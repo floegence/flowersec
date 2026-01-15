@@ -82,7 +82,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	go runAgentEndpoint(ctx, wsURL, grantS.ChannelId, grantS.Token, psk, grantS.ChannelInitExpireAtUnixS)
+	go runServerEndpoint(ctx, wsURL, grantS.ChannelId, grantS.Token, psk, grantS.ChannelInitExpireAtUnixS)
 
 	ready := map[string]any{
 		"ws_url":       wsURL,
@@ -99,7 +99,7 @@ func main() {
 	cancel2()
 }
 
-func runAgentEndpoint(ctx context.Context, wsURL string, channelID string, tokenStr string, psk []byte, initExp int64) {
+func runServerEndpoint(ctx context.Context, wsURL string, channelID string, tokenStr string, psk []byte, initExp int64) {
 	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
 		return

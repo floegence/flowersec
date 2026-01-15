@@ -76,7 +76,7 @@ func TestE2E_RPCOverTunnelE2EEYamux(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runAgentServerEndpoint(ctx, t, wsURL, grantS, psk)
+		runServerEndpoint(ctx, t, wsURL, grantS, psk)
 	}()
 
 	// Client endpoint does one RPC call and then closes.
@@ -313,7 +313,7 @@ func runServerHandshakeOnly(ctx context.Context, wsURL string, grant *controlv1.
 	return secure.Close()
 }
 
-func runAgentServerEndpoint(ctx context.Context, t *testing.T, wsURL string, grant *controlv1.ChannelInitGrant, psk []byte) {
+func runServerEndpoint(ctx context.Context, t *testing.T, wsURL string, grant *controlv1.ChannelInitGrant, psk []byte) {
 	t.Helper()
 	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 	if err != nil {

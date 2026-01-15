@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Starts the demo agent endpoint (yamux server) with a server-side ChannelInitGrant.
+# Starts the demo server endpoint (yamux server) with a server-side ChannelInitGrant.
 # Input can be either:
 # - full JSON: {"grant_client":...,"grant_server":...}
 # - or grant_server JSON itself
@@ -16,8 +16,7 @@ fi
 
 cd "$ROOT/examples"
 if [[ -z "$GRANT_FILE" ]]; then
-  exec go run ./go/agent_endpoint
+  exec go run ./go/server_endpoint
 else
-  exec go run ./go/agent_endpoint --grant "$GRANT_FILE"
+  exec go run ./go/server_endpoint --grant "$GRANT_FILE"
 fi
-

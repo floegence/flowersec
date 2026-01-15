@@ -11,7 +11,7 @@ const WS = require("ws");
 
 describe("go<->ts integration", () => {
   test(
-    "ts client talks to go agent through tunnel",
+    "ts client talks to go server endpoint through tunnel",
     async () => {
       const goCwd = path.join(process.cwd(), "..", "go");
       const p = spawn("go", ["run", "./cmd/flowersec-e2e-harness"], {

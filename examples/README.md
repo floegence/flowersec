@@ -1,6 +1,6 @@
 # Examples
 
-This folder is a hands-on cookbook for running Flowersec end-to-end using the real protocol layers from `.design.md`:
+This folder is a hands-on cookbook for running Flowersec end-to-end using the real protocol stack:
 
 - Tunnel path: WS Attach (text) + E2EE (FSEH/FSEC) + Yamux + RPC + extra `echo` stream
 - Direct path (no tunnel): WS + E2EE + Yamux + RPC + extra `echo` stream
@@ -9,7 +9,7 @@ This folder is a hands-on cookbook for running Flowersec end-to-end using the re
 
 - Tunnel server (deliverable): `go/cmd/flowersec-tunnel/` (blind forwarder; verifies tokens; pairs by `channel_id` + `role`)
 - Controlplane demo: `examples/go/controlplane_demo/` (owns issuer keys; mints `ChannelInitGrant` pairs)
-- Agent endpoint demo: `examples/go/agent_endpoint/` (acts as the endpoint with `role=server`; runs E2EE server + Yamux server)
+- Go server endpoint demo: `examples/go/server_endpoint/` (acts as the endpoint with `role=server`; runs E2EE server + Yamux server)
 - Clients:
   - Go: `examples/go/go_client_tunnel/`, `examples/go/go_client_direct/`
   - TS (Node): `examples/ts/node-tunnel-client.mjs`, `examples/ts/node-direct-client.mjs`
@@ -36,9 +36,9 @@ npm run build
   - Practical rule: mint a fresh channel (`POST /v1/channel/init`) for every new connection attempt.
 - Role pairing: a tunnel channel requires exactly one `role=client` and one `role=server`.
   - TS tunnel client and Go tunnel client are both `role=client` and cannot talk to each other directly.
-  - Use the agent endpoint demo (`role=server`) as the peer for any tunnel client.
+  - Use the server endpoint demo (`role=server`) as the peer for any tunnel client.
 
-## Scenario A: TS client (Node) ↔ Go agent endpoint (server) through tunnel
+## Scenario A: TS client (Node) ↔ Go server endpoint (role=server) through tunnel
 
 Terminal 1: start controlplane demo (default tunnel URL hint is `ws://127.0.0.1:8080/ws`)
 
@@ -54,12 +54,12 @@ Terminal 2: start tunnel server (deployable service, no code changes)
 eval "$(jq -r '.tunnel_start_cmd' /tmp/fsec-controlplane.json)"
 ```
 
-Terminal 3: mint a channel (grants) and start the agent endpoint (server-side grant)
+Terminal 3: mint a channel (grants) and start the server endpoint (server-side grant)
 
 ```bash
 CP_URL="$(jq -r '.controlplane_http_url' /tmp/fsec-controlplane.json)"
 curl -sS -X POST "$CP_URL/v1/channel/init" | tee /tmp/fsec-channel.json
-./examples/run-agent-endpoint.sh /tmp/fsec-channel.json
+./examples/run-server-endpoint.sh /tmp/fsec-channel.json
 ```
 
 Terminal 4: run the TS tunnel client (client-side grant)
@@ -70,9 +70,9 @@ node ./examples/ts/node-tunnel-client.mjs < /tmp/fsec-channel.json
 
 Expected: one RPC response + one RPC notify + one `echo` stream roundtrip.
 
-## Scenario B: TS client (Browser) ↔ Go agent endpoint (server) through tunnel
+## Scenario B: TS client (Browser) ↔ Go server endpoint (role=server) through tunnel
 
-Reuse Scenario A terminals 1-3 (controlplane + tunnel + agent), then serve the repo root:
+Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint), then serve the repo root:
 
 ```bash
 python3 -m http.server 5173
@@ -82,9 +82,9 @@ Open `http://127.0.0.1:5173/examples/ts/browser-tunnel/` and paste `/tmp/fsec-ch
 
 Tip: if you refresh/reconnect, mint a new channel again (one-time token rule).
 
-## Scenario C: Go client ↔ Go agent endpoint (server) through tunnel
+## Scenario C: Go client ↔ Go server endpoint (role=server) through tunnel
 
-Reuse Scenario A terminals 1-3 (controlplane + tunnel + agent), then:
+Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint), then:
 
 ```bash
 go run ./examples/go/go_client_tunnel < /tmp/fsec-channel.json

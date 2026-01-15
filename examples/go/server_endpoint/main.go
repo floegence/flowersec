@@ -39,7 +39,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go runAgentEndpoint(ctx, grant, psk)
+	go runServerEndpoint(ctx, grant, psk)
 
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -47,7 +47,7 @@ func main() {
 	cancel()
 }
 
-func runAgentEndpoint(ctx context.Context, grant *controlv1.ChannelInitGrant, psk []byte) {
+func runServerEndpoint(ctx context.Context, grant *controlv1.ChannelInitGrant, psk []byte) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
