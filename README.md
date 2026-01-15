@@ -48,18 +48,18 @@ The examples in `examples/README.md` cover two common paths. The diagrams below 
 
 ```mermaid
 flowchart LR
-  CP[Controlplane demo<br/>mints ChannelInitGrant pair]
-  Client[Client endpoint<br/>role=client]
-  Server[Server endpoint<br/>role=server]
-  Tunnel[Tunnel server<br/>blind forwarder]
+  CP["Controlplane demo\nmints ChannelInitGrant pair"]
+  Client["Client endpoint\nrole=client"]
+  Server["Server endpoint\nrole=server"]
+  Tunnel["Tunnel server\nblind forwarder"]
 
   CP -->|grant_client| Client
   CP -->|grant_server| Server
 
-  Client -->|WS Attach: token + channel_id| Tunnel
-  Server -->|WS Attach: token + channel_id| Tunnel
+  Client -->|WS Attach token and channel_id| Tunnel
+  Server -->|WS Attach token and channel_id| Tunnel
 
-  Client -->|E2EE (FSEH/FSEC) + Yamux + RPC/echo| Tunnel
+  Client -->|E2EE FSEH-FSEC, Yamux, RPC, echo| Tunnel
   Tunnel -->|encrypted bytes only| Server
 ```
 
@@ -70,7 +70,7 @@ flowchart LR
   Client[Client endpoint]
   Server[Direct server endpoint]
 
-  Client -->|WS + E2EE (FSEH/FSEC) + Yamux + RPC/echo| Server
+  Client -->|WS, E2EE FSEH-FSEC, Yamux, RPC, echo| Server
 ```
 
 ## Development
