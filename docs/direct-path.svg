@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="220" viewBox="0 0 760 220" role="img" aria-label="Direct path (no tunnel) diagram">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#4b5563" />
+    </marker>
+  </defs>
+  <style>
+    .box { fill: #f8fafc; stroke: #0f172a; stroke-width: 1.5; }
+    .line { stroke: #4b5563; stroke-width: 1.6; fill: none; }
+    .title { font: 13px Arial, Helvetica, sans-serif; fill: #111827; font-weight: 600; }
+    .subtitle { font: 12px Arial, Helvetica, sans-serif; fill: #111827; }
+    .label { font: 12px Arial, Helvetica, sans-serif; fill: #374151; }
+  </style>
+
+  <rect class="box" x="60" y="70" width="240" height="80" rx="8" />
+  <text class="title" x="180" y="102" text-anchor="middle">Client endpoint</text>
+
+  <rect class="box" x="460" y="70" width="240" height="80" rx="8" />
+  <text class="title" x="580" y="102" text-anchor="middle">Direct server endpoint</text>
+
+  <path class="line" d="M 300 110 L 460 110" marker-end="url(#arrow)" />
+  <text class="label" x="380" y="88" text-anchor="middle">
+    <tspan x="380" dy="0">WS, E2EE FSEH-FSEC, Yamux</tspan>
+    <tspan x="380" dy="14">RPC, echo</tspan>
+  </text>
+</svg>

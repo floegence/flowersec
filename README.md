@@ -50,13 +50,7 @@ The examples in `examples/README.md` cover two common paths. The diagrams below 
 
 ### Direct path (no tunnel)
 
-```mermaid
-flowchart LR
-  Client[Client endpoint]
-  Server[Direct server endpoint]
-
-  Client -->|WS, E2EE FSEH-FSEC, Yamux, RPC, echo| Server
-```
+![Direct path (no tunnel)](docs/direct-path.svg)
 
 ## Development
 
