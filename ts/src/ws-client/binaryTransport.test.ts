@@ -41,6 +41,22 @@ async function waitForClosed(ws: FakeWebSocket, attempts = 5): Promise<void> {
   }
 }
 
+class DelayedBlob extends Blob {
+  private readonly delayMs: number;
+
+  constructor(parts: BlobPart[], delayMs: number) {
+    super(parts);
+    this.delayMs = delayMs;
+  }
+
+  override async arrayBuffer(): Promise<ArrayBuffer> {
+    await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    return await super.arrayBuffer();
+  }
+}
+
+const testWithBlob = typeof Blob === "undefined" ? test.skip : test;
+
 describe("WebSocketBinaryTransport", () => {
   test("fails fast when queued bytes exceed limit", async () => {
     const ws = new FakeWebSocket();
@@ -52,5 +68,41 @@ describe("WebSocketBinaryTransport", () => {
     await waitForClosed(ws);
     expect(ws.closed).toBe(true);
     await expect(transport.readBinary()).rejects.toThrow(/ws recv buffer exceeded/);
+  });
+
+  test("supports array buffer views", async () => {
+    const ws = new FakeWebSocket();
+    const transport = new WebSocketBinaryTransport(ws);
+
+    const read = transport.readBinary();
+    ws.emit("message", { data: new Uint8Array([7, 8, 9]) });
+
+    await expect(read).resolves.toEqual(new Uint8Array([7, 8, 9]));
+  });
+
+  test("rejects text frames", async () => {
+    const ws = new FakeWebSocket();
+    const transport = new WebSocketBinaryTransport(ws);
+
+    const read = transport.readBinary();
+    ws.emit("message", { data: "text" });
+
+    await expect(read).rejects.toThrow(/unexpected text frame/);
+  });
+
+  testWithBlob("preserves message order across async blob decoding", async () => {
+    const ws = new FakeWebSocket();
+    const transport = new WebSocketBinaryTransport(ws);
+
+    const first = transport.readBinary();
+    const second = transport.readBinary();
+
+    const slow = new DelayedBlob([new Uint8Array([1])], 20);
+    const fast = new DelayedBlob([new Uint8Array([2])], 0);
+    ws.emit("message", { data: slow });
+    ws.emit("message", { data: fast });
+
+    await expect(first).resolves.toEqual(new Uint8Array([1]));
+    await expect(second).resolves.toEqual(new Uint8Array([2]));
   });
 });

@@ -121,4 +121,27 @@ describe("e2ee serverHandshake", () => {
     await serverHandshake(transport, cache, opts);
     expect(respCount).toBe(2);
   });
+
+  test("rejects missing init_exp", async () => {
+    const transport: BinaryTransport = {
+      async readBinary() {
+        throw new Error("unexpected read");
+      },
+      async writeBinary() {},
+      close() {}
+    };
+    const cache = new ServerHandshakeCache();
+    const opts: HandshakeServerOptions = {
+      channelId: "ch_1",
+      suite: 1,
+      psk: crypto.getRandomValues(new Uint8Array(32)),
+      serverFeatures: 0,
+      initExpireAtUnixS: 0,
+      clockSkewSeconds: 30,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20
+    };
+
+    await expect(serverHandshake(transport, cache, opts)).rejects.toThrow(/missing init_exp/);
+  });
 });
