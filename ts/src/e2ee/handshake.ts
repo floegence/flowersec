@@ -63,7 +63,12 @@ function suiteKeypair(suite: Suite): { priv: Uint8Array; pub: Uint8Array } {
 // suiteSharedSecret computes the ECDH shared secret for the suite.
 function suiteSharedSecret(suite: Suite, priv: Uint8Array, peerPub: Uint8Array): Uint8Array {
   if (suite === 1) return x25519.getSharedSecret(priv, peerPub);
-  if (suite === 2) return p256.getSharedSecret(priv, peerPub, false);
+  if (suite === 2) {
+    // P-256 uses the x-coordinate (32 bytes) to align with Go's crypto/ecdh output.
+    const shared = p256.getSharedSecret(priv, peerPub, false);
+    if (shared.length !== 65 || shared[0] !== 4) throw new Error("invalid P-256 shared secret encoding");
+    return shared.slice(1, 33);
+  }
   throw new Error(`unsupported suite ${suite}`);
 }
 

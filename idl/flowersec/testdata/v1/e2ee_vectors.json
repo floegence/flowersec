@@ -34,6 +34,34 @@
         "frame_b64u": "RlNFQwEAAAAAAAAAAAEAAAAVTGA-meXg75teyc41IjS-NQtAs-hd"
       }
     }
+  ],
+  "handshake_p256": [
+    {
+      "case_id": "handshake_p256_basic",
+      "inputs": {
+        "version": 1,
+        "suite": 2,
+        "role": 1,
+        "client_features": 0,
+        "server_features": 1,
+        "channel_id": "chan_p256_test",
+        "nonce_c_b64u": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "nonce_s_b64u": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+        "client_eph_priv_b64u": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE",
+        "server_eph_priv_b64u": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAI",
+        "client_eph_pub_b64u": "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+        "server_eph_pub_b64u": "BHzyexiNA09-ilI4AwS1GsPAiWnid_IbNaYLSPxHZpl4B3dVENuO0EApPZrGn3Qw27p9reY86YIpngS3nSJ4c9E",
+        "psk_b64u": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
+      },
+      "expected": {
+        "shared_secret_b64u": "fPJ7GI0DT36KUjgDBLUaw8CJaeJ38hs1pgtI_EdmmXg",
+        "transcript_hash_b64u": "aXiRFjnPfSDPD7Va-o_-tln9w9RLbmx5qZGtqTQZpWk",
+        "c2s_key_b64u": "N43tNz4ZKHJ-i_YnEyOS8wopsLzewOGdG9tWlmdDnXo",
+        "s2c_key_b64u": "yhI4fiB4UKjSNeQz2FEwhuvfmI7MH0N0rlQS_GQ4vYY",
+        "c2s_nonce_prefix_b64u": "05-spg",
+        "s2c_nonce_prefix_b64u": "8sVFVw",
+        "rekey_base_b64u": "KGeve3v5gkAKdvJBHiivxEhOlS0BkTrhQn9Dyl6XfCA"
+      }
+    }
   ]
 }
-
