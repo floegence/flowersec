@@ -11,32 +11,32 @@ import (
 )
 
 type SecureConn struct {
-	t                BinaryTransport
-	maxRecordBytes   int
-	maxBufferedBytes int
+	t                BinaryTransport // Underlying transport for encrypted frames.
+	maxRecordBytes   int             // Max encoded record size in bytes.
+	maxBufferedBytes int             // Max buffered plaintext bytes before failing.
 
-	mu      sync.Mutex
-	cond    *sync.Cond
-	buf     bytes.Buffer
-	readErr error
-	closed  bool
+	mu      sync.Mutex   // Guards read buffer and read state.
+	cond    *sync.Cond   // Signals readers when data or errors arrive.
+	buf     bytes.Buffer // Buffered plaintext awaiting Read.
+	readErr error        // Sticky read error from readLoop.
+	closed  bool         // Close state for Read/Write.
 
-	sendMu     sync.Mutex
-	sendCond   *sync.Cond
-	sendQueue  []sendReq
-	sendClosed bool
-	sendErr    error
-	sendOnce   sync.Once
+	sendMu     sync.Mutex // Guards send queue and send state.
+	sendCond   *sync.Cond // Signals sender when frames are queued.
+	sendQueue  []sendReq  // Pending frames to send.
+	sendClosed bool       // Indicates no more sends are allowed.
+	sendErr    error      // Sticky send error from writeLoop.
+	sendOnce   sync.Once  // Ensures send shutdown happens once.
 
-	keys RecordKeyState
+	keys RecordKeyState // Current key material and sequence state.
 }
 
 // ErrRecvBufferExceeded indicates buffered plaintext exceeded the configured cap.
 var ErrRecvBufferExceeded = errors.New("recv buffer exceeded")
 
 type sendReq struct {
-	frame []byte
-	done  chan error
+	frame []byte     // Encrypted record frame to write.
+	done  chan error // Completion signal for the send.
 }
 
 // NewSecureConn wraps a BinaryTransport with record encryption and buffering.

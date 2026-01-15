@@ -14,9 +14,9 @@ const AttachVersion = 1
 
 // AttachConstraints caps attach payload sizes to prevent abuse.
 type AttachConstraints struct {
-	MaxAttachBytes int
-	MaxChannelID   int
-	MaxToken       int
+	MaxAttachBytes int // Maximum total attach JSON bytes.
+	MaxChannelID   int // Maximum channel_id length.
+	MaxToken       int // Maximum token length.
 }
 
 // DefaultAttachConstraints returns safe defaults for attach validation.

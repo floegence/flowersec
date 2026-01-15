@@ -32,11 +32,11 @@ const (
 
 // SessionKeys holds the derived bidirectional keys and nonces for a channel.
 type SessionKeys struct {
-	C2SKey      [32]byte
-	S2CKey      [32]byte
-	C2SNoncePre [4]byte
-	S2CNoncePre [4]byte
-	RekeyBase   [32]byte
+	C2SKey      [32]byte // Client-to-server AEAD key.
+	S2CKey      [32]byte // Server-to-client AEAD key.
+	C2SNoncePre [4]byte  // Client-to-server nonce prefix.
+	S2CNoncePre [4]byte  // Server-to-client nonce prefix.
+	RekeyBase   [32]byte // Base secret for deriving rekeyed record keys.
 }
 
 func curveForSuite(s Suite) (ecdh.Curve, error) {

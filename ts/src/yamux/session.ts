@@ -15,28 +15,42 @@ import { YamuxStream } from "./stream.js";
 
 // ByteDuplex is a minimal async read/write/close abstraction.
 export type ByteDuplex = {
+  /** Reads the next chunk from the underlying connection. */
   read(): Promise<Uint8Array>;
+  /** Writes a chunk to the underlying connection. */
   write(chunk: Uint8Array): Promise<void>;
+  /** Closes the underlying connection. */
   close(): void;
 };
 
 // YamuxSessionOptions configures client/server IDs and limits.
 export type YamuxSessionOptions = Readonly<{
+  /** True when acting as the client side (odd stream IDs). */
   client: boolean;
+  /** Optional callback for newly accepted inbound streams. */
   onIncomingStream?: (s: YamuxStream) => void;
+  /** Maximum frame payload bytes accepted per stream frame. */
   maxFrameBytes?: number;
 }>;
 
 // YamuxSession multiplexes multiple streams over a single byte stream.
 export class YamuxSession {
+  // Underlying byte stream for yamux frames.
   private readonly conn: ByteDuplex;
+  // Reader for fixed-length header/body reads.
   private readonly reader: ByteReader;
+  // Active streams keyed by stream ID.
   private readonly streams = new Map<number, YamuxStream>();
+  // Callback for inbound streams created from SYN frames.
   private readonly onIncomingStream: ((s: YamuxStream) => void) | undefined;
+  // Maximum allowed DATA frame length.
   private readonly maxFrameBytes: number;
 
+  // Next stream ID to allocate (odd/even based on role).
   private nextStreamId: number;
+  // Closed flag for terminating read loops and streams.
   private closed = false;
+  // Writers waiting for send window credits per stream.
   private readonly sendWindowWaiters = new Map<number, Array<() => void>>();
 
   constructor(conn: ByteDuplex, opts: YamuxSessionOptions) {

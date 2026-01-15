@@ -24,22 +24,22 @@ const (
 
 // Params define channel-init issuance settings and defaults.
 type Params struct {
-	TunnelURL      string
-	TunnelAudience string
-	IssuerID       string
+	TunnelURL      string // WebSocket URL for tunnel server.
+	TunnelAudience string // Expected audience for issued tokens.
+	IssuerID       string // Issuer identifier embedded in tokens.
 
-	TokenExpSeconds int64
-	ClockSkew       time.Duration
+	TokenExpSeconds int64         // Token lifetime in seconds (capped by init exp).
+	ClockSkew       time.Duration // Allowed clock skew for validation hints.
 
-	AllowedSuites []e2eev1.Suite
-	DefaultSuite  e2eev1.Suite
+	AllowedSuites []e2eev1.Suite // E2EE suites permitted for the channel.
+	DefaultSuite  e2eev1.Suite   // Default E2EE suite for the channel.
 }
 
 // Service issues channel-init grants and tokens for clients/servers.
 type Service struct {
-	Issuer *issuer.Keyset
-	Params Params
-	Now    func() time.Time
+	Issuer *issuer.Keyset   // Signing keyset for tunnel tokens.
+	Params Params           // Defaults and limits for channel-init grants.
+	Now    func() time.Time // Optional time source override.
 }
 
 func (s *Service) now() time.Time {

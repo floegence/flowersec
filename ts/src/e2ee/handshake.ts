@@ -14,25 +14,41 @@ export type Suite = 1 | 2;
 
 // HandshakeClientOptions configures the client handshake path.
 export type HandshakeClientOptions = Readonly<{
+  /** Channel identifier shared with the server. */
   channelId: string;
+  /** Cipher suite selection (see Suite). */
   suite: Suite;
+  /** 32-byte pre-shared key for authenticating the handshake. */
   psk: Uint8Array; // 32
+  /** Client feature bitset advertised during handshake. */
   clientFeatures: number;
+  /** Maximum allowed bytes for a handshake JSON payload. */
   maxHandshakePayload: number;
+  /** Maximum record size for encrypted frames after handshake. */
   maxRecordBytes: number;
+  /** Maximum buffered plaintext bytes for the secure channel. */
   maxBufferedBytes?: number;
 }>;
 
 // HandshakeServerOptions configures the server handshake path.
 export type HandshakeServerOptions = Readonly<{
+  /** Channel identifier expected from the client. */
   channelId: string;
+  /** Cipher suite selection (see Suite). */
   suite: Suite;
+  /** 32-byte pre-shared key for authenticating the handshake. */
   psk: Uint8Array; // 32
+  /** Server feature bitset advertised during handshake. */
   serverFeatures: number;
+  /** Absolute expiry (Unix seconds) for the init message. */
   initExpireAtUnixS: number;
+  /** Allowed clock skew (seconds) for timestamp validation. */
   clockSkewSeconds: number;
+  /** Maximum allowed bytes for a handshake JSON payload. */
   maxHandshakePayload: number;
+  /** Maximum record size for encrypted frames after handshake. */
   maxRecordBytes: number;
+  /** Maximum buffered plaintext bytes for the secure channel. */
   maxBufferedBytes?: number;
 }>;
 
@@ -154,20 +170,31 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
 }
 
 type ServerCacheEntry = {
+  /** Stable fingerprint of the init message for retries. */
   initKey: string;
+  /** Suite used for this cached handshake. */
   suite: Suite;
+  /** Server ephemeral private key for ECDH. */
   serverPriv: Uint8Array;
+  /** Server ephemeral public key bytes. */
   serverPub: Uint8Array;
+  /** Server nonce (32 bytes). */
   nonceS: Uint8Array;
+  /** Handshake identifier returned to the client. */
   handshakeId: string;
+  /** Server feature bitset from this handshake. */
   serverFeatures: number;
+  /** Cache insert time (ms since epoch) for TTL eviction. */
   createdAtMs: number;
 };
 
 // ServerHandshakeCache stores server-side handshake state for retries.
 export class ServerHandshakeCache {
+  // Cache keyed by init fingerprint.
   private readonly m = new Map<string, ServerCacheEntry>();
+  // Time-to-live for cache entries in milliseconds.
   private readonly ttlMs: number;
+  // Maximum number of cached entries.
   private readonly maxEntries: number;
 
   constructor(opts: Readonly<{ ttlMs?: number; maxEntries?: number }> = {}) {

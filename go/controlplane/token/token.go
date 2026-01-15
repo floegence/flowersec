@@ -18,15 +18,15 @@ const Prefix = "FST1"
 
 // Payload is the signed token payload for tunnel attachment.
 type Payload struct {
-	Kid       string `json:"kid"`
-	Aud       string `json:"aud"`
-	Iss       string `json:"iss,omitempty"`
-	ChannelID string `json:"channel_id"`
-	Role      uint8  `json:"role"`
-	TokenID   string `json:"token_id"`
-	InitExp   int64  `json:"init_exp"`
-	Iat       int64  `json:"iat"`
-	Exp       int64  `json:"exp"`
+	Kid       string `json:"kid"`           // Key ID used to verify the signature.
+	Aud       string `json:"aud"`           // Intended audience for the token.
+	Iss       string `json:"iss,omitempty"` // Issuer identifier, optional.
+	ChannelID string `json:"channel_id"`    // Channel identifier this token authorizes.
+	Role      uint8  `json:"role"`          // Endpoint role (client/server).
+	TokenID   string `json:"token_id"`      // Unique token ID for replay protection.
+	InitExp   int64  `json:"init_exp"`      // Channel-init expiry (Unix seconds).
+	Iat       int64  `json:"iat"`           // Issued-at timestamp (Unix seconds).
+	Exp       int64  `json:"exp"`           // Token expiry timestamp (Unix seconds).
 }
 
 var (
@@ -51,10 +51,10 @@ type KeyLookup interface {
 
 // VerifyOptions specifies audience/issuer/time validation details.
 type VerifyOptions struct {
-	Now       time.Time
-	Audience  string
-	Issuer    string
-	ClockSkew time.Duration
+	Now       time.Time     // Override for current time (zero uses time.Now).
+	Audience  string        // Required audience, if non-empty.
+	Issuer    string        // Required issuer, if non-empty.
+	ClockSkew time.Duration // Allowed clock skew for time checks.
 }
 
 // Sign builds a signed token string using the provided Ed25519 key.

@@ -16,8 +16,8 @@ type Handler func(ctx context.Context, payload json.RawMessage) (json.RawMessage
 
 // Router dispatches RPC requests by type ID.
 type Router struct {
-	mu       sync.RWMutex
-	handlers map[uint32]Handler
+	mu       sync.RWMutex       // Guards handler registrations.
+	handlers map[uint32]Handler // Handlers keyed by type ID.
 }
 
 // NewRouter constructs an empty router.
@@ -44,10 +44,10 @@ func (r *Router) handle(ctx context.Context, typeID uint32, payload json.RawMess
 
 // Server reads RPC envelopes and dispatches them through a Router.
 type Server struct {
-	r       io.ReadWriteCloser
-	router  *Router
-	maxLen  int
-	writeMu sync.Mutex
+	r       io.ReadWriteCloser // Underlying stream for framed JSON.
+	router  *Router            // Handler registry for incoming requests.
+	maxLen  int                // Max frame size for ReadJSONFrame.
+	writeMu sync.Mutex         // Serializes writes on the stream.
 }
 
 // NewServer creates a server over a read/write stream.
@@ -111,17 +111,17 @@ func (s *Server) Serve(ctx context.Context) error {
 
 // Client issues RPC calls and receives notifications.
 type Client struct {
-	r      io.ReadWriteCloser
-	maxLen int
+	r      io.ReadWriteCloser // Underlying stream for framed JSON.
+	maxLen int                // Max frame size for ReadJSONFrame.
 
-	writeMu sync.Mutex
+	writeMu sync.Mutex // Serializes writes on the stream.
 
-	mu      sync.Mutex
-	nextID  uint64
-	pending map[uint64]chan rpcv1.RpcEnvelope
-	notify  map[uint32]map[*notifyHandler]struct{}
-	closed  bool
-	lastErr error
+	mu      sync.Mutex                             // Guards pending/notify state.
+	nextID  uint64                                 // Next request ID to allocate.
+	pending map[uint64]chan rpcv1.RpcEnvelope      // Pending responses keyed by request ID.
+	notify  map[uint32]map[*notifyHandler]struct{} // Notification handlers by type ID.
+	closed  bool                                   // Closed flag for read/write paths.
+	lastErr error                                  // Sticky error from read loop.
 }
 
 // NewClient creates an RPC client and starts its read loop.
@@ -141,7 +141,7 @@ func NewClient(rwc io.ReadWriteCloser) *Client {
 func (c *Client) SetMaxFrameBytes(n int) { c.maxLen = n }
 
 type notifyHandler struct {
-	fn func(payload json.RawMessage)
+	fn func(payload json.RawMessage) // Handler callback.
 }
 
 // OnNotify registers a handler for incoming notifications by type ID.

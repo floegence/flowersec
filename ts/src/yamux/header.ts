@@ -6,10 +6,15 @@ export const HEADER_LEN = 12;
 
 // YamuxHeader represents the decoded frame header.
 export type YamuxHeader = Readonly<{
+  /** Protocol version byte. */
   version: number;
+  /** Frame type (data, window update, ping, go away). */
   type: number;
+  /** 16-bit flags field (ACK/SYN/FIN/RST). */
   flags: number;
+  /** Stream identifier (0 reserved for session-level frames). */
   streamId: number;
+  /** Frame payload length in bytes. */
   length: number;
 }>;
 

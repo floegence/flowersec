@@ -44,17 +44,17 @@ const (
 
 // RecordKeyState tracks symmetric keys, nonce prefixes, and sequence counters.
 type RecordKeyState struct {
-	SendKey      [32]byte
-	RecvKey      [32]byte
-	SendNoncePre [4]byte
-	RecvNoncePre [4]byte
-	RekeyBase    [32]byte
-	Transcript   [32]byte
-	SendDir      Direction
-	RecvDir      Direction
+	SendKey      [32]byte  // Current send AEAD key.
+	RecvKey      [32]byte  // Current receive AEAD key.
+	SendNoncePre [4]byte   // Send nonce prefix (first 4 bytes of 12-byte nonce).
+	RecvNoncePre [4]byte   // Receive nonce prefix (first 4 bytes of 12-byte nonce).
+	RekeyBase    [32]byte  // Base secret for deriving per-sequence rekeyed keys.
+	Transcript   [32]byte  // Handshake transcript hash bound into rekey derivation.
+	SendDir      Direction // Direction label for send rekey derivation.
+	RecvDir      Direction // Direction label for receive rekey derivation.
 
-	SendSeq uint64
-	RecvSeq uint64
+	SendSeq uint64 // Next outbound record sequence number.
+	RecvSeq uint64 // Next expected inbound record sequence number.
 }
 
 // MaxPlaintext returns the maximum payload bytes allowed by the record size.

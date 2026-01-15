@@ -6,7 +6,9 @@ export type RpcHandler = (payload: unknown) => Promise<{ payload: unknown; error
 
 // RpcServer dispatches request envelopes to registered handlers.
 export class RpcServer {
+  // Registered handlers keyed by type ID.
   private readonly handlers = new Map<number, RpcHandler>();
+  // Closed flag to stop the serve loop.
   private closed = false;
 
   constructor(

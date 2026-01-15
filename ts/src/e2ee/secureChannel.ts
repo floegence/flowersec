@@ -4,14 +4,19 @@ import { deriveRekeyKey } from "./kdf.js";
 
 // BinaryTransport is the minimal interface for binary message exchange.
 export type BinaryTransport = {
+  /** Reads the next binary frame from the underlying transport. */
   readBinary(): Promise<Uint8Array>;
+  /** Writes a binary frame to the underlying transport. */
   writeBinary(frame: Uint8Array): Promise<void>;
+  /** Closes the transport and unblocks pending readers/writers. */
   close(): void;
 };
 
 // SecureChannelOptions exposes sizing limits for record processing.
 export type SecureChannelOptions = Readonly<{
+  /** Maximum encoded record size (header + ciphertext). */
   maxRecordBytes: number;
+  /** Maximum queued plaintext bytes before backpressure/errors. */
   maxBufferedBytes?: number;
 }>;
 
@@ -20,35 +25,49 @@ type Direction = 1 | 2;
 type SendKind = "app" | "ping" | "rekey";
 
 type SendReq = {
+  /** Outbound frame category (app payload, ping, rekey). */
   kind: SendKind;
+  /** Application payload for app frames only. */
   payload?: Uint8Array;
+  /** Resolve when the frame is sent or rejected. */
   resolve: () => void;
+  /** Reject with transport/crypto errors. */
   reject: (e: unknown) => void;
 };
 
 // SecureChannel encrypts/decrypts records and buffers application payloads.
 export class SecureChannel {
+  // Underlying transport for encrypted record frames.
   private readonly transport: BinaryTransport;
+  // Maximum allowed bytes per record frame.
   private readonly maxRecordBytes: number;
+  // Upper bound for buffered plaintext in memory.
   private readonly maxBufferedBytes: number;
 
+  // Active encryption keys and nonce prefixes for the current epoch.
   private sendKey: Uint8Array;
   private recvKey: Uint8Array;
   private sendNoncePrefix: Uint8Array;
   private recvNoncePrefix: Uint8Array;
+  // Rekey base secret derived from the handshake.
   private readonly rekeyBase: Uint8Array;
+  // Transcript hash binding rekeys to the handshake.
   private readonly transcriptHash: Uint8Array;
+  // Rekey direction identifiers for send/recv.
   private readonly sendDir: Direction;
   private readonly recvDir: Direction;
 
+  // Monotonic record sequence numbers per direction.
   private sendSeq = 1n;
   private recvSeq = 1n;
 
+  // Send queue and waiters for backpressure.
   private sendQueue: SendReq[] = [];
   private sendWaiters: Array<() => void> = [];
   private sendClosed = false;
   private sendErr: unknown = null;
 
+  // Receive queue and waiters for plaintext delivery.
   private readonly recvQueue: Uint8Array[] = [];
   private recvQueueBytes = 0;
   private recvWaiters: Array<() => void> = [];

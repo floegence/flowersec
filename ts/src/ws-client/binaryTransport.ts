@@ -10,13 +10,19 @@ export type WebSocketLike = {
 
 // WebSocketBinaryTransport adapts WebSocket messages to binary reads/writes.
 export class WebSocketBinaryTransport {
+  // Underlying WebSocket instance (browser or polyfill).
   private readonly ws: WebSocketLike;
+  // Buffered inbound frames when no reader is waiting.
   private readonly queue: Uint8Array[] = [];
+  // Current buffered byte count for backpressure.
   private queueBytes = 0;
+  // Maximum buffered bytes before closing the socket.
   private readonly maxQueuedBytes: number;
+  // Pending readers waiting for the next frame.
   private waiters: Array<{ resolve: (b: Uint8Array) => void; reject: (e: unknown) => void }> = [];
   // Serialize message handling to preserve arrival order across async Blob decoding.
   private messageChain: Promise<void> = Promise.resolve();
+  // Sticky error state to fail all future reads/writes.
   private error: unknown = null;
 
   constructor(ws: WebSocketLike, opts: Readonly<{ maxQueuedBytes?: number }> = {}) {

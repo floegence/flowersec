@@ -17,39 +17,39 @@ import (
 )
 
 type HandshakeOptions struct {
-	PSK               []byte
-	Suite             Suite
-	ChannelID         string
-	InitExpireAtUnixS int64
-	ClockSkew         time.Duration
+	PSK               []byte        // 32-byte pre-shared key for handshake auth.
+	Suite             Suite         // Cipher suite selection for ECDH+AEAD.
+	ChannelID         string        // Channel identifier expected by server/client.
+	InitExpireAtUnixS int64         // Init expiry (Unix seconds) enforced by server.
+	ClockSkew         time.Duration // Allowed clock skew for timestamp validation.
 
-	ClientFeatureBits uint32
-	ServerFeatureBits uint32
+	ClientFeatureBits uint32 // Client feature bitset advertised in init.
+	ServerFeatureBits uint32 // Server feature bitset advertised in resp.
 
-	MaxHandshakePayload int
-	MaxRecordBytes      int
-	MaxBufferedBytes    int
+	MaxHandshakePayload int // Maximum handshake JSON payload size.
+	MaxRecordBytes      int // Maximum encrypted record size on the wire.
+	MaxBufferedBytes    int // Maximum buffered plaintext bytes in SecureConn.
 }
 
 // ServerHandshakeCache caches server-side handshake state to support retries.
 type ServerHandshakeCache struct {
 	mu sync.Mutex
-	m  map[string]*serverHandshakeState
+	m  map[string]*serverHandshakeState // Keyed by init fingerprint.
 
-	ttl        time.Duration
-	maxEntries int
+	ttl        time.Duration // Entry TTL; zero disables expiry.
+	maxEntries int           // Max cached entries; zero disables cap.
 }
 
 type serverHandshakeState struct {
-	Key            string
-	HandshakeID    string
-	Suite          Suite
-	ClientInit     e2eev1.E2EE_Init
-	ServerPriv     *ecdh.PrivateKey
-	ServerPubBytes []byte
-	NonceS         [32]byte
-	ServerFeatures uint32
-	CreatedAt      time.Time
+	Key            string           // Fingerprint key for matching retries.
+	HandshakeID    string           // Server-generated handshake identifier.
+	Suite          Suite            // Suite selected for this handshake.
+	ClientInit     e2eev1.E2EE_Init // Parsed client init message.
+	ServerPriv     *ecdh.PrivateKey // Server ephemeral private key.
+	ServerPubBytes []byte           // Server ephemeral public key bytes.
+	NonceS         [32]byte         // Server nonce (32 bytes).
+	ServerFeatures uint32           // Server feature bitset.
+	CreatedAt      time.Time        // Cache insertion time for TTL.
 }
 
 // NewServerHandshakeCache creates a cache with conservative defaults.

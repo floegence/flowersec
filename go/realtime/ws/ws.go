@@ -11,14 +11,14 @@ import (
 )
 
 type Conn struct {
-	c *websocket.Conn
+	c *websocket.Conn // Underlying gorilla/websocket connection.
 }
 
 // UpgraderOptions exposes a small set of websocket upgrader controls.
 type UpgraderOptions struct {
-	ReadBufferSize  int
-	WriteBufferSize int
-	CheckOrigin     func(r *http.Request) bool
+	ReadBufferSize  int                        // Read buffer size for upgrader.
+	WriteBufferSize int                        // Write buffer size for upgrader.
+	CheckOrigin     func(r *http.Request) bool // Optional origin check.
 }
 
 // Upgrade upgrades an HTTP request to a websocket connection.
@@ -37,7 +37,7 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts UpgraderOptions) (*Con
 
 // DialOptions provides optional headers for websocket dialing.
 type DialOptions struct {
-	Header http.Header
+	Header http.Header // Optional headers for the handshake request.
 }
 
 // Dial opens a websocket connection with deadline-aware handshake.

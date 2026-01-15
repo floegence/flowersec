@@ -17,27 +17,27 @@ import (
 )
 
 type Config struct {
-	Path            string
-	TunnelAudience  string
-	TunnelIssuer    string
-	IssuerKeysFile  string
-	MaxAttachBytes  int
-	MaxRecordBytes  int
-	MaxPendingBytes int
-	MaxChannels     int
-	MaxConns        int
+	Path            string // WebSocket endpoint path (e.g. "/ws").
+	TunnelAudience  string // Expected token audience.
+	TunnelIssuer    string // Expected token issuer.
+	IssuerKeysFile  string // Path to JSON keyset with issuer public keys.
+	MaxAttachBytes  int    // Max bytes for initial attach JSON.
+	MaxRecordBytes  int    // Max bytes for tunneled record frames.
+	MaxPendingBytes int    // Max bytes buffered before peer connects.
+	MaxChannels     int    // Maximum active channels.
+	MaxConns        int    // Maximum concurrent websocket connections.
 
-	AllowedOrigins []string
-	AllowNoOrigin  bool
+	AllowedOrigins []string // Allowed Origin header values.
+	AllowNoOrigin  bool     // Whether to allow empty Origin.
 
-	IdleTimeout     time.Duration
-	ClockSkew       time.Duration
-	CleanupInterval time.Duration
+	IdleTimeout     time.Duration // Close channels idle beyond this duration.
+	ClockSkew       time.Duration // Allowed clock skew for token validation.
+	CleanupInterval time.Duration // Background cleanup cadence.
 
-	ReplaceCooldown      time.Duration
-	ReplaceWindow        time.Duration
-	MaxReplacesPerWindow int
-	ReplaceCloseCode     int
+	ReplaceCooldown      time.Duration // Minimum interval between same-role replaces.
+	ReplaceWindow        time.Duration // Sliding window for replace rate limiting.
+	MaxReplacesPerWindow int           // Max replaces allowed per window.
+	ReplaceCloseCode     int           // Close code for rate-limited replace.
 }
 
 // DefaultConfig returns conservative defaults for a tunnel server.
@@ -61,19 +61,19 @@ func DefaultConfig() Config {
 
 // Server terminates websocket tunnels and routes frames between endpoints.
 type Server struct {
-	cfg Config
+	cfg Config // Immutable runtime configuration.
 
-	keys *IssuerKeyset
-	used *TokenUseCache
+	keys *IssuerKeyset  // Issuer public keys for token verification.
+	used *TokenUseCache // Token replay protection cache.
 
-	mu       sync.Mutex
-	channels map[string]*channelState
+	mu       sync.Mutex               // Guards channel state.
+	channels map[string]*channelState // Channel state by channel ID.
 
-	connCount int64
+	connCount int64    // Current connection count.
 	connSet   sync.Map // key: *websocket.Conn, value: struct{}
 
-	stopOnce sync.Once
-	stopCh   chan struct{}
+	stopOnce sync.Once     // Ensures shutdown only happens once.
+	stopCh   chan struct{} // Signals background cleanup to stop.
 }
 
 // New validates config, loads the issuer keyset, and starts background cleanup.
@@ -156,28 +156,28 @@ func (s *Server) Close() {
 var ErrReplaceRateLimited = errors.New("replace rate limited")
 
 type channelState struct {
-	id         string
-	initExp    int64
-	encrypted  bool
-	lastActive time.Time
-	conns      map[tunnelv1.Role]*endpointConn
-	replace    map[tunnelv1.Role]*replaceState
+	id         string                          // Channel identifier.
+	initExp    int64                           // Channel init expiry (Unix seconds).
+	encrypted  bool                            // Whether E2EE record frames observed.
+	lastActive time.Time                       // Last activity timestamp.
+	conns      map[tunnelv1.Role]*endpointConn // Active endpoints by role.
+	replace    map[tunnelv1.Role]*replaceState // Replace rate-limit state by role.
 }
 
 type replaceState struct {
-	last        time.Time
-	windowStart time.Time
-	windowCount int
+	last        time.Time // Last replacement time.
+	windowStart time.Time // Current rate-limit window start.
+	windowCount int       // Replacements within the current window.
 }
 
 type endpointConn struct {
-	role tunnelv1.Role
-	eid  string
-	ws   *websocket.Conn
+	role tunnelv1.Role   // Endpoint role (client/server).
+	eid  string          // Endpoint instance ID (base64url).
+	ws   *websocket.Conn // Underlying websocket connection.
 
-	writeMu      sync.Mutex
-	pending      [][]byte
-	pendingBytes int
+	writeMu      sync.Mutex // Serializes writes to the websocket.
+	pending      [][]byte   // Buffered frames awaiting peer.
+	pendingBytes int        // Total buffered bytes.
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {

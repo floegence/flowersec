@@ -2,7 +2,9 @@ import type { RpcClient } from "../rpc/client.js";
 
 // RpcProxy allows handlers to survive client reattachment.
 export class RpcProxy {
+  // Active client connection (null when detached).
   private client: RpcClient | null = null;
+  // Persisted notification handlers across reattachments.
   private readonly notifyHandlers = new Map<number, Map<(payload: unknown) => void, { unsub?: () => void }>>();
 
   // attach wires existing notification handlers to a new client.

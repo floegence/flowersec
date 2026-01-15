@@ -11,12 +11,19 @@ import { RpcProxy } from "../rpc-proxy/rpcProxy.js";
 
 // TunnelConnectOptions controls transport and handshake limits.
 export type TunnelConnectOptions = Readonly<{
+  /** Optional caller-provided endpoint instance ID (base64url). */
   endpointInstanceId?: string;
+  /** Feature bitset advertised during the E2EE handshake. */
   clientFeatures?: number;
+  /** Maximum allowed bytes for handshake payloads. */
   maxHandshakePayload?: number;
+  /** Maximum encrypted record size on the wire. */
   maxRecordBytes?: number;
+  /** Maximum buffered plaintext bytes in the secure channel. */
   maxBufferedBytes?: number;
+  /** Maximum queued websocket bytes before backpressure. */
   maxWsQueuedBytes?: number;
+  /** Optional factory for creating the WebSocket instance. */
   wsFactory?: (url: string) => WebSocketLike;
 }>;
 

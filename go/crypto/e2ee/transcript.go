@@ -12,16 +12,16 @@ var ErrInvalidTranscriptInput = errors.New("invalid transcript input")
 
 // TranscriptInputs captures the deterministic fields hashed into the transcript.
 type TranscriptInputs struct {
-	Version        uint8
-	Suite          uint16
-	Role           uint8
-	ClientFeatures uint32
-	ServerFeatures uint32
-	ChannelID      string
-	NonceC         [32]byte
-	NonceS         [32]byte
-	ClientEphPub   []byte
-	ServerEphPub   []byte
+	Version        uint8    // Protocol version byte.
+	Suite          uint16   // Numeric suite identifier.
+	Role           uint8    // Role byte (client/server).
+	ClientFeatures uint32   // Client feature bitset.
+	ServerFeatures uint32   // Server feature bitset.
+	ChannelID      string   // Shared channel identifier.
+	NonceC         [32]byte // Client nonce.
+	NonceS         [32]byte // Server nonce.
+	ClientEphPub   []byte   // Client ephemeral public key bytes.
+	ServerEphPub   []byte   // Server ephemeral public key bytes.
 }
 
 // TranscriptHash computes the SHA-256 hash of the canonical handshake transcript.

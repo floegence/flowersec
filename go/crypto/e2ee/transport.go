@@ -10,14 +10,17 @@ import (
 )
 
 type BinaryTransport interface {
+	// ReadBinary reads the next binary frame, honoring the context deadline.
 	ReadBinary(ctx context.Context) ([]byte, error)
+	// WriteBinary writes a binary frame, honoring the context deadline.
 	WriteBinary(ctx context.Context, b []byte) error
+	// Close closes the underlying transport.
 	Close() error
 }
 
 // WebSocketBinaryTransport adapts a gorilla/websocket Conn to BinaryTransport.
 type WebSocketBinaryTransport struct {
-	c *websocket.Conn
+	c *websocket.Conn // Underlying websocket connection.
 }
 
 // NewWebSocketBinaryTransport wraps a websocket connection for binary frames only.

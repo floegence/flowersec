@@ -7,10 +7,15 @@ const te = new TextEncoder();
 
 // SessionKeys holds derived C2S/S2C keys and nonce prefixes.
 export type SessionKeys = Readonly<{
+  /** Client-to-server AEAD key (32 bytes). */
   c2sKey: Uint8Array; // 32
+  /** Server-to-client AEAD key (32 bytes). */
   s2cKey: Uint8Array; // 32
+  /** Client-to-server nonce prefix (4 bytes). */
   c2sNoncePrefix: Uint8Array; // 4
+  /** Server-to-client nonce prefix (4 bytes). */
   s2cNoncePrefix: Uint8Array; // 4
+  /** Base secret for deriving per-sequence rekeyed keys. */
   rekeyBase: Uint8Array; // 32
 }>;
 

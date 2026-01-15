@@ -3,15 +3,25 @@ import { concatBytes, u16be, u32be } from "../utils/bin.js";
 
 // TranscriptInputs contains the canonical fields hashed into the transcript.
 export type TranscriptInputs = Readonly<{
+  /** Protocol version byte used in the transcript. */
   version: number;
+  /** Numeric suite identifier (see e2ee suite). */
   suite: number;
+  /** Role byte (client=1, server=2). */
   role: number;
+  /** Client feature bitset. */
   clientFeatures: number;
+  /** Server feature bitset. */
   serverFeatures: number;
+  /** Channel identifier shared by both endpoints. */
   channelId: string;
+  /** Client nonce (32 bytes). */
   nonceC: Uint8Array; // 32
+  /** Server nonce (32 bytes). */
   nonceS: Uint8Array; // 32
+  /** Client ephemeral public key bytes. */
   clientEphPub: Uint8Array;
+  /** Server ephemeral public key bytes. */
   serverEphPub: Uint8Array;
 }>;
 

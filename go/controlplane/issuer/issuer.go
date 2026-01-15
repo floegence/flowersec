@@ -12,9 +12,9 @@ import (
 )
 
 type Keyset struct {
-	mu   sync.RWMutex
-	kid  string
-	priv ed25519.PrivateKey
+	mu   sync.RWMutex       // Guards key rotation and access.
+	kid  string             // Active key ID for signing.
+	priv ed25519.PrivateKey // Active private key for signing.
 }
 
 // New loads a keyset from an existing Ed25519 private key.
@@ -71,13 +71,13 @@ func (k *Keyset) Rotate(newKid string, newPriv ed25519.PrivateKey) error {
 
 // TunnelKeysetFile matches the JSON layout consumed by the tunnel server.
 type TunnelKeysetFile struct {
-	Keys []TunnelKey `json:"keys"`
+	Keys []TunnelKey `json:"keys"` // Exported public keys for tunnel servers.
 }
 
 // TunnelKey is the exported public key entry for a tunnel server.
 type TunnelKey struct {
-	KID       string `json:"kid"`
-	PubKeyB64 string `json:"pubkey_b64u"`
+	KID       string `json:"kid"`         // Key ID.
+	PubKeyB64 string `json:"pubkey_b64u"` // Base64url-encoded Ed25519 public key.
 }
 
 // ExportTunnelKeyset serializes the public keyset for tunnel servers.

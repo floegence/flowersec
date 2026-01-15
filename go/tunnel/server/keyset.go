@@ -12,8 +12,8 @@ import (
 )
 
 type IssuerKeyset struct {
-	mu   sync.RWMutex
-	keys map[string]ed25519.PublicKey
+	mu   sync.RWMutex                 // Guards keys map.
+	keys map[string]ed25519.PublicKey // Public keys by key ID.
 }
 
 // LoadIssuerKeysetFile loads a JSON keyset exported by the issuer.

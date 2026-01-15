@@ -37,7 +37,7 @@ import (
 //   - Short token expiry: Keep token exp short (e.g., 60s) to minimize the
 //     replay window after restart.
 type TokenUseCache struct {
-	mu   sync.Mutex
+	mu   sync.Mutex       // Guards the used map.
 	used map[string]int64 // key: tokenID, value: expUnix
 }
 

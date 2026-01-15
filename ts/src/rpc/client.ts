@@ -6,9 +6,13 @@ const MAX_SAFE_REQUEST_ID = BigInt(Number.MAX_SAFE_INTEGER);
 
 // RpcClient sends request/response envelopes and dispatches notifications.
 export class RpcClient {
+  // Next request ID (bigint to avoid JS number precision loss).
   private nextId = 1n;
+  // Pending requests keyed by request ID.
   private readonly pending = new Map<bigint, { resolve: (v: RpcEnvelope) => void; reject: (e: unknown) => void }>();
+  // Notification handlers keyed by type ID.
   private readonly notifyHandlers = new Map<number, Set<(payload: unknown) => void>>();
+  // Closed state to stop the read loop and reject calls.
   private closed = false;
 
   constructor(

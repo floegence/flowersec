@@ -23,16 +23,25 @@ type StreamState =
 
 // YamuxStream manages per-stream flow control and state transitions.
 export class YamuxStream {
+  // Stream identifier within the session.
   readonly id: number;
+  // Current stream state in the yamux state machine.
   private state: StreamState;
+  // Parent session used for frame IO and window coordination.
   private readonly session: YamuxSession;
 
+  // Remaining receive window advertised to the peer.
   private recvWindow = DEFAULT_MAX_STREAM_WINDOW;
+  // Remaining send window credit granted by the peer.
   private sendWindow = DEFAULT_MAX_STREAM_WINDOW;
 
+  // Buffered inbound data chunks.
   private readonly recvQueue: Uint8Array[] = [];
+  // Total buffered bytes in recvQueue.
   private recvQueueBytes = 0;
+  // Readers waiting for incoming data or EOF/reset.
   private readWaiters: Array<() => void> = [];
+  // Terminal error (reset/overflow) for the stream.
   private error: unknown = null;
 
   constructor(session: YamuxSession, id: number, state: StreamState) {
