@@ -2,6 +2,7 @@
 
 gen:
 	cd tools/idlgen && go run . -in ../../idl -go-out ../../go/gen -ts-out ../../ts/src/gen
+	cd go && gofmt -w gen
 
 test: go-test ts-test
 
