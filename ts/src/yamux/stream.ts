@@ -74,7 +74,7 @@ export class YamuxStream {
         await this.sendWindowUpdate();
         return b;
       }
-      if (this.state === "closed") throw new Error("eof");
+      if (this.state === "closed" || this.state === "remoteClose") throw new Error("eof");
       await new Promise<void>((resolve) => this.readWaiters.push(resolve));
     }
   }

@@ -22,7 +22,8 @@ type SecureConn struct {
 	closed  bool
 
 	sendMu     sync.Mutex
-	sendCh     chan sendReq
+	sendCond   *sync.Cond
+	sendQueue  []sendReq
 	sendClosed bool
 	sendErr    error
 	sendOnce   sync.Once
@@ -43,8 +44,8 @@ func NewSecureConn(t BinaryTransport, keys RecordKeyState, maxRecordBytes int, m
 		maxRecordBytes:   maxRecordBytes,
 		maxBufferedBytes: maxBufferedBytes,
 		keys:             keys,
-		sendCh:           make(chan sendReq, 16),
 	}
+	c.sendCond = sync.NewCond(&c.sendMu)
 	c.cond = sync.NewCond(&c.mu)
 	go c.writeLoop()
 	go c.readLoop()
@@ -52,9 +53,17 @@ func NewSecureConn(t BinaryTransport, keys RecordKeyState, maxRecordBytes int, m
 }
 
 func (c *SecureConn) writeLoop() {
-	for req := range c.sendCh {
-		// Snapshot send-side state under sendMu to avoid races with Close/RekeyNow/Write.
+	for {
 		c.sendMu.Lock()
+		for len(c.sendQueue) == 0 && !c.sendClosed {
+			c.sendCond.Wait()
+		}
+		if len(c.sendQueue) == 0 && c.sendClosed {
+			c.sendMu.Unlock()
+			return
+		}
+		req := c.sendQueue[0]
+		c.sendQueue = c.sendQueue[1:]
 		closed := c.sendClosed
 		err := c.sendErr
 		c.sendMu.Unlock()
@@ -183,7 +192,8 @@ func (c *SecureConn) Write(p []byte) (int, error) {
 			return total, err
 		}
 		req.frame = frame
-		c.sendCh <- req
+		c.sendQueue = append(c.sendQueue, req)
+		c.sendCond.Signal()
 		c.sendMu.Unlock()
 		if err := <-req.done; err != nil {
 			return total, err
@@ -207,7 +217,7 @@ func (c *SecureConn) Close() error {
 	c.sendOnce.Do(func() {
 		c.sendMu.Lock()
 		c.sendClosed = true
-		close(c.sendCh)
+		c.sendCond.Broadcast()
 		c.sendMu.Unlock()
 	})
 	return c.t.Close()
@@ -242,7 +252,8 @@ func (c *SecureConn) SendPing() error {
 		return err
 	}
 	req.frame = frame
-	c.sendCh <- req
+	c.sendQueue = append(c.sendQueue, req)
+	c.sendCond.Signal()
 	c.sendMu.Unlock()
 	return <-req.done
 }
@@ -273,7 +284,8 @@ func (c *SecureConn) RekeyNow() error {
 		return err
 	}
 	req.frame = frame
-	c.sendCh <- req
+	c.sendQueue = append(c.sendQueue, req)
+	c.sendCond.Signal()
 
 	// Update the send key while still holding sendMu so that any later enqueued app records
 	// are guaranteed to be encrypted under the new key and ordered after the rekey frame.

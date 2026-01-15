@@ -289,11 +289,20 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 	if startPump {
 		go s.pump(a.ChannelId, a.Role, ep)
 	}
+	var flushErr error
 	if lockClient != nil && lockServer != nil {
-		_ = writeFramesLocked(lockServer, flushClientToServer)
-		_ = writeFramesLocked(lockClient, flushServerToClient)
+		if err := writeFramesLocked(lockServer, flushClientToServer); err != nil {
+			flushErr = err
+		}
+		if err := writeFramesLocked(lockClient, flushServerToClient); err != nil && flushErr == nil {
+			flushErr = err
+		}
 		lockServer.writeMu.Unlock()
 		lockClient.writeMu.Unlock()
+	}
+	if flushErr != nil {
+		s.closeChannel(a.ChannelId)
+		return flushErr
 	}
 	return nil
 }

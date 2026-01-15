@@ -86,9 +86,20 @@ export class YamuxSession {
   }
 
   waitForSendWindow(streamId: number): Promise<void> {
-    return new Promise<void>((resolve) => {
+    if (this.closed) return Promise.reject(new Error("session closed"));
+    return new Promise<void>((resolve, reject) => {
+      if (this.closed) {
+        reject(new Error("session closed"));
+        return;
+      }
       const ws = this.sendWindowWaiters.get(streamId) ?? [];
-      ws.push(resolve);
+      ws.push(() => {
+        if (this.closed) {
+          reject(new Error("session closed"));
+          return;
+        }
+        resolve();
+      });
       this.sendWindowWaiters.set(streamId, ws);
     });
   }
@@ -99,8 +110,16 @@ export class YamuxSession {
     if (this.closed) return;
     this.closed = true;
     this.conn.close();
+    this.wakeSendWindowWaiters();
     for (const s of this.streams.values()) s.reset(new Error("session closed"));
     this.streams.clear();
+  }
+
+  private wakeSendWindowWaiters(): void {
+    for (const [streamId, ws] of this.sendWindowWaiters) {
+      this.sendWindowWaiters.delete(streamId);
+      for (const w of ws) w();
+    }
   }
 
   private async readLoop(): Promise<void> {
