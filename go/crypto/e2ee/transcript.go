@@ -7,8 +7,10 @@ import (
 	"github.com/flowersec/flowersec/internal/bin"
 )
 
+// ErrInvalidTranscriptInput signals a missing or oversized transcript field.
 var ErrInvalidTranscriptInput = errors.New("invalid transcript input")
 
+// TranscriptInputs captures the deterministic fields hashed into the transcript.
 type TranscriptInputs struct {
 	Version        uint8
 	Suite          uint16
@@ -22,6 +24,7 @@ type TranscriptInputs struct {
 	ServerEphPub   []byte
 }
 
+// TranscriptHash computes the SHA-256 hash of the canonical handshake transcript.
 func TranscriptHash(in TranscriptInputs) ([32]byte, error) {
 	if in.ChannelID == "" {
 		return [32]byte{}, ErrInvalidTranscriptInput

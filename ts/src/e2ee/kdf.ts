@@ -5,6 +5,7 @@ import { concatBytes, u64be } from "../utils/bin.js";
 
 const te = new TextEncoder();
 
+// SessionKeys holds derived C2S/S2C keys and nonce prefixes.
 export type SessionKeys = Readonly<{
   c2sKey: Uint8Array; // 32
   s2cKey: Uint8Array; // 32
@@ -13,6 +14,7 @@ export type SessionKeys = Readonly<{
   rekeyBase: Uint8Array; // 32
 }>;
 
+// deriveSessionKeys expands the shared secret and transcript into session keys.
 export function deriveSessionKeys(psk: Uint8Array, sharedSecret: Uint8Array, transcriptHash: Uint8Array): SessionKeys {
   if (psk.length !== 32) throw new Error("psk must be 32 bytes");
   if (transcriptHash.length !== 32) throw new Error("transcript hash must be 32 bytes");
@@ -26,6 +28,7 @@ export function deriveSessionKeys(psk: Uint8Array, sharedSecret: Uint8Array, tra
   return { c2sKey, s2cKey, c2sNoncePrefix, s2cNoncePrefix, rekeyBase };
 }
 
+// computeAuthTag authenticates the transcript hash and timestamp.
 export function computeAuthTag(psk: Uint8Array, transcriptHash: Uint8Array, timestampUnixS: bigint): Uint8Array {
   if (psk.length !== 32) throw new Error("psk must be 32 bytes");
   if (transcriptHash.length !== 32) throw new Error("transcript hash must be 32 bytes");
@@ -33,6 +36,7 @@ export function computeAuthTag(psk: Uint8Array, transcriptHash: Uint8Array, time
   return hmac(sha256, psk, msg);
 }
 
+// deriveRekeyKey derives a new record key bound to sequence and direction.
 export function deriveRekeyKey(rekeyBase: Uint8Array, transcriptHash: Uint8Array, seq: bigint, dir: number): Uint8Array {
   if (rekeyBase.length !== 32) throw new Error("rekeyBase must be 32 bytes");
   if (transcriptHash.length !== 32) throw new Error("transcript hash must be 32 bytes");
@@ -41,4 +45,3 @@ export function deriveRekeyKey(rekeyBase: Uint8Array, transcriptHash: Uint8Array
   const prkIkm = te.encode("flowersec-e2ee-v1:rekey");
   return hkdf(sha256, prkIkm, salt, te.encode("flowersec-e2ee-v1:rekey:key"), 32);
 }
-

@@ -10,10 +10,12 @@ import (
 
 var ErrBadStreamHello = errors.New("bad stream hello")
 
+// WriteStreamHello sends a simple protocol greeting with the stream kind.
 func WriteStreamHello(w io.Writer, kind string) error {
 	return WriteJSONFrame(w, rpcv1.StreamHello{Kind: kind, V: 1})
 }
 
+// ReadStreamHello reads and validates the stream greeting.
 func ReadStreamHello(r io.Reader, maxLen int) (rpcv1.StreamHello, error) {
 	b, err := ReadJSONFrame(r, maxLen)
 	if err != nil {

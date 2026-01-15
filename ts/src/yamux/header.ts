@@ -1,8 +1,10 @@
 import { readU32be, u32be } from "../utils/bin.js";
 import { YAMUX_VERSION } from "./constants.js";
 
+// YAMUX header length in bytes.
 export const HEADER_LEN = 12;
 
+// YamuxHeader represents the decoded frame header.
 export type YamuxHeader = Readonly<{
   version: number;
   type: number;
@@ -11,6 +13,7 @@ export type YamuxHeader = Readonly<{
   length: number;
 }>;
 
+// encodeHeader serializes a header with an optional version override.
 export function encodeHeader(h: Omit<YamuxHeader, "version"> & { version?: number }): Uint8Array {
   const out = new Uint8Array(HEADER_LEN);
   out[0] = (h.version ?? YAMUX_VERSION) & 0xff;
@@ -22,6 +25,7 @@ export function encodeHeader(h: Omit<YamuxHeader, "version"> & { version?: numbe
   return out;
 }
 
+// decodeHeader parses a header from a byte buffer at the given offset.
 export function decodeHeader(buf: Uint8Array, off: number): YamuxHeader {
   if (buf.length - off < HEADER_LEN) throw new Error("header too short");
   const version = buf[off]!;
@@ -31,4 +35,3 @@ export function decodeHeader(buf: Uint8Array, off: number): YamuxHeader {
   const length = readU32be(buf, off + 8);
   return { version, type, flags, streamId, length };
 }
-

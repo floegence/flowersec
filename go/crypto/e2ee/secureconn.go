@@ -31,6 +31,7 @@ type SecureConn struct {
 	keys RecordKeyState
 }
 
+// ErrRecvBufferExceeded indicates buffered plaintext exceeded the configured cap.
 var ErrRecvBufferExceeded = errors.New("recv buffer exceeded")
 
 type sendReq struct {
@@ -38,6 +39,7 @@ type sendReq struct {
 	done  chan error
 }
 
+// NewSecureConn wraps a BinaryTransport with record encryption and buffering.
 func NewSecureConn(t BinaryTransport, keys RecordKeyState, maxRecordBytes int, maxBufferedBytes int) *SecureConn {
 	c := &SecureConn{
 		t:                t,
@@ -109,6 +111,7 @@ func (c *SecureConn) readLoop() {
 		case RecordFlagPing:
 			// Ignore.
 		case RecordFlagRekey:
+			// Rekey updates only the receive key, bound to the record seq and direction.
 			newKey, err := DeriveRekeyKey(c.keys.RekeyBase, c.keys.Transcript, seq, c.keys.RecvDir)
 			if err != nil {
 				c.failRead(err)
@@ -157,6 +160,7 @@ func (c *SecureConn) Read(p []byte) (int, error) {
 	}
 }
 
+// Write splits payloads into record-sized chunks and enqueues them for sending.
 func (c *SecureConn) Write(p []byte) (int, error) {
 	maxPlain := MaxPlaintext(c.maxRecordBytes)
 	if maxPlain <= 0 {
@@ -230,6 +234,7 @@ func (c *SecureConn) SetDeadline(_ time.Time) error      { return nil }
 func (c *SecureConn) SetReadDeadline(_ time.Time) error  { return nil }
 func (c *SecureConn) SetWriteDeadline(_ time.Time) error { return nil }
 
+// SendPing writes a keepalive record with an empty payload.
 func (c *SecureConn) SendPing() error {
 	req := sendReq{done: make(chan error, 1)}
 	c.sendMu.Lock()
@@ -258,6 +263,7 @@ func (c *SecureConn) SendPing() error {
 	return <-req.done
 }
 
+// RekeyNow injects a rekey record and advances the send key.
 func (c *SecureConn) RekeyNow() error {
 	req := sendReq{done: make(chan error, 1)}
 	c.sendMu.Lock()
@@ -299,6 +305,7 @@ func (c *SecureConn) RekeyNow() error {
 	return <-req.done
 }
 
+// dummyAddr provides a stable net.Addr for in-memory transports.
 type dummyAddr string
 
 func (d dummyAddr) Network() string { return string(d) }

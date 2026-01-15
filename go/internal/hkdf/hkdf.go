@@ -8,10 +8,12 @@ import (
 
 const sha256Size = 32
 
+// ExtractSHA256 performs HKDF-Extract using SHA-256.
 func ExtractSHA256(salt []byte, ikm []byte) [sha256Size]byte {
 	return extract(sha256.New, salt, ikm)
 }
 
+// ExpandSHA256 performs HKDF-Expand using SHA-256.
 func ExpandSHA256(prk [sha256Size]byte, info []byte, outLen int) ([]byte, error) {
 	if outLen < 0 {
 		return nil, errInvalidLength

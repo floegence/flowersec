@@ -10,21 +10,31 @@ import (
 )
 
 var (
-	ErrRecordTooLarge   = errors.New("record too large")
-	ErrRecordBadSeq     = errors.New("record bad seq")
-	ErrRecordDecrypt    = errors.New("record decrypt failed")
-	ErrRecordBadFlag    = errors.New("record bad flag")
+	// ErrRecordTooLarge signals plaintext or frame exceeds limits.
+	ErrRecordTooLarge = errors.New("record too large")
+	// ErrRecordBadSeq indicates a sequence mismatch when strict ordering is enabled.
+	ErrRecordBadSeq = errors.New("record bad seq")
+	// ErrRecordDecrypt indicates AEAD decryption failed.
+	ErrRecordDecrypt = errors.New("record decrypt failed")
+	// ErrRecordBadFlag indicates an unknown record flag.
+	ErrRecordBadFlag = errors.New("record bad flag")
+	// ErrRecordBadVersion indicates the record header version mismatched.
 	ErrRecordBadVersion = errors.New("record bad version")
 )
 
+// RecordFlag encodes the semantic type of a record frame.
 type RecordFlag uint8
 
 const (
-	RecordFlagApp   RecordFlag = 0
-	RecordFlagPing  RecordFlag = 1
+	// RecordFlagApp carries application payload.
+	RecordFlagApp RecordFlag = 0
+	// RecordFlagPing is a keepalive frame with empty payload.
+	RecordFlagPing RecordFlag = 1
+	// RecordFlagRekey signals a key update at the given sequence number.
 	RecordFlagRekey RecordFlag = 2
 )
 
+// Direction describes the key direction for rekey derivation.
 type Direction uint8
 
 const (
@@ -32,6 +42,7 @@ const (
 	DirS2C Direction = 2
 )
 
+// RecordKeyState tracks symmetric keys, nonce prefixes, and sequence counters.
 type RecordKeyState struct {
 	SendKey      [32]byte
 	RecvKey      [32]byte
@@ -46,6 +57,7 @@ type RecordKeyState struct {
 	RecvSeq uint64
 }
 
+// MaxPlaintext returns the maximum payload bytes allowed by the record size.
 func MaxPlaintext(maxRecordBytes int) int {
 	if maxRecordBytes <= 0 {
 		return 0
@@ -54,6 +66,7 @@ func MaxPlaintext(maxRecordBytes int) int {
 	return maxRecordBytes - recordHeaderLen - 16
 }
 
+// EncryptRecord builds an authenticated record frame for the given plaintext.
 func EncryptRecord(sendKey [32]byte, noncePrefix [4]byte, flags RecordFlag, seq uint64, plaintext []byte, maxRecordBytes int) ([]byte, error) {
 	const maxCipherLen = uint64(0xffffffff)
 	if uint64(len(plaintext))+16 > maxCipherLen {
@@ -84,6 +97,7 @@ func EncryptRecord(sendKey [32]byte, noncePrefix [4]byte, flags RecordFlag, seq 
 	return out, nil
 }
 
+// DecryptRecord validates and decrypts a record frame.
 func DecryptRecord(recvKey [32]byte, noncePrefix [4]byte, frame []byte, expectSeq uint64, maxRecordBytes int) (flags RecordFlag, seq uint64, plaintext []byte, err error) {
 	if maxRecordBytes > 0 && len(frame) > maxRecordBytes {
 		return 0, 0, nil, ErrRecordTooLarge
@@ -126,6 +140,7 @@ func DecryptRecord(recvKey [32]byte, noncePrefix [4]byte, frame []byte, expectSe
 	return flags, seq, plain, nil
 }
 
+// DeriveRekeyKey computes a new send/receive key tied to a specific record sequence.
 func DeriveRekeyKey(rekeyBase [32]byte, transcriptHash [32]byte, seq uint64, dir Direction) ([32]byte, error) {
 	msg := make([]byte, 0, 32+8+1)
 	msg = append(msg, transcriptHash[:]...)

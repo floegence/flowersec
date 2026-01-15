@@ -9,6 +9,7 @@ import { RpcClient } from "../rpc/client.js";
 import { writeStreamHello } from "../rpc/streamHello.js";
 import { RpcProxy } from "../rpc-proxy/rpcProxy.js";
 
+// TunnelConnectOptions controls transport and handshake limits.
 export type TunnelConnectOptions = Readonly<{
   endpointInstanceId?: string;
   clientFeatures?: number;
@@ -19,6 +20,7 @@ export type TunnelConnectOptions = Readonly<{
   wsFactory?: (url: string) => WebSocketLike;
 }>;
 
+// connectTunnelClientRpc attaches to a tunnel and returns an RPC-ready client.
 export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: TunnelConnectOptions = {}) {
   const ws = (opts.wsFactory ?? defaultWebSocketFactory)(grant.tunnel_url);
   await waitOpen(ws);
@@ -36,6 +38,7 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
   const transport = new WebSocketBinaryTransport(ws, { maxQueuedBytes: opts.maxWsQueuedBytes });
   const psk = base64urlDecode(grant.e2ee_psk_b64u);
   const suite = grant.default_suite as unknown as 1 | 2;
+  // Complete the E2EE handshake over the websocket transport.
   const secure = await clientHandshake(transport, {
     channelId: grant.channel_id,
     suite,
@@ -84,10 +87,12 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
   };
 }
 
+// defaultWebSocketFactory constructs a browser WebSocket.
 function defaultWebSocketFactory(url: string): WebSocketLike {
   return new WebSocket(url) as unknown as WebSocketLike;
 }
 
+// waitOpen resolves when the websocket opens or rejects on error/close.
 function waitOpen(ws: WebSocketLike): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const onOpen = () => {
@@ -113,6 +118,7 @@ function waitOpen(ws: WebSocketLike): Promise<void> {
   });
 }
 
+// randomBytes uses the Web Crypto API for nonces and IDs.
 function randomBytes(n: number): Uint8Array {
   const out = new Uint8Array(n);
   crypto.getRandomValues(out);

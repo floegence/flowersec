@@ -1,3 +1,4 @@
+// WebSocketLike abstracts browser/WS implementations used by the transport.
 export type WebSocketLike = {
   binaryType: string;
   readyState: number;
@@ -7,6 +8,7 @@ export type WebSocketLike = {
   removeEventListener(type: "open" | "message" | "error" | "close", listener: (ev: any) => void): void;
 };
 
+// WebSocketBinaryTransport adapts WebSocket messages to binary reads/writes.
 export class WebSocketBinaryTransport {
   private readonly ws: WebSocketLike;
   private readonly queue: Uint8Array[] = [];
@@ -26,6 +28,7 @@ export class WebSocketBinaryTransport {
     this.ws.addEventListener("close", this.onClose);
   }
 
+  // readBinary resolves with the next queued binary message.
   readBinary(): Promise<Uint8Array> {
     if (this.error != null) return Promise.reject(this.error);
     const b = this.queue.shift();
@@ -42,11 +45,13 @@ export class WebSocketBinaryTransport {
     });
   }
 
+  // writeBinary sends a binary frame over the websocket.
   async writeBinary(frame: Uint8Array): Promise<void> {
     if (this.error != null) throw this.error;
     this.ws.send(frame);
   }
 
+  // close tears down listeners and rejects pending readers.
   close(): void {
     this.fail(new Error("websocket closed"));
     this.ws.removeEventListener("message", this.onMessage);
@@ -57,6 +62,7 @@ export class WebSocketBinaryTransport {
     this.ws.close();
   }
 
+  // handleMessage normalizes browser message payloads into Uint8Array.
   private async handleMessage(data: unknown): Promise<void> {
     if (this.error != null) return;
     if (typeof data === "string") {
@@ -100,6 +106,7 @@ export class WebSocketBinaryTransport {
     this.fail(new Error("websocket closed"));
   };
 
+  // push enqueues a frame or delivers it to a waiting reader.
   private push(b: Uint8Array): void {
     const w = this.waiters.shift();
     if (w != null) {
@@ -115,6 +122,7 @@ export class WebSocketBinaryTransport {
     this.queueBytes += b.length;
   }
 
+  // fail transitions the transport into a permanent error state.
   private fail(err: unknown): void {
     if (this.error != null) return;
     this.error = err;

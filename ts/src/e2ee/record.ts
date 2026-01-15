@@ -4,15 +4,19 @@ import { PROTOCOL_VERSION, RECORD_MAGIC, RECORD_FLAG_APP, RECORD_FLAG_PING, RECO
 
 const te = new TextEncoder();
 
+// RecordFlag identifies the semantic meaning of a record frame.
 export type RecordFlag = typeof RECORD_FLAG_APP | typeof RECORD_FLAG_PING | typeof RECORD_FLAG_REKEY;
 
+// RecordError marks record parsing or cryptographic failures.
 export class RecordError extends Error {}
 
+// maxPlaintextBytes returns the payload cap derived from a record size limit.
 export function maxPlaintextBytes(maxRecordBytes: number): number {
   if (maxRecordBytes <= 0) return 0;
   return maxRecordBytes - (4 + 1 + 1 + 8 + 4) - 16;
 }
 
+// encryptRecord builds an AEAD-protected record frame.
 export function encryptRecord(
   key: Uint8Array,
   noncePrefix: Uint8Array,
@@ -39,6 +43,7 @@ export function encryptRecord(
   return out;
 }
 
+// decryptRecord validates and decrypts a record frame.
 export function decryptRecord(
   key: Uint8Array,
   noncePrefix: Uint8Array,

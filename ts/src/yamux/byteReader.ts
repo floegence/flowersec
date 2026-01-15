@@ -1,3 +1,4 @@
+// ByteReader buffers incoming chunks and supports exact reads.
 export class ByteReader {
   private readonly chunks: Uint8Array[] = [];
   private headOff = 0;
@@ -5,6 +6,7 @@ export class ByteReader {
 
   constructor(private readonly readChunk: () => Promise<Uint8Array | null>) {}
 
+  // readExactly reads n bytes or throws on EOF.
   async readExactly(n: number): Promise<Uint8Array> {
     if (n < 0) throw new Error("invalid length");
     while (this.buffered < n) {
@@ -33,8 +35,8 @@ export class ByteReader {
     return out;
   }
 
+  // bufferedBytes returns the number of bytes currently buffered.
   bufferedBytes(): number {
     return this.buffered;
   }
 }
-

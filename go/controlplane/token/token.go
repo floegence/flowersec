@@ -13,8 +13,10 @@ import (
 	"github.com/flowersec/flowersec/internal/base64url"
 )
 
+// Prefix identifies the token format version.
 const Prefix = "FST1"
 
+// Payload is the signed token payload for tunnel attachment.
 type Payload struct {
 	Kid       string `json:"kid"`
 	Aud       string `json:"aud"`
@@ -28,6 +30,7 @@ type Payload struct {
 }
 
 var (
+	// ErrInvalidFormat indicates the token does not match prefix/parts.
 	ErrInvalidFormat   = errors.New("token invalid format")
 	ErrInvalidB64      = errors.New("token invalid base64url")
 	ErrInvalidJSON     = errors.New("token invalid json")
@@ -41,10 +44,12 @@ var (
 	ErrExpAfterInit    = errors.New("token exp > init_exp")
 )
 
+// KeyLookup provides public keys by key ID.
 type KeyLookup interface {
 	Lookup(kid string) (ed25519.PublicKey, bool)
 }
 
+// VerifyOptions specifies audience/issuer/time validation details.
 type VerifyOptions struct {
 	Now       time.Time
 	Audience  string
@@ -52,6 +57,7 @@ type VerifyOptions struct {
 	ClockSkew time.Duration
 }
 
+// Sign builds a signed token string using the provided Ed25519 key.
 func Sign(priv ed25519.PrivateKey, payload Payload) (string, error) {
 	if strings.TrimSpace(payload.Kid) == "" {
 		return "", fmt.Errorf("missing kid: %w", ErrInvalidFormat)
@@ -69,6 +75,7 @@ func Sign(priv ed25519.PrivateKey, payload Payload) (string, error) {
 	return signed + "." + base64url.Encode(sig), nil
 }
 
+// Parse splits the token into payload and signature parts.
 func Parse(token string) (payload Payload, signed []byte, sig []byte, err error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 || parts[0] != Prefix {
@@ -90,6 +97,7 @@ func Parse(token string) (payload Payload, signed []byte, sig []byte, err error)
 	return p, signedData, sigBytes, nil
 }
 
+// Verify validates signature and time-based constraints for a token.
 func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error) {
 	p, signed, sig, err := Parse(tokenStr)
 	if err != nil {
@@ -138,6 +146,7 @@ func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error
 	return p, nil
 }
 
+// StaticKeyset is a simple in-memory key lookup map.
 type StaticKeyset map[string]ed25519.PublicKey
 
 func (s StaticKeyset) Lookup(kid string) (ed25519.PublicKey, bool) {
@@ -145,6 +154,7 @@ func (s StaticKeyset) Lookup(kid string) (ed25519.PublicKey, bool) {
 	return k, ok
 }
 
+// EqualSignedPart compares only the signed parts of two tokens (prefix+payload).
 func EqualSignedPart(a, b string) bool {
 	pa := strings.Split(a, ".")
 	pb := strings.Split(b, ".")

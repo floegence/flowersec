@@ -31,6 +31,7 @@ type HandshakeOptions struct {
 	MaxBufferedBytes    int
 }
 
+// ServerHandshakeCache caches server-side handshake state to support retries.
 type ServerHandshakeCache struct {
 	mu sync.Mutex
 	m  map[string]*serverHandshakeState
@@ -51,6 +52,7 @@ type serverHandshakeState struct {
 	CreatedAt      time.Time
 }
 
+// NewServerHandshakeCache creates a cache with conservative defaults.
 func NewServerHandshakeCache() *ServerHandshakeCache {
 	return &ServerHandshakeCache{
 		m:          make(map[string]*serverHandshakeState),
@@ -69,6 +71,7 @@ func (c *ServerHandshakeCache) SetLimits(ttl time.Duration, maxEntries int) {
 	c.maxEntries = maxEntries
 }
 
+// ClientHandshake performs the E2EE handshake from the client perspective.
 func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptions) (*SecureConn, error) {
 	if len(opts.PSK) != 32 {
 		return nil, ErrInvalidPSK
@@ -109,6 +112,7 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 		return nil, err
 	}
 
+	// Wait for server response with its ephemeral key and nonce.
 	respFrame, err := t.ReadBinary(ctx)
 	if err != nil {
 		return nil, err
@@ -190,6 +194,7 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 		return nil, err
 	}
 
+	// Client sends application data using the C2S direction keys.
 	return NewSecureConn(t, RecordKeyState{
 		SendKey:      keys.C2SKey,
 		RecvKey:      keys.S2CKey,
@@ -204,6 +209,7 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 	}, opts.MaxRecordBytes, opts.MaxBufferedBytes), nil
 }
 
+// ServerHandshake performs the E2EE handshake from the server perspective.
 func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandshakeCache, opts HandshakeOptions) (*SecureConn, error) {
 	if len(opts.PSK) != 32 {
 		return nil, ErrInvalidPSK
@@ -224,6 +230,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	var initMsg e2eev1.E2EE_Init
 	var st *serverHandshakeState
 
+	// Receive init and send response (with retry support via cache).
 	for {
 		frame, err := t.ReadBinary(ctx)
 		if err != nil {
@@ -281,6 +288,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 		break
 	}
 
+	// Wait for ack; handle init retries by re-sending the response.
 	var ack e2eev1.E2EE_Ack
 	for {
 		frame, err := t.ReadBinary(ctx)
@@ -405,6 +413,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 
 	cache.delete(st.Key)
 
+	// Server sends application data using the S2C direction keys.
 	return NewSecureConn(t, RecordKeyState{
 		SendKey:      keys.S2CKey,
 		RecvKey:      keys.C2SKey,

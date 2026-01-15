@@ -14,11 +14,15 @@ import (
 )
 
 const (
+	// ChannelInitWindowSeconds bounds how long a grant remains valid.
 	ChannelInitWindowSeconds = 120
-	IdleTimeoutSeconds       = 60
-	DefaultTokenExpSeconds   = 60
+	// IdleTimeoutSeconds advertises the server idle timeout to clients.
+	IdleTimeoutSeconds = 60
+	// DefaultTokenExpSeconds is used when TokenExpSeconds is unset.
+	DefaultTokenExpSeconds = 60
 )
 
+// Params define channel-init issuance settings and defaults.
 type Params struct {
 	TunnelURL      string
 	TunnelAudience string
@@ -31,6 +35,7 @@ type Params struct {
 	DefaultSuite  e2eev1.Suite
 }
 
+// Service issues channel-init grants and tokens for clients/servers.
 type Service struct {
 	Issuer *issuer.Keyset
 	Params Params
@@ -44,6 +49,7 @@ func (s *Service) now() time.Time {
 	return time.Now()
 }
 
+// NewChannelInit creates paired client/server grants with shared PSK and tokens.
 func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelInitGrant, server *controlv1.ChannelInitGrant, err error) {
 	if s.Issuer == nil {
 		return nil, nil, errors.New("missing issuer")
@@ -115,6 +121,7 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 	return client, server, nil
 }
 
+// ReissueToken refreshes the signed token while keeping the same grant fields.
 func (s *Service) ReissueToken(grant *controlv1.ChannelInitGrant) (*controlv1.ChannelInitGrant, error) {
 	if grant == nil {
 		return nil, errors.New("missing grant")
@@ -170,6 +177,7 @@ func randomBytes(n int) ([]byte, error) {
 	return b, err
 }
 
+// MarshalGrantJSON encodes the grant for transport to the client.
 func MarshalGrantJSON(g *controlv1.ChannelInitGrant) ([]byte, error) {
 	return json.Marshal(g)
 }

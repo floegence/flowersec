@@ -13,11 +13,15 @@ const (
 )
 
 var (
-	ErrInvalidMagic   = errors.New("invalid magic")
+	// ErrInvalidMagic indicates the frame prefix is not recognized.
+	ErrInvalidMagic = errors.New("invalid magic")
+	// ErrInvalidVersion signals the wire protocol version mismatched.
 	ErrInvalidVersion = errors.New("invalid version")
-	ErrInvalidLength  = errors.New("invalid length")
+	// ErrInvalidLength indicates a malformed or truncated frame length.
+	ErrInvalidLength = errors.New("invalid length")
 )
 
+// EncodeHandshakeFrame wraps a JSON payload with the handshake header.
 func EncodeHandshakeFrame(handshakeType uint8, payloadJSON []byte) []byte {
 	out := make([]byte, handshakeHeaderLen+len(payloadJSON))
 	copy(out[:4], []byte(HandshakeMagic))
@@ -28,6 +32,7 @@ func EncodeHandshakeFrame(handshakeType uint8, payloadJSON []byte) []byte {
 	return out
 }
 
+// DecodeHandshakeFrame validates and extracts a handshake frame.
 func DecodeHandshakeFrame(frame []byte, maxPayload int) (handshakeType uint8, payloadJSON []byte, err error) {
 	if len(frame) < handshakeHeaderLen {
 		return 0, nil, ErrInvalidLength
@@ -52,6 +57,7 @@ func DecodeHandshakeFrame(frame []byte, maxPayload int) (handshakeType uint8, pa
 	return handshakeType, frame[10:], nil
 }
 
+// LooksLikeRecordFrame quickly checks a frame header without decrypting.
 func LooksLikeRecordFrame(frame []byte, maxCiphertext int) bool {
 	if len(frame) < recordHeaderLen {
 		return false

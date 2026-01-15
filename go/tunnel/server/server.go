@@ -35,6 +35,7 @@ type Config struct {
 	CleanupInterval time.Duration
 }
 
+// DefaultConfig returns conservative defaults for a tunnel server.
 func DefaultConfig() Config {
 	return Config{
 		Path:            "/ws",
@@ -50,6 +51,7 @@ func DefaultConfig() Config {
 	}
 }
 
+// Server terminates websocket tunnels and routes frames between endpoints.
 type Server struct {
 	cfg Config
 
@@ -66,6 +68,7 @@ type Server struct {
 	stopCh   chan struct{}
 }
 
+// New validates config, loads the issuer keyset, and starts background cleanup.
 func New(cfg Config) (*Server, error) {
 	if cfg.Path == "" {
 		cfg.Path = "/ws"
@@ -106,6 +109,7 @@ func New(cfg Config) (*Server, error) {
 	return s, nil
 }
 
+// ReloadKeys reloads the issuer keyset file on demand.
 func (s *Server) ReloadKeys() error {
 	keys, err := LoadIssuerKeysetFile(s.cfg.IssuerKeysFile)
 	if err != nil {
@@ -115,6 +119,7 @@ func (s *Server) ReloadKeys() error {
 	return nil
 }
 
+// Register installs the websocket and health endpoints on the mux.
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc(s.cfg.Path, s.handleWS)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +128,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	})
 }
 
+// Close stops background cleanup and prevents new work.
 func (s *Server) Close() {
 	s.stopOnce.Do(func() { close(s.stopCh) })
 }
@@ -158,6 +164,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read and validate the attach message.
 	uc.SetReadLimit(int64(s.cfg.MaxAttachBytes))
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -178,6 +185,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify the attach token and guard against replay.
 	p, err := token.Verify(attach.Token, s.keys, token.VerifyOptions{
 		Now:       time.Now(),
 		Audience:  s.cfg.TunnelAudience,
@@ -214,6 +222,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// addEndpoint registers the websocket for a channel and starts routing.
 func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.Conn) error {
 	var toClose []*websocket.Conn
 	var startPump bool
@@ -230,6 +239,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			s.mu.Unlock()
 			return errors.New("too many channels")
 		}
+		// First endpoint for the channel.
 		st = &channelState{
 			id:         a.ChannelId,
 			initExp:    p.InitExp,
@@ -309,6 +319,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 	return nil
 }
 
+// pump forwards frames from a source endpoint to its peer.
 func (s *Server) pump(channelID string, role tunnelv1.Role, src *endpointConn) {
 	for {
 		mt, b, err := src.ws.ReadMessage()
@@ -367,6 +378,7 @@ func writeFramesLocked(dst *endpointConn, frames [][]byte) error {
 	return nil
 }
 
+// routeOrBuffer returns a destination conn or buffers frames until paired.
 func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byte) (dst *endpointConn, flush [][]byte, err error) {
 	now := time.Now()
 	maxCipher := s.cfg.MaxRecordBytes
@@ -410,6 +422,7 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 	return dst, flush, nil
 }
 
+// closeChannel closes both endpoints and removes channel state.
 func (s *Server) closeChannel(channelID string) {
 	var conns []*websocket.Conn
 	s.mu.Lock()
@@ -427,6 +440,7 @@ func (s *Server) closeChannel(channelID string) {
 	}
 }
 
+// closeChannelFrom shuts down a channel when one endpoint fails.
 func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *endpointConn) {
 	var conns []*websocket.Conn
 	s.mu.Lock()
@@ -448,6 +462,7 @@ func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *end
 	}
 }
 
+// checkOrigin validates the Origin header against the allow-list.
 func (s *Server) checkOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -461,6 +476,7 @@ func (s *Server) checkOrigin(r *http.Request) bool {
 	return false
 }
 
+// trackConn increments the connection count and enforces MaxConns.
 func (s *Server) trackConn(c *websocket.Conn) bool {
 	if s.cfg.MaxConns > 0 {
 		if atomic.AddInt64(&s.connCount, 1) > int64(s.cfg.MaxConns) {
@@ -474,6 +490,7 @@ func (s *Server) trackConn(c *websocket.Conn) bool {
 	return true
 }
 
+// untrackConn decrements the connection count if tracked.
 func (s *Server) untrackConn(c *websocket.Conn) {
 	if _, ok := s.connSet.LoadAndDelete(c); !ok {
 		return
@@ -481,6 +498,7 @@ func (s *Server) untrackConn(c *websocket.Conn) {
 	atomic.AddInt64(&s.connCount, -1)
 }
 
+// cleanupLoop periodically expires idle and never-encrypted channels.
 func (s *Server) cleanupLoop() {
 	t := time.NewTicker(s.cfg.CleanupInterval)
 	defer t.Stop()

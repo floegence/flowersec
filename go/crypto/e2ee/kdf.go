@@ -14,17 +14,23 @@ import (
 )
 
 var (
+	// ErrUnsupportedSuite signals that the requested curve or AEAD is not supported.
 	ErrUnsupportedSuite = errors.New("unsupported suite")
-	ErrInvalidPSK       = errors.New("invalid psk")
+	// ErrInvalidPSK indicates the PSK size is not 32 bytes.
+	ErrInvalidPSK = errors.New("invalid psk")
 )
 
+// Suite identifies the key agreement + AEAD suite for the E2EE handshake.
 type Suite uint16
 
 const (
+	// SuiteX25519HKDFAES256GCM uses X25519 for ECDH and AES-256-GCM for records.
 	SuiteX25519HKDFAES256GCM Suite = 1
-	SuiteP256HKDFAES256GCM   Suite = 2
+	// SuiteP256HKDFAES256GCM uses P-256 for ECDH and AES-256-GCM for records.
+	SuiteP256HKDFAES256GCM Suite = 2
 )
 
+// SessionKeys holds the derived bidirectional keys and nonces for a channel.
 type SessionKeys struct {
 	C2SKey      [32]byte
 	S2CKey      [32]byte
@@ -44,6 +50,7 @@ func curveForSuite(s Suite) (ecdh.Curve, error) {
 	}
 }
 
+// GenerateEphemeralKeypair creates a per-handshake ECDH keypair.
 func GenerateEphemeralKeypair(suite Suite) (priv *ecdh.PrivateKey, pub []byte, err error) {
 	curve, err := curveForSuite(suite)
 	if err != nil {
@@ -56,6 +63,7 @@ func GenerateEphemeralKeypair(suite Suite) (priv *ecdh.PrivateKey, pub []byte, e
 	return priv, priv.PublicKey().Bytes(), nil
 }
 
+// ParsePublicKey parses a peer public key for the given suite.
 func ParsePublicKey(suite Suite, pub []byte) (*ecdh.PublicKey, error) {
 	curve, err := curveForSuite(suite)
 	if err != nil {
@@ -64,6 +72,7 @@ func ParsePublicKey(suite Suite, pub []byte) (*ecdh.PublicKey, error) {
 	return curve.NewPublicKey(pub)
 }
 
+// DeriveSessionKeys expands the ECDH shared secret into C2S/S2C keys and nonces.
 func DeriveSessionKeys(psk []byte, suite Suite, sharedSecret []byte, transcriptHash [32]byte) (SessionKeys, error) {
 	if len(psk) != 32 {
 		return SessionKeys{}, ErrInvalidPSK
@@ -105,6 +114,7 @@ func DeriveSessionKeys(psk []byte, suite Suite, sharedSecret []byte, transcriptH
 	return out, nil
 }
 
+// ComputeAuthTag builds the handshake auth tag over the transcript hash and timestamp.
 func ComputeAuthTag(psk []byte, transcriptHash [32]byte, timestampUnixS uint64) ([32]byte, error) {
 	if len(psk) != 32 {
 		return [32]byte{}, ErrInvalidPSK
@@ -122,6 +132,7 @@ func ComputeAuthTag(psk []byte, transcriptHash [32]byte, timestampUnixS uint64) 
 	return out, nil
 }
 
+// NewAESGCM creates an AES-256-GCM AEAD with a fixed 12-byte nonce size.
 func NewAESGCM(key [32]byte) (cipher.AEAD, error) {
 	b, err := aes.NewCipher(key[:])
 	if err != nil {

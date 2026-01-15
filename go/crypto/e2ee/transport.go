@@ -15,14 +15,17 @@ type BinaryTransport interface {
 	Close() error
 }
 
+// WebSocketBinaryTransport adapts a gorilla/websocket Conn to BinaryTransport.
 type WebSocketBinaryTransport struct {
 	c *websocket.Conn
 }
 
+// NewWebSocketBinaryTransport wraps a websocket connection for binary frames only.
 func NewWebSocketBinaryTransport(c *websocket.Conn) *WebSocketBinaryTransport {
 	return &WebSocketBinaryTransport{c: c}
 }
 
+// ReadBinary blocks until a binary frame is received or the context is done.
 func (t *WebSocketBinaryTransport) ReadBinary(ctx context.Context) ([]byte, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = t.c.SetReadDeadline(deadline)
@@ -59,6 +62,7 @@ func (t *WebSocketBinaryTransport) ReadBinary(ctx context.Context) ([]byte, erro
 	}
 }
 
+// WriteBinary writes a binary frame and respects context deadlines.
 func (t *WebSocketBinaryTransport) WriteBinary(ctx context.Context, b []byte) error {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = t.c.SetWriteDeadline(deadline)
@@ -86,6 +90,7 @@ func (t *WebSocketBinaryTransport) WriteBinary(ctx context.Context, b []byte) er
 	return err
 }
 
+// Close closes the underlying websocket connection.
 func (t *WebSocketBinaryTransport) Close() error {
 	return t.c.Close()
 }

@@ -11,17 +11,21 @@ import (
 	rpcv1 "github.com/flowersec/flowersec/gen/flowersec/rpc/v1"
 )
 
+// Handler processes an RPC request and returns payload or an RPC error.
 type Handler func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError)
 
+// Router dispatches RPC requests by type ID.
 type Router struct {
 	mu       sync.RWMutex
 	handlers map[uint32]Handler
 }
 
+// NewRouter constructs an empty router.
 func NewRouter() *Router {
 	return &Router{handlers: make(map[uint32]Handler)}
 }
 
+// Register binds a handler to a type ID.
 func (r *Router) Register(typeID uint32, h Handler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -38,6 +42,7 @@ func (r *Router) handle(ctx context.Context, typeID uint32, payload json.RawMess
 	return h(ctx, payload)
 }
 
+// Server reads RPC envelopes and dispatches them through a Router.
 type Server struct {
 	r       io.ReadWriteCloser
 	router  *Router
@@ -45,12 +50,15 @@ type Server struct {
 	writeMu sync.Mutex
 }
 
+// NewServer creates a server over a read/write stream.
 func NewServer(rwc io.ReadWriteCloser, router *Router) *Server {
 	return &Server{r: rwc, router: router, maxLen: 1 << 20}
 }
 
+// SetMaxFrameBytes caps incoming JSON frames.
 func (s *Server) SetMaxFrameBytes(n int) { s.maxLen = n }
 
+// Notify sends a one-way notification to the peer.
 func (s *Server) Notify(typeID uint32, payload json.RawMessage) error {
 	env := rpcv1.RpcEnvelope{
 		TypeId:     typeID,
@@ -63,6 +71,7 @@ func (s *Server) Notify(typeID uint32, payload json.RawMessage) error {
 	return WriteJSONFrame(s.r, env)
 }
 
+// Serve runs the request loop until the context ends or the stream fails.
 func (s *Server) Serve(ctx context.Context) error {
 	for {
 		select {
@@ -100,6 +109,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 }
 
+// Client issues RPC calls and receives notifications.
 type Client struct {
 	r      io.ReadWriteCloser
 	maxLen int
@@ -114,6 +124,7 @@ type Client struct {
 	lastErr error
 }
 
+// NewClient creates an RPC client and starts its read loop.
 func NewClient(rwc io.ReadWriteCloser) *Client {
 	c := &Client{
 		r:       rwc,
@@ -126,12 +137,14 @@ func NewClient(rwc io.ReadWriteCloser) *Client {
 	return c
 }
 
+// SetMaxFrameBytes caps incoming JSON frames.
 func (c *Client) SetMaxFrameBytes(n int) { c.maxLen = n }
 
 type notifyHandler struct {
 	fn func(payload json.RawMessage)
 }
 
+// OnNotify registers a handler for incoming notifications by type ID.
 func (c *Client) OnNotify(typeID uint32, h func(payload json.RawMessage)) (unsubscribe func()) {
 	nh := &notifyHandler{fn: h}
 	c.mu.Lock()
@@ -154,6 +167,7 @@ func (c *Client) OnNotify(typeID uint32, h func(payload json.RawMessage)) (unsub
 	}
 }
 
+// Notify sends a one-way notification to the peer.
 func (c *Client) Notify(typeID uint32, payload json.RawMessage) error {
 	env := rpcv1.RpcEnvelope{
 		TypeId:     typeID,
@@ -166,6 +180,7 @@ func (c *Client) Notify(typeID uint32, payload json.RawMessage) error {
 	return WriteJSONFrame(c.r, env)
 }
 
+// Call sends an RPC request and waits for its response or context cancellation.
 func (c *Client) Call(ctx context.Context, typeID uint32, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError, error) {
 	reqID, ch, err := c.reserve()
 	if err != nil {
@@ -233,6 +248,7 @@ func (c *Client) readLoop() {
 		}
 		if env.ResponseTo == 0 {
 			if env.RequestId == 0 {
+				// Notification: fan out to registered handlers.
 				c.mu.Lock()
 				m := c.notify[env.TypeId]
 				handlers := make([]*notifyHandler, 0, len(m))
@@ -293,6 +309,7 @@ func (c *Client) closedErr() error {
 
 var ErrTimeout = errors.New("rpc timeout")
 
+// WithTimeout returns the parent context if d<=0; otherwise wraps it with a timeout.
 func WithTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
 	if d <= 0 {
 		return parent, func() {}

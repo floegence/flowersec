@@ -16,6 +16,7 @@ type IssuerKeyset struct {
 	keys map[string]ed25519.PublicKey
 }
 
+// LoadIssuerKeysetFile loads a JSON keyset exported by the issuer.
 func LoadIssuerKeysetFile(path string) (*IssuerKeyset, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -45,6 +46,7 @@ func LoadIssuerKeysetFile(path string) (*IssuerKeyset, error) {
 	return &IssuerKeyset{keys: keys}, nil
 }
 
+// Lookup returns the public key for a given kid.
 func (k *IssuerKeyset) Lookup(kid string) (ed25519.PublicKey, bool) {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
@@ -52,6 +54,7 @@ func (k *IssuerKeyset) Lookup(kid string) (ed25519.PublicKey, bool) {
 	return v, ok
 }
 
+// Replace swaps the entire keyset atomically.
 func (k *IssuerKeyset) Replace(newKeys map[string]ed25519.PublicKey) {
 	k.mu.Lock()
 	k.keys = newKeys

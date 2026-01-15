@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { concatBytes, u16be, u32be } from "../utils/bin.js";
 
+// TranscriptInputs contains the canonical fields hashed into the transcript.
 export type TranscriptInputs = Readonly<{
   version: number;
   suite: number;
@@ -16,6 +17,7 @@ export type TranscriptInputs = Readonly<{
 
 const te = new TextEncoder();
 
+// transcriptHash computes the SHA-256 hash of the handshake transcript.
 export function transcriptHash(inputs: TranscriptInputs): Uint8Array {
   if (inputs.nonceC.length !== 32 || inputs.nonceS.length !== 32) throw new Error("nonce must be 32 bytes");
   const channelIdBytes = te.encode(inputs.channelId);
@@ -41,4 +43,3 @@ export function transcriptHash(inputs: TranscriptInputs): Uint8Array {
   ]);
   return sha256(body);
 }
-

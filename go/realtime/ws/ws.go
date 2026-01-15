@@ -14,12 +14,14 @@ type Conn struct {
 	c *websocket.Conn
 }
 
+// UpgraderOptions exposes a small set of websocket upgrader controls.
 type UpgraderOptions struct {
 	ReadBufferSize  int
 	WriteBufferSize int
 	CheckOrigin     func(r *http.Request) bool
 }
 
+// Upgrade upgrades an HTTP request to a websocket connection.
 func Upgrade(w http.ResponseWriter, r *http.Request, opts UpgraderOptions) (*Conn, error) {
 	up := websocket.Upgrader{
 		ReadBufferSize:  opts.ReadBufferSize,
@@ -33,10 +35,12 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts UpgraderOptions) (*Con
 	return &Conn{c: c}, nil
 }
 
+// DialOptions provides optional headers for websocket dialing.
 type DialOptions struct {
 	Header http.Header
 }
 
+// Dial opens a websocket connection with deadline-aware handshake.
 func Dial(ctx context.Context, urlStr string, opts DialOptions) (*Conn, *http.Response, error) {
 	d := websocket.Dialer{}
 	if deadline, ok := ctx.Deadline(); ok {
@@ -49,10 +53,12 @@ func Dial(ctx context.Context, urlStr string, opts DialOptions) (*Conn, *http.Re
 	return &Conn{c: c}, resp, nil
 }
 
+// SetReadLimit forwards the read limit to the underlying websocket.
 func (c *Conn) SetReadLimit(n int64) {
 	c.c.SetReadLimit(n)
 }
 
+// ReadMessage reads a websocket frame and respects the context deadline.
 func (c *Conn) ReadMessage(ctx context.Context) (int, []byte, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = c.c.SetReadDeadline(deadline)
@@ -71,6 +77,7 @@ func (c *Conn) ReadMessage(ctx context.Context) (int, []byte, error) {
 	return 0, nil, err
 }
 
+// WriteMessage writes a websocket frame and respects the context deadline.
 func (c *Conn) WriteMessage(ctx context.Context, messageType int, data []byte) error {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = c.c.SetWriteDeadline(deadline)
@@ -89,15 +96,18 @@ func (c *Conn) WriteMessage(ctx context.Context, messageType int, data []byte) e
 	return err
 }
 
+// Close closes the websocket connection.
 func (c *Conn) Close() error {
 	return c.c.Close()
 }
 
+// CloseWithStatus sends a close control frame before closing.
 func (c *Conn) CloseWithStatus(code int, text string) error {
 	_ = c.c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, text), time.Now().Add(2*time.Second))
 	return c.c.Close()
 }
 
+// Underlying exposes the raw gorilla/websocket connection.
 func (c *Conn) Underlying() *websocket.Conn {
 	return c.c
 }

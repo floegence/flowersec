@@ -25,6 +25,7 @@ func (s *stringSliceFlag) Set(v string) error {
 	return nil
 }
 
+// main launches a tunnel server with CLI-configurable settings.
 func main() {
 	var listen string
 	var path string
@@ -73,6 +74,7 @@ func main() {
 	mux := http.NewServeMux()
 	s.Register(mux)
 
+	// Bind to the listen address and serve HTTP/WebSocket traffic.
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
 		log.Fatal(err)
@@ -95,6 +97,7 @@ func main() {
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(ready)
 
+	// Handle reloads and shutdowns.
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 

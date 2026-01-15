@@ -21,6 +21,7 @@ type StreamState =
   | "closed"
   | "reset";
 
+// YamuxStream manages per-stream flow control and state transitions.
 export class YamuxStream {
   readonly id: number;
   private state: StreamState;
@@ -40,10 +41,12 @@ export class YamuxStream {
     this.state = state;
   }
 
+  // open sends the initial window update to establish the stream.
   async open(): Promise<void> {
     await this.sendWindowUpdate();
   }
 
+  // onData handles inbound DATA frames and updates receive window.
   onData(data: Uint8Array, flags: number): void {
     this.processFlags(flags);
     if (data.length === 0) return;
@@ -59,12 +62,14 @@ export class YamuxStream {
     for (const w of ws) w();
   }
 
+  // onWindowUpdate applies flow-control credits from peer.
   onWindowUpdate(delta: number, flags: number): void {
     this.processFlags(flags);
     this.sendWindow += delta >>> 0;
     this.session.notifySendWindow(this.id);
   }
 
+  // read resolves with the next data chunk or throws on EOF/reset.
   async read(): Promise<Uint8Array> {
     while (true) {
       if (this.error != null) throw this.error;
@@ -79,6 +84,7 @@ export class YamuxStream {
     }
   }
 
+  // write sends DATA frames, respecting the send window.
   async write(data: Uint8Array): Promise<void> {
     if (this.state === "reset") throw new Error("stream reset");
     if (this.state === "closed" || this.state === "localClose") throw new Error("stream closed");
@@ -101,6 +107,7 @@ export class YamuxStream {
     }
   }
 
+  // close sends FIN and transitions to local close.
   async close(): Promise<void> {
     if (this.state === "closed") return;
     if (this.state === "reset") return;
@@ -115,6 +122,7 @@ export class YamuxStream {
     await this.session.writeRaw(hdr);
   }
 
+  // reset tears down the stream and notifies the peer.
   reset(err: Error): void {
     if (this.state === "reset") return;
     this.state = "reset";
@@ -125,6 +133,7 @@ export class YamuxStream {
     void this.session.sendRst(this.id);
   }
 
+  // processFlags updates the state machine for ACK/FIN/RST.
   private processFlags(flags: number): void {
     if ((flags & FLAG_ACK) !== 0) {
       if (this.state === "synSent") this.state = "established";
@@ -145,6 +154,7 @@ export class YamuxStream {
     }
   }
 
+  // sendFlags returns any SYN/ACK flags needed for the current state.
   private sendFlags(): number {
     if (this.state === "init") {
       this.state = "synSent";
@@ -157,6 +167,7 @@ export class YamuxStream {
     return 0;
   }
 
+  // sendWindowUpdate advertises the current receive window to the peer.
   private async sendWindowUpdate(): Promise<void> {
     const max = DEFAULT_MAX_STREAM_WINDOW;
     const bufLen = this.recvQueueBytes >>> 0;
@@ -173,6 +184,7 @@ export class YamuxStream {
     await this.session.writeRaw(hdr);
   }
 
+  // waitForSendWindow blocks until credits are available.
   private async waitForSendWindow(want: number): Promise<number> {
     if (want <= 0) return 0;
     while (this.sendWindow <= 0) {

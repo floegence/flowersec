@@ -1,8 +1,10 @@
 import type { RpcEnvelope, RpcError } from "../gen/flowersec/rpc/v1.gen.js";
 import { readJsonFrame, writeJsonFrame } from "./framing.js";
 
+// Guard against precision loss when encoding request IDs as numbers.
 const MAX_SAFE_REQUEST_ID = BigInt(Number.MAX_SAFE_INTEGER);
 
+// RpcClient sends request/response envelopes and dispatches notifications.
 export class RpcClient {
   private nextId = 1n;
   private readonly pending = new Map<bigint, { resolve: (v: RpcEnvelope) => void; reject: (e: unknown) => void }>();
@@ -16,6 +18,7 @@ export class RpcClient {
     void this.readLoop();
   }
 
+  // call sends a request and awaits a response or abort.
   async call(typeId: number, payload: unknown, signal?: AbortSignal): Promise<{ payload: unknown; error?: RpcError }> {
     if (this.closed) throw new Error("rpc client closed");
     if (this.nextId > MAX_SAFE_REQUEST_ID) throw new Error("request id overflow");
@@ -51,6 +54,7 @@ export class RpcClient {
     return { payload: resp.payload, error: resp.error };
   }
 
+  // close rejects all pending calls and stops the read loop.
   close(): void {
     this.closed = true;
     for (const [, p] of this.pending) p.reject(new Error("rpc closed"));
@@ -58,6 +62,7 @@ export class RpcClient {
     this.notifyHandlers.clear();
   }
 
+  // onNotify registers a handler for incoming notifications.
   onNotify(typeId: number, handler: (payload: unknown) => void): () => void {
     const tid = typeId >>> 0;
     const set = this.notifyHandlers.get(tid) ?? new Set<(payload: unknown) => void>();
@@ -99,6 +104,7 @@ export class RpcClient {
   }
 }
 
+// raceAbort resolves p unless the signal aborts first.
 async function raceAbort<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (signal == null) return p;
   if (signal.aborted) throw signal.reason ?? new Error("aborted");

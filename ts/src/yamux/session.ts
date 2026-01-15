@@ -13,18 +13,21 @@ import {
 } from "./constants.js";
 import { YamuxStream } from "./stream.js";
 
+// ByteDuplex is a minimal async read/write/close abstraction.
 export type ByteDuplex = {
   read(): Promise<Uint8Array>;
   write(chunk: Uint8Array): Promise<void>;
   close(): void;
 };
 
+// YamuxSessionOptions configures client/server IDs and limits.
 export type YamuxSessionOptions = Readonly<{
   client: boolean;
   onIncomingStream?: (s: YamuxStream) => void;
   maxFrameBytes?: number;
 }>;
 
+// YamuxSession multiplexes multiple streams over a single byte stream.
 export class YamuxSession {
   private readonly conn: ByteDuplex;
   private readonly reader: ByteReader;
@@ -51,6 +54,7 @@ export class YamuxSession {
     void this.readLoop();
   }
 
+  // openStream allocates a new stream and performs the SYN handshake.
   async openStream(): Promise<YamuxStream> {
     const id = this.nextStreamId;
     this.nextStreamId += 2;
@@ -60,14 +64,17 @@ export class YamuxSession {
     return s;
   }
 
+  // getStream returns the stream for an ID, if any.
   getStream(id: number): YamuxStream | undefined {
     return this.streams.get(id);
   }
 
+  // writeRaw writes a raw yamux frame to the underlying connection.
   async writeRaw(chunk: Uint8Array): Promise<void> {
     await this.conn.write(chunk);
   }
 
+  // sendRst sends a reset frame and removes the stream.
   async sendRst(id: number): Promise<void> {
     const hdr = encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_RST, streamId: id, length: 0 });
     if (this.closed) {
@@ -82,6 +89,7 @@ export class YamuxSession {
     this.streams.delete(id);
   }
 
+  // notifySendWindow wakes any writers waiting on window credit.
   notifySendWindow(streamId: number): void {
     const ws = this.sendWindowWaiters.get(streamId);
     if (ws == null) return;
@@ -89,6 +97,7 @@ export class YamuxSession {
     for (const w of ws) w();
   }
 
+  // waitForSendWindow blocks until send window credits are available.
   waitForSendWindow(streamId: number): Promise<void> {
     if (this.closed) return Promise.reject(new Error("session closed"));
     return new Promise<void>((resolve, reject) => {
@@ -110,6 +119,7 @@ export class YamuxSession {
 
   onStreamEstablished(_streamId: number): void {}
 
+  // close terminates the session and resets all streams.
   close(): void {
     if (this.closed) return;
     this.closed = true;

@@ -9,8 +9,10 @@ import { computeAuthTag, deriveSessionKeys } from "./kdf.js";
 import { transcriptHash } from "./transcript.js";
 import { SecureChannel, type BinaryTransport } from "./secureChannel.js";
 
+// Suite identifies the ECDH+AEAD combination.
 export type Suite = 1 | 2;
 
+// HandshakeClientOptions configures the client handshake path.
 export type HandshakeClientOptions = Readonly<{
   channelId: string;
   suite: Suite;
@@ -21,6 +23,7 @@ export type HandshakeClientOptions = Readonly<{
   maxBufferedBytes?: number;
 }>;
 
+// HandshakeServerOptions configures the server handshake path.
 export type HandshakeServerOptions = Readonly<{
   channelId: string;
   suite: Suite;
@@ -42,6 +45,7 @@ function randomBytes(n: number): Uint8Array {
   return out;
 }
 
+// suiteKeypair generates a per-handshake ECDH keypair.
 function suiteKeypair(suite: Suite): { priv: Uint8Array; pub: Uint8Array } {
   if (suite === 1) {
     const priv = x25519.utils.randomPrivateKey();
@@ -56,6 +60,7 @@ function suiteKeypair(suite: Suite): { priv: Uint8Array; pub: Uint8Array } {
   throw new Error(`unsupported suite ${suite}`);
 }
 
+// suiteSharedSecret computes the ECDH shared secret for the suite.
 function suiteSharedSecret(suite: Suite, priv: Uint8Array, peerPub: Uint8Array): Uint8Array {
   if (suite === 1) return x25519.getSharedSecret(priv, peerPub);
   if (suite === 2) return p256.getSharedSecret(priv, peerPub, false);
@@ -79,6 +84,7 @@ function fingerprintInit(init: E2EE_Init): string {
   return base64urlEncode(sum);
 }
 
+// clientHandshake performs the client side of the E2EE handshake.
 export async function clientHandshake(transport: BinaryTransport, opts: HandshakeClientOptions): Promise<SecureChannel> {
   const kp = suiteKeypair(opts.suite);
   const nonceC = randomBytes(32);
@@ -94,6 +100,7 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
   const initJson = te.encode(JSON.stringify(init));
   await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, initJson));
 
+  // Read server response with ephemeral key and nonce.
   const respFrame = await transport.readBinary();
   const decoded = decodeHandshakeFrame(respFrame, opts.maxHandshakePayload);
   if (decoded.handshakeType !== HANDSHAKE_TYPE_RESP) throw new Error("unexpected handshake type");
@@ -125,6 +132,7 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
   };
   await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_ACK, te.encode(JSON.stringify(ack))));
 
+  // Client sends application data with the C2S keys.
   return new SecureChannel({
     transport,
     maxRecordBytes: opts.maxRecordBytes,
@@ -151,6 +159,7 @@ type ServerCacheEntry = {
   createdAtMs: number;
 };
 
+// ServerHandshakeCache stores server-side handshake state for retries.
 export class ServerHandshakeCache {
   private readonly m = new Map<string, ServerCacheEntry>();
   private readonly ttlMs: number;
@@ -168,6 +177,7 @@ export class ServerHandshakeCache {
     }
   }
 
+  // getOrCreate returns a cached entry or creates a new handshake response.
   getOrCreate(init: E2EE_Init, suite: Suite, serverFeatures: number): ServerCacheEntry {
     const nowMs = Date.now();
     const initKey = fingerprintInit(init);
@@ -193,12 +203,14 @@ export class ServerHandshakeCache {
     return entry;
   }
 
+  // delete removes a cached handshake entry.
   delete(init: E2EE_Init): void {
     const initKey = fingerprintInit(init);
     this.m.delete(initKey);
   }
 }
 
+// serverHandshake performs the server side of the E2EE handshake.
 export async function serverHandshake(
   transport: BinaryTransport,
   cache: ServerHandshakeCache,
@@ -268,6 +280,7 @@ export async function serverHandshake(
   const keys = deriveSessionKeys(opts.psk, shared, th);
   cache.delete(init);
 
+  // Server sends application data with the S2C keys.
   return new SecureChannel({
     transport,
     maxRecordBytes: opts.maxRecordBytes,

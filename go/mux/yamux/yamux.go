@@ -6,6 +6,7 @@ import (
 	"github.com/hashicorp/yamux"
 )
 
+// NewClient creates a yamux client session with defaults if cfg is nil.
 func NewClient(conn net.Conn, cfg *yamux.Config) (*yamux.Session, error) {
 	if cfg == nil {
 		cfg = yamux.DefaultConfig()
@@ -13,6 +14,7 @@ func NewClient(conn net.Conn, cfg *yamux.Config) (*yamux.Session, error) {
 	return yamux.Client(conn, cfg)
 }
 
+// NewServer creates a yamux server session with defaults if cfg is nil.
 func NewServer(conn net.Conn, cfg *yamux.Config) (*yamux.Session, error) {
 	if cfg == nil {
 		cfg = yamux.DefaultConfig()

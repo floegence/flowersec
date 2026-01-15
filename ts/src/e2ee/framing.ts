@@ -3,11 +3,15 @@ import { HANDSHAKE_MAGIC, PROTOCOL_VERSION, RECORD_MAGIC } from "./constants.js"
 
 const te = new TextEncoder();
 
+// Handshake header byte size: magic + version + type + length.
 export const HANDSHAKE_HEADER_LEN = 4 + 1 + 1 + 4;
+// Record header byte size: magic + version + flags + seq + length.
 export const RECORD_HEADER_LEN = 4 + 1 + 1 + 8 + 4;
 
+// FramingError marks malformed or truncated frames.
 export class FramingError extends Error {}
 
+// encodeHandshakeFrame builds the handshake header plus JSON payload.
 export function encodeHandshakeFrame(handshakeType: number, payloadJsonUtf8: Uint8Array): Uint8Array {
   const header = new Uint8Array(HANDSHAKE_HEADER_LEN);
   header.set(te.encode(HANDSHAKE_MAGIC), 0);
@@ -17,6 +21,7 @@ export function encodeHandshakeFrame(handshakeType: number, payloadJsonUtf8: Uin
   return concatBytes([header, payloadJsonUtf8]);
 }
 
+// decodeHandshakeFrame validates the handshake header and extracts the payload.
 export function decodeHandshakeFrame(
   frame: Uint8Array,
   maxPayloadBytes: number
@@ -31,6 +36,7 @@ export function decodeHandshakeFrame(
   return { handshakeType, payloadJsonUtf8: frame.slice(HANDSHAKE_HEADER_LEN) };
 }
 
+// looksLikeRecordFrame checks whether a frame matches the record header shape.
 export function looksLikeRecordFrame(frame: Uint8Array, maxCiphertextBytes: number): boolean {
   if (frame.length < RECORD_HEADER_LEN) return false;
   if (new TextDecoder().decode(frame.slice(0, 4)) !== RECORD_MAGIC) return false;
@@ -40,11 +46,12 @@ export function looksLikeRecordFrame(frame: Uint8Array, maxCiphertextBytes: numb
   return RECORD_HEADER_LEN + n === frame.length;
 }
 
+// encodeU64beBigint converts a bigint into an 8-byte big-endian buffer.
 export function encodeU64beBigint(n: bigint): Uint8Array {
   return u64be(n);
 }
 
+// decodeU64beBigint reads a bigint from an 8-byte big-endian buffer.
 export function decodeU64beBigint(buf: Uint8Array, off: number): bigint {
   return readU64be(buf, off);
 }
-

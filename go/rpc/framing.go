@@ -10,6 +10,7 @@ import (
 
 var ErrFrameTooLarge = errors.New("rpc frame too large")
 
+// WriteJSONFrame writes a length-prefixed JSON message to the writer.
 func WriteJSONFrame(w io.Writer, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -24,6 +25,7 @@ func WriteJSONFrame(w io.Writer, v any) error {
 	return err
 }
 
+// ReadJSONFrame reads a length-prefixed JSON payload with a max size guard.
 func ReadJSONFrame(r io.Reader, maxLen int) ([]byte, error) {
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {

@@ -9,14 +9,17 @@ import (
 	"github.com/flowersec/flowersec/internal/base64url"
 )
 
+// AttachVersion is the JSON attach envelope version.
 const AttachVersion = 1
 
+// AttachConstraints caps attach payload sizes to prevent abuse.
 type AttachConstraints struct {
 	MaxAttachBytes int
 	MaxChannelID   int
 	MaxToken       int
 }
 
+// DefaultAttachConstraints returns safe defaults for attach validation.
 func DefaultAttachConstraints() AttachConstraints {
 	return AttachConstraints{
 		MaxAttachBytes: 8 * 1024,
@@ -37,6 +40,7 @@ var (
 	ErrAttachInvalidEID       = errors.New("attach invalid endpoint_instance_id")
 )
 
+// ParseAttachJSON validates and parses the attach JSON message.
 func ParseAttachJSON(b []byte, c AttachConstraints) (*tunnelv1.Attach, error) {
 	if c.MaxAttachBytes > 0 && len(b) > c.MaxAttachBytes {
 		return nil, ErrAttachTooLarge

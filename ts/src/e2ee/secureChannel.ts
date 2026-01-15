@@ -2,12 +2,14 @@ import { RECORD_FLAG_APP, RECORD_FLAG_PING, RECORD_FLAG_REKEY } from "./constant
 import { decryptRecord, encryptRecord, maxPlaintextBytes } from "./record.js";
 import { deriveRekeyKey } from "./kdf.js";
 
+// BinaryTransport is the minimal interface for binary message exchange.
 export type BinaryTransport = {
   readBinary(): Promise<Uint8Array>;
   writeBinary(frame: Uint8Array): Promise<void>;
   close(): void;
 };
 
+// SecureChannelOptions exposes sizing limits for record processing.
 export type SecureChannelOptions = Readonly<{
   maxRecordBytes: number;
   maxBufferedBytes?: number;
@@ -24,6 +26,7 @@ type SendReq = {
   reject: (e: unknown) => void;
 };
 
+// SecureChannel encrypts/decrypts records and buffers application payloads.
 export class SecureChannel {
   private readonly transport: BinaryTransport;
   private readonly maxRecordBytes: number;
@@ -80,6 +83,7 @@ export class SecureChannel {
     void this.sendLoop();
   }
 
+  // write splits payloads into record-sized chunks and queues them for send.
   async write(plaintext: Uint8Array): Promise<void> {
     const maxPlain = Math.max(1, maxPlaintextBytes(this.maxRecordBytes) || plaintext.length);
     let off = 0;
@@ -90,6 +94,7 @@ export class SecureChannel {
     }
   }
 
+  // read resolves with the next plaintext chunk or throws on errors/close.
   async read(): Promise<Uint8Array> {
     while (true) {
       if (this.readErr != null) throw this.readErr;
@@ -103,6 +108,7 @@ export class SecureChannel {
     }
   }
 
+  // close shuts down the transport and rejects any pending senders.
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -115,10 +121,12 @@ export class SecureChannel {
     for (const w of ws) w();
   }
 
+  // sendPing emits a keepalive record.
   async sendPing(): Promise<void> {
     await this.enqueueSend("ping");
   }
 
+  // rekeyNow emits a rekey record and advances the send key.
   async rekeyNow(): Promise<void> {
     await this.enqueueSend("rekey");
   }
@@ -191,6 +199,7 @@ export class SecureChannel {
         } else {
           const seq = this.sendSeq++;
           frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_REKEY, seq, new Uint8Array(), this.maxRecordBytes);
+          // Update the send key after enqueuing the rekey frame.
           this.sendKey = deriveRekeyKey(this.rekeyBase, this.transcriptHash, seq, this.sendDir);
         }
         await this.transport.writeBinary(frame);

@@ -32,6 +32,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Local test issuer and tunnel server.
 	aud := "flowersec-tunnel:dev"
 	issID := "issuer-dev"
 
@@ -82,6 +83,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Start the server-side endpoint that completes the E2EE handshake.
 	go runServerEndpoint(ctx, wsURL, grantS.ChannelId, grantS.Token, psk, grantS.ChannelInitExpireAtUnixS)
 
 	ready := map[string]any{
@@ -99,6 +101,7 @@ func main() {
 	cancel2()
 }
 
+// runServerEndpoint attaches as the server role and serves a simple RPC handler.
 func runServerEndpoint(ctx context.Context, wsURL string, channelID string, tokenStr string, psk []byte, initExp int64) {
 	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
@@ -133,6 +136,7 @@ func runServerEndpoint(ctx context.Context, wsURL string, channelID string, toke
 	}
 	defer secure.Close()
 
+	// Wrap the secure channel with yamux and serve RPC on each stream.
 	ycfg := hyamux.DefaultConfig()
 	ycfg.EnableKeepAlive = false
 	ycfg.LogOutput = io.Discard
@@ -166,6 +170,7 @@ func runServerEndpoint(ctx context.Context, wsURL string, channelID string, toke
 	}
 }
 
+// mustTestIssuer creates a deterministic issuer keyset and writes it to disk.
 func mustTestIssuer() (*issuer.Keyset, string) {
 	seed, _ := hex.DecodeString("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
 	priv := ed25519.NewKeyFromSeed(seed)

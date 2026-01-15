@@ -1,8 +1,10 @@
 import type { RpcEnvelope, RpcError } from "../gen/flowersec/rpc/v1.gen.js";
 import { readJsonFrame, writeJsonFrame } from "./framing.js";
 
+// RpcHandler processes a request and returns a payload or error.
 export type RpcHandler = (payload: unknown) => Promise<{ payload: unknown; error?: RpcError }>;
 
+// RpcServer dispatches request envelopes to registered handlers.
 export class RpcServer {
   private readonly handlers = new Map<number, RpcHandler>();
   private closed = false;
@@ -12,10 +14,12 @@ export class RpcServer {
     private readonly write: (b: Uint8Array) => Promise<void>
   ) {}
 
+  // register binds a handler to a type ID.
   register(typeId: number, h: RpcHandler): void {
     this.handlers.set(typeId >>> 0, h);
   }
 
+  // serve handles request/response frames until closed or aborted.
   async serve(signal?: AbortSignal): Promise<void> {
     while (!this.closed) {
       if (signal?.aborted) throw signal.reason ?? new Error("aborted");
@@ -35,6 +39,7 @@ export class RpcServer {
     }
   }
 
+  // close stops the serve loop.
   close(): void {
     this.closed = true;
   }

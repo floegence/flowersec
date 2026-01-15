@@ -1,3 +1,4 @@
+// base64urlEncode encodes bytes without padding.
 export function base64urlEncode(bytes: Uint8Array): string {
   let b64: string;
   if (typeof Buffer !== "undefined") {
@@ -10,6 +11,7 @@ export function base64urlEncode(bytes: Uint8Array): string {
   return b64.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
+// base64urlDecode decodes base64url without padding.
 export function base64urlDecode(s: string): Uint8Array {
   const normalized = s.replace(/-/g, "+").replace(/_/g, "/");
   const padLen = (4 - (normalized.length % 4)) % 4;
