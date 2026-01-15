@@ -34,6 +34,7 @@ var (
 	ErrUnknownKID      = errors.New("token unknown kid")
 	ErrInvalidSig      = errors.New("token invalid signature")
 	ErrInvalidAudience = errors.New("token invalid audience")
+	ErrInvalidIssuer   = errors.New("token invalid issuer")
 	ErrExpired         = errors.New("token expired")
 	ErrIATInFuture     = errors.New("token iat in future")
 	ErrInitExpired     = errors.New("token init window expired")
@@ -47,6 +48,7 @@ type KeyLookup interface {
 type VerifyOptions struct {
 	Now       time.Time
 	Audience  string
+	Issuer    string
 	ClockSkew time.Duration
 }
 
@@ -102,6 +104,9 @@ func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error
 	}
 	if opts.Audience != "" && subtle.ConstantTimeCompare([]byte(p.Aud), []byte(opts.Audience)) != 1 {
 		return Payload{}, ErrInvalidAudience
+	}
+	if opts.Issuer != "" && subtle.ConstantTimeCompare([]byte(p.Iss), []byte(opts.Issuer)) != 1 {
+		return Payload{}, ErrInvalidIssuer
 	}
 
 	now := opts.Now

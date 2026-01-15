@@ -19,6 +19,7 @@ import (
 type Config struct {
 	Path            string
 	TunnelAudience  string
+	TunnelIssuer    string
 	IssuerKeysFile  string
 	MaxAttachBytes  int
 	MaxRecordBytes  int
@@ -180,6 +181,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	p, err := token.Verify(attach.Token, s.keys, token.VerifyOptions{
 		Now:       time.Now(),
 		Audience:  s.cfg.TunnelAudience,
+		Issuer:    s.cfg.TunnelIssuer,
 		ClockSkew: s.cfg.ClockSkew,
 	})
 	if err != nil {

@@ -24,6 +24,7 @@ export function encryptRecord(
   if (key.length !== 32) throw new RecordError("key must be 32 bytes");
   if (noncePrefix.length !== 4) throw new RecordError("noncePrefix must be 4 bytes");
   const cipherLen = plaintext.length + 16;
+  if (cipherLen > 0xffffffff) throw new RecordError("record too large");
   const header = new Uint8Array(4 + 1 + 1 + 8 + 4);
   header.set(te.encode(RECORD_MAGIC), 0);
   header[4] = PROTOCOL_VERSION;

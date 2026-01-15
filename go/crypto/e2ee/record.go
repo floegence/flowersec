@@ -55,6 +55,10 @@ func MaxPlaintext(maxRecordBytes int) int {
 }
 
 func EncryptRecord(sendKey [32]byte, noncePrefix [4]byte, flags RecordFlag, seq uint64, plaintext []byte, maxRecordBytes int) ([]byte, error) {
+	const maxCipherLen = uint64(0xffffffff)
+	if uint64(len(plaintext))+16 > maxCipherLen {
+		return nil, ErrRecordTooLarge
+	}
 	if maxRecordBytes > 0 {
 		if recordHeaderLen+len(plaintext)+16 > maxRecordBytes {
 			return nil, ErrRecordTooLarge

@@ -1,6 +1,7 @@
 import { ByteReader } from "./byteReader.js";
 import { decodeHeader, encodeHeader, HEADER_LEN } from "./header.js";
 import {
+  DEFAULT_MAX_STREAM_WINDOW,
   FLAG_ACK,
   FLAG_RST,
   FLAG_SYN,
@@ -21,6 +22,7 @@ export type ByteDuplex = {
 export type YamuxSessionOptions = Readonly<{
   client: boolean;
   onIncomingStream?: (s: YamuxStream) => void;
+  maxFrameBytes?: number;
 }>;
 
 export class YamuxSession {
@@ -28,6 +30,7 @@ export class YamuxSession {
   private readonly reader: ByteReader;
   private readonly streams = new Map<number, YamuxStream>();
   private readonly onIncomingStream: ((s: YamuxStream) => void) | undefined;
+  private readonly maxFrameBytes: number;
 
   private nextStreamId: number;
   private closed = false;
@@ -43,6 +46,7 @@ export class YamuxSession {
       }
     });
     this.onIncomingStream = opts.onIncomingStream;
+    this.maxFrameBytes = Math.max(0, opts.maxFrameBytes ?? DEFAULT_MAX_STREAM_WINDOW);
     this.nextStreamId = opts.client ? 1 : 2;
     void this.readLoop();
   }
@@ -132,6 +136,10 @@ export class YamuxSession {
           return;
         }
         if (h.type === TYPE_DATA) {
+          if (this.maxFrameBytes > 0 && h.length > this.maxFrameBytes) {
+            this.close();
+            return;
+          }
           const data = h.length > 0 ? await this.reader.readExactly(h.length) : new Uint8Array();
           await this.handleDataFrame(h.streamId, h.flags, data);
           continue;

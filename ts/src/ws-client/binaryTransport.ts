@@ -46,6 +46,7 @@ export class WebSocketBinaryTransport {
   }
 
   close(): void {
+    this.fail(new Error("websocket closed"));
     this.ws.removeEventListener("message", this.onMessage);
     this.ws.removeEventListener("error", this.onError);
     this.ws.removeEventListener("close", this.onClose);

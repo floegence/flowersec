@@ -1,6 +1,8 @@
 import type { RpcEnvelope, RpcError } from "../gen/flowersec/rpc/v1.gen.js";
 import { readJsonFrame, writeJsonFrame } from "./framing.js";
 
+const MAX_SAFE_REQUEST_ID = BigInt(Number.MAX_SAFE_INTEGER);
+
 export class RpcClient {
   private nextId = 1n;
   private readonly pending = new Map<bigint, { resolve: (v: RpcEnvelope) => void; reject: (e: unknown) => void }>();
@@ -16,7 +18,9 @@ export class RpcClient {
 
   async call(typeId: number, payload: unknown, signal?: AbortSignal): Promise<{ payload: unknown; error?: RpcError }> {
     if (this.closed) throw new Error("rpc client closed");
-    const requestId = this.nextId++;
+    if (this.nextId > MAX_SAFE_REQUEST_ID) throw new Error("request id overflow");
+    const requestId = this.nextId;
+    this.nextId += 1n;
     const env: RpcEnvelope = {
       type_id: typeId >>> 0,
       request_id: Number(requestId),

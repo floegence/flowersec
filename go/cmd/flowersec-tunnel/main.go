@@ -30,6 +30,7 @@ func main() {
 	var path string
 	var issuerKeysFile string
 	var aud string
+	var iss string
 	var allowedOrigins stringSliceFlag
 	var allowNoOrigin bool
 	var maxConns int
@@ -38,6 +39,7 @@ func main() {
 	flag.StringVar(&path, "ws-path", "/ws", "websocket path")
 	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "issuer keyset file (kid->ed25519 pubkey)")
 	flag.StringVar(&aud, "aud", "", "expected token audience")
+	flag.StringVar(&iss, "iss", "", "expected token issuer")
 	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable)")
 	flag.BoolVar(&allowNoOrigin, "allow-no-origin", true, "allow requests without Origin header (non-browser clients)")
 	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent websocket connections (0 uses default)")
@@ -52,6 +54,7 @@ func main() {
 	cfg.Path = path
 	cfg.IssuerKeysFile = issuerKeysFile
 	cfg.TunnelAudience = aud
+	cfg.TunnelIssuer = iss
 	cfg.AllowedOrigins = allowedOrigins
 	cfg.AllowNoOrigin = allowNoOrigin
 	if maxConns > 0 {
