@@ -33,21 +33,29 @@ type Config struct {
 	IdleTimeout     time.Duration
 	ClockSkew       time.Duration
 	CleanupInterval time.Duration
+
+	ReplaceCooldown      time.Duration
+	ReplaceWindow        time.Duration
+	MaxReplacesPerWindow int
+	ReplaceCloseCode     int
 }
 
 // DefaultConfig returns conservative defaults for a tunnel server.
 func DefaultConfig() Config {
 	return Config{
-		Path:            "/ws",
-		MaxAttachBytes:  8 * 1024,
-		MaxRecordBytes:  1 << 20,
-		MaxPendingBytes: 256 * 1024,
-		MaxChannels:     2048,
-		MaxConns:        4096,
-		AllowNoOrigin:   true,
-		IdleTimeout:     60 * time.Second,
-		ClockSkew:       30 * time.Second,
-		CleanupInterval: 500 * time.Millisecond,
+		Path:                 "/ws",
+		MaxAttachBytes:       8 * 1024,
+		MaxRecordBytes:       1 << 20,
+		MaxPendingBytes:      256 * 1024,
+		MaxChannels:          2048,
+		MaxConns:             4096,
+		AllowNoOrigin:        true,
+		IdleTimeout:          60 * time.Second,
+		ClockSkew:            30 * time.Second,
+		CleanupInterval:      500 * time.Millisecond,
+		ReplaceWindow:        10 * time.Second,
+		MaxReplacesPerWindow: 5,
+		ReplaceCloseCode:     websocket.CloseTryAgainLater,
 	}
 }
 
@@ -94,6 +102,18 @@ func New(cfg Config) (*Server, error) {
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = 500 * time.Millisecond
 	}
+	if cfg.ReplaceCooldown < 0 {
+		cfg.ReplaceCooldown = 0
+	}
+	if cfg.ReplaceWindow < 0 {
+		cfg.ReplaceWindow = 0
+	}
+	if cfg.MaxReplacesPerWindow < 0 {
+		cfg.MaxReplacesPerWindow = 0
+	}
+	if cfg.ReplaceCloseCode == 0 {
+		cfg.ReplaceCloseCode = websocket.CloseTryAgainLater
+	}
 	keys, err := LoadIssuerKeysetFile(cfg.IssuerKeysFile)
 	if err != nil {
 		return nil, err
@@ -133,12 +153,21 @@ func (s *Server) Close() {
 	s.stopOnce.Do(func() { close(s.stopCh) })
 }
 
+var ErrReplaceRateLimited = errors.New("replace rate limited")
+
 type channelState struct {
 	id         string
 	initExp    int64
 	encrypted  bool
 	lastActive time.Time
 	conns      map[tunnelv1.Role]*endpointConn
+	replace    map[tunnelv1.Role]*replaceState
+}
+
+type replaceState struct {
+	last        time.Time
+	windowStart time.Time
+	windowCount int
 }
 
 type endpointConn struct {
@@ -216,10 +245,49 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	uc.SetReadLimit(int64(s.cfg.MaxRecordBytes))
 	uc.SetReadDeadline(time.Time{})
 	if err := s.addEndpoint(attach, p, uc); err != nil {
-		_ = c.CloseWithStatus(websocket.CloseInternalServerErr, "attach failed")
+		if errors.Is(err, ErrReplaceRateLimited) {
+			_ = c.CloseWithStatus(s.cfg.ReplaceCloseCode, "replace rate limited")
+		} else {
+			_ = c.CloseWithStatus(websocket.CloseInternalServerErr, "attach failed")
+		}
 		s.untrackConn(uc)
 		return
 	}
+}
+
+// allowReplaceLocked rate-limits same-role replacements to reduce DoS pressure.
+func (s *Server) allowReplaceLocked(st *channelState, role tunnelv1.Role, now time.Time) bool {
+	cooldown := s.cfg.ReplaceCooldown
+	window := s.cfg.ReplaceWindow
+	maxPerWindow := s.cfg.MaxReplacesPerWindow
+	if cooldown <= 0 && (window <= 0 || maxPerWindow <= 0) {
+		return true
+	}
+	if st.replace == nil {
+		st.replace = make(map[tunnelv1.Role]*replaceState, 2)
+	}
+	rs := st.replace[role]
+	if rs == nil {
+		rs = &replaceState{}
+		st.replace[role] = rs
+	}
+	if cooldown > 0 && !rs.last.IsZero() && now.Sub(rs.last) < cooldown {
+		return false
+	}
+	if window > 0 && maxPerWindow > 0 {
+		if rs.windowStart.IsZero() || now.Sub(rs.windowStart) >= window {
+			rs.windowStart = now
+			rs.windowCount = 0
+		}
+		if rs.windowCount >= maxPerWindow {
+			return false
+		}
+	}
+	rs.last = now
+	if window > 0 && maxPerWindow > 0 {
+		rs.windowCount++
+	}
+	return true
 }
 
 // addEndpoint registers the websocket for a channel and starts routing.
@@ -230,6 +298,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 	var flushServerToClient [][]byte
 	var lockClient *endpointConn
 	var lockServer *endpointConn
+	now := time.Now()
 
 	s.mu.Lock()
 	st := s.channels[a.ChannelId]
@@ -243,7 +312,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 		st = &channelState{
 			id:         a.ChannelId,
 			initExp:    p.InitExp,
-			lastActive: time.Now(),
+			lastActive: now,
 			conns:      make(map[tunnelv1.Role]*endpointConn, 2),
 		}
 		st.conns[a.Role] = ep
@@ -256,7 +325,12 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			return errors.New("init_exp mismatch")
 		}
 		if st.conns[a.Role] != nil {
+			if !s.allowReplaceLocked(st, a.Role, now) {
+				s.mu.Unlock()
+				return ErrReplaceRateLimited
+			}
 			// Replacement semantics: close both sides and reset the channel state.
+			replaceState := st.replace
 			for _, e := range st.conns {
 				toClose = append(toClose, e.ws)
 			}
@@ -264,8 +338,9 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			st = &channelState{
 				id:         a.ChannelId,
 				initExp:    p.InitExp,
-				lastActive: time.Now(),
+				lastActive: now,
 				conns:      make(map[tunnelv1.Role]*endpointConn, 2),
+				replace:    replaceState,
 			}
 			st.conns[a.Role] = ep
 			s.channels[a.ChannelId] = st
@@ -273,7 +348,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			s.mu.Unlock()
 		} else {
 			st.conns[a.Role] = ep
-			st.lastActive = time.Now()
+			st.lastActive = now
 			startPump = true
 			// If paired, flush buffered frames in a deterministic order while holding destination write locks.
 			client := st.conns[tunnelv1.Role_client]

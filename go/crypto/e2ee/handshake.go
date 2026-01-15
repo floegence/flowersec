@@ -85,6 +85,9 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 	if opts.MaxBufferedBytes == 0 {
 		opts.MaxBufferedBytes = 4 * (1 << 20)
 	}
+	if opts.MaxHandshakePayload <= 0 {
+		opts.MaxHandshakePayload = 8 * 1024
+	}
 
 	priv, pub, err := GenerateEphemeralKeypair(opts.Suite)
 	if err != nil {
@@ -222,6 +225,9 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	}
 	if opts.MaxBufferedBytes == 0 {
 		opts.MaxBufferedBytes = 4 * (1 << 20)
+	}
+	if opts.MaxHandshakePayload <= 0 {
+		opts.MaxHandshakePayload = 8 * 1024
 	}
 	if opts.InitExpireAtUnixS <= 0 {
 		return nil, errors.New("missing init_exp")

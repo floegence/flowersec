@@ -25,7 +25,17 @@ export class RpcServer {
       if (signal?.aborted) throw signal.reason ?? new Error("aborted");
       const v = (await readJsonFrame(this.readExactly, 1 << 20)) as RpcEnvelope;
       if (v.response_to !== 0) continue;
-      if (v.request_id === 0) continue;
+      if (v.request_id === 0) {
+        const h = this.handlers.get(v.type_id >>> 0);
+        if (h != null) {
+          try {
+            await h(v.payload);
+          } catch {
+            // Keep the serve loop alive on notification handler errors.
+          }
+        }
+        continue;
+      }
       const h = this.handlers.get(v.type_id >>> 0);
       const out = h ? await h(v.payload) : { payload: null, error: { code: 404, message: "handler not found" } };
       const resp: RpcEnvelope = {
