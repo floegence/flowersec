@@ -95,13 +95,14 @@ export class YamuxStream {
 
   // write sends DATA frames, respecting the send window.
   async write(data: Uint8Array): Promise<void> {
-    if (this.state === "reset") throw new Error("stream reset");
-    if (this.state === "closed" || this.state === "localClose") throw new Error("stream closed");
+    this.ensureWritable();
 
     let off = 0;
     while (off < data.length) {
+      this.ensureWritable();
       const chunk = data.subarray(off);
       const allowed = await this.waitForSendWindow(chunk.length);
+      this.ensureWritable();
       const sendChunk = chunk.subarray(0, allowed);
       const flags = this.sendFlags();
       this.sendWindow -= sendChunk.length;
@@ -139,6 +140,7 @@ export class YamuxStream {
     const ws = this.readWaiters;
     this.readWaiters = [];
     for (const w of ws) w();
+    this.session.notifySendWindow(this.id);
     void this.session.sendRst(this.id);
   }
 
@@ -197,8 +199,14 @@ export class YamuxStream {
   private async waitForSendWindow(want: number): Promise<number> {
     if (want <= 0) return 0;
     while (this.sendWindow <= 0) {
+      this.ensureWritable();
       await this.session.waitForSendWindow(this.id);
     }
     return Math.min(want, this.sendWindow);
+  }
+
+  private ensureWritable(): void {
+    if (this.state === "reset") throw new Error("stream reset");
+    if (this.state === "closed" || this.state === "localClose") throw new Error("stream closed");
   }
 }

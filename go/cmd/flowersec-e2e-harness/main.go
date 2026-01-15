@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"io"
 	"log"
 	"net"
@@ -22,6 +23,7 @@ import (
 	rpcv1 "github.com/flowersec/flowersec/gen/flowersec/rpc/v1"
 	tunnelv1 "github.com/flowersec/flowersec/gen/flowersec/tunnel/v1"
 	"github.com/flowersec/flowersec/internal/base64url"
+	"github.com/flowersec/flowersec/internal/yamuxinterop"
 	"github.com/flowersec/flowersec/rpc"
 	"github.com/flowersec/flowersec/tunnel/server"
 	"github.com/gorilla/websocket"
@@ -29,6 +31,10 @@ import (
 )
 
 func main() {
+	var scenarioJSON string
+	flag.StringVar(&scenarioJSON, "scenario", "", "scenario JSON payload")
+	flag.Parse()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -58,6 +64,7 @@ func main() {
 		log.Fatal(err)
 	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	defer shutdownHTTPServer(srv)
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
@@ -83,6 +90,50 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if scenarioJSON != "" {
+		var scenario yamuxinterop.Scenario
+		if err := json.Unmarshal([]byte(scenarioJSON), &scenario); err != nil {
+			log.Fatal(err)
+		}
+		if err := scenario.Normalize(); err != nil {
+			log.Fatal(err)
+		}
+		scenarioCtx, scenarioCancel := context.WithTimeout(ctx, time.Duration(scenario.DeadlineMs)*time.Millisecond)
+		defer scenarioCancel()
+
+		resultCh := make(chan scenarioOutcome, 1)
+		go func() {
+			result, err := runServerEndpointScenario(
+				scenarioCtx,
+				wsURL,
+				grantS.ChannelId,
+				grantS.Token,
+				psk,
+				grantS.ChannelInitExpireAtUnixS,
+				scenario,
+			)
+			resultCh <- scenarioOutcome{Result: result, Err: err}
+		}()
+
+		ready := map[string]any{
+			"ws_url":       wsURL,
+			"grant_client": grantC,
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(ready)
+
+		outcome := <-resultCh
+		out := map[string]any{
+			"result": outcome.Result,
+		}
+		if outcome.Err != nil {
+			out["error"] = outcome.Err.Error()
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(out)
+
+		cancel()
+		return
+	}
+
 	// Start the server-side endpoint that completes the E2EE handshake.
 	go runServerEndpoint(ctx, wsURL, grantS.ChannelId, grantS.Token, psk, grantS.ChannelInitExpireAtUnixS)
 
@@ -96,9 +147,6 @@ func main() {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	cancel()
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
-	_ = srv.Shutdown(ctx2)
-	cancel2()
 }
 
 // runServerEndpoint attaches as the server role and serves a simple RPC handler.
@@ -168,6 +216,68 @@ func runServerEndpoint(ctx context.Context, wsURL string, channelID string, toke
 			_ = srv.Serve(ctx)
 		}()
 	}
+}
+
+type scenarioOutcome struct {
+	Result yamuxinterop.Result
+	Err    error
+}
+
+// runServerEndpointScenario attaches as the server role and runs a yamux interop scenario.
+// Note: this harness only accepts client-initiated streams.
+func runServerEndpointScenario(ctx context.Context, wsURL string, channelID string, tokenStr string, psk []byte, initExp int64, scenario yamuxinterop.Scenario) (yamuxinterop.Result, error) {
+	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+	if err != nil {
+		return yamuxinterop.Result{}, err
+	}
+	defer c.Close()
+
+	attach := tunnelv1.Attach{
+		V:                  1,
+		ChannelId:          channelID,
+		Role:               tunnelv1.Role_server,
+		Token:              tokenStr,
+		EndpointInstanceId: base64url.Encode(make([]byte, 16)),
+	}
+	b, _ := json.Marshal(attach)
+	_ = c.WriteMessage(websocket.TextMessage, b)
+
+	bt := e2ee.NewWebSocketBinaryTransport(c)
+	cache := e2ee.NewServerHandshakeCache()
+	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.HandshakeOptions{
+		PSK:                 psk,
+		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
+		ChannelID:           channelID,
+		InitExpireAtUnixS:   initExp,
+		ClockSkew:           30 * time.Second,
+		ServerFeatureBits:   1,
+		MaxHandshakePayload: 8 * 1024,
+		MaxRecordBytes:      1 << 20,
+	})
+	if err != nil {
+		return yamuxinterop.Result{}, err
+	}
+	defer secure.Close()
+
+	ycfg := hyamux.DefaultConfig()
+	ycfg.EnableKeepAlive = false
+	ycfg.LogOutput = io.Discard
+	if scenario.Scenario == yamuxinterop.ScenarioRstMidWriteGo {
+		ycfg.StreamCloseTimeout = 50 * time.Millisecond
+	}
+	sess, err := hyamux.Server(secure, ycfg)
+	if err != nil {
+		return yamuxinterop.Result{}, err
+	}
+	defer sess.Close()
+
+	return yamuxinterop.RunServer(ctx, sess, scenario)
+}
+
+func shutdownHTTPServer(srv *http.Server) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
 }
 
 // mustTestIssuer creates a deterministic issuer keyset and writes it to disk.

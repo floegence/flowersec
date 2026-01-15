@@ -74,30 +74,47 @@ Source: `ts/src/yamux/constants.ts`, `ts/src/yamux/header.ts`, `ts/src/yamux/ses
 
 ## Interop evidence (what is actually tested today)
 
-The TS Yamux implementation is exercised in a real interop scenario:
+The TS Yamux implementation is exercised in real interop scenarios:
 
-- **TS client ↔ Go server (HashiCorp Yamux)**:
+- **TS client ↔ Go server (minimal Yamux over TCP)**:
+  - Test: `ts/src/e2e/yamux_interop.test.ts` (minimal tcp mode)
+  - Go harness: `go/cmd/flowersec-yamux-harness/main.go`
+  - Covers: window update race, RST handling, concurrent open/close, session close.
+  - Notes: opt-in via `YAMUX_INTEROP=1` (runs Go harnesses).
+  - Notes: sizes scale via `YAMUX_INTEROP_SCALE` (e.g. `2` => 20 streams / 1 MiB per stream).
+  - Notes: client-initiated RST scenarios run when `YAMUX_INTEROP_CLIENT_RST=1`.
+  - Notes: window-update and concurrent-open/close stress runs when `YAMUX_INTEROP_STRESS=1`.
+- **TS client ↔ Go server (full chain: E2EE + tunnel + Yamux)**:
+  - Test: `ts/src/e2e/yamux_interop.test.ts` (full chain mode)
+  - Go harness: `go/cmd/flowersec-e2e-harness/main.go` with `-scenario`
+  - Notes: reduced stream counts/payload sizes to keep end-to-end runtime bounded.
+- **Layered close/reset probes (memory + WS + full chain)**:
+  - Test: `ts/src/e2e/yamux_interop_layers.test.ts`
+  - Covers: session-close wakeup, FIN/RST delivery across SecureChannel + WebSocketBinaryTransport,
+    and a full-chain FIN/RST probe on `rst_mid_write_go`.
+  - Notes: gated by `YAMUX_INTEROP=1`; the full-chain probe additionally requires
+    `YAMUX_INTEROP_DEBUG=1`.
+- **TS client ↔ Go server (RPC happy path)**:
   - Test: `ts/src/e2e/go_integration.test.ts`
-  - Go harness uses `github.com/hashicorp/yamux` as the **server**:
-    - `go/cmd/flowersec-e2e-harness/main.go`
-  - The test covers:
-    - Opening a Yamux stream from TS (`openStream()`).
-    - Writing/reading application bytes over that stream (RPC framing).
-    - Basic window update behavior on the happy path.
+  - Go harness: `go/cmd/flowersec-e2e-harness/main.go`
+  - Covers: single-stream RPC framing and basic window updates.
 
-This confirms wire-level interop and the correctness of the “happy-path” subset under real IO.
+These confirm wire-level interop and the correctness of the happy-path subset under real IO.
 
 ## Current gaps (not yet proven or intentionally simplified)
 
 These items are either untested or simplified compared to HashiCorp Yamux behavior:
 
-- **Multi-stream concurrency**: no dedicated tests for multiple simultaneous streams, interleaved frames,
-  and fairness under contention.
-- **Large payload / fragmentation**: no tests for very large writes requiring repeated window updates.
+- **Multi-stream concurrency**: covered by interop tests, but fairness/priority under heavy contention
+  is not proven.
+- **Large payload / fragmentation**: covered up to ~1 MiB per stream; larger payloads and pathological
+  fragmentation are still untested.
 - **Stress & fuzz robustness**: no fuzz tests for invalid headers/flags/lengths and adversarial streams.
 - **Session-level behaviors**: GO_AWAY reason handling, keepalive/heartbeats, and more nuanced shutdown.
 - **Strictness differences**: unknown frame types trigger session close, which may be stricter than some
   implementations.
+- **Server-initiated streams**: Go-initiated streams are not covered by interop tests yet.
+- **Bidirectional window-update stress**: current window update tests run TS -> Go only.
 
 ## Practical alignment summary
 
@@ -108,4 +125,3 @@ These items are either untested or simplified compared to HashiCorp Yamux behavi
   - FIN/RST edges, ping handling, and window boundary conditions.
 - **Not aligned / out of scope today**:
   - Full Yamux feature parity (advanced GO_AWAY semantics, keepalive, exhaustive error handling).
-
