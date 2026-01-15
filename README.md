@@ -40,6 +40,39 @@ It includes:
 - Single-instance tunnel: token replay protection is in-memory; multi-instance deployments require a shared cache or equivalent.
 - Handshake init_exp: `channel_init_expire_at` (init_exp) must be a non-zero Unix timestamp.
 
+## Communication Scenarios
+
+The examples in `examples/README.md` cover two common paths. The diagrams below mirror those scenarios.
+
+### Tunnel path (controlplane + tunnel)
+
+```mermaid
+flowchart LR
+  CP[Controlplane demo<br/>mints ChannelInitGrant pair]
+  Client[Client endpoint<br/>role=client]
+  Server[Server endpoint<br/>role=server]
+  Tunnel[Tunnel server<br/>blind forwarder]
+
+  CP -->|grant_client| Client
+  CP -->|grant_server| Server
+
+  Client -->|WS Attach: token + channel_id| Tunnel
+  Server -->|WS Attach: token + channel_id| Tunnel
+
+  Client -->|E2EE (FSEH/FSEC) + Yamux + RPC/echo| Tunnel
+  Tunnel -->|encrypted bytes only| Server
+```
+
+### Direct path (no tunnel)
+
+```mermaid
+flowchart LR
+  Client[Client endpoint]
+  Server[Direct server endpoint]
+
+  Client -->|WS + E2EE (FSEH/FSEC) + Yamux + RPC/echo| Server
+```
+
 ## Development
 
 Generate code from IDL:
