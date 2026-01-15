@@ -1,0 +1,24 @@
+{
+  "namespace": "flowersec.tunnel.v1",
+  "enums": {
+    "Role": {
+      "type": "u8",
+      "values": {
+        "client": 1,
+        "server": 2
+      }
+    }
+  },
+  "messages": {
+    "Attach": {
+      "fields": [
+        { "name": "v", "type": "u32" },
+        { "name": "channel_id", "type": "string" },
+        { "name": "role", "type": "Role" },
+        { "name": "token", "type": "string" },
+        { "name": "endpoint_instance_id", "type": "string" },
+        { "name": "caps", "type": "map<string,string>", "optional": true }
+      ]
+    }
+  }
+}

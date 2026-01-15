@@ -1,0 +1,27 @@
+
+.DS_Store
+
+# Go
+/go/bin/
+/go/pkg/
+**/*.test
+**/*.out
+
+# Node
+node_modules/
+dist/
+build/
+out/
+.turbo/
+.next/
+coverage/
+
+# Playwright
+playwright-report/
+test-results/
+
+# IDE
+.idea/
+.vscode/
+
+/\.*\.md

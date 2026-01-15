@@ -1,0 +1,243 @@
+import { x25519 } from "@noble/curves/ed25519";
+import { p256 } from "@noble/curves/p256";
+import { sha256 } from "@noble/hashes/sha256";
+import type { E2EE_Ack, E2EE_Init, E2EE_Resp } from "../gen/flowersec/e2ee/v1.gen.js";
+import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
+import { HANDSHAKE_TYPE_ACK, HANDSHAKE_TYPE_INIT, HANDSHAKE_TYPE_RESP, PROTOCOL_VERSION } from "./constants.js";
+import { encodeHandshakeFrame, decodeHandshakeFrame } from "./framing.js";
+import { computeAuthTag, deriveSessionKeys } from "./kdf.js";
+import { transcriptHash } from "./transcript.js";
+import { SecureChannel, type BinaryTransport } from "./secureChannel.js";
+
+export type Suite = 1 | 2;
+
+export type HandshakeClientOptions = Readonly<{
+  channelId: string;
+  suite: Suite;
+  psk: Uint8Array; // 32
+  clientFeatures: number;
+  maxHandshakePayload: number;
+  maxRecordBytes: number;
+}>;
+
+export type HandshakeServerOptions = Readonly<{
+  channelId: string;
+  suite: Suite;
+  psk: Uint8Array; // 32
+  serverFeatures: number;
+  initExpireAtUnixS: number;
+  clockSkewSeconds: number;
+  maxHandshakePayload: number;
+  maxRecordBytes: number;
+}>;
+
+const te = new TextEncoder();
+const td = new TextDecoder();
+
+function randomBytes(n: number): Uint8Array {
+  const out = new Uint8Array(n);
+  crypto.getRandomValues(out);
+  return out;
+}
+
+function suiteKeypair(suite: Suite): { priv: Uint8Array; pub: Uint8Array } {
+  if (suite === 1) {
+    const priv = x25519.utils.randomPrivateKey();
+    const pub = x25519.getPublicKey(priv);
+    return { priv, pub };
+  }
+  if (suite === 2) {
+    const priv = p256.utils.randomPrivateKey();
+    const pub = p256.getPublicKey(priv, false);
+    return { priv, pub };
+  }
+  throw new Error(`unsupported suite ${suite}`);
+}
+
+function suiteSharedSecret(suite: Suite, priv: Uint8Array, peerPub: Uint8Array): Uint8Array {
+  if (suite === 1) return x25519.getSharedSecret(priv, peerPub);
+  if (suite === 2) return p256.getSharedSecret(priv, peerPub, false);
+  throw new Error(`unsupported suite ${suite}`);
+}
+
+function handshakeIdDeterministic(init: E2EE_Init): string {
+  const b = te.encode(JSON.stringify(init));
+  const sum = sha256(b);
+  return base64urlEncode(sum.slice(0, 24));
+}
+
+export async function clientHandshake(transport: BinaryTransport, opts: HandshakeClientOptions): Promise<SecureChannel> {
+  const kp = suiteKeypair(opts.suite);
+  const nonceC = randomBytes(32);
+  const init: E2EE_Init = {
+    channel_id: opts.channelId,
+    role: 1,
+    version: PROTOCOL_VERSION,
+    suite: opts.suite,
+    client_eph_pub_b64u: base64urlEncode(kp.pub),
+    nonce_c_b64u: base64urlEncode(nonceC),
+    client_features: opts.clientFeatures >>> 0
+  };
+  const initJson = te.encode(JSON.stringify(init));
+  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, initJson));
+
+  const respFrame = await transport.readBinary();
+  const decoded = decodeHandshakeFrame(respFrame, opts.maxHandshakePayload);
+  if (decoded.handshakeType !== HANDSHAKE_TYPE_RESP) throw new Error("unexpected handshake type");
+  const resp = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Resp;
+  const serverPub = base64urlDecode(resp.server_eph_pub_b64u);
+  const nonceS = base64urlDecode(resp.nonce_s_b64u);
+
+  const th = transcriptHash({
+    version: PROTOCOL_VERSION,
+    suite: opts.suite,
+    role: 1,
+    clientFeatures: init.client_features,
+    serverFeatures: resp.server_features >>> 0,
+    channelId: opts.channelId,
+    nonceC,
+    nonceS,
+    clientEphPub: kp.pub,
+    serverEphPub: serverPub
+  });
+  const shared = suiteSharedSecret(opts.suite, kp.priv, serverPub);
+  const keys = deriveSessionKeys(opts.psk, shared, th);
+
+  const ts = BigInt(Math.floor(Date.now() / 1000));
+  const tag = computeAuthTag(opts.psk, th, ts);
+  const ack: E2EE_Ack = {
+    handshake_id: resp.handshake_id,
+    timestamp_unix_s: Number(ts),
+    auth_tag_b64u: base64urlEncode(tag)
+  };
+  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_ACK, te.encode(JSON.stringify(ack))));
+
+  return new SecureChannel({
+    transport,
+    maxRecordBytes: opts.maxRecordBytes,
+    sendKey: keys.c2sKey,
+    recvKey: keys.s2cKey,
+    sendNoncePrefix: keys.c2sNoncePrefix,
+    recvNoncePrefix: keys.s2cNoncePrefix,
+    rekeyBase: keys.rekeyBase,
+    transcriptHash: th,
+    sendDir: 1,
+    recvDir: 2
+  });
+}
+
+type ServerCacheEntry = {
+  initKey: string;
+  suite: Suite;
+  serverPriv: Uint8Array;
+  serverPub: Uint8Array;
+  nonceS: Uint8Array;
+  handshakeId: string;
+  serverFeatures: number;
+};
+
+export class ServerHandshakeCache {
+  private readonly m = new Map<string, ServerCacheEntry>();
+
+  getOrCreate(init: E2EE_Init, suite: Suite, serverFeatures: number): ServerCacheEntry {
+    const initKey = handshakeIdDeterministic(init);
+    const existing = this.m.get(initKey);
+    if (existing != null) return existing;
+    const kp = suiteKeypair(suite);
+    const nonceS = randomBytes(32);
+    const entry: ServerCacheEntry = {
+      initKey,
+      suite,
+      serverPriv: kp.priv,
+      serverPub: kp.pub,
+      nonceS,
+      handshakeId: base64urlEncode(randomBytes(24)),
+      serverFeatures: serverFeatures >>> 0
+    };
+    this.m.set(initKey, entry);
+    return entry;
+  }
+
+  delete(init: E2EE_Init): void {
+    const initKey = handshakeIdDeterministic(init);
+    this.m.delete(initKey);
+  }
+}
+
+export async function serverHandshake(
+  transport: BinaryTransport,
+  cache: ServerHandshakeCache,
+  opts: HandshakeServerOptions
+): Promise<SecureChannel> {
+  const initFrame = await transport.readBinary();
+  const decodedInit = decodeHandshakeFrame(initFrame, opts.maxHandshakePayload);
+  if (decodedInit.handshakeType !== HANDSHAKE_TYPE_INIT) throw new Error("unexpected handshake type");
+  const init = JSON.parse(td.decode(decodedInit.payloadJsonUtf8)) as E2EE_Init;
+  if (init.version !== PROTOCOL_VERSION) throw new Error("bad version");
+  if (init.role !== 1) throw new Error("bad role");
+  if (init.channel_id !== opts.channelId) throw new Error("bad channel_id");
+  const suite = init.suite as Suite;
+  if (suite !== opts.suite) throw new Error("bad suite");
+
+  const entry = cache.getOrCreate(init, suite, opts.serverFeatures);
+  const resp: E2EE_Resp = {
+    handshake_id: entry.handshakeId,
+    server_eph_pub_b64u: base64urlEncode(entry.serverPub),
+    nonce_s_b64u: base64urlEncode(entry.nonceS),
+    server_features: entry.serverFeatures
+  };
+  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify(resp))));
+
+  const ackFrame = await transport.readBinary();
+  const decodedAck = decodeHandshakeFrame(ackFrame, opts.maxHandshakePayload);
+  if (decodedAck.handshakeType !== HANDSHAKE_TYPE_ACK) throw new Error("unexpected handshake type");
+  const ack = JSON.parse(td.decode(decodedAck.payloadJsonUtf8)) as E2EE_Ack;
+  if (ack.handshake_id !== entry.handshakeId) throw new Error("handshake_id mismatch");
+
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - ack.timestamp_unix_s) > opts.clockSkewSeconds) throw new Error("timestamp skew");
+  if (ack.timestamp_unix_s > opts.initExpireAtUnixS + opts.clockSkewSeconds) throw new Error("timestamp after init_exp");
+
+  const clientPub = base64urlDecode(init.client_eph_pub_b64u);
+  const nonceC = base64urlDecode(init.nonce_c_b64u);
+  const th = transcriptHash({
+    version: PROTOCOL_VERSION,
+    suite: suite,
+    role: 1,
+    clientFeatures: init.client_features >>> 0,
+    serverFeatures: entry.serverFeatures,
+    channelId: init.channel_id,
+    nonceC,
+    nonceS: entry.nonceS,
+    clientEphPub: clientPub,
+    serverEphPub: entry.serverPub
+  });
+
+  const expected = computeAuthTag(opts.psk, th, BigInt(ack.timestamp_unix_s));
+  const got = base64urlDecode(ack.auth_tag_b64u);
+  if (got.length !== expected.length || !equalBytes(got, expected)) throw new Error("auth tag mismatch");
+
+  const shared = suiteSharedSecret(suite, entry.serverPriv, clientPub);
+  const keys = deriveSessionKeys(opts.psk, shared, th);
+  cache.delete(init);
+
+  return new SecureChannel({
+    transport,
+    maxRecordBytes: opts.maxRecordBytes,
+    sendKey: keys.s2cKey,
+    recvKey: keys.c2sKey,
+    sendNoncePrefix: keys.s2cNoncePrefix,
+    recvNoncePrefix: keys.c2sNoncePrefix,
+    rekeyBase: keys.rekeyBase,
+    transcriptHash: th,
+    sendDir: 2,
+    recvDir: 1
+  });
+}
+
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let ok = 0;
+  for (let i = 0; i < a.length; i++) ok |= a[i]! ^ b[i]!;
+  return ok === 0;
+}

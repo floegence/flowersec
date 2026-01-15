@@ -1,0 +1,25 @@
+{
+  "cases": [
+    {
+      "case_id": "token_sign_basic",
+      "inputs": {
+        "ed25519_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "payload": {
+          "kid": "k1",
+          "aud": "flowersec-tunnel:dev",
+          "iss": "issuer-dev",
+          "channel_id": "chan_test_123",
+          "role": 1,
+          "token_id": "tok_test_1",
+          "init_exp": 1700000000,
+          "iat": 1699999900,
+          "exp": 1699999960
+        }
+      },
+      "expected": {
+        "token": "FST1.eyJraWQiOiJrMSIsImF1ZCI6ImZsb3dlcnNlYy10dW5uZWw6ZGV2IiwiaXNzIjoiaXNzdWVyLWRldiIsImNoYW5uZWxfaWQiOiJjaGFuX3Rlc3RfMTIzIiwicm9sZSI6MSwidG9rZW5faWQiOiJ0b2tfdGVzdF8xIiwiaW5pdF9leHAiOjE3MDAwMDAwMDAsImlhdCI6MTY5OTk5OTkwMCwiZXhwIjoxNjk5OTk5OTYwfQ.kVkhGkA0jNtlNim16BsfXEAnRovts6qN_wqyeaEpxBGczv7m9JinmJT2FtrMlnywlqlz5SBJRBm1Bw8vT48qDA"
+      }
+    }
+  ]
+}
+

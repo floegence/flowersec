@@ -1,0 +1,78 @@
+package e2ee
+
+import (
+	"crypto/sha256"
+	"errors"
+
+	"github.com/flowersec/flowersec/internal/bin"
+)
+
+var ErrInvalidTranscriptInput = errors.New("invalid transcript input")
+
+type TranscriptInputs struct {
+	Version        uint8
+	Suite          uint16
+	Role           uint8
+	ClientFeatures uint32
+	ServerFeatures uint32
+	ChannelID      string
+	NonceC         [32]byte
+	NonceS         [32]byte
+	ClientEphPub   []byte
+	ServerEphPub   []byte
+}
+
+func TranscriptHash(in TranscriptInputs) ([32]byte, error) {
+	if in.ChannelID == "" {
+		return [32]byte{}, ErrInvalidTranscriptInput
+	}
+	if len(in.ClientEphPub) == 0 || len(in.ServerEphPub) == 0 {
+		return [32]byte{}, ErrInvalidTranscriptInput
+	}
+
+	channelIDBytes := []byte(in.ChannelID)
+	if len(channelIDBytes) > 0xffff {
+		return [32]byte{}, ErrInvalidTranscriptInput
+	}
+	if len(in.ClientEphPub) > 0xffff || len(in.ServerEphPub) > 0xffff {
+		return [32]byte{}, ErrInvalidTranscriptInput
+	}
+
+	// transcript =
+	//   "flowersec-e2ee-v1" ||
+	//   version:u8 ||
+	//   suite:u16be ||
+	//   role:u8 ||
+	//   client_features:u32be ||
+	//   server_features:u32be ||
+	//   channel_id_len:u16be || channel_id ||
+	//   nonce_c(32) || nonce_s(32) ||
+	//   client_pub_len:u16be || client_pub ||
+	//   server_pub_len:u16be || server_pub
+	prefix := []byte("flowersec-e2ee-v1")
+	size := len(prefix) + 1 + 2 + 1 + 4 + 4 + 2 + len(channelIDBytes) + 32 + 32 + 2 + len(in.ClientEphPub) + 2 + len(in.ServerEphPub)
+	buf := make([]byte, 0, size)
+	buf = append(buf, prefix...)
+	buf = append(buf, in.Version)
+	tmp := make([]byte, 8)
+	bin.PutU16BE(tmp[:2], in.Suite)
+	buf = append(buf, tmp[:2]...)
+	buf = append(buf, in.Role)
+	bin.PutU32BE(tmp[:4], in.ClientFeatures)
+	buf = append(buf, tmp[:4]...)
+	bin.PutU32BE(tmp[:4], in.ServerFeatures)
+	buf = append(buf, tmp[:4]...)
+	bin.PutU16BE(tmp[:2], uint16(len(channelIDBytes)))
+	buf = append(buf, tmp[:2]...)
+	buf = append(buf, channelIDBytes...)
+	buf = append(buf, in.NonceC[:]...)
+	buf = append(buf, in.NonceS[:]...)
+	bin.PutU16BE(tmp[:2], uint16(len(in.ClientEphPub)))
+	buf = append(buf, tmp[:2]...)
+	buf = append(buf, in.ClientEphPub...)
+	bin.PutU16BE(tmp[:2], uint16(len(in.ServerEphPub)))
+	buf = append(buf, tmp[:2]...)
+	buf = append(buf, in.ServerEphPub...)
+
+	return sha256.Sum256(buf), nil
+}

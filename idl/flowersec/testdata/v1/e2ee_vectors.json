@@ -1,0 +1,39 @@
+{
+  "transcript_hash": [
+    {
+      "case_id": "transcript_basic_x25519",
+      "inputs": {
+        "version": 1,
+        "suite": 1,
+        "role": 1,
+        "client_features": 0,
+        "server_features": 1,
+        "channel_id": "chan_test_123",
+        "nonce_c_b64u": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "nonce_s_b64u": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+        "client_eph_pub_b64u": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "server_eph_pub_b64u": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+      },
+      "expected": {
+        "transcript_hash_b64u": "_CNQQ3KJtiea7MNxrLoLOG8no_CZqQXCrURxYjYUbjI"
+      }
+    }
+  ],
+  "record_frame": [
+    {
+      "case_id": "record_app_hello",
+      "inputs": {
+        "key_b64u": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8",
+        "nonce_prefix_b64u": "AQIDBA",
+        "flags": 0,
+        "seq": 1,
+        "plaintext_utf8": "hello",
+        "max_record_bytes": 1048576
+      },
+      "expected": {
+        "frame_b64u": "RlNFQwEAAAAAAAAAAAEAAAAVTGA-meXg75teyc41IjS-NQtAs-hd"
+      }
+    }
+  ]
+}
+

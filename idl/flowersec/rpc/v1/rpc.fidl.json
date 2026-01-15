@@ -1,0 +1,27 @@
+{
+  "namespace": "flowersec.rpc.v1",
+  "enums": {},
+  "messages": {
+    "StreamHello": {
+      "fields": [
+        { "name": "kind", "type": "string" },
+        { "name": "v", "type": "u32" }
+      ]
+    },
+    "RpcError": {
+      "fields": [
+        { "name": "code", "type": "u32" },
+        { "name": "message", "type": "string", "optional": true }
+      ]
+    },
+    "RpcEnvelope": {
+      "fields": [
+        { "name": "type_id", "type": "u32" },
+        { "name": "request_id", "type": "u64" },
+        { "name": "response_to", "type": "u64" },
+        { "name": "payload", "type": "json" },
+        { "name": "error", "type": "RpcError", "optional": true }
+      ]
+    }
+  }
+}

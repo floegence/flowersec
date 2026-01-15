@@ -1,0 +1,84 @@
+package issuer
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"sync"
+
+	"github.com/flowersec/flowersec/controlplane/token"
+	"github.com/flowersec/flowersec/internal/base64url"
+)
+
+type Keyset struct {
+	mu   sync.RWMutex
+	kid  string
+	priv ed25519.PrivateKey
+}
+
+func New(kid string, priv ed25519.PrivateKey) (*Keyset, error) {
+	if len(priv) != ed25519.PrivateKeySize {
+		return nil, errors.New("invalid ed25519 private key")
+	}
+	return &Keyset{kid: kid, priv: priv}, nil
+}
+
+func NewRandom(kid string) (*Keyset, error) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	return New(kid, priv)
+}
+
+func (k *Keyset) CurrentKID() string {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.kid
+}
+
+func (k *Keyset) PublicKeys() map[string]ed25519.PublicKey {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	pub := k.priv.Public().(ed25519.PublicKey)
+	return map[string]ed25519.PublicKey{k.kid: pub}
+}
+
+func (k *Keyset) SignToken(p token.Payload) (string, error) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	p.Kid = k.kid
+	return token.Sign(k.priv, p)
+}
+
+func (k *Keyset) Rotate(newKid string, newPriv ed25519.PrivateKey) error {
+	if len(newPriv) != ed25519.PrivateKeySize {
+		return errors.New("invalid ed25519 private key")
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.kid = newKid
+	k.priv = newPriv
+	return nil
+}
+
+type TunnelKeysetFile struct {
+	Keys []TunnelKey `json:"keys"`
+}
+
+type TunnelKey struct {
+	KID       string `json:"kid"`
+	PubKeyB64 string `json:"pubkey_b64u"`
+}
+
+func (k *Keyset) ExportTunnelKeyset() ([]byte, error) {
+	keys := make([]TunnelKey, 0, 1)
+	for kid, pub := range k.PublicKeys() {
+		keys = append(keys, TunnelKey{
+			KID:       kid,
+			PubKeyB64: base64url.Encode(pub),
+		})
+	}
+	return json.MarshalIndent(TunnelKeysetFile{Keys: keys}, "", "  ")
+}

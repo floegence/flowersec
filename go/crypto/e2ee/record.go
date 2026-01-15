@@ -1,0 +1,146 @@
+package e2ee
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"errors"
+
+	"github.com/flowersec/flowersec/internal/bin"
+	"github.com/flowersec/flowersec/internal/hkdf"
+)
+
+var (
+	ErrRecordTooLarge   = errors.New("record too large")
+	ErrRecordBadSeq     = errors.New("record bad seq")
+	ErrRecordDecrypt    = errors.New("record decrypt failed")
+	ErrRecordBadFlag    = errors.New("record bad flag")
+	ErrRecordBadVersion = errors.New("record bad version")
+)
+
+type RecordFlag uint8
+
+const (
+	RecordFlagApp   RecordFlag = 0
+	RecordFlagPing  RecordFlag = 1
+	RecordFlagRekey RecordFlag = 2
+)
+
+type Direction uint8
+
+const (
+	DirC2S Direction = 1
+	DirS2C Direction = 2
+)
+
+type RecordKeyState struct {
+	SendKey      [32]byte
+	RecvKey      [32]byte
+	SendNoncePre [4]byte
+	RecvNoncePre [4]byte
+	RekeyBase    [32]byte
+	Transcript   [32]byte
+	SendDir      Direction
+	RecvDir      Direction
+
+	SendSeq uint64
+	RecvSeq uint64
+}
+
+func MaxPlaintext(maxRecordBytes int) int {
+	if maxRecordBytes <= 0 {
+		return 0
+	}
+	// record = header(18) + ciphertext(plaintext + gcmTag(16))
+	return maxRecordBytes - recordHeaderLen - 16
+}
+
+func EncryptRecord(sendKey [32]byte, noncePrefix [4]byte, flags RecordFlag, seq uint64, plaintext []byte, maxRecordBytes int) ([]byte, error) {
+	if maxRecordBytes > 0 {
+		if recordHeaderLen+len(plaintext)+16 > maxRecordBytes {
+			return nil, ErrRecordTooLarge
+		}
+	}
+	aead, err := NewAESGCM(sendKey)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, 12)
+	copy(nonce[:4], noncePrefix[:])
+	bin.PutU64BE(nonce[4:12], seq)
+
+	out := make([]byte, recordHeaderLen)
+	copy(out[:4], []byte(RecordMagic))
+	out[4] = ProtocolVersion
+	out[5] = byte(flags)
+	bin.PutU64BE(out[6:14], seq)
+	cipherLen := len(plaintext) + 16
+	bin.PutU32BE(out[14:18], uint32(cipherLen))
+	ciphertext := aead.Seal(nil, nonce, plaintext, out)
+	out = append(out, ciphertext...)
+	return out, nil
+}
+
+func DecryptRecord(recvKey [32]byte, noncePrefix [4]byte, frame []byte, expectSeq uint64, maxRecordBytes int) (flags RecordFlag, seq uint64, plaintext []byte, err error) {
+	if maxRecordBytes > 0 && len(frame) > maxRecordBytes {
+		return 0, 0, nil, ErrRecordTooLarge
+	}
+	if len(frame) < recordHeaderLen {
+		return 0, 0, nil, ErrInvalidLength
+	}
+	if string(frame[:4]) != RecordMagic {
+		return 0, 0, nil, ErrInvalidMagic
+	}
+	if frame[4] != ProtocolVersion {
+		return 0, 0, nil, ErrRecordBadVersion
+	}
+	flags = RecordFlag(frame[5])
+	switch flags {
+	case RecordFlagApp, RecordFlagPing, RecordFlagRekey:
+	default:
+		return 0, 0, nil, ErrRecordBadFlag
+	}
+	seq = bin.U64BE(frame[6:14])
+	if expectSeq != 0 && seq != expectSeq {
+		return 0, 0, nil, ErrRecordBadSeq
+	}
+	n := int(bin.U32BE(frame[14:18]))
+	if n < 0 || recordHeaderLen+n != len(frame) {
+		return 0, 0, nil, ErrInvalidLength
+	}
+
+	aead, err := NewAESGCM(recvKey)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	nonce := make([]byte, 12)
+	copy(nonce[:4], noncePrefix[:])
+	bin.PutU64BE(nonce[4:12], seq)
+	plain, err := aead.Open(nil, nonce, frame[recordHeaderLen:], frame[:recordHeaderLen])
+	if err != nil {
+		return 0, 0, nil, ErrRecordDecrypt
+	}
+	return flags, seq, plain, nil
+}
+
+func DeriveRekeyKey(rekeyBase [32]byte, transcriptHash [32]byte, seq uint64, dir Direction) ([32]byte, error) {
+	msg := make([]byte, 0, 32+8+1)
+	msg = append(msg, transcriptHash[:]...)
+	tmp := make([]byte, 8)
+	bin.PutU64BE(tmp, seq)
+	msg = append(msg, tmp...)
+	msg = append(msg, byte(dir))
+
+	mac := hmac.New(sha256.New, rekeyBase[:])
+	_, _ = mac.Write(msg)
+	var salt [32]byte
+	copy(salt[:], mac.Sum(nil))
+
+	prk := hkdf.ExtractSHA256(salt[:], []byte("flowersec-e2ee-v1:rekey"))
+	okm, err := hkdf.ExpandSHA256(prk, []byte("flowersec-e2ee-v1:rekey:key"), 32)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	var out [32]byte
+	copy(out[:], okm)
+	return out, nil
+}

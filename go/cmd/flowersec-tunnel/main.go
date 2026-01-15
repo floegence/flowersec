@@ -1,0 +1,87 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/flowersec/flowersec/tunnel/server"
+)
+
+func main() {
+	var listen string
+	var path string
+	var issuerKeysFile string
+	var aud string
+	flag.StringVar(&listen, "listen", "127.0.0.1:0", "listen address")
+	flag.StringVar(&path, "ws-path", "/ws", "websocket path")
+	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "issuer keyset file (kid->ed25519 pubkey)")
+	flag.StringVar(&aud, "aud", "", "expected token audience")
+	flag.Parse()
+
+	if issuerKeysFile == "" || aud == "" {
+		log.Fatal("missing --issuer-keys-file or --aud")
+	}
+
+	cfg := server.DefaultConfig()
+	cfg.Path = path
+	cfg.IssuerKeysFile = issuerKeysFile
+	cfg.TunnelAudience = aud
+
+	s, err := server.New(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer s.Close()
+
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	ready := map[string]string{
+		"listen":  ln.Addr().String(),
+		"ws_path": path,
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(ready)
+
+	sig := make(chan os.Signal, 2)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+
+	for {
+		switch <-sig {
+		case syscall.SIGHUP:
+			if err := s.ReloadKeys(); err != nil {
+				log.Printf("reload keys failed: %v", err)
+			} else {
+				log.Printf("reloaded issuer keyset")
+			}
+		default:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = srv.Shutdown(ctx)
+			cancel()
+			return
+		}
+	}
+}
