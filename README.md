@@ -37,6 +37,8 @@ It includes:
 - Endpoint roles: `client` vs `server` are protocol roles.
 - One-time tokens: tunnel attach tokens are single-use; mint a fresh channel init for each attempt.
 - Untrusted tunnel: the tunnel cannot decrypt or interpret application data after attach.
+- Single-instance tunnel: token replay protection is in-memory; multi-instance deployments require a shared cache or equivalent.
+- Handshake init_exp: `channel_init_expire_at` (init_exp) must be a non-zero Unix timestamp.
 
 ## Development
 

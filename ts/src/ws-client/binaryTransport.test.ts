@@ -31,6 +31,16 @@ class FakeWebSocket implements WebSocketLike {
   }
 }
 
+async function flushAsync(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitForClosed(ws: FakeWebSocket, attempts = 5): Promise<void> {
+  for (let i = 0; i < attempts && !ws.closed; i++) {
+    await flushAsync();
+  }
+}
+
 describe("WebSocketBinaryTransport", () => {
   test("fails fast when queued bytes exceed limit", async () => {
     const ws = new FakeWebSocket();
@@ -39,6 +49,7 @@ describe("WebSocketBinaryTransport", () => {
     ws.emit("message", { data: new Uint8Array([1, 2, 3]).buffer });
     ws.emit("message", { data: new Uint8Array([4, 5]).buffer });
 
+    await waitForClosed(ws);
     expect(ws.closed).toBe(true);
     await expect(transport.readBinary()).rejects.toThrow(/ws recv buffer exceeded/);
   });

@@ -217,6 +217,9 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	if opts.MaxBufferedBytes == 0 {
 		opts.MaxBufferedBytes = 4 * (1 << 20)
 	}
+	if opts.InitExpireAtUnixS <= 0 {
+		return nil, errors.New("missing init_exp")
+	}
 
 	var initMsg e2eev1.E2EE_Init
 	var st *serverHandshakeState
@@ -338,7 +341,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	if ts.Before(now.Add(-skew)) || ts.After(now.Add(skew)) {
 		return nil, errors.New("timestamp out of skew")
 	}
-	if opts.InitExpireAtUnixS != 0 && int64(ack.TimestampUnixS) > opts.InitExpireAtUnixS+int64(skew.Seconds()) {
+	if int64(ack.TimestampUnixS) > opts.InitExpireAtUnixS+int64(skew.Seconds()) {
 		return nil, errors.New("timestamp after init_exp")
 	}
 

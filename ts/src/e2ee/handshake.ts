@@ -204,6 +204,7 @@ export async function serverHandshake(
   cache: ServerHandshakeCache,
   opts: HandshakeServerOptions
 ): Promise<SecureChannel> {
+  if (opts.initExpireAtUnixS <= 0) throw new Error("missing init_exp");
   const initFrame = await transport.readBinary();
   const decodedInit = decodeHandshakeFrame(initFrame, opts.maxHandshakePayload);
   if (decodedInit.handshakeType !== HANDSHAKE_TYPE_INIT) throw new Error("unexpected handshake type");

@@ -13,6 +13,8 @@ export class WebSocketBinaryTransport {
   private queueBytes = 0;
   private readonly maxQueuedBytes: number;
   private waiters: Array<{ resolve: (b: Uint8Array) => void; reject: (e: unknown) => void }> = [];
+  // Serialize message handling to preserve arrival order across async Blob decoding.
+  private messageChain: Promise<void> = Promise.resolve();
   private error: unknown = null;
 
   constructor(ws: WebSocketLike, opts: Readonly<{ maxQueuedBytes?: number }> = {}) {
@@ -55,21 +57,39 @@ export class WebSocketBinaryTransport {
     this.ws.close();
   }
 
-  private readonly onMessage = (ev: any): void => {
-    const data = ev.data as ArrayBuffer | Blob;
+  private async handleMessage(data: unknown): Promise<void> {
+    if (this.error != null) return;
     if (typeof data === "string") {
-      this.fail(new Error("unexpected text frame"));
+      throw new Error("unexpected text frame");
+    }
+    if (data instanceof Uint8Array) {
+      this.push(data);
       return;
     }
     if (data instanceof ArrayBuffer) {
       this.push(new Uint8Array(data));
       return;
     }
-    if (typeof Blob !== "undefined" && data instanceof Blob) {
-      void data.arrayBuffer().then((ab) => this.push(new Uint8Array(ab)));
+    if (ArrayBuffer.isView(data)) {
+      const view = data as ArrayBufferView;
+      this.push(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
       return;
     }
-    this.fail(new Error("unexpected message type"));
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      const ab = await data.arrayBuffer();
+      if (this.error != null) return;
+      this.push(new Uint8Array(ab));
+      return;
+    }
+    throw new Error("unexpected message type");
+  }
+
+  private readonly onMessage = (ev: any): void => {
+    const data = ev.data;
+    this.messageChain = this.messageChain.then(() => this.handleMessage(data)).catch((err) => {
+      const e = err instanceof Error ? err : new Error(String(err));
+      this.fail(e);
+    });
   };
 
   private readonly onError = (): void => {
