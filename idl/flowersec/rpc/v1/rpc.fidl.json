@@ -3,24 +3,27 @@
   "enums": {},
   "messages": {
     "StreamHello": {
+      "comment": "Initial greeting sent on a new stream.",
       "fields": [
-        { "name": "kind", "type": "string" },
-        { "name": "v", "type": "u32" }
+        { "name": "kind", "type": "string", "comment": "Stream kind label (e.g. \"rpc\")." },
+        { "name": "v", "type": "u32", "comment": "Stream protocol version." }
       ]
     },
     "RpcError": {
+      "comment": "RPC error payload.",
       "fields": [
-        { "name": "code", "type": "u32" },
-        { "name": "message", "type": "string", "optional": true }
+        { "name": "code", "type": "u32", "comment": "Application or transport error code." },
+        { "name": "message", "type": "string", "optional": true, "comment": "Optional human-readable error message." }
       ]
     },
     "RpcEnvelope": {
+      "comment": "Envelope for RPC requests and responses.",
       "fields": [
-        { "name": "type_id", "type": "u32" },
-        { "name": "request_id", "type": "u64" },
-        { "name": "response_to", "type": "u64" },
-        { "name": "payload", "type": "json" },
-        { "name": "error", "type": "RpcError", "optional": true }
+        { "name": "type_id", "type": "u32", "comment": "Type identifier for routing." },
+        { "name": "request_id", "type": "u64", "comment": "Client-assigned request identifier." },
+        { "name": "response_to", "type": "u64", "comment": "Request identifier being responded to." },
+        { "name": "payload", "type": "json", "comment": "Request or response payload as JSON." },
+        { "name": "error", "type": "RpcError", "optional": true, "comment": "Error payload for failed requests." }
       ]
     }
   }

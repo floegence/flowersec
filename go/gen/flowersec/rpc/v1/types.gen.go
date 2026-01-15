@@ -4,22 +4,34 @@ package v1
 
 import "encoding/json"
 
+// Envelope for RPC requests and responses.
 type RpcEnvelope struct {
-	TypeId     uint32          `json:"type_id"`
-	RequestId  uint64          `json:"request_id"`
-	ResponseTo uint64          `json:"response_to"`
-	Payload    json.RawMessage `json:"payload"`
-	Error      *RpcError       `json:"error,omitempty"`
+	// Type identifier for routing.
+	TypeId uint32 `json:"type_id"`
+	// Client-assigned request identifier.
+	RequestId uint64 `json:"request_id"`
+	// Request identifier being responded to.
+	ResponseTo uint64 `json:"response_to"`
+	// Request or response payload as JSON.
+	Payload json.RawMessage `json:"payload"`
+	// Error payload for failed requests.
+	Error *RpcError `json:"error,omitempty"`
 }
 
+// RPC error payload.
 type RpcError struct {
-	Code    uint32  `json:"code"`
+	// Application or transport error code.
+	Code uint32 `json:"code"`
+	// Optional human-readable error message.
 	Message *string `json:"message,omitempty"`
 }
 
+// Initial greeting sent on a new stream.
 type StreamHello struct {
+	// Stream kind label (e.g. "rpc").
 	Kind string `json:"kind"`
-	V    uint32 `json:"v"`
+	// Stream protocol version.
+	V uint32 `json:"v"`
 }
 
 type JSON = json.RawMessage

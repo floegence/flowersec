@@ -4,30 +4,46 @@ package v1
 
 import "encoding/json"
 
+// Endpoint role for tunnel attach.
 type Role uint8
 
 const (
+	// Client endpoint.
 	Role_client Role = 1
+	// Server endpoint.
 	Role_server Role = 2
 )
 
+// E2EE cipher suite identifier.
 type Suite uint16
 
 const (
-	Suite_P256_HKDF_SHA256_AES_256_GCM   Suite = 2
+	// P-256 + HKDF-SHA256 + AES-256-GCM.
+	Suite_P256_HKDF_SHA256_AES_256_GCM Suite = 2
+	// X25519 + HKDF-SHA256 + AES-256-GCM.
 	Suite_X25519_HKDF_SHA256_AES_256_GCM Suite = 1
 )
 
+// Grant issued by controlplane to attach and start E2EE.
 type ChannelInitGrant struct {
-	TunnelUrl                string  `json:"tunnel_url"`
-	ChannelId                string  `json:"channel_id"`
-	ChannelInitExpireAtUnixS int64   `json:"channel_init_expire_at_unix_s"`
-	IdleTimeoutSeconds       int32   `json:"idle_timeout_seconds"`
-	Role                     Role    `json:"role"`
-	Token                    string  `json:"token"`
-	E2eePskB64u              string  `json:"e2ee_psk_b64u"`
-	AllowedSuites            []Suite `json:"allowed_suites"`
-	DefaultSuite             Suite   `json:"default_suite"`
+	// WebSocket URL of the tunnel server.
+	TunnelUrl string `json:"tunnel_url"`
+	// Channel identifier shared by both endpoints.
+	ChannelId string `json:"channel_id"`
+	// Unix timestamp when the grant expires.
+	ChannelInitExpireAtUnixS int64 `json:"channel_init_expire_at_unix_s"`
+	// Server idle timeout hint in seconds.
+	IdleTimeoutSeconds int32 `json:"idle_timeout_seconds"`
+	// Role for this grant (client or server).
+	Role Role `json:"role"`
+	// Signed tunnel attach token.
+	Token string `json:"token"`
+	// Base64url-encoded 32-byte PSK.
+	E2eePskB64u string `json:"e2ee_psk_b64u"`
+	// Allowed E2EE cipher suites.
+	AllowedSuites []Suite `json:"allowed_suites"`
+	// Default E2EE cipher suite.
+	DefaultSuite Suite `json:"default_suite"`
 }
 
 type JSON = json.RawMessage

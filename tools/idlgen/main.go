@@ -19,17 +19,21 @@ type schema struct {
 }
 
 type enumDef struct {
-	Type   string         `json:"type"`
-	Values map[string]int `json:"values"`
+	Type          string            `json:"type"`
+	Comment       string            `json:"comment"`
+	Values        map[string]int    `json:"values"`
+	ValueComments map[string]string `json:"value_comments"`
 }
 
 type messageDef struct {
-	Fields []fieldDef `json:"fields"`
+	Comment string     `json:"comment"`
+	Fields  []fieldDef `json:"fields"`
 }
 
 type fieldDef struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
+	Comment  string `json:"comment"`
 	Optional bool   `json:"optional"`
 }
 
@@ -126,6 +130,7 @@ func genGo(outRoot string, s schema) error {
 	enumNames := sortedKeys(s.Enums)
 	for _, name := range enumNames {
 		ed := s.Enums[name]
+		writeGoComment(&buf, ed.Comment, "")
 		goType := "uint32"
 		if strings.TrimSpace(ed.Type) == "u8" {
 			goType = "uint8"
@@ -136,6 +141,11 @@ func genGo(outRoot string, s schema) error {
 		buf.WriteString("const (\n")
 		valueNames := sortedKeysInt(ed.Values)
 		for _, vn := range valueNames {
+			valueComment := ""
+			if ed.ValueComments != nil {
+				valueComment = ed.ValueComments[vn]
+			}
+			writeGoComment(&buf, valueComment, "\t")
 			fmt.Fprintf(&buf, "\t%s_%s %s = %d\n", name, vn, name, ed.Values[vn])
 		}
 		buf.WriteString(")\n\n")
@@ -144,8 +154,10 @@ func genGo(outRoot string, s schema) error {
 	msgNames := sortedKeys(s.Messages)
 	for _, name := range msgNames {
 		md := s.Messages[name]
+		writeGoComment(&buf, md.Comment, "")
 		fmt.Fprintf(&buf, "type %s struct {\n", name)
 		for _, f := range md.Fields {
+			writeGoComment(&buf, f.Comment, "\t")
 			goFieldName := exportName(f.Name)
 			goType, err := goFieldType(f.Type)
 			if err != nil {
@@ -223,9 +235,15 @@ func genTS(outRoot string, s schema) error {
 	enumNames := sortedKeys(s.Enums)
 	for _, name := range enumNames {
 		ed := s.Enums[name]
+		writeTSComment(&buf, ed.Comment, "")
 		buf.WriteString("export enum " + name + " {\n")
 		valueNames := sortedKeysInt(ed.Values)
 		for _, vn := range valueNames {
+			valueComment := ""
+			if ed.ValueComments != nil {
+				valueComment = ed.ValueComments[vn]
+			}
+			writeTSComment(&buf, valueComment, "  ")
 			fmt.Fprintf(&buf, "  %s_%s = %d,\n", name, vn, ed.Values[vn])
 		}
 		buf.WriteString("}\n\n")
@@ -234,8 +252,10 @@ func genTS(outRoot string, s schema) error {
 	msgNames := sortedKeys(s.Messages)
 	for _, name := range msgNames {
 		md := s.Messages[name]
+		writeTSComment(&buf, md.Comment, "")
 		buf.WriteString("export interface " + name + " {\n")
 		for _, f := range md.Fields {
+			writeTSComment(&buf, f.Comment, "  ")
 			tsType, err := tsFieldType(f.Type)
 			if err != nil {
 				return fmt.Errorf("ts type %s.%s: %w", name, f.Name, err)
@@ -318,4 +338,51 @@ func sortedKeysInt(m map[string]int) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func splitCommentLines(comment string) []string {
+	comment = strings.TrimSpace(comment)
+	if comment == "" {
+		return nil
+	}
+	lines := strings.Split(comment, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, strings.TrimRight(line, "\r"))
+	}
+	return out
+}
+
+func writeGoComment(buf *bytes.Buffer, comment string, indent string) {
+	lines := splitCommentLines(comment)
+	if len(lines) == 0 {
+		return
+	}
+	for _, line := range lines {
+		if line == "" {
+			fmt.Fprintf(buf, "%s//\n", indent)
+			continue
+		}
+		fmt.Fprintf(buf, "%s// %s\n", indent, line)
+	}
+}
+
+func writeTSComment(buf *bytes.Buffer, comment string, indent string) {
+	lines := splitCommentLines(comment)
+	if len(lines) == 0 {
+		return
+	}
+	if len(lines) == 1 {
+		fmt.Fprintf(buf, "%s/** %s */\n", indent, lines[0])
+		return
+	}
+	fmt.Fprintf(buf, "%s/**\n", indent)
+	for _, line := range lines {
+		if line == "" {
+			fmt.Fprintf(buf, "%s *\n", indent)
+			continue
+		}
+		fmt.Fprintf(buf, "%s * %s\n", indent, line)
+	}
+	fmt.Fprintf(buf, "%s */\n", indent)
 }

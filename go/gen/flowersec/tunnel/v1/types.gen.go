@@ -4,20 +4,30 @@ package v1
 
 import "encoding/json"
 
+// Endpoint role for tunnel attach.
 type Role uint8
 
 const (
+	// Client endpoint.
 	Role_client Role = 1
+	// Server endpoint.
 	Role_server Role = 2
 )
 
+// Tunnel attach request payload.
 type Attach struct {
-	V                  uint32             `json:"v"`
-	ChannelId          string             `json:"channel_id"`
-	Role               Role               `json:"role"`
-	Token              string             `json:"token"`
-	EndpointInstanceId string             `json:"endpoint_instance_id"`
-	Caps               *map[string]string `json:"caps,omitempty"`
+	// Attach envelope version.
+	V uint32 `json:"v"`
+	// Channel identifier.
+	ChannelId string `json:"channel_id"`
+	// Endpoint role.
+	Role Role `json:"role"`
+	// Signed attach token.
+	Token string `json:"token"`
+	// Base64url-encoded endpoint instance ID.
+	EndpointInstanceId string `json:"endpoint_instance_id"`
+	// Optional capability map.
+	Caps *map[string]string `json:"caps,omitempty"`
 }
 
 type JSON = json.RawMessage

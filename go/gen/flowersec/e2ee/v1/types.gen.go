@@ -4,55 +4,84 @@ package v1
 
 import "encoding/json"
 
+// Feature bitset advertised during handshake.
 type E2EEFeatureBits uint32
 
 const (
+	// Supports rekey control records.
 	E2EEFeatureBits_rekey E2EEFeatureBits = 1
 )
 
+// Record type indicator for encrypted frames.
 type RecordFlags uint8
 
 const (
-	RecordFlags_app   RecordFlags = 0
-	RecordFlags_ping  RecordFlags = 1
+	// Application data record.
+	RecordFlags_app RecordFlags = 0
+	// Ping record.
+	RecordFlags_ping RecordFlags = 1
+	// Rekey control record.
 	RecordFlags_rekey RecordFlags = 2
 )
 
+// Endpoint role for the E2EE handshake.
 type Role uint8
 
 const (
+	// Client endpoint.
 	Role_client Role = 1
+	// Server endpoint.
 	Role_server Role = 2
 )
 
+// E2EE cipher suite identifier.
 type Suite uint16
 
 const (
-	Suite_P256_HKDF_SHA256_AES_256_GCM   Suite = 2
+	// P-256 + HKDF-SHA256 + AES-256-GCM.
+	Suite_P256_HKDF_SHA256_AES_256_GCM Suite = 2
+	// X25519 + HKDF-SHA256 + AES-256-GCM.
 	Suite_X25519_HKDF_SHA256_AES_256_GCM Suite = 1
 )
 
+// Client handshake ack payload.
 type E2EE_Ack struct {
-	HandshakeId    string `json:"handshake_id"`
+	// Handshake identifier being acknowledged.
+	HandshakeId string `json:"handshake_id"`
+	// Client Unix timestamp used for the auth tag.
 	TimestampUnixS uint64 `json:"timestamp_unix_s"`
-	AuthTagB64u    string `json:"auth_tag_b64u"`
+	// Base64url-encoded auth tag.
+	AuthTagB64u string `json:"auth_tag_b64u"`
 }
 
+// Client handshake init payload.
 type E2EE_Init struct {
-	ChannelId        string `json:"channel_id"`
-	Role             Role   `json:"role"`
-	Version          uint8  `json:"version"`
-	Suite            Suite  `json:"suite"`
+	// Channel identifier.
+	ChannelId string `json:"channel_id"`
+	// Role of the sender (client).
+	Role Role `json:"role"`
+	// Protocol version.
+	Version uint8 `json:"version"`
+	// Requested cipher suite.
+	Suite Suite `json:"suite"`
+	// Base64url-encoded client ephemeral public key.
 	ClientEphPubB64u string `json:"client_eph_pub_b64u"`
-	NonceCB64u       string `json:"nonce_c_b64u"`
-	ClientFeatures   uint32 `json:"client_features"`
+	// Base64url-encoded client nonce (32 bytes).
+	NonceCB64u string `json:"nonce_c_b64u"`
+	// Client feature bits.
+	ClientFeatures uint32 `json:"client_features"`
 }
 
+// Server handshake response payload.
 type E2EE_Resp struct {
-	HandshakeId      string `json:"handshake_id"`
+	// Handshake identifier for retries.
+	HandshakeId string `json:"handshake_id"`
+	// Base64url-encoded server ephemeral public key.
 	ServerEphPubB64u string `json:"server_eph_pub_b64u"`
-	NonceSB64u       string `json:"nonce_s_b64u"`
-	ServerFeatures   uint32 `json:"server_features"`
+	// Base64url-encoded server nonce (32 bytes).
+	NonceSB64u string `json:"nonce_s_b64u"`
+	// Server feature bits.
+	ServerFeatures uint32 `json:"server_features"`
 }
 
 type JSON = json.RawMessage

@@ -2,29 +2,40 @@
   "namespace": "flowersec.controlplane.v1",
   "enums": {
     "Role": {
+      "comment": "Endpoint role for tunnel attach.",
       "type": "u8",
-      "values": { "client": 1, "server": 2 }
+      "values": { "client": 1, "server": 2 },
+      "value_comments": {
+        "client": "Client endpoint.",
+        "server": "Server endpoint."
+      }
     },
     "Suite": {
+      "comment": "E2EE cipher suite identifier.",
       "type": "u16",
       "values": {
         "X25519_HKDF_SHA256_AES_256_GCM": 1,
         "P256_HKDF_SHA256_AES_256_GCM": 2
+      },
+      "value_comments": {
+        "X25519_HKDF_SHA256_AES_256_GCM": "X25519 + HKDF-SHA256 + AES-256-GCM.",
+        "P256_HKDF_SHA256_AES_256_GCM": "P-256 + HKDF-SHA256 + AES-256-GCM."
       }
     }
   },
   "messages": {
     "ChannelInitGrant": {
+      "comment": "Grant issued by controlplane to attach and start E2EE.",
       "fields": [
-        { "name": "tunnel_url", "type": "string" },
-        { "name": "channel_id", "type": "string" },
-        { "name": "channel_init_expire_at_unix_s", "type": "i64" },
-        { "name": "idle_timeout_seconds", "type": "i32" },
-        { "name": "role", "type": "Role" },
-        { "name": "token", "type": "string" },
-        { "name": "e2ee_psk_b64u", "type": "string" },
-        { "name": "allowed_suites", "type": "[]Suite" },
-        { "name": "default_suite", "type": "Suite" }
+        { "name": "tunnel_url", "type": "string", "comment": "WebSocket URL of the tunnel server." },
+        { "name": "channel_id", "type": "string", "comment": "Channel identifier shared by both endpoints." },
+        { "name": "channel_init_expire_at_unix_s", "type": "i64", "comment": "Unix timestamp when the grant expires." },
+        { "name": "idle_timeout_seconds", "type": "i32", "comment": "Server idle timeout hint in seconds." },
+        { "name": "role", "type": "Role", "comment": "Role for this grant (client or server)." },
+        { "name": "token", "type": "string", "comment": "Signed tunnel attach token." },
+        { "name": "e2ee_psk_b64u", "type": "string", "comment": "Base64url-encoded 32-byte PSK." },
+        { "name": "allowed_suites", "type": "[]Suite", "comment": "Allowed E2EE cipher suites." },
+        { "name": "default_suite", "type": "Suite", "comment": "Default E2EE cipher suite." }
       ]
     }
   }

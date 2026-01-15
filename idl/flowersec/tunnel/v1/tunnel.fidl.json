@@ -2,22 +2,28 @@
   "namespace": "flowersec.tunnel.v1",
   "enums": {
     "Role": {
+      "comment": "Endpoint role for tunnel attach.",
       "type": "u8",
       "values": {
         "client": 1,
         "server": 2
+      },
+      "value_comments": {
+        "client": "Client endpoint.",
+        "server": "Server endpoint."
       }
     }
   },
   "messages": {
     "Attach": {
+      "comment": "Tunnel attach request payload.",
       "fields": [
-        { "name": "v", "type": "u32" },
-        { "name": "channel_id", "type": "string" },
-        { "name": "role", "type": "Role" },
-        { "name": "token", "type": "string" },
-        { "name": "endpoint_instance_id", "type": "string" },
-        { "name": "caps", "type": "map<string,string>", "optional": true }
+        { "name": "v", "type": "u32", "comment": "Attach envelope version." },
+        { "name": "channel_id", "type": "string", "comment": "Channel identifier." },
+        { "name": "role", "type": "Role", "comment": "Endpoint role." },
+        { "name": "token", "type": "string", "comment": "Signed attach token." },
+        { "name": "endpoint_instance_id", "type": "string", "comment": "Base64url-encoded endpoint instance ID." },
+        { "name": "caps", "type": "map<string,string>", "optional": true, "comment": "Optional capability map." }
       ]
     }
   }
