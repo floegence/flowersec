@@ -13,5 +13,5 @@ ts-test:
 	cd ts && npm test
 
 lint:
-	cd go && gofmt -w .
+	gofmt -w go examples/go
 	cd ts && npm run lint

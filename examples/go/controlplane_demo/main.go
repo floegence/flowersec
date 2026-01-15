@@ -1,0 +1,181 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"flag"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/flowersec/flowersec/controlplane/channelinit"
+	"github.com/flowersec/flowersec/controlplane/issuer"
+	controlv1 "github.com/flowersec/flowersec/gen/flowersec/controlplane/v1"
+)
+
+type ready struct {
+	ControlplaneHTTPURL string `json:"controlplane_http_url"`
+
+	// Copy-paste values for running the deployable tunnel server.
+	TunnelAudience  string `json:"tunnel_audience"`
+	IssuerKeysFile  string `json:"issuer_keys_file"`
+	TunnelWSURLHint string `json:"tunnel_ws_url_hint"`
+	TunnelStartCmd  string `json:"tunnel_start_cmd"`
+}
+
+type channelInitRequest struct {
+	ChannelID string `json:"channel_id"`
+}
+
+type channelInitResponse struct {
+	GrantClient *controlv1.ChannelInitGrant `json:"grant_client"`
+	GrantServer *controlv1.ChannelInitGrant `json:"grant_server"`
+}
+
+func main() {
+	var listen string
+	var tunnelURL string
+	var aud string
+	var issuerID string
+	var kid string
+	var issuerKeysFile string
+	flag.StringVar(&listen, "listen", "127.0.0.1:0", "listen address")
+	flag.StringVar(&tunnelURL, "tunnel-url", "", "tunnel websocket url (e.g. ws://127.0.0.1:8080/ws)")
+	flag.StringVar(&aud, "aud", "flowersec-tunnel:dev", "token audience (must match tunnel --aud)")
+	flag.StringVar(&issuerID, "issuer-id", "issuer-demo", "issuer id in token payload")
+	flag.StringVar(&kid, "kid", "k1", "issuer key id (kid)")
+	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "output file for tunnel keyset (kid->ed25519 pubkey)")
+	flag.Parse()
+
+	if tunnelURL == "" {
+		log.Fatal("missing --tunnel-url")
+	}
+	if issuerKeysFile == "" {
+		log.Fatal("missing --issuer-keys-file")
+	}
+
+	ks, err := issuer.NewRandom(kid)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := writeTunnelKeysetFile(ks, issuerKeysFile); err != nil {
+		log.Fatal(err)
+	}
+
+	ci := &channelinit.Service{
+		Issuer: ks,
+		Params: channelinit.Params{
+			TunnelURL:       tunnelURL,
+			TunnelAudience:  aud,
+			IssuerID:        issuerID,
+			TokenExpSeconds: 60,
+		},
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		_ = r
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/v1/channel/init", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req channelInitRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
+		chID := req.ChannelID
+		if chID == "" {
+			chID = randomB64u(24)
+		}
+		grantC, grantS, err := ci.NewChannelInit(chID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(channelInitResponse{GrantClient: grantC, GrantServer: grantS})
+	})
+
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		log.Fatal(err)
+	}
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	httpURL := "http://" + ln.Addr().String()
+	_ = json.NewEncoder(os.Stdout).Encode(ready{
+		ControlplaneHTTPURL: httpURL,
+		TunnelAudience:      aud,
+		IssuerKeysFile:      issuerKeysFile,
+		TunnelWSURLHint:     tunnelURL,
+		TunnelStartCmd:      tunnelStartCmd(tunnelURL, aud, issuerKeysFile),
+	})
+
+	sig := make(chan os.Signal, 2)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = srv.Shutdown(ctx2)
+	cancel2()
+}
+
+func writeTunnelKeysetFile(ks *issuer.Keyset, out string) error {
+	b, err := ks.ExportTunnelKeyset()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(out, b, 0o644)
+}
+
+func randomB64u(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func tunnelStartCmd(tunnelURL string, aud string, issuerKeysFile string) string {
+	u, err := url.Parse(tunnelURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	wsPath := u.Path
+	if wsPath == "" || wsPath == "/" {
+		wsPath = "/ws"
+	}
+	// This command is meant to be run from the repo root.
+	return "FSEC_TUNNEL_ISSUER_KEYS_FILE=" + shellQuote(issuerKeysFile) +
+		" FSEC_TUNNEL_AUD=" + shellQuote(aud) +
+		" FSEC_TUNNEL_LISTEN=" + shellQuote(u.Host) +
+		" FSEC_TUNNEL_WS_PATH=" + shellQuote(wsPath) +
+		" ./examples/run-tunnel-server.sh"
+}
+
+func shellQuote(s string) string {
+	// Minimal safe single-quote escaping for bash.
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}

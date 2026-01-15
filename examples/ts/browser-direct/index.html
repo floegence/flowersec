@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flowersec Direct Demo (Browser)</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 920px; }
+      textarea { width: 100%; height: 240px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      pre { background: #0b1020; color: #e8e8e8; padding: 12px; border-radius: 8px; overflow: auto; }
+      button { padding: 8px 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Flowersec Direct Demo (Browser)</h1>
+    <p>Paste JSON from <code>examples/go/direct_demo</code>.</p>
+    <textarea id="in" spellcheck="false"></textarea>
+    <div style="margin: 12px 0">
+      <button id="connect">Connect</button>
+      <button id="close" disabled>Close</button>
+    </div>
+    <pre id="out"></pre>
+
+    <script type="module">
+      import {
+        base64urlDecode,
+        ByteReader,
+        clientHandshake,
+        RpcClient,
+        RpcProxy,
+        WebSocketBinaryTransport,
+        writeStreamHello,
+        YamuxSession
+      } from "../../../ts/dist/index.js";
+
+      const $in = document.getElementById("in");
+      const $out = document.getElementById("out");
+      const $connect = document.getElementById("connect");
+      const $close = document.getElementById("close");
+
+      let client = null;
+
+      function logLine(s) {
+        $out.textContent += s + "\n";
+      }
+
+      function waitOpen(ws) {
+        return new Promise((resolve, reject) => {
+          const onOpen = () => {
+            cleanup();
+            resolve();
+          };
+          const onErr = () => {
+            cleanup();
+            reject(new Error("websocket error"));
+          };
+          const onClose = () => {
+            cleanup();
+            reject(new Error("websocket closed"));
+          };
+          const cleanup = () => {
+            ws.removeEventListener("open", onOpen);
+            ws.removeEventListener("error", onErr);
+            ws.removeEventListener("close", onClose);
+          };
+          ws.addEventListener("open", onOpen);
+          ws.addEventListener("error", onErr);
+          ws.addEventListener("close", onClose);
+        });
+      }
+
+      function waitNotify(proxy, typeId, timeoutMs) {
+        return new Promise((resolve, reject) => {
+          let unsub = () => {};
+          const t = setTimeout(() => {
+            unsub();
+            reject(new Error("timeout waiting for notification"));
+          }, timeoutMs);
+          unsub = proxy.onNotify(typeId, (payload) => {
+            clearTimeout(t);
+            unsub();
+            resolve(payload);
+          });
+        });
+      }
+
+      async function connectDirectClientRpc(info) {
+        const ws = new WebSocket(info.ws_url);
+        await waitOpen(ws);
+
+        const transport = new WebSocketBinaryTransport(ws);
+        const psk = base64urlDecode(info.e2ee_psk_b64u);
+        const suite = info.default_suite;
+        const secure = await clientHandshake(transport, {
+          channelId: info.channel_id,
+          suite,
+          psk,
+          clientFeatures: 0,
+          maxHandshakePayload: 8 * 1024,
+          maxRecordBytes: 1 << 20
+        });
+
+        const conn = {
+          read: () => secure.read(),
+          write: (b) => secure.write(b),
+          close: () => secure.close()
+        };
+        const mux = new YamuxSession(conn, { client: true });
+        const rpcStream = await mux.openStream();
+
+        const reader = new ByteReader(async () => {
+          try {
+            return await rpcStream.read();
+          } catch {
+            return null;
+          }
+        });
+        const readExactly = (n) => reader.readExactly(n);
+        const write = (b) => rpcStream.write(b);
+
+        await writeStreamHello(write, "rpc");
+        const rpc = new RpcClient(readExactly, write);
+        const rpcProxy = new RpcProxy();
+        rpcProxy.attach(rpc);
+
+        return {
+          secure,
+          mux,
+          rpc,
+          rpcProxy,
+          close: () => {
+            rpcProxy.detach();
+            rpc.close();
+            mux.close();
+            secure.close();
+          }
+        };
+      }
+
+      $connect.addEventListener("click", async () => {
+        $out.textContent = "";
+        try {
+          const info = JSON.parse($in.value);
+          client = await connectDirectClientRpc(info);
+          $close.disabled = false;
+
+          const notified = waitNotify(client.rpcProxy, 2, 2000);
+          const resp = await client.rpcProxy.call(1, {});
+          logLine("rpc response: " + JSON.stringify(resp.payload));
+          logLine("rpc notify: " + JSON.stringify(await notified));
+
+          const echo = await client.mux.openStream();
+          const reader = new ByteReader(async () => {
+            try {
+              return await echo.read();
+            } catch {
+              return null;
+            }
+          });
+          await writeStreamHello((b) => echo.write(b), "echo");
+          const msg = new TextEncoder().encode("hello over yamux stream: echo");
+          await echo.write(msg);
+          const got = await reader.readExactly(msg.length);
+          logLine("echo response: " + JSON.stringify(new TextDecoder().decode(got)));
+          await echo.close();
+        } catch (e) {
+          logLine(String(e?.stack ?? e));
+        }
+      });
+
+      $close.addEventListener("click", () => {
+        client?.close();
+        client = null;
+        $close.disabled = true;
+        logLine("closed");
+      });
+    </script>
+  </body>
+</html>

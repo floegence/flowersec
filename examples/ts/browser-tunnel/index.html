@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flowersec Tunnel Demo (Browser)</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 920px; }
+      textarea { width: 100%; height: 240px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      pre { background: #0b1020; color: #e8e8e8; padding: 12px; border-radius: 8px; overflow: auto; }
+      button { padding: 8px 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Flowersec Tunnel Demo (Browser)</h1>
+    <p>Paste JSON from the controlplane <code>/v1/channel/init</code> response (either the full object or <code>grant_client</code> only).</p>
+    <textarea id="in" spellcheck="false"></textarea>
+    <div style="margin: 12px 0">
+      <button id="connect">Connect</button>
+      <button id="close" disabled>Close</button>
+    </div>
+    <pre id="out"></pre>
+
+    <script type="module">
+      import { ByteReader, connectTunnelClientRpc, writeStreamHello } from "../../../ts/dist/index.js";
+
+      const $in = document.getElementById("in");
+      const $out = document.getElementById("out");
+      const $connect = document.getElementById("connect");
+      const $close = document.getElementById("close");
+
+      let client = null;
+
+      function logLine(s) {
+        $out.textContent += s + "\n";
+      }
+
+      function pickGrantClient(obj) {
+        if (obj && typeof obj === "object" && obj.grant_client != null) return obj.grant_client;
+        return obj;
+      }
+
+      function waitNotify(proxy, typeId, timeoutMs) {
+        return new Promise((resolve, reject) => {
+          let unsub = () => {};
+          const t = setTimeout(() => {
+            unsub();
+            reject(new Error("timeout waiting for notification"));
+          }, timeoutMs);
+          unsub = proxy.onNotify(typeId, (payload) => {
+            clearTimeout(t);
+            unsub();
+            resolve(payload);
+          });
+        });
+      }
+
+      $connect.addEventListener("click", async () => {
+        $out.textContent = "";
+        try {
+          const obj = JSON.parse($in.value);
+          const grant = pickGrantClient(obj);
+          client = await connectTunnelClientRpc(grant);
+          $close.disabled = false;
+
+          const notified = waitNotify(client.rpcProxy, 2, 2000);
+          const resp = await client.rpcProxy.call(1, {});
+          logLine("rpc response: " + JSON.stringify(resp.payload));
+          logLine("rpc notify: " + JSON.stringify(await notified));
+
+          const echo = await client.mux.openStream();
+          const reader = new ByteReader(async () => {
+            try {
+              return await echo.read();
+            } catch {
+              return null;
+            }
+          });
+          await writeStreamHello((b) => echo.write(b), "echo");
+          const msg = new TextEncoder().encode("hello over yamux stream: echo");
+          await echo.write(msg);
+          const got = await reader.readExactly(msg.length);
+          logLine("echo response: " + JSON.stringify(new TextDecoder().decode(got)));
+          await echo.close();
+        } catch (e) {
+          logLine(String(e?.stack ?? e));
+        }
+      });
+
+      $close.addEventListener("click", () => {
+        client?.close();
+        client = null;
+        $close.disabled = true;
+        logLine("closed");
+      });
+    </script>
+  </body>
+</html>
