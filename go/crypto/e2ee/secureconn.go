@@ -3,6 +3,7 @@ package e2ee
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -10,8 +11,9 @@ import (
 )
 
 type SecureConn struct {
-	t              BinaryTransport
-	maxRecordBytes int
+	t                BinaryTransport
+	maxRecordBytes   int
+	maxBufferedBytes int
 
 	mu      sync.Mutex
 	cond    *sync.Cond
@@ -28,17 +30,20 @@ type SecureConn struct {
 	keys RecordKeyState
 }
 
+var ErrRecvBufferExceeded = errors.New("recv buffer exceeded")
+
 type sendReq struct {
 	frame []byte
 	done  chan error
 }
 
-func NewSecureConn(t BinaryTransport, keys RecordKeyState, maxRecordBytes int) *SecureConn {
+func NewSecureConn(t BinaryTransport, keys RecordKeyState, maxRecordBytes int, maxBufferedBytes int) *SecureConn {
 	c := &SecureConn{
-		t:              t,
-		maxRecordBytes: maxRecordBytes,
-		keys:           keys,
-		sendCh:         make(chan sendReq, 16),
+		t:                t,
+		maxRecordBytes:   maxRecordBytes,
+		maxBufferedBytes: maxBufferedBytes,
+		keys:             keys,
+		sendCh:           make(chan sendReq, 16),
 	}
 	c.cond = sync.NewCond(&c.mu)
 	go c.writeLoop()
@@ -84,6 +89,11 @@ func (c *SecureConn) readLoop() {
 		switch flags {
 		case RecordFlagApp:
 			c.mu.Lock()
+			if c.maxBufferedBytes > 0 && c.buf.Len()+len(plain) > c.maxBufferedBytes {
+				c.mu.Unlock()
+				c.failRead(ErrRecvBufferExceeded)
+				return
+			}
 			_, _ = c.buf.Write(plain)
 			c.cond.Broadcast()
 			c.mu.Unlock()

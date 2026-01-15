@@ -10,11 +10,14 @@ export type WebSocketLike = {
 export class WebSocketBinaryTransport {
   private readonly ws: WebSocketLike;
   private readonly queue: Uint8Array[] = [];
+  private queueBytes = 0;
+  private readonly maxQueuedBytes: number;
   private waiters: Array<{ resolve: (b: Uint8Array) => void; reject: (e: unknown) => void }> = [];
   private error: unknown = null;
 
-  constructor(ws: WebSocketLike) {
+  constructor(ws: WebSocketLike, opts: Readonly<{ maxQueuedBytes?: number }> = {}) {
     this.ws = ws;
+    this.maxQueuedBytes = Math.max(0, opts.maxQueuedBytes ?? 4 * (1 << 20));
     this.ws.binaryType = "arraybuffer";
     this.ws.addEventListener("message", this.onMessage);
     this.ws.addEventListener("error", this.onError);
@@ -24,7 +27,10 @@ export class WebSocketBinaryTransport {
   readBinary(): Promise<Uint8Array> {
     if (this.error != null) return Promise.reject(this.error);
     const b = this.queue.shift();
-    if (b != null) return Promise.resolve(b);
+    if (b != null) {
+      this.queueBytes -= b.length;
+      return Promise.resolve(b);
+    }
     return new Promise<Uint8Array>((resolve, reject) => {
       if (this.error != null) {
         reject(this.error);
@@ -43,6 +49,8 @@ export class WebSocketBinaryTransport {
     this.ws.removeEventListener("message", this.onMessage);
     this.ws.removeEventListener("error", this.onError);
     this.ws.removeEventListener("close", this.onClose);
+    this.queue.length = 0;
+    this.queueBytes = 0;
     this.ws.close();
   }
 
@@ -77,7 +85,13 @@ export class WebSocketBinaryTransport {
       w.resolve(b);
       return;
     }
+    if (this.maxQueuedBytes > 0 && this.queueBytes + b.length > this.maxQueuedBytes) {
+      this.fail(new Error("ws recv buffer exceeded"));
+      this.ws.close();
+      return;
+    }
     this.queue.push(b);
+    this.queueBytes += b.length;
   }
 
   private fail(err: unknown): void {

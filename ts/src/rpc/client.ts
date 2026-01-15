@@ -26,9 +26,23 @@ export class RpcClient {
     const p = new Promise<RpcEnvelope>((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });
     });
-    await writeJsonFrame(this.write, env);
-    if (signal?.aborted) throw signal.reason ?? new Error("aborted");
-    const resp = await raceAbort(p, signal);
+    try {
+      await writeJsonFrame(this.write, env);
+    } catch (e) {
+      this.pending.delete(requestId);
+      throw e;
+    }
+    if (signal?.aborted) {
+      this.pending.delete(requestId);
+      throw signal.reason ?? new Error("aborted");
+    }
+    let resp: RpcEnvelope;
+    try {
+      resp = await raceAbort(p, signal);
+    } catch (e) {
+      this.pending.delete(requestId);
+      throw e;
+    }
     if (resp.error == null) return { payload: resp.payload };
     return { payload: resp.payload, error: resp.error };
   }

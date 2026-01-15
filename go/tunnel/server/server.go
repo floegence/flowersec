@@ -204,6 +204,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uc.SetReadLimit(int64(s.cfg.MaxRecordBytes))
+	uc.SetReadDeadline(time.Time{})
 	if err := s.addEndpoint(attach, p, uc); err != nil {
 		_ = c.CloseWithStatus(websocket.CloseInternalServerErr, "attach failed")
 		s.untrackConn(uc)

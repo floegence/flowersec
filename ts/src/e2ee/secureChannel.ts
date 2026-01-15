@@ -15,6 +15,15 @@ export type SecureChannelOptions = Readonly<{
 
 type Direction = 1 | 2;
 
+type SendKind = "app" | "ping" | "rekey";
+
+type SendReq = {
+  kind: SendKind;
+  payload?: Uint8Array;
+  resolve: () => void;
+  reject: (e: unknown) => void;
+};
+
 export class SecureChannel {
   private readonly transport: BinaryTransport;
   private readonly maxRecordBytes: number;
@@ -31,6 +40,11 @@ export class SecureChannel {
 
   private sendSeq = 1n;
   private recvSeq = 1n;
+
+  private sendQueue: SendReq[] = [];
+  private sendWaiters: Array<() => void> = [];
+  private sendClosed = false;
+  private sendErr: unknown = null;
 
   private readonly recvQueue: Uint8Array[] = [];
   private recvQueueBytes = 0;
@@ -63,6 +77,7 @@ export class SecureChannel {
     this.sendDir = args.sendDir;
     this.recvDir = args.recvDir;
     void this.readLoop();
+    void this.sendLoop();
   }
 
   async write(plaintext: Uint8Array): Promise<void> {
@@ -70,9 +85,7 @@ export class SecureChannel {
     let off = 0;
     while (off < plaintext.length) {
       const chunk = plaintext.slice(off, Math.min(plaintext.length, off + maxPlain));
-      const seq = this.sendSeq++;
-      const frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_APP, seq, chunk, this.maxRecordBytes);
-      await this.transport.writeBinary(frame);
+      await this.enqueueSend("app", chunk);
       off += chunk.length;
     }
   }
@@ -93,6 +106,9 @@ export class SecureChannel {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.sendClosed = true;
+    this.rejectQueuedSenders(this.sendErr ?? new Error("closed"));
+    this.wakeSendWaiters();
     this.transport.close();
     const ws = this.recvWaiters;
     this.recvWaiters = [];
@@ -100,16 +116,92 @@ export class SecureChannel {
   }
 
   async sendPing(): Promise<void> {
-    const seq = this.sendSeq++;
-    const frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_PING, seq, new Uint8Array(), this.maxRecordBytes);
-    await this.transport.writeBinary(frame);
+    await this.enqueueSend("ping");
   }
 
   async rekeyNow(): Promise<void> {
-    const seq = this.sendSeq++;
-    const frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_REKEY, seq, new Uint8Array(), this.maxRecordBytes);
-    await this.transport.writeBinary(frame);
-    this.sendKey = deriveRekeyKey(this.rekeyBase, this.transcriptHash, seq, this.sendDir);
+    await this.enqueueSend("rekey");
+  }
+
+  private enqueueSend(kind: SendKind, payload?: Uint8Array): Promise<void> {
+    if (this.sendErr != null) return Promise.reject(this.sendErr);
+    if (this.closed || this.sendClosed) return Promise.reject(new Error("closed"));
+    return new Promise<void>((resolve, reject) => {
+      if (this.sendErr != null) {
+        reject(this.sendErr);
+        return;
+      }
+      if (this.closed || this.sendClosed) {
+        reject(new Error("closed"));
+        return;
+      }
+      this.sendQueue.push({ kind, payload, resolve, reject });
+      const w = this.sendWaiters.shift();
+      if (w != null) w();
+    });
+  }
+
+  private async nextSend(): Promise<SendReq | null> {
+    if (this.sendQueue.length > 0) return this.sendQueue.shift() ?? null;
+    if (this.closed || this.sendClosed) return null;
+    return await new Promise<SendReq | null>((resolve) => {
+      this.sendWaiters.push(() => resolve(this.sendQueue.shift() ?? null));
+    });
+  }
+
+  private wakeSendWaiters(): void {
+    const ws = this.sendWaiters;
+    this.sendWaiters = [];
+    for (const w of ws) w();
+  }
+
+  private rejectQueuedSenders(err: unknown): void {
+    const queued = this.sendQueue;
+    this.sendQueue = [];
+    for (const req of queued) req.reject(err);
+  }
+
+  private failSend(err: unknown): void {
+    if (this.sendErr != null) return;
+    this.sendErr = err;
+    this.rejectQueuedSenders(err);
+    this.wakeSendWaiters();
+  }
+
+  private async sendLoop(): Promise<void> {
+    while (true) {
+      const req = await this.nextSend();
+      if (req == null) return;
+      if (this.sendErr != null) {
+        req.reject(this.sendErr);
+        continue;
+      }
+      if (this.closed || this.sendClosed) {
+        req.reject(new Error("closed"));
+        continue;
+      }
+      try {
+        let frame: Uint8Array;
+        if (req.kind === "app") {
+          const seq = this.sendSeq++;
+          frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_APP, seq, req.payload ?? new Uint8Array(), this.maxRecordBytes);
+        } else if (req.kind === "ping") {
+          const seq = this.sendSeq++;
+          frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_PING, seq, new Uint8Array(), this.maxRecordBytes);
+        } else {
+          const seq = this.sendSeq++;
+          frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_REKEY, seq, new Uint8Array(), this.maxRecordBytes);
+          this.sendKey = deriveRekeyKey(this.rekeyBase, this.transcriptHash, seq, this.sendDir);
+        }
+        await this.transport.writeBinary(frame);
+        req.resolve();
+      } catch (e) {
+        req.reject(e);
+        this.failSend(e);
+        this.close();
+        return;
+      }
+    }
   }
 
   private async readLoop(): Promise<void> {

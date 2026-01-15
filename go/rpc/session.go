@@ -214,9 +214,8 @@ func (c *Client) reserve() (uint64, chan rpcv1.RpcEnvelope, error) {
 
 func (c *Client) release(id uint64) {
 	c.mu.Lock()
-	if ch, ok := c.pending[id]; ok {
+	if _, ok := c.pending[id]; ok {
 		delete(c.pending, id)
-		close(ch)
 	}
 	c.mu.Unlock()
 }

@@ -14,6 +14,8 @@ export type TunnelConnectOptions = Readonly<{
   clientFeatures?: number;
   maxHandshakePayload?: number;
   maxRecordBytes?: number;
+  maxBufferedBytes?: number;
+  maxWsQueuedBytes?: number;
   wsFactory?: (url: string) => WebSocketLike;
 }>;
 
@@ -31,7 +33,7 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
   };
   ws.send(JSON.stringify(attach));
 
-  const transport = new WebSocketBinaryTransport(ws);
+  const transport = new WebSocketBinaryTransport(ws, { maxQueuedBytes: opts.maxWsQueuedBytes });
   const psk = base64urlDecode(grant.e2ee_psk_b64u);
   const suite = grant.default_suite as unknown as 1 | 2;
   const secure = await clientHandshake(transport, {
@@ -40,7 +42,8 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
     psk,
     clientFeatures: opts.clientFeatures ?? 0,
     maxHandshakePayload: opts.maxHandshakePayload ?? 8 * 1024,
-    maxRecordBytes: opts.maxRecordBytes ?? (1 << 20)
+    maxRecordBytes: opts.maxRecordBytes ?? (1 << 20),
+    maxBufferedBytes: opts.maxBufferedBytes
   });
 
   const conn = {

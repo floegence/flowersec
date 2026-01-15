@@ -118,3 +118,47 @@ func TestRPC_ClientCallFailsWhenTransportCloses(t *testing.T) {
 		t.Fatal("timeout waiting for Call to return")
 	}
 }
+
+func TestRPC_CallCancelDoesNotPanicOnLateResponse(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	c := rpc.NewClient(a)
+	defer c.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		bs, err := rpc.ReadJSONFrame(b, 1<<20)
+		if err != nil {
+			return
+		}
+		var env rpcv1.RpcEnvelope
+		if err := json.Unmarshal(bs, &env); err != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		resp := rpcv1.RpcEnvelope{
+			TypeId:     env.TypeId,
+			RequestId:  0,
+			ResponseTo: env.RequestId,
+			Payload:    json.RawMessage(`{}`),
+		}
+		_ = rpc.WriteJSONFrame(b, resp)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	_, _, err := c.Call(ctx, 1, json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for server goroutine")
+	}
+}

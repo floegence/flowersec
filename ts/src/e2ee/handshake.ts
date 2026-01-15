@@ -18,6 +18,7 @@ export type HandshakeClientOptions = Readonly<{
   clientFeatures: number;
   maxHandshakePayload: number;
   maxRecordBytes: number;
+  maxBufferedBytes?: number;
 }>;
 
 export type HandshakeServerOptions = Readonly<{
@@ -29,6 +30,7 @@ export type HandshakeServerOptions = Readonly<{
   clockSkewSeconds: number;
   maxHandshakePayload: number;
   maxRecordBytes: number;
+  maxBufferedBytes?: number;
 }>;
 
 const te = new TextEncoder();
@@ -126,6 +128,7 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
   return new SecureChannel({
     transport,
     maxRecordBytes: opts.maxRecordBytes,
+    maxBufferedBytes: opts.maxBufferedBytes,
     sendKey: keys.c2sKey,
     recvKey: keys.s2cKey,
     sendNoncePrefix: keys.c2sNoncePrefix,
@@ -267,6 +270,7 @@ export async function serverHandshake(
   return new SecureChannel({
     transport,
     maxRecordBytes: opts.maxRecordBytes,
+    maxBufferedBytes: opts.maxBufferedBytes,
     sendKey: keys.s2cKey,
     recvKey: keys.c2sKey,
     sendNoncePrefix: keys.s2cNoncePrefix,

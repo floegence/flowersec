@@ -66,7 +66,15 @@ export class YamuxSession {
 
   async sendRst(id: number): Promise<void> {
     const hdr = encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_RST, streamId: id, length: 0 });
-    await this.writeRaw(hdr);
+    if (this.closed) {
+      this.streams.delete(id);
+      return;
+    }
+    try {
+      await this.writeRaw(hdr);
+    } catch {
+      // Best-effort reset; ignore errors when the session is closing.
+    }
     this.streams.delete(id);
   }
 

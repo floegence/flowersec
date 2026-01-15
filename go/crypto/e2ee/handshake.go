@@ -28,6 +28,7 @@ type HandshakeOptions struct {
 
 	MaxHandshakePayload int
 	MaxRecordBytes      int
+	MaxBufferedBytes    int
 }
 
 type ServerHandshakeCache struct {
@@ -77,6 +78,9 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 	}
 	if opts.Suite == 0 {
 		opts.Suite = SuiteX25519HKDFAES256GCM
+	}
+	if opts.MaxBufferedBytes == 0 {
+		opts.MaxBufferedBytes = 4 * (1 << 20)
 	}
 
 	priv, pub, err := GenerateEphemeralKeypair(opts.Suite)
@@ -197,7 +201,7 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 		RecvDir:      DirS2C,
 		SendSeq:      1,
 		RecvSeq:      1,
-	}, opts.MaxRecordBytes), nil
+	}, opts.MaxRecordBytes, opts.MaxBufferedBytes), nil
 }
 
 func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandshakeCache, opts HandshakeOptions) (*SecureConn, error) {
@@ -209,6 +213,9 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	}
 	if opts.Suite == 0 {
 		opts.Suite = SuiteX25519HKDFAES256GCM
+	}
+	if opts.MaxBufferedBytes == 0 {
+		opts.MaxBufferedBytes = 4 * (1 << 20)
 	}
 
 	var initMsg e2eev1.E2EE_Init
@@ -406,7 +413,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 		RecvDir:      DirC2S,
 		SendSeq:      1,
 		RecvSeq:      1,
-	}, opts.MaxRecordBytes), nil
+	}, opts.MaxRecordBytes, opts.MaxBufferedBytes), nil
 }
 
 func (c *ServerHandshakeCache) getOrCreate(initMsg e2eev1.E2EE_Init, suite Suite, serverFeatures uint32) (*serverHandshakeState, error) {
