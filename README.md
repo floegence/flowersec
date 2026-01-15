@@ -46,22 +46,7 @@ The examples in `examples/README.md` cover two common paths. The diagrams below 
 
 ### Tunnel path (controlplane + tunnel)
 
-```mermaid
-flowchart LR
-  CP["Controlplane demo\nmints ChannelInitGrant pair"]
-  Client["Client endpoint\nrole=client"]
-  Server["Server endpoint\nrole=server"]
-  Tunnel["Tunnel server\nblind forwarder"]
-
-  CP -->|grant_client| Client
-  CP -->|grant_server| Server
-
-  Client -->|WS Attach token and channel_id| Tunnel
-  Server -->|WS Attach token and channel_id| Tunnel
-
-  Client -->|E2EE FSEH-FSEC, Yamux, RPC, echo| Tunnel
-  Tunnel -->|encrypted bytes only| Server
-```
+![Tunnel path (controlplane + tunnel)](docs/tunnel-path.svg)
 
 ### Direct path (no tunnel)
 
