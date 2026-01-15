@@ -33,6 +33,9 @@ type HandshakeOptions struct {
 type ServerHandshakeCache struct {
 	mu sync.Mutex
 	m  map[string]*serverHandshakeState
+
+	ttl        time.Duration
+	maxEntries int
 }
 
 type serverHandshakeState struct {
@@ -48,7 +51,21 @@ type serverHandshakeState struct {
 }
 
 func NewServerHandshakeCache() *ServerHandshakeCache {
-	return &ServerHandshakeCache{m: make(map[string]*serverHandshakeState)}
+	return &ServerHandshakeCache{
+		m:          make(map[string]*serverHandshakeState),
+		ttl:        60 * time.Second,
+		maxEntries: 4096,
+	}
+}
+
+var ErrTooManyPendingHandshakes = errors.New("too many pending handshakes")
+
+// SetLimits configures cache bounds. A zero value disables the corresponding limit.
+func (c *ServerHandshakeCache) SetLimits(ttl time.Duration, maxEntries int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ttl = ttl
+	c.maxEntries = maxEntries
 }
 
 func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptions) (*SecureConn, error) {
@@ -307,8 +324,11 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 
 	now := time.Now()
 	skew := opts.ClockSkew
+	if skew < 0 {
+		skew = 0
+	}
 	ts := time.Unix(int64(ack.TimestampUnixS), 0)
-	if skew > 0 && (ts.Before(now.Add(-skew)) || ts.After(now.Add(skew))) {
+	if ts.Before(now.Add(-skew)) || ts.After(now.Add(skew)) {
 		return nil, errors.New("timestamp out of skew")
 	}
 	if opts.InitExpireAtUnixS != 0 && int64(ack.TimestampUnixS) > opts.InitExpireAtUnixS+int64(skew.Seconds()) {
@@ -394,10 +414,15 @@ func (c *ServerHandshakeCache) getOrCreate(initMsg e2eev1.E2EE_Init, suite Suite
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.cleanupLocked(now)
 	if st, ok := c.m[key]; ok {
 		return st, nil
+	}
+	if c.maxEntries > 0 && len(c.m) >= c.maxEntries {
+		return nil, ErrTooManyPendingHandshakes
 	}
 	priv, pub, err := GenerateEphemeralKeypair(suite)
 	if err != nil {
@@ -420,7 +445,7 @@ func (c *ServerHandshakeCache) getOrCreate(initMsg e2eev1.E2EE_Init, suite Suite
 		ServerPubBytes: pub,
 		NonceS:         nonceS,
 		ServerFeatures: serverFeatures,
-		CreatedAt:      time.Now(),
+		CreatedAt:      now,
 	}
 	c.m[key] = st
 	return st, nil
@@ -430,6 +455,17 @@ func (c *ServerHandshakeCache) delete(key string) {
 	c.mu.Lock()
 	delete(c.m, key)
 	c.mu.Unlock()
+}
+
+func (c *ServerHandshakeCache) cleanupLocked(now time.Time) {
+	if c.ttl <= 0 {
+		return
+	}
+	for k, st := range c.m {
+		if now.Sub(st.CreatedAt) > c.ttl {
+			delete(c.m, k)
+		}
+	}
 }
 
 func fingerprintInit(initMsg e2eev1.E2EE_Init) (string, error) {

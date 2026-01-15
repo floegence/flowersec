@@ -77,3 +77,44 @@ func TestRPC_NotificationAndRequest(t *testing.T) {
 	_ = a.Close()
 	<-done
 }
+
+func TestRPC_ClientCallFailsWhenTransportCloses(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	c := rpc.NewClient(a)
+	defer c.Close()
+
+	// Drain the request so Client.Call can move past the write and wait for the response.
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		_, _ = rpc.ReadJSONFrame(b, 1<<20)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := c.Call(ctx, 1, json.RawMessage(`{}`))
+		errCh <- err
+	}()
+
+	select {
+	case <-drained:
+		_ = b.Close()
+	case <-ctx.Done():
+		t.Fatal("timeout waiting to drain request")
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for Call to return")
+	}
+}

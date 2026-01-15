@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flowersec/flowersec/controlplane/token"
@@ -22,6 +23,12 @@ type Config struct {
 	MaxAttachBytes  int
 	MaxRecordBytes  int
 	MaxPendingBytes int
+	MaxChannels     int
+	MaxConns        int
+
+	AllowedOrigins []string
+	AllowNoOrigin  bool
+
 	IdleTimeout     time.Duration
 	ClockSkew       time.Duration
 	CleanupInterval time.Duration
@@ -33,6 +40,9 @@ func DefaultConfig() Config {
 		MaxAttachBytes:  8 * 1024,
 		MaxRecordBytes:  1 << 20,
 		MaxPendingBytes: 256 * 1024,
+		MaxChannels:     2048,
+		MaxConns:        4096,
+		AllowNoOrigin:   true,
 		IdleTimeout:     60 * time.Second,
 		ClockSkew:       30 * time.Second,
 		CleanupInterval: 500 * time.Millisecond,
@@ -47,6 +57,9 @@ type Server struct {
 
 	mu       sync.Mutex
 	channels map[string]*channelState
+
+	connCount int64
+	connSet   sync.Map // key: *websocket.Conn, value: struct{}
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -64,6 +77,12 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.MaxPendingBytes <= 0 {
 		cfg.MaxPendingBytes = 256 * 1024
+	}
+	if cfg.MaxChannels <= 0 {
+		cfg.MaxChannels = 2048
+	}
+	if cfg.MaxConns <= 0 {
+		cfg.MaxConns = 4096
 	}
 	if cfg.IdleTimeout <= 0 {
 		cfg.IdleTimeout = 60 * time.Second
@@ -127,12 +146,17 @@ type endpointConn struct {
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	c, err := ws.Upgrade(w, r, ws.UpgraderOptions{
-		CheckOrigin: func(r *http.Request) bool { return true },
+		CheckOrigin: s.checkOrigin,
 	})
 	if err != nil {
 		return
 	}
 	uc := c.Underlying()
+	if !s.trackConn(uc) {
+		_ = c.CloseWithStatus(websocket.CloseTryAgainLater, "too many connections")
+		return
+	}
+
 	uc.SetReadLimit(int64(s.cfg.MaxAttachBytes))
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -141,6 +165,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	mt, msg, err := c.ReadMessage(ctx)
 	if err != nil || mt != websocket.TextMessage {
 		_ = c.CloseWithStatus(websocket.CloseProtocolError, "expected attach")
+		s.untrackConn(uc)
 		return
 	}
 	attach, err := protocol.ParseAttachJSON(msg, protocol.AttachConstraints{
@@ -148,6 +173,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		_ = c.CloseWithStatus(websocket.CloseProtocolError, "invalid attach")
+		s.untrackConn(uc)
 		return
 	}
 
@@ -158,24 +184,29 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "invalid token")
+		s.untrackConn(uc)
 		return
 	}
 	if p.ChannelID != attach.ChannelId {
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "channel mismatch")
+		s.untrackConn(uc)
 		return
 	}
 	if uint8(attach.Role) != p.Role {
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "role mismatch")
+		s.untrackConn(uc)
 		return
 	}
 	if !s.used.TryUse(p.TokenID, p.Exp, time.Now()) {
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "token replay")
+		s.untrackConn(uc)
 		return
 	}
 
 	uc.SetReadLimit(int64(s.cfg.MaxRecordBytes))
 	if err := s.addEndpoint(attach, p, uc); err != nil {
 		_ = c.CloseWithStatus(websocket.CloseInternalServerErr, "attach failed")
+		s.untrackConn(uc)
 		return
 	}
 }
@@ -192,6 +223,10 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 	st := s.channels[a.ChannelId]
 	ep := &endpointConn{role: a.Role, eid: a.EndpointInstanceId, ws: uc}
 	if st == nil {
+		if s.cfg.MaxChannels > 0 && len(s.channels) >= s.cfg.MaxChannels {
+			s.mu.Unlock()
+			return errors.New("too many channels")
+		}
 		st = &channelState{
 			id:         a.ChannelId,
 			initExp:    p.InitExp,
@@ -247,6 +282,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 
 	for _, c := range toClose {
 		_ = c.Close()
+		s.untrackConn(c)
 	}
 
 	if startPump {
@@ -375,6 +411,7 @@ func (s *Server) closeChannel(channelID string) {
 	s.mu.Unlock()
 	for _, c := range conns {
 		_ = c.Close()
+		s.untrackConn(c)
 	}
 }
 
@@ -385,6 +422,7 @@ func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *end
 	if st == nil || st.conns[role] != src {
 		s.mu.Unlock()
 		_ = src.ws.Close()
+		s.untrackConn(src.ws)
 		return
 	}
 	for _, e := range st.conns {
@@ -394,7 +432,41 @@ func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *end
 	s.mu.Unlock()
 	for _, c := range conns {
 		_ = c.Close()
+		s.untrackConn(c)
 	}
+}
+
+func (s *Server) checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return s.cfg.AllowNoOrigin
+	}
+	for _, allowed := range s.cfg.AllowedOrigins {
+		if origin == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) trackConn(c *websocket.Conn) bool {
+	if s.cfg.MaxConns > 0 {
+		if atomic.AddInt64(&s.connCount, 1) > int64(s.cfg.MaxConns) {
+			atomic.AddInt64(&s.connCount, -1)
+			return false
+		}
+	} else {
+		atomic.AddInt64(&s.connCount, 1)
+	}
+	s.connSet.Store(c, struct{}{})
+	return true
+}
+
+func (s *Server) untrackConn(c *websocket.Conn) {
+	if _, ok := s.connSet.LoadAndDelete(c); !ok {
+		return
+	}
+	atomic.AddInt64(&s.connCount, -1)
 }
 
 func (s *Server) cleanupLoop() {

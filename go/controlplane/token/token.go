@@ -109,12 +109,15 @@ func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error
 		now = time.Now()
 	}
 	skew := opts.ClockSkew
+	if skew < 0 {
+		skew = 0
+	}
 
 	iat := time.Unix(p.Iat, 0)
 	exp := time.Unix(p.Exp, 0)
 	initExp := time.Unix(p.InitExp, 0)
 
-	if skew > 0 && iat.After(now.Add(skew)) {
+	if iat.After(now.Add(skew)) {
 		return Payload{}, ErrIATInFuture
 	}
 	if exp.Before(now.Add(-skew)) {

@@ -9,21 +9,39 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/flowersec/flowersec/tunnel/server"
 )
 
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string { return strings.Join(*s, ",") }
+
+func (s *stringSliceFlag) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
 func main() {
 	var listen string
 	var path string
 	var issuerKeysFile string
 	var aud string
+	var allowedOrigins stringSliceFlag
+	var allowNoOrigin bool
+	var maxConns int
+	var maxChannels int
 	flag.StringVar(&listen, "listen", "127.0.0.1:0", "listen address")
 	flag.StringVar(&path, "ws-path", "/ws", "websocket path")
 	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "issuer keyset file (kid->ed25519 pubkey)")
 	flag.StringVar(&aud, "aud", "", "expected token audience")
+	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable)")
+	flag.BoolVar(&allowNoOrigin, "allow-no-origin", true, "allow requests without Origin header (non-browser clients)")
+	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent websocket connections (0 uses default)")
+	flag.IntVar(&maxChannels, "max-channels", 0, "max concurrent channels (0 uses default)")
 	flag.Parse()
 
 	if issuerKeysFile == "" || aud == "" {
@@ -34,6 +52,14 @@ func main() {
 	cfg.Path = path
 	cfg.IssuerKeysFile = issuerKeysFile
 	cfg.TunnelAudience = aud
+	cfg.AllowedOrigins = allowedOrigins
+	cfg.AllowNoOrigin = allowNoOrigin
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
+	}
+	if maxChannels > 0 {
+		cfg.MaxChannels = maxChannels
+	}
 
 	s, err := server.New(cfg)
 	if err != nil {

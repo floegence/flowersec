@@ -1,6 +1,5 @@
 import { gcm } from "@noble/ciphers/aes";
 import { concatBytes, readU32be, readU64be, u32be, u64be } from "../utils/bin.js";
-import { base64urlEncode } from "../utils/base64url.js";
 import { PROTOCOL_VERSION, RECORD_MAGIC, RECORD_FLAG_APP, RECORD_FLAG_PING, RECORD_FLAG_REKEY } from "./constants.js";
 
 const te = new TextEncoder();
@@ -64,6 +63,6 @@ export function decryptRecord(
     const plaintext = gcm(key, nonce, frame.slice(0, headerLen)).decrypt(frame.slice(headerLen));
     return { flags, seq, plaintext };
   } catch (e) {
-    throw new RecordError(`decrypt failed: ${String(e)} frame=${base64urlEncode(frame)}`);
+    throw new RecordError(`decrypt failed: ${String(e)} len=${frame.length}`);
   }
 }

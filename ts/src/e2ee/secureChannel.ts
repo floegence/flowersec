@@ -10,6 +10,7 @@ export type BinaryTransport = {
 
 export type SecureChannelOptions = Readonly<{
   maxRecordBytes: number;
+  maxBufferedBytes?: number;
 }>;
 
 type Direction = 1 | 2;
@@ -17,6 +18,7 @@ type Direction = 1 | 2;
 export class SecureChannel {
   private readonly transport: BinaryTransport;
   private readonly maxRecordBytes: number;
+  private readonly maxBufferedBytes: number;
 
   private sendKey: Uint8Array;
   private recvKey: Uint8Array;
@@ -39,6 +41,7 @@ export class SecureChannel {
   constructor(args: {
     transport: BinaryTransport;
     maxRecordBytes: number;
+    maxBufferedBytes?: number;
     sendKey: Uint8Array;
     recvKey: Uint8Array;
     sendNoncePrefix: Uint8Array;
@@ -50,6 +53,7 @@ export class SecureChannel {
   }) {
     this.transport = args.transport;
     this.maxRecordBytes = args.maxRecordBytes;
+    this.maxBufferedBytes = Math.max(0, args.maxBufferedBytes ?? 4 * (1 << 20));
     this.sendKey = args.sendKey;
     this.recvKey = args.recvKey;
     this.sendNoncePrefix = args.sendNoncePrefix;
@@ -121,6 +125,9 @@ export class SecureChannel {
         );
         this.recvSeq = seq + 1n;
         if (flags === RECORD_FLAG_APP) {
+          if (this.maxBufferedBytes > 0 && this.recvQueueBytes + plaintext.length > this.maxBufferedBytes) {
+            throw new Error("recv buffer exceeded");
+          }
           this.recvQueue.push(plaintext);
           this.recvQueueBytes += plaintext.length;
           const ws = this.recvWaiters;
@@ -144,4 +151,3 @@ export class SecureChannel {
     }
   }
 }
-

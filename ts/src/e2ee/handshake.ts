@@ -60,10 +60,21 @@ function suiteSharedSecret(suite: Suite, priv: Uint8Array, peerPub: Uint8Array):
   throw new Error(`unsupported suite ${suite}`);
 }
 
-function handshakeIdDeterministic(init: E2EE_Init): string {
-  const b = te.encode(JSON.stringify(init));
+function fingerprintInit(init: E2EE_Init): string {
+  // Canonicalize to avoid JSON key-order affecting the cache key.
+  const canonical = {
+    channel_id: init.channel_id,
+    role: init.role,
+    version: init.version,
+    suite: init.suite,
+    client_eph_pub_b64u: init.client_eph_pub_b64u,
+    nonce_c_b64u: init.nonce_c_b64u,
+    client_features: init.client_features
+  } satisfies E2EE_Init;
+  const b = te.encode(JSON.stringify(canonical));
   const sum = sha256(b);
-  return base64urlEncode(sum.slice(0, 24));
+  // Full 32-byte fingerprint (aligns with Go's sha256-based fingerprinting).
+  return base64urlEncode(sum);
 }
 
 export async function clientHandshake(transport: BinaryTransport, opts: HandshakeClientOptions): Promise<SecureChannel> {
@@ -134,15 +145,35 @@ type ServerCacheEntry = {
   nonceS: Uint8Array;
   handshakeId: string;
   serverFeatures: number;
+  createdAtMs: number;
 };
 
 export class ServerHandshakeCache {
   private readonly m = new Map<string, ServerCacheEntry>();
+  private readonly ttlMs: number;
+  private readonly maxEntries: number;
+
+  constructor(opts: Readonly<{ ttlMs?: number; maxEntries?: number }> = {}) {
+    this.ttlMs = Math.max(0, opts.ttlMs ?? 60_000);
+    this.maxEntries = Math.max(0, opts.maxEntries ?? 4096);
+  }
+
+  private cleanup(nowMs: number): void {
+    if (this.ttlMs <= 0) return;
+    for (const [k, v] of this.m) {
+      if (nowMs - v.createdAtMs > this.ttlMs) this.m.delete(k);
+    }
+  }
 
   getOrCreate(init: E2EE_Init, suite: Suite, serverFeatures: number): ServerCacheEntry {
-    const initKey = handshakeIdDeterministic(init);
+    const nowMs = Date.now();
+    const initKey = fingerprintInit(init);
+    this.cleanup(nowMs);
     const existing = this.m.get(initKey);
     if (existing != null) return existing;
+    if (this.maxEntries > 0 && this.m.size >= this.maxEntries) {
+      throw new Error("too many pending handshakes");
+    }
     const kp = suiteKeypair(suite);
     const nonceS = randomBytes(32);
     const entry: ServerCacheEntry = {
@@ -152,14 +183,15 @@ export class ServerHandshakeCache {
       serverPub: kp.pub,
       nonceS,
       handshakeId: base64urlEncode(randomBytes(24)),
-      serverFeatures: serverFeatures >>> 0
+      serverFeatures: serverFeatures >>> 0,
+      createdAtMs: nowMs
     };
     this.m.set(initKey, entry);
     return entry;
   }
 
   delete(init: E2EE_Init): void {
-    const initKey = handshakeIdDeterministic(init);
+    const initKey = fingerprintInit(init);
     this.m.delete(initKey);
   }
 }
@@ -188,10 +220,21 @@ export async function serverHandshake(
   };
   await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify(resp))));
 
-  const ackFrame = await transport.readBinary();
-  const decodedAck = decodeHandshakeFrame(ackFrame, opts.maxHandshakePayload);
-  if (decodedAck.handshakeType !== HANDSHAKE_TYPE_ACK) throw new Error("unexpected handshake type");
-  const ack = JSON.parse(td.decode(decodedAck.payloadJsonUtf8)) as E2EE_Ack;
+  let ack: E2EE_Ack;
+  while (true) {
+    const frame = await transport.readBinary();
+    const decoded = decodeHandshakeFrame(frame, opts.maxHandshakePayload);
+    if (decoded.handshakeType === HANDSHAKE_TYPE_INIT) {
+      // Client retry: re-send the cached response if parameters match.
+      const retry = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Init;
+      if (fingerprintInit(retry) !== entry.initKey) throw new Error("unexpected init retry parameters");
+      await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify(resp))));
+      continue;
+    }
+    if (decoded.handshakeType !== HANDSHAKE_TYPE_ACK) throw new Error("unexpected handshake type");
+    ack = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Ack;
+    break;
+  }
   if (ack.handshake_id !== entry.handshakeId) throw new Error("handshake_id mismatch");
 
   const now = Math.floor(Date.now() / 1000);

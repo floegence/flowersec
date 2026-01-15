@@ -111,6 +111,7 @@ type Client struct {
 	pending map[uint64]chan rpcv1.RpcEnvelope
 	notify  map[uint32]map[*notifyHandler]struct{}
 	closed  bool
+	lastErr error
 }
 
 func NewClient(rwc io.ReadWriteCloser) *Client {
@@ -187,7 +188,10 @@ func (c *Client) Call(ctx context.Context, typeID uint32, payload json.RawMessag
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
-	case resp := <-ch:
+	case resp, ok := <-ch:
+		if !ok {
+			return nil, nil, c.closedErr()
+		}
 		return resp.Payload, resp.Error, nil
 	}
 }
@@ -196,6 +200,9 @@ func (c *Client) reserve() (uint64, chan rpcv1.RpcEnvelope, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
+		if c.lastErr != nil {
+			return 0, nil, c.lastErr
+		}
 		return 0, nil, io.ErrClosedPipe
 	}
 	id := c.nextID
@@ -255,6 +262,9 @@ func (c *Client) readLoop() {
 func (c *Client) closeAll(err error) {
 	c.mu.Lock()
 	c.closed = true
+	if c.lastErr == nil {
+		c.lastErr = err
+	}
 	for id, ch := range c.pending {
 		delete(c.pending, id)
 		close(ch)
@@ -272,6 +282,15 @@ func (c *Client) Close() error {
 }
 
 func strPtr(s string) *string { return &s }
+
+func (c *Client) closedErr() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lastErr != nil {
+		return c.lastErr
+	}
+	return io.ErrClosedPipe
+}
 
 var ErrTimeout = errors.New("rpc timeout")
 
