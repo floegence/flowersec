@@ -57,7 +57,3 @@ make test
 
 - Tunnel server (deployable): `go/cmd/flowersec-tunnel/`
   - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`
-
-## License
-
-Not specified yet.
