@@ -100,7 +100,7 @@ func TestRouteOrBufferBehavior(t *testing.T) {
 	}
 
 	frame := []byte{1, 2, 3, 4, 5}
-	_, _, err := s.routeOrBuffer("ch", tunnelv1.Role_client, frame)
+	_, _, err := s.routeOrBuffer("ch", tunnelv1.Role_client, src, frame)
 	if err == nil {
 		t.Fatalf("expected pending overflow")
 	}
@@ -131,7 +131,7 @@ func TestRouteOrBufferEncrypted(t *testing.T) {
 		t.Fatalf("expected frame to look like a record")
 	}
 
-	_, _, err := s.routeOrBuffer("ch", tunnelv1.Role_client, frame)
+	_, _, err := s.routeOrBuffer("ch", tunnelv1.Role_client, src, frame)
 	if err != nil {
 		t.Fatalf("routeOrBuffer failed: %v", err)
 	}

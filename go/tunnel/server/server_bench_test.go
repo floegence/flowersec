@@ -13,10 +13,11 @@ func BenchmarkRouteOrBufferPaired(b *testing.B) {
 	s := newBenchServer()
 	frame := benchRecordFrame(b, 256)
 	st := s.channels["chan_bench"]
+	src := st.conns[tunnelv1.Role_client]
 	st.encrypted = false
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, _, err := s.routeOrBuffer("chan_bench", tunnelv1.Role_client, frame); err != nil {
+		if _, _, err := s.routeOrBuffer("chan_bench", tunnelv1.Role_client, src, frame); err != nil {
 			b.Fatalf("routeOrBuffer failed: %v", err)
 		}
 	}
@@ -34,7 +35,7 @@ func BenchmarkRouteOrBufferPending(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		src.pending = src.pending[:0]
 		src.pendingBytes = 0
-		if _, _, err := s.routeOrBuffer("chan_bench", tunnelv1.Role_client, frame); err != nil {
+		if _, _, err := s.routeOrBuffer("chan_bench", tunnelv1.Role_client, src, frame); err != nil {
 			b.Fatalf("routeOrBuffer failed: %v", err)
 		}
 	}
