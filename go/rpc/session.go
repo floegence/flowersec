@@ -83,6 +83,20 @@ func (s *Server) Notify(typeID uint32, payload json.RawMessage) error {
 
 // Serve runs the request loop until the context ends or the stream fails.
 func (s *Server) Serve(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = s.r.Close()
+		case <-done:
+		}
+	}()
+	defer close(done)
+	const maxInvalidJSONFrames = 3
+	invalidJSONFrames := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -92,12 +106,22 @@ func (s *Server) Serve(ctx context.Context) error {
 		b, err := ReadJSONFrame(s.r, s.maxLen)
 		if err != nil {
 			s.obs.ServerFrameError(observability.RPCFrameRead)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
 		}
 		var env rpcv1.RpcEnvelope
 		if err := json.Unmarshal(b, &env); err != nil {
+			invalidJSONFrames++
+			if invalidJSONFrames >= maxInvalidJSONFrames {
+				s.obs.ServerFrameError(observability.RPCFrameRead)
+				_ = s.r.Close()
+				return errors.New("rpc invalid json frame")
+			}
 			continue
 		}
+		invalidJSONFrames = 0
 		if env.ResponseTo != 0 {
 			continue
 		}

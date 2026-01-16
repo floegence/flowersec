@@ -2,6 +2,7 @@ import { concatBytes, readU32be, readU64be, u32be, u64be } from "../utils/bin.js
 import { HANDSHAKE_MAGIC, PROTOCOL_VERSION, RECORD_MAGIC } from "./constants.js";
 
 const te = new TextEncoder();
+const td = new TextDecoder();
 
 // Handshake header byte size: magic + version + type + length.
 export const HANDSHAKE_HEADER_LEN = 4 + 1 + 1 + 4;
@@ -27,7 +28,7 @@ export function decodeHandshakeFrame(
   maxPayloadBytes: number
 ): { handshakeType: number; payloadJsonUtf8: Uint8Array } {
   if (frame.length < HANDSHAKE_HEADER_LEN) throw new FramingError("handshake frame too short");
-  if (new TextDecoder().decode(frame.slice(0, 4)) !== HANDSHAKE_MAGIC) throw new FramingError("bad handshake magic");
+  if (td.decode(frame.slice(0, 4)) !== HANDSHAKE_MAGIC) throw new FramingError("bad handshake magic");
   if (frame[4] !== PROTOCOL_VERSION) throw new FramingError("bad handshake version");
   const handshakeType = frame[5]!;
   const n = readU32be(frame, 6);
@@ -39,7 +40,7 @@ export function decodeHandshakeFrame(
 // looksLikeRecordFrame checks whether a frame matches the record header shape.
 export function looksLikeRecordFrame(frame: Uint8Array, maxCiphertextBytes: number): boolean {
   if (frame.length < RECORD_HEADER_LEN) return false;
-  if (new TextDecoder().decode(frame.slice(0, 4)) !== RECORD_MAGIC) return false;
+  if (td.decode(frame.slice(0, 4)) !== RECORD_MAGIC) return false;
   if (frame[4] !== PROTOCOL_VERSION) return false;
   const n = readU32be(frame, 14);
   if (maxCiphertextBytes > 0 && n > maxCiphertextBytes) return false;

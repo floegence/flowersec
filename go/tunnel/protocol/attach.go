@@ -33,6 +33,7 @@ var (
 	ErrAttachInvalidJSON      = errors.New("attach invalid json")
 	ErrAttachInvalidVersion   = errors.New("attach invalid version")
 	ErrAttachMissingChannelID = errors.New("attach missing channel_id")
+	ErrAttachInvalidChannelID = errors.New("attach invalid channel_id")
 	ErrAttachInvalidRole      = errors.New("attach invalid role")
 	ErrAttachMissingToken     = errors.New("attach missing token")
 	ErrAttachInvalidToken     = errors.New("attach invalid token")
@@ -56,7 +57,7 @@ func ParseAttachJSON(b []byte, c AttachConstraints) (*tunnelv1.Attach, error) {
 		return nil, ErrAttachMissingChannelID
 	}
 	if c.MaxChannelID > 0 && len(a.ChannelId) > c.MaxChannelID {
-		return nil, fmt.Errorf("channel_id too long: %w", ErrAttachMissingChannelID)
+		return nil, fmt.Errorf("channel_id too long: %w", ErrAttachInvalidChannelID)
 	}
 	if a.Role != tunnelv1.Role_client && a.Role != tunnelv1.Role_server {
 		return nil, ErrAttachInvalidRole

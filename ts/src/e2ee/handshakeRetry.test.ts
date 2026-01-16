@@ -144,4 +144,84 @@ describe("e2ee serverHandshake", () => {
 
     await expect(serverHandshake(transport, cache, opts)).rejects.toThrow(/missing init_exp/);
   });
+
+  test("rejects bad nonce length", async () => {
+    const channelId = "ch_1";
+    const suite = 1 as const;
+    const clientPub = x25519.getPublicKey(x25519.utils.randomPrivateKey());
+    const nonceC = crypto.getRandomValues(new Uint8Array(31));
+    const init = {
+      channel_id: channelId,
+      role: 1,
+      version: PROTOCOL_VERSION,
+      suite,
+      client_eph_pub_b64u: base64urlEncode(clientPub),
+      nonce_c_b64u: base64urlEncode(nonceC),
+      client_features: 0
+    } as const;
+    const initFrame = encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, u8(JSON.stringify(init)));
+
+    const transport: BinaryTransport = {
+      async readBinary() {
+        return initFrame;
+      },
+      async writeBinary() {
+        throw new Error("unexpected write");
+      },
+      close() {}
+    };
+    const cache = new ServerHandshakeCache();
+    const opts: HandshakeServerOptions = {
+      channelId,
+      suite,
+      psk: crypto.getRandomValues(new Uint8Array(32)),
+      serverFeatures: 0,
+      initExpireAtUnixS: Math.floor(Date.now() / 1000) + 120,
+      clockSkewSeconds: 30,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20
+    };
+
+    await expect(serverHandshake(transport, cache, opts)).rejects.toThrow(/bad nonce_c length/);
+  });
+
+  test("rejects bad client eph pub length", async () => {
+    const channelId = "ch_1";
+    const suite = 1 as const;
+    const clientPub = crypto.getRandomValues(new Uint8Array(31));
+    const nonceC = crypto.getRandomValues(new Uint8Array(32));
+    const init = {
+      channel_id: channelId,
+      role: 1,
+      version: PROTOCOL_VERSION,
+      suite,
+      client_eph_pub_b64u: base64urlEncode(clientPub),
+      nonce_c_b64u: base64urlEncode(nonceC),
+      client_features: 0
+    } as const;
+    const initFrame = encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, u8(JSON.stringify(init)));
+
+    const transport: BinaryTransport = {
+      async readBinary() {
+        return initFrame;
+      },
+      async writeBinary() {
+        throw new Error("unexpected write");
+      },
+      close() {}
+    };
+    const cache = new ServerHandshakeCache();
+    const opts: HandshakeServerOptions = {
+      channelId,
+      suite,
+      psk: crypto.getRandomValues(new Uint8Array(32)),
+      serverFeatures: 0,
+      initExpireAtUnixS: Math.floor(Date.now() / 1000) + 120,
+      clockSkewSeconds: 30,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20
+    };
+
+    await expect(serverHandshake(transport, cache, opts)).rejects.toThrow(/bad client eph pub length/);
+  });
 });

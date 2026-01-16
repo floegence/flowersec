@@ -458,6 +458,11 @@ func (s *Server) flushPending(st *channelState, client *endpointConn, server *en
 		st.mu.Lock()
 		pendingClient := client.pending
 		pendingServer := server.pending
+		encryptedNow := false
+		if !st.encrypted && looksLikeEncryptedPending(pendingClient, pendingServer, s.cfg.MaxRecordBytes) {
+			st.encrypted = true
+			encryptedNow = true
+		}
 		if len(pendingClient) == 0 && len(pendingServer) == 0 {
 			st.flushing = false
 			st.mu.Unlock()
@@ -468,6 +473,9 @@ func (s *Server) flushPending(st *channelState, client *endpointConn, server *en
 		server.pending = nil
 		server.pendingBytes = 0
 		st.mu.Unlock()
+		if encryptedNow {
+			s.obs.Encrypted()
+		}
 
 		client.writeMu.Lock()
 		server.writeMu.Lock()
@@ -560,6 +568,24 @@ func writeFramesLocked(dst *endpointConn, frames [][]byte) error {
 	return nil
 }
 
+func looksLikeEncryptedPending(clientPending [][]byte, serverPending [][]byte, maxCipher int) bool {
+	for _, frame := range clientPending {
+		if looksLikeEncryptedFrame(frame, maxCipher) {
+			return true
+		}
+	}
+	for _, frame := range serverPending {
+		if looksLikeEncryptedFrame(frame, maxCipher) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeEncryptedFrame(frame []byte, maxCipher int) bool {
+	return e2ee.LooksLikeRecordFrame(frame, maxCipher) || e2ee.LooksLikeHandshakeFrame(frame, maxCipher)
+}
+
 // routeOrBuffer returns a destination conn or buffers frames until paired.
 func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byte) (dst *endpointConn, flush [][]byte, err error) {
 	now := time.Now()
@@ -575,10 +601,6 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 	st.mu.Lock()
 	s.mu.Unlock()
 	st.lastActive = now
-	if !st.encrypted && e2ee.LooksLikeRecordFrame(frame, maxCipher) {
-		st.encrypted = true
-		encryptedNow = true
-	}
 	src := st.conns[role]
 	if src == nil {
 		st.mu.Unlock()
@@ -594,6 +616,10 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 		peerRole = tunnelv1.Role_client
 	}
 	dst = st.conns[peerRole]
+	if !st.encrypted && dst != nil && looksLikeEncryptedFrame(frame, maxCipher) {
+		st.encrypted = true
+		encryptedNow = true
+	}
 	if dst == nil || st.flushing {
 		if s.cfg.MaxPendingBytes > 0 && src.pendingBytes+len(frame) > s.cfg.MaxPendingBytes {
 			st.mu.Unlock()

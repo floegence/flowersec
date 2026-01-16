@@ -2,7 +2,10 @@ package rpc_test
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -161,4 +164,70 @@ func TestRPC_CallCancelDoesNotPanicOnLateResponse(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for server goroutine")
 	}
+}
+
+func TestRPC_ServerServeHonorsContextCancel(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	router := rpc.NewRouter()
+	srv := rpc.NewServer(a, router)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Serve(ctx)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for server to exit")
+	}
+}
+
+func TestRPC_ServerServeRejectsInvalidJSON(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	router := rpc.NewRouter()
+	srv := rpc.NewServer(a, router)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Serve(ctx)
+	}()
+
+	for i := 0; i < 3; i++ {
+		if err := writeRawFrame(b, []byte("{")); err != nil {
+			t.Fatalf("write raw frame: %v", err)
+		}
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for server to exit")
+	}
+}
+
+func writeRawFrame(w io.Writer, payload []byte) error {
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload)))
+	if _, err := w.Write(hdr[:]); err != nil {
+		return err
+	}
+	_, err := w.Write(payload)
+	return err
 }

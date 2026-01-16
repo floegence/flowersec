@@ -259,6 +259,12 @@ export async function serverHandshake(
   const suite = init.suite as Suite;
   if (suite !== opts.suite) throw new Error("bad suite");
 
+  const clientPub = base64urlDecode(init.client_eph_pub_b64u);
+  const nonceC = base64urlDecode(init.nonce_c_b64u);
+  if (nonceC.length !== 32) throw new Error("bad nonce_c length");
+  if (suite === 1 && clientPub.length !== 32) throw new Error("bad client eph pub length");
+  if (suite === 2 && clientPub.length !== 65) throw new Error("bad client eph pub length");
+
   const entry = cache.getOrCreate(init, suite, opts.serverFeatures);
   const resp: E2EE_Resp = {
     handshake_id: entry.handshakeId,
@@ -289,8 +295,6 @@ export async function serverHandshake(
   if (Math.abs(now - ack.timestamp_unix_s) > opts.clockSkewSeconds) throw new Error("timestamp skew");
   if (ack.timestamp_unix_s > opts.initExpireAtUnixS + opts.clockSkewSeconds) throw new Error("timestamp after init_exp");
 
-  const clientPub = base64urlDecode(init.client_eph_pub_b64u);
-  const nonceC = base64urlDecode(init.nonce_c_b64u);
   const th = transcriptHash({
     version: PROTOCOL_VERSION,
     suite: suite,

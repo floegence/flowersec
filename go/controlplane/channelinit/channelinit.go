@@ -22,6 +22,8 @@ const (
 	DefaultTokenExpSeconds = 60
 )
 
+var ErrChannelInitExpired = errors.New("channel init expired")
+
 // Params define channel-init issuance settings and defaults.
 type Params struct {
 	TunnelURL      string // WebSocket URL for tunnel server.
@@ -127,6 +129,13 @@ func (s *Service) ReissueToken(grant *controlv1.ChannelInitGrant) (*controlv1.Ch
 		return nil, errors.New("missing grant")
 	}
 	now := s.now()
+	skew := s.Params.ClockSkew
+	if skew < 0 {
+		skew = 0
+	}
+	if now.Unix() > grant.ChannelInitExpireAtUnixS+int64(skew/time.Second) {
+		return nil, ErrChannelInitExpired
+	}
 	tokenExpSeconds := s.Params.TokenExpSeconds
 	if tokenExpSeconds <= 0 {
 		tokenExpSeconds = DefaultTokenExpSeconds

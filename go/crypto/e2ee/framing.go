@@ -57,6 +57,32 @@ func DecodeHandshakeFrame(frame []byte, maxPayload int) (handshakeType uint8, pa
 	return handshakeType, frame[10:], nil
 }
 
+// LooksLikeHandshakeFrame quickly checks a handshake frame header without parsing the JSON payload.
+func LooksLikeHandshakeFrame(frame []byte, maxPayload int) bool {
+	if len(frame) < handshakeHeaderLen {
+		return false
+	}
+	if string(frame[:4]) != HandshakeMagic {
+		return false
+	}
+	if frame[4] != ProtocolVersion {
+		return false
+	}
+	switch frame[5] {
+	case HandshakeTypeInit, HandshakeTypeResp, HandshakeTypeAck:
+	default:
+		return false
+	}
+	n := int(bin.U32BE(frame[6:10]))
+	if n < 0 {
+		return false
+	}
+	if maxPayload > 0 && n > maxPayload {
+		return false
+	}
+	return handshakeHeaderLen+n == len(frame)
+}
+
 // LooksLikeRecordFrame quickly checks a frame header without decrypting.
 func LooksLikeRecordFrame(frame []byte, maxCiphertext int) bool {
 	if len(frame) < recordHeaderLen {
