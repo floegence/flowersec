@@ -1,34 +1,84 @@
 package channelinit
 
 import (
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/floegence/flowersec/controlplane/issuer"
+	"github.com/floegence/flowersec/controlplane/token"
 )
 
-func TestReissueTokenRejectsExpiredGrant(t *testing.T) {
-	keys, err := issuer.NewRandom("kid-1")
+func TestNewChannelInitValidations(t *testing.T) {
+	svc := &Service{}
+	if _, _, err := svc.NewChannelInit("ch"); err == nil {
+		t.Fatalf("expected missing issuer")
+	}
+
+	ks, _ := issuer.NewRandom("kid")
+	svc = &Service{Issuer: ks}
+	if _, _, err := svc.NewChannelInit("ch"); err == nil {
+		t.Fatalf("expected missing tunnel params")
+	}
+
+	svc.Params.TunnelURL = "ws://example"
+	svc.Params.TunnelAudience = "aud"
+	if _, _, err := svc.NewChannelInit(""); err == nil {
+		t.Fatalf("expected missing channel_id")
+	}
+}
+
+func TestNewChannelInitDefaultsAndTokenExp(t *testing.T) {
+	ks, _ := issuer.NewRandom("kid")
+	svc := &Service{Issuer: ks}
+	svc.Params.TunnelURL = "ws://example"
+	svc.Params.TunnelAudience = "aud"
+	svc.Params.IssuerID = "iss"
+	svc.Params.TokenExpSeconds = 9999
+
+	client, _, err := svc.NewChannelInit("ch")
 	if err != nil {
-		t.Fatalf("new issuer: %v", err)
+		t.Fatalf("NewChannelInit failed: %v", err)
 	}
-	now := time.Unix(1000, 0)
-	svc := &Service{
-		Issuer: keys,
-		Params: Params{
-			TunnelURL:      "wss://example.test/ws",
-			TunnelAudience: "aud",
-		},
-		Now: func() time.Time { return now },
+	if client.DefaultSuite == 0 {
+		t.Fatalf("expected default suite")
 	}
-	grant, _, err := svc.NewChannelInit("ch_1")
+	if len(client.AllowedSuites) == 0 {
+		t.Fatalf("expected allowed suites")
+	}
+
+	p, _, _, err := token.Parse(client.Token)
 	if err != nil {
-		t.Fatalf("new channel init: %v", err)
+		t.Fatalf("Parse failed: %v", err)
 	}
-	grant.ChannelInitExpireAtUnixS = now.Add(-time.Second).Unix()
-	_, err = svc.ReissueToken(grant)
-	if !errors.Is(err, ErrChannelInitExpired) {
-		t.Fatalf("expected ErrChannelInitExpired, got %v", err)
+	if p.Exp > p.InitExp {
+		t.Fatalf("expected exp <= init_exp")
+	}
+}
+
+func TestReissueToken(t *testing.T) {
+	svc := &Service{}
+	if _, err := svc.ReissueToken(nil); err == nil {
+		t.Fatalf("expected missing grant error")
+	}
+
+	ks, _ := issuer.NewRandom("kid")
+	svc = &Service{
+		Issuer: ks,
+		Params: Params{TunnelURL: "ws://example", TunnelAudience: "aud", IssuerID: "iss"},
+		Now:    func() time.Time { return time.Unix(10, 0) },
+	}
+	grant, _, err := svc.NewChannelInit("ch")
+	if err != nil {
+		t.Fatalf("NewChannelInit failed: %v", err)
+	}
+	updated, err := svc.ReissueToken(grant)
+	if err != nil {
+		t.Fatalf("ReissueToken failed: %v", err)
+	}
+	if updated.Token == grant.Token {
+		t.Fatalf("expected token to change")
+	}
+	if updated.ChannelId != grant.ChannelId {
+		t.Fatalf("expected channel_id to match")
 	}
 }

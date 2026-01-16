@@ -109,4 +109,82 @@ describe("WebSocketBinaryTransport", () => {
     await expect(first).resolves.toEqual(new Uint8Array([1]));
     await expect(second).resolves.toEqual(new Uint8Array([2]));
   });
+
+  test("readBinary rejects on websocket error event", async () => {
+    const ws = new FakeWebSocket();
+    const onWsError = vi.fn();
+    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsError } });
+
+    const read = transport.readBinary();
+    ws.emit("error", {});
+
+    await expect(read).rejects.toThrow(/websocket error/);
+    expect(onWsError).toHaveBeenCalledWith("error");
+  });
+
+  test("readBinary rejects on websocket close event", async () => {
+    const ws = new FakeWebSocket();
+    const onWsError = vi.fn();
+    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsError } });
+
+    const read = transport.readBinary();
+    ws.emit("close", {});
+
+    await expect(read).rejects.toThrow(/websocket closed/);
+    expect(onWsError).toHaveBeenCalledWith("close");
+  });
+
+  test("close rejects pending readers", async () => {
+    const ws = new FakeWebSocket();
+    const transport = new WebSocketBinaryTransport(ws);
+
+    const read = transport.readBinary();
+    transport.close();
+
+    await expect(read).rejects.toThrow(/websocket closed/);
+    expect(ws.closed).toBe(true);
+  });
+
+  test("rejects unexpected message types", async () => {
+    const ws = new FakeWebSocket();
+    const onWsError = vi.fn();
+    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsError } });
+
+    const read = transport.readBinary();
+    ws.emit("message", { data: 123 });
+
+    await expect(read).rejects.toThrow(/unexpected message type/);
+    expect(onWsError).toHaveBeenCalledWith("unexpected_message_type");
+  });
+
+  testWithBlob("messageChain propagates blob decode errors", async () => {
+    class BadBlob extends Blob {
+      override async arrayBuffer(): Promise<ArrayBuffer> {
+        throw new Error("boom");
+      }
+    }
+
+    const ws = new FakeWebSocket();
+    const onWsError = vi.fn();
+    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsError } });
+
+    const read = transport.readBinary();
+    ws.emit("message", { data: new BadBlob([new Uint8Array([1])]) });
+
+    await expect(read).rejects.toThrow(/boom/);
+    expect(onWsError).toHaveBeenCalledWith("error");
+  });
+
+  test("maxQueuedBytes allows exact limit then fails on overflow", async () => {
+    const ws = new FakeWebSocket();
+    const transport = new WebSocketBinaryTransport(ws, { maxQueuedBytes: 3 });
+
+    ws.emit("message", { data: new Uint8Array([1, 2, 3]).buffer });
+    const read = transport.readBinary();
+    await expect(read).resolves.toEqual(new Uint8Array([1, 2, 3]));
+
+    ws.emit("message", { data: new Uint8Array([4, 5, 6, 7]).buffer });
+    await waitForClosed(ws);
+    expect(ws.closed).toBe(true);
+  });
 });
