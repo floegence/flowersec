@@ -51,6 +51,8 @@ export function decryptRecord(
   expectSeq: bigint | null,
   maxRecordBytes: number
 ): { flags: number; seq: bigint; plaintext: Uint8Array } {
+  if (key.length !== 32) throw new RecordError("key must be 32 bytes");
+  if (noncePrefix.length !== 4) throw new RecordError("noncePrefix must be 4 bytes");
   const headerLen = 4 + 1 + 1 + 8 + 4;
   if (maxRecordBytes > 0 && frame.length > maxRecordBytes) throw new RecordError("record too large");
   if (frame.length < headerLen) throw new RecordError("record too short");

@@ -7,9 +7,10 @@ export type TunnelAttachReason = "send_failed";
 export type TunnelHandshakeResult = "ok" | "fail";
 export type TunnelHandshakeReason = "handshake_error";
 
+export type WsCloseKind = "local" | "peer_or_error";
+
 export type WsErrorReason =
   | "error"
-  | "close"
   | "recv_buffer_exceeded"
   | "unexpected_text_frame"
   | "unexpected_message_type";
@@ -25,6 +26,7 @@ export type ClientObserver = {
   onTunnelConnect(result: TunnelConnectResult, reason: TunnelConnectReason | undefined, elapsedSeconds: number): void;
   onTunnelAttach(result: TunnelAttachResult, reason: TunnelAttachReason | undefined): void;
   onTunnelHandshake(result: TunnelHandshakeResult, reason: TunnelHandshakeReason | undefined, elapsedSeconds: number): void;
+  onWsClose(kind: WsCloseKind, code?: number): void;
   onWsError(reason: WsErrorReason): void;
   onRpcCall(result: RpcCallResult, elapsedSeconds: number): void;
   onRpcNotify(): void;
@@ -36,6 +38,7 @@ export const NoopObserver: ClientObserver = {
   onTunnelConnect: () => {},
   onTunnelAttach: () => {},
   onTunnelHandshake: () => {},
+  onWsClose: () => {},
   onWsError: () => {},
   onRpcCall: () => {},
   onRpcNotify: () => {}
@@ -47,6 +50,7 @@ export function normalizeObserver(observer?: ClientObserverLike): ClientObserver
     onTunnelConnect: observer.onTunnelConnect ?? NoopObserver.onTunnelConnect,
     onTunnelAttach: observer.onTunnelAttach ?? NoopObserver.onTunnelAttach,
     onTunnelHandshake: observer.onTunnelHandshake ?? NoopObserver.onTunnelHandshake,
+    onWsClose: observer.onWsClose ?? NoopObserver.onWsClose,
     onWsError: observer.onWsError ?? NoopObserver.onWsError,
     onRpcCall: observer.onRpcCall ?? NoopObserver.onRpcCall,
     onRpcNotify: observer.onRpcNotify ?? NoopObserver.onRpcNotify

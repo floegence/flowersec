@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { YamuxSession } from "./session.js";
 import { encodeHeader, decodeHeader } from "./header.js";
-import { FLAG_ACK, FLAG_SYN, TYPE_DATA, TYPE_GO_AWAY, TYPE_PING, TYPE_WINDOW_UPDATE } from "./constants.js";
+import { FLAG_ACK, FLAG_FIN, FLAG_SYN, TYPE_DATA, TYPE_GO_AWAY, TYPE_PING, TYPE_WINDOW_UPDATE } from "./constants.js";
 
 class QueueConn {
   private readonly reads: Uint8Array[] = [];
@@ -129,5 +129,36 @@ describe("YamuxSession", () => {
     session.close();
 
     await expect(wait).rejects.toThrow(/session closed/);
+  });
+
+  test("stream is removed after FIN handshake completes", async () => {
+    const conn = new QueueConn();
+    const session = new YamuxSession(conn, { client: true });
+
+    const stream = await session.openStream();
+    await stream.close();
+
+    conn.enqueue(encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_FIN, streamId: stream.id, length: 0 }));
+
+    await tick();
+    expect(session.getStream(stream.id)).toBeUndefined();
+
+    session.close();
+  });
+
+  test("remote FIN then local close does not block reads and removes stream", async () => {
+    const conn = new QueueConn();
+    const session = new YamuxSession(conn, { client: true });
+
+    const stream = await session.openStream();
+    conn.enqueue(encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_FIN, streamId: stream.id, length: 0 }));
+
+    await tick();
+    await stream.close();
+
+    await expect(stream.read()).rejects.toThrow(/eof/);
+    expect(session.getStream(stream.id)).toBeUndefined();
+
+    session.close();
   });
 });

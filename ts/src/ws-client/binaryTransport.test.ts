@@ -61,7 +61,8 @@ describe("WebSocketBinaryTransport", () => {
   test("fails fast when queued bytes exceed limit", async () => {
     const ws = new FakeWebSocket();
     const onWsError = vi.fn();
-    const transport = new WebSocketBinaryTransport(ws, { maxQueuedBytes: 4, observer: { onWsError } });
+    const onWsClose = vi.fn();
+    const transport = new WebSocketBinaryTransport(ws, { maxQueuedBytes: 4, observer: { onWsClose, onWsError } });
 
     ws.emit("message", { data: new Uint8Array([1, 2, 3]).buffer });
     ws.emit("message", { data: new Uint8Array([4, 5]).buffer });
@@ -70,6 +71,7 @@ describe("WebSocketBinaryTransport", () => {
     expect(ws.closed).toBe(true);
     await expect(transport.readBinary()).rejects.toThrow(/ws recv buffer exceeded/);
     expect(onWsError).toHaveBeenCalledWith("recv_buffer_exceeded");
+    expect(onWsClose).toHaveBeenCalledWith("local");
   });
 
   test("supports array buffer views", async () => {
@@ -124,25 +126,27 @@ describe("WebSocketBinaryTransport", () => {
 
   test("readBinary rejects on websocket close event", async () => {
     const ws = new FakeWebSocket();
-    const onWsError = vi.fn();
-    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsError } });
+    const onWsClose = vi.fn();
+    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsClose } });
 
     const read = transport.readBinary();
     ws.emit("close", {});
 
     await expect(read).rejects.toThrow(/websocket closed/);
-    expect(onWsError).toHaveBeenCalledWith("close");
+    expect(onWsClose).toHaveBeenCalledWith("peer_or_error", undefined);
   });
 
   test("close rejects pending readers", async () => {
     const ws = new FakeWebSocket();
-    const transport = new WebSocketBinaryTransport(ws);
+    const onWsClose = vi.fn();
+    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsClose } });
 
     const read = transport.readBinary();
     transport.close();
 
     await expect(read).rejects.toThrow(/websocket closed/);
     expect(ws.closed).toBe(true);
+    expect(onWsClose).toHaveBeenCalledWith("local");
   });
 
   test("rejects unexpected message types", async () => {

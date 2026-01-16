@@ -61,7 +61,7 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
   }
 
   const transport = new WebSocketBinaryTransport(ws, {
-    maxQueuedBytes: opts.maxWsQueuedBytes,
+    ...(opts.maxWsQueuedBytes !== undefined ? { maxQueuedBytes: opts.maxWsQueuedBytes } : {}),
     observer
   });
   const psk = base64urlDecode(grant.e2ee_psk_b64u);
@@ -77,7 +77,7 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
       clientFeatures: opts.clientFeatures ?? 0,
       maxHandshakePayload: opts.maxHandshakePayload ?? 8 * 1024,
       maxRecordBytes: opts.maxRecordBytes ?? (1 << 20),
-      maxBufferedBytes: opts.maxBufferedBytes
+      ...(opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: opts.maxBufferedBytes } : {})
     });
     observer.onTunnelHandshake("ok", undefined, nowSeconds() - handshakeStart);
   } catch (err) {

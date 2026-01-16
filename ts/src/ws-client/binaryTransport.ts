@@ -28,6 +28,8 @@ export class WebSocketBinaryTransport {
   private messageChain: Promise<void> = Promise.resolve();
   // Sticky error state to fail all future reads/writes.
   private error: unknown = null;
+  // Tracks whether the close is initiated locally to avoid double-reporting.
+  private localCloseRequested = false;
 
   constructor(
     ws: WebSocketLike,
@@ -67,7 +69,11 @@ export class WebSocketBinaryTransport {
 
   // close tears down listeners and rejects pending readers.
   close(): void {
-    this.fail(new Error("websocket closed"), "close");
+    if (!this.localCloseRequested) {
+      this.localCloseRequested = true;
+      if (this.error == null) this.observer.onWsClose("local");
+    }
+    this.fail(new Error("websocket closed"));
     this.ws.removeEventListener("message", this.onMessage);
     this.ws.removeEventListener("error", this.onError);
     this.ws.removeEventListener("close", this.onClose);
@@ -90,6 +96,8 @@ export class WebSocketBinaryTransport {
     if (data instanceof ArrayBuffer) {
       if (this.maxQueuedBytes > 0 && this.queueBytes + data.byteLength > this.maxQueuedBytes) {
         this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+        this.localCloseRequested = true;
+        this.observer.onWsClose("local");
         this.ws.close();
         return;
       }
@@ -100,6 +108,8 @@ export class WebSocketBinaryTransport {
       const view = data as ArrayBufferView;
       if (this.maxQueuedBytes > 0 && this.queueBytes + view.byteLength > this.maxQueuedBytes) {
         this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+        this.localCloseRequested = true;
+        this.observer.onWsClose("local");
         this.ws.close();
         return;
       }
@@ -109,6 +119,8 @@ export class WebSocketBinaryTransport {
     if (typeof Blob !== "undefined" && data instanceof Blob) {
       if (this.maxQueuedBytes > 0 && this.queueBytes + data.size > this.maxQueuedBytes) {
         this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+        this.localCloseRequested = true;
+        this.observer.onWsClose("local");
         this.ws.close();
         return;
       }
@@ -132,8 +144,12 @@ export class WebSocketBinaryTransport {
     this.fail(new Error("websocket error"), "error");
   };
 
-  private readonly onClose = (): void => {
-    this.fail(new Error("websocket closed"), "close");
+  private readonly onClose = (ev: any): void => {
+    if (!this.localCloseRequested) {
+      const code = typeof ev?.code === "number" ? ev.code : undefined;
+      this.observer.onWsClose("peer_or_error", code);
+    }
+    this.fail(new Error("websocket closed"));
   };
 
   // push enqueues a frame or delivers it to a waiting reader.
@@ -145,6 +161,8 @@ export class WebSocketBinaryTransport {
     }
     if (this.maxQueuedBytes > 0 && this.queueBytes + b.length > this.maxQueuedBytes) {
       this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+      this.localCloseRequested = true;
+      this.observer.onWsClose("local");
       this.ws.close();
       return;
     }

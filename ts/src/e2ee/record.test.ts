@@ -24,6 +24,12 @@ describe("record", () => {
     expect(() => encryptRecord(key, nonce, RECORD_FLAG_APP, 1n, new Uint8Array(10), 10)).toThrow(/record too large/);
   });
 
+  test("decryptRecord validates key and nonce length", () => {
+    const { frame } = makeFrame();
+    expect(() => decryptRecord(new Uint8Array(31), new Uint8Array(4), frame, 1n, 1 << 20)).toThrow(/key must be 32 bytes/);
+    expect(() => decryptRecord(new Uint8Array(32), new Uint8Array(3), frame, 1n, 1 << 20)).toThrow(/noncePrefix must be 4 bytes/);
+  });
+
   test("decryptRecord validates header fields", () => {
     const { key, noncePrefix, frame } = makeFrame();
 

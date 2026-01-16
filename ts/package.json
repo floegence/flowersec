@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "bench": "vitest bench --run",
     "test": "vitest run",
     "lint": "eslint ."

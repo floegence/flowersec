@@ -121,15 +121,20 @@ export class YamuxStream {
   async close(): Promise<void> {
     if (this.state === "closed") return;
     if (this.state === "reset") return;
-    this.state = "localClose";
+    const wasRemoteClose = this.state === "remoteClose";
     const flags = this.sendFlags() | FLAG_FIN;
+    this.state = wasRemoteClose ? "closed" : "localClose";
     const hdr = encodeHeader({
       type: TYPE_WINDOW_UPDATE,
       flags,
       streamId: this.id,
       length: 0
     });
-    await this.session.writeRaw(hdr);
+    try {
+      await this.session.writeRaw(hdr);
+    } finally {
+      if (wasRemoteClose) this.finalizeClosed();
+    }
   }
 
   // reset tears down the stream and notifies the peer.
@@ -153,6 +158,7 @@ export class YamuxStream {
     if ((flags & FLAG_FIN) !== 0) {
       if (this.state === "localClose") {
         this.state = "closed";
+        this.finalizeClosed();
       } else if (this.state === "established" || this.state === "synSent" || this.state === "synReceived") {
         this.state = "remoteClose";
       }
@@ -163,6 +169,13 @@ export class YamuxStream {
     if ((flags & FLAG_RST) !== 0) {
       this.reset(new Error("rst"));
     }
+  }
+
+  private finalizeClosed(): void {
+    const ws = this.readWaiters;
+    this.readWaiters = [];
+    for (const w of ws) w();
+    this.session.onStreamClosed(this.id);
   }
 
   // sendFlags returns any SYN/ACK flags needed for the current state.

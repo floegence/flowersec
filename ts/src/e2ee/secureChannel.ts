@@ -162,7 +162,8 @@ export class SecureChannel {
         reject(new Error("closed"));
         return;
       }
-      this.sendQueue.push({ kind, payload, resolve, reject });
+      const req: SendReq = payload === undefined ? { kind, resolve, reject } : { kind, payload, resolve, reject };
+      this.sendQueue.push(req);
       const w = this.sendWaiters.shift();
       if (w != null) w();
     });

@@ -9,7 +9,8 @@ describe("observability", () => {
     obs.onTunnelConnect("ok", undefined, 1);
     obs.onTunnelAttach("ok", undefined);
     obs.onTunnelHandshake("ok", undefined, 1);
-    obs.onWsError("close");
+    obs.onWsClose("local");
+    obs.onWsError("error");
     obs.onRpcCall("ok", 0.01);
     obs.onRpcNotify();
 

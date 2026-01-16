@@ -107,6 +107,8 @@ function fingerprintInit(init: E2EE_Init): string {
 
 // clientHandshake performs the client side of the E2EE handshake.
 export async function clientHandshake(transport: BinaryTransport, opts: HandshakeClientOptions): Promise<SecureChannel> {
+  if (opts.psk.length !== 32) throw new Error("psk must be 32 bytes");
+  if (opts.channelId === "") throw new Error("missing channel_id");
   const kp = suiteKeypair(opts.suite);
   const nonceC = randomBytes(32);
   const init: E2EE_Init = {
@@ -126,8 +128,14 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
   const decoded = decodeHandshakeFrame(respFrame, opts.maxHandshakePayload);
   if (decoded.handshakeType !== HANDSHAKE_TYPE_RESP) throw new Error("unexpected handshake type");
   const resp = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Resp;
+  if (resp.handshake_id == null || resp.handshake_id === "") throw new Error("missing handshake_id");
+  if (resp.server_eph_pub_b64u == null || resp.server_eph_pub_b64u === "") throw new Error("missing server_eph_pub_b64u");
+  if (resp.nonce_s_b64u == null || resp.nonce_s_b64u === "") throw new Error("missing nonce_s_b64u");
   const serverPub = base64urlDecode(resp.server_eph_pub_b64u);
   const nonceS = base64urlDecode(resp.nonce_s_b64u);
+  if (nonceS.length !== 32) throw new Error("bad nonce_s length");
+  if (opts.suite === 1 && serverPub.length !== 32) throw new Error("bad server eph pub length");
+  if (opts.suite === 2 && serverPub.length !== 65) throw new Error("bad server eph pub length");
 
   const th = transcriptHash({
     version: PROTOCOL_VERSION,
@@ -157,7 +165,7 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
   return new SecureChannel({
     transport,
     maxRecordBytes: opts.maxRecordBytes,
-    maxBufferedBytes: opts.maxBufferedBytes,
+    ...(opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: opts.maxBufferedBytes } : {}),
     sendKey: keys.c2sKey,
     recvKey: keys.s2cKey,
     sendNoncePrefix: keys.c2sNoncePrefix,
@@ -320,7 +328,7 @@ export async function serverHandshake(
   return new SecureChannel({
     transport,
     maxRecordBytes: opts.maxRecordBytes,
-    maxBufferedBytes: opts.maxBufferedBytes,
+    ...(opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: opts.maxBufferedBytes } : {}),
     sendKey: keys.s2cKey,
     recvKey: keys.c2sKey,
     sendNoncePrefix: keys.s2cNoncePrefix,

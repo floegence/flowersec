@@ -92,7 +92,7 @@ export class YamuxSession {
   async sendRst(id: number): Promise<void> {
     const hdr = encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_RST, streamId: id, length: 0 });
     if (this.closed) {
-      this.streams.delete(id);
+      this.onStreamClosed(id);
       return;
     }
     try {
@@ -100,7 +100,7 @@ export class YamuxSession {
     } catch {
       // Best-effort reset; ignore errors when the session is closing.
     }
-    this.streams.delete(id);
+    this.onStreamClosed(id);
   }
 
   // notifySendWindow wakes any writers waiting on window credit.
@@ -133,14 +133,21 @@ export class YamuxSession {
 
   onStreamEstablished(_streamId: number): void {}
 
+  // onStreamClosed removes the stream and wakes any per-stream waiters.
+  onStreamClosed(streamId: number): void {
+    this.streams.delete(streamId);
+    this.notifySendWindow(streamId);
+  }
+
   // close terminates the session and resets all streams.
   close(): void {
     if (this.closed) return;
     this.closed = true;
     this.conn.close();
     this.wakeSendWindowWaiters();
-    for (const s of this.streams.values()) s.reset(new Error("session closed"));
+    const streams = Array.from(this.streams.values());
     this.streams.clear();
+    for (const s of streams) s.reset(new Error("session closed"));
   }
 
   private wakeSendWindowWaiters(): void {

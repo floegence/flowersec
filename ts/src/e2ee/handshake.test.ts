@@ -99,6 +99,63 @@ function buildAckFrame(args: {
 }
 
 describe("clientHandshake", () => {
+  test("rejects missing handshake_id", async () => {
+    const serverPub = base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
+    const nonceS = base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
+    const transport = new ScriptedTransport([
+      encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify({ server_eph_pub_b64u: serverPub, nonce_s_b64u: nonceS, server_features: 0 })))
+    ]);
+
+    await expect(clientHandshake(transport, {
+      channelId: "ch_1",
+      suite: 1,
+      psk: crypto.getRandomValues(new Uint8Array(32)),
+      clientFeatures: 0,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20
+    })).rejects.toThrow(/missing handshake_id/);
+  });
+
+  test("rejects bad nonce_s length", async () => {
+    const transport = new ScriptedTransport([
+      encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify({
+        handshake_id: "hs_1",
+        server_eph_pub_b64u: base64urlEncode(crypto.getRandomValues(new Uint8Array(32))),
+        nonce_s_b64u: base64urlEncode(crypto.getRandomValues(new Uint8Array(31))),
+        server_features: 0
+      })))
+    ]);
+
+    await expect(clientHandshake(transport, {
+      channelId: "ch_1",
+      suite: 1,
+      psk: crypto.getRandomValues(new Uint8Array(32)),
+      clientFeatures: 0,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20
+    })).rejects.toThrow(/bad nonce_s length/);
+  });
+
+  test("rejects bad server eph pub length", async () => {
+    const transport = new ScriptedTransport([
+      encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify({
+        handshake_id: "hs_1",
+        server_eph_pub_b64u: base64urlEncode(crypto.getRandomValues(new Uint8Array(31))),
+        nonce_s_b64u: base64urlEncode(crypto.getRandomValues(new Uint8Array(32))),
+        server_features: 0
+      })))
+    ]);
+
+    await expect(clientHandshake(transport, {
+      channelId: "ch_1",
+      suite: 1,
+      psk: crypto.getRandomValues(new Uint8Array(32)),
+      clientFeatures: 0,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20
+    })).rejects.toThrow(/bad server eph pub length/);
+  });
+
   test("rejects unexpected response type", async () => {
     const transport = new ScriptedTransport([
       encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, te.encode("{}"))
