@@ -1,4 +1,4 @@
-.PHONY: gen test go-test ts-test lint
+.PHONY: gen test go-test ts-test lint bench
 
 YAMUX_INTEROP ?= 1
 YAMUX_INTEROP_STRESS ?= 0
@@ -25,3 +25,6 @@ ts-test:
 lint:
 	gofmt -w go examples/go
 	cd ts && npm run lint
+
+bench:
+	bash tools/bench/bench.sh
