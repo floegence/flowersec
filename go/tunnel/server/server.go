@@ -50,8 +50,8 @@ func DefaultConfig() Config {
 		MaxAttachBytes:       8 * 1024,
 		MaxRecordBytes:       1 << 20,
 		MaxPendingBytes:      256 * 1024,
-		MaxChannels:          2048,
-		MaxConns:             4096,
+		MaxChannels:          6000,
+		MaxConns:             12000,
 		AllowNoOrigin:        true,
 		IdleTimeout:          60 * time.Second,
 		ClockSkew:            30 * time.Second,
@@ -102,10 +102,10 @@ func New(cfg Config) (*Server, error) {
 		cfg.MaxPendingBytes = 256 * 1024
 	}
 	if cfg.MaxChannels <= 0 {
-		cfg.MaxChannels = 2048
+		cfg.MaxChannels = 6000
 	}
 	if cfg.MaxConns <= 0 {
-		cfg.MaxConns = 4096
+		cfg.MaxConns = 12000
 	}
 	if cfg.IdleTimeout <= 0 {
 		cfg.IdleTimeout = 60 * time.Second
