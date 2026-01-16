@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	tunnelv1 "github.com/flowersec/flowersec/gen/flowersec/tunnel/v1"
-	"github.com/flowersec/flowersec/internal/base64url"
+	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
+	"github.com/floegence/flowersec/internal/base64url"
 )
 
 // AttachVersion is the JSON attach envelope version.

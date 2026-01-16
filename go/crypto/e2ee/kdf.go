@@ -10,7 +10,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/flowersec/flowersec/internal/hkdf"
+	"github.com/floegence/flowersec/internal/hkdf"
 )
 
 var (

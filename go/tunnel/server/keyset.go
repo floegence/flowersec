@@ -7,8 +7,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/flowersec/flowersec/controlplane/issuer"
-	"github.com/flowersec/flowersec/internal/base64url"
+	"github.com/floegence/flowersec/controlplane/issuer"
+	"github.com/floegence/flowersec/internal/base64url"
 )
 
 type IssuerKeyset struct {

@@ -8,12 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flowersec/flowersec/controlplane/token"
-	"github.com/flowersec/flowersec/crypto/e2ee"
-	tunnelv1 "github.com/flowersec/flowersec/gen/flowersec/tunnel/v1"
-	"github.com/flowersec/flowersec/observability"
-	"github.com/flowersec/flowersec/realtime/ws"
-	"github.com/flowersec/flowersec/tunnel/protocol"
+	"github.com/floegence/flowersec/controlplane/token"
+	"github.com/floegence/flowersec/crypto/e2ee"
+	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
+	"github.com/floegence/flowersec/observability"
+	"github.com/floegence/flowersec/realtime/ws"
+	"github.com/floegence/flowersec/tunnel/protocol"
 	"github.com/gorilla/websocket"
 )
 

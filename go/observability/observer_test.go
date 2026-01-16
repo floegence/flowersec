@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowersec/flowersec/observability"
+	"github.com/floegence/flowersec/observability"
 )
 
 type countingTunnelObserver struct {

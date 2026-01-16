@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/flowersec/flowersec/controlplane/issuer"
+	"github.com/floegence/flowersec/controlplane/issuer"
 )
 
 func main() {

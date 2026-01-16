@@ -6,11 +6,11 @@ import (
 	"errors"
 	"time"
 
-	"github.com/flowersec/flowersec/controlplane/issuer"
-	"github.com/flowersec/flowersec/controlplane/token"
-	controlv1 "github.com/flowersec/flowersec/gen/flowersec/controlplane/v1"
-	e2eev1 "github.com/flowersec/flowersec/gen/flowersec/e2ee/v1"
-	"github.com/flowersec/flowersec/internal/base64url"
+	"github.com/floegence/flowersec/controlplane/issuer"
+	"github.com/floegence/flowersec/controlplane/token"
+	controlv1 "github.com/floegence/flowersec/gen/flowersec/controlplane/v1"
+	e2eev1 "github.com/floegence/flowersec/gen/flowersec/e2ee/v1"
+	"github.com/floegence/flowersec/internal/base64url"
 )
 
 const (

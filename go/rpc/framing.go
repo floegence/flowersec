@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/flowersec/flowersec/internal/bin"
+	"github.com/floegence/flowersec/internal/bin"
 )
 
 var ErrFrameTooLarge = errors.New("rpc frame too large")

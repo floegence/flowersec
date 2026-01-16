@@ -14,9 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flowersec/flowersec/observability"
-	"github.com/flowersec/flowersec/observability/prom"
-	"github.com/flowersec/flowersec/tunnel/server"
+	"github.com/floegence/flowersec/observability"
+	"github.com/floegence/flowersec/observability/prom"
+	"github.com/floegence/flowersec/tunnel/server"
 )
 
 type stringSliceFlag []string

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/flowersec/flowersec/observability"
+	"github.com/floegence/flowersec/observability"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )

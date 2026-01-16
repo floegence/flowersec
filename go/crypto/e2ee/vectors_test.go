@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/flowersec/flowersec/internal/base64url"
+	"github.com/floegence/flowersec/internal/base64url"
 )
 
 type e2eeVectorsFile struct {

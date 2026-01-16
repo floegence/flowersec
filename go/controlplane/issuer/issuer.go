@@ -7,8 +7,8 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/flowersec/flowersec/controlplane/token"
-	"github.com/flowersec/flowersec/internal/base64url"
+	"github.com/floegence/flowersec/controlplane/token"
+	"github.com/floegence/flowersec/internal/base64url"
 )
 
 type Keyset struct {

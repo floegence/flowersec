@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	rpcv1 "github.com/flowersec/flowersec/gen/flowersec/rpc/v1"
-	"github.com/flowersec/flowersec/rpc"
+	rpcv1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/rpc"
 )
 
 func TestRPC_NotificationAndRequest(t *testing.T) {

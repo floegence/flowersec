@@ -10,9 +10,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/flowersec/flowersec-examples/go/exampleutil"
-	"github.com/flowersec/flowersec/crypto/e2ee"
-	"github.com/flowersec/flowersec/rpc"
+	"github.com/floegence/flowersec-examples/go/exampleutil"
+	"github.com/floegence/flowersec/crypto/e2ee"
+	"github.com/floegence/flowersec/rpc"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )

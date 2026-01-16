@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 
-	rpcv1 "github.com/flowersec/flowersec/gen/flowersec/rpc/v1"
+	rpcv1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
 )
 
 var ErrBadStreamHello = errors.New("bad stream hello")

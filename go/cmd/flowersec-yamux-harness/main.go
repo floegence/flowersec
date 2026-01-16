@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/flowersec/flowersec/internal/yamuxinterop"
+	"github.com/floegence/flowersec/internal/yamuxinterop"
 	hyamux "github.com/hashicorp/yamux"
 )
 

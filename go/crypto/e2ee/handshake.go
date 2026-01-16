@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	e2eev1 "github.com/flowersec/flowersec/gen/flowersec/e2ee/v1"
-	"github.com/flowersec/flowersec/internal/base64url"
+	e2eev1 "github.com/floegence/flowersec/gen/flowersec/e2ee/v1"
+	"github.com/floegence/flowersec/internal/base64url"
 )
 
 type HandshakeOptions struct {

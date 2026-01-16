@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	rpcv1 "github.com/flowersec/flowersec/gen/flowersec/rpc/v1"
-	"github.com/flowersec/flowersec/observability"
+	rpcv1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/observability"
 )
 
 // Handler processes an RPC request and returns payload or an RPC error.

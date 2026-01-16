@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flowersec/flowersec/controlplane/channelinit"
-	"github.com/flowersec/flowersec/controlplane/issuer"
-	controlv1 "github.com/flowersec/flowersec/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/controlplane/channelinit"
+	"github.com/floegence/flowersec/controlplane/issuer"
+	controlv1 "github.com/floegence/flowersec/gen/flowersec/controlplane/v1"
 )
 
 type ready struct {

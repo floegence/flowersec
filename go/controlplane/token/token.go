@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flowersec/flowersec/internal/base64url"
+	"github.com/floegence/flowersec/internal/base64url"
 )
 
 // Prefix identifies the token format version.

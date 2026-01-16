@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/flowersec/flowersec/internal/bin"
+	"github.com/floegence/flowersec/internal/bin"
 )
 
 const (

@@ -14,11 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/flowersec/flowersec-examples/go/exampleutil"
-	"github.com/flowersec/flowersec/crypto/e2ee"
-	rpcv1 "github.com/flowersec/flowersec/gen/flowersec/rpc/v1"
-	"github.com/flowersec/flowersec/realtime/ws"
-	"github.com/flowersec/flowersec/rpc"
+	"github.com/floegence/flowersec-examples/go/exampleutil"
+	"github.com/floegence/flowersec/crypto/e2ee"
+	rpcv1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/realtime/ws"
+	"github.com/floegence/flowersec/rpc"
 	hyamux "github.com/hashicorp/yamux"
 )
 

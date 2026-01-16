@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"errors"
 
-	"github.com/flowersec/flowersec/internal/bin"
-	"github.com/flowersec/flowersec/internal/hkdf"
+	"github.com/floegence/flowersec/internal/bin"
+	"github.com/floegence/flowersec/internal/hkdf"
 )
 
 var (
