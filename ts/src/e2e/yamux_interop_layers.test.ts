@@ -38,9 +38,7 @@ const trace = enableDebug
   : () => {};
 
 describeInterop("yamux interop (layers: in-memory)", () => {
-  test(
-    "session close wakes writers waiting on flow control",
-    async () => {
+  test("session close wakes writers waiting on flow control", { timeout: 5000 }, async () => {
       const { a, b } = createByteDuplexPair();
       const server = new YamuxSession(b, {
         client: false,
@@ -54,13 +52,9 @@ describeInterop("yamux interop (layers: in-memory)", () => {
       client.close();
       await expect(writeTask).rejects.toThrow(/session closed|stream/);
       server.close();
-    },
-    { timeout: 5000 }
-  );
+    });
 
-  test(
-    "secure channel delivers FIN/RST when server closes early",
-    async () => {
+  test("secure channel delivers FIN/RST when server closes early", { timeout: 8000 }, async () => {
       const { client, server, close } = await createSecureChannelPair();
       const probe = new FrameProbe();
       const clientMux = new YamuxSession(tapDuplex(secureToDuplex(client), probe), { client: true });
@@ -75,15 +69,11 @@ describeInterop("yamux interop (layers: in-memory)", () => {
 
       clientMux.close();
       close();
-    },
-    { timeout: 8000 }
-  );
+    });
 });
 
 describeInterop("yamux interop (layers: websocket)", () => {
-  test(
-    "websocket transport preserves FIN/RST delivery",
-    async () => {
+  test("websocket transport preserves FIN/RST delivery", { timeout: 15000 }, async () => {
       const { clientWs, serverWs, close } = await openWebSocketPair();
       const { client, server } = await createSecureChannelPair({
         clientTransport: new WebSocketBinaryTransport(clientWs),
@@ -105,15 +95,11 @@ describeInterop("yamux interop (layers: websocket)", () => {
       client.close();
       server.close();
       await close();
-    },
-    { timeout: 15000 }
-  );
+    });
 });
 
 describeDebug("yamux interop (full chain probe)", () => {
-  test(
-    "full chain receives FIN/RST on rst_mid_write_go",
-    async () => {
+  test("full chain receives FIN/RST on rst_mid_write_go", { timeout: 30000 }, async () => {
       const scenario: Scenario = {
         scenario: "rst_mid_write_go",
         streams: 3,
@@ -175,9 +161,7 @@ describeDebug("yamux interop (full chain probe)", () => {
       } finally {
         await withTimeout("harness exit", 5000, exitPromise);
       }
-    },
-    { timeout: 30000 }
-  );
+    });
 });
 
 type Scenario = {

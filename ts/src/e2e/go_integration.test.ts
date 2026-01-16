@@ -10,9 +10,7 @@ const require = createRequire(import.meta.url);
 const WS = require("ws");
 
 describe("go<->ts integration", () => {
-  test(
-    "ts client talks to go server endpoint through tunnel",
-    async () => {
+  test("ts client talks to go server endpoint through tunnel", { timeout: 60000 }, async () => {
       const goCwd = path.join(process.cwd(), "..", "go");
       const p = spawn("go", ["run", "./cmd/flowersec-e2e-harness"], {
         cwd: goCwd,
@@ -42,9 +40,7 @@ describe("go<->ts integration", () => {
         p.kill("SIGTERM");
         await once(p, "exit");
       }
-    },
-    { timeout: 60000 }
-  );
+    });
 });
 
 async function waitForLine(get: () => string, timeoutMs: number): Promise<void> {

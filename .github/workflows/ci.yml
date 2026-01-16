@@ -26,10 +26,5 @@ jobs:
           cache: npm
           cache-dependency-path: ts/package-lock.json
 
-      - name: Install TS dependencies
-        working-directory: ts
-        run: npm ci
-
       - name: Run checks
         run: make check
-

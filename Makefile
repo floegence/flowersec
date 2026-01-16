@@ -1,4 +1,4 @@
-.PHONY: gen test go-test go-test-race go-vulncheck ts-test ts-lint fmt fmt-check lint lint-check bench check
+.PHONY: gen test go-test go-test-race go-vulncheck ts-ci ts-audit ts-test ts-lint ts-build fmt fmt-check lint lint-check bench check
 
 GOVULNCHECK_VERSION ?= v1.1.4
 
@@ -30,8 +30,17 @@ ts-test:
 		YAMUX_INTEROP_DEBUG=$(YAMUX_INTEROP_DEBUG) \
 		npm test
 
+ts-ci:
+	cd ts && npm ci --audit=false
+
+ts-audit:
+	cd ts && npm audit --audit-level=high --omit=dev
+
 ts-lint:
 	cd ts && npm run lint
+
+ts-build:
+	cd ts && rm -rf dist && npm run build
 
 fmt:
 	gofmt -w go examples/go
@@ -47,7 +56,14 @@ lint: fmt ts-lint
 
 lint-check: fmt-check ts-lint
 
-check: lint-check test go-test-race go-vulncheck
+check:
+	$(MAKE) ts-ci
+	$(MAKE) lint-check
+	$(MAKE) ts-build
+	$(MAKE) test
+	$(MAKE) go-test-race
+	$(MAKE) go-vulncheck
+	$(MAKE) ts-audit
 
 bench:
 	bash tools/bench/bench.sh

@@ -218,27 +218,19 @@ const describeInterop = enableInterop ? describe : describe.skip;
 
 describeInterop("yamux interop (minimal tcp)", () => {
   for (const scenario of minimalScenarios) {
-    test(
-      scenario.scenario,
-      async () => {
+    test(scenario.scenario, { timeout: scenario.deadline_ms + 20000 }, async () => {
         const { client, server } = await runMinimalScenario(scenario);
         assertScenario(scenario, client, server);
-      },
-      { timeout: scenario.deadline_ms + 20000 }
-    );
+      });
   }
 });
 
 describeInterop("yamux interop (full chain)", () => {
   for (const scenario of fullChainScenarios) {
-    test(
-      scenario.scenario,
-      async () => {
+    test(scenario.scenario, { timeout: scenario.deadline_ms + 30000 }, async () => {
         const { client, server } = await runFullScenario(scenario);
         assertScenario(scenario, client, server);
-      },
-      { timeout: scenario.deadline_ms + 30000 }
-    );
+      });
   }
 });
 
