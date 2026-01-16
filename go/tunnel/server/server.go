@@ -186,9 +186,11 @@ var (
 )
 
 type channelState struct {
+	mu         sync.Mutex                      // Guards channel state.
 	id         string                          // Channel identifier.
 	initExp    int64                           // Channel init expiry (Unix seconds).
 	encrypted  bool                            // Whether E2EE record frames observed.
+	flushing   bool                            // True while pairing flush is in progress.
 	firstSeen  time.Time                       // When the first endpoint arrived.
 	lastActive time.Time                       // Last activity timestamp.
 	conns      map[tunnelv1.Role]*endpointConn // Active endpoints by role.
@@ -336,20 +338,19 @@ func (s *Server) allowReplaceLocked(st *channelState, role tunnelv1.Role, now ti
 func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.Conn) error {
 	var toClose []*websocket.Conn
 	var startPump bool
-	var flushClientToServer [][]byte
-	var flushServerToClient [][]byte
-	var lockClient *endpointConn
-	var lockServer *endpointConn
 	var pairLatency time.Duration
 	var channelCount int
 	var setChannelCount bool
 	var replaceResult observability.ReplaceResult
 	var setReplaceResult bool
+	var paired bool
+	var client *endpointConn
+	var server *endpointConn
 	now := time.Now()
 
+	ep := &endpointConn{role: a.Role, eid: a.EndpointInstanceId, ws: uc}
 	s.mu.Lock()
 	st := s.channels[a.ChannelId]
-	ep := &endpointConn{role: a.Role, eid: a.EndpointInstanceId, ws: uc}
 	if st == nil {
 		if s.cfg.MaxChannels > 0 && len(s.channels) >= s.cfg.MaxChannels {
 			s.mu.Unlock()
@@ -370,12 +371,15 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 		startPump = true
 		s.mu.Unlock()
 	} else {
+		st.mu.Lock()
 		if st.initExp != p.InitExp {
+			st.mu.Unlock()
 			s.mu.Unlock()
 			return errors.New("init_exp mismatch")
 		}
 		if st.conns[a.Role] != nil {
 			if !s.allowReplaceLocked(st, a.Role, now) {
+				st.mu.Unlock()
 				s.mu.Unlock()
 				s.obs.Replace(observability.ReplaceResultRateLimited)
 				return ErrReplaceRateLimited
@@ -386,6 +390,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 				toClose = append(toClose, e.ws)
 			}
 			delete(s.channels, a.ChannelId)
+			old := st
 			st = &channelState{
 				id:         a.ChannelId,
 				initExp:    p.InitExp,
@@ -399,26 +404,20 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			replaceResult = observability.ReplaceResultOK
 			setReplaceResult = true
 			startPump = true
+			old.mu.Unlock()
 			s.mu.Unlock()
 		} else {
 			st.conns[a.Role] = ep
 			st.lastActive = now
 			startPump = true
-			// If paired, flush buffered frames in a deterministic order while holding destination write locks.
-			client := st.conns[tunnelv1.Role_client]
-			server := st.conns[tunnelv1.Role_server]
+			client = st.conns[tunnelv1.Role_client]
+			server = st.conns[tunnelv1.Role_server]
 			if client != nil && server != nil {
 				pairLatency = now.Sub(st.firstSeen)
-				lockClient, lockServer = client, server
-				lockClient.writeMu.Lock()
-				lockServer.writeMu.Lock()
-				flushClientToServer = client.pending
-				client.pending = nil
-				client.pendingBytes = 0
-				flushServerToClient = server.pending
-				server.pending = nil
-				server.pendingBytes = 0
+				st.flushing = true
+				paired = true
 			}
+			st.mu.Unlock()
 			s.mu.Unlock()
 		}
 	}
@@ -441,23 +440,50 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 	if startPump {
 		go s.pump(a.ChannelId, a.Role, ep)
 	}
-	var flushErr error
-	if lockClient != nil && lockServer != nil {
-		if err := writeFramesLocked(lockServer, flushClientToServer); err != nil {
-			flushErr = err
+	if paired {
+		if err := s.flushPending(st, client, server); err != nil {
+			s.obs.Close(observability.CloseReasonWriteError)
+			s.closeChannel(a.ChannelId)
+			return err
 		}
-		if err := writeFramesLocked(lockClient, flushServerToClient); err != nil && flushErr == nil {
-			flushErr = err
-		}
-		lockServer.writeMu.Unlock()
-		lockClient.writeMu.Unlock()
-	}
-	if flushErr != nil {
-		s.obs.Close(observability.CloseReasonWriteError)
-		s.closeChannel(a.ChannelId)
-		return flushErr
 	}
 	return nil
+}
+
+func (s *Server) flushPending(st *channelState, client *endpointConn, server *endpointConn) error {
+	if st == nil || client == nil || server == nil {
+		return nil
+	}
+	for {
+		st.mu.Lock()
+		pendingClient := client.pending
+		pendingServer := server.pending
+		if len(pendingClient) == 0 && len(pendingServer) == 0 {
+			st.flushing = false
+			st.mu.Unlock()
+			return nil
+		}
+		client.pending = nil
+		client.pendingBytes = 0
+		server.pending = nil
+		server.pendingBytes = 0
+		st.mu.Unlock()
+
+		client.writeMu.Lock()
+		server.writeMu.Lock()
+		var flushErr error
+		if err := writeFramesLocked(server, pendingClient); err != nil {
+			flushErr = err
+		}
+		if err := writeFramesLocked(client, pendingServer); err != nil && flushErr == nil {
+			flushErr = err
+		}
+		server.writeMu.Unlock()
+		client.writeMu.Unlock()
+		if flushErr != nil {
+			return flushErr
+		}
+	}
 }
 
 // pump forwards frames from a source endpoint to its peer.
@@ -546,6 +572,8 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 		s.mu.Unlock()
 		return nil, nil, errUnknownChannel
 	}
+	st.mu.Lock()
+	s.mu.Unlock()
 	st.lastActive = now
 	if !st.encrypted && e2ee.LooksLikeRecordFrame(frame, maxCipher) {
 		st.encrypted = true
@@ -553,7 +581,7 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 	}
 	src := st.conns[role]
 	if src == nil {
-		s.mu.Unlock()
+		st.mu.Unlock()
 		if encryptedNow {
 			s.obs.Encrypted()
 		}
@@ -566,9 +594,9 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 		peerRole = tunnelv1.Role_client
 	}
 	dst = st.conns[peerRole]
-	if dst == nil {
+	if dst == nil || st.flushing {
 		if s.cfg.MaxPendingBytes > 0 && src.pendingBytes+len(frame) > s.cfg.MaxPendingBytes {
-			s.mu.Unlock()
+			st.mu.Unlock()
 			if encryptedNow {
 				s.obs.Encrypted()
 			}
@@ -578,7 +606,7 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 		copy(cpy, frame)
 		src.pending = append(src.pending, cpy)
 		src.pendingBytes += len(cpy)
-		s.mu.Unlock()
+		st.mu.Unlock()
 		if encryptedNow {
 			s.obs.Encrypted()
 		}
@@ -589,7 +617,7 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 		src.pending = nil
 		src.pendingBytes = 0
 	}
-	s.mu.Unlock()
+	st.mu.Unlock()
 	if encryptedNow {
 		s.obs.Encrypted()
 	}
@@ -604,12 +632,14 @@ func (s *Server) closeChannel(channelID string) {
 	s.mu.Lock()
 	st := s.channels[channelID]
 	if st != nil {
+		st.mu.Lock()
 		for _, e := range st.conns {
 			conns = append(conns, e.ws)
 		}
 		delete(s.channels, channelID)
 		channelCount = len(s.channels)
 		removed = true
+		st.mu.Unlock()
 	}
 	s.mu.Unlock()
 	if removed {
@@ -627,7 +657,15 @@ func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *end
 	var channelCount int
 	s.mu.Lock()
 	st := s.channels[channelID]
-	if st == nil || st.conns[role] != src {
+	if st == nil {
+		s.mu.Unlock()
+		_ = src.ws.Close()
+		s.untrackConn(src.ws)
+		return
+	}
+	st.mu.Lock()
+	if st.conns[role] != src {
+		st.mu.Unlock()
 		s.mu.Unlock()
 		_ = src.ws.Close()
 		s.untrackConn(src.ws)
@@ -638,6 +676,7 @@ func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *end
 	}
 	delete(s.channels, channelID)
 	channelCount = len(s.channels)
+	st.mu.Unlock()
 	s.mu.Unlock()
 	s.obs.ChannelCount(channelCount)
 	for _, c := range conns {
@@ -706,14 +745,18 @@ func (s *Server) cleanupLoop() {
 			var toClose []closeTarget
 			s.mu.Lock()
 			for id, st := range s.channels {
+				st.mu.Lock()
 				if !st.encrypted && now.Unix() > st.initExp {
 					toClose = append(toClose, closeTarget{id: id, reason: observability.CloseReasonInitExpired})
+					st.mu.Unlock()
 					continue
 				}
 				if s.cfg.IdleTimeout > 0 && now.Sub(st.lastActive) > s.cfg.IdleTimeout {
 					toClose = append(toClose, closeTarget{id: id, reason: observability.CloseReasonIdleTimeout})
+					st.mu.Unlock()
 					continue
 				}
+				st.mu.Unlock()
 			}
 			s.mu.Unlock()
 			for _, target := range toClose {
