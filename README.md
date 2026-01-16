@@ -67,6 +67,36 @@ make lint
 make test
 ```
 
+## Observability
+
+The tunnel binary exposes Prometheus metrics with a signal-based switch. Metrics are disabled by default and `/metrics` returns 404 until enabled.
+
+- Enable metrics: send `SIGUSR1`
+- Disable metrics: send `SIGUSR2`
+- Endpoint: `GET /metrics` on the same HTTP server as the tunnel
+
+Example:
+
+```bash
+# run tunnel
+go run ./go/cmd/flowersec-tunnel \
+  --listen 127.0.0.1:8080 \
+  --issuer-keys-file /path/to/keys.json \
+  --aud your-audience
+
+# enable metrics
+kill -USR1 <pid>
+
+# scrape metrics
+curl http://127.0.0.1:8080/metrics
+```
+
+Library integrations:
+
+- Go tunnel: set `server.Config.Observer` if you run the server directly.
+- Go RPC: attach an observer via `rpc.Server.SetObserver(...)` or `rpc.Client.SetObserver(...)`.
+- TS client: pass `observer` into `connectTunnelClientRpc(...)`, `WebSocketBinaryTransport`, or `RpcClient`.
+
 ## Binaries
 
 - Tunnel server (deployable): `go/cmd/flowersec-tunnel/`
