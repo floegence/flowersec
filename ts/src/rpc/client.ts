@@ -1,4 +1,5 @@
 import type { RpcEnvelope, RpcError } from "../gen/flowersec/rpc/v1.gen.js";
+import { normalizeObserver, nowSeconds, type ClientObserver, type ClientObserverLike, type RpcCallResult } from "../observability/observer.js";
 import { readJsonFrame, writeJsonFrame } from "./framing.js";
 
 // Guard against precision loss when encoding request IDs as numbers.
@@ -14,11 +15,15 @@ export class RpcClient {
   private readonly notifyHandlers = new Map<number, Set<(payload: unknown) => void>>();
   // Closed state to stop the read loop and reject calls.
   private closed = false;
+  // Observer for RPC events.
+  private readonly observer: ClientObserver;
 
   constructor(
     private readonly readExactly: (n: number) => Promise<Uint8Array>,
-    private readonly write: (b: Uint8Array) => Promise<void>
+    private readonly write: (b: Uint8Array) => Promise<void>,
+    opts: Readonly<{ observer?: ClientObserverLike }> = {}
   ) {
+    this.observer = normalizeObserver(opts.observer);
     void this.readLoop();
   }
 
@@ -26,6 +31,10 @@ export class RpcClient {
   async call(typeId: number, payload: unknown, signal?: AbortSignal): Promise<{ payload: unknown; error?: RpcError }> {
     if (this.closed) throw new Error("rpc client closed");
     if (this.nextId > MAX_SAFE_REQUEST_ID) throw new Error("request id overflow");
+    const start = nowSeconds();
+    const record = (result: RpcCallResult) => {
+      this.observer.onRpcCall(result, nowSeconds() - start);
+    };
     const requestId = this.nextId;
     this.nextId += 1n;
     const env: RpcEnvelope = {
@@ -41,10 +50,12 @@ export class RpcClient {
       await writeJsonFrame(this.write, env);
     } catch (e) {
       this.pending.delete(requestId);
+      record("transport_error");
       throw e;
     }
     if (signal?.aborted) {
       this.pending.delete(requestId);
+      record("canceled");
       throw signal.reason ?? new Error("aborted");
     }
     let resp: RpcEnvelope;
@@ -52,8 +63,11 @@ export class RpcClient {
       resp = await raceAbort(p, signal);
     } catch (e) {
       this.pending.delete(requestId);
+      record(signal?.aborted ? "canceled" : "transport_error");
       throw e;
     }
+    const result = rpcResultFromError(resp.error);
+    record(result);
     if (resp.error == null) return { payload: resp.payload };
     return { payload: resp.payload, error: resp.error };
   }
@@ -86,6 +100,7 @@ export class RpcClient {
         if (v.response_to === 0) {
           // Notification: response_to=0 and request_id=0.
           if (v.request_id === 0) {
+            this.observer.onRpcNotify();
             const set = this.notifyHandlers.get(v.type_id >>> 0);
             if (set != null) {
               for (const h of set) h(v.payload);
@@ -126,4 +141,10 @@ async function raceAbort<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
       }
     );
   });
+}
+
+function rpcResultFromError(err?: RpcError): RpcCallResult {
+  if (err == null) return "ok";
+  if (err.code === 404) return "handler_not_found";
+  return "rpc_error";
 }

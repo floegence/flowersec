@@ -7,6 +7,7 @@ export * from "./e2ee/kdf.js";
 export * from "./e2ee/record.js";
 export * from "./e2ee/secureChannel.js";
 export * from "./e2ee/handshake.js";
+export * from "./observability/index.js";
 export * from "./ws-client/binaryTransport.js";
 export * from "./yamux/index.js";
 export * from "./rpc/index.js";

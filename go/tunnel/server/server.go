@@ -11,6 +11,7 @@ import (
 	"github.com/flowersec/flowersec/controlplane/token"
 	"github.com/flowersec/flowersec/crypto/e2ee"
 	tunnelv1 "github.com/flowersec/flowersec/gen/flowersec/tunnel/v1"
+	"github.com/flowersec/flowersec/observability"
 	"github.com/flowersec/flowersec/realtime/ws"
 	"github.com/flowersec/flowersec/tunnel/protocol"
 	"github.com/gorilla/websocket"
@@ -38,6 +39,8 @@ type Config struct {
 	ReplaceWindow        time.Duration // Sliding window for replace rate limiting.
 	MaxReplacesPerWindow int           // Max replaces allowed per window.
 	ReplaceCloseCode     int           // Close code for rate-limited replace.
+
+	Observer observability.TunnelObserver // Optional tunnel metrics observer.
 }
 
 // DefaultConfig returns conservative defaults for a tunnel server.
@@ -56,6 +59,7 @@ func DefaultConfig() Config {
 		ReplaceWindow:        10 * time.Second,
 		MaxReplacesPerWindow: 5,
 		ReplaceCloseCode:     websocket.CloseTryAgainLater,
+		Observer:             observability.NoopTunnelObserver,
 	}
 }
 
@@ -63,8 +67,9 @@ func DefaultConfig() Config {
 type Server struct {
 	cfg Config // Immutable runtime configuration.
 
-	keys *IssuerKeyset  // Issuer public keys for token verification.
-	used *TokenUseCache // Token replay protection cache.
+	keys *IssuerKeyset                // Issuer public keys for token verification.
+	used *TokenUseCache               // Token replay protection cache.
+	obs  observability.TunnelObserver // Metrics observer.
 
 	mu       sync.Mutex               // Guards channel state.
 	channels map[string]*channelState // Channel state by channel ID.
@@ -74,6 +79,12 @@ type Server struct {
 
 	stopOnce sync.Once     // Ensures shutdown only happens once.
 	stopCh   chan struct{} // Signals background cleanup to stop.
+}
+
+// Stats captures a snapshot of tunnel server counts.
+type Stats struct {
+	ConnCount    int64
+	ChannelCount int
 }
 
 // New validates config, loads the issuer keyset, and starts background cleanup.
@@ -114,6 +125,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.ReplaceCloseCode == 0 {
 		cfg.ReplaceCloseCode = websocket.CloseTryAgainLater
 	}
+	if cfg.Observer == nil {
+		cfg.Observer = observability.NoopTunnelObserver
+	}
 	keys, err := LoadIssuerKeysetFile(cfg.IssuerKeysFile)
 	if err != nil {
 		return nil, err
@@ -122,11 +136,21 @@ func New(cfg Config) (*Server, error) {
 		cfg:      cfg,
 		keys:     keys,
 		used:     NewTokenUseCache(),
+		obs:      cfg.Observer,
 		channels: make(map[string]*channelState),
 		stopCh:   make(chan struct{}),
 	}
 	go s.cleanupLoop()
 	return s, nil
+}
+
+// Stats returns a point-in-time view of connection and channel counts.
+func (s *Server) Stats() Stats {
+	connCount := atomic.LoadInt64(&s.connCount)
+	s.mu.Lock()
+	channelCount := len(s.channels)
+	s.mu.Unlock()
+	return Stats{ConnCount: connCount, ChannelCount: channelCount}
 }
 
 // ReloadKeys reloads the issuer keyset file on demand.
@@ -155,10 +179,17 @@ func (s *Server) Close() {
 
 var ErrReplaceRateLimited = errors.New("replace rate limited")
 
+var (
+	errUnknownChannel  = errors.New("unknown channel")
+	errMissingSrc      = errors.New("missing src")
+	errPendingOverflow = errors.New("pending buffer overflow")
+)
+
 type channelState struct {
 	id         string                          // Channel identifier.
 	initExp    int64                           // Channel init expiry (Unix seconds).
 	encrypted  bool                            // Whether E2EE record frames observed.
+	firstSeen  time.Time                       // When the first endpoint arrived.
 	lastActive time.Time                       // Last activity timestamp.
 	conns      map[tunnelv1.Role]*endpointConn // Active endpoints by role.
 	replace    map[tunnelv1.Role]*replaceState // Replace rate-limit state by role.
@@ -185,10 +216,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		CheckOrigin: s.checkOrigin,
 	})
 	if err != nil {
+		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonUpgradeError)
 		return
 	}
 	uc := c.Underlying()
 	if !s.trackConn(uc) {
+		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonTooManyConnections)
 		_ = c.CloseWithStatus(websocket.CloseTryAgainLater, "too many connections")
 		return
 	}
@@ -201,6 +234,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	mt, msg, err := c.ReadMessage(ctx)
 	if err != nil || mt != websocket.TextMessage {
+		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonExpectedAttach)
 		_ = c.CloseWithStatus(websocket.CloseProtocolError, "expected attach")
 		s.untrackConn(uc)
 		return
@@ -209,6 +243,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		MaxAttachBytes: s.cfg.MaxAttachBytes,
 	})
 	if err != nil {
+		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonInvalidAttach)
 		_ = c.CloseWithStatus(websocket.CloseProtocolError, "invalid attach")
 		s.untrackConn(uc)
 		return
@@ -222,21 +257,25 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		ClockSkew: s.cfg.ClockSkew,
 	})
 	if err != nil {
+		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonInvalidToken)
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "invalid token")
 		s.untrackConn(uc)
 		return
 	}
 	if p.ChannelID != attach.ChannelId {
+		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonChannelMismatch)
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "channel mismatch")
 		s.untrackConn(uc)
 		return
 	}
 	if uint8(attach.Role) != p.Role {
+		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonRoleMismatch)
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "role mismatch")
 		s.untrackConn(uc)
 		return
 	}
 	if !s.used.TryUse(p.TokenID, p.Exp, time.Now()) {
+		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonTokenReplay)
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "token replay")
 		s.untrackConn(uc)
 		return
@@ -246,13 +285,16 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	uc.SetReadDeadline(time.Time{})
 	if err := s.addEndpoint(attach, p, uc); err != nil {
 		if errors.Is(err, ErrReplaceRateLimited) {
+			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonReplaceRateLimited)
 			_ = c.CloseWithStatus(s.cfg.ReplaceCloseCode, "replace rate limited")
 		} else {
+			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonAttachFailed)
 			_ = c.CloseWithStatus(websocket.CloseInternalServerErr, "attach failed")
 		}
 		s.untrackConn(uc)
 		return
 	}
+	s.obs.Attach(observability.AttachResultOK, observability.AttachReasonOK)
 }
 
 // allowReplaceLocked rate-limits same-role replacements to reduce DoS pressure.
@@ -298,6 +340,11 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 	var flushServerToClient [][]byte
 	var lockClient *endpointConn
 	var lockServer *endpointConn
+	var pairLatency time.Duration
+	var channelCount int
+	var setChannelCount bool
+	var replaceResult observability.ReplaceResult
+	var setReplaceResult bool
 	now := time.Now()
 
 	s.mu.Lock()
@@ -312,11 +359,14 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 		st = &channelState{
 			id:         a.ChannelId,
 			initExp:    p.InitExp,
+			firstSeen:  now,
 			lastActive: now,
 			conns:      make(map[tunnelv1.Role]*endpointConn, 2),
 		}
 		st.conns[a.Role] = ep
 		s.channels[a.ChannelId] = st
+		channelCount = len(s.channels)
+		setChannelCount = true
 		startPump = true
 		s.mu.Unlock()
 	} else {
@@ -327,6 +377,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 		if st.conns[a.Role] != nil {
 			if !s.allowReplaceLocked(st, a.Role, now) {
 				s.mu.Unlock()
+				s.obs.Replace(observability.ReplaceResultRateLimited)
 				return ErrReplaceRateLimited
 			}
 			// Replacement semantics: close both sides and reset the channel state.
@@ -338,12 +389,15 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			st = &channelState{
 				id:         a.ChannelId,
 				initExp:    p.InitExp,
+				firstSeen:  now,
 				lastActive: now,
 				conns:      make(map[tunnelv1.Role]*endpointConn, 2),
 				replace:    replaceState,
 			}
 			st.conns[a.Role] = ep
 			s.channels[a.ChannelId] = st
+			replaceResult = observability.ReplaceResultOK
+			setReplaceResult = true
 			startPump = true
 			s.mu.Unlock()
 		} else {
@@ -354,6 +408,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			client := st.conns[tunnelv1.Role_client]
 			server := st.conns[tunnelv1.Role_server]
 			if client != nil && server != nil {
+				pairLatency = now.Sub(st.firstSeen)
 				lockClient, lockServer = client, server
 				lockClient.writeMu.Lock()
 				lockServer.writeMu.Lock()
@@ -366,6 +421,16 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			}
 			s.mu.Unlock()
 		}
+	}
+
+	if setReplaceResult {
+		s.obs.Replace(replaceResult)
+	}
+	if setChannelCount {
+		s.obs.ChannelCount(channelCount)
+	}
+	if pairLatency > 0 {
+		s.obs.PairLatency(pairLatency)
 	}
 
 	for _, c := range toClose {
@@ -388,6 +453,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 		lockClient.writeMu.Unlock()
 	}
 	if flushErr != nil {
+		s.obs.Close(observability.CloseReasonWriteError)
 		s.closeChannel(a.ChannelId)
 		return flushErr
 	}
@@ -399,20 +465,33 @@ func (s *Server) pump(channelID string, role tunnelv1.Role, src *endpointConn) {
 	for {
 		mt, b, err := src.ws.ReadMessage()
 		if err != nil {
+			s.obs.Close(observability.CloseReasonPeerClosed)
 			s.closeChannelFrom(channelID, role, src)
 			return
 		}
 		if mt != websocket.BinaryMessage {
+			s.obs.Close(observability.CloseReasonNonBinaryFrame)
 			s.closeChannelFrom(channelID, role, src)
 			return
 		}
 		if s.cfg.MaxRecordBytes > 0 && len(b) > s.cfg.MaxRecordBytes {
+			s.obs.Close(observability.CloseReasonRecordTooLarge)
 			s.closeChannelFrom(channelID, role, src)
 			return
 		}
 
 		dst, pendingToFlush, err := s.routeOrBuffer(channelID, role, b)
 		if err != nil {
+			switch {
+			case errors.Is(err, errUnknownChannel):
+				s.obs.Close(observability.CloseReasonUnknownChannel)
+			case errors.Is(err, errMissingSrc):
+				s.obs.Close(observability.CloseReasonMissingSrc)
+			case errors.Is(err, errPendingOverflow):
+				s.obs.Close(observability.CloseReasonPendingOverflow)
+			default:
+				s.obs.Close(observability.CloseReasonPeerClosed)
+			}
 			s.closeChannelFrom(channelID, role, src)
 			return
 		}
@@ -422,11 +501,13 @@ func (s *Server) pump(channelID string, role tunnelv1.Role, src *endpointConn) {
 
 		if len(pendingToFlush) > 0 {
 			if err := writeFrames(dst, pendingToFlush); err != nil {
+				s.obs.Close(observability.CloseReasonWriteError)
 				s.closeChannelFrom(channelID, role, src)
 				return
 			}
 		}
 		if err := writeFrames(dst, [][]byte{b}); err != nil {
+			s.obs.Close(observability.CloseReasonWriteError)
 			s.closeChannelFrom(channelID, role, src)
 			return
 		}
@@ -458,19 +539,25 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 	now := time.Now()
 	maxCipher := s.cfg.MaxRecordBytes
 
+	var encryptedNow bool
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	st := s.channels[channelID]
 	if st == nil {
-		return nil, nil, errors.New("unknown channel")
+		s.mu.Unlock()
+		return nil, nil, errUnknownChannel
 	}
 	st.lastActive = now
 	if !st.encrypted && e2ee.LooksLikeRecordFrame(frame, maxCipher) {
 		st.encrypted = true
+		encryptedNow = true
 	}
 	src := st.conns[role]
 	if src == nil {
-		return nil, nil, errors.New("missing src")
+		s.mu.Unlock()
+		if encryptedNow {
+			s.obs.Encrypted()
+		}
+		return nil, nil, errMissingSrc
 	}
 	var peerRole tunnelv1.Role
 	if role == tunnelv1.Role_client {
@@ -481,12 +568,20 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 	dst = st.conns[peerRole]
 	if dst == nil {
 		if s.cfg.MaxPendingBytes > 0 && src.pendingBytes+len(frame) > s.cfg.MaxPendingBytes {
-			return nil, nil, errors.New("pending buffer overflow")
+			s.mu.Unlock()
+			if encryptedNow {
+				s.obs.Encrypted()
+			}
+			return nil, nil, errPendingOverflow
 		}
 		cpy := make([]byte, len(frame))
 		copy(cpy, frame)
 		src.pending = append(src.pending, cpy)
 		src.pendingBytes += len(cpy)
+		s.mu.Unlock()
+		if encryptedNow {
+			s.obs.Encrypted()
+		}
 		return nil, nil, nil
 	}
 	if len(src.pending) > 0 {
@@ -494,12 +589,18 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 		src.pending = nil
 		src.pendingBytes = 0
 	}
+	s.mu.Unlock()
+	if encryptedNow {
+		s.obs.Encrypted()
+	}
 	return dst, flush, nil
 }
 
 // closeChannel closes both endpoints and removes channel state.
 func (s *Server) closeChannel(channelID string) {
 	var conns []*websocket.Conn
+	var channelCount int
+	var removed bool
 	s.mu.Lock()
 	st := s.channels[channelID]
 	if st != nil {
@@ -507,8 +608,13 @@ func (s *Server) closeChannel(channelID string) {
 			conns = append(conns, e.ws)
 		}
 		delete(s.channels, channelID)
+		channelCount = len(s.channels)
+		removed = true
 	}
 	s.mu.Unlock()
+	if removed {
+		s.obs.ChannelCount(channelCount)
+	}
 	for _, c := range conns {
 		_ = c.Close()
 		s.untrackConn(c)
@@ -518,6 +624,7 @@ func (s *Server) closeChannel(channelID string) {
 // closeChannelFrom shuts down a channel when one endpoint fails.
 func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *endpointConn) {
 	var conns []*websocket.Conn
+	var channelCount int
 	s.mu.Lock()
 	st := s.channels[channelID]
 	if st == nil || st.conns[role] != src {
@@ -530,7 +637,9 @@ func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *end
 		conns = append(conns, e.ws)
 	}
 	delete(s.channels, channelID)
+	channelCount = len(s.channels)
 	s.mu.Unlock()
+	s.obs.ChannelCount(channelCount)
 	for _, c := range conns {
 		_ = c.Close()
 		s.untrackConn(c)
@@ -554,12 +663,16 @@ func (s *Server) checkOrigin(r *http.Request) bool {
 // trackConn increments the connection count and enforces MaxConns.
 func (s *Server) trackConn(c *websocket.Conn) bool {
 	if s.cfg.MaxConns > 0 {
-		if atomic.AddInt64(&s.connCount, 1) > int64(s.cfg.MaxConns) {
-			atomic.AddInt64(&s.connCount, -1)
+		newCount := atomic.AddInt64(&s.connCount, 1)
+		if newCount > int64(s.cfg.MaxConns) {
+			newCount = atomic.AddInt64(&s.connCount, -1)
+			s.obs.ConnCount(newCount)
 			return false
 		}
+		s.obs.ConnCount(newCount)
 	} else {
-		atomic.AddInt64(&s.connCount, 1)
+		newCount := atomic.AddInt64(&s.connCount, 1)
+		s.obs.ConnCount(newCount)
 	}
 	s.connSet.Store(c, struct{}{})
 	return true
@@ -570,7 +683,8 @@ func (s *Server) untrackConn(c *websocket.Conn) {
 	if _, ok := s.connSet.LoadAndDelete(c); !ok {
 		return
 	}
-	atomic.AddInt64(&s.connCount, -1)
+	newCount := atomic.AddInt64(&s.connCount, -1)
+	s.obs.ConnCount(newCount)
 }
 
 // cleanupLoop periodically expires idle and never-encrypted channels.
@@ -585,21 +699,26 @@ func (s *Server) cleanupLoop() {
 			now := time.Now()
 			s.used.Cleanup(now)
 
-			var toClose []string
+			type closeTarget struct {
+				id     string
+				reason observability.CloseReason
+			}
+			var toClose []closeTarget
 			s.mu.Lock()
 			for id, st := range s.channels {
 				if !st.encrypted && now.Unix() > st.initExp {
-					toClose = append(toClose, id)
+					toClose = append(toClose, closeTarget{id: id, reason: observability.CloseReasonInitExpired})
 					continue
 				}
 				if s.cfg.IdleTimeout > 0 && now.Sub(st.lastActive) > s.cfg.IdleTimeout {
-					toClose = append(toClose, id)
+					toClose = append(toClose, closeTarget{id: id, reason: observability.CloseReasonIdleTimeout})
 					continue
 				}
 			}
 			s.mu.Unlock()
-			for _, id := range toClose {
-				s.closeChannel(id)
+			for _, target := range toClose {
+				s.obs.Close(target.reason)
+				s.closeChannel(target.id)
 			}
 		}
 	}

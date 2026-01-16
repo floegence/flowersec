@@ -10,9 +10,12 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/flowersec/flowersec/observability"
+	"github.com/flowersec/flowersec/observability/prom"
 	"github.com/flowersec/flowersec/tunnel/server"
 )
 
@@ -23,6 +26,74 @@ func (s *stringSliceFlag) String() string { return strings.Join(*s, ",") }
 func (s *stringSliceFlag) Set(v string) error {
 	*s = append(*s, v)
 	return nil
+}
+
+type switchHandler struct {
+	mu      sync.RWMutex
+	handler http.Handler
+}
+
+func newSwitchHandler() *switchHandler {
+	return &switchHandler{handler: http.NotFoundHandler()}
+}
+
+func (h *switchHandler) Set(next http.Handler) {
+	if next == nil {
+		next = http.NotFoundHandler()
+	}
+	h.mu.Lock()
+	h.handler = next
+	h.mu.Unlock()
+}
+
+func (h *switchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mu.RLock()
+	handler := h.handler
+	h.mu.RUnlock()
+	handler.ServeHTTP(w, r)
+}
+
+type metricsController struct {
+	mu       sync.Mutex
+	enabled  bool
+	handler  *switchHandler
+	observer *observability.AtomicTunnelObserver
+	srv      *server.Server
+}
+
+func newMetricsController(handler *switchHandler, observer *observability.AtomicTunnelObserver, srv *server.Server) *metricsController {
+	return &metricsController{
+		handler:  handler,
+		observer: observer,
+		srv:      srv,
+	}
+}
+
+func (c *metricsController) Enable() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.enabled {
+		return
+	}
+	reg := prom.NewRegistry()
+	tunnelObs := prom.NewTunnelObserver(reg)
+	c.handler.Set(prom.Handler(reg))
+	c.observer.Set(tunnelObs)
+	stats := c.srv.Stats()
+	tunnelObs.ConnCount(stats.ConnCount)
+	tunnelObs.ChannelCount(stats.ChannelCount)
+	c.enabled = true
+}
+
+func (c *metricsController) Disable() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.enabled {
+		return
+	}
+	c.handler.Set(nil)
+	c.observer.Set(observability.NoopTunnelObserver)
+	c.enabled = false
 }
 
 // main launches a tunnel server with CLI-configurable settings.
@@ -52,6 +123,8 @@ func main() {
 	}
 
 	cfg := server.DefaultConfig()
+	observer := observability.NewAtomicTunnelObserver()
+	cfg.Observer = observer
 	cfg.Path = path
 	cfg.IssuerKeysFile = issuerKeysFile
 	cfg.TunnelAudience = aud
@@ -73,6 +146,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	s.Register(mux)
+	metricsHandler := newSwitchHandler()
+	mux.Handle("/metrics", metricsHandler)
+	metrics := newMetricsController(metricsHandler, observer, s)
 
 	// Bind to the listen address and serve HTTP/WebSocket traffic.
 	ln, err := net.Listen("tcp", listen)
@@ -99,7 +175,7 @@ func main() {
 
 	// Handle reloads and shutdowns.
 	sig := make(chan os.Signal, 2)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
 
 	for {
 		switch <-sig {
@@ -109,6 +185,12 @@ func main() {
 			} else {
 				log.Printf("reloaded issuer keyset")
 			}
+		case syscall.SIGUSR1:
+			metrics.Enable()
+			log.Printf("metrics enabled")
+		case syscall.SIGUSR2:
+			metrics.Disable()
+			log.Printf("metrics disabled")
 		default:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_ = srv.Shutdown(ctx)

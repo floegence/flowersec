@@ -1,5 +1,6 @@
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
 import { Role as TunnelRole, type Attach } from "../gen/flowersec/tunnel/v1.gen.js";
+import { normalizeObserver, nowSeconds, type ClientObserverLike } from "../observability/observer.js";
 import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
 import { WebSocketBinaryTransport, type WebSocketLike } from "../ws-client/binaryTransport.js";
 import { clientHandshake } from "../e2ee/handshake.js";
@@ -25,12 +26,23 @@ export type TunnelConnectOptions = Readonly<{
   maxWsQueuedBytes?: number;
   /** Optional factory for creating the WebSocket instance. */
   wsFactory?: (url: string) => WebSocketLike;
+  /** Optional observer for client metrics. */
+  observer?: ClientObserverLike;
 }>;
 
 // connectTunnelClientRpc attaches to a tunnel and returns an RPC-ready client.
 export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: TunnelConnectOptions = {}) {
+  const observer = normalizeObserver(opts.observer);
+  const connectStart = nowSeconds();
   const ws = (opts.wsFactory ?? defaultWebSocketFactory)(grant.tunnel_url);
-  await waitOpen(ws);
+  try {
+    await waitOpen(ws);
+    observer.onTunnelConnect("ok", undefined, nowSeconds() - connectStart);
+  } catch (err) {
+    const reason = err instanceof Error && err.message === "websocket closed" ? "websocket_closed" : "websocket_error";
+    observer.onTunnelConnect("fail", reason, nowSeconds() - connectStart);
+    throw err;
+  }
 
   const endpointInstanceId = opts.endpointInstanceId ?? base64urlEncode(randomBytes(24));
   const attach: Attach = {
@@ -40,21 +52,38 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
     token: grant.token,
     endpoint_instance_id: endpointInstanceId
   };
-  ws.send(JSON.stringify(attach));
+  try {
+    ws.send(JSON.stringify(attach));
+    observer.onTunnelAttach("ok", undefined);
+  } catch (err) {
+    observer.onTunnelAttach("fail", "send_failed");
+    throw err;
+  }
 
-  const transport = new WebSocketBinaryTransport(ws, { maxQueuedBytes: opts.maxWsQueuedBytes });
+  const transport = new WebSocketBinaryTransport(ws, {
+    maxQueuedBytes: opts.maxWsQueuedBytes,
+    observer
+  });
   const psk = base64urlDecode(grant.e2ee_psk_b64u);
   const suite = grant.default_suite as unknown as 1 | 2;
   // Complete the E2EE handshake over the websocket transport.
-  const secure = await clientHandshake(transport, {
-    channelId: grant.channel_id,
-    suite,
-    psk,
-    clientFeatures: opts.clientFeatures ?? 0,
-    maxHandshakePayload: opts.maxHandshakePayload ?? 8 * 1024,
-    maxRecordBytes: opts.maxRecordBytes ?? (1 << 20),
-    maxBufferedBytes: opts.maxBufferedBytes
-  });
+  const handshakeStart = nowSeconds();
+  let secure: Awaited<ReturnType<typeof clientHandshake>>;
+  try {
+    secure = await clientHandshake(transport, {
+      channelId: grant.channel_id,
+      suite,
+      psk,
+      clientFeatures: opts.clientFeatures ?? 0,
+      maxHandshakePayload: opts.maxHandshakePayload ?? 8 * 1024,
+      maxRecordBytes: opts.maxRecordBytes ?? (1 << 20),
+      maxBufferedBytes: opts.maxBufferedBytes
+    });
+    observer.onTunnelHandshake("ok", undefined, nowSeconds() - handshakeStart);
+  } catch (err) {
+    observer.onTunnelHandshake("fail", "handshake_error", nowSeconds() - handshakeStart);
+    throw err;
+  }
 
   const conn = {
     read: () => secure.read(),
@@ -75,7 +104,7 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
   const write = (b: Uint8Array) => rpcStream.write(b);
 
   await writeStreamHello(write, "rpc");
-  const rpc = new RpcClient(readExactly, write);
+  const rpc = new RpcClient(readExactly, write, { observer });
   const rpcProxy = new RpcProxy();
   rpcProxy.attach(rpc);
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { WebSocketBinaryTransport, type WebSocketLike } from "./binaryTransport.js";
 
 class FakeWebSocket implements WebSocketLike {
@@ -60,7 +60,8 @@ const testWithBlob = typeof Blob === "undefined" ? test.skip : test;
 describe("WebSocketBinaryTransport", () => {
   test("fails fast when queued bytes exceed limit", async () => {
     const ws = new FakeWebSocket();
-    const transport = new WebSocketBinaryTransport(ws, { maxQueuedBytes: 4 });
+    const onWsError = vi.fn();
+    const transport = new WebSocketBinaryTransport(ws, { maxQueuedBytes: 4, observer: { onWsError } });
 
     ws.emit("message", { data: new Uint8Array([1, 2, 3]).buffer });
     ws.emit("message", { data: new Uint8Array([4, 5]).buffer });
@@ -68,6 +69,7 @@ describe("WebSocketBinaryTransport", () => {
     await waitForClosed(ws);
     expect(ws.closed).toBe(true);
     await expect(transport.readBinary()).rejects.toThrow(/ws recv buffer exceeded/);
+    expect(onWsError).toHaveBeenCalledWith("recv_buffer_exceeded");
   });
 
   test("supports array buffer views", async () => {
@@ -82,12 +84,14 @@ describe("WebSocketBinaryTransport", () => {
 
   test("rejects text frames", async () => {
     const ws = new FakeWebSocket();
-    const transport = new WebSocketBinaryTransport(ws);
+    const onWsError = vi.fn();
+    const transport = new WebSocketBinaryTransport(ws, { observer: { onWsError } });
 
     const read = transport.readBinary();
     ws.emit("message", { data: "text" });
 
     await expect(read).rejects.toThrow(/unexpected text frame/);
+    expect(onWsError).toHaveBeenCalledWith("unexpected_text_frame");
   });
 
   testWithBlob("preserves message order across async blob decoding", async () => {

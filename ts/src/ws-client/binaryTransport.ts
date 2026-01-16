@@ -1,3 +1,5 @@
+import { normalizeObserver, type ClientObserver, type ClientObserverLike, type WsErrorReason } from "../observability/observer.js";
+
 // WebSocketLike abstracts browser/WS implementations used by the transport.
 export type WebSocketLike = {
   binaryType: string;
@@ -12,6 +14,8 @@ export type WebSocketLike = {
 export class WebSocketBinaryTransport {
   // Underlying WebSocket instance (browser or polyfill).
   private readonly ws: WebSocketLike;
+  // Observer for websocket-level errors.
+  private readonly observer: ClientObserver;
   // Buffered inbound frames when no reader is waiting.
   private readonly queue: Uint8Array[] = [];
   // Current buffered byte count for backpressure.
@@ -25,8 +29,12 @@ export class WebSocketBinaryTransport {
   // Sticky error state to fail all future reads/writes.
   private error: unknown = null;
 
-  constructor(ws: WebSocketLike, opts: Readonly<{ maxQueuedBytes?: number }> = {}) {
+  constructor(
+    ws: WebSocketLike,
+    opts: Readonly<{ maxQueuedBytes?: number; observer?: ClientObserverLike }> = {}
+  ) {
     this.ws = ws;
+    this.observer = normalizeObserver(opts.observer);
     this.maxQueuedBytes = Math.max(0, opts.maxQueuedBytes ?? 4 * (1 << 20));
     this.ws.binaryType = "arraybuffer";
     this.ws.addEventListener("message", this.onMessage);
@@ -59,7 +67,7 @@ export class WebSocketBinaryTransport {
 
   // close tears down listeners and rejects pending readers.
   close(): void {
-    this.fail(new Error("websocket closed"));
+    this.fail(new Error("websocket closed"), "close");
     this.ws.removeEventListener("message", this.onMessage);
     this.ws.removeEventListener("error", this.onError);
     this.ws.removeEventListener("close", this.onClose);
@@ -72,7 +80,8 @@ export class WebSocketBinaryTransport {
   private async handleMessage(data: unknown): Promise<void> {
     if (this.error != null) return;
     if (typeof data === "string") {
-      throw new Error("unexpected text frame");
+      this.fail(new Error("unexpected text frame"), "unexpected_text_frame");
+      return;
     }
     if (data instanceof Uint8Array) {
       this.push(data);
@@ -93,23 +102,23 @@ export class WebSocketBinaryTransport {
       this.push(new Uint8Array(ab));
       return;
     }
-    throw new Error("unexpected message type");
+    this.fail(new Error("unexpected message type"), "unexpected_message_type");
   }
 
   private readonly onMessage = (ev: any): void => {
     const data = ev.data;
     this.messageChain = this.messageChain.then(() => this.handleMessage(data)).catch((err) => {
       const e = err instanceof Error ? err : new Error(String(err));
-      this.fail(e);
+      this.fail(e, "error");
     });
   };
 
   private readonly onError = (): void => {
-    this.fail(new Error("websocket error"));
+    this.fail(new Error("websocket error"), "error");
   };
 
   private readonly onClose = (): void => {
-    this.fail(new Error("websocket closed"));
+    this.fail(new Error("websocket closed"), "close");
   };
 
   // push enqueues a frame or delivers it to a waiting reader.
@@ -120,7 +129,7 @@ export class WebSocketBinaryTransport {
       return;
     }
     if (this.maxQueuedBytes > 0 && this.queueBytes + b.length > this.maxQueuedBytes) {
-      this.fail(new Error("ws recv buffer exceeded"));
+      this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
       this.ws.close();
       return;
     }
@@ -129,9 +138,12 @@ export class WebSocketBinaryTransport {
   }
 
   // fail transitions the transport into a permanent error state.
-  private fail(err: unknown): void {
+  private fail(err: unknown, reason?: WsErrorReason): void {
     if (this.error != null) return;
     this.error = err;
+    if (reason != null) {
+      this.observer.onWsError(reason);
+    }
     const ws = this.waiters;
     this.waiters = [];
     for (const w of ws) w.reject(err);
