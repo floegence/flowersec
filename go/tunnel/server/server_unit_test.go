@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,19 +14,32 @@ import (
 )
 
 type testObserver struct {
+	mu         sync.Mutex
 	connCounts []int64
 	encrypted  int
 	closes     []observability.CloseReason
 }
 
-func (o *testObserver) ConnCount(n int64)  { o.connCounts = append(o.connCounts, n) }
+func (o *testObserver) ConnCount(n int64) {
+	o.mu.Lock()
+	o.connCounts = append(o.connCounts, n)
+	o.mu.Unlock()
+}
 func (o *testObserver) ChannelCount(_ int) {}
 func (o *testObserver) Attach(_ observability.AttachResult, _ observability.AttachReason) {
 }
 func (o *testObserver) Replace(_ observability.ReplaceResult) {}
-func (o *testObserver) Close(r observability.CloseReason)     { o.closes = append(o.closes, r) }
-func (o *testObserver) PairLatency(_ time.Duration)           {}
-func (o *testObserver) Encrypted()                            { o.encrypted++ }
+func (o *testObserver) Close(r observability.CloseReason) {
+	o.mu.Lock()
+	o.closes = append(o.closes, r)
+	o.mu.Unlock()
+}
+func (o *testObserver) PairLatency(_ time.Duration) {}
+func (o *testObserver) Encrypted() {
+	o.mu.Lock()
+	o.encrypted++
+	o.mu.Unlock()
+}
 
 func TestCheckOrigin(t *testing.T) {
 	s := &Server{cfg: Config{AllowedOrigins: []string{"https://ok"}, AllowNoOrigin: false}}
@@ -106,6 +120,30 @@ func TestRouteOrBufferBehavior(t *testing.T) {
 	}
 }
 
+func TestRouteOrBufferGlobalPendingOverflow(t *testing.T) {
+	obs := &testObserver{}
+	s := &Server{
+		cfg:      Config{MaxPendingBytes: 1024, MaxTotalPendingBytes: 4, MaxRecordBytes: 1 << 20},
+		obs:      obs,
+		channels: make(map[string]*channelState),
+	}
+
+	st := &channelState{conns: make(map[tunnelv1.Role]*endpointConn)}
+	s.channels["ch"] = st
+	src := &endpointConn{role: tunnelv1.Role_client}
+	st.conns = map[tunnelv1.Role]*endpointConn{tunnelv1.Role_client: src}
+
+	frame := []byte{1, 2, 3}
+	_, _, err := s.routeOrBuffer("ch", tunnelv1.Role_client, src, frame)
+	if err != nil {
+		t.Fatalf("routeOrBuffer failed: %v", err)
+	}
+	_, _, err = s.routeOrBuffer("ch", tunnelv1.Role_client, src, frame)
+	if err == nil {
+		t.Fatalf("expected global pending overflow")
+	}
+}
+
 func TestRouteOrBufferEncrypted(t *testing.T) {
 	obs := &testObserver{}
 	s := &Server{cfg: Config{MaxPendingBytes: 0, MaxRecordBytes: 1 << 20}, obs: obs, channels: make(map[string]*channelState)}
@@ -167,14 +205,30 @@ func TestCleanupLoopClosesExpiredChannels(t *testing.T) {
 		encrypted:  true,
 	}
 
-	go s.cleanupLoop()
-	time.Sleep(20 * time.Millisecond)
-	close(s.stopCh)
+	done := make(chan struct{})
+	go func() {
+		s.cleanupLoop()
+		close(done)
+	}()
 
-	if len(s.channels) != 0 {
-		t.Fatalf("expected channels to be cleaned up")
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for {
+		if s.Stats().ChannelCount == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected channels to be cleaned up")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	if len(obs.closes) == 0 {
+
+	s.Close()
+	<-done
+
+	obs.mu.Lock()
+	closeCount := len(obs.closes)
+	obs.mu.Unlock()
+	if closeCount == 0 {
 		t.Fatalf("expected close reasons to be recorded")
 	}
 }

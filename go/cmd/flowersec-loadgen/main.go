@@ -665,6 +665,15 @@ type statsSnapshot struct {
 	attempts int
 	success  int
 	failure  int
+
+	failures  map[string]int
+	perSecond map[int64]int
+
+	wsOpen     []int64
+	attachSend []int64
+	pairReady  []int64
+	handshake  []int64
+	rpcCall    []int64
 }
 
 func (s *statsCollector) snapshotCounts() statsSnapshot {
@@ -739,23 +748,29 @@ func buildOutput(cfg loadConfig, total int, stats *statsCollector, live *liveReg
 	return out
 }
 
-func (s *statsCollector) export() statsCollector {
+func (s *statsCollector) export() statsSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cp := *s
-	cp.failures = make(map[string]int, len(s.failures))
+	cp := statsSnapshot{
+		attempts: s.attempts,
+		success:  s.success,
+		failure:  s.failure,
+
+		failures:  make(map[string]int, len(s.failures)),
+		perSecond: make(map[int64]int, len(s.perSecond)),
+
+		wsOpen:     append([]int64(nil), s.wsOpen...),
+		attachSend: append([]int64(nil), s.attachSend...),
+		pairReady:  append([]int64(nil), s.pairReady...),
+		handshake:  append([]int64(nil), s.handshake...),
+		rpcCall:    append([]int64(nil), s.rpcCall...),
+	}
 	for k, v := range s.failures {
 		cp.failures[k] = v
 	}
-	cp.perSecond = make(map[int64]int, len(s.perSecond))
 	for k, v := range s.perSecond {
 		cp.perSecond[k] = v
 	}
-	cp.wsOpen = append([]int64(nil), s.wsOpen...)
-	cp.attachSend = append([]int64(nil), s.attachSend...)
-	cp.pairReady = append([]int64(nil), s.pairReady...)
-	cp.handshake = append([]int64(nil), s.handshake...)
-	cp.rpcCall = append([]int64(nil), s.rpcCall...)
 	return cp
 }
 

@@ -569,8 +569,10 @@ async function openWebSocketPair(): Promise<{
   if (!port) throw new Error("failed to allocate websocket port");
   const url = `ws://127.0.0.1:${port}`;
   const clientWs = new WS(url) as WebSocketLike;
+  // Attach handlers before awaiting the server-side connection to avoid missing a fast "open"/"error" event.
+  const openPromise = waitOpen(clientWs);
   const [serverWs] = (await once(wss, "connection")) as [WebSocketLike];
-  await waitOpen(clientWs);
+  await openPromise;
   return {
     clientWs,
     serverWs,
@@ -640,6 +642,7 @@ function spawnGoHarness(scenario: Scenario): {
 }
 
 function waitOpen(ws: WebSocketLike): Promise<void> {
+  if (ws.readyState === 1) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const onOpen = () => {
       cleanup();

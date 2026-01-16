@@ -2,7 +2,6 @@ package ws
 
 import (
 	"context"
-	"errors"
 	"net"
 	"net/http"
 	"time"
@@ -60,7 +59,8 @@ func (c *Conn) SetReadLimit(n int64) {
 
 // ReadMessage reads a websocket frame and respects the context deadline.
 func (c *Conn) ReadMessage(ctx context.Context) (int, []byte, error) {
-	if deadline, ok := ctx.Deadline(); ok {
+	deadline, hasDeadline := ctx.Deadline()
+	if hasDeadline {
 		_ = c.c.SetReadDeadline(deadline)
 	} else {
 		_ = c.c.SetReadDeadline(time.Time{})
@@ -69,9 +69,16 @@ func (c *Conn) ReadMessage(ctx context.Context) (int, []byte, error) {
 	if err == nil {
 		return mt, b, nil
 	}
-	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		if ne, ok := err.(net.Error); ok && ne.Timeout() {
-			return 0, nil, ctx.Err()
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		// Prefer ctx.Err() when it is already set.
+		if cerr := ctx.Err(); cerr != nil {
+			return 0, nil, cerr
+		}
+		// When we set the websocket read deadline from ctx.Deadline(), the I/O timeout
+		// can race slightly ahead of the context timer; map it to DeadlineExceeded
+		// once the deadline has passed to keep a stable error contract.
+		if hasDeadline && !time.Now().Before(deadline) {
+			return 0, nil, context.DeadlineExceeded
 		}
 	}
 	return 0, nil, err
@@ -79,7 +86,8 @@ func (c *Conn) ReadMessage(ctx context.Context) (int, []byte, error) {
 
 // WriteMessage writes a websocket frame and respects the context deadline.
 func (c *Conn) WriteMessage(ctx context.Context, messageType int, data []byte) error {
-	if deadline, ok := ctx.Deadline(); ok {
+	deadline, hasDeadline := ctx.Deadline()
+	if hasDeadline {
 		_ = c.c.SetWriteDeadline(deadline)
 	} else {
 		_ = c.c.SetWriteDeadline(time.Time{})
@@ -88,9 +96,12 @@ func (c *Conn) WriteMessage(ctx context.Context, messageType int, data []byte) e
 	if err == nil {
 		return nil
 	}
-	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		if ne, ok := err.(net.Error); ok && ne.Timeout() {
-			return ctx.Err()
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		if hasDeadline && !time.Now().Before(deadline) {
+			return context.DeadlineExceeded
 		}
 	}
 	return err

@@ -35,15 +35,19 @@ func (t *WebSocketBinaryTransport) ReadBinary(ctx context.Context) ([]byte, erro
 	} else {
 		_ = t.c.SetReadDeadline(time.Time{})
 	}
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = t.c.SetReadDeadline(time.Now())
-		case <-done:
-		}
-	}()
-	defer close(done)
+	// Avoid spawning a goroutine in the hot path (SecureConn uses context.Background()).
+	var done chan struct{}
+	if ctx.Done() != nil {
+		done = make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = t.c.SetReadDeadline(time.Now())
+			case <-done:
+			}
+		}()
+		defer close(done)
+	}
 	for {
 		mt, b, err := t.c.ReadMessage()
 		if err != nil {
@@ -72,15 +76,19 @@ func (t *WebSocketBinaryTransport) WriteBinary(ctx context.Context, b []byte) er
 	} else {
 		_ = t.c.SetWriteDeadline(time.Time{})
 	}
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = t.c.SetWriteDeadline(time.Now())
-		case <-done:
-		}
-	}()
-	defer close(done)
+	// Avoid spawning a goroutine in the hot path (SecureConn uses context.Background()).
+	var done chan struct{}
+	if ctx.Done() != nil {
+		done = make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = t.c.SetWriteDeadline(time.Now())
+			case <-done:
+			}
+		}()
+		defer close(done)
+	}
 	err := t.c.WriteMessage(websocket.BinaryMessage, b)
 	if err == nil {
 		return nil

@@ -37,6 +37,7 @@ export class YamuxStream {
 
   // Buffered inbound data chunks.
   private readonly recvQueue: Uint8Array[] = [];
+  private recvQueueHead = 0;
   // Total buffered bytes in recvQueue.
   private recvQueueBytes = 0;
   // Readers waiting for incoming data or EOF/reset.
@@ -82,7 +83,7 @@ export class YamuxStream {
   async read(): Promise<Uint8Array> {
     while (true) {
       if (this.error != null) throw this.error;
-      const b = this.recvQueue.shift();
+      const b = this.shiftRecv();
       if (b != null) {
         this.recvQueueBytes -= b.length;
         await this.sendWindowUpdate();
@@ -142,6 +143,10 @@ export class YamuxStream {
     if (this.state === "reset") return;
     this.state = "reset";
     this.error = err;
+    // Drop any buffered data to free memory on terminal errors.
+    this.recvQueue.length = 0;
+    this.recvQueueHead = 0;
+    this.recvQueueBytes = 0;
     const ws = this.readWaiters;
     this.readWaiters = [];
     for (const w of ws) w();
@@ -176,6 +181,17 @@ export class YamuxStream {
     this.readWaiters = [];
     for (const w of ws) w();
     this.session.onStreamClosed(this.id);
+  }
+
+  private shiftRecv(): Uint8Array | undefined {
+    if (this.recvQueueHead >= this.recvQueue.length) return undefined;
+    const b = this.recvQueue[this.recvQueueHead];
+    this.recvQueueHead++;
+    if (this.recvQueueHead > 1024 && this.recvQueueHead * 2 > this.recvQueue.length) {
+      this.recvQueue.splice(0, this.recvQueueHead);
+      this.recvQueueHead = 0;
+    }
+    return b;
   }
 
   // sendFlags returns any SYN/ACK flags needed for the current state.

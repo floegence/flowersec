@@ -18,12 +18,16 @@ export class WebSocketBinaryTransport {
   private readonly observer: ClientObserver;
   // Buffered inbound frames when no reader is waiting.
   private readonly queue: Uint8Array[] = [];
+  // Read cursor for queue to avoid Array.shift() O(n).
+  private queueHead = 0;
   // Current buffered byte count for backpressure.
   private queueBytes = 0;
   // Maximum buffered bytes before closing the socket.
   private readonly maxQueuedBytes: number;
   // Pending readers waiting for the next frame.
   private waiters: Array<{ resolve: (b: Uint8Array) => void; reject: (e: unknown) => void }> = [];
+  // Read cursor for waiters to avoid Array.shift() O(n).
+  private waitersHead = 0;
   // Serialize message handling to preserve arrival order across async Blob decoding.
   private messageChain: Promise<void> = Promise.resolve();
   // Sticky error state to fail all future reads/writes.
@@ -47,7 +51,7 @@ export class WebSocketBinaryTransport {
   // readBinary resolves with the next queued binary message.
   readBinary(): Promise<Uint8Array> {
     if (this.error != null) return Promise.reject(this.error);
-    const b = this.queue.shift();
+    const b = this.shiftQueue();
     if (b != null) {
       this.queueBytes -= b.length;
       return Promise.resolve(b);
@@ -78,6 +82,7 @@ export class WebSocketBinaryTransport {
     this.ws.removeEventListener("error", this.onError);
     this.ws.removeEventListener("close", this.onClose);
     this.queue.length = 0;
+    this.queueHead = 0;
     this.queueBytes = 0;
     this.ws.close();
   }
@@ -154,7 +159,7 @@ export class WebSocketBinaryTransport {
 
   // push enqueues a frame or delivers it to a waiting reader.
   private push(b: Uint8Array): void {
-    const w = this.waiters.shift();
+    const w = this.shiftWaiter();
     if (w != null) {
       w.resolve(b);
       return;
@@ -170,6 +175,29 @@ export class WebSocketBinaryTransport {
     this.queueBytes += b.length;
   }
 
+  private shiftQueue(): Uint8Array | undefined {
+    if (this.queueHead >= this.queue.length) return undefined;
+    const b = this.queue[this.queueHead];
+    this.queueHead++;
+    // Periodic compaction to release references and keep array bounded.
+    if (this.queueHead > 1024 && this.queueHead * 2 > this.queue.length) {
+      this.queue.splice(0, this.queueHead);
+      this.queueHead = 0;
+    }
+    return b;
+  }
+
+  private shiftWaiter(): { resolve: (b: Uint8Array) => void; reject: (e: unknown) => void } | undefined {
+    if (this.waitersHead >= this.waiters.length) return undefined;
+    const w = this.waiters[this.waitersHead];
+    this.waitersHead++;
+    if (this.waitersHead > 1024 && this.waitersHead * 2 > this.waiters.length) {
+      this.waiters.splice(0, this.waitersHead);
+      this.waitersHead = 0;
+    }
+    return w;
+  }
+
   // fail transitions the transport into a permanent error state.
   private fail(err: unknown, reason?: WsErrorReason): void {
     if (this.error != null) return;
@@ -178,7 +206,9 @@ export class WebSocketBinaryTransport {
       this.observer.onWsError(reason);
     }
     const ws = this.waiters;
+    const start = this.waitersHead;
     this.waiters = [];
-    for (const w of ws) w.reject(err);
+    this.waitersHead = 0;
+    for (let i = start; i < ws.length; i++) ws[i]!.reject(err);
   }
 }

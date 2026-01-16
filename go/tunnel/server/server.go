@@ -18,22 +18,25 @@ import (
 )
 
 type Config struct {
-	Path            string // WebSocket endpoint path (e.g. "/ws").
-	TunnelAudience  string // Expected token audience.
-	TunnelIssuer    string // Expected token issuer.
-	IssuerKeysFile  string // Path to JSON keyset with issuer public keys.
-	MaxAttachBytes  int    // Max bytes for initial attach JSON.
-	MaxRecordBytes  int    // Max bytes for tunneled record frames.
-	MaxPendingBytes int    // Max bytes buffered before peer connects.
-	MaxChannels     int    // Maximum active channels.
-	MaxConns        int    // Maximum concurrent websocket connections.
+	Path                 string // WebSocket endpoint path (e.g. "/ws").
+	TunnelAudience       string // Expected token audience.
+	TunnelIssuer         string // Expected token issuer.
+	IssuerKeysFile       string // Path to JSON keyset with issuer public keys.
+	MaxAttachBytes       int    // Max bytes for initial attach JSON.
+	MaxRecordBytes       int    // Max bytes for tunneled record frames.
+	MaxPendingBytes      int    // Max bytes buffered before peer connects.
+	MaxTotalPendingBytes int    // Max total bytes buffered across all unpaired endpoints.
+	MaxChannels          int    // Maximum active channels.
+	MaxConns             int    // Maximum concurrent websocket connections.
 
 	AllowedOrigins []string // Allowed Origin header values.
 	AllowNoOrigin  bool     // Whether to allow empty Origin.
 
-	IdleTimeout     time.Duration // Close channels idle beyond this duration.
-	ClockSkew       time.Duration // Allowed clock skew for token validation.
-	CleanupInterval time.Duration // Background cleanup cadence.
+	IdleTimeout        time.Duration // Close channels idle beyond this duration.
+	ClockSkew          time.Duration // Allowed clock skew for token validation.
+	CleanupInterval    time.Duration // Background cleanup cadence.
+	WriteTimeout       time.Duration // Per-frame websocket write deadline (0 disables).
+	MaxWriteQueueBytes int           // Max buffered bytes for websocket writes per endpoint.
 
 	ReplaceCooldown      time.Duration // Minimum interval between same-role replaces.
 	ReplaceWindow        time.Duration // Sliding window for replace rate limiting.
@@ -50,12 +53,15 @@ func DefaultConfig() Config {
 		MaxAttachBytes:       8 * 1024,
 		MaxRecordBytes:       1 << 20,
 		MaxPendingBytes:      256 * 1024,
+		MaxTotalPendingBytes: 256 * 1024 * 1024,
 		MaxChannels:          6000,
 		MaxConns:             12000,
 		AllowNoOrigin:        true,
 		IdleTimeout:          60 * time.Second,
 		ClockSkew:            30 * time.Second,
 		CleanupInterval:      500 * time.Millisecond,
+		WriteTimeout:         10 * time.Second,
+		MaxWriteQueueBytes:   1 << 20,
 		ReplaceWindow:        10 * time.Second,
 		MaxReplacesPerWindow: 5,
 		ReplaceCloseCode:     websocket.CloseTryAgainLater,
@@ -76,6 +82,8 @@ type Server struct {
 
 	connCount int64    // Current connection count.
 	connSet   sync.Map // key: *websocket.Conn, value: struct{}
+
+	totalPendingBytes int64 // Total buffered pending bytes across all channels.
 
 	stopOnce sync.Once     // Ensures shutdown only happens once.
 	stopCh   chan struct{} // Signals background cleanup to stop.
@@ -101,6 +109,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.MaxPendingBytes <= 0 {
 		cfg.MaxPendingBytes = 256 * 1024
 	}
+	if cfg.MaxTotalPendingBytes < 0 {
+		cfg.MaxTotalPendingBytes = 0
+	}
 	if cfg.MaxChannels <= 0 {
 		cfg.MaxChannels = 6000
 	}
@@ -112,6 +123,15 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = 500 * time.Millisecond
+	}
+	if cfg.WriteTimeout < 0 {
+		cfg.WriteTimeout = 0
+	}
+	if cfg.MaxWriteQueueBytes <= 0 {
+		cfg.MaxWriteQueueBytes = 1 << 20
+	}
+	if cfg.MaxWriteQueueBytes < cfg.MaxRecordBytes {
+		return nil, errors.New("max write queue bytes must be >= max record bytes")
 	}
 	if cfg.ReplaceCooldown < 0 {
 		cfg.ReplaceCooldown = 0
@@ -180,9 +200,10 @@ func (s *Server) Close() {
 var ErrReplaceRateLimited = errors.New("replace rate limited")
 
 var (
-	errUnknownChannel  = errors.New("unknown channel")
-	errMissingSrc      = errors.New("missing src")
-	errPendingOverflow = errors.New("pending buffer overflow")
+	errUnknownChannel   = errors.New("unknown channel")
+	errMissingSrc       = errors.New("missing src")
+	errPendingOverflow  = errors.New("pending buffer overflow")
+	errWriteQueueClosed = errors.New("write queue closed")
 )
 
 type channelState struct {
@@ -203,14 +224,115 @@ type replaceState struct {
 	windowCount int       // Replacements within the current window.
 }
 
+type writeReq struct {
+	frame []byte
+	done  chan error
+}
+
 type endpointConn struct {
 	role tunnelv1.Role   // Endpoint role (client/server).
 	eid  string          // Endpoint instance ID (base64url).
 	ws   *websocket.Conn // Underlying websocket connection.
 
-	writeMu      sync.Mutex // Serializes writes to the websocket.
-	pending      [][]byte   // Buffered frames awaiting peer.
-	pendingBytes int        // Total buffered bytes.
+	pending      [][]byte // Buffered frames awaiting peer.
+	pendingBytes int      // Total buffered bytes.
+
+	outMu     sync.Mutex // Guards write queue state.
+	outCond   *sync.Cond // Signals enqueue/dequeue events.
+	outQueue  []writeReq // Pending frames to write.
+	outHead   int        // Read cursor into outQueue.
+	outBytes  int        // Buffered bytes in outQueue.
+	outClosed bool       // True once the write queue is closed.
+	outErr    error      // Sticky error for blocked writers.
+}
+
+func newEndpointConn(role tunnelv1.Role, eid string, ws *websocket.Conn) *endpointConn {
+	ep := &endpointConn{role: role, eid: eid, ws: ws}
+	ep.outCond = sync.NewCond(&ep.outMu)
+	return ep
+}
+
+func (ep *endpointConn) closeWriteQueue(err error) {
+	ep.outMu.Lock()
+	if ep.outClosed {
+		ep.outMu.Unlock()
+		return
+	}
+	ep.outClosed = true
+	closeErr := err
+	if closeErr == nil {
+		closeErr = errWriteQueueClosed
+	}
+	ep.outErr = closeErr
+	for i := ep.outHead; i < len(ep.outQueue); i++ {
+		req := ep.outQueue[i]
+		ep.outQueue[i] = writeReq{}
+		ep.outBytes -= len(req.frame)
+		if req.done != nil {
+			req.done <- closeErr
+			close(req.done)
+		}
+	}
+	ep.outQueue = nil
+	ep.outHead = 0
+	ep.outCond.Broadcast()
+	ep.outMu.Unlock()
+}
+
+func (ep *endpointConn) enqueueWrite(frame []byte, maxBytes int) (<-chan error, error) {
+	ep.outMu.Lock()
+	defer ep.outMu.Unlock()
+	if maxBytes > 0 && len(frame) > maxBytes {
+		return nil, errors.New("frame exceeds write queue limit")
+	}
+	for !ep.outClosed && maxBytes > 0 && ep.outBytes+len(frame) > maxBytes {
+		ep.outCond.Wait()
+	}
+	if ep.outClosed {
+		if ep.outErr != nil {
+			return nil, ep.outErr
+		}
+		return nil, errWriteQueueClosed
+	}
+	done := make(chan error, 1)
+	ep.outQueue = append(ep.outQueue, writeReq{frame: frame, done: done})
+	ep.outBytes += len(frame)
+	ep.outCond.Signal()
+	return done, nil
+}
+
+func (ep *endpointConn) nextWrite() (writeReq, error) {
+	ep.outMu.Lock()
+	defer ep.outMu.Unlock()
+	for !ep.outClosed && ep.outHead >= len(ep.outQueue) {
+		ep.outCond.Wait()
+	}
+	if ep.outHead >= len(ep.outQueue) {
+		if ep.outErr != nil {
+			return writeReq{}, ep.outErr
+		}
+		return writeReq{}, errWriteQueueClosed
+	}
+	req := ep.outQueue[ep.outHead]
+	ep.outQueue[ep.outHead] = writeReq{}
+	ep.outHead++
+	if ep.outHead > 1024 && ep.outHead*2 > len(ep.outQueue) {
+		ep.outQueue = append([]writeReq(nil), ep.outQueue[ep.outHead:]...)
+		ep.outHead = 0
+	}
+	return req, nil
+}
+
+func (ep *endpointConn) finishWrite(req writeReq, err error) {
+	ep.outMu.Lock()
+	ep.outBytes -= len(req.frame)
+	ep.outCond.Broadcast()
+	ep.outMu.Unlock()
+
+	if req.done != nil {
+		req.done <- err
+		close(req.done)
+	}
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -346,9 +468,10 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 	var paired bool
 	var client *endpointConn
 	var server *endpointConn
+	var droppedPendingBytes int
 	now := time.Now()
 
-	ep := &endpointConn{role: a.Role, eid: a.EndpointInstanceId, ws: uc}
+	ep := newEndpointConn(a.Role, a.EndpointInstanceId, uc)
 	s.mu.Lock()
 	st := s.channels[a.ChannelId]
 	if st == nil {
@@ -387,6 +510,10 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			// Replacement semantics: close both sides and reset the channel state.
 			replaceState := st.replace
 			for _, e := range st.conns {
+				droppedPendingBytes += e.pendingBytes
+				e.pending = nil
+				e.pendingBytes = 0
+				e.closeWriteQueue(nil)
 				toClose = append(toClose, e.ws)
 			}
 			delete(s.channels, a.ChannelId)
@@ -406,6 +533,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			startPump = true
 			old.mu.Unlock()
 			s.mu.Unlock()
+			s.subPendingBytes(droppedPendingBytes)
 		} else {
 			st.conns[a.Role] = ep
 			st.lastActive = now
@@ -439,6 +567,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 
 	if startPump {
 		go s.pump(a.ChannelId, a.Role, ep)
+		go s.writePump(a.ChannelId, a.Role, ep)
 	}
 	if paired {
 		if err := s.flushPending(st, client, server); err != nil {
@@ -458,6 +587,8 @@ func (s *Server) flushPending(st *channelState, client *endpointConn, server *en
 		st.mu.Lock()
 		pendingClient := client.pending
 		pendingServer := server.pending
+		pendingClientBytes := client.pendingBytes
+		pendingServerBytes := server.pendingBytes
 		encryptedNow := false
 		if !st.encrypted && looksLikeEncryptedPending(pendingClient, pendingServer, s.cfg.MaxRecordBytes) {
 			st.encrypted = true
@@ -473,21 +604,18 @@ func (s *Server) flushPending(st *channelState, client *endpointConn, server *en
 		server.pending = nil
 		server.pendingBytes = 0
 		st.mu.Unlock()
+		s.subPendingBytes(pendingClientBytes + pendingServerBytes)
 		if encryptedNow {
 			s.obs.Encrypted()
 		}
 
-		client.writeMu.Lock()
-		server.writeMu.Lock()
 		var flushErr error
-		if err := writeFramesLocked(server, pendingClient); err != nil {
+		if _, err := s.enqueueFrames(server, pendingClient); err != nil {
 			flushErr = err
 		}
-		if err := writeFramesLocked(client, pendingServer); err != nil && flushErr == nil {
+		if _, err := s.enqueueFrames(client, pendingServer); err != nil && flushErr == nil {
 			flushErr = err
 		}
-		server.writeMu.Unlock()
-		client.writeMu.Unlock()
 		if flushErr != nil {
 			return flushErr
 		}
@@ -496,19 +624,23 @@ func (s *Server) flushPending(st *channelState, client *endpointConn, server *en
 
 // pump forwards frames from a source endpoint to its peer.
 func (s *Server) pump(channelID string, role tunnelv1.Role, src *endpointConn) {
+	var lastWriteDone <-chan error
 	for {
 		mt, b, err := src.ws.ReadMessage()
 		if err != nil {
+			s.waitWriteDone(lastWriteDone)
 			s.obs.Close(observability.CloseReasonPeerClosed)
 			s.closeChannelFrom(channelID, role, src)
 			return
 		}
 		if mt != websocket.BinaryMessage {
+			s.waitWriteDone(lastWriteDone)
 			s.obs.Close(observability.CloseReasonNonBinaryFrame)
 			s.closeChannelFrom(channelID, role, src)
 			return
 		}
 		if s.cfg.MaxRecordBytes > 0 && len(b) > s.cfg.MaxRecordBytes {
+			s.waitWriteDone(lastWriteDone)
 			s.obs.Close(observability.CloseReasonRecordTooLarge)
 			s.closeChannelFrom(channelID, role, src)
 			return
@@ -534,38 +666,74 @@ func (s *Server) pump(channelID string, role tunnelv1.Role, src *endpointConn) {
 		}
 
 		if len(pendingToFlush) > 0 {
-			if err := writeFrames(dst, pendingToFlush); err != nil {
+			d, err := s.enqueueFrames(dst, pendingToFlush)
+			if err != nil {
 				s.obs.Close(observability.CloseReasonWriteError)
 				s.closeChannelFrom(channelID, role, src)
 				return
 			}
+			lastWriteDone = d
 		}
-		if err := writeFrames(dst, [][]byte{b}); err != nil {
+		d, err := s.enqueueFrames(dst, [][]byte{b})
+		if err != nil {
 			s.obs.Close(observability.CloseReasonWriteError)
 			s.closeChannelFrom(channelID, role, src)
+			return
+		}
+		lastWriteDone = d
+	}
+}
+
+func (s *Server) enqueueFrames(dst *endpointConn, frames [][]byte) (<-chan error, error) {
+	var lastDone <-chan error
+	for _, f := range frames {
+		done, err := dst.enqueueWrite(f, s.cfg.MaxWriteQueueBytes)
+		if err != nil {
+			return nil, err
+		}
+		lastDone = done
+	}
+	return lastDone, nil
+}
+
+func (s *Server) writeFrame(dst *endpointConn, frame []byte) error {
+	if s.cfg.WriteTimeout > 0 {
+		_ = dst.ws.SetWriteDeadline(time.Now().Add(s.cfg.WriteTimeout))
+	} else {
+		_ = dst.ws.SetWriteDeadline(time.Time{})
+	}
+	return dst.ws.WriteMessage(websocket.BinaryMessage, frame)
+}
+
+func (s *Server) writePump(channelID string, role tunnelv1.Role, dst *endpointConn) {
+	for {
+		req, err := dst.nextWrite()
+		if err != nil {
+			return
+		}
+		writeErr := s.writeFrame(dst, req.frame)
+		dst.finishWrite(req, writeErr)
+		if writeErr != nil {
+			dst.closeWriteQueue(writeErr)
+			s.obs.Close(observability.CloseReasonWriteError)
+			s.closeChannelFrom(channelID, role, dst)
 			return
 		}
 	}
 }
 
-func writeFrames(dst *endpointConn, frames [][]byte) error {
-	dst.writeMu.Lock()
-	defer dst.writeMu.Unlock()
-	for _, f := range frames {
-		if err := dst.ws.WriteMessage(websocket.BinaryMessage, f); err != nil {
-			return err
-		}
+func (s *Server) waitWriteDone(done <-chan error) {
+	if done == nil {
+		return
 	}
-	return nil
-}
-
-func writeFramesLocked(dst *endpointConn, frames [][]byte) error {
-	for _, f := range frames {
-		if err := dst.ws.WriteMessage(websocket.BinaryMessage, f); err != nil {
-			return err
-		}
+	timeout := s.cfg.WriteTimeout
+	if timeout <= 0 {
+		timeout = 100 * time.Millisecond
 	}
-	return nil
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }
 
 func looksLikeEncryptedPending(clientPending [][]byte, serverPending [][]byte, maxCipher int) bool {
@@ -628,6 +796,13 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, src *endpoi
 			}
 			return nil, nil, errPendingOverflow
 		}
+		if !s.tryAddPendingBytes(len(frame)) {
+			st.mu.Unlock()
+			if encryptedNow {
+				s.obs.Encrypted()
+			}
+			return nil, nil, errPendingOverflow
+		}
 		cpy := make([]byte, len(frame))
 		copy(cpy, frame)
 		src.pending = append(src.pending, cpy)
@@ -640,8 +815,10 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, src *endpoi
 	}
 	if len(src.pending) > 0 {
 		flush = src.pending
+		flushBytes := src.pendingBytes
 		src.pending = nil
 		src.pendingBytes = 0
+		s.subPendingBytes(flushBytes)
 	}
 	st.mu.Unlock()
 	if encryptedNow {
@@ -655,11 +832,16 @@ func (s *Server) closeChannel(channelID string) {
 	var conns []*websocket.Conn
 	var channelCount int
 	var removed bool
+	var pendingBytes int
 	s.mu.Lock()
 	st := s.channels[channelID]
 	if st != nil {
 		st.mu.Lock()
 		for _, e := range st.conns {
+			pendingBytes += e.pendingBytes
+			e.pending = nil
+			e.pendingBytes = 0
+			e.closeWriteQueue(nil)
 			conns = append(conns, e.ws)
 		}
 		delete(s.channels, channelID)
@@ -668,6 +850,7 @@ func (s *Server) closeChannel(channelID string) {
 		st.mu.Unlock()
 	}
 	s.mu.Unlock()
+	s.subPendingBytes(pendingBytes)
 	if removed {
 		s.obs.ChannelCount(channelCount)
 	}
@@ -681,10 +864,12 @@ func (s *Server) closeChannel(channelID string) {
 func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *endpointConn) {
 	var conns []*websocket.Conn
 	var channelCount int
+	var pendingBytes int
 	s.mu.Lock()
 	st := s.channels[channelID]
 	if st == nil {
 		s.mu.Unlock()
+		src.closeWriteQueue(nil)
 		_ = src.ws.Close()
 		s.untrackConn(src.ws)
 		return
@@ -693,22 +878,47 @@ func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *end
 	if st.conns[role] != src {
 		st.mu.Unlock()
 		s.mu.Unlock()
+		src.closeWriteQueue(nil)
 		_ = src.ws.Close()
 		s.untrackConn(src.ws)
 		return
 	}
 	for _, e := range st.conns {
+		pendingBytes += e.pendingBytes
+		e.pending = nil
+		e.pendingBytes = 0
+		e.closeWriteQueue(nil)
 		conns = append(conns, e.ws)
 	}
 	delete(s.channels, channelID)
 	channelCount = len(s.channels)
 	st.mu.Unlock()
 	s.mu.Unlock()
+	s.subPendingBytes(pendingBytes)
 	s.obs.ChannelCount(channelCount)
 	for _, c := range conns {
 		_ = c.Close()
 		s.untrackConn(c)
 	}
+}
+
+func (s *Server) tryAddPendingBytes(n int) bool {
+	if s.cfg.MaxTotalPendingBytes <= 0 || n <= 0 {
+		return true
+	}
+	newTotal := atomic.AddInt64(&s.totalPendingBytes, int64(n))
+	if newTotal > int64(s.cfg.MaxTotalPendingBytes) {
+		atomic.AddInt64(&s.totalPendingBytes, -int64(n))
+		return false
+	}
+	return true
+}
+
+func (s *Server) subPendingBytes(n int) {
+	if s.cfg.MaxTotalPendingBytes <= 0 || n <= 0 {
+		return
+	}
+	atomic.AddInt64(&s.totalPendingBytes, -int64(n))
 }
 
 // checkOrigin validates the Origin header against the allow-list.

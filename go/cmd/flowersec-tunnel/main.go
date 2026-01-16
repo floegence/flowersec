@@ -98,31 +98,38 @@ func (c *metricsController) Disable() {
 
 // main launches a tunnel server with CLI-configurable settings.
 func main() {
+	cfg := server.DefaultConfig()
+
 	var listen string
 	var path string
 	var issuerKeysFile string
 	var aud string
 	var iss string
 	var allowedOrigins stringSliceFlag
-	var allowNoOrigin bool
+	allowNoOrigin := cfg.AllowNoOrigin
 	var maxConns int
 	var maxChannels int
+	maxTotalPendingBytes := cfg.MaxTotalPendingBytes
+	writeTimeout := cfg.WriteTimeout
+	maxWriteQueueBytes := cfg.MaxWriteQueueBytes
 	flag.StringVar(&listen, "listen", "127.0.0.1:0", "listen address")
 	flag.StringVar(&path, "ws-path", "/ws", "websocket path")
 	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "issuer keyset file (kid->ed25519 pubkey)")
 	flag.StringVar(&aud, "aud", "", "expected token audience")
 	flag.StringVar(&iss, "iss", "", "expected token issuer")
 	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable)")
-	flag.BoolVar(&allowNoOrigin, "allow-no-origin", true, "allow requests without Origin header (non-browser clients)")
+	flag.BoolVar(&allowNoOrigin, "allow-no-origin", cfg.AllowNoOrigin, "allow requests without Origin header (non-browser clients)")
 	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent websocket connections (0 uses default)")
 	flag.IntVar(&maxChannels, "max-channels", 0, "max concurrent channels (0 uses default)")
+	flag.IntVar(&maxTotalPendingBytes, "max-total-pending-bytes", cfg.MaxTotalPendingBytes, "max total pending bytes buffered across all channels (0 disables)")
+	flag.DurationVar(&writeTimeout, "write-timeout", cfg.WriteTimeout, "per-frame websocket write timeout (0 disables)")
+	flag.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", cfg.MaxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (0 uses default)")
 	flag.Parse()
 
 	if issuerKeysFile == "" || aud == "" {
 		log.Fatal("missing --issuer-keys-file or --aud")
 	}
 
-	cfg := server.DefaultConfig()
 	observer := observability.NewAtomicTunnelObserver()
 	cfg.Observer = observer
 	cfg.Path = path
@@ -137,6 +144,9 @@ func main() {
 	if maxChannels > 0 {
 		cfg.MaxChannels = maxChannels
 	}
+	cfg.MaxTotalPendingBytes = maxTotalPendingBytes
+	cfg.WriteTimeout = writeTimeout
+	cfg.MaxWriteQueueBytes = maxWriteQueueBytes
 
 	s, err := server.New(cfg)
 	if err != nil {

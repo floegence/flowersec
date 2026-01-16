@@ -7,7 +7,7 @@ Run date: Fri Jan 16 10:09:26 CST 2026
 - OS: macOS 26.2
 - CPU: Apple M3 Pro
 - RAM: 18.0 GB
-- Go: go version go1.24.5 darwin/arm64
+- Go: go version go1.25.6 darwin/arm64
 - Node: v23.7.0
 - Constraints used:
   - Go: `GOMAXPROCS=2`, `GOMEMLIMIT=1024MiB`

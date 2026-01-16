@@ -37,6 +37,8 @@ npm run build
 - Role pairing: a tunnel channel requires exactly one `role=client` and one `role=server`.
   - TS tunnel client and Go tunnel client are both `role=client` and cannot talk to each other directly.
   - Use the server endpoint demo (`role=server`) as the peer for any tunnel client.
+- Browser Origin: the tunnel validates the WebSocket `Origin` header. For browser scenarios you must allow your page origin.
+  - Example: `FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 ./examples/run-tunnel-server.sh`
 
 ## Scenario A: TS client (Node) ↔ Go server endpoint (role=server) through tunnel
 
@@ -72,7 +74,15 @@ Expected: one RPC response + one RPC notify + one `echo` stream roundtrip.
 
 ## Scenario B: TS client (Browser) ↔ Go server endpoint (role=server) through tunnel
 
-Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint), then serve the repo root:
+Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint).
+
+If you started the tunnel server without an allow-list, restart it with an allowed Origin (Terminal 2):
+
+```bash
+FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 eval "$(jq -r '.tunnel_start_cmd' /tmp/fsec-controlplane.json)"
+```
+
+Then serve the repo root:
 
 ```bash
 python3 -m http.server 5173

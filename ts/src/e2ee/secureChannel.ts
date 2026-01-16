@@ -63,12 +63,15 @@ export class SecureChannel {
 
   // Send queue and waiters for backpressure.
   private sendQueue: SendReq[] = [];
+  private sendQueueHead = 0;
   private sendWaiters: Array<() => void> = [];
+  private sendWaitersHead = 0;
   private sendClosed = false;
   private sendErr: unknown = null;
 
   // Receive queue and waiters for plaintext delivery.
   private readonly recvQueue: Uint8Array[] = [];
+  private recvQueueHead = 0;
   private recvQueueBytes = 0;
   private recvWaiters: Array<() => void> = [];
   private readErr: unknown = null;
@@ -117,8 +120,13 @@ export class SecureChannel {
   async read(): Promise<Uint8Array> {
     while (true) {
       if (this.readErr != null) throw this.readErr;
-      if (this.recvQueue.length > 0) {
-        const b = this.recvQueue.shift()!;
+      if (this.recvQueueHead < this.recvQueue.length) {
+        const b = this.recvQueue[this.recvQueueHead]!;
+        this.recvQueueHead++;
+        if (this.recvQueueHead > 1024 && this.recvQueueHead * 2 > this.recvQueue.length) {
+          this.recvQueue.splice(0, this.recvQueueHead);
+          this.recvQueueHead = 0;
+        }
         this.recvQueueBytes -= b.length;
         return b;
       }
@@ -135,6 +143,9 @@ export class SecureChannel {
     this.rejectQueuedSenders(this.sendErr ?? new Error("closed"));
     this.wakeSendWaiters();
     this.transport.close();
+    this.recvQueue.length = 0;
+    this.recvQueueHead = 0;
+    this.recvQueueBytes = 0;
     const ws = this.recvWaiters;
     this.recvWaiters = [];
     for (const w of ws) w();
@@ -164,29 +175,56 @@ export class SecureChannel {
       }
       const req: SendReq = payload === undefined ? { kind, resolve, reject } : { kind, payload, resolve, reject };
       this.sendQueue.push(req);
-      const w = this.sendWaiters.shift();
+      const w = this.shiftSendWaiter();
       if (w != null) w();
     });
   }
 
   private async nextSend(): Promise<SendReq | null> {
-    if (this.sendQueue.length > 0) return this.sendQueue.shift() ?? null;
+    const immediate = this.dequeueSend();
+    if (immediate != null) return immediate;
     if (this.closed || this.sendClosed) return null;
     return await new Promise<SendReq | null>((resolve) => {
-      this.sendWaiters.push(() => resolve(this.sendQueue.shift() ?? null));
+      this.sendWaiters.push(() => resolve(this.dequeueSend()));
     });
+  }
+
+  private dequeueSend(): SendReq | null {
+    if (this.sendQueueHead >= this.sendQueue.length) return null;
+    const req = this.sendQueue[this.sendQueueHead]!;
+    this.sendQueueHead++;
+    if (this.sendQueueHead > 1024 && this.sendQueueHead * 2 > this.sendQueue.length) {
+      this.sendQueue.splice(0, this.sendQueueHead);
+      this.sendQueueHead = 0;
+    }
+    return req;
+  }
+
+  private shiftSendWaiter(): (() => void) | undefined {
+    if (this.sendWaitersHead >= this.sendWaiters.length) return undefined;
+    const w = this.sendWaiters[this.sendWaitersHead];
+    this.sendWaitersHead++;
+    if (this.sendWaitersHead > 1024 && this.sendWaitersHead * 2 > this.sendWaiters.length) {
+      this.sendWaiters.splice(0, this.sendWaitersHead);
+      this.sendWaitersHead = 0;
+    }
+    return w;
   }
 
   private wakeSendWaiters(): void {
     const ws = this.sendWaiters;
+    const start = this.sendWaitersHead;
     this.sendWaiters = [];
-    for (const w of ws) w();
+    this.sendWaitersHead = 0;
+    for (let i = start; i < ws.length; i++) ws[i]!();
   }
 
   private rejectQueuedSenders(err: unknown): void {
     const queued = this.sendQueue;
+    const start = this.sendQueueHead;
     this.sendQueue = [];
-    for (const req of queued) req.reject(err);
+    this.sendQueueHead = 0;
+    for (let i = start; i < queued.length; i++) queued[i]!.reject(err);
   }
 
   private failSend(err: unknown): void {

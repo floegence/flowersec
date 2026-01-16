@@ -11,6 +11,7 @@ LISTEN="${FSEC_TUNNEL_LISTEN:-127.0.0.1:0}"
 WS_PATH="${FSEC_TUNNEL_WS_PATH:-/ws}"
 
 KEYS_FILE="${FSEC_TUNNEL_ISSUER_KEYS_FILE:-}"
+ALLOW_ORIGIN="${FSEC_TUNNEL_ALLOW_ORIGIN:-}"
 
 if [[ -z "$KEYS_FILE" ]]; then
   echo "Missing issuer keys file."
@@ -23,8 +24,13 @@ fi
 echo "Starting tunnel server (aud=$AUD, listen=$LISTEN, ws_path=$WS_PATH)"
 echo "First stdout line is JSON: {\"listen\":\"...\",\"ws_path\":\"...\"}"
 cd "$ROOT/go"
+ALLOW_ORIGIN_ARGS=()
+if [[ -n "$ALLOW_ORIGIN" ]]; then
+  ALLOW_ORIGIN_ARGS+=(--allow-origin "$ALLOW_ORIGIN")
+fi
 exec go run ./cmd/flowersec-tunnel \
   --listen "$LISTEN" \
   --ws-path "$WS_PATH" \
   --issuer-keys-file "$KEYS_FILE" \
-  --aud "$AUD"
+  --aud "$AUD" \
+  "${ALLOW_ORIGIN_ARGS[@]}"

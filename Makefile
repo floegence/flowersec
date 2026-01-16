@@ -1,4 +1,6 @@
-.PHONY: gen test go-test ts-test lint bench
+.PHONY: gen test go-test go-test-race go-vulncheck ts-test ts-lint fmt fmt-check lint lint-check bench check
+
+GOVULNCHECK_VERSION ?= v1.1.4
 
 YAMUX_INTEROP ?= 1
 YAMUX_INTEROP_STRESS ?= 0
@@ -14,6 +16,12 @@ test: go-test ts-test
 go-test:
 	cd go && go test ./...
 
+go-test-race:
+	cd go && go test -race ./...
+
+go-vulncheck:
+	cd go && go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
 ts-test:
 	cd ts && \
 		YAMUX_INTEROP=$(YAMUX_INTEROP) \
@@ -22,9 +30,24 @@ ts-test:
 		YAMUX_INTEROP_DEBUG=$(YAMUX_INTEROP_DEBUG) \
 		npm test
 
-lint:
-	gofmt -w go examples/go
+ts-lint:
 	cd ts && npm run lint
+
+fmt:
+	gofmt -w go examples/go
+
+fmt-check:
+	@if [ -n "$$(gofmt -l go examples/go)" ]; then \
+		echo "gofmt needed; run 'make fmt'"; \
+		gofmt -l go examples/go; \
+		exit 1; \
+	fi
+
+lint: fmt ts-lint
+
+lint-check: fmt-check ts-lint
+
+check: lint-check test go-test-race go-vulncheck
 
 bench:
 	bash tools/bench/bench.sh

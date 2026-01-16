@@ -1,6 +1,6 @@
 module github.com/floegence/flowersec
 
-go 1.24.5
+go 1.25.6
 
 require (
 	github.com/gorilla/websocket v1.5.3

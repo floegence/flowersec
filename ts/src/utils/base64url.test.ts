@@ -23,4 +23,10 @@ describe("base64url", () => {
     expect(enc.includes("+")).toBe(false);
     expect(enc.includes("/")).toBe(false);
   });
+
+  test("decode rejects invalid input", () => {
+    expect(() => base64urlDecode("!!!!")).toThrow();
+    expect(() => base64urlDecode("Zg=")).toThrow();
+    expect(() => base64urlDecode("A")).toThrow(); // invalid length (1 mod 4)
+  });
 });
