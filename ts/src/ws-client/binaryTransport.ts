@@ -88,15 +88,30 @@ export class WebSocketBinaryTransport {
       return;
     }
     if (data instanceof ArrayBuffer) {
+      if (this.maxQueuedBytes > 0 && this.queueBytes + data.byteLength > this.maxQueuedBytes) {
+        this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+        this.ws.close();
+        return;
+      }
       this.push(new Uint8Array(data));
       return;
     }
     if (ArrayBuffer.isView(data)) {
       const view = data as ArrayBufferView;
+      if (this.maxQueuedBytes > 0 && this.queueBytes + view.byteLength > this.maxQueuedBytes) {
+        this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+        this.ws.close();
+        return;
+      }
       this.push(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
       return;
     }
     if (typeof Blob !== "undefined" && data instanceof Blob) {
+      if (this.maxQueuedBytes > 0 && this.queueBytes + data.size > this.maxQueuedBytes) {
+        this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
+        this.ws.close();
+        return;
+      }
       const ab = await data.arrayBuffer();
       if (this.error != null) return;
       this.push(new Uint8Array(ab));

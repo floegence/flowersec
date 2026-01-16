@@ -514,7 +514,7 @@ func (s *Server) pump(channelID string, role tunnelv1.Role, src *endpointConn) {
 			return
 		}
 
-		dst, pendingToFlush, err := s.routeOrBuffer(channelID, role, b)
+		dst, pendingToFlush, err := s.routeOrBuffer(channelID, role, src, b)
 		if err != nil {
 			switch {
 			case errors.Is(err, errUnknownChannel):
@@ -587,7 +587,7 @@ func looksLikeEncryptedFrame(frame []byte, maxCipher int) bool {
 }
 
 // routeOrBuffer returns a destination conn or buffers frames until paired.
-func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byte) (dst *endpointConn, flush [][]byte, err error) {
+func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, src *endpointConn, frame []byte) (dst *endpointConn, flush [][]byte, err error) {
 	now := time.Now()
 	maxCipher := s.cfg.MaxRecordBytes
 
@@ -601,8 +601,8 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, frame []byt
 	st.mu.Lock()
 	s.mu.Unlock()
 	st.lastActive = now
-	src := st.conns[role]
-	if src == nil {
+	current := st.conns[role]
+	if current == nil || current != src {
 		st.mu.Unlock()
 		if encryptedNow {
 			s.obs.Encrypted()

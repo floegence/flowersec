@@ -235,6 +235,8 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 
 	var initMsg e2eev1.E2EE_Init
 	var st *serverHandshakeState
+	var clientPubBytes []byte
+	var nonceCBytes []byte
 
 	// Receive init and send response (with retry support via cache).
 	for {
@@ -270,6 +272,30 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 			suite = opts.Suite
 		}
 		if opts.Suite != 0 && suite != opts.Suite {
+			return nil, ErrUnsupportedSuite
+		}
+
+		clientPubBytes, err = base64url.Decode(initMsg.ClientEphPubB64u)
+		if err != nil {
+			return nil, err
+		}
+		nonceCBytes, err = base64url.Decode(initMsg.NonceCB64u)
+		if err != nil {
+			return nil, err
+		}
+		if len(nonceCBytes) != 32 {
+			return nil, errors.New("invalid nonce_c length")
+		}
+		switch suite {
+		case SuiteX25519HKDFAES256GCM:
+			if len(clientPubBytes) != 32 {
+				return nil, errors.New("invalid client eph pub length")
+			}
+		case SuiteP256HKDFAES256GCM:
+			if len(clientPubBytes) != 65 {
+				return nil, errors.New("invalid client eph pub length")
+			}
+		default:
 			return nil, ErrUnsupportedSuite
 		}
 
@@ -367,17 +393,6 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 		return nil, errors.New("invalid auth tag length")
 	}
 
-	clientPubBytes, err := base64url.Decode(initMsg.ClientEphPubB64u)
-	if err != nil {
-		return nil, err
-	}
-	nonceCBytes, err := base64url.Decode(initMsg.NonceCB64u)
-	if err != nil {
-		return nil, err
-	}
-	if len(nonceCBytes) != 32 {
-		return nil, errors.New("invalid nonce_c length")
-	}
 	var nonceC [32]byte
 	copy(nonceC[:], nonceCBytes)
 
