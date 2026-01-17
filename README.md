@@ -60,6 +60,11 @@ Generate code from IDL:
 make gen
 ```
 
+Node.js version:
+
+- Recommended: Node.js 22 (LTS). See `.nvmrc`.
+- CI uses Node.js 22 (see `.github/workflows/ci.yml`).
+
 Run formatting/lint and tests:
 
 ```bash

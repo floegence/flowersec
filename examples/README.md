@@ -18,7 +18,7 @@ This folder is a hands-on cookbook for running Flowersec end-to-end using the re
 ## Prerequisites
 
 - Go (same major as `go/go.mod`)
-- Node.js (for TypeScript clients)
+- Node.js (for TypeScript clients; recommended: Node.js 22 LTS)
 - Optional: `jq` (to parse the JSON "ready" lines; you can also copy/paste manually)
 
 ## Build the TypeScript bundle (required for TS clients)
