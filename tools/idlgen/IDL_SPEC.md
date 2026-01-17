@@ -56,6 +56,20 @@ The generator extracts:
         }
       ]
     }
+  },
+  "services": {
+    "ServiceName": {
+      "comment": "Optional service doc.",
+      "methods": {
+        "MethodName": {
+          "comment": "Optional method doc.",
+          "kind": "request|notify",
+          "type_id": 123,
+          "request": "RequestMessage",
+          "response": "ResponseMessage (request only)"
+        }
+      }
+    }
   }
 }
 ```
@@ -63,8 +77,22 @@ The generator extracts:
 Notes:
 
 - `enums` and `messages` can be empty or omitted.
+- `services` can be empty or omitted. When present, `idlgen` generates typed RPC stubs (Go and TS).
 - `comment` and `value_comments` are optional and only affect generated doc comments.
 - Enum `type` is only used for Go output; `u8` -> `uint8`, `u16` -> `uint16`, otherwise `uint32`.
+
+## Services and typed RPC stubs
+
+The `services` section is a lightweight way to bind stable RPC `type_id` values to named methods and message types.
+It does not change the wire envelope format. It exists to generate ergonomic, strongly typed client/server code.
+
+Rules:
+
+- `kind` must be either `request` or `notify`.
+- `type_id` must be non-zero and unique within a single `.fidl.json` file.
+- `request` must refer to a message declared in the same file.
+- For `request` methods, `response` must refer to a message declared in the same file.
+- For `notify` methods, `response` must be omitted.
 
 ## Supported field types and mappings
 
@@ -103,6 +131,11 @@ Given `-go-out` and `-ts-out`:
 
 - Go: `go/gen/flowersec/<domain>/<version>/types.gen.go` with package name `v1`.
 - TypeScript: `ts/src/gen/flowersec/<domain>/<version>.gen.ts`.
+
+When `services` is present:
+
+- Go: `go/gen/flowersec/<domain>/<version>/rpc.gen.go` (typed stubs; constants + clients + registration helpers).
+- TypeScript: `ts/src/gen/flowersec/<domain>/<version>.rpc.gen.ts` (typed client factory).
 
 ## Usage
 

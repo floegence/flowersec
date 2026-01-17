@@ -41,6 +41,18 @@ function assertU32(name: string, v: unknown): number {
   return n;
 }
 
+function assertU16(name: string, v: unknown): number {
+  const n = assertU32(name, v);
+  if (n > 0xffff) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertU8(name: string, v: unknown): number {
+  const n = assertU32(name, v);
+  if (n > 0xff) throw new Error(`bad ${name}`);
+  return n;
+}
+
 function assertU64(name: string, v: unknown): number {
   const n = assertSafeInt(name, v);
   if (n < 0) throw new Error(`bad ${name}`);

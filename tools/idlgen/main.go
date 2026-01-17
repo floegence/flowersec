@@ -741,6 +741,16 @@ func writeTSAsserts(buf *bytes.Buffer, s schema) {
 	buf.WriteString("  if (n < 0 || n > 0xffffffff) throw new Error(`bad ${name}`);\n")
 	buf.WriteString("  return n;\n")
 	buf.WriteString("}\n\n")
+	buf.WriteString("function assertU16(name: string, v: unknown): number {\n")
+	buf.WriteString("  const n = assertU32(name, v);\n")
+	buf.WriteString("  if (n > 0xffff) throw new Error(`bad ${name}`);\n")
+	buf.WriteString("  return n;\n")
+	buf.WriteString("}\n\n")
+	buf.WriteString("function assertU8(name: string, v: unknown): number {\n")
+	buf.WriteString("  const n = assertU32(name, v);\n")
+	buf.WriteString("  if (n > 0xff) throw new Error(`bad ${name}`);\n")
+	buf.WriteString("  return n;\n")
+	buf.WriteString("}\n\n")
 	buf.WriteString("function assertU64(name: string, v: unknown): number {\n")
 	buf.WriteString("  const n = assertSafeInt(name, v);\n")
 	buf.WriteString("  if (n < 0) throw new Error(`bad ${name}`);\n")
@@ -818,7 +828,11 @@ func writeTSAssertExpr(buf *bytes.Buffer, name string, typ string, expr string, 
 		fmt.Fprintf(buf, "assertString(%q, %s);\n", name, expr)
 	case "bool":
 		fmt.Fprintf(buf, "assertBoolean(%q, %s);\n", name, expr)
-	case "u8", "u16", "u32":
+	case "u8":
+		fmt.Fprintf(buf, "assertU8(%q, %s);\n", name, expr)
+	case "u16":
+		fmt.Fprintf(buf, "assertU16(%q, %s);\n", name, expr)
+	case "u32":
 		fmt.Fprintf(buf, "assertU32(%q, %s);\n", name, expr)
 	case "u64":
 		fmt.Fprintf(buf, "assertU64(%q, %s);\n", name, expr)

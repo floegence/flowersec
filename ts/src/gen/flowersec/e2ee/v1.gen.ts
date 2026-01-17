@@ -97,6 +97,18 @@ function assertU32(name: string, v: unknown): number {
   return n;
 }
 
+function assertU16(name: string, v: unknown): number {
+  const n = assertU32(name, v);
+  if (n > 0xffff) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertU8(name: string, v: unknown): number {
+  const n = assertU32(name, v);
+  if (n > 0xff) throw new Error(`bad ${name}`);
+  return n;
+}
+
 function assertU64(name: string, v: unknown): number {
   const n = assertSafeInt(name, v);
   if (n < 0) throw new Error(`bad ${name}`);
@@ -186,7 +198,7 @@ export function assertE2EE_Init(v: unknown): E2EE_Init {
   if (o["role"] === undefined) throw new Error("bad E2EE_Init.role");
   assertRole("E2EE_Init.role", o["role"]);
   if (o["version"] === undefined) throw new Error("bad E2EE_Init.version");
-  assertU32("E2EE_Init.version", o["version"]);
+  assertU8("E2EE_Init.version", o["version"]);
   if (o["suite"] === undefined) throw new Error("bad E2EE_Init.suite");
   assertSuite("E2EE_Init.suite", o["suite"]);
   if (o["client_eph_pub_b64u"] === undefined) throw new Error("bad E2EE_Init.client_eph_pub_b64u");
