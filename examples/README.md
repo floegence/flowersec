@@ -33,12 +33,15 @@ npm run build
 ## Important notes (read before running scenarios)
 
 - Transport security: the attach layer is plaintext by design, so use `wss://` (or TLS terminated by a reverse proxy) in any non-local deployment. The tunnel binary supports optional TLS via `--tls-cert-file/--tls-key-file` (disabled by default).
+- Token issuer (`iss`): the tunnel requires `--iss` and will reject tokens whose payload `iss` does not match. Keep your controlplane `--issuer-id` and tunnel `--iss` consistent.
 - One-time tokens: tunnel enforces `token_id` single-use. If you re-run a client with the same `grant_client`/`grant_server`, you will hit token replay and the tunnel will close the connection.
   - Practical rule: mint a fresh channel (`POST /v1/channel/init`) for every new connection attempt.
 - Role pairing: a tunnel channel requires exactly one `role=client` and one `role=server`.
   - TS tunnel client and Go tunnel client are both `role=client` and cannot talk to each other directly.
   - Use the server endpoint demo (`role=server`) as the peer for any tunnel client.
 - Browser Origin: the tunnel validates the WebSocket `Origin` header. For browser scenarios you must allow your page origin.
+  - Default allow-list is `*.redeven.com` and is meant as a placeholder. Override it in deployment.
+  - For Node clients (ws polyfill), set an `Origin` header in your `wsFactory` or start the tunnel with `--allow-no-origin`.
   - Example: `FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 ./examples/run-tunnel-server.sh`
 
 ## Scenario A: TS client (Node) ↔ Go server endpoint (role=server) through tunnel
@@ -50,13 +53,14 @@ CP_JSON="$(mktemp -t fsec-controlplane.XXXXXX.json)"
 ./examples/run-controlplane-demo.sh | tee "$CP_JSON"
 ```
 
-It prints a first JSON line including `controlplane_http_url`, `issuer_keys_file`, and the tunnel params needed to start the deployable tunnel server.
+It prints a first JSON line including `controlplane_http_url`, `issuer_keys_file`, and the tunnel params needed to start the deployable tunnel server (including `tunnel_issuer`).
 
 Terminal 2: start tunnel server (deployable service, no code changes)
 
 ```bash
 FSEC_TUNNEL_ISSUER_KEYS_FILE="$(jq -r '.issuer_keys_file' "$CP_JSON")" \
 FSEC_TUNNEL_AUD="$(jq -r '.tunnel_audience' "$CP_JSON")" \
+FSEC_TUNNEL_ISS="$(jq -r '.tunnel_issuer' "$CP_JSON")" \
 FSEC_TUNNEL_LISTEN="$(jq -r '.tunnel_listen' "$CP_JSON")" \
 FSEC_TUNNEL_WS_PATH="$(jq -r '.tunnel_ws_path' "$CP_JSON")" \
 ./examples/run-tunnel-server.sh
@@ -99,6 +103,7 @@ If you started the tunnel server without an allow-list, restart it with an allow
 FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 \
 FSEC_TUNNEL_ISSUER_KEYS_FILE="$(jq -r '.issuer_keys_file' "$CP_JSON")" \
 FSEC_TUNNEL_AUD="$(jq -r '.tunnel_audience' "$CP_JSON")" \
+FSEC_TUNNEL_ISS="$(jq -r '.tunnel_issuer' "$CP_JSON")" \
 FSEC_TUNNEL_LISTEN="$(jq -r '.tunnel_listen' "$CP_JSON")" \
 FSEC_TUNNEL_WS_PATH="$(jq -r '.tunnel_ws_path' "$CP_JSON")" \
 ./examples/run-tunnel-server.sh

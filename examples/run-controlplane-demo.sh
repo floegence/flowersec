@@ -12,6 +12,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 AUD="${FSEC_TUNNEL_AUD:-flowersec-tunnel:dev}"
+ISSUER_ID="${FSEC_ISSUER_ID:-issuer-demo}"
 TUNNEL_LISTEN="${FSEC_TUNNEL_LISTEN:-127.0.0.1:8080}"
 TUNNEL_WS_PATH="${FSEC_TUNNEL_WS_PATH:-/ws}"
 TUNNEL_SCHEME="${FSEC_TUNNEL_SCHEME:-ws}"
@@ -27,7 +28,6 @@ else
 fi
 LISTEN="${FSEC_CONTROLPLANE_LISTEN:-127.0.0.1:0}"
 KID="${FSEC_ISSUER_KID:-k1}"
-ISSUER_ID="${FSEC_ISSUER_ID:-issuer-demo}"
 
 TMP_DIR="${FSEC_DEMO_TMP_DIR:-$ROOT/examples/.tmp}"
 KEYS_FILE="${FSEC_TUNNEL_ISSUER_KEYS_FILE:-$TMP_DIR/issuer_keys.json}"
@@ -37,7 +37,7 @@ mkdir -p "$TMP_DIR"
 echo "Starting controlplane demo (listen=$LISTEN)"
 echo "It will write tunnel issuer keyset to: $KEYS_FILE"
 echo "Tunnel WS URL (hint for grants): $TUNNEL_URL"
-echo "First stdout line is JSON: {\"controlplane_http_url\":\"...\",\"issuer_keys_file\":\"...\",\"tunnel_audience\":\"...\",\"tunnel_listen\":\"...\",\"tunnel_ws_path\":\"...\"}"
+echo "First stdout line is JSON: {\"controlplane_http_url\":\"...\",\"issuer_keys_file\":\"...\",\"tunnel_audience\":\"...\",\"tunnel_issuer\":\"...\",\"tunnel_listen\":\"...\",\"tunnel_ws_path\":\"...\"}"
 
 cd "$ROOT/examples"
 exec go run ./go/controlplane_demo \

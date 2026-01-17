@@ -29,7 +29,7 @@ describe("go<->ts integration", () => {
       const ready = JSON.parse(firstLine) as { grant_client: any };
 
       const client = await connectTunnelClientRpc(ready.grant_client, {
-        wsFactory: (url) => new WS(url)
+        wsFactory: (url) => new WS(url, { headers: { Origin: "https://app.redeven.com" } })
       });
       try {
         const demo = createDemoClient(client.rpcProxy);

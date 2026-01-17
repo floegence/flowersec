@@ -39,6 +39,7 @@ func TestE2E_RPCOverTunnelE2EEYamux(t *testing.T) {
 	tunnelCfg := server.DefaultConfig()
 	tunnelCfg.IssuerKeysFile = keyFile
 	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
+	tunnelCfg.TunnelIssuer = "issuer-dev"
 	tunnelCfg.IdleTimeout = 2 * time.Second
 	tunnelCfg.CleanupInterval = 50 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
@@ -96,6 +97,7 @@ func TestE2E_BufferingBeforePair(t *testing.T) {
 	tunnelCfg := server.DefaultConfig()
 	tunnelCfg.IssuerKeysFile = keyFile
 	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
+	tunnelCfg.TunnelIssuer = "issuer-dev"
 	tunnelCfg.IdleTimeout = 2 * time.Second
 	tunnelCfg.CleanupInterval = 50 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
@@ -154,6 +156,7 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 	tunnelCfg := server.DefaultConfig()
 	tunnelCfg.IssuerKeysFile = keyFile
 	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
+	tunnelCfg.TunnelIssuer = "issuer-dev"
 	tunnelCfg.IdleTimeout = 150 * time.Millisecond
 	tunnelCfg.CleanupInterval = 20 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
@@ -185,7 +188,7 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 
 	serverSecureCh := make(chan *e2ee.SecureConn, 1)
 	go func() {
-		c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+		c, _, err := dialTunnel(ctx, wsURL)
 		if err != nil {
 			serverSecureCh <- nil
 			return
@@ -212,7 +215,7 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 		serverSecureCh <- secure
 	}()
 
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+	c, _, err := dialTunnel(ctx, wsURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +262,7 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 }
 
 func runClientHandshakeOnly(ctx context.Context, wsURL string, grant *controlv1.ChannelInitGrant, psk []byte) error {
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+	c, _, err := dialTunnel(ctx, wsURL)
 	if err != nil {
 		return err
 	}
@@ -285,7 +288,7 @@ func runClientHandshakeOnly(ctx context.Context, wsURL string, grant *controlv1.
 }
 
 func runServerHandshakeOnly(ctx context.Context, wsURL string, grant *controlv1.ChannelInitGrant, psk []byte) error {
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+	c, _, err := dialTunnel(ctx, wsURL)
 	if err != nil {
 		return err
 	}
@@ -315,7 +318,7 @@ func runServerHandshakeOnly(ctx context.Context, wsURL string, grant *controlv1.
 
 func runServerEndpoint(ctx context.Context, t *testing.T, wsURL string, grant *controlv1.ChannelInitGrant, psk []byte) {
 	t.Helper()
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+	c, _, err := dialTunnel(ctx, wsURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +387,7 @@ func runServerEndpoint(ctx context.Context, t *testing.T, wsURL string, grant *c
 
 func runBrowserClientEndpoint(ctx context.Context, t *testing.T, wsURL string, grant *controlv1.ChannelInitGrant, psk []byte) string {
 	t.Helper()
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+	c, _, err := dialTunnel(ctx, wsURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,4 +477,10 @@ func randomB64u(n int) string {
 
 func fixedEID() string {
 	return base64url.Encode(make([]byte, 16))
+}
+
+func dialTunnel(ctx context.Context, wsURL string) (*websocket.Conn, *http.Response, error) {
+	h := http.Header{}
+	h.Set("Origin", "https://app.redeven.com")
+	return websocket.DefaultDialer.DialContext(ctx, wsURL, h)
 }

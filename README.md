@@ -61,6 +61,17 @@ Generate code from IDL:
 make gen
 ```
 
+## Tunnel defaults (important for deployment)
+
+The deployable tunnel binary is `go/cmd/flowersec-tunnel/`.
+
+- TLS is **disabled by default**. For any non-local deployment, use `wss://` (either enable `--tls-cert-file/--tls-key-file` or terminate TLS at a reverse proxy).
+- Browser Origin checks are **enabled by default**:
+  - Default allow-list is `*.redeven.com` (placeholder). Override it via `--allow-origin`.
+  - `--allow-origin` accepts either a hostname (e.g. `example.com`) or a full Origin value (e.g. `https://example.com` or `http://127.0.0.1:5173`).
+  - Requests without `Origin` are **rejected by default**; enable `--allow-no-origin` only for non-browser clients.
+- Token issuer (`iss`) is **required**: pass `--iss` and ensure it matches the token payload `iss` minted by your controlplane.
+
 Node.js version:
 
 - Recommended: Node.js 22 (LTS). See `.nvmrc`.
@@ -88,7 +99,8 @@ Example:
 go run ./go/cmd/flowersec-tunnel \
   --listen 127.0.0.1:8080 \
   --issuer-keys-file /path/to/keys.json \
-  --aud your-audience
+  --aud your-audience \
+  --iss your-issuer
 
 # enable metrics
 kill -USR1 <pid>
@@ -106,4 +118,4 @@ Library integrations:
 ## Binaries
 
 - Tunnel server (deployable): `go/cmd/flowersec-tunnel/`
-  - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`, `--tls-cert-file`, `--tls-key-file`
+  - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`, `--iss`, `--allow-origin`, `--allow-no-origin`, `--tls-cert-file`, `--tls-key-file`

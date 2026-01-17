@@ -573,7 +573,7 @@ async function connectTunnelClientYamuxWithProbe(
   grant: ChannelInitGrant,
   probe: FrameProbe
 ): Promise<{ mux: YamuxSession; close: () => void }> {
-  const ws = new WS(grant.tunnel_url) as WebSocketLike;
+  const ws = new WS(grant.tunnel_url, { headers: { Origin: "https://app.redeven.com" } }) as WebSocketLike;
   await waitOpen(ws);
 
   const attach: Attach = {

@@ -130,8 +130,8 @@ func main() {
 	flag.StringVar(&path, "ws-path", "/ws", "websocket path")
 	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "issuer keyset file (kid->ed25519 pubkey)")
 	flag.StringVar(&aud, "aud", "", "expected token audience")
-	flag.StringVar(&iss, "iss", "", "expected token issuer")
-	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable)")
+	flag.StringVar(&iss, "iss", "", "expected token issuer (required; must match token payload 'iss')")
+	flag.Var(&allowedOrigins, "allow-origin", "allowed browser Origin host or full Origin value (repeatable); default: redeven.com (override in deployment)")
 	flag.BoolVar(&allowNoOrigin, "allow-no-origin", cfg.AllowNoOrigin, "allow requests without Origin header (non-browser clients)")
 	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent websocket connections (0 uses default)")
 	flag.IntVar(&maxChannels, "max-channels", 0, "max concurrent channels (0 uses default)")
@@ -142,11 +142,14 @@ func main() {
 	flag.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", cfg.MaxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (0 uses default)")
 	flag.Parse()
 
-	if issuerKeysFile == "" || aud == "" {
-		log.Fatal("missing --issuer-keys-file or --aud")
+	if issuerKeysFile == "" || aud == "" || iss == "" {
+		log.Fatal("missing --issuer-keys-file, --aud, or --iss")
 	}
 	if err := validateTLSFiles(tlsCertFile, tlsKeyFile); err != nil {
 		log.Fatal(err)
+	}
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = append(allowedOrigins, cfg.AllowedOrigins...)
 	}
 
 	observer := observability.NewAtomicTunnelObserver()

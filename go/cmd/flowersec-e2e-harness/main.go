@@ -49,6 +49,7 @@ func main() {
 	tunnelCfg := server.DefaultConfig()
 	tunnelCfg.IssuerKeysFile = keyFile
 	tunnelCfg.TunnelAudience = aud
+	tunnelCfg.TunnelIssuer = issID
 	tunnelCfg.IdleTimeout = 60 * time.Second
 	tunnelCfg.CleanupInterval = 50 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
@@ -152,7 +153,7 @@ func main() {
 
 // runServerEndpoint attaches as the server role and serves a simple RPC handler.
 func runServerEndpoint(ctx context.Context, wsURL string, channelID string, tokenStr string, psk []byte, initExp int64) {
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+	c, _, err := dialTunnel(ctx, wsURL)
 	if err != nil {
 		return
 	}
@@ -234,7 +235,7 @@ type scenarioOutcome struct {
 // runServerEndpointScenario attaches as the server role and runs a yamux interop scenario.
 // Note: this harness only accepts client-initiated streams.
 func runServerEndpointScenario(ctx context.Context, wsURL string, channelID string, tokenStr string, psk []byte, initExp int64, scenario yamuxinterop.Scenario) (yamuxinterop.Result, error) {
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+	c, _, err := dialTunnel(ctx, wsURL)
 	if err != nil {
 		return yamuxinterop.Result{}, err
 	}
@@ -280,6 +281,12 @@ func runServerEndpointScenario(ctx context.Context, wsURL string, channelID stri
 	defer sess.Close()
 
 	return yamuxinterop.RunServer(ctx, sess, scenario)
+}
+
+func dialTunnel(ctx context.Context, wsURL string) (*websocket.Conn, *http.Response, error) {
+	h := http.Header{}
+	h.Set("Origin", "https://app.redeven.com")
+	return websocket.DefaultDialer.DialContext(ctx, wsURL, h)
 }
 
 func shutdownHTTPServer(srv *http.Server) {

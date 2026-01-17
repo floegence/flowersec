@@ -27,6 +27,7 @@ type ready struct {
 	ControlplaneHTTPURL string `json:"controlplane_http_url"`
 
 	TunnelAudience  string `json:"tunnel_audience"`
+	TunnelIssuer    string `json:"tunnel_issuer"`
 	IssuerKeysFile  string `json:"issuer_keys_file"`
 	TunnelWSURLHint string `json:"tunnel_ws_url_hint"`
 	TunnelListen    string `json:"tunnel_listen"`
@@ -111,6 +112,7 @@ func main() {
 	_ = json.NewEncoder(os.Stdout).Encode(ready{
 		ControlplaneHTTPURL: httpURL,
 		TunnelAudience:      aud,
+		TunnelIssuer:        issuerID,
 		IssuerKeysFile:      issuerKeysFile,
 		TunnelWSURLHint:     tunnelURL,
 		TunnelListen:        tunnelListen,

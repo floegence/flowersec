@@ -39,7 +39,7 @@ async function main() {
   const grant = pickGrantClient(readyOrGrant);
 
   const client = await connectTunnelClientRpc(grant, {
-    wsFactory: (url) => new WS(url)
+    wsFactory: (url) => new WS(url, { headers: { Origin: "https://app.redeven.com" } })
   });
 
   try {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,7 +59,8 @@ func DefaultConfig() Config {
 		MaxTotalPendingBytes: 256 * 1024 * 1024,
 		MaxChannels:          6000,
 		MaxConns:             12000,
-		AllowNoOrigin:        true,
+		AllowedOrigins:       []string{"*.redeven.com"},
+		AllowNoOrigin:        false,
 		IdleTimeout:          60 * time.Second,
 		ClockSkew:            30 * time.Second,
 		CleanupInterval:      500 * time.Millisecond,
@@ -100,6 +103,12 @@ type Stats struct {
 func New(cfg Config) (*Server, error) {
 	if cfg.Path == "" {
 		cfg.Path = "/ws"
+	}
+	if strings.TrimSpace(cfg.TunnelAudience) == "" {
+		return nil, errors.New("missing tunnel audience")
+	}
+	if strings.TrimSpace(cfg.TunnelIssuer) == "" {
+		return nil, errors.New("missing tunnel issuer")
 	}
 	if cfg.MaxAttachBytes <= 0 {
 		cfg.MaxAttachBytes = 8 * 1024
@@ -937,7 +946,41 @@ func (s *Server) checkOrigin(r *http.Request) bool {
 	if origin == "" {
 		return s.cfg.AllowNoOrigin
 	}
+	parsed, err := url.Parse(origin)
+	hostname := ""
+	if err == nil {
+		hostname = parsed.Hostname()
+	}
 	for _, allowed := range s.cfg.AllowedOrigins {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == "" {
+			continue
+		}
+		// If allowed contains a scheme, treat it as a full Origin value match
+		// (e.g. "https://example.com" or "http://127.0.0.1:5173").
+		if strings.Contains(allowed, "://") {
+			if origin == allowed {
+				return true
+			}
+			continue
+		}
+		// Support wildcard hostname entries like "*.example.com".
+		// For usability, we treat "*.example.com" as matching both "example.com"
+		// and any subdomain (e.g. "a.example.com").
+		if strings.HasPrefix(allowed, "*.") {
+			base := strings.TrimPrefix(allowed, "*.")
+			if hostname != "" && base != "" {
+				if hostname == base || strings.HasSuffix(hostname, "."+base) {
+					return true
+				}
+			}
+			continue
+		}
+		// Otherwise, treat it as a hostname allow-list entry (e.g. "example.com").
+		if hostname != "" && hostname == allowed {
+			return true
+		}
+		// Also allow exact string matches for non-standard Origin values (e.g. "null").
 		if origin == allowed {
 			return true
 		}

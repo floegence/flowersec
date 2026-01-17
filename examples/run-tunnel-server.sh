@@ -7,6 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 AUD="${FSEC_TUNNEL_AUD:-flowersec-tunnel:dev}"
+ISS="${FSEC_TUNNEL_ISS:-issuer-demo}"
 LISTEN="${FSEC_TUNNEL_LISTEN:-127.0.0.1:0}"
 WS_PATH="${FSEC_TUNNEL_WS_PATH:-/ws}"
 
@@ -23,7 +24,7 @@ if [[ -z "$KEYS_FILE" ]]; then
   exit 1
 fi
 
-echo "Starting tunnel server (aud=$AUD, listen=$LISTEN, ws_path=$WS_PATH)"
+echo "Starting tunnel server (aud=$AUD, iss=$ISS, listen=$LISTEN, ws_path=$WS_PATH)"
 echo "First stdout line is JSON: {\"listen\":\"...\",\"ws_path\":\"...\"}"
 cd "$ROOT/go"
 ALLOW_ORIGIN_ARGS=()
@@ -46,5 +47,6 @@ exec go run ./cmd/flowersec-tunnel \
   --ws-path "$WS_PATH" \
   --issuer-keys-file "$KEYS_FILE" \
   --aud "$AUD" \
+  --iss "$ISS" \
   "${ALLOW_ORIGIN_ARGS[@]}" \
   "${TLS_ARGS[@]}"

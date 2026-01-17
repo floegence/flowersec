@@ -409,7 +409,7 @@ func runConnection(ctx context.Context, svc *channelinit.Service, wsURL string, 
 	}()
 
 	wsStart := time.Now()
-	c, _, err := websocket.DefaultDialer.DialContext(connCtx, wsURL, nil)
+	c, _, err := dialTunnel(connCtx, wsURL)
 	if err != nil {
 		out.wsOpen = time.Since(wsStart)
 		out.errStage = "ws_open"
@@ -536,7 +536,7 @@ func startServerEndpoint(ctx context.Context, wsURL string, grant *controlv1.Cha
 	serverCtx, cancel := context.WithCancel(ctx)
 
 	go func() {
-		c, _, err := websocket.DefaultDialer.DialContext(serverCtx, wsURL, nil)
+		c, _, err := dialTunnel(serverCtx, wsURL)
 		if err != nil {
 			ready <- err
 			return
@@ -968,6 +968,12 @@ func randomEndpointID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return base64url.Encode(b)
+}
+
+func dialTunnel(ctx context.Context, wsURL string) (*websocket.Conn, *http.Response, error) {
+	h := http.Header{}
+	h.Set("Origin", "https://app.redeven.com")
+	return websocket.DefaultDialer.DialContext(ctx, wsURL, h)
 }
 
 func itoa(v int) string {
