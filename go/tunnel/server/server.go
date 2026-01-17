@@ -121,6 +121,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.IdleTimeout <= 0 {
 		cfg.IdleTimeout = 60 * time.Second
 	}
+	if cfg.ClockSkew < 0 {
+		cfg.ClockSkew = 0
+	}
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = 500 * time.Millisecond
 	}
@@ -374,8 +377,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the attach token and guard against replay.
+	now := time.Now()
 	p, err := token.Verify(attach.Token, s.keys, token.VerifyOptions{
-		Now:       time.Now(),
+		Now:       now,
 		Audience:  s.cfg.TunnelAudience,
 		Issuer:    s.cfg.TunnelIssuer,
 		ClockSkew: s.cfg.ClockSkew,
@@ -398,7 +402,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		s.untrackConn(uc)
 		return
 	}
-	if !s.used.TryUse(p.TokenID, p.Exp, time.Now()) {
+	usedUntilUnix := addSkewUnix(p.Exp, s.cfg.ClockSkew)
+	if !s.used.TryUse(p.TokenID, usedUntilUnix, now) {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonTokenReplay)
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "token replay")
 		s.untrackConn(uc)
@@ -975,6 +980,7 @@ func (s *Server) cleanupLoop() {
 			return
 		case <-t.C:
 			now := time.Now()
+			nowUnix := now.Unix()
 			s.used.Cleanup(now)
 
 			type closeTarget struct {
@@ -985,7 +991,7 @@ func (s *Server) cleanupLoop() {
 			s.mu.Lock()
 			for id, st := range s.channels {
 				st.mu.Lock()
-				if !st.sawRecord && now.Unix() > st.initExp {
+				if !st.sawRecord && nowUnix > addSkewUnix(st.initExp, s.cfg.ClockSkew) {
 					toClose = append(toClose, closeTarget{id: id, reason: observability.CloseReasonInitExpired})
 					st.mu.Unlock()
 					continue

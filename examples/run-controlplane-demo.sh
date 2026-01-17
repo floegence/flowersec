@@ -25,7 +25,7 @@ mkdir -p "$TMP_DIR"
 echo "Starting controlplane demo (listen=$LISTEN)"
 echo "It will write tunnel issuer keyset to: $KEYS_FILE"
 echo "Tunnel WS URL (hint for grants): $TUNNEL_URL"
-echo "First stdout line is JSON: {\"controlplane_http_url\":\"...\",\"issuer_keys_file\":\"...\",\"tunnel_audience\":\"...\",\"tunnel_start_cmd\":\"...\"}"
+echo "First stdout line is JSON: {\"controlplane_http_url\":\"...\",\"issuer_keys_file\":\"...\",\"tunnel_audience\":\"...\",\"tunnel_listen\":\"...\",\"tunnel_ws_path\":\"...\"}"
 
 cd "$ROOT/examples"
 exec go run ./go/controlplane_demo \

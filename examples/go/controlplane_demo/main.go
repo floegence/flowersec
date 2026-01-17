@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -25,11 +24,11 @@ import (
 type ready struct {
 	ControlplaneHTTPURL string `json:"controlplane_http_url"`
 
-	// Copy-paste values for running the deployable tunnel server.
 	TunnelAudience  string `json:"tunnel_audience"`
 	IssuerKeysFile  string `json:"issuer_keys_file"`
 	TunnelWSURLHint string `json:"tunnel_ws_url_hint"`
-	TunnelStartCmd  string `json:"tunnel_start_cmd"`
+	TunnelListen    string `json:"tunnel_listen"`
+	TunnelWSPath    string `json:"tunnel_ws_path"`
 }
 
 type channelInitRequest struct {
@@ -123,12 +122,14 @@ func main() {
 	}()
 
 	httpURL := "http://" + ln.Addr().String()
+	tunnelListen, tunnelWSPath := tunnelListenAndPath(tunnelURL)
 	_ = json.NewEncoder(os.Stdout).Encode(ready{
 		ControlplaneHTTPURL: httpURL,
 		TunnelAudience:      aud,
 		IssuerKeysFile:      issuerKeysFile,
 		TunnelWSURLHint:     tunnelURL,
-		TunnelStartCmd:      tunnelStartCmd(tunnelURL, aud, issuerKeysFile),
+		TunnelListen:        tunnelListen,
+		TunnelWSPath:        tunnelWSPath,
 	})
 
 	sig := make(chan os.Signal, 2)
@@ -158,24 +159,14 @@ func randomB64u(n int) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func tunnelStartCmd(tunnelURL string, aud string, issuerKeysFile string) string {
+func tunnelListenAndPath(tunnelURL string) (listen string, wsPath string) {
 	u, err := url.Parse(tunnelURL)
 	if err != nil || u.Host == "" {
-		return ""
+		return "", ""
 	}
-	wsPath := u.Path
+	wsPath = u.Path
 	if wsPath == "" || wsPath == "/" {
 		wsPath = "/ws"
 	}
-	// This command is meant to be run from the repo root.
-	return "FSEC_TUNNEL_ISSUER_KEYS_FILE=" + shellQuote(issuerKeysFile) +
-		" FSEC_TUNNEL_AUD=" + shellQuote(aud) +
-		" FSEC_TUNNEL_LISTEN=" + shellQuote(u.Host) +
-		" FSEC_TUNNEL_WS_PATH=" + shellQuote(wsPath) +
-		" ./examples/run-tunnel-server.sh"
-}
-
-func shellQuote(s string) string {
-	// Minimal safe single-quote escaping for bash.
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return u.Host, wsPath
 }

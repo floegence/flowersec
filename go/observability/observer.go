@@ -82,6 +82,7 @@ type TunnelObserver interface {
 type RPCObserver interface {
 	ServerRequest(result RPCResult)
 	ServerFrameError(direction RPCFrameDirection)
+	ClientFrameError(direction RPCFrameDirection)
 	ClientCall(result RPCResult, d time.Duration)
 	ClientNotify()
 }
@@ -100,6 +101,7 @@ type noopRPCObserver struct{}
 
 func (noopRPCObserver) ServerRequest(RPCResult)             {}
 func (noopRPCObserver) ServerFrameError(RPCFrameDirection)  {}
+func (noopRPCObserver) ClientFrameError(RPCFrameDirection)  {}
 func (noopRPCObserver) ClientCall(RPCResult, time.Duration) {}
 func (noopRPCObserver) ClientNotify()                       {}
 
@@ -184,6 +186,9 @@ func (a *AtomicRPCObserver) load() RPCObserver {
 func (a *AtomicRPCObserver) ServerRequest(result RPCResult) { a.load().ServerRequest(result) }
 func (a *AtomicRPCObserver) ServerFrameError(direction RPCFrameDirection) {
 	a.load().ServerFrameError(direction)
+}
+func (a *AtomicRPCObserver) ClientFrameError(direction RPCFrameDirection) {
+	a.load().ClientFrameError(direction)
 }
 func (a *AtomicRPCObserver) ClientCall(result RPCResult, d time.Duration) {
 	a.load().ClientCall(result, d)

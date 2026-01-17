@@ -32,6 +32,8 @@ func (o *resultObserver) ServerRequest(result observability.RPCResult) {
 
 func (o *resultObserver) ServerFrameError(observability.RPCFrameDirection) {}
 
+func (o *resultObserver) ClientFrameError(observability.RPCFrameDirection) {}
+
 func (o *resultObserver) ClientCall(result observability.RPCResult, _ time.Duration) {
 	o.clientCh <- result
 }

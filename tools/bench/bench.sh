@@ -31,13 +31,20 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[bench] running go benchmarks..."
-(cd "${GO_DIR}" && eval "${GO_BENCH_CMD}") | tee "${GO_OUT}"
+(cd "${GO_DIR}" && GOMAXPROCS="${GOMAXPROCS}" GOMEMLIMIT="${GOMEMLIMIT}" go test -bench . -benchmem ./crypto/e2ee ./tunnel/server) | tee "${GO_OUT}"
 
 echo "[bench] running ts benchmarks..."
-(cd "${TS_DIR}" && eval "${TS_BENCH_CMD}") | tee "${TS_OUT}"
+(cd "${TS_DIR}" && NODE_OPTIONS="${NODE_OPTIONS}" npm run bench) | tee "${TS_OUT}"
 
 echo "[bench] running load generator..."
-(cd "${GO_DIR}" && eval "${LOADGEN_CMD}") > "${LOADGEN_OUT}"
+(cd "${GO_DIR}" && GOMAXPROCS="${GOMAXPROCS}" GOMEMLIMIT="${GOMEMLIMIT}" go run ./cmd/flowersec-loadgen \
+  --mode=full \
+  --channels="${LOADGEN_CHANNELS}" \
+  --rate="${LOADGEN_RATE}" \
+  --ramp-step="${LOADGEN_RAMP_STEP}" \
+  --ramp-interval="${LOADGEN_RAMP_INTERVAL}" \
+  --steady="${LOADGEN_STEADY}" \
+  --report-interval="${LOADGEN_REPORT_INTERVAL}") > "${LOADGEN_OUT}"
 
 RUN_DATE="$(date)"
 OS_VERSION="$(sw_vers -productVersion)"

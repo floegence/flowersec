@@ -45,29 +45,35 @@ npm run build
 Terminal 1: start controlplane demo (default tunnel URL hint is `ws://127.0.0.1:8080/ws`)
 
 ```bash
-./examples/run-controlplane-demo.sh | tee /tmp/fsec-controlplane.json
+CP_JSON="$(mktemp -t fsec-controlplane.XXXXXX.json)"
+./examples/run-controlplane-demo.sh | tee "$CP_JSON"
 ```
 
-It prints a first JSON line including `controlplane_http_url` and a copy-pastable `tunnel_start_cmd`.
+It prints a first JSON line including `controlplane_http_url`, `issuer_keys_file`, and the tunnel params needed to start the deployable tunnel server.
 
 Terminal 2: start tunnel server (deployable service, no code changes)
 
 ```bash
-eval "$(jq -r '.tunnel_start_cmd' /tmp/fsec-controlplane.json)"
+FSEC_TUNNEL_ISSUER_KEYS_FILE="$(jq -r '.issuer_keys_file' "$CP_JSON")" \
+FSEC_TUNNEL_AUD="$(jq -r '.tunnel_audience' "$CP_JSON")" \
+FSEC_TUNNEL_LISTEN="$(jq -r '.tunnel_listen' "$CP_JSON")" \
+FSEC_TUNNEL_WS_PATH="$(jq -r '.tunnel_ws_path' "$CP_JSON")" \
+./examples/run-tunnel-server.sh
 ```
 
 Terminal 3: mint a channel (grants) and start the server endpoint (server-side grant)
 
 ```bash
-CP_URL="$(jq -r '.controlplane_http_url' /tmp/fsec-controlplane.json)"
-curl -sS -X POST "$CP_URL/v1/channel/init" | tee /tmp/fsec-channel.json
-./examples/run-server-endpoint.sh /tmp/fsec-channel.json
+CHANNEL_JSON="$(mktemp -t fsec-channel.XXXXXX.json)"
+CP_URL="$(jq -r '.controlplane_http_url' "$CP_JSON")"
+curl -sS -X POST "$CP_URL/v1/channel/init" | tee "$CHANNEL_JSON"
+./examples/run-server-endpoint.sh "$CHANNEL_JSON"
 ```
 
 Terminal 4: run the TS tunnel client (client-side grant)
 
 ```bash
-node ./examples/ts/node-tunnel-client.mjs < /tmp/fsec-channel.json
+node ./examples/ts/node-tunnel-client.mjs < "$CHANNEL_JSON"
 ```
 
 Expected: one RPC response + one RPC notify + one `echo` stream roundtrip.
@@ -79,7 +85,12 @@ Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint).
 If you started the tunnel server without an allow-list, restart it with an allowed Origin (Terminal 2):
 
 ```bash
-FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 eval "$(jq -r '.tunnel_start_cmd' /tmp/fsec-controlplane.json)"
+FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 \
+FSEC_TUNNEL_ISSUER_KEYS_FILE="$(jq -r '.issuer_keys_file' "$CP_JSON")" \
+FSEC_TUNNEL_AUD="$(jq -r '.tunnel_audience' "$CP_JSON")" \
+FSEC_TUNNEL_LISTEN="$(jq -r '.tunnel_listen' "$CP_JSON")" \
+FSEC_TUNNEL_WS_PATH="$(jq -r '.tunnel_ws_path' "$CP_JSON")" \
+./examples/run-tunnel-server.sh
 ```
 
 Then serve the repo root:
@@ -88,7 +99,7 @@ Then serve the repo root:
 python3 -m http.server 5173
 ```
 
-Open `http://127.0.0.1:5173/examples/ts/browser-tunnel/` and paste `/tmp/fsec-channel.json`.
+Open `http://127.0.0.1:5173/examples/ts/browser-tunnel/` and paste the channel JSON (the same file you wrote in Terminal 3, e.g. `$CHANNEL_JSON`).
 
 Tip: if you refresh/reconnect, mint a new channel again (one-time token rule).
 
@@ -97,7 +108,7 @@ Tip: if you refresh/reconnect, mint a new channel again (one-time token rule).
 Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint), then:
 
 ```bash
-go run ./examples/go/go_client_tunnel < /tmp/fsec-channel.json
+go run ./examples/go/go_client_tunnel < "$CHANNEL_JSON"
 ```
 
 ## Scenario D: TS client (Node) ↔ Go direct server (no tunnel)
@@ -124,5 +135,5 @@ go run ./examples/go/go_client_direct < /tmp/fsec-direct.json
 
 ## Troubleshooting
 
-- Tunnel fails with "token replay": you reused `/tmp/fsec-channel.json`. Mint a new one via `POST /v1/channel/init`.
+- Tunnel fails with "token replay": you reused the same channel JSON (e.g. `$CHANNEL_JSON`). Mint a new one via `POST /v1/channel/init`.
 - Nothing can connect: check that `FSEC_TUNNEL_URL` in `./examples/run-controlplane-demo.sh` matches the tunnel listen/ws-path you actually started.

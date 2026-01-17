@@ -199,4 +199,40 @@ func TestRPCClientNotifyHandlerPanicDoesNotCrashAndOtherHandlersRun(t *testing.T
 	}
 }
 
+func TestRPCClientClosesAfterInvalidJSONFrames(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	client := rpc.NewClient(a)
+	defer client.Close()
+
+	invalidPayload := []byte("not-json")
+	for i := 0; i < 3; i++ {
+		if err := writeRawFrame(b, invalidPayload); err != nil {
+			t.Fatalf("write invalid frame failed: %v", err)
+		}
+	}
+
+	// The client should close its end after maxInvalidJSONFrames invalid payloads,
+	// which should make subsequent writes fail.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := writeRawFrame(b, invalidPayload); err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected peer write to fail after client closes")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, _, err := client.Call(ctx, 1, json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatalf("expected call to fail after invalid json frames")
+	}
+}
+
 func stringPtr(s string) *string { return &s }

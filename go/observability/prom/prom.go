@@ -107,6 +107,7 @@ func (o *TunnelObserver) Encrypted() {
 type RPCObserver struct {
 	serverRequests    *prometheus.CounterVec
 	frameErrors       *prometheus.CounterVec
+	clientFrameErrors *prometheus.CounterVec
 	clientCalls       *prometheus.CounterVec
 	clientCallLatency prometheus.Histogram
 	clientNotify      prometheus.Counter
@@ -121,7 +122,11 @@ func NewRPCObserver(reg *prometheus.Registry) *RPCObserver {
 		}, []string{"result"}),
 		frameErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "flowersec_rpc_frame_errors_total",
-			Help: "RPC frame read/write errors.",
+			Help: "RPC server frame read/write errors.",
+		}, []string{"direction"}),
+		clientFrameErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "flowersec_rpc_client_frame_errors_total",
+			Help: "RPC client frame read/write errors.",
 		}, []string{"direction"}),
 		clientCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "flowersec_rpc_client_calls_total",
@@ -140,6 +145,7 @@ func NewRPCObserver(reg *prometheus.Registry) *RPCObserver {
 	reg.MustRegister(
 		o.serverRequests,
 		o.frameErrors,
+		o.clientFrameErrors,
 		o.clientCalls,
 		o.clientCallLatency,
 		o.clientNotify,
@@ -153,6 +159,10 @@ func (o *RPCObserver) ServerRequest(result observability.RPCResult) {
 
 func (o *RPCObserver) ServerFrameError(direction observability.RPCFrameDirection) {
 	o.frameErrors.WithLabelValues(string(direction)).Inc()
+}
+
+func (o *RPCObserver) ClientFrameError(direction observability.RPCFrameDirection) {
+	o.clientFrameErrors.WithLabelValues(string(direction)).Inc()
 }
 
 func (o *RPCObserver) ClientCall(result observability.RPCResult, d time.Duration) {

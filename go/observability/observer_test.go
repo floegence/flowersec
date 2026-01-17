@@ -29,6 +29,7 @@ type countingRPCObserver struct {
 
 func (c *countingRPCObserver) ServerRequest(observability.RPCResult)            {}
 func (c *countingRPCObserver) ServerFrameError(observability.RPCFrameDirection) {}
+func (c *countingRPCObserver) ClientFrameError(observability.RPCFrameDirection) {}
 func (c *countingRPCObserver) ClientCall(observability.RPCResult, time.Duration) {
 	atomic.AddInt64(&c.calls, 1)
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"math"
 	"sync"
 	"time"
 )
@@ -38,14 +39,19 @@ import (
 //     replay window after restart.
 type TokenUseCache struct {
 	mu   sync.Mutex       // Guards the used map.
-	used map[string]int64 // key: tokenID, value: expUnix
+	used map[string]int64 // key: tokenID, value: usedUntilUnix
 }
 
 func NewTokenUseCache() *TokenUseCache {
 	return &TokenUseCache{used: make(map[string]int64)}
 }
 
-func (c *TokenUseCache) TryUse(tokenID string, expUnix int64, now time.Time) bool {
+// TryUse marks tokenID as used until usedUntilUnix (Unix seconds).
+//
+// Callers should pass a usedUntilUnix that matches the acceptance window of the
+// token verifier (e.g. exp + clockSkewSeconds). Otherwise, replays can slip
+// through when exp is already in the past but still within clock skew.
+func (c *TokenUseCache) TryUse(tokenID string, usedUntilUnix int64, now time.Time) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if tokenID == "" {
@@ -54,7 +60,7 @@ func (c *TokenUseCache) TryUse(tokenID string, expUnix int64, now time.Time) boo
 	if prev, ok := c.used[tokenID]; ok && prev >= now.Unix() {
 		return false
 	}
-	c.used[tokenID] = expUnix
+	c.used[tokenID] = usedUntilUnix
 	return true
 }
 
@@ -67,4 +73,29 @@ func (c *TokenUseCache) Cleanup(now time.Time) {
 			delete(c.used, k)
 		}
 	}
+}
+
+func skewSeconds(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	secs := d / time.Second
+	if d%time.Second != 0 {
+		secs++
+	}
+	if secs < 0 {
+		return 0
+	}
+	return int64(secs)
+}
+
+func addSkewUnix(unixS int64, skew time.Duration) int64 {
+	secs := skewSeconds(skew)
+	if secs == 0 {
+		return unixS
+	}
+	if unixS > math.MaxInt64-secs {
+		return math.MaxInt64
+	}
+	return unixS + secs
 }

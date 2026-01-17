@@ -12,6 +12,8 @@ import (
 	"github.com/floegence/flowersec/observability"
 )
 
+const maxInvalidJSONFrames = 3
+
 // Handler processes an RPC request and returns payload or an RPC error.
 type Handler func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError)
 
@@ -85,7 +87,11 @@ func (s *Server) Notify(typeID uint32, payload json.RawMessage) error {
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return WriteJSONFrame(s.r, env)
+	err := WriteJSONFrame(s.r, env)
+	if err != nil {
+		s.obs.ServerFrameError(observability.RPCFrameWrite)
+	}
+	return err
 }
 
 // Serve runs the request loop until the context ends or the stream fails.
@@ -102,7 +108,6 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}()
 	defer close(done)
-	const maxInvalidJSONFrames = 3
 	invalidJSONFrames := 0
 	for {
 		select {
@@ -233,7 +238,11 @@ func (c *Client) Notify(typeID uint32, payload json.RawMessage) error {
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	return WriteJSONFrame(c.r, env)
+	err := WriteJSONFrame(c.r, env)
+	if err != nil {
+		c.obs.ClientFrameError(observability.RPCFrameWrite)
+	}
+	return err
 }
 
 // Call sends an RPC request and waits for its response or context cancellation.
@@ -259,6 +268,7 @@ func (c *Client) Call(ctx context.Context, typeID uint32, payload json.RawMessag
 	err = WriteJSONFrame(c.r, env)
 	c.writeMu.Unlock()
 	if err != nil {
+		c.obs.ClientFrameError(observability.RPCFrameWrite)
 		record(observability.RPCResultTransportError)
 		return nil, nil, err
 	}
@@ -301,16 +311,26 @@ func (c *Client) release(id uint64) {
 }
 
 func (c *Client) readLoop() {
+	invalidJSONFrames := 0
 	for {
 		b, err := ReadJSONFrame(c.r, c.maxLen)
 		if err != nil {
+			c.obs.ClientFrameError(observability.RPCFrameRead)
 			c.closeAll(err)
 			return
 		}
 		var env rpcv1.RpcEnvelope
 		if err := json.Unmarshal(b, &env); err != nil {
+			invalidJSONFrames++
+			if invalidJSONFrames >= maxInvalidJSONFrames {
+				c.obs.ClientFrameError(observability.RPCFrameRead)
+				_ = c.r.Close()
+				c.closeAll(errors.New("rpc invalid json frame"))
+				return
+			}
 			continue
 		}
+		invalidJSONFrames = 0
 		if env.ResponseTo == 0 {
 			if env.RequestId == 0 {
 				// Notification: fan out to registered handlers.

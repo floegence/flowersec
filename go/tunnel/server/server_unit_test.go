@@ -270,3 +270,41 @@ func TestCleanupLoopClosesExpiredChannels(t *testing.T) {
 		t.Fatalf("expected close reasons to be recorded")
 	}
 }
+
+func TestCleanupLoopDoesNotCloseInitExpiredWithinSkew(t *testing.T) {
+	obs := &testObserver{}
+	s := &Server{
+		cfg:      Config{CleanupInterval: 5 * time.Millisecond, ClockSkew: 30 * time.Second},
+		obs:      obs,
+		used:     NewTokenUseCache(),
+		channels: make(map[string]*channelState),
+		stopCh:   make(chan struct{}),
+	}
+
+	s.channels["skewed"] = &channelState{
+		id:         "skewed",
+		initExp:    time.Now().Add(-time.Second).Unix(),
+		lastActive: time.Now(),
+		conns:      make(map[tunnelv1.Role]*endpointConn),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.cleanupLoop()
+		close(done)
+	}()
+
+	// Give the cleanup loop time to run at least once.
+	time.Sleep(50 * time.Millisecond)
+
+	if got := s.Stats().ChannelCount; got != 1 {
+		t.Fatalf("expected channel to remain within skew window, got %d", got)
+	}
+
+	s.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for cleanup loop to stop")
+	}
+}
