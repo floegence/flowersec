@@ -32,6 +32,7 @@ npm run build
 
 ## Important notes (read before running scenarios)
 
+- Transport security: the attach layer is plaintext by design, so use `wss://` (or TLS terminated by a reverse proxy) in any non-local deployment. The tunnel binary supports optional TLS via `--tls-cert-file/--tls-key-file` (disabled by default).
 - One-time tokens: tunnel enforces `token_id` single-use. If you re-run a client with the same `grant_client`/`grant_server`, you will hit token replay and the tunnel will close the connection.
   - Practical rule: mint a fresh channel (`POST /v1/channel/init`) for every new connection attempt.
 - Role pairing: a tunnel channel requires exactly one `role=client` and one `role=server`.
@@ -58,6 +59,16 @@ FSEC_TUNNEL_ISSUER_KEYS_FILE="$(jq -r '.issuer_keys_file' "$CP_JSON")" \
 FSEC_TUNNEL_AUD="$(jq -r '.tunnel_audience' "$CP_JSON")" \
 FSEC_TUNNEL_LISTEN="$(jq -r '.tunnel_listen' "$CP_JSON")" \
 FSEC_TUNNEL_WS_PATH="$(jq -r '.tunnel_ws_path' "$CP_JSON")" \
+./examples/run-tunnel-server.sh
+```
+
+Optional TLS (disabled by default):
+
+```bash
+# If you enable TLS on the tunnel, also update the controlplane hint URL:
+#   export FSEC_TUNNEL_URL="wss://127.0.0.1:8080/ws"
+FSEC_TUNNEL_TLS_CERT_FILE=/path/to/cert.pem \
+FSEC_TUNNEL_TLS_KEY_FILE=/path/to/key.pem \
 ./examples/run-tunnel-server.sh
 ```
 

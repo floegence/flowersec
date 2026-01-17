@@ -74,6 +74,9 @@ describe("e2ee serverHandshake", () => {
         throw new Error("unexpected read");
       },
       async writeBinary(frame: Uint8Array) {
+        // serverHandshake writes a server-finished record (FSEC) after the handshake;
+        // ignore non-handshake frames here and only count FSEH responses.
+        if (new TextDecoder().decode(frame.slice(0, 4)) !== "FSEH") return;
         const decoded = decodeHandshakeFrame(frame, 8 * 1024);
         if (decoded.handshakeType !== HANDSHAKE_TYPE_RESP) return;
         respCount++;

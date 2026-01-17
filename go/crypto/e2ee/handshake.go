@@ -198,6 +198,20 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 		return nil, err
 	}
 
+	// Server-finished confirmation: require the server to immediately prove it has derived
+	// the same session keys by sending an encrypted ping record with seq=1.
+	finishedFrame, err := t.ReadBinary(ctx)
+	if err != nil {
+		return nil, err
+	}
+	flags, _, plain, err := DecryptRecord(keys.S2CKey, keys.S2CNoncePre, finishedFrame, 1, opts.MaxRecordBytes)
+	if err != nil {
+		return nil, err
+	}
+	if flags != RecordFlagPing || len(plain) != 0 {
+		return nil, errors.New("expected server-finished ping")
+	}
+
 	// Client sends application data using the C2S direction keys.
 	return NewSecureConn(t, RecordKeyState{
 		SendKey:      keys.C2SKey,
@@ -209,7 +223,7 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 		SendDir:      DirC2S,
 		RecvDir:      DirS2C,
 		SendSeq:      1,
-		RecvSeq:      1,
+		RecvSeq:      2,
 	}, opts.MaxRecordBytes, opts.MaxBufferedBytes), nil
 }
 
@@ -436,6 +450,16 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 
 	cache.delete(st.Key)
 
+	// Server-finished confirmation: immediately send an encrypted ping record (seq=1)
+	// so the client can detect successful key agreement before returning.
+	pingFrame, err := EncryptRecord(keys.S2CKey, keys.S2CNoncePre, RecordFlagPing, 1, nil, opts.MaxRecordBytes)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.WriteBinary(ctx, pingFrame); err != nil {
+		return nil, err
+	}
+
 	// Server sends application data using the S2C direction keys.
 	return NewSecureConn(t, RecordKeyState{
 		SendKey:      keys.S2CKey,
@@ -446,7 +470,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 		Transcript:   th,
 		SendDir:      DirS2C,
 		RecvDir:      DirC2S,
-		SendSeq:      1,
+		SendSeq:      2,
 		RecvSeq:      1,
 	}, opts.MaxRecordBytes, opts.MaxBufferedBytes), nil
 }

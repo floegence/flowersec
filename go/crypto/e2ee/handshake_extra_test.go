@@ -81,6 +81,107 @@ func TestClientHandshakeValidations(t *testing.T) {
 	}
 }
 
+func TestClientHandshakeRequiresServerFinishedPing(t *testing.T) {
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = byte(i + 1)
+	}
+
+	var initMsg e2eev1.E2EE_Init
+	var keys SessionKeys
+	var maxRecordBytes = 1 << 20
+
+	transport := &scriptedTransport{}
+	transport.onWrite = func(frame []byte) {
+		ht, payload, err := DecodeHandshakeFrame(frame, 8*1024)
+		if err != nil {
+			return
+		}
+		switch ht {
+		case HandshakeTypeInit:
+			// Build a valid server response and remember the derived S2C keys.
+			if err := json.Unmarshal(payload, &initMsg); err != nil {
+				return
+			}
+			clientPubBytes, err := base64url.Decode(initMsg.ClientEphPubB64u)
+			if err != nil {
+				return
+			}
+			nonceCBytes, err := base64url.Decode(initMsg.NonceCB64u)
+			if err != nil || len(nonceCBytes) != 32 {
+				return
+			}
+			var nonceC [32]byte
+			copy(nonceC[:], nonceCBytes)
+
+			suite := Suite(initMsg.Suite)
+			priv, pub, err := GenerateEphemeralKeypair(suite)
+			if err != nil {
+				return
+			}
+			var nonceS [32]byte
+			for i := range nonceS {
+				nonceS[i] = byte(i + 10)
+			}
+			resp := e2eev1.E2EE_Resp{
+				HandshakeId:      "hs_1",
+				ServerEphPubB64u: base64url.Encode(pub),
+				NonceSB64u:       base64url.Encode(nonceS[:]),
+				ServerFeatures:   0,
+			}
+			respJSON, _ := json.Marshal(resp)
+			transport.reads = append(transport.reads, EncodeHandshakeFrame(HandshakeTypeResp, respJSON))
+
+			th, err := TranscriptHash(TranscriptInputs{
+				Version:        ProtocolVersion,
+				Suite:          uint16(suite),
+				Role:           uint8(e2eev1.Role_client),
+				ClientFeatures: initMsg.ClientFeatures,
+				ServerFeatures: 0,
+				ChannelID:      initMsg.ChannelId,
+				NonceC:         nonceC,
+				NonceS:         nonceS,
+				ClientEphPub:   clientPubBytes,
+				ServerEphPub:   pub,
+			})
+			if err != nil {
+				return
+			}
+			peerPub, err := ParsePublicKey(suite, clientPubBytes)
+			if err != nil {
+				return
+			}
+			shared, err := priv.ECDH(peerPub)
+			if err != nil {
+				return
+			}
+			keys, err = DeriveSessionKeys(psk, suite, shared, th)
+			if err != nil {
+				return
+			}
+		case HandshakeTypeAck:
+			// Instead of the required server-finished ping, send an app record (seq=1).
+			appFrame, err := EncryptRecord(keys.S2CKey, keys.S2CNoncePre, RecordFlagApp, 1, []byte("x"), maxRecordBytes)
+			if err != nil {
+				return
+			}
+			transport.reads = append(transport.reads, appFrame)
+		}
+	}
+
+	_, err := ClientHandshake(context.Background(), transport, HandshakeOptions{
+		PSK:                 psk,
+		Suite:               SuiteX25519HKDFAES256GCM,
+		ChannelID:           "ch_1",
+		ClientFeatureBits:   0,
+		MaxHandshakePayload: 8 * 1024,
+		MaxRecordBytes:      maxRecordBytes,
+	})
+	if err == nil || err.Error() != "expected server-finished ping" {
+		t.Fatalf("expected server-finished ping error, got %v", err)
+	}
+}
+
 func TestServerHandshakeRejectsRoleAndSuite(t *testing.T) {
 	init, frame := makeInit(t, SuiteX25519HKDFAES256GCM)
 	init.Role = e2eev1.Role_server

@@ -65,8 +65,8 @@ export class SecureChannel {
   private readonly recvDir: Direction;
 
   // Monotonic record sequence numbers per direction.
-  private sendSeq = 1n;
-  private recvSeq = 1n;
+  private sendSeq: bigint;
+  private recvSeq: bigint;
 
   // Send queue and waiters for backpressure.
   private sendQueue: SendReq[] = [];
@@ -96,6 +96,8 @@ export class SecureChannel {
     transcriptHash: Uint8Array;
     sendDir: Direction;
     recvDir: Direction;
+    sendSeq?: bigint;
+    recvSeq?: bigint;
   }) {
     this.transport = args.transport;
     this.maxRecordBytes = args.maxRecordBytes;
@@ -108,6 +110,8 @@ export class SecureChannel {
     this.transcriptHash = args.transcriptHash;
     this.sendDir = args.sendDir;
     this.recvDir = args.recvDir;
+    this.sendSeq = args.sendSeq ?? 1n;
+    this.recvSeq = args.recvSeq ?? 1n;
     void this.readLoop();
     void this.sendLoop();
   }

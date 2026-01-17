@@ -37,8 +37,9 @@ It includes:
 - Endpoint roles: `client` vs `server` are protocol roles.
 - One-time tokens: tunnel attach tokens are single-use; mint a fresh channel init for each attempt.
 - Untrusted tunnel: the tunnel cannot decrypt or interpret application data after attach.
-- Single-instance tunnel: token replay protection is in-memory; multi-instance deployments require a shared cache or equivalent.
+- Single-instance tunnel: token replay protection is in-memory. To scale without shared state, shard channels across multiple tunnel endpoints at the control plane layer (set different `tunnel_url` values per channel).
 - Handshake init_exp: `channel_init_expire_at` (init_exp) must be a non-zero Unix timestamp.
+- Handshake confirmation: after `E2EE_Ack`, the server sends an encrypted ping record (`FSEC`, `flags=ping`, `seq=1`). Clients wait for this server-finished proof before returning.
 
 ## Communication Scenarios
 
@@ -105,4 +106,4 @@ Library integrations:
 ## Binaries
 
 - Tunnel server (deployable): `go/cmd/flowersec-tunnel/`
-  - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`
+  - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`, `--tls-cert-file`, `--tls-key-file`

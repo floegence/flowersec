@@ -3,10 +3,11 @@ import { p256 } from "@noble/curves/p256";
 import { sha256 } from "@noble/hashes/sha256";
 import type { E2EE_Ack, E2EE_Init, E2EE_Resp } from "../gen/flowersec/e2ee/v1.gen.js";
 import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
-import { HANDSHAKE_TYPE_ACK, HANDSHAKE_TYPE_INIT, HANDSHAKE_TYPE_RESP, PROTOCOL_VERSION } from "./constants.js";
+import { HANDSHAKE_TYPE_ACK, HANDSHAKE_TYPE_INIT, HANDSHAKE_TYPE_RESP, PROTOCOL_VERSION, RECORD_FLAG_PING } from "./constants.js";
 import { encodeHandshakeFrame, decodeHandshakeFrame } from "./framing.js";
 import { computeAuthTag, deriveSessionKeys } from "./kdf.js";
 import { transcriptHash } from "./transcript.js";
+import { decryptRecord, encryptRecord } from "./record.js";
 import { SecureChannel, type BinaryTransport } from "./secureChannel.js";
 import { TimeoutError, throwIfAborted } from "../utils/errors.js";
 
@@ -188,6 +189,13 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
     ioOpts(opts.signal, deadlineMs)
   );
 
+  // Server-finished confirmation: require an encrypted ping record (seq=1) before returning.
+  const finishedFrame = await transport.readBinary(ioOpts(opts.signal, deadlineMs));
+  const finished = decryptRecord(keys.s2cKey, keys.s2cNoncePrefix, finishedFrame, 1n, opts.maxRecordBytes);
+  if (finished.flags !== RECORD_FLAG_PING || finished.plaintext.length !== 0) {
+    throw new Error("expected server-finished ping");
+  }
+
   // Client sends application data with the C2S keys.
   return new SecureChannel({
     transport,
@@ -200,7 +208,8 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
     rekeyBase: keys.rekeyBase,
     transcriptHash: th,
     sendDir: 1,
-    recvDir: 2
+    recvDir: 2,
+    recvSeq: 2n
   });
 }
 
@@ -355,6 +364,10 @@ export async function serverHandshake(
   const keys = deriveSessionKeys(opts.psk, shared, th);
   cache.delete(init);
 
+  // Server-finished confirmation: send an encrypted ping record (seq=1) immediately after the handshake.
+  const pingFrame = encryptRecord(keys.s2cKey, keys.s2cNoncePrefix, RECORD_FLAG_PING, 1n, new Uint8Array(), opts.maxRecordBytes);
+  await transport.writeBinary(pingFrame, ioOpts(opts.signal, deadlineMs));
+
   // Server sends application data with the S2C keys.
   return new SecureChannel({
     transport,
@@ -367,7 +380,8 @@ export async function serverHandshake(
     rekeyBase: keys.rekeyBase,
     transcriptHash: th,
     sendDir: 2,
-    recvDir: 1
+    recvDir: 1,
+    sendSeq: 2n
   });
 }
 

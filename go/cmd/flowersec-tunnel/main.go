@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
 	"log"
 	"net"
@@ -96,6 +98,16 @@ func (c *metricsController) Disable() {
 	c.enabled = false
 }
 
+func validateTLSFiles(certFile string, keyFile string) error {
+	if certFile == "" && keyFile == "" {
+		return nil
+	}
+	if certFile == "" || keyFile == "" {
+		return errors.New("tls requires both --tls-cert-file and --tls-key-file")
+	}
+	return nil
+}
+
 // main launches a tunnel server with CLI-configurable settings.
 func main() {
 	cfg := server.DefaultConfig()
@@ -109,6 +121,8 @@ func main() {
 	allowNoOrigin := cfg.AllowNoOrigin
 	var maxConns int
 	var maxChannels int
+	var tlsCertFile string
+	var tlsKeyFile string
 	maxTotalPendingBytes := cfg.MaxTotalPendingBytes
 	writeTimeout := cfg.WriteTimeout
 	maxWriteQueueBytes := cfg.MaxWriteQueueBytes
@@ -121,6 +135,8 @@ func main() {
 	flag.BoolVar(&allowNoOrigin, "allow-no-origin", cfg.AllowNoOrigin, "allow requests without Origin header (non-browser clients)")
 	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent websocket connections (0 uses default)")
 	flag.IntVar(&maxChannels, "max-channels", 0, "max concurrent channels (0 uses default)")
+	flag.StringVar(&tlsCertFile, "tls-cert-file", "", "enable TLS with the given certificate file (default: disabled)")
+	flag.StringVar(&tlsKeyFile, "tls-key-file", "", "enable TLS with the given private key file (default: disabled)")
 	flag.IntVar(&maxTotalPendingBytes, "max-total-pending-bytes", cfg.MaxTotalPendingBytes, "max total pending bytes buffered across all channels (0 disables)")
 	flag.DurationVar(&writeTimeout, "write-timeout", cfg.WriteTimeout, "per-frame websocket write timeout (0 disables)")
 	flag.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", cfg.MaxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (0 uses default)")
@@ -128,6 +144,9 @@ func main() {
 
 	if issuerKeysFile == "" || aud == "" {
 		log.Fatal("missing --issuer-keys-file or --aud")
+	}
+	if err := validateTLSFiles(tlsCertFile, tlsKeyFile); err != nil {
+		log.Fatal(err)
 	}
 
 	observer := observability.NewAtomicTunnelObserver()
@@ -167,9 +186,24 @@ func main() {
 	}
 
 	srv := newHTTPServer(mux)
+	if tlsCertFile != "" {
+		if srv.TLSConfig == nil {
+			srv.TLSConfig = &tls.Config{}
+		}
+		// TLS is optional and disabled by default. When enabled, enforce a conservative minimum version.
+		if srv.TLSConfig.MinVersion == 0 {
+			srv.TLSConfig.MinVersion = tls.VersionTLS12
+		}
+	}
 
 	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		var err error
+		if tlsCertFile != "" {
+			err = srv.ServeTLS(ln, tlsCertFile, tlsKeyFile)
+		} else {
+			err = srv.Serve(ln)
+		}
+		if err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()

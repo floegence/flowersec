@@ -66,8 +66,9 @@ The tunnel validates the attach token, and the E2EE handshake validates init_exp
 ## Deployment considerations
 
 - Single-instance tunnel servers are supported by the in-memory token replay cache.
-- Multi-instance tunnels require shared token replay state (for example, Redis) or strict session affinity.
-- If you run multiple tunnel instances behind a load balancer, avoid routing the same channel to multiple instances without shared state.
+- If you want to scale without shared replay state, do it at the control plane layer by sharding channels across multiple tunnel endpoints (issue different `tunnel_url` values per channel). Each tunnel can remain a single instance.
+- Multi-instance tunnels behind a load balancer require shared token replay state (for example, Redis) or strict session affinity; otherwise token replay protection becomes best-effort and the DoS window increases.
+- Prefer `wss://` for any non-local deployment. The tunnel can terminate TLS directly (optional) or sit behind a TLS-terminating reverse proxy.
 
 ## Keepalive and idle timeouts
 
