@@ -1,4 +1,4 @@
-package rpc
+package hello
 
 import (
 	"encoding/json"
@@ -6,18 +6,19 @@ import (
 	"io"
 
 	rpcv1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/rpc/frame"
 )
 
 var ErrBadStreamHello = errors.New("bad stream hello")
 
 // WriteStreamHello sends a simple protocol greeting with the stream kind.
 func WriteStreamHello(w io.Writer, kind string) error {
-	return WriteJSONFrame(w, rpcv1.StreamHello{Kind: kind, V: 1})
+	return frame.WriteJSONFrame(w, rpcv1.StreamHello{Kind: kind, V: 1})
 }
 
 // ReadStreamHello reads and validates the stream greeting.
 func ReadStreamHello(r io.Reader, maxLen int) (rpcv1.StreamHello, error) {
-	b, err := ReadJSONFrame(r, maxLen)
+	b, err := frame.ReadJSONFrame(r, maxLen)
 	if err != nil {
 		return rpcv1.StreamHello{}, err
 	}

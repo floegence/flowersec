@@ -67,7 +67,7 @@ vi.mock("../rpc-proxy/rpcProxy.js", () => ({ RpcProxy: mocks.MockRpcProxy }));
 
 vi.mock("../yamux/session.js", () => ({ YamuxSession: mocks.MockYamuxSession }));
 
-import { connectDirectClientRpc } from "./connect.js";
+import { connectDirect } from "./connect.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -113,19 +113,19 @@ function makeInfo(): DirectConnectInfo {
   };
 }
 
-describe("connectDirectClientRpc", () => {
+describe("connectDirect", () => {
   test("reports websocket error on connect", async () => {
     const ws = new FakeWebSocket();
     const observer = {
-      onTunnelConnect: vi.fn(),
-      onTunnelAttach: vi.fn(),
-      onTunnelHandshake: vi.fn(),
+      onConnect: vi.fn(),
+      onAttach: vi.fn(),
+      onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
       onRpcNotify: vi.fn()
     };
 
-    const p = connectDirectClientRpc(makeInfo(), {
+    const p = connectDirect(makeInfo(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       observer
@@ -134,21 +134,21 @@ describe("connectDirectClientRpc", () => {
     setTimeout(() => ws.emit("error", {}), 0);
     await expect(p).rejects.toThrow(/websocket error/);
 
-    expect(observer.onTunnelConnect).toHaveBeenCalledWith("fail", "websocket_error", expect.any(Number));
+    expect(observer.onConnect).toHaveBeenCalledWith("direct", "fail", "websocket_error", expect.any(Number));
   });
 
   test("reports connect timeout", async () => {
     const ws = new FakeWebSocket();
     const observer = {
-      onTunnelConnect: vi.fn(),
-      onTunnelAttach: vi.fn(),
-      onTunnelHandshake: vi.fn(),
+      onConnect: vi.fn(),
+      onAttach: vi.fn(),
+      onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
       onRpcNotify: vi.fn()
     };
 
-    const p = connectDirectClientRpc(makeInfo(), {
+    const p = connectDirect(makeInfo(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       connectTimeoutMs: 30,
@@ -156,22 +156,22 @@ describe("connectDirectClientRpc", () => {
     });
 
     await expect(p).rejects.toThrow(/connect timeout/);
-    expect(observer.onTunnelConnect).toHaveBeenCalledWith("fail", "timeout", expect.any(Number));
+    expect(observer.onConnect).toHaveBeenCalledWith("direct", "fail", "timeout", expect.any(Number));
   });
 
   test("reports connect cancellation", async () => {
     const ws = new FakeWebSocket();
     const ac = new AbortController();
     const observer = {
-      onTunnelConnect: vi.fn(),
-      onTunnelAttach: vi.fn(),
-      onTunnelHandshake: vi.fn(),
+      onConnect: vi.fn(),
+      onAttach: vi.fn(),
+      onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
       onRpcNotify: vi.fn()
     };
 
-    const p = connectDirectClientRpc(makeInfo(), {
+    const p = connectDirect(makeInfo(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       signal: ac.signal,
@@ -180,22 +180,22 @@ describe("connectDirectClientRpc", () => {
 
     setTimeout(() => ac.abort(), 0);
     await expect(p).rejects.toThrow(/connect aborted/);
-    expect(observer.onTunnelConnect).toHaveBeenCalledWith("fail", "canceled", expect.any(Number));
+    expect(observer.onConnect).toHaveBeenCalledWith("direct", "fail", "canceled", expect.any(Number));
   });
 
   test("reports handshake failures", async () => {
     const ws = new FakeWebSocket();
     clientHandshakeMock.mockRejectedValueOnce(new Error("handshake failed"));
     const observer = {
-      onTunnelConnect: vi.fn(),
-      onTunnelAttach: vi.fn(),
-      onTunnelHandshake: vi.fn(),
+      onConnect: vi.fn(),
+      onAttach: vi.fn(),
+      onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
       onRpcNotify: vi.fn()
     };
 
-    const p = connectDirectClientRpc(makeInfo(), {
+    const p = connectDirect(makeInfo(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       observer
@@ -204,22 +204,22 @@ describe("connectDirectClientRpc", () => {
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toThrow(/handshake failed/);
 
-    expect(observer.onTunnelHandshake).toHaveBeenCalledWith("fail", "handshake_error", expect.any(Number));
+    expect(observer.onHandshake).toHaveBeenCalledWith("direct", "fail", "handshake_error", expect.any(Number));
   });
 
   test("reports handshake timeout", async () => {
     const ws = new FakeWebSocket();
     clientHandshakeMock.mockImplementationOnce(() => new Promise(() => {}));
     const observer = {
-      onTunnelConnect: vi.fn(),
-      onTunnelAttach: vi.fn(),
-      onTunnelHandshake: vi.fn(),
+      onConnect: vi.fn(),
+      onAttach: vi.fn(),
+      onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
       onRpcNotify: vi.fn()
     };
 
-    const p = connectDirectClientRpc(makeInfo(), {
+    const p = connectDirect(makeInfo(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       handshakeTimeoutMs: 30,
@@ -228,7 +228,7 @@ describe("connectDirectClientRpc", () => {
 
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toThrow(/timeout/);
-    expect(observer.onTunnelHandshake).toHaveBeenCalledWith("fail", "timeout", expect.any(Number));
+    expect(observer.onHandshake).toHaveBeenCalledWith("direct", "fail", "timeout", expect.any(Number));
   });
 
   test("close tears down rpc, mux, and secure resources", async () => {
@@ -245,7 +245,7 @@ describe("connectDirectClientRpc", () => {
       close: vi.fn()
     });
 
-    const p = connectDirectClientRpc(makeInfo(), {
+    const p = connectDirect(makeInfo(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any
     });

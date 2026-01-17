@@ -27,7 +27,7 @@ func (t *testBinaryTransport) Close() error {
 	return nil
 }
 
-func TestSecureConnRecvBufferExceeded(t *testing.T) {
+func TestSecureChannelRecvBufferExceeded(t *testing.T) {
 	var recvKey [32]byte
 	var noncePre [4]byte
 	recvKey[0] = 1
@@ -39,7 +39,7 @@ func TestSecureConnRecvBufferExceeded(t *testing.T) {
 	}
 
 	tr := &testBinaryTransport{readCh: make(chan []byte, 1)}
-	conn := NewSecureConn(tr, RecordKeyState{
+	conn := NewSecureChannel(tr, RecordKeyState{
 		RecvKey:      recvKey,
 		RecvNoncePre: noncePre,
 		RecvSeq:      1,

@@ -18,6 +18,56 @@ type BinaryTransport interface {
 	Close() error
 }
 
+// WebSocketMessageConn is a message-oriented websocket connection that supports context-aware reads/writes.
+//
+// It matches realtime/ws.Conn and is used to avoid leaking the underlying gorilla/websocket connection
+// into higher-level code.
+type WebSocketMessageConn interface {
+	ReadMessage(ctx context.Context) (messageType int, b []byte, err error)
+	WriteMessage(ctx context.Context, messageType int, b []byte) error
+	Close() error
+}
+
+// WebSocketMessageTransport adapts a context-aware websocket message connection to BinaryTransport.
+//
+// It accepts only binary messages. Text messages are treated as protocol errors.
+type WebSocketMessageTransport struct {
+	c WebSocketMessageConn
+}
+
+// NewWebSocketMessageTransport wraps a websocket message connection for binary frames only.
+func NewWebSocketMessageTransport(c WebSocketMessageConn) *WebSocketMessageTransport {
+	return &WebSocketMessageTransport{c: c}
+}
+
+// ReadBinary blocks until a binary message is received or the context is done.
+func (t *WebSocketMessageTransport) ReadBinary(ctx context.Context) ([]byte, error) {
+	for {
+		mt, b, err := t.c.ReadMessage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		switch mt {
+		case websocket.BinaryMessage:
+			return b, nil
+		case websocket.TextMessage:
+			return nil, errors.New("unexpected ws text message")
+		default:
+			continue
+		}
+	}
+}
+
+// WriteBinary writes a binary message and respects context deadlines.
+func (t *WebSocketMessageTransport) WriteBinary(ctx context.Context, b []byte) error {
+	return t.c.WriteMessage(ctx, websocket.BinaryMessage, b)
+}
+
+// Close closes the underlying websocket connection.
+func (t *WebSocketMessageTransport) Close() error {
+	return t.c.Close()
+}
+
 // WebSocketBinaryTransport adapts a gorilla/websocket Conn to BinaryTransport.
 type WebSocketBinaryTransport struct {
 	c *websocket.Conn // Underlying websocket connection.
@@ -35,7 +85,7 @@ func (t *WebSocketBinaryTransport) ReadBinary(ctx context.Context) ([]byte, erro
 	} else {
 		_ = t.c.SetReadDeadline(time.Time{})
 	}
-	// Avoid spawning a goroutine in the hot path (SecureConn uses context.Background()).
+	// Avoid spawning a goroutine in the hot path (SecureChannel uses context.Background()).
 	var done chan struct{}
 	if ctx.Done() != nil {
 		done = make(chan struct{})
@@ -76,7 +126,7 @@ func (t *WebSocketBinaryTransport) WriteBinary(ctx context.Context, b []byte) er
 	} else {
 		_ = t.c.SetWriteDeadline(time.Time{})
 	}
-	// Avoid spawning a goroutine in the hot path (SecureConn uses context.Background()).
+	// Avoid spawning a goroutine in the hot path (SecureChannel uses context.Background()).
 	var done chan struct{}
 	if ctx.Done() != nil {
 		done = make(chan struct{})

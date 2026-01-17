@@ -17,6 +17,7 @@ import (
 	controlv1 "github.com/floegence/flowersec/gen/flowersec/controlplane/v1"
 	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/rpc"
+	rpchello "github.com/floegence/flowersec/rpc/hello"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )
@@ -80,11 +81,11 @@ func main() {
 
 	// E2EE handshake over the websocket binary transport.
 	bt := e2ee.NewWebSocketBinaryTransport(c)
-	secure, err := e2ee.ClientHandshake(ctx, bt, e2ee.HandshakeOptions{
+	secure, err := e2ee.ClientHandshake(ctx, bt, e2ee.ClientHandshakeOptions{
 		PSK:                 psk,
 		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
 		ChannelID:           grant.ChannelId,
-		ClientFeatureBits:   1,
+		ClientFeatures:      1,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
 	})
@@ -110,7 +111,7 @@ func main() {
 	defer rpcStream.Close()
 
 	// The server expects a StreamHello frame at the beginning of each yamux stream.
-	if err := rpc.WriteStreamHello(rpcStream, "rpc"); err != nil {
+	if err := rpchello.WriteStreamHello(rpcStream, "rpc"); err != nil {
 		log.Fatal(err)
 	}
 	client := rpc.NewClient(rpcStream)
@@ -149,7 +150,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer echoStream.Close()
-	if err := rpc.WriteStreamHello(echoStream, "echo"); err != nil {
+	if err := rpchello.WriteStreamHello(echoStream, "echo"); err != nil {
 		log.Fatal(err)
 	}
 

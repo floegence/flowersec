@@ -4,7 +4,7 @@ import { once } from "node:events";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { connectTunnelClientRpc } from "../tunnel-client/connect.js";
+import { connectTunnel } from "../tunnel-client/connect.js";
 import { createDemoClient } from "../gen/flowersec/demo/v1.rpc.gen.js";
 
 const require = createRequire(import.meta.url);
@@ -28,7 +28,7 @@ describe("go<->ts integration", () => {
       const firstLine = line.split("\n")[0]!;
       const ready = JSON.parse(firstLine) as { grant_client: any };
 
-      const client = await connectTunnelClientRpc(ready.grant_client, {
+      const client = await connectTunnel(ready.grant_client, {
         origin: "https://app.redeven.com",
         wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } })
       });

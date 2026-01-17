@@ -43,9 +43,9 @@ func (t *blockingWriteTransport) Close() error {
 	}
 }
 
-func TestSecureConnReadDeadlineTimesOut(t *testing.T) {
+func TestSecureChannelReadDeadlineTimesOut(t *testing.T) {
 	tr := &testBinaryTransport{readCh: make(chan []byte)}
-	conn := NewSecureConn(tr, RecordKeyState{}, 1<<20, 0)
+	conn := NewSecureChannel(tr, RecordKeyState{}, 1<<20, 0)
 	defer conn.Close()
 
 	_ = conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
@@ -59,9 +59,9 @@ func TestSecureConnReadDeadlineTimesOut(t *testing.T) {
 	}
 }
 
-func TestSecureConnReadDeadlineUpdateAffectsInFlightRead(t *testing.T) {
+func TestSecureChannelReadDeadlineUpdateAffectsInFlightRead(t *testing.T) {
 	tr := &testBinaryTransport{readCh: make(chan []byte)}
-	conn := NewSecureConn(tr, RecordKeyState{}, 1<<20, 0)
+	conn := NewSecureChannel(tr, RecordKeyState{}, 1<<20, 0)
 	defer conn.Close()
 
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -89,13 +89,13 @@ func TestSecureConnReadDeadlineUpdateAffectsInFlightRead(t *testing.T) {
 	}
 }
 
-func TestSecureConnWriteDeadlineUpdateAffectsInFlightWrite(t *testing.T) {
+func TestSecureChannelWriteDeadlineUpdateAffectsInFlightWrite(t *testing.T) {
 	tr := newBlockingWriteTransport()
 	keys := RecordKeyState{
 		SendDir: DirC2S,
 		SendSeq: 1,
 	}
-	conn := NewSecureConn(tr, keys, 1<<20, 0)
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
 	defer conn.Close()
 
 	type result struct {

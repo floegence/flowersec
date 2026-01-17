@@ -10,9 +10,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/floegence/flowersec/connect"
+	"github.com/floegence/flowersec/client"
 	directv1 "github.com/floegence/flowersec/gen/flowersec/direct/v1"
-	"github.com/floegence/flowersec/rpc"
 )
 
 // go_client_direct_simple demonstrates the minimal direct (no tunnel) client using the high-level Go helpers:
@@ -40,7 +39,7 @@ func main() {
 	// This helper builds the full protocol stack and returns an RPC-ready client:
 	// - client.Mux: open extra streams (e.g. echo)
 	// - client.RPC: typed request/notify API over the dedicated "rpc" stream
-	client, err := connect.ConnectDirectClientRPC(context.Background(), info, connect.DirectClientOptions{
+	c, err := client.DialDirect(context.Background(), info, client.DialOptions{
 		ConnectTimeout:   10 * time.Second,
 		HandshakeTimeout: 10 * time.Second,
 		MaxRecordBytes:   1 << 20,
@@ -49,11 +48,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer c.Close()
 
 	// Subscribe to the notify type_id=2 and then call request type_id=1.
 	notified := make(chan json.RawMessage, 1)
-	unsub := client.RPC.OnNotify(2, func(payload json.RawMessage) {
+	unsub := c.RPC.OnNotify(2, func(payload json.RawMessage) {
 		select {
 		case notified <- payload:
 		default:
@@ -64,7 +63,7 @@ func main() {
 	callCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// In these demos, type_id=1 expects an empty JSON object and replies {"ok":true}.
-	payload, rpcErr, err := client.RPC.Call(callCtx, 1, json.RawMessage(`{}`))
+	payload, rpcErr, err := c.RPC.Call(callCtx, 1, json.RawMessage(`{}`))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -81,15 +80,12 @@ func main() {
 	}
 
 	// Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
-	echoStream, err := client.Mux.OpenStream()
+	// Note: Client.OpenStream(kind) automatically writes the StreamHello(kind) preface.
+	echoStream, err := c.OpenStream("echo")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer echoStream.Close()
-	// The server expects a StreamHello frame at the beginning of each yamux stream.
-	if err := rpc.WriteStreamHello(echoStream, "echo"); err != nil {
-		log.Fatal(err)
-	}
 
 	msg := []byte("hello over yamux stream: echo")
 	if _, err := echoStream.Write(msg); err != nil {

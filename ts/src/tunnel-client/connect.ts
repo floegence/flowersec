@@ -11,6 +11,7 @@ import { ByteReader } from "../yamux/byteReader.js";
 import { RpcClient } from "../rpc/client.js";
 import { writeStreamHello } from "../rpc/streamHello.js";
 import { RpcProxy } from "../rpc-proxy/rpcProxy.js";
+import type { Client } from "../client.js";
 
 // TunnelConnectOptions controls transport and handshake limits.
 export type TunnelConnectOptions = Readonly<{
@@ -40,8 +41,8 @@ export type TunnelConnectOptions = Readonly<{
   observer?: ClientObserverLike;
 }>;
 
-// connectTunnelClientRpc attaches to a tunnel and returns an RPC-ready client.
-export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: TunnelConnectOptions) {
+// connectTunnel attaches to a tunnel and returns an RPC-ready session.
+export async function connectTunnel(grant: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client> {
   const checkedGrant = assertChannelInitGrant(grant);
   const observer = normalizeObserver(opts.observer);
   const signal = opts.signal;
@@ -56,10 +57,10 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
       timeoutMs: connectTimeoutMs,
       ...(signal !== undefined ? { signal } : {})
     });
-    observer.onTunnelConnect("ok", undefined, nowSeconds() - connectStart);
+    observer.onConnect("tunnel", "ok", undefined, nowSeconds() - connectStart);
   } catch (err) {
     const reason = classifyConnectError(err);
-    observer.onTunnelConnect("fail", reason, nowSeconds() - connectStart);
+    observer.onConnect("tunnel", "fail", reason, nowSeconds() - connectStart);
     throw err;
   }
 
@@ -75,9 +76,9 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
   };
   try {
     ws.send(JSON.stringify(attach));
-    observer.onTunnelAttach("ok", undefined);
+    observer.onAttach("ok", undefined);
   } catch (err) {
-    observer.onTunnelAttach("fail", "send_failed");
+    observer.onAttach("fail", "send_failed");
     try {
       ws.close();
     } catch {
@@ -114,9 +115,9 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
         onCancel: () => transport.close()
       }
     );
-    observer.onTunnelHandshake("ok", undefined, nowSeconds() - handshakeStart);
+    observer.onHandshake("tunnel", "ok", undefined, nowSeconds() - handshakeStart);
   } catch (err) {
-    observer.onTunnelHandshake("fail", classifyHandshakeError(err), nowSeconds() - handshakeStart);
+    observer.onHandshake("tunnel", "fail", classifyHandshakeError(err), nowSeconds() - handshakeStart);
     transport.close();
     throw err;
   }
@@ -145,11 +146,27 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
   rpcProxy.attach(rpc);
 
   return {
+    path: "tunnel",
     endpointInstanceId,
     secure,
     mux,
     rpc,
     rpcProxy,
+    openStream: async (kind: string) => {
+      if (kind == null || kind === "") throw new Error("missing stream kind");
+      const s = await mux.openStream();
+      try {
+        await writeStreamHello((b) => s.write(b), kind);
+      } catch (err) {
+        try {
+          await s.close();
+        } catch {
+          // ignore
+        }
+        throw err;
+      }
+      return s;
+    },
     close: () => {
       rpcProxy.detach();
       rpc.close();

@@ -30,10 +30,7 @@ func (t *stubTransport) Close() error {
 
 func TestServerHandshakeRequiresInitExp(t *testing.T) {
 	transport := &stubTransport{}
-	_, err := ServerHandshake(context.Background(), transport, nil, HandshakeOptions{
-		PSK:               make([]byte, 32),
-		InitExpireAtUnixS: 0,
-	})
+	_, err := ServerHandshake(context.Background(), transport, nil, ServerHandshakeOptions{PSK: make([]byte, 32), InitExpireAtUnixS: 0})
 	if err == nil || err.Error() != "missing init_exp" {
 		t.Fatalf("expected missing init_exp error, got %v", err)
 	}
@@ -53,16 +50,16 @@ func TestHandshakeServerFinishedPingRoundTrip(t *testing.T) {
 	defer cancel()
 
 	cache := NewServerHandshakeCache()
-	serverCh := make(chan *SecureConn, 1)
+	serverCh := make(chan *SecureChannel, 1)
 	serverErr := make(chan error, 1)
 	go func() {
-		sc, err := ServerHandshake(ctx, serverTr, cache, HandshakeOptions{
+		sc, err := ServerHandshake(ctx, serverTr, cache, ServerHandshakeOptions{
 			PSK:                 psk,
 			Suite:               SuiteX25519HKDFAES256GCM,
 			ChannelID:           "chan_test",
 			InitExpireAtUnixS:   time.Now().Add(60 * time.Second).Unix(),
 			ClockSkew:           30 * time.Second,
-			ServerFeatureBits:   1,
+			ServerFeatures:      1,
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		})
@@ -73,11 +70,11 @@ func TestHandshakeServerFinishedPingRoundTrip(t *testing.T) {
 		serverCh <- sc
 	}()
 
-	cc, err := ClientHandshake(ctx, clientTr, HandshakeOptions{
+	cc, err := ClientHandshake(ctx, clientTr, ClientHandshakeOptions{
 		PSK:                 psk,
 		Suite:               SuiteX25519HKDFAES256GCM,
 		ChannelID:           "chan_test",
-		ClientFeatureBits:   0,
+		ClientFeatures:      0,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
 	})
@@ -86,7 +83,7 @@ func TestHandshakeServerFinishedPingRoundTrip(t *testing.T) {
 	}
 	defer cc.Close()
 
-	var sc *SecureConn
+	var sc *SecureChannel
 	select {
 	case sc = <-serverCh:
 	case err := <-serverErr:

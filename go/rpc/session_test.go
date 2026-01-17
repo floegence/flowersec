@@ -12,6 +12,7 @@ import (
 
 	rpcv1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/rpc"
+	"github.com/floegence/flowersec/rpc/frame"
 )
 
 func TestRPC_NotificationAndRequest(t *testing.T) {
@@ -93,7 +94,7 @@ func TestRPC_ClientCallFailsWhenTransportCloses(t *testing.T) {
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
-		_, _ = rpc.ReadJSONFrame(b, 1<<20)
+		_, _ = frame.ReadJSONFrame(b, 1<<20)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -133,7 +134,7 @@ func TestRPC_CallCancelDoesNotPanicOnLateResponse(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		bs, err := rpc.ReadJSONFrame(b, 1<<20)
+		bs, err := frame.ReadJSONFrame(b, 1<<20)
 		if err != nil {
 			return
 		}
@@ -148,7 +149,7 @@ func TestRPC_CallCancelDoesNotPanicOnLateResponse(t *testing.T) {
 			ResponseTo: env.RequestId,
 			Payload:    json.RawMessage(`{}`),
 		}
-		_ = rpc.WriteJSONFrame(b, resp)
+		_ = frame.WriteJSONFrame(b, resp)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)

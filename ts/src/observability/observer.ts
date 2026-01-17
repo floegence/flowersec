@@ -1,11 +1,13 @@
-export type TunnelConnectResult = "ok" | "fail";
-export type TunnelConnectReason = "websocket_error" | "websocket_closed" | "timeout" | "canceled";
+import type { ClientPath } from "../client.js";
 
-export type TunnelAttachResult = "ok" | "fail";
-export type TunnelAttachReason = "send_failed";
+export type ConnectResult = "ok" | "fail";
+export type ConnectReason = "websocket_error" | "websocket_closed" | "timeout" | "canceled";
 
-export type TunnelHandshakeResult = "ok" | "fail";
-export type TunnelHandshakeReason = "handshake_error" | "timeout" | "canceled";
+export type AttachResult = "ok" | "fail";
+export type AttachReason = "send_failed";
+
+export type HandshakeResult = "ok" | "fail";
+export type HandshakeReason = "handshake_error" | "timeout" | "canceled";
 
 export type WsCloseKind = "local" | "peer_or_error";
 
@@ -23,9 +25,9 @@ export type RpcCallResult =
   | "canceled";
 
 export type ClientObserver = {
-  onTunnelConnect(result: TunnelConnectResult, reason: TunnelConnectReason | undefined, elapsedSeconds: number): void;
-  onTunnelAttach(result: TunnelAttachResult, reason: TunnelAttachReason | undefined): void;
-  onTunnelHandshake(result: TunnelHandshakeResult, reason: TunnelHandshakeReason | undefined, elapsedSeconds: number): void;
+  onConnect(path: ClientPath, result: ConnectResult, reason: ConnectReason | undefined, elapsedSeconds: number): void;
+  onAttach(result: AttachResult, reason: AttachReason | undefined): void;
+  onHandshake(path: ClientPath, result: HandshakeResult, reason: HandshakeReason | undefined, elapsedSeconds: number): void;
   onWsClose(kind: WsCloseKind, code?: number): void;
   onWsError(reason: WsErrorReason): void;
   onRpcCall(result: RpcCallResult, elapsedSeconds: number): void;
@@ -35,9 +37,9 @@ export type ClientObserver = {
 export type ClientObserverLike = Partial<ClientObserver>;
 
 export const NoopObserver: ClientObserver = {
-  onTunnelConnect: () => {},
-  onTunnelAttach: () => {},
-  onTunnelHandshake: () => {},
+  onConnect: () => {},
+  onAttach: () => {},
+  onHandshake: () => {},
   onWsClose: () => {},
   onWsError: () => {},
   onRpcCall: () => {},
@@ -47,9 +49,9 @@ export const NoopObserver: ClientObserver = {
 export function normalizeObserver(observer?: ClientObserverLike): ClientObserver {
   if (observer == null) return NoopObserver;
   return {
-    onTunnelConnect: observer.onTunnelConnect ?? NoopObserver.onTunnelConnect,
-    onTunnelAttach: observer.onTunnelAttach ?? NoopObserver.onTunnelAttach,
-    onTunnelHandshake: observer.onTunnelHandshake ?? NoopObserver.onTunnelHandshake,
+    onConnect: observer.onConnect ?? NoopObserver.onConnect,
+    onAttach: observer.onAttach ?? NoopObserver.onAttach,
+    onHandshake: observer.onHandshake ?? NoopObserver.onHandshake,
     onWsClose: observer.onWsClose ?? NoopObserver.onWsClose,
     onWsError: observer.onWsError ?? NoopObserver.onWsError,
     onRpcCall: observer.onRpcCall ?? NoopObserver.onRpcCall,

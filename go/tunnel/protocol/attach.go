@@ -41,8 +41,25 @@ var (
 	ErrAttachInvalidEID       = errors.New("attach invalid endpoint_instance_id")
 )
 
-// ParseAttachJSON validates and parses the attach JSON message.
-func ParseAttachJSON(b []byte, c AttachConstraints) (*tunnelv1.Attach, error) {
+// ParseAttach validates and parses an attach JSON message using DefaultAttachConstraints.
+func ParseAttach(b []byte) (*tunnelv1.Attach, error) {
+	return ParseAttachWithConstraints(b, DefaultAttachConstraints())
+}
+
+// ParseAttachWithConstraints validates and parses the attach JSON message.
+//
+// Zero-valued fields in c are filled from DefaultAttachConstraints to ensure a safe default.
+func ParseAttachWithConstraints(b []byte, c AttachConstraints) (*tunnelv1.Attach, error) {
+	def := DefaultAttachConstraints()
+	if c.MaxAttachBytes == 0 {
+		c.MaxAttachBytes = def.MaxAttachBytes
+	}
+	if c.MaxChannelID == 0 {
+		c.MaxChannelID = def.MaxChannelID
+	}
+	if c.MaxToken == 0 {
+		c.MaxToken = def.MaxToken
+	}
 	if c.MaxAttachBytes > 0 && len(b) > c.MaxAttachBytes {
 		return nil, ErrAttachTooLarge
 	}

@@ -4,11 +4,11 @@ import { normalizeObserver, nowSeconds, NoopObserver } from "./observer.js";
 describe("observability", () => {
   test("normalizeObserver fills missing handlers", () => {
     const onConnect = vi.fn();
-    const obs = normalizeObserver({ onTunnelConnect: onConnect });
+    const obs = normalizeObserver({ onConnect });
 
-    obs.onTunnelConnect("ok", undefined, 1);
-    obs.onTunnelAttach("ok", undefined);
-    obs.onTunnelHandshake("ok", undefined, 1);
+    obs.onConnect("tunnel", "ok", undefined, 1);
+    obs.onAttach("ok", undefined);
+    obs.onHandshake("tunnel", "ok", undefined, 1);
     obs.onWsClose("local");
     obs.onWsError("error");
     obs.onRpcCall("ok", 0.01);

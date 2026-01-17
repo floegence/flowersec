@@ -63,7 +63,7 @@ func makeInit(t *testing.T, suite Suite) (e2eev1.E2EE_Init, []byte) {
 }
 
 func TestClientHandshakeValidations(t *testing.T) {
-	_, err := ClientHandshake(context.Background(), &stubTransport{}, HandshakeOptions{
+	_, err := ClientHandshake(context.Background(), &stubTransport{}, ClientHandshakeOptions{
 		PSK:       make([]byte, 32),
 		ChannelID: "",
 	})
@@ -71,7 +71,7 @@ func TestClientHandshakeValidations(t *testing.T) {
 		t.Fatalf("expected missing channel_id, got %v", err)
 	}
 
-	_, err = ClientHandshake(context.Background(), &stubTransport{}, HandshakeOptions{
+	_, err = ClientHandshake(context.Background(), &stubTransport{}, ClientHandshakeOptions{
 		PSK:       make([]byte, 32),
 		ChannelID: "ch",
 		Suite:     Suite(99),
@@ -169,11 +169,11 @@ func TestClientHandshakeRequiresServerFinishedPing(t *testing.T) {
 		}
 	}
 
-	_, err := ClientHandshake(context.Background(), transport, HandshakeOptions{
+	_, err := ClientHandshake(context.Background(), transport, ClientHandshakeOptions{
 		PSK:                 psk,
 		Suite:               SuiteX25519HKDFAES256GCM,
 		ChannelID:           "ch_1",
-		ClientFeatureBits:   0,
+		ClientFeatures:      0,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      maxRecordBytes,
 	})
@@ -188,7 +188,7 @@ func TestServerHandshakeRejectsRoleAndSuite(t *testing.T) {
 	b, _ := json.Marshal(init)
 	transport := &scriptedTransport{reads: [][]byte{EncodeHandshakeFrame(HandshakeTypeInit, b)}}
 
-	_, err := ServerHandshake(context.Background(), transport, nil, HandshakeOptions{
+	_, err := ServerHandshake(context.Background(), transport, nil, ServerHandshakeOptions{
 		PSK:               make([]byte, 32),
 		ChannelID:         "ch_1",
 		Suite:             SuiteX25519HKDFAES256GCM,
@@ -202,7 +202,7 @@ func TestServerHandshakeRejectsRoleAndSuite(t *testing.T) {
 	init.Suite = e2eev1.Suite(2)
 	b, _ = json.Marshal(init)
 	transport = &scriptedTransport{reads: [][]byte{EncodeHandshakeFrame(HandshakeTypeInit, b)}}
-	_, err = ServerHandshake(context.Background(), transport, nil, HandshakeOptions{
+	_, err = ServerHandshake(context.Background(), transport, nil, ServerHandshakeOptions{
 		PSK:               make([]byte, 32),
 		ChannelID:         "ch_1",
 		Suite:             SuiteX25519HKDFAES256GCM,
@@ -235,7 +235,7 @@ func TestServerHandshakeAuthTagMismatch(t *testing.T) {
 		transport.reads = append(transport.reads, EncodeHandshakeFrame(HandshakeTypeAck, b))
 	}
 
-	_, err := ServerHandshake(context.Background(), transport, nil, HandshakeOptions{
+	_, err := ServerHandshake(context.Background(), transport, nil, ServerHandshakeOptions{
 		PSK:               psk,
 		ChannelID:         "ch_1",
 		Suite:             SuiteX25519HKDFAES256GCM,
@@ -269,7 +269,7 @@ func TestServerHandshakeTimestampChecks(t *testing.T) {
 		transport.reads = append(transport.reads, EncodeHandshakeFrame(HandshakeTypeAck, b))
 	}
 
-	_, err := ServerHandshake(context.Background(), transport, nil, HandshakeOptions{
+	_, err := ServerHandshake(context.Background(), transport, nil, ServerHandshakeOptions{
 		PSK:               psk,
 		ChannelID:         "ch_1",
 		Suite:             SuiteX25519HKDFAES256GCM,
@@ -298,7 +298,7 @@ func TestServerHandshakeTimestampChecks(t *testing.T) {
 		transport.reads = append(transport.reads, EncodeHandshakeFrame(HandshakeTypeAck, b))
 	}
 
-	_, err = ServerHandshake(context.Background(), transport, nil, HandshakeOptions{
+	_, err = ServerHandshake(context.Background(), transport, nil, ServerHandshakeOptions{
 		PSK:               psk,
 		ChannelID:         "ch_1",
 		Suite:             SuiteX25519HKDFAES256GCM,
@@ -347,7 +347,7 @@ func TestServerHandshakeRoundsSkewToWholeSeconds(t *testing.T) {
 		transport.reads = append(transport.reads, EncodeHandshakeFrame(HandshakeTypeAck, b))
 	}
 
-	_, err := ServerHandshake(context.Background(), transport, nil, HandshakeOptions{
+	_, err := ServerHandshake(context.Background(), transport, nil, ServerHandshakeOptions{
 		PSK:               psk,
 		ChannelID:         "ch_1",
 		Suite:             SuiteX25519HKDFAES256GCM,

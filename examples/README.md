@@ -12,7 +12,7 @@ This folder is a hands-on cookbook for running Flowersec end-to-end using the re
 - Go server endpoint demo: `examples/go/server_endpoint/` (acts as the endpoint with `role=server`; runs E2EE server + Yamux server)
 - Clients:
   - Go:
-    - Simple (uses `go/connect` helpers): `examples/go/go_client_tunnel_simple/`, `examples/go/go_client_direct_simple/`
+    - Simple (uses `go/client` helpers): `examples/go/go_client_tunnel_simple/`, `examples/go/go_client_direct_simple/`
     - Advanced (manual stack): `examples/go/go_client_tunnel/`, `examples/go/go_client_direct/`
   - TS (Node):
     - Simple (high-level helpers): `examples/ts/node-tunnel-client.mjs`, `examples/ts/node-direct-client.mjs`
@@ -128,7 +128,7 @@ Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint), then:
 go run ./examples/go/go_client_tunnel --origin http://127.0.0.1:5173 < "$CHANNEL_JSON"
 ```
 
-Simple variant (uses `go/connect`):
+Simple variant (uses `go/client`):
 
 ```bash
 go run ./examples/go/go_client_tunnel_simple --origin http://127.0.0.1:5173 < "$CHANNEL_JSON"
@@ -162,7 +162,7 @@ Reuse Scenario D terminal 1, then:
 go run ./examples/go/go_client_direct --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json
 ```
 
-Simple variant (uses `go/connect`):
+Simple variant (uses `go/client`):
 
 ```bash
 go run ./examples/go/go_client_direct_simple --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json

@@ -31,6 +31,7 @@ import (
 	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/internal/base64url"
 	"github.com/floegence/flowersec/rpc"
+	rpchello "github.com/floegence/flowersec/rpc/hello"
 	"github.com/floegence/flowersec/tunnel/server"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
@@ -389,7 +390,7 @@ func runConnection(ctx context.Context, svc *channelinit.Service, wsURL string, 
 	defer cancel()
 
 	var wsConn *websocket.Conn
-	var secure *e2ee.SecureConn
+	var secure *e2ee.SecureChannel
 	var sess *hyamux.Session
 	keepOpen := false
 	defer func() {
@@ -447,11 +448,11 @@ func runConnection(ctx context.Context, svc *channelinit.Service, wsURL string, 
 
 	transport := &timingTransport{inner: e2ee.NewWebSocketBinaryTransport(c)}
 	hsStart := time.Now()
-	secureConn, err := e2ee.ClientHandshake(connCtx, transport, e2ee.HandshakeOptions{
+	secureConn, err := e2ee.ClientHandshake(connCtx, transport, e2ee.ClientHandshakeOptions{
 		PSK:                 psk,
 		Suite:               e2ee.Suite(grantC.DefaultSuite),
 		ChannelID:           grantC.ChannelId,
-		ClientFeatureBits:   0,
+		ClientFeatures:      0,
 		MaxHandshakePayload: cfg.maxHandshakeSize,
 		MaxRecordBytes:      cfg.maxRecordBytes,
 		MaxBufferedBytes:    cfg.maxBufferedBytes,
@@ -501,7 +502,7 @@ func runConnection(ctx context.Context, svc *channelinit.Service, wsURL string, 
 		out.errStage = "yamux_open"
 		return out
 	}
-	if err := rpc.WriteStreamHello(stream, "rpc"); err != nil {
+	if err := rpchello.WriteStreamHello(stream, "rpc"); err != nil {
 		_ = stream.Close()
 		out.errStage = "rpc_hello"
 		return out
@@ -563,13 +564,13 @@ func startServerEndpoint(ctx context.Context, wsURL string, grant *controlv1.Cha
 
 		bt := e2ee.NewWebSocketBinaryTransport(c)
 		cache := e2ee.NewServerHandshakeCache()
-		secure, err := e2ee.ServerHandshake(serverCtx, bt, cache, e2ee.HandshakeOptions{
+		secure, err := e2ee.ServerHandshake(serverCtx, bt, cache, e2ee.ServerHandshakeOptions{
 			PSK:                 psk,
 			Suite:               e2ee.Suite(grant.DefaultSuite),
 			ChannelID:           grant.ChannelId,
 			InitExpireAtUnixS:   grant.ChannelInitExpireAtUnixS,
 			ClockSkew:           30 * time.Second,
-			ServerFeatureBits:   1,
+			ServerFeatures:      1,
 			MaxHandshakePayload: cfg.maxHandshakeSize,
 			MaxRecordBytes:      cfg.maxRecordBytes,
 			MaxBufferedBytes:    cfg.maxBufferedBytes,
@@ -610,7 +611,7 @@ func startServerEndpoint(ctx context.Context, wsURL string, grant *controlv1.Cha
 			}
 			go func() {
 				defer stream.Close()
-				h, err := rpc.ReadStreamHello(stream, 8*1024)
+				h, err := rpchello.ReadStreamHello(stream, 8*1024)
 				if err != nil || h.Kind != "rpc" {
 					return
 				}

@@ -24,6 +24,7 @@ import (
 	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/internal/base64url"
 	"github.com/floegence/flowersec/rpc"
+	rpchello "github.com/floegence/flowersec/rpc/hello"
 	"github.com/floegence/flowersec/tunnel/server"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
@@ -189,7 +190,7 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 	}
 	psk, _ := base64url.Decode(grantC.E2eePskB64u)
 
-	serverSecureCh := make(chan *e2ee.SecureConn, 1)
+	serverSecureCh := make(chan *e2ee.SecureChannel, 1)
 	go func() {
 		c, _, err := dialTunnel(ctx, wsURL)
 		if err != nil {
@@ -201,13 +202,13 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 		_ = c.WriteMessage(websocket.TextMessage, b)
 		bt := e2ee.NewWebSocketBinaryTransport(c)
 		cache := e2ee.NewServerHandshakeCache()
-		secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.HandshakeOptions{
+		secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.ServerHandshakeOptions{
 			PSK:                 psk,
 			Suite:               e2ee.SuiteX25519HKDFAES256GCM,
 			ChannelID:           grantS.ChannelId,
 			InitExpireAtUnixS:   grantS.ChannelInitExpireAtUnixS,
 			ClockSkew:           30 * time.Second,
-			ServerFeatureBits:   1,
+			ServerFeatures:      1,
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		})
@@ -229,11 +230,11 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	bt := e2ee.NewWebSocketBinaryTransport(c)
-	secureC, err := e2ee.ClientHandshake(ctx, bt, e2ee.HandshakeOptions{
+	secureC, err := e2ee.ClientHandshake(ctx, bt, e2ee.ClientHandshakeOptions{
 		PSK:                 psk,
 		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
 		ChannelID:           grantC.ChannelId,
-		ClientFeatureBits:   1,
+		ClientFeatures:      1,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
 	})
@@ -259,7 +260,7 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 	_ = sess.Close()
 
 	time.Sleep(400 * time.Millisecond)
-	if err := secureC.SendPing(); err == nil {
+	if err := secureC.Ping(); err == nil {
 		t.Fatal("expected connection to be closed by idle timeout")
 	}
 }
@@ -276,11 +277,11 @@ func runClientHandshakeOnly(ctx context.Context, wsURL string, grant *controlv1.
 		return err
 	}
 	bt := e2ee.NewWebSocketBinaryTransport(c)
-	secure, err := e2ee.ClientHandshake(ctx, bt, e2ee.HandshakeOptions{
+	secure, err := e2ee.ClientHandshake(ctx, bt, e2ee.ClientHandshakeOptions{
 		PSK:                 psk,
 		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
 		ChannelID:           grant.ChannelId,
-		ClientFeatureBits:   0,
+		ClientFeatures:      0,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
 	})
@@ -303,13 +304,13 @@ func runServerHandshakeOnly(ctx context.Context, wsURL string, grant *controlv1.
 	}
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	cache := e2ee.NewServerHandshakeCache()
-	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.HandshakeOptions{
+	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.ServerHandshakeOptions{
 		PSK:                 psk,
 		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
 		ChannelID:           grant.ChannelId,
 		InitExpireAtUnixS:   grant.ChannelInitExpireAtUnixS,
 		ClockSkew:           30 * time.Second,
-		ServerFeatureBits:   0,
+		ServerFeatures:      0,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
 	})
@@ -341,13 +342,13 @@ func runServerEndpoint(ctx context.Context, t *testing.T, wsURL string, grant *c
 
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	cache := e2ee.NewServerHandshakeCache()
-	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.HandshakeOptions{
+	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.ServerHandshakeOptions{
 		PSK:                 psk,
 		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
 		ChannelID:           grant.ChannelId,
 		InitExpireAtUnixS:   grant.ChannelInitExpireAtUnixS,
 		ClockSkew:           30 * time.Second,
-		ServerFeatureBits:   1,
+		ServerFeatures:      1,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
 	})
@@ -370,7 +371,7 @@ func runServerEndpoint(ctx context.Context, t *testing.T, wsURL string, grant *c
 	}
 	defer stream.Close()
 
-	h, err := rpc.ReadStreamHello(stream, 8*1024)
+	h, err := rpchello.ReadStreamHello(stream, 8*1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,11 +410,11 @@ func runBrowserClientEndpoint(ctx context.Context, t *testing.T, wsURL string, g
 	}
 
 	bt := e2ee.NewWebSocketBinaryTransport(c)
-	secure, err := e2ee.ClientHandshake(ctx, bt, e2ee.HandshakeOptions{
+	secure, err := e2ee.ClientHandshake(ctx, bt, e2ee.ClientHandshakeOptions{
 		PSK:                 psk,
 		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
 		ChannelID:           grant.ChannelId,
-		ClientFeatureBits:   1,
+		ClientFeatures:      1,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
 	})
@@ -436,7 +437,7 @@ func runBrowserClientEndpoint(ctx context.Context, t *testing.T, wsURL string, g
 	}
 	defer stream.Close()
 
-	if err := rpc.WriteStreamHello(stream, "rpc"); err != nil {
+	if err := rpchello.WriteStreamHello(stream, "rpc"); err != nil {
 		t.Fatal(err)
 	}
 	client := rpc.NewClient(stream)

@@ -11,7 +11,15 @@ import (
 	"time"
 )
 
-type SecureConn struct {
+// SecureChannel wraps a BinaryTransport with E2EE record framing, buffering, and a net.Conn-compatible API.
+//
+// It is safe for concurrent use by multiple goroutines.
+//
+// Notes:
+// - Read returns plaintext bytes from application records (RecordFlagApp).
+// - Write encrypts application data into records and preserves strict send ordering.
+// - Ping and Rekey inject control records on the send path.
+type SecureChannel struct {
 	t                BinaryTransport // Underlying transport for encrypted frames.
 	maxRecordBytes   int             // Max encoded record size in bytes.
 	maxBufferedBytes int             // Max buffered plaintext bytes before failing.
@@ -45,9 +53,9 @@ type sendReq struct {
 	done  chan error // Completion signal for the send.
 }
 
-// NewSecureConn wraps a BinaryTransport with record encryption and buffering.
-func NewSecureConn(t BinaryTransport, keys RecordKeyState, maxRecordBytes int, maxBufferedBytes int) *SecureConn {
-	c := &SecureConn{
+// NewSecureChannel wraps a BinaryTransport with record encryption and buffering.
+func NewSecureChannel(t BinaryTransport, keys RecordKeyState, maxRecordBytes int, maxBufferedBytes int) *SecureChannel {
+	c := &SecureChannel{
 		t:                t,
 		maxRecordBytes:   maxRecordBytes,
 		maxBufferedBytes: maxBufferedBytes,
@@ -61,17 +69,17 @@ func NewSecureConn(t BinaryTransport, keys RecordKeyState, maxRecordBytes int, m
 	return c
 }
 
-func (c *SecureConn) signalReadLocked() {
+func (c *SecureChannel) signalReadLocked() {
 	close(c.readNotify)
 	c.readNotify = make(chan struct{})
 }
 
-func (c *SecureConn) signalWriteLocked() {
+func (c *SecureChannel) signalWriteLocked() {
 	close(c.writeNotify)
 	c.writeNotify = make(chan struct{})
 }
 
-func (c *SecureConn) writeLoop() {
+func (c *SecureChannel) writeLoop() {
 	for {
 		c.sendMu.Lock()
 		for len(c.sendQueue) == 0 && !c.sendClosed {
@@ -101,7 +109,7 @@ func (c *SecureConn) writeLoop() {
 	}
 }
 
-func (c *SecureConn) readLoop() {
+func (c *SecureChannel) readLoop() {
 	for {
 		frame, err := c.t.ReadBinary(context.Background())
 		if err != nil {
@@ -142,7 +150,7 @@ func (c *SecureConn) readLoop() {
 	}
 }
 
-func (c *SecureConn) failRead(err error) {
+func (c *SecureChannel) failRead(err error) {
 	c.mu.Lock()
 	if c.readErr == nil {
 		c.readErr = err
@@ -152,7 +160,7 @@ func (c *SecureConn) failRead(err error) {
 	_ = c.Close()
 }
 
-func (c *SecureConn) setSendErr(err error) {
+func (c *SecureChannel) setSendErr(err error) {
 	c.sendMu.Lock()
 	if c.sendErr == nil {
 		c.sendErr = err
@@ -160,7 +168,7 @@ func (c *SecureConn) setSendErr(err error) {
 	c.sendMu.Unlock()
 }
 
-func (c *SecureConn) Read(p []byte) (int, error) {
+func (c *SecureChannel) Read(p []byte) (int, error) {
 	for {
 		c.mu.Lock()
 		if c.buf.Len() > 0 {
@@ -201,8 +209,8 @@ func (c *SecureConn) Read(p []byte) (int, error) {
 }
 
 // Write splits payloads into record-sized chunks and enqueues them for sending.
-func (c *SecureConn) Write(p []byte) (int, error) {
-	maxPlain := MaxPlaintext(c.maxRecordBytes)
+func (c *SecureChannel) Write(p []byte) (int, error) {
+	maxPlain := MaxPlaintextBytes(c.maxRecordBytes)
 	if maxPlain <= 0 {
 		maxPlain = len(p)
 	}
@@ -249,7 +257,7 @@ func (c *SecureConn) Write(p []byte) (int, error) {
 	return total, nil
 }
 
-func (c *SecureConn) Close() error {
+func (c *SecureChannel) Close() error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -268,10 +276,10 @@ func (c *SecureConn) Close() error {
 	return c.t.Close()
 }
 
-func (c *SecureConn) LocalAddr() net.Addr  { return dummyAddr("flowersec-local") }
-func (c *SecureConn) RemoteAddr() net.Addr { return dummyAddr("flowersec-remote") }
+func (c *SecureChannel) LocalAddr() net.Addr  { return dummyAddr("flowersec-local") }
+func (c *SecureChannel) RemoteAddr() net.Addr { return dummyAddr("flowersec-remote") }
 
-func (c *SecureConn) SetReadDeadline(t time.Time) error {
+func (c *SecureChannel) SetReadDeadline(t time.Time) error {
 	c.mu.Lock()
 	c.readDeadline = t
 	c.signalReadLocked()
@@ -279,7 +287,7 @@ func (c *SecureConn) SetReadDeadline(t time.Time) error {
 	return nil
 }
 
-func (c *SecureConn) SetWriteDeadline(t time.Time) error {
+func (c *SecureChannel) SetWriteDeadline(t time.Time) error {
 	c.sendMu.Lock()
 	c.writeDeadline = t
 	c.signalWriteLocked()
@@ -287,14 +295,14 @@ func (c *SecureConn) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
-func (c *SecureConn) SetDeadline(t time.Time) error {
+func (c *SecureChannel) SetDeadline(t time.Time) error {
 	_ = c.SetReadDeadline(t)
 	_ = c.SetWriteDeadline(t)
 	return nil
 }
 
-// SendPing writes a keepalive record with an empty payload.
-func (c *SecureConn) SendPing() error {
+// Ping writes a keepalive record with an empty payload.
+func (c *SecureChannel) Ping() error {
 	req := sendReq{done: make(chan error, 1)}
 	c.sendMu.Lock()
 	if c.sendClosed {
@@ -322,8 +330,8 @@ func (c *SecureConn) SendPing() error {
 	return c.waitSend(req.done)
 }
 
-// RekeyNow injects a rekey record and advances the send key.
-func (c *SecureConn) RekeyNow() error {
+// Rekey injects a rekey record and advances the send key.
+func (c *SecureChannel) Rekey() error {
 	req := sendReq{done: make(chan error, 1)}
 	c.sendMu.Lock()
 	if c.sendClosed {
@@ -364,7 +372,7 @@ func (c *SecureConn) RekeyNow() error {
 	return c.waitSend(req.done)
 }
 
-func (c *SecureConn) waitSend(done <-chan error) error {
+func (c *SecureChannel) waitSend(done <-chan error) error {
 	for {
 		c.sendMu.Lock()
 		ch := c.writeNotify

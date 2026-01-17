@@ -23,7 +23,7 @@
     <pre id="out"></pre>
 
     <script type="module">
-      import { ByteReader, connectTunnelClientRpc, writeStreamHello } from "../../../ts/dist/index.js";
+      import { ByteReader, connectTunnel } from "../../../ts/dist/index.js";
 
       // Browser notes:
       // - Browsers set the WebSocket Origin header automatically to window.location.origin.
@@ -68,7 +68,7 @@
           const grant = pickGrantClient(obj);
           // High-level helper: it performs tunnel attach + E2EE handshake + yamux + RPC wiring.
           // It also checks that the provided origin matches window.location.origin.
-          client = await connectTunnelClientRpc(grant, { origin: window.location.origin });
+          client = await connectTunnel(grant, { origin: window.location.origin });
           $close.disabled = false;
 
           // In these demos, type_id=1 responds {"ok":true} and the server also emits notify type_id=2.
@@ -78,7 +78,8 @@
           logLine("rpc notify: " + JSON.stringify(await notified));
 
           // Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
-          const echo = await client.mux.openStream();
+          // Note: client.openStream(kind) automatically writes the StreamHello(kind) preface.
+          const echo = await client.openStream("echo");
           const reader = new ByteReader(async () => {
             try {
               return await echo.read();
@@ -86,7 +87,6 @@
               return null;
             }
           });
-          await writeStreamHello((b) => echo.write(b), "echo");
           const msg = new TextEncoder().encode("hello over yamux stream: echo");
           await echo.write(msg);
           const got = await reader.readExactly(msg.length);

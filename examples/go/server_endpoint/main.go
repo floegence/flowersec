@@ -19,6 +19,7 @@ import (
 	rpcv1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
 	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/rpc"
+	rpchello "github.com/floegence/flowersec/rpc/hello"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )
@@ -94,13 +95,13 @@ func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.Chan
 	// If init_exp is 0 or expired, handshake must fail.
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	cache := e2ee.NewServerHandshakeCache()
-	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.HandshakeOptions{
+	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.ServerHandshakeOptions{
 		PSK:                 psk,
 		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
 		ChannelID:           grant.ChannelId,
 		InitExpireAtUnixS:   grant.ChannelInitExpireAtUnixS,
 		ClockSkew:           30 * time.Second,
-		ServerFeatureBits:   1,
+		ServerFeatures:      1,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
 	})
@@ -133,7 +134,7 @@ func handleStream(ctx context.Context, stream io.ReadWriteCloser) {
 	defer stream.Close()
 
 	// StreamHello is the first frame on every yamux stream.
-	h, err := rpc.ReadStreamHello(stream, 8*1024)
+	h, err := rpchello.ReadStreamHello(stream, 8*1024)
 	if err != nil {
 		return
 	}

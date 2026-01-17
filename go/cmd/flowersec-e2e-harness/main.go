@@ -26,6 +26,7 @@ import (
 	"github.com/floegence/flowersec/internal/base64url"
 	"github.com/floegence/flowersec/internal/yamuxinterop"
 	"github.com/floegence/flowersec/rpc"
+	rpchello "github.com/floegence/flowersec/rpc/hello"
 	"github.com/floegence/flowersec/tunnel/server"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
@@ -172,13 +173,13 @@ func runServerEndpoint(ctx context.Context, wsURL string, channelID string, toke
 
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	cache := e2ee.NewServerHandshakeCache()
-	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.HandshakeOptions{
+	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.ServerHandshakeOptions{
 		PSK:                 psk,
 		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
 		ChannelID:           channelID,
 		InitExpireAtUnixS:   initExp,
 		ClockSkew:           30 * time.Second,
-		ServerFeatureBits:   1,
+		ServerFeatures:      1,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
 	})
@@ -204,7 +205,7 @@ func runServerEndpoint(ctx context.Context, wsURL string, channelID string, toke
 		}
 		go func() {
 			defer stream.Close()
-			h, err := rpc.ReadStreamHello(stream, 8*1024)
+			h, err := rpchello.ReadStreamHello(stream, 8*1024)
 			if err != nil || h.Kind != "rpc" {
 				return
 			}
@@ -254,13 +255,13 @@ func runServerEndpointScenario(ctx context.Context, wsURL string, channelID stri
 
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	cache := e2ee.NewServerHandshakeCache()
-	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.HandshakeOptions{
+	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.ServerHandshakeOptions{
 		PSK:                 psk,
 		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
 		ChannelID:           channelID,
 		InitExpireAtUnixS:   initExp,
 		ClockSkew:           30 * time.Second,
-		ServerFeatureBits:   1,
+		ServerFeatures:      1,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
 	})

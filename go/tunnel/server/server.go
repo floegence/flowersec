@@ -389,7 +389,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		s.untrackConn(uc)
 		return
 	}
-	attach, err := protocol.ParseAttachJSON(msg, protocol.AttachConstraints{
+	attach, err := protocol.ParseAttachWithConstraints(msg, protocol.AttachConstraints{
 		MaxAttachBytes: s.cfg.MaxAttachBytes,
 	})
 	if err != nil {

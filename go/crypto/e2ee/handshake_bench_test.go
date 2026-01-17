@@ -25,16 +25,16 @@ func benchmarkHandshake(b *testing.B, suite Suite) {
 		cache := NewServerHandshakeCache()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 
-		serverCh := make(chan *SecureConn, 1)
+		serverCh := make(chan *SecureChannel, 1)
 		serverErr := make(chan error, 1)
 		go func() {
-			sc, err := ServerHandshake(ctx, serverTr, cache, HandshakeOptions{
+			sc, err := ServerHandshake(ctx, serverTr, cache, ServerHandshakeOptions{
 				PSK:                 psk,
 				Suite:               suite,
 				ChannelID:           "chan_bench",
 				InitExpireAtUnixS:   time.Now().Add(60 * time.Second).Unix(),
 				ClockSkew:           30 * time.Second,
-				ServerFeatureBits:   1,
+				ServerFeatures:      1,
 				MaxHandshakePayload: 8 * 1024,
 				MaxRecordBytes:      1 << 20,
 			})
@@ -45,11 +45,11 @@ func benchmarkHandshake(b *testing.B, suite Suite) {
 			serverCh <- sc
 		}()
 
-		cc, err := ClientHandshake(ctx, clientTr, HandshakeOptions{
+		cc, err := ClientHandshake(ctx, clientTr, ClientHandshakeOptions{
 			PSK:                 psk,
 			Suite:               suite,
 			ChannelID:           "chan_bench",
-			ClientFeatureBits:   0,
+			ClientFeatures:      0,
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		})
@@ -59,7 +59,7 @@ func benchmarkHandshake(b *testing.B, suite Suite) {
 			_ = serverTr.Close()
 			b.Fatalf("client handshake failed: %v", err)
 		}
-		var sc *SecureConn
+		var sc *SecureChannel
 		select {
 		case sc = <-serverCh:
 		case err := <-serverErr:

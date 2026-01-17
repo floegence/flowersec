@@ -36,7 +36,7 @@ func (t *recordingTransport) Close() error {
 	return nil
 }
 
-func TestSecureConnSendPingAndRekey(t *testing.T) {
+func TestSecureChannelPingAndRekey(t *testing.T) {
 	tr := newRecordingTransport()
 	var key [32]byte
 	var nonce [4]byte
@@ -54,14 +54,14 @@ func TestSecureConnSendPingAndRekey(t *testing.T) {
 		SendSeq:      1,
 		RecvSeq:      1,
 	}
-	conn := NewSecureConn(tr, keys, 1<<20, 0)
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
 	defer conn.Close()
 
-	if err := conn.SendPing(); err != nil {
-		t.Fatalf("SendPing failed: %v", err)
+	if err := conn.Ping(); err != nil {
+		t.Fatalf("Ping failed: %v", err)
 	}
-	if err := conn.RekeyNow(); err != nil {
-		t.Fatalf("RekeyNow failed: %v", err)
+	if err := conn.Rekey(); err != nil {
+		t.Fatalf("Rekey failed: %v", err)
 	}
 
 	ping := <-tr.writeCh
@@ -81,12 +81,12 @@ func TestSecureConnSendPingAndRekey(t *testing.T) {
 	}
 }
 
-func TestSecureConnWriteSplitsFrames(t *testing.T) {
+func TestSecureChannelWriteSplitsFrames(t *testing.T) {
 	tr := newRecordingTransport()
 	var key [32]byte
 	var nonce [4]byte
 	keys := RecordKeyState{SendKey: key, RecvKey: key, SendNoncePre: nonce, RecvNoncePre: nonce, SendDir: DirC2S, RecvDir: DirS2C}
-	conn := NewSecureConn(tr, keys, 40, 0)
+	conn := NewSecureChannel(tr, keys, 40, 0)
 	defer conn.Close()
 
 	payload := make([]byte, 20)
@@ -98,12 +98,12 @@ func TestSecureConnWriteSplitsFrames(t *testing.T) {
 	}
 }
 
-func TestSecureConnReadRejectsBadFlag(t *testing.T) {
+func TestSecureChannelReadRejectsBadFlag(t *testing.T) {
 	tr := newRecordingTransport()
 	var key [32]byte
 	var nonce [4]byte
 	keys := RecordKeyState{SendKey: key, RecvKey: key, SendNoncePre: nonce, RecvNoncePre: nonce, SendDir: DirC2S, RecvDir: DirS2C, SendSeq: 1, RecvSeq: 1}
-	conn := NewSecureConn(tr, keys, 1<<20, 0)
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
 	defer conn.Close()
 
 	frame, err := EncryptRecord(key, nonce, RecordFlagApp, 1, []byte("hi"), 1<<20)
@@ -131,7 +131,7 @@ func TestSecureConnReadRejectsBadFlag(t *testing.T) {
 	}
 }
 
-func TestSecureConnRekeyUpdatesSendKey(t *testing.T) {
+func TestSecureChannelRekeyUpdatesSendKey(t *testing.T) {
 	tr := newRecordingTransport()
 	var key [32]byte
 	var nonce [4]byte
@@ -149,11 +149,11 @@ func TestSecureConnRekeyUpdatesSendKey(t *testing.T) {
 		SendSeq:      1,
 		RecvSeq:      1,
 	}
-	conn := NewSecureConn(tr, keys, 1<<20, 0)
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
 	defer conn.Close()
 
-	if err := conn.RekeyNow(); err != nil {
-		t.Fatalf("RekeyNow failed: %v", err)
+	if err := conn.Rekey(); err != nil {
+		t.Fatalf("Rekey failed: %v", err)
 	}
 	if _, err := conn.Write([]byte("hi")); err != nil {
 		t.Fatalf("Write failed: %v", err)

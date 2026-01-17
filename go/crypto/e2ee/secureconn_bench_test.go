@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-func BenchmarkSecureConnRoundTrip(b *testing.B) {
+func BenchmarkSecureChannelRoundTrip(b *testing.B) {
 	sizes := []int{256, 1024, 8 * 1024, 64 * 1024}
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("%dB", size), func(b *testing.B) {
-			client, server, cleanup := newSecureConnPair()
+			client, server, cleanup := newSecureChannelPair()
 			defer cleanup()
 			payload := make([]byte, size)
 			buf := make([]byte, size)
@@ -27,7 +27,7 @@ func BenchmarkSecureConnRoundTrip(b *testing.B) {
 	}
 }
 
-func newSecureConnPair() (*SecureConn, *SecureConn, func()) {
+func newSecureChannelPair() (*SecureChannel, *SecureChannel, func()) {
 	clientTr, serverTr := newMemoryTransportPair(64)
 	var keyA [32]byte
 	var keyB [32]byte
@@ -38,7 +38,7 @@ func newSecureConnPair() (*SecureConn, *SecureConn, func()) {
 	nonceA[0] = 3
 	nonceB[0] = 4
 
-	client := NewSecureConn(clientTr, RecordKeyState{
+	client := NewSecureChannel(clientTr, RecordKeyState{
 		SendKey:      keyA,
 		RecvKey:      keyB,
 		SendNoncePre: nonceA,
@@ -46,7 +46,7 @@ func newSecureConnPair() (*SecureConn, *SecureConn, func()) {
 		SendDir:      DirC2S,
 		RecvDir:      DirS2C,
 	}, 1<<20, 4*(1<<20))
-	server := NewSecureConn(serverTr, RecordKeyState{
+	server := NewSecureChannel(serverTr, RecordKeyState{
 		SendKey:      keyB,
 		RecvKey:      keyA,
 		SendNoncePre: nonceB,

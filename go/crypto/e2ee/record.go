@@ -57,8 +57,8 @@ type RecordKeyState struct {
 	RecvSeq uint64 // Next expected inbound record sequence number.
 }
 
-// MaxPlaintext returns the maximum payload bytes allowed by the record size.
-func MaxPlaintext(maxRecordBytes int) int {
+// MaxPlaintextBytes returns the maximum payload bytes allowed by the record size.
+func MaxPlaintextBytes(maxRecordBytes int) int {
 	if maxRecordBytes <= 0 {
 		return 0
 	}

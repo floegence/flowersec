@@ -17,19 +17,33 @@ import (
 	"github.com/floegence/flowersec/internal/timeutil"
 )
 
-type HandshakeOptions struct {
-	PSK               []byte        // 32-byte pre-shared key for handshake auth.
-	Suite             Suite         // Cipher suite selection for ECDH+AEAD.
-	ChannelID         string        // Channel identifier expected by server/client.
-	InitExpireAtUnixS int64         // Init expiry (Unix seconds) enforced by server.
-	ClockSkew         time.Duration // Allowed clock skew for timestamp validation.
+// ClientHandshakeOptions configures the client side of the E2EE handshake.
+type ClientHandshakeOptions struct {
+	PSK       []byte // 32-byte pre-shared key for handshake auth.
+	Suite     Suite  // Cipher suite selection for ECDH+AEAD.
+	ChannelID string // Channel identifier expected by server/client.
 
-	ClientFeatureBits uint32 // Client feature bitset advertised in init.
-	ServerFeatureBits uint32 // Server feature bitset advertised in resp.
+	ClientFeatures uint32 // Feature bitset advertised in init.
 
 	MaxHandshakePayload int // Maximum handshake JSON payload size.
 	MaxRecordBytes      int // Maximum encrypted record size on the wire.
-	MaxBufferedBytes    int // Maximum buffered plaintext bytes in SecureConn.
+	MaxBufferedBytes    int // Maximum buffered plaintext bytes in SecureChannel.
+}
+
+// ServerHandshakeOptions configures the server side of the E2EE handshake.
+type ServerHandshakeOptions struct {
+	PSK       []byte // 32-byte pre-shared key for handshake auth.
+	Suite     Suite  // Cipher suite selection for ECDH+AEAD.
+	ChannelID string // Channel identifier expected by server/client.
+
+	InitExpireAtUnixS int64         // Init expiry (Unix seconds) enforced by server.
+	ClockSkew         time.Duration // Allowed clock skew for timestamp validation.
+
+	ServerFeatures uint32 // Feature bitset advertised in resp.
+
+	MaxHandshakePayload int // Maximum handshake JSON payload size.
+	MaxRecordBytes      int // Maximum encrypted record size on the wire.
+	MaxBufferedBytes    int // Maximum buffered plaintext bytes in SecureChannel.
 }
 
 // ServerHandshakeCache caches server-side handshake state to support retries.
@@ -73,7 +87,7 @@ func (c *ServerHandshakeCache) SetLimits(ttl time.Duration, maxEntries int) {
 }
 
 // ClientHandshake performs the E2EE handshake from the client perspective.
-func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptions) (*SecureConn, error) {
+func ClientHandshake(ctx context.Context, t BinaryTransport, opts ClientHandshakeOptions) (*SecureChannel, error) {
 	if len(opts.PSK) != 32 {
 		return nil, ErrInvalidPSK
 	}
@@ -88,6 +102,9 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 	}
 	if opts.MaxHandshakePayload <= 0 {
 		opts.MaxHandshakePayload = 8 * 1024
+	}
+	if opts.MaxRecordBytes <= 0 {
+		opts.MaxRecordBytes = 1 << 20
 	}
 
 	priv, pub, err := GenerateEphemeralKeypair(opts.Suite)
@@ -106,7 +123,7 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 		Suite:            e2eev1.Suite(opts.Suite),
 		ClientEphPubB64u: base64url.Encode(pub),
 		NonceCB64u:       base64url.Encode(nonceC[:]),
-		ClientFeatures:   opts.ClientFeatureBits,
+		ClientFeatures:   opts.ClientFeatures,
 	}
 	initJSON, err := json.Marshal(initMsg)
 	if err != nil {
@@ -213,7 +230,7 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 	}
 
 	// Client sends application data using the C2S direction keys.
-	return NewSecureConn(t, RecordKeyState{
+	return NewSecureChannel(t, RecordKeyState{
 		SendKey:      keys.C2SKey,
 		RecvKey:      keys.S2CKey,
 		SendNoncePre: keys.C2SNoncePre,
@@ -228,7 +245,7 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts HandshakeOptio
 }
 
 // ServerHandshake performs the E2EE handshake from the server perspective.
-func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandshakeCache, opts HandshakeOptions) (*SecureConn, error) {
+func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandshakeCache, opts ServerHandshakeOptions) (*SecureChannel, error) {
 	if len(opts.PSK) != 32 {
 		return nil, ErrInvalidPSK
 	}
@@ -244,8 +261,14 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	if opts.MaxHandshakePayload <= 0 {
 		opts.MaxHandshakePayload = 8 * 1024
 	}
+	if opts.MaxRecordBytes <= 0 {
+		opts.MaxRecordBytes = 1 << 20
+	}
 	if opts.InitExpireAtUnixS <= 0 {
 		return nil, errors.New("missing init_exp")
+	}
+	if opts.ClockSkew == 0 {
+		opts.ClockSkew = 30 * time.Second
 	}
 
 	var initMsg e2eev1.E2EE_Init
@@ -314,7 +337,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 			return nil, ErrUnsupportedSuite
 		}
 
-		st, err = cache.getOrCreate(initMsg, suite, opts.ServerFeatureBits)
+		st, err = cache.getOrCreate(initMsg, suite, opts.ServerFeatures)
 		if err != nil {
 			return nil, err
 		}
@@ -461,7 +484,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	}
 
 	// Server sends application data using the S2C direction keys.
-	return NewSecureConn(t, RecordKeyState{
+	return NewSecureChannel(t, RecordKeyState{
 		SendKey:      keys.S2CKey,
 		RecvKey:      keys.C2SKey,
 		SendNoncePre: keys.S2CNoncePre,

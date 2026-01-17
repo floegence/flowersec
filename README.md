@@ -29,6 +29,11 @@ The recommended hands-on entrypoint is the scenario cookbook:
 open examples/README.md
 ```
 
+High-level client entrypoints:
+
+- Go: `github.com/floegence/flowersec/client` (`client.DialTunnel`, `client.DialDirect`)
+- TS: `@flowersec/core` (`connectTunnel`, `connectDirect`)
+
 It includes:
 
 - Running the deployable tunnel server as an unmodified service
@@ -118,7 +123,7 @@ Library integrations:
 
 - Go tunnel: set `server.Config.Observer` if you run the server directly.
 - Go RPC: attach an observer via `rpc.Server.SetObserver(...)` or `rpc.Client.SetObserver(...)`.
-- TS client: pass `observer` into `connectTunnelClientRpc(...)`, `WebSocketBinaryTransport`, or `RpcClient`.
+- TS client: pass `observer` into `connectTunnel(...)` / `connectDirect(...)`, `WebSocketBinaryTransport`, or `RpcClient`.
 
 ## Binaries
 

@@ -1,11 +1,11 @@
 import { createRequire } from "node:module";
 import process from "node:process";
 
-import { ByteReader, connectDirectClientRpc, writeStreamHello } from "../../ts/dist/index.js";
+import { ByteReader, connectDirect } from "../../ts/dist/index.js";
 
 // node-direct-client is the "simple" Node.js direct (no tunnel) client example.
 //
-// It uses the high-level helper connectDirectClientRpc(), which internally performs:
+// It uses the high-level helper connectDirect(), which internally performs:
 // - WebSocket connect (requires explicit Origin in Node)
 // - E2EE handshake
 // - Yamux session
@@ -48,8 +48,8 @@ async function main() {
   const origin = process.env.FSEC_ORIGIN ?? "";
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
-  // connectDirectClientRpc() returns an RPC-ready client and a yamux session for extra streams.
-  const client = await connectDirectClientRpc(info, {
+  // connectDirect() returns an RPC-ready session and a yamux session for extra streams.
+  const client = await connectDirect(info, {
     origin,
     wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } })
   });
@@ -62,7 +62,8 @@ async function main() {
     console.log("rpc notify:", JSON.stringify(await notified));
 
     // Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
-    const echo = await client.mux.openStream();
+    // Note: client.openStream(kind) automatically writes the StreamHello(kind) preface.
+    const echo = await client.openStream("echo");
     const reader = new ByteReader(async () => {
       try {
         return await echo.read();
@@ -70,7 +71,6 @@ async function main() {
         return null;
       }
     });
-    await writeStreamHello((b) => echo.write(b), "echo");
     const msg = new TextEncoder().encode("hello over yamux stream: echo");
     await echo.write(msg);
     const got = await reader.readExactly(msg.length);
