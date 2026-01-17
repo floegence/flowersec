@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -25,11 +26,12 @@ type DirectClientOptions struct {
 
 // DirectClient is a convenience wrapper for a direct WS + E2EE + yamux + RPC client stack.
 type DirectClient struct {
-	Conn io.Closer
+	WS *ws.Conn
 
-	Secure io.Closer
-	Mux    io.Closer
-	RPC    *rpc.Client
+	Secure    net.Conn
+	Mux       *hyamux.Session
+	RPCStream io.ReadWriteCloser
+	RPC       *rpc.Client
 
 	closeAll func() error
 }
@@ -118,10 +120,11 @@ func ConnectDirectClientRPC(ctx context.Context, info *directv1.DirectConnectInf
 	client := rpc.NewClient(rpcStream)
 
 	out := &DirectClient{
-		Conn:   c,
-		Secure: secure,
-		Mux:    sess,
-		RPC:    client,
+		WS:        c,
+		Secure:    secure,
+		Mux:       sess,
+		RPCStream: rpcStream,
+		RPC:       client,
 	}
 	out.closeAll = func() error {
 		client.Close()

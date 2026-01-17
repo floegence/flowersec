@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -29,11 +30,13 @@ type TunnelClientOptions struct {
 
 // TunnelClient is a convenience wrapper for a tunnel + E2EE + yamux + RPC client stack.
 type TunnelClient struct {
-	Conn io.Closer
+	WS                 *ws.Conn
+	EndpointInstanceID string
 
-	Secure io.Closer
-	Mux    io.Closer
-	RPC    *rpc.Client
+	Secure    net.Conn
+	Mux       *hyamux.Session
+	RPCStream io.ReadWriteCloser
+	RPC       *rpc.Client
 
 	closeAll func() error
 }
@@ -143,10 +146,12 @@ func ConnectTunnelClientRPC(ctx context.Context, grant *controlv1.ChannelInitGra
 	client := rpc.NewClient(rpcStream)
 
 	out := &TunnelClient{
-		Conn:   c,
-		Secure: secure,
-		Mux:    sess,
-		RPC:    client,
+		WS:                 c,
+		EndpointInstanceID: endpointInstanceID,
+		Secure:             secure,
+		Mux:                sess,
+		RPCStream:          rpcStream,
+		RPC:                client,
 	}
 	out.closeAll = func() error {
 		client.Close()

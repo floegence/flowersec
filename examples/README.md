@@ -11,9 +11,15 @@ This folder is a hands-on cookbook for running Flowersec end-to-end using the re
 - Controlplane demo: `examples/go/controlplane_demo/` (owns issuer keys; mints `ChannelInitGrant` pairs)
 - Go server endpoint demo: `examples/go/server_endpoint/` (acts as the endpoint with `role=server`; runs E2EE server + Yamux server)
 - Clients:
-  - Go: `examples/go/go_client_tunnel/`, `examples/go/go_client_direct/`
-  - TS (Node): `examples/ts/node-tunnel-client.mjs`, `examples/ts/node-direct-client.mjs`
-  - TS (Browser): `examples/ts/browser-tunnel/`, `examples/ts/browser-direct/`
+  - Go:
+    - Simple (uses `go/connect` helpers): `examples/go/go_client_tunnel_simple/`, `examples/go/go_client_direct_simple/`
+    - Advanced (manual stack): `examples/go/go_client_tunnel/`, `examples/go/go_client_direct/`
+  - TS (Node):
+    - Simple (high-level helpers): `examples/ts/node-tunnel-client.mjs`, `examples/ts/node-direct-client.mjs`
+    - Advanced (manual stack): `examples/ts/node-tunnel-client-advanced.mjs`, `examples/ts/node-direct-client-advanced.mjs`
+  - TS (Browser):
+    - Simple: `examples/ts/browser-tunnel/index.html`, `examples/ts/browser-direct/index.html`
+    - Advanced: `examples/ts/browser-tunnel/advanced.html`, `examples/ts/browser-direct/advanced.html`
 
 ## Prerequisites
 
@@ -92,6 +98,12 @@ Terminal 4: run the TS tunnel client (client-side grant)
 FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-tunnel-client.mjs < "$CHANNEL_JSON"
 ```
 
+Advanced variant (manual stack):
+
+```bash
+FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-tunnel-client-advanced.mjs < "$CHANNEL_JSON"
+```
+
 Expected: one RPC response + one RPC notify + one `echo` stream roundtrip.
 
 ## Scenario B: TS client (Browser) ↔ Go server endpoint (role=server) through tunnel
@@ -116,6 +128,12 @@ Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint), then:
 go run ./examples/go/go_client_tunnel --origin http://127.0.0.1:5173 < "$CHANNEL_JSON"
 ```
 
+Simple variant (uses `go/connect`):
+
+```bash
+go run ./examples/go/go_client_tunnel_simple --origin http://127.0.0.1:5173 < "$CHANNEL_JSON"
+```
+
 ## Scenario D: TS client (Node) ↔ Go direct server (no tunnel)
 
 Terminal 1: start the direct server (no Attach; WS immediately runs E2EE server + Yamux server)
@@ -130,12 +148,24 @@ Terminal 2: run the TS direct client
 FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-direct-client.mjs < /tmp/fsec-direct.json
 ```
 
+Advanced variant (manual stack):
+
+```bash
+FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-direct-client-advanced.mjs < /tmp/fsec-direct.json
+```
+
 ## Scenario E: Go client ↔ Go direct server (no tunnel)
 
 Reuse Scenario D terminal 1, then:
 
 ```bash
 go run ./examples/go/go_client_direct --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json
+```
+
+Simple variant (uses `go/connect`):
+
+```bash
+go run ./examples/go/go_client_direct_simple --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json
 ```
 
 ## Troubleshooting

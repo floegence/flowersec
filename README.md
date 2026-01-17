@@ -19,6 +19,7 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 - TypeScript library (ESM, browser-friendly): `ts/`
 - Single-source IDL and codegen: `idl/`, `tools/idlgen/`
 - Demos + scenario cookbook: `examples/README.md`
+  - Includes both high-level client helpers and manual stack examples (Go + TS).
 
 ## Quickstart
 

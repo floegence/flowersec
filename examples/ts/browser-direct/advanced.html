@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flowersec Direct Demo (Browser, Advanced)</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 920px; }
+      textarea { width: 100%; height: 240px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      pre { background: #0b1020; color: #e8e8e8; padding: 12px; border-radius: 8px; overflow: auto; }
+      button { padding: 8px 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Flowersec Direct Demo (Browser, Advanced)</h1>
+    <p>This page shows the manual stack: WS → E2EE → Yamux → RPC.</p>
+    <p>For the high-level helper, open <a href="./index.html">index.html</a>.</p>
+    <p>Paste JSON from <code>examples/go/direct_demo</code>.</p>
+    <textarea id="in" spellcheck="false"></textarea>
+    <div style="margin: 12px 0">
+      <button id="connect">Connect</button>
+      <button id="close" disabled>Close</button>
+    </div>
+    <pre id="out"></pre>
+
+    <script type="module">
+      import {
+        ByteReader,
+        RpcClient,
+        RpcProxy,
+        WebSocketBinaryTransport,
+        YamuxSession,
+        base64urlDecode,
+        clientHandshake,
+        writeStreamHello
+      } from "../../../ts/dist/index.js";
+
+      const $in = document.getElementById("in");
+      const $out = document.getElementById("out");
+      const $connect = document.getElementById("connect");
+      const $close = document.getElementById("close");
+
+      let client = null;
+
+      function logLine(s) {
+        $out.textContent += s + "\n";
+      }
+
+      function waitOpen(ws, timeoutMs) {
+        return new Promise((resolve, reject) => {
+          let done = false;
+          const t = setTimeout(() => {
+            cleanup();
+            reject(new Error("connect timeout"));
+          }, timeoutMs);
+
+          const onOpen = () => {
+            cleanup();
+            resolve();
+          };
+          const onErr = () => {
+            cleanup();
+            reject(new Error("websocket error"));
+          };
+          const onClose = () => {
+            cleanup();
+            reject(new Error("websocket closed"));
+          };
+          const cleanup = () => {
+            if (done) return;
+            done = true;
+            clearTimeout(t);
+            ws.removeEventListener("open", onOpen);
+            ws.removeEventListener("error", onErr);
+            ws.removeEventListener("close", onClose);
+          };
+          ws.addEventListener("open", onOpen);
+          ws.addEventListener("error", onErr);
+          ws.addEventListener("close", onClose);
+        });
+      }
+
+      function waitNotify(proxy, typeId, timeoutMs) {
+        return new Promise((resolve, reject) => {
+          let unsub = () => {};
+          const t = setTimeout(() => {
+            unsub();
+            reject(new Error("timeout waiting for notification"));
+          }, timeoutMs);
+          unsub = proxy.onNotify(typeId, (payload) => {
+            clearTimeout(t);
+            unsub();
+            resolve(payload);
+          });
+        });
+      }
+
+      function closeClient() {
+        if (!client) return;
+        try {
+          client.rpcProxy.detach();
+        } catch {
+          // ignore
+        }
+        try {
+          client.rpc.close();
+        } catch {
+          // ignore
+        }
+        try {
+          client.mux.close();
+        } catch {
+          // ignore
+        }
+        try {
+          client.secure.close();
+        } catch {
+          // ignore
+        }
+        client = null;
+        $close.disabled = true;
+      }
+
+      $connect.addEventListener("click", async () => {
+        $out.textContent = "";
+        closeClient();
+        try {
+          const info = JSON.parse($in.value);
+          const ws = new WebSocket(info.ws_url);
+          await waitOpen(ws, 10_000);
+
+          const transport = new WebSocketBinaryTransport(ws);
+          const psk = base64urlDecode(info.e2ee_psk_b64u);
+          const suite = info.default_suite;
+          const secure = await clientHandshake(transport, {
+            channelId: info.channel_id,
+            suite,
+            psk,
+            clientFeatures: 0,
+            maxHandshakePayload: 8 * 1024,
+            maxRecordBytes: 1 << 20,
+            timeoutMs: 10_000
+          });
+
+          const conn = {
+            read: () => secure.read(),
+            write: (b) => secure.write(b),
+            close: () => secure.close()
+          };
+          const mux = new YamuxSession(conn, { client: true });
+
+          const rpcStream = await mux.openStream();
+          const rpcReader = new ByteReader(async () => {
+            try {
+              return await rpcStream.read();
+            } catch {
+              return null;
+            }
+          });
+          const readExactly = (n) => rpcReader.readExactly(n);
+          const write = (b) => rpcStream.write(b);
+          await writeStreamHello(write, "rpc");
+
+          const rpc = new RpcClient(readExactly, write);
+          const rpcProxy = new RpcProxy();
+          rpcProxy.attach(rpc);
+
+          client = { secure, mux, rpc, rpcProxy };
+          $close.disabled = false;
+
+          const notified = waitNotify(rpcProxy, 2, 2000);
+          const resp = await rpcProxy.call(1, {});
+          logLine("rpc response: " + JSON.stringify(resp.payload));
+          logLine("rpc notify: " + JSON.stringify(await notified));
+
+          const echo = await mux.openStream();
+          const echoReader = new ByteReader(async () => {
+            try {
+              return await echo.read();
+            } catch {
+              return null;
+            }
+          });
+          await writeStreamHello((b) => echo.write(b), "echo");
+          const msg = new TextEncoder().encode("hello over yamux stream: echo");
+          await echo.write(msg);
+          const got = await echoReader.readExactly(msg.length);
+          logLine("echo response: " + JSON.stringify(new TextDecoder().decode(got)));
+          await echo.close();
+        } catch (e) {
+          logLine(String(e?.stack ?? e));
+          closeClient();
+        }
+      });
+
+      $close.addEventListener("click", () => {
+        closeClient();
+        logLine("closed");
+      });
+    </script>
+  </body>
+</html>
+
