@@ -1,11 +1,11 @@
 export type TunnelConnectResult = "ok" | "fail";
-export type TunnelConnectReason = "websocket_error" | "websocket_closed";
+export type TunnelConnectReason = "websocket_error" | "websocket_closed" | "timeout" | "canceled";
 
 export type TunnelAttachResult = "ok" | "fail";
 export type TunnelAttachReason = "send_failed";
 
 export type TunnelHandshakeResult = "ok" | "fail";
-export type TunnelHandshakeReason = "handshake_error";
+export type TunnelHandshakeReason = "handshake_error" | "timeout" | "canceled";
 
 export type WsCloseKind = "local" | "peer_or_error";
 

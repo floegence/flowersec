@@ -8,6 +8,7 @@ import { encodeHandshakeFrame, decodeHandshakeFrame } from "./framing.js";
 import { computeAuthTag, deriveSessionKeys } from "./kdf.js";
 import { transcriptHash } from "./transcript.js";
 import { SecureChannel, type BinaryTransport } from "./secureChannel.js";
+import { TimeoutError, throwIfAborted } from "../utils/errors.js";
 
 // Suite identifies the ECDH+AEAD combination.
 export type Suite = 1 | 2;
@@ -28,6 +29,10 @@ export type HandshakeClientOptions = Readonly<{
   maxRecordBytes: number;
   /** Maximum buffered plaintext bytes for the secure channel. */
   maxBufferedBytes?: number;
+  /** Optional AbortSignal to cancel the handshake. */
+  signal?: AbortSignal;
+  /** Optional total handshake timeout in milliseconds (0 disables). */
+  timeoutMs?: number;
 }>;
 
 // HandshakeServerOptions configures the server handshake path.
@@ -50,10 +55,28 @@ export type HandshakeServerOptions = Readonly<{
   maxRecordBytes: number;
   /** Maximum buffered plaintext bytes for the secure channel. */
   maxBufferedBytes?: number;
+  /** Optional AbortSignal to cancel the handshake. */
+  signal?: AbortSignal;
+  /** Optional total handshake timeout in milliseconds (0 disables). */
+  timeoutMs?: number;
 }>;
 
 const te = new TextEncoder();
 const td = new TextDecoder();
+
+function handshakeDeadlineMs(timeoutMs: number | undefined): number | null {
+  const ms = Math.max(0, timeoutMs ?? 10_000);
+  if (ms <= 0) return null;
+  return Date.now() + ms;
+}
+
+function ioOpts(signal: AbortSignal | undefined, deadlineMs: number | null): { signal?: AbortSignal; timeoutMs?: number } {
+  throwIfAborted(signal, "handshake aborted");
+  if (deadlineMs == null) return signal != null ? { signal } : {};
+  const remaining = deadlineMs - Date.now();
+  if (remaining <= 0) throw new TimeoutError("handshake timeout");
+  return signal != null ? { signal, timeoutMs: remaining } : { timeoutMs: remaining };
+}
 
 function randomBytes(n: number): Uint8Array {
   const out = new Uint8Array(n);
@@ -109,6 +132,7 @@ function fingerprintInit(init: E2EE_Init): string {
 export async function clientHandshake(transport: BinaryTransport, opts: HandshakeClientOptions): Promise<SecureChannel> {
   if (opts.psk.length !== 32) throw new Error("psk must be 32 bytes");
   if (opts.channelId === "") throw new Error("missing channel_id");
+  const deadlineMs = handshakeDeadlineMs(opts.timeoutMs);
   const kp = suiteKeypair(opts.suite);
   const nonceC = randomBytes(32);
   const init: E2EE_Init = {
@@ -121,10 +145,10 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
     client_features: opts.clientFeatures >>> 0
   };
   const initJson = te.encode(JSON.stringify(init));
-  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, initJson));
+  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, initJson), ioOpts(opts.signal, deadlineMs));
 
   // Read server response with ephemeral key and nonce.
-  const respFrame = await transport.readBinary();
+  const respFrame = await transport.readBinary(ioOpts(opts.signal, deadlineMs));
   const decoded = decodeHandshakeFrame(respFrame, opts.maxHandshakePayload);
   if (decoded.handshakeType !== HANDSHAKE_TYPE_RESP) throw new Error("unexpected handshake type");
   const resp = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Resp;
@@ -159,7 +183,10 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
     timestamp_unix_s: Number(ts),
     auth_tag_b64u: base64urlEncode(tag)
   };
-  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_ACK, te.encode(JSON.stringify(ack))));
+  await transport.writeBinary(
+    encodeHandshakeFrame(HANDSHAKE_TYPE_ACK, te.encode(JSON.stringify(ack))),
+    ioOpts(opts.signal, deadlineMs)
+  );
 
   // Client sends application data with the C2S keys.
   return new SecureChannel({
@@ -257,7 +284,8 @@ export async function serverHandshake(
   opts: HandshakeServerOptions
 ): Promise<SecureChannel> {
   if (opts.initExpireAtUnixS <= 0) throw new Error("missing init_exp");
-  const initFrame = await transport.readBinary();
+  const deadlineMs = handshakeDeadlineMs(opts.timeoutMs);
+  const initFrame = await transport.readBinary(ioOpts(opts.signal, deadlineMs));
   const decodedInit = decodeHandshakeFrame(initFrame, opts.maxHandshakePayload);
   if (decodedInit.handshakeType !== HANDSHAKE_TYPE_INIT) throw new Error("unexpected handshake type");
   const init = JSON.parse(td.decode(decodedInit.payloadJsonUtf8)) as E2EE_Init;
@@ -280,17 +308,20 @@ export async function serverHandshake(
     nonce_s_b64u: base64urlEncode(entry.nonceS),
     server_features: entry.serverFeatures
   };
-  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify(resp))));
+  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify(resp))), ioOpts(opts.signal, deadlineMs));
 
   let ack: E2EE_Ack;
   while (true) {
-    const frame = await transport.readBinary();
+    const frame = await transport.readBinary(ioOpts(opts.signal, deadlineMs));
     const decoded = decodeHandshakeFrame(frame, opts.maxHandshakePayload);
     if (decoded.handshakeType === HANDSHAKE_TYPE_INIT) {
       // Client retry: re-send the cached response if parameters match.
       const retry = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Init;
       if (fingerprintInit(retry) !== entry.initKey) throw new Error("unexpected init retry parameters");
-      await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify(resp))));
+      await transport.writeBinary(
+        encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify(resp))),
+        ioOpts(opts.signal, deadlineMs)
+      );
       continue;
     }
     if (decoded.handshakeType !== HANDSHAKE_TYPE_ACK) throw new Error("unexpected handshake type");

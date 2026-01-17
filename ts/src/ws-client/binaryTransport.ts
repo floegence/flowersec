@@ -1,4 +1,5 @@
 import { normalizeObserver, type ClientObserver, type ClientObserverLike, type WsErrorReason } from "../observability/observer.js";
+import { AbortError, TimeoutError, throwIfAborted } from "../utils/errors.js";
 
 // WebSocketLike abstracts browser/WS implementations used by the transport.
 export type WebSocketLike = {
@@ -8,6 +9,13 @@ export type WebSocketLike = {
   close(code?: number, reason?: string): void;
   addEventListener(type: "open" | "message" | "error" | "close", listener: (ev: any) => void): void;
   removeEventListener(type: "open" | "message" | "error" | "close", listener: (ev: any) => void): void;
+};
+
+type ReadWaiter = {
+  resolve: (b: Uint8Array) => void;
+  reject: (e: unknown) => void;
+  settled: boolean;
+  cleanup: () => void;
 };
 
 // WebSocketBinaryTransport adapts WebSocket messages to binary reads/writes.
@@ -25,9 +33,11 @@ export class WebSocketBinaryTransport {
   // Maximum buffered bytes before closing the socket.
   private readonly maxQueuedBytes: number;
   // Pending readers waiting for the next frame.
-  private waiters: Array<{ resolve: (b: Uint8Array) => void; reject: (e: unknown) => void }> = [];
+  private waiters: ReadWaiter[] = [];
   // Read cursor for waiters to avoid Array.shift() O(n).
   private waitersHead = 0;
+  // Tracks how many waiters have settled (timeout/abort) without being compacted away yet.
+  private waitersSettled = 0;
   // Serialize message handling to preserve arrival order across async Blob decoding.
   private messageChain: Promise<void> = Promise.resolve();
   // Sticky error state to fail all future reads/writes.
@@ -49,7 +59,8 @@ export class WebSocketBinaryTransport {
   }
 
   // readBinary resolves with the next queued binary message.
-  readBinary(): Promise<Uint8Array> {
+  readBinary(opts: Readonly<{ signal?: AbortSignal; timeoutMs?: number }> = {}): Promise<Uint8Array> {
+    if (opts.signal?.aborted) return Promise.reject(new AbortError("read aborted"));
     if (this.error != null) return Promise.reject(this.error);
     const b = this.shiftQueue();
     if (b != null) {
@@ -57,16 +68,58 @@ export class WebSocketBinaryTransport {
       return Promise.resolve(b);
     }
     return new Promise<Uint8Array>((resolve, reject) => {
+      if (opts.signal?.aborted) {
+        reject(new AbortError("read aborted"));
+        return;
+      }
       if (this.error != null) {
         reject(this.error);
         return;
       }
-      this.waiters.push({ resolve, reject });
+      const waiter = {
+        resolve,
+        reject,
+        settled: false,
+        cleanup: () => {}
+      };
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const onAbort = () => {
+        if (waiter.settled) return;
+        waiter.settled = true;
+        waiter.cleanup();
+        this.waitersSettled++;
+        this.compactWaitersMaybe();
+        reject(new AbortError("read aborted"));
+      };
+      const cleanup = () => {
+        if (timeout != null) clearTimeout(timeout);
+        timeout = undefined;
+        opts.signal?.removeEventListener("abort", onAbort);
+      };
+      waiter.cleanup = cleanup;
+      opts.signal?.addEventListener("abort", onAbort);
+      const timeoutMs = Math.max(0, opts.timeoutMs ?? 0);
+      if (timeoutMs > 0) {
+        timeout = setTimeout(() => {
+          if (waiter.settled) return;
+          waiter.settled = true;
+          cleanup();
+          this.waitersSettled++;
+          this.compactWaitersMaybe();
+          reject(new TimeoutError("read timeout"));
+        }, timeoutMs);
+      }
+      this.waiters.push(waiter);
     });
   }
 
   // writeBinary sends a binary frame over the websocket.
-  async writeBinary(frame: Uint8Array): Promise<void> {
+  async writeBinary(frame: Uint8Array, opts: Readonly<{ signal?: AbortSignal; timeoutMs?: number }> = {}): Promise<void> {
+    throwIfAborted(opts.signal, "write aborted");
+    if (opts.timeoutMs != null) {
+      const timeoutMs = Math.max(0, opts.timeoutMs);
+      if (timeoutMs <= 0) throw new TimeoutError("write timeout");
+    }
     if (this.error != null) throw this.error;
     this.ws.send(frame);
   }
@@ -161,6 +214,10 @@ export class WebSocketBinaryTransport {
   private push(b: Uint8Array): void {
     const w = this.shiftWaiter();
     if (w != null) {
+      if (!w.settled) {
+        w.settled = true;
+        w.cleanup();
+      }
       w.resolve(b);
       return;
     }
@@ -187,15 +244,42 @@ export class WebSocketBinaryTransport {
     return b;
   }
 
-  private shiftWaiter(): { resolve: (b: Uint8Array) => void; reject: (e: unknown) => void } | undefined {
-    if (this.waitersHead >= this.waiters.length) return undefined;
-    const w = this.waiters[this.waitersHead];
-    this.waitersHead++;
+  private shiftWaiter(): ReadWaiter | undefined {
+    while (this.waitersHead < this.waiters.length) {
+      const w = this.waiters[this.waitersHead];
+      this.waitersHead++;
+      if (w != null && !w.settled) {
+        if (this.waitersHead > 1024 && this.waitersHead * 2 > this.waiters.length) {
+          this.waiters.splice(0, this.waitersHead);
+          this.waitersHead = 0;
+          this.waitersSettled = 0;
+        }
+        return w;
+      }
+    }
     if (this.waitersHead > 1024 && this.waitersHead * 2 > this.waiters.length) {
       this.waiters.splice(0, this.waitersHead);
       this.waitersHead = 0;
+      this.waitersSettled = 0;
     }
-    return w;
+    return undefined;
+  }
+
+  private compactWaitersMaybe(): void {
+    // Timeouts/cancellations can settle waiters without any incoming messages,
+    // so we compact based on how many settled entries we're carrying around.
+    if (this.waiters.length < 64) return;
+    if (this.waitersSettled < 32) return;
+    if (this.waitersSettled * 2 <= this.waiters.length) return;
+
+    const next: ReadWaiter[] = [];
+    for (let i = this.waitersHead; i < this.waiters.length; i++) {
+      const w = this.waiters[i]!;
+      if (!w.settled) next.push(w);
+    }
+    this.waiters = next;
+    this.waitersHead = 0;
+    this.waitersSettled = 0;
   }
 
   // fail transitions the transport into a permanent error state.
@@ -209,6 +293,12 @@ export class WebSocketBinaryTransport {
     const start = this.waitersHead;
     this.waiters = [];
     this.waitersHead = 0;
-    for (let i = start; i < ws.length; i++) ws[i]!.reject(err);
+    for (let i = start; i < ws.length; i++) {
+      const w = ws[i];
+      if (w == null || w.settled) continue;
+      w.settled = true;
+      w.cleanup();
+      w.reject(err);
+    }
   }
 }

@@ -137,6 +137,50 @@ describe("connectTunnelClientRpc", () => {
     expect(observer.onTunnelConnect).toHaveBeenCalledWith("fail", "websocket_error", expect.any(Number));
   });
 
+  test("reports connect timeout", async () => {
+    const ws = new FakeWebSocket();
+    const observer = {
+      onTunnelConnect: vi.fn(),
+      onTunnelAttach: vi.fn(),
+      onTunnelHandshake: vi.fn(),
+      onWsError: vi.fn(),
+      onRpcCall: vi.fn(),
+      onRpcNotify: vi.fn()
+    };
+
+    const p = connectTunnelClientRpc(makeGrant(), {
+      wsFactory: () => ws as any,
+      connectTimeoutMs: 30,
+      observer
+    });
+
+    await expect(p).rejects.toThrow(/connect timeout/);
+    expect(observer.onTunnelConnect).toHaveBeenCalledWith("fail", "timeout", expect.any(Number));
+  });
+
+  test("reports connect cancellation", async () => {
+    const ws = new FakeWebSocket();
+    const ac = new AbortController();
+    const observer = {
+      onTunnelConnect: vi.fn(),
+      onTunnelAttach: vi.fn(),
+      onTunnelHandshake: vi.fn(),
+      onWsError: vi.fn(),
+      onRpcCall: vi.fn(),
+      onRpcNotify: vi.fn()
+    };
+
+    const p = connectTunnelClientRpc(makeGrant(), {
+      wsFactory: () => ws as any,
+      signal: ac.signal,
+      observer
+    });
+
+    setTimeout(() => ac.abort(), 0);
+    await expect(p).rejects.toThrow(/connect aborted/);
+    expect(observer.onTunnelConnect).toHaveBeenCalledWith("fail", "canceled", expect.any(Number));
+  });
+
   test("reports attach send failures", async () => {
     const ws = new FakeWebSocket();
     ws.send = () => {
@@ -183,6 +227,29 @@ describe("connectTunnelClientRpc", () => {
     await expect(p).rejects.toThrow(/handshake failed/);
 
     expect(observer.onTunnelHandshake).toHaveBeenCalledWith("fail", "handshake_error", expect.any(Number));
+  });
+
+  test("reports handshake timeout", async () => {
+    const ws = new FakeWebSocket();
+    clientHandshakeMock.mockImplementationOnce(() => new Promise(() => {}));
+    const observer = {
+      onTunnelConnect: vi.fn(),
+      onTunnelAttach: vi.fn(),
+      onTunnelHandshake: vi.fn(),
+      onWsError: vi.fn(),
+      onRpcCall: vi.fn(),
+      onRpcNotify: vi.fn()
+    };
+
+    const p = connectTunnelClientRpc(makeGrant(), {
+      wsFactory: () => ws as any,
+      handshakeTimeoutMs: 30,
+      observer
+    });
+
+    setTimeout(() => ws.emit("open", {}), 0);
+    await expect(p).rejects.toThrow(/timeout/);
+    expect(observer.onTunnelHandshake).toHaveBeenCalledWith("fail", "timeout", expect.any(Number));
   });
 
   test("close tears down rpc, mux, and secure resources", async () => {

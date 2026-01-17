@@ -58,6 +58,30 @@ class DelayedBlob extends Blob {
 const testWithBlob = typeof Blob === "undefined" ? test.skip : test;
 
 describe("WebSocketBinaryTransport", () => {
+  test("readBinary supports AbortSignal without consuming future messages", async () => {
+    const ws = new FakeWebSocket();
+    const transport = new WebSocketBinaryTransport(ws);
+
+    const ac = new AbortController();
+    const abortedRead = transport.readBinary({ signal: ac.signal });
+    ac.abort();
+    await expect(abortedRead).rejects.toThrow(/read aborted/);
+
+    ws.emit("message", { data: new Uint8Array([9]).buffer });
+    await expect(transport.readBinary()).resolves.toEqual(new Uint8Array([9]));
+  });
+
+  test("readBinary supports timeout without consuming future messages", async () => {
+    const ws = new FakeWebSocket();
+    const transport = new WebSocketBinaryTransport(ws);
+
+    const timed = transport.readBinary({ timeoutMs: 30 });
+    await expect(timed).rejects.toThrow(/read timeout/);
+
+    ws.emit("message", { data: new Uint8Array([8]).buffer });
+    await expect(transport.readBinary()).resolves.toEqual(new Uint8Array([8]));
+  });
+
   test("fails fast when queued bytes exceed limit", async () => {
     const ws = new FakeWebSocket();
     const onWsError = vi.fn();

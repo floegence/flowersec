@@ -1,5 +1,6 @@
 export * from "./utils/base64url.js";
 export * from "./utils/bin.js";
+export * from "./utils/errors.js";
 export * from "./e2ee/constants.js";
 export * from "./e2ee/framing.js";
 export * from "./e2ee/transcript.js";
