@@ -46,6 +46,9 @@ export class YamuxSession {
   // Maximum allowed DATA frame length.
   private readonly maxFrameBytes: number;
 
+  // True when this side is the yamux client (odd local stream IDs).
+  private readonly client: boolean;
+
   // Next stream ID to allocate (odd/even based on role).
   private nextStreamId: number;
   // Closed flag for terminating read loops and streams.
@@ -64,6 +67,7 @@ export class YamuxSession {
     });
     this.onIncomingStream = opts.onIncomingStream;
     this.maxFrameBytes = Math.max(0, opts.maxFrameBytes ?? DEFAULT_MAX_STREAM_WINDOW);
+    this.client = opts.client;
     this.nextStreamId = opts.client ? 1 : 2;
     void this.readLoop();
   }
@@ -211,6 +215,10 @@ export class YamuxSession {
     let s = this.streams.get(streamId);
     if (s == null) {
       if ((flags & FLAG_SYN) !== 0) {
+        if (!this.isInboundStreamIdValid(streamId)) {
+          await this.sendRst(streamId);
+          return;
+        }
         s = new YamuxStream(this, streamId, "synReceived");
         this.streams.set(streamId, s);
         await s.open();
@@ -231,6 +239,10 @@ export class YamuxSession {
     let s = this.streams.get(streamId);
     if (s == null) {
       if ((flags & FLAG_SYN) !== 0) {
+        if (!this.isInboundStreamIdValid(streamId)) {
+          await this.sendRst(streamId);
+          return;
+        }
         s = new YamuxStream(this, streamId, "synReceived");
         this.streams.set(streamId, s);
         await s.open();
@@ -241,5 +253,14 @@ export class YamuxSession {
       }
     }
     s.onWindowUpdate(delta, flags);
+  }
+
+  private isInboundStreamIdValid(streamId: number): boolean {
+    // yamux uses stream ID parity to identify the initiator:
+    // client-initiated streams are odd, server-initiated streams are even.
+    //
+    // When we are the client, the peer is the server and must initiate even IDs.
+    // When we are the server, the peer is the client and must initiate odd IDs.
+    return (streamId & 1) === (this.client ? 0 : 1);
   }
 }

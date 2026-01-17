@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { YamuxSession } from "./session.js";
 import { encodeHeader, decodeHeader } from "./header.js";
-import { FLAG_ACK, FLAG_FIN, FLAG_SYN, TYPE_DATA, TYPE_GO_AWAY, TYPE_PING, TYPE_WINDOW_UPDATE } from "./constants.js";
+import { FLAG_ACK, FLAG_FIN, FLAG_RST, FLAG_SYN, TYPE_DATA, TYPE_GO_AWAY, TYPE_PING, TYPE_WINDOW_UPDATE } from "./constants.js";
 
 class QueueConn {
   private readonly reads: Uint8Array[] = [];
@@ -99,12 +99,40 @@ describe("YamuxSession", () => {
       }
     });
 
-    const hdr = encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_SYN, streamId: 5, length: 128 });
+    // When acting as the client, inbound (server-initiated) streams must be even.
+    const hdr = encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_SYN, streamId: 6, length: 128 });
     conn.enqueue(hdr);
 
     await tick();
     expect(incoming).toBe(1);
-    expect(session.getStream(5)).toBeDefined();
+    expect(session.getStream(6)).toBeDefined();
+
+    session.close();
+  });
+
+  test("inbound SYN with wrong streamId parity is RST and does not create stream", async () => {
+    const conn = new QueueConn();
+    let incoming = 0;
+    const session = new YamuxSession(conn, {
+      client: true,
+      onIncomingStream: () => {
+        incoming += 1;
+      }
+    });
+
+    // Client expects server-initiated streams to be even; odd is invalid.
+    const hdr = encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_SYN, streamId: 5, length: 128 });
+    conn.enqueue(hdr);
+
+    await tick();
+    expect(incoming).toBe(0);
+    expect(session.getStream(5)).toBeUndefined();
+
+    expect(conn.writes.length).toBe(1);
+    const resp = decodeHeader(conn.writes[0]!, 0);
+    expect(resp.type).toBe(TYPE_WINDOW_UPDATE);
+    expect(resp.streamId).toBe(5);
+    expect(resp.flags & FLAG_RST).toBe(FLAG_RST);
 
     session.close();
   });
