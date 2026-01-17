@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -16,10 +17,12 @@ type SecureConn struct {
 	maxBufferedBytes int             // Max buffered plaintext bytes before failing.
 
 	mu      sync.Mutex   // Guards read buffer and read state.
-	cond    *sync.Cond   // Signals readers when data or errors arrive.
 	buf     bytes.Buffer // Buffered plaintext awaiting Read.
 	readErr error        // Sticky read error from readLoop.
 	closed  bool         // Close state for Read/Write.
+
+	readNotify   chan struct{} // Closed+replaced to wake Read waiters (data, errors, close, deadline changes).
+	readDeadline time.Time     // Read deadline for net.Conn Read; zero means no deadline.
 
 	sendMu     sync.Mutex // Guards send queue and send state.
 	sendCond   *sync.Cond // Signals sender when frames are queued.
@@ -27,6 +30,9 @@ type SecureConn struct {
 	sendClosed bool       // Indicates no more sends are allowed.
 	sendErr    error      // Sticky send error from writeLoop.
 	sendOnce   sync.Once  // Ensures send shutdown happens once.
+
+	writeNotify   chan struct{} // Closed+replaced to wake Write waiters (deadline changes, close).
+	writeDeadline time.Time     // Write deadline for net.Conn Write; zero means no deadline.
 
 	keys RecordKeyState // Current key material and sequence state.
 }
@@ -45,13 +51,24 @@ func NewSecureConn(t BinaryTransport, keys RecordKeyState, maxRecordBytes int, m
 		t:                t,
 		maxRecordBytes:   maxRecordBytes,
 		maxBufferedBytes: maxBufferedBytes,
+		readNotify:       make(chan struct{}),
+		writeNotify:      make(chan struct{}),
 		keys:             keys,
 	}
 	c.sendCond = sync.NewCond(&c.sendMu)
-	c.cond = sync.NewCond(&c.mu)
 	go c.writeLoop()
 	go c.readLoop()
 	return c
+}
+
+func (c *SecureConn) signalReadLocked() {
+	close(c.readNotify)
+	c.readNotify = make(chan struct{})
+}
+
+func (c *SecureConn) signalWriteLocked() {
+	close(c.writeNotify)
+	c.writeNotify = make(chan struct{})
 }
 
 func (c *SecureConn) writeLoop() {
@@ -106,7 +123,7 @@ func (c *SecureConn) readLoop() {
 				return
 			}
 			_, _ = c.buf.Write(plain)
-			c.cond.Broadcast()
+			c.signalReadLocked()
 			c.mu.Unlock()
 		case RecordFlagPing:
 			// Ignore.
@@ -130,7 +147,7 @@ func (c *SecureConn) failRead(err error) {
 	if c.readErr == nil {
 		c.readErr = err
 	}
-	c.cond.Broadcast()
+	c.signalReadLocked()
 	c.mu.Unlock()
 	_ = c.Close()
 }
@@ -144,19 +161,42 @@ func (c *SecureConn) setSendErr(err error) {
 }
 
 func (c *SecureConn) Read(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	for {
+		c.mu.Lock()
 		if c.buf.Len() > 0 {
-			return c.buf.Read(p)
+			n, err := c.buf.Read(p)
+			c.mu.Unlock()
+			return n, err
 		}
 		if c.readErr != nil {
-			return 0, c.readErr
+			err := c.readErr
+			c.mu.Unlock()
+			return 0, err
 		}
 		if c.closed {
+			c.mu.Unlock()
 			return 0, io.EOF
 		}
-		c.cond.Wait()
+
+		ch := c.readNotify
+		deadline := c.readDeadline
+		c.mu.Unlock()
+
+		if !deadline.IsZero() {
+			d := time.Until(deadline)
+			if d <= 0 {
+				return 0, os.ErrDeadlineExceeded
+			}
+			timer := time.NewTimer(d)
+			select {
+			case <-ch:
+				timer.Stop()
+				continue
+			case <-timer.C:
+				return 0, os.ErrDeadlineExceeded
+			}
+		}
+		<-ch
 	}
 }
 
@@ -199,7 +239,7 @@ func (c *SecureConn) Write(p []byte) (int, error) {
 		c.sendQueue = append(c.sendQueue, req)
 		c.sendCond.Signal()
 		c.sendMu.Unlock()
-		if err := <-req.done; err != nil {
+		if err := c.waitSend(req.done); err != nil {
 			return total, err
 		}
 
@@ -216,11 +256,12 @@ func (c *SecureConn) Close() error {
 		return nil
 	}
 	c.closed = true
-	c.cond.Broadcast()
+	c.signalReadLocked()
 	c.mu.Unlock()
 	c.sendOnce.Do(func() {
 		c.sendMu.Lock()
 		c.sendClosed = true
+		c.signalWriteLocked()
 		c.sendCond.Broadcast()
 		c.sendMu.Unlock()
 	})
@@ -230,9 +271,27 @@ func (c *SecureConn) Close() error {
 func (c *SecureConn) LocalAddr() net.Addr  { return dummyAddr("flowersec-local") }
 func (c *SecureConn) RemoteAddr() net.Addr { return dummyAddr("flowersec-remote") }
 
-func (c *SecureConn) SetDeadline(_ time.Time) error      { return nil }
-func (c *SecureConn) SetReadDeadline(_ time.Time) error  { return nil }
-func (c *SecureConn) SetWriteDeadline(_ time.Time) error { return nil }
+func (c *SecureConn) SetReadDeadline(t time.Time) error {
+	c.mu.Lock()
+	c.readDeadline = t
+	c.signalReadLocked()
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *SecureConn) SetWriteDeadline(t time.Time) error {
+	c.sendMu.Lock()
+	c.writeDeadline = t
+	c.signalWriteLocked()
+	c.sendMu.Unlock()
+	return nil
+}
+
+func (c *SecureConn) SetDeadline(t time.Time) error {
+	_ = c.SetReadDeadline(t)
+	_ = c.SetWriteDeadline(t)
+	return nil
+}
 
 // SendPing writes a keepalive record with an empty payload.
 func (c *SecureConn) SendPing() error {
@@ -260,7 +319,7 @@ func (c *SecureConn) SendPing() error {
 	c.sendQueue = append(c.sendQueue, req)
 	c.sendCond.Signal()
 	c.sendMu.Unlock()
-	return <-req.done
+	return c.waitSend(req.done)
 }
 
 // RekeyNow injects a rekey record and advances the send key.
@@ -302,7 +361,40 @@ func (c *SecureConn) RekeyNow() error {
 	}
 	c.keys.SendKey = newKey
 	c.sendMu.Unlock()
-	return <-req.done
+	return c.waitSend(req.done)
+}
+
+func (c *SecureConn) waitSend(done <-chan error) error {
+	for {
+		c.sendMu.Lock()
+		ch := c.writeNotify
+		deadline := c.writeDeadline
+		c.sendMu.Unlock()
+
+		if deadline.IsZero() {
+			select {
+			case err := <-done:
+				return err
+			case <-ch:
+				continue
+			}
+		}
+		d := time.Until(deadline)
+		if d <= 0 {
+			return os.ErrDeadlineExceeded
+		}
+		timer := time.NewTimer(d)
+		select {
+		case err := <-done:
+			timer.Stop()
+			return err
+		case <-timer.C:
+			return os.ErrDeadlineExceeded
+		case <-ch:
+			timer.Stop()
+			continue
+		}
+	}
 }
 
 // dummyAddr provides a stable net.Addr for in-memory transports.
