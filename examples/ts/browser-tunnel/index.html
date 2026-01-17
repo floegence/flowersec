@@ -60,7 +60,7 @@
         try {
           const obj = JSON.parse($in.value);
           const grant = pickGrantClient(obj);
-          client = await connectTunnelClientRpc(grant);
+          client = await connectTunnelClientRpc(grant, { origin: window.location.origin });
           $close.disabled = false;
 
           const notified = waitNotify(client.rpcProxy, 2, 2000);

@@ -39,10 +39,10 @@ npm run build
 - Role pairing: a tunnel channel requires exactly one `role=client` and one `role=server`.
   - TS tunnel client and Go tunnel client are both `role=client` and cannot talk to each other directly.
   - Use the server endpoint demo (`role=server`) as the peer for any tunnel client.
-- Browser Origin: the tunnel validates the WebSocket `Origin` header. For browser scenarios you must allow your page origin.
-  - Default allow-list is `*.redeven.com` and is meant as a placeholder. Override it in deployment.
-  - For Node clients (ws polyfill), set an `Origin` header in your `wsFactory` or start the tunnel with `--allow-no-origin`.
-  - Example: `FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 ./examples/run-tunnel-server.sh`
+- Origin policy (required): the tunnel validates the WebSocket `Origin` header and requires an explicit allow-list.
+  - Start the tunnel with `FSEC_TUNNEL_ALLOW_ORIGIN=<your-origin>` (required by `./examples/run-tunnel-server.sh`).
+  - All clients must explicitly send an Origin header. The TS/Go client helpers require an explicit `origin` value.
+  - Example (local): `FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173`
 
 ## Scenario A: TS client (Node) ↔ Go server endpoint (role=server) through tunnel
 
@@ -58,6 +58,7 @@ It prints a first JSON line including `controlplane_http_url`, `issuer_keys_file
 Terminal 2: start tunnel server (deployable service, no code changes)
 
 ```bash
+FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 \
 FSEC_TUNNEL_ISSUER_KEYS_FILE="$(jq -r '.issuer_keys_file' "$CP_JSON")" \
 FSEC_TUNNEL_AUD="$(jq -r '.tunnel_audience' "$CP_JSON")" \
 FSEC_TUNNEL_ISS="$(jq -r '.tunnel_issuer' "$CP_JSON")" \
@@ -82,13 +83,13 @@ Terminal 3: mint a channel (grants) and start the server endpoint (server-side g
 CHANNEL_JSON="$(mktemp -t fsec-channel.XXXXXX.json)"
 CP_URL="$(jq -r '.controlplane_http_url' "$CP_JSON")"
 curl -sS -X POST "$CP_URL/v1/channel/init" | tee "$CHANNEL_JSON"
-./examples/run-server-endpoint.sh "$CHANNEL_JSON"
+FSEC_ORIGIN=http://127.0.0.1:5173 ./examples/run-server-endpoint.sh "$CHANNEL_JSON"
 ```
 
 Terminal 4: run the TS tunnel client (client-side grant)
 
 ```bash
-node ./examples/ts/node-tunnel-client.mjs < "$CHANNEL_JSON"
+FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-tunnel-client.mjs < "$CHANNEL_JSON"
 ```
 
 Expected: one RPC response + one RPC notify + one `echo` stream roundtrip.
@@ -96,18 +97,6 @@ Expected: one RPC response + one RPC notify + one `echo` stream roundtrip.
 ## Scenario B: TS client (Browser) ↔ Go server endpoint (role=server) through tunnel
 
 Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint).
-
-If you started the tunnel server without an allow-list, restart it with an allowed Origin (Terminal 2):
-
-```bash
-FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 \
-FSEC_TUNNEL_ISSUER_KEYS_FILE="$(jq -r '.issuer_keys_file' "$CP_JSON")" \
-FSEC_TUNNEL_AUD="$(jq -r '.tunnel_audience' "$CP_JSON")" \
-FSEC_TUNNEL_ISS="$(jq -r '.tunnel_issuer' "$CP_JSON")" \
-FSEC_TUNNEL_LISTEN="$(jq -r '.tunnel_listen' "$CP_JSON")" \
-FSEC_TUNNEL_WS_PATH="$(jq -r '.tunnel_ws_path' "$CP_JSON")" \
-./examples/run-tunnel-server.sh
-```
 
 Then serve the repo root:
 
@@ -124,7 +113,7 @@ Tip: if you refresh/reconnect, mint a new channel again (one-time token rule).
 Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint), then:
 
 ```bash
-go run ./examples/go/go_client_tunnel < "$CHANNEL_JSON"
+go run ./examples/go/go_client_tunnel --origin http://127.0.0.1:5173 < "$CHANNEL_JSON"
 ```
 
 ## Scenario D: TS client (Node) ↔ Go direct server (no tunnel)
@@ -132,13 +121,13 @@ go run ./examples/go/go_client_tunnel < "$CHANNEL_JSON"
 Terminal 1: start the direct server (no Attach; WS immediately runs E2EE server + Yamux server)
 
 ```bash
-go run ./examples/go/direct_demo | tee /tmp/fsec-direct.json
+go run ./examples/go/direct_demo --allow-origin http://127.0.0.1:5173 | tee /tmp/fsec-direct.json
 ```
 
 Terminal 2: run the TS direct client
 
 ```bash
-node ./examples/ts/node-direct-client.mjs < /tmp/fsec-direct.json
+FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-direct-client.mjs < /tmp/fsec-direct.json
 ```
 
 ## Scenario E: Go client ↔ Go direct server (no tunnel)
@@ -146,7 +135,7 @@ node ./examples/ts/node-direct-client.mjs < /tmp/fsec-direct.json
 Reuse Scenario D terminal 1, then:
 
 ```bash
-go run ./examples/go/go_client_direct < /tmp/fsec-direct.json
+go run ./examples/go/go_client_direct --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json
 ```
 
 ## Troubleshooting

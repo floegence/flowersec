@@ -126,6 +126,7 @@ describe("connectDirectClientRpc", () => {
     };
 
     const p = connectDirectClientRpc(makeInfo(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       observer
     });
@@ -148,6 +149,7 @@ describe("connectDirectClientRpc", () => {
     };
 
     const p = connectDirectClientRpc(makeInfo(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       connectTimeoutMs: 30,
       observer
@@ -170,6 +172,7 @@ describe("connectDirectClientRpc", () => {
     };
 
     const p = connectDirectClientRpc(makeInfo(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       signal: ac.signal,
       observer
@@ -193,6 +196,7 @@ describe("connectDirectClientRpc", () => {
     };
 
     const p = connectDirectClientRpc(makeInfo(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       observer
     });
@@ -216,6 +220,7 @@ describe("connectDirectClientRpc", () => {
     };
 
     const p = connectDirectClientRpc(makeInfo(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       handshakeTimeoutMs: 30,
       observer
@@ -241,6 +246,7 @@ describe("connectDirectClientRpc", () => {
     });
 
     const p = connectDirectClientRpc(makeInfo(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any
     });
 
@@ -254,4 +260,3 @@ describe("connectDirectClientRpc", () => {
     expect(secureClose).toHaveBeenCalledTimes(1);
   });
 });
-

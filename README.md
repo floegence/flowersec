@@ -11,6 +11,8 @@ It provides a consistent protocol stack across Go and TypeScript (browser-friend
 
 Status: experimental; not audited.
 
+Security note: in any non-local deployment, use `wss://` (or terminate TLS at a reverse proxy). `ws://` exposes bearer tokens and metadata on the wire.
+
 ## Repository Layout
 
 - Go library and binaries: `go/`
@@ -66,10 +68,10 @@ make gen
 The deployable tunnel binary is `go/cmd/flowersec-tunnel/`.
 
 - TLS is **disabled by default**. For any non-local deployment, use `wss://` (either enable `--tls-cert-file/--tls-key-file` or terminate TLS at a reverse proxy).
-- Browser Origin checks are **enabled by default**:
-  - Default allow-list is `*.redeven.com` (placeholder). Override it via `--allow-origin`.
+- Origin checks are **enabled by default** and require an explicit allow-list:
   - `--allow-origin` accepts either a hostname (e.g. `example.com`) or a full Origin value (e.g. `https://example.com` or `http://127.0.0.1:5173`).
-  - Requests without `Origin` are **rejected by default**; enable `--allow-no-origin` only for non-browser clients.
+  - Requests without `Origin` are **rejected by default**; `--allow-no-origin` is intended for non-browser clients (discouraged).
+  - Client helpers require an explicit origin: in browsers pass `window.location.origin`; in Node pass `origin` and a `wsFactory` that sets the `Origin` header.
 - Token issuer (`iss`) is **required**: pass `--iss` and ensure it matches the token payload `iss` minted by your controlplane.
 
 Node.js version:
@@ -86,11 +88,11 @@ make test
 
 ## Observability
 
-The tunnel binary exposes Prometheus metrics with a signal-based switch. Metrics are disabled by default and `/metrics` returns 404 until enabled.
+The tunnel binary exposes Prometheus metrics on a dedicated metrics server. Metrics are disabled by default and `/metrics` returns 404 until enabled.
 
 - Enable metrics: send `SIGUSR1`
 - Disable metrics: send `SIGUSR2`
-- Endpoint: `GET /metrics` on the same HTTP server as the tunnel
+- Endpoint: `GET /metrics` on the metrics server (`--metrics-listen`)
 
 Example:
 
@@ -98,15 +100,17 @@ Example:
 # run tunnel
 go run ./go/cmd/flowersec-tunnel \
   --listen 127.0.0.1:8080 \
+  --metrics-listen 127.0.0.1:9090 \
   --issuer-keys-file /path/to/keys.json \
   --aud your-audience \
-  --iss your-issuer
+  --iss your-issuer \
+  --allow-origin http://127.0.0.1:5173
 
 # enable metrics
 kill -USR1 <pid>
 
 # scrape metrics
-curl http://127.0.0.1:8080/metrics
+curl http://127.0.0.1:9090/metrics
 ```
 
 Library integrations:
@@ -118,4 +122,4 @@ Library integrations:
 ## Binaries
 
 - Tunnel server (deployable): `go/cmd/flowersec-tunnel/`
-  - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`, `--iss`, `--allow-origin`, `--allow-no-origin`, `--tls-cert-file`, `--tls-key-file`
+  - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`, `--iss`, `--allow-origin`, `--allow-no-origin`, `--tls-cert-file`, `--tls-key-file`, `--metrics-listen`

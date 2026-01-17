@@ -114,12 +114,8 @@ export class WebSocketBinaryTransport {
   }
 
   // writeBinary sends a binary frame over the websocket.
-  async writeBinary(frame: Uint8Array, opts: Readonly<{ signal?: AbortSignal; timeoutMs?: number }> = {}): Promise<void> {
+  async writeBinary(frame: Uint8Array, opts: Readonly<{ signal?: AbortSignal }> = {}): Promise<void> {
     throwIfAborted(opts.signal, "write aborted");
-    if (opts.timeoutMs != null) {
-      const timeoutMs = Math.max(0, opts.timeoutMs);
-      if (timeoutMs <= 0) throw new TimeoutError("write timeout");
-    }
     if (this.error != null) throw this.error;
     this.ws.send(frame);
   }

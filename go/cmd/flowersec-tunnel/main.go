@@ -123,6 +123,7 @@ func main() {
 	var maxChannels int
 	var tlsCertFile string
 	var tlsKeyFile string
+	var metricsListen string
 	maxTotalPendingBytes := cfg.MaxTotalPendingBytes
 	writeTimeout := cfg.WriteTimeout
 	maxWriteQueueBytes := cfg.MaxWriteQueueBytes
@@ -131,12 +132,13 @@ func main() {
 	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "issuer keyset file (kid->ed25519 pubkey)")
 	flag.StringVar(&aud, "aud", "", "expected token audience")
 	flag.StringVar(&iss, "iss", "", "expected token issuer (required; must match token payload 'iss')")
-	flag.Var(&allowedOrigins, "allow-origin", "allowed browser Origin host or full Origin value (repeatable); default: redeven.com (override in deployment)")
-	flag.BoolVar(&allowNoOrigin, "allow-no-origin", cfg.AllowNoOrigin, "allow requests without Origin header (non-browser clients)")
+	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin host or full Origin value (repeatable; required)")
+	flag.BoolVar(&allowNoOrigin, "allow-no-origin", cfg.AllowNoOrigin, "allow requests without Origin header (non-browser clients; discouraged)")
 	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent websocket connections (0 uses default)")
 	flag.IntVar(&maxChannels, "max-channels", 0, "max concurrent channels (0 uses default)")
 	flag.StringVar(&tlsCertFile, "tls-cert-file", "", "enable TLS with the given certificate file (default: disabled)")
 	flag.StringVar(&tlsKeyFile, "tls-key-file", "", "enable TLS with the given private key file (default: disabled)")
+	flag.StringVar(&metricsListen, "metrics-listen", "", "listen address for metrics server (empty disables)")
 	flag.IntVar(&maxTotalPendingBytes, "max-total-pending-bytes", cfg.MaxTotalPendingBytes, "max total pending bytes buffered across all channels (0 disables)")
 	flag.DurationVar(&writeTimeout, "write-timeout", cfg.WriteTimeout, "per-frame websocket write timeout (0 disables)")
 	flag.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", cfg.MaxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (0 uses default)")
@@ -149,7 +151,7 @@ func main() {
 		log.Fatal(err)
 	}
 	if len(allowedOrigins) == 0 {
-		allowedOrigins = append(allowedOrigins, cfg.AllowedOrigins...)
+		log.Fatal("missing --allow-origin")
 	}
 
 	observer := observability.NewAtomicTunnelObserver()
@@ -178,9 +180,41 @@ func main() {
 
 	mux := http.NewServeMux()
 	s.Register(mux)
-	metricsHandler := newSwitchHandler()
-	mux.Handle("/metrics", metricsHandler)
-	metrics := newMetricsController(metricsHandler, observer, s)
+
+	var metrics *metricsController
+	var metricsSrv *http.Server
+	var metricsLn net.Listener
+	if metricsListen != "" {
+		metricsMux := http.NewServeMux()
+		metricsHandler := newSwitchHandler()
+		metricsMux.Handle("/metrics", metricsHandler)
+		metrics = newMetricsController(metricsHandler, observer, s)
+
+		metricsLn, err = net.Listen("tcp", metricsListen)
+		if err != nil {
+			log.Fatal(err)
+		}
+		metricsSrv = newHTTPServer(metricsMux)
+		if tlsCertFile != "" {
+			if metricsSrv.TLSConfig == nil {
+				metricsSrv.TLSConfig = &tls.Config{}
+			}
+			if metricsSrv.TLSConfig.MinVersion == 0 {
+				metricsSrv.TLSConfig.MinVersion = tls.VersionTLS12
+			}
+		}
+		go func() {
+			var err error
+			if tlsCertFile != "" {
+				err = metricsSrv.ServeTLS(metricsLn, tlsCertFile, tlsKeyFile)
+			} else {
+				err = metricsSrv.Serve(metricsLn)
+			}
+			if err != nil && err != http.ErrServerClosed {
+				log.Fatal(err)
+			}
+		}()
+	}
 
 	// Bind to the listen address and serve HTTP/WebSocket traffic.
 	ln, err := net.Listen("tcp", listen)
@@ -217,15 +251,19 @@ func main() {
 	}
 	wsScheme := "ws"
 	httpScheme := "http"
+	metricsScheme := "http"
 	if tlsCertFile != "" {
 		wsScheme = "wss"
 		httpScheme = "https"
+		metricsScheme = "https"
 	}
 	host := ln.Addr().String()
 	ready["ws_url"] = wsScheme + "://" + host + path
 	ready["http_url"] = httpScheme + "://" + host
 	ready["healthz_url"] = ready["http_url"] + "/healthz"
-	ready["metrics_url"] = ready["http_url"] + "/metrics"
+	if metricsLn != nil {
+		ready["metrics_url"] = metricsScheme + "://" + metricsLn.Addr().String() + "/metrics"
+	}
 	_ = json.NewEncoder(os.Stdout).Encode(ready)
 
 	// Handle reloads and shutdowns.
@@ -241,14 +279,24 @@ func main() {
 				log.Printf("reloaded issuer keyset")
 			}
 		case syscall.SIGUSR1:
+			if metrics == nil {
+				log.Printf("metrics server disabled (missing --metrics-listen)")
+				continue
+			}
 			metrics.Enable()
 			log.Printf("metrics enabled")
 		case syscall.SIGUSR2:
+			if metrics == nil {
+				continue
+			}
 			metrics.Disable()
 			log.Printf("metrics disabled")
 		default:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_ = srv.Shutdown(ctx)
+			if metricsSrv != nil {
+				_ = metricsSrv.Shutdown(ctx)
+			}
 			cancel()
 			return
 		}

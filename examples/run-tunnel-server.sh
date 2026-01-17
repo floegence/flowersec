@@ -24,13 +24,17 @@ if [[ -z "$KEYS_FILE" ]]; then
   exit 1
 fi
 
+if [[ -z "$ALLOW_ORIGIN" ]]; then
+  echo "Missing allowed Origin."
+  echo "Set FSEC_TUNNEL_ALLOW_ORIGIN to your expected browser Origin, for example:"
+  echo "  FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173"
+  exit 1
+fi
+
 echo "Starting tunnel server (aud=$AUD, iss=$ISS, listen=$LISTEN, ws_path=$WS_PATH)"
 echo "First stdout line is JSON: {\"listen\":\"...\",\"ws_path\":\"...\"}"
 cd "$ROOT/go"
-ALLOW_ORIGIN_ARGS=()
-if [[ -n "$ALLOW_ORIGIN" ]]; then
-  ALLOW_ORIGIN_ARGS+=(--allow-origin "$ALLOW_ORIGIN")
-fi
+ALLOW_ORIGIN_ARGS=(--allow-origin "$ALLOW_ORIGIN")
 TLS_ARGS=()
 if [[ -n "$TLS_CERT_FILE" || -n "$TLS_KEY_FILE" ]]; then
   if [[ -z "$TLS_CERT_FILE" || -z "$TLS_KEY_FILE" ]]; then

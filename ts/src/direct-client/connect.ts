@@ -13,6 +13,8 @@ import { RpcProxy } from "../rpc-proxy/rpcProxy.js";
 
 // DirectConnectOptions controls transport and handshake limits.
 export type DirectConnectOptions = Readonly<{
+  /** Explicit Origin value (required). In browsers this must match window.location.origin. */
+  origin: string;
   /** Optional AbortSignal to cancel connect/handshake. */
   signal?: AbortSignal;
   /** Optional websocket connect timeout in milliseconds (0 disables). */
@@ -28,13 +30,13 @@ export type DirectConnectOptions = Readonly<{
   /** Maximum queued websocket bytes before backpressure. */
   maxWsQueuedBytes?: number;
   /** Optional factory for creating the WebSocket instance. */
-  wsFactory?: (url: string) => WebSocketLike;
+  wsFactory?: (url: string, origin: string) => WebSocketLike;
   /** Optional observer for client metrics. */
   observer?: ClientObserverLike;
 }>;
 
 // connectDirectClientRpc connects to a direct websocket endpoint and returns an RPC-ready client.
-export async function connectDirectClientRpc(info: DirectConnectInfo, opts: DirectConnectOptions = {}) {
+export async function connectDirectClientRpc(info: DirectConnectInfo, opts: DirectConnectOptions) {
   const ready = assertDirectConnectInfo(info);
   const observer = normalizeObserver(opts.observer);
   const signal = opts.signal;
@@ -42,7 +44,9 @@ export async function connectDirectClientRpc(info: DirectConnectInfo, opts: Dire
   const handshakeTimeoutMs = opts.handshakeTimeoutMs ?? 10_000;
 
   const connectStart = nowSeconds();
-  const ws = (opts.wsFactory ?? defaultWebSocketFactory)(ready.ws_url);
+  const origin = opts.origin;
+  if (origin == null || origin === "") throw new Error("missing origin");
+  const ws = createWebSocket(ready.ws_url, origin, opts.wsFactory);
   try {
     await waitOpen(ws, {
       timeoutMs: connectTimeoutMs,
@@ -132,6 +136,19 @@ export async function connectDirectClientRpc(info: DirectConnectInfo, opts: Dire
 // defaultWebSocketFactory constructs a browser WebSocket.
 function defaultWebSocketFactory(url: string): WebSocketLike {
   return new WebSocket(url) as unknown as WebSocketLike;
+}
+
+function isBrowserEnv(): boolean {
+  return typeof window !== "undefined" && typeof window.location !== "undefined" && typeof window.location.origin === "string";
+}
+
+function createWebSocket(url: string, origin: string, wsFactory: ((url: string, origin: string) => WebSocketLike) | undefined): WebSocketLike {
+  if (wsFactory != null) return wsFactory(url, origin);
+  if (isBrowserEnv()) {
+    if (window.location.origin !== origin) throw new Error(`origin mismatch: expected ${origin}, got ${window.location.origin}`);
+    return defaultWebSocketFactory(url);
+  }
+  throw new Error("wsFactory is required outside the browser to set the Origin header");
 }
 
 // waitOpen resolves when the websocket opens or rejects on error/close.
@@ -242,4 +259,3 @@ async function withAbortAndTimeout<T>(
     );
   });
 }
-

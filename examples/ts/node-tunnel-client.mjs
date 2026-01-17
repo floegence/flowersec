@@ -38,8 +38,12 @@ async function main() {
   const readyOrGrant = JSON.parse(input);
   const grant = pickGrantClient(readyOrGrant);
 
+  const origin = process.env.FSEC_ORIGIN ?? "";
+  if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
+
   const client = await connectTunnelClientRpc(grant, {
-    wsFactory: (url) => new WS(url, { headers: { Origin: "https://app.redeven.com" } })
+    origin,
+    wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } })
   });
 
   try {

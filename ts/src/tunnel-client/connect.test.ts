@@ -132,6 +132,7 @@ describe("connectTunnelClientRpc", () => {
     };
 
     const p = connectTunnelClientRpc(makeGrant(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       observer
     });
@@ -154,6 +155,7 @@ describe("connectTunnelClientRpc", () => {
     };
 
     const p = connectTunnelClientRpc(makeGrant(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       connectTimeoutMs: 30,
       observer
@@ -176,6 +178,7 @@ describe("connectTunnelClientRpc", () => {
     };
 
     const p = connectTunnelClientRpc(makeGrant(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       signal: ac.signal,
       observer
@@ -201,6 +204,7 @@ describe("connectTunnelClientRpc", () => {
     };
 
     const p = connectTunnelClientRpc(makeGrant(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       observer
     });
@@ -224,6 +228,7 @@ describe("connectTunnelClientRpc", () => {
     };
 
     const p = connectTunnelClientRpc(makeGrant(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       observer
     });
@@ -247,6 +252,7 @@ describe("connectTunnelClientRpc", () => {
     };
 
     const p = connectTunnelClientRpc(makeGrant(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       handshakeTimeoutMs: 30,
       observer
@@ -272,6 +278,7 @@ describe("connectTunnelClientRpc", () => {
     });
 
     const p = connectTunnelClientRpc(makeGrant(), {
+      origin: "https://app.redeven.com",
       wsFactory: () => ws as any
     });
 

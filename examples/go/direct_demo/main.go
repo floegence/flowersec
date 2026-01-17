@@ -36,13 +36,19 @@ func main() {
 	var listen string
 	var wsPath string
 	var channelID string
+	var allowedOrigins stringSliceFlag
 	flag.StringVar(&listen, "listen", "127.0.0.1:0", "listen address")
 	flag.StringVar(&wsPath, "ws-path", "/ws", "websocket path")
 	flag.StringVar(&channelID, "channel-id", "", "fixed channel id (default: random)")
+	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin host or full Origin value (repeatable; required)")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	if len(allowedOrigins) == 0 {
+		log.Fatal("missing --allow-origin")
+	}
 
 	if channelID == "" {
 		channelID = randomB64u(24)
@@ -56,7 +62,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(wsPath, func(w http.ResponseWriter, r *http.Request) {
-		c, err := ws.Upgrade(w, r, ws.UpgraderOptions{CheckOrigin: func(r *http.Request) bool { return true }})
+		c, err := ws.Upgrade(w, r, ws.UpgraderOptions{CheckOrigin: ws.NewOriginChecker(allowedOrigins, false)})
 		if err != nil {
 			return
 		}
@@ -136,6 +142,15 @@ func main() {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
 	_ = srv.Shutdown(ctx2)
 	cancel2()
+}
+
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string { return "" }
+
+func (s *stringSliceFlag) Set(v string) error {
+	*s = append(*s, v)
+	return nil
 }
 
 func handleStream(ctx context.Context, stream net.Conn) {

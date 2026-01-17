@@ -887,6 +887,7 @@ func startTunnel(ctx context.Context, cfg loadConfig, keyFile string) (string, f
 	tunnelCfg.IssuerKeysFile = keyFile
 	tunnelCfg.TunnelAudience = "flowersec-tunnel:loadgen"
 	tunnelCfg.TunnelIssuer = "issuer-loadgen"
+	tunnelCfg.AllowedOrigins = []string{"https://app.redeven.com"}
 	if cfg.maxConns > 0 {
 		tunnelCfg.MaxConns = cfg.maxConns
 	}

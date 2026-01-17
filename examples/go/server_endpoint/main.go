@@ -7,6 +7,7 @@ import (
 	"flag"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,8 +25,14 @@ import (
 
 func main() {
 	var grantPath string
+	var origin string
 	flag.StringVar(&grantPath, "grant", "", "path to JSON-encoded ChannelInitGrant for role=server (default: stdin)")
+	flag.StringVar(&origin, "origin", "", "explicit Origin header value (required)")
 	flag.Parse()
+
+	if origin == "" {
+		log.Fatal("missing --origin")
+	}
 
 	grant, err := readGrantServer(grantPath)
 	if err != nil {
@@ -39,7 +46,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go runServerEndpoint(ctx, grant, psk)
+	go runServerEndpoint(ctx, origin, grant, psk)
 
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -47,11 +54,13 @@ func main() {
 	cancel()
 }
 
-func runServerEndpoint(ctx context.Context, grant *controlv1.ChannelInitGrant, psk []byte) {
+func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant, psk []byte) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, grant.TunnelUrl, nil)
+	h := http.Header{}
+	h.Set("Origin", origin)
+	c, _, err := websocket.DefaultDialer.DialContext(ctx, grant.TunnelUrl, h)
 	if err != nil {
 		return
 	}

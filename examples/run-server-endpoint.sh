@@ -8,6 +8,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+ORIGIN="${FSEC_ORIGIN:-}"
+if [[ -z "$ORIGIN" ]]; then
+  echo "Missing explicit Origin."
+  echo "Set FSEC_ORIGIN to the Origin you want the tunnel to accept, for example:"
+  echo "  FSEC_ORIGIN=http://127.0.0.1:5173"
+  exit 1
+fi
+
 GRANT_FILE="${1:-}"
 if [[ -n "$GRANT_FILE" && ! -f "$GRANT_FILE" ]]; then
   echo "grant file not found: $GRANT_FILE" >&2
@@ -16,7 +24,7 @@ fi
 
 cd "$ROOT/examples"
 if [[ -z "$GRANT_FILE" ]]; then
-  exec go run ./go/server_endpoint
+  exec go run ./go/server_endpoint --origin "$ORIGIN"
 else
-  exec go run ./go/server_endpoint --grant "$GRANT_FILE"
+  exec go run ./go/server_endpoint --origin "$ORIGIN" --grant "$GRANT_FILE"
 fi

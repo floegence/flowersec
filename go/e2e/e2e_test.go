@@ -40,6 +40,7 @@ func TestE2E_RPCOverTunnelE2EEYamux(t *testing.T) {
 	tunnelCfg.IssuerKeysFile = keyFile
 	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
 	tunnelCfg.TunnelIssuer = "issuer-dev"
+	tunnelCfg.AllowedOrigins = []string{"https://app.redeven.com"}
 	tunnelCfg.IdleTimeout = 2 * time.Second
 	tunnelCfg.CleanupInterval = 50 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
@@ -98,6 +99,7 @@ func TestE2E_BufferingBeforePair(t *testing.T) {
 	tunnelCfg.IssuerKeysFile = keyFile
 	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
 	tunnelCfg.TunnelIssuer = "issuer-dev"
+	tunnelCfg.AllowedOrigins = []string{"https://app.redeven.com"}
 	tunnelCfg.IdleTimeout = 2 * time.Second
 	tunnelCfg.CleanupInterval = 50 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
@@ -157,6 +159,7 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 	tunnelCfg.IssuerKeysFile = keyFile
 	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
 	tunnelCfg.TunnelIssuer = "issuer-dev"
+	tunnelCfg.AllowedOrigins = []string{"https://app.redeven.com"}
 	tunnelCfg.IdleTimeout = 150 * time.Millisecond
 	tunnelCfg.CleanupInterval = 20 * time.Millisecond
 	tun, err := server.New(tunnelCfg)

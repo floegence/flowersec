@@ -3,18 +3,23 @@ import { decryptRecord, encryptRecord, maxPlaintextBytes } from "./record.js";
 import { deriveRekeyKey } from "./kdf.js";
 
 // BinaryTransport is the minimal interface for binary message exchange.
-export type BinaryTransportOptions = Readonly<{
+export type ReadBinaryOptions = Readonly<{
   /** Optional AbortSignal to cancel the pending operation. */
   signal?: AbortSignal;
   /** Optional timeout (milliseconds) for the pending operation. */
   timeoutMs?: number;
 }>;
 
+export type WriteBinaryOptions = Readonly<{
+  /** Optional AbortSignal to cancel the pending operation. */
+  signal?: AbortSignal;
+}>;
+
 export type BinaryTransport = {
   /** Reads the next binary frame from the underlying transport. */
-  readBinary(opts?: BinaryTransportOptions): Promise<Uint8Array>;
+  readBinary(opts?: ReadBinaryOptions): Promise<Uint8Array>;
   /** Writes a binary frame to the underlying transport. */
-  writeBinary(frame: Uint8Array, opts?: BinaryTransportOptions): Promise<void>;
+  writeBinary(frame: Uint8Array, opts?: WriteBinaryOptions): Promise<void>;
   /** Closes the transport and unblocks pending readers/writers. */
   close(): void;
 };

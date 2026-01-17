@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -22,8 +23,14 @@ import (
 
 func main() {
 	var grantPath string
+	var origin string
 	flag.StringVar(&grantPath, "grant", "", "path to JSON-encoded ChannelInitGrant for role=client (default: stdin)")
+	flag.StringVar(&origin, "origin", "", "explicit Origin header value (required)")
 	flag.Parse()
+
+	if origin == "" {
+		log.Fatal("missing --origin")
+	}
 
 	grant, err := readGrant(grantPath)
 	if err != nil {
@@ -37,7 +44,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, grant.TunnelUrl, nil)
+	h := http.Header{}
+	h.Set("Origin", origin)
+	c, _, err := websocket.DefaultDialer.DialContext(ctx, grant.TunnelUrl, h)
 	if err != nil {
 		log.Fatal(err)
 	}

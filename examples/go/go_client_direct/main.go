@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -27,8 +28,14 @@ type directInfo struct {
 
 func main() {
 	var infoPath string
+	var origin string
 	flag.StringVar(&infoPath, "info", "", "path to JSON output from direct_demo (default: stdin)")
+	flag.StringVar(&origin, "origin", "", "explicit Origin header value (required)")
 	flag.Parse()
+
+	if origin == "" {
+		log.Fatal("missing --origin")
+	}
 
 	info, err := readDirectInfo(infoPath)
 	if err != nil {
@@ -42,7 +49,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, info.WSURL, nil)
+	h := http.Header{}
+	h.Set("Origin", origin)
+	c, _, err := websocket.DefaultDialer.DialContext(ctx, info.WSURL, h)
 	if err != nil {
 		log.Fatal(err)
 	}

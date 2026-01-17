@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/floegence/flowersec/crypto/e2ee"
@@ -23,6 +24,7 @@ type TunnelClientOptions struct {
 	ConnectTimeout   time.Duration // WebSocket connect timeout (0 disables).
 	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 disables).
 	MaxRecordBytes   int           // Max encrypted record size on the wire (0 uses default).
+	Origin           string        // Explicit Origin header value (required).
 }
 
 // TunnelClient is a convenience wrapper for a tunnel + E2EE + yamux + RPC client stack.
@@ -63,7 +65,12 @@ func ConnectTunnelClientRPC(ctx context.Context, grant *controlv1.ChannelInitGra
 	connectCtx, connectCancel := rpc.WithTimeout(ctx, opts.ConnectTimeout)
 	defer connectCancel()
 
-	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{})
+	if opts.Origin == "" {
+		return nil, errors.New("missing origin")
+	}
+	h := http.Header{}
+	h.Set("Origin", opts.Origin)
+	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h})
 	if err != nil {
 		return nil, err
 	}

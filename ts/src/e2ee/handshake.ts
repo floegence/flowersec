@@ -71,12 +71,17 @@ function handshakeDeadlineMs(timeoutMs: number | undefined): number | null {
   return Date.now() + ms;
 }
 
-function ioOpts(signal: AbortSignal | undefined, deadlineMs: number | null): { signal?: AbortSignal; timeoutMs?: number } {
+function ioReadOpts(signal: AbortSignal | undefined, deadlineMs: number | null): { signal?: AbortSignal; timeoutMs?: number } {
   throwIfAborted(signal, "handshake aborted");
   if (deadlineMs == null) return signal != null ? { signal } : {};
   const remaining = deadlineMs - Date.now();
   if (remaining <= 0) throw new TimeoutError("handshake timeout");
   return signal != null ? { signal, timeoutMs: remaining } : { timeoutMs: remaining };
+}
+
+function ioWriteOpts(signal: AbortSignal | undefined): { signal?: AbortSignal } {
+  throwIfAborted(signal, "handshake aborted");
+  return signal != null ? { signal } : {};
 }
 
 function randomBytes(n: number): Uint8Array {
@@ -146,10 +151,10 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
     client_features: opts.clientFeatures >>> 0
   };
   const initJson = te.encode(JSON.stringify(init));
-  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, initJson), ioOpts(opts.signal, deadlineMs));
+  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, initJson), ioWriteOpts(opts.signal));
 
   // Read server response with ephemeral key and nonce.
-  const respFrame = await transport.readBinary(ioOpts(opts.signal, deadlineMs));
+  const respFrame = await transport.readBinary(ioReadOpts(opts.signal, deadlineMs));
   const decoded = decodeHandshakeFrame(respFrame, opts.maxHandshakePayload);
   if (decoded.handshakeType !== HANDSHAKE_TYPE_RESP) throw new Error("unexpected handshake type");
   const resp = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Resp;
@@ -186,11 +191,11 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
   };
   await transport.writeBinary(
     encodeHandshakeFrame(HANDSHAKE_TYPE_ACK, te.encode(JSON.stringify(ack))),
-    ioOpts(opts.signal, deadlineMs)
+    ioWriteOpts(opts.signal)
   );
 
   // Server-finished confirmation: require an encrypted ping record (seq=1) before returning.
-  const finishedFrame = await transport.readBinary(ioOpts(opts.signal, deadlineMs));
+  const finishedFrame = await transport.readBinary(ioReadOpts(opts.signal, deadlineMs));
   const finished = decryptRecord(keys.s2cKey, keys.s2cNoncePrefix, finishedFrame, 1n, opts.maxRecordBytes);
   if (finished.flags !== RECORD_FLAG_PING || finished.plaintext.length !== 0) {
     throw new Error("expected server-finished ping");
@@ -294,7 +299,7 @@ export async function serverHandshake(
 ): Promise<SecureChannel> {
   if (opts.initExpireAtUnixS <= 0) throw new Error("missing init_exp");
   const deadlineMs = handshakeDeadlineMs(opts.timeoutMs);
-  const initFrame = await transport.readBinary(ioOpts(opts.signal, deadlineMs));
+  const initFrame = await transport.readBinary(ioReadOpts(opts.signal, deadlineMs));
   const decodedInit = decodeHandshakeFrame(initFrame, opts.maxHandshakePayload);
   if (decodedInit.handshakeType !== HANDSHAKE_TYPE_INIT) throw new Error("unexpected handshake type");
   const init = JSON.parse(td.decode(decodedInit.payloadJsonUtf8)) as E2EE_Init;
@@ -317,11 +322,11 @@ export async function serverHandshake(
     nonce_s_b64u: base64urlEncode(entry.nonceS),
     server_features: entry.serverFeatures
   };
-  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify(resp))), ioOpts(opts.signal, deadlineMs));
+  await transport.writeBinary(encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify(resp))), ioWriteOpts(opts.signal));
 
   let ack: E2EE_Ack;
   while (true) {
-    const frame = await transport.readBinary(ioOpts(opts.signal, deadlineMs));
+    const frame = await transport.readBinary(ioReadOpts(opts.signal, deadlineMs));
     const decoded = decodeHandshakeFrame(frame, opts.maxHandshakePayload);
     if (decoded.handshakeType === HANDSHAKE_TYPE_INIT) {
       // Client retry: re-send the cached response if parameters match.
@@ -329,7 +334,7 @@ export async function serverHandshake(
       if (fingerprintInit(retry) !== entry.initKey) throw new Error("unexpected init retry parameters");
       await transport.writeBinary(
         encodeHandshakeFrame(HANDSHAKE_TYPE_RESP, te.encode(JSON.stringify(resp))),
-        ioOpts(opts.signal, deadlineMs)
+        ioWriteOpts(opts.signal)
       );
       continue;
     }
@@ -366,7 +371,7 @@ export async function serverHandshake(
 
   // Server-finished confirmation: send an encrypted ping record (seq=1) immediately after the handshake.
   const pingFrame = encryptRecord(keys.s2cKey, keys.s2cNoncePrefix, RECORD_FLAG_PING, 1n, new Uint8Array(), opts.maxRecordBytes);
-  await transport.writeBinary(pingFrame, ioOpts(opts.signal, deadlineMs));
+  await transport.writeBinary(pingFrame, ioWriteOpts(opts.signal));
 
   // Server sends application data with the S2C keys.
   return new SecureChannel({
