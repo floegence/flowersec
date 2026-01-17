@@ -8,6 +8,30 @@ The IDL used in this repository is a JSON-based schema with the suffix `.fidl.js
 The generator scans the input directory recursively for `*.fidl.json` files. The
 `namespace` field is required and drives output paths.
 
+This document describes the exact JSON syntax supported by the current generator
+(`tools/idlgen`). It is intended for first-time users who need to write IDL JSON
+from scratch.
+
+## Quick start
+
+1) Create a file under `idl/flowersec/<domain>/<version>/` with suffix `.fidl.json`.
+
+2) Write a single JSON object with at least:
+
+- `namespace`: `flowersec.<domain>.<version>`
+- `messages`: one or more message definitions (or an empty object)
+
+3) Run code generation from repo root:
+
+```
+make gen
+```
+
+Generated outputs:
+
+- Go: `go/gen/flowersec/<domain>/<version>/types.gen.go` (and `rpc.gen.go` if `services` is present)
+- TypeScript: `ts/src/gen/flowersec/<domain>/<version>.gen.ts` (and `<version>.rpc.gen.ts` if `services` is present)
+
 ## File layout and namespace
 
 Typical layout in this repo follows:
@@ -27,7 +51,31 @@ The generator extracts:
 - `domain` as the second segment (e.g. `rpc` in `flowersec.rpc.v1`).
 - `version` as the last segment (e.g. `v1`).
 
+Notes:
+
+- The generator trusts the `namespace` to determine output paths; it does not infer
+  `domain`/`version` from the on-disk directory names.
+- The `domain` is a logical protocol area. In this repo you will see domains like
+  `tunnel`, `e2ee`, `rpc`, and `controlplane`.
+
 ## JSON schema
+
+Each `.fidl.json` file is a single JSON object.
+
+### Supported top-level keys
+
+The generator recognizes the following top-level keys:
+
+- `namespace` (required): string
+- `enums` (optional): object
+- `messages` (optional): object
+- `services` (optional): object
+
+Unknown keys are ignored by the current generator (Go's JSON decoder ignores unknown fields),
+but you should avoid relying on that behavior. For compatibility and clarity, use only the
+keys listed above.
+
+### Full shape (reference)
 
 ```
 {
@@ -81,10 +129,128 @@ Notes:
 - `comment` and `value_comments` are optional and only affect generated doc comments.
 - Enum `type` is only used for Go output; `u8` -> `uint8`, `u16` -> `uint16`, otherwise `uint32`.
 
+## Naming and style guidelines
+
+- File suffix must be `.fidl.json`.
+- `namespace` must be non-empty.
+- Message and enum names become code identifiers; prefer `PascalCase` names:
+  - `ChannelInitGrant`, `RpcEnvelope`, `StreamHello`
+- Field names are expected to be `snake_case` because the wire format is JSON:
+  - `channel_id`, `e2ee_psk_b64u`, `endpoint_instance_id`
+
+Go output:
+
+- Field names are converted to exported `PascalCase` struct fields.
+
+TypeScript output:
+
+- Field names remain `snake_case` because the generated types represent the wire JSON.
+- A separate “camelCase API layer” is not generated automatically; if you want that, wrap it in your own facade.
+
+## Enums
+
+Enums are defined under the `enums` map:
+
+```
+"enums": {
+  "Role": {
+    "comment": "Endpoint role for tunnel attach.",
+    "type": "u8",
+    "values": {
+      "client": 1,
+      "server": 2
+    },
+    "value_comments": {
+      "client": "Client endpoint.",
+      "server": "Server endpoint."
+    }
+  }
+}
+```
+
+Rules and behavior:
+
+- Enum names are keys in `enums` (example: `"Role"`).
+- `values` is a map of string keys to integer values.
+- `type` (optional) only affects Go output integer width:
+  - `u8` -> `uint8`
+  - `u16` -> `uint16`
+  - anything else / omitted -> `uint32`
+- TS always generates a `number`-backed `enum`.
+- Generated TS also includes runtime validation for enum-typed fields: the number must be one of the declared values.
+
+## Messages
+
+Messages are defined under the `messages` map.
+
+Example:
+
+```
+"messages": {
+  "ChannelInitGrant": {
+    "comment": "Grant issued by controlplane to attach and start E2EE.",
+    "fields": [
+      { "name": "tunnel_url", "type": "string" },
+      { "name": "channel_id", "type": "string" },
+      { "name": "idle_timeout_seconds", "type": "i32" },
+      { "name": "allowed_suites", "type": "[]Suite" },
+      { "name": "token", "type": "string" }
+    ]
+  }
+}
+```
+
+### Field object keys
+
+Each field object supports:
+
+- `name` (required): string
+- `type` (required): string
+- `optional` (optional): boolean
+- `comment` (optional): string
+
+Optional fields:
+
+- Go: pointer field + `omitempty`
+- TS: optional property (`field_name?: Type`)
+
+## Supported field types
+
+The `type` string supports:
+
+- Scalars: `string`, `bool`, `u8`, `u16`, `u32`, `u64`, `i32`, `i64`
+- JSON escape hatch: `json`
+- Map: `map<string,string>`
+- Array: `[]T` (example: `[]u32`, `[]Suite`, `[]Attach`)
+- Reference: `EnumOrMessage` (must match a declared enum or message name)
+
+Type mappings:
+
+```
+string             -> Go string            | TS string
+bool               -> Go bool              | TS boolean
+u8                 -> Go uint8             | TS number
+u16                -> Go uint16            | TS number
+u32                -> Go uint32            | TS number
+u64                -> Go uint64            | TS number (must be a safe integer)
+i32                -> Go int32             | TS number
+i64                -> Go int64             | TS number (must be a safe integer)
+json               -> Go json.RawMessage   | TS unknown
+map<string,string> -> Go map[string]string | TS Record<string, string>
+[]T                -> Go []T               | TS T[]
+EnumOrMessage      -> Go EnumOrMessage     | TS EnumOrMessage
+```
+
+Important JSON/TS constraints:
+
+- The wire format is JSON, so TS uses `number` for numeric values.
+- For `u64` and `i64` in TS, runtime validation enforces `Number.isSafeInteger(...)` to avoid silent precision loss.
+- For `u8`/`u16`/`u32` in TS, runtime validation enforces integer-ness and upper bounds.
+
 ## Services and typed RPC stubs
 
-The `services` section is a lightweight way to bind stable RPC `type_id` values to named methods and message types.
-It does not change the wire envelope format. It exists to generate ergonomic, strongly typed client/server code.
+The `services` section binds stable RPC `type_id` values to named methods and message types.
+It does not change the RPC wire envelope format; it only generates ergonomic, strongly typed wrappers.
 
 Rules:
 
@@ -94,36 +260,63 @@ Rules:
 - For `request` methods, `response` must refer to a message declared in the same file.
 - For `notify` methods, `response` must be omitted.
 
-## Supported field types and mappings
+### Service object keys
+
+`services` is a map of service name -> service definition. Each service definition supports:
+
+- `comment` (optional): string
+- `methods` (required for useful output): object map of method name -> method definition
+
+Each method definition supports:
+
+- `comment` (optional): string
+- `kind` (required): `"request"` or `"notify"`
+- `type_id` (required): integer (non-zero)
+- `request` (required): message name (must exist in this file)
+- `response` (required for `request`): message name (must exist in this file)
+
+### Minimal end-to-end example (request + notify)
 
 ```
-string             -> Go string            | TS string
-bool               -> Go bool              | TS boolean
-u8                 -> Go uint8             | TS number
-u16                -> Go uint16            | TS number
-u32                -> Go uint32            | TS number
-u64                -> Go uint64            | TS number (must be a safe integer: 0..Number.MAX_SAFE_INTEGER)
-i32                -> Go int32             | TS number
-i64                -> Go int64             | TS number
-json               -> Go json.RawMessage   | TS unknown
-map<string,string> -> Go map[string]string | TS Record<string, string>
-[]T                -> Go []T               | TS T[]
-EnumOrMessage      -> Go EnumOrMessage     | TS EnumOrMessage
+{
+  "namespace": "flowersec.demo.v1",
+  "enums": {},
+  "messages": {
+    "PingRequest": { "comment": "Ping request.", "fields": [] },
+    "PingResponse": {
+      "comment": "Ping response.",
+      "fields": [{ "name": "ok", "type": "bool", "comment": "Whether the request succeeded." }]
+    },
+    "HelloNotify": {
+      "comment": "Hello notification payload.",
+      "fields": [{ "name": "hello", "type": "string", "comment": "Hello message." }]
+    }
+  },
+  "services": {
+    "Demo": {
+      "comment": "Demo service used by examples and integration tests.",
+      "methods": {
+        "Ping": { "kind": "request", "type_id": 1, "request": "PingRequest", "response": "PingResponse" },
+        "Hello": { "kind": "notify", "type_id": 2, "request": "HelloNotify" }
+      }
+    }
+  }
+}
 ```
 
-## Optional fields
+## Runtime validation in generated TypeScript
 
-When `optional: true` is set on a field:
+For every generated message and enum, `idlgen` emits runtime `assert*` helpers in `<version>.gen.ts`:
 
-- Go: the field type becomes a pointer and the JSON tag includes `omitempty`.
-- TypeScript: the field becomes optional (`field_name?: Type`).
+- `assert<MessageName>(v: unknown): MessageName`
 
-## Naming rules
+These helpers validate:
 
-- Field names are expected to be `snake_case`. Go output converts them to exported
-  `PascalCase` field names. The special field name `json` becomes `JSON` in Go.
-- Enum values are emitted with the enum name prefix, for example `Role_client`.
-- Message and enum type names are used verbatim in both Go and TypeScript output.
+- required fields exist
+- enum values are within the declared set
+- numeric values are integers and within the declared bounds (`u8`, `u16`, `u32`, `i32`, and safe integers for `u64`/`i64`)
+
+Typed RPC stubs use these asserts automatically.
 
 ## Generator outputs
 
@@ -136,6 +329,14 @@ When `services` is present:
 
 - Go: `go/gen/flowersec/<domain>/<version>/rpc.gen.go` (typed stubs; constants + clients + registration helpers).
 - TypeScript: `ts/src/gen/flowersec/<domain>/<version>.rpc.gen.ts` (typed client factory).
+
+## Deterministic ordering
+
+To keep diffs stable, the generator sorts:
+
+- input `.fidl.json` file paths
+- enum names, message names, and service names
+- enum value keys and service method names
 
 ## Usage
 
@@ -181,3 +382,19 @@ A simplified example based on `idl/flowersec/tunnel/v1/tunnel.fidl.json`:
   }
 }
 ```
+
+## FAQ / common mistakes
+
+### “Generation failed: unknown request/response message”
+
+For typed RPC stubs, method `request`/`response` must refer to a message defined in the same `.fidl.json` file.
+
+### “My u64/i64 values break in TypeScript”
+
+The wire format is JSON and TS represents numbers as IEEE-754 doubles. Values must be safe integers.
+If you need full 64-bit integer support in JS, you must represent them as strings in the wire schema
+(not currently supported by this generator).
+
+### “Does the IDL support `bytes`, `errors`, or union types?”
+
+Not in the current generator. The supported field type keywords are listed in "Supported field types".
