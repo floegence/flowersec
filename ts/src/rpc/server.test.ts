@@ -150,6 +150,36 @@ describe("RpcServer", () => {
     expect(resp.payload).toEqual({ ok: true });
   });
 
+  test("request handler errors do not stop serve loop", async () => {
+    const q = new ByteQueue();
+    const writes: Uint8Array[] = [];
+    const server = new RpcServer(q.readExactly.bind(q), async (b) => {
+      writes.push(b);
+    });
+    server.register(1, async () => {
+      throw new Error("boom");
+    });
+    server.register(2, async (payload) => ({ payload }));
+
+    const req1 = await makeFrame({ type_id: 1, request_id: 5, response_to: 0, payload: { x: 1 } });
+    const req2 = await makeFrame({ type_id: 2, request_id: 6, response_to: 0, payload: { ok: true } });
+    await q.write(req1);
+    await q.write(req2);
+
+    const serve = server.serve();
+    await waitFor(() => writes.length === 2);
+    q.close(new Error("eof"));
+    await expect(serve).rejects.toThrow(/eof/);
+
+    const resp1 = decodeEnvelope(writes[0]!);
+    expect(resp1.response_to).toBe(5);
+    expect(resp1.error?.code).toBe(500);
+
+    const resp2 = decodeEnvelope(writes[1]!);
+    expect(resp2.response_to).toBe(6);
+    expect(resp2.payload).toEqual({ ok: true });
+  });
+
   test("ignores response_to frames", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];

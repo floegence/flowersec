@@ -33,13 +33,20 @@ func (r *Router) Register(typeID uint32, h Handler) {
 	r.handlers[typeID] = h
 }
 
-func (r *Router) handle(ctx context.Context, typeID uint32, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
+func (r *Router) handle(ctx context.Context, typeID uint32, payload json.RawMessage) (out json.RawMessage, rpcErr *rpcv1.RpcError) {
 	r.mu.RLock()
 	h := r.handlers[typeID]
 	r.mu.RUnlock()
 	if h == nil {
 		return nil, &rpcv1.RpcError{Code: 404, Message: strPtr("handler not found")}
 	}
+	defer func() {
+		if recover() != nil {
+			// Treat handler panics as internal errors so user code cannot crash the process.
+			out = nil
+			rpcErr = &rpcv1.RpcError{Code: 500, Message: strPtr("handler panic")}
+		}
+	}()
 	return h(ctx, payload)
 }
 
@@ -316,7 +323,11 @@ func (c *Client) readLoop() {
 				}
 				c.mu.Unlock()
 				for _, h := range handlers {
-					h.fn(env.Payload)
+					func() {
+						// User callbacks must not be able to crash the transport read loop.
+						defer func() { _ = recover() }()
+						h.fn(env.Payload)
+					}()
 				}
 			}
 			continue

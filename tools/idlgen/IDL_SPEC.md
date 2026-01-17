@@ -74,7 +74,7 @@ bool               -> Go bool              | TS boolean
 u8                 -> Go uint8             | TS number
 u16                -> Go uint16            | TS number
 u32                -> Go uint32            | TS number
-u64                -> Go uint64            | TS number
+u64                -> Go uint64            | TS number (must be a safe integer: 0..Number.MAX_SAFE_INTEGER)
 i32                -> Go int32             | TS number
 i64                -> Go int64             | TS number
 json               -> Go json.RawMessage   | TS unknown

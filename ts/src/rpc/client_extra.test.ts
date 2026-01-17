@@ -165,4 +165,60 @@ describe("RpcClient extra behavior", () => {
     q.close(new Error("eof"));
     expect(results).toEqual(["rpc_error", "handler_not_found"]);
   });
+
+  test("notification handler errors do not stop readLoop", async () => {
+    const q = new ByteQueue();
+    let notifyOk = 0;
+    const client = new RpcClient(q.readExactly.bind(q), async (frame) => {
+      const env = decodeEnvelope(frame);
+      if (env.request_id === 0) return;
+      await writeJsonFrame(q.write.bind(q), {
+        type_id: env.type_id,
+        request_id: 0,
+        response_to: env.request_id,
+        payload: env.payload
+      });
+    });
+
+    client.onNotify(9, () => {
+      throw new Error("boom");
+    });
+    client.onNotify(9, () => {
+      notifyOk += 1;
+    });
+
+    await writeJsonFrame(q.write.bind(q), {
+      type_id: 9,
+      request_id: 0,
+      response_to: 0,
+      payload: { ping: true }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(notifyOk).toBe(1);
+
+    const resp = await client.call(1, { ok: true });
+    expect(resp.payload).toEqual({ ok: true });
+
+    client.close();
+    q.close(new Error("eof"));
+  });
+
+  test("rejects rpc envelopes with unsafe u64 response_to", async () => {
+    const q = new ByteQueue();
+    const client = new RpcClient(q.readExactly.bind(q), async (frame) => {
+      const env = decodeEnvelope(frame);
+      if (env.request_id === 0) return;
+      // 2^53 is exactly representable but outside JS safe integer range.
+      await writeJsonFrame(q.write.bind(q), {
+        type_id: env.type_id,
+        request_id: 0,
+        response_to: 9007199254740992,
+        payload: { ok: true }
+      });
+    });
+
+    await expect(client.call(1, { ok: true })).rejects.toThrow(/bad rpc envelope: response_to/);
+    client.close();
+    q.close(new Error("eof"));
+  });
 });

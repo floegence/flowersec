@@ -1,5 +1,6 @@
 import type { RpcEnvelope, RpcError } from "../gen/flowersec/rpc/v1.gen.js";
 import { readJsonFrame, writeJsonFrame } from "./framing.js";
+import { assertRpcEnvelope } from "./validate.js";
 
 // RpcHandler processes a request and returns a payload or error.
 export type RpcHandler = (payload: unknown) => Promise<{ payload: unknown; error?: RpcError }>;
@@ -25,7 +26,7 @@ export class RpcServer {
   async serve(signal?: AbortSignal): Promise<void> {
     while (!this.closed) {
       if (signal?.aborted) throw signal.reason ?? new Error("aborted");
-      const v = (await readJsonFrame(this.readExactly, 1 << 20)) as RpcEnvelope;
+      const v = assertRpcEnvelope(await readJsonFrame(this.readExactly, 1 << 20));
       if (v.response_to !== 0) continue;
       if (v.request_id === 0) {
         const h = this.handlers.get(v.type_id >>> 0);
@@ -39,7 +40,17 @@ export class RpcServer {
         continue;
       }
       const h = this.handlers.get(v.type_id >>> 0);
-      const out = h ? await h(v.payload) : { payload: null, error: { code: 404, message: "handler not found" } };
+      let out: Awaited<ReturnType<RpcHandler>>;
+      if (h == null) {
+        out = { payload: null, error: { code: 404, message: "handler not found" } };
+      } else {
+        try {
+          out = await h(v.payload);
+        } catch {
+          // Keep the serve loop alive on request handler errors.
+          out = { payload: null, error: { code: 500, message: "internal error" } };
+        }
+      }
       const resp: RpcEnvelope = {
         type_id: v.type_id,
         request_id: 0,

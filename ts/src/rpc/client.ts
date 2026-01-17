@@ -1,6 +1,7 @@
 import type { RpcEnvelope, RpcError } from "../gen/flowersec/rpc/v1.gen.js";
 import { normalizeObserver, nowSeconds, type ClientObserver, type ClientObserverLike, type RpcCallResult } from "../observability/observer.js";
 import { readJsonFrame, writeJsonFrame } from "./framing.js";
+import { assertRpcEnvelope } from "./validate.js";
 
 // Guard against precision loss when encoding request IDs as numbers.
 const MAX_SAFE_REQUEST_ID = BigInt(Number.MAX_SAFE_INTEGER);
@@ -96,14 +97,20 @@ export class RpcClient {
   private async readLoop(): Promise<void> {
     try {
       while (!this.closed) {
-        const v = (await readJsonFrame(this.readExactly, 1 << 20)) as RpcEnvelope;
+        const v = assertRpcEnvelope(await readJsonFrame(this.readExactly, 1 << 20));
         if (v.response_to === 0) {
           // Notification: response_to=0 and request_id=0.
           if (v.request_id === 0) {
             this.observer.onRpcNotify();
             const set = this.notifyHandlers.get(v.type_id >>> 0);
             if (set != null) {
-              for (const h of set) h(v.payload);
+              for (const h of set) {
+                try {
+                  h(v.payload);
+                } catch {
+                  // User handlers should not be able to take down the transport read loop.
+                }
+              }
             }
           }
           continue;
