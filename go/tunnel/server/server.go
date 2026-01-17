@@ -11,6 +11,7 @@ import (
 	"github.com/floegence/flowersec/controlplane/token"
 	"github.com/floegence/flowersec/crypto/e2ee"
 	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
+	"github.com/floegence/flowersec/internal/timeutil"
 	"github.com/floegence/flowersec/observability"
 	"github.com/floegence/flowersec/realtime/ws"
 	"github.com/floegence/flowersec/tunnel/protocol"
@@ -124,6 +125,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.ClockSkew < 0 {
 		cfg.ClockSkew = 0
 	}
+	cfg.ClockSkew = timeutil.NormalizeSkew(cfg.ClockSkew)
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = 500 * time.Millisecond
 	}

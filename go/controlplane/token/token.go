@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/internal/base64url"
+	"github.com/floegence/flowersec/internal/timeutil"
 )
 
 // Prefix identifies the token format version.
@@ -125,6 +126,7 @@ func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error
 	if skew < 0 {
 		skew = 0
 	}
+	skew = timeutil.NormalizeSkew(skew)
 
 	iat := time.Unix(p.Iat, 0)
 	exp := time.Unix(p.Exp, 0)

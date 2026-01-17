@@ -11,6 +11,7 @@ import (
 	controlv1 "github.com/floegence/flowersec/gen/flowersec/controlplane/v1"
 	e2eev1 "github.com/floegence/flowersec/gen/flowersec/e2ee/v1"
 	"github.com/floegence/flowersec/internal/base64url"
+	"github.com/floegence/flowersec/internal/timeutil"
 )
 
 const (
@@ -141,7 +142,8 @@ func (s *Service) ReissueToken(grant *controlv1.ChannelInitGrant) (*controlv1.Ch
 	if skew < 0 {
 		skew = 0
 	}
-	if now.Unix() > grant.ChannelInitExpireAtUnixS+int64(skew/time.Second) {
+	skew = timeutil.NormalizeSkew(skew)
+	if now.Unix() > timeutil.AddSkewUnix(grant.ChannelInitExpireAtUnixS, skew) {
 		return nil, ErrChannelInitExpired
 	}
 	tokenExpSeconds := s.Params.TokenExpSeconds

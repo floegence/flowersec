@@ -4,6 +4,8 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/floegence/flowersec/internal/timeutil"
 )
 
 // TokenUseCache provides in-memory single-use enforcement for token_id values.
@@ -75,22 +77,8 @@ func (c *TokenUseCache) Cleanup(now time.Time) {
 	}
 }
 
-func skewSeconds(d time.Duration) int64 {
-	if d <= 0 {
-		return 0
-	}
-	secs := d / time.Second
-	if d%time.Second != 0 {
-		secs++
-	}
-	if secs < 0 {
-		return 0
-	}
-	return int64(secs)
-}
-
 func addSkewUnix(unixS int64, skew time.Duration) int64 {
-	secs := skewSeconds(skew)
+	secs := timeutil.SkewSecondsCeil(skew)
 	if secs == 0 {
 		return unixS
 	}

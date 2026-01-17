@@ -14,6 +14,7 @@ import (
 
 	e2eev1 "github.com/floegence/flowersec/gen/flowersec/e2ee/v1"
 	"github.com/floegence/flowersec/internal/base64url"
+	"github.com/floegence/flowersec/internal/timeutil"
 )
 
 type HandshakeOptions struct {
@@ -377,11 +378,12 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	if skew < 0 {
 		skew = 0
 	}
+	skew = timeutil.NormalizeSkew(skew)
 	ts := time.Unix(int64(ack.TimestampUnixS), 0)
 	if ts.Before(now.Add(-skew)) || ts.After(now.Add(skew)) {
 		return nil, errors.New("timestamp out of skew")
 	}
-	if int64(ack.TimestampUnixS) > opts.InitExpireAtUnixS+int64(skew.Seconds()) {
+	if int64(ack.TimestampUnixS) > timeutil.AddSkewUnix(opts.InitExpireAtUnixS, skew) {
 		return nil, errors.New("timestamp after init_exp")
 	}
 

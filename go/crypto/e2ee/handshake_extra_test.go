@@ -223,3 +223,37 @@ func TestServerHandshakeCacheMaxEntries(t *testing.T) {
 		t.Fatalf("expected too many pending handshakes error")
 	}
 }
+
+func TestServerHandshakeRoundsSkewToWholeSeconds(t *testing.T) {
+	psk := make([]byte, 32)
+	_, frame := makeInit(t, SuiteX25519HKDFAES256GCM)
+
+	tsUnix := time.Now().Unix()
+	transport := &scriptedTransport{reads: [][]byte{frame}}
+	transport.onWrite = func(respFrame []byte) {
+		_, payload, err := DecodeHandshakeFrame(respFrame, 8*1024)
+		if err != nil {
+			return
+		}
+		var resp e2eev1.E2EE_Resp
+		_ = json.Unmarshal(payload, &resp)
+		ack := e2eev1.E2EE_Ack{
+			HandshakeId:    resp.HandshakeId,
+			TimestampUnixS: uint64(tsUnix),
+			AuthTagB64u:    base64url.Encode(make([]byte, 32)),
+		}
+		b, _ := json.Marshal(ack)
+		transport.reads = append(transport.reads, EncodeHandshakeFrame(HandshakeTypeAck, b))
+	}
+
+	_, err := ServerHandshake(context.Background(), transport, nil, HandshakeOptions{
+		PSK:               psk,
+		ChannelID:         "ch_1",
+		Suite:             SuiteX25519HKDFAES256GCM,
+		InitExpireAtUnixS: tsUnix - 2,
+		ClockSkew:         1500 * time.Millisecond,
+	})
+	if err == nil || err.Error() != "auth tag mismatch" {
+		t.Fatalf("expected auth tag mismatch, got %v", err)
+	}
+}

@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -39,6 +41,8 @@ type channelInitResponse struct {
 	GrantClient *controlv1.ChannelInitGrant `json:"grant_client"`
 	GrantServer *controlv1.ChannelInitGrant `json:"grant_server"`
 }
+
+const maxChannelInitBodyBytes = 8 * 1024
 
 func main() {
 	var listen string
@@ -86,26 +90,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("/v1/channel/init", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var req channelInitRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-
-		chID := req.ChannelID
-		if chID == "" {
-			chID = randomB64u(24)
-		}
-		grantC, grantS, err := ci.NewChannelInit(chID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("content-type", "application/json")
-		_ = json.NewEncoder(w).Encode(channelInitResponse{GrantClient: grantC, GrantServer: grantS})
-	})
+	mux.HandleFunc("/v1/channel/init", channelInitHandler(ci))
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -138,6 +123,40 @@ func main() {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
 	_ = srv.Shutdown(ctx2)
 	cancel2()
+}
+
+func channelInitHandler(ci *channelinit.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, maxChannelInitBodyBytes)
+
+		var req channelInitRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		chID := req.ChannelID
+		if chID == "" {
+			chID = randomB64u(24)
+		}
+		grantC, grantS, err := ci.NewChannelInit(chID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(channelInitResponse{GrantClient: grantC, GrantServer: grantS})
+	}
 }
 
 func writeTunnelKeysetFile(ks *issuer.Keyset, out string) error {
