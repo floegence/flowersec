@@ -212,6 +212,17 @@ func main() {
 		"listen":  ln.Addr().String(),
 		"ws_path": path,
 	}
+	wsScheme := "ws"
+	httpScheme := "http"
+	if tlsCertFile != "" {
+		wsScheme = "wss"
+		httpScheme = "https"
+	}
+	host := ln.Addr().String()
+	ready["ws_url"] = wsScheme + "://" + host + path
+	ready["http_url"] = httpScheme + "://" + host
+	ready["healthz_url"] = ready["http_url"] + "/healthz"
+	ready["metrics_url"] = ready["http_url"] + "/metrics"
 	_ = json.NewEncoder(os.Stdout).Encode(ready)
 
 	// Handle reloads and shutdowns.

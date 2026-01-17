@@ -65,8 +65,8 @@ FSEC_TUNNEL_WS_PATH="$(jq -r '.tunnel_ws_path' "$CP_JSON")" \
 Optional TLS (disabled by default):
 
 ```bash
-# If you enable TLS on the tunnel, also update the controlplane hint URL:
-#   export FSEC_TUNNEL_URL="wss://127.0.0.1:8080/ws"
+# If you export the TLS env vars before starting the controlplane demo,
+# it automatically switches the issued tunnel_url to wss://.
 FSEC_TUNNEL_TLS_CERT_FILE=/path/to/cert.pem \
 FSEC_TUNNEL_TLS_KEY_FILE=/path/to/key.pem \
 ./examples/run-tunnel-server.sh

@@ -12,7 +12,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 AUD="${FSEC_TUNNEL_AUD:-flowersec-tunnel:dev}"
-TUNNEL_URL="${FSEC_TUNNEL_URL:-ws://127.0.0.1:8080/ws}"
+TUNNEL_LISTEN="${FSEC_TUNNEL_LISTEN:-127.0.0.1:8080}"
+TUNNEL_WS_PATH="${FSEC_TUNNEL_WS_PATH:-/ws}"
+TUNNEL_SCHEME="${FSEC_TUNNEL_SCHEME:-ws}"
+if [[ -z "${FSEC_TUNNEL_URL:-}" ]]; then
+  # If the user provided TLS materials for the tunnel server, default to wss://.
+  # This keeps the controlplane-issued tunnel_url consistent without requiring manual edits.
+  if [[ -n "${FSEC_TUNNEL_TLS_CERT_FILE:-}" || -n "${FSEC_TUNNEL_TLS_KEY_FILE:-}" ]]; then
+    TUNNEL_SCHEME="wss"
+  fi
+  TUNNEL_URL="${TUNNEL_SCHEME}://${TUNNEL_LISTEN}${TUNNEL_WS_PATH}"
+else
+  TUNNEL_URL="${FSEC_TUNNEL_URL}"
+fi
 LISTEN="${FSEC_CONTROLPLANE_LISTEN:-127.0.0.1:0}"
 KID="${FSEC_ISSUER_KID:-k1}"
 ISSUER_ID="${FSEC_ISSUER_ID:-issuer-demo}"
