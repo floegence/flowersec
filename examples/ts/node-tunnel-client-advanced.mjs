@@ -15,6 +15,19 @@ import {
 } from "../../ts/dist/index.js";
 import { Role as TunnelRole } from "../../ts/dist/gen/flowersec/tunnel/v1.gen.js";
 
+// node-tunnel-client-advanced is the "advanced" Node.js tunnel client example.
+//
+// It manually assembles the protocol stack:
+// WebSocket connect -> tunnel attach (text) -> E2EE handshake -> Yamux -> RPC, plus an "echo" stream.
+//
+// Use this version when you want to understand or customize each layer.
+// For the minimal helper-based version, see examples/ts/node-tunnel-client.mjs.
+//
+// Notes:
+// - The tunnel server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
+// - Tunnel attach tokens are one-time use; mint a new channel init for each connection attempt.
+// - Input JSON can be either the full controlplane response {"grant_client":...,"grant_server":...}
+//   or just the grant_client object itself.
 const require = createRequire(import.meta.url);
 const WS = require("ws");
 
@@ -85,12 +98,15 @@ async function main() {
   const readyOrGrant = JSON.parse(input);
   const grant = pickGrantClient(readyOrGrant);
 
+  // Explicit Origin header value used by the tunnel allow-list.
   const origin = process.env.FSEC_ORIGIN ?? "";
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
+  // Step 1: WebSocket connect.
   const ws = new WS(grant.tunnel_url, { headers: { Origin: origin } });
   await waitOpen(ws, 10_000);
 
+  // Step 2: tunnel attach (plaintext JSON). This is only for pairing/auth; it does not protect data.
   const endpointInstanceId = base64urlEncode(crypto.randomBytes(24));
   const attach = {
     v: 1,
@@ -101,6 +117,7 @@ async function main() {
   };
   ws.send(JSON.stringify(attach));
 
+  // Step 3: E2EE handshake over the websocket binary transport.
   const transport = new WebSocketBinaryTransport(ws);
   const psk = base64urlDecode(grant.e2ee_psk_b64u);
   const suite = grant.default_suite;
@@ -114,6 +131,7 @@ async function main() {
     timeoutMs: 10_000
   });
 
+  // Step 4: Yamux session over the secure channel.
   const conn = {
     read: () => secure.read(),
     write: (b) => secure.write(b),
@@ -121,6 +139,7 @@ async function main() {
   };
   const mux = new YamuxSession(conn, { client: true });
 
+  // Step 5: RPC stream (first yamux stream) with StreamHello="rpc".
   const rpcStream = await mux.openStream();
   const rpcReader = new ByteReader(async () => {
     try {
@@ -133,16 +152,19 @@ async function main() {
   const write = (b) => rpcStream.write(b);
   await writeStreamHello(write, "rpc");
 
+  // Step 6: RpcClient + RpcProxy: typed request/notify over type_id routing.
   const rpc = new RpcClient(readExactly, write);
   const rpcProxy = new RpcProxy();
   rpcProxy.attach(rpc);
 
   try {
+    // In these demos, type_id=1 responds {"ok":true} and the server also emits notify type_id=2.
     const notified = waitNotify(rpcProxy, 2, 2000);
     const resp = await rpcProxy.call(1, {});
     console.log("rpc response:", JSON.stringify(resp.payload));
     console.log("rpc notify:", JSON.stringify(await notified));
 
+    // Open a separate yamux stream ("echo") to show multiplexing.
     const echo = await mux.openStream();
     const echoReader = new ByteReader(async () => {
       try {
@@ -158,6 +180,7 @@ async function main() {
     console.log("echo response:", JSON.stringify(new TextDecoder().decode(got)));
     await echo.close();
   } finally {
+    // Best-effort shutdown. secure.close() will close the underlying transport (websocket).
     rpcProxy.detach();
     rpc.close();
     mux.close();
@@ -166,4 +189,3 @@ async function main() {
 }
 
 await main();
-

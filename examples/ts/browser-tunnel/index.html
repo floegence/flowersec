@@ -25,6 +25,11 @@
     <script type="module">
       import { ByteReader, connectTunnelClientRpc, writeStreamHello } from "../../../ts/dist/index.js";
 
+      // Browser notes:
+      // - Browsers set the WebSocket Origin header automatically to window.location.origin.
+      // - The tunnel server enforces an Origin allow-list; make sure you started it with an allowlist that includes
+      //   this page's origin (e.g. http://127.0.0.1:5173).
+      // - Tunnel attach tokens are one-time use; if you refresh/reconnect, mint a new channel init again.
       const $in = document.getElementById("in");
       const $out = document.getElementById("out");
       const $connect = document.getElementById("connect");
@@ -61,14 +66,18 @@
         try {
           const obj = JSON.parse($in.value);
           const grant = pickGrantClient(obj);
+          // High-level helper: it performs tunnel attach + E2EE handshake + yamux + RPC wiring.
+          // It also checks that the provided origin matches window.location.origin.
           client = await connectTunnelClientRpc(grant, { origin: window.location.origin });
           $close.disabled = false;
 
+          // In these demos, type_id=1 responds {"ok":true} and the server also emits notify type_id=2.
           const notified = waitNotify(client.rpcProxy, 2, 2000);
           const resp = await client.rpcProxy.call(1, {});
           logLine("rpc response: " + JSON.stringify(resp.payload));
           logLine("rpc notify: " + JSON.stringify(await notified));
 
+          // Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
           const echo = await client.mux.openStream();
           const reader = new ByteReader(async () => {
             try {

@@ -3,6 +3,10 @@ set -euo pipefail
 
 # Starts the real deliverable tunnel server: go/cmd/flowersec-tunnel.
 # This script intentionally does NOT generate keys: issuer keys are owned by the controlplane.
+#
+# Notes:
+# - Origin checks are enabled by default; the tunnel rejects requests without Origin unless you explicitly allow it.
+# - Attach tokens are one-time use. If you reuse a channel init/grant, the tunnel will close the connection.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

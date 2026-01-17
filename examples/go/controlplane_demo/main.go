@@ -23,6 +23,14 @@ import (
 	controlv1 "github.com/floegence/flowersec/gen/flowersec/controlplane/v1"
 )
 
+// controlplane_demo is a minimal controlplane service used by the examples:
+// - owns an issuer keypair in-process
+// - writes a tunnel keyset file (kid -> ed25519 pubkey) for the tunnel server to load
+// - exposes HTTP endpoint POST /v1/channel/init to mint a pair of ChannelInitGrant objects (client/server)
+//
+// Notes:
+// - Tunnel attach tokens are one-time use. Clients must request a new channel init for each connection attempt.
+// - This demo is intentionally not "production"; it exists so you can run the real tunnel binary unmodified.
 type ready struct {
 	ControlplaneHTTPURL string `json:"controlplane_http_url"`
 
@@ -67,14 +75,18 @@ func main() {
 		log.Fatal("missing --issuer-keys-file")
 	}
 
+	// Generate an issuer keyset for signing tunnel attach tokens (ed25519).
 	ks, err := issuer.NewRandom(kid)
 	if err != nil {
 		log.Fatal(err)
 	}
+	// The tunnel server loads this keyset to validate tokens by kid.
 	if err := writeTunnelKeysetFile(ks, issuerKeysFile); err != nil {
 		log.Fatal(err)
 	}
 
+	// Channel init service mints a pair of grants (role=client and role=server).
+	// Each grant carries channel_id, tunnel_url, psk, init_exp, and a signed one-time token.
 	ci := &channelinit.Service{
 		Issuer: ks,
 		Params: channelinit.Params{
@@ -107,6 +119,7 @@ func main() {
 		}
 	}()
 
+	// Print a JSON "ready" line for scripts to consume (URLs, issuer key file, tunnel hints).
 	httpURL := "http://" + ln.Addr().String()
 	tunnelListen, tunnelWSPath := tunnelListenAndPath(tunnelURL)
 	_ = json.NewEncoder(os.Stdout).Encode(ready{
@@ -134,6 +147,8 @@ func channelInitHandler(ci *channelinit.Service) http.HandlerFunc {
 			return
 		}
 
+		// This endpoint accepts an optional {"channel_id":"..."} body.
+		// If channel_id is omitted, a random one is generated.
 		r.Body = http.MaxBytesReader(w, r.Body, maxChannelInitBodyBytes)
 
 		var req channelInitRequest
@@ -151,6 +166,7 @@ func channelInitHandler(ci *channelinit.Service) http.HandlerFunc {
 		if chID == "" {
 			chID = randomB64u(24)
 		}
+		// Mint a client grant (role=client) and a server grant (role=server) for the same channel.
 		grantC, grantS, err := ci.NewChannelInit(chID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

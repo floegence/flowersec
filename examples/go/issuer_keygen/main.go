@@ -9,6 +9,13 @@ import (
 	"github.com/floegence/flowersec/controlplane/issuer"
 )
 
+// issuer_keygen generates a tunnel issuer keyset file (kid -> ed25519 pubkey) for local testing.
+//
+// Notes:
+//   - For the end-to-end scenarios in examples/README.md, you typically don't need this:
+//     examples/go/controlplane_demo writes the keyset file automatically.
+//   - Keep the generated file private if you also store the signing key material (this tool exports the public keyset
+//     used by the tunnel; the signer keypair lives in-process in the controlplane demo).
 func main() {
 	var kid string
 	var out string

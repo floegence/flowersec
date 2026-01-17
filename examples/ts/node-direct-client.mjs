@@ -3,6 +3,18 @@ import process from "node:process";
 
 import { ByteReader, connectDirectClientRpc, writeStreamHello } from "../../ts/dist/index.js";
 
+// node-direct-client is the "simple" Node.js direct (no tunnel) client example.
+//
+// It uses the high-level helper connectDirectClientRpc(), which internally performs:
+// - WebSocket connect (requires explicit Origin in Node)
+// - E2EE handshake
+// - Yamux session
+// - RPC wiring (rpcProxy)
+//
+// Notes:
+// - The direct demo server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
+// - In Node, you MUST provide wsFactory so the helper can set the Origin header (browsers set Origin automatically).
+// - Input JSON is the output of examples/go/direct_demo.
 const require = createRequire(import.meta.url);
 const WS = require("ws");
 
@@ -32,20 +44,24 @@ async function main() {
   const input = await readStdinUtf8();
   const info = JSON.parse(input);
 
+  // Explicit Origin header value used by the server allow-list.
   const origin = process.env.FSEC_ORIGIN ?? "";
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
+  // connectDirectClientRpc() returns an RPC-ready client and a yamux session for extra streams.
   const client = await connectDirectClientRpc(info, {
     origin,
     wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } })
   });
 
   try {
+    // Subscribe to notify type_id=2 and call request type_id=1 (see direct_demo).
     const notified = waitNotify(client.rpcProxy, 2, 2000);
     const resp = await client.rpcProxy.call(1, {});
     console.log("rpc response:", JSON.stringify(resp.payload));
     console.log("rpc notify:", JSON.stringify(await notified));
 
+    // Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
     const echo = await client.mux.openStream();
     const reader = new ByteReader(async () => {
       try {

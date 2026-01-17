@@ -15,6 +15,12 @@ import (
 	"github.com/floegence/flowersec/rpc"
 )
 
+// go_client_direct_simple demonstrates the minimal direct (no tunnel) client using the high-level Go helpers:
+// WS -> E2EE -> Yamux -> RPC, plus an extra "echo" stream roundtrip.
+//
+// Notes:
+// - You must provide an explicit Origin header value (the direct demo server enforces an allow-list).
+// - Input JSON is the output of examples/go/direct_demo (it includes ws_url, channel_id, and e2ee_psk_b64u).
 func main() {
 	var infoPath string
 	var origin string
@@ -31,6 +37,9 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// This helper builds the full protocol stack and returns an RPC-ready client:
+	// - client.Mux: open extra streams (e.g. echo)
+	// - client.RPC: typed request/notify API over the dedicated "rpc" stream
 	client, err := connect.ConnectDirectClientRPC(context.Background(), info, connect.DirectClientOptions{
 		ConnectTimeout:   10 * time.Second,
 		HandshakeTimeout: 10 * time.Second,
@@ -42,6 +51,7 @@ func main() {
 	}
 	defer client.Close()
 
+	// Subscribe to the notify type_id=2 and then call request type_id=1.
 	notified := make(chan json.RawMessage, 1)
 	unsub := client.RPC.OnNotify(2, func(payload json.RawMessage) {
 		select {
@@ -53,6 +63,7 @@ func main() {
 
 	callCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// In these demos, type_id=1 expects an empty JSON object and replies {"ok":true}.
 	payload, rpcErr, err := client.RPC.Call(callCtx, 1, json.RawMessage(`{}`))
 	if err != nil {
 		log.Fatal(err)
@@ -69,11 +80,13 @@ func main() {
 		fmt.Println("rpc notify: timeout")
 	}
 
+	// Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
 	echoStream, err := client.Mux.OpenStream()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer echoStream.Close()
+	// The server expects a StreamHello frame at the beginning of each yamux stream.
 	if err := rpc.WriteStreamHello(echoStream, "echo"); err != nil {
 		log.Fatal(err)
 	}
@@ -101,6 +114,7 @@ func readDirectInfo(path string) (*directv1.DirectConnectInfo, error) {
 		defer f.Close()
 		r = f
 	}
+	// The direct demo prints a JSON object that matches DirectConnectInfo fields.
 	var info directv1.DirectConnectInfo
 	if err := json.NewDecoder(r).Decode(&info); err != nil {
 		return nil, err

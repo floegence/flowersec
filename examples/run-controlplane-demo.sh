@@ -8,6 +8,10 @@ set -euo pipefail
 #
 # Tunnel server is intentionally separate and should be started via:
 #   FSEC_TUNNEL_ISSUER_KEYS_FILE=... ./examples/run-tunnel-server.sh
+#
+# Notes:
+# - Tokens minted by the controlplane are one-time use. Reusing the same channel JSON will trigger token replay.
+# - For any non-local deployment, prefer wss:// (or TLS terminated at a reverse proxy).
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

@@ -22,6 +22,15 @@ import (
 	hyamux "github.com/hashicorp/yamux"
 )
 
+// direct_demo starts a direct (no tunnel) WebSocket server endpoint that speaks the full Flowersec stack:
+// WS -> E2EE (server side) -> Yamux (server) -> RPC ("rpc" stream) + echo ("echo" stream).
+//
+// It prints a JSON "ready" object to stdout which is consumed by the TS/Go direct client examples.
+//
+// Notes:
+// - This demo enforces an Origin allow-list. Pass --allow-origin for your expected browser Origin.
+// - The E2EE handshake includes an init_exp (Unix seconds). This server picks init_exp=now+120s.
+// - For any non-local deployment, prefer wss:// (or TLS terminated at a reverse proxy).
 type ready struct {
 	WSURL               string            `json:"ws_url"`
 	ChannelID           string            `json:"channel_id"`
@@ -50,6 +59,8 @@ func main() {
 		log.Fatal("missing --allow-origin")
 	}
 
+	// Generate a fresh channel id + PSK for each server run by default.
+	// Clients must use the exact same channel_id and PSK during the handshake.
 	if channelID == "" {
 		channelID = randomB64u(24)
 	}
@@ -62,6 +73,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(wsPath, func(w http.ResponseWriter, r *http.Request) {
+		// Upgrade to WebSocket and enforce Origin policy.
 		c, err := ws.Upgrade(w, r, ws.UpgraderOptions{CheckOrigin: ws.NewOriginChecker(allowedOrigins, false)})
 		if err != nil {
 			return
@@ -70,6 +82,7 @@ func main() {
 		go func() {
 			defer uc.Close()
 
+			// Server side E2EE handshake; handshake cache supports client retries.
 			bt := e2ee.NewWebSocketBinaryTransport(uc)
 			cache := e2ee.NewServerHandshakeCache()
 			secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.HandshakeOptions{
@@ -87,6 +100,7 @@ func main() {
 			}
 			defer secure.Close()
 
+			// Yamux server session runs over the secure channel.
 			ycfg := hyamux.DefaultConfig()
 			ycfg.EnableKeepAlive = false
 			ycfg.LogOutput = io.Discard
@@ -96,6 +110,7 @@ func main() {
 			}
 			defer sess.Close()
 
+			// Each accepted stream begins with a StreamHello message that tells us the kind.
 			for {
 				stream, err := sess.AcceptStream()
 				if err != nil {
@@ -117,6 +132,7 @@ func main() {
 		}
 	}()
 
+	// Print connection info for clients (ws_url, channel_id, psk, suite, init_exp, plus demo ids).
 	wsURL := "ws://" + ln.Addr().String() + wsPath
 	_ = json.NewEncoder(os.Stdout).Encode(ready{
 		WSURL:               wsURL,
@@ -156,12 +172,14 @@ func (s *stringSliceFlag) Set(v string) error {
 func handleStream(ctx context.Context, stream net.Conn) {
 	defer stream.Close()
 
+	// StreamHello is the first frame on every yamux stream.
 	h, err := rpc.ReadStreamHello(stream, 8*1024)
 	if err != nil {
 		return
 	}
 	switch h.Kind {
 	case "rpc":
+		// RPC stream: reply to type_id=1 and emit a notify type_id=2.
 		router := rpc.NewRouter()
 		srv := rpc.NewServer(stream, router)
 		router.Register(1, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
@@ -171,6 +189,7 @@ func handleStream(ctx context.Context, stream net.Conn) {
 		})
 		_ = srv.Serve(ctx)
 	case "echo":
+		// Echo stream: raw bytes roundtrip.
 		_, _ = io.Copy(stream, stream)
 	default:
 		return

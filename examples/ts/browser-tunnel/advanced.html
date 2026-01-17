@@ -37,6 +37,10 @@
       } from "../../../ts/dist/index.js";
       import { Role as TunnelRole } from "../../../ts/dist/gen/flowersec/tunnel/v1.gen.js";
 
+      // Browser notes:
+      // - You cannot manually set the WebSocket Origin header in browsers; it is always window.location.origin.
+      // - The tunnel server enforces an Origin allow-list; make sure it includes this page's origin.
+      // - Tunnel attach tokens are one-time use; if you refresh/reconnect, mint a new channel init again.
       const $in = document.getElementById("in");
       const $out = document.getElementById("out");
       const $connect = document.getElementById("connect");
@@ -135,9 +139,12 @@
           const obj = JSON.parse($in.value);
           const grant = pickGrantClient(obj);
 
+          // Step 1: WebSocket connect.
+          // The browser automatically supplies the Origin header based on window.location.origin.
           const ws = new WebSocket(grant.tunnel_url);
           await waitOpen(ws, 10_000);
 
+          // Step 2: tunnel attach (plaintext JSON). This is only for pairing/auth; it does not protect data.
           const endpointBytes = new Uint8Array(24);
           crypto.getRandomValues(endpointBytes);
           const endpointInstanceId = base64urlEncode(endpointBytes);
@@ -150,6 +157,7 @@
           };
           ws.send(JSON.stringify(attach));
 
+          // Step 3: E2EE handshake over the websocket binary transport.
           const transport = new WebSocketBinaryTransport(ws);
           const psk = base64urlDecode(grant.e2ee_psk_b64u);
           const suite = grant.default_suite;
@@ -163,6 +171,7 @@
             timeoutMs: 10_000
           });
 
+          // Step 4: Yamux session over the secure channel.
           const conn = {
             read: () => secure.read(),
             write: (b) => secure.write(b),
@@ -170,6 +179,7 @@
           };
           const mux = new YamuxSession(conn, { client: true });
 
+          // Step 5: RPC stream (first yamux stream) with StreamHello="rpc".
           const rpcStream = await mux.openStream();
           const rpcReader = new ByteReader(async () => {
             try {
@@ -182,6 +192,7 @@
           const write = (b) => rpcStream.write(b);
           await writeStreamHello(write, "rpc");
 
+          // Step 6: RpcClient + RpcProxy: typed request/notify over type_id routing.
           const rpc = new RpcClient(readExactly, write);
           const rpcProxy = new RpcProxy();
           rpcProxy.attach(rpc);
@@ -189,11 +200,13 @@
           client = { secure, mux, rpc, rpcProxy };
           $close.disabled = false;
 
+          // In these demos, type_id=1 responds {"ok":true} and the server also emits notify type_id=2.
           const notified = waitNotify(rpcProxy, 2, 2000);
           const resp = await rpcProxy.call(1, {});
           logLine("rpc response: " + JSON.stringify(resp.payload));
           logLine("rpc notify: " + JSON.stringify(await notified));
 
+          // Open a separate yamux stream ("echo") to show multiplexing.
           const echo = await mux.openStream();
           const echoReader = new ByteReader(async () => {
             try {
@@ -221,4 +234,3 @@
     </script>
   </body>
 </html>
-

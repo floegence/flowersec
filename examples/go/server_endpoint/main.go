@@ -23,6 +23,18 @@ import (
 	hyamux "github.com/hashicorp/yamux"
 )
 
+// server_endpoint is a demo endpoint that attaches to a tunnel as role=server and serves:
+// - RPC on the "rpc" stream (type_id=1 request, type_id=2 notify)
+// - Echo on the "echo" stream
+//
+// This endpoint is intended to be paired with any tunnel client (Go/TS). Note that both Go/TS tunnel clients
+// are role=client and cannot talk to each other directly.
+//
+// Notes:
+//   - Input JSON can be either the full controlplane response {"grant_client":...,"grant_server":...}
+//     or just the grant_server object itself.
+//   - You must provide an explicit Origin header value (the tunnel enforces an allow-list).
+//   - Tunnel attach tokens are one-time use; mint a new channel init for every new connection attempt.
 func main() {
 	var grantPath string
 	var origin string
@@ -58,6 +70,7 @@ func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.Chan
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	// WebSocket dial: the Origin header is required by the tunnel server.
 	h := http.Header{}
 	h.Set("Origin", origin)
 	c, _, err := websocket.DefaultDialer.DialContext(ctx, grant.TunnelUrl, h)
@@ -66,6 +79,7 @@ func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.Chan
 	}
 	defer c.Close()
 
+	// Tunnel attach: plaintext JSON message used only for pairing/auth.
 	attach := tunnelv1.Attach{
 		V:                  1,
 		ChannelId:          grant.ChannelId,
@@ -76,6 +90,8 @@ func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.Chan
 	attachJSON, _ := json.Marshal(attach)
 	_ = c.WriteMessage(websocket.TextMessage, attachJSON)
 
+	// Server side E2EE handshake. The init_exp comes from the controlplane grant.
+	// If init_exp is 0 or expired, handshake must fail.
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	cache := e2ee.NewServerHandshakeCache()
 	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.HandshakeOptions{
@@ -93,6 +109,7 @@ func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.Chan
 	}
 	defer secure.Close()
 
+	// Yamux server session runs over the secure channel.
 	ycfg := hyamux.DefaultConfig()
 	ycfg.EnableKeepAlive = false
 	ycfg.LogOutput = io.Discard
@@ -102,6 +119,7 @@ func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.Chan
 	}
 	defer sess.Close()
 
+	// Each accepted stream begins with a StreamHello message that tells us the kind.
 	for {
 		stream, err := sess.AcceptStream()
 		if err != nil {
@@ -114,12 +132,14 @@ func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.Chan
 func handleStream(ctx context.Context, stream io.ReadWriteCloser) {
 	defer stream.Close()
 
+	// StreamHello is the first frame on every yamux stream.
 	h, err := rpc.ReadStreamHello(stream, 8*1024)
 	if err != nil {
 		return
 	}
 	switch h.Kind {
 	case "rpc":
+		// RPC stream: reply to type_id=1 and emit a notify type_id=2.
 		router := rpc.NewRouter()
 		srv := rpc.NewServer(stream, router)
 		router.Register(1, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
@@ -129,6 +149,7 @@ func handleStream(ctx context.Context, stream io.ReadWriteCloser) {
 		})
 		_ = srv.Serve(ctx)
 	case "echo":
+		// Echo stream: raw bytes roundtrip.
 		_, _ = io.Copy(stream, stream)
 	default:
 		return
@@ -154,6 +175,7 @@ func readGrantServer(path string) (*controlv1.ChannelInitGrant, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Accept either the full /v1/channel/init response or the raw grant itself.
 	if err := json.Unmarshal(b, &raw); err == nil && raw.GrantServer != nil {
 		if raw.GrantServer.Role != controlv1.Role_server {
 			return nil, errRole("server", raw.GrantServer.Role)

@@ -15,6 +15,14 @@ import (
 	"github.com/floegence/flowersec/rpc"
 )
 
+// go_client_tunnel_simple demonstrates the minimal tunnel client using the high-level Go helpers:
+// tunnel attach (text) -> E2EE -> Yamux -> RPC, plus an extra "echo" stream roundtrip.
+//
+// Notes:
+//   - You must provide an explicit Origin header value (the tunnel enforces an allow-list).
+//   - Tunnel attach tokens are one-time use; mint a new channel init for every new connection attempt.
+//   - Input JSON can be either the full controlplane response {"grant_client":...,"grant_server":...}
+//     or just the grant_client object itself.
 func main() {
 	var grantPath string
 	var origin string
@@ -31,6 +39,9 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// This helper builds the full protocol stack and returns an RPC-ready client:
+	// - client.Mux: open extra streams (e.g. echo)
+	// - client.RPC: typed request/notify API over the dedicated "rpc" stream
 	client, err := connect.ConnectTunnelClientRPC(context.Background(), grant, connect.TunnelClientOptions{
 		ConnectTimeout:   10 * time.Second,
 		HandshakeTimeout: 10 * time.Second,
@@ -42,6 +53,7 @@ func main() {
 	}
 	defer client.Close()
 
+	// Subscribe to the notify type_id=2 and then call request type_id=1.
 	notified := make(chan json.RawMessage, 1)
 	unsub := client.RPC.OnNotify(2, func(payload json.RawMessage) {
 		select {
@@ -53,6 +65,7 @@ func main() {
 
 	callCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// In these demos, type_id=1 expects an empty JSON object and replies {"ok":true}.
 	payload, rpcErr, err := client.RPC.Call(callCtx, 1, json.RawMessage(`{}`))
 	if err != nil {
 		log.Fatal(err)
@@ -69,11 +82,13 @@ func main() {
 		fmt.Println("rpc notify: timeout")
 	}
 
+	// Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
 	echoStream, err := client.Mux.OpenStream()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer echoStream.Close()
+	// The server expects a StreamHello frame at the beginning of each yamux stream.
 	if err := rpc.WriteStreamHello(echoStream, "echo"); err != nil {
 		log.Fatal(err)
 	}
@@ -105,6 +120,7 @@ func readGrantClient(path string) (*controlv1.ChannelInitGrant, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Accept either the full /v1/channel/init response or the raw grant itself.
 	var wrap struct {
 		GrantClient *controlv1.ChannelInitGrant `json:"grant_client"`
 	}

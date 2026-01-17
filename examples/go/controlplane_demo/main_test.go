@@ -12,6 +12,10 @@ import (
 	"github.com/floegence/flowersec/controlplane/issuer"
 )
 
+// These tests validate the minimal controlplane demo HTTP handler contract:
+// - accepts an empty POST body (channel_id is optional)
+// - rejects invalid JSON
+// - enforces a request size limit
 func TestChannelInitHandlerEmptyBody(t *testing.T) {
 	ks, err := issuer.NewRandom("k1")
 	if err != nil {

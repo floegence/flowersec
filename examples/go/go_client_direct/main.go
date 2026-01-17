@@ -26,6 +26,15 @@ type directInfo struct {
 	ChannelInitExpireAt int64  `json:"channel_init_expire_at_unix_s"`
 }
 
+// go_client_direct is an "advanced" example that manually assembles the protocol stack:
+// WebSocket -> E2EE -> Yamux -> RPC, plus an extra "echo" stream.
+//
+// Use this version when you want full control over each layer (dialer, handshake options, etc.).
+// For the minimal helper-based version, see examples/go/go_client_direct_simple.
+//
+// Notes:
+// - You must provide an explicit Origin header value (the direct demo server enforces an allow-list).
+// - Input JSON is the output of examples/go/direct_demo.
 func main() {
 	var infoPath string
 	var origin string
@@ -46,6 +55,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// WebSocket dial: the Origin header is required by the direct demo server.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -57,6 +67,7 @@ func main() {
 	}
 	defer c.Close()
 
+	// E2EE handshake over the websocket binary transport.
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	secure, err := e2ee.ClientHandshake(ctx, bt, e2ee.HandshakeOptions{
 		PSK:                 psk,
@@ -71,6 +82,7 @@ func main() {
 	}
 	defer secure.Close()
 
+	// Yamux multiplexing over the secure (encrypted) channel.
 	ycfg := hyamux.DefaultConfig()
 	ycfg.EnableKeepAlive = false
 	ycfg.LogOutput = io.Discard
@@ -86,12 +98,14 @@ func main() {
 	}
 	defer rpcStream.Close()
 
+	// The server expects a StreamHello frame at the beginning of each yamux stream.
 	if err := rpc.WriteStreamHello(rpcStream, "rpc"); err != nil {
 		log.Fatal(err)
 	}
 	client := rpc.NewClient(rpcStream)
 	defer client.Close()
 
+	// Subscribe to the notify type_id=2 and then call request type_id=1.
 	notified := make(chan json.RawMessage, 1)
 	unsub := client.OnNotify(2, func(payload json.RawMessage) {
 		select {
@@ -101,6 +115,7 @@ func main() {
 	})
 	defer unsub()
 
+	// In these demos, type_id=1 expects an empty JSON object and replies {"ok":true}.
 	payload, rpcErr, err := client.Call(ctx, 1, json.RawMessage(`{}`))
 	if err != nil {
 		log.Fatal(err)
@@ -117,6 +132,7 @@ func main() {
 		fmt.Println("rpc notify: timeout")
 	}
 
+	// Open a separate yamux stream ("echo") to show multiplexing.
 	echoStream, err := sess.OpenStream()
 	if err != nil {
 		log.Fatal(err)

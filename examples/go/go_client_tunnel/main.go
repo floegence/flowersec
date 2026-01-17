@@ -21,6 +21,17 @@ import (
 	hyamux "github.com/hashicorp/yamux"
 )
 
+// go_client_tunnel is an "advanced" example that manually assembles the protocol stack:
+// WebSocket attach (text) -> E2EE -> Yamux -> RPC, plus an extra "echo" stream.
+//
+// Use this version when you want full control over each layer (dialer, attach payload, handshake limits, etc.).
+// For the minimal helper-based version, see examples/go/go_client_tunnel_simple.
+//
+// Notes:
+//   - You must provide an explicit Origin header value (the tunnel enforces an allow-list).
+//   - Tunnel attach tokens are one-time use; mint a new channel init for every new connection attempt.
+//   - Input JSON can be either the full controlplane response {"grant_client":...,"grant_server":...}
+//     or just the grant_client object itself.
 func main() {
 	var grantPath string
 	var origin string
@@ -41,6 +52,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// WebSocket dial: the Origin header is required by the tunnel server.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -52,6 +64,8 @@ func main() {
 	}
 	defer c.Close()
 
+	// Tunnel attach: plaintext JSON message used only for pairing/auth.
+	// After attach, application data is protected by E2EE and opaque to the tunnel.
 	attach := tunnelv1.Attach{
 		V:                  1,
 		ChannelId:          grant.ChannelId,
@@ -64,6 +78,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// E2EE handshake over the websocket binary transport.
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	secure, err := e2ee.ClientHandshake(ctx, bt, e2ee.HandshakeOptions{
 		PSK:                 psk,
@@ -78,6 +93,7 @@ func main() {
 	}
 	defer secure.Close()
 
+	// Yamux multiplexing over the secure (encrypted) channel.
 	ycfg := hyamux.DefaultConfig()
 	ycfg.EnableKeepAlive = false
 	ycfg.LogOutput = io.Discard
@@ -93,12 +109,14 @@ func main() {
 	}
 	defer rpcStream.Close()
 
+	// The server expects a StreamHello frame at the beginning of each yamux stream.
 	if err := rpc.WriteStreamHello(rpcStream, "rpc"); err != nil {
 		log.Fatal(err)
 	}
 	client := rpc.NewClient(rpcStream)
 	defer client.Close()
 
+	// Subscribe to the notify type_id=2 and then call request type_id=1.
 	notified := make(chan json.RawMessage, 1)
 	unsub := client.OnNotify(2, func(payload json.RawMessage) {
 		select {
@@ -108,6 +126,7 @@ func main() {
 	})
 	defer unsub()
 
+	// In these demos, type_id=1 expects an empty JSON object and replies {"ok":true}.
 	payload, rpcErr, err := client.Call(ctx, 1, json.RawMessage(`{}`))
 	if err != nil {
 		log.Fatal(err)
@@ -124,6 +143,7 @@ func main() {
 		fmt.Println("rpc notify: timeout")
 	}
 
+	// Open a separate yamux stream ("echo") to show multiplexing.
 	echoStream, err := sess.OpenStream()
 	if err != nil {
 		log.Fatal(err)

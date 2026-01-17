@@ -5,6 +5,10 @@ set -euo pipefail
 # Input can be either:
 # - full JSON: {"grant_client":...,"grant_server":...}
 # - or grant_server JSON itself
+#
+# Notes:
+# - This endpoint attaches to the tunnel as role=server and should be paired with a role=client tunnel client.
+# - Tunnel attach tokens are one-time use. If you reuse a channel JSON, the tunnel will close the connection.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
