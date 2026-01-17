@@ -210,7 +210,7 @@ type channelState struct {
 	mu         sync.Mutex                      // Guards channel state.
 	id         string                          // Channel identifier.
 	initExp    int64                           // Channel init expiry (Unix seconds).
-	encrypted  bool                            // Whether E2EE record frames observed.
+	sawRecord  bool                            // True once an E2EE record frame (FSEC) is observed.
 	flushing   bool                            // True while pairing flush is in progress.
 	firstSeen  time.Time                       // When the first endpoint arrived.
 	lastActive time.Time                       // Last activity timestamp.
@@ -589,10 +589,10 @@ func (s *Server) flushPending(st *channelState, client *endpointConn, server *en
 		pendingServer := server.pending
 		pendingClientBytes := client.pendingBytes
 		pendingServerBytes := server.pendingBytes
-		encryptedNow := false
-		if !st.encrypted && looksLikeEncryptedPending(pendingClient, pendingServer, s.cfg.MaxRecordBytes) {
-			st.encrypted = true
-			encryptedNow = true
+		recordNow := false
+		if !st.sawRecord && looksLikeRecordPending(pendingClient, pendingServer, s.cfg.MaxRecordBytes) {
+			st.sawRecord = true
+			recordNow = true
 		}
 		if len(pendingClient) == 0 && len(pendingServer) == 0 {
 			st.flushing = false
@@ -605,7 +605,7 @@ func (s *Server) flushPending(st *channelState, client *endpointConn, server *en
 		server.pendingBytes = 0
 		st.mu.Unlock()
 		s.subPendingBytes(pendingClientBytes + pendingServerBytes)
-		if encryptedNow {
+		if recordNow {
 			s.obs.Encrypted()
 		}
 
@@ -736,22 +736,22 @@ func (s *Server) waitWriteDone(done <-chan error) {
 	}
 }
 
-func looksLikeEncryptedPending(clientPending [][]byte, serverPending [][]byte, maxCipher int) bool {
+func looksLikeRecordPending(clientPending [][]byte, serverPending [][]byte, maxCipher int) bool {
 	for _, frame := range clientPending {
-		if looksLikeEncryptedFrame(frame, maxCipher) {
+		if looksLikeRecordFrame(frame, maxCipher) {
 			return true
 		}
 	}
 	for _, frame := range serverPending {
-		if looksLikeEncryptedFrame(frame, maxCipher) {
+		if looksLikeRecordFrame(frame, maxCipher) {
 			return true
 		}
 	}
 	return false
 }
 
-func looksLikeEncryptedFrame(frame []byte, maxCipher int) bool {
-	return e2ee.LooksLikeRecordFrame(frame, maxCipher) || e2ee.LooksLikeHandshakeFrame(frame, maxCipher)
+func looksLikeRecordFrame(frame []byte, maxCipher int) bool {
+	return e2ee.LooksLikeRecordFrame(frame, maxCipher)
 }
 
 // routeOrBuffer returns a destination conn or buffers frames until paired.
@@ -759,7 +759,7 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, src *endpoi
 	now := time.Now()
 	maxCipher := s.cfg.MaxRecordBytes
 
-	var encryptedNow bool
+	var recordNow bool
 	s.mu.Lock()
 	st := s.channels[channelID]
 	if st == nil {
@@ -772,7 +772,7 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, src *endpoi
 	current := st.conns[role]
 	if current == nil || current != src {
 		st.mu.Unlock()
-		if encryptedNow {
+		if recordNow {
 			s.obs.Encrypted()
 		}
 		return nil, nil, errMissingSrc
@@ -784,21 +784,24 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, src *endpoi
 		peerRole = tunnelv1.Role_client
 	}
 	dst = st.conns[peerRole]
-	if !st.encrypted && dst != nil && looksLikeEncryptedFrame(frame, maxCipher) {
-		st.encrypted = true
-		encryptedNow = true
+	// Only treat the channel as having entered the encrypted data state once we observe
+	// an E2EE record frame (FSEC). Handshake frames (FSEH) are intentionally excluded
+	// so init_exp cleanup behavior matches the design contract.
+	if !st.sawRecord && dst != nil && looksLikeRecordFrame(frame, maxCipher) {
+		st.sawRecord = true
+		recordNow = true
 	}
 	if dst == nil || st.flushing {
 		if s.cfg.MaxPendingBytes > 0 && src.pendingBytes+len(frame) > s.cfg.MaxPendingBytes {
 			st.mu.Unlock()
-			if encryptedNow {
+			if recordNow {
 				s.obs.Encrypted()
 			}
 			return nil, nil, errPendingOverflow
 		}
 		if !s.tryAddPendingBytes(len(frame)) {
 			st.mu.Unlock()
-			if encryptedNow {
+			if recordNow {
 				s.obs.Encrypted()
 			}
 			return nil, nil, errPendingOverflow
@@ -808,7 +811,7 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, src *endpoi
 		src.pending = append(src.pending, cpy)
 		src.pendingBytes += len(cpy)
 		st.mu.Unlock()
-		if encryptedNow {
+		if recordNow {
 			s.obs.Encrypted()
 		}
 		return nil, nil, nil
@@ -821,7 +824,7 @@ func (s *Server) routeOrBuffer(channelID string, role tunnelv1.Role, src *endpoi
 		s.subPendingBytes(flushBytes)
 	}
 	st.mu.Unlock()
-	if encryptedNow {
+	if recordNow {
 		s.obs.Encrypted()
 	}
 	return dst, flush, nil
@@ -962,7 +965,7 @@ func (s *Server) untrackConn(c *websocket.Conn) {
 	s.obs.ConnCount(newCount)
 }
 
-// cleanupLoop periodically expires idle and never-encrypted channels.
+// cleanupLoop periodically expires idle channels and channels that never enter the encrypted data state.
 func (s *Server) cleanupLoop() {
 	t := time.NewTicker(s.cfg.CleanupInterval)
 	defer t.Stop()
@@ -982,7 +985,7 @@ func (s *Server) cleanupLoop() {
 			s.mu.Lock()
 			for id, st := range s.channels {
 				st.mu.Lock()
-				if !st.encrypted && now.Unix() > st.initExp {
+				if !st.sawRecord && now.Unix() > st.initExp {
 					toClose = append(toClose, closeTarget{id: id, reason: observability.CloseReasonInitExpired})
 					st.mu.Unlock()
 					continue

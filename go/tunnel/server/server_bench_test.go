@@ -14,7 +14,7 @@ func BenchmarkRouteOrBufferPaired(b *testing.B) {
 	frame := benchRecordFrame(b, 256)
 	st := s.channels["chan_bench"]
 	src := st.conns[tunnelv1.Role_client]
-	st.encrypted = false
+	st.sawRecord = false
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		if _, _, err := s.routeOrBuffer("chan_bench", tunnelv1.Role_client, src, frame); err != nil {
@@ -28,7 +28,7 @@ func BenchmarkRouteOrBufferPending(b *testing.B) {
 	frame := benchRecordFrame(b, 256)
 	st := s.channels["chan_bench"]
 	delete(st.conns, tunnelv1.Role_server)
-	st.encrypted = false
+	st.sawRecord = false
 	src := st.conns[tunnelv1.Role_client]
 	src.pending = make([][]byte, 0, 1)
 	b.ReportAllocs()

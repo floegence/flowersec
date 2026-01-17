@@ -173,11 +173,49 @@ func TestRouteOrBufferEncrypted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("routeOrBuffer failed: %v", err)
 	}
-	if !st.encrypted {
-		t.Fatalf("expected channel to be marked encrypted")
+	if !st.sawRecord {
+		t.Fatalf("expected channel to be marked as having seen a record frame")
 	}
 	if obs.encrypted != 1 {
 		t.Fatalf("expected observer encrypted count 1, got %d", obs.encrypted)
+	}
+}
+
+func TestRouteOrBufferDoesNotMarkEncryptedOnHandshakeFrame(t *testing.T) {
+	obs := &testObserver{}
+	s := &Server{cfg: Config{MaxPendingBytes: 0, MaxRecordBytes: 1 << 20}, obs: obs, channels: make(map[string]*channelState)}
+
+	st := &channelState{conns: make(map[tunnelv1.Role]*endpointConn)}
+	s.channels["ch"] = st
+	src := &endpointConn{role: tunnelv1.Role_client}
+	dst := &endpointConn{role: tunnelv1.Role_server}
+	st.conns = map[tunnelv1.Role]*endpointConn{
+		tunnelv1.Role_client: src,
+		tunnelv1.Role_server: dst,
+	}
+
+	// Minimal "looks like" handshake frame: FSEH + version + type + zero payload length.
+	frame := make([]byte, 4+1+1+4)
+	copy(frame[:4], []byte(e2ee.HandshakeMagic))
+	frame[4] = e2ee.ProtocolVersion
+	frame[5] = e2ee.HandshakeTypeInit
+	frame[6] = 0
+	frame[7] = 0
+	frame[8] = 0
+	frame[9] = 0
+	if !e2ee.LooksLikeHandshakeFrame(frame, s.cfg.MaxRecordBytes) {
+		t.Fatalf("expected frame to look like a handshake")
+	}
+
+	_, _, err := s.routeOrBuffer("ch", tunnelv1.Role_client, src, frame)
+	if err != nil {
+		t.Fatalf("routeOrBuffer failed: %v", err)
+	}
+	if st.sawRecord {
+		t.Fatalf("expected handshake frame to not mark channel as having seen a record")
+	}
+	if obs.encrypted != 0 {
+		t.Fatalf("expected observer encrypted count 0, got %d", obs.encrypted)
 	}
 }
 
@@ -202,7 +240,7 @@ func TestCleanupLoopClosesExpiredChannels(t *testing.T) {
 		initExp:    time.Now().Add(time.Second).Unix(),
 		lastActive: time.Now().Add(-time.Second),
 		conns:      make(map[tunnelv1.Role]*endpointConn),
-		encrypted:  true,
+		sawRecord:  true,
 	}
 
 	done := make(chan struct{})
