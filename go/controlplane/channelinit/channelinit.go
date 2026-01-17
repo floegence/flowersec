@@ -79,13 +79,21 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 	if len(allowedSuitesE2EE) == 0 {
 		allowedSuitesE2EE = []e2eev1.Suite{e2eev1.Suite_X25519_HKDF_SHA256_AES_256_GCM}
 	}
+	allowedSuitesE2EE = normalizeSuites(allowedSuitesE2EE)
+	if len(allowedSuitesE2EE) == 0 {
+		return nil, nil, errors.New("no allowed suites")
+	}
 	allowedSuites := make([]controlv1.Suite, 0, len(allowedSuitesE2EE))
 	for _, s := range allowedSuitesE2EE {
 		allowedSuites = append(allowedSuites, controlv1.Suite(s))
 	}
 	defaultSuiteE2EE := s.Params.DefaultSuite
 	if defaultSuiteE2EE == 0 {
-		defaultSuiteE2EE = e2eev1.Suite_X25519_HKDF_SHA256_AES_256_GCM
+		// If the caller does not specify a default, prefer the first allowed suite.
+		defaultSuiteE2EE = allowedSuitesE2EE[0]
+	}
+	if !containsSuite(allowedSuitesE2EE, defaultSuiteE2EE) {
+		return nil, nil, errors.New("default suite not allowed")
 	}
 	defaultSuite := controlv1.Suite(defaultSuiteE2EE)
 
@@ -189,4 +197,32 @@ func randomBytes(n int) ([]byte, error) {
 // MarshalGrantJSON encodes the grant for transport to the client.
 func MarshalGrantJSON(g *controlv1.ChannelInitGrant) ([]byte, error) {
 	return json.Marshal(g)
+}
+
+func normalizeSuites(in []e2eev1.Suite) []e2eev1.Suite {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]e2eev1.Suite, 0, len(in))
+	seen := make(map[e2eev1.Suite]struct{}, len(in))
+	for _, s := range in {
+		if s == 0 {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func containsSuite(list []e2eev1.Suite, want e2eev1.Suite) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
