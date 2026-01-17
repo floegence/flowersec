@@ -1,0 +1,42 @@
+{
+  "namespace": "flowersec.demo.v1",
+  "enums": {},
+  "messages": {
+    "PingRequest": {
+      "comment": "Demo ping request.",
+      "fields": []
+    },
+    "PingResponse": {
+      "comment": "Demo ping response.",
+      "fields": [
+        { "name": "ok", "type": "bool", "comment": "Whether the request succeeded." }
+      ]
+    },
+    "HelloNotify": {
+      "comment": "Demo hello notification.",
+      "fields": [
+        { "name": "hello", "type": "string", "comment": "Hello message." }
+      ]
+    }
+  },
+  "services": {
+    "Demo": {
+      "comment": "Demo service used by examples and integration tests.",
+      "methods": {
+        "Ping": {
+          "comment": "Ping request/response.",
+          "kind": "request",
+          "type_id": 1,
+          "request": "PingRequest",
+          "response": "PingResponse"
+        },
+        "Hello": {
+          "comment": "Hello notification.",
+          "kind": "notify",
+          "type_id": 2,
+          "request": "HelloNotify"
+        }
+      }
+    }
+  }
+}

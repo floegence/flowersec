@@ -38,3 +38,102 @@ export interface ChannelInitGrant {
   default_suite: Suite;
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v != null && !Array.isArray(v);
+}
+
+function assertString(name: string, v: unknown): string {
+  if (typeof v !== "string") throw new Error(`bad ${name}`);
+  return v;
+}
+
+function assertBoolean(name: string, v: unknown): boolean {
+  if (typeof v !== "boolean") throw new Error(`bad ${name}`);
+  return v;
+}
+
+function assertSafeInt(name: string, v: unknown): number {
+  if (typeof v !== "number" || !Number.isSafeInteger(v)) throw new Error(`bad ${name}`);
+  return v;
+}
+
+function assertU32(name: string, v: unknown): number {
+  const n = assertSafeInt(name, v);
+  if (n < 0 || n > 0xffffffff) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertU64(name: string, v: unknown): number {
+  const n = assertSafeInt(name, v);
+  if (n < 0) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertI32(name: string, v: unknown): number {
+  const n = assertSafeInt(name, v);
+  if (n < -2147483648 || n > 2147483647) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertI64(name: string, v: unknown): number {
+  return assertSafeInt(name, v);
+}
+
+function assertStringMap(name: string, v: unknown): Record<string, string> {
+  if (!isRecord(v)) throw new Error(`bad ${name}`);
+  for (const [k, vv] of Object.entries(v)) {
+    void k;
+    if (typeof vv !== "string") throw new Error(`bad ${name}`);
+  }
+  return v as Record<string, string>;
+}
+
+const _RoleValues = new Set<number>([
+  1,
+  2,
+]);
+
+function assertRole(name: string, v: unknown): Role {
+  const n = assertSafeInt(name, v);
+  if (!_RoleValues.has(n)) throw new Error(`bad ${name}`);
+  return n as Role;
+}
+
+const _SuiteValues = new Set<number>([
+  2,
+  1,
+]);
+
+function assertSuite(name: string, v: unknown): Suite {
+  const n = assertSafeInt(name, v);
+  if (!_SuiteValues.has(n)) throw new Error(`bad ${name}`);
+  return n as Suite;
+}
+
+export function assertChannelInitGrant(v: unknown): ChannelInitGrant {
+  if (!isRecord(v)) throw new Error("bad ChannelInitGrant");
+  const o = v as Record<string, unknown>;
+  if (o["tunnel_url"] === undefined) throw new Error("bad ChannelInitGrant.tunnel_url");
+  assertString("ChannelInitGrant.tunnel_url", o["tunnel_url"]);
+  if (o["channel_id"] === undefined) throw new Error("bad ChannelInitGrant.channel_id");
+  assertString("ChannelInitGrant.channel_id", o["channel_id"]);
+  if (o["channel_init_expire_at_unix_s"] === undefined) throw new Error("bad ChannelInitGrant.channel_init_expire_at_unix_s");
+  assertI64("ChannelInitGrant.channel_init_expire_at_unix_s", o["channel_init_expire_at_unix_s"]);
+  if (o["idle_timeout_seconds"] === undefined) throw new Error("bad ChannelInitGrant.idle_timeout_seconds");
+  assertI32("ChannelInitGrant.idle_timeout_seconds", o["idle_timeout_seconds"]);
+  if (o["role"] === undefined) throw new Error("bad ChannelInitGrant.role");
+  assertRole("ChannelInitGrant.role", o["role"]);
+  if (o["token"] === undefined) throw new Error("bad ChannelInitGrant.token");
+  assertString("ChannelInitGrant.token", o["token"]);
+  if (o["e2ee_psk_b64u"] === undefined) throw new Error("bad ChannelInitGrant.e2ee_psk_b64u");
+  assertString("ChannelInitGrant.e2ee_psk_b64u", o["e2ee_psk_b64u"]);
+  if (o["allowed_suites"] === undefined) throw new Error("bad ChannelInitGrant.allowed_suites");
+  if (!Array.isArray(o["allowed_suites"])) throw new Error("bad ChannelInitGrant.allowed_suites");
+for (let i = 0; i < (o["allowed_suites"] as unknown[]).length; i++) {
+assertSuite("ChannelInitGrant.allowed_suites[]", (o["allowed_suites"] as unknown[])[i]);
+}
+  if (o["default_suite"] === undefined) throw new Error("bad ChannelInitGrant.default_suite");
+  assertSuite("ChannelInitGrant.default_suite", o["default_suite"]);
+  return o as unknown as ChannelInitGrant;
+}
+

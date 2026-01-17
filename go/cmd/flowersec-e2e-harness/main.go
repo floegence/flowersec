@@ -20,6 +20,7 @@ import (
 	"github.com/floegence/flowersec/controlplane/channelinit"
 	"github.com/floegence/flowersec/controlplane/issuer"
 	"github.com/floegence/flowersec/crypto/e2ee"
+	demov1 "github.com/floegence/flowersec/gen/flowersec/demo/v1"
 	rpcv1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
 	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/internal/base64url"
@@ -207,15 +208,22 @@ func runServerEndpoint(ctx context.Context, wsURL string, channelID string, toke
 			}
 			router := rpc.NewRouter()
 			srv := rpc.NewServer(stream, router)
-			router.Register(1, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
-				_ = ctx
-				_ = payload
-				_ = srv.Notify(2, json.RawMessage(`{"hello":"world"}`))
-				return json.RawMessage(`{"ok":true}`), nil
-			})
+			demov1.RegisterDemo(router, demoHandler{srv: srv})
 			_ = srv.Serve(ctx)
 		}()
 	}
+}
+
+// demoHandler implements the generated Demo service for integration tests.
+type demoHandler struct {
+	srv *rpc.Server
+}
+
+func (h demoHandler) Ping(ctx context.Context, req *demov1.PingRequest) (*demov1.PingResponse, *rpcv1.RpcError) {
+	_ = ctx
+	_ = req
+	_ = demov1.NotifyDemoHello(h.srv, &demov1.HelloNotify{Hello: "world"})
+	return &demov1.PingResponse{Ok: true}, nil
 }
 
 type scenarioOutcome struct {

@@ -1,8 +1,7 @@
-import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
-import { Role as TunnelRole, type Attach } from "../gen/flowersec/tunnel/v1.gen.js";
-import { assertChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
+import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
+import { assertDirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
 import { normalizeObserver, nowSeconds, type ClientObserverLike } from "../observability/observer.js";
-import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
+import { base64urlDecode } from "../utils/base64url.js";
 import { AbortError, TimeoutError, isAbortError, isTimeoutError, throwIfAborted } from "../utils/errors.js";
 import { WebSocketBinaryTransport, type WebSocketLike } from "../ws-client/binaryTransport.js";
 import { clientHandshake } from "../e2ee/handshake.js";
@@ -12,18 +11,14 @@ import { RpcClient } from "../rpc/client.js";
 import { writeStreamHello } from "../rpc/streamHello.js";
 import { RpcProxy } from "../rpc-proxy/rpcProxy.js";
 
-// TunnelConnectOptions controls transport and handshake limits.
-export type TunnelConnectOptions = Readonly<{
+// DirectConnectOptions controls transport and handshake limits.
+export type DirectConnectOptions = Readonly<{
   /** Optional AbortSignal to cancel connect/handshake. */
   signal?: AbortSignal;
   /** Optional websocket connect timeout in milliseconds (0 disables). */
   connectTimeoutMs?: number;
   /** Optional total E2EE handshake timeout in milliseconds (0 disables). */
   handshakeTimeoutMs?: number;
-  /** Optional caller-provided endpoint instance ID (base64url). */
-  endpointInstanceId?: string;
-  /** Feature bitset advertised during the E2EE handshake. */
-  clientFeatures?: number;
   /** Maximum allowed bytes for handshake payloads. */
   maxHandshakePayload?: number;
   /** Maximum encrypted record size on the wire. */
@@ -38,15 +33,16 @@ export type TunnelConnectOptions = Readonly<{
   observer?: ClientObserverLike;
 }>;
 
-// connectTunnelClientRpc attaches to a tunnel and returns an RPC-ready client.
-export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: TunnelConnectOptions = {}) {
-  const checkedGrant = assertChannelInitGrant(grant);
+// connectDirectClientRpc connects to a direct websocket endpoint and returns an RPC-ready client.
+export async function connectDirectClientRpc(info: DirectConnectInfo, opts: DirectConnectOptions = {}) {
+  const ready = assertDirectConnectInfo(info);
   const observer = normalizeObserver(opts.observer);
   const signal = opts.signal;
   const connectTimeoutMs = opts.connectTimeoutMs ?? 10_000;
   const handshakeTimeoutMs = opts.handshakeTimeoutMs ?? 10_000;
+
   const connectStart = nowSeconds();
-  const ws = (opts.wsFactory ?? defaultWebSocketFactory)(checkedGrant.tunnel_url);
+  const ws = (opts.wsFactory ?? defaultWebSocketFactory)(ready.ws_url);
   try {
     await waitOpen(ws, {
       timeoutMs: connectTimeoutMs,
@@ -61,43 +57,22 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
 
   throwIfAborted(signal, "connect aborted");
 
-  const endpointInstanceId = opts.endpointInstanceId ?? base64urlEncode(randomBytes(24));
-  const attach: Attach = {
-    v: 1,
-    channel_id: checkedGrant.channel_id,
-    role: TunnelRole.Role_client,
-    token: checkedGrant.token,
-    endpoint_instance_id: endpointInstanceId
-  };
-  try {
-    ws.send(JSON.stringify(attach));
-    observer.onTunnelAttach("ok", undefined);
-  } catch (err) {
-    observer.onTunnelAttach("fail", "send_failed");
-    try {
-      ws.close();
-    } catch {
-      // ignore
-    }
-    throw err;
-  }
-
   const transport = new WebSocketBinaryTransport(ws, {
     ...(opts.maxWsQueuedBytes !== undefined ? { maxQueuedBytes: opts.maxWsQueuedBytes } : {}),
     observer
   });
-  const psk = base64urlDecode(checkedGrant.e2ee_psk_b64u);
-  const suite = checkedGrant.default_suite as unknown as 1 | 2;
-  // Complete the E2EE handshake over the websocket transport.
+  const psk = base64urlDecode(ready.e2ee_psk_b64u);
+  const suite = ready.default_suite as unknown as 1 | 2;
+
   const handshakeStart = nowSeconds();
   let secure: Awaited<ReturnType<typeof clientHandshake>>;
   try {
     secure = await withAbortAndTimeout(
       clientHandshake(transport, {
-        channelId: checkedGrant.channel_id,
+        channelId: ready.channel_id,
         suite,
         psk,
-        clientFeatures: opts.clientFeatures ?? 0,
+        clientFeatures: 0,
         maxHandshakePayload: opts.maxHandshakePayload ?? 8 * 1024,
         maxRecordBytes: opts.maxRecordBytes ?? (1 << 20),
         ...(opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: opts.maxBufferedBytes } : {}),
@@ -141,7 +116,6 @@ export async function connectTunnelClientRpc(grant: ChannelInitGrant, opts: Tunn
   rpcProxy.attach(rpc);
 
   return {
-    endpointInstanceId,
     secure,
     mux,
     rpc,
@@ -262,16 +236,10 @@ async function withAbortAndTimeout<T>(
           }, timeoutMs)
         : undefined;
     opts.signal?.addEventListener("abort", onAbort);
-    p.then(
+    void p.then(
       (v) => finish(() => resolve(v)),
       (e) => finish(() => reject(e))
     );
   });
 }
 
-// randomBytes uses the Web Crypto API for nonces and IDs.
-function randomBytes(n: number): Uint8Array {
-  const out = new Uint8Array(n);
-  crypto.getRandomValues(out);
-  return out;
-}

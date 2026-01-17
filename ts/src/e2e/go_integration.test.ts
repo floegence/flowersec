@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { connectTunnelClientRpc } from "../tunnel-client/connect.js";
+import { createDemoClient } from "../gen/flowersec/demo/v1.rpc.gen.js";
 
 const require = createRequire(import.meta.url);
 const WS = require("ws");
@@ -31,9 +32,9 @@ describe("go<->ts integration", () => {
         wsFactory: (url) => new WS(url)
       });
       try {
-        const notified = waitNotify(client.rpcProxy, 2, 2000);
-        const resp = await client.rpcProxy.call(1, {});
-        expect(resp.payload).toEqual({ ok: true });
+        const demo = createDemoClient(client.rpcProxy);
+        const notified = waitNotify(demo, 2000);
+        await expect(demo.ping({})).resolves.toEqual({ ok: true });
         await expect(notified).resolves.toEqual({ hello: "world" });
       } finally {
         client.close();
@@ -52,7 +53,7 @@ async function waitForLine(get: () => string, timeoutMs: number): Promise<void> 
   throw new Error("timeout waiting for harness output");
 }
 
-function waitNotify(proxy: { onNotify: (typeId: number, h: (payload: any) => void) => () => void }, typeId: number, timeoutMs: number) {
+function waitNotify(demo: { onHello: (h: (payload: any) => void) => () => void }, timeoutMs: number) {
   return new Promise<any>((resolve, reject) => {
     let unsub = () => {};
     const t = setTimeout(() => {
@@ -60,7 +61,7 @@ function waitNotify(proxy: { onNotify: (typeId: number, h: (payload: any) => voi
       reject(new Error("timeout waiting for notification"));
     }, timeoutMs);
     t.unref?.();
-    unsub = proxy.onNotify(typeId, (payload) => {
+    unsub = demo.onHello((payload) => {
       clearTimeout(t);
       unsub();
       resolve(payload);

@@ -1,0 +1,16 @@
+{
+  "namespace": "flowersec.direct.v1",
+  "enums": {},
+  "messages": {
+    "DirectConnectInfo": {
+      "comment": "Connection info for direct (no tunnel) WebSocket + E2EE sessions.",
+      "fields": [
+        { "name": "ws_url", "type": "string", "comment": "WebSocket URL of the direct server." },
+        { "name": "channel_id", "type": "string", "comment": "Channel identifier." },
+        { "name": "e2ee_psk_b64u", "type": "string", "comment": "Base64url-encoded 32-byte PSK." },
+        { "name": "default_suite", "type": "u32", "comment": "Default E2EE suite identifier." }
+      ]
+    }
+  }
+}
+

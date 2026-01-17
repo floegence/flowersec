@@ -30,3 +30,91 @@ export interface StreamHello {
   v: number;
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v != null && !Array.isArray(v);
+}
+
+function assertString(name: string, v: unknown): string {
+  if (typeof v !== "string") throw new Error(`bad ${name}`);
+  return v;
+}
+
+function assertBoolean(name: string, v: unknown): boolean {
+  if (typeof v !== "boolean") throw new Error(`bad ${name}`);
+  return v;
+}
+
+function assertSafeInt(name: string, v: unknown): number {
+  if (typeof v !== "number" || !Number.isSafeInteger(v)) throw new Error(`bad ${name}`);
+  return v;
+}
+
+function assertU32(name: string, v: unknown): number {
+  const n = assertSafeInt(name, v);
+  if (n < 0 || n > 0xffffffff) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertU64(name: string, v: unknown): number {
+  const n = assertSafeInt(name, v);
+  if (n < 0) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertI32(name: string, v: unknown): number {
+  const n = assertSafeInt(name, v);
+  if (n < -2147483648 || n > 2147483647) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertI64(name: string, v: unknown): number {
+  return assertSafeInt(name, v);
+}
+
+function assertStringMap(name: string, v: unknown): Record<string, string> {
+  if (!isRecord(v)) throw new Error(`bad ${name}`);
+  for (const [k, vv] of Object.entries(v)) {
+    void k;
+    if (typeof vv !== "string") throw new Error(`bad ${name}`);
+  }
+  return v as Record<string, string>;
+}
+
+export function assertRpcEnvelope(v: unknown): RpcEnvelope {
+  if (!isRecord(v)) throw new Error("bad RpcEnvelope");
+  const o = v as Record<string, unknown>;
+  if (o["type_id"] === undefined) throw new Error("bad RpcEnvelope.type_id");
+  assertU32("RpcEnvelope.type_id", o["type_id"]);
+  if (o["request_id"] === undefined) throw new Error("bad RpcEnvelope.request_id");
+  assertU64("RpcEnvelope.request_id", o["request_id"]);
+  if (o["response_to"] === undefined) throw new Error("bad RpcEnvelope.response_to");
+  assertU64("RpcEnvelope.response_to", o["response_to"]);
+  if (o["payload"] === undefined) throw new Error("bad RpcEnvelope.payload");
+  void o["payload"];
+  if (o["error"] !== undefined) {
+    assertRpcError(o["error"]);
+  }
+  return o as unknown as RpcEnvelope;
+}
+
+export function assertRpcError(v: unknown): RpcError {
+  if (!isRecord(v)) throw new Error("bad RpcError");
+  const o = v as Record<string, unknown>;
+  if (o["code"] === undefined) throw new Error("bad RpcError.code");
+  assertU32("RpcError.code", o["code"]);
+  if (o["message"] !== undefined) {
+    assertString("RpcError.message", o["message"]);
+  }
+  return o as unknown as RpcError;
+}
+
+export function assertStreamHello(v: unknown): StreamHello {
+  if (!isRecord(v)) throw new Error("bad StreamHello");
+  const o = v as Record<string, unknown>;
+  if (o["kind"] === undefined) throw new Error("bad StreamHello.kind");
+  assertString("StreamHello.kind", o["kind"]);
+  if (o["v"] === undefined) throw new Error("bad StreamHello.v");
+  assertU32("StreamHello.v", o["v"]);
+  return o as unknown as StreamHello;
+}
+

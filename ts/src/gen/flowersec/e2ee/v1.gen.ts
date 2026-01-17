@@ -72,3 +72,143 @@ export interface E2EE_Resp {
   server_features: number;
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v != null && !Array.isArray(v);
+}
+
+function assertString(name: string, v: unknown): string {
+  if (typeof v !== "string") throw new Error(`bad ${name}`);
+  return v;
+}
+
+function assertBoolean(name: string, v: unknown): boolean {
+  if (typeof v !== "boolean") throw new Error(`bad ${name}`);
+  return v;
+}
+
+function assertSafeInt(name: string, v: unknown): number {
+  if (typeof v !== "number" || !Number.isSafeInteger(v)) throw new Error(`bad ${name}`);
+  return v;
+}
+
+function assertU32(name: string, v: unknown): number {
+  const n = assertSafeInt(name, v);
+  if (n < 0 || n > 0xffffffff) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertU64(name: string, v: unknown): number {
+  const n = assertSafeInt(name, v);
+  if (n < 0) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertI32(name: string, v: unknown): number {
+  const n = assertSafeInt(name, v);
+  if (n < -2147483648 || n > 2147483647) throw new Error(`bad ${name}`);
+  return n;
+}
+
+function assertI64(name: string, v: unknown): number {
+  return assertSafeInt(name, v);
+}
+
+function assertStringMap(name: string, v: unknown): Record<string, string> {
+  if (!isRecord(v)) throw new Error(`bad ${name}`);
+  for (const [k, vv] of Object.entries(v)) {
+    void k;
+    if (typeof vv !== "string") throw new Error(`bad ${name}`);
+  }
+  return v as Record<string, string>;
+}
+
+const _E2EEFeatureBitsValues = new Set<number>([
+  1,
+]);
+
+function assertE2EEFeatureBits(name: string, v: unknown): E2EEFeatureBits {
+  const n = assertSafeInt(name, v);
+  if (!_E2EEFeatureBitsValues.has(n)) throw new Error(`bad ${name}`);
+  return n as E2EEFeatureBits;
+}
+
+const _RecordFlagsValues = new Set<number>([
+  0,
+  1,
+  2,
+]);
+
+function assertRecordFlags(name: string, v: unknown): RecordFlags {
+  const n = assertSafeInt(name, v);
+  if (!_RecordFlagsValues.has(n)) throw new Error(`bad ${name}`);
+  return n as RecordFlags;
+}
+
+const _RoleValues = new Set<number>([
+  1,
+  2,
+]);
+
+function assertRole(name: string, v: unknown): Role {
+  const n = assertSafeInt(name, v);
+  if (!_RoleValues.has(n)) throw new Error(`bad ${name}`);
+  return n as Role;
+}
+
+const _SuiteValues = new Set<number>([
+  2,
+  1,
+]);
+
+function assertSuite(name: string, v: unknown): Suite {
+  const n = assertSafeInt(name, v);
+  if (!_SuiteValues.has(n)) throw new Error(`bad ${name}`);
+  return n as Suite;
+}
+
+export function assertE2EE_Ack(v: unknown): E2EE_Ack {
+  if (!isRecord(v)) throw new Error("bad E2EE_Ack");
+  const o = v as Record<string, unknown>;
+  if (o["handshake_id"] === undefined) throw new Error("bad E2EE_Ack.handshake_id");
+  assertString("E2EE_Ack.handshake_id", o["handshake_id"]);
+  if (o["timestamp_unix_s"] === undefined) throw new Error("bad E2EE_Ack.timestamp_unix_s");
+  assertU64("E2EE_Ack.timestamp_unix_s", o["timestamp_unix_s"]);
+  if (o["auth_tag_b64u"] === undefined) throw new Error("bad E2EE_Ack.auth_tag_b64u");
+  assertString("E2EE_Ack.auth_tag_b64u", o["auth_tag_b64u"]);
+  return o as unknown as E2EE_Ack;
+}
+
+export function assertE2EE_Init(v: unknown): E2EE_Init {
+  if (!isRecord(v)) throw new Error("bad E2EE_Init");
+  const o = v as Record<string, unknown>;
+  if (o["channel_id"] === undefined) throw new Error("bad E2EE_Init.channel_id");
+  assertString("E2EE_Init.channel_id", o["channel_id"]);
+  if (o["role"] === undefined) throw new Error("bad E2EE_Init.role");
+  assertRole("E2EE_Init.role", o["role"]);
+  if (o["version"] === undefined) throw new Error("bad E2EE_Init.version");
+  assertU32("E2EE_Init.version", o["version"]);
+  if (o["suite"] === undefined) throw new Error("bad E2EE_Init.suite");
+  assertSuite("E2EE_Init.suite", o["suite"]);
+  if (o["client_eph_pub_b64u"] === undefined) throw new Error("bad E2EE_Init.client_eph_pub_b64u");
+  assertString("E2EE_Init.client_eph_pub_b64u", o["client_eph_pub_b64u"]);
+  if (o["nonce_c_b64u"] === undefined) throw new Error("bad E2EE_Init.nonce_c_b64u");
+  assertString("E2EE_Init.nonce_c_b64u", o["nonce_c_b64u"]);
+  if (o["client_features"] === undefined) throw new Error("bad E2EE_Init.client_features");
+  assertU32("E2EE_Init.client_features", o["client_features"]);
+  return o as unknown as E2EE_Init;
+}
+
+export function assertE2EE_Resp(v: unknown): E2EE_Resp {
+  if (!isRecord(v)) throw new Error("bad E2EE_Resp");
+  const o = v as Record<string, unknown>;
+  if (o["handshake_id"] === undefined) throw new Error("bad E2EE_Resp.handshake_id");
+  assertString("E2EE_Resp.handshake_id", o["handshake_id"]);
+  if (o["server_eph_pub_b64u"] === undefined) throw new Error("bad E2EE_Resp.server_eph_pub_b64u");
+  assertString("E2EE_Resp.server_eph_pub_b64u", o["server_eph_pub_b64u"]);
+  if (o["nonce_s_b64u"] === undefined) throw new Error("bad E2EE_Resp.nonce_s_b64u");
+  assertString("E2EE_Resp.nonce_s_b64u", o["nonce_s_b64u"]);
+  if (o["server_features"] === undefined) throw new Error("bad E2EE_Resp.server_features");
+  assertU32("E2EE_Resp.server_features", o["server_features"]);
+  return o as unknown as E2EE_Resp;
+}
+

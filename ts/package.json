@@ -3,12 +3,28 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/facade.js",
+  "types": "./dist/facade.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/facade.d.ts",
+      "default": "./dist/facade.js"
+    },
+    "./internal": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./rpc": {
+      "types": "./dist/rpc/index.d.ts",
+      "default": "./dist/rpc/index.js"
+    },
+    "./tunnel-client": {
+      "types": "./dist/tunnel-client/index.d.ts",
+      "default": "./dist/tunnel-client/index.js"
+    },
+    "./direct-client": {
+      "types": "./dist/direct-client/index.d.ts",
+      "default": "./dist/direct-client/index.js"
     }
   },
   "scripts": {

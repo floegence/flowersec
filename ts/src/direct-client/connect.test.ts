@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { base64urlEncode } from "../utils/base64url.js";
-import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
-import { Role, Suite } from "../gen/flowersec/controlplane/v1.gen.js";
+import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
 
 const mocks = vi.hoisted(() => {
   const clientHandshakeMock = vi.fn();
@@ -68,7 +67,7 @@ vi.mock("../rpc-proxy/rpcProxy.js", () => ({ RpcProxy: mocks.MockRpcProxy }));
 
 vi.mock("../yamux/session.js", () => ({ YamuxSession: mocks.MockYamuxSession }));
 
-import { connectTunnelClientRpc } from "./connect.js";
+import { connectDirectClientRpc } from "./connect.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -104,22 +103,17 @@ class FakeWebSocket {
   }
 }
 
-function makeGrant(): ChannelInitGrant {
+function makeInfo(): DirectConnectInfo {
   const psk = base64urlEncode(new Uint8Array(32).fill(1));
   return {
-    tunnel_url: "ws://example.invalid",
+    ws_url: "ws://example.invalid",
     channel_id: "ch_1",
-    channel_init_expire_at_unix_s: Math.floor(Date.now() / 1000) + 120,
-    idle_timeout_seconds: 60,
-    role: Role.Role_client,
-    token: "tok",
     e2ee_psk_b64u: psk,
-    allowed_suites: [Suite.Suite_X25519_HKDF_SHA256_AES_256_GCM],
     default_suite: 1
   };
 }
 
-describe("connectTunnelClientRpc", () => {
+describe("connectDirectClientRpc", () => {
   test("reports websocket error on connect", async () => {
     const ws = new FakeWebSocket();
     const observer = {
@@ -131,7 +125,7 @@ describe("connectTunnelClientRpc", () => {
       onRpcNotify: vi.fn()
     };
 
-    const p = connectTunnelClientRpc(makeGrant(), {
+    const p = connectDirectClientRpc(makeInfo(), {
       wsFactory: () => ws as any,
       observer
     });
@@ -153,7 +147,7 @@ describe("connectTunnelClientRpc", () => {
       onRpcNotify: vi.fn()
     };
 
-    const p = connectTunnelClientRpc(makeGrant(), {
+    const p = connectDirectClientRpc(makeInfo(), {
       wsFactory: () => ws as any,
       connectTimeoutMs: 30,
       observer
@@ -175,7 +169,7 @@ describe("connectTunnelClientRpc", () => {
       onRpcNotify: vi.fn()
     };
 
-    const p = connectTunnelClientRpc(makeGrant(), {
+    const p = connectDirectClientRpc(makeInfo(), {
       wsFactory: () => ws as any,
       signal: ac.signal,
       observer
@@ -184,31 +178,6 @@ describe("connectTunnelClientRpc", () => {
     setTimeout(() => ac.abort(), 0);
     await expect(p).rejects.toThrow(/connect aborted/);
     expect(observer.onTunnelConnect).toHaveBeenCalledWith("fail", "canceled", expect.any(Number));
-  });
-
-  test("reports attach send failures", async () => {
-    const ws = new FakeWebSocket();
-    ws.send = () => {
-      throw new Error("send failed");
-    };
-    const observer = {
-      onTunnelConnect: vi.fn(),
-      onTunnelAttach: vi.fn(),
-      onTunnelHandshake: vi.fn(),
-      onWsError: vi.fn(),
-      onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
-    };
-
-    const p = connectTunnelClientRpc(makeGrant(), {
-      wsFactory: () => ws as any,
-      observer
-    });
-
-    setTimeout(() => ws.emit("open", {}), 0);
-    await expect(p).rejects.toThrow(/send failed/);
-
-    expect(observer.onTunnelAttach).toHaveBeenCalledWith("fail", "send_failed");
   });
 
   test("reports handshake failures", async () => {
@@ -223,7 +192,7 @@ describe("connectTunnelClientRpc", () => {
       onRpcNotify: vi.fn()
     };
 
-    const p = connectTunnelClientRpc(makeGrant(), {
+    const p = connectDirectClientRpc(makeInfo(), {
       wsFactory: () => ws as any,
       observer
     });
@@ -246,7 +215,7 @@ describe("connectTunnelClientRpc", () => {
       onRpcNotify: vi.fn()
     };
 
-    const p = connectTunnelClientRpc(makeGrant(), {
+    const p = connectDirectClientRpc(makeInfo(), {
       wsFactory: () => ws as any,
       handshakeTimeoutMs: 30,
       observer
@@ -271,7 +240,7 @@ describe("connectTunnelClientRpc", () => {
       close: vi.fn()
     });
 
-    const p = connectTunnelClientRpc(makeGrant(), {
+    const p = connectDirectClientRpc(makeInfo(), {
       wsFactory: () => ws as any
     });
 
@@ -285,3 +254,4 @@ describe("connectTunnelClientRpc", () => {
     expect(secureClose).toHaveBeenCalledTimes(1);
   });
 });
+
