@@ -166,10 +166,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	srv := &http.Server{
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	srv := newHTTPServer(mux)
 
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
