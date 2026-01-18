@@ -57,12 +57,14 @@ func TestDirectHandler_AllowsConnectDirect(t *testing.T) {
 		E2eePskB64u:  base64.RawURLEncoding.EncodeToString(psk),
 		DefaultSuite: uint32(e2ee.SuiteX25519HKDFAES256GCM),
 	}
-	c, err := client.ConnectDirect(context.Background(), info, client.DirectConnectOptions{
-		Origin:           origin,
-		ConnectTimeout:   2 * time.Second,
-		HandshakeTimeout: 2 * time.Second,
-		MaxRecordBytes:   1 << 20,
-	})
+	c, err := client.ConnectDirect(
+		context.Background(),
+		info,
+		origin,
+		client.WithConnectTimeout(2*time.Second),
+		client.WithHandshakeTimeout(2*time.Second),
+		client.WithMaxRecordBytes(1<<20),
+	)
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)
 	}

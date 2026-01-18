@@ -7,7 +7,7 @@ import { normalizeObserver, nowSeconds, type ClientObserverLike } from "../obser
 import { base64urlDecode } from "../utils/base64url.js";
 import { FlowersecError, throwIfAborted } from "../utils/errors.js";
 import { WebSocketBinaryTransport, type WebSocketLike } from "../ws-client/binaryTransport.js";
-import type { Client } from "../client.js";
+import type { ClientInternal } from "../client.js";
 import {
   OriginMismatchError,
   WsFactoryRequiredError,
@@ -29,13 +29,13 @@ export type ConnectOptionsBase = Readonly<{
   handshakeTimeoutMs?: number;
   /** Feature bitset advertised during the E2EE handshake. */
   clientFeatures?: number;
-  /** Maximum allowed bytes for handshake payloads. */
+  /** Maximum allowed bytes for handshake payloads (0 uses default). */
   maxHandshakePayload?: number;
-  /** Maximum encrypted record size on the wire. */
+  /** Maximum encrypted record size on the wire (0 uses default). */
   maxRecordBytes?: number;
-  /** Maximum buffered plaintext bytes in the secure channel. */
+  /** Maximum buffered plaintext bytes in the secure channel (0 uses default). */
   maxBufferedBytes?: number;
-  /** Maximum queued websocket bytes before backpressure. */
+  /** Maximum queued websocket bytes before backpressure (0 uses default). */
   maxWsQueuedBytes?: number;
   /** Optional factory for creating the WebSocket instance. */
   wsFactory?: (url: string, origin: string) => WebSocketLike;
@@ -53,7 +53,7 @@ export type ConnectCoreArgs = Readonly<{
   attach?: Readonly<{ attachJson: string; endpointInstanceId: string }>;
 }>;
 
-export async function connectCore(args: ConnectCoreArgs): Promise<Client> {
+export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal> {
   const observer = normalizeObserver(args.opts.observer);
   const signal = args.opts.signal;
   const connectTimeoutMs = args.opts.connectTimeoutMs ?? 10_000;
@@ -63,6 +63,10 @@ export async function connectCore(args: ConnectCoreArgs): Promise<Client> {
   const origin = args.opts.origin;
   if (origin == null || origin === "") {
     throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_origin", message: "missing origin" });
+  }
+  if (args.wsUrl == null || args.wsUrl === "") {
+    const code = args.path === "tunnel" ? "missing_tunnel_url" : "missing_ws_url";
+    throw new FlowersecError({ path: args.path, stage: "validate", code, message: "missing websocket url" });
   }
 
   let ws: WebSocketLike;
@@ -123,7 +127,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<Client> {
     }
 
     const transport = new WebSocketBinaryTransport(ws, {
-      ...(args.opts.maxWsQueuedBytes !== undefined ? { maxQueuedBytes: args.opts.maxWsQueuedBytes } : {}),
+      ...(args.opts.maxWsQueuedBytes != null && args.opts.maxWsQueuedBytes > 0 ? { maxQueuedBytes: args.opts.maxWsQueuedBytes } : {}),
       observer,
     });
 
@@ -151,15 +155,18 @@ export async function connectCore(args: ConnectCoreArgs): Promise<Client> {
     const handshakeStart = nowSeconds();
     let secure: Awaited<ReturnType<typeof clientHandshake>>;
     try {
+      const maxHandshakePayload = args.opts.maxHandshakePayload ?? 0;
+      const maxRecordBytes = args.opts.maxRecordBytes ?? 0;
+      const maxBufferedBytes = args.opts.maxBufferedBytes ?? 0;
       secure = await withAbortAndTimeout(
         clientHandshake(transport, {
           channelId: args.channelId,
           suite,
           psk,
           clientFeatures: args.opts.clientFeatures ?? 0,
-          maxHandshakePayload: args.opts.maxHandshakePayload ?? 8 * 1024,
-          maxRecordBytes: args.opts.maxRecordBytes ?? (1 << 20),
-          ...(args.opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: args.opts.maxBufferedBytes } : {}),
+          maxHandshakePayload: maxHandshakePayload > 0 ? maxHandshakePayload : 8 * 1024,
+          maxRecordBytes: maxRecordBytes > 0 ? maxRecordBytes : (1 << 20),
+          ...(maxBufferedBytes > 0 ? { maxBufferedBytes } : {}),
           timeoutMs: handshakeTimeoutMs,
           ...(signal !== undefined ? { signal } : {}),
         }),

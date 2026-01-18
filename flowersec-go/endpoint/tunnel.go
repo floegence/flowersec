@@ -12,38 +12,14 @@ import (
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
-	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/internal/endpointid"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )
 
-type TunnelConnectOptions struct {
-	Origin string // Explicit Origin header value (required).
-
-	Header http.Header       // Optional headers for the WebSocket handshake.
-	Dialer *websocket.Dialer // Optional websocket dialer (proxy/TLS/etc).
-
-	ConnectTimeout   time.Duration // WebSocket connect timeout (0 uses default; <0 disables).
-	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default; <0 disables).
-
-	MaxHandshakePayload int // Maximum handshake JSON payload size (0 uses default).
-	MaxRecordBytes      int // Maximum encrypted record size on the wire (0 uses default).
-	MaxBufferedBytes    int // Maximum buffered plaintext bytes in SecureChannel (0 uses default).
-
-	ServerFeatures uint32 // Feature bitset advertised during the E2EE handshake.
-
-	ClockSkew time.Duration // Allowed clock skew for handshake timestamp validation (0 uses default).
-
-	EndpointInstanceID string                     // Optional endpoint instance ID (base64url); empty generates a random value.
-	HandshakeCache     *e2ee.ServerHandshakeCache // Optional cache for handshake retries (nil uses a new default cache per connection).
-
-	YamuxConfig *hyamux.Config // Optional yamux server config (nil uses defaults).
-}
-
 // ConnectTunnel attaches to a tunnel as role=server and returns a multiplexed endpoint session.
-func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts TunnelConnectOptions) (*Session, error) {
+func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, opts ...ConnectOption) (*Session, error) {
 	if grant == nil {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingGrant, ErrMissingGrant)
 	}
@@ -53,7 +29,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if grant.TunnelUrl == "" {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingTunnelURL, ErrMissingTunnelURL)
 	}
-	if opts.Origin == "" {
+	if origin == "" {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingOrigin, ErrMissingOrigin)
 	}
 	if grant.ChannelId == "" {
@@ -61,6 +37,10 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	}
 	if grant.ChannelInitExpireAtUnixS <= 0 {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingInitExp, ErrMissingInitExp)
+	}
+	cfg, err := applyConnectOptions(opts)
+	if err != nil {
+		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidOption, err)
 	}
 	psk, err := base64url.Decode(grant.E2eePskB64u)
 	if err != nil || len(psk) != 32 {
@@ -76,26 +56,20 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
 	}
 
-	connectTimeout := opts.ConnectTimeout
-	if connectTimeout == 0 {
-		connectTimeout = defaults.ConnectTimeout
-	}
-	handshakeTimeout := opts.HandshakeTimeout
-	if handshakeTimeout == 0 {
-		handshakeTimeout = defaults.HandshakeTimeout
-	}
+	connectTimeout := cfg.connectTimeout
+	handshakeTimeout := cfg.handshakeTimeout
 
 	connectCtx, connectCancel := contextutil.WithTimeout(ctx, connectTimeout)
 	defer connectCancel()
 
-	h := cloneHeader(opts.Header)
-	h.Set("Origin", opts.Origin)
-	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: opts.Dialer})
+	h := cloneHeader(cfg.header)
+	h.Set("Origin", origin)
+	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
 		return nil, wrapErr(PathTunnel, StageConnect, CodeDialFailed, err)
 	}
 
-	endpointInstanceID := opts.EndpointInstanceID
+	endpointInstanceID := cfg.endpointInstanceID
 	if endpointInstanceID == "" {
 		endpointInstanceID, err = endpointid.Random(24)
 		if err != nil {
@@ -126,14 +100,14 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 		suite:            suite,
 		channelID:        grant.ChannelId,
 		initExpireAtUnix: grant.ChannelInitExpireAtUnixS,
-		clockSkew:        opts.ClockSkew,
-		serverFeatures:   opts.ServerFeatures,
-		maxHandshake:     opts.MaxHandshakePayload,
-		maxRecordBytes:   opts.MaxRecordBytes,
-		maxBufferedBytes: opts.MaxBufferedBytes,
+		clockSkew:        cfg.clockSkew,
+		serverFeatures:   cfg.serverFeatures,
+		maxHandshake:     cfg.maxHandshakePayload,
+		maxRecordBytes:   cfg.maxRecordBytes,
+		maxBufferedBytes: cfg.maxBufferedBytes,
 		handshakeTimeout: handshakeTimeout,
-		cache:            opts.HandshakeCache,
-		yamuxConfig:      opts.YamuxConfig,
+		cache:            cfg.handshakeCache,
+		yamuxConfig:      cfg.yamuxConfig,
 	})
 	if err != nil {
 		_ = c.Close()

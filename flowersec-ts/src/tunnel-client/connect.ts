@@ -5,7 +5,7 @@ import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
 import { FlowersecError } from "../utils/errors.js";
 import { randomBytes } from "../client-connect/common.js";
 import { connectCore, type ConnectOptionsBase } from "../client-connect/connectCore.js";
-import type { Client } from "../client.js";
+import type { ClientInternal } from "../client.js";
 
 // TunnelConnectOptions controls transport and handshake limits.
 export type TunnelConnectOptions = ConnectOptionsBase &
@@ -15,8 +15,19 @@ export type TunnelConnectOptions = ConnectOptionsBase &
   }>;
 
 // connectTunnel attaches to a tunnel and returns an RPC-ready session.
-export async function connectTunnel(grant: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client> {
-  const checkedGrant = assertChannelInitGrant(grant);
+export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions): Promise<ClientInternal> {
+  if (grant == null) {
+    throw new FlowersecError({ stage: "validate", code: "missing_grant", path: "tunnel", message: "missing grant" });
+  }
+  let checkedGrant: ChannelInitGrant;
+  try {
+    checkedGrant = assertChannelInitGrant(grant);
+  } catch (e) {
+    throw new FlowersecError({ stage: "validate", code: "invalid_grant", path: "tunnel", message: "invalid ChannelInitGrant", cause: e });
+  }
+  if (checkedGrant.tunnel_url === "") {
+    throw new FlowersecError({ stage: "validate", code: "missing_tunnel_url", path: "tunnel", message: "missing tunnel_url" });
+  }
   if (checkedGrant.role !== ControlRole.Role_client) {
     throw new FlowersecError({ stage: "validate", code: "role_mismatch", path: "tunnel", message: "expected role=client" });
   }

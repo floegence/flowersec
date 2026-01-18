@@ -40,14 +40,16 @@ func main() {
 	}
 
 	// This helper builds the full protocol stack and returns an RPC-ready client:
-	// - client.Mux: open extra streams (e.g. echo)
-	// - client.RPC: typed request/notify API over the dedicated "rpc" stream
-	c, err := client.ConnectTunnel(context.Background(), grant, client.TunnelConnectOptions{
-		ConnectTimeout:   10 * time.Second,
-		HandshakeTimeout: 10 * time.Second,
-		MaxRecordBytes:   1 << 20,
-		Origin:           origin,
-	})
+	// - c.OpenStream(kind): open extra streams (e.g. "echo")
+	// - c.RPC(): typed request/notify API over the dedicated "rpc" stream
+	c, err := client.ConnectTunnel(
+		context.Background(),
+		grant,
+		origin,
+		client.WithConnectTimeout(10*time.Second),
+		client.WithHandshakeTimeout(10*time.Second),
+		client.WithMaxRecordBytes(1<<20),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}

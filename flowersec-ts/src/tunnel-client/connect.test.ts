@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { base64urlEncode } from "../utils/base64url.js";
 import { FlowersecError } from "../utils/errors.js";
+import { E2EEHandshakeError } from "../e2ee/errors.js";
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
 import { Role, Suite } from "../gen/flowersec/controlplane/v1.gen.js";
 
@@ -104,6 +105,20 @@ function makeGrant(): ChannelInitGrant {
 }
 
 describe("connectTunnel", () => {
+  test("wraps invalid grant payloads", async () => {
+    const p = connectTunnel("bad" as any, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_grant", path: "tunnel" });
+  });
+
+  test("rejects missing tunnel_url", async () => {
+    const bad = makeGrant();
+    bad.tunnel_url = "";
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_tunnel_url", path: "tunnel" });
+  });
+
   test("rejects invalid endpointInstanceId encoding", async () => {
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
@@ -254,6 +269,30 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toMatchObject({ stage: "handshake", code: "handshake_error", path: "tunnel" });
 
     expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "handshake_error", expect.any(Number));
+  });
+
+  test("classifies handshake timestamp failures", async () => {
+    const ws = new FakeWebSocket();
+    clientHandshakeMock.mockRejectedValueOnce(new E2EEHandshakeError("timestamp_after_init_exp", "timestamp after init_exp"));
+    const observer = {
+      onConnect: vi.fn(),
+      onAttach: vi.fn(),
+      onHandshake: vi.fn(),
+      onWsError: vi.fn(),
+      onRpcCall: vi.fn(),
+      onRpcNotify: vi.fn()
+    };
+
+    const p = connectTunnel(makeGrant(), {
+      origin: "https://app.redeven.com",
+      wsFactory: () => ws as any,
+      observer
+    });
+
+    setTimeout(() => ws.emit("open", {}), 0);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "timestamp_after_init_exp", path: "tunnel" });
+    expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "timestamp_after_init_exp", expect.any(Number));
   });
 
   test("reports handshake timeout", async () => {

@@ -85,14 +85,16 @@ func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 		},
 	}
 
-	c, err := client.ConnectDirect(context.Background(), info, client.DirectConnectOptions{
-		Origin:           origin,
-		Header:           http.Header{"X-Test": []string{"1"}},
-		Dialer:           dialer,
-		ConnectTimeout:   2 * time.Second,
-		HandshakeTimeout: 2 * time.Second,
-		MaxRecordBytes:   1 << 20,
-	})
+	c, err := client.ConnectDirect(
+		context.Background(),
+		info,
+		origin,
+		client.WithHeader(http.Header{"X-Test": []string{"1"}}),
+		client.WithDialer(dialer),
+		client.WithConnectTimeout(2*time.Second),
+		client.WithHandshakeTimeout(2*time.Second),
+		client.WithMaxRecordBytes(1<<20),
+	)
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)
 	}

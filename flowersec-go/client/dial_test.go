@@ -25,10 +25,7 @@ func TestConnectTunnel_RejectsInvalidEndpointInstanceID(t *testing.T) {
 		AllowedSuites:      []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
 		IdleTimeoutSeconds: 60,
 	}
-	_, err := ConnectTunnel(context.Background(), grant, TunnelConnectOptions{
-		Origin:             "http://example.com",
-		EndpointInstanceID: "!!!",
-	})
+	_, err := ConnectTunnel(context.Background(), grant, "http://example.com", WithEndpointInstanceID("!!!"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -59,9 +56,7 @@ func TestConnectTunnel_RejectsInvalidPSKLength(t *testing.T) {
 		AllowedSuites:      []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
 		IdleTimeoutSeconds: 60,
 	}
-	_, err := ConnectTunnel(context.Background(), grant, TunnelConnectOptions{
-		Origin: "http://example.com",
-	})
+	_, err := ConnectTunnel(context.Background(), grant, "http://example.com")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -88,7 +83,7 @@ func TestConnectDirect_RejectsInvalidSuite(t *testing.T) {
 		E2eePskB64u:  base64.RawURLEncoding.EncodeToString(psk),
 		DefaultSuite: 999,
 	}
-	_, err := ConnectDirect(context.Background(), info, DirectConnectOptions{Origin: "http://example.com"})
+	_, err := ConnectDirect(context.Background(), info, "http://example.com")
 	if err == nil {
 		t.Fatal("expected error")
 	}

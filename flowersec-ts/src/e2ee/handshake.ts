@@ -9,6 +9,7 @@ import { computeAuthTag, deriveSessionKeys } from "./kdf.js";
 import { transcriptHash } from "./transcript.js";
 import { decryptRecord, encryptRecord } from "./record.js";
 import { SecureChannel, type BinaryTransport } from "./secureChannel.js";
+import { E2EEHandshakeError } from "./errors.js";
 import { TimeoutError, throwIfAborted } from "../utils/errors.js";
 
 // Suite identifies the ECDH+AEAD combination.
@@ -303,7 +304,7 @@ export async function serverHandshake(
   const decodedInit = decodeHandshakeFrame(initFrame, opts.maxHandshakePayload);
   if (decodedInit.handshakeType !== HANDSHAKE_TYPE_INIT) throw new Error("unexpected handshake type");
   const init = JSON.parse(td.decode(decodedInit.payloadJsonUtf8)) as E2EE_Init;
-  if (init.version !== PROTOCOL_VERSION) throw new Error("bad version");
+  if (init.version !== PROTOCOL_VERSION) throw new E2EEHandshakeError("invalid_version", "bad version");
   if (init.role !== 1) throw new Error("bad role");
   if (init.channel_id !== opts.channelId) throw new Error("bad channel_id");
   const suite = init.suite as Suite;
@@ -345,8 +346,8 @@ export async function serverHandshake(
   if (ack.handshake_id !== entry.handshakeId) throw new Error("handshake_id mismatch");
 
   const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - ack.timestamp_unix_s) > opts.clockSkewSeconds) throw new Error("timestamp skew");
-  if (ack.timestamp_unix_s > opts.initExpireAtUnixS + opts.clockSkewSeconds) throw new Error("timestamp after init_exp");
+  if (Math.abs(now - ack.timestamp_unix_s) > opts.clockSkewSeconds) throw new E2EEHandshakeError("timestamp_out_of_skew", "timestamp skew");
+  if (ack.timestamp_unix_s > opts.initExpireAtUnixS + opts.clockSkewSeconds) throw new E2EEHandshakeError("timestamp_after_init_exp", "timestamp after init_exp");
 
   const th = transcriptHash({
     version: PROTOCOL_VERSION,
@@ -363,7 +364,7 @@ export async function serverHandshake(
 
   const expected = computeAuthTag(opts.psk, th, BigInt(ack.timestamp_unix_s));
   const got = base64urlDecode(ack.auth_tag_b64u);
-  if (got.length !== expected.length || !equalBytes(got, expected)) throw new Error("auth tag mismatch");
+  if (got.length !== expected.length || !equalBytes(got, expected)) throw new E2EEHandshakeError("auth_tag_mismatch", "auth tag mismatch");
 
   const shared = suiteSharedSecret(suite, entry.serverPriv, clientPub);
   const keys = deriveSessionKeys(opts.psk, shared, th);

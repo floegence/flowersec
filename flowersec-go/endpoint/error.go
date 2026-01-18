@@ -27,6 +27,7 @@ const (
 	CodeInvalidPSK                Code = "invalid_psk"
 	CodeInvalidEndpointInstanceID Code = "invalid_endpoint_instance_id"
 	CodeInvalidSuite              Code = "invalid_suite"
+	CodeInvalidOption             Code = "invalid_option"
 	CodeRandomFailed              Code = "random_failed"
 	CodeUpgradeFailed             Code = "upgrade_failed"
 	CodeDialFailed                Code = "dial_failed"

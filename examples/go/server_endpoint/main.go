@@ -58,12 +58,14 @@ func main() {
 }
 
 func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) {
-	sess, err := endpoint.ConnectTunnel(ctx, grant, endpoint.TunnelConnectOptions{
-		Origin:           origin,
-		ConnectTimeout:   10 * time.Second,
-		HandshakeTimeout: 10 * time.Second,
-		MaxRecordBytes:   1 << 20,
-	})
+	sess, err := endpoint.ConnectTunnel(
+		ctx,
+		grant,
+		origin,
+		endpoint.WithConnectTimeout(10*time.Second),
+		endpoint.WithHandshakeTimeout(10*time.Second),
+		endpoint.WithMaxRecordBytes(1<<20),
+	)
 	if err != nil {
 		return
 	}

@@ -7,7 +7,14 @@ export type AttachResult = "ok" | "fail";
 export type AttachReason = "send_failed";
 
 export type HandshakeResult = "ok" | "fail";
-export type HandshakeReason = "handshake_error" | "timeout" | "canceled";
+export type HandshakeReason =
+  | "auth_tag_mismatch"
+  | "handshake_error"
+  | "invalid_version"
+  | "timestamp_after_init_exp"
+  | "timestamp_out_of_skew"
+  | "timeout"
+  | "canceled";
 
 export type WsCloseKind = "local" | "peer_or_error";
 

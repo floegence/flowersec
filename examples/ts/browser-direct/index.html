@@ -23,7 +23,7 @@
     <pre id="out"></pre>
 
     <script type="module">
-      import { connectDirect } from "../../../flowersec-ts/dist/facade.js";
+      import { connectDirectBrowser } from "../../../flowersec-ts/dist/browser/index.js";
       import { createDemoClient } from "../../../flowersec-ts/dist/gen/flowersec/demo/v1.rpc.gen.js";
       import { ByteReader } from "../../../flowersec-ts/dist/yamux/index.js";
 
@@ -62,8 +62,7 @@
         try {
           const info = JSON.parse($in.value);
           // High-level helper: it performs E2EE handshake + yamux + RPC.
-          // It also checks that the provided origin matches window.location.origin.
-          client = await connectDirect(info, { origin: window.location.origin });
+          client = await connectDirectBrowser(info);
           $close.disabled = false;
 
           const demo = createDemoClient(client.rpc);

@@ -27,6 +27,7 @@ const (
 	CodeInvalidSuite              Code = "invalid_suite"
 	CodeInvalidPSK                Code = "invalid_psk"
 	CodeInvalidEndpointInstanceID Code = "invalid_endpoint_instance_id"
+	CodeInvalidOption             Code = "invalid_option"
 	CodeRandomFailed              Code = "random_failed"
 	CodeNotConnected              Code = "not_connected"
 	CodeMissingStreamKind         Code = "missing_stream_kind"

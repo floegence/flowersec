@@ -13,7 +13,6 @@ import (
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
-	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/internal/endpointid"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
@@ -22,44 +21,8 @@ import (
 	hyamux "github.com/hashicorp/yamux"
 )
 
-// TunnelConnectOptions configures timeouts and limits for tunnel clients.
-type TunnelConnectOptions struct {
-	Origin string // Explicit Origin header value (required).
-
-	Header http.Header       // Optional headers for the WebSocket handshake.
-	Dialer *websocket.Dialer // Optional websocket dialer (proxy/TLS/etc).
-
-	ConnectTimeout   time.Duration // WebSocket connect timeout (0 uses default; <0 disables).
-	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default; <0 disables).
-
-	MaxHandshakePayload int // Maximum handshake JSON payload size (0 uses default).
-	MaxRecordBytes      int // Maximum encrypted record size on the wire (0 uses default).
-	MaxBufferedBytes    int // Maximum buffered plaintext bytes in SecureChannel (0 uses default).
-
-	ClientFeatures uint32 // Feature bitset advertised during the E2EE handshake.
-
-	EndpointInstanceID string // Optional endpoint instance ID (base64url); empty generates a random value.
-}
-
-// DirectConnectOptions configures timeouts and limits for direct clients.
-type DirectConnectOptions struct {
-	Origin string // Explicit Origin header value (required).
-
-	Header http.Header       // Optional headers for the WebSocket handshake.
-	Dialer *websocket.Dialer // Optional websocket dialer (proxy/TLS/etc).
-
-	ConnectTimeout   time.Duration // WebSocket connect timeout (0 uses default; <0 disables).
-	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default; <0 disables).
-
-	MaxHandshakePayload int // Maximum handshake JSON payload size (0 uses default).
-	MaxRecordBytes      int // Maximum encrypted record size on the wire (0 uses default).
-	MaxBufferedBytes    int // Maximum buffered plaintext bytes in SecureChannel (0 uses default).
-
-	ClientFeatures uint32 // Feature bitset advertised during the E2EE handshake.
-}
-
 // ConnectTunnel attaches to a tunnel as role=client and returns an RPC-ready session.
-func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts TunnelConnectOptions) (*Client, error) {
+func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, opts ...ConnectOption) (*Client, error) {
 	if grant == nil {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingGrant, ErrMissingGrant)
 	}
@@ -69,11 +32,15 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if grant.TunnelUrl == "" {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingTunnelURL, ErrMissingTunnelURL)
 	}
-	if opts.Origin == "" {
+	if origin == "" {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingOrigin, ErrMissingOrigin)
 	}
 	if grant.ChannelId == "" {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingChannelID, ErrMissingChannelID)
+	}
+	cfg, err := applyConnectOptions(opts)
+	if err != nil {
+		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidOption, err)
 	}
 	psk, err := base64url.Decode(grant.E2eePskB64u)
 	if err != nil || len(psk) != 32 {
@@ -89,7 +56,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
 	}
 
-	endpointInstanceID := opts.EndpointInstanceID
+	endpointInstanceID := cfg.endpointInstanceID
 	if endpointInstanceID == "" {
 		endpointInstanceID, err = endpointid.Random(24)
 		if err != nil {
@@ -98,22 +65,15 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	} else if err := endpointid.Validate(endpointInstanceID); err != nil {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
 	}
-
-	connectTimeout := opts.ConnectTimeout
-	if connectTimeout == 0 {
-		connectTimeout = defaults.ConnectTimeout
-	}
-	handshakeTimeout := opts.HandshakeTimeout
-	if handshakeTimeout == 0 {
-		handshakeTimeout = defaults.HandshakeTimeout
-	}
+	connectTimeout := cfg.connectTimeout
+	handshakeTimeout := cfg.handshakeTimeout
 
 	connectCtx, connectCancel := contextutil.WithTimeout(ctx, connectTimeout)
 	defer connectCancel()
 
-	h := cloneHeader(opts.Header)
-	h.Set("Origin", opts.Origin)
-	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: opts.Dialer})
+	h := cloneHeader(cfg.header)
+	h.Set("Origin", origin)
+	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
 		return nil, wrapErr(PathTunnel, StageConnect, CodeDialFailed, err)
 	}
@@ -134,10 +94,10 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 		psk:               psk,
 		suite:             suite,
 		channelID:         grant.ChannelId,
-		clientFeatures:    opts.ClientFeatures,
-		maxHandshakeBytes: opts.MaxHandshakePayload,
-		maxRecordBytes:    opts.MaxRecordBytes,
-		maxBufferedBytes:  opts.MaxBufferedBytes,
+		clientFeatures:    cfg.clientFeatures,
+		maxHandshakeBytes: cfg.maxHandshakePayload,
+		maxRecordBytes:    cfg.maxRecordBytes,
+		maxBufferedBytes:  cfg.maxBufferedBytes,
 		handshakeTimeout:  handshakeTimeout,
 	})
 	if err != nil {
@@ -148,18 +108,25 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 }
 
 // ConnectDirect connects to a direct websocket endpoint and returns an RPC-ready session.
-func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts DirectConnectOptions) (*Client, error) {
+func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin string, opts ...ConnectOption) (*Client, error) {
 	if info == nil {
 		return nil, wrapErr(PathDirect, StageValidate, CodeMissingConnectInfo, ErrMissingConnectInfo)
 	}
 	if info.WsUrl == "" {
 		return nil, wrapErr(PathDirect, StageValidate, CodeMissingWSURL, ErrMissingWSURL)
 	}
-	if opts.Origin == "" {
+	if origin == "" {
 		return nil, wrapErr(PathDirect, StageValidate, CodeMissingOrigin, ErrMissingOrigin)
 	}
 	if info.ChannelId == "" {
 		return nil, wrapErr(PathDirect, StageValidate, CodeMissingChannelID, ErrMissingChannelID)
+	}
+	cfg, err := applyConnectOptions(opts)
+	if err != nil {
+		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidOption, err)
+	}
+	if cfg.endpointInstanceID != "" {
+		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidOption, ErrEndpointInstanceIDNotSupported)
 	}
 	psk, err := base64url.Decode(info.E2eePskB64u)
 	if err != nil || len(psk) != 32 {
@@ -175,21 +142,15 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts D
 		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
 	}
 
-	connectTimeout := opts.ConnectTimeout
-	if connectTimeout == 0 {
-		connectTimeout = defaults.ConnectTimeout
-	}
-	handshakeTimeout := opts.HandshakeTimeout
-	if handshakeTimeout == 0 {
-		handshakeTimeout = defaults.HandshakeTimeout
-	}
+	connectTimeout := cfg.connectTimeout
+	handshakeTimeout := cfg.handshakeTimeout
 
 	connectCtx, connectCancel := contextutil.WithTimeout(ctx, connectTimeout)
 	defer connectCancel()
 
-	h := cloneHeader(opts.Header)
-	h.Set("Origin", opts.Origin)
-	c, _, err := ws.Dial(connectCtx, info.WsUrl, ws.DialOptions{Header: h, Dialer: opts.Dialer})
+	h := cloneHeader(cfg.header)
+	h.Set("Origin", origin)
+	c, _, err := ws.Dial(connectCtx, info.WsUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
 		return nil, wrapErr(PathDirect, StageConnect, CodeDialFailed, err)
 	}
@@ -198,10 +159,10 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts D
 		psk:               psk,
 		suite:             suite,
 		channelID:         info.ChannelId,
-		clientFeatures:    opts.ClientFeatures,
-		maxHandshakeBytes: opts.MaxHandshakePayload,
-		maxRecordBytes:    opts.MaxRecordBytes,
-		maxBufferedBytes:  opts.MaxBufferedBytes,
+		clientFeatures:    cfg.clientFeatures,
+		maxHandshakeBytes: cfg.maxHandshakePayload,
+		maxRecordBytes:    cfg.maxRecordBytes,
+		maxBufferedBytes:  cfg.maxBufferedBytes,
 		handshakeTimeout:  handshakeTimeout,
 	})
 	if err != nil {

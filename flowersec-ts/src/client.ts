@@ -5,13 +5,23 @@ import type { YamuxStream } from "./yamux/stream.js";
 
 export type ClientPath = "tunnel" | "direct";
 
-// Client is a high-level session that bundles SecureChannel + yamux + RPC.
+// Client is a high-level session intended as the default user entrypoint.
+//
+// It intentionally does NOT expose the underlying SecureChannel or YamuxSession
+// so the stable surface is not coupled to lower-level implementation details.
 export type Client = Readonly<{
   path: ClientPath;
   endpointInstanceId?: string;
-  secure: SecureChannel;
-  mux: YamuxSession;
   rpc: RpcClient;
   openStream: (kind: string) => Promise<YamuxStream>;
   close: () => void;
 }>;
+
+// ClientInternal exposes the underlying stack for advanced integrations.
+//
+// It is exported only from @flowersec/core/internal and may change without notice.
+export type ClientInternal = Client &
+  Readonly<{
+    secure: SecureChannel;
+    mux: YamuxSession;
+  }>;

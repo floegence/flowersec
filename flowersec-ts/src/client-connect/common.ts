@@ -1,4 +1,5 @@
 import { AbortError, TimeoutError, isAbortError, isTimeoutError, throwIfAborted } from "../utils/errors.js";
+import { E2EEHandshakeError } from "../e2ee/errors.js";
 import type { WebSocketLike } from "../ws-client/binaryTransport.js";
 
 class WebSocketClosedError extends Error {
@@ -29,7 +30,7 @@ export class OriginMismatchError extends Error {
 
 export class WsFactoryRequiredError extends Error {
   constructor() {
-    super("wsFactory is required outside the browser to set the Origin header (use createNodeWsFactory from @flowersec/core/node)");
+    super("wsFactory is required outside the browser to set the Origin header (use connectTunnelNode/connectDirectNode or createNodeWsFactory from @flowersec/core/node)");
     this.name = "WsFactoryRequiredError";
   }
 }
@@ -62,9 +63,12 @@ export function classifyConnectError(err: unknown): "websocket_error" | "websock
   return "websocket_error";
 }
 
-export function classifyHandshakeError(err: unknown): "handshake_error" | "timeout" | "canceled" {
+export function classifyHandshakeError(
+  err: unknown
+): "auth_tag_mismatch" | "handshake_error" | "invalid_version" | "timestamp_after_init_exp" | "timestamp_out_of_skew" | "timeout" | "canceled" {
   if (isTimeoutError(err)) return "timeout";
   if (isAbortError(err)) return "canceled";
+  if (err instanceof E2EEHandshakeError) return err.code;
   return "handshake_error";
 }
 

@@ -1,7 +1,6 @@
 import process from "node:process";
 
-import { connectTunnel } from "../../flowersec-ts/dist/facade.js";
-import { createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
+import { connectTunnelNode } from "../../flowersec-ts/dist/node/index.js";
 import { createDemoClient } from "../../flowersec-ts/dist/gen/flowersec/demo/v1.rpc.gen.js";
 import { ByteReader } from "../../flowersec-ts/dist/yamux/index.js";
 
@@ -16,7 +15,7 @@ import { ByteReader } from "../../flowersec-ts/dist/yamux/index.js";
 //
 // Notes:
 // - The tunnel server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
-// - In Node, you MUST provide wsFactory so the helper can set the Origin header (browsers set Origin automatically).
+// - In Node, connectTunnelNode() automatically sets wsFactory so the Origin header is sent correctly.
 // - Tunnel attach tokens are one-time use; mint a new channel init for each connection attempt.
 // - Input JSON can be either the full controlplane response {"grant_client":...,"grant_server":...}
 //   or just the grant_client object itself.
@@ -56,11 +55,8 @@ async function main() {
   const origin = process.env.FSEC_ORIGIN ?? "";
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
-  // connectTunnel() returns an RPC-ready session and a yamux session for extra streams.
-  const client = await connectTunnel(grant, {
-    origin,
-    wsFactory: createNodeWsFactory()
-  });
+  // connectTunnelNode() returns an RPC-ready session and supports extra yamux streams via openStream(kind).
+  const client = await connectTunnelNode(grant, { origin });
 
   try {
     const demo = createDemoClient(client.rpc);

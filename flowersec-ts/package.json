@@ -10,41 +10,17 @@
       "types": "./dist/facade.d.ts",
       "default": "./dist/facade.js"
     },
-    "./internal": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "./e2ee": {
-      "types": "./dist/e2ee/index.d.ts",
-      "default": "./dist/e2ee/index.js"
-    },
-    "./ws": {
-      "types": "./dist/ws/index.d.ts",
-      "default": "./dist/ws/index.js"
-    },
-    "./yamux": {
-      "types": "./dist/yamux/index.d.ts",
-      "default": "./dist/yamux/index.js"
-    },
-    "./rpc": {
-      "types": "./dist/rpc/index.d.ts",
-      "default": "./dist/rpc/index.js"
-    },
-    "./rpc-proxy": {
-      "types": "./dist/rpc-proxy/index.d.ts",
-      "default": "./dist/rpc-proxy/index.js"
-    },
-    "./tunnel-client": {
-      "types": "./dist/tunnel-client/index.d.ts",
-      "default": "./dist/tunnel-client/index.js"
-    },
-    "./direct-client": {
-      "types": "./dist/direct-client/index.d.ts",
-      "default": "./dist/direct-client/index.js"
-    },
     "./node": {
       "types": "./dist/node/index.d.ts",
       "default": "./dist/node/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "default": "./dist/browser/index.js"
+    },
+    "./internal": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     }
   },
   "engines": {

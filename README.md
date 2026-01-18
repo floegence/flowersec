@@ -41,9 +41,11 @@ go get github.com/floegence/flowersec/flowersec-go@v0.1.0
 
 Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.1.0`).
 
-- Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.ConnectTunnel`, `client.ConnectDirect`)
+- Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.ConnectTunnel(ctx, grant, origin, ...opts)`, `client.ConnectDirect(ctx, info, origin, ...opts)`)
 - Go (server endpoint): `github.com/floegence/flowersec/flowersec-go/endpoint` (accept/dial `role=server` endpoints)
 - TS (stable): `@flowersec/core` (`connectTunnel`, `connectDirect`)
+- TS (Node): `@flowersec/core/node` (`connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
+- TS (browser): `@flowersec/core/browser` (`connectTunnelBrowser`, `connectDirectBrowser`)
 - TS (advanced): `@flowersec/core/internal` (E2EE/Yamux/RPC/WebSocket building blocks)
 
 It includes:
@@ -93,7 +95,10 @@ The deployable tunnel binary is `flowersec-go/cmd/flowersec-tunnel/`.
 - Origin checks are **enabled by default** and require an explicit allow-list:
   - `--allow-origin` accepts either a hostname (e.g. `example.com`) or a full Origin value (e.g. `https://example.com` or `http://127.0.0.1:5173`).
   - Requests without `Origin` are **rejected by default**; `--allow-no-origin` is intended for non-browser clients (discouraged).
-  - Client helpers require an explicit origin: in browsers pass `window.location.origin`; in Node pass `origin` and a `wsFactory` that sets the `Origin` header (use `createNodeWsFactory` from `@flowersec/core/node`).
+  - Client helpers:
+    - Go: pass an explicit `origin` string to `client.ConnectTunnel` / `client.ConnectDirect`.
+    - TS browser: use `connectTunnelBrowser` / `connectDirectBrowser` from `@flowersec/core/browser` (uses `window.location.origin`).
+    - TS Node: use `connectTunnelNode` / `connectDirectNode` from `@flowersec/core/node` (auto-injects a `wsFactory` that sets the `Origin` header), or pass `wsFactory` manually.
 - Token issuer (`iss`) is **required**: pass `--iss` and ensure it matches the token payload `iss` minted by your controlplane.
 
 Node.js version:

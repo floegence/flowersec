@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { base64urlEncode } from "../utils/base64url.js";
 import { FlowersecError } from "../utils/errors.js";
+import { E2EEHandshakeError } from "../e2ee/errors.js";
 import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
 
 const mocks = vi.hoisted(() => {
@@ -98,6 +99,20 @@ function makeInfo(): DirectConnectInfo {
 }
 
 describe("connectDirect", () => {
+  test("wraps invalid connect info payloads", async () => {
+    const p = connectDirect("bad" as any, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_connect_info", path: "direct" });
+  });
+
+  test("rejects missing ws_url", async () => {
+    const bad = makeInfo();
+    bad.ws_url = "";
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_ws_url", path: "direct" });
+  });
+
   test("requires wsFactory outside the browser", async () => {
     const p = connectDirect(makeInfo(), { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
@@ -199,6 +214,30 @@ describe("connectDirect", () => {
     await expect(p).rejects.toMatchObject({ stage: "handshake", code: "handshake_error", path: "direct" });
 
     expect(observer.onHandshake).toHaveBeenCalledWith("direct", "fail", "handshake_error", expect.any(Number));
+  });
+
+  test("classifies handshake auth tag failures", async () => {
+    const ws = new FakeWebSocket();
+    clientHandshakeMock.mockRejectedValueOnce(new E2EEHandshakeError("auth_tag_mismatch", "auth tag mismatch"));
+    const observer = {
+      onConnect: vi.fn(),
+      onAttach: vi.fn(),
+      onHandshake: vi.fn(),
+      onWsError: vi.fn(),
+      onRpcCall: vi.fn(),
+      onRpcNotify: vi.fn()
+    };
+
+    const p = connectDirect(makeInfo(), {
+      origin: "https://app.redeven.com",
+      wsFactory: () => ws as any,
+      observer
+    });
+
+    setTimeout(() => ws.emit("open", {}), 0);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "auth_tag_mismatch", path: "direct" });
+    expect(observer.onHandshake).toHaveBeenCalledWith("direct", "fail", "auth_tag_mismatch", expect.any(Number));
   });
 
   test("reports handshake timeout", async () => {
