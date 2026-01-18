@@ -74,7 +74,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc(
 		wsPath,
-		endpoint.DirectHTTPHandler(endpoint.DirectHTTPHandlerOptions{
+		endpoint.DirectHandler(endpoint.DirectHandlerOptions{
 			AllowedOrigins: allowedOrigins,
 			AllowNoOrigin:  false,
 			Handshake: endpoint.AcceptDirectOptions{

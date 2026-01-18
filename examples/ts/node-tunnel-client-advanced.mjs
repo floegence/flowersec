@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { createRequire } from "node:module";
 import process from "node:process";
 
 import {
@@ -13,6 +12,7 @@ import {
   clientHandshake,
   writeStreamHello
 } from "../../ts/dist/index.js";
+import { createNodeWsFactory } from "../../ts/dist/node/index.js";
 import { Role as TunnelRole } from "../../ts/dist/gen/flowersec/tunnel/v1.gen.js";
 
 // node-tunnel-client-advanced is the "advanced" Node.js tunnel client example.
@@ -28,9 +28,6 @@ import { Role as TunnelRole } from "../../ts/dist/gen/flowersec/tunnel/v1.gen.js
 // - Tunnel attach tokens are one-time use; mint a new channel init for each connection attempt.
 // - Input JSON can be either the full controlplane response {"grant_client":...,"grant_server":...}
 //   or just the grant_client object itself.
-const require = createRequire(import.meta.url);
-const WS = require("ws");
-
 async function readStdinUtf8() {
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
@@ -103,7 +100,7 @@ async function main() {
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
   // Step 1: WebSocket connect.
-  const ws = new WS(grant.tunnel_url, { headers: { Origin: origin } });
+  const ws = createNodeWsFactory()(grant.tunnel_url, origin);
   await waitOpen(ws, 10_000);
 
   // Step 2: tunnel attach (plaintext JSON). This is only for pairing/auth; it does not protect data.

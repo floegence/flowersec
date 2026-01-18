@@ -58,7 +58,7 @@ func main() {
 }
 
 func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) {
-	sess, err := endpoint.DialTunnelServer(ctx, grant, endpoint.DialTunnelServerOptions{
+	sess, err := endpoint.ConnectTunnel(ctx, grant, endpoint.TunnelConnectOptions{
 		Origin:           origin,
 		ConnectTimeout:   10 * time.Second,
 		HandshakeTimeout: 10 * time.Second,

@@ -29,7 +29,7 @@ export class OriginMismatchError extends Error {
 
 export class WsFactoryRequiredError extends Error {
   constructor() {
-    super("wsFactory is required outside the browser to set the Origin header");
+    super("wsFactory is required outside the browser to set the Origin header (use createNodeWsFactory from @flowersec/core/node)");
     this.name = "WsFactoryRequiredError";
   }
 }

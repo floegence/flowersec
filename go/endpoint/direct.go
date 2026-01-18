@@ -8,6 +8,7 @@ import (
 
 	"github.com/floegence/flowersec/crypto/e2ee"
 	"github.com/floegence/flowersec/internal/contextutil"
+	"github.com/floegence/flowersec/internal/defaults"
 	"github.com/floegence/flowersec/realtime/ws"
 	hyamux "github.com/hashicorp/yamux"
 )
@@ -20,7 +21,7 @@ type AcceptDirectOptions struct {
 	InitExpireAtUnixS int64
 	ClockSkew         time.Duration
 
-	HandshakeTimeout time.Duration
+	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default; <0 disables).
 
 	ServerFeatures uint32
 
@@ -57,7 +58,11 @@ func AcceptDirectWS(ctx context.Context, c *ws.Conn, opts AcceptDirectOptions) (
 		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
 	}
 
-	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, opts.HandshakeTimeout)
+	handshakeTimeout := opts.HandshakeTimeout
+	if handshakeTimeout == 0 {
+		handshakeTimeout = defaults.HandshakeTimeout
+	}
+	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, handshakeTimeout)
 	defer handshakeCancel()
 
 	cache := opts.HandshakeCache
@@ -101,7 +106,7 @@ func AcceptDirectWS(ctx context.Context, c *ws.Conn, opts AcceptDirectOptions) (
 	}, nil
 }
 
-type DirectHTTPHandlerOptions struct {
+type DirectHandlerOptions struct {
 	AllowedOrigins []string
 	AllowNoOrigin  bool
 
@@ -114,9 +119,9 @@ type DirectHTTPHandlerOptions struct {
 	OnStream func(kind string, stream io.ReadWriteCloser)
 }
 
-// DirectHTTPHandler returns an http.HandlerFunc that upgrades to WebSocket, runs the server handshake,
+// DirectHandler returns an http.HandlerFunc that upgrades to WebSocket, runs the server handshake,
 // and then dispatches yamux streams by StreamHello(kind).
-func DirectHTTPHandler(opts DirectHTTPHandlerOptions) http.HandlerFunc {
+func DirectHandler(opts DirectHandlerOptions) http.HandlerFunc {
 	checkOrigin := opts.Upgrader.CheckOrigin
 	if checkOrigin == nil {
 		checkOrigin = ws.NewOriginChecker(opts.AllowedOrigins, opts.AllowNoOrigin)

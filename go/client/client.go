@@ -30,8 +30,6 @@ type Client struct {
 	mux    *hyamux.Session
 	rpc    *rpc.Client
 
-	rpcStream io.ReadWriteCloser
-
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -79,10 +77,7 @@ func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		var firstErr error
 		if c.rpc != nil {
-			c.rpc.Close()
-		}
-		if c.rpcStream != nil {
-			if err := c.rpcStream.Close(); err != nil && firstErr == nil {
+			if err := c.rpc.Close(); err != nil && firstErr == nil {
 				firstErr = err
 			}
 		}

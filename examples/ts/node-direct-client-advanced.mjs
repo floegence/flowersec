@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import process from "node:process";
 
 import {
@@ -11,6 +10,7 @@ import {
   clientHandshake,
   writeStreamHello
 } from "../../ts/dist/index.js";
+import { createNodeWsFactory } from "../../ts/dist/node/index.js";
 
 // node-direct-client-advanced is the "advanced" Node.js direct (no tunnel) client example.
 //
@@ -23,9 +23,6 @@ import {
 // Notes:
 // - The direct demo server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
 // - Input JSON is the output of examples/go/direct_demo.
-const require = createRequire(import.meta.url);
-const WS = require("ws");
-
 async function readStdinUtf8() {
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
@@ -92,7 +89,7 @@ async function main() {
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
   // Step 1: WebSocket connect.
-  const ws = new WS(info.ws_url, { headers: { Origin: origin } });
+  const ws = createNodeWsFactory()(info.ws_url, origin);
   await waitOpen(ws, 10_000);
 
   // Step 2: E2EE handshake over the websocket binary transport.

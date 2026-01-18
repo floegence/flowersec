@@ -280,6 +280,30 @@ describe("connectDirect", () => {
     conn.close();
   });
 
+  test("openStream validates stream kind", async () => {
+    const ws = new FakeWebSocket();
+    clientHandshakeMock.mockResolvedValueOnce({
+      read: vi.fn(),
+      write: vi.fn(),
+      close: vi.fn()
+    });
+    openStream.mockResolvedValueOnce({
+      read: vi.fn().mockResolvedValue(new Uint8Array()),
+      write: vi.fn(),
+      close: vi.fn()
+    });
+
+    const p = connectDirect(makeInfo(), {
+      origin: "https://app.redeven.com",
+      wsFactory: () => ws as any
+    });
+
+    setTimeout(() => ws.emit("open", {}), 0);
+    const conn = await p;
+    await expect(conn.openStream("")).rejects.toMatchObject({ stage: "validate", code: "missing_stream_kind", path: "direct" });
+    conn.close();
+  });
+
   test("openStream wraps StreamHello write errors and closes the stream", async () => {
     const ws = new FakeWebSocket();
     clientHandshakeMock.mockResolvedValueOnce({

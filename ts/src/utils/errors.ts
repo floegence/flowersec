@@ -16,13 +16,34 @@ export type FlowersecPath = "tunnel" | "direct";
 
 export type FlowersecStage = "validate" | "connect" | "attach" | "handshake" | "yamux" | "rpc" | "close";
 
+export type FlowersecErrorCode =
+  | "canceled"
+  | "handshake_error"
+  | "invalid_endpoint_instance_id"
+  | "invalid_psk"
+  | "invalid_suite"
+  | "missing_attach"
+  | "missing_channel_id"
+  | "missing_origin"
+  | "missing_stream_kind"
+  | "open_stream_failed"
+  | "origin_mismatch"
+  | "role_mismatch"
+  | "send_failed"
+  | "stream_hello_failed"
+  | "timeout"
+  | "websocket_closed"
+  | "websocket_error"
+  | "websocket_init_failed"
+  | "ws_factory_required";
+
 export class FlowersecError extends Error {
-  readonly code: string;
+  readonly code: FlowersecErrorCode;
   readonly stage: FlowersecStage;
   readonly path?: FlowersecPath;
   override readonly cause?: unknown;
 
-  constructor(args: Readonly<{ code: string; stage: FlowersecStage; message?: string; path?: FlowersecPath; cause?: unknown }>) {
+  constructor(args: Readonly<{ code: FlowersecErrorCode; stage: FlowersecStage; message?: string; path?: FlowersecPath; cause?: unknown }>) {
     super(args.message ?? `${args.stage} failed`, args.cause !== undefined ? { cause: args.cause } : undefined);
     this.name = "FlowersecError";
     this.code = args.code;

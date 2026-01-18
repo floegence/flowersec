@@ -41,6 +41,10 @@
     "./direct-client": {
       "types": "./dist/direct-client/index.d.ts",
       "default": "./dist/direct-client/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
     }
   },
   "engines": {
@@ -55,7 +59,8 @@
   "dependencies": {
     "@noble/ciphers": "^0.6.0",
     "@noble/curves": "^1.9.0",
-    "@noble/hashes": "^1.8.0"
+    "@noble/hashes": "^1.8.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -64,7 +69,6 @@
     "@typescript-eslint/parser": "^8.18.0",
     "eslint": "^9.17.0",
     "typescript": "^5.7.2",
-    "vitest": "^4.0.17",
-    "ws": "^8.18.0"
+    "vitest": "^4.0.17"
   }
 }

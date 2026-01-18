@@ -7,7 +7,7 @@ export type { ClientObserverLike } from "./observability/observer.js";
 
 export type { Client, ClientPath } from "./client.js";
 
-export type { FlowersecPath, FlowersecStage } from "./utils/errors.js";
+export type { FlowersecErrorCode, FlowersecPath, FlowersecStage } from "./utils/errors.js";
 export { FlowersecError } from "./utils/errors.js";
 
 export type { TunnelConnectOptions } from "./tunnel-client/connect.js";

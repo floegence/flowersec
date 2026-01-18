@@ -236,7 +236,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<Client> {
       mux,
       rpc,
       openStream: async (kind: string) => {
-        if (kind == null || kind === "") throw new FlowersecError({ path: args.path, stage: "yamux", code: "missing_stream_kind", message: "missing stream kind" });
+        if (kind == null || kind === "") throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_stream_kind", message: "missing stream kind" });
         let s: Awaited<ReturnType<YamuxSession["openStream"]>>;
         try {
           s = await mux.openStream();

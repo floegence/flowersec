@@ -1,7 +1,7 @@
-import { createRequire } from "node:module";
 import process from "node:process";
 
 import { connectDirect } from "../../ts/dist/facade.js";
+import { createNodeWsFactory } from "../../ts/dist/node/index.js";
 import { createDemoClient } from "../../ts/dist/gen/flowersec/demo/v1.rpc.gen.js";
 import { ByteReader } from "../../ts/dist/yamux/index.js";
 
@@ -17,8 +17,6 @@ import { ByteReader } from "../../ts/dist/yamux/index.js";
 // - The direct demo server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
 // - In Node, you MUST provide wsFactory so the helper can set the Origin header (browsers set Origin automatically).
 // - Input JSON is the output of examples/go/direct_demo.
-const require = createRequire(import.meta.url);
-const WS = require("ws");
 
 async function readStdinUtf8() {
   const chunks = [];
@@ -53,7 +51,7 @@ async function main() {
   // connectDirect() returns an RPC-ready session and a yamux session for extra streams.
   const client = await connectDirect(info, {
     origin,
-    wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } })
+    wsFactory: createNodeWsFactory()
   });
 
   try {

@@ -1,7 +1,7 @@
-import { createRequire } from "node:module";
 import process from "node:process";
 
 import { connectTunnel } from "../../ts/dist/facade.js";
+import { createNodeWsFactory } from "../../ts/dist/node/index.js";
 import { createDemoClient } from "../../ts/dist/gen/flowersec/demo/v1.rpc.gen.js";
 import { ByteReader } from "../../ts/dist/yamux/index.js";
 
@@ -20,9 +20,6 @@ import { ByteReader } from "../../ts/dist/yamux/index.js";
 // - Tunnel attach tokens are one-time use; mint a new channel init for each connection attempt.
 // - Input JSON can be either the full controlplane response {"grant_client":...,"grant_server":...}
 //   or just the grant_client object itself.
-const require = createRequire(import.meta.url);
-const WS = require("ws");
-
 async function readStdinUtf8() {
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
@@ -62,7 +59,7 @@ async function main() {
   // connectTunnel() returns an RPC-ready session and a yamux session for extra streams.
   const client = await connectTunnel(grant, {
     origin,
-    wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } })
+    wsFactory: createNodeWsFactory()
   });
 
   try {

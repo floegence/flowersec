@@ -31,7 +31,7 @@ open examples/README.md
 
 High-level client entrypoints:
 
-- Go (client): `github.com/floegence/flowersec/client` (`client.DialTunnel`, `client.DialDirect`)
+- Go (client): `github.com/floegence/flowersec/client` (`client.ConnectTunnel`, `client.ConnectDirect`)
 - Go (server endpoint): `github.com/floegence/flowersec/endpoint` (accept/dial `role=server` endpoints)
 - TS (stable): `@flowersec/core` (`connectTunnel`, `connectDirect`)
 - TS (advanced): `@flowersec/core/internal` (E2EE/Yamux/RPC/WebSocket building blocks)
@@ -83,7 +83,7 @@ The deployable tunnel binary is `go/cmd/flowersec-tunnel/`.
 - Origin checks are **enabled by default** and require an explicit allow-list:
   - `--allow-origin` accepts either a hostname (e.g. `example.com`) or a full Origin value (e.g. `https://example.com` or `http://127.0.0.1:5173`).
   - Requests without `Origin` are **rejected by default**; `--allow-no-origin` is intended for non-browser clients (discouraged).
-  - Client helpers require an explicit origin: in browsers pass `window.location.origin`; in Node pass `origin` and a `wsFactory` that sets the `Origin` header.
+  - Client helpers require an explicit origin: in browsers pass `window.location.origin`; in Node pass `origin` and a `wsFactory` that sets the `Origin` header (use `createNodeWsFactory` from `@flowersec/core/node`).
 - Token issuer (`iss`) is **required**: pass `--iss` and ensure it matches the token payload `iss` minted by your controlplane.
 
 Node.js version:

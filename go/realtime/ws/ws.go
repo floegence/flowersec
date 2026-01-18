@@ -37,13 +37,23 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts UpgraderOptions) (*Con
 // DialOptions provides optional headers for websocket dialing.
 type DialOptions struct {
 	Header http.Header // Optional headers for the handshake request.
+	Dialer *websocket.Dialer
 }
 
 // Dial opens a websocket connection with deadline-aware handshake.
 func Dial(ctx context.Context, urlStr string, opts DialOptions) (*Conn, *http.Response, error) {
-	d := websocket.Dialer{}
+	var d websocket.Dialer
+	if opts.Dialer != nil {
+		d = *opts.Dialer
+	} else {
+		d = websocket.Dialer{}
+	}
 	if deadline, ok := ctx.Deadline(); ok {
-		d.HandshakeTimeout = time.Until(deadline)
+		// Prefer the tighter of dialer.HandshakeTimeout and the context deadline when both are set.
+		dl := time.Until(deadline)
+		if d.HandshakeTimeout == 0 || d.HandshakeTimeout > dl {
+			d.HandshakeTimeout = dl
+		}
 	}
 	c, resp, err := d.DialContext(ctx, urlStr, opts.Header)
 	if err != nil {

@@ -10,7 +10,7 @@ import (
 	directv1 "github.com/floegence/flowersec/gen/flowersec/direct/v1"
 )
 
-func TestDialTunnel_RejectsInvalidEndpointInstanceID(t *testing.T) {
+func TestConnectTunnel_RejectsInvalidEndpointInstanceID(t *testing.T) {
 	psk := make([]byte, 32)
 	for i := range psk {
 		psk[i] = 1
@@ -25,7 +25,7 @@ func TestDialTunnel_RejectsInvalidEndpointInstanceID(t *testing.T) {
 		AllowedSuites:      []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
 		IdleTimeoutSeconds: 60,
 	}
-	_, err := DialTunnel(context.Background(), grant, DialTunnelOptions{
+	_, err := ConnectTunnel(context.Background(), grant, TunnelConnectOptions{
 		Origin:             "http://example.com",
 		EndpointInstanceID: "!!!",
 	})
@@ -44,7 +44,7 @@ func TestDialTunnel_RejectsInvalidEndpointInstanceID(t *testing.T) {
 	}
 }
 
-func TestDialTunnel_RejectsInvalidPSKLength(t *testing.T) {
+func TestConnectTunnel_RejectsInvalidPSKLength(t *testing.T) {
 	psk := make([]byte, 16)
 	for i := range psk {
 		psk[i] = 1
@@ -59,7 +59,7 @@ func TestDialTunnel_RejectsInvalidPSKLength(t *testing.T) {
 		AllowedSuites:      []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
 		IdleTimeoutSeconds: 60,
 	}
-	_, err := DialTunnel(context.Background(), grant, DialTunnelOptions{
+	_, err := ConnectTunnel(context.Background(), grant, TunnelConnectOptions{
 		Origin: "http://example.com",
 	})
 	if err == nil {
@@ -77,7 +77,7 @@ func TestDialTunnel_RejectsInvalidPSKLength(t *testing.T) {
 	}
 }
 
-func TestDialDirect_RejectsInvalidSuite(t *testing.T) {
+func TestConnectDirect_RejectsInvalidSuite(t *testing.T) {
 	psk := make([]byte, 32)
 	for i := range psk {
 		psk[i] = 1
@@ -88,7 +88,7 @@ func TestDialDirect_RejectsInvalidSuite(t *testing.T) {
 		E2eePskB64u:  base64.RawURLEncoding.EncodeToString(psk),
 		DefaultSuite: 999,
 	}
-	_, err := DialDirect(context.Background(), info, DialDirectOptions{Origin: "http://example.com"})
+	_, err := ConnectDirect(context.Background(), info, DirectConnectOptions{Origin: "http://example.com"})
 	if err == nil {
 		t.Fatal("expected error")
 	}

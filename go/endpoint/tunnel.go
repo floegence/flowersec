@@ -12,17 +12,21 @@ import (
 	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/internal/base64url"
 	"github.com/floegence/flowersec/internal/contextutil"
+	"github.com/floegence/flowersec/internal/defaults"
 	"github.com/floegence/flowersec/internal/endpointid"
 	"github.com/floegence/flowersec/realtime/ws"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )
 
-type DialTunnelServerOptions struct {
+type TunnelConnectOptions struct {
 	Origin string // Explicit Origin header value (required).
 
-	ConnectTimeout   time.Duration // WebSocket connect timeout (0 disables).
-	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 disables).
+	Header http.Header       // Optional headers for the WebSocket handshake.
+	Dialer *websocket.Dialer // Optional websocket dialer (proxy/TLS/etc).
+
+	ConnectTimeout   time.Duration // WebSocket connect timeout (0 uses default; <0 disables).
+	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default; <0 disables).
 
 	MaxHandshakePayload int // Maximum handshake JSON payload size (0 uses default).
 	MaxRecordBytes      int // Maximum encrypted record size on the wire (0 uses default).
@@ -38,8 +42,8 @@ type DialTunnelServerOptions struct {
 	YamuxConfig *hyamux.Config // Optional yamux server config (nil uses defaults).
 }
 
-// DialTunnelServer attaches to a tunnel as role=server and returns a multiplexed endpoint session.
-func DialTunnelServer(ctx context.Context, grant *controlv1.ChannelInitGrant, opts DialTunnelServerOptions) (*Session, error) {
+// ConnectTunnel attaches to a tunnel as role=server and returns a multiplexed endpoint session.
+func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts TunnelConnectOptions) (*Session, error) {
 	if grant == nil {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingGrant, ErrMissingGrant)
 	}
@@ -72,12 +76,21 @@ func DialTunnelServer(ctx context.Context, grant *controlv1.ChannelInitGrant, op
 		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
 	}
 
-	connectCtx, connectCancel := contextutil.WithTimeout(ctx, opts.ConnectTimeout)
+	connectTimeout := opts.ConnectTimeout
+	if connectTimeout == 0 {
+		connectTimeout = defaults.ConnectTimeout
+	}
+	handshakeTimeout := opts.HandshakeTimeout
+	if handshakeTimeout == 0 {
+		handshakeTimeout = defaults.HandshakeTimeout
+	}
+
+	connectCtx, connectCancel := contextutil.WithTimeout(ctx, connectTimeout)
 	defer connectCancel()
 
-	h := http.Header{}
+	h := cloneHeader(opts.Header)
 	h.Set("Origin", opts.Origin)
-	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h})
+	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: opts.Dialer})
 	if err != nil {
 		return nil, wrapErr(PathTunnel, StageConnect, CodeDialFailed, err)
 	}
@@ -118,7 +131,7 @@ func DialTunnelServer(ctx context.Context, grant *controlv1.ChannelInitGrant, op
 		maxHandshake:     opts.MaxHandshakePayload,
 		maxRecordBytes:   opts.MaxRecordBytes,
 		maxBufferedBytes: opts.MaxBufferedBytes,
-		handshakeTimeout: opts.HandshakeTimeout,
+		handshakeTimeout: handshakeTimeout,
 		cache:            opts.HandshakeCache,
 		yamuxConfig:      opts.YamuxConfig,
 	})
@@ -186,4 +199,17 @@ func serveAfterAttach(ctx context.Context, c *ws.Conn, path Path, endpointInstan
 		secure:             secure,
 		mux:                mux,
 	}, nil
+}
+
+func cloneHeader(h http.Header) http.Header {
+	if h == nil {
+		return http.Header{}
+	}
+	out := make(http.Header, len(h))
+	for k, vv := range h {
+		cp := make([]string, len(vv))
+		copy(cp, vv)
+		out[k] = cp
+	}
+	return out
 }

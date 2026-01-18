@@ -40,7 +40,7 @@ func main() {
 	// This helper builds the full protocol stack and returns an RPC-ready client:
 	// - client.Mux: open extra streams (e.g. echo)
 	// - client.RPC: typed request/notify API over the dedicated "rpc" stream
-	c, err := client.DialDirect(context.Background(), info, client.DialDirectOptions{
+	c, err := client.ConnectDirect(context.Background(), info, client.DirectConnectOptions{
 		ConnectTimeout:   10 * time.Second,
 		HandshakeTimeout: 10 * time.Second,
 		MaxRecordBytes:   1 << 20,
