@@ -228,8 +228,8 @@ func genGoRPC(outRoot string, s schema) error {
 	buf.WriteString("import (\n")
 	buf.WriteString("\t\"context\"\n")
 	buf.WriteString("\t\"encoding/json\"\n\n")
-	buf.WriteString("\trpcwirev1 \"github.com/floegence/flowersec/gen/flowersec/rpc/v1\"\n")
-	buf.WriteString("\t\"github.com/floegence/flowersec/rpc\"\n")
+	buf.WriteString("\trpcwirev1 \"github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1\"\n")
+	buf.WriteString("\t\"github.com/floegence/flowersec/flowersec-go/rpc\"\n")
 	buf.WriteString(")\n\n")
 
 	serviceNames := sortedKeys(s.Services)

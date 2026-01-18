@@ -2,8 +2,8 @@
 .DS_Store
 
 # Go
-/go/bin/
-/go/pkg/
+/flowersec-go/bin/
+/flowersec-go/pkg/
 **/*.test
 **/*.out
 

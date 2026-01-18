@@ -11,9 +11,9 @@ import {
   base64urlEncode,
   clientHandshake,
   writeStreamHello
-} from "../../ts/dist/index.js";
-import { createNodeWsFactory } from "../../ts/dist/node/index.js";
-import { Role as TunnelRole } from "../../ts/dist/gen/flowersec/tunnel/v1.gen.js";
+} from "../../flowersec-ts/dist/index.js";
+import { createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
+import { Role as TunnelRole } from "../../flowersec-ts/dist/gen/flowersec/tunnel/v1.gen.js";
 
 // node-tunnel-client-advanced is the "advanced" Node.js tunnel client example.
 //

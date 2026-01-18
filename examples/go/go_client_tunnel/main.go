@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec-examples/go/exampleutil"
-	"github.com/floegence/flowersec/crypto/e2ee"
-	controlv1 "github.com/floegence/flowersec/gen/flowersec/controlplane/v1"
-	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
-	"github.com/floegence/flowersec/rpc"
-	rpchello "github.com/floegence/flowersec/rpc/hello"
+	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
+	"github.com/floegence/flowersec/flowersec-go/rpc"
+	rpchello "github.com/floegence/flowersec/flowersec-go/rpc/hello"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )

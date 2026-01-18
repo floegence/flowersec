@@ -18,9 +18,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/floegence/flowersec/controlplane/channelinit"
-	"github.com/floegence/flowersec/controlplane/issuer"
-	controlv1 "github.com/floegence/flowersec/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
+	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 )
 
 // controlplane_demo is a minimal controlplane service used by the examples:

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-GO_DIR="${ROOT_DIR}/go"
-TS_DIR="${ROOT_DIR}/ts"
+GO_DIR="${ROOT_DIR}/flowersec-go"
+TS_DIR="${ROOT_DIR}/flowersec-ts"
 OUT_FILE="${ROOT_DIR}/BENCH_RESULTS.md"
 
 GOMAXPROCS="${GOMAXPROCS:-2}"

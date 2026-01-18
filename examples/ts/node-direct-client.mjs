@@ -1,9 +1,9 @@
 import process from "node:process";
 
-import { connectDirect } from "../../ts/dist/facade.js";
-import { createNodeWsFactory } from "../../ts/dist/node/index.js";
-import { createDemoClient } from "../../ts/dist/gen/flowersec/demo/v1.rpc.gen.js";
-import { ByteReader } from "../../ts/dist/yamux/index.js";
+import { connectDirect } from "../../flowersec-ts/dist/facade.js";
+import { createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
+import { createDemoClient } from "../../flowersec-ts/dist/gen/flowersec/demo/v1.rpc.gen.js";
+import { ByteReader } from "../../flowersec-ts/dist/yamux/index.js";
 
 // node-direct-client is the "simple" Node.js direct (no tunnel) client example.
 //

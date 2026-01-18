@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Starts the real deliverable tunnel server: go/cmd/flowersec-tunnel.
+# Starts the real deliverable tunnel server: flowersec-go/cmd/flowersec-tunnel.
 # This script intentionally does NOT generate keys: issuer keys are owned by the controlplane.
 #
 # Notes:
@@ -37,7 +37,7 @@ fi
 
 echo "Starting tunnel server (aud=$AUD, iss=$ISS, listen=$LISTEN, ws_path=$WS_PATH)"
 echo "First stdout line is JSON: {\"listen\":\"...\",\"ws_path\":\"...\"}"
-cd "$ROOT/go"
+cd "$ROOT/flowersec-go"
 ALLOW_ORIGIN_ARGS=(--allow-origin "$ALLOW_ORIGIN")
 TLS_ARGS=()
 if [[ -n "$TLS_CERT_FILE" || -n "$TLS_KEY_FILE" ]]; then

@@ -29,8 +29,8 @@ make gen
 
 Generated outputs:
 
-- Go: `go/gen/flowersec/<domain>/<version>/types.gen.go` (and `rpc.gen.go` if `services` is present)
-- TypeScript: `ts/src/gen/flowersec/<domain>/<version>.gen.ts` (and `<version>.rpc.gen.ts` if `services` is present)
+- Go: `flowersec-go/gen/flowersec/<domain>/<version>/types.gen.go` (and `rpc.gen.go` if `services` is present)
+- TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.gen.ts` (and `<version>.rpc.gen.ts` if `services` is present)
 
 ## File layout and namespace
 
@@ -322,13 +322,13 @@ Typed RPC stubs use these asserts automatically.
 
 Given `-go-out` and `-ts-out`:
 
-- Go: `go/gen/flowersec/<domain>/<version>/types.gen.go` with package name `v1`.
-- TypeScript: `ts/src/gen/flowersec/<domain>/<version>.gen.ts`.
+- Go: `flowersec-go/gen/flowersec/<domain>/<version>/types.gen.go` with package name `v1`.
+- TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.gen.ts`.
 
 When `services` is present:
 
-- Go: `go/gen/flowersec/<domain>/<version>/rpc.gen.go` (typed stubs; constants + clients + registration helpers).
-- TypeScript: `ts/src/gen/flowersec/<domain>/<version>.rpc.gen.ts` (typed client factory).
+- Go: `flowersec-go/gen/flowersec/<domain>/<version>/rpc.gen.go` (typed stubs; constants + clients + registration helpers).
+- TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.rpc.gen.ts` (typed client factory).
 
 ## Deterministic ordering
 
@@ -349,7 +349,7 @@ make gen
 Or run the generator directly:
 
 ```
-go run ./tools/idlgen -in ./idl -go-out ./go/gen -ts-out ./ts/src/gen
+go run ./tools/idlgen -in ./idl -go-out ./flowersec-go/gen -ts-out ./flowersec-ts/src/gen
 ```
 
 ## Example

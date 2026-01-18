@@ -11,11 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/floegence/flowersec/endpoint"
-	controlv1 "github.com/floegence/flowersec/gen/flowersec/controlplane/v1"
-	demov1 "github.com/floegence/flowersec/gen/flowersec/demo/v1"
-	rpcwirev1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/rpc"
+	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+	demov1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/demo/v1"
+	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
 // server_endpoint is a demo endpoint that attaches to a tunnel as role=server and serves:

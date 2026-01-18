@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/floegence/flowersec/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 )
 
 // issuer_keygen generates a tunnel issuer keyset file (kid -> ed25519 pubkey) for local testing.

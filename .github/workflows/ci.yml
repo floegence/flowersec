@@ -16,7 +16,7 @@ jobs:
           go-version: "1.25.6"
           cache: true
           cache-dependency-path: |
-            go/go.sum
+            flowersec-go/go.sum
             examples/go.sum
 
       - name: Setup Node
@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: ts/package-lock.json
+          cache-dependency-path: flowersec-ts/package-lock.json
 
       - name: Run checks
         run: make check

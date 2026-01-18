@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/floegence/flowersec/controlplane/channelinit"
-	"github.com/floegence/flowersec/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
+	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 )
 
 // These tests validate the minimal controlplane demo HTTP handler contract:

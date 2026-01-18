@@ -15,8 +15,8 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 
 ## Repository Layout
 
-- Go library and binaries: `go/`
-- TypeScript library (ESM, browser-friendly): `ts/`
+- Go library and binaries: `flowersec-go/`
+- TypeScript library (ESM, browser-friendly): `flowersec-ts/`
 - Single-source IDL and codegen: `idl/`, `tools/idlgen/`
 - Demos + scenario cookbook: `examples/README.md`
   - Includes both high-level client helpers and manual stack examples (Go + TS).
@@ -31,8 +31,18 @@ open examples/README.md
 
 High-level client entrypoints:
 
-- Go (client): `github.com/floegence/flowersec/client` (`client.ConnectTunnel`, `client.ConnectDirect`)
-- Go (server endpoint): `github.com/floegence/flowersec/endpoint` (accept/dial `role=server` endpoints)
+Install the Go module:
+
+```bash
+go get github.com/floegence/flowersec/flowersec-go@latest
+# Or pin a version:
+go get github.com/floegence/flowersec/flowersec-go@v0.1.0
+```
+
+Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.1.0`).
+
+- Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.ConnectTunnel`, `client.ConnectDirect`)
+- Go (server endpoint): `github.com/floegence/flowersec/flowersec-go/endpoint` (accept/dial `role=server` endpoints)
 - TS (stable): `@flowersec/core` (`connectTunnel`, `connectDirect`)
 - TS (advanced): `@flowersec/core/internal` (E2EE/Yamux/RPC/WebSocket building blocks)
 
@@ -73,11 +83,11 @@ make gen
 
 Go workspace:
 
-- The repo includes a root `go.work`, so you can run Go commands from the repo root (e.g. `go run ./examples/...` or `go test ./go/... ./examples/...`).
+- Go code lives in the `flowersec-go/` module; examples live in the `examples/` module. Run Go commands from those directories (or use `make go-test`).
 
 ## Tunnel defaults (important for deployment)
 
-The deployable tunnel binary is `go/cmd/flowersec-tunnel/`.
+The deployable tunnel binary is `flowersec-go/cmd/flowersec-tunnel/`.
 
 - TLS is **disabled by default**. For any non-local deployment, use `wss://` (either enable `--tls-cert-file/--tls-key-file` or terminate TLS at a reverse proxy).
 - Origin checks are **enabled by default** and require an explicit allow-list:
@@ -110,7 +120,8 @@ Example:
 
 ```bash
 # run tunnel
-go run ./go/cmd/flowersec-tunnel \
+cd flowersec-go
+go run ./cmd/flowersec-tunnel \
   --listen 127.0.0.1:8080 \
   --metrics-listen 127.0.0.1:9090 \
   --issuer-keys-file /path/to/keys.json \
@@ -133,5 +144,5 @@ Library integrations:
 
 ## Binaries
 
-- Tunnel server (deployable): `go/cmd/flowersec-tunnel/`
+- Tunnel server (deployable): `flowersec-go/cmd/flowersec-tunnel/`
   - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`, `--iss`, `--allow-origin`, `--allow-no-origin`, `--tls-cert-file`, `--tls-key-file`, `--metrics-listen`

@@ -9,8 +9,8 @@ import {
   base64urlDecode,
   clientHandshake,
   writeStreamHello
-} from "../../ts/dist/index.js";
-import { createNodeWsFactory } from "../../ts/dist/node/index.js";
+} from "../../flowersec-ts/dist/index.js";
+import { createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
 
 // node-direct-client-advanced is the "advanced" Node.js direct (no tunnel) client example.
 //

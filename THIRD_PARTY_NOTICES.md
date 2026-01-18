@@ -3,8 +3,8 @@
 This repository includes third-party open source software via Go modules and npm packages.
 
 Data sources:
-- Go modules build list from `go/` (via `go list -m all`)
-- npm packages from `ts/package-lock.json`
+- Go modules build list from `flowersec-go/` (via `go list -m all`)
+- npm packages from `flowersec-ts/package-lock.json`
 
 License identifiers are best-effort and derived from upstream metadata / LICENSE files.
 For authoritative license texts and copyright notices, refer to each upstream project.

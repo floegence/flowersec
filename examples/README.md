@@ -7,12 +7,12 @@ This folder is a hands-on cookbook for running Flowersec end-to-end using the re
 
 ## Components (what each demo is)
 
-- Tunnel server (deliverable): `go/cmd/flowersec-tunnel/` (blind forwarder; verifies tokens; pairs by `channel_id` + `role`)
+- Tunnel server (deliverable): `flowersec-go/cmd/flowersec-tunnel/` (blind forwarder; verifies tokens; pairs by `channel_id` + `role`)
 - Controlplane demo: `examples/go/controlplane_demo/` (owns issuer keys; mints `ChannelInitGrant` pairs)
-- Go server endpoint demo: `examples/go/server_endpoint/` (acts as the endpoint with `role=server`; built on `go/endpoint`)
+- Go server endpoint demo: `examples/go/server_endpoint/` (acts as the endpoint with `role=server`; built on `flowersec-go/endpoint`)
 - Clients:
   - Go:
-    - Simple (uses `go/client` helpers): `examples/go/go_client_tunnel_simple/`, `examples/go/go_client_direct_simple/`
+    - Simple (uses `flowersec-go/client` helpers): `examples/go/go_client_tunnel_simple/`, `examples/go/go_client_direct_simple/`
     - Advanced (manual stack): `examples/go/go_client_tunnel/`, `examples/go/go_client_direct/`
   - TS (Node):
     - Simple (high-level helpers): `examples/ts/node-tunnel-client.mjs`, `examples/ts/node-direct-client.mjs`
@@ -23,17 +23,17 @@ This folder is a hands-on cookbook for running Flowersec end-to-end using the re
 
 ## Prerequisites
 
-- Go (same major as `go/go.mod`)
+- Go (same major as `flowersec-go/go.mod`)
 - Node.js (for TypeScript clients; recommended: Node.js 22 LTS)
 - Optional: `jq` (to parse the JSON "ready" lines; you can also copy/paste manually)
-  - This repo includes a root `go.work`, so `go run ./examples/...` works from the repo root (for tests: `go test ./go/... ./examples/...`).
+  - Run Go commands from `examples/` (examples module) or `flowersec-go/` (library module). `make go-test` runs both.
 
 ## Build the TypeScript bundle (required for TS clients)
 
-TS examples import from `ts/dist/`, so build it once:
+TS examples import from `flowersec-ts/dist/`, so build it once:
 
 ```bash
-cd ts
+cd flowersec-ts
 npm run build
 ```
 
@@ -126,13 +126,15 @@ Tip: if you refresh/reconnect, mint a new channel again (one-time token rule).
 Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint), then:
 
 ```bash
-go run ./examples/go/go_client_tunnel --origin http://127.0.0.1:5173 < "$CHANNEL_JSON"
+cd examples
+go run ./go/go_client_tunnel --origin http://127.0.0.1:5173 < "$CHANNEL_JSON"
 ```
 
-Simple variant (uses `go/client`):
+Simple variant (uses `flowersec-go/client`):
 
 ```bash
-go run ./examples/go/go_client_tunnel_simple --origin http://127.0.0.1:5173 < "$CHANNEL_JSON"
+cd examples
+go run ./go/go_client_tunnel_simple --origin http://127.0.0.1:5173 < "$CHANNEL_JSON"
 ```
 
 ## Scenario D: TS client (Node) ↔ Go direct server (no tunnel)
@@ -140,7 +142,8 @@ go run ./examples/go/go_client_tunnel_simple --origin http://127.0.0.1:5173 < "$
 Terminal 1: start the direct server (no Attach; WS immediately runs E2EE server + Yamux server)
 
 ```bash
-go run ./examples/go/direct_demo --allow-origin http://127.0.0.1:5173 | tee /tmp/fsec-direct.json
+cd examples
+go run ./go/direct_demo --allow-origin http://127.0.0.1:5173 | tee /tmp/fsec-direct.json
 ```
 
 Terminal 2: run the TS direct client
@@ -160,13 +163,15 @@ FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-direct-client-advanced
 Reuse Scenario D terminal 1, then:
 
 ```bash
-go run ./examples/go/go_client_direct --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json
+cd examples
+go run ./go/go_client_direct --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json
 ```
 
-Simple variant (uses `go/client`):
+Simple variant (uses `flowersec-go/client`):
 
 ```bash
-go run ./examples/go/go_client_direct_simple --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json
+cd examples
+go run ./go/go_client_direct_simple --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json
 ```
 
 ## Troubleshooting

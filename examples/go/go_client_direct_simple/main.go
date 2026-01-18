@@ -10,9 +10,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/floegence/flowersec/client"
-	demov1 "github.com/floegence/flowersec/gen/flowersec/demo/v1"
-	directv1 "github.com/floegence/flowersec/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/client"
+	demov1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/demo/v1"
+	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 )
 
 // go_client_direct_simple demonstrates the minimal direct (no tunnel) client using the high-level Go helpers:

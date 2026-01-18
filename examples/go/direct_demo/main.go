@@ -15,11 +15,11 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec-examples/go/exampleutil"
-	"github.com/floegence/flowersec/crypto/e2ee"
-	"github.com/floegence/flowersec/endpoint"
-	demov1 "github.com/floegence/flowersec/gen/flowersec/demo/v1"
-	rpcwirev1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/rpc"
+	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	demov1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/demo/v1"
+	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
 // direct_demo starts a direct (no tunnel) WebSocket server endpoint that speaks the full Flowersec stack:
