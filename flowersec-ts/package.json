@@ -18,6 +18,34 @@
       "types": "./dist/browser/index.d.ts",
       "default": "./dist/browser/index.js"
     },
+    "./rpc": {
+      "types": "./dist/rpc/index.d.ts",
+      "default": "./dist/rpc/index.js"
+    },
+    "./yamux": {
+      "types": "./dist/yamux/index.d.ts",
+      "default": "./dist/yamux/index.js"
+    },
+    "./e2ee": {
+      "types": "./dist/e2ee/index.d.ts",
+      "default": "./dist/e2ee/index.js"
+    },
+    "./ws": {
+      "types": "./dist/ws/index.d.ts",
+      "default": "./dist/ws/index.js"
+    },
+    "./observability": {
+      "types": "./dist/observability/index.d.ts",
+      "default": "./dist/observability/index.js"
+    },
+    "./streamhello": {
+      "types": "./dist/streamhello/index.d.ts",
+      "default": "./dist/streamhello/index.js"
+    },
+    "./gen/*": {
+      "types": "./dist/gen/*.d.ts",
+      "default": "./dist/gen/*.js"
+    },
     "./internal": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"

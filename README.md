@@ -46,7 +46,9 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 - TS (stable): `@flowersec/core` (`connectTunnel`, `connectDirect`)
 - TS (Node): `@flowersec/core/node` (`connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
 - TS (browser): `@flowersec/core/browser` (`connectTunnelBrowser`, `connectDirectBrowser`)
-- TS (advanced): `@flowersec/core/internal` (E2EE/Yamux/RPC/WebSocket building blocks)
+- TS (building blocks): `@flowersec/core/rpc`, `@flowersec/core/yamux`, `@flowersec/core/e2ee`, `@flowersec/core/ws`, `@flowersec/core/observability`, `@flowersec/core/streamhello`
+- TS (generated stubs): `@flowersec/core/gen/...`
+- TS (unstable): `@flowersec/core/internal` (internal glue; not recommended as a stable dependency)
 
 It includes:
 
