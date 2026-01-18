@@ -8,7 +8,7 @@ This folder is a hands-on cookbook for running Flowersec end-to-end using the re
 ## Components (what each demo is)
 
 - Tunnel server (deliverable): `flowersec-go/cmd/flowersec-tunnel/` (blind forwarder; verifies tokens; pairs by `channel_id` + `role`)
-- Controlplane demo: `examples/go/controlplane_demo/` (owns issuer keys; mints `ChannelInitGrant` pairs)
+- Controlplane demo: `examples/go/controlplane_demo/` (owns issuer keys; mints `ChannelInitGrant` pairs; pushes `grant_server` to server endpoints over a direct Flowersec control channel)
 - Go server endpoint demo: `examples/go/server_endpoint/` (acts as the endpoint with `role=server`; built on `flowersec-go/endpoint`)
 - Clients:
   - Go:
@@ -41,7 +41,7 @@ npm run build
 
 - Transport security: the attach layer is plaintext by design, so use `wss://` (or TLS terminated by a reverse proxy) in any non-local deployment. The tunnel binary supports optional TLS via `--tls-cert-file/--tls-key-file` (disabled by default).
 - Token issuer (`iss`): the tunnel requires `--iss` and will reject tokens whose payload `iss` does not match. Keep your controlplane `--issuer-id` and tunnel `--iss` consistent.
-- One-time tokens: tunnel enforces `token_id` single-use. If you re-run a client with the same `grant_client`/`grant_server`, you will hit token replay and the tunnel will close the connection.
+- One-time tokens: tunnel enforces `token_id` single-use. If you re-run a client with the same `grant_client`, you will hit token replay and the tunnel will close the connection.
   - Practical rule: mint a fresh channel (`POST /v1/channel/init`) for every new connection attempt.
 - Role pairing: a tunnel channel requires exactly one `role=client` and one `role=server`.
   - TS tunnel client and Go tunnel client are both `role=client` and cannot talk to each other directly.
@@ -87,18 +87,18 @@ FSEC_TUNNEL_TLS_KEY_FILE=/path/to/key.pem \
 ./examples/run-tunnel-server.sh
 ```
 
-Terminal 3: mint a channel (grants) and start the server endpoint (server-side grant)
+Terminal 3: start the server endpoint (control-connected)
+
+```bash
+FSEC_ORIGIN=http://127.0.0.1:5173 ./examples/run-server-endpoint.sh "$CP_JSON"
+```
+
+Terminal 4: mint a channel (grant_client) and run the TS tunnel client
 
 ```bash
 CHANNEL_JSON="$(mktemp -t fsec-channel.XXXXXX.json)"
 CP_URL="$(jq -r '.controlplane_http_url' "$CP_JSON")"
 curl -sS -X POST "$CP_URL/v1/channel/init" | tee "$CHANNEL_JSON"
-FSEC_ORIGIN=http://127.0.0.1:5173 ./examples/run-server-endpoint.sh "$CHANNEL_JSON"
-```
-
-Terminal 4: run the TS tunnel client (client-side grant)
-
-```bash
 FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-tunnel-client.mjs < "$CHANNEL_JSON"
 ```
 
@@ -120,13 +120,13 @@ Then serve the repo root:
 python3 -m http.server 5173
 ```
 
-Open `http://127.0.0.1:5173/examples/ts/browser-tunnel/` and paste the channel JSON (the same file you wrote in Terminal 3, e.g. `$CHANNEL_JSON`).
+Open `http://127.0.0.1:5173/examples/ts/browser-tunnel/` and paste the channel JSON (the same file you wrote in Terminal 4, e.g. `$CHANNEL_JSON`).
 
 Tip: if you refresh/reconnect, mint a new channel again (one-time token rule).
 
 ## Scenario C: Go client ↔ Go server endpoint (role=server) through tunnel
 
-Reuse Scenario A terminals 1-3 (controlplane + tunnel + server endpoint), then:
+Reuse Scenario A terminals 1-4 (controlplane + tunnel + server endpoint + channel init), then:
 
 ```bash
 cd examples

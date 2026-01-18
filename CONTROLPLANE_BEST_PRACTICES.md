@@ -27,7 +27,7 @@ The tunnel validates the attach token, and the E2EE handshake validates init_exp
 ## Recommended control plane APIs
 
 - POST /v1/channel/init
-  - Returns a pair of grants: grant_client and grant_server.
+  - Returns grant_client and coordinates delivery of the paired grant_server to the server endpoint over a secure channel (for example, a persistent control connection).
   - If channel_id is omitted, generate a random 24-byte base64url ID.
   - Always generate a new PSK and new tokens for each init request.
 

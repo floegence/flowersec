@@ -21,7 +21,7 @@ import (
 // Notes:
 //   - You must provide an explicit Origin header value (the tunnel enforces an allow-list).
 //   - Tunnel attach tokens are one-time use; mint a new channel init for every new connection attempt.
-//   - Input JSON can be either the full controlplane response {"grant_client":...,"grant_server":...}
+//   - Input JSON can be either the controlplane response {"grant_client":...}
 //     or just the grant_client object itself.
 func main() {
 	var grantPath string

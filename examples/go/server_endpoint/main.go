@@ -1,63 +1,131 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+
+	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	demov1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/demo/v1"
+	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
-// server_endpoint is a demo endpoint that attaches to a tunnel as role=server and serves:
-// - RPC on the "rpc" stream (type_id=1 request, type_id=2 notify)
+const (
+	controlRPCTypeRegisterServerEndpoint uint32 = 1001
+	controlRPCTypeGrantServer            uint32 = 1002
+)
+
+type controlplaneReady struct {
+	ServerEndpointControl *directv1.DirectConnectInfo `json:"server_endpoint_control"`
+}
+
+type serverEndpointRegisterRequest struct {
+	EndpointID string `json:"endpoint_id"`
+}
+
+type serverEndpointRegisterResponse struct {
+	OK bool `json:"ok"`
+}
+
+// server_endpoint maintains a persistent direct Flowersec connection to the controlplane and receives grant_server
+// over RPC notify. For each received grant_server, it attaches to the tunnel as role=server and serves:
+// - RPC on the "rpc" stream (demo type_id=1 request, type_id=2 notify)
 // - Echo on the "echo" stream
 //
-// This endpoint is intended to be paired with any tunnel client (Go/TS). Note that both Go/TS tunnel clients
-// are role=client and cannot talk to each other directly.
-//
 // Notes:
-//   - Input JSON can be either the full controlplane response {"grant_client":...,"grant_server":...}
-//     or just the grant_server object itself.
-//   - You must provide an explicit Origin header value (the tunnel enforces an allow-list).
-//   - Tunnel attach tokens are one-time use; mint a new channel init for every new connection attempt.
+// - You must provide an explicit Origin header value (the tunnel enforces an allow-list).
+// - Tunnel attach tokens are one-time use; the controlplane mints a new grant for every new connection attempt.
 func main() {
-	var grantPath string
+	var controlPath string
 	var origin string
-	flag.StringVar(&grantPath, "grant", "", "path to JSON-encoded ChannelInitGrant for role=server (default: stdin)")
+	var endpointID string
+	flag.StringVar(&controlPath, "control", "", "path to JSON output from controlplane_demo (default: stdin)")
 	flag.StringVar(&origin, "origin", "", "explicit Origin header value (required)")
+	flag.StringVar(&endpointID, "endpoint-id", "", "logical endpoint id for controlplane registration (default: random)")
 	flag.Parse()
 
 	if origin == "" {
 		log.Fatal("missing --origin")
 	}
 
-	grant, err := readGrantServer(grantPath)
+	info, err := readControlplaneControlInfo(controlPath)
 	if err != nil {
 		log.Fatal(err)
 	}
+	if endpointID == "" {
+		endpointID = randomB64u(24)
+	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	go runServerEndpoint(ctx, origin, grant)
+	cp, err := client.ConnectDirect(
+		ctx,
+		info,
+		origin,
+		client.WithConnectTimeout(10*time.Second),
+		client.WithHandshakeTimeout(10*time.Second),
+		client.WithMaxRecordBytes(1<<20),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer cp.Close()
 
-	sig := make(chan os.Signal, 2)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-	cancel()
+	regCtx, regCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer regCancel()
+	if err := registerWithControlplane(regCtx, cp.RPC(), endpointID); err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("registered with controlplane (endpoint_id=%s)", endpointID)
+
+	grants := make(chan *controlv1.ChannelInitGrant, 16)
+	unsub := cp.RPC().OnNotify(controlRPCTypeGrantServer, func(payload json.RawMessage) {
+		var g controlv1.ChannelInitGrant
+		if err := json.Unmarshal(payload, &g); err != nil {
+			log.Printf("invalid grant_server notify payload: %v", err)
+			return
+		}
+		if g.Role != controlv1.Role_server {
+			log.Printf("unexpected grant role: %v", g.Role)
+			return
+		}
+		select {
+		case grants <- &g:
+		default:
+			log.Printf("dropping grant_server (queue full)")
+		}
+	})
+	defer unsub()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case grant := <-grants:
+			go serveTunnelSession(ctx, origin, grant)
+		}
+	}
 }
 
-func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) {
+func serveTunnelSession(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) {
 	sess, err := endpoint.ConnectTunnel(
 		ctx,
 		grant,
@@ -67,11 +135,13 @@ func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.Chan
 		endpoint.WithMaxRecordBytes(1<<20),
 	)
 	if err != nil {
+		log.Printf("tunnel connect failed (channel_id=%s): %v", grant.ChannelId, err)
 		return
 	}
 	defer sess.Close()
+	log.Printf("tunnel session ready (channel_id=%s endpoint_instance_id=%s)", grant.ChannelId, sess.EndpointInstanceID())
 
-	_ = sess.ServeStreams(ctx, 8*1024, func(kind string, stream io.ReadWriteCloser) {
+	err = sess.ServeStreams(ctx, 8*1024, func(kind string, stream io.ReadWriteCloser) {
 		defer stream.Close()
 		switch kind {
 		case "rpc":
@@ -85,6 +155,9 @@ func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.Chan
 			return
 		}
 	})
+	if err != nil && ctx.Err() == nil {
+		log.Printf("tunnel session ended (channel_id=%s): %v", grant.ChannelId, err)
+	}
 }
 
 type demoHandler struct {
@@ -97,7 +170,7 @@ func (h demoHandler) Ping(ctx context.Context, _req *demov1.PingRequest) (*demov
 	return &demov1.PingResponse{Ok: true}, nil
 }
 
-func readGrantServer(path string) (*controlv1.ChannelInitGrant, error) {
+func readControlplaneControlInfo(path string) (*directv1.DirectConnectInfo, error) {
 	var r io.Reader
 	if path == "" {
 		r = os.Stdin
@@ -109,39 +182,62 @@ func readGrantServer(path string) (*controlv1.ChannelInitGrant, error) {
 		defer f.Close()
 		r = f
 	}
-	var raw struct {
-		GrantServer *controlv1.ChannelInitGrant `json:"grant_server"`
-	}
-	b, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	// Accept either the full /v1/channel/init response or the raw grant itself.
-	if err := json.Unmarshal(b, &raw); err == nil && raw.GrantServer != nil {
-		if raw.GrantServer.Role != controlv1.Role_server {
-			return nil, errRole("server", raw.GrantServer.Role)
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
 		}
-		return raw.GrantServer, nil
+		var out controlplaneReady
+		if err := json.Unmarshal([]byte(line), &out); err != nil {
+			continue
+		}
+		if out.ServerEndpointControl == nil {
+			continue
+		}
+		info := out.ServerEndpointControl
+		if info.WsUrl == "" || info.ChannelId == "" || info.E2eePskB64u == "" {
+			continue
+		}
+		return info, nil
 	}
-	var g controlv1.ChannelInitGrant
-	if err := json.Unmarshal(b, &g); err != nil {
+	if err := sc.Err(); err != nil {
 		return nil, err
 	}
-	if g.Role != controlv1.Role_server {
-		return nil, errRole("server", g.Role)
+	return nil, errors.New("missing server_endpoint_control in controlplane output")
+}
+
+func registerWithControlplane(ctx context.Context, c *rpc.Client, endpointID string) error {
+	reqJSON, _ := json.Marshal(serverEndpointRegisterRequest{EndpointID: endpointID})
+	resp, rpcErr, err := c.Call(ctx, controlRPCTypeRegisterServerEndpoint, reqJSON)
+	if err != nil {
+		return err
 	}
-	return &g, nil
+	if rpcErr != nil {
+		return fmt.Errorf("register failed: %d %s", rpcErr.Code, derefString(rpcErr.Message))
+	}
+	var out serverEndpointRegisterResponse
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return err
+	}
+	if !out.OK {
+		return errors.New("register not ok")
+	}
+	return nil
 }
 
-func errRole(expect string, got controlv1.Role) error {
-	return &roleError{expect: expect, got: got}
+func randomB64u(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-type roleError struct {
-	expect string
-	got    controlv1.Role
-}
-
-func (e *roleError) Error() string {
-	return "expected role=" + e.expect
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

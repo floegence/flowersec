@@ -17,7 +17,7 @@ import { ByteReader } from "../../flowersec-ts/dist/yamux/index.js";
 // - The tunnel server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
 // - In Node, connectTunnelNode() automatically sets wsFactory so the Origin header is sent correctly.
 // - Tunnel attach tokens are one-time use; mint a new channel init for each connection attempt.
-// - Input JSON can be either the full controlplane response {"grant_client":...,"grant_server":...}
+// - Input JSON can be either the controlplane response {"grant_client":...}
 //   or just the grant_client object itself.
 async function readStdinUtf8() {
   const chunks = [];

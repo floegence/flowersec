@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Starts the demo server endpoint (yamux server) with a server-side ChannelInitGrant.
-# Input can be either:
-# - full JSON: {"grant_client":...,"grant_server":...}
-# - or grant_server JSON itself
+# Starts the demo server endpoint in "control-connected" mode:
+# - It maintains a persistent Flowersec direct connection to the controlplane.
+# - It receives grant_server over RPC notify.
+# - For each grant_server, it attaches to the tunnel as role=server and serves RPC + echo streams.
 #
 # Notes:
-# - This endpoint attaches to the tunnel as role=server and should be paired with a role=client tunnel client.
-# - Tunnel attach tokens are one-time use. If you reuse a channel JSON, the tunnel will close the connection.
+# - Tunnel attach tokens are one-time use. Mint a new channel init for every new connection attempt.
+# - For any non-local deployment, prefer wss:// (or TLS terminated at a reverse proxy).
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -20,15 +20,20 @@ if [[ -z "$ORIGIN" ]]; then
   exit 1
 fi
 
-GRANT_FILE="${1:-}"
-if [[ -n "$GRANT_FILE" && ! -f "$GRANT_FILE" ]]; then
-  echo "grant file not found: $GRANT_FILE" >&2
+CONTROL_FILE="${1:-}"
+if [[ -z "$CONTROL_FILE" ]]; then
+  echo "Missing controlplane JSON file." >&2
+  echo "Tip (local dev): start controlplane demo and capture its JSON:" >&2
+  echo '  CP_JSON="$(mktemp -t fsec-controlplane.XXXXXX.json)"' >&2
+  echo '  ./examples/run-controlplane-demo.sh | tee "$CP_JSON"' >&2
+  echo "Then start the server endpoint:" >&2
+  echo '  FSEC_ORIGIN=http://127.0.0.1:5173 ./examples/run-server-endpoint.sh "$CP_JSON"' >&2
+  exit 1
+fi
+if [[ -n "$CONTROL_FILE" && ! -f "$CONTROL_FILE" ]]; then
+  echo "controlplane file not found: $CONTROL_FILE" >&2
   exit 1
 fi
 
 cd "$ROOT/examples"
-if [[ -z "$GRANT_FILE" ]]; then
-  exec go run ./go/server_endpoint --origin "$ORIGIN"
-else
-  exec go run ./go/server_endpoint --origin "$ORIGIN" --grant "$GRANT_FILE"
-fi
+exec go run ./go/server_endpoint --origin "$ORIGIN" --control "$CONTROL_FILE"

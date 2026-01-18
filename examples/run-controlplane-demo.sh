@@ -38,10 +38,10 @@ KEYS_FILE="${FSEC_TUNNEL_ISSUER_KEYS_FILE:-$TMP_DIR/issuer_keys.json}"
 
 mkdir -p "$TMP_DIR"
 
-echo "Starting controlplane demo (listen=$LISTEN)"
-echo "It will write tunnel issuer keyset to: $KEYS_FILE"
-echo "Tunnel WS URL (hint for grants): $TUNNEL_URL"
-echo "First stdout line is JSON: {\"controlplane_http_url\":\"...\",\"issuer_keys_file\":\"...\",\"tunnel_audience\":\"...\",\"tunnel_issuer\":\"...\",\"tunnel_listen\":\"...\",\"tunnel_ws_path\":\"...\"}"
+echo "Starting controlplane demo (listen=$LISTEN)" >&2
+echo "It will write tunnel issuer keyset to: $KEYS_FILE" >&2
+echo "Tunnel WS URL (hint for grants): $TUNNEL_URL" >&2
+echo "First stdout line is JSON (machine-readable)." >&2
 
 cd "$ROOT/examples"
 exec go run ./go/controlplane_demo \

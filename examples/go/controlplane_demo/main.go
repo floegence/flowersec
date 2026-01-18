@@ -15,18 +15,26 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
+	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
+	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
 // controlplane_demo is a minimal controlplane service used by the examples:
 // - owns an issuer keypair in-process
 // - writes a tunnel keyset file (kid -> ed25519 pubkey) for the tunnel server to load
-// - exposes HTTP endpoint POST /v1/channel/init to mint a pair of ChannelInitGrant objects (client/server)
+// - exposes HTTP endpoint POST /v1/channel/init to mint grant_client and push grant_server to server endpoints over a direct Flowersec control channel
 //
 // Notes:
 // - Tunnel attach tokens are one-time use. Clients must request a new channel init for each connection attempt.
@@ -40,18 +48,31 @@ type ready struct {
 	TunnelWSURLHint string `json:"tunnel_ws_url_hint"`
 	TunnelListen    string `json:"tunnel_listen"`
 	TunnelWSPath    string `json:"tunnel_ws_path"`
+
+	// ServerEndpointControl provides direct (no-tunnel) connection info for server endpoints.
+	// Server endpoints keep a persistent Flowersec connection to the controlplane and receive grant_server over RPC notify.
+	ServerEndpointControl *directv1.DirectConnectInfo `json:"server_endpoint_control"`
 }
 
 type channelInitRequest struct {
 	ChannelID string `json:"channel_id"`
+	// EndpointID optionally targets a specific registered server endpoint.
+	// If empty, the most recently registered endpoint is used.
+	EndpointID string `json:"endpoint_id"`
 }
 
 type channelInitResponse struct {
 	GrantClient *controlv1.ChannelInitGrant `json:"grant_client"`
-	GrantServer *controlv1.ChannelInitGrant `json:"grant_server"`
 }
 
 const maxChannelInitBodyBytes = 8 * 1024
+
+const (
+	serverEndpointControlWSPath = "/control/ws"
+
+	controlRPCTypeRegisterServerEndpoint uint32 = 1001
+	controlRPCTypeGrantServer            uint32 = 1002
+)
 
 func main() {
 	var listen string
@@ -97,13 +118,57 @@ func main() {
 		},
 	}
 
+	// Server endpoints keep a persistent direct Flowersec connection to the controlplane to receive grant_server.
+	controlChannelID := randomB64u(24)
+	controlPSK := make([]byte, 32)
+	if _, err := rand.Read(controlPSK); err != nil {
+		log.Fatal(err)
+	}
+	controlPSKB64u := base64.RawURLEncoding.EncodeToString(controlPSK)
+	// The init_exp check is enforced only during the handshake. Pick a long expiry for the persistent control channel.
+	controlInitExp := time.Now().Add(365 * 24 * time.Hour).Unix()
+	controlEndpoints := newServerEndpointRegistry()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_ = r
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("/v1/channel/init", channelInitHandler(ci))
+	mux.HandleFunc("/v1/channel/init", channelInitHandler(ci, controlEndpoints))
+	mux.HandleFunc(
+		serverEndpointControlWSPath,
+		endpoint.DirectHandler(endpoint.DirectHandlerOptions{
+			Upgrader: ws.UpgraderOptions{
+				CheckOrigin: func(_ *http.Request) bool { return true },
+			},
+			Handshake: endpoint.AcceptDirectOptions{
+				ChannelID:           controlChannelID,
+				PSK:                 controlPSK,
+				Suite:               e2ee.SuiteX25519HKDFAES256GCM,
+				InitExpireAtUnixS:   controlInitExp,
+				ClockSkew:           30 * time.Second,
+				HandshakeTimeout:    30 * time.Second,
+				ServerFeatures:      1,
+				MaxHandshakePayload: 8 * 1024,
+				MaxRecordBytes:      1 << 20,
+			},
+			OnStream: func(kind string, stream io.ReadWriteCloser) {
+				defer stream.Close()
+				switch kind {
+				case "rpc":
+					router := rpc.NewRouter()
+					srv := rpc.NewServer(stream, router)
+					conn := &serverEndpointConn{srv: srv, reg: controlEndpoints}
+					router.Register(controlRPCTypeRegisterServerEndpoint, conn.handleRegister)
+					_ = srv.Serve(context.Background())
+					conn.unregister()
+				default:
+					return
+				}
+			},
+		}),
+	)
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -121,6 +186,7 @@ func main() {
 
 	// Print a JSON "ready" line for scripts to consume (URLs, issuer key file, tunnel hints).
 	httpURL := "http://" + ln.Addr().String()
+	controlWSURL := "ws://" + ln.Addr().String() + serverEndpointControlWSPath
 	tunnelListen, tunnelWSPath := tunnelListenAndPath(tunnelURL)
 	_ = json.NewEncoder(os.Stdout).Encode(ready{
 		ControlplaneHTTPURL: httpURL,
@@ -130,6 +196,12 @@ func main() {
 		TunnelWSURLHint:     tunnelURL,
 		TunnelListen:        tunnelListen,
 		TunnelWSPath:        tunnelWSPath,
+		ServerEndpointControl: &directv1.DirectConnectInfo{
+			WsUrl:        controlWSURL,
+			ChannelId:    controlChannelID,
+			E2eePskB64u:  controlPSKB64u,
+			DefaultSuite: 1,
+		},
 	})
 
 	sig := make(chan os.Signal, 2)
@@ -140,7 +212,107 @@ func main() {
 	cancel2()
 }
 
-func channelInitHandler(ci *channelinit.Service) http.HandlerFunc {
+type notifySink interface {
+	Notify(typeID uint32, payload json.RawMessage) error
+}
+
+type serverEndpointRegistry struct {
+	mu        sync.RWMutex
+	byID      map[string]notifySink
+	defaultID string
+}
+
+func newServerEndpointRegistry() *serverEndpointRegistry {
+	return &serverEndpointRegistry{byID: make(map[string]notifySink)}
+}
+
+func (r *serverEndpointRegistry) Register(id string, s notifySink) {
+	if id == "" || s == nil {
+		return
+	}
+	r.mu.Lock()
+	r.byID[id] = s
+	r.defaultID = id
+	r.mu.Unlock()
+}
+
+func (r *serverEndpointRegistry) Unregister(id string, s notifySink) {
+	if id == "" || s == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if cur := r.byID[id]; cur != s {
+		return
+	}
+	delete(r.byID, id)
+	if r.defaultID == id {
+		r.defaultID = ""
+	}
+}
+
+func (r *serverEndpointRegistry) Pick(id string) (notifySink, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if id != "" {
+		s := r.byID[id]
+		return s, s != nil
+	}
+	s := r.byID[r.defaultID]
+	return s, s != nil
+}
+
+type serverEndpointConn struct {
+	srv *rpc.Server
+	reg *serverEndpointRegistry
+
+	mu sync.Mutex
+	id string
+}
+
+type serverEndpointRegisterRequest struct {
+	EndpointID string `json:"endpoint_id"`
+}
+
+type serverEndpointRegisterResponse struct {
+	OK bool `json:"ok"`
+}
+
+func (c *serverEndpointConn) handleRegister(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcwirev1.RpcError) {
+	var req serverEndpointRegisterRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		msg := "invalid json"
+		return nil, &rpcwirev1.RpcError{Code: 400, Message: &msg}
+	}
+	id := strings.TrimSpace(req.EndpointID)
+	if id == "" {
+		msg := "missing endpoint_id"
+		return nil, &rpcwirev1.RpcError{Code: 400, Message: &msg}
+	}
+	c.mu.Lock()
+	prev := c.id
+	c.id = id
+	c.mu.Unlock()
+	if prev != "" && prev != id {
+		c.reg.Unregister(prev, c.srv)
+	}
+	c.reg.Register(id, c.srv)
+
+	out, _ := json.Marshal(serverEndpointRegisterResponse{OK: true})
+	return out, nil
+}
+
+func (c *serverEndpointConn) unregister() {
+	c.mu.Lock()
+	id := c.id
+	c.id = ""
+	c.mu.Unlock()
+	if id != "" {
+		c.reg.Unregister(id, c.srv)
+	}
+}
+
+func channelInitHandler(ci *channelinit.Service, endpoints *serverEndpointRegistry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -172,8 +344,24 @@ func channelInitHandler(ci *channelinit.Service) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+
+		if endpoints == nil {
+			http.Error(w, "control channel disabled", http.StatusServiceUnavailable)
+			return
+		}
+		sink, ok := endpoints.Pick(req.EndpointID)
+		if !ok {
+			http.Error(w, "no server endpoint connected", http.StatusServiceUnavailable)
+			return
+		}
+		grantJSON, _ := json.Marshal(grantS)
+		if err := sink.Notify(controlRPCTypeGrantServer, grantJSON); err != nil {
+			http.Error(w, "failed to deliver grant_server", http.StatusServiceUnavailable)
+			return
+		}
+
 		w.Header().Set("content-type", "application/json")
-		_ = json.NewEncoder(w).Encode(channelInitResponse{GrantClient: grantC, GrantServer: grantS})
+		_ = json.NewEncoder(w).Encode(channelInitResponse{GrantClient: grantC})
 	}
 }
 

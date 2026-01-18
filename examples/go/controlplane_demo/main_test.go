@@ -10,6 +10,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 )
 
 // These tests validate the minimal controlplane demo HTTP handler contract:
@@ -31,9 +32,13 @@ func TestChannelInitHandlerEmptyBody(t *testing.T) {
 		},
 	}
 
+	sink := &stubNotifySink{}
+	endpoints := newServerEndpointRegistry()
+	endpoints.Register("server-1", sink)
+
 	req := httptest.NewRequest(http.MethodPost, "/v1/channel/init", nil)
 	w := httptest.NewRecorder()
-	channelInitHandler(ci).ServeHTTP(w, req)
+	channelInitHandler(ci, endpoints).ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusOK, w.Body.String())
@@ -42,8 +47,21 @@ func TestChannelInitHandlerEmptyBody(t *testing.T) {
 	if err := json.NewDecoder(bytes.NewReader(w.Body.Bytes())).Decode(&resp); err != nil {
 		t.Fatalf("decode response failed: %v", err)
 	}
-	if resp.GrantClient == nil || resp.GrantServer == nil {
-		t.Fatalf("expected grants to be present")
+	if resp.GrantClient == nil {
+		t.Fatalf("expected grant_client to be present")
+	}
+	if len(sink.calls) != 1 {
+		t.Fatalf("expected 1 notify call, got %d", len(sink.calls))
+	}
+	if sink.calls[0].typeID != controlRPCTypeGrantServer {
+		t.Fatalf("unexpected notify type_id: %d", sink.calls[0].typeID)
+	}
+	var grantS controlv1.ChannelInitGrant
+	if err := json.Unmarshal(sink.calls[0].payload, &grantS); err != nil {
+		t.Fatalf("decode grant_server notify failed: %v", err)
+	}
+	if grantS.Role != controlv1.Role_server {
+		t.Fatalf("expected role=server, got %v", grantS.Role)
 	}
 }
 
@@ -62,9 +80,13 @@ func TestChannelInitHandlerRejectsInvalidJSON(t *testing.T) {
 		},
 	}
 
+	sink := &stubNotifySink{}
+	endpoints := newServerEndpointRegistry()
+	endpoints.Register("server-1", sink)
+
 	req := httptest.NewRequest(http.MethodPost, "/v1/channel/init", strings.NewReader("{"))
 	w := httptest.NewRecorder()
-	channelInitHandler(ci).ServeHTTP(w, req)
+	channelInitHandler(ci, endpoints).ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusBadRequest, w.Body.String())
@@ -86,12 +108,30 @@ func TestChannelInitHandlerRejectsOversizedBody(t *testing.T) {
 		},
 	}
 
+	sink := &stubNotifySink{}
+	endpoints := newServerEndpointRegistry()
+	endpoints.Register("server-1", sink)
+
 	oversized := `{"channel_id":"` + strings.Repeat("a", maxChannelInitBodyBytes) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/channel/init", strings.NewReader(oversized))
 	w := httptest.NewRecorder()
-	channelInitHandler(ci).ServeHTTP(w, req)
+	channelInitHandler(ci, endpoints).ServeHTTP(w, req)
 
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusRequestEntityTooLarge, w.Body.String())
 	}
+}
+
+type stubNotifyCall struct {
+	typeID  uint32
+	payload json.RawMessage
+}
+
+type stubNotifySink struct {
+	calls []stubNotifyCall
+}
+
+func (s *stubNotifySink) Notify(typeID uint32, payload json.RawMessage) error {
+	s.calls = append(s.calls, stubNotifyCall{typeID: typeID, payload: payload})
+	return nil
 }
