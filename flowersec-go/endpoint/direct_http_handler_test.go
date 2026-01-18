@@ -52,10 +52,11 @@ func TestDirectHandler_AllowsConnectDirect(t *testing.T) {
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
 	info := &directv1.DirectConnectInfo{
-		WsUrl:        wsURL,
-		ChannelId:    channelID,
-		E2eePskB64u:  base64.RawURLEncoding.EncodeToString(psk),
-		DefaultSuite: uint32(e2ee.SuiteX25519HKDFAES256GCM),
+		WsUrl:                    wsURL,
+		ChannelId:                channelID,
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		ChannelInitExpireAtUnixS: initExp,
+		DefaultSuite:             uint32(e2ee.SuiteX25519HKDFAES256GCM),
 	}
 	c, err := client.ConnectDirect(
 		context.Background(),

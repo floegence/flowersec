@@ -94,6 +94,7 @@ function makeInfo(): DirectConnectInfo {
     ws_url: "ws://example.invalid",
     channel_id: "ch_1",
     e2ee_psk_b64u: psk,
+    channel_init_expire_at_unix_s: Math.floor(Date.now() / 1000) + 120,
     default_suite: 1
   };
 }
@@ -111,6 +112,14 @@ describe("connectDirect", () => {
     const p = connectDirect(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_ws_url", path: "direct" });
+  });
+
+  test("rejects missing init exp", async () => {
+    const bad = makeInfo();
+    bad.channel_init_expire_at_unix_s = 0;
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "direct" });
   });
 
   test("requires wsFactory outside the browser", async () => {

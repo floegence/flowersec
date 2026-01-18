@@ -8,6 +8,8 @@ export interface DirectConnectInfo {
   channel_id: string;
   /** Base64url-encoded 32-byte PSK. */
   e2ee_psk_b64u: string;
+  /** Unix timestamp when the handshake init window expires. */
+  channel_init_expire_at_unix_s: number;
   /** Default E2EE suite identifier. */
   default_suite: number;
 }
@@ -83,6 +85,8 @@ export function assertDirectConnectInfo(v: unknown): DirectConnectInfo {
   assertString("DirectConnectInfo.channel_id", o["channel_id"]);
   if (o["e2ee_psk_b64u"] === undefined) throw new Error("bad DirectConnectInfo.e2ee_psk_b64u");
   assertString("DirectConnectInfo.e2ee_psk_b64u", o["e2ee_psk_b64u"]);
+  if (o["channel_init_expire_at_unix_s"] === undefined) throw new Error("bad DirectConnectInfo.channel_init_expire_at_unix_s");
+  assertI64("DirectConnectInfo.channel_init_expire_at_unix_s", o["channel_init_expire_at_unix_s"]);
   if (o["default_suite"] === undefined) throw new Error("bad DirectConnectInfo.default_suite");
   assertU32("DirectConnectInfo.default_suite", o["default_suite"]);
   return o as unknown as DirectConnectInfo;

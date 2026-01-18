@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
@@ -16,54 +17,54 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/endpointid"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
-	rpchello "github.com/floegence/flowersec/flowersec-go/rpc/hello"
+	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )
 
 // ConnectTunnel attaches to a tunnel as role=client and returns an RPC-ready session.
-func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, opts ...TunnelConnectOption) (*Client, error) {
+func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, opts ...ConnectOption) (Client, error) {
 	if grant == nil {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingGrant, ErrMissingGrant)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingGrant, ErrMissingGrant)
 	}
 	if grant.Role != controlv1.Role_client {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeRoleMismatch, ErrExpectedRoleClient)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRoleMismatch, ErrExpectedRoleClient)
 	}
 	if grant.TunnelUrl == "" {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingTunnelURL, ErrMissingTunnelURL)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingTunnelURL, ErrMissingTunnelURL)
 	}
 	if origin == "" {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingOrigin, ErrMissingOrigin)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
 	if grant.ChannelId == "" {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingChannelID, ErrMissingChannelID)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
 	}
-	cfg, err := applyTunnelConnectOptions(opts)
+	cfg, err := applyConnectOptions(opts)
 	if err != nil {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidOption, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
 	}
 	psk, err := base64url.Decode(grant.E2eePskB64u)
 	if err != nil || len(psk) != 32 {
 		if err == nil {
 			err = ErrInvalidPSK
 		}
-		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidPSK, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidPSK, err)
 	}
 	suite := e2ee.Suite(grant.DefaultSuite)
 	switch suite {
 	case e2ee.SuiteX25519HKDFAES256GCM, e2ee.SuiteP256HKDFAES256GCM:
 	default:
-		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
 	}
 
 	endpointInstanceID := cfg.endpointInstanceID
 	if endpointInstanceID == "" {
 		endpointInstanceID, err = endpointid.Random(24)
 		if err != nil {
-			return nil, wrapErr(PathTunnel, StageValidate, CodeRandomFailed, err)
+			return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRandomFailed, err)
 		}
 	} else if err := endpointid.Validate(endpointInstanceID); err != nil {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
 	}
 	connectTimeout := cfg.connectTimeout
 	handshakeTimeout := cfg.handshakeTimeout
@@ -75,7 +76,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	h.Set("Origin", origin)
 	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
-		return nil, wrapErr(PathTunnel, StageConnect, CodeDialFailed, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.CodeDialFailed, err)
 	}
 	attach := tunnelv1.Attach{
 		V:                  1,
@@ -87,10 +88,10 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	attachJSON, _ := json.Marshal(attach)
 	if err := c.WriteMessage(connectCtx, websocket.TextMessage, attachJSON); err != nil {
 		_ = c.Close()
-		return nil, wrapErr(PathTunnel, StageAttach, CodeAttachFailed, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, fserrors.CodeAttachFailed, err)
 	}
 
-	out, err := dialAfterAttach(ctx, c, PathTunnel, endpointInstanceID, dialE2EEOptions{
+	out, err := dialAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, dialE2EEOptions{
 		psk:               psk,
 		suite:             suite,
 		channelID:         grant.ChannelId,
@@ -108,35 +109,41 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 }
 
 // ConnectDirect connects to a direct websocket endpoint and returns an RPC-ready session.
-func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin string, opts ...DirectConnectOption) (*Client, error) {
+func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin string, opts ...ConnectOption) (Client, error) {
 	if info == nil {
-		return nil, wrapErr(PathDirect, StageValidate, CodeMissingConnectInfo, ErrMissingConnectInfo)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConnectInfo, ErrMissingConnectInfo)
 	}
 	if info.WsUrl == "" {
-		return nil, wrapErr(PathDirect, StageValidate, CodeMissingWSURL, ErrMissingWSURL)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingWSURL, ErrMissingWSURL)
 	}
 	if origin == "" {
-		return nil, wrapErr(PathDirect, StageValidate, CodeMissingOrigin, ErrMissingOrigin)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
 	if info.ChannelId == "" {
-		return nil, wrapErr(PathDirect, StageValidate, CodeMissingChannelID, ErrMissingChannelID)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
 	}
-	cfg, err := applyDirectConnectOptions(opts)
+	if info.ChannelInitExpireAtUnixS <= 0 {
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingInitExp, ErrMissingInitExp)
+	}
+	cfg, err := applyConnectOptions(opts)
 	if err != nil {
-		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidOption, err)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
+	}
+	if cfg.endpointInstanceID != "" {
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrEndpointInstanceIDNotAllowed)
 	}
 	psk, err := base64url.Decode(info.E2eePskB64u)
 	if err != nil || len(psk) != 32 {
 		if err == nil {
 			err = ErrInvalidPSK
 		}
-		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidPSK, err)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidPSK, err)
 	}
 	suite := e2ee.Suite(info.DefaultSuite)
 	switch suite {
 	case e2ee.SuiteX25519HKDFAES256GCM, e2ee.SuiteP256HKDFAES256GCM:
 	default:
-		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
 	}
 
 	connectTimeout := cfg.connectTimeout
@@ -149,10 +156,10 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin
 	h.Set("Origin", origin)
 	c, _, err := ws.Dial(connectCtx, info.WsUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
-		return nil, wrapErr(PathDirect, StageConnect, CodeDialFailed, err)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageConnect, fserrors.CodeDialFailed, err)
 	}
 
-	out, err := dialAfterAttach(ctx, c, PathDirect, "", dialE2EEOptions{
+	out, err := dialAfterAttach(ctx, c, fserrors.PathDirect, "", dialE2EEOptions{
 		psk:               psk,
 		suite:             suite,
 		channelID:         info.ChannelId,
@@ -182,7 +189,7 @@ type dialE2EEOptions struct {
 	handshakeTimeout time.Duration
 }
 
-func dialAfterAttach(ctx context.Context, c *ws.Conn, path Path, endpointInstanceID string, opts dialE2EEOptions) (*Client, error) {
+func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpointInstanceID string, opts dialE2EEOptions) (*session, error) {
 	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, opts.handshakeTimeout)
 	defer handshakeCancel()
 
@@ -197,7 +204,7 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path Path, endpointInstanc
 		MaxBufferedBytes:    opts.maxBufferedBytes,
 	})
 	if err != nil {
-		return nil, wrapErr(path, StageHandshake, CodeHandshakeFailed, err)
+		return nil, wrapErr(path, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, err)
 	}
 
 	ycfg := hyamux.DefaultConfig()
@@ -206,24 +213,24 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path Path, endpointInstanc
 	sess, err := hyamux.Client(secure, ycfg)
 	if err != nil {
 		_ = secure.Close()
-		return nil, wrapErr(path, StageYamux, CodeMuxFailed, err)
+		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeMuxFailed, err)
 	}
 
 	rpcStream, err := sess.OpenStream()
 	if err != nil {
 		_ = sess.Close()
 		_ = secure.Close()
-		return nil, wrapErr(path, StageYamux, CodeOpenStreamFailed, err)
+		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
 	}
-	if err := rpchello.WriteStreamHello(rpcStream, "rpc"); err != nil {
+	if err := streamhello.WriteStreamHello(rpcStream, "rpc"); err != nil {
 		_ = rpcStream.Close()
 		_ = sess.Close()
 		_ = secure.Close()
-		return nil, wrapErr(path, StageRPC, CodeStreamHelloFailed, err)
+		return nil, wrapErr(path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
 	}
 	rpcClient := rpc.NewClient(rpcStream)
 
-	out := &Client{
+	out := &session{
 		path:               path,
 		endpointInstanceID: endpointInstanceID,
 		secure:             secure,

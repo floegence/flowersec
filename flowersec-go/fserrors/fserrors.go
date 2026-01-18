@@ -1,7 +1,16 @@
-package client
+package fserrors
 
 import "fmt"
 
+// Path identifies the top-level connect path.
+type Path string
+
+const (
+	PathTunnel Path = "tunnel"
+	PathDirect Path = "direct"
+)
+
+// Stage identifies which step of the protocol stack failed.
 type Stage string
 
 const (
@@ -14,6 +23,7 @@ const (
 	StageClose     Stage = "close"
 )
 
+// Code is a stable, programmatic error identifier for user-facing operations.
 type Code string
 
 const (
@@ -23,23 +33,28 @@ const (
 	CodeMissingTunnelURL          Code = "missing_tunnel_url"
 	CodeMissingWSURL              Code = "missing_ws_url"
 	CodeMissingOrigin             Code = "missing_origin"
+	CodeMissingConn               Code = "missing_conn"
 	CodeMissingChannelID          Code = "missing_channel_id"
+	CodeMissingInitExp            Code = "missing_init_exp"
 	CodeInvalidSuite              Code = "invalid_suite"
 	CodeInvalidPSK                Code = "invalid_psk"
 	CodeInvalidEndpointInstanceID Code = "invalid_endpoint_instance_id"
 	CodeInvalidOption             Code = "invalid_option"
 	CodeRandomFailed              Code = "random_failed"
+	CodeUpgradeFailed             Code = "upgrade_failed"
 	CodeNotConnected              Code = "not_connected"
+	CodeMissingHandler            Code = "missing_handler"
 	CodeMissingStreamKind         Code = "missing_stream_kind"
 	CodeDialFailed                Code = "dial_failed"
 	CodeAttachFailed              Code = "attach_failed"
 	CodeHandshakeFailed           Code = "handshake_failed"
 	CodeMuxFailed                 Code = "mux_failed"
+	CodeAcceptStreamFailed        Code = "accept_stream_failed"
 	CodeOpenStreamFailed          Code = "open_stream_failed"
 	CodeStreamHelloFailed         Code = "stream_hello_failed"
 )
 
-// Error is a structured, programmatically identifiable error for high-level client operations.
+// Error is a structured, programmatically identifiable error for user-facing operations.
 type Error struct {
 	Path  Path
 	Stage Stage
@@ -59,6 +74,6 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
-func wrapErr(path Path, stage Stage, code Code, err error) error {
+func Wrap(path Path, stage Stage, code Code, err error) error {
 	return &Error{Path: path, Stage: stage, Code: code, Err: err}
 }

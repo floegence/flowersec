@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
@@ -37,33 +38,33 @@ type AcceptDirectOptions struct {
 
 // AcceptDirectWS performs the server-side E2EE handshake on an upgraded websocket connection
 // and returns a multiplexed endpoint session.
-func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOptions) (*Session, error) {
+func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOptions) (Session, error) {
 	if c == nil {
-		return nil, wrapErr(PathDirect, StageValidate, CodeMissingConn, ErrMissingConn)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConn, ErrMissingConn)
 	}
 	if opts.ChannelID == "" {
 		_ = c.Close()
-		return nil, wrapErr(PathDirect, StageValidate, CodeMissingChannelID, ErrMissingChannelID)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
 	}
 	if opts.InitExpireAtUnixS <= 0 {
 		_ = c.Close()
-		return nil, wrapErr(PathDirect, StageValidate, CodeMissingInitExp, ErrMissingInitExp)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingInitExp, ErrMissingInitExp)
 	}
 	if len(opts.PSK) != 32 {
 		_ = c.Close()
-		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidPSK, ErrInvalidPSK)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidPSK, ErrInvalidPSK)
 	}
 	switch opts.Suite {
 	case e2ee.SuiteX25519HKDFAES256GCM, e2ee.SuiteP256HKDFAES256GCM:
 	default:
 		_ = c.Close()
-		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
 	}
 
 	handshakeTimeout := opts.HandshakeTimeout
 	if handshakeTimeout < 0 {
 		_ = c.Close()
-		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidOption, fmt.Errorf("handshake timeout must be >= 0"))
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("handshake timeout must be >= 0"))
 	}
 	if handshakeTimeout == 0 {
 		handshakeTimeout = defaults.HandshakeTimeout
@@ -90,7 +91,7 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 	})
 	if err != nil {
 		_ = c.Close()
-		return nil, wrapErr(PathDirect, StageHandshake, CodeHandshakeFailed, err)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, err)
 	}
 
 	ycfg := opts.YamuxConfig
@@ -102,11 +103,11 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 	mux, err := hyamux.Server(secure, ycfg)
 	if err != nil {
 		_ = secure.Close()
-		return nil, wrapErr(PathDirect, StageYamux, CodeMuxFailed, err)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageYamux, fserrors.CodeMuxFailed, err)
 	}
 
-	return &Session{
-		path:   PathDirect,
+	return &session{
+		path:   fserrors.PathDirect,
 		secure: secure,
 		mux:    mux,
 	}, nil

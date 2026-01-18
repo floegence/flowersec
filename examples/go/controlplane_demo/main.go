@@ -197,10 +197,11 @@ func main() {
 		TunnelListen:        tunnelListen,
 		TunnelWSPath:        tunnelWSPath,
 		ServerEndpointControl: &directv1.DirectConnectInfo{
-			WsUrl:        controlWSURL,
-			ChannelId:    controlChannelID,
-			E2eePskB64u:  controlPSKB64u,
-			DefaultSuite: 1,
+			WsUrl:                    controlWSURL,
+			ChannelId:                controlChannelID,
+			E2eePskB64u:              controlPSKB64u,
+			ChannelInitExpireAtUnixS: controlInitExp,
+			DefaultSuite:             1,
 		},
 	})
 

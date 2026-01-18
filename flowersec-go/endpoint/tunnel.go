@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
@@ -19,41 +20,41 @@ import (
 )
 
 // ConnectTunnel attaches to a tunnel as role=server and returns a multiplexed endpoint session.
-func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, opts ...ConnectOption) (*Session, error) {
+func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, opts ...ConnectOption) (Session, error) {
 	if grant == nil {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingGrant, ErrMissingGrant)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingGrant, ErrMissingGrant)
 	}
 	if grant.Role != controlv1.Role_server {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeRoleMismatch, ErrExpectedRoleServer)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRoleMismatch, ErrExpectedRoleServer)
 	}
 	if grant.TunnelUrl == "" {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingTunnelURL, ErrMissingTunnelURL)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingTunnelURL, ErrMissingTunnelURL)
 	}
 	if origin == "" {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingOrigin, ErrMissingOrigin)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
 	if grant.ChannelId == "" {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingChannelID, ErrMissingChannelID)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
 	}
 	if grant.ChannelInitExpireAtUnixS <= 0 {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingInitExp, ErrMissingInitExp)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingInitExp, ErrMissingInitExp)
 	}
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
-		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidOption, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
 	}
 	psk, err := base64url.Decode(grant.E2eePskB64u)
 	if err != nil || len(psk) != 32 {
 		if err == nil {
 			err = ErrInvalidPSK
 		}
-		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidPSK, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidPSK, err)
 	}
 	suite := e2ee.Suite(grant.DefaultSuite)
 	switch suite {
 	case e2ee.SuiteX25519HKDFAES256GCM, e2ee.SuiteP256HKDFAES256GCM:
 	default:
-		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
 	}
 
 	connectTimeout := cfg.connectTimeout
@@ -66,7 +67,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	h.Set("Origin", origin)
 	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
-		return nil, wrapErr(PathTunnel, StageConnect, CodeDialFailed, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.CodeDialFailed, err)
 	}
 
 	endpointInstanceID := cfg.endpointInstanceID
@@ -74,12 +75,12 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 		endpointInstanceID, err = endpointid.Random(24)
 		if err != nil {
 			_ = c.Close()
-			return nil, wrapErr(PathTunnel, StageValidate, CodeRandomFailed, err)
+			return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRandomFailed, err)
 		}
 	}
 	if err := endpointid.Validate(endpointInstanceID); err != nil {
 		_ = c.Close()
-		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
 	}
 
 	attach := tunnelv1.Attach{
@@ -92,10 +93,10 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	attachJSON, _ := json.Marshal(attach)
 	if err := c.WriteMessage(connectCtx, websocket.TextMessage, attachJSON); err != nil {
 		_ = c.Close()
-		return nil, wrapErr(PathTunnel, StageAttach, CodeAttachFailed, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, fserrors.CodeAttachFailed, err)
 	}
 
-	sess, err := serveAfterAttach(ctx, c, PathTunnel, endpointInstanceID, serverHandshakeOptions{
+	sess, err := serveAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, serverHandshakeOptions{
 		psk:              psk,
 		suite:            suite,
 		channelID:        grant.ChannelId,
@@ -131,7 +132,7 @@ type serverHandshakeOptions struct {
 	yamuxConfig      *hyamux.Config
 }
 
-func serveAfterAttach(ctx context.Context, c *ws.Conn, path Path, endpointInstanceID string, opts serverHandshakeOptions) (*Session, error) {
+func serveAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpointInstanceID string, opts serverHandshakeOptions) (Session, error) {
 	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, opts.handshakeTimeout)
 	defer handshakeCancel()
 
@@ -152,7 +153,7 @@ func serveAfterAttach(ctx context.Context, c *ws.Conn, path Path, endpointInstan
 		MaxBufferedBytes:    opts.maxBufferedBytes,
 	})
 	if err != nil {
-		return nil, wrapErr(path, StageHandshake, CodeHandshakeFailed, err)
+		return nil, wrapErr(path, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, err)
 	}
 
 	ycfg := opts.yamuxConfig
@@ -164,10 +165,10 @@ func serveAfterAttach(ctx context.Context, c *ws.Conn, path Path, endpointInstan
 	mux, err := hyamux.Server(secure, ycfg)
 	if err != nil {
 		_ = secure.Close()
-		return nil, wrapErr(path, StageYamux, CodeMuxFailed, err)
+		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeMuxFailed, err)
 	}
 
-	return &Session{
+	return &session{
 		path:               path,
 		endpointInstanceID: endpointInstanceID,
 		secure:             secure,

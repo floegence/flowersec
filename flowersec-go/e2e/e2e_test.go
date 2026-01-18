@@ -24,7 +24,7 @@ import (
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
-	rpchello "github.com/floegence/flowersec/flowersec-go/rpc/hello"
+	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
@@ -371,7 +371,7 @@ func runServerEndpoint(ctx context.Context, t *testing.T, wsURL string, grant *c
 	}
 	defer stream.Close()
 
-	h, err := rpchello.ReadStreamHello(stream, 8*1024)
+	h, err := streamhello.ReadStreamHello(stream, 8*1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func runBrowserClientEndpoint(ctx context.Context, t *testing.T, wsURL string, g
 	}
 	defer stream.Close()
 
-	if err := rpchello.WriteStreamHello(stream, "rpc"); err != nil {
+	if err := streamhello.WriteStreamHello(stream, "rpc"); err != nil {
 		t.Fatal(err)
 	}
 	client := rpc.NewClient(stream)

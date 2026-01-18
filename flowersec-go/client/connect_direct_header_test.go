@@ -71,10 +71,11 @@ func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
 	info := &directv1.DirectConnectInfo{
-		WsUrl:        wsURL,
-		ChannelId:    channelID,
-		E2eePskB64u:  base64.RawURLEncoding.EncodeToString(psk),
-		DefaultSuite: uint32(e2ee.SuiteX25519HKDFAES256GCM),
+		WsUrl:                    wsURL,
+		ChannelId:                channelID,
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		ChannelInitExpireAtUnixS: initExp,
+		DefaultSuite:             uint32(e2ee.SuiteX25519HKDFAES256GCM),
 	}
 
 	dialer := &websocket.Dialer{
@@ -99,6 +100,10 @@ func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 		t.Fatalf("ConnectDirect() failed: %v", err)
 	}
 	_ = c.Close()
+
+	if _, ok := c.(client.ClientInternal); !ok {
+		t.Fatal("expected client to also implement ClientInternal")
+	}
 
 	if !originOK.Load() {
 		t.Fatal("server did not observe Origin header")

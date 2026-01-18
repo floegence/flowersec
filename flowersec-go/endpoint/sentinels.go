@@ -15,4 +15,5 @@ var (
 	ErrInvalidSuite              = errors.New("invalid suite")
 	ErrNotConnected              = errors.New("endpoint is not connected")
 	ErrMissingHandler            = errors.New("missing handler")
+	ErrMissingStreamKind         = errors.New("missing stream kind")
 )

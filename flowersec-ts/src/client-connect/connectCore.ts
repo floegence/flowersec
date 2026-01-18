@@ -2,7 +2,7 @@ import { clientHandshake } from "../e2ee/handshake.js";
 import { ByteReader } from "../yamux/byteReader.js";
 import { YamuxSession } from "../yamux/session.js";
 import { RpcClient } from "../rpc/client.js";
-import { writeStreamHello } from "../rpc/streamHello.js";
+import { writeStreamHello } from "../streamhello/streamHello.js";
 import { normalizeObserver, nowSeconds, type ClientObserverLike } from "../observability/observer.js";
 import { base64urlDecode } from "../utils/base64url.js";
 import { FlowersecError, throwIfAborted } from "../utils/errors.js";

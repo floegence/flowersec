@@ -5,24 +5,34 @@ import (
 	"sync"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
-	rpchello "github.com/floegence/flowersec/flowersec-go/rpc/hello"
+	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	hyamux "github.com/hashicorp/yamux"
 )
 
-// Path describes which top-level connect path is used.
-type Path string
-
-const (
-	PathTunnel Path = "tunnel"
-	PathDirect Path = "direct"
-)
-
-// Client is a high-level session that bundles SecureChannel + yamux + RPC.
+// Client is a high-level session intended as the default user entrypoint.
 //
-// It is intended as the default entrypoint for users. Advanced integrations can
-// build their own stack by importing lower-level packages.
-type Client struct {
+// It intentionally does not expose the underlying SecureChannel or yamux.Session.
+// Advanced integrations can opt into ClientInternal via a type assertion.
+type Client interface {
+	Path() Path
+	EndpointInstanceID() string
+	RPC() *rpc.Client
+	OpenStream(kind string) (io.ReadWriteCloser, error)
+	Close() error
+}
+
+// ClientInternal exposes the underlying stack for advanced integrations.
+//
+// The returned types may change in future versions.
+type ClientInternal interface {
+	Client
+	Secure() *e2ee.SecureChannel
+	Mux() *hyamux.Session
+}
+
+type session struct {
 	path               Path
 	endpointInstanceID string // Only for PathTunnel; empty for PathDirect.
 
@@ -34,35 +44,35 @@ type Client struct {
 	closeErr  error
 }
 
-func (c *Client) Path() Path {
+func (c *session) Path() Path {
 	if c == nil {
 		return ""
 	}
 	return c.path
 }
 
-func (c *Client) EndpointInstanceID() string {
+func (c *session) EndpointInstanceID() string {
 	if c == nil {
 		return ""
 	}
 	return c.endpointInstanceID
 }
 
-func (c *Client) Secure() *e2ee.SecureChannel {
+func (c *session) Secure() *e2ee.SecureChannel {
 	if c == nil {
 		return nil
 	}
 	return c.secure
 }
 
-func (c *Client) Mux() *hyamux.Session {
+func (c *session) Mux() *hyamux.Session {
 	if c == nil {
 		return nil
 	}
 	return c.mux
 }
 
-func (c *Client) RPC() *rpc.Client {
+func (c *session) RPC() *rpc.Client {
 	if c == nil {
 		return nil
 	}
@@ -70,7 +80,7 @@ func (c *Client) RPC() *rpc.Client {
 }
 
 // Close tears down all resources in a best-effort manner.
-func (c *Client) Close() error {
+func (c *session) Close() error {
 	if c == nil {
 		return nil
 	}
@@ -99,24 +109,24 @@ func (c *Client) Close() error {
 // OpenStream opens a new yamux stream and writes the StreamHello(kind) preface.
 //
 // Every yamux stream in this project is expected to start with a StreamHello frame.
-func (c *Client) OpenStream(kind string) (io.ReadWriteCloser, error) {
+func (c *session) OpenStream(kind string) (io.ReadWriteCloser, error) {
 	if c == nil || c.mux == nil {
 		var path Path
 		if c != nil {
 			path = c.path
 		}
-		return nil, wrapErr(path, StageYamux, CodeNotConnected, ErrNotConnected)
+		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeNotConnected, ErrNotConnected)
 	}
 	if kind == "" {
-		return nil, wrapErr(c.path, StageValidate, CodeMissingStreamKind, ErrMissingStreamKind)
+		return nil, wrapErr(c.path, fserrors.StageValidate, fserrors.CodeMissingStreamKind, ErrMissingStreamKind)
 	}
 	s, err := c.mux.OpenStream()
 	if err != nil {
-		return nil, wrapErr(c.path, StageYamux, CodeOpenStreamFailed, err)
+		return nil, wrapErr(c.path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
 	}
-	if err := rpchello.WriteStreamHello(s, kind); err != nil {
+	if err := streamhello.WriteStreamHello(s, kind); err != nil {
 		_ = s.Close()
-		return nil, wrapErr(c.path, StageRPC, CodeStreamHelloFailed, err)
+		return nil, wrapErr(c.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
 	}
 	return s, nil
 }

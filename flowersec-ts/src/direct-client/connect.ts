@@ -21,6 +21,14 @@ export async function connectDirect(info: unknown, opts: DirectConnectOptions): 
   if (ready.ws_url === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_ws_url", path: "direct", message: "missing ws_url" });
   }
+  if (ready.channel_init_expire_at_unix_s <= 0) {
+    throw new FlowersecError({
+      stage: "validate",
+      code: "missing_init_exp",
+      path: "direct",
+      message: "missing channel_init_expire_at_unix_s",
+    });
+  }
   return await connectCore({
     path: "direct",
     wsUrl: ready.ws_url,

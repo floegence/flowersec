@@ -14,5 +14,6 @@ export * from "./observability/index.js";
 export * from "./ws-client/binaryTransport.js";
 export * from "./yamux/index.js";
 export * from "./rpc/index.js";
+export * from "./streamhello/index.js";
 export * from "./tunnel-client/index.js";
 export * from "./direct-client/index.js";

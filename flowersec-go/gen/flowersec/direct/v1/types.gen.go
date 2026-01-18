@@ -12,6 +12,8 @@ type DirectConnectInfo struct {
 	ChannelId string `json:"channel_id"`
 	// Base64url-encoded 32-byte PSK.
 	E2eePskB64u string `json:"e2ee_psk_b64u"`
+	// Unix timestamp when the handshake init window expires.
+	ChannelInitExpireAtUnixS int64 `json:"channel_init_expire_at_unix_s"`
 	// Default E2EE suite identifier.
 	DefaultSuite uint32 `json:"default_suite"`
 }

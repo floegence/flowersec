@@ -17,7 +17,7 @@ import (
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
-	rpchello "github.com/floegence/flowersec/flowersec-go/rpc/hello"
+	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )
@@ -111,7 +111,7 @@ func main() {
 	defer rpcStream.Close()
 
 	// The server expects a StreamHello frame at the beginning of each yamux stream.
-	if err := rpchello.WriteStreamHello(rpcStream, "rpc"); err != nil {
+	if err := streamhello.WriteStreamHello(rpcStream, "rpc"); err != nil {
 		log.Fatal(err)
 	}
 	client := rpc.NewClient(rpcStream)
@@ -150,7 +150,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer echoStream.Close()
-	if err := rpchello.WriteStreamHello(echoStream, "echo"); err != nil {
+	if err := streamhello.WriteStreamHello(echoStream, "echo"); err != nil {
 		log.Fatal(err)
 	}
 

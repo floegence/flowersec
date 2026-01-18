@@ -29,6 +29,7 @@ export type FlowersecErrorCode =
   | "missing_channel_id"
   | "missing_connect_info"
   | "missing_grant"
+  | "missing_init_exp"
   | "missing_origin"
   | "missing_stream_kind"
   | "missing_tunnel_url"

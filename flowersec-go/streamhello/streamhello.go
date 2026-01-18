@@ -1,4 +1,4 @@
-package hello
+package streamhello
 
 import (
 	"encoding/json"

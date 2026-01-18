@@ -9,7 +9,7 @@ import (
 
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/rpc/frame"
-	rpchello "github.com/floegence/flowersec/flowersec-go/rpc/hello"
+	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	hyamux "github.com/hashicorp/yamux"
 )
 
@@ -49,10 +49,10 @@ func TestSessionAcceptStreamHello(t *testing.T) {
 		if err != nil {
 			return
 		}
-		_ = rpchello.WriteStreamHello(s, "echo")
+		_ = streamhello.WriteStreamHello(s, "echo")
 	}()
 
-	sess := &Session{path: PathDirect, mux: srv}
+	sess := &session{path: PathDirect, mux: srv}
 	kind, stream, err := sess.AcceptStreamHello(8 * 1024)
 	if err != nil {
 		t.Fatalf("AcceptStreamHello: %v", err)
@@ -67,7 +67,7 @@ func TestSessionServeStreamsDispatches(t *testing.T) {
 	cli, srv, closeFn := newYamuxPair(t)
 	defer closeFn()
 
-	sess := &Session{path: PathDirect, mux: srv}
+	sess := &session{path: PathDirect, mux: srv}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -86,7 +86,7 @@ func TestSessionServeStreamsDispatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client OpenStream: %v", err)
 	}
-	if err := rpchello.WriteStreamHello(s, "rpc"); err != nil {
+	if err := streamhello.WriteStreamHello(s, "rpc"); err != nil {
 		t.Fatalf("WriteStreamHello: %v", err)
 	}
 
@@ -105,7 +105,7 @@ func TestSessionServeStreamsSkipsBadStreamHello(t *testing.T) {
 	cli, srv, closeFn := newYamuxPair(t)
 	defer closeFn()
 
-	sess := &Session{path: PathDirect, mux: srv}
+	sess := &session{path: PathDirect, mux: srv}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -133,7 +133,7 @@ func TestSessionServeStreamsSkipsBadStreamHello(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client OpenStream: %v", err)
 	}
-	if err := rpchello.WriteStreamHello(s2, "echo"); err != nil {
+	if err := streamhello.WriteStreamHello(s2, "echo"); err != nil {
 		t.Fatalf("WriteStreamHello: %v", err)
 	}
 
@@ -146,4 +146,30 @@ func TestSessionServeStreamsSkipsBadStreamHello(t *testing.T) {
 		t.Fatal("timeout waiting for handler")
 	}
 	cancel()
+}
+
+func TestSessionOpenStreamWritesHello(t *testing.T) {
+	cli, srv, closeFn := newYamuxPair(t)
+	defer closeFn()
+
+	sess := &session{path: PathDirect, mux: srv}
+	st, err := sess.OpenStream("echo")
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	defer st.Close()
+
+	in, err := cli.AcceptStream()
+	if err != nil {
+		t.Fatalf("client AcceptStream: %v", err)
+	}
+	defer in.Close()
+
+	h, err := streamhello.ReadStreamHello(in, 8*1024)
+	if err != nil {
+		t.Fatalf("ReadStreamHello: %v", err)
+	}
+	if h.Kind != "echo" {
+		t.Fatalf("kind mismatch: got %q", h.Kind)
+	}
 }

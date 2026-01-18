@@ -26,7 +26,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	"github.com/floegence/flowersec/flowersec-go/internal/yamuxinterop"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
-	rpchello "github.com/floegence/flowersec/flowersec-go/rpc/hello"
+	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
@@ -205,7 +205,7 @@ func runServerEndpoint(ctx context.Context, wsURL string, channelID string, toke
 		}
 		go func() {
 			defer stream.Close()
-			h, err := rpchello.ReadStreamHello(stream, 8*1024)
+			h, err := streamhello.ReadStreamHello(stream, 8*1024)
 			if err != nil || h.Kind != "rpc" {
 				return
 			}

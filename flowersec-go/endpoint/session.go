@@ -6,20 +6,36 @@ import (
 	"sync"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
-	rpchello "github.com/floegence/flowersec/flowersec-go/rpc/hello"
+	"github.com/floegence/flowersec/flowersec-go/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	hyamux "github.com/hashicorp/yamux"
-)
-
-type Path string
-
-const (
-	PathTunnel Path = "tunnel"
-	PathDirect Path = "direct"
 )
 
 const DefaultMaxStreamHelloBytes = 8 * 1024
 
-type Session struct {
+// Session is a multiplexed endpoint session intended as the default user entrypoint.
+//
+// It intentionally does not expose the underlying SecureChannel or yamux.Session.
+// Advanced integrations can opt into SessionInternal via a type assertion.
+type Session interface {
+	Path() Path
+	EndpointInstanceID() string
+	AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteCloser, error)
+	ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser)) error
+	OpenStream(kind string) (io.ReadWriteCloser, error)
+	Close() error
+}
+
+// SessionInternal exposes the underlying stack for advanced integrations.
+//
+// The returned types may change in future versions.
+type SessionInternal interface {
+	Session
+	Secure() *e2ee.SecureChannel
+	Mux() *hyamux.Session
+}
+
+type session struct {
 	path               Path
 	endpointInstanceID string
 
@@ -30,35 +46,35 @@ type Session struct {
 	closeErr  error
 }
 
-func (s *Session) Path() Path {
+func (s *session) Path() Path {
 	if s == nil {
 		return ""
 	}
 	return s.path
 }
 
-func (s *Session) EndpointInstanceID() string {
+func (s *session) EndpointInstanceID() string {
 	if s == nil {
 		return ""
 	}
 	return s.endpointInstanceID
 }
 
-func (s *Session) Secure() *e2ee.SecureChannel {
+func (s *session) Secure() *e2ee.SecureChannel {
 	if s == nil {
 		return nil
 	}
 	return s.secure
 }
 
-func (s *Session) Mux() *hyamux.Session {
+func (s *session) Mux() *hyamux.Session {
 	if s == nil {
 		return nil
 	}
 	return s.mux
 }
 
-func (s *Session) Close() error {
+func (s *session) Close() error {
 	if s == nil {
 		return nil
 	}
@@ -80,25 +96,25 @@ func (s *Session) Close() error {
 }
 
 // AcceptStreamHello accepts the next inbound stream and reads its StreamHello(kind) prefix.
-func (s *Session) AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteCloser, error) {
+func (s *session) AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteCloser, error) {
 	if s == nil || s.mux == nil {
 		var path Path
 		if s != nil {
 			path = s.path
 		}
-		return "", nil, wrapErr(path, StageYamux, CodeNotConnected, ErrNotConnected)
+		return "", nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeNotConnected, ErrNotConnected)
 	}
 	if maxHelloBytes <= 0 {
 		maxHelloBytes = DefaultMaxStreamHelloBytes
 	}
 	stream, err := s.mux.AcceptStream()
 	if err != nil {
-		return "", nil, wrapErr(s.path, StageYamux, CodeAcceptStreamFailed, err)
+		return "", nil, wrapErr(s.path, fserrors.StageYamux, fserrors.CodeAcceptStreamFailed, err)
 	}
-	h, err := rpchello.ReadStreamHello(stream, maxHelloBytes)
+	h, err := streamhello.ReadStreamHello(stream, maxHelloBytes)
 	if err != nil {
 		_ = stream.Close()
-		return "", nil, wrapErr(s.path, StageRPC, CodeStreamHelloFailed, err)
+		return "", nil, wrapErr(s.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
 	}
 	return h.Kind, stream, nil
 }
@@ -106,16 +122,16 @@ func (s *Session) AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteClos
 // ServeStreams runs an accept loop and dispatches each stream to handler(kind, stream).
 //
 // handler is invoked in its own goroutine for each accepted stream.
-func (s *Session) ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser)) error {
+func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser)) error {
 	if s == nil || s.mux == nil {
 		var path Path
 		if s != nil {
 			path = s.path
 		}
-		return wrapErr(path, StageYamux, CodeNotConnected, ErrNotConnected)
+		return wrapErr(path, fserrors.StageYamux, fserrors.CodeNotConnected, ErrNotConnected)
 	}
 	if handler == nil {
-		return wrapErr(s.path, StageValidate, CodeMissingHandler, ErrMissingHandler)
+		return wrapErr(s.path, fserrors.StageValidate, fserrors.CodeMissingHandler, ErrMissingHandler)
 	}
 	if maxHelloBytes <= 0 {
 		maxHelloBytes = DefaultMaxStreamHelloBytes
@@ -141,9 +157,9 @@ func (s *Session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return wrapErr(s.path, StageYamux, CodeAcceptStreamFailed, err)
+			return wrapErr(s.path, fserrors.StageYamux, fserrors.CodeAcceptStreamFailed, err)
 		}
-		h, err := rpchello.ReadStreamHello(stream, maxHelloBytes)
+		h, err := streamhello.ReadStreamHello(stream, maxHelloBytes)
 		if err != nil {
 			_ = stream.Close()
 			continue
@@ -151,4 +167,29 @@ func (s *Session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 		kind := h.Kind
 		go handler(kind, stream)
 	}
+}
+
+// OpenStream opens a new yamux stream and writes the StreamHello(kind) preface.
+//
+// Every yamux stream in this project is expected to start with a StreamHello frame.
+func (s *session) OpenStream(kind string) (io.ReadWriteCloser, error) {
+	if s == nil || s.mux == nil {
+		var path Path
+		if s != nil {
+			path = s.path
+		}
+		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeNotConnected, ErrNotConnected)
+	}
+	if kind == "" {
+		return nil, wrapErr(s.path, fserrors.StageValidate, fserrors.CodeMissingStreamKind, ErrMissingStreamKind)
+	}
+	st, err := s.mux.OpenStream()
+	if err != nil {
+		return nil, wrapErr(s.path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
+	}
+	if err := streamhello.WriteStreamHello(st, kind); err != nil {
+		_ = st.Close()
+		return nil, wrapErr(s.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
+	}
+	return st, nil
 }

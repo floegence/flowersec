@@ -78,10 +78,11 @@ func TestConnectDirect_RejectsInvalidSuite(t *testing.T) {
 		psk[i] = 1
 	}
 	info := &directv1.DirectConnectInfo{
-		WsUrl:        "ws://example.invalid",
-		ChannelId:    "ch_1",
-		E2eePskB64u:  base64.RawURLEncoding.EncodeToString(psk),
-		DefaultSuite: 999,
+		WsUrl:                    "ws://example.invalid",
+		ChannelId:                "ch_1",
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		ChannelInitExpireAtUnixS: 1,
+		DefaultSuite:             999,
 	}
 	_, err := ConnectDirect(context.Background(), info, "http://example.com")
 	if err == nil {
@@ -95,6 +96,27 @@ func TestConnectDirect_RejectsInvalidSuite(t *testing.T) {
 		t.Fatalf("expected *client.Error, got %T", err)
 	}
 	if fe.Path != PathDirect || fe.Stage != StageValidate || fe.Code != CodeInvalidSuite {
+		t.Fatalf("unexpected error: %+v", fe)
+	}
+}
+
+func TestConnectDirect_RejectsMissingInitExp(t *testing.T) {
+	info := &directv1.DirectConnectInfo{
+		WsUrl:     "ws://example.invalid",
+		ChannelId: "ch_1",
+	}
+	_, err := ConnectDirect(context.Background(), info, "http://example.com")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrMissingInitExp) {
+		t.Fatalf("expected ErrMissingInitExp, got %v", err)
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *client.Error, got %T", err)
+	}
+	if fe.Path != PathDirect || fe.Stage != StageValidate || fe.Code != CodeMissingInitExp {
 		t.Fatalf("unexpected error: %+v", fe)
 	}
 }
