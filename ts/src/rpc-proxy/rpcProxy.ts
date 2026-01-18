@@ -52,4 +52,10 @@ export class RpcProxy {
     if (this.client == null) throw new Error("rpc proxy is not attached");
     return await this.client.call(typeId, payload, signal);
   }
+
+  // notify forwards a one-way notification to the attached client.
+  async notify(typeId: number, payload: unknown): Promise<void> {
+    if (this.client == null) throw new Error("rpc proxy is not attached");
+    await this.client.notify(typeId, payload);
+  }
 }

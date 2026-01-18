@@ -2,9 +2,7 @@ package client
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -15,6 +13,7 @@ import (
 	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/internal/base64url"
 	"github.com/floegence/flowersec/internal/contextutil"
+	"github.com/floegence/flowersec/internal/endpointid"
 	"github.com/floegence/flowersec/realtime/ws"
 	"github.com/floegence/flowersec/rpc"
 	rpchello "github.com/floegence/flowersec/rpc/hello"
@@ -22,8 +21,8 @@ import (
 	hyamux "github.com/hashicorp/yamux"
 )
 
-// DialOptions configures timeouts and limits for both tunnel and direct clients.
-type DialOptions struct {
+// DialTunnelOptions configures timeouts and limits for tunnel clients.
+type DialTunnelOptions struct {
 	Origin string // Explicit Origin header value (required).
 
 	ConnectTimeout   time.Duration // WebSocket connect timeout (0 disables).
@@ -35,26 +34,62 @@ type DialOptions struct {
 
 	ClientFeatures uint32 // Feature bitset advertised during the E2EE handshake.
 
-	EndpointInstanceID string // Optional; only used for DialTunnel.
+	EndpointInstanceID string // Optional endpoint instance ID (base64url); empty generates a random value.
+}
+
+// DialDirectOptions configures timeouts and limits for direct clients.
+type DialDirectOptions struct {
+	Origin string // Explicit Origin header value (required).
+
+	ConnectTimeout   time.Duration // WebSocket connect timeout (0 disables).
+	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 disables).
+
+	MaxHandshakePayload int // Maximum handshake JSON payload size (0 uses default).
+	MaxRecordBytes      int // Maximum encrypted record size on the wire (0 uses default).
+	MaxBufferedBytes    int // Maximum buffered plaintext bytes in SecureChannel (0 uses default).
+
+	ClientFeatures uint32 // Feature bitset advertised during the E2EE handshake.
 }
 
 // DialTunnel attaches to a tunnel as role=client and returns an RPC-ready session.
-func DialTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts DialOptions) (*Client, error) {
+func DialTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts DialTunnelOptions) (*Client, error) {
 	if grant == nil {
-		return nil, errors.New("missing grant")
+		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingGrant, ErrMissingGrant)
 	}
 	if grant.Role != controlv1.Role_client {
-		return nil, errors.New("expected role=client")
+		return nil, wrapErr(PathTunnel, StageValidate, CodeRoleMismatch, ErrExpectedRoleClient)
 	}
 	if grant.TunnelUrl == "" {
-		return nil, errors.New("missing tunnel_url")
+		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingTunnelURL, ErrMissingTunnelURL)
 	}
 	if opts.Origin == "" {
-		return nil, errors.New("missing origin")
+		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingOrigin, ErrMissingOrigin)
+	}
+	if grant.ChannelId == "" {
+		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingChannelID, ErrMissingChannelID)
 	}
 	psk, err := base64url.Decode(grant.E2eePskB64u)
-	if err != nil {
-		return nil, err
+	if err != nil || len(psk) != 32 {
+		if err == nil {
+			err = ErrInvalidPSK
+		}
+		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidPSK, err)
+	}
+	suite := e2ee.Suite(grant.DefaultSuite)
+	switch suite {
+	case e2ee.SuiteX25519HKDFAES256GCM, e2ee.SuiteP256HKDFAES256GCM:
+	default:
+		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
+	}
+
+	endpointInstanceID := opts.EndpointInstanceID
+	if endpointInstanceID == "" {
+		endpointInstanceID, err = endpointid.Random(24)
+		if err != nil {
+			return nil, wrapErr(PathTunnel, StageValidate, CodeRandomFailed, err)
+		}
+	} else if err := endpointid.Validate(endpointInstanceID); err != nil {
+		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
 	}
 
 	connectCtx, connectCancel := contextutil.WithTimeout(ctx, opts.ConnectTimeout)
@@ -64,16 +99,7 @@ func DialTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts Dia
 	h.Set("Origin", opts.Origin)
 	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h})
 	if err != nil {
-		return nil, err
-	}
-
-	endpointInstanceID := opts.EndpointInstanceID
-	if endpointInstanceID == "" {
-		endpointInstanceID, err = randomB64u(24)
-		if err != nil {
-			_ = c.Close()
-			return nil, err
-		}
+		return nil, wrapErr(PathTunnel, StageConnect, CodeDialFailed, err)
 	}
 	attach := tunnelv1.Attach{
 		V:                  1,
@@ -85,12 +111,12 @@ func DialTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts Dia
 	attachJSON, _ := json.Marshal(attach)
 	if err := c.WriteMessage(connectCtx, websocket.TextMessage, attachJSON); err != nil {
 		_ = c.Close()
-		return nil, err
+		return nil, wrapErr(PathTunnel, StageAttach, CodeAttachFailed, err)
 	}
 
 	out, err := dialAfterAttach(ctx, c, PathTunnel, endpointInstanceID, dialE2EEOptions{
 		psk:               psk,
-		suite:             e2ee.Suite(grant.DefaultSuite),
+		suite:             suite,
 		channelID:         grant.ChannelId,
 		clientFeatures:    opts.ClientFeatures,
 		maxHandshakeBytes: opts.MaxHandshakePayload,
@@ -106,19 +132,31 @@ func DialTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts Dia
 }
 
 // DialDirect connects to a direct websocket endpoint and returns an RPC-ready session.
-func DialDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts DialOptions) (*Client, error) {
+func DialDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts DialDirectOptions) (*Client, error) {
 	if info == nil {
-		return nil, errors.New("missing connect info")
+		return nil, wrapErr(PathDirect, StageValidate, CodeMissingConnectInfo, ErrMissingConnectInfo)
 	}
 	if info.WsUrl == "" {
-		return nil, errors.New("missing ws_url")
+		return nil, wrapErr(PathDirect, StageValidate, CodeMissingWSURL, ErrMissingWSURL)
 	}
 	if opts.Origin == "" {
-		return nil, errors.New("missing origin")
+		return nil, wrapErr(PathDirect, StageValidate, CodeMissingOrigin, ErrMissingOrigin)
+	}
+	if info.ChannelId == "" {
+		return nil, wrapErr(PathDirect, StageValidate, CodeMissingChannelID, ErrMissingChannelID)
 	}
 	psk, err := base64url.Decode(info.E2eePskB64u)
-	if err != nil {
-		return nil, err
+	if err != nil || len(psk) != 32 {
+		if err == nil {
+			err = ErrInvalidPSK
+		}
+		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidPSK, err)
+	}
+	suite := e2ee.Suite(info.DefaultSuite)
+	switch suite {
+	case e2ee.SuiteX25519HKDFAES256GCM, e2ee.SuiteP256HKDFAES256GCM:
+	default:
+		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidSuite, ErrInvalidSuite)
 	}
 
 	connectCtx, connectCancel := contextutil.WithTimeout(ctx, opts.ConnectTimeout)
@@ -128,12 +166,12 @@ func DialDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts Dial
 	h.Set("Origin", opts.Origin)
 	c, _, err := ws.Dial(connectCtx, info.WsUrl, ws.DialOptions{Header: h})
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(PathDirect, StageConnect, CodeDialFailed, err)
 	}
 
 	out, err := dialAfterAttach(ctx, c, PathDirect, "", dialE2EEOptions{
 		psk:               psk,
-		suite:             e2ee.Suite(info.DefaultSuite),
+		suite:             suite,
 		channelID:         info.ChannelId,
 		clientFeatures:    opts.ClientFeatures,
 		maxHandshakeBytes: opts.MaxHandshakePayload,
@@ -176,7 +214,7 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path Path, endpointInstanc
 		MaxBufferedBytes:    opts.maxBufferedBytes,
 	})
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(path, StageHandshake, CodeHandshakeFailed, err)
 	}
 
 	ycfg := hyamux.DefaultConfig()
@@ -185,38 +223,30 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path Path, endpointInstanc
 	sess, err := hyamux.Client(secure, ycfg)
 	if err != nil {
 		_ = secure.Close()
-		return nil, err
+		return nil, wrapErr(path, StageYamux, CodeMuxFailed, err)
 	}
 
 	rpcStream, err := sess.OpenStream()
 	if err != nil {
 		_ = sess.Close()
 		_ = secure.Close()
-		return nil, err
+		return nil, wrapErr(path, StageYamux, CodeOpenStreamFailed, err)
 	}
 	if err := rpchello.WriteStreamHello(rpcStream, "rpc"); err != nil {
 		_ = rpcStream.Close()
 		_ = sess.Close()
 		_ = secure.Close()
-		return nil, err
+		return nil, wrapErr(path, StageRPC, CodeStreamHelloFailed, err)
 	}
 	rpcClient := rpc.NewClient(rpcStream)
 
 	out := &Client{
-		Path:               path,
-		EndpointInstanceID: endpointInstanceID,
-		Secure:             secure,
-		Mux:                sess,
-		RPC:                rpcClient,
+		path:               path,
+		endpointInstanceID: endpointInstanceID,
+		secure:             secure,
+		mux:                sess,
+		rpc:                rpcClient,
 		rpcStream:          rpcStream,
 	}
 	return out, nil
-}
-
-func randomB64u(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64url.Encode(b), nil
 }

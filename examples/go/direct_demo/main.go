@@ -16,11 +16,10 @@ import (
 
 	"github.com/floegence/flowersec-examples/go/exampleutil"
 	"github.com/floegence/flowersec/crypto/e2ee"
-	rpcv1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/realtime/ws"
+	"github.com/floegence/flowersec/endpoint"
+	demov1 "github.com/floegence/flowersec/gen/flowersec/demo/v1"
+	rpcwirev1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/rpc"
-	rpchello "github.com/floegence/flowersec/rpc/hello"
-	hyamux "github.com/hashicorp/yamux"
 )
 
 // direct_demo starts a direct (no tunnel) WebSocket server endpoint that speaks the full Flowersec stack:
@@ -73,53 +72,38 @@ func main() {
 	initExp := time.Now().Add(120 * time.Second).Unix()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc(wsPath, func(w http.ResponseWriter, r *http.Request) {
-		// Upgrade to WebSocket and enforce Origin policy.
-		c, err := ws.Upgrade(w, r, ws.UpgraderOptions{CheckOrigin: ws.NewOriginChecker(allowedOrigins, false)})
-		if err != nil {
-			return
-		}
-		go func() {
-			defer c.Close()
-
-			// Server side E2EE handshake; handshake cache supports client retries.
-			bt := e2ee.NewWebSocketMessageTransport(c)
-			cache := e2ee.NewServerHandshakeCache()
-			secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.ServerHandshakeOptions{
+	mux.HandleFunc(
+		wsPath,
+		endpoint.DirectHTTPHandler(endpoint.DirectHTTPHandlerOptions{
+			AllowedOrigins: allowedOrigins,
+			AllowNoOrigin:  false,
+			Handshake: endpoint.AcceptDirectOptions{
+				ChannelID:           channelID,
 				PSK:                 psk,
 				Suite:               e2ee.SuiteX25519HKDFAES256GCM,
-				ChannelID:           channelID,
 				InitExpireAtUnixS:   initExp,
 				ClockSkew:           30 * time.Second,
+				HandshakeTimeout:    30 * time.Second,
 				ServerFeatures:      1,
 				MaxHandshakePayload: 8 * 1024,
 				MaxRecordBytes:      1 << 20,
-			})
-			if err != nil {
-				return
-			}
-			defer secure.Close()
-
-			// Yamux server session runs over the secure channel.
-			ycfg := hyamux.DefaultConfig()
-			ycfg.EnableKeepAlive = false
-			ycfg.LogOutput = io.Discard
-			sess, err := hyamux.Server(secure, ycfg)
-			if err != nil {
-				return
-			}
-			defer sess.Close()
-
-			// Each accepted stream begins with a StreamHello message that tells us the kind.
-			for {
-				stream, err := sess.AcceptStream()
-				if err != nil {
+			},
+			OnStream: func(kind string, stream io.ReadWriteCloser) {
+				defer stream.Close()
+				switch kind {
+				case "rpc":
+					router := rpc.NewRouter()
+					srv := rpc.NewServer(stream, router)
+					demov1.RegisterDemo(router, demoHandler{srv: srv})
+					_ = srv.Serve(ctx)
+				case "echo":
+					_, _ = io.Copy(stream, stream)
+				default:
 					return
 				}
-				go handleStream(ctx, stream)
-			}
-		}()
-	})
+			},
+		}),
+	)
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -169,31 +153,14 @@ func (s *stringSliceFlag) Set(v string) error {
 	return nil
 }
 
-func handleStream(ctx context.Context, stream net.Conn) {
-	defer stream.Close()
+type demoHandler struct {
+	srv *rpc.Server
+}
 
-	// StreamHello is the first frame on every yamux stream.
-	h, err := rpchello.ReadStreamHello(stream, 8*1024)
-	if err != nil {
-		return
-	}
-	switch h.Kind {
-	case "rpc":
-		// RPC stream: reply to type_id=1 and emit a notify type_id=2.
-		router := rpc.NewRouter()
-		srv := rpc.NewServer(stream, router)
-		router.Register(1, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
-			_ = payload
-			_ = srv.Notify(2, json.RawMessage(`{"hello":"world"}`))
-			return json.RawMessage(`{"ok":true}`), nil
-		})
-		_ = srv.Serve(ctx)
-	case "echo":
-		// Echo stream: raw bytes roundtrip.
-		_, _ = io.Copy(stream, stream)
-	default:
-		return
-	}
+func (h demoHandler) Ping(ctx context.Context, _req *demov1.PingRequest) (*demov1.PingResponse, *rpcwirev1.RpcError) {
+	_ = ctx
+	_ = demov1.NotifyDemoHello(h.srv, &demov1.HelloNotify{Hello: "world"})
+	return &demov1.PingResponse{Ok: true}, nil
 }
 
 func randomB64u(n int) string {

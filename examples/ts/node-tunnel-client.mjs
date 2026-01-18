@@ -1,7 +1,9 @@
 import { createRequire } from "node:module";
 import process from "node:process";
 
-import { ByteReader, connectTunnel } from "../../ts/dist/index.js";
+import { connectTunnel } from "../../ts/dist/facade.js";
+import { createDemoClient } from "../../ts/dist/gen/flowersec/demo/v1.rpc.gen.js";
+import { ByteReader } from "../../ts/dist/yamux/index.js";
 
 // node-tunnel-client is the "simple" Node.js tunnel client example.
 //
@@ -10,7 +12,7 @@ import { ByteReader, connectTunnel } from "../../ts/dist/index.js";
 // - tunnel attach (text)
 // - E2EE handshake
 // - Yamux session
-// - RPC wiring (rpcProxy)
+// - RPC stream
 //
 // Notes:
 // - The tunnel server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
@@ -32,7 +34,7 @@ function pickGrantClient(obj) {
   return obj;
 }
 
-function waitNotify(proxy, typeId, timeoutMs) {
+function waitHello(demo, timeoutMs) {
   return new Promise((resolve, reject) => {
     let unsub = () => {};
     const t = setTimeout(() => {
@@ -40,7 +42,7 @@ function waitNotify(proxy, typeId, timeoutMs) {
       reject(new Error("timeout waiting for notification"));
     }, timeoutMs);
     t.unref?.();
-    unsub = proxy.onNotify(typeId, (payload) => {
+    unsub = demo.onHello((payload) => {
       clearTimeout(t);
       unsub();
       resolve(payload);
@@ -64,10 +66,10 @@ async function main() {
   });
 
   try {
-    // Subscribe to notify type_id=2 and call request type_id=1 (see server_endpoint/direct_demo).
-    const notified = waitNotify(client.rpcProxy, 2, 2000);
-    const resp = await client.rpcProxy.call(1, {});
-    console.log("rpc response:", JSON.stringify(resp.payload));
+    const demo = createDemoClient(client.rpc);
+    const notified = waitHello(demo, 2000);
+    const resp = await demo.ping({});
+    console.log("rpc response:", JSON.stringify(resp));
     console.log("rpc notify:", JSON.stringify(await notified));
 
     // Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.

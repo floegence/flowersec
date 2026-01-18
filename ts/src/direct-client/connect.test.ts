@@ -1,12 +1,11 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { base64urlEncode } from "../utils/base64url.js";
+import { FlowersecError } from "../utils/errors.js";
 import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
 
 const mocks = vi.hoisted(() => {
   const clientHandshakeMock = vi.fn();
   const rpcClose = vi.fn();
-  const rpcProxyAttach = vi.fn();
-  const rpcProxyDetach = vi.fn();
   const muxClose = vi.fn();
   const openStream = vi.fn();
 
@@ -14,15 +13,6 @@ const mocks = vi.hoisted(() => {
     constructor(_readExactly: any, _write: any, _opts?: any) {}
     close() {
       rpcClose();
-    }
-  }
-
-  class MockRpcProxy {
-    attach() {
-      rpcProxyAttach();
-    }
-    detach() {
-      rpcProxyDetach();
     }
   }
 
@@ -39,12 +29,9 @@ const mocks = vi.hoisted(() => {
   return {
     clientHandshakeMock,
     rpcClose,
-    rpcProxyAttach,
-    rpcProxyDetach,
     muxClose,
     openStream,
     MockRpcClient,
-    MockRpcProxy,
     MockYamuxSession
   };
 });
@@ -52,7 +39,6 @@ const mocks = vi.hoisted(() => {
 const {
   clientHandshakeMock,
   rpcClose,
-  rpcProxyDetach,
   muxClose,
   openStream
 } = mocks;
@@ -62,8 +48,6 @@ vi.mock("../e2ee/handshake.js", () => ({
 }));
 
 vi.mock("../rpc/client.js", () => ({ RpcClient: mocks.MockRpcClient }));
-
-vi.mock("../rpc-proxy/rpcProxy.js", () => ({ RpcProxy: mocks.MockRpcProxy }));
 
 vi.mock("../yamux/session.js", () => ({ YamuxSession: mocks.MockYamuxSession }));
 
@@ -114,6 +98,12 @@ function makeInfo(): DirectConnectInfo {
 }
 
 describe("connectDirect", () => {
+  test("requires wsFactory outside the browser", async () => {
+    const p = connectDirect(makeInfo(), { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "ws_factory_required", path: "direct" });
+  });
+
   test("reports websocket error on connect", async () => {
     const ws = new FakeWebSocket();
     const observer = {
@@ -132,7 +122,8 @@ describe("connectDirect", () => {
     });
 
     setTimeout(() => ws.emit("error", {}), 0);
-    await expect(p).rejects.toThrow(/websocket error/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "connect", code: "websocket_error", path: "direct" });
 
     expect(observer.onConnect).toHaveBeenCalledWith("direct", "fail", "websocket_error", expect.any(Number));
   });
@@ -155,7 +146,8 @@ describe("connectDirect", () => {
       observer
     });
 
-    await expect(p).rejects.toThrow(/connect timeout/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "connect", code: "timeout", path: "direct" });
     expect(observer.onConnect).toHaveBeenCalledWith("direct", "fail", "timeout", expect.any(Number));
   });
 
@@ -179,7 +171,8 @@ describe("connectDirect", () => {
     });
 
     setTimeout(() => ac.abort(), 0);
-    await expect(p).rejects.toThrow(/connect aborted/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "connect", code: "canceled", path: "direct" });
     expect(observer.onConnect).toHaveBeenCalledWith("direct", "fail", "canceled", expect.any(Number));
   });
 
@@ -202,7 +195,8 @@ describe("connectDirect", () => {
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
-    await expect(p).rejects.toThrow(/handshake failed/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "handshake_error", path: "direct" });
 
     expect(observer.onHandshake).toHaveBeenCalledWith("direct", "fail", "handshake_error", expect.any(Number));
   });
@@ -227,7 +221,8 @@ describe("connectDirect", () => {
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
-    await expect(p).rejects.toThrow(/timeout/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "timeout", path: "direct" });
     expect(observer.onHandshake).toHaveBeenCalledWith("direct", "fail", "timeout", expect.any(Number));
   });
 
@@ -254,9 +249,66 @@ describe("connectDirect", () => {
     const conn = await p;
     conn.close();
 
-    expect(rpcProxyDetach).toHaveBeenCalledTimes(1);
     expect(rpcClose).toHaveBeenCalledTimes(1);
     expect(muxClose).toHaveBeenCalledTimes(1);
     expect(secureClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("openStream wraps yamux openStream errors", async () => {
+    const ws = new FakeWebSocket();
+    clientHandshakeMock.mockResolvedValueOnce({
+      read: vi.fn(),
+      write: vi.fn(),
+      close: vi.fn()
+    });
+    openStream
+      .mockResolvedValueOnce({
+        read: vi.fn().mockResolvedValue(new Uint8Array()),
+        write: vi.fn(),
+        close: vi.fn()
+      })
+      .mockRejectedValueOnce(new Error("yamux open failed"));
+
+    const p = connectDirect(makeInfo(), {
+      origin: "https://app.redeven.com",
+      wsFactory: () => ws as any
+    });
+
+    setTimeout(() => ws.emit("open", {}), 0);
+    const conn = await p;
+    await expect(conn.openStream("echo")).rejects.toMatchObject({ stage: "yamux", code: "open_stream_failed", path: "direct" });
+    conn.close();
+  });
+
+  test("openStream wraps StreamHello write errors and closes the stream", async () => {
+    const ws = new FakeWebSocket();
+    clientHandshakeMock.mockResolvedValueOnce({
+      read: vi.fn(),
+      write: vi.fn(),
+      close: vi.fn()
+    });
+    const badStreamClose = vi.fn();
+    openStream
+      .mockResolvedValueOnce({
+        read: vi.fn().mockResolvedValue(new Uint8Array()),
+        write: vi.fn(),
+        close: vi.fn()
+      })
+      .mockResolvedValueOnce({
+        read: vi.fn(),
+        write: vi.fn().mockRejectedValueOnce(new Error("write failed")),
+        close: badStreamClose
+      });
+
+    const p = connectDirect(makeInfo(), {
+      origin: "https://app.redeven.com",
+      wsFactory: () => ws as any
+    });
+
+    setTimeout(() => ws.emit("open", {}), 0);
+    const conn = await p;
+    await expect(conn.openStream("echo")).rejects.toMatchObject({ stage: "rpc", code: "stream_hello_failed", path: "direct" });
+    expect(badStreamClose).toHaveBeenCalledTimes(1);
+    conn.close();
   });
 });

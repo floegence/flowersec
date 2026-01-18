@@ -23,7 +23,9 @@
     <pre id="out"></pre>
 
     <script type="module">
-      import { ByteReader, connectDirect } from "../../../ts/dist/index.js";
+      import { connectDirect } from "../../../ts/dist/facade.js";
+      import { createDemoClient } from "../../../ts/dist/gen/flowersec/demo/v1.rpc.gen.js";
+      import { ByteReader } from "../../../ts/dist/yamux/index.js";
 
       // Browser notes:
       // - Browsers set the WebSocket Origin header automatically to window.location.origin.
@@ -40,14 +42,14 @@
         $out.textContent += s + "\n";
       }
 
-      function waitNotify(proxy, typeId, timeoutMs) {
+      function waitHello(demo, timeoutMs) {
         return new Promise((resolve, reject) => {
           let unsub = () => {};
           const t = setTimeout(() => {
             unsub();
             reject(new Error("timeout waiting for notification"));
           }, timeoutMs);
-          unsub = proxy.onNotify(typeId, (payload) => {
+          unsub = demo.onHello((payload) => {
             clearTimeout(t);
             unsub();
             resolve(payload);
@@ -59,15 +61,15 @@
         $out.textContent = "";
         try {
           const info = JSON.parse($in.value);
-          // High-level helper: it performs E2EE handshake + yamux + RPC wiring.
+          // High-level helper: it performs E2EE handshake + yamux + RPC.
           // It also checks that the provided origin matches window.location.origin.
           client = await connectDirect(info, { origin: window.location.origin });
           $close.disabled = false;
 
-          // In these demos, type_id=1 responds {"ok":true} and the server also emits notify type_id=2.
-          const notified = waitNotify(client.rpcProxy, 2, 2000);
-          const resp = await client.rpcProxy.call(1, {});
-          logLine("rpc response: " + JSON.stringify(resp.payload));
+          const demo = createDemoClient(client.rpc);
+          const notified = waitHello(demo, 2000);
+          const resp = await demo.ping({});
+          logLine("rpc response: " + JSON.stringify(resp));
           logLine("rpc notify: " + JSON.stringify(await notified));
 
           // Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.

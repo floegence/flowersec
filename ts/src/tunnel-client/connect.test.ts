@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { base64urlEncode } from "../utils/base64url.js";
+import { FlowersecError } from "../utils/errors.js";
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
 import { Role, Suite } from "../gen/flowersec/controlplane/v1.gen.js";
 
 const mocks = vi.hoisted(() => {
   const clientHandshakeMock = vi.fn();
   const rpcClose = vi.fn();
-  const rpcProxyAttach = vi.fn();
-  const rpcProxyDetach = vi.fn();
   const muxClose = vi.fn();
   const openStream = vi.fn();
 
@@ -15,15 +14,6 @@ const mocks = vi.hoisted(() => {
     constructor(_readExactly: any, _write: any, _opts?: any) {}
     close() {
       rpcClose();
-    }
-  }
-
-  class MockRpcProxy {
-    attach() {
-      rpcProxyAttach();
-    }
-    detach() {
-      rpcProxyDetach();
     }
   }
 
@@ -40,12 +30,9 @@ const mocks = vi.hoisted(() => {
   return {
     clientHandshakeMock,
     rpcClose,
-    rpcProxyAttach,
-    rpcProxyDetach,
     muxClose,
     openStream,
     MockRpcClient,
-    MockRpcProxy,
     MockYamuxSession
   };
 });
@@ -53,7 +40,6 @@ const mocks = vi.hoisted(() => {
 const {
   clientHandshakeMock,
   rpcClose,
-  rpcProxyDetach,
   muxClose,
   openStream
 } = mocks;
@@ -63,8 +49,6 @@ vi.mock("../e2ee/handshake.js", () => ({
 }));
 
 vi.mock("../rpc/client.js", () => ({ RpcClient: mocks.MockRpcClient }));
-
-vi.mock("../rpc-proxy/rpcProxy.js", () => ({ RpcProxy: mocks.MockRpcProxy }));
 
 vi.mock("../yamux/session.js", () => ({ YamuxSession: mocks.MockYamuxSession }));
 
@@ -120,6 +104,34 @@ function makeGrant(): ChannelInitGrant {
 }
 
 describe("connectTunnel", () => {
+  test("rejects invalid endpointInstanceId encoding", async () => {
+    const p = connectTunnel(makeGrant(), {
+      origin: "https://app.redeven.com",
+      endpointInstanceId: "!!!"
+    });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_endpoint_instance_id", path: "tunnel" });
+  });
+
+  test("rejects endpointInstanceId length out of range", async () => {
+    const p = connectTunnel(makeGrant(), {
+      origin: "https://app.redeven.com",
+      endpointInstanceId: base64urlEncode(new Uint8Array(8).fill(1))
+    });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_endpoint_instance_id", path: "tunnel" });
+  });
+
+  test("rejects non-client role grants", async () => {
+    const bad = makeGrant();
+    bad.role = Role.Role_server;
+    const p = connectTunnel(bad, {
+      origin: "https://app.redeven.com"
+    });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "role_mismatch", path: "tunnel" });
+  });
+
   test("reports websocket error on connect", async () => {
     const ws = new FakeWebSocket();
     const observer = {
@@ -138,7 +150,8 @@ describe("connectTunnel", () => {
     });
 
     setTimeout(() => ws.emit("error", {}), 0);
-    await expect(p).rejects.toThrow(/websocket error/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "connect", code: "websocket_error", path: "tunnel" });
 
     expect(observer.onConnect).toHaveBeenCalledWith("tunnel", "fail", "websocket_error", expect.any(Number));
   });
@@ -161,7 +174,8 @@ describe("connectTunnel", () => {
       observer
     });
 
-    await expect(p).rejects.toThrow(/connect timeout/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "connect", code: "timeout", path: "tunnel" });
     expect(observer.onConnect).toHaveBeenCalledWith("tunnel", "fail", "timeout", expect.any(Number));
   });
 
@@ -185,7 +199,8 @@ describe("connectTunnel", () => {
     });
 
     setTimeout(() => ac.abort(), 0);
-    await expect(p).rejects.toThrow(/connect aborted/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "connect", code: "canceled", path: "tunnel" });
     expect(observer.onConnect).toHaveBeenCalledWith("tunnel", "fail", "canceled", expect.any(Number));
   });
 
@@ -210,7 +225,8 @@ describe("connectTunnel", () => {
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
-    await expect(p).rejects.toThrow(/send failed/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "attach", code: "send_failed", path: "tunnel" });
 
     expect(observer.onAttach).toHaveBeenCalledWith("fail", "send_failed");
   });
@@ -234,7 +250,8 @@ describe("connectTunnel", () => {
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
-    await expect(p).rejects.toThrow(/handshake failed/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "handshake_error", path: "tunnel" });
 
     expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "handshake_error", expect.any(Number));
   });
@@ -259,7 +276,8 @@ describe("connectTunnel", () => {
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
-    await expect(p).rejects.toThrow(/timeout/);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "timeout", path: "tunnel" });
     expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "timeout", expect.any(Number));
   });
 
@@ -286,7 +304,6 @@ describe("connectTunnel", () => {
     const conn = await p;
     conn.close();
 
-    expect(rpcProxyDetach).toHaveBeenCalledTimes(1);
     expect(rpcClose).toHaveBeenCalledTimes(1);
     expect(muxClose).toHaveBeenCalledTimes(1);
     expect(secureClose).toHaveBeenCalledTimes(1);

@@ -94,6 +94,18 @@ export class RpcClient {
     };
   }
 
+  // notify sends a one-way notification to the peer.
+  async notify(typeId: number, payload: unknown): Promise<void> {
+    if (this.closed) throw new Error("rpc client closed");
+    const env: RpcEnvelope = {
+      type_id: typeId >>> 0,
+      request_id: 0,
+      response_to: 0,
+      payload
+    };
+    await writeJsonFrame(this.write, env);
+  }
+
   private async readLoop(): Promise<void> {
     try {
       while (!this.closed) {

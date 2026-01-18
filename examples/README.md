@@ -9,7 +9,7 @@ This folder is a hands-on cookbook for running Flowersec end-to-end using the re
 
 - Tunnel server (deliverable): `go/cmd/flowersec-tunnel/` (blind forwarder; verifies tokens; pairs by `channel_id` + `role`)
 - Controlplane demo: `examples/go/controlplane_demo/` (owns issuer keys; mints `ChannelInitGrant` pairs)
-- Go server endpoint demo: `examples/go/server_endpoint/` (acts as the endpoint with `role=server`; runs E2EE server + Yamux server)
+- Go server endpoint demo: `examples/go/server_endpoint/` (acts as the endpoint with `role=server`; built on `go/endpoint`)
 - Clients:
   - Go:
     - Simple (uses `go/client` helpers): `examples/go/go_client_tunnel_simple/`, `examples/go/go_client_direct_simple/`
@@ -26,6 +26,7 @@ This folder is a hands-on cookbook for running Flowersec end-to-end using the re
 - Go (same major as `go/go.mod`)
 - Node.js (for TypeScript clients; recommended: Node.js 22 LTS)
 - Optional: `jq` (to parse the JSON "ready" lines; you can also copy/paste manually)
+  - This repo includes a root `go.work`, so `go run ./examples/...` works from the repo root (for tests: `go test ./go/... ./examples/...`).
 
 ## Build the TypeScript bundle (required for TS clients)
 

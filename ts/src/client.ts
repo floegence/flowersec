@@ -1,6 +1,5 @@
 import type { SecureChannel } from "./e2ee/secureChannel.js";
 import type { RpcClient } from "./rpc/client.js";
-import type { RpcProxy } from "./rpc-proxy/rpcProxy.js";
 import type { YamuxSession } from "./yamux/session.js";
 import type { YamuxStream } from "./yamux/stream.js";
 
@@ -13,8 +12,6 @@ export type Client = Readonly<{
   secure: SecureChannel;
   mux: YamuxSession;
   rpc: RpcClient;
-  rpcProxy: RpcProxy;
   openStream: (kind: string) => Promise<YamuxStream>;
   close: () => void;
 }>;
-

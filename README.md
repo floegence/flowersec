@@ -31,8 +31,10 @@ open examples/README.md
 
 High-level client entrypoints:
 
-- Go: `github.com/floegence/flowersec/client` (`client.DialTunnel`, `client.DialDirect`)
-- TS: `@flowersec/core` (`connectTunnel`, `connectDirect`)
+- Go (client): `github.com/floegence/flowersec/client` (`client.DialTunnel`, `client.DialDirect`)
+- Go (server endpoint): `github.com/floegence/flowersec/endpoint` (accept/dial `role=server` endpoints)
+- TS (stable): `@flowersec/core` (`connectTunnel`, `connectDirect`)
+- TS (advanced): `@flowersec/core/internal` (E2EE/Yamux/RPC/WebSocket building blocks)
 
 It includes:
 
@@ -68,6 +70,10 @@ Generate code from IDL:
 ```bash
 make gen
 ```
+
+Go workspace:
+
+- The repo includes a root `go.work`, so you can run Go commands from the repo root (e.g. `go run ./examples/...` or `go test ./go/... ./examples/...`).
 
 ## Tunnel defaults (important for deployment)
 

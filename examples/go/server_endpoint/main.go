@@ -2,26 +2,20 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/floegence/flowersec-examples/go/exampleutil"
-	"github.com/floegence/flowersec/crypto/e2ee"
+	"github.com/floegence/flowersec/endpoint"
 	controlv1 "github.com/floegence/flowersec/gen/flowersec/controlplane/v1"
-	rpcv1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
-	tunnelv1 "github.com/floegence/flowersec/gen/flowersec/tunnel/v1"
+	demov1 "github.com/floegence/flowersec/gen/flowersec/demo/v1"
+	rpcwirev1 "github.com/floegence/flowersec/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/rpc"
-	rpchello "github.com/floegence/flowersec/rpc/hello"
-	"github.com/gorilla/websocket"
-	hyamux "github.com/hashicorp/yamux"
 )
 
 // server_endpoint is a demo endpoint that attaches to a tunnel as role=server and serves:
@@ -51,15 +45,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	psk, err := exampleutil.Decode(grant.E2eePskB64u)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go runServerEndpoint(ctx, origin, grant, psk)
+	go runServerEndpoint(ctx, origin, grant)
 
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -67,94 +57,42 @@ func main() {
 	cancel()
 }
 
-func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant, psk []byte) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	// WebSocket dial: the Origin header is required by the tunnel server.
-	h := http.Header{}
-	h.Set("Origin", origin)
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, grant.TunnelUrl, h)
-	if err != nil {
-		return
-	}
-	defer c.Close()
-
-	// Tunnel attach: plaintext JSON message used only for pairing/auth.
-	attach := tunnelv1.Attach{
-		V:                  1,
-		ChannelId:          grant.ChannelId,
-		Role:               tunnelv1.Role_server,
-		Token:              grant.Token,
-		EndpointInstanceId: randomB64u(24),
-	}
-	attachJSON, _ := json.Marshal(attach)
-	_ = c.WriteMessage(websocket.TextMessage, attachJSON)
-
-	// Server side E2EE handshake. The init_exp comes from the controlplane grant.
-	// If init_exp is 0 or expired, handshake must fail.
-	bt := e2ee.NewWebSocketBinaryTransport(c)
-	cache := e2ee.NewServerHandshakeCache()
-	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.ServerHandshakeOptions{
-		PSK:                 psk,
-		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
-		ChannelID:           grant.ChannelId,
-		InitExpireAtUnixS:   grant.ChannelInitExpireAtUnixS,
-		ClockSkew:           30 * time.Second,
-		ServerFeatures:      1,
-		MaxHandshakePayload: 8 * 1024,
-		MaxRecordBytes:      1 << 20,
+func runServerEndpoint(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) {
+	sess, err := endpoint.DialTunnelServer(ctx, grant, endpoint.DialTunnelServerOptions{
+		Origin:           origin,
+		ConnectTimeout:   10 * time.Second,
+		HandshakeTimeout: 10 * time.Second,
+		MaxRecordBytes:   1 << 20,
 	})
-	if err != nil {
-		return
-	}
-	defer secure.Close()
-
-	// Yamux server session runs over the secure channel.
-	ycfg := hyamux.DefaultConfig()
-	ycfg.EnableKeepAlive = false
-	ycfg.LogOutput = io.Discard
-	sess, err := hyamux.Server(secure, ycfg)
 	if err != nil {
 		return
 	}
 	defer sess.Close()
 
-	// Each accepted stream begins with a StreamHello message that tells us the kind.
-	for {
-		stream, err := sess.AcceptStream()
-		if err != nil {
+	_ = sess.ServeStreams(ctx, 8*1024, func(kind string, stream io.ReadWriteCloser) {
+		defer stream.Close()
+		switch kind {
+		case "rpc":
+			router := rpc.NewRouter()
+			srv := rpc.NewServer(stream, router)
+			demov1.RegisterDemo(router, demoHandler{srv: srv})
+			_ = srv.Serve(ctx)
+		case "echo":
+			_, _ = io.Copy(stream, stream)
+		default:
 			return
 		}
-		go handleStream(ctx, stream)
-	}
+	})
 }
 
-func handleStream(ctx context.Context, stream io.ReadWriteCloser) {
-	defer stream.Close()
+type demoHandler struct {
+	srv *rpc.Server
+}
 
-	// StreamHello is the first frame on every yamux stream.
-	h, err := rpchello.ReadStreamHello(stream, 8*1024)
-	if err != nil {
-		return
-	}
-	switch h.Kind {
-	case "rpc":
-		// RPC stream: reply to type_id=1 and emit a notify type_id=2.
-		router := rpc.NewRouter()
-		srv := rpc.NewServer(stream, router)
-		router.Register(1, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
-			_ = payload
-			_ = srv.Notify(2, json.RawMessage(`{"hello":"world"}`))
-			return json.RawMessage(`{"ok":true}`), nil
-		})
-		_ = srv.Serve(ctx)
-	case "echo":
-		// Echo stream: raw bytes roundtrip.
-		_, _ = io.Copy(stream, stream)
-	default:
-		return
-	}
+func (h demoHandler) Ping(ctx context.Context, _req *demov1.PingRequest) (*demov1.PingResponse, *rpcwirev1.RpcError) {
+	_ = ctx
+	_ = demov1.NotifyDemoHello(h.srv, &demov1.HelloNotify{Hello: "world"})
+	return &demov1.PingResponse{Ok: true}, nil
 }
 
 func readGrantServer(path string) (*controlv1.ChannelInitGrant, error) {
@@ -204,12 +142,4 @@ type roleError struct {
 
 func (e *roleError) Error() string {
 	return "expected role=" + e.expect
-}
-
-func randomB64u(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return exampleutil.Encode(b)
 }

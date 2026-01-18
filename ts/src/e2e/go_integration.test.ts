@@ -33,7 +33,7 @@ describe("go<->ts integration", () => {
         wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } })
       });
       try {
-        const demo = createDemoClient(client.rpcProxy);
+        const demo = createDemoClient(client.rpc);
         const notified = waitNotify(demo, 2000);
         await expect(demo.ping({})).resolves.toEqual({ ok: true });
         await expect(notified).resolves.toEqual({ hello: "world" });

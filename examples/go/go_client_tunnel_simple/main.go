@@ -12,6 +12,7 @@ import (
 
 	"github.com/floegence/flowersec/client"
 	controlv1 "github.com/floegence/flowersec/gen/flowersec/controlplane/v1"
+	demov1 "github.com/floegence/flowersec/gen/flowersec/demo/v1"
 )
 
 // go_client_tunnel_simple demonstrates the minimal tunnel client using the high-level Go helpers:
@@ -41,7 +42,7 @@ func main() {
 	// This helper builds the full protocol stack and returns an RPC-ready client:
 	// - client.Mux: open extra streams (e.g. echo)
 	// - client.RPC: typed request/notify API over the dedicated "rpc" stream
-	c, err := client.DialTunnel(context.Background(), grant, client.DialOptions{
+	c, err := client.DialTunnel(context.Background(), grant, client.DialTunnelOptions{
 		ConnectTimeout:   10 * time.Second,
 		HandshakeTimeout: 10 * time.Second,
 		MaxRecordBytes:   1 << 20,
@@ -52,9 +53,10 @@ func main() {
 	}
 	defer c.Close()
 
-	// Subscribe to the notify type_id=2 and then call request type_id=1.
-	notified := make(chan json.RawMessage, 1)
-	unsub := c.RPC.OnNotify(2, func(payload json.RawMessage) {
+	// Subscribe to hello notify and then call ping (see examples/go/server_endpoint).
+	demo := demov1.NewDemoClient(c.RPC())
+	notified := make(chan *demov1.HelloNotify, 1)
+	unsub := demo.OnHello(func(payload *demov1.HelloNotify) {
 		select {
 		case notified <- payload:
 		default:
@@ -64,19 +66,17 @@ func main() {
 
 	callCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// In these demos, type_id=1 expects an empty JSON object and replies {"ok":true}.
-	payload, rpcErr, err := c.RPC.Call(callCtx, 1, json.RawMessage(`{}`))
+	resp, err := demo.Ping(callCtx, &demov1.PingRequest{})
 	if err != nil {
 		log.Fatal(err)
 	}
-	if rpcErr != nil {
-		log.Fatalf("rpc error: %+v", rpcErr)
-	}
-	fmt.Printf("rpc response: %s\n", string(payload))
+	respJSON, _ := json.Marshal(resp)
+	fmt.Printf("rpc response: %s\n", string(respJSON))
 
 	select {
 	case p := <-notified:
-		fmt.Printf("rpc notify: %s\n", string(p))
+		b, _ := json.Marshal(p)
+		fmt.Printf("rpc notify: %s\n", string(b))
 	case <-time.After(2 * time.Second):
 		fmt.Println("rpc notify: timeout")
 	}
