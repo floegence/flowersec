@@ -22,7 +22,7 @@ import (
 )
 
 // ConnectTunnel attaches to a tunnel as role=client and returns an RPC-ready session.
-func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, opts ...ConnectOption) (*Client, error) {
+func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, opts ...TunnelConnectOption) (*Client, error) {
 	if grant == nil {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingGrant, ErrMissingGrant)
 	}
@@ -38,7 +38,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	if grant.ChannelId == "" {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeMissingChannelID, ErrMissingChannelID)
 	}
-	cfg, err := applyConnectOptions(opts)
+	cfg, err := applyTunnelConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(PathTunnel, StageValidate, CodeInvalidOption, err)
 	}
@@ -108,7 +108,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 }
 
 // ConnectDirect connects to a direct websocket endpoint and returns an RPC-ready session.
-func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin string, opts ...ConnectOption) (*Client, error) {
+func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin string, opts ...DirectConnectOption) (*Client, error) {
 	if info == nil {
 		return nil, wrapErr(PathDirect, StageValidate, CodeMissingConnectInfo, ErrMissingConnectInfo)
 	}
@@ -121,12 +121,9 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin
 	if info.ChannelId == "" {
 		return nil, wrapErr(PathDirect, StageValidate, CodeMissingChannelID, ErrMissingChannelID)
 	}
-	cfg, err := applyConnectOptions(opts)
+	cfg, err := applyDirectConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidOption, err)
-	}
-	if cfg.endpointInstanceID != "" {
-		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidOption, ErrEndpointInstanceIDNotSupported)
 	}
 	psk, err := base64url.Decode(info.E2eePskB64u)
 	if err != nil || len(psk) != 32 {

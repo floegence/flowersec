@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
+	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )
 
@@ -21,7 +23,7 @@ type AcceptDirectOptions struct {
 	InitExpireAtUnixS int64
 	ClockSkew         time.Duration
 
-	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default; <0 disables).
+	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default).
 
 	ServerFeatures uint32
 
@@ -35,7 +37,7 @@ type AcceptDirectOptions struct {
 
 // AcceptDirectWS performs the server-side E2EE handshake on an upgraded websocket connection
 // and returns a multiplexed endpoint session.
-func AcceptDirectWS(ctx context.Context, c *ws.Conn, opts AcceptDirectOptions) (*Session, error) {
+func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOptions) (*Session, error) {
 	if c == nil {
 		return nil, wrapErr(PathDirect, StageValidate, CodeMissingConn, ErrMissingConn)
 	}
@@ -59,6 +61,10 @@ func AcceptDirectWS(ctx context.Context, c *ws.Conn, opts AcceptDirectOptions) (
 	}
 
 	handshakeTimeout := opts.HandshakeTimeout
+	if handshakeTimeout < 0 {
+		_ = c.Close()
+		return nil, wrapErr(PathDirect, StageValidate, CodeInvalidOption, fmt.Errorf("handshake timeout must be >= 0"))
+	}
 	if handshakeTimeout == 0 {
 		handshakeTimeout = defaults.HandshakeTimeout
 	}
@@ -70,7 +76,7 @@ func AcceptDirectWS(ctx context.Context, c *ws.Conn, opts AcceptDirectOptions) (
 		cache = e2ee.NewServerHandshakeCache()
 	}
 
-	bt := e2ee.NewWebSocketMessageTransport(c)
+	bt := e2ee.NewWebSocketBinaryTransport(c)
 	secure, err := e2ee.ServerHandshake(handshakeCtx, bt, cache, e2ee.ServerHandshakeOptions{
 		PSK:                 opts.PSK,
 		Suite:               opts.Suite,
@@ -141,7 +147,7 @@ func DirectHandler(opts DirectHandlerOptions) http.HandlerFunc {
 			return
 		}
 		defer c.Close()
-		sess, err := AcceptDirectWS(r.Context(), c, opts.Handshake)
+		sess, err := AcceptDirectWS(r.Context(), c.Underlying(), opts.Handshake)
 		if err != nil {
 			return
 		}

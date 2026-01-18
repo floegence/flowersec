@@ -76,7 +76,15 @@ func NewServerHandshakeCache() *ServerHandshakeCache {
 	}
 }
 
-var ErrTooManyPendingHandshakes = errors.New("too many pending handshakes")
+var (
+	ErrTooManyPendingHandshakes = errors.New("too many pending handshakes")
+
+	// Handshake errors surfaced for programmatic handling at higher levels.
+	ErrHandshakeIDMismatch   = errors.New("handshake_id mismatch")
+	ErrTimestampOutOfSkew    = errors.New("timestamp out of skew")
+	ErrTimestampAfterInitExp = errors.New("timestamp after init_exp")
+	ErrAuthTagMismatch       = errors.New("auth tag mismatch")
+)
 
 // SetLimits configures cache bounds. A zero value disables the corresponding limit.
 func (c *ServerHandshakeCache) SetLimits(ttl time.Duration, maxEntries int) {
@@ -407,7 +415,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	}
 
 	if ack.HandshakeId != st.HandshakeID {
-		return nil, errors.New("handshake_id mismatch")
+		return nil, ErrHandshakeIDMismatch
 	}
 
 	now := time.Now()
@@ -418,10 +426,10 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	skew = timeutil.NormalizeSkew(skew)
 	ts := time.Unix(int64(ack.TimestampUnixS), 0)
 	if ts.Before(now.Add(-skew)) || ts.After(now.Add(skew)) {
-		return nil, errors.New("timestamp out of skew")
+		return nil, ErrTimestampOutOfSkew
 	}
 	if int64(ack.TimestampUnixS) > timeutil.AddSkewUnix(opts.InitExpireAtUnixS, skew) {
-		return nil, errors.New("timestamp after init_exp")
+		return nil, ErrTimestampAfterInitExp
 	}
 
 	authTagBytes, err := base64url.Decode(ack.AuthTagB64u)
@@ -455,7 +463,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 		return nil, err
 	}
 	if subtle.ConstantTimeCompare(expTag[:], authTagBytes) != 1 {
-		return nil, errors.New("auth tag mismatch")
+		return nil, ErrAuthTagMismatch
 	}
 
 	peerPub, err := ParsePublicKey(st.Suite, clientPubBytes)

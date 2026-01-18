@@ -5,6 +5,9 @@ import { connectDirect } from "../direct-client/connect.js";
 import { connectTunnel } from "../tunnel-client/connect.js";
 import { FlowersecError } from "../utils/errors.js";
 
+import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
+import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
+
 export type TunnelConnectBrowserOptions = Omit<TunnelConnectOptions, "origin" | "wsFactory">;
 
 export type DirectConnectBrowserOptions = Omit<DirectConnectOptions, "origin" | "wsFactory">;
@@ -15,6 +18,7 @@ function getBrowserOrigin(): string {
   return typeof o === "string" ? o : "";
 }
 
+export async function connectTunnelBrowser(grant: ChannelInitGrant, opts?: TunnelConnectBrowserOptions): Promise<Client>;
 export async function connectTunnelBrowser(grant: unknown, opts: TunnelConnectBrowserOptions = {}): Promise<Client> {
   const origin = getBrowserOrigin();
   if (origin === "") {
@@ -23,6 +27,7 @@ export async function connectTunnelBrowser(grant: unknown, opts: TunnelConnectBr
   return await connectTunnel(grant, { ...opts, origin });
 }
 
+export async function connectDirectBrowser(info: DirectConnectInfo, opts?: DirectConnectBrowserOptions): Promise<Client>;
 export async function connectDirectBrowser(info: unknown, opts: DirectConnectBrowserOptions = {}): Promise<Client> {
   const origin = getBrowserOrigin();
   if (origin === "") {
@@ -30,4 +35,3 @@ export async function connectDirectBrowser(info: unknown, opts: DirectConnectBro
   }
   return await connectDirect(info, { ...opts, origin });
 }
-

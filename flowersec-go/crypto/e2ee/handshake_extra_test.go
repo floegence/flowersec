@@ -242,7 +242,7 @@ func TestServerHandshakeAuthTagMismatch(t *testing.T) {
 		InitExpireAtUnixS: time.Now().Add(time.Minute).Unix(),
 		ClockSkew:         30 * time.Second,
 	})
-	if err == nil || err.Error() != "auth tag mismatch" {
+	if err == nil || !errors.Is(err, ErrAuthTagMismatch) {
 		t.Fatalf("expected auth tag mismatch, got %v", err)
 	}
 }
@@ -276,7 +276,7 @@ func TestServerHandshakeTimestampChecks(t *testing.T) {
 		InitExpireAtUnixS: time.Now().Add(time.Minute).Unix(),
 		ClockSkew:         10 * time.Second,
 	})
-	if err == nil || err.Error() != "timestamp out of skew" {
+	if err == nil || !errors.Is(err, ErrTimestampOutOfSkew) {
 		t.Fatalf("expected timestamp skew, got %v", err)
 	}
 
@@ -305,7 +305,7 @@ func TestServerHandshakeTimestampChecks(t *testing.T) {
 		InitExpireAtUnixS: time.Now().Add(-10 * time.Second).Unix(),
 		ClockSkew:         5 * time.Second,
 	})
-	if err == nil || err.Error() != "timestamp after init_exp" {
+	if err == nil || !errors.Is(err, ErrTimestampAfterInitExp) {
 		t.Fatalf("expected timestamp after init_exp, got %v", err)
 	}
 	_ = init
@@ -354,7 +354,7 @@ func TestServerHandshakeRoundsSkewToWholeSeconds(t *testing.T) {
 		InitExpireAtUnixS: tsUnix - 2,
 		ClockSkew:         1500 * time.Millisecond,
 	})
-	if err == nil || err.Error() != "auth tag mismatch" {
+	if err == nil || !errors.Is(err, ErrAuthTagMismatch) {
 		t.Fatalf("expected auth tag mismatch, got %v", err)
 	}
 }
