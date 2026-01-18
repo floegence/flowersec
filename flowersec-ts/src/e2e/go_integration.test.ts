@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { connectTunnel } from "../tunnel-client/connect.js";
-import { createDemoClient } from "../gen/flowersec/demo/v1.rpc.gen.js";
+import { createDemoClient } from "../_examples/flowersec/demo/v1.rpc.gen.js";
 
 const require = createRequire(import.meta.url);
 const WS = require("ws");

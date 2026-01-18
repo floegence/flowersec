@@ -18,10 +18,11 @@ import (
 	"encoding/base64"
 	"errors"
 
+	demov1 "github.com/floegence/flowersec-examples/gen/flowersec/demo/v1"
 	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	demov1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/demo/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
@@ -115,17 +116,29 @@ func main() {
 	})
 	defer unsub()
 
+	streamSrv := endpointserve.New(endpointserve.Options{
+		RPC: endpointserve.RPCOptions{
+			Register: func(r *rpc.Router, srv *rpc.Server) {
+				demov1.RegisterDemo(r, demoHandler{srv: srv})
+			},
+		},
+	})
+	streamSrv.Handle("echo", func(ctx context.Context, stream io.ReadWriteCloser) {
+		_ = ctx
+		_, _ = io.Copy(stream, stream)
+	})
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case grant := <-grants:
-			go serveTunnelSession(ctx, origin, grant)
+			go serveTunnelSession(ctx, origin, streamSrv, grant)
 		}
 	}
 }
 
-func serveTunnelSession(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) {
+func serveTunnelSession(ctx context.Context, origin string, streamSrv *endpointserve.Server, grant *controlv1.ChannelInitGrant) {
 	sess, err := endpoint.ConnectTunnel(
 		ctx,
 		grant,
@@ -141,20 +154,7 @@ func serveTunnelSession(ctx context.Context, origin string, grant *controlv1.Cha
 	defer sess.Close()
 	log.Printf("tunnel session ready (channel_id=%s endpoint_instance_id=%s)", grant.ChannelId, sess.EndpointInstanceID())
 
-	err = sess.ServeStreams(ctx, 8*1024, func(kind string, stream io.ReadWriteCloser) {
-		defer stream.Close()
-		switch kind {
-		case "rpc":
-			router := rpc.NewRouter()
-			srv := rpc.NewServer(stream, router)
-			demov1.RegisterDemo(router, demoHandler{srv: srv})
-			_ = srv.Serve(ctx)
-		case "echo":
-			_, _ = io.Copy(stream, stream)
-		default:
-			return
-		}
-	})
+	err = streamSrv.ServeSession(ctx, sess)
 	if err != nil && ctx.Err() == nil {
 		log.Printf("tunnel session ended (channel_id=%s): %v", grant.ChannelId, err)
 	}

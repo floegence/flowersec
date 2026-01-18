@@ -10,9 +10,9 @@ import (
 	"os"
 	"time"
 
+	demov1 "github.com/floegence/flowersec-examples/gen/flowersec/demo/v1"
 	"github.com/floegence/flowersec/flowersec-go/client"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	demov1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/demo/v1"
 )
 
 // go_client_tunnel_simple demonstrates the minimal tunnel client using the high-level Go helpers:

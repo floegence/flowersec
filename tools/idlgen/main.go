@@ -55,17 +55,29 @@ func main() {
 	var inDir string
 	var goOut string
 	var tsOut string
+	var manifestPath string
 	flag.StringVar(&inDir, "in", "", "input idl directory")
 	flag.StringVar(&goOut, "go-out", "", "output directory for Go")
 	flag.StringVar(&tsOut, "ts-out", "", "output directory for TypeScript")
+	flag.StringVar(&manifestPath, "manifest", "", "optional manifest file listing .fidl.json paths (relative to -in)")
 	flag.Parse()
 
-	if strings.TrimSpace(inDir) == "" || strings.TrimSpace(goOut) == "" || strings.TrimSpace(tsOut) == "" {
-		fmt.Fprintln(os.Stderr, "missing -in/-go-out/-ts-out")
+	if strings.TrimSpace(inDir) == "" {
+		fmt.Fprintln(os.Stderr, "missing -in")
+		os.Exit(2)
+	}
+	if strings.TrimSpace(goOut) == "" && strings.TrimSpace(tsOut) == "" {
+		fmt.Fprintln(os.Stderr, "missing -go-out and -ts-out (need at least one)")
 		os.Exit(2)
 	}
 
-	files, err := listFIDLFiles(inDir)
+	var files []string
+	var err error
+	if strings.TrimSpace(manifestPath) != "" {
+		files, err = listFIDLFilesFromManifest(inDir, manifestPath)
+	} else {
+		files, err = listFIDLFiles(inDir)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -99,23 +111,61 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		if err := genGo(goOut, s); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+		if strings.TrimSpace(goOut) != "" {
+			if err := genGo(goOut, s); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			if err := genGoRPC(goOut, s); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
 		}
-		if err := genGoRPC(goOut, s); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		if err := genTS(tsOut, s); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		if err := genTSRPC(tsOut, s); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+		if strings.TrimSpace(tsOut) != "" {
+			if err := genTS(tsOut, s); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			if err := genTSRPC(tsOut, s); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
 		}
 	}
+}
+
+func listFIDLFilesFromManifest(root string, manifestPath string) ([]string, error) {
+	b, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(string(b), "\n")
+	out := make([]string, 0, len(lines))
+	seen := make(map[string]struct{}, len(lines))
+	for i, line := range lines {
+		raw := strings.TrimSpace(line)
+		if raw == "" || strings.HasPrefix(raw, "#") {
+			continue
+		}
+		p := raw
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(root, p)
+		}
+		p = filepath.Clean(p)
+		if !strings.HasSuffix(p, ".fidl.json") {
+			return nil, fmt.Errorf("manifest line %d: %q is not a .fidl.json path", i+1, raw)
+		}
+		if _, err := os.Stat(p); err != nil {
+			return nil, fmt.Errorf("manifest line %d: %q: %w", i+1, raw, err)
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func listFIDLFiles(root string) ([]string, error) {

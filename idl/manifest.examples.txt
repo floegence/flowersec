@@ -1,0 +1,2 @@
+# Example/test-only IDLs (not part of the public API surface).
+flowersec/demo/v1/demo.fidl.json

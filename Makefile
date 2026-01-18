@@ -1,4 +1,4 @@
-.PHONY: gen test go-test go-test-race go-vulncheck ts-ci ts-audit ts-test ts-lint ts-build fmt fmt-check lint lint-check bench check
+.PHONY: gen gen-core gen-examples test go-test go-test-race go-vulncheck ts-ci ts-audit ts-test ts-lint ts-build fmt fmt-check lint lint-check bench check
 
 GOVULNCHECK_VERSION ?= v1.1.4
 
@@ -7,19 +7,30 @@ YAMUX_INTEROP_STRESS ?= 0
 YAMUX_INTEROP_CLIENT_RST ?= 0
 YAMUX_INTEROP_DEBUG ?= 0
 
-gen:
-	cd tools/idlgen && go run . -in ../../idl -go-out ../../flowersec-go/gen -ts-out ../../flowersec-ts/src/gen
+gen: gen-core gen-examples
+
+gen-core:
+	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.core.txt -go-out ../../flowersec-go/gen -ts-out ../../flowersec-ts/src/gen
 	cd flowersec-go && gofmt -w gen
+
+gen-examples:
+	# Demo IDL is for examples/integration tests only; do not ship it as a public API surface.
+	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.examples.txt -go-out ../../examples/gen -ts-out ../../flowersec-ts/src/_examples
+	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.examples.txt -go-out ../../flowersec-go/internal/testgen -ts-out ../../flowersec-ts/src/_examples
+	gofmt -w examples/gen
+	cd flowersec-go && gofmt -w internal/testgen
 
 test: go-test ts-test
 
 go-test:
 	cd flowersec-go && go test ./...
 	cd examples && go test ./...
+	cd tools/idlgen && go test ./...
 
 go-test-race:
 	cd flowersec-go && go test -race ./...
 	cd examples && go test -race ./...
+	cd tools/idlgen && go test -race ./...
 
 go-vulncheck:
 	cd flowersec-go && go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
@@ -45,12 +56,12 @@ ts-build:
 	cd flowersec-ts && rm -rf dist && npm run build
 
 fmt:
-	gofmt -w flowersec-go examples/go
+	gofmt -w flowersec-go examples/go examples/gen
 
 fmt-check:
-	@if [ -n "$$(gofmt -l flowersec-go examples/go)" ]; then \
+	@if [ -n "$$(gofmt -l flowersec-go examples/go examples/gen)" ]; then \
 		echo "gofmt needed; run 'make fmt'"; \
-		gofmt -l flowersec-go examples/go; \
+		gofmt -l flowersec-go examples/go examples/gen; \
 		exit 1; \
 	fi
 

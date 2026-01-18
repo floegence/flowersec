@@ -1,7 +1,7 @@
 import process from "node:process";
 
 import { connectTunnelNode } from "../../flowersec-ts/dist/node/index.js";
-import { createDemoClient } from "../../flowersec-ts/dist/gen/flowersec/demo/v1.rpc.gen.js";
+import { createDemoClient } from "../../flowersec-ts/dist/_examples/flowersec/demo/v1.rpc.gen.js";
 import { ByteReader } from "../../flowersec-ts/dist/yamux/index.js";
 
 // node-tunnel-client is the "simple" Node.js tunnel client example.

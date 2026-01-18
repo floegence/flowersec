@@ -1,0 +1,6 @@
+# Stable Flowersec protocol IDLs (public API surface).
+flowersec/controlplane/v1/controlplane.fidl.json
+flowersec/direct/v1/direct.fidl.json
+flowersec/e2ee/v1/e2ee.fidl.json
+flowersec/rpc/v1/rpc.fidl.json
+flowersec/tunnel/v1/tunnel.fidl.json

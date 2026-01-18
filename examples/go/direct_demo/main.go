@@ -14,10 +14,11 @@ import (
 	"syscall"
 	"time"
 
+	demov1 "github.com/floegence/flowersec-examples/gen/flowersec/demo/v1"
 	"github.com/floegence/flowersec-examples/go/exampleutil"
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	demov1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/demo/v1"
+	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
@@ -71,6 +72,18 @@ func main() {
 	pskB64u := exampleutil.Encode(psk)
 	initExp := time.Now().Add(120 * time.Second).Unix()
 
+	streamSrv := endpointserve.New(endpointserve.Options{
+		RPC: endpointserve.RPCOptions{
+			Register: func(r *rpc.Router, srv *rpc.Server) {
+				demov1.RegisterDemo(r, demoHandler{srv: srv})
+			},
+		},
+	})
+	streamSrv.Handle("echo", func(ctx context.Context, stream io.ReadWriteCloser) {
+		_ = ctx
+		_, _ = io.Copy(stream, stream)
+	})
+
 	mux := http.NewServeMux()
 	mux.HandleFunc(
 		wsPath,
@@ -89,18 +102,7 @@ func main() {
 				MaxRecordBytes:      1 << 20,
 			},
 			OnStream: func(kind string, stream io.ReadWriteCloser) {
-				defer stream.Close()
-				switch kind {
-				case "rpc":
-					router := rpc.NewRouter()
-					srv := rpc.NewServer(stream, router)
-					demov1.RegisterDemo(router, demoHandler{srv: srv})
-					_ = srv.Serve(ctx)
-				case "echo":
-					_, _ = io.Copy(stream, stream)
-				default:
-					return
-				}
+				streamSrv.HandleStream(ctx, kind, stream)
 			},
 		}),
 	)

@@ -47,8 +47,8 @@ describe("package exports", () => {
       assert.equal(typeof sh.readStreamHello, "function");
       assert.equal(typeof sh.writeStreamHello, "function");
 
-      const demoGen = await import("@flowersec/core/gen/flowersec/demo/v1.rpc.gen");
-      assert.equal(typeof demoGen.createDemoClient, "function");
+      const rpcGen = await import("@flowersec/core/gen/flowersec/rpc/v1.gen");
+      assert.equal(typeof rpcGen.assertRpcError, "function");
 
       const internal = await import("@flowersec/core/internal");
       assert.equal(typeof internal.clientHandshake, "function");

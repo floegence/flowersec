@@ -10,8 +10,8 @@ import (
 	"os"
 	"time"
 
+	demov1 "github.com/floegence/flowersec-examples/gen/flowersec/demo/v1"
 	"github.com/floegence/flowersec/flowersec-go/client"
-	demov1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/demo/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 )
 

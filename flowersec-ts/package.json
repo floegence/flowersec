@@ -42,9 +42,25 @@
       "types": "./dist/streamhello/index.d.ts",
       "default": "./dist/streamhello/index.js"
     },
-    "./gen/*": {
-      "types": "./dist/gen/*.d.ts",
-      "default": "./dist/gen/*.js"
+    "./gen/flowersec/controlplane/*": {
+      "types": "./dist/gen/flowersec/controlplane/*.d.ts",
+      "default": "./dist/gen/flowersec/controlplane/*.js"
+    },
+    "./gen/flowersec/direct/*": {
+      "types": "./dist/gen/flowersec/direct/*.d.ts",
+      "default": "./dist/gen/flowersec/direct/*.js"
+    },
+    "./gen/flowersec/e2ee/*": {
+      "types": "./dist/gen/flowersec/e2ee/*.d.ts",
+      "default": "./dist/gen/flowersec/e2ee/*.js"
+    },
+    "./gen/flowersec/rpc/*": {
+      "types": "./dist/gen/flowersec/rpc/*.d.ts",
+      "default": "./dist/gen/flowersec/rpc/*.js"
+    },
+    "./gen/flowersec/tunnel/*": {
+      "types": "./dist/gen/flowersec/tunnel/*.d.ts",
+      "default": "./dist/gen/flowersec/tunnel/*.js"
     },
     "./internal": {
       "types": "./dist/index.d.ts",
