@@ -68,10 +68,22 @@ func connectJSONBytes(ctx context.Context, b []byte, origin string, opts ...Conn
 	}
 
 	_, hasGrantClient := obj["grant_client"]
+	_, hasGrantServer := obj["grant_server"]
 	_, hasTunnelURL := obj["tunnel_url"]
 	_, hasToken := obj["token"]
 	_, hasRole := obj["role"]
 	if !hasGrantClient && !hasTunnelURL && !hasToken && !hasRole {
+		if hasGrantServer {
+			raw := bytes.TrimSpace(obj["grant_server"])
+			if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+				return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingGrant, ErrMissingGrant)
+			}
+			var grant controlv1.ChannelInitGrant
+			if err := json.Unmarshal(raw, &grant); err != nil {
+				return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
+			}
+			return ConnectTunnel(ctx, &grant, origin, opts...)
+		}
 		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
 	}
 

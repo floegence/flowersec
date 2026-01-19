@@ -49,6 +49,15 @@ describe("connect (auto-detect)", () => {
     expect(mocks.connectDirect).not.toHaveBeenCalled();
   });
 
+  test("routes grant_server wrapper inputs to connectTunnel (role mismatch happens inside)", async () => {
+    mocks.connectTunnel.mockResolvedValueOnce({ path: "tunnel" });
+    const input = { grant_server: { tunnel_url: "ws://example.invalid/ws" } };
+    const out = await connect(input, { origin: "https://app.example" });
+    expect(out).toEqual({ path: "tunnel" });
+    expect(mocks.connectTunnel).toHaveBeenCalledWith(input, { origin: "https://app.example" });
+    expect(mocks.connectDirect).not.toHaveBeenCalled();
+  });
+
   test("prefers direct when both ws_url and tunnel_url are present", async () => {
     mocks.connectDirect.mockResolvedValueOnce({ path: "direct" });
     const input = { ws_url: "ws://example.invalid/ws", tunnel_url: "ws://tunnel.invalid/ws" };

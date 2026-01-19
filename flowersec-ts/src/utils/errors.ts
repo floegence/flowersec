@@ -21,6 +21,7 @@ export type FlowersecErrorCode =
   | "canceled"
   | "handshake_failed"
   | "invalid_input"
+  | "invalid_option"
   | "invalid_connect_info"
   | "invalid_endpoint_instance_id"
   | "invalid_grant"

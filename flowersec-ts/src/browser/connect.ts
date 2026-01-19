@@ -25,7 +25,7 @@ export async function connectBrowser(input: unknown, opts?: ConnectBrowserOption
 export async function connectBrowser(input: unknown, opts: ConnectBrowserOptions = {}): Promise<Client> {
   const origin = getBrowserOrigin();
   if (origin === "") {
-    throw new FlowersecError({ stage: "validate", code: "missing_origin", message: "missing browser origin" });
+    throw new FlowersecError({ stage: "validate", code: "missing_origin", path: "auto", message: "missing browser origin" });
   }
   return await connect(input, { ...opts, origin } as ConnectOptions);
 }

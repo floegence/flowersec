@@ -50,6 +50,8 @@ This writes:
 - `./keys/issuer_key.json` (private signing key; keep it secret)
 - `./keys/issuer_keys.json` (public keyset for the tunnel)
 
+Tip: the helper tools support env defaults (flags override env). See `flowersec-issuer-keygen --help` and `flowersec-channelinit --help`.
+
 Allowed Origin entries support:
 
 - Full Origin values (for example `https://example.com` or `http://127.0.0.1:5173`)

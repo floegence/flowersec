@@ -28,6 +28,12 @@ func TestVersionFlag(t *testing.T) {
 }
 
 func TestKeygenWritesFilesAndEmitsReadyJSON(t *testing.T) {
+	t.Setenv("FSEC_ISSUER_KID", "")
+	t.Setenv("FSEC_ISSUER_OUT_DIR", "")
+	t.Setenv("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
+	t.Setenv("FSEC_ISSUER_KEYS_FILE", "")
+	t.Setenv("FSEC_TUNNEL_ISSUER_KEYS_FILE", "")
+
 	oldV := version
 	version = "v1.2.3"
 	t.Cleanup(func() { version = oldV })
@@ -77,5 +83,38 @@ func TestKeygenWritesFilesAndEmitsReadyJSON(t *testing.T) {
 		if got := pubStat.Mode().Perm(); got != 0o644 {
 			t.Fatalf("unexpected issuer keys perms: got %o, want %o", got, 0o644)
 		}
+	}
+}
+
+func TestKeygen_EnvDefaults(t *testing.T) {
+	t.Setenv("FSEC_ISSUER_KID", "k9")
+	t.Setenv("FSEC_ISSUER_PRIVATE_KEY_FILE", "issuer_key_custom.json")
+	t.Setenv("FSEC_ISSUER_KEYS_FILE", "")
+	t.Setenv("FSEC_TUNNEL_ISSUER_KEYS_FILE", "issuer_keys_custom.json")
+
+	outDir := t.TempDir()
+	t.Setenv("FSEC_ISSUER_OUT_DIR", outDir)
+
+	var stdout, stderr bytes.Buffer
+	code := run(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+
+	var r ready
+	if err := json.Unmarshal(stdout.Bytes(), &r); err != nil {
+		t.Fatalf("decode ready JSON: %v (stdout=%q)", err, stdout.String())
+	}
+	if r.KID != "k9" {
+		t.Fatalf("unexpected kid: %q", r.KID)
+	}
+
+	privPath := filepath.Join(outDir, "issuer_key_custom.json")
+	if _, err := os.Stat(privPath); err != nil {
+		t.Fatalf("private key file not written: %v", err)
+	}
+	pubPath := filepath.Join(outDir, "issuer_keys_custom.json")
+	if _, err := os.Stat(pubPath); err != nil {
+		t.Fatalf("issuer keys file not written: %v", err)
 	}
 }

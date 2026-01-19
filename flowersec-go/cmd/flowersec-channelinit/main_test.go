@@ -30,6 +30,16 @@ func TestVersionFlag(t *testing.T) {
 }
 
 func TestChannelInitOutputIsProtocolioCompatible(t *testing.T) {
+	t.Setenv("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
+	t.Setenv("FSEC_TUNNEL_URL", "")
+	t.Setenv("FSEC_TUNNEL_AUD", "")
+	t.Setenv("FSEC_TUNNEL_ISS", "")
+	t.Setenv("FSEC_ISSUER_ID", "")
+	t.Setenv("FSEC_CHANNEL_ID", "")
+	t.Setenv("FSEC_CHANNELINIT_OUT", "")
+	t.Setenv("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", "")
+	t.Setenv("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", "")
+
 	oldV := version
 	version = "v1.2.3"
 	t.Cleanup(func() { version = oldV })
@@ -87,5 +97,91 @@ func TestChannelInitOutputIsProtocolioCompatible(t *testing.T) {
 	}
 	if gs.ChannelId != "ch_1" {
 		t.Fatalf("unexpected server channel_id: %q", gs.ChannelId)
+	}
+}
+
+func TestChannelInit_EnvDefaults(t *testing.T) {
+	t.Setenv("FSEC_TUNNEL_URL", "ws://127.0.0.1:8080/ws")
+	t.Setenv("FSEC_TUNNEL_AUD", "aud")
+	t.Setenv("FSEC_TUNNEL_ISS", "iss")
+	t.Setenv("FSEC_CHANNEL_ID", "ch_1")
+	t.Setenv("FSEC_CHANNELINIT_OUT", "")
+	t.Setenv("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", "")
+	t.Setenv("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", "")
+
+	tmp := t.TempDir()
+	ks, err := issuer.NewRandom("k1")
+	if err != nil {
+		t.Fatalf("new issuer: %v", err)
+	}
+	privJSON, err := ks.ExportPrivateKeyFile()
+	if err != nil {
+		t.Fatalf("export private key: %v", err)
+	}
+	privFile := filepath.Join(tmp, "issuer_key.json")
+	if err := os.WriteFile(privFile, privJSON, 0o600); err != nil {
+		t.Fatalf("write private key file: %v", err)
+	}
+	t.Setenv("FSEC_ISSUER_PRIVATE_KEY_FILE", privFile)
+
+	var stdout, stderr bytes.Buffer
+	code := run(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "\n  \"grant_client\"") {
+		t.Fatalf("expected compact JSON by default, got indented output: %q", stdout.String())
+	}
+
+	var out output
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("decode output: %v (stdout=%q)", err, stdout.String())
+	}
+	if out.GrantClient == nil || out.GrantServer == nil {
+		t.Fatalf("missing grants: %+v", out)
+	}
+}
+
+func TestChannelInit_PrettyFlag(t *testing.T) {
+	t.Setenv("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
+	t.Setenv("FSEC_TUNNEL_URL", "")
+	t.Setenv("FSEC_TUNNEL_AUD", "")
+	t.Setenv("FSEC_TUNNEL_ISS", "")
+	t.Setenv("FSEC_ISSUER_ID", "")
+	t.Setenv("FSEC_CHANNEL_ID", "")
+	t.Setenv("FSEC_CHANNELINIT_OUT", "")
+	t.Setenv("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", "")
+	t.Setenv("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", "")
+
+	tmp := t.TempDir()
+	ks, err := issuer.NewRandom("k1")
+	if err != nil {
+		t.Fatalf("new issuer: %v", err)
+	}
+	privJSON, err := ks.ExportPrivateKeyFile()
+	if err != nil {
+		t.Fatalf("export private key: %v", err)
+	}
+	privFile := filepath.Join(tmp, "issuer_key.json")
+	if err := os.WriteFile(privFile, privJSON, 0o600); err != nil {
+		t.Fatalf("write private key file: %v", err)
+	}
+
+	args := []string{
+		"--issuer-private-key-file", privFile,
+		"--tunnel-url", "ws://127.0.0.1:8080/ws",
+		"--aud", "aud",
+		"--iss", "iss",
+		"--channel-id", "ch_1",
+		"--pretty",
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\n  \"grant_client\"") {
+		t.Fatalf("expected indented JSON output, got %q", stdout.String())
 	}
 }

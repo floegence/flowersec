@@ -54,19 +54,23 @@ function maybeParseJSON(input: unknown): unknown {
 //
 // It is a convenience wrapper intended for cases where the caller only has an input JSON object
 // (or a JSON string) and does not want to branch on ws_url vs tunnel_url manually.
+export async function connect(input: DirectConnectInfo, opts: DirectConnectOptions): Promise<Client>;
+export async function connect(input: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client>;
+export async function connect(input: unknown, opts: ConnectOptions): Promise<Client>;
 export async function connect(input: unknown, opts: ConnectOptions): Promise<Client> {
   const v = maybeParseJSON(input);
   if (v != null && typeof v === "object") {
     const o = v as Record<string, unknown>;
     if (o["ws_url"] !== undefined) return await connectDirectInternal(v, opts as DirectConnectOptions);
     if (o["grant_client"] !== undefined) return await connectTunnelInternal(v, opts as TunnelConnectOptions);
+    if (o["grant_server"] !== undefined) return await connectTunnelInternal(v, opts as TunnelConnectOptions);
     if (o["tunnel_url"] !== undefined) return await connectTunnelInternal(v, opts as TunnelConnectOptions);
     if (o["token"] !== undefined || o["role"] !== undefined) return await connectTunnelInternal(v, opts as TunnelConnectOptions);
     throw new FlowersecError({
       path: "auto",
       stage: "validate",
       code: "invalid_input",
-      message: "invalid input: expected DirectConnectInfo (ws_url) or ChannelInitGrant (tunnel_url or grant_client)",
+      message: "invalid input: expected DirectConnectInfo (ws_url) or ChannelInitGrant (tunnel_url, grant_client, or grant_server)",
     });
   }
   throw new FlowersecError({

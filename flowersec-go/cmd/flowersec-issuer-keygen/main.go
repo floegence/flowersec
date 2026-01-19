@@ -36,19 +36,19 @@ func main() {
 func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	showVersion := false
 
-	var kid string
-	var outDir string
-	var privFile string
-	var pubFile string
+	kid := envString("FSEC_ISSUER_KID", "k1")
+	outDir := envString("FSEC_ISSUER_OUT_DIR", ".")
+	privFile := envString("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
+	pubFile := envString("FSEC_ISSUER_KEYS_FILE", envString("FSEC_TUNNEL_ISSUER_KEYS_FILE", ""))
 	var overwrite bool
 
 	fs := flag.NewFlagSet("flowersec-issuer-keygen", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.BoolVar(&showVersion, "version", false, "print version and exit")
-	fs.StringVar(&kid, "kid", "k1", "issuer key id (kid)")
-	fs.StringVar(&outDir, "out-dir", ".", "output directory for generated files")
-	fs.StringVar(&privFile, "private-key-file", "", "output file for issuer private key (default: <out-dir>/issuer_key.json)")
-	fs.StringVar(&pubFile, "issuer-keys-file", "", "output file for tunnel issuer keyset (public keys) (default: <out-dir>/issuer_keys.json)")
+	fs.StringVar(&kid, "kid", kid, "issuer key id (kid) (env: FSEC_ISSUER_KID)")
+	fs.StringVar(&outDir, "out-dir", outDir, "output directory for generated files (env: FSEC_ISSUER_OUT_DIR)")
+	fs.StringVar(&privFile, "private-key-file", privFile, "output file for issuer private key (default: <out-dir>/issuer_key.json) (env: FSEC_ISSUER_PRIVATE_KEY_FILE)")
+	fs.StringVar(&pubFile, "issuer-keys-file", pubFile, "output file for tunnel issuer keyset (public keys) (default: <out-dir>/issuer_keys.json) (env: FSEC_ISSUER_KEYS_FILE or FSEC_TUNNEL_ISSUER_KEYS_FILE)")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing files")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -61,10 +61,17 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 0
 	}
 
+	usageErr := func(msg string) int {
+		if msg != "" {
+			fmt.Fprintln(stderr, msg)
+		}
+		fs.Usage()
+		return 2
+	}
+
 	kid = strings.TrimSpace(kid)
 	if kid == "" {
-		fmt.Fprintln(stderr, "missing --kid")
-		return 2
+		return usageErr("missing --kid")
 	}
 	outDir = strings.TrimSpace(outDir)
 	if outDir == "" {
@@ -149,4 +156,11 @@ func absOr(path string) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func envString(key string, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
 }

@@ -51,6 +51,22 @@ flowersec-channelinit \
   > channel.json
 ```
 
+Env-defaults variant (flags override env):
+
+```bash
+export FSEC_ISSUER_OUT_DIR=./keys
+flowersec-issuer-keygen
+
+export FSEC_ISSUER_PRIVATE_KEY_FILE=./keys/issuer_key.json
+export FSEC_TUNNEL_URL=ws://127.0.0.1:8080/ws
+export FSEC_TUNNEL_AUD=flowersec-tunnel:dev
+export FSEC_TUNNEL_ISS=issuer-dev
+flowersec-channelinit > channel.json
+
+# Optional: human-readable JSON.
+# flowersec-channelinit --pretty > channel.json
+```
+
 The resulting `channel.json` contains both `grant_client` and `grant_server` and can be consumed by
 `protocolio.DecodeGrantClientJSON` / `protocolio.DecodeGrantServerJSON` and by the TS connect helpers
 (they accept the wrapper object).
@@ -446,6 +462,7 @@ Secure-layer keepalive failures (explicit ping) use: `ping_failed`.
 
 Input validation codes for tunnel connects include: `missing_token` (for `ChannelInitGrant.token`).
 Auto-detect helpers use `path=auto` and `code=invalid_input` when the provided input does not look like either direct or tunnel connect JSON.
+If you accidentally pass a server grant wrapper (`{"grant_server": {...}}`) into a client connect helper, auto-detect routes it to the tunnel path and you should see `path=tunnel` with `code=role_mismatch`.
 
 For generated Go RPC handlers (`rpc.gen.go`), handler methods return `error`. To return a non-500 wire RPC error, return `&rpc.Error{Code: ..., Message: ...}` (any other error is treated as `code=500` / `"internal error"`).
 
@@ -456,6 +473,8 @@ High-level APIs throw `FlowersecError` with `{path, stage, code}`. Codes match t
 Handshake fallback code is `handshake_failed`. Secure-layer keepalive failures (explicit ping) use `ping_failed`.
 
 Auto-detect helpers use `path=auto` and `code=invalid_input` when the provided input does not look like either direct or tunnel connect JSON.
+If you accidentally pass a server grant wrapper (`{"grant_server": {...}}`) into a client connect helper, auto-detect routes it to the tunnel path and you should see `path=tunnel` with `code=role_mismatch`.
+If you pass a tunnel-only option (for example `endpointInstanceId`) to a direct connect helper, it fails fast with `code=invalid_option`.
 
 ## Keepalive (recommended)
 

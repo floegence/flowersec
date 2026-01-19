@@ -10,6 +10,8 @@ import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
 
 import { createNodeWsFactory } from "./wsFactory.js";
 
+export async function connectNode(input: DirectConnectInfo, opts: DirectConnectOptions): Promise<Client>;
+export async function connectNode(input: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client>;
 export async function connectNode(input: unknown, opts: ConnectOptions): Promise<Client> {
   return await connect(input, { ...opts, wsFactory: opts.wsFactory ?? createNodeWsFactory() });
 }

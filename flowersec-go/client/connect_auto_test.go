@@ -49,6 +49,20 @@ func TestConnect_AutoDetectGrantClientWrapper(t *testing.T) {
 	}
 }
 
+func TestConnect_AutoDetectGrantServerWrapper(t *testing.T) {
+	_, err := Connect(context.Background(), []byte(`{"grant_server":{"role":2}}`), "http://example.com")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *client.Error, got %T", err)
+	}
+	if fe.Path != PathTunnel || fe.Stage != StageValidate || fe.Code != CodeRoleMismatch {
+		t.Fatalf("unexpected error: %+v", fe)
+	}
+}
+
 func TestConnect_PrefersDirectWhenBothPresent(t *testing.T) {
 	_, err := Connect(context.Background(), []byte(`{"ws_url":"","tunnel_url":"ws://tunnel.invalid/ws","role":1}`), "http://example.com")
 	if err == nil {

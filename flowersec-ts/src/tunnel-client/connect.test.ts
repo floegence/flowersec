@@ -179,6 +179,14 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "role_mismatch", path: "tunnel" });
   });
 
+  test("rejects grant_server wrapper inputs with role mismatch", async () => {
+    const bad = makeGrant();
+    bad.role = Role.Role_server;
+    const p = connectTunnel({ grant_server: bad } as any, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "role_mismatch", path: "tunnel" });
+  });
+
   test("reports websocket error on connect", async () => {
     const ws = new FakeWebSocket();
     const observer = {

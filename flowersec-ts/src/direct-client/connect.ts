@@ -10,6 +10,15 @@ export type DirectConnectOptions = ConnectOptionsBase;
 
 // connectDirect connects to a direct websocket endpoint and returns an RPC-ready session.
 export async function connectDirect(info: unknown, opts: DirectConnectOptions): Promise<ClientInternal> {
+  const endpointInstanceId = (opts as any)?.endpointInstanceId;
+  if (endpointInstanceId != null) {
+    throw new FlowersecError({
+      stage: "validate",
+      code: "invalid_option",
+      path: "direct",
+      message: "endpointInstanceId is only valid for tunnel connects",
+    });
+  }
   if (info == null) {
     throw new FlowersecError({ stage: "validate", code: "missing_connect_info", path: "direct", message: "missing connect info" });
   }

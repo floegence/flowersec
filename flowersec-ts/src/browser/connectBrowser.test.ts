@@ -22,7 +22,7 @@ describe("connectBrowser", () => {
   test("throws missing_origin when window.location.origin is unavailable", async () => {
     const p = connectBrowser({ ws_url: "ws://example.invalid/ws" }, {});
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_origin" });
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_origin", path: "auto" });
     expect(mocks.connect).not.toHaveBeenCalled();
   });
 
@@ -37,4 +37,3 @@ describe("connectBrowser", () => {
     expect(mocks.connect).toHaveBeenCalledWith(input, { connectTimeoutMs: 123, origin: "http://127.0.0.1:5173" });
   });
 });
-

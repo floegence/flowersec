@@ -14,16 +14,17 @@ export type TunnelConnectOptions = ConnectOptionsBase &
     endpointInstanceId?: string;
   }>;
 
-function unwrapGrantClient(v: unknown): unknown {
+function unwrapGrant(v: unknown): unknown {
   if (v == null || typeof v !== "object") return v;
   const o = v as Record<string, unknown>;
   if (o["grant_client"] != null) return o["grant_client"];
+  if (o["grant_server"] != null) return o["grant_server"];
   return v;
 }
 
 // connectTunnel attaches to a tunnel and returns an RPC-ready session.
 export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions): Promise<ClientInternal> {
-  const input = unwrapGrantClient(grant);
+  const input = unwrapGrant(grant);
   if (input == null) {
     throw new FlowersecError({ stage: "validate", code: "missing_grant", path: "tunnel", message: "missing grant" });
   }

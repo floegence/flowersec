@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
@@ -38,28 +39,38 @@ func main() {
 func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	showVersion := false
 
-	var issuerPrivFile string
-	var tunnelURL string
-	var aud string
-	var iss string
-	var channelID string
-	var tokenExpSeconds int64
-	var idleTimeoutSeconds int
-	var outFile string
+	issuerPrivFile := envString("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
+	tunnelURL := envString("FSEC_TUNNEL_URL", "")
+	aud := envString("FSEC_TUNNEL_AUD", "")
+	iss := envString("FSEC_TUNNEL_ISS", envString("FSEC_ISSUER_ID", ""))
+	channelID := envString("FSEC_CHANNEL_ID", "")
+	tokenExpSeconds, err := envInt64WithErr("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", 60)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_CHANNELINIT_TOKEN_EXP_SECONDS: %v\n", err)
+		return 2
+	}
+	idleTimeoutSeconds, err := envIntWithErr("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", 60)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS: %v\n", err)
+		return 2
+	}
+	outFile := envString("FSEC_CHANNELINIT_OUT", "")
 	var overwrite bool
+	var pretty bool
 
 	fs := flag.NewFlagSet("flowersec-channelinit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.BoolVar(&showVersion, "version", false, "print version and exit")
-	fs.StringVar(&issuerPrivFile, "issuer-private-key-file", "", "issuer private key file (required)")
-	fs.StringVar(&tunnelURL, "tunnel-url", "", "tunnel websocket url (required; e.g. ws://127.0.0.1:8080/ws)")
-	fs.StringVar(&aud, "aud", "", "token audience (required; must match tunnel --aud)")
-	fs.StringVar(&iss, "iss", "", "token issuer (required; must match tunnel --iss)")
-	fs.StringVar(&channelID, "channel-id", "", "channel id (default: random)")
-	fs.Int64Var(&tokenExpSeconds, "token-exp-seconds", 60, "token lifetime in seconds (capped by init exp)")
-	fs.IntVar(&idleTimeoutSeconds, "idle-timeout-seconds", 60, "tunnel idle timeout in seconds (embedded into tokens and enforced by the tunnel)")
-	fs.StringVar(&outFile, "out", "", "output file (default: stdout)")
+	fs.StringVar(&issuerPrivFile, "issuer-private-key-file", issuerPrivFile, "issuer private key file (required) (env: FSEC_ISSUER_PRIVATE_KEY_FILE)")
+	fs.StringVar(&tunnelURL, "tunnel-url", tunnelURL, "tunnel websocket url (required; e.g. ws://127.0.0.1:8080/ws) (env: FSEC_TUNNEL_URL)")
+	fs.StringVar(&aud, "aud", aud, "token audience (required; must match tunnel --aud) (env: FSEC_TUNNEL_AUD)")
+	fs.StringVar(&iss, "iss", iss, "token issuer (required; must match tunnel --iss) (env: FSEC_TUNNEL_ISS or FSEC_ISSUER_ID)")
+	fs.StringVar(&channelID, "channel-id", channelID, "channel id (default: random) (env: FSEC_CHANNEL_ID)")
+	fs.Int64Var(&tokenExpSeconds, "token-exp-seconds", tokenExpSeconds, "token lifetime in seconds (capped by init exp) (env: FSEC_CHANNELINIT_TOKEN_EXP_SECONDS)")
+	fs.IntVar(&idleTimeoutSeconds, "idle-timeout-seconds", idleTimeoutSeconds, "tunnel idle timeout in seconds (embedded into tokens and enforced by the tunnel) (env: FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS)")
+	fs.StringVar(&outFile, "out", outFile, "output file (default: stdout) (env: FSEC_CHANNELINIT_OUT)")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing --out file")
+	fs.BoolVar(&pretty, "pretty", false, "pretty-print JSON output")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -71,6 +82,14 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 0
 	}
 
+	usageErr := func(msg string) int {
+		if msg != "" {
+			fmt.Fprintln(stderr, msg)
+		}
+		fs.Usage()
+		return 2
+	}
+
 	issuerPrivFile = strings.TrimSpace(issuerPrivFile)
 	tunnelURL = strings.TrimSpace(tunnelURL)
 	aud = strings.TrimSpace(aud)
@@ -79,8 +98,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	outFile = strings.TrimSpace(outFile)
 
 	if issuerPrivFile == "" || tunnelURL == "" || aud == "" || iss == "" {
-		fmt.Fprintln(stderr, "missing --issuer-private-key-file, --tunnel-url, --aud, or --iss")
-		return 2
+		return usageErr("missing --issuer-private-key-file, --tunnel-url, --aud, or --iss")
 	}
 	if channelID == "" {
 		channelID = randomB64u(24)
@@ -107,13 +125,19 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	b, err := json.MarshalIndent(output{
+	out := output{
 		Version:     version,
 		Commit:      commit,
 		Date:        date,
 		GrantClient: client,
 		GrantServer: server,
-	}, "", "  ")
+	}
+	var b []byte
+	if pretty {
+		b, err = json.MarshalIndent(out, "", "  ")
+	} else {
+		b, err = json.Marshal(out)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -146,4 +170,35 @@ func randomB64u(n int) string {
 		panic(err)
 	}
 	return base64url.Encode(b)
+}
+
+func envString(key string, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envIntWithErr(key string, fallback int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
+func envInt64WithErr(key string, fallback int64) (int64, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
 }

@@ -83,6 +83,24 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit
 - `flowersec-issuer-keygen` writes `issuer_key.json` (private key; keep it secret) and `issuer_keys.json` (public keyset for the tunnel).
 - `flowersec-channelinit` outputs a JSON object containing `grant_client`/`grant_server` (plus version metadata) to stdout (redirect to a file if needed).
 
+Flags override env. For scripting, both tools support env defaults:
+
+```bash
+# Generate issuer keys (private + public keyset for the tunnel).
+export FSEC_ISSUER_OUT_DIR=./keys
+flowersec-issuer-keygen
+
+# Mint a one-time ChannelInitGrant pair (client/server).
+export FSEC_ISSUER_PRIVATE_KEY_FILE=./keys/issuer_key.json
+export FSEC_TUNNEL_URL=ws://127.0.0.1:8080/ws
+export FSEC_TUNNEL_AUD=flowersec-tunnel:dev
+export FSEC_TUNNEL_ISS=issuer-dev
+flowersec-channelinit > channel.json
+
+# Tip: use --pretty for human-readable JSON.
+# flowersec-channelinit --pretty > channel.json
+```
+
 **Option B: GitHub Releases (no Go)**
 
 Download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip` on Windows) from the same GitHub Release tag (`flowersec-go/vX.Y.Z`).

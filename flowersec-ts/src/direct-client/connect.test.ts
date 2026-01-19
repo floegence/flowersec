@@ -138,6 +138,12 @@ describe("connectDirect", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_psk", path: "direct" });
   });
 
+  test("rejects endpointInstanceId (tunnel-only option)", async () => {
+    const p = connectDirect(makeInfo(), { origin: "https://app.redeven.com", endpointInstanceId: "x" } as any);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_option", path: "direct" });
+  });
+
   test("requires wsFactory outside the browser", async () => {
     const p = connectDirect(makeInfo(), { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
