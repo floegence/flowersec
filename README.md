@@ -29,6 +29,93 @@ The recommended hands-on entrypoint is the scenario cookbook:
 open examples/README.md
 ```
 
+If you want a "from zero" guided path (copy/paste friendly), follow the section below.
+
+## Getting started (from zero, local)
+
+This section is a nanny-style walkthrough to get a working end-to-end session on your machine.
+
+### 0) Prerequisites
+
+- Go (same major as `flowersec-go/go.mod`)
+- Node.js 22 LTS (see `.nvmrc`)
+- Optional: `jq` (makes copying values from JSON outputs easier)
+
+### 1) Build the TypeScript bundle once (required for TS examples)
+
+The TS example scripts import from `flowersec-ts/dist/`, so build it once:
+
+```bash
+cd flowersec-ts
+npm ci
+npm run build
+cd ..
+```
+
+### 2) Run your first end-to-end session (direct path, no tunnel)
+
+This is the simplest path: a single direct WebSocket server endpoint that immediately runs E2EE + Yamux + RPC.
+
+Terminal 1 (start the direct server demo):
+
+```bash
+cd examples
+go run ./go/direct_demo --allow-origin http://127.0.0.1:5173 | tee /tmp/fsec-direct.json
+```
+
+Terminal 2 (run a Node.js client against it):
+
+```bash
+FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-direct-client.mjs < /tmp/fsec-direct.json
+```
+
+Alternative (Go client):
+
+```bash
+cd examples
+go run ./go/go_client_direct_simple --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json
+```
+
+### 3) Run the full stack (controlplane + tunnel)
+
+This is the recommended architecture when you need an untrusted public rendezvous (the tunnel) while keeping E2EE end-to-end.
+
+Terminal 1 (start the controlplane demo; it prints a JSON line with params):
+
+```bash
+CP_JSON="$(mktemp -t fsec-controlplane.XXXXXX.json)"
+./examples/run-controlplane-demo.sh | tee "$CP_JSON"
+```
+
+Terminal 2 (start the deployable tunnel service using the params from Terminal 1):
+
+```bash
+FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 \
+FSEC_TUNNEL_ISSUER_KEYS_FILE="$(jq -r '.issuer_keys_file' "$CP_JSON")" \
+FSEC_TUNNEL_AUD="$(jq -r '.tunnel_audience' "$CP_JSON")" \
+FSEC_TUNNEL_ISS="$(jq -r '.tunnel_issuer' "$CP_JSON")" \
+FSEC_TUNNEL_LISTEN="$(jq -r '.tunnel_listen' "$CP_JSON")" \
+FSEC_TUNNEL_WS_PATH="$(jq -r '.tunnel_ws_path' "$CP_JSON")" \
+./examples/run-tunnel-server.sh
+```
+
+Terminal 3 (start a server endpoint; it receives `grant_server` over a control channel and attaches as role=server):
+
+```bash
+FSEC_ORIGIN=http://127.0.0.1:5173 ./examples/run-server-endpoint.sh "$CP_JSON"
+```
+
+Terminal 4 (mint a channel init and run a client):
+
+```bash
+CHANNEL_JSON="$(mktemp -t fsec-channel.XXXXXX.json)"
+CP_URL="$(jq -r '.controlplane_http_url' "$CP_JSON")"
+curl -sS -X POST "$CP_URL/v1/channel/init" | tee "$CHANNEL_JSON"
+FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-tunnel-client.mjs < "$CHANNEL_JSON"
+```
+
+If you refresh/reconnect: mint a new channel again (tunnel attach tokens are one-time use).
+
 High-level client entrypoints:
 
 Install the Go module:
@@ -43,12 +130,16 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 
 - Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.ConnectTunnel(ctx, grant, origin, ...opts)`, `client.ConnectDirect(ctx, info, origin, ...opts)`)
 - Go (server endpoint): `github.com/floegence/flowersec/flowersec-go/endpoint` (accept/dial `role=server` endpoints)
+- Go (server stream runtime): `github.com/floegence/flowersec/flowersec-go/endpoint/serve` (default stream dispatch + RPC stream handler)
 - TS (stable): `@flowersec/core` (`connectTunnel`, `connectDirect`)
 - TS (Node): `@flowersec/core/node` (`connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
 - TS (browser): `@flowersec/core/browser` (`connectTunnelBrowser`, `connectDirectBrowser`)
 - TS (building blocks): `@flowersec/core/rpc`, `@flowersec/core/yamux`, `@flowersec/core/e2ee`, `@flowersec/core/ws`, `@flowersec/core/observability`, `@flowersec/core/streamhello`
-- TS (generated stubs): `@flowersec/core/gen/...`
+- TS (generated protocol stubs): `@flowersec/core/gen/flowersec/{controlplane,direct,e2ee,rpc,tunnel}/*`
 - TS (unstable): `@flowersec/core/internal` (internal glue; not recommended as a stable dependency)
+
+Note: the `demo` IDL used by the cookbook/examples is intentionally NOT part of the public API surface.
+The generated demo stubs live under `examples/gen/` (Go examples module) and `flowersec-ts/src/_examples/` (TS repo-only), and are not exported via `@flowersec/core`.
 
 It includes:
 
@@ -84,6 +175,12 @@ Generate code from IDL:
 ```bash
 make gen
 ```
+
+Codegen is split into:
+
+- `make gen-core`: stable protocol IDLs (public API surface)
+- `make gen-examples`: example/test-only IDLs (not exported as a public API)
+- `make gen`: both
 
 Go workspace:
 
