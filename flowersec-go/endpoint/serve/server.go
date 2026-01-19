@@ -2,6 +2,8 @@ package serve
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"sync"
 
@@ -36,6 +38,10 @@ type Options struct {
 	// If <= 0, endpoint.DefaultMaxStreamHelloBytes is used.
 	MaxStreamHelloBytes int
 	RPC                 RPCOptions
+
+	// OnError is called for non-fatal stream accept/dispatch errors (e.g. bad StreamHello)
+	// and panics recovered from user handlers. It must not panic.
+	OnError func(err error)
 }
 
 // Server dispatches endpoint streams by StreamHello(kind).
@@ -45,6 +51,7 @@ type Options struct {
 type Server struct {
 	maxHelloBytes int
 	rpc           RPCOptions
+	onError       func(err error)
 
 	mu       sync.RWMutex
 	handlers map[string]StreamHandler
@@ -63,6 +70,7 @@ func New(opts Options) *Server {
 	return &Server{
 		maxHelloBytes: maxHello,
 		rpc:           rpcOpts,
+		onError:       opts.OnError,
 		handlers:      make(map[string]StreamHandler),
 	}
 }
@@ -88,9 +96,38 @@ func (s *Server) ServeSession(ctx context.Context, sess endpoint.Session) error 
 	if s == nil {
 		return nil
 	}
-	return sess.ServeStreams(ctx, s.maxHelloBytes, func(kind string, stream io.ReadWriteCloser) {
-		s.HandleStream(ctx, kind, stream)
-	})
+	if sess == nil {
+		return errors.New("missing session")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = sess.Close()
+		case <-done:
+		}
+	}()
+	defer close(done)
+
+	for {
+		kind, stream, err := sess.AcceptStreamHello(s.maxHelloBytes)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			var fe *endpoint.Error
+			if errors.As(err, &fe) && fe.Code == endpoint.CodeStreamHelloFailed {
+				s.reportError(err)
+				continue
+			}
+			return err
+		}
+		go s.HandleStream(ctx, kind, stream)
+	}
 }
 
 // HandleStream dispatches a single stream by kind.
@@ -99,6 +136,11 @@ func (s *Server) HandleStream(ctx context.Context, kind string, stream io.ReadWr
 		return
 	}
 	defer stream.Close()
+	defer func() {
+		if recover() != nil {
+			s.reportError(fmt.Errorf("stream handler panic (kind=%q)", kind))
+		}
+	}()
 	if kind == "" {
 		return
 	}
@@ -129,6 +171,21 @@ func (s *Server) serveRPC(ctx context.Context, stream io.ReadWriteCloser) {
 	if s.rpc.Observer != nil {
 		srv.SetObserver(s.rpc.Observer)
 	}
+	defer func() {
+		if recover() != nil {
+			s.reportError(errors.New("rpc register panic"))
+		}
+	}()
 	s.rpc.Register(router, srv)
 	_ = srv.Serve(ctx)
+}
+
+func (s *Server) reportError(err error) {
+	if s == nil || s.onError == nil || err == nil {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	s.onError(err)
 }

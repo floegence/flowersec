@@ -56,17 +56,17 @@ func Notify[T any](n Notifier, typeID uint32, msg *T) error {
 }
 
 // Register registers a typed request handler for the given type ID.
-func Register[TReq any, TResp any](r *rpc.Router, typeID uint32, h func(ctx context.Context, req *TReq) (*TResp, *rpcwirev1.RpcError)) {
+func Register[TReq any, TResp any](r *rpc.Router, typeID uint32, h func(ctx context.Context, req *TReq) (*TResp, error)) {
 	r.Register(typeID, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcwirev1.RpcError) {
 		var req TReq
 		if len(payload) != 0 {
 			if err := json.Unmarshal(payload, &req); err != nil {
-				return nil, &rpcwirev1.RpcError{Code: 400, Message: strPtr("invalid payload")}
+				return nil, rpc.ToWireError(&rpc.Error{Code: 400, Message: "invalid payload"})
 			}
 		}
-		resp, rpcErr := h(ctx, &req)
-		if rpcErr != nil {
-			return nil, rpcErr
+		resp, err := h(ctx, &req)
+		if err != nil {
+			return nil, rpc.ToWireError(err)
 		}
 		var zeroResp TResp
 		if resp == nil {
@@ -74,10 +74,8 @@ func Register[TReq any, TResp any](r *rpc.Router, typeID uint32, h func(ctx cont
 		}
 		b, err := json.Marshal(resp)
 		if err != nil {
-			return nil, &rpcwirev1.RpcError{Code: 500, Message: strPtr("internal error")}
+			return nil, rpc.ToWireError(err)
 		}
 		return b, nil
 	})
 }
-
-func strPtr(s string) *string { return &s }

@@ -3,6 +3,7 @@ package endpoint_test
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -96,4 +97,84 @@ func TestDirectHandler_AllowsConnectDirect(t *testing.T) {
 		t.Fatalf("ConnectDirect() failed: %v", err)
 	}
 	_ = c.Close()
+}
+
+func TestDirectHandler_OnError_UpgradeFailed(t *testing.T) {
+	t.Parallel()
+
+	origin := "http://example.com"
+	errCh := make(chan error, 1)
+	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		AllowedOrigins: []string{origin},
+		OnStream:       func(string, io.ReadWriteCloser) {},
+		OnError: func(err error) {
+			select {
+			case errCh <- err:
+			default:
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDirectHandler() failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/ws", nil)
+	rec := httptest.NewRecorder()
+	wsHandler(rec, req)
+
+	select {
+	case got := <-errCh:
+		var fe *endpoint.Error
+		if !errors.As(got, &fe) {
+			t.Fatalf("expected *endpoint.Error, got %T", got)
+		}
+		if fe.Path != endpoint.PathDirect || fe.Stage != endpoint.StageConnect || fe.Code != endpoint.CodeUpgradeFailed {
+			t.Fatalf("unexpected error: %+v", fe)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for OnError")
+	}
+}
+
+func TestDirectHandler_OnError_MissingOrigin(t *testing.T) {
+	t.Parallel()
+
+	origin := "http://example.com"
+	errCh := make(chan error, 1)
+	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		AllowedOrigins: []string{origin},
+		OnStream:       func(string, io.ReadWriteCloser) {},
+		OnError: func(err error) {
+			select {
+			case errCh <- err:
+			default:
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDirectHandler() failed: %v", err)
+	}
+
+	// WebSocket upgrade attempt without Origin.
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+
+	rec := httptest.NewRecorder()
+	wsHandler(rec, req)
+
+	select {
+	case got := <-errCh:
+		var fe *endpoint.Error
+		if !errors.As(got, &fe) {
+			t.Fatalf("expected *endpoint.Error, got %T", got)
+		}
+		if fe.Path != endpoint.PathDirect || fe.Stage != endpoint.StageValidate || fe.Code != endpoint.CodeMissingOrigin {
+			t.Fatalf("unexpected error: %+v", fe)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for OnError")
+	}
 }

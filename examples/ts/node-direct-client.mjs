@@ -1,12 +1,12 @@
 import process from "node:process";
 
 import { connectDirectNode } from "../../flowersec-ts/dist/node/index.js";
-import { createDemoClient } from "../../flowersec-ts/dist/_examples/flowersec/demo/v1.rpc.gen.js";
+import { createDemoSession } from "../../flowersec-ts/dist/_examples/flowersec/demo/v1.facade.gen.js";
 import { ByteReader } from "../../flowersec-ts/dist/yamux/index.js";
 
 // node-direct-client is the "simple" Node.js direct (no tunnel) client example.
 //
-// It uses the high-level helper connectDirect(), which internally performs:
+// It uses the high-level helper connectDirectNode(), which internally performs:
 // - WebSocket connect (requires explicit Origin in Node)
 // - E2EE handshake
 // - Yamux session
@@ -48,18 +48,17 @@ async function main() {
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
   // connectDirectNode() returns an RPC-ready session and supports extra yamux streams via openStream(kind).
-  const client = await connectDirectNode(info, { origin });
+  const demo = createDemoSession(await connectDirectNode(info, { origin }));
 
   try {
-    const demo = createDemoClient(client.rpc);
     const notified = waitHello(demo, 2000);
     const resp = await demo.ping({});
     console.log("rpc response:", JSON.stringify(resp));
     console.log("rpc notify:", JSON.stringify(await notified));
 
     // Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
-    // Note: client.openStream(kind) automatically writes the StreamHello(kind) preface.
-    const echo = await client.openStream("echo");
+    // Note: openStream(kind) automatically writes the StreamHello(kind) preface.
+    const echo = await demo.openStream("echo");
     const reader = new ByteReader(async () => {
       try {
         return await echo.read();
@@ -73,7 +72,7 @@ async function main() {
     console.log("echo response:", JSON.stringify(new TextDecoder().decode(got)));
     await echo.close();
   } finally {
-    client.close();
+    demo.close();
   }
 }
 

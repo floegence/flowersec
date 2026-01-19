@@ -19,7 +19,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
-	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
@@ -160,7 +159,7 @@ type demoHandler struct {
 	srv *rpc.Server
 }
 
-func (h demoHandler) Ping(ctx context.Context, _req *demov1.PingRequest) (*demov1.PingResponse, *rpcwirev1.RpcError) {
+func (h demoHandler) Ping(ctx context.Context, _req *demov1.PingRequest) (*demov1.PingResponse, error) {
 	_ = ctx
 	_ = demov1.NotifyDemoHello(h.srv, &demov1.HelloNotify{Hello: "world"})
 	return &demov1.PingResponse{Ok: true}, nil

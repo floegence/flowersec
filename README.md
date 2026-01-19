@@ -224,11 +224,13 @@ make test
 
 ## Observability
 
-The tunnel binary exposes Prometheus metrics on a dedicated metrics server. Metrics are disabled by default and `/metrics` returns 404 until enabled.
+The tunnel binary exposes Prometheus metrics on a dedicated metrics server. The metrics server is disabled by default (empty `--metrics-listen`).
 
-- Enable metrics: send `SIGUSR1`
+When `--metrics-listen` is set, `GET /metrics` is served immediately.
+You can toggle metrics at runtime:
+
 - Disable metrics: send `SIGUSR2`
-- Endpoint: `GET /metrics` on the metrics server (`--metrics-listen`)
+- Re-enable metrics: send `SIGUSR1`
 
 Example:
 
@@ -242,9 +244,6 @@ go run ./cmd/flowersec-tunnel \
   --aud your-audience \
   --iss your-issuer \
   --allow-origin http://127.0.0.1:5173
-
-# enable metrics
-kill -USR1 <pid>
 
 # scrape metrics
 curl http://127.0.0.1:9090/metrics

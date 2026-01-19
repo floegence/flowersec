@@ -130,6 +130,10 @@ func main() {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
+			if err := genTSFacade(tsOut, s); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
 		}
 	}
 }
@@ -314,17 +318,17 @@ func genGoRPC(outRoot string, s schema) error {
 		}
 		if hasRequest {
 			fmt.Fprintf(&buf, "type %sHandler interface {\n", svcExport)
-			for _, mn := range methodNames {
-				m := svc.Methods[mn]
-				if strings.TrimSpace(m.Kind) != "request" {
-					continue
+				for _, mn := range methodNames {
+					m := svc.Methods[mn]
+					if strings.TrimSpace(m.Kind) != "request" {
+						continue
+					}
+					writeGoComment(&buf, m.Comment, "\t")
+					fmt.Fprintf(&buf, "\t%s(ctx context.Context, req *%s) (*%s, error)\n", exportName(mn), exportName(m.Request), exportName(m.Response))
 				}
-				writeGoComment(&buf, m.Comment, "\t")
-				fmt.Fprintf(&buf, "\t%s(ctx context.Context, req *%s) (*%s, *rpcwirev1.RpcError)\n", exportName(mn), exportName(m.Request), exportName(m.Response))
-			}
-			buf.WriteString("}\n\n")
+				buf.WriteString("}\n\n")
 
-			fmt.Fprintf(&buf, "func Register%s(r *rpc.Router, h %sHandler) {\n", svcExport, svcExport)
+				fmt.Fprintf(&buf, "func Register%s(r *rpc.Router, h %sHandler) {\n", svcExport, svcExport)
 			for _, mn := range methodNames {
 				m := svc.Methods[mn]
 				if strings.TrimSpace(m.Kind) != "request" {
@@ -335,28 +339,28 @@ func genGoRPC(outRoot string, s schema) error {
 				respType := exportName(m.Response)
 				handlerMethod := exportName(mn)
 				fmt.Fprintf(&buf, "\tr.Register(%s, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcwirev1.RpcError) {\n", typeIDConst)
-				fmt.Fprintf(&buf, "\t\tvar req %s\n", reqType)
-				buf.WriteString("\t\tif len(payload) != 0 {\n")
-				fmt.Fprintf(&buf, "\t\t\tif err := json.Unmarshal(payload, &req); err != nil {\n")
-				buf.WriteString("\t\t\t\treturn nil, &rpcwirev1.RpcError{Code: 400, Message: strPtr(\"invalid payload\")}\n")
-				buf.WriteString("\t\t\t}\n")
-				buf.WriteString("\t\t}\n")
-				fmt.Fprintf(&buf, "\t\tresp, rpcErr := h.%s(ctx, &req)\n", handlerMethod)
-				buf.WriteString("\t\tif rpcErr != nil {\n")
-				buf.WriteString("\t\t\treturn nil, rpcErr\n")
-				buf.WriteString("\t\t}\n")
-				fmt.Fprintf(&buf, "\t\tvar zero %s\n", respType)
-				buf.WriteString("\t\tif resp == nil {\n")
-				buf.WriteString("\t\t\tresp = &zero\n")
-				buf.WriteString("\t\t}\n")
-				buf.WriteString("\t\tb, err := json.Marshal(resp)\n")
-				buf.WriteString("\t\tif err != nil {\n")
-				buf.WriteString("\t\t\treturn nil, &rpcwirev1.RpcError{Code: 500, Message: strPtr(\"internal error\")}\n")
-				buf.WriteString("\t\t}\n")
-				buf.WriteString("\t\treturn b, nil\n")
-				buf.WriteString("\t})\n\n")
-			}
-			buf.WriteString("}\n\n")
+					fmt.Fprintf(&buf, "\t\tvar req %s\n", reqType)
+					buf.WriteString("\t\tif len(payload) != 0 {\n")
+					fmt.Fprintf(&buf, "\t\t\tif err := json.Unmarshal(payload, &req); err != nil {\n")
+					buf.WriteString("\t\t\t\treturn nil, rpc.ToWireError(&rpc.Error{Code: 400, Message: \"invalid payload\"})\n")
+					buf.WriteString("\t\t\t}\n")
+					buf.WriteString("\t\t}\n")
+					fmt.Fprintf(&buf, "\t\tresp, err := h.%s(ctx, &req)\n", handlerMethod)
+					buf.WriteString("\t\tif err != nil {\n")
+					buf.WriteString("\t\t\treturn nil, rpc.ToWireError(err)\n")
+					buf.WriteString("\t\t}\n")
+					fmt.Fprintf(&buf, "\t\tvar zero %s\n", respType)
+					buf.WriteString("\t\tif resp == nil {\n")
+					buf.WriteString("\t\t\tresp = &zero\n")
+					buf.WriteString("\t\t}\n")
+					buf.WriteString("\t\tb, err := json.Marshal(resp)\n")
+					buf.WriteString("\t\tif err != nil {\n")
+					buf.WriteString("\t\t\treturn nil, rpc.ToWireError(err)\n")
+					buf.WriteString("\t\t}\n")
+					buf.WriteString("\t\treturn b, nil\n")
+					buf.WriteString("\t})\n\n")
+				}
+				buf.WriteString("}\n\n")
 		}
 
 		// Client methods.
@@ -410,13 +414,11 @@ func genGoRPC(outRoot string, s schema) error {
 				continue
 			}
 		}
+		}
+
+		outFile := filepath.Join(outDir, "rpc.gen.go")
+		return os.WriteFile(outFile, buf.Bytes(), 0o644)
 	}
-
-	buf.WriteString("func strPtr(s string) *string { return &s }\n")
-
-	outFile := filepath.Join(outDir, "rpc.gen.go")
-	return os.WriteFile(outFile, buf.Bytes(), 0o644)
-}
 
 func goFieldType(t string) (string, error) {
 	switch t {
@@ -594,6 +596,103 @@ func genTSRPC(outRoot string, s schema) error {
 		buf.WriteString("  };\n")
 		buf.WriteString("}\n\n")
 	}
+
+	return os.WriteFile(outFile, buf.Bytes(), 0o644)
+}
+
+func genTSFacade(outRoot string, s schema) error {
+	if len(s.Services) == 0 {
+		return nil
+	}
+	domain, version, err := domainAndVersion(s.Namespace)
+	if err != nil {
+		return err
+	}
+	outDir := filepath.Join(outRoot, "flowersec", domain)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+	outFile := filepath.Join(outDir, version+".facade.gen.ts")
+
+	serviceNames := sortedKeys(s.Services)
+	if len(serviceNames) == 0 {
+		return nil
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("// Code generated by idlgen. DO NOT EDIT.\n\n")
+
+	// This file is an ergonomic layer on top of typed RPC stubs.
+	buf.WriteString("import type { Client } from \"../../../client.js\";\n")
+	buf.WriteString("import { connectDirect } from \"../../../direct-client/connect.js\";\n")
+	buf.WriteString("import type { DirectConnectOptions } from \"../../../direct-client/connect.js\";\n")
+	buf.WriteString("import { connectTunnel } from \"../../../tunnel-client/connect.js\";\n")
+	buf.WriteString("import type { TunnelConnectOptions } from \"../../../tunnel-client/connect.js\";\n")
+	buf.WriteString("import type { ChannelInitGrant } from \"../../../gen/flowersec/controlplane/v1.gen.js\";\n")
+	buf.WriteString("import type { DirectConnectInfo } from \"../../../gen/flowersec/direct/v1.gen.js\";\n")
+	buf.WriteString("import {\n")
+	for _, svcName := range serviceNames {
+		svcExport := exportName(svcName)
+		buf.WriteString("  create" + svcExport + "Client,\n")
+	}
+	buf.WriteString("} from \"./" + version + ".rpc.gen.js\";\n\n")
+
+	if len(serviceNames) == 1 {
+		svcName := serviceNames[0]
+		svcExport := exportName(svcName)
+
+		buf.WriteString("export type " + svcExport + "Session = Client & ReturnType<typeof create" + svcExport + "Client>;\n\n")
+
+		buf.WriteString("export function create" + svcExport + "Session(client: Client): " + svcExport + "Session {\n")
+		buf.WriteString("  return { ...client, ...create" + svcExport + "Client(client.rpc) };\n")
+		buf.WriteString("}\n\n")
+
+		buf.WriteString("export async function connect" + svcExport + "Tunnel(grant: ChannelInitGrant, opts: TunnelConnectOptions): Promise<" + svcExport + "Session>;\n")
+		buf.WriteString("export async function connect" + svcExport + "Tunnel(grant: unknown, opts: TunnelConnectOptions): Promise<" + svcExport + "Session> {\n")
+		buf.WriteString("  const client = await connectTunnel(grant, opts);\n")
+		buf.WriteString("  return create" + svcExport + "Session(client);\n")
+		buf.WriteString("}\n\n")
+
+		buf.WriteString("export async function connect" + svcExport + "Direct(info: DirectConnectInfo, opts: DirectConnectOptions): Promise<" + svcExport + "Session>;\n")
+		buf.WriteString("export async function connect" + svcExport + "Direct(info: unknown, opts: DirectConnectOptions): Promise<" + svcExport + "Session> {\n")
+		buf.WriteString("  const client = await connectDirect(info, opts);\n")
+		buf.WriteString("  return create" + svcExport + "Session(client);\n")
+		buf.WriteString("}\n")
+
+		return os.WriteFile(outFile, buf.Bytes(), 0o644)
+	}
+
+	apiExport := exportName(domain)
+	buf.WriteString("export type " + apiExport + "Api = Client & Readonly<{\n")
+	for _, svcName := range serviceNames {
+		prop := lowerCamel(svcName)
+		svcExport := exportName(svcName)
+		buf.WriteString("  " + prop + ": ReturnType<typeof create" + svcExport + "Client>;\n")
+	}
+	buf.WriteString("}>;\n\n")
+
+	buf.WriteString("export function create" + apiExport + "Api(client: Client): " + apiExport + "Api {\n")
+	buf.WriteString("  return {\n")
+	buf.WriteString("    ...client,\n")
+	for _, svcName := range serviceNames {
+		prop := lowerCamel(svcName)
+		svcExport := exportName(svcName)
+		buf.WriteString("    " + prop + ": create" + svcExport + "Client(client.rpc),\n")
+	}
+	buf.WriteString("  };\n")
+	buf.WriteString("}\n\n")
+
+	buf.WriteString("export async function connect" + apiExport + "Tunnel(grant: ChannelInitGrant, opts: TunnelConnectOptions): Promise<" + apiExport + "Api>;\n")
+	buf.WriteString("export async function connect" + apiExport + "Tunnel(grant: unknown, opts: TunnelConnectOptions): Promise<" + apiExport + "Api> {\n")
+	buf.WriteString("  const client = await connectTunnel(grant, opts);\n")
+	buf.WriteString("  return create" + apiExport + "Api(client);\n")
+	buf.WriteString("}\n\n")
+
+	buf.WriteString("export async function connect" + apiExport + "Direct(info: DirectConnectInfo, opts: DirectConnectOptions): Promise<" + apiExport + "Api>;\n")
+	buf.WriteString("export async function connect" + apiExport + "Direct(info: unknown, opts: DirectConnectOptions): Promise<" + apiExport + "Api> {\n")
+	buf.WriteString("  const client = await connectDirect(info, opts);\n")
+	buf.WriteString("  return create" + apiExport + "Api(client);\n")
+	buf.WriteString("}\n")
 
 	return os.WriteFile(outFile, buf.Bytes(), 0o644)
 }

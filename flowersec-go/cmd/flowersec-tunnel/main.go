@@ -189,6 +189,7 @@ func main() {
 		metricsHandler := newSwitchHandler()
 		metricsMux.Handle("/metrics", metricsHandler)
 		metrics = newMetricsController(metricsHandler, observer, s)
+		metrics.Enable()
 
 		metricsLn, err = net.Listen("tcp", metricsListen)
 		if err != nil {

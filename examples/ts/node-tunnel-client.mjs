@@ -1,12 +1,12 @@
 import process from "node:process";
 
 import { connectTunnelNode } from "../../flowersec-ts/dist/node/index.js";
-import { createDemoClient } from "../../flowersec-ts/dist/_examples/flowersec/demo/v1.rpc.gen.js";
+import { createDemoSession } from "../../flowersec-ts/dist/_examples/flowersec/demo/v1.facade.gen.js";
 import { ByteReader } from "../../flowersec-ts/dist/yamux/index.js";
 
 // node-tunnel-client is the "simple" Node.js tunnel client example.
 //
-// It uses the high-level helper connectTunnel(), which internally performs:
+// It uses the high-level helper connectTunnelNode(), which internally performs:
 // - WebSocket connect (requires explicit Origin in Node)
 // - tunnel attach (text)
 // - E2EE handshake
@@ -50,18 +50,17 @@ async function main() {
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
   // connectTunnelNode() returns an RPC-ready session and supports extra yamux streams via openStream(kind).
-  const client = await connectTunnelNode(readyOrGrant, { origin });
+  const demo = createDemoSession(await connectTunnelNode(readyOrGrant, { origin }));
 
   try {
-    const demo = createDemoClient(client.rpc);
     const notified = waitHello(demo, 2000);
     const resp = await demo.ping({});
     console.log("rpc response:", JSON.stringify(resp));
     console.log("rpc notify:", JSON.stringify(await notified));
 
     // Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
-    // Note: client.openStream(kind) automatically writes the StreamHello(kind) preface.
-    const echo = await client.openStream("echo");
+    // Note: openStream(kind) automatically writes the StreamHello(kind) preface.
+    const echo = await demo.openStream("echo");
     const reader = new ByteReader(async () => {
       try {
         return await echo.read();
@@ -75,7 +74,7 @@ async function main() {
     console.log("echo response:", JSON.stringify(new TextDecoder().decode(got)));
     await echo.close();
   } finally {
-    client.close();
+    demo.close();
   }
 }
 

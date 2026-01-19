@@ -4,8 +4,7 @@ import { once } from "node:events";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { connectTunnel } from "../tunnel-client/connect.js";
-import { createDemoClient } from "../_examples/flowersec/demo/v1.rpc.gen.js";
+import { connectDemoTunnel } from "../_examples/flowersec/demo/v1.facade.gen.js";
 
 const require = createRequire(import.meta.url);
 const WS = require("ws");
@@ -28,17 +27,16 @@ describe("go<->ts integration", () => {
       const firstLine = line.split("\n")[0]!;
       const ready = JSON.parse(firstLine) as { grant_client: any };
 
-      const client = await connectTunnel(ready.grant_client, {
+      const demo = await connectDemoTunnel(ready.grant_client, {
         origin: "https://app.redeven.com",
         wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } })
       });
       try {
-        const demo = createDemoClient(client.rpc);
         const notified = waitNotify(demo, 2000);
         await expect(demo.ping({})).resolves.toEqual({ ok: true });
         await expect(notified).resolves.toEqual({ hello: "world" });
       } finally {
-        client.close();
+        demo.close();
         p.kill("SIGTERM");
         await once(p, "exit");
       }

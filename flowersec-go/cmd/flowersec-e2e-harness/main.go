@@ -20,7 +20,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	demov1 "github.com/floegence/flowersec/flowersec-go/internal/testgen/flowersec/demo/v1"
@@ -222,7 +221,7 @@ type demoHandler struct {
 	srv *rpc.Server
 }
 
-func (h demoHandler) Ping(ctx context.Context, req *demov1.PingRequest) (*demov1.PingResponse, *rpcv1.RpcError) {
+func (h demoHandler) Ping(ctx context.Context, req *demov1.PingRequest) (*demov1.PingResponse, error) {
 	_ = ctx
 	_ = req
 	_ = demov1.NotifyDemoHello(h.srv, &demov1.HelloNotify{Hello: "world"})

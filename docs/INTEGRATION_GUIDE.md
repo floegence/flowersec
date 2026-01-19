@@ -22,6 +22,8 @@ It focuses on the most ergonomic and stable entrypoints across Go and TypeScript
 - Node: `@flowersec/core/node` → `connectTunnelNode(...)`, `connectDirectNode(...)`
 - Browser: `@flowersec/core/browser` → `connectTunnelBrowser(...)`, `connectDirectBrowser(...)`
 
+Note: the TypeScript package currently provides **role=client** connect helpers only. Server endpoints (role=server) are implemented in Go (`flowersec-go/endpoint`).
+
 ## Choose a topology
 
 ### A) Direct path (no tunnel)
@@ -76,7 +78,65 @@ func main() {
 }
 ```
 
-## Go: minimal client (tunnel or direct)
+## Go: minimal direct server endpoint (no tunnel)
+
+This is the direct (no-tunnel) equivalent of a server endpoint: upgrade to WebSocket, run the server-side E2EE handshake, then dispatch streams by `StreamHello(kind)`.
+
+```go
+import (
+  "context"
+  "io"
+  "log"
+  "net/http"
+  "time"
+
+  "github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+  "github.com/floegence/flowersec/flowersec-go/endpoint"
+  "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
+  "github.com/floegence/flowersec/flowersec-go/rpc"
+)
+
+func main() {
+  channelID := "your-channel-id"
+  psk := loadPSKSomehow() // 32 bytes
+  initExp := time.Now().Add(120 * time.Second).Unix()
+
+  srv := serve.New(serve.Options{
+    OnError: func(err error) { log.Printf("direct server error: %v", err) },
+    RPC: serve.RPCOptions{
+      Register: func(r *rpc.Router, _ *rpc.Server) {
+        // Register your type_id handlers here.
+      },
+    },
+  })
+
+  wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+    AllowedOrigins: []string{"https://your-web-origin.example"},
+    Handshake: endpoint.AcceptDirectOptions{
+      ChannelID:         channelID,
+      PSK:               psk,
+      Suite:             e2ee.SuiteX25519HKDFAES256GCM,
+      InitExpireAtUnixS: initExp,
+      ClockSkew:         30 * time.Second,
+    },
+    OnStream: func(kind string, stream io.ReadWriteCloser) {
+      srv.HandleStream(context.Background(), kind, stream)
+    },
+    OnError: func(err error) { log.Printf("upgrade/handshake error: %v", err) },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  mux := http.NewServeMux()
+  mux.HandleFunc("/ws", wsHandler)
+  log.Fatal(http.ListenAndServe(":8080", mux))
+}
+```
+
+Your application must distribute the matching `DirectConnectInfo` (ws_url, channel_id, psk, init_exp, suite) to clients out-of-band (often as JSON).
+
+## Go: minimal tunnel client (role=client)
 
 If your controlplane returns `{"grant_client":{...}}`, you can pipe it directly into `protocolio.DecodeGrantClientJSON`.
 
@@ -107,6 +167,34 @@ func main() {
 }
 ```
 
+## Go: minimal direct client (role=client)
+
+If your server returns a `DirectConnectInfo` JSON object, decode it and dial the direct endpoint:
+
+```go
+import (
+  "context"
+  "log"
+  "os"
+
+  "github.com/floegence/flowersec/flowersec-go/client"
+  "github.com/floegence/flowersec/flowersec-go/protocolio"
+)
+
+func main() {
+  origin := "https://your-web-origin.example"
+  info, err := protocolio.DecodeDirectConnectInfoJSON(os.Stdin)
+  if err != nil {
+    log.Fatal(err)
+  }
+  c, err := client.ConnectDirect(context.Background(), info, origin)
+  if err != nil {
+    log.Fatal(err)
+  }
+  defer c.Close()
+}
+```
+
 ## TypeScript: minimal clients
 
 ### Node.js
@@ -121,6 +209,16 @@ const input = JSON.parse(await readStdin());
 const client = await connectTunnelNode(input, { origin });
 ```
 
+Direct variant:
+
+```ts
+import { connectDirectNode } from "@flowersec/core/node";
+
+const origin = process.env.FSEC_ORIGIN!;
+const info = JSON.parse(await readStdin()); // DirectConnectInfo
+const client = await connectDirectNode(info, { origin });
+```
+
 ### Browser
 
 ```ts
@@ -129,6 +227,15 @@ import { connectTunnelBrowser } from "@flowersec/core/browser";
 // Uses window.location.origin automatically.
 const input = JSON.parse(textarea.value);
 const client = await connectTunnelBrowser(input);
+```
+
+Direct variant:
+
+```ts
+import { connectDirectBrowser } from "@flowersec/core/browser";
+
+const info = JSON.parse(textarea.value); // DirectConnectInfo
+const client = await connectDirectBrowser(info);
 ```
 
 ## IDL and typed RPC stubs (recommended)
@@ -142,6 +249,7 @@ With `services` in your `.fidl.json`, `idlgen` generates typed RPC stubs:
 
 - Go: `flowersec-go/gen/flowersec/<domain>/<version>/rpc.gen.go`
 - TS: `flowersec-ts/src/gen/flowersec/<domain>/<version>.rpc.gen.ts`
+- TS: `flowersec-ts/src/gen/flowersec/<domain>/<version>.facade.gen.ts` (optional ergonomic layer)
 
 ## Origin allow-list (tunnel and direct server)
 
@@ -162,7 +270,8 @@ Allowed entries support:
 High-level APIs return `*fserrors.Error` (via `errors.As`), which includes `{Path, Stage, Code}`.
 Handshake-related codes include: `auth_tag_mismatch`, `timestamp_out_of_skew`, `timestamp_after_init_exp`, `invalid_version`, plus `timeout`/`canceled`.
 
+For generated Go RPC handlers (`rpc.gen.go`), handler methods return `error`. To return a non-500 wire RPC error, return `&rpc.Error{Code: ..., Message: ...}` (any other error is treated as `code=500` / `"internal error"`).
+
 **TypeScript**
 
 High-level APIs throw `FlowersecError` with `{path, stage, code}`. Codes match the same set for handshake failures.
-

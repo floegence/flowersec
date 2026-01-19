@@ -125,12 +125,16 @@ type DirectHandlerOptions struct {
 	MaxStreamHelloBytes int
 
 	OnStream func(kind string, stream io.ReadWriteCloser)
+
+	// OnError is called on upgrade/handshake/serve failures. It must not panic.
+	OnError func(err error)
 }
 
 // NewDirectHandler returns an http.HandlerFunc that upgrades to WebSocket, runs the server handshake,
 // and then dispatches yamux streams by StreamHello(kind).
 func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 	checkOrigin := opts.Upgrader.CheckOrigin
+	hasCustomOriginCheck := checkOrigin != nil
 	if checkOrigin == nil {
 		if len(opts.AllowedOrigins) == 0 && !opts.AllowNoOrigin {
 			return nil, errors.New("missing allowed origins")
@@ -147,20 +151,72 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 		CheckOrigin:     checkOrigin,
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
+		onErr := func(err error) {
+			if opts.OnError == nil || err == nil {
+				return
+			}
+			defer func() {
+				_ = recover()
+			}()
+			opts.OnError(err)
+		}
+
 		c, err := ws.Upgrade(w, r, upgrader)
 		if err != nil {
+			if !hasCustomOriginCheck && websocket.IsWebSocketUpgrade(r) && r.Header.Get("Origin") == "" && !opts.AllowNoOrigin {
+				onErr(wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin))
+				return
+			}
+			onErr(wrapErr(fserrors.PathDirect, fserrors.StageConnect, fserrors.CodeUpgradeFailed, err))
 			return
 		}
 		defer c.Close()
 		sess, err := AcceptDirectWS(r.Context(), c.Underlying(), opts.Handshake)
 		if err != nil {
+			onErr(err)
 			return
 		}
 		defer sess.Close()
 		if opts.OnStream == nil {
 			return
 		}
-		_ = sess.ServeStreams(r.Context(), maxHello, opts.OnStream)
+		ctx := r.Context()
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = sess.Close()
+			case <-done:
+			}
+		}()
+		defer close(done)
+
+		for {
+			kind, stream, err := sess.AcceptStreamHello(maxHello)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				var fe *fserrors.Error
+				if errors.As(err, &fe) && fe.Code == fserrors.CodeStreamHelloFailed {
+					onErr(err)
+					continue
+				}
+				onErr(err)
+				return
+			}
+			go func(kind string, stream io.ReadWriteCloser) {
+				defer func() {
+					if recover() != nil {
+						_ = stream.Close()
+					}
+				}()
+				opts.OnStream(kind, stream)
+			}(kind, stream)
+		}
 	}, nil
 }
 

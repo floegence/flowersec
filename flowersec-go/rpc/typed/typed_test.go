@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
@@ -26,10 +25,10 @@ func TestCallAndRegister(t *testing.T) {
 	defer b.Close()
 
 	router := rpc.NewRouter()
-	Register[req, resp](router, 1, func(ctx context.Context, r *req) (*resp, *rpcwirev1.RpcError) {
+	Register[req, resp](router, 1, func(ctx context.Context, r *req) (*resp, error) {
 		_ = ctx
 		if r.A != 1 {
-			return nil, &rpcwirev1.RpcError{Code: 400, Message: strPtr("bad a")}
+			return nil, &rpc.Error{Code: 400, Message: "bad a"}
 		}
 		return &resp{OK: true}, nil
 	})
@@ -58,10 +57,10 @@ func TestCallRPCError(t *testing.T) {
 	defer b.Close()
 
 	router := rpc.NewRouter()
-	Register[req, resp](router, 1, func(ctx context.Context, r *req) (*resp, *rpcwirev1.RpcError) {
+	Register[req, resp](router, 1, func(ctx context.Context, r *req) (*resp, error) {
 		_ = ctx
 		if r.A != 1 {
-			return nil, &rpcwirev1.RpcError{Code: 400, Message: strPtr("bad a")}
+			return nil, &rpc.Error{Code: 400, Message: "bad a"}
 		}
 		return &resp{OK: true}, nil
 	})
@@ -91,7 +90,7 @@ func TestRegisterInvalidPayload(t *testing.T) {
 	defer b.Close()
 
 	router := rpc.NewRouter()
-	Register[req, resp](router, 1, func(ctx context.Context, r *req) (*resp, *rpcwirev1.RpcError) {
+	Register[req, resp](router, 1, func(ctx context.Context, r *req) (*resp, error) {
 		_ = ctx
 		_ = r
 		return &resp{OK: true}, nil

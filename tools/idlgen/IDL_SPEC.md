@@ -329,6 +329,13 @@ When `services` is present:
 
 - Go: `flowersec-go/gen/flowersec/<domain>/<version>/rpc.gen.go` (typed stubs; constants + clients + registration helpers).
 - TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.rpc.gen.ts` (typed client factory).
+- TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.facade.gen.ts` (ergonomic helpers: connect wrappers + service bundling).
+
+Go handler ergonomics:
+
+- Generated server handler interfaces return `(*Resp, error)` (instead of exposing the wire `RpcError` type).
+- To return a non-500 RPC error code/message, return `&rpc.Error{Code: ..., Message: ...}` (from `github.com/floegence/flowersec/flowersec-go/rpc`).
+- Any other non-nil error is treated as an internal error: `code=500`, `message="internal error"`.
 
 ## Deterministic ordering
 

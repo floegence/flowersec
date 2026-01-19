@@ -25,7 +25,7 @@ func NewDemoClient(c *rpc.Client) *DemoClient { return &DemoClient{c: c} }
 
 type DemoHandler interface {
 	// Ping request/response.
-	Ping(ctx context.Context, req *PingRequest) (*PingResponse, *rpcwirev1.RpcError)
+	Ping(ctx context.Context, req *PingRequest) (*PingResponse, error)
 }
 
 func RegisterDemo(r *rpc.Router, h DemoHandler) {
@@ -33,12 +33,12 @@ func RegisterDemo(r *rpc.Router, h DemoHandler) {
 		var req PingRequest
 		if len(payload) != 0 {
 			if err := json.Unmarshal(payload, &req); err != nil {
-				return nil, &rpcwirev1.RpcError{Code: 400, Message: strPtr("invalid payload")}
+				return nil, rpc.ToWireError(&rpc.Error{Code: 400, Message: "invalid payload"})
 			}
 		}
-		resp, rpcErr := h.Ping(ctx, &req)
-		if rpcErr != nil {
-			return nil, rpcErr
+		resp, err := h.Ping(ctx, &req)
+		if err != nil {
+			return nil, rpc.ToWireError(err)
 		}
 		var zero PingResponse
 		if resp == nil {
@@ -46,7 +46,7 @@ func RegisterDemo(r *rpc.Router, h DemoHandler) {
 		}
 		b, err := json.Marshal(resp)
 		if err != nil {
-			return nil, &rpcwirev1.RpcError{Code: 500, Message: strPtr("internal error")}
+			return nil, rpc.ToWireError(err)
 		}
 		return b, nil
 	})
@@ -102,5 +102,3 @@ func (x *DemoClient) Ping(ctx context.Context, req *PingRequest) (*PingResponse,
 	}
 	return &resp, nil
 }
-
-func strPtr(s string) *string { return &s }
