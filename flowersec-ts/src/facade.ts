@@ -3,6 +3,7 @@ import type { DirectConnectOptions } from "./direct-client/connect.js";
 import { connectDirect as connectDirectInternal } from "./direct-client/connect.js";
 import type { TunnelConnectOptions } from "./tunnel-client/connect.js";
 import { connectTunnel as connectTunnelInternal } from "./tunnel-client/connect.js";
+import { FlowersecError } from "./utils/errors.js";
 
 import type { ChannelInitGrant } from "./gen/flowersec/controlplane/v1.gen.js";
 import type { DirectConnectInfo } from "./gen/flowersec/direct/v1.gen.js";
@@ -61,6 +62,17 @@ export async function connect(input: unknown, opts: ConnectOptions): Promise<Cli
     if (o["grant_client"] !== undefined) return await connectTunnelInternal(v, opts as TunnelConnectOptions);
     if (o["tunnel_url"] !== undefined) return await connectTunnelInternal(v, opts as TunnelConnectOptions);
     if (o["token"] !== undefined || o["role"] !== undefined) return await connectTunnelInternal(v, opts as TunnelConnectOptions);
+    throw new FlowersecError({
+      path: "auto",
+      stage: "validate",
+      code: "invalid_input",
+      message: "invalid input: expected DirectConnectInfo (ws_url) or ChannelInitGrant (tunnel_url or grant_client)",
+    });
   }
-  return await connectTunnelInternal(v, opts as TunnelConnectOptions);
+  throw new FlowersecError({
+    path: "auto",
+    stage: "validate",
+    code: "invalid_input",
+    message: "invalid input: expected an object or a JSON string",
+  });
 }

@@ -6,6 +6,7 @@ import "fmt"
 type Path string
 
 const (
+	PathAuto   Path = "auto"
 	PathTunnel Path = "tunnel"
 	PathDirect Path = "direct"
 )
@@ -30,6 +31,7 @@ type Code string
 const (
 	CodeTimeout                   Code = "timeout"
 	CodeCanceled                  Code = "canceled"
+	CodeInvalidInput              Code = "invalid_input"
 	CodeMissingGrant              Code = "missing_grant"
 	CodeMissingConnectInfo        Code = "missing_connect_info"
 	CodeRoleMismatch              Code = "role_mismatch"
@@ -38,6 +40,7 @@ const (
 	CodeMissingOrigin             Code = "missing_origin"
 	CodeMissingConn               Code = "missing_conn"
 	CodeMissingChannelID          Code = "missing_channel_id"
+	CodeMissingToken              Code = "missing_token"
 	CodeMissingInitExp            Code = "missing_init_exp"
 	CodeTimestampAfterInitExp     Code = "timestamp_after_init_exp"
 	CodeTimestampOutOfSkew        Code = "timestamp_out_of_skew"

@@ -12,7 +12,7 @@ export class AbortError extends Error {
   }
 }
 
-export type FlowersecPath = "tunnel" | "direct";
+export type FlowersecPath = "auto" | "tunnel" | "direct";
 
 export type FlowersecStage = "validate" | "connect" | "attach" | "handshake" | "secure" | "yamux" | "rpc" | "close";
 
@@ -20,6 +20,7 @@ export type FlowersecErrorCode =
   | "auth_tag_mismatch"
   | "canceled"
   | "handshake_failed"
+  | "invalid_input"
   | "invalid_connect_info"
   | "invalid_endpoint_instance_id"
   | "invalid_grant"
@@ -32,6 +33,7 @@ export type FlowersecErrorCode =
   | "missing_init_exp"
   | "missing_origin"
   | "missing_stream_kind"
+  | "missing_token"
   | "missing_tunnel_url"
   | "missing_ws_url"
   | "open_stream_failed"

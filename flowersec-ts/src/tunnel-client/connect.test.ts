@@ -119,12 +119,36 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_tunnel_url", path: "tunnel" });
   });
 
+  test("rejects missing channel_id", async () => {
+    const bad = makeGrant();
+    bad.channel_id = "";
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_channel_id", path: "tunnel" });
+  });
+
+  test("rejects missing token", async () => {
+    const bad = makeGrant();
+    bad.token = "";
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_token", path: "tunnel" });
+  });
+
   test("rejects missing init exp", async () => {
     const bad = makeGrant();
     bad.channel_init_expire_at_unix_s = 0;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "tunnel" });
+  });
+
+  test("rejects invalid psk length", async () => {
+    const bad = makeGrant();
+    bad.e2ee_psk_b64u = base64urlEncode(new Uint8Array(31).fill(1));
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_psk", path: "tunnel" });
   });
 
   test("rejects invalid endpointInstanceId encoding", async () => {

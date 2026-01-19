@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { FlowersecError } from "./utils/errors.js";
 
 const mocks = vi.hoisted(() => {
   const connectDirect = vi.fn();
@@ -72,5 +73,21 @@ describe("connect (auto-detect)", () => {
     expect(out).toEqual({ path: "tunnel" });
     expect(mocks.connectTunnel).toHaveBeenCalledWith(input, { origin: "https://app.example" });
     expect(mocks.connectDirect).not.toHaveBeenCalled();
+  });
+
+  test("rejects unknown objects with invalid_input", async () => {
+    const p = connect({ hello: "world" }, { origin: "https://app.example" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "auto" });
+    expect(mocks.connectDirect).not.toHaveBeenCalled();
+    expect(mocks.connectTunnel).not.toHaveBeenCalled();
+  });
+
+  test("rejects non-JSON strings with invalid_input", async () => {
+    const p = connect("not json", { origin: "https://app.example" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "auto" });
+    expect(mocks.connectDirect).not.toHaveBeenCalled();
+    expect(mocks.connectTunnel).not.toHaveBeenCalled();
   });
 });

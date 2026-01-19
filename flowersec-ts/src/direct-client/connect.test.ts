@@ -114,12 +114,28 @@ describe("connectDirect", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_ws_url", path: "direct" });
   });
 
+  test("rejects missing channel_id", async () => {
+    const bad = makeInfo();
+    bad.channel_id = "";
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_channel_id", path: "direct" });
+  });
+
   test("rejects missing init exp", async () => {
     const bad = makeInfo();
     bad.channel_init_expire_at_unix_s = 0;
     const p = connectDirect(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "direct" });
+  });
+
+  test("rejects invalid psk length", async () => {
+    const bad = makeInfo();
+    bad.e2ee_psk_b64u = base64urlEncode(new Uint8Array(31).fill(1));
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_psk", path: "direct" });
   });
 
   test("requires wsFactory outside the browser", async () => {

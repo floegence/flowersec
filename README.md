@@ -81,7 +81,7 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit
 ```
 
 - `flowersec-issuer-keygen` writes `issuer_key.json` (private key; keep it secret) and `issuer_keys.json` (public keyset for the tunnel).
-- `flowersec-channelinit` outputs `{"grant_client":{...},"grant_server":{...}}` to stdout (redirect to a file if needed).
+- `flowersec-channelinit` outputs a JSON object containing `grant_client`/`grant_server` (plus version metadata) to stdout (redirect to a file if needed).
 
 **Option B: GitHub Releases (no Go)**
 
@@ -114,10 +114,11 @@ go get github.com/floegence/flowersec/flowersec-go@v0.1.0
 Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.1.0`).
 
 - TypeScript install (no clone): download `flowersec-core-X.Y.Z.tgz` from the same GitHub Release and install with `npm i ./flowersec-core-X.Y.Z.tgz`.
-- Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.ConnectTunnel(ctx, grant, origin, ...opts)`, `client.ConnectDirect(ctx, info, origin, ...opts)`)
+- Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.Connect(ctx, input, origin, ...opts)`, `client.ConnectTunnel(ctx, grant, origin, ...opts)`, `client.ConnectDirect(ctx, info, origin, ...opts)`)
 - Go (server endpoint): `github.com/floegence/flowersec/flowersec-go/endpoint` (accept/dial `role=server` endpoints)
 - Go (server stream runtime): `github.com/floegence/flowersec/flowersec-go/endpoint/serve` (default stream dispatch + RPC stream handler)
 - Go (input JSON helpers): `github.com/floegence/flowersec/flowersec-go/protocolio` (`DecodeGrantClientJSON`, `DecodeDirectConnectInfoJSON`)
+- Go (RPC): `github.com/floegence/flowersec/flowersec-go/rpc` (router, server, client)
 - TS (stable): `@flowersec/core` (`connect`, `connectTunnel`, `connectDirect`)
 - TS (Node): `@flowersec/core/node` (`connectNode`, `connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
 - TS (browser): `@flowersec/core/browser` (`connectBrowser`, `connectTunnelBrowser`, `connectDirectBrowser`)

@@ -23,13 +23,15 @@ These packages are the recommended integration entrypoints:
 
 - `github.com/floegence/flowersec/flowersec-go/client`
   - Role: `client`
-  - APIs: `client.ConnectTunnel(...)`, `client.ConnectDirect(...)`
+  - APIs: `client.Connect(...)`, `client.ConnectTunnel(...)`, `client.ConnectDirect(...)`
 - `github.com/floegence/flowersec/flowersec-go/endpoint`
   - Role: `server`
   - APIs: `endpoint.ConnectTunnel(...)`, `endpoint.NewDirectHandler(...)`, `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandlerResolved(...)`, `endpoint.AcceptDirectWSResolved(...)`
 - `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
   - Role: server runtime
   - APIs: `serve.New(...)`, `srv.Handle(...)`, `srv.ServeSession(...)`, `serve.ServeTunnel(...)`
+- `github.com/floegence/flowersec/flowersec-go/rpc`
+  - Role: stable RPC client/server/router APIs (used by `Client.RPC()` and `endpoint/serve`)
 - `github.com/floegence/flowersec/flowersec-go/protocolio`
   - Role: JSON decoding helpers for `ChannelInitGrant` and `DirectConnectInfo`
 - `github.com/floegence/flowersec/flowersec-go/fserrors`
@@ -43,7 +45,7 @@ Controlplane helpers (supported for integration and used by the helper CLIs):
 
 ## Go: building blocks (not a stable surface)
 
-The repository also contains lower-level components (crypto, framing, yamux, rpc, ws, tunnel internals).
+The repository also contains lower-level components (crypto, framing, yamux, ws, tunnel internals).
 They are useful for contributors and advanced integrations, but are not intended as a stable API surface.
 
 If you rely on these directly, expect breaking changes without deprecation cycles.
@@ -59,6 +61,15 @@ Stable entrypoints:
   - `connectNode(...)`, `connectTunnelNode(...)`, `connectDirectNode(...)`, `createNodeWsFactory()`
 - `@flowersec/core/browser`:
   - `connectBrowser(...)`, `connectTunnelBrowser(...)`, `connectDirectBrowser(...)`
+
+Stable building blocks (advanced, but supported):
+
+- `@flowersec/core/rpc` (RPC framing and client/server)
+- `@flowersec/core/yamux` (yamux framing and session)
+- `@flowersec/core/e2ee` (record layer and handshake helpers)
+- `@flowersec/core/ws` (WebSocket binary transport)
+- `@flowersec/core/observability` (observer types)
+- `@flowersec/core/streamhello` (stream hello helpers)
 
 Unstable entrypoint:
 

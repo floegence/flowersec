@@ -7,6 +7,7 @@ type Error = fserrors.Error
 type Path = fserrors.Path
 
 const (
+	PathAuto   = fserrors.PathAuto
 	PathTunnel = fserrors.PathTunnel
 	PathDirect = fserrors.PathDirect
 )
@@ -29,12 +30,14 @@ type Code = fserrors.Code
 const (
 	CodeTimeout                   = fserrors.CodeTimeout
 	CodeCanceled                  = fserrors.CodeCanceled
+	CodeInvalidInput              = fserrors.CodeInvalidInput
 	CodeMissingGrant              = fserrors.CodeMissingGrant
 	CodeRoleMismatch              = fserrors.CodeRoleMismatch
 	CodeMissingTunnelURL          = fserrors.CodeMissingTunnelURL
 	CodeMissingOrigin             = fserrors.CodeMissingOrigin
 	CodeMissingConn               = fserrors.CodeMissingConn
 	CodeMissingChannelID          = fserrors.CodeMissingChannelID
+	CodeMissingToken              = fserrors.CodeMissingToken
 	CodeMissingInitExp            = fserrors.CodeMissingInitExp
 	CodeTimestampAfterInitExp     = fserrors.CodeTimestampAfterInitExp
 	CodeTimestampOutOfSkew        = fserrors.CodeTimestampOutOfSkew

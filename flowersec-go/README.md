@@ -45,6 +45,7 @@ No-Go option: download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) fr
 - Client (role=client): `github.com/floegence/flowersec/flowersec-go/client`
 - Server endpoint (role=server): `github.com/floegence/flowersec/flowersec-go/endpoint`
 - Server stream runtime: `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
+- RPC (router/server/client): `github.com/floegence/flowersec/flowersec-go/rpc`
 - Input JSON helpers: `github.com/floegence/flowersec/flowersec-go/protocolio`
 
 For a full integration walkthrough, see `docs/INTEGRATION_GUIDE.md` in the repository root.

@@ -9,6 +9,7 @@ var (
 	ErrMissingOrigin             = errors.New("missing origin")
 	ErrMissingConn               = errors.New("missing websocket conn")
 	ErrMissingChannelID          = errors.New("missing channel_id")
+	ErrMissingToken              = errors.New("missing token")
 	ErrMissingInitExp            = errors.New("missing init_exp")
 	ErrInvalidEndpointInstanceID = errors.New("invalid endpoint_instance_id")
 	ErrInvalidPSK                = errors.New("invalid psk")

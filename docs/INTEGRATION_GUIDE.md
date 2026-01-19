@@ -73,6 +73,7 @@ For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMEN
 **Go**
 
 - Client (role=client):
+  - `client.Connect(ctx, input, origin, ...opts)` (auto-detect tunnel vs direct inputs)
   - `client.ConnectTunnel(ctx, grant, origin, ...opts)`
   - `client.ConnectDirect(ctx, info, origin, ...opts)`
 - Server endpoint (role=server):
@@ -265,6 +266,30 @@ func main() {
 }
 ```
 
+## Go: minimal client (auto-detect, recommended)
+
+If your input JSON is either a `ChannelInitGrant` wrapper (`{"grant_client":{...}}`) or a `DirectConnectInfo`,
+you can pipe it directly into `client.Connect(...)` and let it auto-detect the path:
+
+```go
+import (
+  "context"
+  "log"
+  "os"
+
+  "github.com/floegence/flowersec/flowersec-go/client"
+)
+
+func main() {
+  origin := "https://your-web-origin.example"
+  c, err := client.Connect(context.Background(), os.Stdin, origin)
+  if err != nil {
+    log.Fatal(err)
+  }
+  defer c.Close()
+}
+```
+
 ## Go: minimal tunnel client (role=client)
 
 If your controlplane returns `{"grant_client":{...}}`, you can pipe it directly into `protocolio.DecodeGrantClientJSON`.
@@ -419,6 +444,9 @@ High-level APIs return `*fserrors.Error` (via `errors.As`), which includes `{Pat
 Handshake-related codes include: `auth_tag_mismatch`, `timestamp_out_of_skew`, `timestamp_after_init_exp`, `invalid_version`, plus `timeout`/`canceled`.
 Secure-layer keepalive failures (explicit ping) use: `ping_failed`.
 
+Input validation codes for tunnel connects include: `missing_token` (for `ChannelInitGrant.token`).
+Auto-detect helpers use `path=auto` and `code=invalid_input` when the provided input does not look like either direct or tunnel connect JSON.
+
 For generated Go RPC handlers (`rpc.gen.go`), handler methods return `error`. To return a non-500 wire RPC error, return `&rpc.Error{Code: ..., Message: ...}` (any other error is treated as `code=500` / `"internal error"`).
 
 **TypeScript**
@@ -426,6 +454,8 @@ For generated Go RPC handlers (`rpc.gen.go`), handler methods return `error`. To
 High-level APIs throw `FlowersecError` with `{path, stage, code}`. Codes match the same set for handshake failures.
 
 Handshake fallback code is `handshake_failed`. Secure-layer keepalive failures (explicit ping) use `ping_failed`.
+
+Auto-detect helpers use `path=auto` and `code=invalid_input` when the provided input does not look like either direct or tunnel connect JSON.
 
 ## Keepalive (recommended)
 

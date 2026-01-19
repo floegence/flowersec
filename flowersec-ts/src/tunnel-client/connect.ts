@@ -36,6 +36,12 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
   if (checkedGrant.tunnel_url === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_tunnel_url", path: "tunnel", message: "missing tunnel_url" });
   }
+  if (checkedGrant.channel_id === "") {
+    throw new FlowersecError({ stage: "validate", code: "missing_channel_id", path: "tunnel", message: "missing channel_id" });
+  }
+  if (checkedGrant.token === "") {
+    throw new FlowersecError({ stage: "validate", code: "missing_token", path: "tunnel", message: "missing token" });
+  }
   if (checkedGrant.channel_init_expire_at_unix_s <= 0) {
     throw new FlowersecError({
       stage: "validate",
@@ -43,6 +49,14 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
       path: "tunnel",
       message: "missing channel_init_expire_at_unix_s",
     });
+  }
+  try {
+    const psk = base64urlDecode(checkedGrant.e2ee_psk_b64u);
+    if (psk.length !== 32) {
+      throw new Error("psk must be 32 bytes");
+    }
+  } catch (e) {
+    throw new FlowersecError({ stage: "validate", code: "invalid_psk", path: "tunnel", message: "invalid e2ee_psk_b64u", cause: e });
   }
   const idleTimeoutSeconds = checkedGrant.idle_timeout_seconds;
   if (checkedGrant.role !== ControlRole.Role_client) {
