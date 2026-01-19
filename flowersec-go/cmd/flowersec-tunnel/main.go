@@ -6,11 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,6 +23,12 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/observability/prom"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
+)
+
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
 )
 
 type stringSliceFlag []string
@@ -108,50 +118,100 @@ func validateTLSFiles(certFile string, keyFile string) error {
 	return nil
 }
 
-// main launches a tunnel server with CLI-configurable settings.
 func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	cfg := server.DefaultConfig()
 
-	var listen string
-	var path string
-	var issuerKeysFile string
-	var aud string
-	var iss string
-	var allowedOrigins stringSliceFlag
-	allowNoOrigin := cfg.AllowNoOrigin
-	var maxConns int
-	var maxChannels int
-	var tlsCertFile string
-	var tlsKeyFile string
-	var metricsListen string
-	maxTotalPendingBytes := cfg.MaxTotalPendingBytes
-	writeTimeout := cfg.WriteTimeout
-	maxWriteQueueBytes := cfg.MaxWriteQueueBytes
-	flag.StringVar(&listen, "listen", "127.0.0.1:0", "listen address")
-	flag.StringVar(&path, "ws-path", "/ws", "websocket path")
-	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "issuer keyset file (kid->ed25519 pubkey)")
-	flag.StringVar(&aud, "aud", "", "expected token audience")
-	flag.StringVar(&iss, "iss", "", "expected token issuer (required; must match token payload 'iss')")
-	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com), or exact non-standard values (e.g. null)")
-	flag.BoolVar(&allowNoOrigin, "allow-no-origin", cfg.AllowNoOrigin, "allow requests without Origin header (non-browser clients; discouraged)")
-	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent websocket connections (0 uses default)")
-	flag.IntVar(&maxChannels, "max-channels", 0, "max concurrent channels (0 uses default)")
-	flag.StringVar(&tlsCertFile, "tls-cert-file", "", "enable TLS with the given certificate file (default: disabled)")
-	flag.StringVar(&tlsKeyFile, "tls-key-file", "", "enable TLS with the given private key file (default: disabled)")
-	flag.StringVar(&metricsListen, "metrics-listen", "", "listen address for metrics server (empty disables)")
-	flag.IntVar(&maxTotalPendingBytes, "max-total-pending-bytes", cfg.MaxTotalPendingBytes, "max total pending bytes buffered across all channels (0 disables)")
-	flag.DurationVar(&writeTimeout, "write-timeout", cfg.WriteTimeout, "per-frame websocket write timeout (0 disables)")
-	flag.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", cfg.MaxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (0 uses default)")
-	flag.Parse()
+	logger := log.New(stderr, "", log.LstdFlags)
+
+	listen := envString("FSEC_TUNNEL_LISTEN", "127.0.0.1:0")
+	path := envString("FSEC_TUNNEL_WS_PATH", "/ws")
+	issuerKeysFile := envString("FSEC_TUNNEL_ISSUER_KEYS_FILE", "")
+	aud := envString("FSEC_TUNNEL_AUD", "")
+	iss := envString("FSEC_TUNNEL_ISS", "")
+	metricsListen := envString("FSEC_TUNNEL_METRICS_LISTEN", "")
+	tlsCertFile := envString("FSEC_TUNNEL_TLS_CERT_FILE", "")
+	tlsKeyFile := envString("FSEC_TUNNEL_TLS_KEY_FILE", "")
+
+	allowedOrigins := stringSliceFlag(splitCSVEnv("FSEC_TUNNEL_ALLOW_ORIGIN"))
+
+	allowNoOrigin, err := envBoolWithErr("FSEC_TUNNEL_ALLOW_NO_ORIGIN", cfg.AllowNoOrigin)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_ALLOW_NO_ORIGIN: %v\n", err)
+		return 2
+	}
+
+	maxConns, err := envIntWithErr("FSEC_TUNNEL_MAX_CONNS", 0)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_CONNS: %v\n", err)
+		return 2
+	}
+	maxChannels, err := envIntWithErr("FSEC_TUNNEL_MAX_CHANNELS", 0)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_CHANNELS: %v\n", err)
+		return 2
+	}
+	maxTotalPendingBytes, err := envIntWithErr("FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES", cfg.MaxTotalPendingBytes)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES: %v\n", err)
+		return 2
+	}
+	writeTimeout, err := envDurationWithErr("FSEC_TUNNEL_WRITE_TIMEOUT", cfg.WriteTimeout)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_WRITE_TIMEOUT: %v\n", err)
+		return 2
+	}
+	maxWriteQueueBytes, err := envIntWithErr("FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES", cfg.MaxWriteQueueBytes)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES: %v\n", err)
+		return 2
+	}
+
+	fs := flag.NewFlagSet("flowersec-tunnel", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	showVersion := false
+	fs.BoolVar(&showVersion, "version", false, "print version and exit")
+	fs.StringVar(&listen, "listen", listen, "listen address (env: FSEC_TUNNEL_LISTEN)")
+	fs.StringVar(&path, "ws-path", path, "websocket path (env: FSEC_TUNNEL_WS_PATH)")
+	fs.StringVar(&issuerKeysFile, "issuer-keys-file", issuerKeysFile, "issuer keyset file (kid->ed25519 pubkey) (env: FSEC_TUNNEL_ISSUER_KEYS_FILE)")
+	fs.StringVar(&aud, "aud", aud, "expected token audience (env: FSEC_TUNNEL_AUD)")
+	fs.StringVar(&iss, "iss", iss, "expected token issuer (required; must match token payload 'iss') (env: FSEC_TUNNEL_ISS)")
+	fs.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com), or exact non-standard values (e.g. null) (env: FSEC_TUNNEL_ALLOW_ORIGIN)")
+	fs.BoolVar(&allowNoOrigin, "allow-no-origin", allowNoOrigin, "allow requests without Origin header (non-browser clients; discouraged) (env: FSEC_TUNNEL_ALLOW_NO_ORIGIN)")
+	fs.IntVar(&maxConns, "max-conns", maxConns, "max concurrent websocket connections (0 uses default) (env: FSEC_TUNNEL_MAX_CONNS)")
+	fs.IntVar(&maxChannels, "max-channels", maxChannels, "max concurrent channels (0 uses default) (env: FSEC_TUNNEL_MAX_CHANNELS)")
+	fs.StringVar(&tlsCertFile, "tls-cert-file", tlsCertFile, "enable TLS with the given certificate file (default: disabled) (env: FSEC_TUNNEL_TLS_CERT_FILE)")
+	fs.StringVar(&tlsKeyFile, "tls-key-file", tlsKeyFile, "enable TLS with the given private key file (default: disabled) (env: FSEC_TUNNEL_TLS_KEY_FILE)")
+	fs.StringVar(&metricsListen, "metrics-listen", metricsListen, "listen address for metrics server (empty disables) (env: FSEC_TUNNEL_METRICS_LISTEN)")
+	fs.IntVar(&maxTotalPendingBytes, "max-total-pending-bytes", maxTotalPendingBytes, "max total pending bytes buffered across all channels (0 disables) (env: FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES)")
+	fs.DurationVar(&writeTimeout, "write-timeout", writeTimeout, "per-frame websocket write timeout (0 disables) (env: FSEC_TUNNEL_WRITE_TIMEOUT)")
+	fs.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", maxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (0 uses default) (env: FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if showVersion {
+		_, _ = fmt.Fprintln(stdout, versionString())
+		return 0
+	}
 
 	if issuerKeysFile == "" || aud == "" || iss == "" {
-		log.Fatal("missing --issuer-keys-file, --aud, or --iss")
+		fmt.Fprintln(stderr, "missing --issuer-keys-file, --aud, or --iss")
+		return 2
 	}
 	if err := validateTLSFiles(tlsCertFile, tlsKeyFile); err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(stderr, err)
+		return 2
 	}
 	if len(allowedOrigins) == 0 {
-		log.Fatal("missing --allow-origin")
+		fmt.Fprintln(stderr, "missing --allow-origin")
+		return 2
 	}
 
 	observer := observability.NewAtomicTunnelObserver()
@@ -174,7 +234,8 @@ func main() {
 
 	s, err := server.New(cfg)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	defer s.Close()
 
@@ -193,7 +254,8 @@ func main() {
 
 		metricsLn, err = net.Listen("tcp", metricsListen)
 		if err != nil {
-			log.Fatal(err)
+			fmt.Fprintln(stderr, err)
+			return 1
 		}
 		metricsSrv = newHTTPServer(metricsMux)
 		if tlsCertFile != "" {
@@ -212,7 +274,7 @@ func main() {
 				err = metricsSrv.Serve(metricsLn)
 			}
 			if err != nil && err != http.ErrServerClosed {
-				log.Fatal(err)
+				logger.Fatal(err)
 			}
 		}()
 	}
@@ -220,7 +282,8 @@ func main() {
 	// Bind to the listen address and serve HTTP/WebSocket traffic.
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 
 	srv := newHTTPServer(mux)
@@ -242,7 +305,7 @@ func main() {
 			err = srv.Serve(ln)
 		}
 		if err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
+			logger.Fatal(err)
 		}
 	}()
 
@@ -265,7 +328,7 @@ func main() {
 	if metricsLn != nil {
 		ready["metrics_url"] = metricsScheme + "://" + metricsLn.Addr().String() + "/metrics"
 	}
-	_ = json.NewEncoder(os.Stdout).Encode(ready)
+	_ = json.NewEncoder(stdout).Encode(ready)
 
 	// Handle reloads and shutdowns.
 	sig := make(chan os.Signal, 2)
@@ -275,23 +338,23 @@ func main() {
 		switch <-sig {
 		case syscall.SIGHUP:
 			if err := s.ReloadKeys(); err != nil {
-				log.Printf("reload keys failed: %v", err)
+				logger.Printf("reload keys failed: %v", err)
 			} else {
-				log.Printf("reloaded issuer keyset")
+				logger.Printf("reloaded issuer keyset")
 			}
 		case syscall.SIGUSR1:
 			if metrics == nil {
-				log.Printf("metrics server disabled (missing --metrics-listen)")
+				logger.Printf("metrics server disabled (missing --metrics-listen)")
 				continue
 			}
 			metrics.Enable()
-			log.Printf("metrics enabled")
+			logger.Printf("metrics enabled")
 		case syscall.SIGUSR2:
 			if metrics == nil {
 				continue
 			}
 			metrics.Disable()
-			log.Printf("metrics disabled")
+			logger.Printf("metrics disabled")
 		default:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_ = srv.Shutdown(ctx)
@@ -299,7 +362,112 @@ func main() {
 				_ = metricsSrv.Shutdown(ctx)
 			}
 			cancel()
-			return
+			return 0
 		}
 	}
+}
+
+func envString(key string, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func splitCSVEnv(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		v := strings.TrimSpace(p)
+		if v == "" {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func envBoolWithErr(key string, fallback bool) (bool, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, err
+	}
+	return v, nil
+}
+
+func envIntWithErr(key string, fallback int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
+func envDurationWithErr(key string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, err
+	}
+	return d, nil
+}
+
+func versionString() string {
+	v := strings.TrimSpace(version)
+	c := strings.TrimSpace(commit)
+	d := strings.TrimSpace(date)
+
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v == "" || v == "dev" || v == "(devel)" {
+			if strings.TrimSpace(info.Main.Version) != "" && info.Main.Version != "(devel)" {
+				v = info.Main.Version
+			}
+		}
+		if c == "" || c == "unknown" {
+			if rev := buildSetting(info, "vcs.revision"); rev != "" {
+				c = rev
+			}
+		}
+		if d == "" || d == "unknown" {
+			if t := buildSetting(info, "vcs.time"); t != "" {
+				d = t
+			}
+		}
+	}
+
+	out := v
+	if c != "" && c != "unknown" {
+		out += " (" + c + ")"
+	}
+	if d != "" && d != "unknown" {
+		out += " " + d
+	}
+	return out
+}
+
+func buildSetting(info *debug.BuildInfo, key string) string {
+	if info == nil {
+		return ""
+	}
+	for _, s := range info.Settings {
+		if s.Key == key {
+			return s.Value
+		}
+	}
+	return ""
 }

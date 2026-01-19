@@ -3,6 +3,22 @@
 This guide is for integrating Flowersec into your own application (not just running the demos).
 It focuses on the most ergonomic and stable entrypoints across Go and TypeScript.
 
+## Install
+
+**Go (library)**
+
+```bash
+go get github.com/floegence/flowersec/flowersec-go@latest
+```
+
+**Tunnel server (deployable)**
+
+```bash
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
+```
+
+For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMENT.md`.
+
 ## Recommended entrypoints
 
 **Go**

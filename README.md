@@ -35,6 +35,46 @@ If you are integrating Flowersec into your own codebase (not just running the de
 
 If you want a "from zero" guided path (copy/paste friendly), follow the section below.
 
+## Install (no clone)
+
+This section is for users who want to install Flowersec tools without cloning this repository.
+
+### Tunnel server (deployable)
+
+**Option A: `go install`**
+
+```bash
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
+flowersec-tunnel --version
+```
+
+**Option B: GitHub Releases**
+
+Download prebuilt binaries (and `checksums.txt`) from the GitHub Releases page.
+
+**Option C: Docker image (recommended for deployments)**
+
+The tunnel CLI supports `FSEC_TUNNEL_*` environment variables as defaults (flags override env). Minimal example:
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  -v "$PWD/issuer_keys.json:/etc/flowersec/issuer_keys.json:ro" \
+  -e FSEC_TUNNEL_LISTEN=0.0.0.0:8080 \
+  -e FSEC_TUNNEL_WS_PATH=/ws \
+  -e FSEC_TUNNEL_ISSUER_KEYS_FILE=/etc/flowersec/issuer_keys.json \
+  -e FSEC_TUNNEL_AUD=flowersec-tunnel:prod \
+  -e FSEC_TUNNEL_ISS=issuer-prod \
+  -e FSEC_TUNNEL_ALLOW_ORIGIN=https://your-web-origin.example \
+  ghcr.io/floegence/flowersec-tunnel:latest
+```
+
+- `issuer_keys.json` is the issuer **public keyset** owned by your controlplane (the tunnel uses it to verify tokens). Keep `aud`/`iss` consistent with the controlplane-issued token payload.
+- Health check: `GET /healthz` on the tunnel HTTP server.
+- Metrics: set `FSEC_TUNNEL_METRICS_LISTEN=0.0.0.0:9090` and expose `-p 9090:9090`.
+
+Full deployment notes: `docs/TUNNEL_DEPLOYMENT.md`.
+
 ## Getting started (from zero, local)
 
 This section is a nanny-style walkthrough to get a working end-to-end session on your machine.

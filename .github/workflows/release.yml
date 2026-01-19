@@ -1,0 +1,111 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "flowersec-go/v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute version vars
+        id: vars
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#flowersec-go/v}"
+          DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.6"
+          cache: true
+          cache-dependency-path: flowersec-go/go.sum
+
+      - name: Build tunnel release artifacts
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.vars.outputs.version }}"
+          COMMIT="${GITHUB_SHA}"
+          DATE="${{ steps.vars.outputs.date }}"
+
+          mkdir -p dist
+
+          build_one() {
+            local os="$1"
+            local arch="$2"
+            local ext=""
+            local archive_ext="tar.gz"
+            if [[ "$os" == "windows" ]]; then
+              ext=".exe"
+              archive_ext="zip"
+            fi
+            local dir="flowersec-tunnel_${VERSION}_${os}_${arch}"
+            rm -rf "$dir"
+            mkdir -p "$dir"
+
+            ( cd flowersec-go && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/flowersec-tunnel${ext}" ./cmd/flowersec-tunnel \
+            )
+
+            cp LICENSE "$dir/"
+
+            if [[ "$archive_ext" == "zip" ]]; then
+              ( cd "$dir" && zip -qr "../dist/${dir}.zip" . )
+            else
+              tar -C "$dir" -czf "dist/${dir}.tar.gz" .
+            fi
+          }
+
+          build_one linux amd64
+          build_one linux arm64
+          build_one darwin amd64
+          build_one darwin arm64
+          build_one windows amd64
+
+          ( cd dist && sha256sum * > checksums.txt )
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push tunnel image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/flowersec-tunnel/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/flowersec-tunnel:${{ steps.vars.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/flowersec-tunnel:latest
+          build-args: |
+            VERSION=v${{ steps.vars.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ steps.vars.outputs.date }}
