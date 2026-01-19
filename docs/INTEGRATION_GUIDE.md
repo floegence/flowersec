@@ -3,6 +3,11 @@
 This guide is for integrating Flowersec into your own application (not just running the demos).
 It focuses on the most ergonomic and stable entrypoints across Go and TypeScript.
 
+## Prerequisites
+
+- Go 1.25.x (required)
+- Node.js 22 LTS recommended (TypeScript only)
+
 ## Install
 
 **Go (library)**
@@ -15,6 +20,17 @@ go get github.com/floegence/flowersec/flowersec-go@latest
 
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
+```
+
+**TypeScript (ESM, browser-friendly)**
+
+The release assets include an npm tarball so you can install without cloning:
+
+- Download `flowersec-core-X.Y.Z.tgz` from the GitHub Release `flowersec-go/vX.Y.Z`
+- Install it:
+
+```bash
+npm i ./flowersec-core-X.Y.Z.tgz
 ```
 
 For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMENT.md`.

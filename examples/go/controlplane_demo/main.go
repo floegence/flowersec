@@ -82,18 +82,19 @@ func main() {
 	var kid string
 	var issuerKeysFile string
 	flag.StringVar(&listen, "listen", "127.0.0.1:0", "listen address")
-	flag.StringVar(&tunnelURL, "tunnel-url", "", "tunnel websocket url (e.g. ws://127.0.0.1:8080/ws)")
+	flag.StringVar(&tunnelURL, "tunnel-url", "ws://127.0.0.1:8080/ws", "tunnel websocket url (e.g. ws://127.0.0.1:8080/ws)")
 	flag.StringVar(&aud, "aud", "flowersec-tunnel:dev", "token audience (must match tunnel --aud)")
 	flag.StringVar(&issuerID, "issuer-id", "issuer-demo", "issuer id in token payload")
 	flag.StringVar(&kid, "kid", "k1", "issuer key id (kid)")
-	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "output file for tunnel keyset (kid->ed25519 pubkey)")
+	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "output file for tunnel keyset (kid->ed25519 pubkey) (default: temp file)")
 	flag.Parse()
 
 	if tunnelURL == "" {
 		log.Fatal("missing --tunnel-url")
 	}
-	if issuerKeysFile == "" {
-		log.Fatal("missing --issuer-keys-file")
+	issuerKeysFile, err := resolveIssuerKeysFile(issuerKeysFile)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	// Generate an issuer keyset for signing tunnel attach tokens (ed25519).
@@ -212,6 +213,18 @@ func main() {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
 	_ = srv.Shutdown(ctx2)
 	cancel2()
+}
+
+func resolveIssuerKeysFile(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed != "" {
+		return trimmed, nil
+	}
+	dir, err := os.MkdirTemp("", "fsec-controlplane-demo.")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "issuer_keys.json"), nil
 }
 
 type notifySink interface {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -134,4 +136,27 @@ type stubNotifySink struct {
 func (s *stubNotifySink) Notify(typeID uint32, payload json.RawMessage) error {
 	s.calls = append(s.calls, stubNotifyCall{typeID: typeID, payload: payload})
 	return nil
+}
+
+func TestResolveIssuerKeysFile_DefaultsToTemp(t *testing.T) {
+	p, err := resolveIssuerKeysFile("")
+	if err != nil {
+		t.Fatalf("resolveIssuerKeysFile() failed: %v", err)
+	}
+	if filepath.Base(p) != "issuer_keys.json" {
+		t.Fatalf("expected issuer_keys.json basename, got %q", filepath.Base(p))
+	}
+	if _, err := os.Stat(filepath.Dir(p)); err != nil {
+		t.Fatalf("expected dir to exist: %v", err)
+	}
+}
+
+func TestResolveIssuerKeysFile_UsesProvidedPath(t *testing.T) {
+	p, err := resolveIssuerKeysFile(" /tmp/foo.json ")
+	if err != nil {
+		t.Fatalf("resolveIssuerKeysFile() failed: %v", err)
+	}
+	if p != "/tmp/foo.json" {
+		t.Fatalf("expected path to be preserved, got %q", p)
+	}
 }

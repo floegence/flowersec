@@ -55,12 +55,15 @@ func main() {
 	var origin string
 	var endpointID string
 	flag.StringVar(&controlPath, "control", "", "path to JSON output from controlplane_demo (default: stdin)")
-	flag.StringVar(&origin, "origin", "", "explicit Origin header value (required)")
+	flag.StringVar(&origin, "origin", "", "explicit Origin header value (or env: FSEC_ORIGIN)")
 	flag.StringVar(&endpointID, "endpoint-id", "", "logical endpoint id for controlplane registration (default: random)")
 	flag.Parse()
 
 	if origin == "" {
-		log.Fatal("missing --origin")
+		origin = os.Getenv("FSEC_ORIGIN")
+	}
+	if origin == "" {
+		log.Fatal("missing --origin (or env: FSEC_ORIGIN)")
 	}
 
 	info, err := readControlplaneControlInfo(controlPath)

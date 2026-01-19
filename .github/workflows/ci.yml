@@ -13,7 +13,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.6"
+          go-version-file: flowersec-go/go.mod
           cache: true
           cache-dependency-path: |
             flowersec-go/go.sum

@@ -27,11 +27,14 @@ func main() {
 	var grantPath string
 	var origin string
 	flag.StringVar(&grantPath, "grant", "", "path to JSON-encoded ChannelInitGrant for role=client (default: stdin)")
-	flag.StringVar(&origin, "origin", "", "explicit Origin header value (required)")
+	flag.StringVar(&origin, "origin", "", "explicit Origin header value (or env: FSEC_ORIGIN)")
 	flag.Parse()
 
 	if origin == "" {
-		log.Fatal("missing --origin")
+		origin = os.Getenv("FSEC_ORIGIN")
+	}
+	if origin == "" {
+		log.Fatal("missing --origin (or env: FSEC_ORIGIN)")
 	}
 
 	var grantReader io.Reader = os.Stdin

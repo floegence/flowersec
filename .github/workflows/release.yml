@@ -29,9 +29,16 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.6"
+          go-version-file: flowersec-go/go.mod
           cache: true
           cache-dependency-path: flowersec-go/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: flowersec-ts/package-lock.json
 
       - name: Build tunnel release artifacts
         run: |
@@ -41,6 +48,20 @@ jobs:
           DATE="${{ steps.vars.outputs.date }}"
 
           mkdir -p dist
+
+          # Build the TypeScript dist once (shared across all demo bundles).
+          ( cd flowersec-ts && \
+            npm ci --audit=false && \
+            npm run build \
+          )
+
+          # Pack the TypeScript npm tarball for no-clone installs (from GitHub Releases).
+          # This does not publish to npm; it only produces a .tgz artifact.
+          ( cd flowersec-ts && \
+            npm version --no-git-tag-version "${VERSION}" && \
+            npm pack --silent && \
+            mv "flowersec-core-${VERSION}.tgz" "../dist/" \
+          )
 
           build_one() {
             local os="$1"
@@ -71,11 +92,74 @@ jobs:
             fi
           }
 
+          build_demos_one() {
+            local os="$1"
+            local arch="$2"
+            local ext=""
+            local archive_ext="tar.gz"
+            if [[ "$os" == "windows" ]]; then
+              ext=".exe"
+              archive_ext="zip"
+            fi
+            local dir="flowersec-demos_${VERSION}_${os}_${arch}"
+            rm -rf "$dir"
+            mkdir -p "$dir/bin"
+
+            # Runtime binaries (no Go required for demos).
+            ( cd flowersec-go && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-tunnel${ext}" ./cmd/flowersec-tunnel \
+            )
+            ( cd examples && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -o "../$dir/bin/flowersec-controlplane-demo${ext}" ./go/controlplane_demo \
+            )
+            ( cd examples && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -o "../$dir/bin/flowersec-server-endpoint-demo${ext}" ./go/server_endpoint \
+            )
+            ( cd examples && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -o "../$dir/bin/flowersec-direct-demo${ext}" ./go/direct_demo \
+            )
+            ( cd examples && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -o "../$dir/bin/flowersec-go-client-tunnel${ext}" ./go/go_client_tunnel_simple \
+            )
+            ( cd examples && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -o "../$dir/bin/flowersec-go-client-direct${ext}" ./go/go_client_direct_simple \
+            )
+
+            # Demo assets (TS dist + scripts + docs).
+            mkdir -p "$dir/flowersec-ts"
+            cp -R flowersec-ts/dist "$dir/flowersec-ts/dist"
+            mkdir -p "$dir/examples"
+            cp examples/README.md "$dir/examples/README.md"
+            cp -R examples/ts "$dir/examples/ts"
+
+            cp LICENSE "$dir/"
+
+            if [[ "$archive_ext" == "zip" ]]; then
+              ( cd "$dir" && zip -qr "../dist/${dir}.zip" . )
+            else
+              tar -C "$dir" -czf "dist/${dir}.tar.gz" .
+            fi
+          }
+
           build_one linux amd64
           build_one linux arm64
           build_one darwin amd64
           build_one darwin arm64
           build_one windows amd64
+
+          build_demos_one linux amd64
+          build_demos_one linux arm64
+          build_demos_one darwin amd64
+          build_demos_one darwin arm64
+          build_demos_one windows amd64
 
           ( cd dist && sha256sum * > checksums.txt )
 

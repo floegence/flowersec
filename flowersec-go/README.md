@@ -9,6 +9,8 @@ This module contains the Go implementation of the Flowersec data-plane protocol 
 
 Status: experimental; not audited.
 
+Prerequisite: Go 1.25.x.
+
 ## Install (Go library)
 
 ```bash

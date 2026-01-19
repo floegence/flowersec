@@ -49,6 +49,22 @@ func TestRun_VersionFlag(t *testing.T) {
 	}
 }
 
+func TestRun_HelpMarksRequiredFlags(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run([]string{"--help"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%q)", code, stderr.String())
+	}
+	help := stderr.String()
+	if !strings.Contains(help, "issuer keyset file (kid->ed25519 pubkey) (required)") {
+		t.Fatalf("expected issuer-keys-file to be marked required, help=%q", help)
+	}
+	if !strings.Contains(help, "expected token audience (required)") {
+		t.Fatalf("expected aud to be marked required, help=%q", help)
+	}
+}
+
 func TestSplitCSVEnv(t *testing.T) {
 	t.Setenv("FSEC_TUNNEL_ALLOW_ORIGIN", "a,b, c,,")
 	got := splitCSVEnv("FSEC_TUNNEL_ALLOW_ORIGIN")

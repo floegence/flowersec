@@ -21,19 +21,10 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 - Demos + scenario cookbook: `examples/README.md`
   - Includes both high-level client helpers and manual stack examples (Go + TS).
 
-## Quickstart
+## Quickstart (no clone)
 
-The recommended hands-on entrypoint is the scenario cookbook:
-
-```bash
-open examples/README.md
-```
-
-If you are integrating Flowersec into your own codebase (not just running the demos), start here:
-
-- `docs/INTEGRATION_GUIDE.md`
-
-If you want a "from zero" guided path (copy/paste friendly), follow the section below.
+- Demos: download the `flowersec-demos` bundle from GitHub Releases and follow `examples/README.md` (works from the extracted bundle root).
+- Integration: `docs/INTEGRATION_GUIDE.md`.
 
 ## Install (no clone)
 
@@ -47,6 +38,8 @@ This section is for users who want to install Flowersec tools without cloning th
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
 flowersec-tunnel --version
 ```
+
+Note: `go install` requires Go 1.25.x and installs into `$(go env GOBIN)` (or `$(go env GOPATH)/bin`).
 
 **Option B: GitHub Releases**
 
@@ -75,90 +68,12 @@ docker run --rm \
 
 Full deployment notes: `docs/TUNNEL_DEPLOYMENT.md`.
 
-## Getting started (from zero, local)
+## Getting started (no clone, local)
 
-This section is a nanny-style walkthrough to get a working end-to-end session on your machine.
+The recommended hands-on entrypoint is the demo bundle shipped in GitHub Releases:
 
-### 0) Prerequisites
-
-- Go (same major as `flowersec-go/go.mod`)
-- Node.js 22 LTS (see `.nvmrc`)
-- Optional: `jq` (makes copying values from JSON outputs easier)
-
-### 1) Build the TypeScript bundle once (required for TS examples)
-
-The TS example scripts import from `flowersec-ts/dist/`, so build it once:
-
-```bash
-cd flowersec-ts
-npm ci
-npm run build
-cd ..
-```
-
-### 2) Run your first end-to-end session (direct path, no tunnel)
-
-This is the simplest path: a single direct WebSocket server endpoint that immediately runs E2EE + Yamux + RPC.
-
-Terminal 1 (start the direct server demo):
-
-```bash
-cd examples
-go run ./go/direct_demo --allow-origin http://127.0.0.1:5173 | tee /tmp/fsec-direct.json
-```
-
-Terminal 2 (run a Node.js client against it):
-
-```bash
-FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-direct-client.mjs < /tmp/fsec-direct.json
-```
-
-Alternative (Go client):
-
-```bash
-cd examples
-go run ./go/go_client_direct_simple --origin http://127.0.0.1:5173 < /tmp/fsec-direct.json
-```
-
-### 3) Run the full stack (controlplane + tunnel)
-
-This is the recommended architecture when you need an untrusted public rendezvous (the tunnel) while keeping E2EE end-to-end.
-
-Terminal 1 (start the controlplane demo; it prints a JSON line with params):
-
-```bash
-CP_JSON="$(mktemp -t fsec-controlplane.XXXXXX.json)"
-./examples/run-controlplane-demo.sh | tee "$CP_JSON"
-```
-
-Terminal 2 (start the deployable tunnel service using the params from Terminal 1):
-
-```bash
-FSEC_TUNNEL_ALLOW_ORIGIN=http://127.0.0.1:5173 \
-FSEC_TUNNEL_ISSUER_KEYS_FILE="$(jq -r '.issuer_keys_file' "$CP_JSON")" \
-FSEC_TUNNEL_AUD="$(jq -r '.tunnel_audience' "$CP_JSON")" \
-FSEC_TUNNEL_ISS="$(jq -r '.tunnel_issuer' "$CP_JSON")" \
-FSEC_TUNNEL_LISTEN="$(jq -r '.tunnel_listen' "$CP_JSON")" \
-FSEC_TUNNEL_WS_PATH="$(jq -r '.tunnel_ws_path' "$CP_JSON")" \
-./examples/run-tunnel-server.sh
-```
-
-Terminal 3 (start a server endpoint; it receives `grant_server` over a control channel and attaches as role=server):
-
-```bash
-FSEC_ORIGIN=http://127.0.0.1:5173 ./examples/run-server-endpoint.sh "$CP_JSON"
-```
-
-Terminal 4 (mint a channel init and run a client):
-
-```bash
-CHANNEL_JSON="$(mktemp -t fsec-channel.XXXXXX.json)"
-CP_URL="$(jq -r '.controlplane_http_url' "$CP_JSON")"
-curl -sS -X POST "$CP_URL/v1/channel/init" | tee "$CHANNEL_JSON"
-FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-tunnel-client.mjs < "$CHANNEL_JSON"
-```
-
-If you refresh/reconnect: mint a new channel again (tunnel attach tokens are one-time use).
+- Download `flowersec-demos_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) from the `flowersec-go/vX.Y.Z` release.
+- Follow `examples/README.md` (copy/paste friendly; does not require a repository checkout).
 
 High-level client entrypoints:
 
@@ -172,6 +87,7 @@ go get github.com/floegence/flowersec/flowersec-go@v0.1.0
 
 Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.1.0`).
 
+- TypeScript install (no clone): download `flowersec-core-X.Y.Z.tgz` from the same GitHub Release and install with `npm i ./flowersec-core-X.Y.Z.tgz`.
 - Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.ConnectTunnel(ctx, grant, origin, ...opts)`, `client.ConnectDirect(ctx, info, origin, ...opts)`)
 - Go (server endpoint): `github.com/floegence/flowersec/flowersec-go/endpoint` (accept/dial `role=server` endpoints)
 - Go (server stream runtime): `github.com/floegence/flowersec/flowersec-go/endpoint/serve` (default stream dispatch + RPC stream handler)
