@@ -98,7 +98,7 @@ func main() {
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		},
-		OnStream: func(kind string, stream io.ReadWriteCloser) {
+		OnStream: func(_ context.Context, kind string, stream io.ReadWriteCloser) {
 			streamSrv.HandleStream(ctx, kind, stream)
 		},
 	})

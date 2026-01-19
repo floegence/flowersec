@@ -62,7 +62,7 @@ func TestDirectHandler_AllowsConnectDirect(t *testing.T) {
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		},
-		OnStream: func(_kind string, stream io.ReadWriteCloser) {
+		OnStream: func(_ context.Context, _kind string, stream io.ReadWriteCloser) {
 			_ = stream.Close()
 		},
 	})
@@ -99,6 +99,133 @@ func TestDirectHandler_AllowsConnectDirect(t *testing.T) {
 	_ = c.Close()
 }
 
+func TestDirectHandlerResolved_AllowsConnectDirect(t *testing.T) {
+	origin := "http://example.com"
+	channelID := "ch_test"
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+	initExp := time.Now().Add(120 * time.Second).Unix()
+
+	mux := http.NewServeMux()
+	wsHandler, err := endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
+		AllowedOrigins: []string{origin},
+		AllowNoOrigin:  false,
+		Handshake: endpoint.AcceptDirectResolverOptions{
+			ClockSkew:           30 * time.Second,
+			HandshakeTimeout:    2 * time.Second,
+			MaxHandshakePayload: 8 * 1024,
+			MaxRecordBytes:      1 << 20,
+			Resolve: func(_ context.Context, init endpoint.DirectHandshakeInit) (endpoint.DirectHandshakeSecrets, error) {
+				if init.ChannelID != channelID {
+					return endpoint.DirectHandshakeSecrets{}, errors.New("unknown channel")
+				}
+				return endpoint.DirectHandshakeSecrets{PSK: psk, InitExpireAtUnixS: initExp}, nil
+			},
+		},
+		OnStream: func(_ context.Context, _kind string, stream io.ReadWriteCloser) {
+			_ = stream.Close()
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDirectHandlerResolved() failed: %v", err)
+	}
+	mux.HandleFunc("/ws", wsHandler)
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	info := &directv1.DirectConnectInfo{
+		WsUrl:                    wsURL,
+		ChannelId:                channelID,
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		ChannelInitExpireAtUnixS: initExp,
+		DefaultSuite:             uint32(e2ee.SuiteX25519HKDFAES256GCM),
+	}
+	c, err := client.ConnectDirect(
+		context.Background(),
+		info,
+		origin,
+		client.WithConnectTimeout(2*time.Second),
+		client.WithHandshakeTimeout(2*time.Second),
+		client.WithMaxRecordBytes(1<<20),
+	)
+	if err != nil {
+		t.Fatalf("ConnectDirect() failed: %v", err)
+	}
+	_ = c.Close()
+}
+
+func TestDirectHandlerResolved_OnError_ResolveFailed(t *testing.T) {
+	t.Parallel()
+
+	origin := "http://example.com"
+	channelID := "ch_test"
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+	initExp := time.Now().Add(120 * time.Second).Unix()
+
+	errCh := make(chan error, 1)
+	mux := http.NewServeMux()
+	wsHandler, err := endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
+		AllowedOrigins: []string{origin},
+		AllowNoOrigin:  false,
+		Handshake: endpoint.AcceptDirectResolverOptions{
+			Resolve: func(context.Context, endpoint.DirectHandshakeInit) (endpoint.DirectHandshakeSecrets, error) {
+				return endpoint.DirectHandshakeSecrets{}, errors.New("nope")
+			},
+		},
+		OnStream: func(context.Context, string, io.ReadWriteCloser) {},
+		OnError: func(err error) {
+			select {
+			case errCh <- err:
+			default:
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDirectHandlerResolved() failed: %v", err)
+	}
+	mux.HandleFunc("/ws", wsHandler)
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	info := &directv1.DirectConnectInfo{
+		WsUrl:                    wsURL,
+		ChannelId:                channelID,
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		ChannelInitExpireAtUnixS: initExp,
+		DefaultSuite:             uint32(e2ee.SuiteX25519HKDFAES256GCM),
+	}
+	_, _ = client.ConnectDirect(
+		context.Background(),
+		info,
+		origin,
+		client.WithConnectTimeout(2*time.Second),
+		client.WithHandshakeTimeout(2*time.Second),
+		client.WithMaxRecordBytes(1<<20),
+	)
+
+	select {
+	case got := <-errCh:
+		var fe *endpoint.Error
+		if !errors.As(got, &fe) {
+			t.Fatalf("expected *endpoint.Error, got %T", got)
+		}
+		if fe.Path != endpoint.PathDirect || fe.Stage != endpoint.StageValidate || fe.Code != endpoint.CodeResolveFailed {
+			t.Fatalf("unexpected error: %+v", fe)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for OnError")
+	}
+}
+
 func TestDirectHandler_OnError_UpgradeFailed(t *testing.T) {
 	t.Parallel()
 
@@ -106,7 +233,7 @@ func TestDirectHandler_OnError_UpgradeFailed(t *testing.T) {
 	errCh := make(chan error, 1)
 	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
 		AllowedOrigins: []string{origin},
-		OnStream:       func(string, io.ReadWriteCloser) {},
+		OnStream:       func(context.Context, string, io.ReadWriteCloser) {},
 		OnError: func(err error) {
 			select {
 			case errCh <- err:
@@ -143,7 +270,7 @@ func TestDirectHandler_OnError_MissingOrigin(t *testing.T) {
 	errCh := make(chan error, 1)
 	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
 		AllowedOrigins: []string{origin},
-		OnStream:       func(string, io.ReadWriteCloser) {},
+		OnStream:       func(context.Context, string, io.ReadWriteCloser) {},
 		OnError: func(err error) {
 			select {
 			case errCh <- err:

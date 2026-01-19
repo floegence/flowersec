@@ -16,14 +16,15 @@ func TestConnectTunnel_RejectsInvalidEndpointInstanceID(t *testing.T) {
 		psk[i] = 1
 	}
 	grant := &controlv1.ChannelInitGrant{
-		TunnelUrl:          "ws://example.invalid",
-		ChannelId:          "ch_1",
-		Role:               controlv1.Role_client,
-		Token:              "tok",
-		E2eePskB64u:        base64.RawURLEncoding.EncodeToString(psk),
-		DefaultSuite:       1,
-		AllowedSuites:      []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
-		IdleTimeoutSeconds: 60,
+		TunnelUrl:                "ws://example.invalid",
+		ChannelId:                "ch_1",
+		ChannelInitExpireAtUnixS: 1,
+		Role:                     controlv1.Role_client,
+		Token:                    "tok",
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		DefaultSuite:             1,
+		AllowedSuites:            []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
+		IdleTimeoutSeconds:       60,
 	}
 	_, err := ConnectTunnel(context.Background(), grant, "http://example.com", WithEndpointInstanceID("!!!"))
 	if err == nil {
@@ -47,14 +48,15 @@ func TestConnectTunnel_RejectsInvalidPSKLength(t *testing.T) {
 		psk[i] = 1
 	}
 	grant := &controlv1.ChannelInitGrant{
-		TunnelUrl:          "ws://example.invalid",
-		ChannelId:          "ch_1",
-		Role:               controlv1.Role_client,
-		Token:              "tok",
-		E2eePskB64u:        base64.RawURLEncoding.EncodeToString(psk),
-		DefaultSuite:       1,
-		AllowedSuites:      []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
-		IdleTimeoutSeconds: 60,
+		TunnelUrl:                "ws://example.invalid",
+		ChannelId:                "ch_1",
+		ChannelInitExpireAtUnixS: 1,
+		Role:                     controlv1.Role_client,
+		Token:                    "tok",
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		DefaultSuite:             1,
+		AllowedSuites:            []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
+		IdleTimeoutSeconds:       60,
 	}
 	_, err := ConnectTunnel(context.Background(), grant, "http://example.com")
 	if err == nil {
@@ -68,6 +70,37 @@ func TestConnectTunnel_RejectsInvalidPSKLength(t *testing.T) {
 		t.Fatalf("expected *client.Error, got %T", err)
 	}
 	if fe.Path != PathTunnel || fe.Stage != StageValidate || fe.Code != CodeInvalidPSK {
+		t.Fatalf("unexpected error: %+v", fe)
+	}
+}
+
+func TestConnectTunnel_RejectsMissingInitExp(t *testing.T) {
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+	grant := &controlv1.ChannelInitGrant{
+		TunnelUrl:          "ws://example.invalid",
+		ChannelId:          "ch_1",
+		Role:               controlv1.Role_client,
+		Token:              "tok",
+		E2eePskB64u:        base64.RawURLEncoding.EncodeToString(psk),
+		DefaultSuite:       1,
+		AllowedSuites:      []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
+		IdleTimeoutSeconds: 60,
+	}
+	_, err := ConnectTunnel(context.Background(), grant, "http://example.com")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrMissingInitExp) {
+		t.Fatalf("expected ErrMissingInitExp, got %v", err)
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *client.Error, got %T", err)
+	}
+	if fe.Path != PathTunnel || fe.Stage != StageValidate || fe.Code != CodeMissingInitExp {
 		t.Fatalf("unexpected error: %+v", fe)
 	}
 }

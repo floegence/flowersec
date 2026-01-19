@@ -36,6 +36,14 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
   if (checkedGrant.tunnel_url === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_tunnel_url", path: "tunnel", message: "missing tunnel_url" });
   }
+  if (checkedGrant.channel_init_expire_at_unix_s <= 0) {
+    throw new FlowersecError({
+      stage: "validate",
+      code: "missing_init_exp",
+      path: "tunnel",
+      message: "missing channel_init_expire_at_unix_s",
+    });
+  }
   const idleTimeoutSeconds = checkedGrant.idle_timeout_seconds;
   if (checkedGrant.role !== ControlRole.Role_client) {
     throw new FlowersecError({ stage: "validate", code: "role_mismatch", path: "tunnel", message: "expected role=client" });

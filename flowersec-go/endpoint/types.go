@@ -44,6 +44,7 @@ const (
 	CodeInvalidEndpointInstanceID = fserrors.CodeInvalidEndpointInstanceID
 	CodeInvalidSuite              = fserrors.CodeInvalidSuite
 	CodeInvalidOption             = fserrors.CodeInvalidOption
+	CodeResolveFailed             = fserrors.CodeResolveFailed
 	CodeRandomFailed              = fserrors.CodeRandomFailed
 	CodeUpgradeFailed             = fserrors.CodeUpgradeFailed
 	CodeDialFailed                = fserrors.CodeDialFailed

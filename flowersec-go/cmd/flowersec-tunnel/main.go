@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -118,6 +119,19 @@ func validateTLSFiles(certFile string, keyFile string) error {
 	return nil
 }
 
+type ready struct {
+	Version       string `json:"version"`
+	Commit        string `json:"commit"`
+	Date          string `json:"date"`
+	Listen        string `json:"listen"`
+	WSPath        string `json:"ws_path"`
+	AdvertiseHost string `json:"advertise_host,omitempty"`
+	WSURL         string `json:"ws_url"`
+	HTTPURL       string `json:"http_url"`
+	HealthzURL    string `json:"healthz_url"`
+	MetricsURL    string `json:"metrics_url,omitempty"`
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -128,6 +142,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	logger := log.New(stderr, "", log.LstdFlags)
 
 	listen := envString("FSEC_TUNNEL_LISTEN", "127.0.0.1:0")
+	advertiseHost := envString("FSEC_TUNNEL_ADVERTISE_HOST", "")
 	path := envString("FSEC_TUNNEL_WS_PATH", "/ws")
 	issuerKeysFile := envString("FSEC_TUNNEL_ISSUER_KEYS_FILE", "")
 	aud := envString("FSEC_TUNNEL_AUD", "")
@@ -176,6 +191,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	showVersion := false
 	fs.BoolVar(&showVersion, "version", false, "print version and exit")
 	fs.StringVar(&listen, "listen", listen, "listen address (env: FSEC_TUNNEL_LISTEN)")
+	fs.StringVar(&advertiseHost, "advertise-host", advertiseHost, "public host[:port] for ready URLs (optional; avoids ws://0.0.0.0) (env: FSEC_TUNNEL_ADVERTISE_HOST)")
 	fs.StringVar(&path, "ws-path", path, "websocket path (env: FSEC_TUNNEL_WS_PATH)")
 	fs.StringVar(&issuerKeysFile, "issuer-keys-file", issuerKeysFile, "issuer keyset file (kid->ed25519 pubkey) (required) (env: FSEC_TUNNEL_ISSUER_KEYS_FILE)")
 	fs.StringVar(&aud, "aud", aud, "expected token audience (required) (env: FSEC_TUNNEL_AUD)")
@@ -201,17 +217,22 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 0
 	}
 
-	if issuerKeysFile == "" || aud == "" || iss == "" {
-		fmt.Fprintln(stderr, "missing --issuer-keys-file, --aud, or --iss")
+	usageErr := func(msg string) int {
+		if msg != "" {
+			fmt.Fprintln(stderr, msg)
+		}
+		fs.Usage()
 		return 2
+	}
+
+	if issuerKeysFile == "" || aud == "" || iss == "" {
+		return usageErr("missing --issuer-keys-file, --aud, or --iss")
 	}
 	if err := validateTLSFiles(tlsCertFile, tlsKeyFile); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
+		return usageErr(err.Error())
 	}
 	if len(allowedOrigins) == 0 {
-		fmt.Fprintln(stderr, "missing --allow-origin")
-		return 2
+		return usageErr("missing --allow-origin")
 	}
 
 	observer := observability.NewAtomicTunnelObserver()
@@ -309,10 +330,6 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 	}()
 
-	ready := map[string]string{
-		"listen":  ln.Addr().String(),
-		"ws_path": path,
-	}
 	wsScheme := "ws"
 	httpScheme := "http"
 	metricsScheme := "http"
@@ -321,14 +338,36 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		httpScheme = "https"
 		metricsScheme = "https"
 	}
-	host := ln.Addr().String()
-	ready["ws_url"] = wsScheme + "://" + host + path
-	ready["http_url"] = httpScheme + "://" + host
-	ready["healthz_url"] = ready["http_url"] + "/healthz"
-	if metricsLn != nil {
-		ready["metrics_url"] = metricsScheme + "://" + metricsLn.Addr().String() + "/metrics"
+	bindAddr := ln.Addr().String()
+	advMainHostPort, advHostOnly, advWasSet, err := resolveAdvertiseHost(bindAddr, advertiseHost)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
-	_ = json.NewEncoder(stdout).Encode(ready)
+
+	out := ready{
+		Version:    version,
+		Commit:     commit,
+		Date:       date,
+		Listen:     bindAddr,
+		WSPath:     path,
+		WSURL:      wsScheme + "://" + advMainHostPort + path,
+		HTTPURL:    httpScheme + "://" + advMainHostPort,
+		HealthzURL: httpScheme + "://" + advMainHostPort + "/healthz",
+	}
+	if advWasSet {
+		out.AdvertiseHost = advertiseHost
+	}
+	if metricsLn != nil {
+		metricsAddr := metricsLn.Addr().String()
+		out.MetricsURL = metricsScheme + "://" + metricsAddr + "/metrics"
+		if advWasSet {
+			if _, port, err := net.SplitHostPort(metricsAddr); err == nil {
+				out.MetricsURL = metricsScheme + "://" + net.JoinHostPort(advHostOnly, port) + "/metrics"
+			}
+		}
+	}
+	_ = json.NewEncoder(stdout).Encode(out)
 
 	// Handle reloads and shutdowns.
 	sig := make(chan os.Signal, 2)
@@ -372,6 +411,33 @@ func envString(key string, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func resolveAdvertiseHost(bindHostPort string, advertiseHost string) (mainHostPort string, hostOnly string, wasSet bool, err error) {
+	bindHost, bindPort, err := net.SplitHostPort(bindHostPort)
+	if err != nil {
+		return "", "", false, err
+	}
+	if strings.TrimSpace(advertiseHost) == "" {
+		return bindHostPort, bindHost, false, nil
+	}
+	raw := strings.TrimSpace(advertiseHost)
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return "", "", true, fmt.Errorf("invalid advertise host: %w", err)
+		}
+		if u.Host == "" {
+			return "", "", true, errors.New("invalid advertise host: missing host")
+		}
+		raw = u.Host
+	}
+	hostOnly = raw
+	if h, p, err := net.SplitHostPort(raw); err == nil {
+		return net.JoinHostPort(h, p), h, true, nil
+	}
+	hostOnly = strings.TrimSuffix(strings.TrimPrefix(hostOnly, "["), "]")
+	return net.JoinHostPort(hostOnly, bindPort), hostOnly, true, nil
 }
 
 func splitCSVEnv(key string) []string {

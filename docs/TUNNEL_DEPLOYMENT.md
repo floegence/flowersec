@@ -65,6 +65,7 @@ All settings are available as flags. For container deployments, the tunnel also 
 | Flag | Env var | Notes |
 | --- | --- | --- |
 | `--listen` | `FSEC_TUNNEL_LISTEN` | default `127.0.0.1:0` |
+| `--advertise-host` | `FSEC_TUNNEL_ADVERTISE_HOST` | public host[:port] used only for ready URLs (useful when listening on `0.0.0.0`) |
 | `--ws-path` | `FSEC_TUNNEL_WS_PATH` | default `/ws` |
 | `--issuer-keys-file` | `FSEC_TUNNEL_ISSUER_KEYS_FILE` | required |
 | `--aud` | `FSEC_TUNNEL_AUD` | required |

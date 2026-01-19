@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
+	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
@@ -114,6 +116,176 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 	}, nil
 }
 
+// DirectHandshakeInit contains stable, security-relevant fields from the client handshake init.
+type DirectHandshakeInit struct {
+	ChannelID      string
+	Version        uint8
+	Suite          e2ee.Suite
+	ClientFeatures uint32
+}
+
+// DirectHandshakeSecrets are the per-channel secrets required to accept a direct handshake.
+type DirectHandshakeSecrets struct {
+	PSK               []byte
+	InitExpireAtUnixS int64
+}
+
+// AcceptDirectResolverOptions configures a direct handshake where per-channel secrets are resolved
+// at runtime based on the client handshake init.
+type AcceptDirectResolverOptions struct {
+	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default).
+
+	ClockSkew time.Duration
+
+	ServerFeatures uint32
+
+	MaxHandshakePayload int
+	MaxRecordBytes      int
+	MaxBufferedBytes    int
+
+	HandshakeCache *e2ee.ServerHandshakeCache
+	YamuxConfig    *hyamux.Config
+
+	// Resolve returns the PSK and init_exp for the given client init. It must not panic.
+	Resolve func(ctx context.Context, init DirectHandshakeInit) (DirectHandshakeSecrets, error)
+}
+
+type replayBinaryTransport struct {
+	first     []byte
+	firstUsed bool
+	t         e2ee.BinaryTransport
+}
+
+func (r *replayBinaryTransport) ReadBinary(ctx context.Context) ([]byte, error) {
+	if !r.firstUsed {
+		r.firstUsed = true
+		return r.first, nil
+	}
+	return r.t.ReadBinary(ctx)
+}
+
+func (r *replayBinaryTransport) WriteBinary(ctx context.Context, b []byte) error {
+	return r.t.WriteBinary(ctx, b)
+}
+
+func (r *replayBinaryTransport) Close() error { return r.t.Close() }
+
+// AcceptDirectWSResolved performs the server-side E2EE handshake on an upgraded websocket connection
+// but resolves per-channel secrets (PSK + init_exp) dynamically based on the client init frame.
+func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptDirectResolverOptions) (Session, error) {
+	if c == nil {
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConn, ErrMissingConn)
+	}
+	if opts.Resolve == nil {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrMissingResolver)
+	}
+
+	handshakeTimeout := opts.HandshakeTimeout
+	if handshakeTimeout < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("handshake timeout must be >= 0"))
+	}
+	if handshakeTimeout == 0 {
+		handshakeTimeout = defaults.HandshakeTimeout
+	}
+	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, handshakeTimeout)
+	defer handshakeCancel()
+
+	maxHello := opts.MaxHandshakePayload
+	if maxHello <= 0 {
+		maxHello = 8 * 1024
+	}
+
+	bt := e2ee.NewWebSocketBinaryTransport(c)
+	firstFrame, err := bt.ReadBinary(handshakeCtx)
+	if err != nil {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
+	}
+	ht, payload, err := e2ee.DecodeHandshakeFrame(firstFrame, maxHello)
+	if err != nil {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
+	}
+	if ht != e2ee.HandshakeTypeInit {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, errors.New("unexpected handshake type"))
+	}
+	var initMsg e2eev1.E2EE_Init
+	if err := json.Unmarshal(payload, &initMsg); err != nil {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, err)
+	}
+	if initMsg.ChannelId == "" {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
+	}
+	if initMsg.Version != e2ee.ProtocolVersion {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeInvalidVersion, e2ee.ErrInvalidVersion)
+	}
+	if initMsg.Role != e2eev1.Role_client {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, errors.New("unexpected role in init"))
+	}
+
+	resolveInput := DirectHandshakeInit{
+		ChannelID:      initMsg.ChannelId,
+		Version:        initMsg.Version,
+		Suite:          e2ee.Suite(initMsg.Suite),
+		ClientFeatures: initMsg.ClientFeatures,
+	}
+	secrets, err := safeResolve(handshakeCtx, opts.Resolve, resolveInput)
+	if err != nil {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeResolveFailed, err)
+	}
+	if secrets.InitExpireAtUnixS <= 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingInitExp, ErrMissingInitExp)
+	}
+	if len(secrets.PSK) != 32 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidPSK, ErrInvalidPSK)
+	}
+
+	ycfg := opts.YamuxConfig
+	if ycfg == nil {
+		ycfg = hyamux.DefaultConfig()
+		ycfg.EnableKeepAlive = false
+		ycfg.LogOutput = io.Discard
+	}
+
+	secure, err := e2ee.ServerHandshake(handshakeCtx, &replayBinaryTransport{first: firstFrame, t: bt}, opts.HandshakeCache, e2ee.ServerHandshakeOptions{
+		PSK:                 secrets.PSK,
+		Suite:               e2ee.Suite(initMsg.Suite),
+		ChannelID:           initMsg.ChannelId,
+		InitExpireAtUnixS:   secrets.InitExpireAtUnixS,
+		ClockSkew:           opts.ClockSkew,
+		ServerFeatures:      opts.ServerFeatures,
+		MaxHandshakePayload: opts.MaxHandshakePayload,
+		MaxRecordBytes:      opts.MaxRecordBytes,
+		MaxBufferedBytes:    opts.MaxBufferedBytes,
+	})
+	if err != nil {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
+	}
+
+	mux, err := hyamux.Server(secure, ycfg)
+	if err != nil {
+		_ = secure.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageYamux, fserrors.CodeMuxFailed, err)
+	}
+
+	return &session{
+		path:   fserrors.PathDirect,
+		secure: secure,
+		mux:    mux,
+	}, nil
+}
+
 type DirectHandlerOptions struct {
 	AllowedOrigins []string
 	AllowNoOrigin  bool
@@ -124,7 +296,7 @@ type DirectHandlerOptions struct {
 
 	MaxStreamHelloBytes int
 
-	OnStream func(kind string, stream io.ReadWriteCloser)
+	OnStream func(ctx context.Context, kind string, stream io.ReadWriteCloser)
 
 	// OnError is called on upgrade/handshake/serve failures. It must not panic.
 	OnError func(err error)
@@ -180,14 +352,14 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 		if opts.OnStream == nil {
 			return
 		}
-		ctx := r.Context()
-		if err := ctx.Err(); err != nil {
+		reqCtx := r.Context()
+		if err := reqCtx.Err(); err != nil {
 			return
 		}
 		done := make(chan struct{})
 		go func() {
 			select {
-			case <-ctx.Done():
+			case <-reqCtx.Done():
 				_ = sess.Close()
 			case <-done:
 			}
@@ -197,7 +369,7 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 		for {
 			kind, stream, err := sess.AcceptStreamHello(maxHello)
 			if err != nil {
-				if ctx.Err() != nil {
+				if reqCtx.Err() != nil {
 					return
 				}
 				var fe *fserrors.Error
@@ -209,12 +381,13 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 				return
 			}
 			go func(kind string, stream io.ReadWriteCloser) {
+				defer stream.Close()
 				defer func() {
 					if recover() != nil {
-						_ = stream.Close()
+						// stream already closed
 					}
 				}()
-				opts.OnStream(kind, stream)
+				opts.OnStream(reqCtx, kind, stream)
 			}(kind, stream)
 		}
 	}, nil
@@ -227,4 +400,129 @@ func MustDirectHandler(opts DirectHandlerOptions) http.HandlerFunc {
 		panic(err)
 	}
 	return h
+}
+
+type DirectHandlerResolvedOptions struct {
+	AllowedOrigins []string
+	AllowNoOrigin  bool
+
+	Upgrader ws.UpgraderOptions
+
+	Handshake AcceptDirectResolverOptions
+
+	MaxStreamHelloBytes int
+
+	OnStream func(ctx context.Context, kind string, stream io.ReadWriteCloser)
+
+	// OnError is called on upgrade/handshake/serve failures. It must not panic.
+	OnError func(err error)
+}
+
+// NewDirectHandlerResolved is like NewDirectHandler, but resolves per-channel handshake secrets at runtime.
+func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFunc, error) {
+	checkOrigin := opts.Upgrader.CheckOrigin
+	hasCustomOriginCheck := checkOrigin != nil
+	if checkOrigin == nil {
+		if len(opts.AllowedOrigins) == 0 && !opts.AllowNoOrigin {
+			return nil, errors.New("missing allowed origins")
+		}
+		checkOrigin = ws.NewOriginChecker(opts.AllowedOrigins, opts.AllowNoOrigin)
+	}
+	maxHello := opts.MaxStreamHelloBytes
+	if maxHello <= 0 {
+		maxHello = DefaultMaxStreamHelloBytes
+	}
+	upgrader := ws.UpgraderOptions{
+		ReadBufferSize:  opts.Upgrader.ReadBufferSize,
+		WriteBufferSize: opts.Upgrader.WriteBufferSize,
+		CheckOrigin:     checkOrigin,
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		onErr := func(err error) {
+			if opts.OnError == nil || err == nil {
+				return
+			}
+			defer func() {
+				_ = recover()
+			}()
+			opts.OnError(err)
+		}
+
+		c, err := ws.Upgrade(w, r, upgrader)
+		if err != nil {
+			if !hasCustomOriginCheck && websocket.IsWebSocketUpgrade(r) && r.Header.Get("Origin") == "" && !opts.AllowNoOrigin {
+				onErr(wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin))
+				return
+			}
+			onErr(wrapErr(fserrors.PathDirect, fserrors.StageConnect, fserrors.CodeUpgradeFailed, err))
+			return
+		}
+		defer c.Close()
+		sess, err := AcceptDirectWSResolved(r.Context(), c.Underlying(), opts.Handshake)
+		if err != nil {
+			onErr(err)
+			return
+		}
+		defer sess.Close()
+		if opts.OnStream == nil {
+			return
+		}
+		reqCtx := r.Context()
+		if err := reqCtx.Err(); err != nil {
+			return
+		}
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-reqCtx.Done():
+				_ = sess.Close()
+			case <-done:
+			}
+		}()
+		defer close(done)
+
+		for {
+			kind, stream, err := sess.AcceptStreamHello(maxHello)
+			if err != nil {
+				if reqCtx.Err() != nil {
+					return
+				}
+				var fe *fserrors.Error
+				if errors.As(err, &fe) && fe.Code == fserrors.CodeStreamHelloFailed {
+					onErr(err)
+					continue
+				}
+				onErr(err)
+				return
+			}
+			go func(kind string, stream io.ReadWriteCloser) {
+				defer stream.Close()
+				defer func() {
+					if recover() != nil {
+						// stream already closed
+					}
+				}()
+				opts.OnStream(reqCtx, kind, stream)
+			}(kind, stream)
+		}
+	}, nil
+}
+
+// MustDirectHandlerResolved panics if NewDirectHandlerResolved fails.
+func MustDirectHandlerResolved(opts DirectHandlerResolvedOptions) http.HandlerFunc {
+	h, err := NewDirectHandlerResolved(opts)
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
+
+func safeResolve(ctx context.Context, resolve func(context.Context, DirectHandshakeInit) (DirectHandshakeSecrets, error), init DirectHandshakeInit) (out DirectHandshakeSecrets, err error) {
+	defer func() {
+		if recover() != nil {
+			out = DirectHandshakeSecrets{}
+			err = errors.New("direct resolve panic")
+		}
+	}()
+	return resolve(ctx, init)
 }

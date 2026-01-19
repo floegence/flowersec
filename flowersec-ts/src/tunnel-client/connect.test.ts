@@ -119,6 +119,14 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_tunnel_url", path: "tunnel" });
   });
 
+  test("rejects missing init exp", async () => {
+    const bad = makeGrant();
+    bad.channel_init_expire_at_unix_s = 0;
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "tunnel" });
+  });
+
   test("rejects invalid endpointInstanceId encoding", async () => {
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",

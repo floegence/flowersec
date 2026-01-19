@@ -13,6 +13,7 @@ var (
 	ErrInvalidEndpointInstanceID = errors.New("invalid endpoint_instance_id")
 	ErrInvalidPSK                = errors.New("invalid psk")
 	ErrInvalidSuite              = errors.New("invalid suite")
+	ErrMissingResolver           = errors.New("missing resolver")
 	ErrNotConnected              = errors.New("endpoint is not connected")
 	ErrMissingHandler            = errors.New("missing handler")
 	ErrMissingStreamKind         = errors.New("missing stream kind")

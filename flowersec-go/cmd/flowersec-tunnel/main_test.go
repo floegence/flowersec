@@ -67,6 +67,98 @@ func TestRun_HelpMarksRequiredFlags(t *testing.T) {
 	}
 }
 
+func TestResolveAdvertiseHost_DefaultsToBindAddr(t *testing.T) {
+	main, hostOnly, wasSet, err := resolveAdvertiseHost("0.0.0.0:8080", "")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if wasSet {
+		t.Fatalf("expected wasSet=false")
+	}
+	if main != "0.0.0.0:8080" {
+		t.Fatalf("unexpected main: %q", main)
+	}
+	if hostOnly != "0.0.0.0" {
+		t.Fatalf("unexpected hostOnly: %q", hostOnly)
+	}
+}
+
+func TestResolveAdvertiseHost_HostOnlyUsesBindPort(t *testing.T) {
+	main, hostOnly, wasSet, err := resolveAdvertiseHost("0.0.0.0:8080", "example.com")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !wasSet {
+		t.Fatalf("expected wasSet=true")
+	}
+	if main != "example.com:8080" {
+		t.Fatalf("unexpected main: %q", main)
+	}
+	if hostOnly != "example.com" {
+		t.Fatalf("unexpected hostOnly: %q", hostOnly)
+	}
+}
+
+func TestResolveAdvertiseHost_HostPortOverridesBindPort(t *testing.T) {
+	main, hostOnly, wasSet, err := resolveAdvertiseHost("0.0.0.0:8080", "example.com:9999")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !wasSet {
+		t.Fatalf("expected wasSet=true")
+	}
+	if main != "example.com:9999" {
+		t.Fatalf("unexpected main: %q", main)
+	}
+	if hostOnly != "example.com" {
+		t.Fatalf("unexpected hostOnly: %q", hostOnly)
+	}
+}
+
+func TestResolveAdvertiseHost_URLIsAccepted(t *testing.T) {
+	main, hostOnly, wasSet, err := resolveAdvertiseHost("0.0.0.0:8080", "https://example.com:7777")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !wasSet {
+		t.Fatalf("expected wasSet=true")
+	}
+	if main != "example.com:7777" {
+		t.Fatalf("unexpected main: %q", main)
+	}
+	if hostOnly != "example.com" {
+		t.Fatalf("unexpected hostOnly: %q", hostOnly)
+	}
+}
+
+func TestResolveAdvertiseHost_StripsIPv6Brackets(t *testing.T) {
+	main, hostOnly, wasSet, err := resolveAdvertiseHost("[::]:8080", "[::1]")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !wasSet {
+		t.Fatalf("expected wasSet=true")
+	}
+	if main != "[::1]:8080" {
+		t.Fatalf("unexpected main: %q", main)
+	}
+	if hostOnly != "::1" {
+		t.Fatalf("unexpected hostOnly: %q", hostOnly)
+	}
+}
+
+func TestRun_MissingRequiredFlags_PrintsUsage(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run([]string{"--listen", "127.0.0.1:0"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "Usage of flowersec-tunnel") {
+		t.Fatalf("expected usage in stderr, got %q", stderr.String())
+	}
+}
+
 func TestSplitCSVEnv(t *testing.T) {
 	t.Setenv("FSEC_TUNNEL_ALLOW_ORIGIN", "a,b, c,,")
 	got := splitCSVEnv("FSEC_TUNNEL_ALLOW_ORIGIN")

@@ -77,7 +77,7 @@ For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMEN
   - `client.ConnectDirect(ctx, info, origin, ...opts)`
 - Server endpoint (role=server):
   - `endpoint.ConnectTunnel(ctx, grant, origin, ...opts)`
-  - Direct server: `endpoint.AcceptDirectWS(...)` or `endpoint.NewDirectHandler(...)`
+  - Direct server: `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandler(...)`, or the resolver variants `endpoint.AcceptDirectWSResolved(...)` / `endpoint.NewDirectHandlerResolved(...)`
 - Stream runtime (recommended for servers): `endpoint/serve` (RPC stream handler + dispatch)
 - Input JSON helpers: `protocolio.DecodeGrantClientJSON(...)`, `protocolio.DecodeDirectConnectInfoJSON(...)`
 
@@ -188,8 +188,8 @@ func main() {
       InitExpireAtUnixS: initExp,
       ClockSkew:         30 * time.Second,
     },
-    OnStream: func(kind string, stream io.ReadWriteCloser) {
-      srv.HandleStream(context.Background(), kind, stream)
+    OnStream: func(ctx context.Context, kind string, stream io.ReadWriteCloser) {
+      srv.HandleStream(ctx, kind, stream)
     },
     OnError: func(err error) { log.Printf("upgrade/handshake error: %v", err) },
   })
@@ -204,6 +204,66 @@ func main() {
 ```
 
 Your application must distribute the matching `DirectConnectInfo` (ws_url, channel_id, psk, init_exp, suite) to clients out-of-band (often as JSON).
+
+### Go: multi-channel direct server (recommended)
+
+The minimal example above hard-codes `channel_id` and `psk`. In real apps, direct servers usually need to support many channels.
+
+Use `endpoint.NewDirectHandlerResolved` to resolve `{psk, init_exp}` dynamically based on the client's handshake init:
+
+```go
+import (
+  "context"
+  "errors"
+  "io"
+  "log"
+  "net/http"
+  "time"
+
+  "github.com/floegence/flowersec/flowersec-go/endpoint"
+  "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
+)
+
+type secrets struct {
+  psk []byte
+  initExp int64
+}
+
+var byChannel = map[string]secrets{
+  // "ch_1": {psk: ..., initExp: ...},
+}
+
+func main() {
+  srv := serve.New(serve.Options{
+    OnError: func(err error) { log.Printf("direct server error: %v", err) },
+  })
+
+  wsHandler, err := endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
+    AllowedOrigins: []string{"https://your-web-origin.example"},
+    Handshake: endpoint.AcceptDirectResolverOptions{
+      ClockSkew: 30 * time.Second,
+      Resolve: func(ctx context.Context, init endpoint.DirectHandshakeInit) (endpoint.DirectHandshakeSecrets, error) {
+        s, ok := byChannel[init.ChannelID]
+        if !ok {
+          return endpoint.DirectHandshakeSecrets{}, errors.New("unknown channel")
+        }
+        return endpoint.DirectHandshakeSecrets{PSK: s.psk, InitExpireAtUnixS: s.initExp}, nil
+      },
+    },
+    OnStream: func(ctx context.Context, kind string, stream io.ReadWriteCloser) {
+      srv.HandleStream(ctx, kind, stream)
+    },
+    OnError: func(err error) { log.Printf("upgrade/handshake error: %v", err) },
+  })
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  mux := http.NewServeMux()
+  mux.HandleFunc("/ws", wsHandler)
+  log.Fatal(http.ListenAndServe(":8080", mux))
+}
+```
 
 ## Go: minimal tunnel client (role=client)
 

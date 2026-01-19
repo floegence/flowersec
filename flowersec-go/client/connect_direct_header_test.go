@@ -58,7 +58,7 @@ func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		},
-		OnStream: func(_kind string, stream io.ReadWriteCloser) {
+		OnStream: func(_ context.Context, _kind string, stream io.ReadWriteCloser) {
 			_ = stream.Close()
 		},
 	})

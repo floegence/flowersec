@@ -152,15 +152,14 @@ func main() {
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		},
-		OnStream: func(kind string, stream io.ReadWriteCloser) {
-			defer stream.Close()
+		OnStream: func(ctx context.Context, kind string, stream io.ReadWriteCloser) {
 			switch kind {
 			case "rpc":
 				router := rpc.NewRouter()
 				srv := rpc.NewServer(stream, router)
 				conn := &serverEndpointConn{srv: srv, reg: controlEndpoints}
 				router.Register(controlRPCTypeRegisterServerEndpoint, conn.handleRegister)
-				_ = srv.Serve(context.Background())
+				_ = srv.Serve(ctx)
 				conn.unregister()
 			default:
 				return
