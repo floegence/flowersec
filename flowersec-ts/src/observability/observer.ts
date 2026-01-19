@@ -9,7 +9,7 @@ export type AttachReason = "send_failed";
 export type HandshakeResult = "ok" | "fail";
 export type HandshakeReason =
   | "auth_tag_mismatch"
-  | "handshake_error"
+  | "handshake_failed"
   | "invalid_version"
   | "timestamp_after_init_exp"
   | "timestamp_out_of_skew"

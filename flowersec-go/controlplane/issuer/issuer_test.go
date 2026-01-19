@@ -31,7 +31,7 @@ func TestSignTokenFillsKid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	payload := token.Payload{Aud: "aud", ChannelID: "ch", Role: 1, TokenID: "id", InitExp: 100, Iat: 10, Exp: 50}
+	payload := token.Payload{Aud: "aud", ChannelID: "ch", Role: 1, TokenID: "id", InitExp: 100, IdleTimeoutSeconds: 60, Iat: 10, Exp: 50}
 	signed, err := ks.SignToken(payload)
 	if err != nil {
 		t.Fatalf("SignToken failed: %v", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
@@ -23,6 +24,7 @@ type Session interface {
 	AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteCloser, error)
 	ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser)) error
 	OpenStream(kind string) (io.ReadWriteCloser, error)
+	Ping() error
 	Close() error
 }
 
@@ -44,6 +46,8 @@ type session struct {
 
 	closeOnce sync.Once
 	closeErr  error
+
+	keepaliveStop chan struct{}
 }
 
 func (s *session) Path() Path {
@@ -74,12 +78,29 @@ func (s *session) Mux() *hyamux.Session {
 	return s.mux
 }
 
+func (s *session) Ping() error {
+	if s == nil || s.secure == nil {
+		var path Path
+		if s != nil {
+			path = s.path
+		}
+		return wrapErr(path, fserrors.StageSecure, fserrors.CodeNotConnected, ErrNotConnected)
+	}
+	if err := s.secure.Ping(); err != nil {
+		return wrapErr(s.path, fserrors.StageSecure, fserrors.CodePingFailed, err)
+	}
+	return nil
+}
+
 func (s *session) Close() error {
 	if s == nil {
 		return nil
 	}
 	s.closeOnce.Do(func() {
 		var firstErr error
+		if s.keepaliveStop != nil {
+			close(s.keepaliveStop)
+		}
 		if s.mux != nil {
 			if err := s.mux.Close(); err != nil && firstErr == nil {
 				firstErr = err
@@ -192,4 +213,30 @@ func (s *session) OpenStream(kind string) (io.ReadWriteCloser, error) {
 		return nil, wrapErr(s.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
 	}
 	return st, nil
+}
+
+func (s *session) startKeepalive(interval time.Duration) {
+	if s == nil || s.secure == nil || interval <= 0 {
+		return
+	}
+	if s.keepaliveStop != nil {
+		return
+	}
+	stop := make(chan struct{})
+	s.keepaliveStop = stop
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if err := s.Ping(); err != nil {
+					_ = s.Close()
+					return
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
 }

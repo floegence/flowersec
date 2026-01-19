@@ -33,6 +33,9 @@ type connectOptions struct {
 	endpointInstanceID string
 	handshakeCache     *e2ee.ServerHandshakeCache
 	yamuxConfig        *hyamux.Config
+
+	keepaliveInterval time.Duration
+	keepaliveSet      bool
 }
 
 func defaultConnectOptions() connectOptions {
@@ -165,6 +168,18 @@ func WithHandshakeCache(cache *e2ee.ServerHandshakeCache) ConnectOption {
 func WithYamuxConfig(ycfg *hyamux.Config) ConnectOption {
 	return func(cfg *connectOptions) error {
 		cfg.yamuxConfig = ycfg
+		return nil
+	}
+}
+
+// WithKeepaliveInterval sets the encrypted keepalive ping interval (0 disables).
+func WithKeepaliveInterval(d time.Duration) ConnectOption {
+	return func(cfg *connectOptions) error {
+		if d < 0 {
+			return fmt.Errorf("keepalive interval must be >= 0")
+		}
+		cfg.keepaliveInterval = d
+		cfg.keepaliveSet = true
 		return nil
 	}
 }

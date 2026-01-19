@@ -11,10 +11,10 @@ import {
   createDemoClient,
 } from "./v1.rpc.gen.js";
 
-export type DemoSession = Client & ReturnType<typeof createDemoClient>;
+export type DemoSession = Client & Readonly<{ demo: ReturnType<typeof createDemoClient> }>;
 
 export function createDemoSession(client: Client): DemoSession {
-  return { ...client, ...createDemoClient(client.rpc) };
+  return { ...client, demo: createDemoClient(client.rpc) };
 }
 
 export async function connectDemoTunnel(grant: ChannelInitGrant, opts: TunnelConnectOptions): Promise<DemoSession>;

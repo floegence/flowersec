@@ -15,34 +15,36 @@ import (
 )
 
 // Prefix identifies the token format version.
-const Prefix = "FST1"
+const Prefix = "FST2"
 
 // Payload is the signed token payload for tunnel attachment.
 type Payload struct {
-	Kid       string `json:"kid"`           // Key ID used to verify the signature.
-	Aud       string `json:"aud"`           // Intended audience for the token.
-	Iss       string `json:"iss,omitempty"` // Issuer identifier, optional.
-	ChannelID string `json:"channel_id"`    // Channel identifier this token authorizes.
-	Role      uint8  `json:"role"`          // Endpoint role (client/server).
-	TokenID   string `json:"token_id"`      // Unique token ID for replay protection.
-	InitExp   int64  `json:"init_exp"`      // Channel-init expiry (Unix seconds).
-	Iat       int64  `json:"iat"`           // Issued-at timestamp (Unix seconds).
-	Exp       int64  `json:"exp"`           // Token expiry timestamp (Unix seconds).
+	Kid                string `json:"kid"`                  // Key ID used to verify the signature.
+	Aud                string `json:"aud"`                  // Intended audience for the token.
+	Iss                string `json:"iss,omitempty"`        // Issuer identifier, optional.
+	ChannelID          string `json:"channel_id"`           // Channel identifier this token authorizes.
+	Role               uint8  `json:"role"`                 // Endpoint role (client/server).
+	TokenID            string `json:"token_id"`             // Unique token ID for replay protection.
+	InitExp            int64  `json:"init_exp"`             // Channel-init expiry (Unix seconds).
+	IdleTimeoutSeconds int32  `json:"idle_timeout_seconds"` // Tunnel idle timeout in seconds for this channel.
+	Iat                int64  `json:"iat"`                  // Issued-at timestamp (Unix seconds).
+	Exp                int64  `json:"exp"`                  // Token expiry timestamp (Unix seconds).
 }
 
 var (
 	// ErrInvalidFormat indicates the token does not match prefix/parts.
-	ErrInvalidFormat   = errors.New("token invalid format")
-	ErrInvalidB64      = errors.New("token invalid base64url")
-	ErrInvalidJSON     = errors.New("token invalid json")
-	ErrUnknownKID      = errors.New("token unknown kid")
-	ErrInvalidSig      = errors.New("token invalid signature")
-	ErrInvalidAudience = errors.New("token invalid audience")
-	ErrInvalidIssuer   = errors.New("token invalid issuer")
-	ErrExpired         = errors.New("token expired")
-	ErrIATInFuture     = errors.New("token iat in future")
-	ErrInitExpired     = errors.New("token init window expired")
-	ErrExpAfterInit    = errors.New("token exp > init_exp")
+	ErrInvalidFormat      = errors.New("token invalid format")
+	ErrInvalidB64         = errors.New("token invalid base64url")
+	ErrInvalidJSON        = errors.New("token invalid json")
+	ErrUnknownKID         = errors.New("token unknown kid")
+	ErrInvalidSig         = errors.New("token invalid signature")
+	ErrInvalidAudience    = errors.New("token invalid audience")
+	ErrInvalidIssuer      = errors.New("token invalid issuer")
+	ErrExpired            = errors.New("token expired")
+	ErrIATInFuture        = errors.New("token iat in future")
+	ErrInitExpired        = errors.New("token init window expired")
+	ErrExpAfterInit       = errors.New("token exp > init_exp")
+	ErrInvalidIdleTimeout = errors.New("token invalid idle timeout")
 )
 
 // KeyLookup provides public keys by key ID.
@@ -65,6 +67,9 @@ func Sign(priv ed25519.PrivateKey, payload Payload) (string, error) {
 	}
 	if strings.TrimSpace(payload.Aud) == "" {
 		return "", fmt.Errorf("missing aud: %w", ErrInvalidFormat)
+	}
+	if payload.IdleTimeoutSeconds <= 0 {
+		return "", fmt.Errorf("missing idle_timeout_seconds: %w", ErrInvalidIdleTimeout)
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -103,6 +108,9 @@ func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error
 	p, signed, sig, err := Parse(tokenStr)
 	if err != nil {
 		return Payload{}, err
+	}
+	if p.IdleTimeoutSeconds <= 0 {
+		return Payload{}, ErrInvalidIdleTimeout
 	}
 	pub, ok := keys.Lookup(p.Kid)
 	if !ok {

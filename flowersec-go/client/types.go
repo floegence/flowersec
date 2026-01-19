@@ -18,6 +18,7 @@ const (
 	StageConnect   = fserrors.StageConnect
 	StageAttach    = fserrors.StageAttach
 	StageHandshake = fserrors.StageHandshake
+	StageSecure    = fserrors.StageSecure
 	StageYamux     = fserrors.StageYamux
 	StageRPC       = fserrors.StageRPC
 	StageClose     = fserrors.StageClose
@@ -50,6 +51,7 @@ const (
 	CodeDialFailed                = fserrors.CodeDialFailed
 	CodeAttachFailed              = fserrors.CodeAttachFailed
 	CodeHandshakeFailed           = fserrors.CodeHandshakeFailed
+	CodePingFailed                = fserrors.CodePingFailed
 	CodeMuxFailed                 = fserrors.CodeMuxFailed
 	CodeOpenStreamFailed          = fserrors.CodeOpenStreamFailed
 	CodeStreamHelloFailed         = fserrors.CodeStreamHelloFailed

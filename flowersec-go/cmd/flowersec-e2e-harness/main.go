@@ -51,7 +51,6 @@ func main() {
 	tunnelCfg.TunnelAudience = aud
 	tunnelCfg.TunnelIssuer = issID
 	tunnelCfg.AllowedOrigins = []string{"https://app.redeven.com"}
-	tunnelCfg.IdleTimeout = 60 * time.Second
 	tunnelCfg.CleanupInterval = 50 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
 	if err != nil {

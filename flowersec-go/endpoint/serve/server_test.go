@@ -92,6 +92,7 @@ func (s *fakeSession) OpenStream(string) (io.ReadWriteCloser, error) {
 func (s *fakeSession) ServeStreams(context.Context, int, func(string, io.ReadWriteCloser)) error {
 	return errors.New("not implemented")
 }
+func (s *fakeSession) Ping() error  { return nil }
 func (s *fakeSession) Close() error { return nil }
 
 func (s *fakeSession) AcceptStreamHello(_ int) (string, io.ReadWriteCloser, error) {

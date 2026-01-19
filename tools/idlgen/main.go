@@ -318,17 +318,17 @@ func genGoRPC(outRoot string, s schema) error {
 		}
 		if hasRequest {
 			fmt.Fprintf(&buf, "type %sHandler interface {\n", svcExport)
-				for _, mn := range methodNames {
-					m := svc.Methods[mn]
-					if strings.TrimSpace(m.Kind) != "request" {
-						continue
-					}
-					writeGoComment(&buf, m.Comment, "\t")
-					fmt.Fprintf(&buf, "\t%s(ctx context.Context, req *%s) (*%s, error)\n", exportName(mn), exportName(m.Request), exportName(m.Response))
+			for _, mn := range methodNames {
+				m := svc.Methods[mn]
+				if strings.TrimSpace(m.Kind) != "request" {
+					continue
 				}
-				buf.WriteString("}\n\n")
+				writeGoComment(&buf, m.Comment, "\t")
+				fmt.Fprintf(&buf, "\t%s(ctx context.Context, req *%s) (*%s, error)\n", exportName(mn), exportName(m.Request), exportName(m.Response))
+			}
+			buf.WriteString("}\n\n")
 
-				fmt.Fprintf(&buf, "func Register%s(r *rpc.Router, h %sHandler) {\n", svcExport, svcExport)
+			fmt.Fprintf(&buf, "func Register%s(r *rpc.Router, h %sHandler) {\n", svcExport, svcExport)
 			for _, mn := range methodNames {
 				m := svc.Methods[mn]
 				if strings.TrimSpace(m.Kind) != "request" {
@@ -339,28 +339,28 @@ func genGoRPC(outRoot string, s schema) error {
 				respType := exportName(m.Response)
 				handlerMethod := exportName(mn)
 				fmt.Fprintf(&buf, "\tr.Register(%s, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcwirev1.RpcError) {\n", typeIDConst)
-					fmt.Fprintf(&buf, "\t\tvar req %s\n", reqType)
-					buf.WriteString("\t\tif len(payload) != 0 {\n")
-					fmt.Fprintf(&buf, "\t\t\tif err := json.Unmarshal(payload, &req); err != nil {\n")
-					buf.WriteString("\t\t\t\treturn nil, rpc.ToWireError(&rpc.Error{Code: 400, Message: \"invalid payload\"})\n")
-					buf.WriteString("\t\t\t}\n")
-					buf.WriteString("\t\t}\n")
-					fmt.Fprintf(&buf, "\t\tresp, err := h.%s(ctx, &req)\n", handlerMethod)
-					buf.WriteString("\t\tif err != nil {\n")
-					buf.WriteString("\t\t\treturn nil, rpc.ToWireError(err)\n")
-					buf.WriteString("\t\t}\n")
-					fmt.Fprintf(&buf, "\t\tvar zero %s\n", respType)
-					buf.WriteString("\t\tif resp == nil {\n")
-					buf.WriteString("\t\t\tresp = &zero\n")
-					buf.WriteString("\t\t}\n")
-					buf.WriteString("\t\tb, err := json.Marshal(resp)\n")
-					buf.WriteString("\t\tif err != nil {\n")
-					buf.WriteString("\t\t\treturn nil, rpc.ToWireError(err)\n")
-					buf.WriteString("\t\t}\n")
-					buf.WriteString("\t\treturn b, nil\n")
-					buf.WriteString("\t})\n\n")
-				}
-				buf.WriteString("}\n\n")
+				fmt.Fprintf(&buf, "\t\tvar req %s\n", reqType)
+				buf.WriteString("\t\tif len(payload) != 0 {\n")
+				fmt.Fprintf(&buf, "\t\t\tif err := json.Unmarshal(payload, &req); err != nil {\n")
+				buf.WriteString("\t\t\t\treturn nil, rpc.ToWireError(&rpc.Error{Code: 400, Message: \"invalid payload\"})\n")
+				buf.WriteString("\t\t\t}\n")
+				buf.WriteString("\t\t}\n")
+				fmt.Fprintf(&buf, "\t\tresp, err := h.%s(ctx, &req)\n", handlerMethod)
+				buf.WriteString("\t\tif err != nil {\n")
+				buf.WriteString("\t\t\treturn nil, rpc.ToWireError(err)\n")
+				buf.WriteString("\t\t}\n")
+				fmt.Fprintf(&buf, "\t\tvar zero %s\n", respType)
+				buf.WriteString("\t\tif resp == nil {\n")
+				buf.WriteString("\t\t\tresp = &zero\n")
+				buf.WriteString("\t\t}\n")
+				buf.WriteString("\t\tb, err := json.Marshal(resp)\n")
+				buf.WriteString("\t\tif err != nil {\n")
+				buf.WriteString("\t\t\treturn nil, rpc.ToWireError(err)\n")
+				buf.WriteString("\t\t}\n")
+				buf.WriteString("\t\treturn b, nil\n")
+				buf.WriteString("\t})\n\n")
+			}
+			buf.WriteString("}\n\n")
 		}
 
 		// Client methods.
@@ -414,11 +414,11 @@ func genGoRPC(outRoot string, s schema) error {
 				continue
 			}
 		}
-		}
-
-		outFile := filepath.Join(outDir, "rpc.gen.go")
-		return os.WriteFile(outFile, buf.Bytes(), 0o644)
 	}
+
+	outFile := filepath.Join(outDir, "rpc.gen.go")
+	return os.WriteFile(outFile, buf.Bytes(), 0o644)
+}
 
 func goFieldType(t string) (string, error) {
 	switch t {
@@ -640,11 +640,12 @@ func genTSFacade(outRoot string, s schema) error {
 	if len(serviceNames) == 1 {
 		svcName := serviceNames[0]
 		svcExport := exportName(svcName)
+		prop := lowerCamel(svcName)
 
-		buf.WriteString("export type " + svcExport + "Session = Client & ReturnType<typeof create" + svcExport + "Client>;\n\n")
+		buf.WriteString("export type " + svcExport + "Session = Client & Readonly<{ " + prop + ": ReturnType<typeof create" + svcExport + "Client> }>;\n\n")
 
 		buf.WriteString("export function create" + svcExport + "Session(client: Client): " + svcExport + "Session {\n")
-		buf.WriteString("  return { ...client, ...create" + svcExport + "Client(client.rpc) };\n")
+		buf.WriteString("  return { ...client, " + prop + ": create" + svcExport + "Client(client.rpc) };\n")
 		buf.WriteString("}\n\n")
 
 		buf.WriteString("export async function connect" + svcExport + "Tunnel(grant: ChannelInitGrant, opts: TunnelConnectOptions): Promise<" + svcExport + "Session>;\n")

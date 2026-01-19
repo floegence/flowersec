@@ -220,13 +220,22 @@ func main() {
 	}
 	defer closeTunnel()
 
+	idleTimeoutSeconds := int32(0)
+	if cfg.idleTimeout > 0 {
+		idleTimeoutSeconds = int32(cfg.idleTimeout / time.Second)
+		if idleTimeoutSeconds <= 0 {
+			idleTimeoutSeconds = 1
+		}
+	}
+
 	ci := &channelinit.Service{
 		Issuer: iss,
 		Params: channelinit.Params{
-			TunnelURL:       wsURL,
-			TunnelAudience:  "flowersec-tunnel:loadgen",
-			IssuerID:        "issuer-loadgen",
-			TokenExpSeconds: 60,
+			TunnelURL:          wsURL,
+			TunnelAudience:     "flowersec-tunnel:loadgen",
+			IssuerID:           "issuer-loadgen",
+			TokenExpSeconds:    60,
+			IdleTimeoutSeconds: idleTimeoutSeconds,
 		},
 	}
 
@@ -900,9 +909,6 @@ func startTunnel(ctx context.Context, cfg loadConfig, keyFile string) (string, f
 	}
 	if cfg.maxPendingBytes > 0 {
 		tunnelCfg.MaxPendingBytes = cfg.maxPendingBytes
-	}
-	if cfg.idleTimeout > 0 {
-		tunnelCfg.IdleTimeout = cfg.idleTimeout
 	}
 	if cfg.cleanupInterval > 0 {
 		tunnelCfg.CleanupInterval = cfg.cleanupInterval

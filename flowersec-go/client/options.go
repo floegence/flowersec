@@ -29,6 +29,9 @@ type connectOptions struct {
 
 	// endpointInstanceID is used only for tunnel attaches; it must be base64url(16..32 bytes).
 	endpointInstanceID string
+
+	keepaliveInterval time.Duration
+	keepaliveSet      bool
 }
 
 func defaultConnectOptions() connectOptions {
@@ -134,6 +137,18 @@ func WithClientFeatures(features uint32) ConnectOption {
 func WithEndpointInstanceID(id string) ConnectOption {
 	return func(cfg *connectOptions) error {
 		cfg.endpointInstanceID = id
+		return nil
+	}
+}
+
+// WithKeepaliveInterval sets the encrypted keepalive ping interval (0 disables).
+func WithKeepaliveInterval(d time.Duration) ConnectOption {
+	return func(cfg *connectOptions) error {
+		if d < 0 {
+			return fmt.Errorf("keepalive interval must be >= 0")
+		}
+		cfg.keepaliveInterval = d
+		cfg.keepaliveSet = true
 		return nil
 	}
 }

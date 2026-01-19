@@ -43,6 +43,10 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	if err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
 	}
+	keepalive := cfg.keepaliveInterval
+	if !cfg.keepaliveSet {
+		keepalive = defaultKeepaliveInterval(grant.IdleTimeoutSeconds)
+	}
 	psk, err := base64url.Decode(grant.E2eePskB64u)
 	if err != nil || len(psk) != 32 {
 		if err == nil {
@@ -105,6 +109,9 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 		_ = c.Close()
 		return nil, err
 	}
+	if keepalive > 0 {
+		out.startKeepalive(keepalive)
+	}
 	return out, nil
 }
 
@@ -128,6 +135,10 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
+	}
+	keepalive := time.Duration(0)
+	if cfg.keepaliveSet {
+		keepalive = cfg.keepaliveInterval
 	}
 	if cfg.endpointInstanceID != "" {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrEndpointInstanceIDNotAllowed)
@@ -173,7 +184,25 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin
 		_ = c.Close()
 		return nil, err
 	}
+	if keepalive > 0 {
+		out.startKeepalive(keepalive)
+	}
 	return out, nil
+}
+
+func defaultKeepaliveInterval(idleTimeoutSeconds int32) time.Duration {
+	if idleTimeoutSeconds <= 0 {
+		return 0
+	}
+	idle := time.Duration(idleTimeoutSeconds) * time.Second
+	interval := idle / 2
+	if interval < 500*time.Millisecond {
+		interval = 500 * time.Millisecond
+	}
+	if interval >= idle {
+		interval = idle / 2
+	}
+	return interval
 }
 
 type dialE2EEOptions struct {

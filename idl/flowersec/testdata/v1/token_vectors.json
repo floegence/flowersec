@@ -12,14 +12,14 @@
           "role": 1,
           "token_id": "tok_test_1",
           "init_exp": 1700000000,
+          "idle_timeout_seconds": 60,
           "iat": 1699999900,
           "exp": 1699999960
         }
       },
       "expected": {
-        "token": "FST1.eyJraWQiOiJrMSIsImF1ZCI6ImZsb3dlcnNlYy10dW5uZWw6ZGV2IiwiaXNzIjoiaXNzdWVyLWRldiIsImNoYW5uZWxfaWQiOiJjaGFuX3Rlc3RfMTIzIiwicm9sZSI6MSwidG9rZW5faWQiOiJ0b2tfdGVzdF8xIiwiaW5pdF9leHAiOjE3MDAwMDAwMDAsImlhdCI6MTY5OTk5OTkwMCwiZXhwIjoxNjk5OTk5OTYwfQ.kVkhGkA0jNtlNim16BsfXEAnRovts6qN_wqyeaEpxBGczv7m9JinmJT2FtrMlnywlqlz5SBJRBm1Bw8vT48qDA"
+        "token": "FST2.eyJraWQiOiJrMSIsImF1ZCI6ImZsb3dlcnNlYy10dW5uZWw6ZGV2IiwiaXNzIjoiaXNzdWVyLWRldiIsImNoYW5uZWxfaWQiOiJjaGFuX3Rlc3RfMTIzIiwicm9sZSI6MSwidG9rZW5faWQiOiJ0b2tfdGVzdF8xIiwiaW5pdF9leHAiOjE3MDAwMDAwMDAsImlkbGVfdGltZW91dF9zZWNvbmRzIjo2MCwiaWF0IjoxNjk5OTk5OTAwLCJleHAiOjE2OTk5OTk5NjB9.OCJtBmTln5TXsyKrTe6QnustwPlEHw_uA2bgoajAi437n4B4W_F1lUVW7tFTazsXrc4pjVvoZeabIPxdx_HNDQ"
       }
     }
   ]
 }
-

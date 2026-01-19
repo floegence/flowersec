@@ -3,6 +3,7 @@ package client
 import (
 	"io"
 	"sync"
+	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
@@ -20,6 +21,7 @@ type Client interface {
 	EndpointInstanceID() string
 	RPC() *rpc.Client
 	OpenStream(kind string) (io.ReadWriteCloser, error)
+	Ping() error
 	Close() error
 }
 
@@ -42,6 +44,8 @@ type session struct {
 
 	closeOnce sync.Once
 	closeErr  error
+
+	keepaliveStop chan struct{}
 }
 
 func (c *session) Path() Path {
@@ -79,6 +83,20 @@ func (c *session) RPC() *rpc.Client {
 	return c.rpc
 }
 
+func (c *session) Ping() error {
+	if c == nil || c.secure == nil {
+		var path Path
+		if c != nil {
+			path = c.path
+		}
+		return wrapErr(path, fserrors.StageSecure, fserrors.CodeNotConnected, ErrNotConnected)
+	}
+	if err := c.secure.Ping(); err != nil {
+		return wrapErr(c.path, fserrors.StageSecure, fserrors.CodePingFailed, err)
+	}
+	return nil
+}
+
 // Close tears down all resources in a best-effort manner.
 func (c *session) Close() error {
 	if c == nil {
@@ -86,6 +104,9 @@ func (c *session) Close() error {
 	}
 	c.closeOnce.Do(func() {
 		var firstErr error
+		if c.keepaliveStop != nil {
+			close(c.keepaliveStop)
+		}
 		if c.rpc != nil {
 			if err := c.rpc.Close(); err != nil && firstErr == nil {
 				firstErr = err
@@ -129,4 +150,30 @@ func (c *session) OpenStream(kind string) (io.ReadWriteCloser, error) {
 		return nil, wrapErr(c.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
 	}
 	return s, nil
+}
+
+func (c *session) startKeepalive(interval time.Duration) {
+	if c == nil || c.secure == nil || interval <= 0 {
+		return
+	}
+	if c.keepaliveStop != nil {
+		return
+	}
+	stop := make(chan struct{})
+	c.keepaliveStop = stop
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if err := c.Ping(); err != nil {
+					_ = c.Close()
+					return
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
 }

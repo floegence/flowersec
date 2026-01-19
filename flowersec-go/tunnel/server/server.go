@@ -34,7 +34,6 @@ type Config struct {
 	AllowedOrigins []string // Allowed Origin header values.
 	AllowNoOrigin  bool     // Whether to allow empty Origin.
 
-	IdleTimeout        time.Duration // Close channels idle beyond this duration.
 	ClockSkew          time.Duration // Allowed clock skew for token validation.
 	CleanupInterval    time.Duration // Background cleanup cadence.
 	WriteTimeout       time.Duration // Per-frame websocket write deadline (0 disables).
@@ -60,7 +59,6 @@ func DefaultConfig() Config {
 		MaxConns:             12000,
 		AllowedOrigins:       nil,
 		AllowNoOrigin:        false,
-		IdleTimeout:          60 * time.Second,
 		ClockSkew:            30 * time.Second,
 		CleanupInterval:      500 * time.Millisecond,
 		WriteTimeout:         10 * time.Second,
@@ -139,9 +137,6 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.MaxConns <= 0 {
 		cfg.MaxConns = 12000
-	}
-	if cfg.IdleTimeout <= 0 {
-		cfg.IdleTimeout = 60 * time.Second
 	}
 	if cfg.ClockSkew < 0 {
 		cfg.ClockSkew = 0
@@ -233,15 +228,16 @@ var (
 )
 
 type channelState struct {
-	mu         sync.Mutex                      // Guards channel state.
-	id         string                          // Channel identifier.
-	initExp    int64                           // Channel init expiry (Unix seconds).
-	sawRecord  bool                            // True once an E2EE record frame (FSEC) is observed.
-	flushing   bool                            // True while pairing flush is in progress.
-	firstSeen  time.Time                       // When the first endpoint arrived.
-	lastActive time.Time                       // Last activity timestamp.
-	conns      map[tunnelv1.Role]*endpointConn // Active endpoints by role.
-	replace    map[tunnelv1.Role]*replaceState // Replace rate-limit state by role.
+	mu          sync.Mutex                      // Guards channel state.
+	id          string                          // Channel identifier.
+	initExp     int64                           // Channel init expiry (Unix seconds).
+	idleTimeout time.Duration                   // Idle timeout enforced for the channel.
+	sawRecord   bool                            // True once an E2EE record frame (FSEC) is observed.
+	flushing    bool                            // True while pairing flush is in progress.
+	firstSeen   time.Time                       // When the first endpoint arrived.
+	lastActive  time.Time                       // Last activity timestamp.
+	conns       map[tunnelv1.Role]*endpointConn // Active endpoints by role.
+	replace     map[tunnelv1.Role]*replaceState // Replace rate-limit state by role.
 }
 
 type replaceState struct {
@@ -509,11 +505,12 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 		}
 		// First endpoint for the channel.
 		st = &channelState{
-			id:         a.ChannelId,
-			initExp:    p.InitExp,
-			firstSeen:  now,
-			lastActive: now,
-			conns:      make(map[tunnelv1.Role]*endpointConn, 2),
+			id:          a.ChannelId,
+			initExp:     p.InitExp,
+			idleTimeout: time.Duration(p.IdleTimeoutSeconds) * time.Second,
+			firstSeen:   now,
+			lastActive:  now,
+			conns:       make(map[tunnelv1.Role]*endpointConn, 2),
 		}
 		st.conns[a.Role] = ep
 		s.channels[a.ChannelId] = st
@@ -527,6 +524,11 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			st.mu.Unlock()
 			s.mu.Unlock()
 			return errors.New("init_exp mismatch")
+		}
+		if st.idleTimeout != time.Duration(p.IdleTimeoutSeconds)*time.Second {
+			st.mu.Unlock()
+			s.mu.Unlock()
+			return errors.New("idle_timeout mismatch")
 		}
 		if st.conns[a.Role] != nil {
 			if !s.allowReplaceLocked(st, a.Role, now) {
@@ -547,12 +549,13 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			delete(s.channels, a.ChannelId)
 			old := st
 			st = &channelState{
-				id:         a.ChannelId,
-				initExp:    p.InitExp,
-				firstSeen:  now,
-				lastActive: now,
-				conns:      make(map[tunnelv1.Role]*endpointConn, 2),
-				replace:    replaceState,
+				id:          a.ChannelId,
+				initExp:     p.InitExp,
+				idleTimeout: time.Duration(p.IdleTimeoutSeconds) * time.Second,
+				firstSeen:   now,
+				lastActive:  now,
+				conns:       make(map[tunnelv1.Role]*endpointConn, 2),
+				replace:     replaceState,
 			}
 			st.conns[a.Role] = ep
 			s.channels[a.ChannelId] = st
@@ -1010,7 +1013,7 @@ func (s *Server) cleanupLoop() {
 					st.mu.Unlock()
 					continue
 				}
-				if s.cfg.IdleTimeout > 0 && now.Sub(st.lastActive) > s.cfg.IdleTimeout {
+				if st.idleTimeout > 0 && now.Sub(st.lastActive) > st.idleTimeout {
 					toClose = append(toClose, closeTarget{id: id, reason: observability.CloseReasonIdleTimeout})
 					st.mu.Unlock()
 					continue

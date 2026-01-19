@@ -30,6 +30,7 @@ func TestReissueTokenRoundsSkewToWholeSeconds(t *testing.T) {
 		TunnelUrl:                s.Params.TunnelURL,
 		ChannelId:                "ch",
 		ChannelInitExpireAtUnixS: initExp,
+		IdleTimeoutSeconds:       DefaultIdleTimeoutSeconds,
 		Role:                     controlv1.Role_client,
 	}
 

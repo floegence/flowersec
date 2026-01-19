@@ -27,16 +27,16 @@ describe("go<->ts integration", () => {
       const firstLine = line.split("\n")[0]!;
       const ready = JSON.parse(firstLine) as { grant_client: any };
 
-      const demo = await connectDemoTunnel(ready.grant_client, {
+      const sess = await connectDemoTunnel(ready.grant_client, {
         origin: "https://app.redeven.com",
         wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } })
       });
       try {
-        const notified = waitNotify(demo, 2000);
-        await expect(demo.ping({})).resolves.toEqual({ ok: true });
+        const notified = waitNotify(sess.demo, 2000);
+        await expect(sess.demo.ping({})).resolves.toEqual({ ok: true });
         await expect(notified).resolves.toEqual({ hello: "world" });
       } finally {
-        demo.close();
+        sess.close();
         p.kill("SIGTERM");
         await once(p, "exit");
       }

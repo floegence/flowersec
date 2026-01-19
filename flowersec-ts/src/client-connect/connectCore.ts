@@ -41,6 +41,8 @@ export type ConnectOptionsBase = Readonly<{
   wsFactory?: (url: string, origin: string) => WebSocketLike;
   /** Optional observer for client metrics. */
   observer?: ClientObserverLike;
+  /** Encrypted keepalive ping interval in milliseconds (0 disables). */
+  keepaliveIntervalMs?: number;
 }>;
 
 export type ConnectCoreArgs = Readonly<{
@@ -236,12 +238,48 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
 
     const rpc = new RpcClient(readExactly, write, { observer });
 
+    const ping = async (): Promise<void> => {
+      try {
+        await secure.sendPing();
+      } catch (e) {
+        throw new FlowersecError({ path: args.path, stage: "secure", code: "ping_failed", message: "ping failed", cause: e });
+      }
+    };
+
+    const keepaliveIntervalMs = Math.max(0, args.opts.keepaliveIntervalMs ?? 0);
+    let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
+    let keepaliveInFlight = false;
+    const stopKeepalive = () => {
+      if (keepaliveTimer === undefined) return;
+      clearInterval(keepaliveTimer);
+      keepaliveTimer = undefined;
+    };
+    if (keepaliveIntervalMs > 0) {
+      keepaliveTimer = setInterval(() => {
+        if (keepaliveInFlight) return;
+        keepaliveInFlight = true;
+        ping()
+          .catch(() => {
+            try {
+              ws.close();
+            } catch {
+              // ignore
+            }
+          })
+          .finally(() => {
+            keepaliveInFlight = false;
+          });
+      }, keepaliveIntervalMs);
+      (keepaliveTimer as any)?.unref?.();
+    }
+
     return {
       path: args.path,
       ...(args.attach != null ? { endpointInstanceId: args.attach.endpointInstanceId } : {}),
       secure,
       mux,
       rpc,
+      ping,
       openStream: async (kind: string) => {
         if (kind == null || kind === "") throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_stream_kind", message: "missing stream kind" });
         let s: Awaited<ReturnType<YamuxSession["openStream"]>>;
@@ -269,6 +307,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         return s;
       },
       close: () => {
+        stopKeepalive();
         rpc.close();
         mux.close();
         secure.close();

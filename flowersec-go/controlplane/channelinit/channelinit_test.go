@@ -41,6 +41,9 @@ func TestNewChannelInitDefaultsAndTokenExp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewChannelInit failed: %v", err)
 	}
+	if client.IdleTimeoutSeconds != DefaultIdleTimeoutSeconds {
+		t.Fatalf("expected default idle_timeout_seconds=%d, got %d", DefaultIdleTimeoutSeconds, client.IdleTimeoutSeconds)
+	}
 	if client.DefaultSuite == 0 {
 		t.Fatalf("expected default suite")
 	}
@@ -51,6 +54,9 @@ func TestNewChannelInitDefaultsAndTokenExp(t *testing.T) {
 	p, _, _, err := token.Parse(client.Token)
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
+	}
+	if p.IdleTimeoutSeconds != client.IdleTimeoutSeconds {
+		t.Fatalf("expected token idle_timeout_seconds=%d, got %d", client.IdleTimeoutSeconds, p.IdleTimeoutSeconds)
 	}
 	if p.Exp > p.InitExp {
 		t.Fatalf("expected exp <= init_exp")

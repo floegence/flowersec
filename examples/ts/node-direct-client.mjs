@@ -48,17 +48,17 @@ async function main() {
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
   // connectDirectNode() returns an RPC-ready session and supports extra yamux streams via openStream(kind).
-  const demo = createDemoSession(await connectDirectNode(info, { origin }));
+  const sess = createDemoSession(await connectDirectNode(info, { origin }));
 
   try {
-    const notified = waitHello(demo, 2000);
-    const resp = await demo.ping({});
+    const notified = waitHello(sess.demo, 2000);
+    const resp = await sess.demo.ping({});
     console.log("rpc response:", JSON.stringify(resp));
     console.log("rpc notify:", JSON.stringify(await notified));
 
     // Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
     // Note: openStream(kind) automatically writes the StreamHello(kind) preface.
-    const echo = await demo.openStream("echo");
+    const echo = await sess.openStream("echo");
     const reader = new ByteReader(async () => {
       try {
         return await echo.read();
@@ -72,7 +72,7 @@ async function main() {
     console.log("echo response:", JSON.stringify(new TextDecoder().decode(got)));
     await echo.close();
   } finally {
-    demo.close();
+    sess.close();
   }
 }
 

@@ -18,11 +18,11 @@ func newKeypair() ed25519.PrivateKey {
 
 func TestSignRequiresKidAndAud(t *testing.T) {
 	priv := newKeypair()
-	_, err := Sign(priv, Payload{Aud: "aud"})
+	_, err := Sign(priv, Payload{Aud: "aud", IdleTimeoutSeconds: 60})
 	if err == nil || !errors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected invalid format for missing kid, got %v", err)
 	}
-	_, err = Sign(priv, Payload{Kid: "kid"})
+	_, err = Sign(priv, Payload{Kid: "kid", IdleTimeoutSeconds: 60})
 	if err == nil || !errors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected invalid format for missing aud, got %v", err)
 	}
@@ -32,12 +32,12 @@ func TestParseRejectsInvalidInputs(t *testing.T) {
 	if _, _, _, err := Parse("bad"); !errors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected invalid format, got %v", err)
 	}
-	if _, _, _, err := Parse("FST1.notbase64.sig"); !errors.Is(err, ErrInvalidB64) {
+	if _, _, _, err := Parse("FST2.notbase64.sig"); !errors.Is(err, ErrInvalidB64) {
 		t.Fatalf("expected invalid base64, got %v", err)
 	}
 
 	payload := base64.RawStdEncoding.EncodeToString([]byte("not-json"))
-	if _, _, _, err := Parse("FST1." + payload + ".sig"); !errors.Is(err, ErrInvalidJSON) {
+	if _, _, _, err := Parse("FST2." + payload + ".sig"); !errors.Is(err, ErrInvalidJSON) {
 		t.Fatalf("expected invalid json, got %v", err)
 	}
 }
@@ -46,15 +46,16 @@ func TestVerifyRejectsAudienceIssuerAndTime(t *testing.T) {
 	priv := newKeypair()
 	pub := priv.Public().(ed25519.PublicKey)
 	base := Payload{
-		Kid:       "kid",
-		Aud:       "aud",
-		Iss:       "iss",
-		ChannelID: "ch",
-		Role:      1,
-		TokenID:   "tid",
-		InitExp:   100,
-		Iat:       10,
-		Exp:       50,
+		Kid:                "kid",
+		Aud:                "aud",
+		Iss:                "iss",
+		ChannelID:          "ch",
+		Role:               1,
+		TokenID:            "tid",
+		InitExp:            100,
+		IdleTimeoutSeconds: 60,
+		Iat:                10,
+		Exp:                50,
 	}
 	good, err := Sign(priv, base)
 	if err != nil {
@@ -100,7 +101,7 @@ func TestVerifyRejectsAudienceIssuerAndTime(t *testing.T) {
 
 func TestEqualSignedPart(t *testing.T) {
 	priv := newKeypair()
-	p := Payload{Kid: "kid", Aud: "aud", ChannelID: "ch", Role: 1, TokenID: "id", InitExp: 100, Iat: 10, Exp: 50}
+	p := Payload{Kid: "kid", Aud: "aud", ChannelID: "ch", Role: 1, TokenID: "id", InitExp: 100, IdleTimeoutSeconds: 60, Iat: 10, Exp: 50}
 	t1, _ := Sign(priv, p)
 	t2, _ := Sign(priv, p)
 	if !EqualSignedPart(t1, t2) {

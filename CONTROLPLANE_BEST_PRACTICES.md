@@ -24,6 +24,12 @@ A ChannelInitGrant includes the fields below (names match the generated IDL):
 
 The tunnel validates the attach token, and the E2EE handshake validates init_exp. Tokens are single-use and should be treated as ephemeral.
 
+Idle timeouts are enforced by the tunnel based on a signed token claim:
+
+- The controlplane must embed `idle_timeout_seconds` into the signed token payload.
+- The tunnel enforces the channel idle timeout from the token claim (not from any out-of-band hint).
+- Both endpoints must attach with tokens that agree on `idle_timeout_seconds` for the same `channel_id`.
+
 ## Recommended control plane APIs
 
 - POST /v1/channel/init
@@ -72,8 +78,17 @@ The tunnel validates the attach token, and the E2EE handshake validates init_exp
 
 ## Keepalive and idle timeouts
 
-- idle_timeout_seconds is advertised in the grant; the tunnel enforces idle timeouts.
-- Send periodic encrypted pings (SecureChannel sendPing) with an interval lower than idle_timeout_seconds.
+- idle_timeout_seconds is advertised in the grant and embedded into the signed token; the tunnel enforces idle timeouts from the token claim.
+- High-level client helpers enable encrypted keepalive pings by default (recommended). You can override/disable it via connect options.
+- If you disable keepalive, ensure your application sends traffic often enough (or call the explicit ping API) to avoid idle timeout closures.
+
+Stable ping entrypoints:
+
+- Go:
+  - `client.Client.Ping()` (role=client)
+  - `endpoint.Session.Ping()` (role=server)
+- TypeScript:
+  - `Client.ping()` (returned by `connectTunnel*` / `connectDirect*`)
 
 ## Observability and safety limits
 

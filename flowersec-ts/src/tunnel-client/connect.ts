@@ -36,6 +36,7 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
   if (checkedGrant.tunnel_url === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_tunnel_url", path: "tunnel", message: "missing tunnel_url" });
   }
+  const idleTimeoutSeconds = checkedGrant.idle_timeout_seconds;
   if (checkedGrant.role !== ControlRole.Role_client) {
     throw new FlowersecError({ stage: "validate", code: "role_mismatch", path: "tunnel", message: "expected role=client" });
   }
@@ -68,13 +69,22 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
     endpoint_instance_id: endpointInstanceId
   };
   const attachJson = JSON.stringify(attach);
+  const keepaliveIntervalMs =
+    opts.keepaliveIntervalMs !== undefined ? Math.max(0, opts.keepaliveIntervalMs) : defaultKeepaliveIntervalMs(idleTimeoutSeconds);
   return await connectCore({
     path: "tunnel",
     wsUrl: checkedGrant.tunnel_url,
     channelId: checkedGrant.channel_id,
     e2eePskB64u: checkedGrant.e2ee_psk_b64u,
     defaultSuite: checkedGrant.default_suite,
-    opts,
+    opts: { ...opts, keepaliveIntervalMs },
     attach: { attachJson, endpointInstanceId }
   });
+}
+
+function defaultKeepaliveIntervalMs(idleTimeoutSeconds: number): number {
+  if (!Number.isFinite(idleTimeoutSeconds) || idleTimeoutSeconds <= 0) return 0;
+  const idleMs = idleTimeoutSeconds * 1000;
+  const half = Math.floor(idleMs / 2);
+  return Math.max(500, half);
 }

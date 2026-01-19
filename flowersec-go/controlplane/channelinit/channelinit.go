@@ -17,8 +17,10 @@ import (
 const (
 	// ChannelInitWindowSeconds bounds how long a grant remains valid.
 	ChannelInitWindowSeconds = 120
-	// IdleTimeoutSeconds advertises the server idle timeout to clients.
-	IdleTimeoutSeconds = 60
+	// DefaultIdleTimeoutSeconds advertises the tunnel idle timeout to endpoints.
+	//
+	// This value is embedded into signed tokens and enforced by the tunnel.
+	DefaultIdleTimeoutSeconds = 60
 	// DefaultTokenExpSeconds is used when TokenExpSeconds is unset.
 	DefaultTokenExpSeconds = 60
 )
@@ -31,8 +33,9 @@ type Params struct {
 	TunnelAudience string // Expected audience for issued tokens.
 	IssuerID       string // Issuer identifier embedded in tokens.
 
-	TokenExpSeconds int64         // Token lifetime in seconds (capped by init exp).
-	ClockSkew       time.Duration // Allowed clock skew for validation hints.
+	TokenExpSeconds    int64         // Token lifetime in seconds (capped by init exp).
+	IdleTimeoutSeconds int32         // Tunnel idle timeout enforced per channel (seconds).
+	ClockSkew          time.Duration // Allowed clock skew for validation hints.
 
 	AllowedSuites []e2eev1.Suite // E2EE suites permitted for the channel.
 	DefaultSuite  e2eev1.Suite   // Default E2EE suite for the channel.
@@ -75,6 +78,10 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 	if tokenExpSeconds <= 0 {
 		tokenExpSeconds = DefaultTokenExpSeconds
 	}
+	idleTimeoutSeconds := s.Params.IdleTimeoutSeconds
+	if idleTimeoutSeconds <= 0 {
+		idleTimeoutSeconds = DefaultIdleTimeoutSeconds
+	}
 
 	allowedSuitesE2EE := s.Params.AllowedSuites
 	if len(allowedSuitesE2EE) == 0 {
@@ -98,11 +105,11 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 	}
 	defaultSuite := controlv1.Suite(defaultSuiteE2EE)
 
-	clientToken, err := s.signRoleToken(channelID, uint8(controlv1.Role_client), initExp, tokenExpSeconds, now)
+	clientToken, err := s.signRoleToken(channelID, uint8(controlv1.Role_client), initExp, idleTimeoutSeconds, tokenExpSeconds, now)
 	if err != nil {
 		return nil, nil, err
 	}
-	serverToken, err := s.signRoleToken(channelID, uint8(controlv1.Role_server), initExp, tokenExpSeconds, now)
+	serverToken, err := s.signRoleToken(channelID, uint8(controlv1.Role_server), initExp, idleTimeoutSeconds, tokenExpSeconds, now)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -111,7 +118,7 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 		TunnelUrl:                s.Params.TunnelURL,
 		ChannelId:                channelID,
 		ChannelInitExpireAtUnixS: initExp,
-		IdleTimeoutSeconds:       IdleTimeoutSeconds,
+		IdleTimeoutSeconds:       idleTimeoutSeconds,
 		Role:                     controlv1.Role_client,
 		Token:                    clientToken,
 		E2eePskB64u:              pskB64u,
@@ -122,7 +129,7 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 		TunnelUrl:                s.Params.TunnelURL,
 		ChannelId:                channelID,
 		ChannelInitExpireAtUnixS: initExp,
-		IdleTimeoutSeconds:       IdleTimeoutSeconds,
+		IdleTimeoutSeconds:       idleTimeoutSeconds,
 		Role:                     controlv1.Role_server,
 		Token:                    serverToken,
 		E2eePskB64u:              pskB64u,
@@ -136,6 +143,9 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 func (s *Service) ReissueToken(grant *controlv1.ChannelInitGrant) (*controlv1.ChannelInitGrant, error) {
 	if grant == nil {
 		return nil, errors.New("missing grant")
+	}
+	if grant.IdleTimeoutSeconds <= 0 {
+		return nil, errors.New("missing idle_timeout_seconds")
 	}
 	now := s.now()
 	skew := s.Params.ClockSkew
@@ -151,7 +161,7 @@ func (s *Service) ReissueToken(grant *controlv1.ChannelInitGrant) (*controlv1.Ch
 		tokenExpSeconds = DefaultTokenExpSeconds
 	}
 	role := uint8(grant.Role)
-	newToken, err := s.signRoleToken(grant.ChannelId, role, grant.ChannelInitExpireAtUnixS, tokenExpSeconds, now)
+	newToken, err := s.signRoleToken(grant.ChannelId, role, grant.ChannelInitExpireAtUnixS, grant.IdleTimeoutSeconds, tokenExpSeconds, now)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +170,7 @@ func (s *Service) ReissueToken(grant *controlv1.ChannelInitGrant) (*controlv1.Ch
 	return &out, nil
 }
 
-func (s *Service) signRoleToken(channelID string, role uint8, initExp int64, tokenExpSeconds int64, now time.Time) (string, error) {
+func (s *Service) signRoleToken(channelID string, role uint8, initExp int64, idleTimeoutSeconds int32, tokenExpSeconds int64, now time.Time) (string, error) {
 	tokenID, err := randomB64u(24)
 	if err != nil {
 		return "", err
@@ -171,14 +181,15 @@ func (s *Service) signRoleToken(channelID string, role uint8, initExp int64, tok
 		exp = initExp
 	}
 	return s.Issuer.SignToken(token.Payload{
-		Aud:       s.Params.TunnelAudience,
-		Iss:       s.Params.IssuerID,
-		ChannelID: channelID,
-		Role:      role,
-		TokenID:   tokenID,
-		InitExp:   initExp,
-		Iat:       iat,
-		Exp:       exp,
+		Aud:                s.Params.TunnelAudience,
+		Iss:                s.Params.IssuerID,
+		ChannelID:          channelID,
+		Role:               role,
+		TokenID:            tokenID,
+		InitExp:            initExp,
+		IdleTimeoutSeconds: idleTimeoutSeconds,
+		Iat:                iat,
+		Exp:                exp,
 	})
 }
 

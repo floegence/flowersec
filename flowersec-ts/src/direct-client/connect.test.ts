@@ -220,9 +220,9 @@ describe("connectDirect", () => {
 
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "handshake_error", path: "direct" });
+    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "handshake_failed", path: "direct" });
 
-    expect(observer.onHandshake).toHaveBeenCalledWith("direct", "fail", "handshake_error", expect.any(Number));
+    expect(observer.onHandshake).toHaveBeenCalledWith("direct", "fail", "handshake_failed", expect.any(Number));
   });
 
   test("classifies handshake auth tag failures", async () => {

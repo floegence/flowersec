@@ -269,9 +269,31 @@ Allowed entries support:
 
 High-level APIs return `*fserrors.Error` (via `errors.As`), which includes `{Path, Stage, Code}`.
 Handshake-related codes include: `auth_tag_mismatch`, `timestamp_out_of_skew`, `timestamp_after_init_exp`, `invalid_version`, plus `timeout`/`canceled`.
+Secure-layer keepalive failures (explicit ping) use: `ping_failed`.
 
 For generated Go RPC handlers (`rpc.gen.go`), handler methods return `error`. To return a non-500 wire RPC error, return `&rpc.Error{Code: ..., Message: ...}` (any other error is treated as `code=500` / `"internal error"`).
 
 **TypeScript**
 
 High-level APIs throw `FlowersecError` with `{path, stage, code}`. Codes match the same set for handshake failures.
+
+Handshake fallback code is `handshake_failed`. Secure-layer keepalive failures (explicit ping) use `ping_failed`.
+
+## Keepalive (recommended)
+
+Tunnel sessions are subject to an idle timeout (`idle_timeout_seconds`) enforced by the tunnel (from the signed token claim).
+
+High-level connect helpers enable encrypted keepalive pings by default for tunnel connects.
+You can override or disable it:
+
+- Go:
+  - Disable: `client.ConnectTunnel(..., client.WithKeepaliveInterval(0))`
+  - Override: `client.ConnectTunnel(..., client.WithKeepaliveInterval(15*time.Second))`
+- TypeScript:
+  - Disable: `connectTunnelNode(input, { origin, keepaliveIntervalMs: 0 })`
+  - Override: `connectTunnelNode(input, { origin, keepaliveIntervalMs: 15_000 })`
+
+You can also send an explicit keepalive ping:
+
+- Go: `Client.Ping()` / `Session.Ping()`
+- TypeScript: `client.ping()`

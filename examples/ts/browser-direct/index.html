@@ -65,8 +65,8 @@
           sess = createDemoSession(await connectDirectBrowser(info));
           $close.disabled = false;
 
-          const notified = waitHello(sess, 2000);
-          const resp = await sess.ping({});
+          const notified = waitHello(sess.demo, 2000);
+          const resp = await sess.demo.ping({});
           logLine("rpc response: " + JSON.stringify(resp));
           logLine("rpc notify: " + JSON.stringify(await notified));
 

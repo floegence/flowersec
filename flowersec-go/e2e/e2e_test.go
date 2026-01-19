@@ -16,9 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
@@ -42,7 +44,6 @@ func TestE2E_RPCOverTunnelE2EEYamux(t *testing.T) {
 	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
 	tunnelCfg.TunnelIssuer = "issuer-dev"
 	tunnelCfg.AllowedOrigins = []string{"https://app.redeven.com"}
-	tunnelCfg.IdleTimeout = 2 * time.Second
 	tunnelCfg.CleanupInterval = 50 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
 	if err != nil {
@@ -59,10 +60,11 @@ func TestE2E_RPCOverTunnelE2EEYamux(t *testing.T) {
 	ci := &channelinit.Service{
 		Issuer: iss,
 		Params: channelinit.Params{
-			TunnelURL:       wsURL,
-			TunnelAudience:  tunnelCfg.TunnelAudience,
-			IssuerID:        "issuer-dev",
-			TokenExpSeconds: 60,
+			TunnelURL:          wsURL,
+			TunnelAudience:     tunnelCfg.TunnelAudience,
+			IssuerID:           "issuer-dev",
+			TokenExpSeconds:    60,
+			IdleTimeoutSeconds: 2,
 		},
 	}
 	grantC, grantS, err := ci.NewChannelInit("chan_e2e_1")
@@ -101,7 +103,6 @@ func TestE2E_BufferingBeforePair(t *testing.T) {
 	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
 	tunnelCfg.TunnelIssuer = "issuer-dev"
 	tunnelCfg.AllowedOrigins = []string{"https://app.redeven.com"}
-	tunnelCfg.IdleTimeout = 2 * time.Second
 	tunnelCfg.CleanupInterval = 50 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
 	if err != nil {
@@ -118,10 +119,11 @@ func TestE2E_BufferingBeforePair(t *testing.T) {
 	ci := &channelinit.Service{
 		Issuer: iss,
 		Params: channelinit.Params{
-			TunnelURL:       wsURL,
-			TunnelAudience:  tunnelCfg.TunnelAudience,
-			IssuerID:        "issuer-dev",
-			TokenExpSeconds: 60,
+			TunnelURL:          wsURL,
+			TunnelAudience:     tunnelCfg.TunnelAudience,
+			IssuerID:           "issuer-dev",
+			TokenExpSeconds:    60,
+			IdleTimeoutSeconds: 2,
 		},
 	}
 	grantC, grantS, err := ci.NewChannelInit("chan_e2e_buf_1")
@@ -161,7 +163,6 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
 	tunnelCfg.TunnelIssuer = "issuer-dev"
 	tunnelCfg.AllowedOrigins = []string{"https://app.redeven.com"}
-	tunnelCfg.IdleTimeout = 150 * time.Millisecond
 	tunnelCfg.CleanupInterval = 20 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
 	if err != nil {
@@ -178,10 +179,11 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 	ci := &channelinit.Service{
 		Issuer: iss,
 		Params: channelinit.Params{
-			TunnelURL:       wsURL,
-			TunnelAudience:  tunnelCfg.TunnelAudience,
-			IssuerID:        "issuer-dev",
-			TokenExpSeconds: 60,
+			TunnelURL:          wsURL,
+			TunnelAudience:     tunnelCfg.TunnelAudience,
+			IssuerID:           "issuer-dev",
+			TokenExpSeconds:    60,
+			IdleTimeoutSeconds: 1,
 		},
 	}
 	grantC, grantS, err := ci.NewChannelInit("chan_e2e_idle_1")
@@ -259,9 +261,79 @@ func TestE2E_IdleTimeoutClosesChannel(t *testing.T) {
 	}
 	_ = sess.Close()
 
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(1500 * time.Millisecond)
 	if err := secureC.Ping(); err == nil {
 		t.Fatal("expected connection to be closed by idle timeout")
+	}
+}
+
+func TestE2E_DefaultKeepalivePreventsIdleTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	iss, keyFile := newTestIssuer(t)
+	defer os.Remove(keyFile)
+
+	tunnelCfg := server.DefaultConfig()
+	tunnelCfg.IssuerKeysFile = keyFile
+	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
+	tunnelCfg.TunnelIssuer = "issuer-dev"
+	tunnelCfg.AllowedOrigins = []string{"https://app.redeven.com"}
+	tunnelCfg.CleanupInterval = 20 * time.Millisecond
+	tun, err := server.New(tunnelCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tun.Close()
+
+	mux := http.NewServeMux()
+	tun.Register(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + tunnelCfg.Path
+
+	ci := &channelinit.Service{
+		Issuer: iss,
+		Params: channelinit.Params{
+			TunnelURL:          wsURL,
+			TunnelAudience:     tunnelCfg.TunnelAudience,
+			IssuerID:           "issuer-dev",
+			TokenExpSeconds:    60,
+			IdleTimeoutSeconds: 2,
+		},
+	}
+	grantC, grantS, err := ci.NewChannelInit("chan_e2e_keepalive_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type serverResult struct {
+		sess endpoint.Session
+		err  error
+	}
+	serverCh := make(chan serverResult, 1)
+	go func() {
+		// Disable endpoint keepalive to ensure the client default keepalive keeps the channel alive.
+		sess, err := endpoint.ConnectTunnel(ctx, grantS, "https://app.redeven.com", endpoint.WithKeepaliveInterval(0))
+		serverCh <- serverResult{sess: sess, err: err}
+	}()
+
+	// Client keepalive is enabled by default for tunnel connects.
+	c, err := client.ConnectTunnel(ctx, grantC, "https://app.redeven.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	res := <-serverCh
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	defer res.sess.Close()
+
+	time.Sleep(4500 * time.Millisecond)
+	if err := c.Ping(); err != nil {
+		t.Fatalf("expected ping to succeed, got %v", err)
 	}
 }
 

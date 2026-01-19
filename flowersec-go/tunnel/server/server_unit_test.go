@@ -222,7 +222,7 @@ func TestRouteOrBufferDoesNotMarkEncryptedOnHandshakeFrame(t *testing.T) {
 func TestCleanupLoopClosesExpiredChannels(t *testing.T) {
 	obs := &testObserver{}
 	s := &Server{
-		cfg:      Config{CleanupInterval: 5 * time.Millisecond, IdleTimeout: 5 * time.Millisecond},
+		cfg:      Config{CleanupInterval: 5 * time.Millisecond},
 		obs:      obs,
 		used:     NewTokenUseCache(),
 		channels: make(map[string]*channelState),
@@ -236,11 +236,12 @@ func TestCleanupLoopClosesExpiredChannels(t *testing.T) {
 		conns:      make(map[tunnelv1.Role]*endpointConn),
 	}
 	s.channels["idle"] = &channelState{
-		id:         "idle",
-		initExp:    time.Now().Add(time.Second).Unix(),
-		lastActive: time.Now().Add(-time.Second),
-		conns:      make(map[tunnelv1.Role]*endpointConn),
-		sawRecord:  true,
+		id:          "idle",
+		initExp:     time.Now().Add(time.Second).Unix(),
+		idleTimeout: 5 * time.Millisecond,
+		lastActive:  time.Now().Add(-time.Second),
+		conns:       make(map[tunnelv1.Role]*endpointConn),
+		sawRecord:   true,
 	}
 
 	done := make(chan struct{})

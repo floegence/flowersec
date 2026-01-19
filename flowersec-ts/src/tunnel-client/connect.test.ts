@@ -266,9 +266,9 @@ describe("connectTunnel", () => {
 
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "handshake_error", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "handshake_failed", path: "tunnel" });
 
-    expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "handshake_error", expect.any(Number));
+    expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "handshake_failed", expect.any(Number));
   });
 
   test("classifies handshake timestamp failures", async () => {
@@ -346,5 +346,37 @@ describe("connectTunnel", () => {
     expect(rpcClose).toHaveBeenCalledTimes(1);
     expect(muxClose).toHaveBeenCalledTimes(1);
     expect(secureClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("ping wraps secure ping failures", async () => {
+    const ws = new FakeWebSocket();
+    const secureClose = vi.fn();
+    const securePing = vi.fn().mockRejectedValueOnce(new Error("ping failed"));
+    clientHandshakeMock.mockResolvedValueOnce({
+      read: vi.fn(),
+      write: vi.fn(),
+      close: secureClose,
+      sendPing: securePing
+    });
+    openStream.mockResolvedValueOnce({
+      read: vi.fn().mockResolvedValue(new Uint8Array()),
+      write: vi.fn(),
+      close: vi.fn()
+    });
+
+    const p = connectTunnel(makeGrant(), {
+      origin: "https://app.redeven.com",
+      wsFactory: () => ws as any
+    });
+
+    setTimeout(() => ws.emit("open", {}), 0);
+    const conn = await p;
+
+    const pp = conn.ping();
+    await expect(pp).rejects.toBeInstanceOf(FlowersecError);
+    await expect(pp).rejects.toMatchObject({ stage: "secure", code: "ping_failed", path: "tunnel" });
+    expect(securePing).toHaveBeenCalledTimes(1);
+
+    conn.close();
   });
 });
