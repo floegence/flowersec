@@ -34,7 +34,7 @@ echo "[bench] running go benchmarks..."
 (cd "${GO_DIR}" && GOMAXPROCS="${GOMAXPROCS}" GOMEMLIMIT="${GOMEMLIMIT}" go test -bench . -benchmem ./crypto/e2ee ./tunnel/server) | tee "${GO_OUT}"
 
 echo "[bench] running ts benchmarks..."
-(cd "${TS_DIR}" && NODE_OPTIONS="${NODE_OPTIONS}" npm run bench) | tee "${TS_OUT}"
+(cd "${TS_DIR}" && NODE_OPTIONS="${NODE_OPTIONS}" NO_COLOR=1 FORCE_COLOR=0 npm run bench) | tee "${TS_OUT}"
 
 echo "[bench] running load generator..."
 (cd "${GO_DIR}" && GOMAXPROCS="${GOMAXPROCS}" GOMEMLIMIT="${GOMEMLIMIT}" go run ./cmd/flowersec-loadgen \
@@ -46,7 +46,7 @@ echo "[bench] running load generator..."
   --steady="${LOADGEN_STEADY}" \
   --report-interval="${LOADGEN_REPORT_INTERVAL}") > "${LOADGEN_OUT}"
 
-RUN_DATE="$(date)"
+RUN_DATE="$(LC_ALL=C date)"
 OS_VERSION="$(sw_vers -productVersion)"
 CPU_MODEL="$(sysctl -n machdep.cpu.brand_string)"
 RAM_BYTES="$(sysctl -n hw.memsize)"

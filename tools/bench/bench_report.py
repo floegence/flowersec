@@ -5,6 +5,13 @@ import json
 import re
 
 
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def strip_ansi(s: str) -> str:
+    return ANSI_ESCAPE_RE.sub("", s)
+
+
 def parse_go(path: str):
     pkg = ""
     out = {"e2ee": [], "tunnel": []}
@@ -13,7 +20,7 @@ def parse_go(path: str):
     )
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
-            line = line.strip()
+            line = strip_ansi(line).strip()
             if line.startswith("pkg:"):
                 parts = line.split()
                 if len(parts) >= 2:
@@ -41,6 +48,7 @@ def parse_ts(path: str):
     out = {"handshake": [], "record": [], "yamux": []}
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
+            line = strip_ansi(line)
             if "> e2ee handshake" in line:
                 section = "handshake"
                 continue
