@@ -26,6 +26,8 @@ After extracting, you should have:
 
 - `bin/` (prebuilt Go binaries)
   - `flowersec-tunnel`
+  - `flowersec-issuer-keygen`
+  - `flowersec-channelinit`
   - `flowersec-controlplane-demo`
   - `flowersec-server-endpoint-demo`
   - `flowersec-direct-demo`

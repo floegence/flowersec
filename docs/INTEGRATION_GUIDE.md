@@ -27,10 +27,17 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@late
 These tools generate an issuer keypair and mint `ChannelInitGrant` pairs for testing.
 Keep the private key file secret.
 
+Option A: `go install`:
+
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit@latest
 ```
+
+Option B: GitHub Releases (no Go):
+
+- Download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip` on Windows) from the GitHub Release tag `flowersec-go/vX.Y.Z`.
+- Extract it and run the tools from `bin/`.
 
 Example:
 
@@ -76,9 +83,9 @@ For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMEN
 
 **TypeScript**
 
-- Stable: `@flowersec/core` → `connectTunnel(...)`, `connectDirect(...)`
-- Node: `@flowersec/core/node` → `connectTunnelNode(...)`, `connectDirectNode(...)`
-- Browser: `@flowersec/core/browser` → `connectTunnelBrowser(...)`, `connectDirectBrowser(...)`
+- Stable: `@flowersec/core` → `connect(...)`, `connectTunnel(...)`, `connectDirect(...)`
+- Node: `@flowersec/core/node` → `connectNode(...)`, `connectTunnelNode(...)`, `connectDirectNode(...)`
+- Browser: `@flowersec/core/browser` → `connectBrowser(...)`, `connectTunnelBrowser(...)`, `connectDirectBrowser(...)`
 
 Note: the TypeScript package currently provides **role=client** connect helpers only. Server endpoints (role=server) are implemented in Go (`flowersec-go/endpoint`).
 
@@ -271,6 +278,16 @@ const input = JSON.parse(await readStdin());
 const client = await connectTunnelNode(input, { origin });
 ```
 
+Auto-detect variant (tunnel vs direct):
+
+```ts
+import { connectNode } from "@flowersec/core/node";
+
+const origin = process.env.FSEC_ORIGIN!;
+const input = JSON.parse(await readStdin()); // ChannelInitGrant wrapper OR DirectConnectInfo
+const client = await connectNode(input, { origin });
+```
+
 Direct variant:
 
 ```ts
@@ -289,6 +306,15 @@ import { connectTunnelBrowser } from "@flowersec/core/browser";
 // Uses window.location.origin automatically.
 const input = JSON.parse(textarea.value);
 const client = await connectTunnelBrowser(input);
+```
+
+Auto-detect variant (tunnel vs direct):
+
+```ts
+import { connectBrowser } from "@flowersec/core/browser";
+
+const input = JSON.parse(textarea.value); // ChannelInitGrant wrapper OR DirectConnectInfo
+const client = await connectBrowser(input);
 ```
 
 Direct variant:

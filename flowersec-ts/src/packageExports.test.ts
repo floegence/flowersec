@@ -18,9 +18,21 @@ describe("package exports", () => {
       import assert from "node:assert/strict";
 
       const core = await import("@flowersec/core");
+      assert.equal(typeof core.connect, "function");
       assert.equal(typeof core.connectTunnel, "function");
       assert.equal(typeof core.connectDirect, "function");
       assert.equal(typeof core.FlowersecError, "function");
+
+      const node = await import("@flowersec/core/node");
+      assert.equal(typeof node.connectNode, "function");
+      assert.equal(typeof node.connectTunnelNode, "function");
+      assert.equal(typeof node.connectDirectNode, "function");
+      assert.equal(typeof node.createNodeWsFactory, "function");
+
+      const browser = await import("@flowersec/core/browser");
+      assert.equal(typeof browser.connectBrowser, "function");
+      assert.equal(typeof browser.connectTunnelBrowser, "function");
+      assert.equal(typeof browser.connectDirectBrowser, "function");
 
       const rpc = await import("@flowersec/core/rpc");
       assert.equal(typeof rpc.RpcClient, "function");

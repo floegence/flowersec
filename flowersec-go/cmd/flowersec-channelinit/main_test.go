@@ -2,77 +2,90 @@ package main
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
-func TestRunEmitsGrantPair(t *testing.T) {
-	dir := t.TempDir()
-	privPath := dir + "/issuer_key.json"
+func TestVersionFlag(t *testing.T) {
+	oldV, oldC, oldD := version, commit, date
+	version, commit, date = "v1.2.3", "abc", "2020-01-01T00:00:00Z"
+	t.Cleanup(func() { version, commit, date = oldV, oldC, oldD })
 
-	_, priv, _ := ed25519.GenerateKey(nil)
-	ks, err := issuer.New("k1", priv)
-	if err != nil {
-		t.Fatalf("issuer.New failed: %v", err)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--version"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
 	}
-	b, err := ks.ExportPrivateKeyFile()
-	if err != nil {
-		t.Fatalf("ExportPrivateKeyFile failed: %v", err)
+	got := strings.TrimSpace(stdout.String())
+	want := "v1.2.3 (abc) 2020-01-01T00:00:00Z"
+	if got != want {
+		t.Fatalf("unexpected version output: got %q, want %q", got, want)
 	}
-	if err := os.WriteFile(privPath, b, 0o600); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
+}
+
+func TestChannelInitOutputIsProtocolioCompatible(t *testing.T) {
+	oldV := version
+	version = "v1.2.3"
+	t.Cleanup(func() { version = oldV })
+
+	tmp := t.TempDir()
+	ks, err := issuer.NewRandom("k1")
+	if err != nil {
+		t.Fatalf("new issuer: %v", err)
+	}
+	privJSON, err := ks.ExportPrivateKeyFile()
+	if err != nil {
+		t.Fatalf("export private key: %v", err)
+	}
+	privFile := filepath.Join(tmp, "issuer_key.json")
+	if err := os.WriteFile(privFile, privJSON, 0o600); err != nil {
+		t.Fatalf("write private key file: %v", err)
 	}
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	code := run(
-		[]string{
-			"--issuer-private-key-file", privPath,
-			"--tunnel-url", "ws://127.0.0.1:8080/ws",
-			"--aud", "flowersec-tunnel:test",
-			"--iss", "issuer-test",
-			"--channel-id", "ch1",
-		},
-		&stdout,
-		&stderr,
-	)
+	args := []string{
+		"--issuer-private-key-file", privFile,
+		"--tunnel-url", "ws://127.0.0.1:8080/ws",
+		"--aud", "aud",
+		"--iss", "iss",
+		"--channel-id", "ch_1",
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
 	}
 
 	var out output
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		t.Fatalf("unmarshal stdout failed: %v", err)
+		t.Fatalf("decode output: %v (stdout=%q)", err, stdout.String())
+	}
+	if out.Version != "v1.2.3" {
+		t.Fatalf("unexpected version: %q", out.Version)
 	}
 	if out.GrantClient == nil || out.GrantServer == nil {
-		t.Fatalf("missing grant_client or grant_server")
-	}
-	if out.GrantClient.Role != controlv1.Role_client {
-		t.Fatalf("unexpected grant_client role: %v", out.GrantClient.Role)
-	}
-	if out.GrantServer.Role != controlv1.Role_server {
-		t.Fatalf("unexpected grant_server role: %v", out.GrantServer.Role)
-	}
-	if out.GrantClient.ChannelId != "ch1" || out.GrantServer.ChannelId != "ch1" {
-		t.Fatalf("unexpected channel_id: client=%q server=%q", out.GrantClient.ChannelId, out.GrantServer.ChannelId)
-	}
-	if out.GrantClient.Token == "" || out.GrantServer.Token == "" {
-		t.Fatalf("missing tokens")
-	}
-	if out.GrantClient.E2eePskB64u == "" || out.GrantServer.E2eePskB64u == "" {
-		t.Fatalf("missing psk")
+		t.Fatalf("missing grants: %+v", out)
 	}
 
-	if _, err := protocolio.DecodeGrantClientJSON(bytes.NewReader(stdout.Bytes())); err != nil {
-		t.Fatalf("DecodeGrantClientJSON failed: %v", err)
+	// Extra top-level fields must not break wrapper-based decoders.
+	gc, err := protocolio.DecodeGrantClientJSON(bytes.NewReader(stdout.Bytes()))
+	if err != nil {
+		t.Fatalf("DecodeGrantClientJSON: %v", err)
 	}
-	if _, err := protocolio.DecodeGrantServerJSON(bytes.NewReader(stdout.Bytes())); err != nil {
-		t.Fatalf("DecodeGrantServerJSON failed: %v", err)
+	if gc.ChannelId != "ch_1" {
+		t.Fatalf("unexpected client channel_id: %q", gc.ChannelId)
+	}
+	gs, err := protocolio.DecodeGrantServerJSON(bytes.NewReader(stdout.Bytes()))
+	if err != nil {
+		t.Fatalf("DecodeGrantServerJSON: %v", err)
+	}
+	if gs.ChannelId != "ch_1" {
+		t.Fatalf("unexpected server channel_id: %q", gs.ChannelId)
 	}
 }

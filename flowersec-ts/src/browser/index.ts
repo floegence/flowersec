@@ -1,3 +1,2 @@
-export type { DirectConnectBrowserOptions, TunnelConnectBrowserOptions } from "./connect.js";
-export { connectDirectBrowser, connectTunnelBrowser } from "./connect.js";
-
+export type { ConnectBrowserOptions, DirectConnectBrowserOptions, TunnelConnectBrowserOptions } from "./connect.js";
+export { connectBrowser, connectDirectBrowser, connectTunnelBrowser } from "./connect.js";

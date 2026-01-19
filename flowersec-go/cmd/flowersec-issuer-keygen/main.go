@@ -11,9 +11,19 @@ import (
 	"strings"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
+	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
+)
+
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
 )
 
 type ready struct {
+	Version        string `json:"version"`
+	Commit         string `json:"commit"`
+	Date           string `json:"date"`
 	KID            string `json:"kid"`
 	PrivateKeyFile string `json:"private_key_file"`
 	IssuerKeysFile string `json:"issuer_keys_file"`
@@ -24,6 +34,8 @@ func main() {
 }
 
 func run(args []string, stdout io.Writer, stderr io.Writer) int {
+	showVersion := false
+
 	var kid string
 	var outDir string
 	var privFile string
@@ -32,6 +44,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("flowersec-issuer-keygen", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.BoolVar(&showVersion, "version", false, "print version and exit")
 	fs.StringVar(&kid, "kid", "k1", "issuer key id (kid)")
 	fs.StringVar(&outDir, "out-dir", ".", "output directory for generated files")
 	fs.StringVar(&privFile, "private-key-file", "", "output file for issuer private key (default: <out-dir>/issuer_key.json)")
@@ -42,6 +55,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			return 0
 		}
 		return 2
+	}
+	if showVersion {
+		_, _ = fmt.Fprintln(stdout, fsversion.String(version, commit, date))
+		return 0
 	}
 
 	kid = strings.TrimSpace(kid)
@@ -108,6 +125,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	privOut := absOr(privFile)
 	pubOut := absOr(pubFile)
 	_ = json.NewEncoder(stdout).Encode(ready{
+		Version:        version,
+		Commit:         commit,
+		Date:           date,
 		KID:            kid,
 		PrivateKeyFile: privOut,
 		IssuerKeysFile: pubOut,

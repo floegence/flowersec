@@ -1,2 +1,2 @@
 export { createNodeWsFactory } from "./wsFactory.js";
-export { connectDirectNode, connectTunnelNode } from "./connect.js";
+export { connectDirectNode, connectNode, connectTunnelNode } from "./connect.js";

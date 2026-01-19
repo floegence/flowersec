@@ -38,6 +38,8 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keyg
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit@latest
 ```
 
+No-Go option: download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) from the GitHub Release and run the binaries from `bin/`.
+
 ## Recommended entrypoints
 
 - Client (role=client): `github.com/floegence/flowersec/flowersec-go/client`

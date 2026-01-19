@@ -3,6 +3,7 @@ import type { DirectConnectOptions } from "../direct-client/connect.js";
 import type { TunnelConnectOptions } from "../tunnel-client/connect.js";
 import { connectDirect } from "../direct-client/connect.js";
 import { connectTunnel } from "../tunnel-client/connect.js";
+import { connect, type ConnectOptions } from "../facade.js";
 import { FlowersecError } from "../utils/errors.js";
 
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
@@ -12,10 +13,21 @@ export type TunnelConnectBrowserOptions = Omit<TunnelConnectOptions, "origin" | 
 
 export type DirectConnectBrowserOptions = Omit<DirectConnectOptions, "origin" | "wsFactory">;
 
+export type ConnectBrowserOptions = Omit<ConnectOptions, "origin" | "wsFactory">;
+
 function getBrowserOrigin(): string {
   if (typeof window === "undefined") return "";
   const o = (window as any)?.location?.origin;
   return typeof o === "string" ? o : "";
+}
+
+export async function connectBrowser(input: unknown, opts?: ConnectBrowserOptions): Promise<Client>;
+export async function connectBrowser(input: unknown, opts: ConnectBrowserOptions = {}): Promise<Client> {
+  const origin = getBrowserOrigin();
+  if (origin === "") {
+    throw new FlowersecError({ stage: "validate", code: "missing_origin", message: "missing browser origin" });
+  }
+  return await connect(input, { ...opts, origin } as ConnectOptions);
 }
 
 export async function connectTunnelBrowser(grant: ChannelInitGrant, opts?: TunnelConnectBrowserOptions): Promise<Client>;

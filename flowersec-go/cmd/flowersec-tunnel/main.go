@@ -13,13 +13,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
 	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/observability/prom"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
@@ -197,7 +197,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 	if showVersion {
-		_, _ = fmt.Fprintln(stdout, versionString())
+		_, _ = fmt.Fprintln(stdout, fsversion.String(version, commit, date))
 		return 0
 	}
 
@@ -425,49 +425,4 @@ func envDurationWithErr(key string, fallback time.Duration) (time.Duration, erro
 		return 0, err
 	}
 	return d, nil
-}
-
-func versionString() string {
-	v := strings.TrimSpace(version)
-	c := strings.TrimSpace(commit)
-	d := strings.TrimSpace(date)
-
-	if info, ok := debug.ReadBuildInfo(); ok {
-		if v == "" || v == "dev" || v == "(devel)" {
-			if strings.TrimSpace(info.Main.Version) != "" && info.Main.Version != "(devel)" {
-				v = info.Main.Version
-			}
-		}
-		if c == "" || c == "unknown" {
-			if rev := buildSetting(info, "vcs.revision"); rev != "" {
-				c = rev
-			}
-		}
-		if d == "" || d == "unknown" {
-			if t := buildSetting(info, "vcs.time"); t != "" {
-				d = t
-			}
-		}
-	}
-
-	out := v
-	if c != "" && c != "unknown" {
-		out += " (" + c + ")"
-	}
-	if d != "" && d != "unknown" {
-		out += " " + d
-	}
-	return out
-}
-
-func buildSetting(info *debug.BuildInfo, key string) string {
-	if info == nil {
-		return ""
-	}
-	for _, s := range info.Settings {
-		if s.Key == key {
-			return s.Value
-		}
-	}
-	return ""
 }

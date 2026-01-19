@@ -43,6 +43,8 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keyg
 flowersec-issuer-keygen --out-dir ./keys
 ```
 
+No-Go option: download and extract `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) from the GitHub Release and run `./bin/flowersec-issuer-keygen`.
+
 This writes:
 
 - `./keys/issuer_key.json` (private signing key; keep it secret)

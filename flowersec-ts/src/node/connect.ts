@@ -3,11 +3,16 @@ import type { DirectConnectOptions } from "../direct-client/connect.js";
 import type { TunnelConnectOptions } from "../tunnel-client/connect.js";
 import { connectDirect } from "../direct-client/connect.js";
 import { connectTunnel } from "../tunnel-client/connect.js";
+import { connect, type ConnectOptions } from "../facade.js";
 
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
 import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
 
 import { createNodeWsFactory } from "./wsFactory.js";
+
+export async function connectNode(input: unknown, opts: ConnectOptions): Promise<Client> {
+  return await connect(input, { ...opts, wsFactory: opts.wsFactory ?? createNodeWsFactory() });
+}
 
 export async function connectTunnelNode(grant: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client>;
 export async function connectTunnelNode(grant: unknown, opts: TunnelConnectOptions): Promise<Client> {

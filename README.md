@@ -25,6 +25,7 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 
 - Demos: download the `flowersec-demos` bundle from GitHub Releases and follow `examples/README.md` (works from the extracted bundle root).
 - Integration: `docs/INTEGRATION_GUIDE.md`.
+- API surface: `docs/API_SURFACE.md`.
 
 ## Install (no clone)
 
@@ -72,6 +73,8 @@ Full deployment notes: `docs/TUNNEL_DEPLOYMENT.md`.
 
 These tools help you generate an issuer keypair and mint `ChannelInitGrant` pairs without writing a controlplane:
 
+**Option A: `go install`**
+
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit@latest
@@ -79,6 +82,17 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit
 
 - `flowersec-issuer-keygen` writes `issuer_key.json` (private key; keep it secret) and `issuer_keys.json` (public keyset for the tunnel).
 - `flowersec-channelinit` outputs `{"grant_client":{...},"grant_server":{...}}` to stdout (redirect to a file if needed).
+
+**Option B: GitHub Releases (no Go)**
+
+Download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip` on Windows) from the same GitHub Release tag (`flowersec-go/vX.Y.Z`).
+
+The tools bundle includes:
+
+- `bin/flowersec-issuer-keygen`
+- `bin/flowersec-channelinit`
+
+Note: the `flowersec-demos` bundle also includes these binaries under `bin/` for convenience.
 
 ## Getting started (no clone, local)
 
@@ -104,9 +118,9 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 - Go (server endpoint): `github.com/floegence/flowersec/flowersec-go/endpoint` (accept/dial `role=server` endpoints)
 - Go (server stream runtime): `github.com/floegence/flowersec/flowersec-go/endpoint/serve` (default stream dispatch + RPC stream handler)
 - Go (input JSON helpers): `github.com/floegence/flowersec/flowersec-go/protocolio` (`DecodeGrantClientJSON`, `DecodeDirectConnectInfoJSON`)
-- TS (stable): `@flowersec/core` (`connectTunnel`, `connectDirect`)
-- TS (Node): `@flowersec/core/node` (`connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
-- TS (browser): `@flowersec/core/browser` (`connectTunnelBrowser`, `connectDirectBrowser`)
+- TS (stable): `@flowersec/core` (`connect`, `connectTunnel`, `connectDirect`)
+- TS (Node): `@flowersec/core/node` (`connectNode`, `connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
+- TS (browser): `@flowersec/core/browser` (`connectBrowser`, `connectTunnelBrowser`, `connectDirectBrowser`)
 - TS (building blocks): `@flowersec/core/rpc`, `@flowersec/core/yamux`, `@flowersec/core/e2ee`, `@flowersec/core/ws`, `@flowersec/core/observability`, `@flowersec/core/streamhello`
 - TS (generated protocol stubs): `@flowersec/core/gen/flowersec/{controlplane,direct,e2ee,rpc,tunnel}/*`
 - TS (unstable): `@flowersec/core/internal` (internal glue; not recommended as a stable dependency)

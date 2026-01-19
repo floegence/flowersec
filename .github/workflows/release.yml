@@ -92,6 +92,41 @@ jobs:
             fi
           }
 
+          build_tools_one() {
+            local os="$1"
+            local arch="$2"
+            local ext=""
+            local archive_ext="tar.gz"
+            if [[ "$os" == "windows" ]]; then
+              ext=".exe"
+              archive_ext="zip"
+            fi
+            local dir="flowersec-tools_${VERSION}_${os}_${arch}"
+            rm -rf "$dir"
+            mkdir -p "$dir/bin"
+
+            ( cd flowersec-go && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-issuer-keygen${ext}" ./cmd/flowersec-issuer-keygen \
+            )
+            ( cd flowersec-go && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-channelinit${ext}" ./cmd/flowersec-channelinit \
+            )
+
+            cp LICENSE "$dir/"
+
+            if [[ "$archive_ext" == "zip" ]]; then
+              ( cd "$dir" && zip -qr "../dist/${dir}.zip" . )
+            else
+              tar -C "$dir" -czf "dist/${dir}.tar.gz" .
+            fi
+          }
+
           build_demos_one() {
             local os="$1"
             local arch="$2"
@@ -132,6 +167,18 @@ jobs:
               CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
               go build -trimpath -o "../$dir/bin/flowersec-go-client-direct${ext}" ./go/go_client_direct_simple \
             )
+            ( cd flowersec-go && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-issuer-keygen${ext}" ./cmd/flowersec-issuer-keygen \
+            )
+            ( cd flowersec-go && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-channelinit${ext}" ./cmd/flowersec-channelinit \
+            )
 
             # Demo assets (TS dist + scripts + docs).
             mkdir -p "$dir/flowersec-ts"
@@ -154,6 +201,12 @@ jobs:
           build_one darwin amd64
           build_one darwin arm64
           build_one windows amd64
+
+          build_tools_one linux amd64
+          build_tools_one linux arm64
+          build_tools_one darwin amd64
+          build_tools_one darwin arm64
+          build_tools_one windows amd64
 
           build_demos_one linux amd64
           build_demos_one linux arm64

@@ -14,9 +14,19 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
+)
+
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
 )
 
 type output struct {
+	Version     string                      `json:"version"`
+	Commit      string                      `json:"commit"`
+	Date        string                      `json:"date"`
 	GrantClient *controlv1.ChannelInitGrant `json:"grant_client"`
 	GrantServer *controlv1.ChannelInitGrant `json:"grant_server"`
 }
@@ -26,6 +36,8 @@ func main() {
 }
 
 func run(args []string, stdout io.Writer, stderr io.Writer) int {
+	showVersion := false
+
 	var issuerPrivFile string
 	var tunnelURL string
 	var aud string
@@ -38,6 +50,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("flowersec-channelinit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.BoolVar(&showVersion, "version", false, "print version and exit")
 	fs.StringVar(&issuerPrivFile, "issuer-private-key-file", "", "issuer private key file (required)")
 	fs.StringVar(&tunnelURL, "tunnel-url", "", "tunnel websocket url (required; e.g. ws://127.0.0.1:8080/ws)")
 	fs.StringVar(&aud, "aud", "", "token audience (required; must match tunnel --aud)")
@@ -52,6 +65,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			return 0
 		}
 		return 2
+	}
+	if showVersion {
+		_, _ = fmt.Fprintln(stdout, fsversion.String(version, commit, date))
+		return 0
 	}
 
 	issuerPrivFile = strings.TrimSpace(issuerPrivFile)
@@ -90,7 +107,13 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	b, err := json.MarshalIndent(output{GrantClient: client, GrantServer: server}, "", "  ")
+	b, err := json.MarshalIndent(output{
+		Version:     version,
+		Commit:      commit,
+		Date:        date,
+		GrantClient: client,
+		GrantServer: server,
+	}, "", "  ")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

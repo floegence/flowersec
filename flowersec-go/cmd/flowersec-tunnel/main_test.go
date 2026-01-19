@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
 )
 
 func TestVersionString_UsesLdflags(t *testing.T) {
@@ -21,7 +23,7 @@ func TestVersionString_UsesLdflags(t *testing.T) {
 	commit = "deadbeef"
 	date = "2026-01-01T00:00:00Z"
 
-	got := versionString()
+	got := fsversion.String(version, commit, date)
 	if !strings.Contains(got, "v1.2.3") {
 		t.Fatalf("expected version in output, got %q", got)
 	}
