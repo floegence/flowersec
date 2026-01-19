@@ -1,0 +1,132 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
+)
+
+type ready struct {
+	KID            string `json:"kid"`
+	PrivateKeyFile string `json:"private_key_file"`
+	IssuerKeysFile string `json:"issuer_keys_file"`
+}
+
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout io.Writer, stderr io.Writer) int {
+	var kid string
+	var outDir string
+	var privFile string
+	var pubFile string
+	var overwrite bool
+
+	fs := flag.NewFlagSet("flowersec-issuer-keygen", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&kid, "kid", "k1", "issuer key id (kid)")
+	fs.StringVar(&outDir, "out-dir", ".", "output directory for generated files")
+	fs.StringVar(&privFile, "private-key-file", "", "output file for issuer private key (default: <out-dir>/issuer_key.json)")
+	fs.StringVar(&pubFile, "issuer-keys-file", "", "output file for tunnel issuer keyset (public keys) (default: <out-dir>/issuer_keys.json)")
+	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing files")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+
+	kid = strings.TrimSpace(kid)
+	if kid == "" {
+		fmt.Fprintln(stderr, "missing --kid")
+		return 2
+	}
+	outDir = strings.TrimSpace(outDir)
+	if outDir == "" {
+		outDir = "."
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	if privFile == "" {
+		privFile = filepath.Join(outDir, "issuer_key.json")
+	} else if !filepath.IsAbs(privFile) {
+		privFile = filepath.Join(outDir, privFile)
+	}
+	if pubFile == "" {
+		pubFile = filepath.Join(outDir, "issuer_keys.json")
+	} else if !filepath.IsAbs(pubFile) {
+		pubFile = filepath.Join(outDir, pubFile)
+	}
+
+	if !overwrite {
+		if fileExists(privFile) {
+			fmt.Fprintf(stderr, "refusing to overwrite existing file: %s (use --overwrite)\n", privFile)
+			return 2
+		}
+		if fileExists(pubFile) {
+			fmt.Fprintf(stderr, "refusing to overwrite existing file: %s (use --overwrite)\n", pubFile)
+			return 2
+		}
+	}
+
+	ks, err := issuer.NewRandom(kid)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	privJSON, err := ks.ExportPrivateKeyFile()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	pubJSON, err := ks.ExportTunnelKeyset()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	if err := os.WriteFile(privFile, privJSON, 0o600); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := os.WriteFile(pubFile, pubJSON, 0o644); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	privOut := absOr(privFile)
+	pubOut := absOr(pubFile)
+	_ = json.NewEncoder(stdout).Encode(ready{
+		KID:            kid,
+		PrivateKeyFile: privOut,
+		IssuerKeysFile: pubOut,
+	})
+	return 0
+}
+
+func absOr(path string) string {
+	if path == "" {
+		return ""
+	}
+	a, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return a
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}

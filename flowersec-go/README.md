@@ -29,6 +29,15 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@late
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@v0.1.0
 ```
 
+## Install (controlplane helper tools, optional)
+
+These tools are intended for local development and demos (keep private keys secret):
+
+```bash
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit@latest
+```
+
 ## Recommended entrypoints
 
 - Client (role=client): `github.com/floegence/flowersec/flowersec-go/client`

@@ -23,7 +23,7 @@ GOMAXPROCS=2 GOMEMLIMIT=1024MiB go test -bench . -benchmem ./crypto/e2ee ./tunne
 NODE_OPTIONS=--max-old-space-size=768 npm run bench
 
 # Load generator (full mode, loopback)
-GOMAXPROCS=2 GOMEMLIMIT=1024MiB go run ./cmd/flowersec-loadgen --mode=full --channels=1000 --rate=400 --ramp-step=200 --ramp-interval=2s --steady=30s --report-interval=1s
+GOMAXPROCS=2 GOMEMLIMIT=1024MiB go run ./internal/cmd/flowersec-loadgen --mode=full --channels=1000 --rate=400 --ramp-step=200 --ramp-interval=2s --steady=30s --report-interval=1s
 ```
 
 ## Go Benchmarks

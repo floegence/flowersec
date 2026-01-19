@@ -36,6 +36,18 @@ The tunnel requires these inputs:
 
 The issuer keyset is owned by your controlplane (it must publish the issuer public keys so the tunnel can verify tokens).
 
+For local development, you can generate a keypair and the corresponding tunnel keyset file using:
+
+```bash
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
+flowersec-issuer-keygen --out-dir ./keys
+```
+
+This writes:
+
+- `./keys/issuer_key.json` (private signing key; keep it secret)
+- `./keys/issuer_keys.json` (public keyset for the tunnel)
+
 Allowed Origin entries support:
 
 - Full Origin values (for example `https://example.com` or `http://127.0.0.1:5173`)

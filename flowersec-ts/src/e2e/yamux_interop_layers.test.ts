@@ -614,7 +614,7 @@ function spawnGoHarness(scenario: Scenario): {
   exitPromise: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 } {
   const goCwd = path.join(process.cwd(), "..", "flowersec-go");
-  const proc = spawn("go", ["run", "./cmd/flowersec-e2e-harness", "-scenario", JSON.stringify(scenario)], {
+  const proc = spawn("go", ["run", "./internal/cmd/flowersec-e2e-harness", "-scenario", JSON.stringify(scenario)], {
     cwd: goCwd,
     stdio: ["ignore", "pipe", "pipe"]
   });

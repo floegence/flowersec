@@ -236,7 +236,7 @@ describeInterop("yamux interop (full chain)", () => {
 
 async function runMinimalScenario(scenario: Scenario): Promise<{ client: ClientRun; server: ServerRun }> {
   const goCwd = path.join(process.cwd(), "..", "flowersec-go");
-  const proc = spawn("go", ["run", "./cmd/flowersec-yamux-harness", "-scenario", JSON.stringify(scenario)], {
+  const proc = spawn("go", ["run", "./internal/cmd/flowersec-yamux-harness", "-scenario", JSON.stringify(scenario)], {
     cwd: goCwd,
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -276,7 +276,7 @@ async function runMinimalScenario(scenario: Scenario): Promise<{ client: ClientR
 
 async function runFullScenario(scenario: Scenario): Promise<{ client: ClientRun; server: ServerRun }> {
   const goCwd = path.join(process.cwd(), "..", "flowersec-go");
-  const proc = spawn("go", ["run", "./cmd/flowersec-e2e-harness", "-scenario", JSON.stringify(scenario)], {
+  const proc = spawn("go", ["run", "./internal/cmd/flowersec-e2e-harness", "-scenario", JSON.stringify(scenario)], {
     cwd: goCwd,
     stdio: ["ignore", "pipe", "pipe"]
   });

@@ -68,6 +68,18 @@ docker run --rm \
 
 Full deployment notes: `docs/TUNNEL_DEPLOYMENT.md`.
 
+### Controlplane helper tools (optional, local/dev)
+
+These tools help you generate an issuer keypair and mint `ChannelInitGrant` pairs without writing a controlplane:
+
+```bash
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit@latest
+```
+
+- `flowersec-issuer-keygen` writes `issuer_key.json` (private key; keep it secret) and `issuer_keys.json` (public keyset for the tunnel).
+- `flowersec-channelinit` outputs `{"grant_client":{...},"grant_server":{...}}` to stdout (redirect to a file if needed).
+
 ## Getting started (no clone, local)
 
 The recommended hands-on entrypoint is the demo bundle shipped in GitHub Releases:
@@ -216,3 +228,5 @@ Library integrations:
 
 - Tunnel server (deployable): `flowersec-go/cmd/flowersec-tunnel/`
   - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`, `--iss`, `--allow-origin`, `--allow-no-origin`, `--tls-cert-file`, `--tls-key-file`, `--metrics-listen`, `--max-conns`, `--max-channels`, `--max-total-pending-bytes`, `--write-timeout`, `--max-write-queue-bytes` (see `--help` for full details)
+- Controlplane helpers (local/dev): `flowersec-go/cmd/flowersec-issuer-keygen/`, `flowersec-go/cmd/flowersec-channelinit/`
+- Internal tooling (not a supported public CLI surface): `flowersec-go/internal/cmd/*` (interop harnesses, load generator)

@@ -12,7 +12,7 @@ const WS = require("ws");
 describe("go<->ts integration", () => {
   test("ts client talks to go server endpoint through tunnel", { timeout: 60000 }, async () => {
       const goCwd = path.join(process.cwd(), "..", "flowersec-go");
-      const p = spawn("go", ["run", "./cmd/flowersec-e2e-harness"], {
+      const p = spawn("go", ["run", "./internal/cmd/flowersec-e2e-harness"], {
         cwd: goCwd,
         stdio: ["ignore", "pipe", "pipe"]
       });

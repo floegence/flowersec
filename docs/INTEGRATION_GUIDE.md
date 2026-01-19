@@ -22,6 +22,32 @@ go get github.com/floegence/flowersec/flowersec-go@latest
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
 ```
 
+**Controlplane helper tools (optional, local/dev)**
+
+These tools generate an issuer keypair and mint `ChannelInitGrant` pairs for testing.
+Keep the private key file secret.
+
+```bash
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit@latest
+```
+
+Example:
+
+```bash
+flowersec-issuer-keygen --out-dir ./keys
+flowersec-channelinit \
+  --issuer-private-key-file ./keys/issuer_key.json \
+  --tunnel-url ws://127.0.0.1:8080/ws \
+  --aud flowersec-tunnel:dev \
+  --iss issuer-dev \
+  > channel.json
+```
+
+The resulting `channel.json` contains both `grant_client` and `grant_server` and can be consumed by
+`protocolio.DecodeGrantClientJSON` / `protocolio.DecodeGrantServerJSON` and by the TS connect helpers
+(they accept the wrapper object).
+
 **TypeScript (ESM, browser-friendly)**
 
 The release assets include an npm tarball so you can install without cloning:
@@ -84,17 +110,21 @@ This shows the recommended runtime: `endpoint/serve` dispatches streams by `Stre
 import (
   "context"
   "log"
+  "os"
 
   "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
-  "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+  "github.com/floegence/flowersec/flowersec-go/protocolio"
   "github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
 type myHandler struct{}
 
 func main() {
-  var grant *v1.ChannelInitGrant = loadGrantServerSomehow()
   origin := "https://your-web-origin.example"
+  grant, err := protocolio.DecodeGrantServerJSON(os.Stdin)
+  if err != nil {
+    log.Fatal(err)
+  }
 
   srv := serve.New(serve.Options{
     RPC: serve.RPCOptions{

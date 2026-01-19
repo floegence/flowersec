@@ -3,6 +3,7 @@ package issuer
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
@@ -64,5 +65,51 @@ func TestExportTunnelKeyset(t *testing.T) {
 	}
 	if out.Keys[0].KID != "kid" {
 		t.Fatalf("unexpected kid: %s", out.Keys[0].KID)
+	}
+}
+
+func TestPrivateKeyFileRoundtrip(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(nil)
+	ks, err := New("kid", priv)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	b, err := ks.ExportPrivateKeyFile()
+	if err != nil {
+		t.Fatalf("ExportPrivateKeyFile failed: %v", err)
+	}
+	var out PrivateKeyFile
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if out.KID != "kid" {
+		t.Fatalf("unexpected kid: %s", out.KID)
+	}
+	if out.PrivKeyB64 == "" {
+		t.Fatalf("missing privkey_b64u")
+	}
+
+	f, err := os.CreateTemp("", "fsec-issuer-private.*.json")
+	if err != nil {
+		t.Fatalf("CreateTemp failed: %v", err)
+	}
+	defer os.Remove(f.Name())
+	if err := os.WriteFile(f.Name(), b, 0o600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	loaded, err := LoadPrivateKeyFile(f.Name())
+	if err != nil {
+		t.Fatalf("LoadPrivateKeyFile failed: %v", err)
+	}
+	if loaded.CurrentKID() != "kid" {
+		t.Fatalf("unexpected kid: %s", loaded.CurrentKID())
+	}
+
+	origPub := ks.PublicKeys()["kid"]
+	gotPub := loaded.PublicKeys()["kid"]
+	if !origPub.Equal(gotPub) {
+		t.Fatalf("public key mismatch")
 	}
 }

@@ -19,7 +19,7 @@ LOADGEN_REPORT_INTERVAL="${LOADGEN_REPORT_INTERVAL:-1s}"
 
 GO_BENCH_CMD="GOMAXPROCS=${GOMAXPROCS} GOMEMLIMIT=${GOMEMLIMIT} go test -bench . -benchmem ./crypto/e2ee ./tunnel/server"
 TS_BENCH_CMD="NODE_OPTIONS=${NODE_OPTIONS} npm run bench"
-LOADGEN_CMD="GOMAXPROCS=${GOMAXPROCS} GOMEMLIMIT=${GOMEMLIMIT} go run ./cmd/flowersec-loadgen --mode=full --channels=${LOADGEN_CHANNELS} --rate=${LOADGEN_RATE} --ramp-step=${LOADGEN_RAMP_STEP} --ramp-interval=${LOADGEN_RAMP_INTERVAL} --steady=${LOADGEN_STEADY} --report-interval=${LOADGEN_REPORT_INTERVAL}"
+LOADGEN_CMD="GOMAXPROCS=${GOMAXPROCS} GOMEMLIMIT=${GOMEMLIMIT} go run ./internal/cmd/flowersec-loadgen --mode=full --channels=${LOADGEN_CHANNELS} --rate=${LOADGEN_RATE} --ramp-step=${LOADGEN_RAMP_STEP} --ramp-interval=${LOADGEN_RAMP_INTERVAL} --steady=${LOADGEN_STEADY} --report-interval=${LOADGEN_REPORT_INTERVAL}"
 
 GO_OUT="$(mktemp)"
 TS_OUT="$(mktemp)"
@@ -37,7 +37,7 @@ echo "[bench] running ts benchmarks..."
 (cd "${TS_DIR}" && NODE_OPTIONS="${NODE_OPTIONS}" NO_COLOR=1 FORCE_COLOR=0 npm run bench) | tee "${TS_OUT}"
 
 echo "[bench] running load generator..."
-(cd "${GO_DIR}" && GOMAXPROCS="${GOMAXPROCS}" GOMEMLIMIT="${GOMEMLIMIT}" go run ./cmd/flowersec-loadgen \
+(cd "${GO_DIR}" && GOMAXPROCS="${GOMAXPROCS}" GOMEMLIMIT="${GOMEMLIMIT}" go run ./internal/cmd/flowersec-loadgen \
   --mode=full \
   --channels="${LOADGEN_CHANNELS}" \
   --rate="${LOADGEN_RATE}" \
