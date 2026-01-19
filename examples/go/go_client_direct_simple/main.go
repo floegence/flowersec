@@ -12,7 +12,7 @@ import (
 
 	demov1 "github.com/floegence/flowersec-examples/gen/flowersec/demo/v1"
 	"github.com/floegence/flowersec/flowersec-go/client"
-	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
 // go_client_direct_simple demonstrates the minimal direct (no tunnel) client using the high-level Go helpers:
@@ -32,7 +32,16 @@ func main() {
 		log.Fatal("missing --origin")
 	}
 
-	info, err := readDirectInfo(infoPath)
+	var infoReader io.Reader = os.Stdin
+	if infoPath != "" {
+		f, err := os.Open(infoPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		infoReader = f
+	}
+	info, err := protocolio.DecodeDirectConnectInfoJSON(infoReader)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -98,27 +107,4 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("echo response: %q\n", string(buf))
-}
-
-func readDirectInfo(path string) (*directv1.DirectConnectInfo, error) {
-	var r io.Reader
-	if path == "" {
-		r = os.Stdin
-	} else {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		r = f
-	}
-	// The direct demo prints a JSON object that matches DirectConnectInfo fields.
-	var info directv1.DirectConnectInfo
-	if err := json.NewDecoder(r).Decode(&info); err != nil {
-		return nil, err
-	}
-	if info.WsUrl == "" || info.ChannelId == "" || info.E2eePskB64u == "" {
-		return nil, fmt.Errorf("missing required fields in direct info")
-	}
-	return &info, nil
 }

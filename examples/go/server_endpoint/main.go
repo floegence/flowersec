@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -10,7 +9,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -182,30 +180,18 @@ func readControlplaneControlInfo(path string) (*directv1.DirectConnectInfo, erro
 		defer f.Close()
 		r = f
 	}
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var out controlplaneReady
-		if err := json.Unmarshal([]byte(line), &out); err != nil {
-			continue
-		}
-		if out.ServerEndpointControl == nil {
-			continue
-		}
-		info := out.ServerEndpointControl
-		if info.WsUrl == "" || info.ChannelId == "" || info.E2eePskB64u == "" {
-			continue
-		}
-		return info, nil
-	}
-	if err := sc.Err(); err != nil {
+	var out controlplaneReady
+	if err := json.NewDecoder(r).Decode(&out); err != nil {
 		return nil, err
 	}
-	return nil, errors.New("missing server_endpoint_control in controlplane output")
+	if out.ServerEndpointControl == nil {
+		return nil, errors.New("missing server_endpoint_control in controlplane output")
+	}
+	info := out.ServerEndpointControl
+	if info.WsUrl == "" || info.ChannelId == "" || info.E2eePskB64u == "" {
+		return nil, errors.New("missing required fields in server_endpoint_control")
+	}
+	return info, nil
 }
 
 func registerWithControlplane(ctx context.Context, c *rpc.Client, endpointID string) error {

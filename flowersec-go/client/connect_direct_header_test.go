@@ -46,24 +46,28 @@ func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
+	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		Upgrader: ws.UpgraderOptions{CheckOrigin: checkOrigin},
+		Handshake: endpoint.AcceptDirectOptions{
+			ChannelID:           channelID,
+			PSK:                 psk,
+			Suite:               e2ee.SuiteX25519HKDFAES256GCM,
+			InitExpireAtUnixS:   initExp,
+			ClockSkew:           30 * time.Second,
+			HandshakeTimeout:    2 * time.Second,
+			MaxHandshakePayload: 8 * 1024,
+			MaxRecordBytes:      1 << 20,
+		},
+		OnStream: func(_kind string, stream io.ReadWriteCloser) {
+			_ = stream.Close()
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDirectHandler() failed: %v", err)
+	}
 	mux.HandleFunc(
 		"/ws",
-		endpoint.DirectHandler(endpoint.DirectHandlerOptions{
-			Upgrader: ws.UpgraderOptions{CheckOrigin: checkOrigin},
-			Handshake: endpoint.AcceptDirectOptions{
-				ChannelID:           channelID,
-				PSK:                 psk,
-				Suite:               e2ee.SuiteX25519HKDFAES256GCM,
-				InitExpireAtUnixS:   initExp,
-				ClockSkew:           30 * time.Second,
-				HandshakeTimeout:    2 * time.Second,
-				MaxHandshakePayload: 8 * 1024,
-				MaxRecordBytes:      1 << 20,
-			},
-			OnStream: func(_kind string, stream io.ReadWriteCloser) {
-				_ = stream.Close()
-			},
-		}),
+		wsHandler,
 	)
 
 	srv := httptest.NewServer(mux)

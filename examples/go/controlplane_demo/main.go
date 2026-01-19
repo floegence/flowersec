@@ -136,39 +136,40 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/v1/channel/init", channelInitHandler(ci, controlEndpoints))
-	mux.HandleFunc(
-		serverEndpointControlWSPath,
-		endpoint.DirectHandler(endpoint.DirectHandlerOptions{
-			Upgrader: ws.UpgraderOptions{
-				CheckOrigin: func(_ *http.Request) bool { return true },
-			},
-			Handshake: endpoint.AcceptDirectOptions{
-				ChannelID:           controlChannelID,
-				PSK:                 controlPSK,
-				Suite:               e2ee.SuiteX25519HKDFAES256GCM,
-				InitExpireAtUnixS:   controlInitExp,
-				ClockSkew:           30 * time.Second,
-				HandshakeTimeout:    30 * time.Second,
-				ServerFeatures:      1,
-				MaxHandshakePayload: 8 * 1024,
-				MaxRecordBytes:      1 << 20,
-			},
-			OnStream: func(kind string, stream io.ReadWriteCloser) {
-				defer stream.Close()
-				switch kind {
-				case "rpc":
-					router := rpc.NewRouter()
-					srv := rpc.NewServer(stream, router)
-					conn := &serverEndpointConn{srv: srv, reg: controlEndpoints}
-					router.Register(controlRPCTypeRegisterServerEndpoint, conn.handleRegister)
-					_ = srv.Serve(context.Background())
-					conn.unregister()
-				default:
-					return
-				}
-			},
-		}),
-	)
+	controlWSHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		Upgrader: ws.UpgraderOptions{
+			CheckOrigin: func(_ *http.Request) bool { return true },
+		},
+		Handshake: endpoint.AcceptDirectOptions{
+			ChannelID:           controlChannelID,
+			PSK:                 controlPSK,
+			Suite:               e2ee.SuiteX25519HKDFAES256GCM,
+			InitExpireAtUnixS:   controlInitExp,
+			ClockSkew:           30 * time.Second,
+			HandshakeTimeout:    30 * time.Second,
+			ServerFeatures:      1,
+			MaxHandshakePayload: 8 * 1024,
+			MaxRecordBytes:      1 << 20,
+		},
+		OnStream: func(kind string, stream io.ReadWriteCloser) {
+			defer stream.Close()
+			switch kind {
+			case "rpc":
+				router := rpc.NewRouter()
+				srv := rpc.NewServer(stream, router)
+				conn := &serverEndpointConn{srv: srv, reg: controlEndpoints}
+				router.Register(controlRPCTypeRegisterServerEndpoint, conn.handleRegister)
+				_ = srv.Serve(context.Background())
+				conn.unregister()
+			default:
+				return
+			}
+		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.HandleFunc(serverEndpointControlWSPath, controlWSHandler)
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {

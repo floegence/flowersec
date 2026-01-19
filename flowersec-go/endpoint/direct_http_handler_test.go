@@ -14,7 +14,29 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 )
+
+func TestNewDirectHandler_OriginPolicy(t *testing.T) {
+	t.Parallel()
+
+	_, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if _, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{AllowNoOrigin: true}); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if _, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{AllowedOrigins: []string{"example.com"}}); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if _, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		Upgrader: ws.UpgraderOptions{CheckOrigin: func(*http.Request) bool { return true }},
+	}); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
 
 func TestDirectHandler_AllowsConnectDirect(t *testing.T) {
 	origin := "http://example.com"
@@ -26,25 +48,29 @@ func TestDirectHandler_AllowsConnectDirect(t *testing.T) {
 	initExp := time.Now().Add(120 * time.Second).Unix()
 
 	mux := http.NewServeMux()
+	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		AllowedOrigins: []string{origin},
+		AllowNoOrigin:  false,
+		Handshake: endpoint.AcceptDirectOptions{
+			ChannelID:           channelID,
+			PSK:                 psk,
+			Suite:               e2ee.SuiteX25519HKDFAES256GCM,
+			InitExpireAtUnixS:   initExp,
+			ClockSkew:           30 * time.Second,
+			HandshakeTimeout:    2 * time.Second,
+			MaxHandshakePayload: 8 * 1024,
+			MaxRecordBytes:      1 << 20,
+		},
+		OnStream: func(_kind string, stream io.ReadWriteCloser) {
+			_ = stream.Close()
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDirectHandler() failed: %v", err)
+	}
 	mux.HandleFunc(
 		"/ws",
-		endpoint.DirectHandler(endpoint.DirectHandlerOptions{
-			AllowedOrigins: []string{origin},
-			AllowNoOrigin:  false,
-			Handshake: endpoint.AcceptDirectOptions{
-				ChannelID:           channelID,
-				PSK:                 psk,
-				Suite:               e2ee.SuiteX25519HKDFAES256GCM,
-				InitExpireAtUnixS:   initExp,
-				ClockSkew:           30 * time.Second,
-				HandshakeTimeout:    2 * time.Second,
-				MaxHandshakePayload: 8 * 1024,
-				MaxRecordBytes:      1 << 20,
-			},
-			OnStream: func(_kind string, stream io.ReadWriteCloser) {
-				_ = stream.Close()
-			},
-		}),
+		wsHandler,
 	)
 
 	srv := httptest.NewServer(mux)

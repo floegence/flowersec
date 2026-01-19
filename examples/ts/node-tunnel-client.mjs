@@ -25,11 +25,6 @@ async function readStdinUtf8() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function pickGrantClient(obj) {
-  if (obj && typeof obj === "object" && obj.grant_client != null) return obj.grant_client;
-  return obj;
-}
-
 function waitHello(demo, timeoutMs) {
   return new Promise((resolve, reject) => {
     let unsub = () => {};
@@ -49,14 +44,13 @@ function waitHello(demo, timeoutMs) {
 async function main() {
   const input = await readStdinUtf8();
   const readyOrGrant = JSON.parse(input);
-  const grant = pickGrantClient(readyOrGrant);
 
   // Explicit Origin header value used by the tunnel allow-list.
   const origin = process.env.FSEC_ORIGIN ?? "";
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
   // connectTunnelNode() returns an RPC-ready session and supports extra yamux streams via openStream(kind).
-  const client = await connectTunnelNode(grant, { origin });
+  const client = await connectTunnelNode(readyOrGrant, { origin });
 
   try {
     const demo = createDemoClient(client.rpc);

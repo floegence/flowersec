@@ -43,11 +43,6 @@
         $out.textContent += s + "\n";
       }
 
-      function pickGrantClient(obj) {
-        if (obj && typeof obj === "object" && obj.grant_client != null) return obj.grant_client;
-        return obj;
-      }
-
       function waitHello(demo, timeoutMs) {
         return new Promise((resolve, reject) => {
           let unsub = () => {};
@@ -67,9 +62,8 @@
         $out.textContent = "";
         try {
           const obj = JSON.parse($in.value);
-          const grant = pickGrantClient(obj);
           // High-level helper: it performs tunnel attach + E2EE handshake + yamux + RPC.
-          client = await connectTunnelBrowser(grant);
+          client = await connectTunnelBrowser(obj);
           $close.disabled = false;
 
           const demo = createDemoClient(client.rpc);

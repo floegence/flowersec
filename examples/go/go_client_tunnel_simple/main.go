@@ -12,7 +12,7 @@ import (
 
 	demov1 "github.com/floegence/flowersec-examples/gen/flowersec/demo/v1"
 	"github.com/floegence/flowersec/flowersec-go/client"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
 // go_client_tunnel_simple demonstrates the minimal tunnel client using the high-level Go helpers:
@@ -34,7 +34,16 @@ func main() {
 		log.Fatal("missing --origin")
 	}
 
-	grant, err := readGrantClient(grantPath)
+	var grantReader io.Reader = os.Stdin
+	if grantPath != "" {
+		f, err := os.Open(grantPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		grantReader = f
+	}
+	grant, err := protocolio.DecodeGrantClientJSON(grantReader)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -100,40 +109,4 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("echo response: %q\n", string(buf))
-}
-
-func readGrantClient(path string) (*controlv1.ChannelInitGrant, error) {
-	var r io.Reader
-	if path == "" {
-		r = os.Stdin
-	} else {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		r = f
-	}
-	b, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	// Accept either the full /v1/channel/init response or the raw grant itself.
-	var wrap struct {
-		GrantClient *controlv1.ChannelInitGrant `json:"grant_client"`
-	}
-	if err := json.Unmarshal(b, &wrap); err == nil && wrap.GrantClient != nil {
-		if wrap.GrantClient.Role != controlv1.Role_client {
-			return nil, fmt.Errorf("expected role=client, got %v", wrap.GrantClient.Role)
-		}
-		return wrap.GrantClient, nil
-	}
-	var g controlv1.ChannelInitGrant
-	if err := json.Unmarshal(b, &g); err != nil {
-		return nil, err
-	}
-	if g.Role != controlv1.Role_client {
-		return nil, fmt.Errorf("expected role=client, got %v", g.Role)
-	}
-	return &g, nil
 }

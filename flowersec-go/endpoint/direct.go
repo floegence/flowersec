@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -91,7 +92,7 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 	})
 	if err != nil {
 		_ = c.Close()
-		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, err)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
 	}
 
 	ycfg := opts.YamuxConfig
@@ -126,11 +127,14 @@ type DirectHandlerOptions struct {
 	OnStream func(kind string, stream io.ReadWriteCloser)
 }
 
-// DirectHandler returns an http.HandlerFunc that upgrades to WebSocket, runs the server handshake,
+// NewDirectHandler returns an http.HandlerFunc that upgrades to WebSocket, runs the server handshake,
 // and then dispatches yamux streams by StreamHello(kind).
-func DirectHandler(opts DirectHandlerOptions) http.HandlerFunc {
+func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 	checkOrigin := opts.Upgrader.CheckOrigin
 	if checkOrigin == nil {
+		if len(opts.AllowedOrigins) == 0 && !opts.AllowNoOrigin {
+			return nil, errors.New("missing allowed origins")
+		}
 		checkOrigin = ws.NewOriginChecker(opts.AllowedOrigins, opts.AllowNoOrigin)
 	}
 	maxHello := opts.MaxStreamHelloBytes
@@ -157,5 +161,14 @@ func DirectHandler(opts DirectHandlerOptions) http.HandlerFunc {
 			return
 		}
 		_ = sess.ServeStreams(r.Context(), maxHello, opts.OnStream)
+	}, nil
+}
+
+// MustDirectHandler panics if NewDirectHandler fails.
+func MustDirectHandler(opts DirectHandlerOptions) http.HandlerFunc {
+	h, err := NewDirectHandler(opts)
+	if err != nil {
+		panic(err)
 	}
+	return h
 }

@@ -26,6 +26,8 @@ const (
 type Code = fserrors.Code
 
 const (
+	CodeTimeout                   = fserrors.CodeTimeout
+	CodeCanceled                  = fserrors.CodeCanceled
 	CodeMissingGrant              = fserrors.CodeMissingGrant
 	CodeMissingConnectInfo        = fserrors.CodeMissingConnectInfo
 	CodeRoleMismatch              = fserrors.CodeRoleMismatch
@@ -34,6 +36,10 @@ const (
 	CodeMissingOrigin             = fserrors.CodeMissingOrigin
 	CodeMissingChannelID          = fserrors.CodeMissingChannelID
 	CodeMissingInitExp            = fserrors.CodeMissingInitExp
+	CodeTimestampAfterInitExp     = fserrors.CodeTimestampAfterInitExp
+	CodeTimestampOutOfSkew        = fserrors.CodeTimestampOutOfSkew
+	CodeAuthTagMismatch           = fserrors.CodeAuthTagMismatch
+	CodeInvalidVersion            = fserrors.CodeInvalidVersion
 	CodeInvalidSuite              = fserrors.CodeInvalidSuite
 	CodeInvalidPSK                = fserrors.CodeInvalidPSK
 	CodeInvalidEndpointInstanceID = fserrors.CodeInvalidEndpointInstanceID

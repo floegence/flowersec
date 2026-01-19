@@ -50,7 +50,7 @@ func main() {
 	flag.StringVar(&listen, "listen", "127.0.0.1:0", "listen address")
 	flag.StringVar(&wsPath, "ws-path", "/ws", "websocket path")
 	flag.StringVar(&channelID, "channel-id", "", "fixed channel id (default: random)")
-	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin host or full Origin value (repeatable; required)")
+	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com), or exact non-standard values (e.g. null)")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -85,27 +85,28 @@ func main() {
 	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc(
-		wsPath,
-		endpoint.DirectHandler(endpoint.DirectHandlerOptions{
-			AllowedOrigins: allowedOrigins,
-			AllowNoOrigin:  false,
-			Handshake: endpoint.AcceptDirectOptions{
-				ChannelID:           channelID,
-				PSK:                 psk,
-				Suite:               e2ee.SuiteX25519HKDFAES256GCM,
-				InitExpireAtUnixS:   initExp,
-				ClockSkew:           30 * time.Second,
-				HandshakeTimeout:    30 * time.Second,
-				ServerFeatures:      1,
-				MaxHandshakePayload: 8 * 1024,
-				MaxRecordBytes:      1 << 20,
-			},
-			OnStream: func(kind string, stream io.ReadWriteCloser) {
-				streamSrv.HandleStream(ctx, kind, stream)
-			},
-		}),
-	)
+	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		AllowedOrigins: allowedOrigins,
+		AllowNoOrigin:  false,
+		Handshake: endpoint.AcceptDirectOptions{
+			ChannelID:           channelID,
+			PSK:                 psk,
+			Suite:               e2ee.SuiteX25519HKDFAES256GCM,
+			InitExpireAtUnixS:   initExp,
+			ClockSkew:           30 * time.Second,
+			HandshakeTimeout:    30 * time.Second,
+			ServerFeatures:      1,
+			MaxHandshakePayload: 8 * 1024,
+			MaxRecordBytes:      1 << 20,
+		},
+		OnStream: func(kind string, stream io.ReadWriteCloser) {
+			streamSrv.HandleStream(ctx, kind, stream)
+		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.HandleFunc(wsPath, wsHandler)
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {

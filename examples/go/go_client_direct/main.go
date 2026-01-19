@@ -13,19 +13,12 @@ import (
 
 	"github.com/floegence/flowersec-examples/go/exampleutil"
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )
-
-type directInfo struct {
-	WSURL               string `json:"ws_url"`
-	ChannelID           string `json:"channel_id"`
-	E2EEPskB64u         string `json:"e2ee_psk_b64u"`
-	DefaultSuite        int    `json:"default_suite"`
-	ChannelInitExpireAt int64  `json:"channel_init_expire_at_unix_s"`
-}
 
 // go_client_direct is an "advanced" example that manually assembles the protocol stack:
 // WebSocket -> E2EE -> Yamux -> RPC, plus an extra "echo" stream.
@@ -47,13 +40,28 @@ func main() {
 		log.Fatal("missing --origin")
 	}
 
-	info, err := readDirectInfo(infoPath)
+	var infoReader io.Reader = os.Stdin
+	if infoPath != "" {
+		f, err := os.Open(infoPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		infoReader = f
+	}
+	info, err := protocolio.DecodeDirectConnectInfoJSON(infoReader)
 	if err != nil {
 		log.Fatal(err)
 	}
-	psk, err := exampleutil.Decode(info.E2EEPskB64u)
+	psk, err := exampleutil.Decode(info.E2eePskB64u)
 	if err != nil {
 		log.Fatal(err)
+	}
+	suite := e2ee.Suite(info.DefaultSuite)
+	switch suite {
+	case e2ee.SuiteX25519HKDFAES256GCM, e2ee.SuiteP256HKDFAES256GCM:
+	default:
+		log.Fatal("invalid suite")
 	}
 
 	// WebSocket dial: the Origin header is required by the direct demo server.
@@ -62,7 +70,7 @@ func main() {
 
 	h := http.Header{}
 	h.Set("Origin", origin)
-	c, _, err := websocket.DefaultDialer.DialContext(ctx, info.WSURL, h)
+	c, _, err := websocket.DefaultDialer.DialContext(ctx, info.WsUrl, h)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -72,8 +80,8 @@ func main() {
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	secure, err := e2ee.ClientHandshake(ctx, bt, e2ee.ClientHandshakeOptions{
 		PSK:                 psk,
-		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
-		ChannelID:           info.ChannelID,
+		Suite:               suite,
+		ChannelID:           info.ChannelId,
 		ClientFeatures:      1,
 		MaxHandshakePayload: 8 * 1024,
 		MaxRecordBytes:      1 << 20,
@@ -152,26 +160,4 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("echo response: %q\n", string(buf))
-}
-
-func readDirectInfo(path string) (*directInfo, error) {
-	var r io.Reader
-	if path == "" {
-		r = os.Stdin
-	} else {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		r = f
-	}
-	var info directInfo
-	if err := json.NewDecoder(r).Decode(&info); err != nil {
-		return nil, err
-	}
-	if info.WSURL == "" || info.ChannelID == "" || info.E2EEPskB64u == "" {
-		return nil, fmt.Errorf("missing required fields in direct info")
-	}
-	return &info, nil
 }

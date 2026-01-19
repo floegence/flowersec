@@ -132,7 +132,7 @@ func main() {
 	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "issuer keyset file (kid->ed25519 pubkey)")
 	flag.StringVar(&aud, "aud", "", "expected token audience")
 	flag.StringVar(&iss, "iss", "", "expected token issuer (required; must match token payload 'iss')")
-	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin host or full Origin value (repeatable; required)")
+	flag.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com), or exact non-standard values (e.g. null)")
 	flag.BoolVar(&allowNoOrigin, "allow-no-origin", cfg.AllowNoOrigin, "allow requests without Origin header (non-browser clients; discouraged)")
 	flag.IntVar(&maxConns, "max-conns", 0, "max concurrent websocket connections (0 uses default)")
 	flag.IntVar(&maxChannels, "max-channels", 0, "max concurrent channels (0 uses default)")

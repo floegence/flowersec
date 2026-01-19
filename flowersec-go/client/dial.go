@@ -76,7 +76,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	h.Set("Origin", origin)
 	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.CodeDialFailed, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
 	attach := tunnelv1.Attach{
 		V:                  1,
@@ -88,7 +88,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	attachJSON, _ := json.Marshal(attach)
 	if err := c.WriteMessage(connectCtx, websocket.TextMessage, attachJSON); err != nil {
 		_ = c.Close()
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, fserrors.CodeAttachFailed, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, fserrors.ClassifyAttachCode(err), err)
 	}
 
 	out, err := dialAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, dialE2EEOptions{
@@ -156,7 +156,7 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin
 	h.Set("Origin", origin)
 	c, _, err := ws.Dial(connectCtx, info.WsUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
-		return nil, wrapErr(fserrors.PathDirect, fserrors.StageConnect, fserrors.CodeDialFailed, err)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
 
 	out, err := dialAfterAttach(ctx, c, fserrors.PathDirect, "", dialE2EEOptions{
@@ -204,7 +204,7 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 		MaxBufferedBytes:    opts.maxBufferedBytes,
 	})
 	if err != nil {
-		return nil, wrapErr(path, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, err)
+		return nil, wrapErr(path, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
 	}
 
 	ycfg := hyamux.DefaultConfig()

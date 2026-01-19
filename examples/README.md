@@ -48,6 +48,7 @@ npm run build
   - Use the server endpoint demo (`role=server`) as the peer for any tunnel client.
 - Origin policy (required): the tunnel validates the WebSocket `Origin` header and requires an explicit allow-list.
   - Start the tunnel with `FSEC_TUNNEL_ALLOW_ORIGIN=<your-origin>` (required by `./examples/run-tunnel-server.sh`).
+    - Allowed entries support full Origin values (`http://127.0.0.1:5173`), hostname (`example.com`, port ignored), hostname:port (`example.com:5173`), wildcard hostnames (`*.example.com`), and exact non-standard values (`null`).
   - All clients must send an Origin header. Go clients require an explicit `origin` value; TS browser clients use `window.location.origin`.
   - TS convenience wrappers:
     - Browser: use `connectTunnelBrowser` / `connectDirectBrowser` from `@flowersec/core/browser` (uses `window.location.origin`).

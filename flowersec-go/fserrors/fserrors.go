@@ -27,6 +27,8 @@ const (
 type Code string
 
 const (
+	CodeTimeout                   Code = "timeout"
+	CodeCanceled                  Code = "canceled"
 	CodeMissingGrant              Code = "missing_grant"
 	CodeMissingConnectInfo        Code = "missing_connect_info"
 	CodeRoleMismatch              Code = "role_mismatch"
@@ -36,6 +38,10 @@ const (
 	CodeMissingConn               Code = "missing_conn"
 	CodeMissingChannelID          Code = "missing_channel_id"
 	CodeMissingInitExp            Code = "missing_init_exp"
+	CodeTimestampAfterInitExp     Code = "timestamp_after_init_exp"
+	CodeTimestampOutOfSkew        Code = "timestamp_out_of_skew"
+	CodeAuthTagMismatch           Code = "auth_tag_mismatch"
+	CodeInvalidVersion            Code = "invalid_version"
 	CodeInvalidSuite              Code = "invalid_suite"
 	CodeInvalidPSK                Code = "invalid_psk"
 	CodeInvalidEndpointInstanceID Code = "invalid_endpoint_instance_id"

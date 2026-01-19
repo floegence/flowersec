@@ -29,6 +29,10 @@ The recommended hands-on entrypoint is the scenario cookbook:
 open examples/README.md
 ```
 
+If you are integrating Flowersec into your own codebase (not just running the demos), start here:
+
+- `docs/INTEGRATION_GUIDE.md`
+
 If you want a "from zero" guided path (copy/paste friendly), follow the section below.
 
 ## Getting started (from zero, local)
@@ -131,6 +135,7 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 - Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.ConnectTunnel(ctx, grant, origin, ...opts)`, `client.ConnectDirect(ctx, info, origin, ...opts)`)
 - Go (server endpoint): `github.com/floegence/flowersec/flowersec-go/endpoint` (accept/dial `role=server` endpoints)
 - Go (server stream runtime): `github.com/floegence/flowersec/flowersec-go/endpoint/serve` (default stream dispatch + RPC stream handler)
+- Go (input JSON helpers): `github.com/floegence/flowersec/flowersec-go/protocolio` (`DecodeGrantClientJSON`, `DecodeDirectConnectInfoJSON`)
 - TS (stable): `@flowersec/core` (`connectTunnel`, `connectDirect`)
 - TS (Node): `@flowersec/core/node` (`connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
 - TS (browser): `@flowersec/core/browser` (`connectTunnelBrowser`, `connectDirectBrowser`)
@@ -192,7 +197,12 @@ The deployable tunnel binary is `flowersec-go/cmd/flowersec-tunnel/`.
 
 - TLS is **disabled by default**. For any non-local deployment, use `wss://` (either enable `--tls-cert-file/--tls-key-file` or terminate TLS at a reverse proxy).
 - Origin checks are **enabled by default** and require an explicit allow-list:
-  - `--allow-origin` accepts either a hostname (e.g. `example.com`) or a full Origin value (e.g. `https://example.com` or `http://127.0.0.1:5173`).
+  - `--allow-origin` accepts:
+    - full Origin values (e.g. `https://example.com` or `http://127.0.0.1:5173`)
+    - hostname entries (e.g. `example.com`, port ignored)
+    - hostname:port entries (e.g. `example.com:5173`)
+    - wildcard hostnames (e.g. `*.example.com`)
+    - exact non-standard values (e.g. `null`)
   - Requests without `Origin` are **rejected by default**; `--allow-no-origin` is intended for non-browser clients (discouraged).
   - Client helpers:
     - Go: pass an explicit `origin` string to `client.ConnectTunnel` / `client.ConnectDirect`.

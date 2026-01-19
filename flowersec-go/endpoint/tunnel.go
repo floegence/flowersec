@@ -67,7 +67,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	h.Set("Origin", origin)
 	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.CodeDialFailed, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
 
 	endpointInstanceID := cfg.endpointInstanceID
@@ -93,7 +93,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	attachJSON, _ := json.Marshal(attach)
 	if err := c.WriteMessage(connectCtx, websocket.TextMessage, attachJSON); err != nil {
 		_ = c.Close()
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, fserrors.CodeAttachFailed, err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, fserrors.ClassifyAttachCode(err), err)
 	}
 
 	sess, err := serveAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, serverHandshakeOptions{
@@ -153,7 +153,7 @@ func serveAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpo
 		MaxBufferedBytes:    opts.maxBufferedBytes,
 	})
 	if err != nil {
-		return nil, wrapErr(path, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, err)
+		return nil, wrapErr(path, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
 	}
 
 	ycfg := opts.yamuxConfig
