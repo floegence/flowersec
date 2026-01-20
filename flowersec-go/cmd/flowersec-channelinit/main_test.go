@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,5 +184,35 @@ func TestChannelInit_PrettyFlag(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "\n  \"grant_client\"") {
 		t.Fatalf("expected indented JSON output, got %q", stdout.String())
+	}
+}
+
+type errReader struct{}
+
+func (errReader) Read(p []byte) (int, error) {
+	return 0, errors.New("boom")
+}
+
+func TestRun_RandomChannelIDFailure_Exits1(t *testing.T) {
+	orig := randReader
+	randReader = errReader{}
+	t.Cleanup(func() { randReader = orig })
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--issuer-private-key-file", "issuer_key.json",
+			"--tunnel-url", "ws://127.0.0.1:8080/ws",
+			"--aud", "aud",
+			"--iss", "iss",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "generate random channel id") {
+		t.Fatalf("expected stderr to contain random channel id error, got %q", stderr.String())
 	}
 }

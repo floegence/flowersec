@@ -21,6 +21,9 @@ var (
 	version = "dev"
 	commit  = "unknown"
 	date    = "unknown"
+
+	// randReader is overridden in tests.
+	randReader io.Reader = rand.Reader
 )
 
 type output struct {
@@ -93,14 +96,19 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return usageErr("--init-exp-seconds must be > 0")
 	}
 	if channelID == "" {
-		channelID = randomB64u(24)
+		id, err := randomB64u(24)
+		if err != nil {
+			fmt.Fprintln(stderr, fmt.Errorf("generate random channel id: %w", err))
+			return 1
+		}
+		channelID = id
 	}
 
 	var psk []byte
 	if pskB64u == "" {
 		psk = make([]byte, 32)
-		if _, err := rand.Read(psk); err != nil {
-			fmt.Fprintln(stderr, err)
+		if _, err := io.ReadFull(randReader, psk); err != nil {
+			fmt.Fprintln(stderr, fmt.Errorf("generate random psk: %w", err))
 			return 1
 		}
 		pskB64u = base64url.Encode(psk)
@@ -179,12 +187,12 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-func randomB64u(n int) string {
+func randomB64u(n int) (string, error) {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
+	if _, err := io.ReadFull(randReader, b); err != nil {
+		return "", err
 	}
-	return base64url.Encode(b)
+	return base64url.Encode(b), nil
 }
 
 func envString(key string, fallback string) string {
