@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
@@ -18,6 +19,15 @@ import (
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
 )
+
+func hasNonEmptyAllowedOrigins(allowed []string) bool {
+	for _, o := range allowed {
+		if strings.TrimSpace(o) != "" {
+			return true
+		}
+	}
+	return false
+}
 
 // AcceptDirectOptions configures AcceptDirectWS for direct (no-tunnel) server endpoints.
 type AcceptDirectOptions struct {
@@ -319,8 +329,10 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 	checkOrigin := opts.Upgrader.CheckOrigin
 	hasCustomOriginCheck := checkOrigin != nil
 	if checkOrigin == nil {
-		if len(opts.AllowedOrigins) == 0 && !opts.AllowNoOrigin {
-			return nil, errors.New("missing AllowedOrigins (set AllowedOrigins, set AllowNoOrigin, or set Upgrader.CheckOrigin)")
+		if !hasNonEmptyAllowedOrigins(opts.AllowedOrigins) {
+			// Keep the default origin policy explicit and safe. AllowNoOrigin is an additive capability
+			// (for non-browser clients that omit Origin) and does not replace the allow-list.
+			return nil, errors.New("missing AllowedOrigins (set AllowedOrigins or set Upgrader.CheckOrigin)")
 		}
 		checkOrigin = ws.NewOriginChecker(opts.AllowedOrigins, opts.AllowNoOrigin)
 	}
@@ -428,8 +440,10 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 	checkOrigin := opts.Upgrader.CheckOrigin
 	hasCustomOriginCheck := checkOrigin != nil
 	if checkOrigin == nil {
-		if len(opts.AllowedOrigins) == 0 && !opts.AllowNoOrigin {
-			return nil, errors.New("missing AllowedOrigins (set AllowedOrigins, set AllowNoOrigin, or set Upgrader.CheckOrigin)")
+		if !hasNonEmptyAllowedOrigins(opts.AllowedOrigins) {
+			// Keep the default origin policy explicit and safe. AllowNoOrigin is an additive capability
+			// (for non-browser clients that omit Origin) and does not replace the allow-list.
+			return nil, errors.New("missing AllowedOrigins (set AllowedOrigins or set Upgrader.CheckOrigin)")
 		}
 		checkOrigin = ws.NewOriginChecker(opts.AllowedOrigins, opts.AllowNoOrigin)
 	}

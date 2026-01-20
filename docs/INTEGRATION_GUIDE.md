@@ -473,7 +473,7 @@ Practical guidance:
 
 - Browser clients always send `Origin` (it is the browser's `window.location.origin`). Your allow-list must include that exact value.
 - Go/Node clients must set an explicit `Origin` value. Pick a stable origin-like string that represents your app/environment (often the same public web origin you allow for browsers).
-- `--allow-no-origin` / `AllowNoOrigin` only affects requests that omit the `Origin` header entirely; the official Go/TS helpers always send `Origin`, so you should still configure `allow-origin` (recommended).
+- `--allow-no-origin` / `AllowNoOrigin` is additive: it only affects requests that omit the `Origin` header entirely and does not replace the allow-list. The official Go/TS helpers always send `Origin`, so you still must configure `allow-origin` unless you provide a custom `CheckOrigin`.
 
 Allowed entries support:
 

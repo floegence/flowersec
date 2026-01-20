@@ -27,8 +27,14 @@ func TestNewDirectHandler_OriginPolicy(t *testing.T) {
 	if _, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
 		AllowNoOrigin: true,
 		OnStream:      func(context.Context, string, io.ReadWriteCloser) {},
-	}); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	}); err == nil {
+		t.Fatal("expected error")
+	}
+	if _, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		AllowedOrigins: []string{""},
+		OnStream:       func(context.Context, string, io.ReadWriteCloser) {},
+	}); err == nil {
+		t.Fatal("expected error")
 	}
 	if _, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
 		AllowedOrigins: []string{"example.com"},
@@ -38,6 +44,55 @@ func TestNewDirectHandler_OriginPolicy(t *testing.T) {
 	}
 	if _, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
 		Upgrader: endpoint.UpgraderOptions{CheckOrigin: func(*http.Request) bool { return true }},
+		OnStream: func(context.Context, string, io.ReadWriteCloser) {},
+	}); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestNewDirectHandlerResolved_OriginPolicy(t *testing.T) {
+	t.Parallel()
+
+	if _, err := endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
+		AllowNoOrigin: true,
+		Handshake: endpoint.AcceptDirectResolverOptions{
+			Resolve: func(context.Context, endpoint.DirectHandshakeInit) (endpoint.DirectHandshakeSecrets, error) {
+				return endpoint.DirectHandshakeSecrets{}, nil
+			},
+		},
+		OnStream: func(context.Context, string, io.ReadWriteCloser) {},
+	}); err == nil {
+		t.Fatal("expected error")
+	}
+	if _, err := endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
+		AllowedOrigins: []string{""},
+		Handshake: endpoint.AcceptDirectResolverOptions{
+			Resolve: func(context.Context, endpoint.DirectHandshakeInit) (endpoint.DirectHandshakeSecrets, error) {
+				return endpoint.DirectHandshakeSecrets{}, nil
+			},
+		},
+		OnStream: func(context.Context, string, io.ReadWriteCloser) {},
+	}); err == nil {
+		t.Fatal("expected error")
+	}
+	if _, err := endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
+		AllowedOrigins: []string{"example.com"},
+		Handshake: endpoint.AcceptDirectResolverOptions{
+			Resolve: func(context.Context, endpoint.DirectHandshakeInit) (endpoint.DirectHandshakeSecrets, error) {
+				return endpoint.DirectHandshakeSecrets{}, nil
+			},
+		},
+		OnStream: func(context.Context, string, io.ReadWriteCloser) {},
+	}); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if _, err := endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
+		Upgrader: endpoint.UpgraderOptions{CheckOrigin: func(*http.Request) bool { return true }},
+		Handshake: endpoint.AcceptDirectResolverOptions{
+			Resolve: func(context.Context, endpoint.DirectHandshakeInit) (endpoint.DirectHandshakeSecrets, error) {
+				return endpoint.DirectHandshakeSecrets{}, nil
+			},
+		},
 		OnStream: func(context.Context, string, io.ReadWriteCloser) {},
 	}); err != nil {
 		t.Fatalf("expected no error, got %v", err)
