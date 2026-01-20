@@ -17,6 +17,7 @@ import {
   waitOpen,
   withAbortAndTimeout,
 } from "./common.js";
+import { isTunnelAttachCloseReason } from "./tunnelAttachCloseReason.js";
 
 export type ConnectOptionsBase = Readonly<{
   /** Explicit Origin value (required). In browsers this must match window.location.origin. */
@@ -117,7 +118,6 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       }
       try {
         ws.send(args.attach.attachJson);
-        observer.onAttach("ok", undefined);
       } catch (err) {
         observer.onAttach("fail", "send_failed");
         try {
@@ -179,46 +179,31 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
           onCancel: () => transport.close(),
         }
       );
+      if (args.path === "tunnel") {
+        observer.onAttach("ok", undefined);
+      }
       observer.onHandshake(args.path, "ok", undefined, nowSeconds() - handshakeStart);
     } catch (err) {
-      observer.onHandshake(args.path, "fail", classifyHandshakeError(err), nowSeconds() - handshakeStart);
+      const handshakeElapsedSeconds = nowSeconds() - handshakeStart;
+      const handshakeCode = classifyHandshakeError(err);
       transport.close();
 
       if (args.path === "tunnel" && err instanceof WsCloseError) {
         const reason = err.reason;
-        if (reason === "too_many_connections") {
-          throw new FlowersecError({ path: args.path, stage: "attach", code: "too_many_connections", message: "tunnel rejected attach", cause: err });
-        }
-        if (reason === "expected_attach") {
-          throw new FlowersecError({ path: args.path, stage: "attach", code: "expected_attach", message: "tunnel rejected attach", cause: err });
-        }
-        if (reason === "invalid_attach") {
-          throw new FlowersecError({ path: args.path, stage: "attach", code: "invalid_attach", message: "tunnel rejected attach", cause: err });
-        }
-        if (reason === "invalid_token") {
-          throw new FlowersecError({ path: args.path, stage: "attach", code: "invalid_token", message: "tunnel rejected attach", cause: err });
-        }
-        if (reason === "channel_mismatch") {
-          throw new FlowersecError({ path: args.path, stage: "attach", code: "channel_mismatch", message: "tunnel rejected attach", cause: err });
-        }
-        if (reason === "role_mismatch") {
-          throw new FlowersecError({ path: args.path, stage: "attach", code: "role_mismatch", message: "tunnel rejected attach", cause: err });
-        }
-        if (reason === "token_replay") {
-          throw new FlowersecError({ path: args.path, stage: "attach", code: "token_replay", message: "tunnel rejected attach", cause: err });
-        }
-        if (reason === "replace_rate_limited") {
-          throw new FlowersecError({ path: args.path, stage: "attach", code: "replace_rate_limited", message: "tunnel rejected attach", cause: err });
-        }
-        if (reason === "attach_failed") {
-          throw new FlowersecError({ path: args.path, stage: "attach", code: "attach_failed", message: "tunnel rejected attach", cause: err });
+        if (isTunnelAttachCloseReason(reason)) {
+          observer.onAttach("fail", reason);
+          throw new FlowersecError({ path: args.path, stage: "attach", code: reason, message: "tunnel rejected attach", cause: err });
         }
       }
 
+      if (args.path === "tunnel") {
+        observer.onAttach("ok", undefined);
+      }
+      observer.onHandshake(args.path, "fail", handshakeCode, handshakeElapsedSeconds);
       throw new FlowersecError({
         path: args.path,
         stage: "handshake",
-        code: classifyHandshakeError(err),
+        code: handshakeCode,
         message: "handshake failed",
         cause: err,
       });

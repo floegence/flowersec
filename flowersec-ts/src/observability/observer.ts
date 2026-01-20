@@ -4,7 +4,17 @@ export type ConnectResult = "ok" | "fail";
 export type ConnectReason = "websocket_error" | "websocket_closed" | "timeout" | "canceled";
 
 export type AttachResult = "ok" | "fail";
-export type AttachReason = "send_failed";
+export type AttachReason =
+  | "send_failed"
+  | "too_many_connections"
+  | "expected_attach"
+  | "invalid_attach"
+  | "invalid_token"
+  | "channel_mismatch"
+  | "role_mismatch"
+  | "token_replay"
+  | "replace_rate_limited"
+  | "attach_failed";
 
 export type HandshakeResult = "ok" | "fail";
 export type HandshakeReason =

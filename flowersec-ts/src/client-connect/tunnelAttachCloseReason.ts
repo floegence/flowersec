@@ -1,0 +1,20 @@
+import type { FlowersecErrorCode } from "../utils/errors.js";
+
+export const tunnelAttachCloseReasons = [
+  "too_many_connections",
+  "expected_attach",
+  "invalid_attach",
+  "invalid_token",
+  "channel_mismatch",
+  "role_mismatch",
+  "token_replay",
+  "replace_rate_limited",
+  "attach_failed"
+] as const satisfies readonly FlowersecErrorCode[];
+
+export type TunnelAttachCloseReason = (typeof tunnelAttachCloseReasons)[number];
+
+export function isTunnelAttachCloseReason(v: string): v is TunnelAttachCloseReason {
+  return (tunnelAttachCloseReasons as readonly string[]).includes(v);
+}
+

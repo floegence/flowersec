@@ -223,15 +223,26 @@ describe("connectTunnel", () => {
   test("maps tunnel attach rejection close reasons to stable attach codes", async () => {
     const ws = new FakeWebSocket();
     clientHandshakeMock.mockRejectedValueOnce(new WsCloseError(1008, "invalid_token"));
+    const observer = {
+      onConnect: vi.fn(),
+      onAttach: vi.fn(),
+      onHandshake: vi.fn(),
+      onWsError: vi.fn(),
+      onRpcCall: vi.fn(),
+      onRpcNotify: vi.fn()
+    };
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
+      observer
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "attach", code: "invalid_token", path: "tunnel" });
+    expect(observer.onAttach).toHaveBeenCalledWith("fail", "invalid_token");
+    expect(observer.onHandshake).not.toHaveBeenCalled();
   });
 
   test("reports connect timeout", async () => {
