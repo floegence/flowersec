@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { decodeHandshakeFrame, encodeHandshakeFrame, HANDSHAKE_HEADER_LEN, looksLikeRecordFrame, RECORD_HEADER_LEN, encodeU64beBigint, decodeU64beBigint } from "./framing.js";
+import { FramingError, decodeHandshakeFrame, encodeHandshakeFrame, HANDSHAKE_HEADER_LEN, looksLikeRecordFrame, RECORD_HEADER_LEN, encodeU64beBigint, decodeU64beBigint } from "./framing.js";
 import { HANDSHAKE_TYPE_INIT, HANDSHAKE_TYPE_RESP, PROTOCOL_VERSION, RECORD_MAGIC } from "./constants.js";
 import { u32be } from "../utils/bin.js";
 
@@ -55,5 +55,28 @@ describe("e2ee framing", () => {
     const payload = new Uint8Array(0);
     const frame = encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, payload);
     expect(frame.length).toBe(HANDSHAKE_HEADER_LEN);
+  });
+
+  test("decodeHandshakeFrame is robust to adversarial inputs", () => {
+    // Deterministic pseudo-random generator to avoid flaky tests.
+    let x = 0x12345678;
+    const nextU32 = () => {
+      // xorshift32
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      return x >>> 0;
+    };
+
+    for (let i = 0; i < 500; i++) {
+      const len = nextU32() % 256;
+      const buf = new Uint8Array(len);
+      for (let j = 0; j < buf.length; j++) buf[j] = nextU32() & 0xff;
+      try {
+        decodeHandshakeFrame(buf, 1024);
+      } catch (e) {
+        expect(e).toBeInstanceOf(FramingError);
+      }
+    }
   });
 });
