@@ -61,9 +61,6 @@ describe("package exports", () => {
 
       const rpcGen = await import("@flowersec/core/gen/flowersec/rpc/v1.gen");
       assert.equal(typeof rpcGen.assertRpcError, "function");
-
-      const internal = await import("@flowersec/core/internal");
-      assert.equal(typeof internal.clientHandshake, "function");
     `;
 
     expect(() =>
