@@ -85,6 +85,13 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     throw new FlowersecError({ path: args.path, stage: "connect", code: "dial_failed", message: "dial failed", cause: e });
   }
 
+  // Install close/error/message listeners before waiting for "open" to avoid a gap where a peer close
+  // (for example a tunnel attach rejection with a reason token) can be missed and misclassified as a handshake timeout.
+  const transport = new WebSocketBinaryTransport(ws, {
+    ...(args.opts.maxWsQueuedBytes != null && args.opts.maxWsQueuedBytes > 0 ? { maxQueuedBytes: args.opts.maxWsQueuedBytes } : {}),
+    observer,
+  });
+
   try {
     try {
       await waitOpen(ws, {
@@ -95,6 +102,11 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     } catch (err) {
       const reason = classifyConnectError(err);
       observer.onConnect(args.path, "fail", reason, nowSeconds() - connectStart);
+      try {
+        transport.close();
+      } catch {
+        // ignore
+      }
       const code = reason === "timeout" ? "timeout" : reason === "canceled" ? "canceled" : "dial_failed";
       throw new FlowersecError({
         path: args.path,
@@ -121,18 +133,13 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       } catch (err) {
         observer.onAttach("fail", "send_failed");
         try {
-          ws.close();
+          transport.close();
         } catch {
           // ignore
         }
         throw new FlowersecError({ path: args.path, stage: "attach", code: "attach_failed", message: "attach failed", cause: err });
       }
     }
-
-    const transport = new WebSocketBinaryTransport(ws, {
-      ...(args.opts.maxWsQueuedBytes != null && args.opts.maxWsQueuedBytes > 0 ? { maxQueuedBytes: args.opts.maxWsQueuedBytes } : {}),
-      observer,
-    });
 
     let psk: Uint8Array;
     try {
@@ -333,7 +340,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     };
   } catch (e) {
     try {
-      ws.close();
+      transport.close();
     } catch {
       // ignore
     }

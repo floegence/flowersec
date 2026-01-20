@@ -245,6 +245,38 @@ describe("connectTunnel", () => {
     expect(observer.onHandshake).not.toHaveBeenCalled();
   });
 
+  test("does not lose tunnel attach close reasons when peer closes immediately after open", async () => {
+    const ws = new FakeWebSocket();
+    clientHandshakeMock.mockImplementationOnce(async (transport: any) => {
+      await transport.readBinary();
+      return {} as any;
+    });
+    const observer = {
+      onConnect: vi.fn(),
+      onAttach: vi.fn(),
+      onHandshake: vi.fn(),
+      onWsError: vi.fn(),
+      onRpcCall: vi.fn(),
+      onRpcNotify: vi.fn()
+    };
+
+    const p = connectTunnel(makeGrant(), {
+      origin: "https://app.redeven.com",
+      wsFactory: () => ws as any,
+      handshakeTimeoutMs: 30,
+      observer
+    });
+
+    setTimeout(() => {
+      ws.emit("open", {});
+      ws.emit("close", { code: 1008, reason: "invalid_token" });
+    }, 0);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "attach", code: "invalid_token", path: "tunnel" });
+    expect(observer.onAttach).toHaveBeenCalledWith("fail", "invalid_token");
+    expect(observer.onHandshake).not.toHaveBeenCalled();
+  });
+
   test("reports connect timeout", async () => {
     const ws = new FakeWebSocket();
     const observer = {
