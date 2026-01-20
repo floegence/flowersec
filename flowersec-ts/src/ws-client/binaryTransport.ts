@@ -2,8 +2,8 @@ import { normalizeObserver, type ClientObserver, type ClientObserverLike, type W
 import { AbortError, TimeoutError, throwIfAborted } from "../utils/errors.js";
 
 export class WsCloseError extends Error {
-  readonly code?: number;
-  readonly reason?: string;
+  readonly code: number | undefined;
+  readonly reason: string | undefined;
 
   constructor(code?: number, reason?: string) {
     const extra =
