@@ -123,13 +123,18 @@ Run multiple tunnel instances with distinct public websocket URLs, then have you
 
 This is the simplest approach and matches the current codebase assumptions.
 
-Reference strategy: rendezvous hashing (HRW) to choose a stable tunnel URL:
+Reference strategy: rendezvous hashing (HRW) to choose a stable tunnel URL (see runnable examples: `examples/go/tunnel_sharding/pick_tunnel_url.go`, `examples/ts/node-tunnel-sharding.mjs`):
 
 Go (controlplane side):
 
 ```go
-func pickTunnelURL(channelID string, urls []string) string {
-  // Highest-score wins: score = hash(channelID + "|" + url)
+import (
+  "crypto/sha256"
+  "encoding/binary"
+)
+
+func PickTunnelURL(channelID string, urls []string) string {
+  // Highest-score wins: score = sha256(channelID + "|" + url)[:8] as big-endian uint64.
   var best string
   var bestScore uint64
   for _, u := range urls {
@@ -143,12 +148,12 @@ func pickTunnelURL(channelID string, urls []string) string {
 }
 ```
 
-TypeScript (controlplane side):
+Node (TypeScript) (controlplane side):
 
 ```ts
-import { createHash } from "crypto";
+import { createHash } from "node:crypto";
 
-function pickTunnelURL(channelId: string, urls: string[]): string {
+export function pickTunnelURL(channelId: string, urls: string[]): string {
   let best = "";
   let bestScore = -1n;
   for (const u of urls) {
