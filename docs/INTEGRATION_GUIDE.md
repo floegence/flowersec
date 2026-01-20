@@ -3,6 +3,13 @@
 This guide is for integrating Flowersec into your own application (not just running the demos).
 It focuses on the most ergonomic and stable entrypoints across Go and TypeScript.
 
+See also:
+
+- Stable API surface: `docs/API_SURFACE.md`
+- Error contract: `docs/ERROR_MODEL.md`
+- Threat model / security boundaries: `docs/THREAT_MODEL.md`
+- Protocol framing (wire format): `docs/PROTOCOL.md`
+
 ## Prerequisites
 
 - Go 1.25.x (required)

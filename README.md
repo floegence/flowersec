@@ -26,6 +26,9 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 - Demos: download the `flowersec-demos` bundle from GitHub Releases and follow `examples/README.md` (works from the extracted bundle root).
 - Integration: `docs/INTEGRATION_GUIDE.md`.
 - API surface: `docs/API_SURFACE.md`.
+- Threat model: `docs/THREAT_MODEL.md`.
+- Protocol contracts: `docs/PROTOCOL.md`.
+- Error model: `docs/ERROR_MODEL.md`.
 
 ## Install (no clone)
 

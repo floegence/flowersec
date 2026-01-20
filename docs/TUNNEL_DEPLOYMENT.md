@@ -108,6 +108,81 @@ To rotate issuer keys without downtime:
 1. Update the issuer keyset JSON file on disk (keep overlapping keys during rotation).
 2. Send `SIGHUP` to the tunnel process to reload the keyset (`--issuer-keys-file`).
 
+## Scaling and multi-instance deployment
+
+The tunnel is **stateful per channel**:
+
+- Pairing state (client/server websocket conns) lives in process memory.
+- Token replay protection (`token_id` single-use) is enforced via an in-memory cache by default.
+
+This means that the two endpoints of the same `channel_id` must attach to the **same tunnel instance**.
+
+### Recommended: controlplane sharding (multiple tunnel URLs)
+
+Run multiple tunnel instances with distinct public websocket URLs, then have your controlplane pick a `tunnel_url` per `channel_id` and embed it in the signed grant/token.
+
+This is the simplest approach and matches the current codebase assumptions.
+
+Reference strategy: rendezvous hashing (HRW) to choose a stable tunnel URL:
+
+Go (controlplane side):
+
+```go
+func pickTunnelURL(channelID string, urls []string) string {
+  // Highest-score wins: score = hash(channelID + "|" + url)
+  var best string
+  var bestScore uint64
+  for _, u := range urls {
+    h := sha256.Sum256([]byte(channelID + "|" + u))
+    score := binary.BigEndian.Uint64(h[:8])
+    if best == "" || score > bestScore {
+      best, bestScore = u, score
+    }
+  }
+  return best
+}
+```
+
+TypeScript (controlplane side):
+
+```ts
+import { createHash } from "crypto";
+
+function pickTunnelURL(channelId: string, urls: string[]): string {
+  let best = "";
+  let bestScore = -1n;
+  for (const u of urls) {
+    const h = createHash("sha256").update(`${channelId}|${u}`).digest();
+    const score =
+      (BigInt(h[0]!) << 56n) |
+      (BigInt(h[1]!) << 48n) |
+      (BigInt(h[2]!) << 40n) |
+      (BigInt(h[3]!) << 32n) |
+      (BigInt(h[4]!) << 24n) |
+      (BigInt(h[5]!) << 16n) |
+      (BigInt(h[6]!) << 8n) |
+      BigInt(h[7]!);
+    if (best === "" || score > bestScore) {
+      best = u;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+```
+
+Notes:
+
+- Any consistent hash scheme works (HRW, jump hash, etc). The goal is a stable `channel_id -> tunnel_url` mapping.
+- Ensure both endpoints obtain grants from the same controlplane mapping logic, so they attach to the same tunnel URL.
+
+### Alternative: load balancer + shared replay state (advanced)
+
+If you insist on putting tunnels behind a load balancer, you must provide **session affinity** by `channel_id` (so pairing works),
+and you should also share token replay state (for example via Redis) to preserve `token_id` single-use semantics across instances.
+
+This repository does not currently ship a built-in shared `TokenUseCache` implementation.
+
 ## Docker examples
 
 ### Minimal tunnel (no TLS)
