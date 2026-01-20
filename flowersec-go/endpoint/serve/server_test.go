@@ -89,7 +89,7 @@ func (s *fakeSession) EndpointInstanceID() string { return "" }
 func (s *fakeSession) OpenStream(string) (io.ReadWriteCloser, error) {
 	return nil, errors.New("not implemented")
 }
-func (s *fakeSession) ServeStreams(context.Context, int, func(string, io.ReadWriteCloser)) error {
+func (s *fakeSession) ServeStreams(context.Context, int, func(string, io.ReadWriteCloser), ...endpoint.ServeStreamsOption) error {
 	return errors.New("not implemented")
 }
 func (s *fakeSession) Ping() error  { return nil }

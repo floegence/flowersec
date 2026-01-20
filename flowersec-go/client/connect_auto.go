@@ -18,18 +18,18 @@ import (
 //   - *controlv1.ChannelInitGrant (tunnel grant, role=client)
 //   - *directv1.DirectConnectInfo (direct connect info)
 //   - io.Reader / []byte / string containing JSON (wrapper {"grant_client":{...}} or DirectConnectInfo)
-func Connect(ctx context.Context, input any, origin string, opts ...ConnectOption) (Client, error) {
+func Connect(ctx context.Context, input any, opts ...ConnectOption) (Client, error) {
 	switch v := input.(type) {
 	case *controlv1.ChannelInitGrant:
-		return ConnectTunnel(ctx, v, origin, opts...)
+		return ConnectTunnel(ctx, v, opts...)
 	case controlv1.ChannelInitGrant:
 		cp := v
-		return ConnectTunnel(ctx, &cp, origin, opts...)
+		return ConnectTunnel(ctx, &cp, opts...)
 	case *directv1.DirectConnectInfo:
-		return ConnectDirect(ctx, v, origin, opts...)
+		return ConnectDirect(ctx, v, opts...)
 	case directv1.DirectConnectInfo:
 		cp := v
-		return ConnectDirect(ctx, &cp, origin, opts...)
+		return ConnectDirect(ctx, &cp, opts...)
 	case io.Reader:
 		if v == nil {
 			return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
@@ -38,17 +38,25 @@ func Connect(ctx context.Context, input any, origin string, opts ...ConnectOptio
 		if err != nil {
 			return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
 		}
-		return connectJSONBytes(ctx, b, origin, opts...)
+		return connectJSONBytes(ctx, b, opts...)
 	case []byte:
-		return connectJSONBytes(ctx, v, origin, opts...)
+		return connectJSONBytes(ctx, v, opts...)
 	case string:
-		return connectJSONBytes(ctx, []byte(v), origin, opts...)
+		s := bytes.TrimSpace([]byte(v))
+		if len(s) == 0 {
+			return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+		}
+		// Avoid guessing file paths or other strings as JSON.
+		if s[0] != '{' && s[0] != '[' {
+			return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+		}
+		return connectJSONBytes(ctx, s, opts...)
 	default:
 		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
 	}
 }
 
-func connectJSONBytes(ctx context.Context, b []byte, origin string, opts ...ConnectOption) (Client, error) {
+func connectJSONBytes(ctx context.Context, b []byte, opts ...ConnectOption) (Client, error) {
 	b = bytes.TrimSpace(b)
 	if len(b) == 0 {
 		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
@@ -64,7 +72,7 @@ func connectJSONBytes(ctx context.Context, b []byte, origin string, opts ...Conn
 		if err := json.Unmarshal(b, &info); err != nil {
 			return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
 		}
-		return ConnectDirect(ctx, &info, origin, opts...)
+		return ConnectDirect(ctx, &info, opts...)
 	}
 
 	_, hasGrantClient := obj["grant_client"]
@@ -82,7 +90,7 @@ func connectJSONBytes(ctx context.Context, b []byte, origin string, opts ...Conn
 			if err := json.Unmarshal(raw, &grant); err != nil {
 				return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
 			}
-			return ConnectTunnel(ctx, &grant, origin, opts...)
+			return ConnectTunnel(ctx, &grant, opts...)
 		}
 		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
 	}
@@ -101,7 +109,7 @@ func connectJSONBytes(ctx context.Context, b []byte, origin string, opts ...Conn
 			return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
 		}
 	}
-	return ConnectTunnel(ctx, &grant, origin, opts...)
+	return ConnectTunnel(ctx, &grant, opts...)
 }
 
 func readAllLimit(r io.Reader, maxBytes int64) ([]byte, error) {

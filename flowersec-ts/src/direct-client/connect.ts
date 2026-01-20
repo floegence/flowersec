@@ -26,7 +26,7 @@ export async function connectDirect(info: unknown, opts: DirectConnectOptions): 
   try {
     ready = assertDirectConnectInfo(info);
   } catch (e) {
-    throw new FlowersecError({ stage: "validate", code: "invalid_connect_info", path: "direct", message: "invalid DirectConnectInfo", cause: e });
+    throw new FlowersecError({ stage: "validate", code: "invalid_input", path: "direct", message: "invalid DirectConnectInfo", cause: e });
   }
   if (ready.ws_url === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_ws_url", path: "direct", message: "missing ws_url" });

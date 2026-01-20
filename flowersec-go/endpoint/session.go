@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -22,7 +23,7 @@ type Session interface {
 	Path() Path
 	EndpointInstanceID() string
 	AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteCloser, error)
-	ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser)) error
+	ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser), opts ...ServeStreamsOption) error
 	OpenStream(kind string) (io.ReadWriteCloser, error)
 	Ping() error
 	Close() error
@@ -145,7 +146,7 @@ func (s *session) AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteClos
 // handler is invoked in its own goroutine for each accepted stream.
 //
 // The stream is closed after handler returns.
-func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser)) error {
+func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser), opts ...ServeStreamsOption) error {
 	if s == nil || s.mux == nil {
 		var path Path
 		if s != nil {
@@ -158,6 +159,11 @@ func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 	}
 	if maxHelloBytes <= 0 {
 		maxHelloBytes = DefaultMaxStreamHelloBytes
+	}
+
+	cfg, err := applyServeStreamsOptions(opts)
+	if err != nil {
+		return wrapErr(s.path, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -185,13 +191,16 @@ func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 		h, err := streamhello.ReadStreamHello(stream, maxHelloBytes)
 		if err != nil {
 			_ = stream.Close()
+			reportServeStreamsError(cfg.onError, wrapErr(s.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err))
 			continue
 		}
 		kind := h.Kind
 		go func(kind string, stream io.ReadWriteCloser) {
 			defer stream.Close()
 			defer func() {
-				_ = recover()
+				if r := recover(); r != nil {
+					reportServeStreamsError(cfg.onError, fmt.Errorf("stream handler panic (kind=%q): %v", kind, r))
+				}
 			}()
 			handler(kind, stream)
 		}(kind, stream)

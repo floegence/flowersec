@@ -189,7 +189,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 
 	showVersion := false
+	pretty := false
 	fs.BoolVar(&showVersion, "version", false, "print version and exit")
+	fs.BoolVar(&pretty, "pretty", false, "pretty-print JSON output (stdout)")
 	fs.StringVar(&listen, "listen", listen, "listen address (env: FSEC_TUNNEL_LISTEN)")
 	fs.StringVar(&advertiseHost, "advertise-host", advertiseHost, "public host[:port] for ready URLs (optional; avoids ws://0.0.0.0) (env: FSEC_TUNNEL_ADVERTISE_HOST)")
 	fs.StringVar(&path, "ws-path", path, "websocket path (env: FSEC_TUNNEL_WS_PATH)")
@@ -367,7 +369,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			}
 		}
 	}
-	_ = json.NewEncoder(stdout).Encode(out)
+	if err := writeReadyJSON(stdout, out, pretty); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 
 	// Handle reloads and shutdowns.
 	sig := make(chan os.Signal, 2)
@@ -411,6 +416,14 @@ func envString(key string, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func writeReadyJSON(w io.Writer, out ready, pretty bool) error {
+	enc := json.NewEncoder(w)
+	if pretty {
+		enc.SetIndent("", "  ")
+	}
+	return enc.Encode(out)
 }
 
 func resolveAdvertiseHost(bindHostPort string, advertiseHost string) (mainHostPort string, hostOnly string, wasSet bool, err error) {

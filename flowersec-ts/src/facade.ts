@@ -45,8 +45,14 @@ function maybeParseJSON(input: unknown): unknown {
   if (s[0] !== "{" && s[0] !== "[") return input;
   try {
     return JSON.parse(s);
-  } catch {
-    return input;
+  } catch (e) {
+    throw new FlowersecError({
+      path: "auto",
+      stage: "validate",
+      code: "invalid_input",
+      message: "invalid JSON string",
+      cause: e,
+    });
   }
 }
 

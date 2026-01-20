@@ -35,6 +35,7 @@ func main() {
 
 func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	showVersion := false
+	pretty := false
 
 	kid := envString("FSEC_ISSUER_KID", "k1")
 	outDir := envString("FSEC_ISSUER_OUT_DIR", ".")
@@ -50,6 +51,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&privFile, "private-key-file", privFile, "output file for issuer private key (default: <out-dir>/issuer_key.json) (env: FSEC_ISSUER_PRIVATE_KEY_FILE)")
 	fs.StringVar(&pubFile, "issuer-keys-file", pubFile, "output file for tunnel issuer keyset (public keys) (default: <out-dir>/issuer_keys.json) (env: FSEC_ISSUER_KEYS_FILE or FSEC_TUNNEL_ISSUER_KEYS_FILE)")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing files")
+	fs.BoolVar(&pretty, "pretty", false, "pretty-print JSON output")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -131,14 +133,21 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	privOut := absOr(privFile)
 	pubOut := absOr(pubFile)
-	_ = json.NewEncoder(stdout).Encode(ready{
+	enc := json.NewEncoder(stdout)
+	if pretty {
+		enc.SetIndent("", "  ")
+	}
+	if err := enc.Encode(ready{
 		Version:        version,
 		Commit:         commit,
 		Date:           date,
 		KID:            kid,
 		PrivateKeyFile: privOut,
 		IssuerKeysFile: pubOut,
-	})
+	}); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	return 0
 }
 

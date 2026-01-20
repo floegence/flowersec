@@ -103,7 +103,7 @@ describe("connectDirect", () => {
   test("wraps invalid connect info payloads", async () => {
     const p = connectDirect("bad" as any, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_connect_info", path: "direct" });
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "direct" });
   });
 
   test("rejects missing ws_url", async () => {
@@ -147,7 +147,7 @@ describe("connectDirect", () => {
   test("requires wsFactory outside the browser", async () => {
     const p = connectDirect(makeInfo(), { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "ws_factory_required", path: "direct" });
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_option", path: "direct" });
   });
 
   test("reports websocket error on connect", async () => {
@@ -169,7 +169,7 @@ describe("connectDirect", () => {
 
     setTimeout(() => ws.emit("error", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "connect", code: "websocket_error", path: "direct" });
+    await expect(p).rejects.toMatchObject({ stage: "connect", code: "dial_failed", path: "direct" });
 
     expect(observer.onConnect).toHaveBeenCalledWith("direct", "fail", "websocket_error", expect.any(Number));
   });

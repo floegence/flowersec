@@ -13,6 +13,7 @@ var _ client.ConnectOption = client.WithConnectTimeout(0)
 var _ client.ConnectOption = client.WithHandshakeTimeout(0)
 var _ client.ConnectOption = client.WithHeader(nil)
 var _ client.ConnectOption = client.WithDialer(nil)
+var _ client.ConnectOption = client.WithOrigin("http://example.com")
 var _ client.ConnectOption = client.WithEndpointInstanceID("test")
 var _ client.ConnectOption = client.WithKeepaliveInterval(0)
 
@@ -24,7 +25,7 @@ func TestWithEndpointInstanceID_RejectsDirect(t *testing.T) {
 			ChannelId:                "ch",
 			ChannelInitExpireAtUnixS: 1,
 		},
-		"http://example.com",
+		client.WithOrigin("http://example.com"),
 		client.WithEndpointInstanceID("test"),
 	)
 	if err == nil {

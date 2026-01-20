@@ -5,6 +5,10 @@ It is meant to remove guesswork for integrators: which packages and entrypoints 
 
 Status: experimental; not audited.
 
+See also:
+
+- Error model: `docs/ERROR_MODEL.md`
+
 ## CLI surface
 
 Supported binaries (user-facing):
@@ -26,7 +30,7 @@ These packages are the recommended integration entrypoints:
   - APIs: `client.Connect(...)`, `client.ConnectTunnel(...)`, `client.ConnectDirect(...)`
 - `github.com/floegence/flowersec/flowersec-go/endpoint`
   - Role: `server`
-  - APIs: `endpoint.ConnectTunnel(...)`, `endpoint.NewDirectHandler(...)`, `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandlerResolved(...)`, `endpoint.AcceptDirectWSResolved(...)`
+  - APIs: `endpoint.ConnectTunnel(...)`, `endpoint.NewDirectHandler(...)`, `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandlerResolved(...)`, `endpoint.AcceptDirectWSResolved(...)` (direct server building blocks; most apps should use `endpoint/serve`)
 - `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
   - Role: server runtime
   - APIs: `serve.New(...)`, `srv.Handle(...)`, `srv.HandleStream(...)`, `srv.ServeSession(...)`, `serve.ServeTunnel(...)`, `serve.NewDirectHandler(...)`, `serve.NewDirectHandlerResolved(...)`

@@ -43,6 +43,8 @@ Example:
 
 ```bash
 flowersec-issuer-keygen --out-dir ./keys
+# Optional: human-readable JSON.
+# flowersec-issuer-keygen --out-dir ./keys --pretty
 flowersec-channelinit \
   --issuer-private-key-file ./keys/issuer_key.json \
   --tunnel-url ws://127.0.0.1:8080/ws \
@@ -89,11 +91,11 @@ For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMEN
 **Go**
 
 - Client (role=client):
-  - `client.Connect(ctx, input, origin, ...opts)` (auto-detect tunnel vs direct inputs)
-  - `client.ConnectTunnel(ctx, grant, origin, ...opts)`
-  - `client.ConnectDirect(ctx, info, origin, ...opts)`
+  - `client.Connect(ctx, input, ...opts)` (auto-detect tunnel vs direct inputs; set Origin via `client.WithOrigin(origin)`)
+  - `client.ConnectTunnel(ctx, grant, ...opts)` (Origin via `client.WithOrigin(origin)`)
+  - `client.ConnectDirect(ctx, info, ...opts)` (Origin via `client.WithOrigin(origin)`)
 - Server endpoint (role=server):
-  - `endpoint.ConnectTunnel(ctx, grant, origin, ...opts)`
+  - `endpoint.ConnectTunnel(ctx, grant, ...opts)` (Origin via `endpoint.WithOrigin(origin)`)
   - Direct server (recommended): `endpoint/serve` → `serve.NewDirectHandler(...)` / `serve.NewDirectHandlerResolved(...)`
   - Direct server (lower-level): `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandler(...)`, or the resolver variants `endpoint.AcceptDirectWSResolved(...)` / `endpoint.NewDirectHandlerResolved(...)`
 - Stream runtime (recommended for servers): `endpoint/serve` (RPC stream handler + dispatch)
@@ -137,6 +139,7 @@ import (
   "log"
   "os"
 
+  "github.com/floegence/flowersec/flowersec-go/endpoint"
   "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
   "github.com/floegence/flowersec/flowersec-go/protocolio"
   "github.com/floegence/flowersec/flowersec-go/rpc"
@@ -159,7 +162,7 @@ func main() {
     },
   })
 
-  if err := serve.ServeTunnel(context.Background(), grant, origin, srv); err != nil {
+  if err := serve.ServeTunnel(context.Background(), grant, srv, endpoint.WithOrigin(origin)); err != nil {
     log.Fatal(err)
   }
 }
@@ -290,7 +293,7 @@ import (
 
 func main() {
   origin := "https://your-web-origin.example"
-  c, err := client.Connect(context.Background(), os.Stdin, origin)
+  c, err := client.Connect(context.Background(), os.Stdin, client.WithOrigin(origin))
   if err != nil {
     log.Fatal(err)
   }
@@ -318,7 +321,7 @@ func main() {
   if err != nil {
     log.Fatal(err)
   }
-  c, err := client.ConnectTunnel(context.Background(), grant, origin)
+  c, err := client.ConnectTunnel(context.Background(), grant, client.WithOrigin(origin))
   if err != nil {
     log.Fatal(err)
   }
@@ -349,7 +352,7 @@ func main() {
   if err != nil {
     log.Fatal(err)
   }
-  c, err := client.ConnectDirect(context.Background(), info, origin)
+  c, err := client.ConnectDirect(context.Background(), info, client.WithOrigin(origin))
   if err != nil {
     log.Fatal(err)
   }
@@ -449,6 +452,12 @@ With `services` in your `.fidl.json`, `idlgen` generates typed RPC stubs:
 
 The tunnel and the direct server handler both enforce an Origin allow-list by default.
 
+Practical guidance:
+
+- Browser clients always send `Origin` (it is the browser's `window.location.origin`). Your allow-list must include that exact value.
+- Go/Node clients must set an explicit `Origin` value. Pick a stable origin-like string that represents your app/environment (often the same public web origin you allow for browsers).
+- `--allow-no-origin` / `AllowNoOrigin` only affects requests that omit the `Origin` header entirely; the official Go/TS helpers always send `Origin`, so you should still configure `allow-origin` (recommended).
+
 Allowed entries support:
 
 - Full Origin: `https://example.com` or `http://127.0.0.1:5173`
@@ -458,6 +467,8 @@ Allowed entries support:
 - Exact non-standard Origin values: `null`
 
 ## Error handling
+
+For the full cross-language error model (stable `path/stage/code` and recommended aggregation), see `docs/ERROR_MODEL.md`.
 
 **Go**
 

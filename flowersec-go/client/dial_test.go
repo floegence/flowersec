@@ -26,7 +26,7 @@ func TestConnectTunnel_RejectsInvalidEndpointInstanceID(t *testing.T) {
 		AllowedSuites:            []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
 		IdleTimeoutSeconds:       60,
 	}
-	_, err := ConnectTunnel(context.Background(), grant, "http://example.com", WithEndpointInstanceID("!!!"))
+	_, err := ConnectTunnel(context.Background(), grant, WithOrigin("http://example.com"), WithEndpointInstanceID("!!!"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -58,7 +58,7 @@ func TestConnectTunnel_RejectsInvalidPSKLength(t *testing.T) {
 		AllowedSuites:            []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
 		IdleTimeoutSeconds:       60,
 	}
-	_, err := ConnectTunnel(context.Background(), grant, "http://example.com")
+	_, err := ConnectTunnel(context.Background(), grant, WithOrigin("http://example.com"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -89,7 +89,7 @@ func TestConnectTunnel_RejectsMissingInitExp(t *testing.T) {
 		AllowedSuites:      []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
 		IdleTimeoutSeconds: 60,
 	}
-	_, err := ConnectTunnel(context.Background(), grant, "http://example.com")
+	_, err := ConnectTunnel(context.Background(), grant, WithOrigin("http://example.com"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -121,7 +121,7 @@ func TestConnectTunnel_RejectsMissingToken(t *testing.T) {
 		AllowedSuites:            []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
 		IdleTimeoutSeconds:       60,
 	}
-	_, err := ConnectTunnel(context.Background(), grant, "http://example.com")
+	_, err := ConnectTunnel(context.Background(), grant, WithOrigin("http://example.com"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -149,7 +149,7 @@ func TestConnectDirect_RejectsInvalidSuite(t *testing.T) {
 		ChannelInitExpireAtUnixS: 1,
 		DefaultSuite:             999,
 	}
-	_, err := ConnectDirect(context.Background(), info, "http://example.com")
+	_, err := ConnectDirect(context.Background(), info, WithOrigin("http://example.com"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -170,7 +170,7 @@ func TestConnectDirect_RejectsMissingInitExp(t *testing.T) {
 		WsUrl:     "ws://example.invalid",
 		ChannelId: "ch_1",
 	}
-	_, err := ConnectDirect(context.Background(), info, "http://example.com")
+	_, err := ConnectDirect(context.Background(), info, WithOrigin("http://example.com"))
 	if err == nil {
 		t.Fatal("expected error")
 	}

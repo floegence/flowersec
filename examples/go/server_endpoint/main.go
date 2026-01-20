@@ -80,7 +80,7 @@ func main() {
 	cp, err := client.ConnectDirect(
 		ctx,
 		info,
-		origin,
+		client.WithOrigin(origin),
 		client.WithConnectTimeout(10*time.Second),
 		client.WithHandshakeTimeout(10*time.Second),
 		client.WithMaxRecordBytes(1<<20),
@@ -142,7 +142,7 @@ func serveTunnelSession(ctx context.Context, origin string, streamSrv *endpoints
 	sess, err := endpoint.ConnectTunnel(
 		ctx,
 		grant,
-		origin,
+		endpoint.WithOrigin(origin),
 		endpoint.WithConnectTimeout(10*time.Second),
 		endpoint.WithHandshakeTimeout(10*time.Second),
 		endpoint.WithMaxRecordBytes(1<<20),

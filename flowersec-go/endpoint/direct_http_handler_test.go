@@ -88,7 +88,7 @@ func TestDirectHandler_AllowsConnectDirect(t *testing.T) {
 	c, err := client.ConnectDirect(
 		context.Background(),
 		info,
-		origin,
+		client.WithOrigin(origin),
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
@@ -147,7 +147,7 @@ func TestDirectHandlerResolved_AllowsConnectDirect(t *testing.T) {
 	c, err := client.ConnectDirect(
 		context.Background(),
 		info,
-		origin,
+		client.WithOrigin(origin),
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
@@ -206,7 +206,7 @@ func TestDirectHandlerResolved_OnError_ResolveFailed(t *testing.T) {
 	_, _ = client.ConnectDirect(
 		context.Background(),
 		info,
-		origin,
+		client.WithOrigin(origin),
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),

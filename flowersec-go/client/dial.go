@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
@@ -23,7 +24,7 @@ import (
 )
 
 // ConnectTunnel attaches to a tunnel as role=client and returns an RPC-ready session.
-func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, opts ...ConnectOption) (Client, error) {
+func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts ...ConnectOption) (Client, error) {
 	if grant == nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingGrant, ErrMissingGrant)
 	}
@@ -32,9 +33,6 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	}
 	if grant.TunnelUrl == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingTunnelURL, ErrMissingTunnelURL)
-	}
-	if origin == "" {
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
 	if grant.ChannelId == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
@@ -48,6 +46,13 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
+	}
+	origin := strings.TrimSpace(cfg.origin)
+	if origin == "" {
+		origin = strings.TrimSpace(cfg.header.Get("Origin"))
+	}
+	if origin == "" {
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
 	keepalive := cfg.keepaliveInterval
 	if !cfg.keepaliveSet {
@@ -122,15 +127,12 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 }
 
 // ConnectDirect connects to a direct websocket endpoint and returns an RPC-ready session.
-func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin string, opts ...ConnectOption) (Client, error) {
+func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts ...ConnectOption) (Client, error) {
 	if info == nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConnectInfo, ErrMissingConnectInfo)
 	}
 	if info.WsUrl == "" {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingWSURL, ErrMissingWSURL)
-	}
-	if origin == "" {
-		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
 	if info.ChannelId == "" {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
@@ -141,6 +143,13 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, origin
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
+	}
+	origin := strings.TrimSpace(cfg.origin)
+	if origin == "" {
+		origin = strings.TrimSpace(cfg.header.Get("Origin"))
+	}
+	if origin == "" {
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
 	keepalive := time.Duration(0)
 	if cfg.keepaliveSet {

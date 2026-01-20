@@ -132,7 +132,7 @@ go get github.com/floegence/flowersec/flowersec-go@v0.1.0
 Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.1.0`).
 
 - TypeScript install (no clone): download `flowersec-core-X.Y.Z.tgz` from the same GitHub Release and install with `npm i ./flowersec-core-X.Y.Z.tgz`.
-- Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.Connect(ctx, input, origin, ...opts)`, `client.ConnectTunnel(ctx, grant, origin, ...opts)`, `client.ConnectDirect(ctx, info, origin, ...opts)`)
+- Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.Connect(ctx, input, ...opts)`, `client.ConnectTunnel(ctx, grant, ...opts)`, `client.ConnectDirect(ctx, info, ...opts)`; set Origin via `client.WithOrigin(origin)`)
 - Go (server endpoint): `github.com/floegence/flowersec/flowersec-go/endpoint` (accept/dial `role=server` endpoints)
 - Go (server stream runtime): `github.com/floegence/flowersec/flowersec-go/endpoint/serve` (default stream dispatch + RPC stream handler)
 - Go (input JSON helpers): `github.com/floegence/flowersec/flowersec-go/protocolio` (`DecodeGrantClientJSON`, `DecodeDirectConnectInfoJSON`)
@@ -207,7 +207,7 @@ The deployable tunnel binary is `flowersec-go/cmd/flowersec-tunnel/`.
     - exact non-standard values (e.g. `null`)
   - Requests without `Origin` are **rejected by default**; `--allow-no-origin` is intended for non-browser clients (discouraged).
   - Client helpers:
-    - Go: pass an explicit `origin` string to `client.ConnectTunnel` / `client.ConnectDirect`.
+    - Go: set an explicit Origin value via `client.WithOrigin(origin)` (for example `client.ConnectTunnel(ctx, grant, client.WithOrigin(origin))`).
     - TS browser: use `connectTunnelBrowser` / `connectDirectBrowser` from `@flowersec/core/browser` (uses `window.location.origin`).
     - TS Node: use `connectTunnelNode` / `connectDirectNode` from `@flowersec/core/node` (auto-injects a `wsFactory` that sets the `Origin` header), or pass `wsFactory` manually.
 - Token issuer (`iss`) is **required**: pass `--iss` and ensure it matches the token payload `iss` minted by your controlplane.

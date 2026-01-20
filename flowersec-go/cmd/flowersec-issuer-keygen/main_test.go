@@ -86,6 +86,25 @@ func TestKeygenWritesFilesAndEmitsReadyJSON(t *testing.T) {
 	}
 }
 
+func TestKeygen_PrettyFlag_EmitsIndentedJSON(t *testing.T) {
+	outDir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--kid", "k1", "--out-dir", outDir, "--pretty"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\n  \"kid\"") {
+		t.Fatalf("expected pretty JSON output, got %q", stdout.String())
+	}
+	var r ready
+	if err := json.Unmarshal(stdout.Bytes(), &r); err != nil {
+		t.Fatalf("decode ready JSON: %v (stdout=%q)", err, stdout.String())
+	}
+	if r.KID != "k1" {
+		t.Fatalf("unexpected kid: %q", r.KID)
+	}
+}
+
 func TestKeygen_EnvDefaults(t *testing.T) {
 	t.Setenv("FSEC_ISSUER_KID", "k9")
 	t.Setenv("FSEC_ISSUER_PRIVATE_KEY_FILE", "issuer_key_custom.json")

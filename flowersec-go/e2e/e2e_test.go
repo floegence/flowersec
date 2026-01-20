@@ -314,12 +314,12 @@ func TestE2E_DefaultKeepalivePreventsIdleTimeout(t *testing.T) {
 	serverCh := make(chan serverResult, 1)
 	go func() {
 		// Disable endpoint keepalive to ensure the client default keepalive keeps the channel alive.
-		sess, err := endpoint.ConnectTunnel(ctx, grantS, "https://app.redeven.com", endpoint.WithKeepaliveInterval(0))
+		sess, err := endpoint.ConnectTunnel(ctx, grantS, endpoint.WithOrigin("https://app.redeven.com"), endpoint.WithKeepaliveInterval(0))
 		serverCh <- serverResult{sess: sess, err: err}
 	}()
 
 	// Client keepalive is enabled by default for tunnel connects.
-	c, err := client.ConnectTunnel(ctx, grantC, "https://app.redeven.com")
+	c, err := client.ConnectTunnel(ctx, grantC, client.WithOrigin("https://app.redeven.com"))
 	if err != nil {
 		t.Fatal(err)
 	}

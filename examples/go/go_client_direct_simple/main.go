@@ -55,7 +55,7 @@ func main() {
 	c, err := client.ConnectDirect(
 		context.Background(),
 		info,
-		origin,
+		client.WithOrigin(origin),
 		client.WithConnectTimeout(10*time.Second),
 		client.WithHandshakeTimeout(10*time.Second),
 		client.WithMaxRecordBytes(1<<20),

@@ -75,6 +75,15 @@ describe("connect (auto-detect)", () => {
     expect(mocks.connectTunnel).not.toHaveBeenCalled();
   });
 
+  test("rejects invalid JSON strings and preserves parse cause", async () => {
+    const p = connect('{ "ws_url": ', { origin: "https://app.example" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await p.catch((e) => {
+      expect(e).toMatchObject({ stage: "validate", code: "invalid_input", path: "auto" });
+      expect((e as FlowersecError).cause).toBeInstanceOf(SyntaxError);
+    });
+  });
+
   test("routes token-like inputs to connectTunnel", async () => {
     mocks.connectTunnel.mockResolvedValueOnce({ path: "tunnel" });
     const input = { token: "tok" };

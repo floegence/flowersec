@@ -2,8 +2,10 @@ package endpoint
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,6 +148,76 @@ func TestSessionServeStreamsSkipsBadStreamHello(t *testing.T) {
 	cancel()
 }
 
+func TestSessionServeStreams_OnErrorReportsBadStreamHello(t *testing.T) {
+	cli, srv, closeFn := newYamuxPair(t)
+	defer closeFn()
+
+	sess := &session{path: PathDirect, mux: srv}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	got := make(chan string, 1)
+	go func() {
+		_ = sess.ServeStreams(
+			ctx,
+			8*1024,
+			func(kind string, _ io.ReadWriteCloser) {
+				select {
+				case got <- kind:
+				default:
+				}
+			},
+			WithServeStreamsOnError(func(err error) {
+				select {
+				case errCh <- err:
+				default:
+				}
+			}),
+		)
+	}()
+
+	// Stream 1: invalid StreamHello (empty kind).
+	s1, err := cli.OpenStream()
+	if err != nil {
+		t.Fatalf("client OpenStream: %v", err)
+	}
+	_ = frame.WriteJSONFrame(s1, rpcv1.StreamHello{Kind: "", V: 1})
+	_ = s1.Close()
+
+	select {
+	case err := <-errCh:
+		var fe *Error
+		if !errors.As(err, &fe) {
+			t.Fatalf("expected *endpoint.Error, got %T", err)
+		}
+		if fe.Path != PathDirect || fe.Stage != StageRPC || fe.Code != CodeStreamHelloFailed {
+			t.Fatalf("unexpected error: %+v", fe)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for OnError")
+	}
+
+	// Stream 2: valid StreamHello to ensure ServeStreams continues.
+	s2, err := cli.OpenStream()
+	if err != nil {
+		t.Fatalf("client OpenStream: %v", err)
+	}
+	if err := streamhello.WriteStreamHello(s2, "echo"); err != nil {
+		t.Fatalf("WriteStreamHello: %v", err)
+	}
+
+	select {
+	case k := <-got:
+		if k != "echo" {
+			t.Fatalf("kind mismatch: got %q", k)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for handler")
+	}
+	cancel()
+}
+
 func TestSessionServeStreamsClosesStream(t *testing.T) {
 	cli, srv, closeFn := newYamuxPair(t)
 	defer closeFn()
@@ -200,6 +272,55 @@ func TestSessionServeStreamsClosesStream(t *testing.T) {
 		_ = s.Close()
 		t.Fatal("timeout waiting for stream close")
 	}
+}
+
+func TestSessionServeStreams_OnErrorReportsHandlerPanic(t *testing.T) {
+	cli, srv, closeFn := newYamuxPair(t)
+	defer closeFn()
+
+	sess := &session{path: PathDirect, mux: srv}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_ = sess.ServeStreams(
+			ctx,
+			8*1024,
+			func(kind string, _ io.ReadWriteCloser) {
+				if kind == "echo" {
+					panic("boom")
+				}
+			},
+			WithServeStreamsOnError(func(err error) {
+				select {
+				case errCh <- err:
+				default:
+				}
+			}),
+		)
+	}()
+
+	s, err := cli.OpenStream()
+	if err != nil {
+		t.Fatalf("client OpenStream: %v", err)
+	}
+	if err := streamhello.WriteStreamHello(s, "echo"); err != nil {
+		t.Fatalf("WriteStreamHello: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected OnError error")
+		}
+		if !strings.Contains(err.Error(), "panic") {
+			t.Fatalf("expected panic error, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for OnError")
+	}
+	cancel()
 }
 
 func TestSessionOpenStreamWritesHello(t *testing.T) {

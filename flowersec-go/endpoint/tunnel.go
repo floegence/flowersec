@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
@@ -20,7 +21,7 @@ import (
 )
 
 // ConnectTunnel attaches to a tunnel as role=server and returns a multiplexed endpoint session.
-func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, opts ...ConnectOption) (Session, error) {
+func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts ...ConnectOption) (Session, error) {
 	if grant == nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingGrant, ErrMissingGrant)
 	}
@@ -29,9 +30,6 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	}
 	if grant.TunnelUrl == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingTunnelURL, ErrMissingTunnelURL)
-	}
-	if origin == "" {
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
 	if grant.ChannelId == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
@@ -45,6 +43,13 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origi
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
+	}
+	origin := strings.TrimSpace(cfg.origin)
+	if origin == "" {
+		origin = strings.TrimSpace(cfg.header.Get("Origin"))
+	}
+	if origin == "" {
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
 	keepalive := cfg.keepaliveInterval
 	if !cfg.keepaliveSet {

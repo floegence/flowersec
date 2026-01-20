@@ -9,11 +9,11 @@ import (
 )
 
 // ServeTunnel connects to a tunnel as role=server and serves streams using srv.
-func ServeTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, origin string, srv *Server, opts ...endpoint.ConnectOption) error {
+func ServeTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, srv *Server, opts ...endpoint.ConnectOption) error {
 	if srv == nil {
 		return errors.New("missing server")
 	}
-	sess, err := endpoint.ConnectTunnel(ctx, grant, origin, opts...)
+	sess, err := endpoint.ConnectTunnel(ctx, grant, opts...)
 	if err != nil {
 		return err
 	}

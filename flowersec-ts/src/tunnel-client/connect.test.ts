@@ -108,7 +108,7 @@ describe("connectTunnel", () => {
   test("wraps invalid grant payloads", async () => {
     const p = connectTunnel("bad" as any, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_grant", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "tunnel" });
   });
 
   test("rejects missing tunnel_url", async () => {
@@ -206,7 +206,7 @@ describe("connectTunnel", () => {
 
     setTimeout(() => ws.emit("error", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "connect", code: "websocket_error", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({ stage: "connect", code: "dial_failed", path: "tunnel" });
 
     expect(observer.onConnect).toHaveBeenCalledWith("tunnel", "fail", "websocket_error", expect.any(Number));
   });
@@ -281,7 +281,7 @@ describe("connectTunnel", () => {
 
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "attach", code: "send_failed", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({ stage: "attach", code: "attach_failed", path: "tunnel" });
 
     expect(observer.onAttach).toHaveBeenCalledWith("fail", "send_failed");
   });

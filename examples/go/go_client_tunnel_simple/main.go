@@ -57,7 +57,7 @@ func main() {
 	c, err := client.ConnectTunnel(
 		context.Background(),
 		grant,
-		origin,
+		client.WithOrigin(origin),
 		client.WithConnectTimeout(10*time.Second),
 		client.WithHandshakeTimeout(10*time.Second),
 		client.WithMaxRecordBytes(1<<20),

@@ -15,7 +15,7 @@ func TestConnectTunnel_RejectsMissingToken(t *testing.T) {
 		Role:      controlv1.Role_server,
 		Token:     "",
 	}
-	_, err := ConnectTunnel(context.Background(), grant, "http://example.com")
+	_, err := ConnectTunnel(context.Background(), grant, WithOrigin("http://example.com"))
 	if err == nil {
 		t.Fatal("expected error")
 	}

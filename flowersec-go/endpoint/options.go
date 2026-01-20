@@ -20,6 +20,8 @@ type connectOptions struct {
 	header http.Header
 	dialer *websocket.Dialer
 
+	origin string
+
 	connectTimeout   time.Duration
 	handshakeTimeout time.Duration
 
@@ -56,6 +58,16 @@ func applyConnectOptions(opts []ConnectOption) (connectOptions, error) {
 		}
 	}
 	return cfg, nil
+}
+
+// WithOrigin sets the explicit Origin header value used for the WebSocket handshake.
+//
+// If unset, ConnectTunnel falls back to cfg.header.Get("Origin") if present.
+func WithOrigin(origin string) ConnectOption {
+	return func(cfg *connectOptions) error {
+		cfg.origin = origin
+		return nil
+	}
 }
 
 // WithHeader adds extra HTTP headers for the WebSocket handshake.

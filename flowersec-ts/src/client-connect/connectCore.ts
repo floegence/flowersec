@@ -76,12 +76,12 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     ws = createWebSocket(args.wsUrl, origin, args.opts.wsFactory);
   } catch (e) {
     if (e instanceof OriginMismatchError) {
-      throw new FlowersecError({ path: args.path, stage: "validate", code: "origin_mismatch", message: e.message, cause: e });
+      throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_option", message: e.message, cause: e });
     }
     if (e instanceof WsFactoryRequiredError) {
-      throw new FlowersecError({ path: args.path, stage: "validate", code: "ws_factory_required", message: e.message, cause: e });
+      throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_option", message: e.message, cause: e });
     }
-    throw new FlowersecError({ path: args.path, stage: "validate", code: "websocket_init_failed", message: "websocket init failed", cause: e });
+    throw new FlowersecError({ path: args.path, stage: "connect", code: "dial_failed", message: "dial failed", cause: e });
   }
 
   try {
@@ -94,10 +94,11 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     } catch (err) {
       const reason = classifyConnectError(err);
       observer.onConnect(args.path, "fail", reason, nowSeconds() - connectStart);
+      const code = reason === "timeout" ? "timeout" : reason === "canceled" ? "canceled" : "dial_failed";
       throw new FlowersecError({
         path: args.path,
         stage: "connect",
-        code: reason,
+        code,
         message: `connect failed: ${reason}`,
         cause: err,
       });
@@ -110,7 +111,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         throw new FlowersecError({
           path: args.path,
           stage: "validate",
-          code: "missing_attach",
+          code: "invalid_option",
           message: "missing attach payload",
         });
       }
@@ -124,7 +125,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         } catch {
           // ignore
         }
-        throw new FlowersecError({ path: args.path, stage: "attach", code: "send_failed", message: "attach send failed", cause: err });
+        throw new FlowersecError({ path: args.path, stage: "attach", code: "attach_failed", message: "attach failed", cause: err });
       }
     }
 

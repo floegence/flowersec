@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
@@ -126,12 +127,16 @@ func (s *Server) ServeSession(ctx context.Context, sess endpoint.Session) error 
 			}
 			return err
 		}
-		go s.HandleStream(ctx, kind, stream)
+		go s.handleStream(ctx, sess.Path(), kind, stream)
 	}
 }
 
 // HandleStream dispatches a single stream by kind.
 func (s *Server) HandleStream(ctx context.Context, kind string, stream io.ReadWriteCloser) {
+	s.handleStream(ctx, "", kind, stream)
+}
+
+func (s *Server) handleStream(ctx context.Context, path endpoint.Path, kind string, stream io.ReadWriteCloser) {
 	if s == nil || stream == nil {
 		return
 	}
@@ -152,6 +157,13 @@ func (s *Server) HandleStream(ctx context.Context, kind string, stream io.ReadWr
 	if kind == s.rpc.Kind && s.rpc.Register != nil {
 		s.serveRPC(ctx, stream)
 		return
+	}
+	if s.onError != nil {
+		p := fserrors.PathAuto
+		if path != "" {
+			p = fserrors.Path(path)
+		}
+		s.reportError(fserrors.Wrap(p, fserrors.StageRPC, fserrors.CodeMissingHandler, fmt.Errorf("unhandled stream kind: %q", kind)))
 	}
 }
 

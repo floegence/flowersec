@@ -32,7 +32,7 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
   try {
     checkedGrant = assertChannelInitGrant(input);
   } catch (e) {
-    throw new FlowersecError({ stage: "validate", code: "invalid_grant", path: "tunnel", message: "invalid ChannelInitGrant", cause: e });
+    throw new FlowersecError({ stage: "validate", code: "invalid_input", path: "tunnel", message: "invalid ChannelInitGrant", cause: e });
   }
   if (checkedGrant.tunnel_url === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_tunnel_url", path: "tunnel", message: "missing tunnel_url" });

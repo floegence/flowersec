@@ -93,7 +93,7 @@ func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 	c, err := client.ConnectDirect(
 		context.Background(),
 		info,
-		origin,
+		client.WithOrigin(origin),
 		client.WithHeader(http.Header{"X-Test": []string{"1"}}),
 		client.WithDialer(dialer),
 		client.WithConnectTimeout(2*time.Second),
