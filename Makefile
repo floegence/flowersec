@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples test go-test go-test-race go-vulncheck ts-ci ts-audit ts-test ts-lint ts-build fmt fmt-check lint lint-check bench check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vulncheck ts-ci ts-audit ts-test ts-lint ts-build fmt fmt-check lint lint-check bench check
 
 GOVULNCHECK_VERSION ?= v1.1.4
 
@@ -8,6 +8,15 @@ YAMUX_INTEROP_CLIENT_RST ?= 0
 YAMUX_INTEROP_DEBUG ?= 0
 
 gen: gen-core gen-examples
+
+gen-check: gen
+	@# Fail if any tracked generated outputs changed (prevents forgetting to commit codegen results).
+	@git diff --exit-code -- \
+		flowersec-go/gen \
+		flowersec-ts/src/gen \
+		examples/gen \
+		flowersec-go/internal/testgen \
+		flowersec-ts/src/_examples
 
 gen-core:
 	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.core.txt -go-out ../../flowersec-go/gen -ts-out ../../flowersec-ts/src/gen
@@ -71,6 +80,7 @@ lint-check: fmt-check ts-lint
 
 check:
 	$(MAKE) ts-ci
+	$(MAKE) gen-check
 	$(MAKE) lint-check
 	$(MAKE) ts-build
 	$(MAKE) test
