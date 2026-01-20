@@ -17,13 +17,13 @@ Run date: Mon Jan 19 15:01:20 CST 2026
 
 ```bash
 # Go micro benches
-GOMAXPROCS=2 GOMEMLIMIT=1024MiB go test -bench . -benchmem ./crypto/e2ee ./tunnel/server
+( cd flowersec-go && GOMAXPROCS=2 GOMEMLIMIT=1024MiB go test -bench . -benchmem ./crypto/e2ee ./tunnel/server )
 
 # TS micro benches
-NODE_OPTIONS=--max-old-space-size=768 npm run bench
+( cd flowersec-ts && NODE_OPTIONS=--max-old-space-size=768 npm run bench )
 
 # Load generator (full mode, loopback)
-GOMAXPROCS=2 GOMEMLIMIT=1024MiB go run ./internal/cmd/flowersec-loadgen --mode=full --channels=1000 --rate=400 --ramp-step=200 --ramp-interval=2s --steady=30s --report-interval=1s
+( cd flowersec-go && GOMAXPROCS=2 GOMEMLIMIT=1024MiB go run ./internal/cmd/flowersec-loadgen --mode=full --channels=1000 --rate=400 --ramp-step=200 --ramp-interval=2s --steady=30s --report-interval=1s )
 ```
 
 ## Go Benchmarks

@@ -29,12 +29,22 @@ docker pull ghcr.io/floegence/flowersec-tunnel:latest
 
 The tunnel requires these inputs:
 
-- `issuer_keys_file`: JSON keyset containing issuer public keys (`kid -> ed25519 pubkey`)
+- `issuer_keys_file`: JSON keyset containing issuer public keys (see format below)
 - `aud`: expected token audience (must match the controlplane-issued token payload)
 - `iss`: expected token issuer (must match the controlplane-issued token payload)
 - `allow_origin`: Origin allow-list (required; requests without `Origin` are rejected by default)
 
 The issuer keyset is owned by your controlplane (it must publish the issuer public keys so the tunnel can verify tokens).
+
+Keyset file format (produced by `flowersec-issuer-keygen`):
+
+```json
+{
+  "keys": [
+    { "kid": "k1", "pubkey_b64u": "..." }
+  ]
+}
+```
 
 For local development, you can generate a keypair and the corresponding tunnel keyset file using:
 

@@ -356,7 +356,11 @@ make gen
 Or run the generator directly:
 
 ```
-go run ./tools/idlgen -in ./idl -go-out ./flowersec-go/gen -ts-out ./flowersec-ts/src/gen
+( cd tools/idlgen && go run . \
+  -in ../../idl \
+  -manifest ../../idl/manifest.core.txt \
+  -go-out ../../flowersec-go/gen \
+  -ts-out ../../flowersec-ts/src/gen )
 ```
 
 ## Example
