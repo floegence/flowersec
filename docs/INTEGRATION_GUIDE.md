@@ -94,7 +94,8 @@ For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMEN
   - `client.ConnectDirect(ctx, info, origin, ...opts)`
 - Server endpoint (role=server):
   - `endpoint.ConnectTunnel(ctx, grant, origin, ...opts)`
-  - Direct server: `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandler(...)`, or the resolver variants `endpoint.AcceptDirectWSResolved(...)` / `endpoint.NewDirectHandlerResolved(...)`
+  - Direct server (recommended): `endpoint/serve` → `serve.NewDirectHandler(...)` / `serve.NewDirectHandlerResolved(...)`
+  - Direct server (lower-level): `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandler(...)`, or the resolver variants `endpoint.AcceptDirectWSResolved(...)` / `endpoint.NewDirectHandlerResolved(...)`
 - Stream runtime (recommended for servers): `endpoint/serve` (RPC stream handler + dispatch)
 - Input JSON helpers: `protocolio.DecodeGrantClientJSON(...)`, `protocolio.DecodeDirectConnectInfoJSON(...)`
 
@@ -170,8 +171,6 @@ This is the direct (no-tunnel) equivalent of a server endpoint: upgrade to WebSo
 
 ```go
 import (
-  "context"
-  "io"
   "log"
   "net/http"
   "time"
@@ -196,7 +195,8 @@ func main() {
     },
   })
 
-  wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+  wsHandler, err := serve.NewDirectHandler(serve.DirectHandlerOptions{
+    Server: srv,
     AllowedOrigins: []string{"https://your-web-origin.example"},
     Handshake: endpoint.AcceptDirectOptions{
       ChannelID:         channelID,
@@ -205,10 +205,6 @@ func main() {
       InitExpireAtUnixS: initExp,
       ClockSkew:         30 * time.Second,
     },
-    OnStream: func(ctx context.Context, kind string, stream io.ReadWriteCloser) {
-      srv.HandleStream(ctx, kind, stream)
-    },
-    OnError: func(err error) { log.Printf("upgrade/handshake error: %v", err) },
   })
   if err != nil {
     log.Fatal(err)
@@ -226,13 +222,12 @@ Your application must distribute the matching `DirectConnectInfo` (ws_url, chann
 
 The minimal example above hard-codes `channel_id` and `psk`. In real apps, direct servers usually need to support many channels.
 
-Use `endpoint.NewDirectHandlerResolved` to resolve `{psk, init_exp}` dynamically based on the client's handshake init:
+Use `serve.NewDirectHandlerResolved` to resolve `{psk, init_exp}` dynamically based on the client's handshake init:
 
 ```go
 import (
   "context"
   "errors"
-  "io"
   "log"
   "net/http"
   "time"
@@ -255,7 +250,8 @@ func main() {
     OnError: func(err error) { log.Printf("direct server error: %v", err) },
   })
 
-  wsHandler, err := endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
+  wsHandler, err := serve.NewDirectHandlerResolved(serve.DirectHandlerResolvedOptions{
+    Server: srv,
     AllowedOrigins: []string{"https://your-web-origin.example"},
     Handshake: endpoint.AcceptDirectResolverOptions{
       ClockSkew: 30 * time.Second,
@@ -267,10 +263,6 @@ func main() {
         return endpoint.DirectHandshakeSecrets{PSK: s.psk, InitExpireAtUnixS: s.initExp}, nil
       },
     },
-    OnStream: func(ctx context.Context, kind string, stream io.ReadWriteCloser) {
-      srv.HandleStream(ctx, kind, stream)
-    },
-    OnError: func(err error) { log.Printf("upgrade/handshake error: %v", err) },
   })
   if err != nil {
     log.Fatal(err)
@@ -433,6 +425,16 @@ Define your own messages/services under `idl/` and run codegen:
 
 - Spec: `tools/idlgen/IDL_SPEC.md`
 - Generate stable outputs: `make gen-core`
+
+If you want to use the same generator from your own repository (no clone), install or run it directly:
+
+```bash
+go install github.com/floegence/flowersec/tools/idlgen@latest
+idlgen --version
+
+# Generate code from all *.fidl.json under ./idl (optionally use -manifest to restrict the set).
+idlgen -in ./idl -go-out ./gen/flowersec -ts-out ./src/gen
+```
 
 With `services` in your `.fidl.json`, `idlgen` generates typed RPC stubs:
 

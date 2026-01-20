@@ -3,13 +3,21 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+)
+
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
 )
 
 type schema struct {
@@ -52,23 +60,43 @@ type methodDef struct {
 }
 
 func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	var inDir string
 	var goOut string
 	var tsOut string
 	var manifestPath string
-	flag.StringVar(&inDir, "in", "", "input idl directory")
-	flag.StringVar(&goOut, "go-out", "", "output directory for Go")
-	flag.StringVar(&tsOut, "ts-out", "", "output directory for TypeScript")
-	flag.StringVar(&manifestPath, "manifest", "", "optional manifest file listing .fidl.json paths (relative to -in)")
-	flag.Parse()
+	showVersion := false
+
+	fs := flag.NewFlagSet("idlgen", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.BoolVar(&showVersion, "version", false, "print version and exit")
+	fs.StringVar(&inDir, "in", "", "input idl directory")
+	fs.StringVar(&goOut, "go-out", "", "output directory for Go")
+	fs.StringVar(&tsOut, "ts-out", "", "output directory for TypeScript")
+	fs.StringVar(&manifestPath, "manifest", "", "optional manifest file listing .fidl.json paths (relative to -in)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if showVersion {
+		_, _ = fmt.Fprintln(stdout, versionString())
+		return 0
+	}
 
 	if strings.TrimSpace(inDir) == "" {
-		fmt.Fprintln(os.Stderr, "missing -in")
-		os.Exit(2)
+		fmt.Fprintln(stderr, "missing -in")
+		fs.Usage()
+		return 2
 	}
 	if strings.TrimSpace(goOut) == "" && strings.TrimSpace(tsOut) == "" {
-		fmt.Fprintln(os.Stderr, "missing -go-out and -ts-out (need at least one)")
-		os.Exit(2)
+		fmt.Fprintln(stderr, "missing -go-out and -ts-out (need at least one)")
+		fs.Usage()
+		return 2
 	}
 
 	var files []string
@@ -79,63 +107,80 @@ func main() {
 		files, err = listFIDLFiles(inDir)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	if len(files) == 0 {
-		fmt.Fprintln(os.Stderr, "no *.fidl.json files found")
-		os.Exit(1)
+		fmt.Fprintln(stderr, "no *.fidl.json files found")
+		return 1
 	}
 
 	schemas := make([]schema, 0, len(files))
 	for _, p := range files {
 		b, err := os.ReadFile(p)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			fmt.Fprintln(stderr, err)
+			return 1
 		}
 		var s schema
 		if err := json.Unmarshal(b, &s); err != nil {
-			fmt.Fprintf(os.Stderr, "decode %s: %v\n", p, err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "decode %s: %v\n", p, err)
+			return 1
 		}
 		if strings.TrimSpace(s.Namespace) == "" {
-			fmt.Fprintf(os.Stderr, "missing namespace in %s\n", p)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "missing namespace in %s\n", p)
+			return 1
 		}
 		schemas = append(schemas, s)
 	}
 
 	for _, s := range schemas {
 		if err := validateSchema(s); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			fmt.Fprintln(stderr, err)
+			return 1
 		}
 		if strings.TrimSpace(goOut) != "" {
 			if err := genGo(goOut, s); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				fmt.Fprintln(stderr, err)
+				return 1
 			}
 			if err := genGoRPC(goOut, s); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				fmt.Fprintln(stderr, err)
+				return 1
 			}
 		}
 		if strings.TrimSpace(tsOut) != "" {
 			if err := genTS(tsOut, s); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				fmt.Fprintln(stderr, err)
+				return 1
 			}
 			if err := genTSRPC(tsOut, s); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				fmt.Fprintln(stderr, err)
+				return 1
 			}
 			if err := genTSFacade(tsOut, s); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				fmt.Fprintln(stderr, err)
+				return 1
 			}
 		}
 	}
+	return 0
+}
+
+func versionString() string {
+	v := strings.TrimSpace(version)
+	if v == "" {
+		v = "dev"
+	}
+	c := strings.TrimSpace(commit)
+	if c == "" {
+		c = "unknown"
+	}
+	d := strings.TrimSpace(date)
+	if d == "" {
+		d = "unknown"
+	}
+	return fmt.Sprintf("idlgen %s (%s) %s", v, c, d)
 }
 
 func listFIDLFilesFromManifest(root string, manifestPath string) ([]string, error) {

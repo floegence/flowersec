@@ -29,7 +29,7 @@ These packages are the recommended integration entrypoints:
   - APIs: `endpoint.ConnectTunnel(...)`, `endpoint.NewDirectHandler(...)`, `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandlerResolved(...)`, `endpoint.AcceptDirectWSResolved(...)`
 - `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
   - Role: server runtime
-  - APIs: `serve.New(...)`, `srv.Handle(...)`, `srv.ServeSession(...)`, `serve.ServeTunnel(...)`
+  - APIs: `serve.New(...)`, `srv.Handle(...)`, `srv.HandleStream(...)`, `srv.ServeSession(...)`, `serve.ServeTunnel(...)`, `serve.NewDirectHandler(...)`, `serve.NewDirectHandlerResolved(...)`
 - `github.com/floegence/flowersec/flowersec-go/rpc`
   - Role: stable RPC client/server/router APIs (used by `Client.RPC()` and `endpoint/serve`)
 - `github.com/floegence/flowersec/flowersec-go/protocolio`

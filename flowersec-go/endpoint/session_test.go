@@ -73,8 +73,7 @@ func TestSessionServeStreamsDispatches(t *testing.T) {
 
 	got := make(chan string, 1)
 	go func() {
-		_ = sess.ServeStreams(ctx, 8*1024, func(kind string, stream io.ReadWriteCloser) {
-			defer stream.Close()
+		_ = sess.ServeStreams(ctx, 8*1024, func(kind string, _ io.ReadWriteCloser) {
 			select {
 			case got <- kind:
 			default:
@@ -111,8 +110,7 @@ func TestSessionServeStreamsSkipsBadStreamHello(t *testing.T) {
 
 	got := make(chan string, 1)
 	go func() {
-		_ = sess.ServeStreams(ctx, 8*1024, func(kind string, stream io.ReadWriteCloser) {
-			defer stream.Close()
+		_ = sess.ServeStreams(ctx, 8*1024, func(kind string, _ io.ReadWriteCloser) {
 			select {
 			case got <- kind:
 			default:
@@ -146,6 +144,62 @@ func TestSessionServeStreamsSkipsBadStreamHello(t *testing.T) {
 		t.Fatal("timeout waiting for handler")
 	}
 	cancel()
+}
+
+func TestSessionServeStreamsClosesStream(t *testing.T) {
+	cli, srv, closeFn := newYamuxPair(t)
+	defer closeFn()
+
+	sess := &session{path: PathDirect, mux: srv}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	handled := make(chan struct{})
+	go func() {
+		_ = sess.ServeStreams(ctx, 8*1024, func(kind string, _ io.ReadWriteCloser) {
+			if kind != "echo" {
+				return
+			}
+			select {
+			case <-handled:
+			default:
+				close(handled)
+			}
+		})
+	}()
+
+	s, err := cli.OpenStream()
+	if err != nil {
+		t.Fatalf("client OpenStream: %v", err)
+	}
+	if err := streamhello.WriteStreamHello(s, "echo"); err != nil {
+		t.Fatalf("WriteStreamHello: %v", err)
+	}
+
+	select {
+	case <-handled:
+	case <-time.After(2 * time.Second):
+		_ = s.Close()
+		t.Fatal("timeout waiting for handler")
+	}
+
+	readDone := make(chan error, 1)
+	go func() {
+		var buf [1]byte
+		_, err := s.Read(buf[:])
+		readDone <- err
+	}()
+
+	select {
+	case err := <-readDone:
+		if err == nil {
+			_ = s.Close()
+			t.Fatal("expected stream read to fail after handler return (stream should be closed)")
+		}
+	case <-time.After(2 * time.Second):
+		_ = s.Close()
+		t.Fatal("timeout waiting for stream close")
+	}
 }
 
 func TestSessionOpenStreamWritesHello(t *testing.T) {

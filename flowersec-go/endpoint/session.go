@@ -143,6 +143,8 @@ func (s *session) AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteClos
 // ServeStreams runs an accept loop and dispatches each stream to handler(kind, stream).
 //
 // handler is invoked in its own goroutine for each accepted stream.
+//
+// The stream is closed after handler returns.
 func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser)) error {
 	if s == nil || s.mux == nil {
 		var path Path
@@ -186,7 +188,13 @@ func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 			continue
 		}
 		kind := h.Kind
-		go handler(kind, stream)
+		go func(kind string, stream io.ReadWriteCloser) {
+			defer stream.Close()
+			defer func() {
+				_ = recover()
+			}()
+			handler(kind, stream)
+		}(kind, stream)
 	}
 }
 

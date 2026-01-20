@@ -1,10 +1,27 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestVersionFlag(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	code := run([]string{"--version"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%q)", code, errOut.String())
+	}
+	s := out.String()
+	if !strings.Contains(s, "idlgen") {
+		t.Fatalf("unexpected version output: %q", s)
+	}
+}
 
 func TestListFIDLFilesFromManifest(t *testing.T) {
 	t.Parallel()
@@ -64,4 +81,3 @@ func TestListFIDLFilesFromManifestRejectsMissingFile(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
-
