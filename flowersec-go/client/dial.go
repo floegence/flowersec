@@ -103,7 +103,8 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	attachJSON, _ := json.Marshal(attach)
 	if err := c.WriteMessage(connectCtx, websocket.TextMessage, attachJSON); err != nil {
 		_ = c.Close()
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, fserrors.ClassifyAttachCode(err), err)
+		code := classifyTunnelAttachWriteCode(err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, code, err)
 	}
 
 	out, err := dialAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, dialE2EEOptions{
@@ -218,6 +219,13 @@ func defaultKeepaliveInterval(idleTimeoutSeconds int32) time.Duration {
 		interval = idle / 2
 	}
 	return interval
+}
+
+func classifyTunnelAttachWriteCode(err error) fserrors.Code {
+	if code, ok := fserrors.ClassifyTunnelAttachCloseCode(err); ok {
+		return code
+	}
+	return fserrors.ClassifyAttachCode(err)
 }
 
 type dialE2EEOptions struct {
