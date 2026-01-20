@@ -4,6 +4,7 @@ import { FlowersecError } from "../utils/errors.js";
 import { E2EEHandshakeError } from "../e2ee/errors.js";
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
 import { Role, Suite } from "../gen/flowersec/controlplane/v1.gen.js";
+import { WsCloseError } from "../ws-client/binaryTransport.js";
 
 const mocks = vi.hoisted(() => {
   const clientHandshakeMock = vi.fn();
@@ -217,6 +218,20 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toMatchObject({ stage: "connect", code: "dial_failed", path: "tunnel" });
 
     expect(observer.onConnect).toHaveBeenCalledWith("tunnel", "fail", "websocket_error", expect.any(Number));
+  });
+
+  test("maps tunnel attach rejection close reasons to stable attach codes", async () => {
+    const ws = new FakeWebSocket();
+    clientHandshakeMock.mockRejectedValueOnce(new WsCloseError(1008, "invalid_token"));
+
+    const p = connectTunnel(makeGrant(), {
+      origin: "https://app.redeven.com",
+      wsFactory: () => ws as any,
+    });
+
+    setTimeout(() => ws.emit("open", {}), 0);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "attach", code: "invalid_token", path: "tunnel" });
   });
 
   test("reports connect timeout", async () => {

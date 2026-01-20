@@ -368,7 +368,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	uc := c.Underlying()
 	if !s.trackConn(uc) {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonTooManyConnections)
-		_ = c.CloseWithStatus(websocket.CloseTryAgainLater, "too many connections")
+		_ = c.CloseWithStatus(websocket.CloseTryAgainLater, string(observability.AttachReasonTooManyConnections))
 		return
 	}
 
@@ -381,7 +381,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	mt, msg, err := c.ReadMessage(ctx)
 	if err != nil || mt != websocket.TextMessage {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonExpectedAttach)
-		_ = c.CloseWithStatus(websocket.CloseProtocolError, "expected attach")
+		_ = c.CloseWithStatus(websocket.CloseProtocolError, string(observability.AttachReasonExpectedAttach))
 		s.untrackConn(uc)
 		return
 	}
@@ -390,7 +390,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonInvalidAttach)
-		_ = c.CloseWithStatus(websocket.CloseProtocolError, "invalid attach")
+		_ = c.CloseWithStatus(websocket.CloseProtocolError, string(observability.AttachReasonInvalidAttach))
 		s.untrackConn(uc)
 		return
 	}
@@ -405,26 +405,26 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonInvalidToken)
-		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "invalid token")
+		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonInvalidToken))
 		s.untrackConn(uc)
 		return
 	}
 	if p.ChannelID != attach.ChannelId {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonChannelMismatch)
-		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "channel mismatch")
+		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonChannelMismatch))
 		s.untrackConn(uc)
 		return
 	}
 	if uint8(attach.Role) != p.Role {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonRoleMismatch)
-		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "role mismatch")
+		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonRoleMismatch))
 		s.untrackConn(uc)
 		return
 	}
 	usedUntilUnix := addSkewUnix(p.Exp, s.cfg.ClockSkew)
 	if !s.used.TryUse(p.TokenID, usedUntilUnix, now) {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonTokenReplay)
-		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, "token replay")
+		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonTokenReplay))
 		s.untrackConn(uc)
 		return
 	}
@@ -434,10 +434,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err := s.addEndpoint(attach, p, uc); err != nil {
 		if errors.Is(err, ErrReplaceRateLimited) {
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonReplaceRateLimited)
-			_ = c.CloseWithStatus(s.cfg.ReplaceCloseCode, "replace rate limited")
+			_ = c.CloseWithStatus(s.cfg.ReplaceCloseCode, string(observability.AttachReasonReplaceRateLimited))
 		} else {
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonAttachFailed)
-			_ = c.CloseWithStatus(websocket.CloseInternalServerErr, "attach failed")
+			_ = c.CloseWithStatus(websocket.CloseInternalServerErr, string(observability.AttachReasonAttachFailed))
 		}
 		s.untrackConn(uc)
 		return

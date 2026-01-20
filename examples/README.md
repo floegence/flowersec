@@ -128,6 +128,6 @@ Tip: if you refresh/reconnect in the tunnel demo, mint a new channel init again 
 
 ## Troubleshooting
 
-- Tunnel fails with "token replay": you reused the same channel JSON. Mint a new one via `POST /v1/channel/init`.
+- Tunnel fails with `token_replay`: you reused the same channel JSON. Mint a new one via `POST /v1/channel/init`.
 - Browser cannot connect: ensure `FSEC_TUNNEL_ALLOW_ORIGIN` includes your page Origin (for example `http://127.0.0.1:5173`).
 - Go binaries not found: ensure you extracted the demo bundle and run from its root (it contains `bin/`).

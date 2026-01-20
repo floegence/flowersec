@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { WebSocketBinaryTransport, type WebSocketLike } from "./binaryTransport.js";
+import { WebSocketBinaryTransport, WsCloseError, type WebSocketLike } from "./binaryTransport.js";
 
 class FakeWebSocket implements WebSocketLike {
   binaryType = "arraybuffer";
@@ -154,10 +154,11 @@ describe("WebSocketBinaryTransport", () => {
     const transport = new WebSocketBinaryTransport(ws, { observer: { onWsClose } });
 
     const read = transport.readBinary();
-    ws.emit("close", {});
+    ws.emit("close", { code: 1008, reason: "invalid_token" });
 
-    await expect(read).rejects.toThrow(/websocket closed/);
-    expect(onWsClose).toHaveBeenCalledWith("peer_or_error", undefined);
+    await expect(read).rejects.toBeInstanceOf(WsCloseError);
+    await expect(read).rejects.toMatchObject({ code: 1008, reason: "invalid_token" });
+    expect(onWsClose).toHaveBeenCalledWith("peer_or_error", 1008);
   });
 
   test("close rejects pending readers", async () => {

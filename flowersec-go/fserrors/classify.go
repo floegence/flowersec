@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/gorilla/websocket"
 )
 
 // ClassifyConnectCode maps a connect-layer error to a stable Code.
@@ -45,5 +46,38 @@ func classifyContextCode(err error, fallback Code) Code {
 		return CodeCanceled
 	default:
 		return fallback
+	}
+}
+
+// ClassifyTunnelAttachCloseCode maps a tunnel websocket close error to a stable Code.
+//
+// The tunnel uses close status + reason tokens (for example "invalid_token", "token_replay")
+// to signal attach rejections before the E2EE handshake begins.
+func ClassifyTunnelAttachCloseCode(err error) (Code, bool) {
+	var ce *websocket.CloseError
+	if !errors.As(err, &ce) {
+		return "", false
+	}
+	switch ce.Text {
+	case "too_many_connections":
+		return CodeTooManyConnections, true
+	case "expected_attach":
+		return CodeExpectedAttach, true
+	case "invalid_attach":
+		return CodeInvalidAttach, true
+	case "invalid_token":
+		return CodeInvalidToken, true
+	case "channel_mismatch":
+		return CodeChannelMismatch, true
+	case "role_mismatch":
+		return CodeRoleMismatch, true
+	case "token_replay":
+		return CodeTokenReplay, true
+	case "replace_rate_limited":
+		return CodeReplaceRateLimited, true
+	case "attach_failed":
+		return CodeAttachFailed, true
+	default:
+		return "", false
 	}
 }

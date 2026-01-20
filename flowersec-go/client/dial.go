@@ -248,6 +248,13 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 		MaxBufferedBytes:    opts.maxBufferedBytes,
 	})
 	if err != nil {
+		// Tunnel attach rejections are communicated via websocket close status + reason tokens.
+		// Surface them as attach-layer failures instead of a generic handshake error.
+		if path == fserrors.PathTunnel {
+			if code, ok := fserrors.ClassifyTunnelAttachCloseCode(err); ok {
+				return nil, wrapErr(path, fserrors.StageAttach, code, err)
+			}
+		}
 		return nil, wrapErr(path, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
 	}
 

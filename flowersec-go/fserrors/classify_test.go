@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/gorilla/websocket"
 )
 
 func TestClassifyConnectCode(t *testing.T) {
@@ -52,6 +53,30 @@ func TestClassifyHandshakeCode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ClassifyHandshakeCode(tc.err); got != tc.want {
 				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestClassifyTunnelAttachCloseCode(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want Code
+		ok   bool
+	}{
+		{"not_close_error", errors.New("x"), "", false},
+		{"invalid_token", &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "invalid_token"}, CodeInvalidToken, true},
+		{"token_replay", &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "token_replay"}, CodeTokenReplay, true},
+		{"replace_rate_limited", &websocket.CloseError{Code: websocket.CloseTryAgainLater, Text: "replace_rate_limited"}, CodeReplaceRateLimited, true},
+		{"role_mismatch", &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "role_mismatch"}, CodeRoleMismatch, true},
+		{"unknown_reason", &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "wat"}, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ClassifyTunnelAttachCloseCode(tc.err)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("expected (%q, %v), got (%q, %v)", tc.want, tc.ok, got, ok)
 			}
 		})
 	}

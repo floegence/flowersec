@@ -1,6 +1,26 @@
 import { normalizeObserver, type ClientObserver, type ClientObserverLike, type WsErrorReason } from "../observability/observer.js";
 import { AbortError, TimeoutError, throwIfAborted } from "../utils/errors.js";
 
+export class WsCloseError extends Error {
+  readonly code?: number;
+  readonly reason?: string;
+
+  constructor(code?: number, reason?: string) {
+    const extra =
+      code !== undefined && reason !== undefined && reason !== ""
+        ? ` (code=${code} reason=${reason})`
+        : code !== undefined
+          ? ` (code=${code})`
+          : reason !== undefined && reason !== ""
+            ? ` (reason=${reason})`
+            : "";
+    super(`websocket closed${extra}`);
+    this.name = "WsCloseError";
+    this.code = code;
+    this.reason = reason;
+  }
+}
+
 // WebSocketLike abstracts browser/WS implementations used by the transport.
 export type WebSocketLike = {
   binaryType: string;
@@ -201,7 +221,10 @@ export class WebSocketBinaryTransport {
   private readonly onClose = (ev: any): void => {
     if (!this.localCloseRequested) {
       const code = typeof ev?.code === "number" ? ev.code : undefined;
+      const reason = typeof ev?.reason === "string" ? ev.reason : undefined;
       this.observer.onWsClose("peer_or_error", code);
+      this.fail(new WsCloseError(code, reason));
+      return;
     }
     this.fail(new Error("websocket closed"));
   };

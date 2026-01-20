@@ -52,6 +52,13 @@ const (
 	CodeUpgradeFailed             = fserrors.CodeUpgradeFailed
 	CodeDialFailed                = fserrors.CodeDialFailed
 	CodeAttachFailed              = fserrors.CodeAttachFailed
+	CodeTooManyConnections        = fserrors.CodeTooManyConnections
+	CodeExpectedAttach            = fserrors.CodeExpectedAttach
+	CodeInvalidAttach             = fserrors.CodeInvalidAttach
+	CodeInvalidToken              = fserrors.CodeInvalidToken
+	CodeChannelMismatch           = fserrors.CodeChannelMismatch
+	CodeTokenReplay               = fserrors.CodeTokenReplay
+	CodeReplaceRateLimited        = fserrors.CodeReplaceRateLimited
 	CodeHandshakeFailed           = fserrors.CodeHandshakeFailed
 	CodePingFailed                = fserrors.CodePingFailed
 	CodeMuxFailed                 = fserrors.CodeMuxFailed

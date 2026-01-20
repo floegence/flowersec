@@ -56,6 +56,9 @@ Validation / configuration:
 Connect / attach / upgrade:
 
 - `dial_failed`, `attach_failed`, `upgrade_failed`
+- `too_many_connections`
+- `expected_attach`, `invalid_attach`
+- `invalid_token`, `channel_mismatch`, `token_replay`, `replace_rate_limited`
 - `timeout`, `canceled`
 
 Handshake:
@@ -73,7 +76,7 @@ Runtime:
 
 Notes:
 
-- `dial_failed` / `attach_failed` are intentionally broad. Transport-specific detail belongs in the `cause` (and, in TypeScript, in the optional observer callbacks).
+- `dial_failed` / `attach_failed` are intentionally broad fallbacks. When the tunnel closes the websocket with a recognized rejection reason, clients may surface a more specific `code` (for example `invalid_token` or `token_replay`).
 - You should expect new codes to be added over time as the protocol surface grows, but existing codes should keep their meaning.
 
 ## Observability Recommendation
