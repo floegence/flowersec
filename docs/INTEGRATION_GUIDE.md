@@ -433,7 +433,10 @@ go install github.com/floegence/flowersec/tools/idlgen@latest
 idlgen --version
 
 # Generate code from all *.fidl.json under ./idl (optionally use -manifest to restrict the set).
-idlgen -in ./idl -go-out ./gen/flowersec -ts-out ./src/gen
+# Output layout:
+# - Go: ./gen/flowersec/<domain>/<version>/*.gen.go
+# - TS: ./src/gen/flowersec/<domain>/<version>.*.gen.ts
+idlgen -in ./idl -go-out ./gen -ts-out ./src/gen
 ```
 
 With `services` in your `.fidl.json`, `idlgen` generates typed RPC stubs:
