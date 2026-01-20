@@ -143,7 +143,7 @@ type serverHandshakeOptions struct {
 	maxRecordBytes   int
 	maxBufferedBytes int
 	handshakeTimeout time.Duration
-	cache            *e2ee.ServerHandshakeCache
+	cache            *HandshakeCache
 	yamuxConfig      *hyamux.Config
 }
 
@@ -153,7 +153,7 @@ func serveAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpo
 
 	cache := opts.cache
 	if cache == nil {
-		cache = e2ee.NewServerHandshakeCache()
+		cache = NewHandshakeCache()
 	}
 	bt := e2ee.NewWebSocketMessageTransport(c)
 	secure, err := e2ee.ServerHandshake(handshakeCtx, bt, cache, e2ee.ServerHandshakeOptions{

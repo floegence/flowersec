@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/client"
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
@@ -44,7 +43,7 @@ func TestNewDirectHandler_AllowsConnectDirect(t *testing.T) {
 		Handshake: endpoint.AcceptDirectOptions{
 			ChannelID:           channelID,
 			PSK:                 psk,
-			Suite:               e2ee.SuiteX25519HKDFAES256GCM,
+			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
 			InitExpireAtUnixS:   initExp,
 			ClockSkew:           30 * time.Second,
 			HandshakeTimeout:    2 * time.Second,
@@ -66,7 +65,7 @@ func TestNewDirectHandler_AllowsConnectDirect(t *testing.T) {
 		ChannelId:                channelID,
 		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
 		ChannelInitExpireAtUnixS: initExp,
-		DefaultSuite:             uint32(e2ee.SuiteX25519HKDFAES256GCM),
+		DefaultSuite:             uint32(endpoint.SuiteX25519HKDFAES256GCM),
 	}
 
 	c, err := client.ConnectDirect(
@@ -129,7 +128,7 @@ func TestNewDirectHandlerResolved_AllowsConnectDirect(t *testing.T) {
 		ChannelId:                channelID,
 		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
 		ChannelInitExpireAtUnixS: initExp,
-		DefaultSuite:             uint32(e2ee.SuiteX25519HKDFAES256GCM),
+		DefaultSuite:             uint32(endpoint.SuiteX25519HKDFAES256GCM),
 	}
 
 	c, err := client.ConnectDirect(

@@ -23,7 +23,7 @@ import (
 type AcceptDirectOptions struct {
 	ChannelID string
 	PSK       []byte
-	Suite     e2ee.Suite
+	Suite     Suite
 
 	InitExpireAtUnixS int64
 	ClockSkew         time.Duration
@@ -36,7 +36,7 @@ type AcceptDirectOptions struct {
 	MaxRecordBytes      int
 	MaxBufferedBytes    int
 
-	HandshakeCache *e2ee.ServerHandshakeCache
+	HandshakeCache *HandshakeCache
 	YamuxConfig    *hyamux.Config
 }
 
@@ -58,8 +58,12 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidPSK, ErrInvalidPSK)
 	}
-	switch opts.Suite {
-	case e2ee.SuiteX25519HKDFAES256GCM, e2ee.SuiteP256HKDFAES256GCM:
+	suite := opts.Suite
+	if suite == 0 {
+		suite = SuiteX25519HKDFAES256GCM
+	}
+	switch suite {
+	case SuiteX25519HKDFAES256GCM, SuiteP256HKDFAES256GCM:
 	default:
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
@@ -78,13 +82,13 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 
 	cache := opts.HandshakeCache
 	if cache == nil {
-		cache = e2ee.NewServerHandshakeCache()
+		cache = NewHandshakeCache()
 	}
 
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	secure, err := e2ee.ServerHandshake(handshakeCtx, bt, cache, e2ee.ServerHandshakeOptions{
 		PSK:                 opts.PSK,
-		Suite:               opts.Suite,
+		Suite:               e2ee.Suite(suite),
 		ChannelID:           opts.ChannelID,
 		InitExpireAtUnixS:   opts.InitExpireAtUnixS,
 		ClockSkew:           opts.ClockSkew,
@@ -121,7 +125,7 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 type DirectHandshakeInit struct {
 	ChannelID      string
 	Version        uint8
-	Suite          e2ee.Suite
+	Suite          Suite
 	ClientFeatures uint32
 }
 
@@ -144,7 +148,7 @@ type AcceptDirectResolverOptions struct {
 	MaxRecordBytes      int
 	MaxBufferedBytes    int
 
-	HandshakeCache *e2ee.ServerHandshakeCache
+	HandshakeCache *HandshakeCache
 	YamuxConfig    *hyamux.Config
 
 	// Resolve returns the PSK and init_exp for the given client init. It must not panic.
@@ -234,7 +238,7 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 	resolveInput := DirectHandshakeInit{
 		ChannelID:      initMsg.ChannelId,
 		Version:        initMsg.Version,
-		Suite:          e2ee.Suite(initMsg.Suite),
+		Suite:          Suite(initMsg.Suite),
 		ClientFeatures: initMsg.ClientFeatures,
 	}
 	secrets, err := safeResolve(handshakeCtx, opts.Resolve, resolveInput)
@@ -291,12 +295,15 @@ type DirectHandlerOptions struct {
 	AllowedOrigins []string
 	AllowNoOrigin  bool
 
-	Upgrader ws.UpgraderOptions
+	Upgrader UpgraderOptions
 
 	Handshake AcceptDirectOptions
 
 	MaxStreamHelloBytes int
 
+	// OnStream is required and is invoked in its own goroutine for each accepted stream.
+	//
+	// The stream is closed after OnStream returns.
 	OnStream func(ctx context.Context, kind string, stream io.ReadWriteCloser)
 
 	// OnError is called on upgrade/handshake/serve failures. It must not panic.
@@ -306,6 +313,9 @@ type DirectHandlerOptions struct {
 // NewDirectHandler returns an http.HandlerFunc that upgrades to WebSocket, runs the server handshake,
 // and then dispatches yamux streams by StreamHello(kind).
 func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
+	if opts.OnStream == nil {
+		return nil, errors.New("missing OnStream (set DirectHandlerOptions.OnStream)")
+	}
 	checkOrigin := opts.Upgrader.CheckOrigin
 	hasCustomOriginCheck := checkOrigin != nil
 	if checkOrigin == nil {
@@ -350,9 +360,6 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 			return
 		}
 		defer sess.Close()
-		if opts.OnStream == nil {
-			return
-		}
 		reqCtx := r.Context()
 		if err := reqCtx.Err(); err != nil {
 			return
@@ -384,8 +391,8 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 			go func(kind string, stream io.ReadWriteCloser) {
 				defer stream.Close()
 				defer func() {
-					if recover() != nil {
-						// stream already closed
+					if r := recover(); r != nil {
+						onErr(fmt.Errorf("direct stream handler panic (kind=%q): %v", kind, r))
 					}
 				}()
 				opts.OnStream(reqCtx, kind, stream)
@@ -407,12 +414,15 @@ type DirectHandlerResolvedOptions struct {
 	AllowedOrigins []string
 	AllowNoOrigin  bool
 
-	Upgrader ws.UpgraderOptions
+	Upgrader UpgraderOptions
 
 	Handshake AcceptDirectResolverOptions
 
 	MaxStreamHelloBytes int
 
+	// OnStream is required and is invoked in its own goroutine for each accepted stream.
+	//
+	// The stream is closed after OnStream returns.
 	OnStream func(ctx context.Context, kind string, stream io.ReadWriteCloser)
 
 	// OnError is called on upgrade/handshake/serve failures. It must not panic.
@@ -421,6 +431,9 @@ type DirectHandlerResolvedOptions struct {
 
 // NewDirectHandlerResolved is like NewDirectHandler, but resolves per-channel handshake secrets at runtime.
 func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFunc, error) {
+	if opts.OnStream == nil {
+		return nil, errors.New("missing OnStream (set DirectHandlerResolvedOptions.OnStream)")
+	}
 	checkOrigin := opts.Upgrader.CheckOrigin
 	hasCustomOriginCheck := checkOrigin != nil
 	if checkOrigin == nil {
@@ -465,9 +478,6 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 			return
 		}
 		defer sess.Close()
-		if opts.OnStream == nil {
-			return
-		}
 		reqCtx := r.Context()
 		if err := reqCtx.Err(); err != nil {
 			return
@@ -499,8 +509,8 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 			go func(kind string, stream io.ReadWriteCloser) {
 				defer stream.Close()
 				defer func() {
-					if recover() != nil {
-						// stream already closed
+					if r := recover(); r != nil {
+						onErr(fmt.Errorf("direct stream handler panic (kind=%q): %v", kind, r))
 					}
 				}()
 				opts.OnStream(reqCtx, kind, stream)

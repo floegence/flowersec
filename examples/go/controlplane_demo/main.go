@@ -22,12 +22,10 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
@@ -138,13 +136,13 @@ func main() {
 	})
 	mux.HandleFunc("/v1/channel/init", channelInitHandler(ci, controlEndpoints))
 	controlWSHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
-		Upgrader: ws.UpgraderOptions{
+		Upgrader: endpoint.UpgraderOptions{
 			CheckOrigin: func(_ *http.Request) bool { return true },
 		},
 		Handshake: endpoint.AcceptDirectOptions{
 			ChannelID:           controlChannelID,
 			PSK:                 controlPSK,
-			Suite:               e2ee.SuiteX25519HKDFAES256GCM,
+			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
 			InitExpireAtUnixS:   controlInitExp,
 			ClockSkew:           30 * time.Second,
 			HandshakeTimeout:    30 * time.Second,

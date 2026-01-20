@@ -16,7 +16,6 @@ import (
 
 	demov1 "github.com/floegence/flowersec-examples/gen/flowersec/demo/v1"
 	"github.com/floegence/flowersec-examples/go/exampleutil"
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
@@ -90,7 +89,7 @@ func main() {
 		Handshake: endpoint.AcceptDirectOptions{
 			ChannelID:           channelID,
 			PSK:                 psk,
-			Suite:               e2ee.SuiteX25519HKDFAES256GCM,
+			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
 			InitExpireAtUnixS:   initExp,
 			ClockSkew:           30 * time.Second,
 			HandshakeTimeout:    30 * time.Second,
@@ -124,7 +123,7 @@ func main() {
 		WSURL:               wsURL,
 		ChannelID:           channelID,
 		E2EEPskB64u:         pskB64u,
-		DefaultSuite:        1,
+		DefaultSuite:        int(endpoint.SuiteX25519HKDFAES256GCM),
 		ChannelInitExpireAt: initExp,
 		ExampleTypeIDs: map[string]uint32{
 			"rpc_request": 1,

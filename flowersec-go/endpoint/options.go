@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
@@ -33,7 +32,7 @@ type connectOptions struct {
 	clockSkew      time.Duration
 
 	endpointInstanceID string
-	handshakeCache     *e2ee.ServerHandshakeCache
+	handshakeCache     *HandshakeCache
 	yamuxConfig        *hyamux.Config
 
 	keepaliveInterval time.Duration
@@ -169,7 +168,7 @@ func WithEndpointInstanceID(id string) ConnectOption {
 }
 
 // WithHandshakeCache supplies a shared server handshake cache for init retries.
-func WithHandshakeCache(cache *e2ee.ServerHandshakeCache) ConnectOption {
+func WithHandshakeCache(cache *HandshakeCache) ConnectOption {
 	return func(cfg *connectOptions) error {
 		cfg.handshakeCache = cache
 		return nil

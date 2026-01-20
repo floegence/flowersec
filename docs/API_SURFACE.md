@@ -32,6 +32,7 @@ These packages are the recommended integration entrypoints:
 - `github.com/floegence/flowersec/flowersec-go/endpoint`
   - Role: `server`
   - APIs: `endpoint.ConnectTunnel(...)`, `endpoint.NewDirectHandler(...)`, `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandlerResolved(...)`, `endpoint.AcceptDirectWSResolved(...)` (direct server building blocks; most apps should use `endpoint/serve`)
+  - Types: `endpoint.Suite` (`SuiteX25519HKDFAES256GCM`, `SuiteP256HKDFAES256GCM`), `endpoint.UpgraderOptions`, `endpoint.HandshakeCache`
 - `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
   - Role: server runtime
   - APIs: `serve.New(...)`, `srv.Handle(...)`, `srv.HandleStream(...)`, `srv.ServeSession(...)`, `serve.ServeTunnel(...)`, `serve.NewDirectHandler(...)`, `serve.NewDirectHandlerResolved(...)`
@@ -47,6 +48,16 @@ Controlplane helpers (supported for integration and used by the helper CLIs):
 - `github.com/floegence/flowersec/flowersec-go/controlplane/issuer`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/token`
+
+## Go: stable protocol types (generated)
+
+The stable APIs above use generated protocol types. These packages are safe to depend on:
+
+- `github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1`
+- `github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1`
+- `github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1`
+- `github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1`
+- `github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1`
 
 ## Go: building blocks (not a stable surface)
 

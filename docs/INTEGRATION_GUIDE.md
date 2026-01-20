@@ -178,7 +178,6 @@ import (
   "net/http"
   "time"
 
-  "github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
   "github.com/floegence/flowersec/flowersec-go/endpoint"
   "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
   "github.com/floegence/flowersec/flowersec-go/rpc"
@@ -204,7 +203,7 @@ func main() {
     Handshake: endpoint.AcceptDirectOptions{
       ChannelID:         channelID,
       PSK:               psk,
-      Suite:             e2ee.SuiteX25519HKDFAES256GCM,
+      Suite:             endpoint.SuiteX25519HKDFAES256GCM,
       InitExpireAtUnixS: initExp,
       ClockSkew:         30 * time.Second,
     },
