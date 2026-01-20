@@ -59,6 +59,12 @@ func TestRun_HelpMarksRequiredFlags(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d (stderr=%q)", code, stderr.String())
 	}
 	help := stderr.String()
+	if !strings.Contains(help, "Examples:") {
+		t.Fatalf("expected help to include Examples, help=%q", help)
+	}
+	if !strings.Contains(help, "Exit codes:") {
+		t.Fatalf("expected help to include exit codes, help=%q", help)
+	}
 	if !strings.Contains(help, "issuer keyset file (kid->ed25519 pubkey) (required)") {
 		t.Fatalf("expected issuer-keys-file to be marked required, help=%q", help)
 	}
@@ -154,7 +160,7 @@ func TestRun_MissingRequiredFlags_PrintsUsage(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected exit 2, got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "Usage of flowersec-tunnel") {
+	if !strings.Contains(stderr.String(), "Usage:") || !strings.Contains(stderr.String(), "flowersec-tunnel") {
 		t.Fatalf("expected usage in stderr, got %q", stderr.String())
 	}
 }

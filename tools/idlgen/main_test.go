@@ -23,6 +23,27 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
+func TestHelp_IncludesExamplesAndExitCodes(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	code := run([]string{"--help"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%q)", code, errOut.String())
+	}
+	help := errOut.String()
+	if !strings.Contains(help, "Examples:") {
+		t.Fatalf("expected help to include Examples, help=%q", help)
+	}
+	if !strings.Contains(help, "Exit codes:") {
+		t.Fatalf("expected help to include exit codes, help=%q", help)
+	}
+	if !strings.Contains(help, "Flags:") {
+		t.Fatalf("expected help to include Flags, help=%q", help)
+	}
+}
+
 func TestListFIDLFilesFromManifest(t *testing.T) {
 	t.Parallel()
 

@@ -80,6 +80,8 @@ The resulting `channel.json` contains both `grant_client` and `grant_server` and
 `protocolio.DecodeGrantClientJSON` / `protocolio.DecodeGrantServerJSON` and by the TS connect helpers
 (they accept the wrapper object).
 
+Tip: every tool supports `--help` which includes copy/paste examples and documents stdout/stderr behavior and exit codes.
+
 **TypeScript (ESM, browser-friendly)**
 
 The release assets include an npm tarball so you can install without cloning:

@@ -77,6 +77,31 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&goOut, "go-out", "", "output directory for Go")
 	fs.StringVar(&tsOut, "ts-out", "", "output directory for TypeScript")
 	fs.StringVar(&manifestPath, "manifest", "", "optional manifest file listing .fidl.json paths (relative to -in)")
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintln(out, "Usage:")
+		fmt.Fprintln(out, "  idlgen -in <dir> (-go-out <dir> | -ts-out <dir> | both) [flags]")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Examples:")
+		fmt.Fprintln(out, "  # Generate Go + TS stubs for stable protocol IDLs.")
+		fmt.Fprintln(out, "  idlgen \\")
+		fmt.Fprintln(out, "    -in ./idl \\")
+		fmt.Fprintln(out, "    -manifest ./idl/manifest.core.txt \\")
+		fmt.Fprintln(out, "    -go-out ./flowersec-go/gen \\")
+		fmt.Fprintln(out, "    -ts-out ./flowersec-ts/src/gen")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Output:")
+		fmt.Fprintln(out, "  writes files under -go-out and/or -ts-out")
+		fmt.Fprintln(out, "  stderr: errors")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Exit codes:")
+		fmt.Fprintln(out, "  0: success")
+		fmt.Fprintln(out, "  2: usage error (bad flags/missing required)")
+		fmt.Fprintln(out, "  1: runtime error")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Flags:")
+		fs.PrintDefaults()
+	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0

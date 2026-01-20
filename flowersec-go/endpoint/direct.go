@@ -401,15 +401,6 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 	}, nil
 }
 
-// MustDirectHandler panics if NewDirectHandler fails.
-func MustDirectHandler(opts DirectHandlerOptions) http.HandlerFunc {
-	h, err := NewDirectHandler(opts)
-	if err != nil {
-		panic(err)
-	}
-	return h
-}
-
 type DirectHandlerResolvedOptions struct {
 	AllowedOrigins []string
 	AllowNoOrigin  bool
@@ -517,15 +508,6 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 			}(kind, stream)
 		}
 	}, nil
-}
-
-// MustDirectHandlerResolved panics if NewDirectHandlerResolved fails.
-func MustDirectHandlerResolved(opts DirectHandlerResolvedOptions) http.HandlerFunc {
-	h, err := NewDirectHandlerResolved(opts)
-	if err != nil {
-		panic(err)
-	}
-	return h
 }
 
 func safeResolve(ctx context.Context, resolve func(context.Context, DirectHandshakeInit) (DirectHandshakeSecrets, error), init DirectHandshakeInit) (out DirectHandshakeSecrets, err error) {

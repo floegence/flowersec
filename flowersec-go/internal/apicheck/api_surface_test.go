@@ -15,6 +15,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
 // Compile-time checks for the intended stable Go API surface. If an entrypoint is renamed or
@@ -47,7 +48,14 @@ var (
 
 	// protocolio
 	_ = protocolio.DecodeGrantClientJSON
+	_ = protocolio.DecodeGrantServerJSON
+	_ = protocolio.DecodeGrantJSON
 	_ = protocolio.DecodeDirectConnectInfoJSON
+
+	// rpc
+	_ = rpc.NewRouter
+	_ = rpc.NewServer
+	_ = rpc.NewClient
 
 	// fserrors
 	_ fserrors.Path
@@ -132,7 +140,13 @@ func TestAPISurfaceDoc_CoversStableGoEntrypoints(t *testing.T) {
 		"serve.NewDirectHandlerResolved(...)",
 
 		"protocolio.DecodeGrantClientJSON(...)",
+		"protocolio.DecodeGrantServerJSON(...)",
+		"protocolio.DecodeGrantJSON(...)",
 		"protocolio.DecodeDirectConnectInfoJSON(...)",
+
+		"rpc.NewRouter(...)",
+		"rpc.NewServer(...)",
+		"rpc.NewClient(...)",
 	}
 	for _, v := range wantEntrypoints {
 		if !bytes.Contains(doc, []byte("`"+v+"`")) {

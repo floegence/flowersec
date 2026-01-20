@@ -52,6 +52,30 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&pubFile, "issuer-keys-file", pubFile, "output file for tunnel issuer keyset (public keys) (default: <out-dir>/issuer_keys.json) (env: FSEC_ISSUER_KEYS_FILE or FSEC_TUNNEL_ISSUER_KEYS_FILE)")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing files")
 	fs.BoolVar(&pretty, "pretty", false, "pretty-print JSON output")
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintln(out, "Usage:")
+		fmt.Fprintln(out, "  flowersec-issuer-keygen [flags]")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Examples:")
+		fmt.Fprintln(out, "  # Generate issuer_key.json (private) and issuer_keys.json (public keyset for the tunnel).")
+		fmt.Fprintln(out, "  flowersec-issuer-keygen --out-dir ./keys --kid k1 --pretty")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Output:")
+		fmt.Fprintln(out, "  stdout: ready JSON (paths to written files)")
+		fmt.Fprintln(out, "  stderr: errors")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Exit codes:")
+		fmt.Fprintln(out, "  0: success")
+		fmt.Fprintln(out, "  2: usage error (bad flags/missing required)")
+		fmt.Fprintln(out, "  1: runtime error")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Env defaults:")
+		fmt.Fprintln(out, "  FSEC_ISSUER_* and FSEC_TUNNEL_ISSUER_KEYS_FILE (flags override env)")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Flags:")
+		fs.PrintDefaults()
+	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0

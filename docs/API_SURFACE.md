@@ -39,6 +39,7 @@ These packages are the recommended integration entrypoints:
   - APIs: `serve.New(...)`, `srv.Handle(...)`, `srv.HandleStream(...)`, `srv.ServeSession(...)`, `serve.ServeTunnel(...)`, `serve.NewDirectHandler(...)`, `serve.NewDirectHandlerResolved(...)`
 - `github.com/floegence/flowersec/flowersec-go/rpc`
   - Role: stable RPC client/server/router APIs (used by `Client.RPC()` and `endpoint/serve`)
+  - APIs: `rpc.NewRouter(...)`, `rpc.NewServer(...)`, `rpc.NewClient(...)`
 - `github.com/floegence/flowersec/flowersec-go/protocolio`
   - Role: JSON decoding helpers for `ChannelInitGrant` and `DirectConnectInfo`
   - APIs: `protocolio.DecodeGrantClientJSON(...)`, `protocolio.DecodeGrantServerJSON(...)`, `protocolio.DecodeGrantJSON(...)`, `protocolio.DecodeDirectConnectInfoJSON(...)`

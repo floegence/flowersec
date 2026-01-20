@@ -64,6 +64,30 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&outFile, "out", outFile, "output file (default: stdout) (env: FSEC_DIRECT_OUT)")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing --out file")
 	fs.BoolVar(&pretty, "pretty", false, "pretty-print JSON output")
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintln(out, "Usage:")
+		fmt.Fprintln(out, "  flowersec-directinit --ws-url <ws://...> [flags]")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Examples:")
+		fmt.Fprintln(out, "  # Generate a DirectConnectInfo JSON object (includes a PSK; keep it secret).")
+		fmt.Fprintln(out, "  flowersec-directinit --ws-url ws://127.0.0.1:8080/ws --pretty > direct.json")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Output:")
+		fmt.Fprintln(out, "  stdout: DirectConnectInfo JSON (when --out is not set)")
+		fmt.Fprintln(out, "  stderr: errors")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Exit codes:")
+		fmt.Fprintln(out, "  0: success")
+		fmt.Fprintln(out, "  2: usage error (bad flags/missing required)")
+		fmt.Fprintln(out, "  1: runtime error")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Env defaults:")
+		fmt.Fprintln(out, "  FSEC_DIRECT_* (flags override env)")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Flags:")
+		fs.PrintDefaults()
+	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0

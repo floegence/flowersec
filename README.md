@@ -30,6 +30,15 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 - Protocol contracts: `docs/PROTOCOL.md`.
 - Error model: `docs/ERROR_MODEL.md`.
 
+## CLI conventions
+
+All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-issuer-keygen`, `flowersec-channelinit`, `flowersec-directinit`, `idlgen`) follow these conventions:
+
+- `--help` includes copy/paste examples and the output contract.
+- Exit codes: `0` success, `2` usage/flag error, `1` runtime error.
+- For JSON-producing tools, stdout is machine-readable JSON; stderr is logs/errors.
+- Many flags support `FSEC_*` environment variable defaults (flags override env).
+
 ## Install (no clone)
 
 This section is for users who want to install Flowersec tools without cloning this repository.

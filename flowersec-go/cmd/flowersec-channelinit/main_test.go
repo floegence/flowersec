@@ -216,3 +216,21 @@ func TestRun_RandomChannelIDFailure_Exits1(t *testing.T) {
 		t.Fatalf("expected stderr to contain random channel id error, got %q", stderr.String())
 	}
 }
+
+func TestHelp_IncludesExamplesAndExitCodes(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--help"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%q)", code, stderr.String())
+	}
+	help := stderr.String()
+	if !strings.Contains(help, "Examples:") {
+		t.Fatalf("expected help to include Examples, help=%q", help)
+	}
+	if !strings.Contains(help, "Exit codes:") {
+		t.Fatalf("expected help to include exit codes, help=%q", help)
+	}
+	if !strings.Contains(help, "Flags:") {
+		t.Fatalf("expected help to include Flags, help=%q", help)
+	}
+}
