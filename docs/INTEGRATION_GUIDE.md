@@ -220,6 +220,15 @@ func main() {
 
 Your application must distribute the matching `DirectConnectInfo` (ws_url, channel_id, psk, init_exp, suite) to clients out-of-band (often as JSON).
 
+Local/dev shortcut: generate a one-off `DirectConnectInfo` JSON object with the helper CLI:
+
+```bash
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-directinit@latest
+flowersec-directinit --ws-url ws://127.0.0.1:8080/ws --pretty > direct.json
+```
+
+Note: the output contains the PSK; treat it as a secret.
+
 ### Go: multi-channel direct server (recommended)
 
 The minimal example above hard-codes `channel_id` and `psk`. In real apps, direct servers usually need to support many channels.

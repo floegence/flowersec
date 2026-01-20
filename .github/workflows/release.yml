@@ -117,6 +117,12 @@ jobs:
                 -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
                 -o "../$dir/bin/flowersec-channelinit${ext}" ./cmd/flowersec-channelinit \
             )
+            ( cd flowersec-go && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-directinit${ext}" ./cmd/flowersec-directinit \
+            )
 
             cp LICENSE "$dir/"
 
@@ -178,6 +184,12 @@ jobs:
               go build -trimpath \
                 -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
                 -o "../$dir/bin/flowersec-channelinit${ext}" ./cmd/flowersec-channelinit \
+            )
+            ( cd flowersec-go && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-directinit${ext}" ./cmd/flowersec-directinit \
             )
 
             # Demo assets (TS dist + scripts + docs).

@@ -1,6 +1,19 @@
 {
   "namespace": "flowersec.direct.v1",
-  "enums": {},
+  "enums": {
+    "Suite": {
+      "comment": "E2EE cipher suite identifier.",
+      "type": "u16",
+      "values": {
+        "X25519_HKDF_SHA256_AES_256_GCM": 1,
+        "P256_HKDF_SHA256_AES_256_GCM": 2
+      },
+      "value_comments": {
+        "X25519_HKDF_SHA256_AES_256_GCM": "X25519 + HKDF-SHA256 + AES-256-GCM.",
+        "P256_HKDF_SHA256_AES_256_GCM": "P-256 + HKDF-SHA256 + AES-256-GCM."
+      }
+    }
+  },
   "messages": {
     "DirectConnectInfo": {
       "comment": "Connection info for direct (no tunnel) WebSocket + E2EE sessions.",
@@ -9,7 +22,7 @@
         { "name": "channel_id", "type": "string", "comment": "Channel identifier." },
         { "name": "e2ee_psk_b64u", "type": "string", "comment": "Base64url-encoded 32-byte PSK." },
         { "name": "channel_init_expire_at_unix_s", "type": "i64", "comment": "Unix timestamp when the handshake init window expires." },
-        { "name": "default_suite", "type": "u32", "comment": "Default E2EE suite identifier." }
+        { "name": "default_suite", "type": "Suite", "comment": "Default E2EE suite identifier." }
       ]
     }
   }

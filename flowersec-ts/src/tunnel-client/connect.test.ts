@@ -143,6 +143,14 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "tunnel" });
   });
 
+  test("rejects invalid suite", async () => {
+    const bad: any = makeGrant();
+    bad.default_suite = 999;
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "tunnel" });
+  });
+
   test("rejects invalid psk length", async () => {
     const bad = makeGrant();
     bad.e2ee_psk_b64u = base64urlEncode(new Uint8Array(31).fill(1));

@@ -116,7 +116,7 @@ func TestDirectHandler_AllowsConnectDirect(t *testing.T) {
 		ChannelId:                channelID,
 		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
 		ChannelInitExpireAtUnixS: initExp,
-		DefaultSuite:             uint32(endpoint.SuiteX25519HKDFAES256GCM),
+		DefaultSuite:             directv1.Suite(endpoint.SuiteX25519HKDFAES256GCM),
 	}
 	c, err := client.ConnectDirect(
 		context.Background(),
@@ -182,7 +182,7 @@ func TestDirectHandler_OnError_HandlerPanic(t *testing.T) {
 		ChannelId:                channelID,
 		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
 		ChannelInitExpireAtUnixS: initExp,
-		DefaultSuite:             uint32(endpoint.SuiteX25519HKDFAES256GCM),
+		DefaultSuite:             directv1.Suite(endpoint.SuiteX25519HKDFAES256GCM),
 	}
 	c, err := client.ConnectDirect(
 		context.Background(),
@@ -253,7 +253,7 @@ func TestDirectHandlerResolved_AllowsConnectDirect(t *testing.T) {
 		ChannelId:                channelID,
 		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
 		ChannelInitExpireAtUnixS: initExp,
-		DefaultSuite:             uint32(endpoint.SuiteX25519HKDFAES256GCM),
+		DefaultSuite:             directv1.Suite(endpoint.SuiteX25519HKDFAES256GCM),
 	}
 	c, err := client.ConnectDirect(
 		context.Background(),
@@ -321,7 +321,7 @@ func TestDirectHandlerResolved_OnError_HandlerPanic(t *testing.T) {
 		ChannelId:                channelID,
 		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
 		ChannelInitExpireAtUnixS: initExp,
-		DefaultSuite:             uint32(endpoint.SuiteX25519HKDFAES256GCM),
+		DefaultSuite:             directv1.Suite(endpoint.SuiteX25519HKDFAES256GCM),
 	}
 	c, err := client.ConnectDirect(
 		context.Background(),
@@ -392,7 +392,7 @@ func TestDirectHandlerResolved_OnError_ResolveFailed(t *testing.T) {
 		ChannelId:                channelID,
 		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
 		ChannelInitExpireAtUnixS: initExp,
-		DefaultSuite:             uint32(endpoint.SuiteX25519HKDFAES256GCM),
+		DefaultSuite:             directv1.Suite(endpoint.SuiteX25519HKDFAES256GCM),
 	}
 	_, _ = client.ConnectDirect(
 		context.Background(),

@@ -69,21 +69,23 @@ docker run --rm \
 
 Full deployment notes: `docs/TUNNEL_DEPLOYMENT.md`.
 
-### Controlplane helper tools (optional, local/dev)
+### Helper tools (optional, local/dev)
 
-These tools help you generate an issuer keypair and mint `ChannelInitGrant` pairs without writing a controlplane:
+These tools help you generate an issuer keypair, mint `ChannelInitGrant` pairs, and generate `DirectConnectInfo` JSON for direct (no tunnel) demos:
 
 **Option A: `go install`**
 
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit@latest
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-directinit@latest
 ```
 
 - `flowersec-issuer-keygen` writes `issuer_key.json` (private key; keep it secret) and `issuer_keys.json` (public keyset for the tunnel).
 - `flowersec-channelinit` outputs a JSON object containing `grant_client`/`grant_server` (plus version metadata) to stdout (redirect to a file if needed).
+- `flowersec-directinit` outputs a `DirectConnectInfo` JSON object (includes PSK; keep it secret) to stdout (redirect to a file if needed).
 
-Flags override env. For scripting, both tools support env defaults:
+Flags override env. For scripting, all tools support env defaults:
 
 ```bash
 # Generate issuer keys (private + public keyset for the tunnel).
@@ -99,6 +101,10 @@ flowersec-channelinit > channel.json
 
 # Tip: use --pretty for human-readable JSON.
 # flowersec-channelinit --pretty > channel.json
+
+# Generate a DirectConnectInfo JSON object for a direct server.
+export FSEC_DIRECT_WS_URL=ws://127.0.0.1:8080/ws
+flowersec-directinit > direct.json
 ```
 
 **Option B: GitHub Releases (no Go)**
@@ -109,6 +115,7 @@ The tools bundle includes:
 
 - `bin/flowersec-issuer-keygen`
 - `bin/flowersec-channelinit`
+- `bin/flowersec-directinit`
 
 Note: the `flowersec-demos` bundle also includes these binaries under `bin/` for convenience.
 
@@ -159,7 +166,7 @@ It includes:
 - One-time tokens: tunnel attach tokens are single-use; mint a fresh channel init for each attempt.
 - Untrusted tunnel: the tunnel cannot decrypt or interpret application data after attach.
 - Single-instance tunnel: token replay protection is in-memory. To scale without shared state, shard channels across multiple tunnel endpoints at the control plane layer (set different `tunnel_url` values per channel).
-- Idle timeout: the tunnel closes channels that are idle beyond `idle_timeout_seconds` (enforced from the signed token claim). High-level connect helpers send encrypted keepalive pings by default.
+- Idle timeout: the tunnel closes channels that are idle beyond `idle_timeout_seconds` (enforced from the signed token claim). High-level connect helpers enable encrypted keepalive pings by default for tunnel connects (direct connects are opt-in).
 - Handshake init_exp: `channel_init_expire_at` (init_exp) must be a non-zero Unix timestamp.
 - Handshake confirmation: after `E2EE_Ack`, the server sends an encrypted ping record (`FSEC`, `flags=ping`, `seq=1`). Clients wait for this server-finished proof before returning.
 
@@ -261,5 +268,5 @@ Library integrations:
 
 - Tunnel server (deployable): `flowersec-go/cmd/flowersec-tunnel/`
   - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`, `--iss`, `--allow-origin`, `--allow-no-origin`, `--tls-cert-file`, `--tls-key-file`, `--metrics-listen`, `--max-conns`, `--max-channels`, `--max-total-pending-bytes`, `--write-timeout`, `--max-write-queue-bytes` (see `--help` for full details)
-- Controlplane helpers (local/dev): `flowersec-go/cmd/flowersec-issuer-keygen/`, `flowersec-go/cmd/flowersec-channelinit/`
+- Helper tools (local/dev): `flowersec-go/cmd/flowersec-issuer-keygen/`, `flowersec-go/cmd/flowersec-channelinit/`, `flowersec-go/cmd/flowersec-directinit/`
 - Internal tooling (not a supported public CLI surface): `flowersec-go/internal/cmd/*` (interop harnesses, load generator)

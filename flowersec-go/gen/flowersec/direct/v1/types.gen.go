@@ -4,6 +4,16 @@ package v1
 
 import "encoding/json"
 
+// E2EE cipher suite identifier.
+type Suite uint16
+
+const (
+	// P-256 + HKDF-SHA256 + AES-256-GCM.
+	Suite_P256_HKDF_SHA256_AES_256_GCM Suite = 2
+	// X25519 + HKDF-SHA256 + AES-256-GCM.
+	Suite_X25519_HKDF_SHA256_AES_256_GCM Suite = 1
+)
+
 // Connection info for direct (no tunnel) WebSocket + E2EE sessions.
 type DirectConnectInfo struct {
 	// WebSocket URL of the direct server.
@@ -15,7 +25,7 @@ type DirectConnectInfo struct {
 	// Unix timestamp when the handshake init window expires.
 	ChannelInitExpireAtUnixS int64 `json:"channel_init_expire_at_unix_s"`
 	// Default E2EE suite identifier.
-	DefaultSuite uint32 `json:"default_suite"`
+	DefaultSuite Suite `json:"default_suite"`
 }
 
 type JSON = json.RawMessage

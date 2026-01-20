@@ -77,7 +77,7 @@ func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 		ChannelId:                channelID,
 		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
 		ChannelInitExpireAtUnixS: initExp,
-		DefaultSuite:             uint32(endpoint.SuiteX25519HKDFAES256GCM),
+		DefaultSuite:             directv1.Suite(endpoint.SuiteX25519HKDFAES256GCM),
 	}
 
 	dialer := &websocket.Dialer{

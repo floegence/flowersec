@@ -14,6 +14,10 @@ export type TunnelConnectOptions = ConnectOptionsBase &
     endpointInstanceId?: string;
   }>;
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v != null && !Array.isArray(v);
+}
+
 function unwrapGrant(v: unknown): unknown {
   if (v == null || typeof v !== "object") return v;
   const o = v as Record<string, unknown>;
@@ -27,6 +31,21 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
   const input = unwrapGrant(grant);
   if (input == null) {
     throw new FlowersecError({ stage: "validate", code: "missing_grant", path: "tunnel", message: "missing grant" });
+  }
+  if (isRecord(input)) {
+    const suite = input["default_suite"];
+    // Keep "invalid_suite" as the stable error code even when the IDL validator rejects the enum value.
+    if (typeof suite === "number" && Number.isSafeInteger(suite) && suite !== 1 && suite !== 2) {
+      throw new FlowersecError({ stage: "validate", code: "invalid_suite", path: "tunnel", message: "invalid suite" });
+    }
+    const allowed = input["allowed_suites"];
+    if (Array.isArray(allowed)) {
+      for (const v of allowed) {
+        if (typeof v === "number" && Number.isSafeInteger(v) && v !== 1 && v !== 2) {
+          throw new FlowersecError({ stage: "validate", code: "invalid_suite", path: "tunnel", message: "invalid suite" });
+        }
+      }
+    }
   }
   let checkedGrant: ChannelInitGrant;
   try {

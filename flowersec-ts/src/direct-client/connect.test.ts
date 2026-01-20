@@ -130,6 +130,14 @@ describe("connectDirect", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "direct" });
   });
 
+  test("rejects invalid suite", async () => {
+    const bad: any = makeInfo();
+    bad.default_suite = 999;
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "direct" });
+  });
+
   test("rejects invalid psk length", async () => {
     const bad = makeInfo();
     bad.e2ee_psk_b64u = base64urlEncode(new Uint8Array(31).fill(1));

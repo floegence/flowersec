@@ -65,7 +65,7 @@ func TestNewDirectHandler_AllowsConnectDirect(t *testing.T) {
 		ChannelId:                channelID,
 		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
 		ChannelInitExpireAtUnixS: initExp,
-		DefaultSuite:             uint32(endpoint.SuiteX25519HKDFAES256GCM),
+		DefaultSuite:             directv1.Suite(endpoint.SuiteX25519HKDFAES256GCM),
 	}
 
 	c, err := client.ConnectDirect(
@@ -128,7 +128,7 @@ func TestNewDirectHandlerResolved_AllowsConnectDirect(t *testing.T) {
 		ChannelId:                channelID,
 		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
 		ChannelInitExpireAtUnixS: initExp,
-		DefaultSuite:             uint32(endpoint.SuiteX25519HKDFAES256GCM),
+		DefaultSuite:             directv1.Suite(endpoint.SuiteX25519HKDFAES256GCM),
 	}
 
 	c, err := client.ConnectDirect(

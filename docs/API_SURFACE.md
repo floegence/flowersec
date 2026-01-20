@@ -16,6 +16,7 @@ Supported binaries (user-facing):
 - `flowersec-tunnel` (deployable tunnel server)
 - `flowersec-issuer-keygen` (helper: generate issuer keypair and tunnel public keyset)
 - `flowersec-channelinit` (helper: mint a `ChannelInitGrant` pair)
+- `flowersec-directinit` (helper: generate a `DirectConnectInfo` JSON object for direct (no tunnel) demos)
 - `idlgen` (code generator for `*.fidl.json` IDL; install via `go install github.com/floegence/flowersec/tools/idlgen@latest`)
 
 Internal tooling (not supported as a public CLI surface):
@@ -40,6 +41,7 @@ These packages are the recommended integration entrypoints:
   - Role: stable RPC client/server/router APIs (used by `Client.RPC()` and `endpoint/serve`)
 - `github.com/floegence/flowersec/flowersec-go/protocolio`
   - Role: JSON decoding helpers for `ChannelInitGrant` and `DirectConnectInfo`
+  - APIs: `protocolio.DecodeGrantClientJSON(...)`, `protocolio.DecodeGrantServerJSON(...)`, `protocolio.DecodeGrantJSON(...)`, `protocolio.DecodeDirectConnectInfoJSON(...)`
 - `github.com/floegence/flowersec/flowersec-go/fserrors`
   - Role: stable error codes (`Path`, `Stage`, `Code`)
 

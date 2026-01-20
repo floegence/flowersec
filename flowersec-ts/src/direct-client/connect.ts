@@ -5,6 +5,10 @@ import { FlowersecError } from "../utils/errors.js";
 import { connectCore, type ConnectOptionsBase } from "../client-connect/connectCore.js";
 import type { ClientInternal } from "../client.js";
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v != null && !Array.isArray(v);
+}
+
 // DirectConnectOptions controls transport and handshake limits.
 export type DirectConnectOptions = ConnectOptionsBase;
 
@@ -21,6 +25,13 @@ export async function connectDirect(info: unknown, opts: DirectConnectOptions): 
   }
   if (info == null) {
     throw new FlowersecError({ stage: "validate", code: "missing_connect_info", path: "direct", message: "missing connect info" });
+  }
+  if (isRecord(info)) {
+    const suite = info["default_suite"];
+    // Keep "invalid_suite" as the stable error code even when the IDL validator rejects the enum value.
+    if (typeof suite === "number" && Number.isSafeInteger(suite) && suite !== 1 && suite !== 2) {
+      throw new FlowersecError({ stage: "validate", code: "invalid_suite", path: "direct", message: "invalid suite" });
+    }
   }
   let ready: DirectConnectInfo;
   try {
