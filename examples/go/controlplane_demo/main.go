@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/floegence/flowersec-examples/go/exampleutil"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
@@ -118,7 +119,10 @@ func main() {
 	}
 
 	// Server endpoints keep a persistent direct Flowersec connection to the controlplane to receive grant_server.
-	controlChannelID := randomB64u(24)
+	controlChannelID, err := exampleutil.RandomB64u(24, nil)
+	if err != nil {
+		log.Fatalf("generate random control channel id: %v", err)
+	}
 	controlPSK := make([]byte, 32)
 	if _, err := rand.Read(controlPSK); err != nil {
 		log.Fatal(err)
@@ -348,7 +352,13 @@ func channelInitHandler(ci *channelinit.Service, endpoints *serverEndpointRegist
 
 		chID := req.ChannelID
 		if chID == "" {
-			chID = randomB64u(24)
+			id, err := exampleutil.RandomB64u(24, nil)
+			if err != nil {
+				log.Printf("generate random channel id: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			chID = id
 		}
 		// Mint a client grant (role=client) and a server grant (role=server) for the same channel.
 		grantC, grantS, err := ci.NewChannelInit(chID)
@@ -386,14 +396,6 @@ func writeTunnelKeysetFile(ks *issuer.Keyset, out string) error {
 		return err
 	}
 	return os.WriteFile(out, b, 0o644)
-}
-
-func randomB64u(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func tunnelListenAndPath(tunnelURL string) (listen string, wsPath string) {

@@ -61,7 +61,11 @@ func main() {
 	// Generate a fresh channel id + PSK for each server run by default.
 	// Clients must use the exact same channel_id and PSK during the handshake.
 	if channelID == "" {
-		channelID = randomB64u(24)
+		id, err := exampleutil.RandomB64u(24, nil)
+		if err != nil {
+			log.Fatalf("generate random channel id: %v", err)
+		}
+		channelID = id
 	}
 	psk := make([]byte, 32)
 	if _, err := rand.Read(psk); err != nil {
@@ -162,12 +166,4 @@ func (h demoHandler) Ping(ctx context.Context, _req *demov1.PingRequest) (*demov
 	_ = ctx
 	_ = demov1.NotifyDemoHello(h.srv, &demov1.HelloNotify{Hello: "world"})
 	return &demov1.PingResponse{Ok: true}, nil
-}
-
-func randomB64u(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return exampleutil.Encode(b)
 }

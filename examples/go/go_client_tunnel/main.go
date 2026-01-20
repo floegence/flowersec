@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -74,6 +73,11 @@ func main() {
 	}
 	defer c.Close()
 
+	endpointInstanceID, err := exampleutil.RandomB64u(24, nil)
+	if err != nil {
+		log.Fatalf("generate endpoint instance id: %v", err)
+	}
+
 	// Tunnel attach: plaintext JSON message used only for pairing/auth.
 	// After attach, application data is protected by E2EE and opaque to the tunnel.
 	attach := tunnelv1.Attach{
@@ -81,7 +85,7 @@ func main() {
 		ChannelId:          grant.ChannelId,
 		Role:               tunnelv1.Role_client,
 		Token:              grant.Token,
-		EndpointInstanceId: randomB64u(24),
+		EndpointInstanceId: endpointInstanceID,
 	}
 	attachJSON, _ := json.Marshal(attach)
 	if err := c.WriteMessage(websocket.TextMessage, attachJSON); err != nil {
@@ -172,12 +176,4 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("echo response: %q\n", string(buf))
-}
-
-func randomB64u(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return exampleutil.Encode(b)
 }

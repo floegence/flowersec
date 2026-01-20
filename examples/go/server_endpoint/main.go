@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,11 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"crypto/rand"
-	"encoding/base64"
-	"errors"
-
 	demov1 "github.com/floegence/flowersec-examples/gen/flowersec/demo/v1"
+	"github.com/floegence/flowersec-examples/go/exampleutil"
 	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
@@ -71,7 +69,11 @@ func main() {
 		log.Fatal(err)
 	}
 	if endpointID == "" {
-		endpointID = randomB64u(24)
+		id, err := exampleutil.RandomB64u(24, nil)
+		if err != nil {
+			log.Fatalf("generate random endpoint id: %v", err)
+		}
+		endpointID = id
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -213,14 +215,6 @@ func registerWithControlplane(ctx context.Context, c *rpc.Client, endpointID str
 		return errors.New("register not ok")
 	}
 	return nil
-}
-
-func randomB64u(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func derefString(p *string) string {
