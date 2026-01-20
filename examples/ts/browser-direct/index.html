@@ -17,8 +17,10 @@
     <p>Paste JSON from <code>examples/go/direct_demo</code>.</p>
     <textarea id="in" spellcheck="false"></textarea>
     <div style="margin: 12px 0">
+      <button id="fetch" disabled>Fetch DirectConnectInfo</button>
       <button id="connect">Connect</button>
       <button id="close" disabled>Close</button>
+      <span id="status" style="margin-left: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;"></span>
     </div>
     <pre id="out"></pre>
 
@@ -33,13 +35,30 @@
       //   this page's origin (e.g. http://127.0.0.1:5173).
       const $in = document.getElementById("in");
       const $out = document.getElementById("out");
+      const $fetch = document.getElementById("fetch");
       const $connect = document.getElementById("connect");
       const $close = document.getElementById("close");
+      const $status = document.getElementById("status");
 
       let sess = null;
 
       function logLine(s) {
         $out.textContent += s + "\n";
+      }
+
+      function setStatus(s) {
+        $status.textContent = s;
+      }
+
+      async function detectDevServer() {
+        try {
+          const resp = await fetch("/__demo/status");
+          if (!resp.ok) return;
+          $fetch.disabled = false;
+          setStatus("dev server detected");
+        } catch {
+          // ignore
+        }
       }
 
       function waitHello(demo, timeoutMs) {
@@ -57,13 +76,31 @@
         });
       }
 
+      $fetch.addEventListener("click", async () => {
+        $out.textContent = "";
+        setStatus("fetching info...");
+        try {
+          const resp = await fetch("/__demo/direct/info");
+          const text = await resp.text();
+          if (!resp.ok) throw new Error(`fetch failed (${resp.status}): ${text}`);
+          const obj = JSON.parse(text);
+          $in.value = JSON.stringify(obj, null, 2);
+          setStatus("info loaded");
+        } catch (e) {
+          setStatus("fetch failed");
+          logLine(String(e?.stack ?? e));
+        }
+      });
+
       $connect.addEventListener("click", async () => {
         $out.textContent = "";
+        setStatus("connecting...");
         try {
           const info = JSON.parse($in.value);
           // High-level helper: it performs E2EE handshake + yamux + RPC.
           sess = createDemoSession(await connectDirectBrowser(info));
           $close.disabled = false;
+          setStatus("connected");
 
           const notified = waitHello(sess.demo, 2000);
           const resp = await sess.demo.ping({});
@@ -86,6 +123,7 @@
           logLine("echo response: " + JSON.stringify(new TextDecoder().decode(got)));
           await echo.close();
         } catch (e) {
+          setStatus("error");
           logLine(String(e?.stack ?? e));
         }
       });
@@ -94,8 +132,11 @@
         sess?.close();
         sess = null;
         $close.disabled = true;
+        setStatus("closed");
         logLine("closed");
       });
+
+      detectDevServer();
     </script>
   </body>
 </html>

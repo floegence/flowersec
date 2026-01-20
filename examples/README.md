@@ -49,6 +49,27 @@ After extracting, you should have:
 - Origin policy (required): the tunnel validates the WebSocket `Origin` header and requires an explicit allow-list.
   - Allowed entries support full Origins (`http://127.0.0.1:5173`), hostname (`example.com`), hostname:port (`example.com:5173`), wildcard hostnames (`*.example.com`), and exact non-standard values (`null`).
 
+## One-command dev server (recommended for browser demos)
+
+If you have Node.js installed, the easiest way to run the full demo stack (no copy/paste, no extra terminals) is:
+
+```bash
+node ./examples/ts/dev-server.mjs | tee dev.json
+```
+
+- stdout: a single JSON `{"status":"ready", ...}` line (script-friendly)
+- stderr: progress logs from the dev server and the spawned Go demos
+
+Then open the URLs from `dev.json`:
+
+- Tunnel demo: `browser_tunnel_url`
+- Direct demo: `browser_direct_url`
+
+Notes:
+
+- The browser demos can now click "Fetch Grant" / "Fetch DirectConnectInfo" (served from the dev server under `/__demo/*`).
+- Stop everything with Ctrl+C (the dev server shuts down child processes).
+
 ## Quickstart: direct path (no tunnel)
 
 Terminal 1: start the direct demo server (prints a JSON "ready" line):
@@ -90,7 +111,7 @@ FSEC_TUNNEL_WS_PATH="$(jq -r '.tunnel_ws_path' "$CP_JSON")" \
 ./bin/flowersec-tunnel | tee tunnel.json
 ```
 
-Terminal 3: start the server endpoint demo (role=server; control-connected):
+Terminal 3: start the server endpoint demo (role=server; control-connected). It prints a JSON "ready" line to stdout and logs to stderr:
 
 ```bash
 FSEC_ORIGIN=http://127.0.0.1:5173 ./bin/flowersec-server-endpoint-demo --control "$CP_JSON"
@@ -115,7 +136,9 @@ Expected: one RPC response + one RPC notify + one `echo` stream roundtrip.
 
 ## Browser demos
 
-Reuse the running servers from the scenarios above, then serve the demo bundle root:
+Option A (recommended): use the dev server above (`node ./examples/ts/dev-server.mjs`).
+
+Option B (manual): reuse the running servers from the scenarios above, then serve the demo bundle root:
 
 ```bash
 python3 -m http.server 5173

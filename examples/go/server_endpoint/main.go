@@ -40,6 +40,11 @@ type serverEndpointRegisterResponse struct {
 	OK bool `json:"ok"`
 }
 
+type ready struct {
+	Status     string `json:"status"`
+	EndpointID string `json:"endpoint_id"`
+}
+
 // server_endpoint maintains a persistent direct Flowersec connection to the controlplane and receives grant_server
 // over RPC notify. For each received grant_server, it attaches to the tunnel as role=server and serves:
 // - RPC on the "rpc" stream (demo type_id=1 request, type_id=2 notify)
@@ -98,6 +103,8 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("registered with controlplane (endpoint_id=%s)", endpointID)
+	// Print a JSON "ready" line for scripts to consume (for example examples/ts/dev-server.mjs).
+	_ = json.NewEncoder(os.Stdout).Encode(ready{Status: "ready", EndpointID: endpointID})
 
 	grants := make(chan *controlv1.ChannelInitGrant, 16)
 	unsub := cp.RPC().OnNotify(controlRPCTypeGrantServer, func(payload json.RawMessage) {

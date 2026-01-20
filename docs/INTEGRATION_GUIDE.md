@@ -5,6 +5,7 @@ It focuses on the most ergonomic and stable entrypoints across Go and TypeScript
 
 See also:
 
+- Frontend quickstart (TypeScript): `docs/FRONTEND_QUICKSTART.md`
 - Stable API surface: `docs/API_SURFACE.md`
 - Error contract: `docs/ERROR_MODEL.md`
 - Threat model / security boundaries: `docs/THREAT_MODEL.md`
