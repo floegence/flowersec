@@ -14,7 +14,7 @@ export const tunnelAttachCloseReasons = [
 
 export type TunnelAttachCloseReason = (typeof tunnelAttachCloseReasons)[number];
 
-export function isTunnelAttachCloseReason(v: string): v is TunnelAttachCloseReason {
+export function isTunnelAttachCloseReason(v: string | undefined): v is TunnelAttachCloseReason {
+  if (v == null) return false;
   return (tunnelAttachCloseReasons as readonly string[]).includes(v);
 }
-
