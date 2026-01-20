@@ -31,7 +31,7 @@ type DirectHandlerOptions struct {
 // using srv.HandleStream.
 func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 	if opts.Server == nil {
-		return nil, errors.New("missing server")
+		return nil, errors.New("missing server (set DirectHandlerOptions.Server)")
 	}
 	onErr := opts.OnError
 	if onErr == nil {
@@ -65,7 +65,7 @@ type DirectHandlerResolvedOptions struct {
 // using srv.HandleStream.
 func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFunc, error) {
 	if opts.Server == nil {
-		return nil, errors.New("missing server")
+		return nil, errors.New("missing server (set DirectHandlerResolvedOptions.Server)")
 	}
 	onErr := opts.OnError
 	if onErr == nil {

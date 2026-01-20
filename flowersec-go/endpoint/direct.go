@@ -19,6 +19,7 @@ import (
 	hyamux "github.com/hashicorp/yamux"
 )
 
+// AcceptDirectOptions configures AcceptDirectWS for direct (no-tunnel) server endpoints.
 type AcceptDirectOptions struct {
 	ChannelID string
 	PSK       []byte
@@ -309,7 +310,7 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 	hasCustomOriginCheck := checkOrigin != nil
 	if checkOrigin == nil {
 		if len(opts.AllowedOrigins) == 0 && !opts.AllowNoOrigin {
-			return nil, errors.New("missing allowed origins")
+			return nil, errors.New("missing AllowedOrigins (set AllowedOrigins, set AllowNoOrigin, or set Upgrader.CheckOrigin)")
 		}
 		checkOrigin = ws.NewOriginChecker(opts.AllowedOrigins, opts.AllowNoOrigin)
 	}
@@ -424,7 +425,7 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 	hasCustomOriginCheck := checkOrigin != nil
 	if checkOrigin == nil {
 		if len(opts.AllowedOrigins) == 0 && !opts.AllowNoOrigin {
-			return nil, errors.New("missing allowed origins")
+			return nil, errors.New("missing AllowedOrigins (set AllowedOrigins, set AllowNoOrigin, or set Upgrader.CheckOrigin)")
 		}
 		checkOrigin = ws.NewOriginChecker(opts.AllowedOrigins, opts.AllowNoOrigin)
 	}

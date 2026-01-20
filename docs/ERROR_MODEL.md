@@ -41,18 +41,21 @@ try {
 
 The following `code` values are intended to be stable across Go and TypeScript:
 
-Validation:
+Validation / configuration:
 
 - `invalid_input`
 - `invalid_option`
-- `missing_grant`, `missing_connect_info`
+- `missing_grant`, `missing_connect_info`, `missing_conn`
+- `role_mismatch`
 - `missing_tunnel_url`, `missing_ws_url`
 - `missing_origin`, `missing_channel_id`, `missing_token`, `missing_init_exp`
 - `invalid_psk`, `invalid_suite`, `invalid_version`, `invalid_endpoint_instance_id`
+- `resolve_failed` (direct server: resolver failed)
+- `random_failed` (e.g. endpoint_instance_id generation failed)
 
-Connect / attach:
+Connect / attach / upgrade:
 
-- `dial_failed`, `attach_failed`
+- `dial_failed`, `attach_failed`, `upgrade_failed`
 - `timeout`, `canceled`
 
 Handshake:
@@ -80,4 +83,3 @@ For logs and metrics, prefer aggregating by:
 - `path + stage + code`
 
 This yields stable dashboards and alerts across both languages and across future internal refactors.
-

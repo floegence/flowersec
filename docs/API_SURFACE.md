@@ -16,6 +16,7 @@ Supported binaries (user-facing):
 - `flowersec-tunnel` (deployable tunnel server)
 - `flowersec-issuer-keygen` (helper: generate issuer keypair and tunnel public keyset)
 - `flowersec-channelinit` (helper: mint a `ChannelInitGrant` pair)
+- `idlgen` (code generator for `*.fidl.json` IDL; install via `go install github.com/floegence/flowersec/tools/idlgen@latest`)
 
 Internal tooling (not supported as a public CLI surface):
 

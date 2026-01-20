@@ -17,7 +17,7 @@ import (
 // Supported input types:
 //   - *controlv1.ChannelInitGrant (tunnel grant, role=client)
 //   - *directv1.DirectConnectInfo (direct connect info)
-//   - io.Reader / []byte / string containing JSON (wrapper {"grant_client":{...}} or DirectConnectInfo)
+//   - io.Reader / []byte / string containing JSON (wrapper {"grant_client":{...}} / {"grant_server":{...}} or raw ChannelInitGrant / DirectConnectInfo)
 func Connect(ctx context.Context, input any, opts ...ConnectOption) (Client, error) {
 	switch v := input.(type) {
 	case *controlv1.ChannelInitGrant:

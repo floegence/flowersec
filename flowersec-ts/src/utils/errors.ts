@@ -56,15 +56,17 @@ export type FlowersecErrorCode =
 export class FlowersecError extends Error {
   readonly code: FlowersecErrorCode;
   readonly stage: FlowersecStage;
-  readonly path?: FlowersecPath;
+  readonly path: FlowersecPath;
   override readonly cause?: unknown;
 
-  constructor(args: Readonly<{ code: FlowersecErrorCode; stage: FlowersecStage; message?: string; path?: FlowersecPath; cause?: unknown }>) {
-    super(args.message ?? `${args.stage} failed`, args.cause !== undefined ? { cause: args.cause } : undefined);
+  constructor(args: Readonly<{ code: FlowersecErrorCode; stage: FlowersecStage; path: FlowersecPath; message?: string; cause?: unknown }>) {
+    const prefix = `${args.path} ${args.stage} (${args.code})`;
+    const message = args.message != null && args.message !== "" ? `${prefix}: ${args.message}` : prefix;
+    super(message, args.cause !== undefined ? { cause: args.cause } : undefined);
     this.name = "FlowersecError";
     this.code = args.code;
     this.stage = args.stage;
-    if (args.path !== undefined) this.path = args.path;
+    this.path = args.path;
     if (args.cause !== undefined) this.cause = args.cause;
   }
 }
