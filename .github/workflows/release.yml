@@ -181,11 +181,15 @@ jobs:
             )
             ( cd examples && \
               CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -o "../$dir/bin/flowersec-go-client-tunnel${ext}" ./go/go_client_tunnel_simple \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-go-client-tunnel${ext}" ./go/go_client_tunnel_simple \
             )
             ( cd examples && \
               CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -o "../$dir/bin/flowersec-go-client-direct${ext}" ./go/go_client_direct_simple \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-go-client-direct${ext}" ./go/go_client_direct_simple \
             )
             ( cd flowersec-go && \
               CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
