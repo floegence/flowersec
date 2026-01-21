@@ -87,11 +87,11 @@ Tip: every tool supports `--help` which includes copy/paste examples and documen
 
 The release assets include an npm tarball so you can install without cloning:
 
-- Download `flowersec-core-X.Y.Z.tgz` from the GitHub Release `flowersec-go/vX.Y.Z`
+- Download `floegence-flowersec-core-X.Y.Z.tgz` from the GitHub Release `flowersec-go/vX.Y.Z`
 - Install it:
 
 ```bash
-npm i ./flowersec-core-X.Y.Z.tgz
+npm i ./floegence-flowersec-core-X.Y.Z.tgz
 ```
 
 For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMENT.md`.
