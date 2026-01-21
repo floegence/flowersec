@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
   release:
@@ -37,6 +38,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          registry-url: "https://registry.npmjs.org"
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
@@ -60,7 +62,7 @@ jobs:
           ( cd flowersec-ts && \
             npm version --no-git-tag-version "${VERSION}" && \
             npm pack --silent && \
-            mv "flowersec-core-${VERSION}.tgz" "../dist/" \
+            mv "floegence-flowersec-core-${VERSION}.tgz" "../dist/" \
           )
 
           build_one() {
@@ -258,3 +260,19 @@ jobs:
             VERSION=v${{ steps.vars.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ steps.vars.outputs.date }}
+
+      - name: Publish npm package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.vars.outputs.version }}"
+          PKG="@floegence/flowersec-core"
+
+          # Make reruns safe: if the version is already published, do nothing.
+          if npm view "${PKG}@${VERSION}" version >/dev/null 2>&1; then
+            echo "${PKG}@${VERSION} already published; skipping"
+            exit 0
+          fi
+
+          ( cd flowersec-ts && npm publish --access public --provenance )

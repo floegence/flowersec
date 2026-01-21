@@ -1,10 +1,28 @@
 {
   "name": "@floegence/flowersec-core",
   "version": "0.0.0",
-  "private": true,
+  "description": "Flowersec core TypeScript library (browser-friendly E2EE + multiplexing over WebSocket).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/floegence/flowersec.git"
+  },
+  "bugs": {
+    "url": "https://github.com/floegence/flowersec/issues"
+  },
+  "homepage": "https://github.com/floegence/flowersec#readme",
   "type": "module",
   "main": "./dist/facade.js",
   "types": "./dist/facade.d.ts",
+  "files": [
+    "dist/**",
+    "README.md",
+    "LICENSE",
+    "YAMUX_ALIGNMENT.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/facade.d.ts",
