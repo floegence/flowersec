@@ -151,21 +151,21 @@ go get github.com/floegence/flowersec/flowersec-go@v0.1.0
 
 Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.1.0`).
 
-- TypeScript install (no clone): download `flowersec-core-X.Y.Z.tgz` from the same GitHub Release and install with `npm i ./flowersec-core-X.Y.Z.tgz`.
+- TypeScript install (no clone): download `floegence-flowersec-core-X.Y.Z.tgz` from the same GitHub Release and install with `npm i ./floegence-flowersec-core-X.Y.Z.tgz`.
 - Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.Connect(ctx, input, ...opts)`, `client.ConnectTunnel(ctx, grant, ...opts)`, `client.ConnectDirect(ctx, info, ...opts)`; set Origin via `client.WithOrigin(origin)`)
 - Go (server endpoint): `github.com/floegence/flowersec/flowersec-go/endpoint` (accept/dial `role=server` endpoints)
 - Go (server stream runtime): `github.com/floegence/flowersec/flowersec-go/endpoint/serve` (default stream dispatch + RPC stream handler)
 - Go (input JSON helpers): `github.com/floegence/flowersec/flowersec-go/protocolio` (`DecodeGrantClientJSON`, `DecodeDirectConnectInfoJSON`)
 - Go (RPC): `github.com/floegence/flowersec/flowersec-go/rpc` (router, server, client)
-- TS (stable): `@flowersec/core` (`connect`, `connectTunnel`, `connectDirect`)
-- TS (Node): `@flowersec/core/node` (`connectNode`, `connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
-- TS (browser): `@flowersec/core/browser` (`connectBrowser`, `connectTunnelBrowser`, `connectDirectBrowser`)
-- TS (building blocks): `@flowersec/core/rpc`, `@flowersec/core/yamux`, `@flowersec/core/e2ee`, `@flowersec/core/ws`, `@flowersec/core/observability`, `@flowersec/core/streamhello`
-- TS (generated protocol stubs): `@flowersec/core/gen/flowersec/{controlplane,direct,e2ee,rpc,tunnel}/*`
-- TS (unstable): `@flowersec/core/internal` (internal glue; not recommended as a stable dependency)
+- TS (stable): `@floegence/flowersec-core` (`connect`, `connectTunnel`, `connectDirect`)
+- TS (Node): `@floegence/flowersec-core/node` (`connectNode`, `connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
+- TS (browser): `@floegence/flowersec-core/browser` (`connectBrowser`, `connectTunnelBrowser`, `connectDirectBrowser`)
+- TS (building blocks): `@floegence/flowersec-core/rpc`, `@floegence/flowersec-core/yamux`, `@floegence/flowersec-core/e2ee`, `@floegence/flowersec-core/ws`, `@floegence/flowersec-core/observability`, `@floegence/flowersec-core/streamhello`
+- TS (generated protocol stubs): `@floegence/flowersec-core/gen/flowersec/{controlplane,direct,e2ee,rpc,tunnel}/*`
+- TS (unstable): `@floegence/flowersec-core/internal` (internal glue; not recommended as a stable dependency)
 
 Note: the `demo` IDL used by the cookbook/examples is intentionally NOT part of the public API surface.
-The generated demo stubs live under `examples/gen/` (Go examples module) and `flowersec-ts/src/_examples/` (TS repo-only), and are not exported via `@flowersec/core`.
+The generated demo stubs live under `examples/gen/` (Go examples module) and `flowersec-ts/src/_examples/` (TS repo-only), and are not exported via `@floegence/flowersec-core`.
 
 It includes:
 
@@ -228,8 +228,8 @@ The deployable tunnel binary is `flowersec-go/cmd/flowersec-tunnel/`.
   - Requests without `Origin` are **rejected by default**; `--allow-no-origin` is intended for non-browser clients (discouraged).
   - Client helpers:
     - Go: set an explicit Origin value via `client.WithOrigin(origin)` (for example `client.ConnectTunnel(ctx, grant, client.WithOrigin(origin))`).
-    - TS browser: use `connectTunnelBrowser` / `connectDirectBrowser` from `@flowersec/core/browser` (uses `window.location.origin`).
-    - TS Node: use `connectTunnelNode` / `connectDirectNode` from `@flowersec/core/node` (auto-injects a `wsFactory` that sets the `Origin` header), or pass `wsFactory` manually.
+    - TS browser: use `connectTunnelBrowser` / `connectDirectBrowser` from `@floegence/flowersec-core/browser` (uses `window.location.origin`).
+    - TS Node: use `connectTunnelNode` / `connectDirectNode` from `@floegence/flowersec-core/node` (auto-injects a `wsFactory` that sets the `Origin` header), or pass `wsFactory` manually.
 - Token issuer (`iss`) is **required**: pass `--iss` and ensure it matches the token payload `iss` minted by your controlplane.
 
 Node.js version:

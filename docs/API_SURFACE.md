@@ -73,23 +73,23 @@ If you rely on these directly, expect breaking changes without deprecation cycle
 
 Stable entrypoints:
 
-- `@flowersec/core`:
+- `@floegence/flowersec-core`:
   - `connect(...)`, `connectTunnel(...)`, `connectDirect(...)`
   - `Client`, `FlowersecError`, protocol types and asserts
-- `@flowersec/core/node`:
+- `@floegence/flowersec-core/node`:
   - `connectNode(...)`, `connectTunnelNode(...)`, `connectDirectNode(...)`, `createNodeWsFactory()`
-- `@flowersec/core/browser`:
+- `@floegence/flowersec-core/browser`:
   - `connectBrowser(...)`, `connectTunnelBrowser(...)`, `connectDirectBrowser(...)`
 
 Stable building blocks (advanced, but supported):
 
-- `@flowersec/core/rpc` (RPC framing and client/server)
-- `@flowersec/core/yamux` (yamux framing and session)
-- `@flowersec/core/e2ee` (record layer and handshake helpers)
-- `@flowersec/core/ws` (WebSocket binary transport)
-- `@flowersec/core/observability` (observer types)
-- `@flowersec/core/streamhello` (stream hello helpers)
+- `@floegence/flowersec-core/rpc` (RPC framing and client/server)
+- `@floegence/flowersec-core/yamux` (yamux framing and session)
+- `@floegence/flowersec-core/e2ee` (record layer and handshake helpers)
+- `@floegence/flowersec-core/ws` (WebSocket binary transport)
+- `@floegence/flowersec-core/observability` (observer types)
+- `@floegence/flowersec-core/streamhello` (stream hello helpers)
 
 Unstable entrypoint:
 
-- `@flowersec/core/internal` (internal glue; not recommended as a stable dependency)
+- `@floegence/flowersec-core/internal` (internal glue; not recommended as a stable dependency)

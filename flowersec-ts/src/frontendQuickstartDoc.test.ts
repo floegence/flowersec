@@ -12,13 +12,12 @@ describe("docs/FRONTEND_QUICKSTART.md", () => {
     expect(doc).toContain("node ./examples/ts/dev-server.mjs");
 
     // Stable TypeScript entrypoints.
-    expect(doc).toContain('from "@flowersec/core/browser"');
+    expect(doc).toContain('from "@floegence/flowersec-core/browser"');
     expect(doc).toContain("connectBrowser");
-    expect(doc).toContain('from "@flowersec/core/node"');
+    expect(doc).toContain('from "@floegence/flowersec-core/node"');
     expect(doc).toContain("connectNode");
 
     // Stable error code contract example (one-time tokens).
     expect(doc).toContain("token_replay");
   });
 });
-

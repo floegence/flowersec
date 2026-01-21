@@ -27,15 +27,15 @@ Notes:
 ## Install
 
 ```bash
-npm install @flowersec/core
+npm install @floegence/flowersec-core
 ```
 
 ## Browser: connect (recommended)
 
-In browsers, use `@flowersec/core/browser` so the Origin header matches `window.location.origin`.
+In browsers, use `@floegence/flowersec-core/browser` so the Origin header matches `window.location.origin`.
 
 ```ts
-import { connectBrowser } from "@flowersec/core/browser";
+import { connectBrowser } from "@floegence/flowersec-core/browser";
 
 // Your backend should mint and return a ChannelInitGrant (or the full {"grant_client": ...} wrapper).
 const grant = await fetch("/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
@@ -47,10 +47,10 @@ client.close();
 
 ## Node.js: connect (recommended)
 
-In Node.js, use `@flowersec/core/node` so the Origin header is set correctly.
+In Node.js, use `@floegence/flowersec-core/node` so the Origin header is set correctly.
 
 ```ts
-import { connectNode } from "@flowersec/core/node";
+import { connectNode } from "@floegence/flowersec-core/node";
 
 const grant = JSON.parse(process.env.FLOWERSEC_GRANT_JSON ?? "{}");
 
@@ -74,4 +74,3 @@ client.close();
 - API surface contract: `docs/API_SURFACE.md`
 - Error model: `docs/ERROR_MODEL.md`
 - Demos cookbook: `examples/README.md`
-

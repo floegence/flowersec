@@ -113,9 +113,9 @@ For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMEN
 
 **TypeScript**
 
-- Stable: `@flowersec/core` → `connect(...)`, `connectTunnel(...)`, `connectDirect(...)`
-- Node: `@flowersec/core/node` → `connectNode(...)`, `connectTunnelNode(...)`, `connectDirectNode(...)`
-- Browser: `@flowersec/core/browser` → `connectBrowser(...)`, `connectTunnelBrowser(...)`, `connectDirectBrowser(...)`
+- Stable: `@floegence/flowersec-core` → `connect(...)`, `connectTunnel(...)`, `connectDirect(...)`
+- Node: `@floegence/flowersec-core/node` → `connectNode(...)`, `connectTunnelNode(...)`, `connectDirectNode(...)`
+- Browser: `@floegence/flowersec-core/browser` → `connectBrowser(...)`, `connectTunnelBrowser(...)`, `connectDirectBrowser(...)`
 
 Note: the TypeScript package currently provides **role=client** connect helpers only. Server endpoints (role=server) are implemented in Go (`flowersec-go/endpoint`).
 
@@ -383,7 +383,7 @@ func main() {
 ### Node.js
 
 ```ts
-import { connectTunnelNode } from "@flowersec/core/node";
+import { connectTunnelNode } from "@floegence/flowersec-core/node";
 
 const origin = process.env.FSEC_ORIGIN!; // explicit Origin value
 const input = JSON.parse(await readStdin());
@@ -395,7 +395,7 @@ const client = await connectTunnelNode(input, { origin });
 Auto-detect variant (tunnel vs direct):
 
 ```ts
-import { connectNode } from "@flowersec/core/node";
+import { connectNode } from "@floegence/flowersec-core/node";
 
 const origin = process.env.FSEC_ORIGIN!;
 const input = JSON.parse(await readStdin()); // ChannelInitGrant wrapper OR DirectConnectInfo
@@ -405,7 +405,7 @@ const client = await connectNode(input, { origin });
 Direct variant:
 
 ```ts
-import { connectDirectNode } from "@flowersec/core/node";
+import { connectDirectNode } from "@floegence/flowersec-core/node";
 
 const origin = process.env.FSEC_ORIGIN!;
 const info = JSON.parse(await readStdin()); // DirectConnectInfo
@@ -415,7 +415,7 @@ const client = await connectDirectNode(info, { origin });
 ### Browser
 
 ```ts
-import { connectTunnelBrowser } from "@flowersec/core/browser";
+import { connectTunnelBrowser } from "@floegence/flowersec-core/browser";
 
 // Uses window.location.origin automatically.
 const input = JSON.parse(textarea.value);
@@ -425,7 +425,7 @@ const client = await connectTunnelBrowser(input);
 Auto-detect variant (tunnel vs direct):
 
 ```ts
-import { connectBrowser } from "@flowersec/core/browser";
+import { connectBrowser } from "@floegence/flowersec-core/browser";
 
 const input = JSON.parse(textarea.value); // ChannelInitGrant wrapper OR DirectConnectInfo
 const client = await connectBrowser(input);
@@ -434,7 +434,7 @@ const client = await connectBrowser(input);
 Direct variant:
 
 ```ts
-import { connectDirectBrowser } from "@flowersec/core/browser";
+import { connectDirectBrowser } from "@floegence/flowersec-core/browser";
 
 const info = JSON.parse(textarea.value); // DirectConnectInfo
 const client = await connectDirectBrowser(info);

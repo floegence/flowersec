@@ -20,7 +20,7 @@ export type Client = Readonly<{
 
 // ClientInternal exposes the underlying stack for advanced integrations.
 //
-// It is exported only from @flowersec/core/internal and may change without notice.
+// It is exported only from @floegence/flowersec-core/internal and may change without notice.
 export type ClientInternal = Client &
   Readonly<{
     secure: SecureChannel;

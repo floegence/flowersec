@@ -17,49 +17,49 @@ describe("package exports", () => {
     const script = `
       import assert from "node:assert/strict";
 
-      const core = await import("@flowersec/core");
+      const core = await import("@floegence/flowersec-core");
       assert.equal(typeof core.connect, "function");
       assert.equal(typeof core.connectTunnel, "function");
       assert.equal(typeof core.connectDirect, "function");
       assert.equal(typeof core.FlowersecError, "function");
 
-      const node = await import("@flowersec/core/node");
+      const node = await import("@floegence/flowersec-core/node");
       assert.equal(typeof node.connectNode, "function");
       assert.equal(typeof node.connectTunnelNode, "function");
       assert.equal(typeof node.connectDirectNode, "function");
       assert.equal(typeof node.createNodeWsFactory, "function");
 
-      const browser = await import("@flowersec/core/browser");
+      const browser = await import("@floegence/flowersec-core/browser");
       assert.equal(typeof browser.connectBrowser, "function");
       assert.equal(typeof browser.connectTunnelBrowser, "function");
       assert.equal(typeof browser.connectDirectBrowser, "function");
 
-      const rpc = await import("@flowersec/core/rpc");
+      const rpc = await import("@floegence/flowersec-core/rpc");
       assert.equal(typeof rpc.RpcClient, "function");
       assert.equal(typeof rpc.RpcServer, "function");
       assert.equal(typeof rpc.RpcCallError, "function");
       assert.equal(typeof rpc.callTyped, "function");
 
-      const yamux = await import("@flowersec/core/yamux");
+      const yamux = await import("@floegence/flowersec-core/yamux");
       assert.equal(typeof yamux.YamuxSession, "function");
       assert.equal(typeof yamux.ByteReader, "function");
 
-      const e2ee = await import("@flowersec/core/e2ee");
+      const e2ee = await import("@floegence/flowersec-core/e2ee");
       assert.equal(typeof e2ee.clientHandshake, "function");
       assert.equal(typeof e2ee.SecureChannel, "function");
 
-      const ws = await import("@flowersec/core/ws");
+      const ws = await import("@floegence/flowersec-core/ws");
       assert.equal(typeof ws.WebSocketBinaryTransport, "function");
 
-      const obs = await import("@flowersec/core/observability");
+      const obs = await import("@floegence/flowersec-core/observability");
       assert.equal(typeof obs.normalizeObserver, "function");
       assert.equal(typeof obs.nowSeconds, "function");
 
-      const sh = await import("@flowersec/core/streamhello");
+      const sh = await import("@floegence/flowersec-core/streamhello");
       assert.equal(typeof sh.readStreamHello, "function");
       assert.equal(typeof sh.writeStreamHello, "function");
 
-      const rpcGen = await import("@flowersec/core/gen/flowersec/rpc/v1.gen");
+      const rpcGen = await import("@floegence/flowersec-core/gen/flowersec/rpc/v1.gen");
       assert.equal(typeof rpcGen.assertRpcError, "function");
     `;
 
