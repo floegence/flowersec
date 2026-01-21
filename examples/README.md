@@ -49,6 +49,22 @@ After extracting, you should have:
 - Origin policy (required): the tunnel validates the WebSocket `Origin` header and requires an explicit allow-list.
   - Allowed entries support full Origins (`http://127.0.0.1:5173`), hostname (`example.com`), hostname:port (`example.com:5173`), wildcard hostnames (`*.example.com`), and exact non-standard values (`null`).
 
+## Demo CLI conventions
+
+The demo bundle includes three long-running demo binaries that print a single "ready" JSON line to stdout:
+
+- `flowersec-controlplane-demo`
+- `flowersec-direct-demo`
+- `flowersec-server-endpoint-demo`
+
+They follow these conventions:
+
+- `--help` includes copy/paste examples and documents stdout/stderr behavior and exit codes.
+- stdout: a single JSON ready object (script-friendly)
+- stderr: logs and errors
+- Exit codes: `0` success, `2` usage error, `1` runtime error
+- `--version` prints build info (in GitHub Release bundles it matches the bundle version)
+
 ## One-command dev server (recommended for browser demos)
 
 If you have Node.js installed, the easiest way to run the full demo stack (no copy/paste, no extra terminals) is:

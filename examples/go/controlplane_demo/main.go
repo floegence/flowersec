@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -74,36 +75,97 @@ const (
 )
 
 func main() {
-	var listen string
-	var tunnelURL string
-	var aud string
-	var issuerID string
-	var kid string
-	var issuerKeysFile string
-	flag.StringVar(&listen, "listen", "127.0.0.1:0", "listen address")
-	flag.StringVar(&tunnelURL, "tunnel-url", "ws://127.0.0.1:8080/ws", "tunnel websocket url (e.g. ws://127.0.0.1:8080/ws)")
-	flag.StringVar(&aud, "aud", "flowersec-tunnel:dev", "token audience (must match tunnel --aud)")
-	flag.StringVar(&issuerID, "issuer-id", "issuer-demo", "issuer id in token payload")
-	flag.StringVar(&kid, "kid", "k1", "issuer key id (kid)")
-	flag.StringVar(&issuerKeysFile, "issuer-keys-file", "", "output file for tunnel keyset (kid->ed25519 pubkey) (default: temp file)")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
 
-	if tunnelURL == "" {
-		log.Fatal("missing --tunnel-url")
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
+func run(args []string, stdout io.Writer, stderr io.Writer) int {
+	logger := log.New(stderr, "", log.LstdFlags)
+
+	listen := "127.0.0.1:0"
+	tunnelURL := "ws://127.0.0.1:8080/ws"
+	aud := "flowersec-tunnel:dev"
+	issuerID := "issuer-demo"
+	kid := "k1"
+	issuerKeysFile := ""
+	showVersion := false
+
+	fs := flag.NewFlagSet("flowersec-controlplane-demo", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.BoolVar(&showVersion, "version", false, "print version and exit")
+	fs.StringVar(&listen, "listen", listen, "listen address")
+	fs.StringVar(&tunnelURL, "tunnel-url", tunnelURL, "tunnel websocket url (e.g. ws://127.0.0.1:8080/ws)")
+	fs.StringVar(&aud, "aud", aud, "token audience (must match tunnel --aud)")
+	fs.StringVar(&issuerID, "issuer-id", issuerID, "issuer id in token payload")
+	fs.StringVar(&kid, "kid", kid, "issuer key id (kid)")
+	fs.StringVar(&issuerKeysFile, "issuer-keys-file", issuerKeysFile, "output file for tunnel keyset (kid->ed25519 pubkey) (default: temp file)")
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintln(out, "Usage:")
+		fmt.Fprintln(out, "  flowersec-controlplane-demo [flags]")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Examples:")
+		fmt.Fprintln(out, "  # Start a demo controlplane (prints a ready JSON line to stdout).")
+		fmt.Fprintln(out, "  flowersec-controlplane-demo --tunnel-url ws://127.0.0.1:8080/ws | tee controlplane.json")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Output:")
+		fmt.Fprintln(out, "  stdout: a single JSON ready object (urls + issuer_keys_file + control channel info)")
+		fmt.Fprintln(out, "  stderr: logs and errors")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Exit codes:")
+		fmt.Fprintln(out, "  0: success")
+		fmt.Fprintln(out, "  2: usage error (bad flags/missing required)")
+		fmt.Fprintln(out, "  1: runtime error")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Flags:")
+		fs.PrintDefaults()
 	}
-	issuerKeysFile, err := resolveIssuerKeysFile(issuerKeysFile)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if showVersion {
+		_, _ = fmt.Fprintln(stdout, exampleutil.VersionString(version, commit, date))
+		return 0
+	}
+
+	usageErr := func(msg string) int {
+		if msg != "" {
+			fmt.Fprintln(stderr, msg)
+		}
+		fs.Usage()
+		return 2
+	}
+
+	tunnelURL = strings.TrimSpace(tunnelURL)
+	if tunnelURL == "" {
+		return usageErr("missing --tunnel-url")
+	}
+
+	var err error
+	issuerKeysFile, err = resolveIssuerKeysFile(issuerKeysFile)
 	if err != nil {
-		log.Fatal(err)
+		logger.Print(err)
+		return 1
 	}
 
 	// Generate an issuer keyset for signing tunnel attach tokens (ed25519).
 	ks, err := issuer.NewRandom(kid)
 	if err != nil {
-		log.Fatal(err)
+		logger.Print(err)
+		return 1
 	}
 	// The tunnel server loads this keyset to validate tokens by kid.
 	if err := writeTunnelKeysetFile(ks, issuerKeysFile); err != nil {
-		log.Fatal(err)
+		logger.Print(err)
+		return 1
 	}
 
 	// Channel init service mints a pair of grants (role=client and role=server).
@@ -121,11 +183,13 @@ func main() {
 	// Server endpoints keep a persistent direct Flowersec connection to the controlplane to receive grant_server.
 	controlChannelID, err := exampleutil.RandomB64u(24, nil)
 	if err != nil {
-		log.Fatalf("generate random control channel id: %v", err)
+		logger.Printf("generate random control channel id: %v", err)
+		return 1
 	}
 	controlPSK := make([]byte, 32)
 	if _, err := rand.Read(controlPSK); err != nil {
-		log.Fatal(err)
+		logger.Print(err)
+		return 1
 	}
 	controlPSKB64u := base64.RawURLEncoding.EncodeToString(controlPSK)
 	// The init_exp check is enforced only during the handshake. Pick a long expiry for the persistent control channel.
@@ -169,29 +233,35 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
+		logger.Print(err)
+		return 1
 	}
 	mux.HandleFunc(serverEndpointControlWSPath, controlWSHandler)
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
-		log.Fatal(err)
+		logger.Print(err)
+		return 1
 	}
 	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+
+	serveErr := make(chan error, 1)
 	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
+		err := srv.Serve(ln)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
 		}
+		serveErr <- err
 	}()
 
 	// Print a JSON "ready" line for scripts to consume (URLs, issuer key file, tunnel hints).
 	httpURL := "http://" + ln.Addr().String()
 	controlWSURL := "ws://" + ln.Addr().String() + serverEndpointControlWSPath
 	tunnelListen, tunnelWSPath := tunnelListenAndPath(tunnelURL)
-	_ = json.NewEncoder(os.Stdout).Encode(ready{
+	if err := json.NewEncoder(stdout).Encode(ready{
 		ControlplaneHTTPURL: httpURL,
 		TunnelAudience:      aud,
 		TunnelIssuer:        issuerID,
@@ -206,14 +276,32 @@ func main() {
 			ChannelInitExpireAtUnixS: controlInitExp,
 			DefaultSuite:             1,
 		},
-	})
+	}); err != nil {
+		logger.Print(err)
+		return 1
+	}
 
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
+
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			logger.Print(err)
+			return 1
+		}
+		return 0
+	case <-sig:
+	}
+
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
 	_ = srv.Shutdown(ctx2)
 	cancel2()
+	if err := <-serveErr; err != nil {
+		logger.Print(err)
+		return 1
+	}
+	return 0
 }
 
 func resolveIssuerKeysFile(path string) (string, error) {

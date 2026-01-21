@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,6 +46,12 @@ type ready struct {
 	EndpointID string `json:"endpoint_id"`
 }
 
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 // server_endpoint maintains a persistent direct Flowersec connection to the controlplane and receives grant_server
 // over RPC notify. For each received grant_server, it attaches to the tunnel as role=server and serves:
 // - RPC on the "rpc" stream (demo type_id=1 request, type_id=2 notify)
@@ -54,29 +61,84 @@ type ready struct {
 // - You must provide an explicit Origin header value (the tunnel enforces an allow-list).
 // - Tunnel attach tokens are one-time use; the controlplane mints a new grant for every new connection attempt.
 func main() {
-	var controlPath string
-	var origin string
-	var endpointID string
-	flag.StringVar(&controlPath, "control", "", "path to JSON output from controlplane_demo (default: stdin)")
-	flag.StringVar(&origin, "origin", "", "explicit Origin header value (or env: FSEC_ORIGIN)")
-	flag.StringVar(&endpointID, "endpoint-id", "", "logical endpoint id for controlplane registration (default: random)")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
 
+func run(args []string, stdout io.Writer, stderr io.Writer) int {
+	logger := log.New(stderr, "", log.LstdFlags)
+
+	controlPath := ""
+	origin := ""
+	endpointID := ""
+	showVersion := false
+
+	fs := flag.NewFlagSet("flowersec-server-endpoint-demo", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.BoolVar(&showVersion, "version", false, "print version and exit")
+	fs.StringVar(&controlPath, "control", controlPath, "path to JSON output from flowersec-controlplane-demo (default: stdin)")
+	fs.StringVar(&origin, "origin", origin, "explicit Origin header value (or env: FSEC_ORIGIN)")
+	fs.StringVar(&endpointID, "endpoint-id", endpointID, "logical endpoint id for controlplane registration (default: random)")
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintln(out, "Usage:")
+		fmt.Fprintln(out, "  flowersec-server-endpoint-demo --origin <origin> [flags]")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Examples:")
+		fmt.Fprintln(out, "  # Start a server endpoint demo that receives grant_server via a control channel.")
+		fmt.Fprintln(out, "  FSEC_ORIGIN=http://127.0.0.1:5173 \\")
+		fmt.Fprintln(out, "    flowersec-server-endpoint-demo --control controlplane.json | tee server_endpoint.json")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Output:")
+		fmt.Fprintln(out, "  stdout: a single JSON ready object (status, endpoint_id)")
+		fmt.Fprintln(out, "  stderr: logs and errors")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Exit codes:")
+		fmt.Fprintln(out, "  0: success")
+		fmt.Fprintln(out, "  2: usage error (bad flags/missing required)")
+		fmt.Fprintln(out, "  1: runtime error")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Flags:")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if showVersion {
+		_, _ = fmt.Fprintln(stdout, exampleutil.VersionString(version, commit, date))
+		return 0
+	}
+
+	usageErr := func(msg string) int {
+		if msg != "" {
+			fmt.Fprintln(stderr, msg)
+		}
+		fs.Usage()
+		return 2
+	}
+
+	controlPath = strings.TrimSpace(controlPath)
+	origin = strings.TrimSpace(origin)
+	endpointID = strings.TrimSpace(endpointID)
 	if origin == "" {
-		origin = os.Getenv("FSEC_ORIGIN")
+		origin = strings.TrimSpace(os.Getenv("FSEC_ORIGIN"))
 	}
 	if origin == "" {
-		log.Fatal("missing --origin (or env: FSEC_ORIGIN)")
+		return usageErr("missing --origin (or env: FSEC_ORIGIN)")
 	}
 
 	info, err := readControlplaneControlInfo(controlPath)
 	if err != nil {
-		log.Fatal(err)
+		logger.Print(err)
+		return 1
 	}
 	if endpointID == "" {
 		id, err := exampleutil.RandomB64u(24, nil)
 		if err != nil {
-			log.Fatalf("generate random endpoint id: %v", err)
+			logger.Printf("generate random endpoint id: %v", err)
+			return 1
 		}
 		endpointID = id
 	}
@@ -93,34 +155,39 @@ func main() {
 		client.WithMaxRecordBytes(1<<20),
 	)
 	if err != nil {
-		log.Fatal(err)
+		logger.Print(err)
+		return 1
 	}
 	defer cp.Close()
 
 	regCtx, regCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer regCancel()
 	if err := registerWithControlplane(regCtx, cp.RPC(), endpointID); err != nil {
-		log.Fatal(err)
+		logger.Print(err)
+		return 1
 	}
-	log.Printf("registered with controlplane (endpoint_id=%s)", endpointID)
+	logger.Printf("registered with controlplane (endpoint_id=%s)", endpointID)
 	// Print a JSON "ready" line for scripts to consume (for example examples/ts/dev-server.mjs).
-	_ = json.NewEncoder(os.Stdout).Encode(ready{Status: "ready", EndpointID: endpointID})
+	if err := json.NewEncoder(stdout).Encode(ready{Status: "ready", EndpointID: endpointID}); err != nil {
+		logger.Print(err)
+		return 1
+	}
 
 	grants := make(chan *controlv1.ChannelInitGrant, 16)
 	unsub := cp.RPC().OnNotify(controlRPCTypeGrantServer, func(payload json.RawMessage) {
 		var g controlv1.ChannelInitGrant
 		if err := json.Unmarshal(payload, &g); err != nil {
-			log.Printf("invalid grant_server notify payload: %v", err)
+			logger.Printf("invalid grant_server notify payload: %v", err)
 			return
 		}
 		if g.Role != controlv1.Role_server {
-			log.Printf("unexpected grant role: %v", g.Role)
+			logger.Printf("unexpected grant role: %v", g.Role)
 			return
 		}
 		select {
 		case grants <- &g:
 		default:
-			log.Printf("dropping grant_server (queue full)")
+			logger.Printf("dropping grant_server (queue full)")
 		}
 	})
 	defer unsub()
@@ -140,14 +207,14 @@ func main() {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return 0
 		case grant := <-grants:
-			go serveTunnelSession(ctx, origin, streamSrv, grant)
+			go serveTunnelSession(ctx, origin, streamSrv, grant, logger)
 		}
 	}
 }
 
-func serveTunnelSession(ctx context.Context, origin string, streamSrv *endpointserve.Server, grant *controlv1.ChannelInitGrant) {
+func serveTunnelSession(ctx context.Context, origin string, streamSrv *endpointserve.Server, grant *controlv1.ChannelInitGrant, logger *log.Logger) {
 	sess, err := endpoint.ConnectTunnel(
 		ctx,
 		grant,
@@ -157,15 +224,15 @@ func serveTunnelSession(ctx context.Context, origin string, streamSrv *endpoints
 		endpoint.WithMaxRecordBytes(1<<20),
 	)
 	if err != nil {
-		log.Printf("tunnel connect failed (channel_id=%s): %v", grant.ChannelId, err)
+		logger.Printf("tunnel connect failed (channel_id=%s): %v", grant.ChannelId, err)
 		return
 	}
 	defer sess.Close()
-	log.Printf("tunnel session ready (channel_id=%s endpoint_instance_id=%s)", grant.ChannelId, sess.EndpointInstanceID())
+	logger.Printf("tunnel session ready (channel_id=%s endpoint_instance_id=%s)", grant.ChannelId, sess.EndpointInstanceID())
 
 	err = streamSrv.ServeSession(ctx, sess)
 	if err != nil && ctx.Err() == nil {
-		log.Printf("tunnel session ended (channel_id=%s): %v", grant.ChannelId, err)
+		logger.Printf("tunnel session ended (channel_id=%s): %v", grant.ChannelId, err)
 	}
 }
 
