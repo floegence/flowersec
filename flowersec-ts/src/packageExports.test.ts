@@ -22,6 +22,7 @@ describe("package exports", () => {
       assert.equal(typeof core.connectTunnel, "function");
       assert.equal(typeof core.connectDirect, "function");
       assert.equal(typeof core.FlowersecError, "function");
+      assert.equal("RpcCallError" in core, false);
 
       const node = await import("@floegence/flowersec-core/node");
       assert.equal(typeof node.connectNode, "function");

@@ -52,7 +52,7 @@ In Node.js, use `@floegence/flowersec-core/node` so the Origin header is set cor
 ```ts
 import { connectNode } from "@floegence/flowersec-core/node";
 
-const grant = JSON.parse(process.env.FLOWERSEC_GRANT_JSON ?? "{}");
+const grant = await fetch("https://your-app.example/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
 
 const client = await connectNode(grant, {
   origin: "https://your-app.example", // must be allowed by the tunnel/direct server Origin policy

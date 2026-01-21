@@ -69,10 +69,22 @@ func WithOrigin(origin string) ConnectOption {
 	}
 }
 
-// WithHeader adds extra HTTP headers for the WebSocket handshake.
+// WithHeader merges extra HTTP headers for the WebSocket handshake.
+//
+// Header keys set by later WithHeader calls override earlier ones.
 func WithHeader(h http.Header) ConnectOption {
 	return func(cfg *connectOptions) error {
-		cfg.header = h
+		if h == nil {
+			return nil
+		}
+		if cfg.header == nil {
+			cfg.header = make(http.Header, len(h))
+		}
+		for k, vv := range h {
+			cp := make([]string, len(vv))
+			copy(cp, vv)
+			cfg.header[http.CanonicalHeaderKey(k)] = cp
+		}
 		return nil
 	}
 }

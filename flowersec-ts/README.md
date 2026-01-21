@@ -28,7 +28,7 @@ Node.js (recommended):
 ```ts
 import { connectNode } from "@floegence/flowersec-core/node";
 
-const grant = JSON.parse(process.env.FLOWERSEC_GRANT_JSON ?? "{}");
+const grant = await fetch("https://your-app.example/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
 const client = await connectNode(grant, { origin: "https://your-app.example" });
 await client.ping();
 client.close();
@@ -40,4 +40,3 @@ client.close();
 - Integration guide: `docs/INTEGRATION_GUIDE.md`
 - API surface contract: `docs/API_SURFACE.md`
 - Error model: `docs/ERROR_MODEL.md`
-

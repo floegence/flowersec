@@ -117,3 +117,147 @@ func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 		t.Fatal("custom websocket dialer was not used")
 	}
 }
+
+func TestConnectDirect_OriginFallsBackToHeader(t *testing.T) {
+	t.Parallel()
+
+	origin := "http://example.com"
+	channelID := "ch_test"
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+	initExp := time.Now().Add(120 * time.Second).Unix()
+
+	var originOK atomic.Bool
+	checkOrigin := func(r *http.Request) bool {
+		if r.Header.Get("Origin") == origin {
+			originOK.Store(true)
+		}
+		return true
+	}
+
+	mux := http.NewServeMux()
+	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		Upgrader: endpoint.UpgraderOptions{CheckOrigin: checkOrigin},
+		Handshake: endpoint.AcceptDirectOptions{
+			ChannelID:           channelID,
+			PSK:                 psk,
+			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
+			InitExpireAtUnixS:   initExp,
+			ClockSkew:           30 * time.Second,
+			HandshakeTimeout:    2 * time.Second,
+			MaxHandshakePayload: 8 * 1024,
+			MaxRecordBytes:      1 << 20,
+		},
+		OnStream: func(_ context.Context, _kind string, stream io.ReadWriteCloser) {
+			_ = stream.Close()
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDirectHandler() failed: %v", err)
+	}
+	mux.HandleFunc("/ws", wsHandler)
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	info := &directv1.DirectConnectInfo{
+		WsUrl:                    wsURL,
+		ChannelId:                channelID,
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		ChannelInitExpireAtUnixS: initExp,
+		DefaultSuite:             directv1.Suite(endpoint.SuiteX25519HKDFAES256GCM),
+	}
+
+	c, err := client.ConnectDirect(
+		context.Background(),
+		info,
+		client.WithHeader(http.Header{"Origin": []string{origin}}),
+		client.WithConnectTimeout(2*time.Second),
+		client.WithHandshakeTimeout(2*time.Second),
+		client.WithMaxRecordBytes(1<<20),
+	)
+	if err != nil {
+		t.Fatalf("ConnectDirect() failed: %v", err)
+	}
+	_ = c.Close()
+
+	if !originOK.Load() {
+		t.Fatal("server did not observe Origin header")
+	}
+}
+
+func TestConnectDirect_WithOriginOverridesHeaderOrigin(t *testing.T) {
+	t.Parallel()
+
+	origin := "http://example.com"
+	otherOrigin := "http://other.example"
+	channelID := "ch_test"
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+	initExp := time.Now().Add(120 * time.Second).Unix()
+
+	var originOK atomic.Bool
+	checkOrigin := func(r *http.Request) bool {
+		if r.Header.Get("Origin") == origin {
+			originOK.Store(true)
+		}
+		return true
+	}
+
+	mux := http.NewServeMux()
+	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		Upgrader: endpoint.UpgraderOptions{CheckOrigin: checkOrigin},
+		Handshake: endpoint.AcceptDirectOptions{
+			ChannelID:           channelID,
+			PSK:                 psk,
+			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
+			InitExpireAtUnixS:   initExp,
+			ClockSkew:           30 * time.Second,
+			HandshakeTimeout:    2 * time.Second,
+			MaxHandshakePayload: 8 * 1024,
+			MaxRecordBytes:      1 << 20,
+		},
+		OnStream: func(_ context.Context, _kind string, stream io.ReadWriteCloser) {
+			_ = stream.Close()
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDirectHandler() failed: %v", err)
+	}
+	mux.HandleFunc("/ws", wsHandler)
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	info := &directv1.DirectConnectInfo{
+		WsUrl:                    wsURL,
+		ChannelId:                channelID,
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		ChannelInitExpireAtUnixS: initExp,
+		DefaultSuite:             directv1.Suite(endpoint.SuiteX25519HKDFAES256GCM),
+	}
+
+	c, err := client.ConnectDirect(
+		context.Background(),
+		info,
+		client.WithOrigin(origin),
+		client.WithHeader(http.Header{"Origin": []string{otherOrigin}}),
+		client.WithConnectTimeout(2*time.Second),
+		client.WithHandshakeTimeout(2*time.Second),
+		client.WithMaxRecordBytes(1<<20),
+	)
+	if err != nil {
+		t.Fatalf("ConnectDirect() failed: %v", err)
+	}
+	_ = c.Close()
+
+	if !originOK.Load() {
+		t.Fatal("server did not observe Origin header")
+	}
+}

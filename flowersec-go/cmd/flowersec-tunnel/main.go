@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
@@ -232,10 +231,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "  2: usage error (bad flags/missing required)")
 		fmt.Fprintln(out, "  1: runtime error")
 		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "Signals:")
-		fmt.Fprintln(out, "  SIGHUP: reload issuer keyset")
-		fmt.Fprintln(out, "  SIGUSR1: enable metrics (requires --metrics-listen)")
-		fmt.Fprintln(out, "  SIGUSR2: disable metrics")
+		printSignalHelp(out)
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Env defaults:")
 		fmt.Fprintln(out, "  FSEC_TUNNEL_* (flags override env)")
@@ -411,38 +407,20 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	// Handle reloads and shutdowns.
 	sig := make(chan os.Signal, 2)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
+	signal.Notify(sig, notifySignals()...)
+	defer signal.Stop(sig)
 
 	for {
-		switch <-sig {
-		case syscall.SIGHUP:
-			if err := s.ReloadKeys(); err != nil {
-				logger.Printf("reload keys failed: %v", err)
-			} else {
-				logger.Printf("reloaded issuer keyset")
-			}
-		case syscall.SIGUSR1:
-			if metrics == nil {
-				logger.Printf("metrics server disabled (missing --metrics-listen)")
-				continue
-			}
-			metrics.Enable()
-			logger.Printf("metrics enabled")
-		case syscall.SIGUSR2:
-			if metrics == nil {
-				continue
-			}
-			metrics.Disable()
-			logger.Printf("metrics disabled")
-		default:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = srv.Shutdown(ctx)
-			if metricsSrv != nil {
-				_ = metricsSrv.Shutdown(ctx)
-			}
-			cancel()
-			return 0
+		if handleSignal(<-sig, logger, func() error { return s.ReloadKeys() }, metrics) {
+			continue
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = srv.Shutdown(ctx)
+		if metricsSrv != nil {
+			_ = metricsSrv.Shutdown(ctx)
+		}
+		cancel()
+		return 0
 	}
 }
 

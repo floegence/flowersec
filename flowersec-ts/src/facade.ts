@@ -24,8 +24,6 @@ export type { TunnelConnectOptions } from "./tunnel-client/connect.js";
 
 export type { DirectConnectOptions } from "./direct-client/connect.js";
 
-export { RpcCallError } from "./rpc/callError.js";
-
 export type ConnectOptions = TunnelConnectOptions | DirectConnectOptions;
 
 export async function connectTunnel(grant: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client>;

@@ -11,6 +11,18 @@ import (
 func TestVersionFlag(t *testing.T) {
 	t.Parallel()
 
+	oldVersion := version
+	oldCommit := commit
+	oldDate := date
+	t.Cleanup(func() {
+		version = oldVersion
+		commit = oldCommit
+		date = oldDate
+	})
+	version = "v1.2.3"
+	commit = "deadbeef"
+	date = "2026-01-01T00:00:00Z"
+
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	code := run([]string{"--version"}, &out, &errOut)
@@ -18,7 +30,7 @@ func TestVersionFlag(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d (stderr=%q)", code, errOut.String())
 	}
 	s := out.String()
-	if !strings.Contains(s, "idlgen") {
+	if !strings.Contains(s, "v1.2.3") || !strings.Contains(s, "deadbeef") || !strings.Contains(s, "2026-01-01T00:00:00Z") {
 		t.Fatalf("unexpected version output: %q", s)
 	}
 }
