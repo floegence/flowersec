@@ -42,6 +42,12 @@ jobs:
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
+      - name: Ensure npm supports trusted publishing (OIDC)
+        run: |
+          set -euo pipefail
+          npm i -g npm@^11.5.1
+          npm --version
+
       - name: Build tunnel release artifacts
         run: |
           set -euo pipefail
@@ -262,8 +268,6 @@ jobs:
             DATE=${{ steps.vars.outputs.date }}
 
       - name: Publish npm package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           VERSION="${{ steps.vars.outputs.version }}"
@@ -275,4 +279,4 @@ jobs:
             exit 0
           fi
 
-          ( cd flowersec-ts && npm publish --access public --provenance )
+          ( cd flowersec-ts && npm publish --access public )
