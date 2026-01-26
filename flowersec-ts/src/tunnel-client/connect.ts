@@ -126,7 +126,10 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
 
 function defaultKeepaliveIntervalMs(idleTimeoutSeconds: number): number {
   if (!Number.isFinite(idleTimeoutSeconds) || idleTimeoutSeconds <= 0) return 0;
-  const idleMs = idleTimeoutSeconds * 1000;
-  const half = Math.floor(idleMs / 2);
-  return Math.max(500, half);
+  const idleMs = Math.floor(idleTimeoutSeconds * 1000);
+  if (idleMs <= 0) return 0;
+  let interval = Math.floor(idleMs / 2);
+  if (interval < 500) interval = 500;
+  if (interval >= idleMs) interval = Math.floor(idleMs / 2);
+  return interval;
 }

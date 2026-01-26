@@ -225,7 +225,16 @@ func main() {
 
   mux := http.NewServeMux()
   mux.HandleFunc("/ws", wsHandler)
-  log.Fatal(http.ListenAndServe(":8080", mux))
+  httpSrv := &http.Server{
+    Addr:              ":8080",
+    Handler:           mux,
+    ReadHeaderTimeout: 5 * time.Second,
+    ReadTimeout:       10 * time.Second,
+    WriteTimeout:      10 * time.Second,
+    IdleTimeout:       60 * time.Second,
+    MaxHeaderBytes:    32 << 10,
+  }
+  log.Fatal(httpSrv.ListenAndServe())
 }
 ```
 
@@ -292,7 +301,16 @@ func main() {
 
   mux := http.NewServeMux()
   mux.HandleFunc("/ws", wsHandler)
-  log.Fatal(http.ListenAndServe(":8080", mux))
+  httpSrv := &http.Server{
+    Addr:              ":8080",
+    Handler:           mux,
+    ReadHeaderTimeout: 5 * time.Second,
+    ReadTimeout:       10 * time.Second,
+    WriteTimeout:      10 * time.Second,
+    IdleTimeout:       60 * time.Second,
+    MaxHeaderBytes:    32 << 10,
+  }
+  log.Fatal(httpSrv.ListenAndServe())
 }
 ```
 
@@ -516,6 +534,7 @@ If you pass a tunnel-only option (for example `endpointInstanceId`) to a direct 
 Tunnel sessions are subject to an idle timeout (`idle_timeout_seconds`) enforced by the tunnel (from the signed token claim).
 
 High-level connect helpers enable encrypted keepalive pings by default for tunnel connects.
+The default interval is `idle_timeout_seconds / 2` (minimum 500ms) and is always strictly less than the idle timeout.
 You can override or disable it:
 
 - Go:

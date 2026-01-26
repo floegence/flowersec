@@ -68,6 +68,9 @@ func Sign(priv ed25519.PrivateKey, payload Payload) (string, error) {
 	if strings.TrimSpace(payload.Aud) == "" {
 		return "", fmt.Errorf("missing aud: %w", ErrInvalidFormat)
 	}
+	if strings.TrimSpace(payload.TokenID) == "" {
+		return "", fmt.Errorf("missing token_id: %w", ErrInvalidFormat)
+	}
 	if payload.IdleTimeoutSeconds <= 0 {
 		return "", fmt.Errorf("missing idle_timeout_seconds: %w", ErrInvalidIdleTimeout)
 	}
@@ -108,6 +111,9 @@ func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error
 	p, signed, sig, err := Parse(tokenStr)
 	if err != nil {
 		return Payload{}, err
+	}
+	if strings.TrimSpace(p.TokenID) == "" {
+		return Payload{}, fmt.Errorf("missing token_id: %w", ErrInvalidFormat)
 	}
 	if p.IdleTimeoutSeconds <= 0 {
 		return Payload{}, ErrInvalidIdleTimeout

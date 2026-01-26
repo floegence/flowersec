@@ -15,6 +15,7 @@ import (
 	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/internal/wsutil"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
@@ -94,6 +95,9 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 	if cache == nil {
 		cache = NewHandshakeCache()
 	}
+
+	// Guard against a single oversized websocket message causing an OOM before E2EE framing checks run.
+	c.SetReadLimit(wsutil.ReadLimit(opts.MaxHandshakePayload, opts.MaxRecordBytes))
 
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	secure, err := e2ee.ServerHandshake(handshakeCtx, bt, cache, e2ee.ServerHandshakeOptions{
@@ -211,6 +215,9 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 	if maxHello <= 0 {
 		maxHello = 8 * 1024
 	}
+
+	// Guard against a single oversized websocket message causing an OOM before E2EE framing checks run.
+	c.SetReadLimit(wsutil.ReadLimit(opts.MaxHandshakePayload, opts.MaxRecordBytes))
 
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	firstFrame, err := bt.ReadBinary(handshakeCtx)

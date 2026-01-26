@@ -81,6 +81,8 @@ type Server struct {
 	mu       sync.Mutex               // Guards channel state.
 	channels map[string]*channelState // Channel state by channel ID.
 
+	closed int32 // Set to 1 once Close is called.
+
 	connCount int64    // Current connection count.
 	connSet   sync.Map // key: *websocket.Conn, value: struct{}
 
@@ -213,9 +215,14 @@ func (s *Server) Register(mux *http.ServeMux) {
 	})
 }
 
-// Close stops background cleanup and prevents new work.
+// Close stops background cleanup, rejects new websocket upgrades, and closes any active
+// tunnel connections managed by this Server.
 func (s *Server) Close() {
-	s.stopOnce.Do(func() { close(s.stopCh) })
+	s.stopOnce.Do(func() {
+		atomic.StoreInt32(&s.closed, 1)
+		close(s.stopCh)
+		s.closeAll()
+	})
 }
 
 var ErrReplaceRateLimited = errors.New("replace rate limited")
@@ -358,6 +365,10 @@ func (ep *endpointConn) finishWrite(req writeReq, err error) {
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	if atomic.LoadInt32(&s.closed) != 0 {
+		http.Error(w, "tunnel server closed", http.StatusServiceUnavailable)
+		return
+	}
 	c, err := ws.Upgrade(w, r, ws.UpgraderOptions{
 		CheckOrigin: s.checkOrigin,
 	})
@@ -443,6 +454,49 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.obs.Attach(observability.AttachResultOK, observability.AttachReasonOK)
+}
+
+func (s *Server) closeAll() {
+	var conns []*websocket.Conn
+	var pendingBytes int
+
+	s.mu.Lock()
+	for id, st := range s.channels {
+		st.mu.Lock()
+		for _, e := range st.conns {
+			pendingBytes += e.pendingBytes
+			e.pending = nil
+			e.pendingBytes = 0
+			e.closeWriteQueue(nil)
+			conns = append(conns, e.ws)
+		}
+		st.mu.Unlock()
+		delete(s.channels, id)
+	}
+	channelCount := len(s.channels)
+	s.mu.Unlock()
+
+	s.subPendingBytes(pendingBytes)
+	s.obs.ChannelCount(channelCount)
+
+	for _, c := range conns {
+		if c == nil {
+			continue
+		}
+		_ = c.Close()
+		s.untrackConn(c)
+	}
+
+	// Close any remaining tracked conns that may not be in s.channels yet (e.g. still reading attach).
+	s.connSet.Range(func(key, _ any) bool {
+		c, ok := key.(*websocket.Conn)
+		if !ok || c == nil {
+			return true
+		}
+		_ = c.Close()
+		s.untrackConn(c)
+		return true
+	})
 }
 
 // allowReplaceLocked rate-limits same-role replacements to reduce DoS pressure.

@@ -150,7 +150,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	tlsCertFile := envString("FSEC_TUNNEL_TLS_CERT_FILE", "")
 	tlsKeyFile := envString("FSEC_TUNNEL_TLS_KEY_FILE", "")
 
-	allowedOrigins := stringSliceFlag(splitCSVEnv("FSEC_TUNNEL_ALLOW_ORIGIN"))
+	allowedOriginsEnv := splitCSVEnv("FSEC_TUNNEL_ALLOW_ORIGIN")
+	var allowedOriginsFlag stringSliceFlag
 
 	allowNoOrigin, err := envBoolWithErr("FSEC_TUNNEL_ALLOW_NO_ORIGIN", cfg.AllowNoOrigin)
 	if err != nil {
@@ -197,7 +198,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&issuerKeysFile, "issuer-keys-file", issuerKeysFile, "issuer keyset file (kid->ed25519 pubkey) (required) (env: FSEC_TUNNEL_ISSUER_KEYS_FILE)")
 	fs.StringVar(&aud, "aud", aud, "expected token audience (required) (env: FSEC_TUNNEL_AUD)")
 	fs.StringVar(&iss, "iss", iss, "expected token issuer (required; must match token payload 'iss') (env: FSEC_TUNNEL_ISS)")
-	fs.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com), or exact non-standard values (e.g. null) (env: FSEC_TUNNEL_ALLOW_ORIGIN; comma-separated)")
+	fs.Var(&allowedOriginsFlag, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com), or exact non-standard values (e.g. null) (env: FSEC_TUNNEL_ALLOW_ORIGIN; comma-separated)")
 	fs.BoolVar(&allowNoOrigin, "allow-no-origin", allowNoOrigin, "allow requests without Origin header (non-browser clients; discouraged) (env: FSEC_TUNNEL_ALLOW_NO_ORIGIN)")
 	fs.IntVar(&maxConns, "max-conns", maxConns, "max concurrent websocket connections (0 uses default) (env: FSEC_TUNNEL_MAX_CONNS)")
 	fs.IntVar(&maxChannels, "max-channels", maxChannels, "max concurrent channels (0 uses default) (env: FSEC_TUNNEL_MAX_CHANNELS)")
@@ -264,6 +265,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if err := validateTLSFiles(tlsCertFile, tlsKeyFile); err != nil {
 		return usageErr(err.Error())
 	}
+	allowedOrigins := selectAllowedOrigins(allowedOriginsEnv, []string(allowedOriginsFlag))
 	if len(allowedOrigins) == 0 {
 		return usageErr("missing --allow-origin")
 	}
@@ -429,6 +431,13 @@ func envString(key string, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func selectAllowedOrigins(env []string, flags []string) []string {
+	if len(flags) > 0 {
+		return flags
+	}
+	return env
 }
 
 func writeReadyJSON(w io.Writer, out ready, pretty bool) error {

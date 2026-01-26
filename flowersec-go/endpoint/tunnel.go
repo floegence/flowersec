@@ -14,7 +14,9 @@ import (
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
+	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/internal/endpointid"
+	"github.com/floegence/flowersec/flowersec-go/internal/wsutil"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
@@ -53,7 +55,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	}
 	keepalive := cfg.keepaliveInterval
 	if !cfg.keepaliveSet {
-		keepalive = defaultKeepaliveInterval(grant.IdleTimeoutSeconds)
+		keepalive = defaults.KeepaliveInterval(grant.IdleTimeoutSeconds)
 	}
 	psk, err := base64url.Decode(grant.E2eePskB64u)
 	if err != nil || len(psk) != 32 {
@@ -81,6 +83,8 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
+	// Guard against a single oversized websocket message causing an OOM before size checks run.
+	c.SetReadLimit(wsutil.ReadLimit(cfg.maxHandshakePayload, cfg.maxRecordBytes))
 
 	endpointInstanceID := cfg.endpointInstanceID
 	if endpointInstanceID == "" {
@@ -189,21 +193,6 @@ func serveAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpo
 		secure:             secure,
 		mux:                mux,
 	}, nil
-}
-
-func defaultKeepaliveInterval(idleTimeoutSeconds int32) time.Duration {
-	if idleTimeoutSeconds <= 0 {
-		return 0
-	}
-	idle := time.Duration(idleTimeoutSeconds) * time.Second
-	interval := idle / 2
-	if interval < 500*time.Millisecond {
-		interval = 500 * time.Millisecond
-	}
-	if interval >= idle {
-		interval = idle / 2
-	}
-	return interval
 }
 
 func cloneHeader(h http.Header) http.Header {

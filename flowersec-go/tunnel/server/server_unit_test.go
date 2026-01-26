@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -77,6 +78,35 @@ func TestTrackConnLimits(t *testing.T) {
 	s.untrackConn(c1)
 	if got := obs.connCounts[len(obs.connCounts)-1]; got != 0 {
 		t.Fatalf("expected conn count to return to 0, got %d", got)
+	}
+}
+
+func TestClose_RejectsNewWebSocketUpgrades(t *testing.T) {
+	s := &Server{
+		cfg:      Config{Path: "/ws", AllowedOrigins: []string{"example.com"}},
+		obs:      observability.NoopTunnelObserver,
+		channels: make(map[string]*channelState),
+		stopCh:   make(chan struct{}),
+	}
+
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	s.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"http://example.com"}})
+	if err == nil {
+		t.Fatal("expected dial error")
+	}
+	if resp == nil {
+		t.Fatalf("expected HTTP response, got nil (err=%v)", err)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", resp.StatusCode)
 	}
 }
 

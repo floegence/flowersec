@@ -3,6 +3,7 @@ package token
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ func newKeypair() ed25519.PrivateKey {
 	return ed25519.NewKeyFromSeed(seed)
 }
 
-func TestSignRequiresKidAndAud(t *testing.T) {
+func TestSignRequiresKidAudAndTokenID(t *testing.T) {
 	priv := newKeypair()
 	_, err := Sign(priv, Payload{Aud: "aud", IdleTimeoutSeconds: 60})
 	if err == nil || !errors.Is(err, ErrInvalidFormat) {
@@ -25,6 +26,10 @@ func TestSignRequiresKidAndAud(t *testing.T) {
 	_, err = Sign(priv, Payload{Kid: "kid", IdleTimeoutSeconds: 60})
 	if err == nil || !errors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected invalid format for missing aud, got %v", err)
+	}
+	_, err = Sign(priv, Payload{Kid: "kid", Aud: "aud", IdleTimeoutSeconds: 60})
+	if err == nil || !errors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected invalid format for missing token_id, got %v", err)
 	}
 }
 
@@ -96,6 +101,35 @@ func TestVerifyRejectsAudienceIssuerAndTime(t *testing.T) {
 	badExpToken, _ := Sign(priv, badExp)
 	if _, err := Verify(badExpToken, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)}); !errors.Is(err, ErrExpAfterInit) {
 		t.Fatalf("expected exp after init, got %v", err)
+	}
+}
+
+func TestVerifyRejectsMissingTokenID(t *testing.T) {
+	priv := newKeypair()
+	pub := priv.Public().(ed25519.PublicKey)
+	p := Payload{
+		Kid:                "kid",
+		Aud:                "aud",
+		Iss:                "iss",
+		ChannelID:          "ch",
+		Role:               1,
+		TokenID:            "",
+		InitExp:            100,
+		IdleTimeoutSeconds: 60,
+		Iat:                10,
+		Exp:                50,
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	payloadB64u := base64.RawURLEncoding.EncodeToString(b)
+	signed := Prefix + "." + payloadB64u
+	sig := ed25519.Sign(priv, []byte(signed))
+	tokenStr := signed + "." + base64.RawURLEncoding.EncodeToString(sig)
+
+	if _, err := Verify(tokenStr, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)}); err == nil || !errors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected invalid format, got %v", err)
 	}
 }
 

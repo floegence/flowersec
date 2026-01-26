@@ -174,6 +174,25 @@ func TestSplitCSVEnv(t *testing.T) {
 	}
 }
 
+func TestSelectAllowedOrigins_FlagOverridesEnv(t *testing.T) {
+	env := []string{"a", "b"}
+	flags := []string{"c"}
+	got := selectAllowedOrigins(env, flags)
+	want := []string{"c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("selectAllowedOrigins mismatch: got=%v want=%v", got, want)
+	}
+}
+
+func TestSelectAllowedOrigins_UsesEnvWhenFlagMissing(t *testing.T) {
+	env := []string{"a", "b"}
+	got := selectAllowedOrigins(env, nil)
+	want := []string{"a", "b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("selectAllowedOrigins mismatch: got=%v want=%v", got, want)
+	}
+}
+
 func TestEnvBoolWithErr(t *testing.T) {
 	t.Setenv("FSEC_TUNNEL_ALLOW_NO_ORIGIN", "true")
 	v, err := envBoolWithErr("FSEC_TUNNEL_ALLOW_NO_ORIGIN", false)

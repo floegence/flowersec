@@ -19,7 +19,7 @@ func TestIsOriginAllowed(t *testing.T) {
 
 	t.Run("hostname match ignores port", func(t *testing.T) {
 		r := httptest.NewRequest("GET", "http://example.com/ws", nil)
-		r.Header.Set("Origin", "https://example.com:5173")
+		r.Header.Set("Origin", "https://ExAmPlE.com:5173")
 		if !IsOriginAllowed(r, []string{"example.com"}, false) {
 			t.Fatal("expected origin to be allowed")
 		}
@@ -27,7 +27,7 @@ func TestIsOriginAllowed(t *testing.T) {
 
 	t.Run("host:port match", func(t *testing.T) {
 		r := httptest.NewRequest("GET", "http://example.com/ws", nil)
-		r.Header.Set("Origin", "https://example.com:5173")
+		r.Header.Set("Origin", "https://ExAmPlE.com:5173")
 		if !IsOriginAllowed(r, []string{"example.com:5173"}, false) {
 			t.Fatal("expected origin to be allowed")
 		}
@@ -41,6 +41,20 @@ func TestIsOriginAllowed(t *testing.T) {
 		base.Header.Set("Origin", "https://example.com")
 		sub := httptest.NewRequest("GET", "http://example.com/ws", nil)
 		sub.Header.Set("Origin", "https://a.example.com")
+		allowed := []string{"*.example.com"}
+		if !IsOriginAllowed(base, allowed, false) {
+			t.Fatal("expected base hostname to be allowed")
+		}
+		if !IsOriginAllowed(sub, allowed, false) {
+			t.Fatal("expected subdomain to be allowed")
+		}
+	})
+
+	t.Run("wildcard match is case-insensitive", func(t *testing.T) {
+		base := httptest.NewRequest("GET", "http://example.com/ws", nil)
+		base.Header.Set("Origin", "https://ExAmPlE.com")
+		sub := httptest.NewRequest("GET", "http://example.com/ws", nil)
+		sub.Header.Set("Origin", "https://A.ExAmPlE.com")
 		allowed := []string{"*.example.com"}
 		if !IsOriginAllowed(base, allowed, false) {
 			t.Fatal("expected base hostname to be allowed")

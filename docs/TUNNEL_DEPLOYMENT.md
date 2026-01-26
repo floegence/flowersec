@@ -123,7 +123,7 @@ To rotate issuer keys without downtime:
 The tunnel is **stateful per channel**:
 
 - Pairing state (client/server websocket conns) lives in process memory.
-- Token replay protection (`token_id` single-use) is enforced via an in-memory cache by default.
+- Token replay protection (non-empty `token_id`, single-use) is enforced via an in-memory cache by default.
 
 This means that the two endpoints of the same `channel_id` must attach to the **same tunnel instance**.
 
