@@ -111,8 +111,7 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
     endpoint_instance_id: endpointInstanceId
   };
   const attachJson = JSON.stringify(attach);
-  const keepaliveIntervalMs =
-    opts.keepaliveIntervalMs !== undefined ? Math.max(0, opts.keepaliveIntervalMs) : defaultKeepaliveIntervalMs(idleTimeoutSeconds);
+  const keepaliveIntervalMs = opts.keepaliveIntervalMs ?? defaultKeepaliveIntervalMs(idleTimeoutSeconds);
   return await connectCore({
     path: "tunnel",
     wsUrl: checkedGrant.tunnel_url,

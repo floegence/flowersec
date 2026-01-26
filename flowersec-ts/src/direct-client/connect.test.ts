@@ -332,6 +332,45 @@ describe("connectDirect", () => {
     expect(secureClose).toHaveBeenCalledTimes(1);
   });
 
+  test("keepalive ping failures tear down rpc, mux, and secure resources", async () => {
+    vi.useFakeTimers();
+    try {
+      const ws = new FakeWebSocket();
+      const secureClose = vi.fn();
+      const sendPing = vi.fn().mockRejectedValueOnce(new Error("ping failed"));
+      clientHandshakeMock.mockResolvedValueOnce({
+        read: vi.fn(),
+        write: vi.fn(),
+        close: secureClose,
+        sendPing
+      });
+      openStream.mockResolvedValueOnce({
+        read: vi.fn().mockResolvedValue(new Uint8Array()),
+        write: vi.fn(),
+        close: vi.fn()
+      });
+
+      const p = connectDirect(makeInfo(), {
+        origin: "https://app.redeven.com",
+        wsFactory: () => ws as any,
+        keepaliveIntervalMs: 10
+      });
+
+      setTimeout(() => ws.emit("open", {}), 0);
+      await vi.advanceTimersByTimeAsync(0);
+      await p;
+
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(sendPing).toHaveBeenCalledTimes(1);
+      expect(rpcClose).toHaveBeenCalledTimes(1);
+      expect(muxClose).toHaveBeenCalledTimes(1);
+      expect(secureClose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("openStream wraps yamux openStream errors", async () => {
     const ws = new FakeWebSocket();
     clientHandshakeMock.mockResolvedValueOnce({

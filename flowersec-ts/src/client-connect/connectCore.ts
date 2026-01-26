@@ -59,8 +59,6 @@ export type ConnectCoreArgs = Readonly<{
 export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal> {
   const observer = normalizeObserver(args.opts.observer);
   const signal = args.opts.signal;
-  const connectTimeoutMs = args.opts.connectTimeoutMs ?? 10_000;
-  const handshakeTimeoutMs = args.opts.handshakeTimeoutMs ?? 10_000;
   const connectStart = nowSeconds();
 
   const origin = args.opts.origin;
@@ -70,6 +68,46 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
   if (args.wsUrl == null || args.wsUrl === "") {
     const code = args.path === "tunnel" ? "missing_tunnel_url" : "missing_ws_url";
     throw new FlowersecError({ path: args.path, stage: "validate", code, message: "missing websocket url" });
+  }
+
+  const invalidOption = (message: string): never => {
+    throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_option", message });
+  };
+
+  const connectTimeoutMs = args.opts.connectTimeoutMs ?? 10_000;
+  if (!Number.isFinite(connectTimeoutMs) || connectTimeoutMs < 0) {
+    invalidOption("connectTimeoutMs must be a non-negative number");
+  }
+  const handshakeTimeoutMs = args.opts.handshakeTimeoutMs ?? 10_000;
+  if (!Number.isFinite(handshakeTimeoutMs) || handshakeTimeoutMs < 0) {
+    invalidOption("handshakeTimeoutMs must be a non-negative number");
+  }
+
+  const keepaliveIntervalMs = args.opts.keepaliveIntervalMs ?? 0;
+  if (!Number.isFinite(keepaliveIntervalMs) || keepaliveIntervalMs < 0) {
+    invalidOption("keepaliveIntervalMs must be a non-negative number");
+  }
+
+  const clientFeatures = args.opts.clientFeatures ?? 0;
+  if (!Number.isSafeInteger(clientFeatures) || clientFeatures < 0 || clientFeatures > 0xffffffff) {
+    invalidOption("clientFeatures must be a uint32");
+  }
+
+  const maxHandshakePayload = args.opts.maxHandshakePayload ?? 0;
+  if (!Number.isSafeInteger(maxHandshakePayload) || maxHandshakePayload < 0) {
+    invalidOption("maxHandshakePayload must be a non-negative integer");
+  }
+  const maxRecordBytes = args.opts.maxRecordBytes ?? 0;
+  if (!Number.isSafeInteger(maxRecordBytes) || maxRecordBytes < 0) {
+    invalidOption("maxRecordBytes must be a non-negative integer");
+  }
+  const maxBufferedBytes = args.opts.maxBufferedBytes ?? 0;
+  if (!Number.isSafeInteger(maxBufferedBytes) || maxBufferedBytes < 0) {
+    invalidOption("maxBufferedBytes must be a non-negative integer");
+  }
+  const maxWsQueuedBytes = args.opts.maxWsQueuedBytes ?? 0;
+  if (!Number.isSafeInteger(maxWsQueuedBytes) || maxWsQueuedBytes < 0) {
+    invalidOption("maxWsQueuedBytes must be a non-negative integer");
   }
 
   let ws: WebSocketLike;
@@ -88,7 +126,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
   // Install close/error/message listeners before waiting for "open" to avoid a gap where a peer close
   // (for example a tunnel attach rejection with a reason token) can be missed and misclassified as a handshake timeout.
   const transport = new WebSocketBinaryTransport(ws, {
-    ...(args.opts.maxWsQueuedBytes != null && args.opts.maxWsQueuedBytes > 0 ? { maxQueuedBytes: args.opts.maxWsQueuedBytes } : {}),
+    ...(maxWsQueuedBytes > 0 ? { maxQueuedBytes: maxWsQueuedBytes } : {}),
     observer,
   });
 
@@ -165,15 +203,12 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     const handshakeStart = nowSeconds();
     let secure: Awaited<ReturnType<typeof clientHandshake>>;
     try {
-      const maxHandshakePayload = args.opts.maxHandshakePayload ?? 0;
-      const maxRecordBytes = args.opts.maxRecordBytes ?? 0;
-      const maxBufferedBytes = args.opts.maxBufferedBytes ?? 0;
       secure = await withAbortAndTimeout(
         clientHandshake(transport, {
           channelId: args.channelId,
           suite,
           psk,
-          clientFeatures: args.opts.clientFeatures ?? 0,
+          clientFeatures,
           maxHandshakePayload: maxHandshakePayload > 0 ? maxHandshakePayload : 8 * 1024,
           maxRecordBytes: maxRecordBytes > 0 ? maxRecordBytes : (1 << 20),
           ...(maxBufferedBytes > 0 ? { maxBufferedBytes } : {}),
@@ -265,7 +300,6 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       }
     };
 
-    const keepaliveIntervalMs = Math.max(0, args.opts.keepaliveIntervalMs ?? 0);
     let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
     let keepaliveInFlight = false;
     const stopKeepalive = () => {
@@ -273,17 +307,31 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       clearInterval(keepaliveTimer);
       keepaliveTimer = undefined;
     };
+    const closeAll = () => {
+      stopKeepalive();
+      try {
+        rpc.close();
+      } catch {
+        // ignore
+      }
+      try {
+        mux.close();
+      } catch {
+        // ignore
+      }
+      try {
+        secure.close();
+      } catch {
+        // ignore
+      }
+    };
     if (keepaliveIntervalMs > 0) {
       keepaliveTimer = setInterval(() => {
         if (keepaliveInFlight) return;
         keepaliveInFlight = true;
         ping()
           .catch(() => {
-            try {
-              ws.close();
-            } catch {
-              // ignore
-            }
+            closeAll();
           })
           .finally(() => {
             keepaliveInFlight = false;
@@ -384,12 +432,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         }
         return s;
       },
-      close: () => {
-        stopKeepalive();
-        rpc.close();
-        mux.close();
-        secure.close();
-      },
+      close: closeAll,
     };
   } catch (e) {
     try {
