@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
-	"github.com/floegence/flowersec/flowersec-go/rpc/frame"
 )
 
 func TestRPCClientCallTimeout(t *testing.T) {
@@ -23,7 +23,7 @@ func TestRPCClientCallTimeout(t *testing.T) {
 
 	// Drain request so the client is waiting for response.
 	go func() {
-		_, _ = frame.ReadJSONFrame(b, 1<<20)
+		_, _ = jsonframe.ReadJSONFrame(b, 1<<20)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -62,16 +62,16 @@ func TestRPCServerNotificationHandlerErrorDoesNotStop(t *testing.T) {
 
 	// Send notification that returns error.
 	notify := rpcv1.RpcEnvelope{TypeId: 1, RequestId: 0, ResponseTo: 0, Payload: json.RawMessage(`{"n":true}`)}
-	if err := frame.WriteJSONFrame(b, notify); err != nil {
+	if err := jsonframe.WriteJSONFrame(b, notify); err != nil {
 		t.Fatalf("write notify failed: %v", err)
 	}
 
 	// Send a request and ensure we still get a response.
 	req := rpcv1.RpcEnvelope{TypeId: 2, RequestId: 7, ResponseTo: 0, Payload: json.RawMessage(`{"ok":true}`)}
-	if err := frame.WriteJSONFrame(b, req); err != nil {
+	if err := jsonframe.WriteJSONFrame(b, req); err != nil {
 		t.Fatalf("write request failed: %v", err)
 	}
-	respBytes, err := frame.ReadJSONFrame(b, 1<<20)
+	respBytes, err := jsonframe.ReadJSONFrame(b, 1<<20)
 	if err != nil {
 		t.Fatalf("read response failed: %v", err)
 	}
@@ -119,10 +119,10 @@ func TestRPCServerHandlerPanicReturns500AndContinues(t *testing.T) {
 	}()
 
 	req1 := rpcv1.RpcEnvelope{TypeId: 1, RequestId: 7, ResponseTo: 0, Payload: json.RawMessage(`{"x":1}`)}
-	if err := frame.WriteJSONFrame(b, req1); err != nil {
+	if err := jsonframe.WriteJSONFrame(b, req1); err != nil {
 		t.Fatalf("write request failed: %v", err)
 	}
-	respBytes, err := frame.ReadJSONFrame(b, 1<<20)
+	respBytes, err := jsonframe.ReadJSONFrame(b, 1<<20)
 	if err != nil {
 		t.Fatalf("read response failed: %v", err)
 	}
@@ -138,10 +138,10 @@ func TestRPCServerHandlerPanicReturns500AndContinues(t *testing.T) {
 	}
 
 	req2 := rpcv1.RpcEnvelope{TypeId: 2, RequestId: 8, ResponseTo: 0, Payload: json.RawMessage(`{"ok":true}`)}
-	if err := frame.WriteJSONFrame(b, req2); err != nil {
+	if err := jsonframe.WriteJSONFrame(b, req2); err != nil {
 		t.Fatalf("write request failed: %v", err)
 	}
-	respBytes2, err := frame.ReadJSONFrame(b, 1<<20)
+	respBytes2, err := jsonframe.ReadJSONFrame(b, 1<<20)
 	if err != nil {
 		t.Fatalf("read response failed: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestRPCClientNotifyHandlerPanicDoesNotCrashAndOtherHandlersRun(t *testing.T
 	defer unsub2()
 
 	notify := rpcv1.RpcEnvelope{TypeId: 2, RequestId: 0, ResponseTo: 0, Payload: json.RawMessage(`{"ping":true}`)}
-	if err := frame.WriteJSONFrame(b, notify); err != nil {
+	if err := jsonframe.WriteJSONFrame(b, notify); err != nil {
 		t.Fatalf("write notify failed: %v", err)
 	}
 

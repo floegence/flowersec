@@ -1,3 +1,5 @@
+import { StreamEOFError } from "./errors.js";
+
 // ByteReader buffers incoming chunks and supports exact reads.
 export class ByteReader {
   private readonly chunks: Uint8Array[] = [];
@@ -12,7 +14,7 @@ export class ByteReader {
     if (n < 0) throw new Error("invalid length");
     while (this.buffered < n) {
       const chunk = await this.readChunk();
-      if (chunk == null) throw new Error("eof");
+      if (chunk == null) throw new StreamEOFError();
       if (chunk.length === 0) continue;
       this.chunks.push(chunk);
       this.buffered += chunk.length;

@@ -2,7 +2,7 @@ import process from "node:process";
 
 import { connectTunnelNode } from "../../flowersec-ts/dist/node/index.js";
 import { createDemoSession } from "../../flowersec-ts/dist/_examples/flowersec/demo/v1.facade.gen.js";
-import { ByteReader } from "../../flowersec-ts/dist/yamux/index.js";
+import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
 
 // node-tunnel-client is the "simple" Node.js tunnel client example.
 //
@@ -61,13 +61,7 @@ async function main() {
     // Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
     // Note: openStream(kind) automatically writes the StreamHello(kind) preface.
     const echo = await sess.openStream("echo");
-    const reader = new ByteReader(async () => {
-      try {
-        return await echo.read();
-      } catch {
-        return null;
-      }
-    });
+    const reader = createByteReader(echo);
     const msg = new TextEncoder().encode("hello over yamux stream: echo");
     await echo.write(msg);
     const got = await reader.readExactly(msg.length);

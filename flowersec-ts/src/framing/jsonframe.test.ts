@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { readJsonFrame, RpcFramingError, writeJsonFrame } from "./framing.js";
+
+import { JsonFramingError, readJsonFrame, writeJsonFrame } from "./jsonframe.js";
 
 class ByteQueue {
   private readonly chunks: Uint8Array[] = [];
@@ -45,7 +46,7 @@ class ByteQueue {
     let offset = 0;
     let remaining = n;
     while (remaining > 0) {
-      const chunk = this.chunks[0];
+      const chunk = this.chunks[0]!;
       if (chunk.length <= remaining) {
         out.set(chunk, offset);
         offset += chunk.length;
@@ -61,25 +62,24 @@ class ByteQueue {
   }
 }
 
-describe("rpc framing", () => {
-  test("writeJsonFrame emits a length-prefixed payload", async () => {
-    const chunks: Uint8Array[] = [];
-    await writeJsonFrame(async (b) => {
-      chunks.push(b);
-    }, { ok: true });
-    expect(chunks.length).toBe(1);
-    const out = chunks[0]!;
+describe("json framing", () => {
+  test("writeJsonFrame emits a length-prefixed payload (object form)", async () => {
+    const w = { chunks: [] as Uint8Array[], async write(b: Uint8Array) { this.chunks.push(b); } };
+    await writeJsonFrame(w, { ok: true });
+
+    expect(w.chunks.length).toBe(1);
+    const out = w.chunks[0]!;
     const len = new DataView(out.buffer, out.byteOffset, out.byteLength).getUint32(0);
     const json = new TextDecoder().decode(out.subarray(4));
     expect(len).toBe(out.length - 4);
     expect(JSON.parse(json)).toEqual({ ok: true });
   });
 
-  test("readJsonFrame rejects oversized frames", async () => {
+  test("readJsonFrame rejects oversized frames (object form)", async () => {
     const q = new ByteQueue();
     const header = new Uint8Array([0, 0, 0, 5]);
     await q.write(header);
-    await expect(readJsonFrame(q.readExactly.bind(q), 4)).rejects.toBeInstanceOf(RpcFramingError);
+    await expect(readJsonFrame(q, 4)).rejects.toBeInstanceOf(JsonFramingError);
   });
 
   test("readJsonFrame rejects invalid JSON", async () => {
@@ -89,15 +89,16 @@ describe("rpc framing", () => {
     new DataView(header.buffer).setUint32(0, payload.length);
     await q.write(header);
     await q.write(payload);
-    await expect(readJsonFrame(q.readExactly.bind(q), 1024)).rejects.toBeInstanceOf(SyntaxError);
+    await expect(readJsonFrame(q, 1024)).rejects.toBeInstanceOf(SyntaxError);
   });
 
-  test("readJsonFrame surfaces read errors", async () => {
+  test("readJsonFrame surfaces read errors (function form)", async () => {
     const q = new ByteQueue();
     const header = new Uint8Array([0, 0, 0, 2]);
     await q.write(header);
-    const p = readJsonFrame(q.readExactly.bind(q), 1024);
+    const p = readJsonFrame((n) => q.readExactly(n), 1024);
     q.close(new Error("eof"));
     await expect(p).rejects.toThrow(/eof/);
   });
 });
+

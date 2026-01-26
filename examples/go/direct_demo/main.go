@@ -21,6 +21,7 @@ import (
 	"github.com/floegence/flowersec-examples/go/exampleutil"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
+	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
@@ -41,6 +42,25 @@ type ready struct {
 	ChannelInitExpireAt int64             `json:"channel_init_expire_at_unix_s"`
 	ExampleTypeIDs      map[string]uint32 `json:"example_type_ids"`
 	ExampleStreamKinds  map[string]string `json:"example_stream_kinds"`
+}
+
+type metaBytesRequest struct {
+	// MaxBytes is the requested number of bytes to stream after the response meta frame.
+	MaxBytes int `json:"max_bytes"`
+	// FillByte is an optional byte value [0,255] used to generate deterministic demo payload bytes.
+	FillByte int `json:"fill_byte,omitempty"`
+}
+
+type metaBytesError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type metaBytesResponse struct {
+	OK          bool            `json:"ok"`
+	ContentLen  int             `json:"content_len,omitempty"`
+	ContentType string          `json:"content_type,omitempty"`
+	Error       *metaBytesError `json:"error,omitempty"`
 }
 
 var (
@@ -145,6 +165,61 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		_ = ctx
 		_, _ = io.Copy(stream, stream)
 	})
+	streamSrv.Handle("meta_bytes", func(ctx context.Context, stream io.ReadWriteCloser) {
+		const maxAllowedBytes = 8 << 20
+		b, err := jsonframe.ReadJSONFrame(stream, jsonframe.DefaultMaxJSONFrameBytes)
+		if err != nil {
+			return
+		}
+		var req metaBytesRequest
+		if err := json.Unmarshal(b, &req); err != nil {
+			_ = jsonframe.WriteJSONFrame(stream, metaBytesResponse{
+				OK:    false,
+				Error: &metaBytesError{Code: "invalid_json", Message: "invalid request meta json"},
+			})
+			return
+		}
+		if req.MaxBytes <= 0 || req.MaxBytes > maxAllowedBytes {
+			_ = jsonframe.WriteJSONFrame(stream, metaBytesResponse{
+				OK:    false,
+				Error: &metaBytesError{Code: "invalid_max_bytes", Message: "max_bytes out of range"},
+			})
+			return
+		}
+		fill := byte(0)
+		if req.FillByte >= 0 && req.FillByte <= 255 {
+			fill = byte(req.FillByte)
+		}
+		if err := jsonframe.WriteJSONFrame(stream, metaBytesResponse{
+			OK:          true,
+			ContentLen:  req.MaxBytes,
+			ContentType: "application/octet-stream",
+		}); err != nil {
+			return
+		}
+
+		// Stream bytes in chunks; stop early on ctx cancel or stream errors.
+		buf := make([]byte, 64*1024)
+		for i := range buf {
+			buf[i] = fill
+		}
+		remain := req.MaxBytes
+		for remain > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			n := len(buf)
+			if remain < n {
+				n = remain
+			}
+			if _, err := stream.Write(buf[:n]); err != nil {
+				return
+			}
+			remain -= n
+		}
+	})
 
 	mux := http.NewServeMux()
 	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
@@ -200,8 +275,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			"rpc_notify":  2,
 		},
 		ExampleStreamKinds: map[string]string{
-			"rpc":  "rpc",
-			"echo": "echo",
+			"rpc":        "rpc",
+			"echo":       "echo",
+			"meta_bytes": "meta_bytes",
 		},
 	}); err != nil {
 		logger.Print(err)

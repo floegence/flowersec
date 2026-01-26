@@ -184,7 +184,7 @@ describe("YamuxSession", () => {
     await tick();
     await stream.close();
 
-    await expect(stream.read()).rejects.toThrow(/eof/);
+    await expect(stream.read()).resolves.toBeNull();
     expect(session.getStream(stream.id)).toBeUndefined();
 
     session.close();

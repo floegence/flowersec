@@ -79,8 +79,8 @@ export class YamuxStream {
     this.session.notifySendWindow(this.id);
   }
 
-  // read resolves with the next data chunk or throws on EOF/reset.
-  async read(): Promise<Uint8Array> {
+  // read resolves with the next data chunk, null on EOF, or throws on reset/errors.
+  async read(): Promise<Uint8Array | null> {
     while (true) {
       if (this.error != null) throw this.error;
       const b = this.shiftRecv();
@@ -89,7 +89,7 @@ export class YamuxStream {
         await this.sendWindowUpdate();
         return b;
       }
-      if (this.state === "closed" || this.state === "remoteClose") throw new Error("eof");
+      if (this.state === "closed" || this.state === "remoteClose") return null;
       await new Promise<void>((resolve) => this.readWaiters.push(resolve));
     }
   }

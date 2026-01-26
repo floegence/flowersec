@@ -1,15 +1,14 @@
 import process from "node:process";
 
 import {
-  ByteReader,
-  RpcClient,
-  RpcProxy,
-  WebSocketBinaryTransport,
-  YamuxSession,
-  base64urlDecode,
-  clientHandshake,
-  writeStreamHello
-} from "../../flowersec-ts/dist/index.js";
+  clientHandshake
+} from "../../flowersec-ts/dist/e2ee/index.js";
+import { WebSocketBinaryTransport } from "../../flowersec-ts/dist/ws/index.js";
+import { YamuxSession } from "../../flowersec-ts/dist/yamux/index.js";
+import { RpcClient } from "../../flowersec-ts/dist/rpc/index.js";
+import { RpcProxy } from "../../flowersec-ts/dist/rpc-proxy/rpcProxy.js";
+import { writeStreamHello } from "../../flowersec-ts/dist/streamhello/index.js";
+import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
 import { createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
 
 // node-direct-client-advanced is the "advanced" Node.js direct (no tunnel) client example.
@@ -94,7 +93,7 @@ async function main() {
 
   // Step 2: E2EE handshake over the websocket binary transport.
   const transport = new WebSocketBinaryTransport(ws);
-  const psk = base64urlDecode(info.e2ee_psk_b64u);
+  const psk = Buffer.from(info.e2ee_psk_b64u, "base64url");
   const suite = info.default_suite;
   const secure = await clientHandshake(transport, {
     channelId: info.channel_id,
@@ -116,13 +115,7 @@ async function main() {
 
   // Step 4: RPC stream (first yamux stream) with StreamHello="rpc".
   const rpcStream = await mux.openStream();
-  const rpcReader = new ByteReader(async () => {
-    try {
-      return await rpcStream.read();
-    } catch {
-      return null;
-    }
-  });
+  const rpcReader = createByteReader(rpcStream);
   const readExactly = (n) => rpcReader.readExactly(n);
   const write = (b) => rpcStream.write(b);
   await writeStreamHello(write, "rpc");
@@ -141,13 +134,7 @@ async function main() {
 
     // Open a separate yamux stream ("echo") to show multiplexing.
     const echo = await mux.openStream();
-    const echoReader = new ByteReader(async () => {
-      try {
-        return await echo.read();
-      } catch {
-        return null;
-      }
-    });
+    const echoReader = createByteReader(echo);
     await writeStreamHello((b) => echo.write(b), "echo");
     const msg = new TextEncoder().encode("hello over yamux stream: echo");
     await echo.write(msg);

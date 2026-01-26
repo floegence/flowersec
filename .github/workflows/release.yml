@@ -66,7 +66,7 @@ jobs:
           # Pack the TypeScript npm tarball for no-clone installs (from GitHub Releases).
           # This does not publish to npm; it only produces a .tgz artifact.
           ( cd flowersec-ts && \
-            npm version --no-git-tag-version "${VERSION}" && \
+            npm version --no-git-tag-version --allow-same-version "${VERSION}" && \
             npm pack --silent && \
             mv "floegence-flowersec-core-${VERSION}.tgz" "../dist/" \
           )
@@ -216,6 +216,8 @@ jobs:
             mkdir -p "$dir/examples"
             cp examples/README.md "$dir/examples/README.md"
             cp -R examples/ts "$dir/examples/ts"
+            mkdir -p "$dir/docs"
+            cp docs/STREAMS.md "$dir/docs/STREAMS.md"
 
             cp LICENSE "$dir/"
 

@@ -13,7 +13,7 @@ export type Client = Readonly<{
   path: ClientPath;
   endpointInstanceId?: string;
   rpc: RpcClient;
-  openStream: (kind: string) => Promise<YamuxStream>;
+  openStream: (kind: string, opts?: Readonly<{ signal?: AbortSignal }>) => Promise<YamuxStream>;
   ping: () => Promise<void>;
   close: () => void;
 }>;

@@ -40,6 +40,9 @@ These packages are the recommended integration entrypoints:
 - `github.com/floegence/flowersec/flowersec-go/rpc`
   - Role: stable RPC client/server/router APIs (used by `Client.RPC()` and `endpoint/serve`)
   - APIs: `rpc.NewRouter(...)`, `rpc.NewServer(...)`, `rpc.NewClient(...)`
+- `github.com/floegence/flowersec/flowersec-go/framing/jsonframe`
+  - Role: stable JSON framing helpers (length-prefixed JSON frames)
+  - APIs: `jsonframe.ReadJSONFrame(...)`, `jsonframe.WriteJSONFrame(...)`, `jsonframe.ReadJSONFrameDefaultMax(...)`
 - `github.com/floegence/flowersec/flowersec-go/protocolio`
   - Role: JSON decoding helpers for `ChannelInitGrant` and `DirectConnectInfo`
   - APIs: `protocolio.DecodeGrantClientJSON(...)`, `protocolio.DecodeGrantServerJSON(...)`, `protocolio.DecodeGrantJSON(...)`, `protocolio.DecodeDirectConnectInfoJSON(...)`
@@ -64,7 +67,7 @@ The stable APIs above use generated protocol types. These packages are safe to d
 
 ## Go: building blocks (not a stable surface)
 
-The repository also contains lower-level components (crypto, framing, yamux, ws, tunnel internals).
+The repository also contains lower-level components (crypto, yamux, ws, tunnel internals, and additional framing utilities beyond the stable packages listed above).
 They are useful for contributors and advanced integrations, but are not intended as a stable API surface.
 
 If you rely on these directly, expect breaking changes without deprecation cycles.
@@ -83,7 +86,9 @@ Stable entrypoints:
 
 Stable building blocks (advanced, but supported):
 
-- `@floegence/flowersec-core/rpc` (RPC framing and client/server)
+- `@floegence/flowersec-core/framing` (length-prefixed JSON framing helpers)
+- `@floegence/flowersec-core/streamio` (stream IO helpers for custom yamux streams)
+- `@floegence/flowersec-core/rpc` (RPC client/server over length-prefixed JSON frames)
 - `@floegence/flowersec-core/yamux` (yamux framing and session)
 - `@floegence/flowersec-core/e2ee` (record layer and handshake helpers)
 - `@floegence/flowersec-core/ws` (WebSocket binary transport)

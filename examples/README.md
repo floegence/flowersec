@@ -106,6 +106,24 @@ Terminal 2 (alternative): Node direct client:
 FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-direct-client.mjs < direct.json
 ```
 
+## Custom stream example: meta + bytes (direct path)
+
+The direct demo server also exposes a custom stream kind `meta_bytes` to demonstrate the recommended
+"JSON meta frame + raw bytes" pattern (see `docs/STREAMS.md`).
+
+Terminal 2: run the Node client for the custom stream:
+
+```bash
+FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/stream-meta-bytes/node-direct-client.mjs < direct.json
+```
+
+Optional env vars:
+
+```bash
+FSEC_META_BYTES=65536 FSEC_META_FILL_BYTE=97 \
+  FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/stream-meta-bytes/node-direct-client.mjs < direct.json
+```
+
 ## Full stack: tunnel path (controlplane + tunnel + server endpoint)
 
 Terminal 1: start the controlplane demo (prints a JSON "ready" line):

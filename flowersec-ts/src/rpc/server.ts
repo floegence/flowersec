@@ -1,5 +1,5 @@
 import type { RpcEnvelope, RpcError } from "../gen/flowersec/rpc/v1.gen.js";
-import { readJsonFrame, writeJsonFrame } from "./framing.js";
+import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
 import { assertRpcEnvelope } from "./validate.js";
 
 // RpcHandler processes a request and returns a payload or error.
@@ -26,7 +26,7 @@ export class RpcServer {
   async serve(signal?: AbortSignal): Promise<void> {
     while (!this.closed) {
       if (signal?.aborted) throw signal.reason ?? new Error("aborted");
-      const v = assertRpcEnvelope(await readJsonFrame(this.readExactly, 1 << 20));
+      const v = assertRpcEnvelope(await readJsonFrame(this.readExactly, DEFAULT_MAX_JSON_FRAME_BYTES));
       if (v.response_to !== 0) continue;
       if (v.request_id === 0) {
         const h = this.handlers.get(v.type_id >>> 0);

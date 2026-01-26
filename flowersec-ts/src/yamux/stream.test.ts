@@ -79,12 +79,12 @@ describe("YamuxStream", () => {
     await expect(stream.read()).rejects.toThrow(/recv window exceeded|rst/);
   });
 
-  test("FIN transitions to remote close and read returns eof", async () => {
+  test("FIN transitions to remote close and read returns null", async () => {
     const session = new FakeSession();
     const stream = new YamuxStream(session as any, 1, "established");
 
     stream.onData(new Uint8Array(), FLAG_FIN);
-    await expect(stream.read()).rejects.toThrow(/eof/);
+    await expect(stream.read()).resolves.toBeNull();
   });
 
   test("reset marks stream as closed", async () => {

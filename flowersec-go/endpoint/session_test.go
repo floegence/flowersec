@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/flowersec-go/rpc/frame"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	hyamux "github.com/hashicorp/yamux"
 )
@@ -125,7 +125,7 @@ func TestSessionServeStreamsSkipsBadStreamHello(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client OpenStream: %v", err)
 	}
-	_ = frame.WriteJSONFrame(s1, rpcv1.StreamHello{Kind: "", V: 1})
+	_ = jsonframe.WriteJSONFrame(s1, rpcv1.StreamHello{Kind: "", V: 1})
 	_ = s1.Close()
 
 	// Stream 2: valid StreamHello.
@@ -182,7 +182,7 @@ func TestSessionServeStreams_OnErrorReportsBadStreamHello(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client OpenStream: %v", err)
 	}
-	_ = frame.WriteJSONFrame(s1, rpcv1.StreamHello{Kind: "", V: 1})
+	_ = jsonframe.WriteJSONFrame(s1, rpcv1.StreamHello{Kind: "", V: 1})
 	_ = s1.Close()
 
 	select {

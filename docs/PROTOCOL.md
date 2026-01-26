@@ -9,6 +9,7 @@ This document describes the current on-the-wire contracts implemented by this re
 - **Cross-language alignment** (Go and TypeScript implement the same contracts)
 
 For the user-facing stable APIs, see `docs/API_SURFACE.md`.
+For the recommended custom stream patterns (meta + bytes), see `docs/STREAMS.md`.
 
 ## 0. Stack overview
 
@@ -155,7 +156,6 @@ RPC messages are length-prefixed JSON frames:
 
 Current implementation:
 
-- Go framing: `flowersec-go/rpc/frame/frame.go`
-- TS framing: `flowersec-ts/src/rpc/framing.ts`
+- Go framing: `flowersec-go/framing/jsonframe/jsonframe.go`
+- TS framing: `flowersec-ts/src/framing/jsonframe.ts`
 - Message schemas: `idl/flowersec/rpc/v1/rpc.fidl.json` (generated into `gen/flowersec/rpc/v1`)
-

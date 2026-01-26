@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { ByteReader } from "./byteReader.js";
+import { StreamEOFError } from "./errors.js";
 
 describe("ByteReader", () => {
   test("reads across multiple chunks", async () => {
@@ -17,7 +18,7 @@ describe("ByteReader", () => {
 
   test("rejects on EOF", async () => {
     const reader = new ByteReader(async () => null);
-    await expect(reader.readExactly(1)).rejects.toThrow(/eof/);
+    await expect(reader.readExactly(1)).rejects.toBeInstanceOf(StreamEOFError);
   });
 
   test("rejects negative length", async () => {

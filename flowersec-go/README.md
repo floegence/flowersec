@@ -16,17 +16,17 @@ Prerequisite: Go 1.25.x.
 ```bash
 go get github.com/floegence/flowersec/flowersec-go@latest
 # Or pin a version:
-go get github.com/floegence/flowersec/flowersec-go@v0.1.0
+go get github.com/floegence/flowersec/flowersec-go@v0.2.0
 ```
 
-Versioning note: repository tags for this submodule are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.1.0`).
+Versioning note: repository tags for this submodule are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.2.0`).
 
 ## Install (tunnel binary)
 
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
 # Or pin a version:
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@v0.1.0
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@v0.2.0
 ```
 
 ## Install (controlplane helper tools, optional)
@@ -46,6 +46,7 @@ No-Go option: download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) fr
 - Server endpoint (role=server): `github.com/floegence/flowersec/flowersec-go/endpoint`
 - Server stream runtime: `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
 - RPC (router/server/client): `github.com/floegence/flowersec/flowersec-go/rpc`
+- JSON framing helpers (advanced): `github.com/floegence/flowersec/flowersec-go/framing/jsonframe`
 - Input JSON helpers: `github.com/floegence/flowersec/flowersec-go/protocolio`
 
 For a full integration walkthrough, see `docs/INTEGRATION_GUIDE.md` in the repository root.

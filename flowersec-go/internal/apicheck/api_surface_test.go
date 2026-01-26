@@ -13,6 +13,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
+	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
@@ -56,6 +57,11 @@ var (
 	_ = rpc.NewRouter
 	_ = rpc.NewServer
 	_ = rpc.NewClient
+
+	// framing/jsonframe
+	_ = jsonframe.ReadJSONFrame
+	_ = jsonframe.WriteJSONFrame
+	_ = jsonframe.ReadJSONFrameDefaultMax
 
 	// fserrors
 	_ fserrors.Path
@@ -101,6 +107,7 @@ func TestAPISurfaceDoc_CoversStableGoEntrypoints(t *testing.T) {
 		"github.com/floegence/flowersec/flowersec-go/endpoint",
 		"github.com/floegence/flowersec/flowersec-go/endpoint/serve",
 		"github.com/floegence/flowersec/flowersec-go/rpc",
+		"github.com/floegence/flowersec/flowersec-go/framing/jsonframe",
 		"github.com/floegence/flowersec/flowersec-go/protocolio",
 		"github.com/floegence/flowersec/flowersec-go/fserrors",
 		"github.com/floegence/flowersec/flowersec-go/controlplane/issuer",
@@ -147,6 +154,10 @@ func TestAPISurfaceDoc_CoversStableGoEntrypoints(t *testing.T) {
 		"rpc.NewRouter(...)",
 		"rpc.NewServer(...)",
 		"rpc.NewClient(...)",
+
+		"jsonframe.ReadJSONFrame(...)",
+		"jsonframe.WriteJSONFrame(...)",
+		"jsonframe.ReadJSONFrameDefaultMax(...)",
 	}
 	for _, v := range wantEntrypoints {
 		if !bytes.Contains(doc, []byte("`"+v+"`")) {

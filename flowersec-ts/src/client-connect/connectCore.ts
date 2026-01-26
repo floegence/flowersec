@@ -5,7 +5,7 @@ import { RpcClient } from "../rpc/client.js";
 import { writeStreamHello } from "../streamhello/streamHello.js";
 import { normalizeObserver, nowSeconds, type ClientObserverLike } from "../observability/observer.js";
 import { base64urlDecode } from "../utils/base64url.js";
-import { FlowersecError, throwIfAborted } from "../utils/errors.js";
+import { AbortError, FlowersecError, throwIfAborted } from "../utils/errors.js";
 import { WebSocketBinaryTransport, WsCloseError, type WebSocketLike } from "../ws-client/binaryTransport.js";
 import type { ClientInternal } from "../client.js";
 import {
@@ -232,13 +232,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       throw new FlowersecError({ path: args.path, stage: "yamux", code: "open_stream_failed", message: "open rpc stream failed", cause: e });
     }
 
-    const reader = new ByteReader(async () => {
-      try {
-        return await rpcStream.read();
-      } catch {
-        return null;
-      }
-    });
+    const reader = new ByteReader(() => rpcStream.read());
     const readExactly = (n: number) => reader.readExactly(n);
     const write = (b: Uint8Array) => rpcStream.write(b);
 
@@ -305,17 +299,76 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       mux,
       rpc,
       ping,
-      openStream: async (kind: string) => {
+      openStream: async (kind: string, opts: Readonly<{ signal?: AbortSignal }> = {}) => {
         if (kind == null || kind === "") throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_stream_kind", message: "missing stream kind" });
+        if (opts.signal?.aborted) {
+          throw new FlowersecError({
+            path: args.path,
+            stage: "yamux",
+            code: "canceled",
+            message: "open stream aborted",
+            cause: opts.signal.reason,
+          });
+        }
+        const abortReason = (signal: AbortSignal): Error => {
+          const r = signal.reason;
+          if (r instanceof Error) return r;
+          if (typeof r === "string" && r !== "") return new AbortError(r);
+          return new AbortError("aborted");
+        };
+        const signal = opts.signal;
+        let abortListener: (() => void) | undefined;
         let s: Awaited<ReturnType<YamuxSession["openStream"]>>;
         try {
           s = await mux.openStream();
         } catch (e) {
           throw new FlowersecError({ path: args.path, stage: "yamux", code: "open_stream_failed", message: "open stream failed", cause: e });
         }
+        if (signal != null) {
+          abortListener = () => {
+            try {
+              s.reset(abortReason(signal));
+            } catch {
+              // ignore
+            }
+          };
+          signal.addEventListener("abort", abortListener, { once: true });
+          if (signal.aborted) abortListener();
+        }
+        if (signal?.aborted) {
+          if (abortListener != null) signal.removeEventListener("abort", abortListener);
+          try {
+            await s.close();
+          } catch {
+            // ignore
+          }
+          throw new FlowersecError({
+            path: args.path,
+            stage: "yamux",
+            code: "canceled",
+            message: "open stream aborted",
+            cause: signal.reason,
+          });
+        }
         try {
           await writeStreamHello((b) => s.write(b), kind);
         } catch (err) {
+          if (signal?.aborted) {
+            if (abortListener != null) signal.removeEventListener("abort", abortListener);
+            try {
+              await s.close();
+            } catch {
+              // ignore
+            }
+            throw new FlowersecError({
+              path: args.path,
+              stage: "yamux",
+              code: "canceled",
+              message: "open stream aborted",
+              cause: signal.reason,
+            });
+          }
+          if (signal != null && abortListener != null) signal.removeEventListener("abort", abortListener);
           try {
             await s.close();
           } catch {

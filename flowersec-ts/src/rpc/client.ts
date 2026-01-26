@@ -1,6 +1,6 @@
 import type { RpcEnvelope, RpcError } from "../gen/flowersec/rpc/v1.gen.js";
 import { normalizeObserver, nowSeconds, type ClientObserver, type ClientObserverLike, type RpcCallResult } from "../observability/observer.js";
-import { readJsonFrame, writeJsonFrame } from "./framing.js";
+import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
 import { assertRpcEnvelope } from "./validate.js";
 
 // Guard against precision loss when encoding request IDs as numbers.
@@ -109,7 +109,7 @@ export class RpcClient {
   private async readLoop(): Promise<void> {
     try {
       while (!this.closed) {
-        const v = assertRpcEnvelope(await readJsonFrame(this.readExactly, 1 << 20));
+        const v = assertRpcEnvelope(await readJsonFrame(this.readExactly, DEFAULT_MAX_JSON_FRAME_BYTES));
         if (v.response_to === 0) {
           // Notification: response_to=0 and request_id=0.
           if (v.request_id === 0) {

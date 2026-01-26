@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/rpc/frame"
 )
 
 const maxInvalidJSONFrames = 3
@@ -57,14 +57,14 @@ func (r *Router) handle(ctx context.Context, typeID uint32, payload json.RawMess
 type Server struct {
 	r       io.ReadWriteCloser        // Underlying stream for framed JSON.
 	router  *Router                   // Handler registry for incoming requests.
-	maxLen  int                       // Max frame size for frame.ReadJSONFrame.
+	maxLen  int                       // Max frame size for jsonframe.ReadJSONFrame.
 	writeMu sync.Mutex                // Serializes writes on the stream.
 	obs     observability.RPCObserver // Metrics observer.
 }
 
 // NewServer creates a server over a read/write stream.
 func NewServer(rwc io.ReadWriteCloser, router *Router) *Server {
-	return &Server{r: rwc, router: router, maxLen: 1 << 20, obs: observability.NoopRPCObserver}
+	return &Server{r: rwc, router: router, maxLen: jsonframe.DefaultMaxJSONFrameBytes, obs: observability.NoopRPCObserver}
 }
 
 // SetMaxFrameBytes caps incoming JSON frames.
@@ -88,7 +88,7 @@ func (s *Server) Notify(typeID uint32, payload json.RawMessage) error {
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	err := frame.WriteJSONFrame(s.r, env)
+	err := jsonframe.WriteJSONFrame(s.r, env)
 	if err != nil {
 		s.obs.ServerFrameError(observability.RPCFrameWrite)
 	}
@@ -116,7 +116,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			return ctx.Err()
 		default:
 		}
-		b, err := frame.ReadJSONFrame(s.r, s.maxLen)
+		b, err := jsonframe.ReadJSONFrame(s.r, s.maxLen)
 		if err != nil {
 			s.obs.ServerFrameError(observability.RPCFrameRead)
 			if ctx.Err() != nil {
@@ -154,7 +154,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			Error:      rpcErr,
 		}
 		s.writeMu.Lock()
-		if err := frame.WriteJSONFrame(s.r, resp); err != nil {
+		if err := jsonframe.WriteJSONFrame(s.r, resp); err != nil {
 			s.obs.ServerFrameError(observability.RPCFrameWrite)
 		}
 		s.writeMu.Unlock()
@@ -164,7 +164,7 @@ func (s *Server) Serve(ctx context.Context) error {
 // Client issues RPC calls and receives notifications.
 type Client struct {
 	r      io.ReadWriteCloser // Underlying stream for framed JSON.
-	maxLen int                // Max frame size for frame.ReadJSONFrame.
+	maxLen int                // Max frame size for jsonframe.ReadJSONFrame.
 
 	writeMu sync.Mutex // Serializes writes on the stream.
 
@@ -181,7 +181,7 @@ type Client struct {
 func NewClient(rwc io.ReadWriteCloser) *Client {
 	c := &Client{
 		r:       rwc,
-		maxLen:  1 << 20,
+		maxLen:  jsonframe.DefaultMaxJSONFrameBytes,
 		nextID:  1,
 		pending: make(map[uint64]chan rpcv1.RpcEnvelope),
 		notify:  make(map[uint32]map[*notifyHandler]struct{}),
@@ -239,7 +239,7 @@ func (c *Client) Notify(typeID uint32, payload json.RawMessage) error {
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	err := frame.WriteJSONFrame(c.r, env)
+	err := jsonframe.WriteJSONFrame(c.r, env)
 	if err != nil {
 		c.obs.ClientFrameError(observability.RPCFrameWrite)
 	}
@@ -266,7 +266,7 @@ func (c *Client) Call(ctx context.Context, typeID uint32, payload json.RawMessag
 		Payload:    payload,
 	}
 	c.writeMu.Lock()
-	err = frame.WriteJSONFrame(c.r, env)
+	err = jsonframe.WriteJSONFrame(c.r, env)
 	c.writeMu.Unlock()
 	if err != nil {
 		c.obs.ClientFrameError(observability.RPCFrameWrite)
@@ -314,7 +314,7 @@ func (c *Client) release(id uint64) {
 func (c *Client) readLoop() {
 	invalidJSONFrames := 0
 	for {
-		b, err := frame.ReadJSONFrame(c.r, c.maxLen)
+		b, err := jsonframe.ReadJSONFrame(c.r, c.maxLen)
 		if err != nil {
 			c.obs.ClientFrameError(observability.RPCFrameRead)
 			c.closeAll(err)

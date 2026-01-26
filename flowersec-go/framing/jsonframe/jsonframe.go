@@ -1,4 +1,4 @@
-package frame
+package jsonframe
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/bin"
 )
 
-var ErrFrameTooLarge = errors.New("rpc frame too large")
+var ErrFrameTooLarge = errors.New("json frame too large")
 
 // DefaultMaxJSONFrameBytes is the recommended maximum size for a single framed JSON message.
 //

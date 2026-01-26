@@ -2,16 +2,14 @@ import crypto from "node:crypto";
 import process from "node:process";
 
 import {
-  ByteReader,
-  RpcClient,
-  RpcProxy,
-  WebSocketBinaryTransport,
-  YamuxSession,
-  base64urlDecode,
-  base64urlEncode,
-  clientHandshake,
-  writeStreamHello
-} from "../../flowersec-ts/dist/index.js";
+  clientHandshake
+} from "../../flowersec-ts/dist/e2ee/index.js";
+import { WebSocketBinaryTransport } from "../../flowersec-ts/dist/ws/index.js";
+import { YamuxSession } from "../../flowersec-ts/dist/yamux/index.js";
+import { RpcClient } from "../../flowersec-ts/dist/rpc/index.js";
+import { RpcProxy } from "../../flowersec-ts/dist/rpc-proxy/rpcProxy.js";
+import { writeStreamHello } from "../../flowersec-ts/dist/streamhello/index.js";
+import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
 import { createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
 import { Role as TunnelRole } from "../../flowersec-ts/dist/gen/flowersec/tunnel/v1.gen.js";
 
@@ -104,7 +102,7 @@ async function main() {
   await waitOpen(ws, 10_000);
 
   // Step 2: tunnel attach (plaintext JSON). This is only for pairing/auth; it does not protect data.
-  const endpointInstanceId = base64urlEncode(crypto.randomBytes(24));
+  const endpointInstanceId = crypto.randomBytes(24).toString("base64url");
   const attach = {
     v: 1,
     channel_id: grant.channel_id,
@@ -116,7 +114,7 @@ async function main() {
 
   // Step 3: E2EE handshake over the websocket binary transport.
   const transport = new WebSocketBinaryTransport(ws);
-  const psk = base64urlDecode(grant.e2ee_psk_b64u);
+  const psk = Buffer.from(grant.e2ee_psk_b64u, "base64url");
   const suite = grant.default_suite;
   const secure = await clientHandshake(transport, {
     channelId: grant.channel_id,
@@ -138,13 +136,7 @@ async function main() {
 
   // Step 5: RPC stream (first yamux stream) with StreamHello="rpc".
   const rpcStream = await mux.openStream();
-  const rpcReader = new ByteReader(async () => {
-    try {
-      return await rpcStream.read();
-    } catch {
-      return null;
-    }
-  });
+  const rpcReader = createByteReader(rpcStream);
   const readExactly = (n) => rpcReader.readExactly(n);
   const write = (b) => rpcStream.write(b);
   await writeStreamHello(write, "rpc");
@@ -163,13 +155,7 @@ async function main() {
 
     // Open a separate yamux stream ("echo") to show multiplexing.
     const echo = await mux.openStream();
-    const echoReader = new ByteReader(async () => {
-      try {
-        return await echo.read();
-      } catch {
-        return null;
-      }
-    });
+    const echoReader = createByteReader(echo);
     await writeStreamHello((b) => echo.write(b), "echo");
     const msg = new TextEncoder().encode("hello over yamux stream: echo");
     await echo.write(msg);

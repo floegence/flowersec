@@ -10,6 +10,7 @@ See also:
 - Error contract: `docs/ERROR_MODEL.md`
 - Threat model / security boundaries: `docs/THREAT_MODEL.md`
 - Protocol framing (wire format): `docs/PROTOCOL.md`
+- Custom streams (meta + bytes pattern): `docs/STREAMS.md`
 
 ## Prerequisites
 

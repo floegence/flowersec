@@ -24,17 +24,13 @@
     <pre id="out"></pre>
 
     <script type="module">
-      import {
-        ByteReader,
-        RpcClient,
-        RpcProxy,
-        WebSocketBinaryTransport,
-        YamuxSession,
-        base64urlDecode,
-        base64urlEncode,
-        clientHandshake,
-        writeStreamHello
-      } from "../../../flowersec-ts/dist/index.js";
+      import { clientHandshake } from "../../../flowersec-ts/dist/e2ee/index.js";
+      import { WebSocketBinaryTransport } from "../../../flowersec-ts/dist/ws/index.js";
+      import { YamuxSession } from "../../../flowersec-ts/dist/yamux/index.js";
+      import { RpcClient } from "../../../flowersec-ts/dist/rpc/index.js";
+      import { RpcProxy } from "../../../flowersec-ts/dist/rpc-proxy/rpcProxy.js";
+      import { writeStreamHello } from "../../../flowersec-ts/dist/streamhello/index.js";
+      import { createByteReader } from "../../../flowersec-ts/dist/streamio/index.js";
       import { Role as TunnelRole } from "../../../flowersec-ts/dist/gen/flowersec/tunnel/v1.gen.js";
 
       // Browser notes:
@@ -104,6 +100,21 @@
             resolve(payload);
           });
         });
+      }
+
+      function base64urlDecode(s) {
+        const pad = "=".repeat((4 - (s.length % 4)) % 4);
+        const b64 = (s + pad).replace(/-/g, "+").replace(/_/g, "/");
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+
+      function base64urlEncode(b) {
+        let bin = "";
+        for (let i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
+        return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
       }
 
       function closeClient() {
@@ -181,13 +192,7 @@
 
           // Step 5: RPC stream (first yamux stream) with StreamHello="rpc".
           const rpcStream = await mux.openStream();
-          const rpcReader = new ByteReader(async () => {
-            try {
-              return await rpcStream.read();
-            } catch {
-              return null;
-            }
-          });
+          const rpcReader = createByteReader(rpcStream);
           const readExactly = (n) => rpcReader.readExactly(n);
           const write = (b) => rpcStream.write(b);
           await writeStreamHello(write, "rpc");
@@ -208,13 +213,7 @@
 
           // Open a separate yamux stream ("echo") to show multiplexing.
           const echo = await mux.openStream();
-          const echoReader = new ByteReader(async () => {
-            try {
-              return await echo.read();
-            } catch {
-              return null;
-            }
-          });
+          const echoReader = createByteReader(echo);
           await writeStreamHello((b) => echo.write(b), "echo");
           const msg = new TextEncoder().encode("hello over yamux stream: echo");
           await echo.write(msg);

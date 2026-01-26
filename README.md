@@ -146,10 +146,10 @@ Install the Go module:
 ```bash
 go get github.com/floegence/flowersec/flowersec-go@latest
 # Or pin a version:
-go get github.com/floegence/flowersec/flowersec-go@v0.1.0
+go get github.com/floegence/flowersec/flowersec-go@v0.2.0
 ```
 
-Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.1.0`).
+Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.2.0`).
 
 - TypeScript install (no clone): download `floegence-flowersec-core-X.Y.Z.tgz` from the same GitHub Release and install with `npm i ./floegence-flowersec-core-X.Y.Z.tgz`.
 - Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.Connect(ctx, input, ...opts)`, `client.ConnectTunnel(ctx, grant, ...opts)`, `client.ConnectDirect(ctx, info, ...opts)`; set Origin via `client.WithOrigin(origin)`)
@@ -160,7 +160,7 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 - TS (stable): `@floegence/flowersec-core` (`connect`, `connectTunnel`, `connectDirect`)
 - TS (Node): `@floegence/flowersec-core/node` (`connectNode`, `connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
 - TS (browser): `@floegence/flowersec-core/browser` (`connectBrowser`, `connectTunnelBrowser`, `connectDirectBrowser`)
-- TS (building blocks): `@floegence/flowersec-core/rpc`, `@floegence/flowersec-core/yamux`, `@floegence/flowersec-core/e2ee`, `@floegence/flowersec-core/ws`, `@floegence/flowersec-core/observability`, `@floegence/flowersec-core/streamhello`
+- TS (building blocks): `@floegence/flowersec-core/framing`, `@floegence/flowersec-core/streamio`, `@floegence/flowersec-core/rpc`, `@floegence/flowersec-core/yamux`, `@floegence/flowersec-core/e2ee`, `@floegence/flowersec-core/ws`, `@floegence/flowersec-core/observability`, `@floegence/flowersec-core/streamhello`
 - TS (generated protocol stubs): `@floegence/flowersec-core/gen/flowersec/{controlplane,direct,e2ee,rpc,tunnel}/*`
 - TS (unstable): `@floegence/flowersec-core/internal` (internal glue; not recommended as a stable dependency)
 

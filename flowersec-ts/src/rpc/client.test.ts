@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import type { RpcEnvelope } from "../gen/flowersec/rpc/v1.gen.js";
 import { readU32be } from "../utils/bin.js";
+import { writeJsonFrame } from "../framing/jsonframe.js";
 import { RpcClient } from "./client.js";
-import { writeJsonFrame } from "./framing.js";
 
 class ByteQueue {
   private readonly chunks: Uint8Array[] = [];

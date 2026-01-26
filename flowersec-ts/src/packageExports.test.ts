@@ -40,10 +40,26 @@ describe("package exports", () => {
       assert.equal(typeof rpc.RpcServer, "function");
       assert.equal(typeof rpc.RpcCallError, "function");
       assert.equal(typeof rpc.callTyped, "function");
+      assert.equal("readJsonFrame" in rpc, false);
+      assert.equal("writeJsonFrame" in rpc, false);
+
+      const framing = await import("@floegence/flowersec-core/framing");
+      assert.equal(typeof framing.readJsonFrame, "function");
+      assert.equal(typeof framing.writeJsonFrame, "function");
+      assert.equal(typeof framing.JsonFramingError, "function");
+      assert.equal(typeof framing.DEFAULT_MAX_JSON_FRAME_BYTES, "number");
+
+      const streamio = await import("@floegence/flowersec-core/streamio");
+      assert.equal(typeof streamio.readMaybe, "function");
+      assert.equal(typeof streamio.createByteReader, "function");
+      assert.equal(typeof streamio.readExactly, "function");
+      assert.equal(typeof streamio.readNBytes, "function");
 
       const yamux = await import("@floegence/flowersec-core/yamux");
       assert.equal(typeof yamux.YamuxSession, "function");
       assert.equal(typeof yamux.ByteReader, "function");
+      assert.equal(typeof yamux.StreamEOFError, "function");
+      assert.equal(typeof yamux.isStreamEOFError, "function");
 
       const e2ee = await import("@floegence/flowersec-core/e2ee");
       assert.equal(typeof e2ee.clientHandshake, "function");
