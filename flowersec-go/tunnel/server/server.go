@@ -132,7 +132,7 @@ func New(cfg Config) (*Server, error) {
 		cfg.MaxPendingBytes = 256 * 1024
 	}
 	if cfg.MaxTotalPendingBytes < 0 {
-		cfg.MaxTotalPendingBytes = 0
+		return nil, errors.New("max total pending bytes must be >= 0")
 	}
 	if cfg.MaxChannels <= 0 {
 		cfg.MaxChannels = 6000
@@ -141,14 +141,14 @@ func New(cfg Config) (*Server, error) {
 		cfg.MaxConns = 12000
 	}
 	if cfg.ClockSkew < 0 {
-		cfg.ClockSkew = 0
+		return nil, errors.New("clock skew must be >= 0")
 	}
 	cfg.ClockSkew = timeutil.NormalizeSkew(cfg.ClockSkew)
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = 500 * time.Millisecond
 	}
 	if cfg.WriteTimeout < 0 {
-		cfg.WriteTimeout = 0
+		return nil, errors.New("write timeout must be >= 0")
 	}
 	if cfg.MaxWriteQueueBytes <= 0 {
 		cfg.MaxWriteQueueBytes = 1 << 20
@@ -157,13 +157,13 @@ func New(cfg Config) (*Server, error) {
 		return nil, errors.New("max write queue bytes must be >= max record bytes")
 	}
 	if cfg.ReplaceCooldown < 0 {
-		cfg.ReplaceCooldown = 0
+		return nil, errors.New("replace cooldown must be >= 0")
 	}
 	if cfg.ReplaceWindow < 0 {
-		cfg.ReplaceWindow = 0
+		return nil, errors.New("replace window must be >= 0")
 	}
 	if cfg.MaxReplacesPerWindow < 0 {
-		cfg.MaxReplacesPerWindow = 0
+		return nil, errors.New("max replaces per window must be >= 0")
 	}
 	if cfg.ReplaceCloseCode == 0 {
 		cfg.ReplaceCloseCode = websocket.CloseTryAgainLater

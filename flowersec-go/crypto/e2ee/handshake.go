@@ -87,11 +87,19 @@ var (
 )
 
 // SetLimits configures cache bounds. A zero value disables the corresponding limit.
-func (c *ServerHandshakeCache) SetLimits(ttl time.Duration, maxEntries int) {
+// Negative values are rejected.
+func (c *ServerHandshakeCache) SetLimits(ttl time.Duration, maxEntries int) error {
+	if ttl < 0 {
+		return errors.New("ttl must be >= 0")
+	}
+	if maxEntries < 0 {
+		return errors.New("max entries must be >= 0")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ttl = ttl
 	c.maxEntries = maxEntries
+	return nil
 }
 
 // ClientHandshake performs the E2EE handshake from the client perspective.

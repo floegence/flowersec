@@ -62,6 +62,8 @@ flowersec-channelinit \
   > channel.json
 ```
 
+On Unix-like systems, `flowersec-issuer-keygen` creates the output directory with owner-only permissions (`0700`) by default.
+
 Env-defaults variant (flags override env):
 
 ```bash
@@ -237,6 +239,8 @@ func main() {
   log.Fatal(httpSrv.ListenAndServe())
 }
 ```
+
+Note: server-side handshake timeout uses a fixed default when unset (`HandshakeTimeout == 0`) and cannot be disabled. If you need a longer window, set `HandshakeTimeout` explicitly.
 
 Your application must distribute the matching `DirectConnectInfo` (ws_url, channel_id, psk, init_exp, suite) to clients out-of-band (often as JSON).
 

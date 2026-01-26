@@ -59,6 +59,40 @@ func TestReadMessageHonorsContextDeadline(t *testing.T) {
 	}
 }
 
+func TestReadMessageHonorsContextCancelWithoutDeadline(t *testing.T) {
+	srv := newWSServer(t)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	c, _, err := Dial(ctx, "ws"+srv.URL[4:], DialOptions{})
+	if err != nil {
+		t.Fatalf("Dial failed: %v", err)
+	}
+	defer c.Close()
+
+	readCtx, readCancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := c.ReadMessage(readCtx)
+		errCh <- err
+	}()
+
+	// Ensure the goroutine is blocked inside ReadMessage before canceling.
+	time.Sleep(10 * time.Millisecond)
+	readCancel()
+
+	select {
+	case err := <-errCh:
+		if err == nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("ReadMessage did not return after context cancellation")
+	}
+}
+
 func TestCloseWithStatus(t *testing.T) {
 	srv := newWSServer(t)
 	defer srv.Close()

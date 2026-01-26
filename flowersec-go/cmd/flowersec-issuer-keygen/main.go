@@ -103,7 +103,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if outDir == "" {
 		outDir = "."
 	}
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	// Keys include a private key file; prefer a conservative directory permission by default.
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}

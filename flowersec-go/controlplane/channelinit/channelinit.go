@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
@@ -60,8 +61,14 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 	if s.Issuer == nil {
 		return nil, nil, errors.New("missing issuer")
 	}
-	if s.Params.TunnelURL == "" || s.Params.TunnelAudience == "" {
-		return nil, nil, errors.New("missing tunnel params")
+	if s.Params.TunnelURL == "" {
+		return nil, nil, errors.New("missing tunnel url")
+	}
+	if s.Params.TunnelAudience == "" {
+		return nil, nil, errors.New("missing tunnel audience")
+	}
+	if s.Params.IssuerID == "" {
+		return nil, nil, errors.New("missing issuer id")
 	}
 	if channelID == "" {
 		return nil, nil, errors.New("missing channel_id")
@@ -141,6 +148,15 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 
 // ReissueToken refreshes the signed token while keeping the same grant fields.
 func (s *Service) ReissueToken(grant *controlv1.ChannelInitGrant) (*controlv1.ChannelInitGrant, error) {
+	if s.Issuer == nil {
+		return nil, errors.New("missing issuer")
+	}
+	if s.Params.TunnelAudience == "" {
+		return nil, errors.New("missing tunnel audience")
+	}
+	if s.Params.IssuerID == "" {
+		return nil, errors.New("missing issuer id")
+	}
 	if grant == nil {
 		return nil, errors.New("missing grant")
 	}
@@ -176,7 +192,15 @@ func (s *Service) signRoleToken(channelID string, role uint8, initExp int64, idl
 		return "", err
 	}
 	iat := now.Unix()
-	exp := now.Add(time.Duration(tokenExpSeconds) * time.Second).Unix()
+	exp := iat
+	if tokenExpSeconds > 0 {
+		// Avoid time.Duration overflow when tokenExpSeconds is very large.
+		if iat > math.MaxInt64-tokenExpSeconds {
+			exp = math.MaxInt64
+		} else {
+			exp = iat + tokenExpSeconds
+		}
+	}
 	if exp > initExp {
 		exp = initExp
 	}

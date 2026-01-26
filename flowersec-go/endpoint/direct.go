@@ -39,7 +39,7 @@ type AcceptDirectOptions struct {
 	InitExpireAtUnixS int64
 	ClockSkew         time.Duration
 
-	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default).
+	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default; cannot be disabled).
 
 	ServerFeatures uint32
 
@@ -152,7 +152,7 @@ type DirectHandshakeSecrets struct {
 // AcceptDirectResolverOptions configures a direct handshake where per-channel secrets are resolved
 // at runtime based on the client handshake init.
 type AcceptDirectResolverOptions struct {
-	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default).
+	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default; cannot be disabled).
 
 	ClockSkew time.Duration
 

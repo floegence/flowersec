@@ -60,6 +60,8 @@ This writes:
 - `./keys/issuer_key.json` (private signing key; keep it secret)
 - `./keys/issuer_keys.json` (public keyset for the tunnel)
 
+On Unix-like systems, the output directory is created with owner-only permissions (`0700`) by default.
+
 Tip: the helper tools support env defaults (flags override env). See `flowersec-issuer-keygen --help` and `flowersec-channelinit --help`.
 
 Allowed Origin entries support:
@@ -87,11 +89,11 @@ All settings are available as flags. For container deployments, the tunnel also 
 | `--tls-cert-file` | `FSEC_TUNNEL_TLS_CERT_FILE` | enable TLS (requires key file too) |
 | `--tls-key-file` | `FSEC_TUNNEL_TLS_KEY_FILE` | enable TLS (requires cert file too) |
 | `--metrics-listen` | `FSEC_TUNNEL_METRICS_LISTEN` | empty disables metrics server |
-| `--max-conns` | `FSEC_TUNNEL_MAX_CONNS` | `0` uses default |
-| `--max-channels` | `FSEC_TUNNEL_MAX_CHANNELS` | `0` uses default |
-| `--max-total-pending-bytes` | `FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES` | `0` disables the global limit |
-| `--write-timeout` | `FSEC_TUNNEL_WRITE_TIMEOUT` | `0` disables per-frame write timeout |
-| `--max-write-queue-bytes` | `FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES` | `0` uses default |
+| `--max-conns` | `FSEC_TUNNEL_MAX_CONNS` | `>= 0`; `0` uses default |
+| `--max-channels` | `FSEC_TUNNEL_MAX_CHANNELS` | `>= 0`; `0` uses default |
+| `--max-total-pending-bytes` | `FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES` | `>= 0`; `0` disables the global limit |
+| `--write-timeout` | `FSEC_TUNNEL_WRITE_TIMEOUT` | `>= 0`; `0` disables per-frame write timeout |
+| `--max-write-queue-bytes` | `FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES` | `>= 0`; `0` uses default |
 
 See `flowersec-tunnel --help` for the full help text.
 

@@ -81,6 +81,18 @@ func TestTrackConnLimits(t *testing.T) {
 	}
 }
 
+func TestNewRejectsNegativeMaxTotalPendingBytes(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TunnelAudience = "aud"
+	cfg.TunnelIssuer = "iss"
+	cfg.IssuerKeysFile = "does-not-matter.json"
+	cfg.AllowedOrigins = []string{"https://ok"}
+	cfg.MaxTotalPendingBytes = -1
+	if _, err := New(cfg); err == nil {
+		t.Fatalf("expected error for negative max total pending bytes")
+	}
+}
+
 func TestClose_RejectsNewWebSocketUpgrades(t *testing.T) {
 	s := &Server{
 		cfg:      Config{Path: "/ws", AllowedOrigins: []string{"example.com"}},

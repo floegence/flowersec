@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -153,7 +154,11 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	now := time.Now()
-	initExpUnixS := now.Add(time.Duration(initExpSeconds) * time.Second).Unix()
+	nowUnix := now.Unix()
+	if nowUnix > math.MaxInt64-initExpSeconds {
+		return usageErr("--init-exp-seconds is too large")
+	}
+	initExpUnixS := nowUnix + initExpSeconds
 
 	out := output{
 		Version: version,

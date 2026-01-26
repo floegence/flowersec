@@ -86,6 +86,28 @@ func TestKeygenWritesFilesAndEmitsReadyJSON(t *testing.T) {
 	}
 }
 
+func TestKeygen_OutDirPermissions_AreOwnerOnlyByDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not reliable on windows")
+	}
+	base := t.TempDir()
+	outDir := filepath.Join(base, "keys")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--kid", "k1", "--out-dir", outDir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+
+	st, err := os.Stat(outDir)
+	if err != nil {
+		t.Fatalf("out dir not created: %v", err)
+	}
+	if st.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("expected out dir to be owner-only, got perms %o", st.Mode().Perm())
+	}
+}
+
 func TestKeygen_PrettyFlag_EmitsIndentedJSON(t *testing.T) {
 	outDir := t.TempDir()
 	var stdout, stderr bytes.Buffer

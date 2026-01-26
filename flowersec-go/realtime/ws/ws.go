@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -67,13 +68,34 @@ func (c *Conn) SetReadLimit(n int64) {
 	c.c.SetReadLimit(n)
 }
 
-// ReadMessage reads a websocket frame and respects the context deadline.
+// ReadMessage reads a websocket frame and respects the context deadline and cancellation.
 func (c *Conn) ReadMessage(ctx context.Context) (int, []byte, error) {
+	// If the context is already done, fail fast without touching socket deadlines.
+	if err := ctx.Err(); err != nil {
+		return 0, nil, err
+	}
 	deadline, hasDeadline := ctx.Deadline()
 	if hasDeadline {
 		_ = c.c.SetReadDeadline(deadline)
 	} else {
 		_ = c.c.SetReadDeadline(time.Time{})
+	}
+	// gorilla/websocket does not natively unblock ReadMessage on context cancellation unless we
+	// set a read deadline. When the context is canceled, force the in-flight read to wake up
+	// promptly and map the resulting I/O timeout back to ctx.Err().
+	if ctx.Done() != nil {
+		var active atomic.Bool
+		active.Store(true)
+		stop := context.AfterFunc(ctx, func() {
+			if !active.Load() {
+				return
+			}
+			_ = c.c.SetReadDeadline(time.Now())
+		})
+		defer func() {
+			active.Store(false)
+			stop()
+		}()
 	}
 	mt, b, err := c.c.ReadMessage()
 	if err == nil {
@@ -94,13 +116,32 @@ func (c *Conn) ReadMessage(ctx context.Context) (int, []byte, error) {
 	return 0, nil, err
 }
 
-// WriteMessage writes a websocket frame and respects the context deadline.
+// WriteMessage writes a websocket frame and respects the context deadline and cancellation.
 func (c *Conn) WriteMessage(ctx context.Context, messageType int, data []byte) error {
+	// If the context is already done, fail fast without touching socket deadlines.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	deadline, hasDeadline := ctx.Deadline()
 	if hasDeadline {
 		_ = c.c.SetWriteDeadline(deadline)
 	} else {
 		_ = c.c.SetWriteDeadline(time.Time{})
+	}
+	// Like ReadMessage, force a blocked WriteMessage to wake up on context cancellation.
+	if ctx.Done() != nil {
+		var active atomic.Bool
+		active.Store(true)
+		stop := context.AfterFunc(ctx, func() {
+			if !active.Load() {
+				return
+			}
+			_ = c.c.SetWriteDeadline(time.Now())
+		})
+		defer func() {
+			active.Store(false)
+			stop()
+		}()
 	}
 	err := c.c.WriteMessage(messageType, data)
 	if err == nil {

@@ -99,6 +99,19 @@ function buildAckFrame(args: {
 }
 
 describe("clientHandshake", () => {
+  test("rejects negative timeoutMs", async () => {
+    const transport = new ScriptedTransport([]);
+    await expect(clientHandshake(transport, {
+      channelId: "ch_1",
+      suite: 1,
+      psk: crypto.getRandomValues(new Uint8Array(32)),
+      clientFeatures: 0,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20,
+      timeoutMs: -1
+    })).rejects.toThrow(/timeoutMs must be >= 0/);
+  });
+
   test("rejects missing handshake_id", async () => {
     const serverPub = base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
     const nonceS = base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
@@ -400,5 +413,11 @@ describe("ServerHandshakeCache", () => {
     const { init: initB } = makeInit({ channelId: "ch_2", suite: 1 });
     cache.getOrCreate(initA, 1, 0);
     expect(() => cache.getOrCreate(initB, 1, 0)).toThrow(/too many pending handshakes/);
+  });
+
+  test("rejects negative or non-integer limits", () => {
+    expect(() => new ServerHandshakeCache({ ttlMs: -1 })).toThrow(/ttlMs must be >= 0/);
+    expect(() => new ServerHandshakeCache({ maxEntries: -1 })).toThrow(/maxEntries must be an integer >= 0/);
+    expect(() => new ServerHandshakeCache({ maxEntries: 1.5 })).toThrow(/maxEntries must be an integer >= 0/);
   });
 });

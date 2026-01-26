@@ -313,7 +313,9 @@ func TestServerHandshakeTimestampChecks(t *testing.T) {
 
 func TestServerHandshakeCacheMaxEntries(t *testing.T) {
 	cache := NewServerHandshakeCache()
-	cache.SetLimits(0, 1)
+	if err := cache.SetLimits(0, 1); err != nil {
+		t.Fatalf("SetLimits failed: %v", err)
+	}
 	initA, _ := makeInit(t, SuiteX25519HKDFAES256GCM)
 	initB, _ := makeInit(t, SuiteX25519HKDFAES256GCM)
 
@@ -322,6 +324,16 @@ func TestServerHandshakeCacheMaxEntries(t *testing.T) {
 	}
 	if _, err := cache.getOrCreate(initB, SuiteX25519HKDFAES256GCM, 0); err == nil {
 		t.Fatalf("expected too many pending handshakes error")
+	}
+}
+
+func TestServerHandshakeCacheSetLimitsRejectsNegativeValues(t *testing.T) {
+	cache := NewServerHandshakeCache()
+	if err := cache.SetLimits(-1*time.Second, 0); err == nil {
+		t.Fatalf("expected error for negative ttl")
+	}
+	if err := cache.SetLimits(0, -1); err == nil {
+		t.Fatalf("expected error for negative max entries")
 	}
 }
 

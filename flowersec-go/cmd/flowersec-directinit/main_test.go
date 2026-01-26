@@ -141,6 +141,30 @@ func TestDirectInit_PrettyFlag(t *testing.T) {
 	}
 }
 
+func TestDirectInit_RejectsInitExpSecondsOverflow(t *testing.T) {
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+
+	args := []string{
+		"--ws-url", "ws://127.0.0.1:8080/ws",
+		"--channel-id", "ch_1",
+		"--psk-b64u", base64.RawURLEncoding.EncodeToString(psk),
+		"--init-exp-seconds", "9223372036854775807",
+		"--suite", "x25519",
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--init-exp-seconds is too large") {
+		t.Fatalf("expected overflow message, got %q", stderr.String())
+	}
+}
+
 type errReader struct{}
 
 func (errReader) Read(p []byte) (int, error) {

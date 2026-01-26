@@ -33,7 +33,7 @@ export type HandshakeClientOptions = Readonly<{
   maxBufferedBytes?: number;
   /** Optional AbortSignal to cancel the handshake. */
   signal?: AbortSignal;
-  /** Optional total handshake timeout in milliseconds (0 disables). */
+  /** Optional total handshake timeout in milliseconds (>= 0; 0 disables). */
   timeoutMs?: number;
 }>;
 
@@ -59,7 +59,7 @@ export type HandshakeServerOptions = Readonly<{
   maxBufferedBytes?: number;
   /** Optional AbortSignal to cancel the handshake. */
   signal?: AbortSignal;
-  /** Optional total handshake timeout in milliseconds (0 disables). */
+  /** Optional total handshake timeout in milliseconds (>= 0; 0 disables). */
   timeoutMs?: number;
 }>;
 
@@ -67,7 +67,8 @@ const te = new TextEncoder();
 const td = new TextDecoder();
 
 function handshakeDeadlineMs(timeoutMs: number | undefined): number | null {
-  const ms = Math.max(0, timeoutMs ?? 10_000);
+  const ms = timeoutMs ?? 10_000;
+  if (!Number.isFinite(ms) || ms < 0) throw new Error("timeoutMs must be >= 0");
   if (ms <= 0) return null;
   return Date.now() + ms;
 }
@@ -248,8 +249,14 @@ export class ServerHandshakeCache {
   private readonly maxEntries: number;
 
   constructor(opts: Readonly<{ ttlMs?: number; maxEntries?: number }> = {}) {
-    this.ttlMs = Math.max(0, opts.ttlMs ?? 60_000);
-    this.maxEntries = Math.max(0, opts.maxEntries ?? 4096);
+    const ttlMs = opts.ttlMs ?? 60_000;
+    if (!Number.isFinite(ttlMs) || ttlMs < 0) throw new Error("ttlMs must be >= 0");
+    const maxEntries = opts.maxEntries ?? 4096;
+    if (!Number.isFinite(maxEntries) || maxEntries < 0 || !Number.isInteger(maxEntries)) {
+      throw new Error("maxEntries must be an integer >= 0");
+    }
+    this.ttlMs = ttlMs;
+    this.maxEntries = maxEntries;
   }
 
   private cleanup(nowMs: number): void {

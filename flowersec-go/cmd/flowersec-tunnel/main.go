@@ -200,14 +200,14 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&iss, "iss", iss, "expected token issuer (required; must match token payload 'iss') (env: FSEC_TUNNEL_ISS)")
 	fs.Var(&allowedOriginsFlag, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com), or exact non-standard values (e.g. null) (env: FSEC_TUNNEL_ALLOW_ORIGIN; comma-separated)")
 	fs.BoolVar(&allowNoOrigin, "allow-no-origin", allowNoOrigin, "allow requests without Origin header (non-browser clients; discouraged) (env: FSEC_TUNNEL_ALLOW_NO_ORIGIN)")
-	fs.IntVar(&maxConns, "max-conns", maxConns, "max concurrent websocket connections (0 uses default) (env: FSEC_TUNNEL_MAX_CONNS)")
-	fs.IntVar(&maxChannels, "max-channels", maxChannels, "max concurrent channels (0 uses default) (env: FSEC_TUNNEL_MAX_CHANNELS)")
+	fs.IntVar(&maxConns, "max-conns", maxConns, "max concurrent websocket connections (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_CONNS)")
+	fs.IntVar(&maxChannels, "max-channels", maxChannels, "max concurrent channels (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_CHANNELS)")
 	fs.StringVar(&tlsCertFile, "tls-cert-file", tlsCertFile, "enable TLS with the given certificate file (default: disabled) (env: FSEC_TUNNEL_TLS_CERT_FILE)")
 	fs.StringVar(&tlsKeyFile, "tls-key-file", tlsKeyFile, "enable TLS with the given private key file (default: disabled) (env: FSEC_TUNNEL_TLS_KEY_FILE)")
 	fs.StringVar(&metricsListen, "metrics-listen", metricsListen, "listen address for metrics server (empty disables) (env: FSEC_TUNNEL_METRICS_LISTEN)")
-	fs.IntVar(&maxTotalPendingBytes, "max-total-pending-bytes", maxTotalPendingBytes, "max total pending bytes buffered across all channels (0 disables) (env: FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES)")
-	fs.DurationVar(&writeTimeout, "write-timeout", writeTimeout, "per-frame websocket write timeout (0 disables) (env: FSEC_TUNNEL_WRITE_TIMEOUT)")
-	fs.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", maxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (0 uses default) (env: FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES)")
+	fs.IntVar(&maxTotalPendingBytes, "max-total-pending-bytes", maxTotalPendingBytes, "max total pending bytes buffered across all channels (>= 0; 0 disables) (env: FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES)")
+	fs.DurationVar(&writeTimeout, "write-timeout", writeTimeout, "per-frame websocket write timeout (>= 0; 0 disables) (env: FSEC_TUNNEL_WRITE_TIMEOUT)")
+	fs.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", maxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES)")
 	fs.Usage = func() {
 		out := fs.Output()
 		fmt.Fprintln(out, "Usage:")
@@ -264,6 +264,21 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	if err := validateTLSFiles(tlsCertFile, tlsKeyFile); err != nil {
 		return usageErr(err.Error())
+	}
+	if maxConns < 0 {
+		return usageErr("--max-conns must be >= 0")
+	}
+	if maxChannels < 0 {
+		return usageErr("--max-channels must be >= 0")
+	}
+	if maxTotalPendingBytes < 0 {
+		return usageErr("--max-total-pending-bytes must be >= 0")
+	}
+	if writeTimeout < 0 {
+		return usageErr("--write-timeout must be >= 0")
+	}
+	if maxWriteQueueBytes < 0 {
+		return usageErr("--max-write-queue-bytes must be >= 0")
 	}
 	allowedOrigins := selectAllowedOrigins(allowedOriginsEnv, []string(allowedOriginsFlag))
 	if len(allowedOrigins) == 0 {
