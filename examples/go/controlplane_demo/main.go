@@ -203,6 +203,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/v1/channel/init", channelInitHandler(ci, controlEndpoints))
+	handshakeTimeout := 30 * time.Second
 	controlWSHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
 		Upgrader: endpoint.UpgraderOptions{
 			CheckOrigin: func(_ *http.Request) bool { return true },
@@ -213,7 +214,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
 			InitExpireAtUnixS:   controlInitExp,
 			ClockSkew:           30 * time.Second,
-			HandshakeTimeout:    30 * time.Second,
+			HandshakeTimeout:    &handshakeTimeout,
 			ServerFeatures:      1,
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,

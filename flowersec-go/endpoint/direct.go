@@ -39,7 +39,7 @@ type AcceptDirectOptions struct {
 	InitExpireAtUnixS int64
 	ClockSkew         time.Duration
 
-	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default; cannot be disabled).
+	HandshakeTimeout *time.Duration // Total E2EE handshake timeout (nil uses default; 0 disables).
 
 	ServerFeatures uint32
 
@@ -80,27 +80,22 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
 	}
 
-	handshakeTimeout := opts.HandshakeTimeout
+	handshakeTimeout := defaults.HandshakeTimeout
+	if opts.HandshakeTimeout != nil {
+		handshakeTimeout = *opts.HandshakeTimeout
+	}
 	if handshakeTimeout < 0 {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("handshake timeout must be >= 0"))
 	}
-	if handshakeTimeout == 0 {
-		handshakeTimeout = defaults.HandshakeTimeout
-	}
 	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, handshakeTimeout)
 	defer handshakeCancel()
-
-	cache := opts.HandshakeCache
-	if cache == nil {
-		cache = NewHandshakeCache()
-	}
 
 	// Guard against a single oversized websocket message causing an OOM before E2EE framing checks run.
 	c.SetReadLimit(wsutil.ReadLimit(opts.MaxHandshakePayload, opts.MaxRecordBytes))
 
 	bt := e2ee.NewWebSocketBinaryTransport(c)
-	secure, err := e2ee.ServerHandshake(handshakeCtx, bt, cache, e2ee.ServerHandshakeOptions{
+	secure, err := e2ee.ServerHandshake(handshakeCtx, bt, opts.HandshakeCache, e2ee.ServerHandshakeOptions{
 		PSK:                 opts.PSK,
 		Suite:               e2ee.Suite(suite),
 		ChannelID:           opts.ChannelID,
@@ -152,7 +147,7 @@ type DirectHandshakeSecrets struct {
 // AcceptDirectResolverOptions configures a direct handshake where per-channel secrets are resolved
 // at runtime based on the client handshake init.
 type AcceptDirectResolverOptions struct {
-	HandshakeTimeout time.Duration // Total E2EE handshake timeout (0 uses default; cannot be disabled).
+	HandshakeTimeout *time.Duration // Total E2EE handshake timeout (nil uses default; 0 disables).
 
 	ClockSkew time.Duration
 
@@ -200,13 +195,13 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrMissingResolver)
 	}
 
-	handshakeTimeout := opts.HandshakeTimeout
+	handshakeTimeout := defaults.HandshakeTimeout
+	if opts.HandshakeTimeout != nil {
+		handshakeTimeout = *opts.HandshakeTimeout
+	}
 	if handshakeTimeout < 0 {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("handshake timeout must be >= 0"))
-	}
-	if handshakeTimeout == 0 {
-		handshakeTimeout = defaults.HandshakeTimeout
 	}
 	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, handshakeTimeout)
 	defer handshakeCancel()

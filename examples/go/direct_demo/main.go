@@ -88,7 +88,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&listen, "listen", listen, "listen address")
 	fs.StringVar(&wsPath, "ws-path", wsPath, "websocket path")
 	fs.StringVar(&channelID, "channel-id", channelID, "fixed channel id (default: random)")
-	fs.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com), or exact non-standard values (e.g. null)")
+	fs.Var(&allowedOrigins, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com; subdomains only), or exact non-standard values (e.g. null)")
 	fs.Usage = func() {
 		out := fs.Output()
 		fmt.Fprintln(out, "Usage:")
@@ -222,6 +222,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	})
 
 	mux := http.NewServeMux()
+	handshakeTimeout := 30 * time.Second
 	wsHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
 		AllowedOrigins: allowedOrigins,
 		AllowNoOrigin:  false,
@@ -231,7 +232,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
 			InitExpireAtUnixS:   initExp,
 			ClockSkew:           30 * time.Second,
-			HandshakeTimeout:    30 * time.Second,
+			HandshakeTimeout:    &handshakeTimeout,
 			ServerFeatures:      1,
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,

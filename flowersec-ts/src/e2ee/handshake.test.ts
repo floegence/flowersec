@@ -277,7 +277,7 @@ describe("serverHandshake", () => {
       clockSkewSeconds: 30,
       maxHandshakePayload: 8 * 1024,
       maxRecordBytes: 1 << 20
-    })).rejects.toThrow(/bad suite/);
+    })).rejects.toMatchObject({ name: "E2EEHandshakeError", code: "invalid_suite" });
   });
 
   test("rejects timestamp skew", async () => {

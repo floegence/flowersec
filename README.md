@@ -223,7 +223,7 @@ The deployable tunnel binary is `flowersec-go/cmd/flowersec-tunnel/`.
     - full Origin values (e.g. `https://example.com` or `http://127.0.0.1:5173`)
     - hostname entries (e.g. `example.com`, port ignored)
     - hostname:port entries (e.g. `example.com:5173`)
-    - wildcard hostnames (e.g. `*.example.com`)
+    - wildcard hostnames (e.g. `*.example.com`; matches subdomains only, not `example.com`)
     - exact non-standard values (e.g. `null`)
   - Requests without `Origin` are **rejected by default**; `--allow-no-origin` is intended for non-browser clients (discouraged).
   - Client helpers:

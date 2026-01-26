@@ -12,6 +12,8 @@ export type AttachReason =
   | "invalid_token"
   | "channel_mismatch"
   | "role_mismatch"
+  | "init_exp_mismatch"
+  | "idle_timeout_mismatch"
   | "token_replay"
   | "replace_rate_limited"
   | "attach_failed";
@@ -20,6 +22,7 @@ export type HandshakeResult = "ok" | "fail";
 export type HandshakeReason =
   | "auth_tag_mismatch"
   | "handshake_failed"
+  | "invalid_suite"
   | "invalid_version"
   | "timestamp_after_init_exp"
   | "timestamp_out_of_skew"

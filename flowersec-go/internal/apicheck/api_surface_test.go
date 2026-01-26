@@ -37,6 +37,8 @@ var (
 	_                = endpoint.SuiteP256HKDFAES256GCM
 	_ endpoint.UpgraderOptions
 	_ endpoint.HandshakeCache
+	_ endpoint.AcceptDirectOptions
+	_ endpoint.AcceptDirectResolverOptions
 
 	// endpoint/serve
 	_ = serve.New

@@ -36,14 +36,14 @@ func TestIsOriginAllowed(t *testing.T) {
 		}
 	})
 
-	t.Run("wildcard matches base and subdomain", func(t *testing.T) {
+	t.Run("wildcard matches subdomain only", func(t *testing.T) {
 		base := httptest.NewRequest("GET", "http://example.com/ws", nil)
 		base.Header.Set("Origin", "https://example.com")
 		sub := httptest.NewRequest("GET", "http://example.com/ws", nil)
 		sub.Header.Set("Origin", "https://a.example.com")
 		allowed := []string{"*.example.com"}
-		if !IsOriginAllowed(base, allowed, false) {
-			t.Fatal("expected base hostname to be allowed")
+		if IsOriginAllowed(base, allowed, false) {
+			t.Fatal("expected base hostname to be rejected")
 		}
 		if !IsOriginAllowed(sub, allowed, false) {
 			t.Fatal("expected subdomain to be allowed")
@@ -56,8 +56,8 @@ func TestIsOriginAllowed(t *testing.T) {
 		sub := httptest.NewRequest("GET", "http://example.com/ws", nil)
 		sub.Header.Set("Origin", "https://A.ExAmPlE.com")
 		allowed := []string{"*.example.com"}
-		if !IsOriginAllowed(base, allowed, false) {
-			t.Fatal("expected base hostname to be allowed")
+		if IsOriginAllowed(base, allowed, false) {
+			t.Fatal("expected base hostname to be rejected")
 		}
 		if !IsOriginAllowed(sub, allowed, false) {
 			t.Fatal("expected subdomain to be allowed")

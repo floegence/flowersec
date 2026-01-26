@@ -47,7 +47,7 @@ After extracting, you should have:
 - Transport security: the attach layer is plaintext by design, so use `wss://` (or TLS terminated at a reverse proxy) in any non-local deployment.
 - One-time tokens: tunnel enforces `token_id` single-use. Mint a new channel init (`POST /v1/channel/init`) for every new connection attempt.
 - Origin policy (required): the tunnel validates the WebSocket `Origin` header and requires an explicit allow-list.
-  - Allowed entries support full Origins (`http://127.0.0.1:5173`), hostname (`example.com`), hostname:port (`example.com:5173`), wildcard hostnames (`*.example.com`), and exact non-standard values (`null`).
+  - Allowed entries support full Origins (`http://127.0.0.1:5173`), hostname (`example.com`), hostname:port (`example.com:5173`), wildcard hostnames (`*.example.com`, subdomains only), and exact non-standard values (`null`).
 
 ## Demo CLI conventions
 

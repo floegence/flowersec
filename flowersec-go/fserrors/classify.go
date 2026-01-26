@@ -25,6 +25,8 @@ func ClassifyHandshakeCode(err error) Code {
 		return CodeTimeout
 	case errors.Is(err, context.Canceled):
 		return CodeCanceled
+	case errors.Is(err, e2ee.ErrUnsupportedSuite):
+		return CodeInvalidSuite
 	case errors.Is(err, e2ee.ErrTimestampOutOfSkew):
 		return CodeTimestampOutOfSkew
 	case errors.Is(err, e2ee.ErrTimestampAfterInitExp):
@@ -69,6 +71,10 @@ func ClassifyTunnelAttachCloseCode(err error) (Code, bool) {
 		return CodeInvalidToken, true
 	case "channel_mismatch":
 		return CodeChannelMismatch, true
+	case "init_exp_mismatch":
+		return CodeInitExpMismatch, true
+	case "idle_timeout_mismatch":
+		return CodeIdleTimeoutMismatch, true
 	case "role_mismatch":
 		return CodeRoleMismatch, true
 	case "token_replay":

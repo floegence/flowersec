@@ -50,6 +50,8 @@ export type FlowersecErrorCode =
   | "invalid_attach"
   | "invalid_token"
   | "channel_mismatch"
+  | "init_exp_mismatch"
+  | "idle_timeout_mismatch"
   | "token_replay"
   | "replace_rate_limited"
   | "handshake_failed"

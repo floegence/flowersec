@@ -240,7 +240,14 @@ func main() {
 }
 ```
 
-Note: server-side handshake timeout uses a fixed default when unset (`HandshakeTimeout == 0`) and cannot be disabled. If you need a longer window, set `HandshakeTimeout` explicitly.
+Note: server-side handshake timeout uses a fixed default when unset (`HandshakeTimeout == nil`). To disable the timeout, set `HandshakeTimeout` to a pointer to `0`:
+
+```go
+ht := time.Duration(0)
+HandshakeTimeout: &ht
+```
+
+(And ensure your context can be canceled.)
 
 Your application must distribute the matching `DirectConnectInfo` (ws_url, channel_id, psk, init_exp, suite) to clients out-of-band (often as JSON).
 
@@ -504,7 +511,7 @@ Allowed entries support:
 - Full Origin: `https://example.com` or `http://127.0.0.1:5173`
 - Hostname (port ignored): `example.com`
 - Hostname + port: `example.com:5173`
-- Wildcard hostname: `*.example.com`
+- Wildcard hostname: `*.example.com` (subdomains only; does not match `example.com`)
 - Exact non-standard Origin values: `null`
 
 ## Error handling

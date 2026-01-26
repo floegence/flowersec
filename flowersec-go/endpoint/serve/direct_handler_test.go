@@ -15,6 +15,8 @@ import (
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 )
 
+func durationPtr(d time.Duration) *time.Duration { return &d }
+
 func TestNewDirectHandler_MissingServer(t *testing.T) {
 	t.Parallel()
 
@@ -46,7 +48,7 @@ func TestNewDirectHandler_AllowsConnectDirect(t *testing.T) {
 			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
 			InitExpireAtUnixS:   initExp,
 			ClockSkew:           30 * time.Second,
-			HandshakeTimeout:    2 * time.Second,
+			HandshakeTimeout:    durationPtr(2 * time.Second),
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		},
@@ -100,7 +102,7 @@ func TestNewDirectHandlerResolved_AllowsConnectDirect(t *testing.T) {
 		AllowNoOrigin:  false,
 		Handshake: endpoint.AcceptDirectResolverOptions{
 			ClockSkew:           30 * time.Second,
-			HandshakeTimeout:    2 * time.Second,
+			HandshakeTimeout:    durationPtr(2 * time.Second),
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 			Resolve: func(_ context.Context, init endpoint.DirectHandshakeInit) (endpoint.DirectHandshakeSecrets, error) {

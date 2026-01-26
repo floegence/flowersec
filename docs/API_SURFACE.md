@@ -33,7 +33,7 @@ These packages are the recommended integration entrypoints:
 - `github.com/floegence/flowersec/flowersec-go/endpoint`
   - Role: `server`
   - APIs: `endpoint.ConnectTunnel(...)`, `endpoint.NewDirectHandler(...)`, `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandlerResolved(...)`, `endpoint.AcceptDirectWSResolved(...)` (direct server building blocks; most apps should use `endpoint/serve`)
-  - Types: `endpoint.Suite` (`SuiteX25519HKDFAES256GCM`, `SuiteP256HKDFAES256GCM`), `endpoint.UpgraderOptions`, `endpoint.HandshakeCache`
+  - Types: `endpoint.Suite` (`SuiteX25519HKDFAES256GCM`, `SuiteP256HKDFAES256GCM`), `endpoint.UpgraderOptions`, `endpoint.HandshakeCache`, `endpoint.AcceptDirectOptions`, `endpoint.AcceptDirectResolverOptions`
 - `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
   - Role: server runtime
   - APIs: `serve.New(...)`, `srv.Handle(...)`, `srv.HandleStream(...)`, `srv.ServeSession(...)`, `serve.ServeTunnel(...)`, `serve.NewDirectHandler(...)`, `serve.NewDirectHandlerResolved(...)`

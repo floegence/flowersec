@@ -40,7 +40,7 @@ Official clients map these reason tokens to stable error codes (see `docs/ERROR_
 
 - `too_many_connections`
 - `expected_attach`, `invalid_attach`
-- `invalid_token`, `channel_mismatch`, `role_mismatch`, `token_replay`, `replace_rate_limited`, `attach_failed`
+- `invalid_token`, `channel_mismatch`, `init_exp_mismatch`, `idle_timeout_mismatch`, `role_mismatch`, `token_replay`, `replace_rate_limited`, `attach_failed`
 
 ## 2. E2EE handshake framing (`FSEH`)
 

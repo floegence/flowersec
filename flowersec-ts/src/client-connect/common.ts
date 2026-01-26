@@ -67,7 +67,7 @@ export function classifyConnectError(err: unknown): "websocket_error" | "websock
 
 export function classifyHandshakeError(
   err: unknown
-): "auth_tag_mismatch" | "handshake_failed" | "invalid_version" | "timestamp_after_init_exp" | "timestamp_out_of_skew" | "timeout" | "canceled" {
+): "auth_tag_mismatch" | "handshake_failed" | "invalid_suite" | "invalid_version" | "timestamp_after_init_exp" | "timestamp_out_of_skew" | "timeout" | "canceled" {
   if (isTimeoutError(err)) return "timeout";
   if (isAbortError(err)) return "canceled";
   if (err instanceof E2EEHandshakeError) return err.code;

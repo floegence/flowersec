@@ -16,17 +16,19 @@ const (
 type AttachReason string
 
 const (
-	AttachReasonOK                 AttachReason = "ok"
-	AttachReasonUpgradeError       AttachReason = "upgrade_error"
-	AttachReasonTooManyConnections AttachReason = "too_many_connections"
-	AttachReasonExpectedAttach     AttachReason = "expected_attach"
-	AttachReasonInvalidAttach      AttachReason = "invalid_attach"
-	AttachReasonInvalidToken       AttachReason = "invalid_token"
-	AttachReasonChannelMismatch    AttachReason = "channel_mismatch"
-	AttachReasonRoleMismatch       AttachReason = "role_mismatch"
-	AttachReasonTokenReplay        AttachReason = "token_replay"
-	AttachReasonReplaceRateLimited AttachReason = "replace_rate_limited"
-	AttachReasonAttachFailed       AttachReason = "attach_failed"
+	AttachReasonOK                  AttachReason = "ok"
+	AttachReasonUpgradeError        AttachReason = "upgrade_error"
+	AttachReasonTooManyConnections  AttachReason = "too_many_connections"
+	AttachReasonExpectedAttach      AttachReason = "expected_attach"
+	AttachReasonInvalidAttach       AttachReason = "invalid_attach"
+	AttachReasonInvalidToken        AttachReason = "invalid_token"
+	AttachReasonChannelMismatch     AttachReason = "channel_mismatch"
+	AttachReasonRoleMismatch        AttachReason = "role_mismatch"
+	AttachReasonInitExpMismatch     AttachReason = "init_exp_mismatch"
+	AttachReasonIdleTimeoutMismatch AttachReason = "idle_timeout_mismatch"
+	AttachReasonTokenReplay         AttachReason = "token_replay"
+	AttachReasonReplaceRateLimited  AttachReason = "replace_rate_limited"
+	AttachReasonAttachFailed        AttachReason = "attach_failed"
 )
 
 type ReplaceResult string

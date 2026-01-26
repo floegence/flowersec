@@ -49,7 +49,7 @@ Multi-instance tunnels:
 Key and secret handling:
 
 - **Never log secrets**: do not log `e2ee_psk_b64u`, issuer private keys, or full bearer tokens.
-- **Origin policy matters**: browsers enforce Origin rules and the tunnel/server should validate Origins. Avoid allowing `null`/no-Origin unless you fully control your clients.
+- **Origin policy matters**: browsers enforce Origin rules and the tunnel/server should validate Origins. Avoid allowing `null`/no-Origin unless you fully control your clients. Wildcards like `*.example.com` match subdomains only; list the apex (`example.com`) explicitly if you need it.
 
 ## Implementation references (current code)
 
@@ -68,4 +68,3 @@ See also:
 - Protocol framing details: `docs/PROTOCOL.md`
 - Error contract: `docs/ERROR_MODEL.md`
 - Deployment guide: `docs/TUNNEL_DEPLOYMENT.md`
-

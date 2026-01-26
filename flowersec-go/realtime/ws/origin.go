@@ -12,7 +12,7 @@ import (
 // Allowed entries support:
 //   - Full Origin values with scheme, e.g. "https://example.com" or "http://127.0.0.1:5173"
 //   - Hostnames, e.g. "example.com"
-//   - Wildcard hostnames, e.g. "*.example.com" (matches both example.com and subdomains)
+//   - Wildcard hostnames, e.g. "*.example.com" (matches subdomains only; does not match example.com)
 //   - Exact non-standard Origin values, e.g. "null"
 //
 // If the request has no Origin header, allowNoOrigin controls acceptance.
@@ -43,13 +43,12 @@ func IsOriginAllowed(r *http.Request, allowed []string, allowNoOrigin bool) bool
 			continue
 		}
 		// Support wildcard hostname entries like "*.example.com".
-		// For usability, treat "*.example.com" as matching both "example.com"
-		// and any subdomain (e.g. "a.example.com").
+		// Treat "*.example.com" as matching subdomains only (e.g. "a.example.com").
 		if strings.HasPrefix(entry, "*.") {
 			base := strings.TrimPrefix(entry, "*.")
 			baseLower := strings.ToLower(base)
 			if hostnameLower != "" && baseLower != "" {
-				if hostnameLower == baseLower || strings.HasSuffix(hostnameLower, "."+baseLower) {
+				if strings.HasSuffix(hostnameLower, "."+baseLower) {
 					return true
 				}
 			}

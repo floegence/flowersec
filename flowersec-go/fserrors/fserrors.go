@@ -63,6 +63,8 @@ const (
 	CodeInvalidAttach             Code = "invalid_attach"
 	CodeInvalidToken              Code = "invalid_token"
 	CodeChannelMismatch           Code = "channel_mismatch"
+	CodeInitExpMismatch           Code = "init_exp_mismatch"
+	CodeIdleTimeoutMismatch       Code = "idle_timeout_mismatch"
 	CodeTokenReplay               Code = "token_replay"
 	CodeReplaceRateLimited        Code = "replace_rate_limited"
 	CodeHandshakeFailed           Code = "handshake_failed"

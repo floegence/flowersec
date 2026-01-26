@@ -69,7 +69,7 @@ Allowed Origin entries support:
 - Full Origin values (for example `https://example.com` or `http://127.0.0.1:5173`)
 - Hostnames (port ignored, for example `example.com`)
 - Hostname + port (for example `example.com:5173`)
-- Wildcard hostnames (for example `*.example.com`)
+- Wildcard hostnames (for example `*.example.com`; subdomains only, does not match `example.com`)
 - Exact non-standard values (for example `null`)
 
 ## Flags and environment variables

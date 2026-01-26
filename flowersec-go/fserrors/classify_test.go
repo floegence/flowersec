@@ -42,6 +42,7 @@ func TestClassifyHandshakeCode(t *testing.T) {
 	}{
 		{"timeout", context.DeadlineExceeded, CodeTimeout},
 		{"canceled", context.Canceled, CodeCanceled},
+		{"invalid_suite", e2ee.ErrUnsupportedSuite, CodeInvalidSuite},
 		{"timestamp_out_of_skew", e2ee.ErrTimestampOutOfSkew, CodeTimestampOutOfSkew},
 		{"timestamp_after_init_exp", e2ee.ErrTimestampAfterInitExp, CodeTimestampAfterInitExp},
 		{"auth_tag_mismatch", e2ee.ErrAuthTagMismatch, CodeAuthTagMismatch},
@@ -67,6 +68,8 @@ func TestClassifyTunnelAttachCloseCode(t *testing.T) {
 	}{
 		{"not_close_error", errors.New("x"), "", false},
 		{"invalid_token", &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "invalid_token"}, CodeInvalidToken, true},
+		{"init_exp_mismatch", &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "init_exp_mismatch"}, CodeInitExpMismatch, true},
+		{"idle_timeout_mismatch", &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "idle_timeout_mismatch"}, CodeIdleTimeoutMismatch, true},
 		{"token_replay", &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "token_replay"}, CodeTokenReplay, true},
 		{"replace_rate_limited", &websocket.CloseError{Code: websocket.CloseTryAgainLater, Text: "replace_rate_limited"}, CodeReplaceRateLimited, true},
 		{"role_mismatch", &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "role_mismatch"}, CodeRoleMismatch, true},

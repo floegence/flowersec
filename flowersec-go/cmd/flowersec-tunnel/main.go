@@ -198,7 +198,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&issuerKeysFile, "issuer-keys-file", issuerKeysFile, "issuer keyset file (kid->ed25519 pubkey) (required) (env: FSEC_TUNNEL_ISSUER_KEYS_FILE)")
 	fs.StringVar(&aud, "aud", aud, "expected token audience (required) (env: FSEC_TUNNEL_AUD)")
 	fs.StringVar(&iss, "iss", iss, "expected token issuer (required; must match token payload 'iss') (env: FSEC_TUNNEL_ISS)")
-	fs.Var(&allowedOriginsFlag, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com), or exact non-standard values (e.g. null) (env: FSEC_TUNNEL_ALLOW_ORIGIN; comma-separated)")
+	fs.Var(&allowedOriginsFlag, "allow-origin", "allowed Origin value (repeatable; required): full Origin, hostname, hostname:port, wildcard hostname (*.example.com; subdomains only), or exact non-standard values (e.g. null) (env: FSEC_TUNNEL_ALLOW_ORIGIN; comma-separated)")
 	fs.BoolVar(&allowNoOrigin, "allow-no-origin", allowNoOrigin, "allow requests without Origin header (non-browser clients; discouraged) (env: FSEC_TUNNEL_ALLOW_NO_ORIGIN)")
 	fs.IntVar(&maxConns, "max-conns", maxConns, "max concurrent websocket connections (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_CONNS)")
 	fs.IntVar(&maxChannels, "max-channels", maxChannels, "max concurrent channels (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_CHANNELS)")

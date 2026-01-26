@@ -18,6 +18,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+func durationPtr(d time.Duration) *time.Duration { return &d }
+
 func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 	t.Parallel()
 
@@ -52,7 +54,7 @@ func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
 			InitExpireAtUnixS:   initExp,
 			ClockSkew:           30 * time.Second,
-			HandshakeTimeout:    2 * time.Second,
+			HandshakeTimeout:    durationPtr(2 * time.Second),
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		},
@@ -146,7 +148,7 @@ func TestConnectDirect_OriginFallsBackToHeader(t *testing.T) {
 			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
 			InitExpireAtUnixS:   initExp,
 			ClockSkew:           30 * time.Second,
-			HandshakeTimeout:    2 * time.Second,
+			HandshakeTimeout:    durationPtr(2 * time.Second),
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		},
@@ -218,7 +220,7 @@ func TestConnectDirect_WithOriginOverridesHeaderOrigin(t *testing.T) {
 			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
 			InitExpireAtUnixS:   initExp,
 			ClockSkew:           30 * time.Second,
-			HandshakeTimeout:    2 * time.Second,
+			HandshakeTimeout:    durationPtr(2 * time.Second),
 			MaxHandshakePayload: 8 * 1024,
 			MaxRecordBytes:      1 << 20,
 		},

@@ -315,7 +315,7 @@ export async function serverHandshake(
   if (init.role !== 1) throw new Error("bad role");
   if (init.channel_id !== opts.channelId) throw new Error("bad channel_id");
   const suite = init.suite as Suite;
-  if (suite !== opts.suite) throw new Error("bad suite");
+  if (suite !== opts.suite) throw new E2EEHandshakeError("invalid_suite", "bad suite");
 
   const clientPub = base64urlDecode(init.client_eph_pub_b64u);
   const nonceC = base64urlDecode(init.nonce_c_b64u);

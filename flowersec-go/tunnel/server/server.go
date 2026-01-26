@@ -225,7 +225,11 @@ func (s *Server) Close() {
 	})
 }
 
-var ErrReplaceRateLimited = errors.New("replace rate limited")
+var (
+	ErrReplaceRateLimited  = errors.New("replace rate limited")
+	errInitExpMismatch     = errors.New("init_exp mismatch")
+	errIdleTimeoutMismatch = errors.New("idle_timeout mismatch")
+)
 
 var (
 	errUnknownChannel   = errors.New("unknown channel")
@@ -443,10 +447,17 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	uc.SetReadLimit(int64(s.cfg.MaxRecordBytes))
 	uc.SetReadDeadline(time.Time{})
 	if err := s.addEndpoint(attach, p, uc); err != nil {
-		if errors.Is(err, ErrReplaceRateLimited) {
+		switch {
+		case errors.Is(err, ErrReplaceRateLimited):
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonReplaceRateLimited)
 			_ = c.CloseWithStatus(s.cfg.ReplaceCloseCode, string(observability.AttachReasonReplaceRateLimited))
-		} else {
+		case errors.Is(err, errInitExpMismatch):
+			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonInitExpMismatch)
+			_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonInitExpMismatch))
+		case errors.Is(err, errIdleTimeoutMismatch):
+			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonIdleTimeoutMismatch)
+			_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonIdleTimeoutMismatch))
+		default:
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonAttachFailed)
 			_ = c.CloseWithStatus(websocket.CloseInternalServerErr, string(observability.AttachReasonAttachFailed))
 		}
@@ -577,12 +588,12 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 		if st.initExp != p.InitExp {
 			st.mu.Unlock()
 			s.mu.Unlock()
-			return errors.New("init_exp mismatch")
+			return errInitExpMismatch
 		}
 		if st.idleTimeout != time.Duration(p.IdleTimeoutSeconds)*time.Second {
 			st.mu.Unlock()
 			s.mu.Unlock()
-			return errors.New("idle_timeout mismatch")
+			return errIdleTimeoutMismatch
 		}
 		if st.conns[a.Role] != nil {
 			if !s.allowReplaceLocked(st, a.Role, now) {

@@ -58,7 +58,7 @@ Connect / attach / upgrade:
 - `dial_failed`, `attach_failed`, `upgrade_failed`
 - `too_many_connections`
 - `expected_attach`, `invalid_attach`
-- `invalid_token`, `channel_mismatch`, `token_replay`, `replace_rate_limited`
+- `invalid_token`, `channel_mismatch`, `init_exp_mismatch`, `idle_timeout_mismatch`, `token_replay`, `replace_rate_limited`
 - `timeout`, `canceled`
 
 Handshake:
