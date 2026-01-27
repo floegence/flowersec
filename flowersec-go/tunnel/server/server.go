@@ -116,6 +116,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Path == "" {
 		cfg.Path = "/ws"
 	}
+	if !strings.HasPrefix(cfg.Path, "/") {
+		return nil, configError("path must start with /")
+	}
 	cfg.IssuerKeysFile = strings.TrimSpace(cfg.IssuerKeysFile)
 	if cfg.IssuerKeysFile == "" {
 		return nil, configError("missing issuer keys file")
@@ -141,35 +144,56 @@ func New(cfg Config) (*Server, error) {
 		return nil, configError("missing allowed origins")
 	}
 	cfg.AllowedOrigins = allowedOrigins
-	if cfg.MaxAttachBytes <= 0 {
+	if cfg.MaxAttachBytes < 0 {
+		return nil, configError("max attach bytes must be >= 0")
+	}
+	if cfg.MaxAttachBytes == 0 {
 		cfg.MaxAttachBytes = 8 * 1024
 	}
-	if cfg.MaxRecordBytes <= 0 {
+	if cfg.MaxRecordBytes < 0 {
+		return nil, configError("max record bytes must be >= 0")
+	}
+	if cfg.MaxRecordBytes == 0 {
 		cfg.MaxRecordBytes = 1 << 20
 	}
-	if cfg.MaxPendingBytes <= 0 {
+	if cfg.MaxPendingBytes < 0 {
+		return nil, configError("max pending bytes must be >= 0")
+	}
+	if cfg.MaxPendingBytes == 0 {
 		cfg.MaxPendingBytes = 256 * 1024
 	}
 	if cfg.MaxTotalPendingBytes < 0 {
 		return nil, configError("max total pending bytes must be >= 0")
 	}
-	if cfg.MaxChannels <= 0 {
+	if cfg.MaxChannels < 0 {
+		return nil, configError("max channels must be >= 0")
+	}
+	if cfg.MaxChannels == 0 {
 		cfg.MaxChannels = 6000
 	}
-	if cfg.MaxConns <= 0 {
+	if cfg.MaxConns < 0 {
+		return nil, configError("max conns must be >= 0")
+	}
+	if cfg.MaxConns == 0 {
 		cfg.MaxConns = 12000
 	}
 	if cfg.ClockSkew < 0 {
 		return nil, configError("clock skew must be >= 0")
 	}
 	cfg.ClockSkew = timeutil.NormalizeSkew(cfg.ClockSkew)
-	if cfg.CleanupInterval <= 0 {
+	if cfg.CleanupInterval < 0 {
+		return nil, configError("cleanup interval must be >= 0")
+	}
+	if cfg.CleanupInterval == 0 {
 		cfg.CleanupInterval = 500 * time.Millisecond
 	}
 	if cfg.WriteTimeout < 0 {
 		return nil, configError("write timeout must be >= 0")
 	}
-	if cfg.MaxWriteQueueBytes <= 0 {
+	if cfg.MaxWriteQueueBytes < 0 {
+		return nil, configError("max write queue bytes must be >= 0")
+	}
+	if cfg.MaxWriteQueueBytes == 0 {
 		cfg.MaxWriteQueueBytes = 1 << 20
 	}
 	if cfg.MaxWriteQueueBytes < cfg.MaxRecordBytes {
@@ -184,8 +208,14 @@ func New(cfg Config) (*Server, error) {
 	if cfg.MaxReplacesPerWindow < 0 {
 		return nil, configError("max replaces per window must be >= 0")
 	}
+	if cfg.ReplaceCloseCode < 0 {
+		return nil, configError("replace close code must be >= 0")
+	}
 	if cfg.ReplaceCloseCode == 0 {
 		cfg.ReplaceCloseCode = websocket.CloseTryAgainLater
+	}
+	if !isValidWebSocketCloseCode(cfg.ReplaceCloseCode) {
+		return nil, configError("replace close code must be a valid websocket close code")
 	}
 	if cfg.Observer == nil {
 		cfg.Observer = observability.NoopTunnelObserver
@@ -204,6 +234,18 @@ func New(cfg Config) (*Server, error) {
 	}
 	go s.cleanupLoop()
 	return s, nil
+}
+
+func isValidWebSocketCloseCode(code int) bool {
+	if code < 1000 || code > 4999 {
+		return false
+	}
+	switch code {
+	case 1004, 1005, 1006, 1014, 1015:
+		return false
+	default:
+		return true
+	}
 }
 
 // Stats returns a point-in-time view of connection and channel counts.

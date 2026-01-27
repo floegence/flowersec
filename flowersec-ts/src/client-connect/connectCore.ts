@@ -65,7 +65,18 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
   if (origin === "") {
     throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_origin", message: "missing origin" });
   }
-  if (args.wsUrl == null || args.wsUrl === "") {
+
+  if (args.path === "tunnel" && args.attach == null) {
+    throw new FlowersecError({
+      path: args.path,
+      stage: "validate",
+      code: "invalid_option",
+      message: "missing attach payload",
+    });
+  }
+
+  const wsUrl = typeof args.wsUrl === "string" ? args.wsUrl.trim() : "";
+  if (wsUrl === "") {
     const code = args.path === "tunnel" ? "missing_tunnel_url" : "missing_ws_url";
     throw new FlowersecError({ path: args.path, stage: "validate", code, message: "missing websocket url" });
   }
@@ -110,9 +121,30 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     invalidOption("maxWsQueuedBytes must be a non-negative integer");
   }
 
+  const channelId = typeof args.channelId === "string" ? args.channelId.trim() : "";
+  if (channelId === "") {
+    throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_channel_id", message: "missing channel_id" });
+  }
+
+  let psk: Uint8Array;
+  try {
+    const pskB64u = typeof args.e2eePskB64u === "string" ? args.e2eePskB64u.trim() : "";
+    psk = base64urlDecode(pskB64u);
+  } catch (e) {
+    throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_psk", message: "invalid e2ee_psk_b64u", cause: e });
+  }
+  if (psk.length !== 32) {
+    throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_psk", message: "psk must be 32 bytes" });
+  }
+
+  const suite = args.defaultSuite as unknown as 1 | 2;
+  if (suite !== 1 && suite !== 2) {
+    throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_suite", message: "invalid suite" });
+  }
+
   let ws: WebSocketLike;
   try {
-    ws = createWebSocket(args.wsUrl, origin, args.opts.wsFactory);
+    ws = createWebSocket(wsUrl, origin, args.opts.wsFactory);
   } catch (e) {
     if (e instanceof OriginMismatchError) {
       throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_option", message: e.message, cause: e });
@@ -158,16 +190,8 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     throwIfAborted(signal, "connect aborted");
 
     if (args.path === "tunnel") {
-      if (args.attach == null) {
-        throw new FlowersecError({
-          path: args.path,
-          stage: "validate",
-          code: "invalid_option",
-          message: "missing attach payload",
-        });
-      }
       try {
-        ws.send(args.attach.attachJson);
+        ws.send(args.attach!.attachJson);
       } catch (err) {
         observer.onAttach("fail", "send_failed");
         try {
@@ -179,33 +203,12 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       }
     }
 
-    let psk: Uint8Array;
-    try {
-      psk = base64urlDecode(args.e2eePskB64u);
-    } catch (e) {
-      transport.close();
-      throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_psk", message: "invalid e2ee_psk_b64u", cause: e });
-    }
-    if (psk.length !== 32) {
-      transport.close();
-      throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_psk", message: "psk must be 32 bytes" });
-    }
-    if (args.channelId == null || args.channelId === "") {
-      transport.close();
-      throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_channel_id", message: "missing channel_id" });
-    }
-    const suite = args.defaultSuite as unknown as 1 | 2;
-    if (suite !== 1 && suite !== 2) {
-      transport.close();
-      throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_suite", message: "invalid suite" });
-    }
-
     const handshakeStart = nowSeconds();
     let secure: Awaited<ReturnType<typeof clientHandshake>>;
     try {
       secure = await withAbortAndTimeout(
         clientHandshake(transport, {
-          channelId: args.channelId,
+          channelId,
           suite,
           psk,
           clientFeatures,

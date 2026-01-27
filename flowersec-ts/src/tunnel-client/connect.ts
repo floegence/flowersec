@@ -91,13 +91,16 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
   } catch (e) {
     throw new FlowersecError({ stage: "validate", code: "invalid_input", path: "tunnel", message: "invalid ChannelInitGrant", cause: e });
   }
-  if (checkedGrant.tunnel_url === "") {
+  const tunnelUrl = checkedGrant.tunnel_url.trim();
+  if (tunnelUrl === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_tunnel_url", path: "tunnel", message: "missing tunnel_url" });
   }
-  if (checkedGrant.channel_id === "") {
+  const channelId = checkedGrant.channel_id.trim();
+  if (channelId === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_channel_id", path: "tunnel", message: "missing channel_id" });
   }
-  if (checkedGrant.token === "") {
+  const token = checkedGrant.token.trim();
+  if (token === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_token", path: "tunnel", message: "missing token" });
   }
   if (checkedGrant.channel_init_expire_at_unix_s <= 0) {
@@ -108,8 +111,9 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
       message: "missing channel_init_expire_at_unix_s",
     });
   }
+  const e2eePskB64u = checkedGrant.e2ee_psk_b64u.trim();
   try {
-    const psk = base64urlDecode(checkedGrant.e2ee_psk_b64u);
+    const psk = base64urlDecode(e2eePskB64u);
     if (psk.length !== 32) {
       throw new Error("psk must be 32 bytes");
     }
@@ -143,18 +147,18 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
   }
   const attach: Attach = {
     v: 1,
-    channel_id: checkedGrant.channel_id,
+    channel_id: channelId,
     role: TunnelRole.Role_client,
-    token: checkedGrant.token,
+    token,
     endpoint_instance_id: endpointInstanceId
   };
   const attachJson = JSON.stringify(attach);
   const keepaliveIntervalMs = opts.keepaliveIntervalMs ?? defaultKeepaliveIntervalMs(idleTimeoutSeconds);
   return await connectCore({
     path: "tunnel",
-    wsUrl: checkedGrant.tunnel_url,
-    channelId: checkedGrant.channel_id,
-    e2eePskB64u: checkedGrant.e2ee_psk_b64u,
+    wsUrl: tunnelUrl,
+    channelId,
+    e2eePskB64u,
     defaultSuite: checkedGrant.default_suite,
     opts: { ...opts, keepaliveIntervalMs },
     attach: { attachJson, endpointInstanceId }

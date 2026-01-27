@@ -169,6 +169,60 @@ func TestConnectTunnel_RejectsMissingToken(t *testing.T) {
 	}
 }
 
+func TestConnectTunnel_TrimsWhitespaceInputs(t *testing.T) {
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+	base := controlv1.ChannelInitGrant{
+		TunnelUrl:                "ws://example.invalid",
+		ChannelId:                "ch_1",
+		ChannelInitExpireAtUnixS: 1,
+		Role:                     controlv1.Role_client,
+		Token:                    "tok",
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		DefaultSuite:             1,
+		AllowedSuites:            []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
+		IdleTimeoutSeconds:       60,
+	}
+
+	{
+		grant := base
+		grant.TunnelUrl = "  \t  "
+		_, err := ConnectTunnel(context.Background(), &grant, WithOrigin("http://example.com"))
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !errors.Is(err, ErrMissingTunnelURL) {
+			t.Fatalf("expected ErrMissingTunnelURL, got %v", err)
+		}
+	}
+
+	{
+		grant := base
+		grant.ChannelId = "  \t  "
+		_, err := ConnectTunnel(context.Background(), &grant, WithOrigin("http://example.com"))
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !errors.Is(err, ErrMissingChannelID) {
+			t.Fatalf("expected ErrMissingChannelID, got %v", err)
+		}
+	}
+
+	{
+		grant := base
+		grant.Token = "  \t  "
+		_, err := ConnectTunnel(context.Background(), &grant, WithOrigin("http://example.com"))
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !errors.Is(err, ErrMissingToken) {
+			t.Fatalf("expected ErrMissingToken, got %v", err)
+		}
+	}
+}
+
 func TestConnectDirect_RejectsInvalidSuite(t *testing.T) {
 	psk := make([]byte, 32)
 	for i := range psk {
@@ -194,6 +248,44 @@ func TestConnectDirect_RejectsInvalidSuite(t *testing.T) {
 	}
 	if fe.Path != PathDirect || fe.Stage != StageValidate || fe.Code != CodeInvalidSuite {
 		t.Fatalf("unexpected error: %+v", fe)
+	}
+}
+
+func TestConnectDirect_TrimsWhitespaceInputs(t *testing.T) {
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+	base := directv1.DirectConnectInfo{
+		WsUrl:                    "ws://example.invalid",
+		ChannelId:                "ch_1",
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		ChannelInitExpireAtUnixS: 1,
+		DefaultSuite:             1,
+	}
+
+	{
+		info := base
+		info.WsUrl = "  \t  "
+		_, err := ConnectDirect(context.Background(), &info, WithOrigin("http://example.com"))
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !errors.Is(err, ErrMissingWSURL) {
+			t.Fatalf("expected ErrMissingWSURL, got %v", err)
+		}
+	}
+
+	{
+		info := base
+		info.ChannelId = "  \t  "
+		_, err := ConnectDirect(context.Background(), &info, WithOrigin("http://example.com"))
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !errors.Is(err, ErrMissingChannelID) {
+			t.Fatalf("expected ErrMissingChannelID, got %v", err)
+		}
 	}
 }
 

@@ -120,6 +120,14 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_tunnel_url", path: "tunnel" });
   });
 
+  test("rejects whitespace tunnel_url", async () => {
+    const bad = makeGrant();
+    bad.tunnel_url = "  \t  ";
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_tunnel_url", path: "tunnel" });
+  });
+
   test("rejects missing tunnel_url field", async () => {
     const bad: any = makeGrant();
     delete bad.tunnel_url;
@@ -147,6 +155,14 @@ describe("connectTunnel", () => {
   test("rejects missing token", async () => {
     const bad = makeGrant();
     bad.token = "";
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_token", path: "tunnel" });
+  });
+
+  test("rejects whitespace token", async () => {
+    const bad = makeGrant();
+    bad.token = "  \t  ";
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_token", path: "tunnel" });

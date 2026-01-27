@@ -2,8 +2,10 @@ package server
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -93,6 +95,78 @@ func TestNewRejectsNegativeMaxTotalPendingBytes(t *testing.T) {
 	cfg.MaxTotalPendingBytes = -1
 	if _, err := New(cfg); err == nil {
 		t.Fatalf("expected error for negative max total pending bytes")
+	}
+}
+
+func TestNewRejectsInvalidPath(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Path = "ws"
+	cfg.TunnelAudience = "aud"
+	cfg.TunnelIssuer = "iss"
+	cfg.IssuerKeysFile = "does-not-matter.json"
+	cfg.AllowedOrigins = []string{"https://ok"}
+	if _, err := New(cfg); err == nil {
+		t.Fatalf("expected error for invalid path")
+	}
+}
+
+func TestNewRejectsNegativeConfigValues(t *testing.T) {
+	base := DefaultConfig()
+	base.TunnelAudience = "aud"
+	base.TunnelIssuer = "iss"
+	base.IssuerKeysFile = "does-not-matter.json"
+	base.AllowedOrigins = []string{"https://ok"}
+
+	cases := []struct {
+		name string
+		mut  func(cfg *Config)
+	}{
+		{name: "MaxAttachBytes", mut: func(cfg *Config) { cfg.MaxAttachBytes = -1 }},
+		{name: "MaxRecordBytes", mut: func(cfg *Config) { cfg.MaxRecordBytes = -1 }},
+		{name: "MaxPendingBytes", mut: func(cfg *Config) { cfg.MaxPendingBytes = -1 }},
+		{name: "MaxChannels", mut: func(cfg *Config) { cfg.MaxChannels = -1 }},
+		{name: "MaxConns", mut: func(cfg *Config) { cfg.MaxConns = -1 }},
+		{name: "CleanupInterval", mut: func(cfg *Config) { cfg.CleanupInterval = -1 }},
+		{name: "MaxWriteQueueBytes", mut: func(cfg *Config) { cfg.MaxWriteQueueBytes = -1 }},
+		{name: "ReplaceCloseCode", mut: func(cfg *Config) { cfg.ReplaceCloseCode = -1 }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base
+			tc.mut(&cfg)
+			_, err := New(cfg)
+			if err == nil {
+				t.Fatalf("expected error")
+			}
+			var ce *ConfigError
+			if !errors.As(err, &ce) {
+				t.Fatalf("expected *ConfigError, got %T", err)
+			}
+		})
+	}
+}
+
+func TestNewRejectsInvalidReplaceCloseCode(t *testing.T) {
+	base := DefaultConfig()
+	base.TunnelAudience = "aud"
+	base.TunnelIssuer = "iss"
+	base.IssuerKeysFile = "does-not-matter.json"
+	base.AllowedOrigins = []string{"https://ok"}
+
+	codes := []int{1, 999, 1005, 1014, 1015, 5000}
+	for _, code := range codes {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			cfg := base
+			cfg.ReplaceCloseCode = code
+			_, err := New(cfg)
+			if err == nil {
+				t.Fatalf("expected error for ReplaceCloseCode=%d", code)
+			}
+			var ce *ConfigError
+			if !errors.As(err, &ce) {
+				t.Fatalf("expected *ConfigError, got %T", err)
+			}
+		})
 	}
 }
 

@@ -33,13 +33,16 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if grant.Role != controlv1.Role_client {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRoleMismatch, ErrExpectedRoleClient)
 	}
-	if grant.TunnelUrl == "" {
+	tunnelURL := strings.TrimSpace(grant.TunnelUrl)
+	if tunnelURL == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingTunnelURL, ErrMissingTunnelURL)
 	}
-	if grant.ChannelId == "" {
+	channelID := strings.TrimSpace(grant.ChannelId)
+	if channelID == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
 	}
-	if grant.Token == "" {
+	tokenStr := strings.TrimSpace(grant.Token)
+	if tokenStr == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingToken, ErrMissingToken)
 	}
 	if grant.ChannelInitExpireAtUnixS <= 0 {
@@ -60,7 +63,8 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if !cfg.keepaliveSet {
 		keepalive = defaults.KeepaliveInterval(grant.IdleTimeoutSeconds)
 	}
-	psk, err := base64url.Decode(grant.E2eePskB64u)
+	pskB64u := strings.TrimSpace(grant.E2eePskB64u)
+	psk, err := base64url.Decode(pskB64u)
 	if err != nil || len(psk) != 32 {
 		if err == nil {
 			err = ErrInvalidPSK
@@ -93,7 +97,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 
 	h := cloneHeader(cfg.header)
 	h.Set("Origin", origin)
-	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
+	c, _, err := ws.Dial(connectCtx, tunnelURL, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
@@ -101,9 +105,9 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	c.SetReadLimit(wsutil.ReadLimit(cfg.maxHandshakePayload, cfg.maxRecordBytes))
 	attach := tunnelv1.Attach{
 		V:                  1,
-		ChannelId:          grant.ChannelId,
+		ChannelId:          channelID,
 		Role:               tunnelv1.Role_client,
-		Token:              grant.Token,
+		Token:              tokenStr,
 		EndpointInstanceId: endpointInstanceID,
 	}
 	attachJSON, _ := json.Marshal(attach)
@@ -116,7 +120,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	out, err := dialAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, dialE2EEOptions{
 		psk:               psk,
 		suite:             suite,
-		channelID:         grant.ChannelId,
+		channelID:         channelID,
 		clientFeatures:    cfg.clientFeatures,
 		maxHandshakeBytes: cfg.maxHandshakePayload,
 		maxRecordBytes:    cfg.maxRecordBytes,
@@ -138,10 +142,12 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	if info == nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConnectInfo, ErrMissingConnectInfo)
 	}
-	if info.WsUrl == "" {
+	wsURL := strings.TrimSpace(info.WsUrl)
+	if wsURL == "" {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingWSURL, ErrMissingWSURL)
 	}
-	if info.ChannelId == "" {
+	channelID := strings.TrimSpace(info.ChannelId)
+	if channelID == "" {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
 	}
 	if info.ChannelInitExpireAtUnixS <= 0 {
@@ -165,7 +171,8 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	if cfg.endpointInstanceIDSet {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrEndpointInstanceIDNotAllowed)
 	}
-	psk, err := base64url.Decode(info.E2eePskB64u)
+	pskB64u := strings.TrimSpace(info.E2eePskB64u)
+	psk, err := base64url.Decode(pskB64u)
 	if err != nil || len(psk) != 32 {
 		if err == nil {
 			err = ErrInvalidPSK
@@ -187,7 +194,7 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 
 	h := cloneHeader(cfg.header)
 	h.Set("Origin", origin)
-	c, _, err := ws.Dial(connectCtx, info.WsUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
+	c, _, err := ws.Dial(connectCtx, wsURL, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
@@ -197,7 +204,7 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	out, err := dialAfterAttach(ctx, c, fserrors.PathDirect, "", dialE2EEOptions{
 		psk:               psk,
 		suite:             suite,
-		channelID:         info.ChannelId,
+		channelID:         channelID,
 		clientFeatures:    cfg.clientFeatures,
 		maxHandshakeBytes: cfg.maxHandshakePayload,
 		maxRecordBytes:    cfg.maxRecordBytes,

@@ -1,13 +1,15 @@
 import { describe, expect, test } from "vitest";
 import { FlowersecError } from "../utils/errors.js";
+import { base64urlEncode } from "../utils/base64url.js";
 import { connectCore } from "./connectCore.js";
 
 describe("connectCore option validation", () => {
+  const psk = base64urlEncode(new Uint8Array(32).fill(1));
   const baseArgs = {
     path: "direct" as const,
     wsUrl: "ws://example.invalid",
     channelId: "ch_1",
-    e2eePskB64u: "psk",
+    e2eePskB64u: psk,
     defaultSuite: 1,
     opts: { origin: "https://app.example" }
   };
