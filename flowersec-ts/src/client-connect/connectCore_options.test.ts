@@ -50,5 +50,35 @@ describe("connectCore option validation", () => {
     await expect(p).rejects.toMatchObject({ path: "direct", stage: "validate", code: "invalid_option" });
     await expect(p).rejects.toMatchObject({ message: expect.stringContaining("clientFeatures") });
   });
-});
 
+  test("rejects whitespace-only origin as missing_origin", async () => {
+    const p = connectCore({
+      ...baseArgs,
+      opts: { ...baseArgs.opts, origin: " " }
+    } as any);
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ path: "direct", stage: "validate", code: "missing_origin" });
+  });
+
+  test("trims origin before passing it to wsFactory", async () => {
+    try {
+      await connectCore({
+        ...baseArgs,
+        opts: {
+          ...baseArgs.opts,
+          origin: " https://app.example ",
+          wsFactory: (_url: string, origin: string) => {
+            if (origin !== "https://app.example") throw new Error("origin_not_trimmed");
+            throw new Error("ok");
+          }
+        }
+      } as any);
+      throw new Error("expected connectCore to throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(FlowersecError);
+      expect(e).toMatchObject({ path: "direct", stage: "connect", code: "dial_failed" });
+      expect((e as any).cause).toBeInstanceOf(Error);
+      expect(((e as any).cause as Error).message).toBe("ok");
+    }
+  });
+});

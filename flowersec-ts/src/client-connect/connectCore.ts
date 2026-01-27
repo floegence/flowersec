@@ -61,8 +61,8 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
   const signal = args.opts.signal;
   const connectStart = nowSeconds();
 
-  const origin = args.opts.origin;
-  if (origin == null || origin === "") {
+  const origin = typeof args.opts.origin === "string" ? args.opts.origin.trim() : "";
+  if (origin === "") {
     throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_origin", message: "missing origin" });
   }
   if (args.wsUrl == null || args.wsUrl === "") {
