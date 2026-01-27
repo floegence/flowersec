@@ -72,4 +72,5 @@ const (
 	CodeOpenStreamFailed          = fserrors.CodeOpenStreamFailed
 	CodeMissingStreamKind         = fserrors.CodeMissingStreamKind
 	CodeStreamHelloFailed         = fserrors.CodeStreamHelloFailed
+	CodeRPCFailed                 = fserrors.CodeRPCFailed
 )

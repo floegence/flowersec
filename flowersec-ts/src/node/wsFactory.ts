@@ -6,16 +6,38 @@ type EventType = "open" | "message" | "error" | "close";
 
 type Listener = (ev: any) => void;
 
+export type NodeWsFactoryOptions = Readonly<{
+  // Maximum message size in bytes enforced by the "ws" client implementation.
+  //
+  // This is a defense-in-depth guard against a single oversized websocket message
+  // causing large allocations before Flowersec protocol size checks run.
+  maxPayload?: number;
+  // perMessageDeflate controls websocket compression negotiation. Default: false.
+  //
+  // Disabling compression avoids compression-bomb style DoS risks and aligns with the Go client defaults.
+  perMessageDeflate?: boolean;
+}>;
+
 // createNodeWsFactory returns a wsFactory compatible with connectTunnel/connectDirect in Node.js.
 //
 // It uses the "ws" package to set the Origin header explicitly (browsers set Origin automatically).
-export function createNodeWsFactory(): (url: string, origin: string) => WebSocketLike {
+export function createNodeWsFactory(opts: NodeWsFactoryOptions = {}): (url: string, origin: string) => WebSocketLike {
   const require = createRequire(import.meta.url);
   const wsMod = require("ws") as any;
   const WebSocketCtor = wsMod?.WebSocket ?? wsMod;
 
+  const maxPayload = opts.maxPayload;
+  if (maxPayload !== undefined && (!Number.isSafeInteger(maxPayload) || maxPayload <= 0)) {
+    throw new Error("maxPayload must be a positive integer");
+  }
+  const perMessageDeflate = opts.perMessageDeflate ?? false;
+
   return (url: string, origin: string): WebSocketLike => {
-    const raw = new WebSocketCtor(url, { headers: { Origin: origin } });
+    const raw = new WebSocketCtor(url, {
+      headers: { Origin: origin },
+      ...(maxPayload !== undefined ? { maxPayload } : {}),
+      perMessageDeflate,
+    });
 
     // Map (type -> user listener -> wrapped listener) so removeEventListener works.
     const listeners = new Map<EventType, Map<Listener, (...args: any[]) => void>>();
@@ -79,4 +101,3 @@ export function createNodeWsFactory(): (url: string, origin: string) => WebSocke
     };
   };
 }
-

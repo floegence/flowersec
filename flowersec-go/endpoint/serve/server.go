@@ -101,7 +101,7 @@ func (s *Server) ServeSession(ctx context.Context, sess endpoint.Session) error 
 		return errors.New("missing session")
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return wrapCtxErr(sess.Path(), err)
 	}
 
 	done := make(chan struct{})
@@ -118,7 +118,7 @@ func (s *Server) ServeSession(ctx context.Context, sess endpoint.Session) error 
 		kind, stream, err := sess.AcceptStreamHello(s.maxHelloBytes)
 		if err != nil {
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return wrapCtxErr(sess.Path(), ctx.Err())
 			}
 			var fe *endpoint.Error
 			if errors.As(err, &fe) && fe.Code == endpoint.CodeStreamHelloFailed {
@@ -155,7 +155,7 @@ func (s *Server) handleStream(ctx context.Context, path endpoint.Path, kind stri
 		return
 	}
 	if kind == s.rpc.Kind && s.rpc.Register != nil {
-		s.serveRPC(ctx, stream)
+		s.serveRPC(ctx, path, stream)
 		return
 	}
 	if s.onError != nil {
@@ -174,7 +174,7 @@ func (s *Server) lookup(kind string) StreamHandler {
 	return h
 }
 
-func (s *Server) serveRPC(ctx context.Context, stream io.ReadWriteCloser) {
+func (s *Server) serveRPC(ctx context.Context, path endpoint.Path, stream io.ReadWriteCloser) {
 	router := rpc.NewRouter()
 	srv := rpc.NewServer(stream, router)
 	if s.rpc.MaxFrameBytes > 0 {
@@ -185,11 +185,47 @@ func (s *Server) serveRPC(ctx context.Context, stream io.ReadWriteCloser) {
 	}
 	defer func() {
 		if recover() != nil {
-			s.reportError(errors.New("rpc register panic"))
+			s.reportError(wrapRPCServeErr(path, errors.New("rpc register panic")))
 		}
 	}()
 	s.rpc.Register(router, srv)
-	_ = srv.Serve(ctx)
+	if err := srv.Serve(ctx); err != nil {
+		// Context cancellation is the normal shutdown signal for server loops.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
+		// EOF is a normal stream teardown when the peer closes cleanly.
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		s.reportError(wrapRPCServeErr(path, err))
+	}
+}
+
+func wrapCtxErr(path endpoint.Path, err error) error {
+	if err == nil {
+		return nil
+	}
+	code := fserrors.CodeCanceled
+	if errors.Is(err, context.DeadlineExceeded) {
+		code = fserrors.CodeTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		code = fserrors.CodeCanceled
+	}
+	p := fserrors.PathAuto
+	if path != "" {
+		p = fserrors.Path(path)
+	}
+	return fserrors.Wrap(p, fserrors.StageClose, code, err)
+}
+
+func wrapRPCServeErr(path endpoint.Path, err error) error {
+	p := fserrors.PathAuto
+	if path != "" {
+		p = fserrors.Path(path)
+	}
+	return fserrors.Wrap(p, fserrors.StageRPC, fserrors.CodeRPCFailed, err)
 }
 
 func (s *Server) reportError(err error) {

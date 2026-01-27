@@ -60,6 +60,7 @@ export type FlowersecErrorCode =
   | "accept_stream_failed"
   | "open_stream_failed"
   | "stream_hello_failed"
+  | "rpc_failed"
   | "not_connected";
 
 export class FlowersecError extends Error {

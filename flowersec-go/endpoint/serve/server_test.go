@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
@@ -54,6 +56,68 @@ func TestServerHandleStreamRPC(t *testing.T) {
 	}
 
 	cancel()
+	_ = clientConn.Close()
+	<-done
+}
+
+func writeRawJSONFrame(w io.Writer, payload []byte) error {
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload)))
+	if _, err := w.Write(hdr[:]); err != nil {
+		return err
+	}
+	_, err := w.Write(payload)
+	return err
+}
+
+func TestServerHandleStreamRPC_OnErrorReportsServeErrors(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	s := New(Options{
+		RPC: RPCOptions{
+			Register: func(_ *rpc.Router, _srv *rpc.Server) {},
+		},
+		OnError: func(err error) {
+			select {
+			case errCh <- err:
+			default:
+			}
+		},
+	})
+
+	serverConn, clientConn := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.HandleStream(ctx, "rpc", serverConn)
+	}()
+
+	// Send invalid JSON frames (but valid length prefixes) to force rpc.Server.Serve to fail.
+	for i := 0; i < 3; i++ {
+		if err := writeRawJSONFrame(clientConn, []byte("{")); err != nil {
+			_ = clientConn.Close()
+			t.Fatalf("write frame: %v", err)
+		}
+	}
+
+	select {
+	case err := <-errCh:
+		var fe *fserrors.Error
+		if !errors.As(err, &fe) {
+			t.Fatalf("expected *fserrors.Error, got %T", err)
+		}
+		if fe.Path != fserrors.PathAuto || fe.Stage != fserrors.StageRPC || fe.Code != fserrors.CodeRPCFailed {
+			t.Fatalf("unexpected error: %+v", fe)
+		}
+	case <-time.After(2 * time.Second):
+		_ = clientConn.Close()
+		t.Fatal("timeout waiting for OnError")
+	}
+
 	_ = clientConn.Close()
 	<-done
 }

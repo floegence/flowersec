@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -167,7 +168,7 @@ func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 	}
 
 	if err := ctx.Err(); err != nil {
-		return err
+		return wrapCtxErr(s.path, err)
 	}
 
 	done := make(chan struct{})
@@ -184,7 +185,7 @@ func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 		stream, err := s.mux.AcceptStream()
 		if err != nil {
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return wrapCtxErr(s.path, ctx.Err())
 			}
 			return wrapErr(s.path, fserrors.StageYamux, fserrors.CodeAcceptStreamFailed, err)
 		}
@@ -205,6 +206,20 @@ func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 			handler(kind, stream)
 		}(kind, stream)
 	}
+}
+
+func wrapCtxErr(path Path, err error) error {
+	if err == nil {
+		return nil
+	}
+	code := fserrors.CodeCanceled
+	if errors.Is(err, context.DeadlineExceeded) {
+		code = fserrors.CodeTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		code = fserrors.CodeCanceled
+	}
+	return wrapErr(path, fserrors.StageClose, code, err)
 }
 
 // OpenStream opens a new yamux stream and writes the StreamHello(kind) preface.

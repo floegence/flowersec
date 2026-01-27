@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -184,6 +185,60 @@ func TestChannelInit_PrettyFlag(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "\n  \"grant_client\"") {
 		t.Fatalf("expected indented JSON output, got %q", stdout.String())
+	}
+}
+
+func TestChannelInit_OutFileOverwrite_TightensPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not reliable on windows")
+	}
+	tmp := t.TempDir()
+	ks, err := issuer.NewRandom("k1")
+	if err != nil {
+		t.Fatalf("new issuer: %v", err)
+	}
+	privJSON, err := ks.ExportPrivateKeyFile()
+	if err != nil {
+		t.Fatalf("export private key: %v", err)
+	}
+	privFile := filepath.Join(tmp, "issuer_key.json")
+	if err := os.WriteFile(privFile, privJSON, 0o600); err != nil {
+		t.Fatalf("write private key file: %v", err)
+	}
+
+	outFile := filepath.Join(tmp, "channel.json")
+	if err := os.WriteFile(outFile, []byte("old"), 0o644); err != nil {
+		t.Fatalf("write old out file: %v", err)
+	}
+	if err := os.Chmod(outFile, 0o644); err != nil {
+		t.Fatalf("chmod old out file: %v", err)
+	}
+
+	args := []string{
+		"--issuer-private-key-file", privFile,
+		"--tunnel-url", "ws://127.0.0.1:8080/ws",
+		"--aud", "aud",
+		"--iss", "iss",
+		"--channel-id", "ch_1",
+		"--out", outFile,
+		"--overwrite",
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+
+	st, err := os.Stat(outFile)
+	if err != nil {
+		t.Fatalf("stat out file: %v", err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("unexpected out file perms: got %o want %o", st.Mode().Perm(), 0o600)
+	}
+	if st.Size() == 0 {
+		t.Fatalf("out file is empty")
 	}
 }
 

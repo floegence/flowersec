@@ -108,6 +108,58 @@ func TestKeygen_OutDirPermissions_AreOwnerOnlyByDefault(t *testing.T) {
 	}
 }
 
+func TestKeygen_Overwrite_TightensExistingDirAndPrivateKeyPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not reliable on windows")
+	}
+	base := t.TempDir()
+	outDir := filepath.Join(base, "keys")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatalf("mkdir out dir: %v", err)
+	}
+	if err := os.Chmod(outDir, 0o755); err != nil {
+		t.Fatalf("chmod out dir: %v", err)
+	}
+
+	privPath := filepath.Join(outDir, "issuer_key.json")
+	if err := os.WriteFile(privPath, []byte("old"), 0o644); err != nil {
+		t.Fatalf("write old private key: %v", err)
+	}
+	if err := os.Chmod(privPath, 0o644); err != nil {
+		t.Fatalf("chmod old private key: %v", err)
+	}
+
+	pubPath := filepath.Join(outDir, "issuer_keys.json")
+	if err := os.WriteFile(pubPath, []byte("old"), 0o644); err != nil {
+		t.Fatalf("write old issuer keys: %v", err)
+	}
+	if err := os.Chmod(pubPath, 0o644); err != nil {
+		t.Fatalf("chmod old issuer keys: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--kid", "k1", "--out-dir", outDir, "--overwrite"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+
+	stDir, err := os.Stat(outDir)
+	if err != nil {
+		t.Fatalf("stat out dir: %v", err)
+	}
+	if stDir.Mode().Perm() != 0o700 {
+		t.Fatalf("unexpected out dir perms: got %o, want %o", stDir.Mode().Perm(), 0o700)
+	}
+
+	stPriv, err := os.Stat(privPath)
+	if err != nil {
+		t.Fatalf("stat private key: %v", err)
+	}
+	if stPriv.Mode().Perm() != 0o600 {
+		t.Fatalf("unexpected private key perms: got %o, want %o", stPriv.Mode().Perm(), 0o600)
+	}
+}
+
 func TestKeygen_PrettyFlag_EmitsIndentedJSON(t *testing.T) {
 	outDir := t.TempDir()
 	var stdout, stderr bytes.Buffer

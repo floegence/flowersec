@@ -391,8 +391,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	bindAddr := ln.Addr().String()
 	advMainHostPort, advHostOnly, advWasSet, err := resolveAdvertiseHost(bindAddr, advertiseHost)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+		return usageErr(err.Error())
 	}
 
 	out := ready{
@@ -475,18 +474,31 @@ func resolveAdvertiseHost(bindHostPort string, advertiseHost string) (mainHostPo
 	if strings.Contains(raw, "://") {
 		u, err := url.Parse(raw)
 		if err != nil {
-			return "", "", true, fmt.Errorf("invalid advertise host: %w", err)
+			return "", "", true, fmt.Errorf("invalid --advertise-host: %w", err)
 		}
 		if u.Host == "" {
-			return "", "", true, errors.New("invalid advertise host: missing host")
+			return "", "", true, errors.New("invalid --advertise-host: missing host")
 		}
 		raw = u.Host
 	}
 	hostOnly = raw
 	if h, p, err := net.SplitHostPort(raw); err == nil {
+		port, perr := strconv.Atoi(p)
+		if perr != nil || port <= 0 || port > 65535 {
+			return "", "", true, fmt.Errorf("invalid --advertise-host: %q (invalid port)", advertiseHost)
+		}
 		return net.JoinHostPort(h, p), h, true, nil
 	}
 	hostOnly = strings.TrimSuffix(strings.TrimPrefix(hostOnly, "["), "]")
+	if strings.Contains(hostOnly, ":") {
+		ipPart := hostOnly
+		if i := strings.IndexByte(ipPart, '%'); i >= 0 {
+			ipPart = ipPart[:i]
+		}
+		if net.ParseIP(ipPart) == nil {
+			return "", "", true, fmt.Errorf("invalid --advertise-host: %q (expected host, host:port, [ipv6], or URL)", advertiseHost)
+		}
+	}
 	return net.JoinHostPort(hostOnly, bindPort), hostOnly, true, nil
 }
 

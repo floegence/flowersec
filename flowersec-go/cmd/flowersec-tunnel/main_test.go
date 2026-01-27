@@ -153,6 +153,16 @@ func TestResolveAdvertiseHost_StripsIPv6Brackets(t *testing.T) {
 	}
 }
 
+func TestResolveAdvertiseHost_RejectsInvalidHostPort(t *testing.T) {
+	_, _, _, err := resolveAdvertiseHost("0.0.0.0:8080", "example.com:abc")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "invalid --advertise-host") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestRun_MissingRequiredFlags_PrintsUsage(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

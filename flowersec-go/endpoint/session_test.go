@@ -348,3 +348,21 @@ func TestSessionOpenStreamWritesHello(t *testing.T) {
 		t.Fatalf("kind mismatch: got %q", h.Kind)
 	}
 }
+
+func TestSessionServeStreams_ContextCanceled_ReturnsStructuredError(t *testing.T) {
+	_, srv, closeFn := newYamuxPair(t)
+	defer closeFn()
+
+	sess := &session{path: PathDirect, mux: srv}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := sess.ServeStreams(ctx, 8*1024, func(string, io.ReadWriteCloser) {})
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *endpoint.Error, got %T", err)
+	}
+	if fe.Path != PathDirect || fe.Stage != StageClose || fe.Code != CodeCanceled {
+		t.Fatalf("unexpected error: %+v", fe)
+	}
+}

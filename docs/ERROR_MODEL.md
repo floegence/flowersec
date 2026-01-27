@@ -71,7 +71,7 @@ Handshake:
 Runtime:
 
 - `open_stream_failed`, `accept_stream_failed`, `mux_failed`
-- `stream_hello_failed`, `missing_stream_kind`, `missing_handler`
+- `stream_hello_failed`, `rpc_failed`, `missing_stream_kind`, `missing_handler`
 - `ping_failed`, `not_connected`
 
 Notes:

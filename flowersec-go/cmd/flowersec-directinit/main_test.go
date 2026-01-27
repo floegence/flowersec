@@ -5,6 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -162,6 +165,50 @@ func TestDirectInit_RejectsInitExpSecondsOverflow(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--init-exp-seconds is too large") {
 		t.Fatalf("expected overflow message, got %q", stderr.String())
+	}
+}
+
+func TestDirectInit_OutFileOverwrite_TightensPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not reliable on windows")
+	}
+	tmp := t.TempDir()
+	outFile := filepath.Join(tmp, "direct.json")
+	if err := os.WriteFile(outFile, []byte("old"), 0o644); err != nil {
+		t.Fatalf("write old out file: %v", err)
+	}
+	if err := os.Chmod(outFile, 0o644); err != nil {
+		t.Fatalf("chmod old out file: %v", err)
+	}
+
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+	args := []string{
+		"--ws-url", "ws://127.0.0.1:8080/ws",
+		"--channel-id", "ch_1",
+		"--psk-b64u", base64.RawURLEncoding.EncodeToString(psk),
+		"--init-exp-seconds", "120",
+		"--suite", "x25519",
+		"--out", outFile,
+		"--overwrite",
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+	st, err := os.Stat(outFile)
+	if err != nil {
+		t.Fatalf("stat out file: %v", err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("unexpected out file perms: got %o want %o", st.Mode().Perm(), 0o600)
+	}
+	if st.Size() == 0 {
+		t.Fatalf("out file is empty")
 	}
 }
 

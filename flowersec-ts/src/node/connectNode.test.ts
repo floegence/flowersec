@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const connect = vi.fn();
   const wsFactory = vi.fn();
-  const createNodeWsFactory = vi.fn(() => wsFactory);
+  const createNodeWsFactory = vi.fn((_opts?: unknown) => wsFactory);
   return { connect, wsFactory, createNodeWsFactory };
 });
 
@@ -12,7 +12,7 @@ vi.mock("../facade.js", () => ({
 }));
 
 vi.mock("./wsFactory.js", () => ({
-  createNodeWsFactory: () => mocks.createNodeWsFactory(),
+  createNodeWsFactory: (opts?: unknown) => mocks.createNodeWsFactory(opts),
 }));
 
 import { connectNode } from "./connect.js";
@@ -28,6 +28,7 @@ describe("connectNode", () => {
     const out = await connectNode(input, { origin: "https://app.example" });
     expect(out).toEqual({ ok: true });
     expect(mocks.createNodeWsFactory).toHaveBeenCalledTimes(1);
+    expect(mocks.createNodeWsFactory).toHaveBeenCalledWith({ maxPayload: expect.any(Number), perMessageDeflate: false });
     expect(mocks.connect).toHaveBeenCalledWith(input, { origin: "https://app.example", wsFactory: mocks.wsFactory });
   });
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/internal/securefile"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
 )
 
@@ -104,7 +105,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		outDir = "."
 	}
 	// Keys include a private key file; prefer a conservative directory permission by default.
-	if err := os.MkdirAll(outDir, 0o700); err != nil {
+	if err := securefile.MkdirAllOwnerOnly(outDir); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -147,11 +148,11 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
-	if err := os.WriteFile(privFile, privJSON, 0o600); err != nil {
+	if err := securefile.WriteFileAtomic(privFile, privJSON, 0o600); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if err := os.WriteFile(pubFile, pubJSON, 0o644); err != nil {
+	if err := securefile.WriteFileAtomic(pubFile, pubJSON, 0o644); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}

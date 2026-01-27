@@ -15,6 +15,7 @@ import (
 
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/internal/securefile"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
 )
 
@@ -193,7 +194,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "refusing to overwrite existing file: %s (use --overwrite)\n", outFile)
 		return 2
 	}
-	if err := os.WriteFile(outFile, b, 0o600); err != nil {
+	if err := securefile.WriteFileAtomic(outFile, b, 0o600); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}

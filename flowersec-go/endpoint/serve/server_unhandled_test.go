@@ -63,8 +63,12 @@ func TestServer_ServeSession_OnError_UnhandledStreamKind(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sess := &fakeSessionUnhandled{path: endpoint.PathDirect, cancel: cancel}
 	err := srv.ServeSession(ctx, sess)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled, got %v", err)
+	var fe *fserrors.Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *fserrors.Error, got %T", err)
+	}
+	if fe.Path != fserrors.PathDirect || fe.Stage != fserrors.StageClose || fe.Code != fserrors.CodeCanceled {
+		t.Fatalf("unexpected error: %+v", fe)
 	}
 
 	select {
