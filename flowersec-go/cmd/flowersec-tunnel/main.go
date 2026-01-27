@@ -259,6 +259,16 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
+	listen = strings.TrimSpace(listen)
+	advertiseHost = strings.TrimSpace(advertiseHost)
+	path = strings.TrimSpace(path)
+	issuerKeysFile = strings.TrimSpace(issuerKeysFile)
+	aud = strings.TrimSpace(aud)
+	iss = strings.TrimSpace(iss)
+	metricsListen = strings.TrimSpace(metricsListen)
+	tlsCertFile = strings.TrimSpace(tlsCertFile)
+	tlsKeyFile = strings.TrimSpace(tlsKeyFile)
+
 	if issuerKeysFile == "" || aud == "" || iss == "" {
 		return usageErr("missing --issuer-keys-file, --aud, or --iss")
 	}
@@ -280,7 +290,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if maxWriteQueueBytes < 0 {
 		return usageErr("--max-write-queue-bytes must be >= 0")
 	}
-	allowedOrigins := selectAllowedOrigins(allowedOriginsEnv, []string(allowedOriginsFlag))
+	allowedOrigins := normalizeAllowedOrigins(selectAllowedOrigins(allowedOriginsEnv, []string(allowedOriginsFlag)))
 	if len(allowedOrigins) == 0 {
 		return usageErr("missing --allow-origin")
 	}
@@ -305,6 +315,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	s, err := server.New(cfg)
 	if err != nil {
+		var ce *server.ConfigError
+		if errors.As(err, &ce) {
+			return usageErr(err.Error())
+		}
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -452,6 +466,21 @@ func selectAllowedOrigins(env []string, flags []string) []string {
 		return flags
 	}
 	return env
+}
+
+func normalizeAllowedOrigins(origins []string) []string {
+	if len(origins) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(origins))
+	for _, raw := range origins {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 func writeReadyJSON(w io.Writer, out ready, pretty bool) error {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/ed25519"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
+	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/gorilla/websocket"
 )
@@ -90,6 +93,44 @@ func TestNewRejectsNegativeMaxTotalPendingBytes(t *testing.T) {
 	cfg.MaxTotalPendingBytes = -1
 	if _, err := New(cfg); err == nil {
 		t.Fatalf("expected error for negative max total pending bytes")
+	}
+}
+
+func TestNewNormalizesWhitespaceConfigFields(t *testing.T) {
+	keysFile := writeTempKeyset(t, issuer.TunnelKeysetFile{
+		Keys: []issuer.TunnelKey{{
+			KID:       "kid",
+			PubKeyB64: base64url.Encode(make([]byte, ed25519.PublicKeySize)),
+		}},
+	})
+
+	cfg := DefaultConfig()
+	cfg.Path = " /ws "
+	cfg.TunnelAudience = " aud "
+	cfg.TunnelIssuer = " iss "
+	cfg.IssuerKeysFile = " " + keysFile + " "
+	cfg.AllowedOrigins = []string{" https://ok ", " "}
+
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	t.Cleanup(s.Close)
+
+	if got := s.cfg.Path; got != "/ws" {
+		t.Fatalf("Path mismatch: got %q want %q", got, "/ws")
+	}
+	if got := s.cfg.TunnelAudience; got != "aud" {
+		t.Fatalf("TunnelAudience mismatch: got %q want %q", got, "aud")
+	}
+	if got := s.cfg.TunnelIssuer; got != "iss" {
+		t.Fatalf("TunnelIssuer mismatch: got %q want %q", got, "iss")
+	}
+	if got := s.cfg.IssuerKeysFile; got != keysFile {
+		t.Fatalf("IssuerKeysFile mismatch: got %q want %q", got, keysFile)
+	}
+	if got := s.cfg.AllowedOrigins; len(got) != 1 || got[0] != "https://ok" {
+		t.Fatalf("AllowedOrigins mismatch: got=%v want=%v", got, []string{"https://ok"})
 	}
 }
 

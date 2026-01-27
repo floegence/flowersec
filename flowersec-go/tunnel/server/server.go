@@ -47,6 +47,18 @@ type Config struct {
 	Observer observability.TunnelObserver // Optional tunnel metrics observer.
 }
 
+// ConfigError is returned when the server configuration is invalid.
+//
+// It is intended to help CLI callers distinguish between usage/config errors (exit=2)
+// and runtime errors (exit=1, e.g. IO failures).
+type ConfigError struct {
+	msg string
+}
+
+func (e *ConfigError) Error() string { return e.msg }
+
+func configError(msg string) error { return &ConfigError{msg: msg} }
+
 // DefaultConfig returns conservative defaults for a tunnel server.
 func DefaultConfig() Config {
 	return Config{
@@ -100,28 +112,35 @@ type Stats struct {
 
 // New validates config, loads the issuer keyset, and starts background cleanup.
 func New(cfg Config) (*Server, error) {
+	cfg.Path = strings.TrimSpace(cfg.Path)
 	if cfg.Path == "" {
 		cfg.Path = "/ws"
 	}
-	if strings.TrimSpace(cfg.TunnelAudience) == "" {
-		return nil, errors.New("missing tunnel audience")
+	cfg.IssuerKeysFile = strings.TrimSpace(cfg.IssuerKeysFile)
+	if cfg.IssuerKeysFile == "" {
+		return nil, configError("missing issuer keys file")
 	}
-	if strings.TrimSpace(cfg.TunnelIssuer) == "" {
-		return nil, errors.New("missing tunnel issuer")
+	cfg.TunnelAudience = strings.TrimSpace(cfg.TunnelAudience)
+	if cfg.TunnelAudience == "" {
+		return nil, configError("missing tunnel audience")
+	}
+	cfg.TunnelIssuer = strings.TrimSpace(cfg.TunnelIssuer)
+	if cfg.TunnelIssuer == "" {
+		return nil, configError("missing tunnel issuer")
 	}
 	if len(cfg.AllowedOrigins) == 0 {
-		return nil, errors.New("missing allowed origins")
+		return nil, configError("missing allowed origins")
 	}
-	hasNonEmptyOrigin := false
+	allowedOrigins := make([]string, 0, len(cfg.AllowedOrigins))
 	for _, o := range cfg.AllowedOrigins {
-		if strings.TrimSpace(o) != "" {
-			hasNonEmptyOrigin = true
-			break
+		if v := strings.TrimSpace(o); v != "" {
+			allowedOrigins = append(allowedOrigins, v)
 		}
 	}
-	if !hasNonEmptyOrigin {
-		return nil, errors.New("missing allowed origins")
+	if len(allowedOrigins) == 0 {
+		return nil, configError("missing allowed origins")
 	}
+	cfg.AllowedOrigins = allowedOrigins
 	if cfg.MaxAttachBytes <= 0 {
 		cfg.MaxAttachBytes = 8 * 1024
 	}
@@ -132,7 +151,7 @@ func New(cfg Config) (*Server, error) {
 		cfg.MaxPendingBytes = 256 * 1024
 	}
 	if cfg.MaxTotalPendingBytes < 0 {
-		return nil, errors.New("max total pending bytes must be >= 0")
+		return nil, configError("max total pending bytes must be >= 0")
 	}
 	if cfg.MaxChannels <= 0 {
 		cfg.MaxChannels = 6000
@@ -141,29 +160,29 @@ func New(cfg Config) (*Server, error) {
 		cfg.MaxConns = 12000
 	}
 	if cfg.ClockSkew < 0 {
-		return nil, errors.New("clock skew must be >= 0")
+		return nil, configError("clock skew must be >= 0")
 	}
 	cfg.ClockSkew = timeutil.NormalizeSkew(cfg.ClockSkew)
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = 500 * time.Millisecond
 	}
 	if cfg.WriteTimeout < 0 {
-		return nil, errors.New("write timeout must be >= 0")
+		return nil, configError("write timeout must be >= 0")
 	}
 	if cfg.MaxWriteQueueBytes <= 0 {
 		cfg.MaxWriteQueueBytes = 1 << 20
 	}
 	if cfg.MaxWriteQueueBytes < cfg.MaxRecordBytes {
-		return nil, errors.New("max write queue bytes must be >= max record bytes")
+		return nil, configError("max write queue bytes must be >= max record bytes")
 	}
 	if cfg.ReplaceCooldown < 0 {
-		return nil, errors.New("replace cooldown must be >= 0")
+		return nil, configError("replace cooldown must be >= 0")
 	}
 	if cfg.ReplaceWindow < 0 {
-		return nil, errors.New("replace window must be >= 0")
+		return nil, configError("replace window must be >= 0")
 	}
 	if cfg.MaxReplacesPerWindow < 0 {
-		return nil, errors.New("max replaces per window must be >= 0")
+		return nil, configError("max replaces per window must be >= 0")
 	}
 	if cfg.ReplaceCloseCode == 0 {
 		cfg.ReplaceCloseCode = websocket.CloseTryAgainLater
@@ -232,6 +251,7 @@ var (
 )
 
 var (
+	errTooManyChannels  = errors.New("too many channels")
 	errUnknownChannel   = errors.New("unknown channel")
 	errMissingSrc       = errors.New("missing src")
 	errPendingOverflow  = errors.New("pending buffer overflow")
@@ -464,6 +484,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	uc.SetReadDeadline(time.Time{})
 	if err := s.addEndpoint(attach, p, uc); err != nil {
 		switch {
+		case errors.Is(err, errTooManyChannels):
+			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonTooManyConnections)
+			_ = c.CloseWithStatus(websocket.CloseTryAgainLater, string(observability.AttachReasonTooManyConnections))
 		case errors.Is(err, ErrReplaceRateLimited):
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonReplaceRateLimited)
 			_ = c.CloseWithStatus(s.cfg.ReplaceCloseCode, string(observability.AttachReasonReplaceRateLimited))
@@ -582,7 +605,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 	if st == nil {
 		if s.cfg.MaxChannels > 0 && len(s.channels) >= s.cfg.MaxChannels {
 			s.mu.Unlock()
-			return errors.New("too many channels")
+			return errTooManyChannels
 		}
 		// First endpoint for the channel.
 		st = &channelState{

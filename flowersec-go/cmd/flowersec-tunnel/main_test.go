@@ -175,6 +175,70 @@ func TestRun_MissingRequiredFlags_PrintsUsage(t *testing.T) {
 	}
 }
 
+func TestRun_WhitespaceRequiredFlags_AreTreatedAsMissing(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--issuer-keys-file", " ",
+			"--aud", "aud",
+			"--iss", "iss",
+			"--allow-origin", "https://ok",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "missing --issuer-keys-file") {
+		t.Fatalf("expected missing required flags message, got %q", stderr.String())
+	}
+}
+
+func TestRun_WhitespaceAllowOrigin_IsTreatedAsMissing(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--issuer-keys-file", "issuer_keys.json",
+			"--aud", "aud",
+			"--iss", "iss",
+			"--allow-origin", " ",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "missing --allow-origin") {
+		t.Fatalf("expected missing allow-origin message, got %q", stderr.String())
+	}
+}
+
+func TestRun_ServerConfigErrors_AreUsageErrors(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--issuer-keys-file", "issuer_keys.json",
+			"--aud", "aud",
+			"--iss", "iss",
+			"--allow-origin", "https://ok",
+			"--max-write-queue-bytes", "1",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "max write queue bytes must be >= max record bytes") {
+		t.Fatalf("expected config error message, got %q", stderr.String())
+	}
+}
+
 func TestRun_NegativeMaxTotalPendingBytes_IsUsageError(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
