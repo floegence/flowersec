@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,6 +112,65 @@ func TestAttachWithEmptyTokenIDIsInvalidToken(t *testing.T) {
 	}
 	if ce.Text != "invalid_token" {
 		t.Fatalf("expected close reason invalid_token, got %q", ce.Text)
+	}
+}
+
+func TestAttachReadTimeoutIsTimeoutReason(t *testing.T) {
+	keysFile := writeTempKeyset(t, issuer.TunnelKeysetFile{
+		Keys: []issuer.TunnelKey{{KID: "kid", PubKeyB64: base64url.Encode(make([]byte, ed25519.PublicKeySize))}},
+	})
+
+	cfg := DefaultConfig()
+	cfg.TunnelAudience = "aud"
+	cfg.TunnelIssuer = "iss"
+	cfg.IssuerKeysFile = keysFile
+	cfg.AllowedOrigins = []string{"https://ok"}
+
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	t.Cleanup(s.Close)
+
+	mux := http.NewServeMux()
+	s.Register(mux)
+
+	ts := httptest.NewUnstartedServer(mux)
+	var baseCancel context.CancelFunc
+	ts.Config.BaseContext = func(_ net.Listener) context.Context {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		baseCancel = cancel
+		return ctx
+	}
+	ts.Start()
+	t.Cleanup(ts.Close)
+	t.Cleanup(func() {
+		if baseCancel != nil {
+			baseCancel()
+		}
+	})
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + cfg.Path
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"https://ok"}})
+	if err != nil {
+		t.Fatalf("Dial() failed: %v", err)
+	}
+	defer c.Close()
+
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = c.ReadMessage()
+	if err == nil {
+		t.Fatal("expected close error")
+	}
+	var ce *websocket.CloseError
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected CloseError, got %T: %v", err, err)
+	}
+	if ce.Code != websocket.ClosePolicyViolation {
+		t.Fatalf("expected close code %d, got %d", websocket.ClosePolicyViolation, ce.Code)
+	}
+	if ce.Text != "timeout" {
+		t.Fatalf("expected close reason timeout, got %q", ce.Text)
 	}
 }
 

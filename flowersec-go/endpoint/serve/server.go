@@ -97,6 +97,9 @@ func (s *Server) ServeSession(ctx context.Context, sess endpoint.Session) error 
 	if s == nil {
 		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if sess == nil {
 		return errors.New("missing session")
 	}
@@ -133,6 +136,9 @@ func (s *Server) ServeSession(ctx context.Context, sess endpoint.Session) error 
 
 // HandleStream dispatches a single stream by kind.
 func (s *Server) HandleStream(ctx context.Context, kind string, stream io.ReadWriteCloser) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	s.handleStream(ctx, "", kind, stream)
 }
 

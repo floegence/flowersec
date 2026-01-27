@@ -289,3 +289,72 @@ func TestHelp_IncludesExamplesAndExitCodes(t *testing.T) {
 		t.Fatalf("expected help to include Flags, help=%q", help)
 	}
 }
+
+func TestChannelInit_RejectsNegativeTokenExpSeconds(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--issuer-private-key-file", "issuer_key.json",
+			"--tunnel-url", "ws://127.0.0.1:8080/ws",
+			"--aud", "aud",
+			"--iss", "iss",
+			"--token-exp-seconds", "-1",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--token-exp-seconds") {
+		t.Fatalf("expected stderr to mention token-exp-seconds, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Usage:") {
+		t.Fatalf("expected stderr to include usage, got %q", stderr.String())
+	}
+}
+
+func TestChannelInit_RejectsNegativeIdleTimeoutSeconds(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--issuer-private-key-file", "issuer_key.json",
+			"--tunnel-url", "ws://127.0.0.1:8080/ws",
+			"--aud", "aud",
+			"--iss", "iss",
+			"--idle-timeout-seconds", "-1",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--idle-timeout-seconds") {
+		t.Fatalf("expected stderr to mention idle-timeout-seconds, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Usage:") {
+		t.Fatalf("expected stderr to include usage, got %q", stderr.String())
+	}
+}
+
+func TestChannelInit_RejectsIdleTimeoutSecondsOutOfInt32Range(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--issuer-private-key-file", "issuer_key.json",
+			"--tunnel-url", "ws://127.0.0.1:8080/ws",
+			"--aud", "aud",
+			"--iss", "iss",
+			"--idle-timeout-seconds", "2147483648",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--idle-timeout-seconds") {
+		t.Fatalf("expected stderr to mention idle-timeout-seconds, got %q", stderr.String())
+	}
+}

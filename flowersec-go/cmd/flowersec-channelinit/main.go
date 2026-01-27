@@ -48,12 +48,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	aud := envString("FSEC_TUNNEL_AUD", "")
 	iss := envString("FSEC_TUNNEL_ISS", envString("FSEC_ISSUER_ID", ""))
 	channelID := envString("FSEC_CHANNEL_ID", "")
-	tokenExpSeconds, err := envInt64WithErr("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", 60)
+	tokenExpSeconds, err := envInt64WithErr("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", 0)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_CHANNELINIT_TOKEN_EXP_SECONDS: %v\n", err)
 		return 2
 	}
-	idleTimeoutSeconds, err := envIntWithErr("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", 60)
+	idleTimeoutSeconds, err := envIntWithErr("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", 0)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS: %v\n", err)
 		return 2
@@ -70,8 +70,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&aud, "aud", aud, "token audience (required; must match tunnel --aud) (env: FSEC_TUNNEL_AUD)")
 	fs.StringVar(&iss, "iss", iss, "token issuer (required; must match tunnel --iss) (env: FSEC_TUNNEL_ISS or FSEC_ISSUER_ID)")
 	fs.StringVar(&channelID, "channel-id", channelID, "channel id (default: random) (env: FSEC_CHANNEL_ID)")
-	fs.Int64Var(&tokenExpSeconds, "token-exp-seconds", tokenExpSeconds, "token lifetime in seconds (capped by init exp) (env: FSEC_CHANNELINIT_TOKEN_EXP_SECONDS)")
-	fs.IntVar(&idleTimeoutSeconds, "idle-timeout-seconds", idleTimeoutSeconds, "tunnel idle timeout in seconds (embedded into tokens and enforced by the tunnel) (env: FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS)")
+	fs.Int64Var(&tokenExpSeconds, "token-exp-seconds", tokenExpSeconds, "token lifetime in seconds (0 uses default; capped by init exp) (env: FSEC_CHANNELINIT_TOKEN_EXP_SECONDS)")
+	fs.IntVar(&idleTimeoutSeconds, "idle-timeout-seconds", idleTimeoutSeconds, "tunnel idle timeout in seconds (0 uses default; embedded into tokens and enforced by the tunnel) (env: FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS)")
 	fs.StringVar(&outFile, "out", outFile, "output file (default: stdout) (env: FSEC_CHANNELINIT_OUT)")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing --out file")
 	fs.BoolVar(&pretty, "pretty", false, "pretty-print JSON output")
@@ -133,6 +133,16 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	if issuerPrivFile == "" || tunnelURL == "" || aud == "" || iss == "" {
 		return usageErr("missing --issuer-private-key-file, --tunnel-url, --aud, or --iss")
+	}
+	if tokenExpSeconds < 0 {
+		return usageErr("--token-exp-seconds must be >= 0 (0 uses default)")
+	}
+	if idleTimeoutSeconds < 0 {
+		return usageErr("--idle-timeout-seconds must be >= 0 (0 uses default)")
+	}
+	const maxInt32 = int(^uint32(0) >> 1)
+	if idleTimeoutSeconds > maxInt32 {
+		return usageErr(fmt.Sprintf("--idle-timeout-seconds must be <= %d", maxInt32))
 	}
 	if channelID == "" {
 		id, err := randomB64u(24)

@@ -106,6 +106,9 @@ func (s *Server) Notify(typeID uint32, payload json.RawMessage) error {
 
 // Serve runs the request loop until the context ends or the stream fails.
 func (s *Server) Serve(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -266,6 +269,9 @@ func (c *Client) Notify(typeID uint32, payload json.RawMessage) error {
 
 // Call sends an RPC request and waits for its response or context cancellation.
 func (c *Client) Call(ctx context.Context, typeID uint32, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	start := time.Now()
 	record := func(result observability.RPCResult) {
 		c.obs.ClientCall(result, time.Since(start))

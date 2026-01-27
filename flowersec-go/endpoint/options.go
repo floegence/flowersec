@@ -31,9 +31,10 @@ type connectOptions struct {
 	serverFeatures uint32
 	clockSkew      time.Duration
 
-	endpointInstanceID string
-	handshakeCache     *HandshakeCache
-	yamuxConfig        *hyamux.Config
+	endpointInstanceID    string
+	endpointInstanceIDSet bool
+	handshakeCache        *HandshakeCache
+	yamuxConfig           *hyamux.Config
 
 	keepaliveInterval time.Duration
 	keepaliveSet      bool
@@ -175,6 +176,7 @@ func WithClockSkew(skew time.Duration) ConnectOption {
 func WithEndpointInstanceID(id string) ConnectOption {
 	return func(cfg *connectOptions) error {
 		cfg.endpointInstanceID = id
+		cfg.endpointInstanceIDSet = true
 		return nil
 	}
 }

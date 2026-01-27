@@ -71,6 +71,19 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
 	}
 
+	endpointInstanceID := cfg.endpointInstanceID
+	if !cfg.endpointInstanceIDSet {
+		endpointInstanceID, err = endpointid.Random(24)
+		if err != nil {
+			return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRandomFailed, err)
+		}
+	} else if endpointInstanceID == "" {
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
+	}
+	if err := endpointid.Validate(endpointInstanceID); err != nil {
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
+	}
+
 	connectTimeout := cfg.connectTimeout
 	handshakeTimeout := cfg.handshakeTimeout
 
@@ -85,19 +98,6 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	}
 	// Guard against a single oversized websocket message causing an OOM before size checks run.
 	c.SetReadLimit(wsutil.ReadLimit(cfg.maxHandshakePayload, cfg.maxRecordBytes))
-
-	endpointInstanceID := cfg.endpointInstanceID
-	if endpointInstanceID == "" {
-		endpointInstanceID, err = endpointid.Random(24)
-		if err != nil {
-			_ = c.Close()
-			return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRandomFailed, err)
-		}
-	}
-	if err := endpointid.Validate(endpointInstanceID); err != nil {
-		_ = c.Close()
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
-	}
 
 	attach := tunnelv1.Attach{
 		V:                  1,

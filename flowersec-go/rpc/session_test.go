@@ -192,6 +192,69 @@ func TestRPC_ServerServeHonorsContextCancel(t *testing.T) {
 	}
 }
 
+func TestRPC_ServerServeAcceptsNilContext(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	router := rpc.NewRouter()
+	srv := rpc.NewServer(a, router)
+	errCh := make(chan error, 1)
+	go func() {
+		// Nil ctx should behave like context.Background() (no panic).
+		errCh <- srv.Serve(nil)
+	}()
+
+	_ = b.Close()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for server to exit")
+	}
+}
+
+func TestRPC_ClientCallAcceptsNilContext(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	c := rpc.NewClient(a)
+	defer c.Close()
+
+	// Drain the request so Call can move past the write and wait for the response.
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		_, _ = jsonframe.ReadJSONFrame(b, 1<<20)
+	}()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := c.Call(nil, 1, json.RawMessage(`{}`))
+		errCh <- err
+	}()
+
+	select {
+	case <-drained:
+		_ = b.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting to drain request")
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for Call to return")
+	}
+}
+
 func TestRPC_ServerServeRejectsInvalidJSON(t *testing.T) {
 	a, b := net.Pipe()
 	defer a.Close()

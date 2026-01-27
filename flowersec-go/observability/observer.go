@@ -29,6 +29,8 @@ const (
 	AttachReasonTokenReplay         AttachReason = "token_replay"
 	AttachReasonReplaceRateLimited  AttachReason = "replace_rate_limited"
 	AttachReasonAttachFailed        AttachReason = "attach_failed"
+	AttachReasonTimeout             AttachReason = "timeout"
+	AttachReasonCanceled            AttachReason = "canceled"
 )
 
 type ReplaceResult string

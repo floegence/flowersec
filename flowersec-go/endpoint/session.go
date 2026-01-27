@@ -155,6 +155,9 @@ func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 		}
 		return wrapErr(path, fserrors.StageYamux, fserrors.CodeNotConnected, ErrNotConnected)
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if handler == nil {
 		return wrapErr(s.path, fserrors.StageValidate, fserrors.CodeMissingHandler, ErrMissingHandler)
 	}

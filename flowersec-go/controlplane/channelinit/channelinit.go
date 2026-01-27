@@ -34,8 +34,8 @@ type Params struct {
 	TunnelAudience string // Expected audience for issued tokens.
 	IssuerID       string // Issuer identifier embedded in tokens.
 
-	TokenExpSeconds    int64         // Token lifetime in seconds (capped by init exp).
-	IdleTimeoutSeconds int32         // Tunnel idle timeout enforced per channel (seconds).
+	TokenExpSeconds    int64         // Token lifetime in seconds (0 uses default; capped by init exp).
+	IdleTimeoutSeconds int32         // Tunnel idle timeout enforced per channel (seconds) (0 uses default).
 	ClockSkew          time.Duration // Allowed clock skew for validation hints.
 
 	AllowedSuites []e2eev1.Suite // E2EE suites permitted for the channel.
@@ -82,11 +82,17 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 	now := s.now()
 	initExp := now.Add(ChannelInitWindowSeconds * time.Second).Unix()
 	tokenExpSeconds := s.Params.TokenExpSeconds
-	if tokenExpSeconds <= 0 {
+	if tokenExpSeconds < 0 {
+		return nil, nil, errors.New("token_exp_seconds must be >= 0")
+	}
+	if tokenExpSeconds == 0 {
 		tokenExpSeconds = DefaultTokenExpSeconds
 	}
 	idleTimeoutSeconds := s.Params.IdleTimeoutSeconds
-	if idleTimeoutSeconds <= 0 {
+	if idleTimeoutSeconds < 0 {
+		return nil, nil, errors.New("idle_timeout_seconds must be >= 0")
+	}
+	if idleTimeoutSeconds == 0 {
 		idleTimeoutSeconds = DefaultIdleTimeoutSeconds
 	}
 
@@ -173,7 +179,10 @@ func (s *Service) ReissueToken(grant *controlv1.ChannelInitGrant) (*controlv1.Ch
 		return nil, ErrChannelInitExpired
 	}
 	tokenExpSeconds := s.Params.TokenExpSeconds
-	if tokenExpSeconds <= 0 {
+	if tokenExpSeconds < 0 {
+		return nil, errors.New("token_exp_seconds must be >= 0")
+	}
+	if tokenExpSeconds == 0 {
 		tokenExpSeconds = DefaultTokenExpSeconds
 	}
 	role := uint8(grant.Role)

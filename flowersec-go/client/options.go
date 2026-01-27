@@ -30,7 +30,8 @@ type connectOptions struct {
 	clientFeatures uint32
 
 	// endpointInstanceID is used only for tunnel attaches; it must be base64url(16..32 bytes).
-	endpointInstanceID string
+	endpointInstanceID    string
+	endpointInstanceIDSet bool
 
 	keepaliveInterval time.Duration
 	keepaliveSet      bool
@@ -161,6 +162,7 @@ func WithClientFeatures(features uint32) ConnectOption {
 func WithEndpointInstanceID(id string) ConnectOption {
 	return func(cfg *connectOptions) error {
 		cfg.endpointInstanceID = id
+		cfg.endpointInstanceIDSet = true
 		return nil
 	}
 }

@@ -394,7 +394,23 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	mt, msg, err := c.ReadMessage(ctx)
-	if err != nil || mt != websocket.TextMessage {
+	if err != nil {
+		reason := observability.AttachReasonExpectedAttach
+		closeCode := websocket.CloseProtocolError
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			reason = observability.AttachReasonTimeout
+			closeCode = websocket.ClosePolicyViolation
+		case errors.Is(err, context.Canceled):
+			reason = observability.AttachReasonCanceled
+			closeCode = websocket.CloseGoingAway
+		}
+		s.obs.Attach(observability.AttachResultFail, reason)
+		_ = c.CloseWithStatus(closeCode, string(reason))
+		s.untrackConn(uc)
+		return
+	}
+	if mt != websocket.TextMessage {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonExpectedAttach)
 		_ = c.CloseWithStatus(websocket.CloseProtocolError, string(observability.AttachReasonExpectedAttach))
 		s.untrackConn(uc)

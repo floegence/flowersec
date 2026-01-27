@@ -75,11 +75,13 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	}
 
 	endpointInstanceID := cfg.endpointInstanceID
-	if endpointInstanceID == "" {
+	if !cfg.endpointInstanceIDSet {
 		endpointInstanceID, err = endpointid.Random(24)
 		if err != nil {
 			return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRandomFailed, err)
 		}
+	} else if endpointInstanceID == "" {
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
 	} else if err := endpointid.Validate(endpointInstanceID); err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
 	}
@@ -160,7 +162,7 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	if cfg.keepaliveSet {
 		keepalive = cfg.keepaliveInterval
 	}
-	if cfg.endpointInstanceID != "" {
+	if cfg.endpointInstanceIDSet {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrEndpointInstanceIDNotAllowed)
 	}
 	psk, err := base64url.Decode(info.E2eePskB64u)

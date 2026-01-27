@@ -430,6 +430,11 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
             cause: err,
           });
         }
+        if (signal != null && abortListener != null) {
+          // AbortSignal is only used to cancel the open + StreamHello phase.
+          // After the stream is ready, callers should close/reset it explicitly.
+          signal.removeEventListener("abort", abortListener);
+        }
         return s;
       },
       close: closeAll,

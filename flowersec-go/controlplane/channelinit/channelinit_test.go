@@ -68,6 +68,70 @@ func TestNewChannelInitDefaultsAndTokenExp(t *testing.T) {
 	}
 }
 
+func TestNewChannelInitRejectsNegativeTokenExpSeconds(t *testing.T) {
+	ks, _ := issuer.NewRandom("kid")
+	svc := &Service{
+		Issuer: ks,
+		Params: Params{
+			TunnelURL:       "ws://example",
+			TunnelAudience:  "aud",
+			IssuerID:        "iss",
+			TokenExpSeconds: -1,
+		},
+	}
+	if _, _, err := svc.NewChannelInit("ch"); err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestNewChannelInitRejectsNegativeIdleTimeoutSeconds(t *testing.T) {
+	ks, _ := issuer.NewRandom("kid")
+	svc := &Service{
+		Issuer: ks,
+		Params: Params{
+			TunnelURL:          "ws://example",
+			TunnelAudience:     "aud",
+			IssuerID:           "iss",
+			IdleTimeoutSeconds: -1,
+		},
+	}
+	if _, _, err := svc.NewChannelInit("ch"); err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestNewChannelInit_ZeroParamsUseDefaults(t *testing.T) {
+	ks, _ := issuer.NewRandom("kid")
+	now := time.Unix(10, 0)
+	svc := &Service{
+		Issuer: ks,
+		Params: Params{
+			TunnelURL:          "ws://example",
+			TunnelAudience:     "aud",
+			IssuerID:           "iss",
+			TokenExpSeconds:    0,
+			IdleTimeoutSeconds: 0,
+		},
+		Now: func() time.Time { return now },
+	}
+
+	client, _, err := svc.NewChannelInit("ch")
+	if err != nil {
+		t.Fatalf("NewChannelInit failed: %v", err)
+	}
+	if client.IdleTimeoutSeconds != DefaultIdleTimeoutSeconds {
+		t.Fatalf("expected default idle_timeout_seconds=%d, got %d", DefaultIdleTimeoutSeconds, client.IdleTimeoutSeconds)
+	}
+
+	p, _, _, err := token.Parse(client.Token)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if p.Exp != p.Iat+DefaultTokenExpSeconds {
+		t.Fatalf("expected exp=iat+%d, got exp=%d iat=%d", DefaultTokenExpSeconds, p.Exp, p.Iat)
+	}
+}
+
 func TestNewChannelInitDefaultSuiteFollowsAllowedSuites(t *testing.T) {
 	ks, _ := issuer.NewRandom("kid")
 	svc := &Service{Issuer: ks}
@@ -131,6 +195,23 @@ func TestReissueToken(t *testing.T) {
 	}
 	if updated.ChannelId != grant.ChannelId {
 		t.Fatalf("expected channel_id to match")
+	}
+}
+
+func TestReissueTokenRejectsNegativeTokenExpSeconds(t *testing.T) {
+	ks, _ := issuer.NewRandom("kid")
+	svc := &Service{
+		Issuer: ks,
+		Params: Params{TunnelURL: "ws://example", TunnelAudience: "aud", IssuerID: "iss"},
+		Now:    func() time.Time { return time.Unix(10, 0) },
+	}
+	grant, _, err := svc.NewChannelInit("ch")
+	if err != nil {
+		t.Fatalf("NewChannelInit failed: %v", err)
+	}
+	svc.Params.TokenExpSeconds = -1
+	if _, err := svc.ReissueToken(grant); err == nil {
+		t.Fatalf("expected error")
 	}
 }
 

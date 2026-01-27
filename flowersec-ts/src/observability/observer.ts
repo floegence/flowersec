@@ -16,7 +16,9 @@ export type AttachReason =
   | "idle_timeout_mismatch"
   | "token_replay"
   | "replace_rate_limited"
-  | "attach_failed";
+  | "attach_failed"
+  | "timeout"
+  | "canceled";
 
 export type HandshakeResult = "ok" | "fail";
 export type HandshakeReason =

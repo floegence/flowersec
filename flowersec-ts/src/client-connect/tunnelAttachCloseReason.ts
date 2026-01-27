@@ -11,7 +11,9 @@ export const tunnelAttachCloseReasons = [
   "role_mismatch",
   "token_replay",
   "replace_rate_limited",
-  "attach_failed"
+  "attach_failed",
+  "timeout",
+  "canceled"
 ] as const satisfies readonly FlowersecErrorCode[];
 
 export type TunnelAttachCloseReason = (typeof tunnelAttachCloseReasons)[number];

@@ -83,6 +83,10 @@ func ClassifyTunnelAttachCloseCode(err error) (Code, bool) {
 		return CodeReplaceRateLimited, true
 	case "attach_failed":
 		return CodeAttachFailed, true
+	case "timeout":
+		return CodeTimeout, true
+	case "canceled":
+		return CodeCanceled, true
 	default:
 		return "", false
 	}
