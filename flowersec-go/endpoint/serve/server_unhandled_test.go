@@ -43,7 +43,7 @@ func (s *fakeSessionUnhandled) ServeStreams(context.Context, int, func(string, i
 	return errors.New("not implemented")
 }
 
-func (s *fakeSessionUnhandled) OpenStream(string) (io.ReadWriteCloser, error) {
+func (s *fakeSessionUnhandled) OpenStream(context.Context, string) (io.ReadWriteCloser, error) {
 	return nil, errors.New("not implemented")
 }
 func (s *fakeSessionUnhandled) Ping() error  { return nil }
@@ -51,7 +51,7 @@ func (s *fakeSessionUnhandled) Close() error { return nil }
 
 func TestServer_ServeSession_OnError_UnhandledStreamKind(t *testing.T) {
 	errCh := make(chan error, 1)
-	srv := New(Options{
+	srv, err := New(Options{
 		OnError: func(err error) {
 			select {
 			case errCh <- err:
@@ -59,10 +59,13 @@ func TestServer_ServeSession_OnError_UnhandledStreamKind(t *testing.T) {
 			}
 		},
 	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	sess := &fakeSessionUnhandled{path: endpoint.PathDirect, cancel: cancel}
-	err := srv.ServeSession(ctx, sess)
+	err = srv.ServeSession(ctx, sess)
 	var fe *fserrors.Error
 	if !errors.As(err, &fe) {
 		t.Fatalf("expected *fserrors.Error, got %T", err)

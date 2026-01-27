@@ -371,7 +371,10 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 		checkOrigin = ws.NewOriginChecker(opts.AllowedOrigins, opts.AllowNoOrigin)
 	}
 	maxHello := opts.MaxStreamHelloBytes
-	if maxHello <= 0 {
+	if maxHello < 0 {
+		return nil, errors.New("invalid MaxStreamHelloBytes (must be >= 0)")
+	}
+	if maxHello == 0 {
 		maxHello = DefaultMaxStreamHelloBytes
 	}
 	upgrader := ws.UpgraderOptions{
@@ -482,7 +485,10 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 		checkOrigin = ws.NewOriginChecker(opts.AllowedOrigins, opts.AllowNoOrigin)
 	}
 	maxHello := opts.MaxStreamHelloBytes
-	if maxHello <= 0 {
+	if maxHello < 0 {
+		return nil, errors.New("invalid MaxStreamHelloBytes (must be >= 0)")
+	}
+	if maxHello == 0 {
 		maxHello = DefaultMaxStreamHelloBytes
 	}
 	upgrader := ws.UpgraderOptions{

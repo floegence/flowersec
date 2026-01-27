@@ -65,6 +65,24 @@ func TestSessionAcceptStreamHello(t *testing.T) {
 	}
 }
 
+func TestSessionAcceptStreamHello_NegativeMaxHelloBytes_ReturnsInvalidOption(t *testing.T) {
+	_, srv, closeFn := newYamuxPair(t)
+	defer closeFn()
+
+	sess := &session{path: PathDirect, mux: srv}
+	_, _, err := sess.AcceptStreamHello(-1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *endpoint.Error, got %T", err)
+	}
+	if fe.Path != PathDirect || fe.Stage != StageValidate || fe.Code != CodeInvalidOption {
+		t.Fatalf("unexpected error: %+v", fe)
+	}
+}
+
 func TestSessionServeStreamsDispatches(t *testing.T) {
 	cli, srv, closeFn := newYamuxPair(t)
 	defer closeFn()
@@ -100,6 +118,24 @@ func TestSessionServeStreamsDispatches(t *testing.T) {
 		t.Fatal("timeout waiting for handler")
 	}
 	cancel()
+}
+
+func TestSessionServeStreams_NegativeMaxHelloBytes_ReturnsInvalidOption(t *testing.T) {
+	_, srv, closeFn := newYamuxPair(t)
+	defer closeFn()
+
+	sess := &session{path: PathDirect, mux: srv}
+	err := sess.ServeStreams(context.Background(), -1, func(string, io.ReadWriteCloser) {})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *endpoint.Error, got %T", err)
+	}
+	if fe.Path != PathDirect || fe.Stage != StageValidate || fe.Code != CodeInvalidOption {
+		t.Fatalf("unexpected error: %+v", fe)
+	}
 }
 
 func TestSessionServeStreamsSkipsBadStreamHello(t *testing.T) {
@@ -328,7 +364,7 @@ func TestSessionOpenStreamWritesHello(t *testing.T) {
 	defer closeFn()
 
 	sess := &session{path: PathDirect, mux: srv}
-	st, err := sess.OpenStream("echo")
+	st, err := sess.OpenStream(context.Background(), "echo")
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
 	}
@@ -346,6 +382,26 @@ func TestSessionOpenStreamWritesHello(t *testing.T) {
 	}
 	if h.Kind != "echo" {
 		t.Fatalf("kind mismatch: got %q", h.Kind)
+	}
+}
+
+func TestSessionOpenStream_ContextCanceled_ReturnsCanceled(t *testing.T) {
+	_, srv, closeFn := newYamuxPair(t)
+	defer closeFn()
+
+	sess := &session{path: PathDirect, mux: srv}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := sess.OpenStream(ctx, "echo")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *endpoint.Error, got %T", err)
+	}
+	if fe.Path != PathDirect || fe.Stage != StageYamux || fe.Code != CodeCanceled {
+		t.Fatalf("unexpected error: %+v", fe)
 	}
 }
 

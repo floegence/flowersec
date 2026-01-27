@@ -30,13 +30,16 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if grant.Role != controlv1.Role_server {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRoleMismatch, ErrExpectedRoleServer)
 	}
-	if grant.TunnelUrl == "" {
+	tunnelURL := strings.TrimSpace(grant.TunnelUrl)
+	if tunnelURL == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingTunnelURL, ErrMissingTunnelURL)
 	}
-	if grant.ChannelId == "" {
+	channelID := strings.TrimSpace(grant.ChannelId)
+	if channelID == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
 	}
-	if grant.Token == "" {
+	tokenStr := strings.TrimSpace(grant.Token)
+	if tokenStr == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingToken, ErrMissingToken)
 	}
 	if grant.ChannelInitExpireAtUnixS <= 0 {
@@ -57,7 +60,8 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if !cfg.keepaliveSet {
 		keepalive = defaults.KeepaliveInterval(grant.IdleTimeoutSeconds)
 	}
-	psk, err := base64url.Decode(grant.E2eePskB64u)
+	pskB64u := strings.TrimSpace(grant.E2eePskB64u)
+	psk, err := base64url.Decode(pskB64u)
 	if err != nil || len(psk) != 32 {
 		if err == nil {
 			err = ErrInvalidPSK
@@ -92,7 +96,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 
 	h := cloneHeader(cfg.header)
 	h.Set("Origin", origin)
-	c, _, err := ws.Dial(connectCtx, grant.TunnelUrl, ws.DialOptions{Header: h, Dialer: cfg.dialer})
+	c, _, err := ws.Dial(connectCtx, tunnelURL, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
@@ -101,9 +105,9 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 
 	attach := tunnelv1.Attach{
 		V:                  1,
-		ChannelId:          grant.ChannelId,
+		ChannelId:          channelID,
 		Role:               tunnelv1.Role_server,
-		Token:              grant.Token,
+		Token:              tokenStr,
 		EndpointInstanceId: endpointInstanceID,
 	}
 	attachJSON, _ := json.Marshal(attach)
@@ -115,7 +119,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	sess, err := serveAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, serverHandshakeOptions{
 		psk:              psk,
 		suite:            suite,
-		channelID:        grant.ChannelId,
+		channelID:        channelID,
 		initExpireAtUnix: grant.ChannelInitExpireAtUnixS,
 		clockSkew:        cfg.clockSkew,
 		serverFeatures:   cfg.serverFeatures,

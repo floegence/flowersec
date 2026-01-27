@@ -192,13 +192,17 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	})
 	defer unsub()
 
-	streamSrv := endpointserve.New(endpointserve.Options{
+	streamSrv, err := endpointserve.New(endpointserve.Options{
 		RPC: endpointserve.RPCOptions{
 			Register: func(r *rpc.Router, srv *rpc.Server) {
 				demov1.RegisterDemo(r, demoHandler{srv: srv})
 			},
 		},
 	})
+	if err != nil {
+		logger.Print(err)
+		return 1
+	}
 	streamSrv.Handle("echo", func(ctx context.Context, stream io.ReadWriteCloser) {
 		_ = ctx
 		_, _ = io.Copy(stream, stream)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,13 +17,46 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
+func newServer(t *testing.T, opts Options) *Server {
+	t.Helper()
+	s, err := New(opts)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	return s
+}
+
+func TestNew_NegativeMaxStreamHelloBytes_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	_, err := New(Options{MaxStreamHelloBytes: -1})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "MaxStreamHelloBytes") {
+		t.Fatalf("expected error to mention MaxStreamHelloBytes, got %v", err)
+	}
+}
+
+func TestNew_NegativeRPCMaxFrameBytes_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	_, err := New(Options{RPC: RPCOptions{MaxFrameBytes: -1}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "RPC.MaxFrameBytes") {
+		t.Fatalf("expected error to mention RPC.MaxFrameBytes, got %v", err)
+	}
+}
+
 func TestServerHandleStreamRPC(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s := New(Options{
+	s := newServer(t, Options{
 		RPC: RPCOptions{
 			Register: func(r *rpc.Router, _srv *rpc.Server) {
 				r.Register(1, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
@@ -77,7 +111,7 @@ func TestServerHandleStreamRPC_OnErrorReportsServeErrors(t *testing.T) {
 	defer cancel()
 
 	errCh := make(chan error, 1)
-	s := New(Options{
+	s := newServer(t, Options{
 		RPC: RPCOptions{
 			Register: func(_ *rpc.Router, _srv *rpc.Server) {},
 		},
@@ -125,7 +159,7 @@ func TestServerHandleStreamRPC_OnErrorReportsServeErrors(t *testing.T) {
 func TestServerHandleStreamUnknownCloses(t *testing.T) {
 	t.Parallel()
 
-	s := New(Options{})
+	s := newServer(t, Options{})
 	serverConn, clientConn := net.Pipe()
 	done := make(chan struct{})
 	go func() {
@@ -150,7 +184,7 @@ type fakeSession struct {
 
 func (s *fakeSession) Path() endpoint.Path        { return endpoint.PathDirect }
 func (s *fakeSession) EndpointInstanceID() string { return "" }
-func (s *fakeSession) OpenStream(string) (io.ReadWriteCloser, error) {
+func (s *fakeSession) OpenStream(context.Context, string) (io.ReadWriteCloser, error) {
 	return nil, errors.New("not implemented")
 }
 func (s *fakeSession) ServeStreams(context.Context, int, func(string, io.ReadWriteCloser), ...endpoint.ServeStreamsOption) error {
@@ -177,7 +211,7 @@ func TestServerServeSession_ReportsBadStreamHelloAndContinues(t *testing.T) {
 	errCh := make(chan error, 1)
 	gotStream := make(chan struct{}, 1)
 
-	srv := New(Options{
+	srv := newServer(t, Options{
 		OnError: func(err error) {
 			select {
 			case errCh <- err:

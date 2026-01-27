@@ -52,6 +52,22 @@ func TestNewDirectHandler_OriginPolicy(t *testing.T) {
 	}
 }
 
+func TestNewDirectHandler_NegativeMaxStreamHelloBytes_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	_, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
+		AllowedOrigins:      []string{"example.com"},
+		MaxStreamHelloBytes: -1,
+		OnStream:            func(context.Context, string, io.ReadWriteCloser) {},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "MaxStreamHelloBytes") {
+		t.Fatalf("expected error to mention MaxStreamHelloBytes, got %v", err)
+	}
+}
+
 func TestNewDirectHandlerResolved_OriginPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -98,6 +114,27 @@ func TestNewDirectHandlerResolved_OriginPolicy(t *testing.T) {
 		OnStream: func(context.Context, string, io.ReadWriteCloser) {},
 	}); err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestNewDirectHandlerResolved_NegativeMaxStreamHelloBytes_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	_, err := endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
+		AllowedOrigins:      []string{"example.com"},
+		MaxStreamHelloBytes: -1,
+		Handshake: endpoint.AcceptDirectResolverOptions{
+			Resolve: func(context.Context, endpoint.DirectHandshakeInit) (endpoint.DirectHandshakeSecrets, error) {
+				return endpoint.DirectHandshakeSecrets{}, nil
+			},
+		},
+		OnStream: func(context.Context, string, io.ReadWriteCloser) {},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "MaxStreamHelloBytes") {
+		t.Fatalf("expected error to mention MaxStreamHelloBytes, got %v", err)
 	}
 }
 

@@ -167,13 +167,16 @@ func main() {
     log.Fatal(err)
   }
 
-  srv := serve.New(serve.Options{
+  srv, err := serve.New(serve.Options{
     RPC: serve.RPCOptions{
       Register: func(r *rpc.Router, _ *rpc.Server) {
         // Register your type_id handlers here (prefer generated stubs; see IDL section below).
       },
     },
   })
+  if err != nil {
+    log.Fatal(err)
+  }
 
   if err := serve.ServeTunnel(context.Background(), grant, srv, endpoint.WithOrigin(origin)); err != nil {
     log.Fatal(err)
@@ -201,7 +204,7 @@ func main() {
   psk := loadPSKSomehow() // 32 bytes
   initExp := time.Now().Add(120 * time.Second).Unix()
 
-  srv := serve.New(serve.Options{
+  srv, err := serve.New(serve.Options{
     OnError: func(err error) { log.Printf("direct server error: %v", err) },
     RPC: serve.RPCOptions{
       Register: func(r *rpc.Router, _ *rpc.Server) {
@@ -209,6 +212,9 @@ func main() {
       },
     },
   })
+  if err != nil {
+    log.Fatal(err)
+  }
 
   wsHandler, err := serve.NewDirectHandler(serve.DirectHandlerOptions{
     Server: srv,
@@ -288,9 +294,12 @@ var byChannel = map[string]secrets{
 }
 
 func main() {
-  srv := serve.New(serve.Options{
+  srv, err := serve.New(serve.Options{
     OnError: func(err error) { log.Printf("direct server error: %v", err) },
   })
+  if err != nil {
+    log.Fatal(err)
+  }
 
   wsHandler, err := serve.NewDirectHandlerResolved(serve.DirectHandlerResolvedOptions{
     Server: srv,

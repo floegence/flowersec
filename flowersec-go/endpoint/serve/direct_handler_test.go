@@ -35,7 +35,10 @@ func TestNewDirectHandler_AllowsConnectDirect(t *testing.T) {
 	}
 	initExp := time.Now().Add(120 * time.Second).Unix()
 
-	srv := serve.New(serve.Options{})
+	srv, err := serve.New(serve.Options{})
+	if err != nil {
+		t.Fatalf("serve.New() failed: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	wsHandler, err := serve.NewDirectHandler(serve.DirectHandlerOptions{
@@ -93,7 +96,10 @@ func TestNewDirectHandlerResolved_AllowsConnectDirect(t *testing.T) {
 	}
 	initExp := time.Now().Add(120 * time.Second).Unix()
 
-	srv := serve.New(serve.Options{})
+	srv, err := serve.New(serve.Options{})
+	if err != nil {
+		t.Fatalf("serve.New() failed: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	wsHandler, err := serve.NewDirectHandlerResolved(serve.DirectHandlerResolvedOptions{

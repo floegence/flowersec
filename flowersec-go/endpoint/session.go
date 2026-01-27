@@ -25,7 +25,7 @@ type Session interface {
 	EndpointInstanceID() string
 	AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteCloser, error)
 	ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser), opts ...ServeStreamsOption) error
-	OpenStream(kind string) (io.ReadWriteCloser, error)
+	OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error)
 	Ping() error
 	Close() error
 }
@@ -127,7 +127,10 @@ func (s *session) AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteClos
 		}
 		return "", nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeNotConnected, ErrNotConnected)
 	}
-	if maxHelloBytes <= 0 {
+	if maxHelloBytes < 0 {
+		return "", nil, wrapErr(s.path, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrInvalidMaxStreamHelloBytes)
+	}
+	if maxHelloBytes == 0 {
 		maxHelloBytes = DefaultMaxStreamHelloBytes
 	}
 	stream, err := s.mux.AcceptStream()
@@ -161,7 +164,10 @@ func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 	if handler == nil {
 		return wrapErr(s.path, fserrors.StageValidate, fserrors.CodeMissingHandler, ErrMissingHandler)
 	}
-	if maxHelloBytes <= 0 {
+	if maxHelloBytes < 0 {
+		return wrapErr(s.path, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrInvalidMaxStreamHelloBytes)
+	}
+	if maxHelloBytes == 0 {
 		maxHelloBytes = DefaultMaxStreamHelloBytes
 	}
 
@@ -228,7 +234,7 @@ func wrapCtxErr(path Path, err error) error {
 // OpenStream opens a new yamux stream and writes the StreamHello(kind) preface.
 //
 // Every yamux stream in this project is expected to start with a StreamHello frame.
-func (s *session) OpenStream(kind string) (io.ReadWriteCloser, error) {
+func (s *session) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
 	if s == nil || s.mux == nil {
 		var path Path
 		if s != nil {
@@ -239,15 +245,63 @@ func (s *session) OpenStream(kind string) (io.ReadWriteCloser, error) {
 	if kind == "" {
 		return nil, wrapErr(s.path, fserrors.StageValidate, fserrors.CodeMissingStreamKind, ErrMissingStreamKind)
 	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, wrapErr(s.path, fserrors.StageYamux, classifyContextCode(err), err)
+	}
+
 	st, err := s.mux.OpenStream()
 	if err != nil {
 		return nil, wrapErr(s.path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
 	}
-	if err := streamhello.WriteStreamHello(st, kind); err != nil {
+
+	// Honor ctx deadline/cancel during the StreamHello write (opening the stream itself is not context-aware).
+	if d, ok := ctx.Deadline(); ok {
+		if ds, ok := any(st).(interface{ SetWriteDeadline(time.Time) error }); ok {
+			_ = ds.SetWriteDeadline(d)
+			defer func() { _ = ds.SetWriteDeadline(time.Time{}) }()
+		}
+	}
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = st.Close()
+		case <-stop:
+		}
+	}()
+	writeErr := streamhello.WriteStreamHello(st, kind)
+	close(stop)
+	if writeErr != nil {
 		_ = st.Close()
-		return nil, wrapErr(s.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
+		if err := ctx.Err(); err != nil {
+			return nil, wrapErr(s.path, fserrors.StageYamux, classifyContextCode(err), err)
+		}
+		return nil, wrapErr(s.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, writeErr)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = st.Close()
+		return nil, wrapErr(s.path, fserrors.StageYamux, classifyContextCode(err), err)
 	}
 	return st, nil
+}
+
+func classifyContextCode(err error) fserrors.Code {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fserrors.CodeTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return fserrors.CodeCanceled
+	}
+	return fserrors.CodeCanceled
 }
 
 func (s *session) startKeepalive(interval time.Duration) {

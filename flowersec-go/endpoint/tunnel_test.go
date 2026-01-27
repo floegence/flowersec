@@ -32,6 +32,75 @@ func TestConnectTunnel_RejectsMissingToken(t *testing.T) {
 	}
 }
 
+func TestConnectTunnel_TrimSpaceRejectsBlankTunnelURL(t *testing.T) {
+	grant := &controlv1.ChannelInitGrant{
+		TunnelUrl: " \t\r\n",
+		ChannelId: "ch_1",
+		Role:      controlv1.Role_server,
+		Token:     "tok",
+	}
+	_, err := ConnectTunnel(context.Background(), grant, WithOrigin("http://example.com"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrMissingTunnelURL) {
+		t.Fatalf("expected ErrMissingTunnelURL, got %v", err)
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *endpoint.Error, got %T", err)
+	}
+	if fe.Path != PathTunnel || fe.Stage != StageValidate || fe.Code != CodeMissingTunnelURL {
+		t.Fatalf("unexpected error: %+v", fe)
+	}
+}
+
+func TestConnectTunnel_TrimSpaceRejectsBlankChannelID(t *testing.T) {
+	grant := &controlv1.ChannelInitGrant{
+		TunnelUrl: "ws://example.invalid",
+		ChannelId: " \t\r\n",
+		Role:      controlv1.Role_server,
+		Token:     "tok",
+	}
+	_, err := ConnectTunnel(context.Background(), grant, WithOrigin("http://example.com"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrMissingChannelID) {
+		t.Fatalf("expected ErrMissingChannelID, got %v", err)
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *endpoint.Error, got %T", err)
+	}
+	if fe.Path != PathTunnel || fe.Stage != StageValidate || fe.Code != CodeMissingChannelID {
+		t.Fatalf("unexpected error: %+v", fe)
+	}
+}
+
+func TestConnectTunnel_TrimSpaceRejectsBlankToken(t *testing.T) {
+	grant := &controlv1.ChannelInitGrant{
+		TunnelUrl: "ws://example.invalid",
+		ChannelId: "ch_1",
+		Role:      controlv1.Role_server,
+		Token:     " \t\r\n",
+	}
+	_, err := ConnectTunnel(context.Background(), grant, WithOrigin("http://example.com"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrMissingToken) {
+		t.Fatalf("expected ErrMissingToken, got %v", err)
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *endpoint.Error, got %T", err)
+	}
+	if fe.Path != PathTunnel || fe.Stage != StageValidate || fe.Code != CodeMissingToken {
+		t.Fatalf("unexpected error: %+v", fe)
+	}
+}
+
 func TestConnectTunnel_RejectsEmptyEndpointInstanceID(t *testing.T) {
 	psk := make([]byte, 32)
 	for i := range psk {

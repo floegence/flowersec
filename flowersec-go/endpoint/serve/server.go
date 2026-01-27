@@ -27,7 +27,8 @@ type RPCOptions struct {
 	// If nil, no built-in RPC stream handler is enabled.
 	Register func(r *rpc.Router, srv *rpc.Server)
 	// MaxFrameBytes caps incoming framed JSON bytes for the RPC session.
-	// If <= 0, the rpc.Server default is used.
+	// If == 0, the rpc.Server default is used.
+	// If < 0, New returns an error.
 	MaxFrameBytes int
 	// Observer attaches an optional metrics observer to each rpc.Server.
 	Observer observability.RPCObserver
@@ -36,7 +37,8 @@ type RPCOptions struct {
 // Options configures a Server.
 type Options struct {
 	// MaxStreamHelloBytes caps the StreamHello frame size.
-	// If <= 0, endpoint.DefaultMaxStreamHelloBytes is used.
+	// If == 0, endpoint.DefaultMaxStreamHelloBytes is used.
+	// If < 0, New returns an error.
 	MaxStreamHelloBytes int
 	RPC                 RPCOptions
 
@@ -59,12 +61,18 @@ type Server struct {
 }
 
 // New constructs a Server with the provided options.
-func New(opts Options) *Server {
+func New(opts Options) (*Server, error) {
 	maxHello := opts.MaxStreamHelloBytes
-	if maxHello <= 0 {
+	if maxHello < 0 {
+		return nil, errors.New("invalid MaxStreamHelloBytes (must be >= 0)")
+	}
+	if maxHello == 0 {
 		maxHello = endpoint.DefaultMaxStreamHelloBytes
 	}
 	rpcOpts := opts.RPC
+	if rpcOpts.MaxFrameBytes < 0 {
+		return nil, errors.New("invalid RPC.MaxFrameBytes (must be >= 0)")
+	}
 	if rpcOpts.Kind == "" {
 		rpcOpts.Kind = "rpc"
 	}
@@ -73,7 +81,7 @@ func New(opts Options) *Server {
 		rpc:           rpcOpts,
 		onError:       opts.OnError,
 		handlers:      make(map[string]StreamHandler),
-	}
+	}, nil
 }
 
 // Handle registers a handler for the given stream kind.
