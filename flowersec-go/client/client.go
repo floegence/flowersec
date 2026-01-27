@@ -1,6 +1,8 @@
 package client
 
 import (
+	"context"
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -20,7 +22,7 @@ type Client interface {
 	Path() Path
 	EndpointInstanceID() string
 	RPC() *rpc.Client
-	OpenStream(kind string) (io.ReadWriteCloser, error)
+	OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error)
 	Ping() error
 	Close() error
 }
@@ -130,7 +132,7 @@ func (c *session) Close() error {
 // OpenStream opens a new yamux stream and writes the StreamHello(kind) preface.
 //
 // Every yamux stream in this project is expected to start with a StreamHello frame.
-func (c *session) OpenStream(kind string) (io.ReadWriteCloser, error) {
+func (c *session) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
 	if c == nil || c.mux == nil {
 		var path Path
 		if c != nil {
@@ -141,15 +143,63 @@ func (c *session) OpenStream(kind string) (io.ReadWriteCloser, error) {
 	if kind == "" {
 		return nil, wrapErr(c.path, fserrors.StageValidate, fserrors.CodeMissingStreamKind, ErrMissingStreamKind)
 	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, wrapErr(c.path, fserrors.StageYamux, classifyContextCode(err), err)
+	}
+
 	s, err := c.mux.OpenStream()
 	if err != nil {
 		return nil, wrapErr(c.path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
 	}
-	if err := streamhello.WriteStreamHello(s, kind); err != nil {
+
+	// Honor ctx deadline/cancel during the StreamHello write (opening the stream itself is not context-aware).
+	if d, ok := ctx.Deadline(); ok {
+		if ds, ok := any(s).(interface{ SetWriteDeadline(time.Time) error }); ok {
+			_ = ds.SetWriteDeadline(d)
+			defer func() { _ = ds.SetWriteDeadline(time.Time{}) }()
+		}
+	}
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = s.Close()
+		case <-stop:
+		}
+	}()
+	writeErr := streamhello.WriteStreamHello(s, kind)
+	close(stop)
+	if writeErr != nil {
 		_ = s.Close()
-		return nil, wrapErr(c.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
+		if err := ctx.Err(); err != nil {
+			return nil, wrapErr(c.path, fserrors.StageYamux, classifyContextCode(err), err)
+		}
+		return nil, wrapErr(c.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, writeErr)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = s.Close()
+		return nil, wrapErr(c.path, fserrors.StageYamux, classifyContextCode(err), err)
 	}
 	return s, nil
+}
+
+func classifyContextCode(err error) fserrors.Code {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fserrors.CodeTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return fserrors.CodeCanceled
+	}
+	return fserrors.CodeCanceled
 }
 
 func (c *session) startKeepalive(interval time.Duration) {

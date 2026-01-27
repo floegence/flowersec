@@ -376,7 +376,7 @@ func main() {
   defer c.Close()
 
   // Use c.RPC() for type_id routing on the "rpc" stream.
-  // Use c.OpenStream("your-kind") for extra yamux streams.
+  // Use c.OpenStream(context.Background(), "your-kind") for extra yamux streams.
 }
 ```
 

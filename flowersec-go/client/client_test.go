@@ -1,6 +1,8 @@
 package client
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -45,10 +47,11 @@ func TestClientCloseNil(t *testing.T) {
 
 func TestClientOpenStreamValidation(t *testing.T) {
 	c := &session{}
-	if _, err := c.OpenStream(""); err == nil {
+	ctx := context.Background()
+	if _, err := c.OpenStream(ctx, ""); err == nil {
 		t.Fatal("OpenStream(\"\") should fail")
 	}
-	if _, err := c.OpenStream("echo"); err == nil {
+	if _, err := c.OpenStream(ctx, "echo"); err == nil {
 		t.Fatal("OpenStream(\"echo\") should fail when not connected")
 	}
 }
@@ -58,7 +61,7 @@ func TestClientOpenStreamWritesHello(t *testing.T) {
 	defer closeFn()
 
 	c := &session{path: PathDirect, mux: cli}
-	st, err := c.OpenStream("echo")
+	st, err := c.OpenStream(context.Background(), "echo")
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
 	}
@@ -76,5 +79,25 @@ func TestClientOpenStreamWritesHello(t *testing.T) {
 	}
 	if h.Kind != "echo" {
 		t.Fatalf("kind mismatch: got %q", h.Kind)
+	}
+}
+
+func TestClientOpenStream_ContextCanceled_ReturnsCanceled(t *testing.T) {
+	cli, _, closeFn := newYamuxPair(t)
+	defer closeFn()
+
+	c := &session{path: PathDirect, mux: cli}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := c.OpenStream(ctx, "echo")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *client.Error, got %T", err)
+	}
+	if fe.Path != PathDirect || fe.Stage != StageYamux || fe.Code != CodeCanceled {
+		t.Fatalf("unexpected error: %+v", fe)
 	}
 }

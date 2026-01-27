@@ -109,7 +109,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	// This helper builds the full protocol stack and returns an RPC-ready client:
-	// - c.OpenStream(kind): open extra streams (e.g. "echo")
+	// - c.OpenStream(ctx, kind): open extra streams (e.g. "echo")
 	// - c.RPC(): typed request/notify API over the dedicated "rpc" stream
 	c, err := client.ConnectDirect(
 		context.Background(),
@@ -155,8 +155,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	// Open a separate yamux stream ("echo") to show multiplexing over the same secure channel.
-	// Note: Client.OpenStream(kind) automatically writes the StreamHello(kind) preface.
-	echoStream, err := c.OpenStream("echo")
+	// Note: Client.OpenStream(ctx, kind) automatically writes the StreamHello(kind) preface.
+	streamCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	echoStream, err := c.OpenStream(streamCtx, "echo")
 	if err != nil {
 		fmt.Fprintln(stderr, fmt.Errorf("open echo stream: %w", err))
 		return 1
