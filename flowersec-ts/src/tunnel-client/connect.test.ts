@@ -120,9 +120,25 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_tunnel_url", path: "tunnel" });
   });
 
+  test("rejects missing tunnel_url field", async () => {
+    const bad: any = makeGrant();
+    delete bad.tunnel_url;
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_tunnel_url", path: "tunnel" });
+  });
+
   test("rejects missing channel_id", async () => {
     const bad = makeGrant();
     bad.channel_id = "";
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_channel_id", path: "tunnel" });
+  });
+
+  test("rejects missing channel_id field", async () => {
+    const bad: any = makeGrant();
+    delete bad.channel_id;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_channel_id", path: "tunnel" });
@@ -136,12 +152,44 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_token", path: "tunnel" });
   });
 
+  test("rejects missing token field", async () => {
+    const bad: any = makeGrant();
+    delete bad.token;
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_token", path: "tunnel" });
+  });
+
   test("rejects missing init exp", async () => {
     const bad = makeGrant();
     bad.channel_init_expire_at_unix_s = 0;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "tunnel" });
+  });
+
+  test("rejects missing init exp field", async () => {
+    const bad: any = makeGrant();
+    delete bad.channel_init_expire_at_unix_s;
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "tunnel" });
+  });
+
+  test("rejects missing e2ee_psk_b64u field", async () => {
+    const bad: any = makeGrant();
+    delete bad.e2ee_psk_b64u;
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_psk", path: "tunnel" });
+  });
+
+  test("rejects missing default_suite field", async () => {
+    const bad: any = makeGrant();
+    delete bad.default_suite;
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "tunnel" });
   });
 
   test("rejects invalid suite", async () => {
@@ -192,6 +240,20 @@ describe("connectTunnel", () => {
     const bad = makeGrant();
     bad.role = Role.Role_server;
     const p = connectTunnel({ grant_server: bad } as any, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "role_mismatch", path: "tunnel" });
+  });
+
+  test("rejects grant_client wrapper with null payload", async () => {
+    const p = connectTunnel({ grant_client: null } as any, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_grant", path: "tunnel" });
+  });
+
+  test("rejects invalid role values as role_mismatch", async () => {
+    const bad: any = makeGrant();
+    bad.role = 999;
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "role_mismatch", path: "tunnel" });
   });

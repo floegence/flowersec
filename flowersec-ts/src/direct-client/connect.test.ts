@@ -114,9 +114,25 @@ describe("connectDirect", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_ws_url", path: "direct" });
   });
 
+  test("rejects missing ws_url field", async () => {
+    const bad: any = makeInfo();
+    delete bad.ws_url;
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_ws_url", path: "direct" });
+  });
+
   test("rejects missing channel_id", async () => {
     const bad = makeInfo();
     bad.channel_id = "";
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_channel_id", path: "direct" });
+  });
+
+  test("rejects missing channel_id field", async () => {
+    const bad: any = makeInfo();
+    delete bad.channel_id;
     const p = connectDirect(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_channel_id", path: "direct" });
@@ -128,6 +144,30 @@ describe("connectDirect", () => {
     const p = connectDirect(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "direct" });
+  });
+
+  test("rejects missing init exp field", async () => {
+    const bad: any = makeInfo();
+    delete bad.channel_init_expire_at_unix_s;
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "direct" });
+  });
+
+  test("rejects missing e2ee_psk_b64u field", async () => {
+    const bad: any = makeInfo();
+    delete bad.e2ee_psk_b64u;
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_psk", path: "direct" });
+  });
+
+  test("rejects missing default_suite field", async () => {
+    const bad: any = makeInfo();
+    delete bad.default_suite;
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "direct" });
   });
 
   test("rejects invalid suite", async () => {

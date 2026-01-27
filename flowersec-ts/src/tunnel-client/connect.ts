@@ -18,11 +18,14 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v != null && !Array.isArray(v);
 }
 
+function hasOwn(o: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(o, key);
+}
+
 function unwrapGrant(v: unknown): unknown {
-  if (v == null || typeof v !== "object") return v;
-  const o = v as Record<string, unknown>;
-  if (o["grant_client"] != null) return o["grant_client"];
-  if (o["grant_server"] != null) return o["grant_server"];
+  if (!isRecord(v)) return v;
+  if (hasOwn(v, "grant_client")) return v["grant_client"];
+  if (hasOwn(v, "grant_server")) return v["grant_server"];
   return v;
 }
 
@@ -33,6 +36,41 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
     throw new FlowersecError({ stage: "validate", code: "missing_grant", path: "tunnel", message: "missing grant" });
   }
   if (isRecord(input)) {
+    // Align missing/invalid field codes with Go: missing fields map to specific stable codes.
+    const okTypes =
+      (!hasOwn(input, "role") || (typeof input["role"] === "number" && Number.isSafeInteger(input["role"]))) &&
+      (!hasOwn(input, "tunnel_url") || typeof input["tunnel_url"] === "string") &&
+      (!hasOwn(input, "channel_id") || typeof input["channel_id"] === "string") &&
+      (!hasOwn(input, "token") || typeof input["token"] === "string") &&
+      (!hasOwn(input, "channel_init_expire_at_unix_s") ||
+        (typeof input["channel_init_expire_at_unix_s"] === "number" && Number.isSafeInteger(input["channel_init_expire_at_unix_s"]))) &&
+      (!hasOwn(input, "e2ee_psk_b64u") || typeof input["e2ee_psk_b64u"] === "string") &&
+      (!hasOwn(input, "default_suite") || (typeof input["default_suite"] === "number" && Number.isSafeInteger(input["default_suite"])));
+    if (okTypes) {
+      const role = input["role"] as number | undefined;
+      if (role === undefined || role !== ControlRole.Role_client) {
+        throw new FlowersecError({ stage: "validate", code: "role_mismatch", path: "tunnel", message: "expected role=client" });
+      }
+      if (!hasOwn(input, "tunnel_url")) {
+        throw new FlowersecError({ stage: "validate", code: "missing_tunnel_url", path: "tunnel", message: "missing tunnel_url" });
+      }
+      if (!hasOwn(input, "channel_id")) {
+        throw new FlowersecError({ stage: "validate", code: "missing_channel_id", path: "tunnel", message: "missing channel_id" });
+      }
+      if (!hasOwn(input, "token")) {
+        throw new FlowersecError({ stage: "validate", code: "missing_token", path: "tunnel", message: "missing token" });
+      }
+      if (!hasOwn(input, "channel_init_expire_at_unix_s")) {
+        throw new FlowersecError({ stage: "validate", code: "missing_init_exp", path: "tunnel", message: "missing channel_init_expire_at_unix_s" });
+      }
+      if (!hasOwn(input, "e2ee_psk_b64u")) {
+        throw new FlowersecError({ stage: "validate", code: "invalid_psk", path: "tunnel", message: "missing e2ee_psk_b64u" });
+      }
+      if (!hasOwn(input, "default_suite")) {
+        throw new FlowersecError({ stage: "validate", code: "invalid_suite", path: "tunnel", message: "missing default_suite" });
+      }
+    }
+
     const suite = input["default_suite"];
     // Keep "invalid_suite" as the stable error code even when the IDL validator rejects the enum value.
     if (typeof suite === "number" && Number.isSafeInteger(suite) && suite !== 1 && suite !== 2) {

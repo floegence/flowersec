@@ -9,6 +9,10 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v != null && !Array.isArray(v);
 }
 
+function hasOwn(o: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(o, key);
+}
+
 // DirectConnectOptions controls transport and handshake limits.
 export type DirectConnectOptions = ConnectOptionsBase;
 
@@ -27,6 +31,37 @@ export async function connectDirect(info: unknown, opts: DirectConnectOptions): 
     throw new FlowersecError({ stage: "validate", code: "missing_connect_info", path: "direct", message: "missing connect info" });
   }
   if (isRecord(info)) {
+    // Align missing/invalid field codes with Go: missing fields map to specific stable codes.
+    const okTypes =
+      (!hasOwn(info, "ws_url") || typeof info["ws_url"] === "string") &&
+      (!hasOwn(info, "channel_id") || typeof info["channel_id"] === "string") &&
+      (!hasOwn(info, "channel_init_expire_at_unix_s") ||
+        (typeof info["channel_init_expire_at_unix_s"] === "number" && Number.isSafeInteger(info["channel_init_expire_at_unix_s"]))) &&
+      (!hasOwn(info, "e2ee_psk_b64u") || typeof info["e2ee_psk_b64u"] === "string") &&
+      (!hasOwn(info, "default_suite") || (typeof info["default_suite"] === "number" && Number.isSafeInteger(info["default_suite"])));
+    if (okTypes) {
+      if (!hasOwn(info, "ws_url")) {
+        throw new FlowersecError({ stage: "validate", code: "missing_ws_url", path: "direct", message: "missing ws_url" });
+      }
+      if (!hasOwn(info, "channel_id")) {
+        throw new FlowersecError({ stage: "validate", code: "missing_channel_id", path: "direct", message: "missing channel_id" });
+      }
+      if (!hasOwn(info, "channel_init_expire_at_unix_s")) {
+        throw new FlowersecError({
+          stage: "validate",
+          code: "missing_init_exp",
+          path: "direct",
+          message: "missing channel_init_expire_at_unix_s",
+        });
+      }
+      if (!hasOwn(info, "e2ee_psk_b64u")) {
+        throw new FlowersecError({ stage: "validate", code: "invalid_psk", path: "direct", message: "missing e2ee_psk_b64u" });
+      }
+      if (!hasOwn(info, "default_suite")) {
+        throw new FlowersecError({ stage: "validate", code: "invalid_suite", path: "direct", message: "missing default_suite" });
+      }
+    }
+
     const suite = info["default_suite"];
     // Keep "invalid_suite" as the stable error code even when the IDL validator rejects the enum value.
     if (typeof suite === "number" && Number.isSafeInteger(suite) && suite !== 1 && suite !== 2) {
