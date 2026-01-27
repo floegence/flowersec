@@ -88,6 +88,22 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("handshake timeout must be >= 0"))
 	}
+	if opts.ClockSkew < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("clock skew must be >= 0"))
+	}
+	if opts.MaxHandshakePayload < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max handshake payload must be >= 0"))
+	}
+	if opts.MaxRecordBytes < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max record bytes must be >= 0"))
+	}
+	if opts.MaxBufferedBytes < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max buffered bytes must be >= 0"))
+	}
 	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, handshakeTimeout)
 	defer handshakeCancel()
 
@@ -202,6 +218,22 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 	if handshakeTimeout < 0 {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("handshake timeout must be >= 0"))
+	}
+	if opts.ClockSkew < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("clock skew must be >= 0"))
+	}
+	if opts.MaxHandshakePayload < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max handshake payload must be >= 0"))
+	}
+	if opts.MaxRecordBytes < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max record bytes must be >= 0"))
+	}
+	if opts.MaxBufferedBytes < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max buffered bytes must be >= 0"))
 	}
 	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, handshakeTimeout)
 	defer handshakeCancel()

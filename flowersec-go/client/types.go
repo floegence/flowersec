@@ -37,6 +37,7 @@ const (
 	CodeMissingTunnelURL          = fserrors.CodeMissingTunnelURL
 	CodeMissingWSURL              = fserrors.CodeMissingWSURL
 	CodeMissingOrigin             = fserrors.CodeMissingOrigin
+	CodeMissingConn               = fserrors.CodeMissingConn
 	CodeMissingChannelID          = fserrors.CodeMissingChannelID
 	CodeMissingToken              = fserrors.CodeMissingToken
 	CodeMissingInitExp            = fserrors.CodeMissingInitExp
@@ -48,8 +49,11 @@ const (
 	CodeInvalidPSK                = fserrors.CodeInvalidPSK
 	CodeInvalidEndpointInstanceID = fserrors.CodeInvalidEndpointInstanceID
 	CodeInvalidOption             = fserrors.CodeInvalidOption
+	CodeResolveFailed             = fserrors.CodeResolveFailed
 	CodeRandomFailed              = fserrors.CodeRandomFailed
+	CodeUpgradeFailed             = fserrors.CodeUpgradeFailed
 	CodeNotConnected              = fserrors.CodeNotConnected
+	CodeMissingHandler            = fserrors.CodeMissingHandler
 	CodeMissingStreamKind         = fserrors.CodeMissingStreamKind
 	CodeDialFailed                = fserrors.CodeDialFailed
 	CodeAttachFailed              = fserrors.CodeAttachFailed
@@ -58,11 +62,14 @@ const (
 	CodeInvalidAttach             = fserrors.CodeInvalidAttach
 	CodeInvalidToken              = fserrors.CodeInvalidToken
 	CodeChannelMismatch           = fserrors.CodeChannelMismatch
+	CodeInitExpMismatch           = fserrors.CodeInitExpMismatch
+	CodeIdleTimeoutMismatch       = fserrors.CodeIdleTimeoutMismatch
 	CodeTokenReplay               = fserrors.CodeTokenReplay
 	CodeReplaceRateLimited        = fserrors.CodeReplaceRateLimited
 	CodeHandshakeFailed           = fserrors.CodeHandshakeFailed
 	CodePingFailed                = fserrors.CodePingFailed
 	CodeMuxFailed                 = fserrors.CodeMuxFailed
+	CodeAcceptStreamFailed        = fserrors.CodeAcceptStreamFailed
 	CodeOpenStreamFailed          = fserrors.CodeOpenStreamFailed
 	CodeStreamHelloFailed         = fserrors.CodeStreamHelloFailed
 )

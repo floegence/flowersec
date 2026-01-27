@@ -32,8 +32,10 @@ const (
 	CodeCanceled                  = fserrors.CodeCanceled
 	CodeInvalidInput              = fserrors.CodeInvalidInput
 	CodeMissingGrant              = fserrors.CodeMissingGrant
+	CodeMissingConnectInfo        = fserrors.CodeMissingConnectInfo
 	CodeRoleMismatch              = fserrors.CodeRoleMismatch
 	CodeMissingTunnelURL          = fserrors.CodeMissingTunnelURL
+	CodeMissingWSURL              = fserrors.CodeMissingWSURL
 	CodeMissingOrigin             = fserrors.CodeMissingOrigin
 	CodeMissingConn               = fserrors.CodeMissingConn
 	CodeMissingChannelID          = fserrors.CodeMissingChannelID
@@ -57,6 +59,8 @@ const (
 	CodeInvalidAttach             = fserrors.CodeInvalidAttach
 	CodeInvalidToken              = fserrors.CodeInvalidToken
 	CodeChannelMismatch           = fserrors.CodeChannelMismatch
+	CodeInitExpMismatch           = fserrors.CodeInitExpMismatch
+	CodeIdleTimeoutMismatch       = fserrors.CodeIdleTimeoutMismatch
 	CodeTokenReplay               = fserrors.CodeTokenReplay
 	CodeReplaceRateLimited        = fserrors.CodeReplaceRateLimited
 	CodeHandshakeFailed           = fserrors.CodeHandshakeFailed

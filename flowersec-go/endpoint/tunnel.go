@@ -109,7 +109,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	attachJSON, _ := json.Marshal(attach)
 	if err := c.WriteMessage(connectCtx, websocket.TextMessage, attachJSON); err != nil {
 		_ = c.Close()
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, fserrors.ClassifyAttachCode(err), err)
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, classifyTunnelAttachWriteCode(err), err)
 	}
 
 	sess, err := serveAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, serverHandshakeOptions{
@@ -172,6 +172,13 @@ func serveAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpo
 		MaxBufferedBytes:    opts.maxBufferedBytes,
 	})
 	if err != nil {
+		// Tunnel attach rejections are communicated via websocket close status + reason tokens.
+		// Surface them as attach-layer failures instead of a generic handshake error.
+		if path == fserrors.PathTunnel {
+			if code, ok := fserrors.ClassifyTunnelAttachCloseCode(err); ok {
+				return nil, wrapErr(path, fserrors.StageAttach, code, err)
+			}
+		}
 		return nil, wrapErr(path, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
 	}
 
@@ -206,4 +213,11 @@ func cloneHeader(h http.Header) http.Header {
 		out[k] = cp
 	}
 	return out
+}
+
+func classifyTunnelAttachWriteCode(err error) fserrors.Code {
+	if code, ok := fserrors.ClassifyTunnelAttachCloseCode(err); ok {
+		return code
+	}
+	return fserrors.ClassifyAttachCode(err)
 }
