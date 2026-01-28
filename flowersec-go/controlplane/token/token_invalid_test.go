@@ -17,6 +17,18 @@ func newKeypair() ed25519.PrivateKey {
 	return ed25519.NewKeyFromSeed(seed)
 }
 
+func signUnchecked(t *testing.T, priv ed25519.PrivateKey, p Payload) string {
+	t.Helper()
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	payloadB64u := base64.RawURLEncoding.EncodeToString(b)
+	signed := Prefix + "." + payloadB64u
+	sig := ed25519.Sign(priv, []byte(signed))
+	return signed + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
 func TestSignRequiresKidAudAndTokenID(t *testing.T) {
 	priv := newKeypair()
 	_, err := Sign(priv, Payload{Aud: "aud", IdleTimeoutSeconds: 60})
@@ -75,22 +87,23 @@ func TestVerifyRejectsAudienceIssuerAndTime(t *testing.T) {
 	}
 
 	expired := base
-	expired.Exp = 5
+	expired.Exp = 15
 	expiredToken, _ := Sign(priv, expired)
 	if _, err := Verify(expiredToken, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)}); !errors.Is(err, ErrExpired) {
 		t.Fatalf("expected expired, got %v", err)
 	}
 
 	future := base
-	future.Iat = 999
+	future.Iat = 30
+	future.Exp = 40
 	futureToken, _ := Sign(priv, future)
 	if _, err := Verify(futureToken, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)}); !errors.Is(err, ErrIATInFuture) {
 		t.Fatalf("expected iat in future, got %v", err)
 	}
 
 	initExpired := base
-	initExpired.InitExp = 1
-	initExpiredToken, _ := Sign(priv, initExpired)
+	initExpired.InitExp = 15
+	initExpiredToken := signUnchecked(t, priv, initExpired)
 	if _, err := Verify(initExpiredToken, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)}); !errors.Is(err, ErrInitExpired) {
 		t.Fatalf("expected init expired, got %v", err)
 	}
@@ -98,7 +111,7 @@ func TestVerifyRejectsAudienceIssuerAndTime(t *testing.T) {
 	badExp := base
 	badExp.Exp = 200
 	badExp.InitExp = 100
-	badExpToken, _ := Sign(priv, badExp)
+	badExpToken := signUnchecked(t, priv, badExp)
 	if _, err := Verify(badExpToken, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)}); !errors.Is(err, ErrExpAfterInit) {
 		t.Fatalf("expected exp after init, got %v", err)
 	}
@@ -130,6 +143,32 @@ func TestVerifyRejectsMissingTokenID(t *testing.T) {
 
 	if _, err := Verify(tokenStr, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)}); err == nil || !errors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected invalid format, got %v", err)
+	}
+}
+
+func TestVerifyRejectsNegativeClockSkew(t *testing.T) {
+	priv := newKeypair()
+	pub := priv.Public().(ed25519.PublicKey)
+	now := time.Unix(20, 0)
+
+	good, err := Sign(priv, Payload{
+		Kid:                "kid",
+		Aud:                "aud",
+		Iss:                "iss",
+		ChannelID:          "ch",
+		Role:               1,
+		TokenID:            "tid",
+		InitExp:            now.Add(120 * time.Second).Unix(),
+		IdleTimeoutSeconds: 60,
+		Iat:                now.Unix(),
+		Exp:                now.Add(60 * time.Second).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("Sign failed: %v", err)
+	}
+
+	if _, err := Verify(good, StaticKeyset{"kid": pub}, VerifyOptions{Now: now, ClockSkew: -1 * time.Second}); err == nil || !errors.Is(err, ErrInvalidClockSkew) {
+		t.Fatalf("expected invalid clock skew, got %v", err)
 	}
 }
 

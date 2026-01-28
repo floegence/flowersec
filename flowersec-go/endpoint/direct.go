@@ -57,7 +57,8 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 	if c == nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConn, ErrMissingConn)
 	}
-	if opts.ChannelID == "" {
+	channelID := strings.TrimSpace(opts.ChannelID)
+	if channelID == "" {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
 	}
@@ -114,7 +115,7 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 	secure, err := e2ee.ServerHandshake(handshakeCtx, bt, opts.HandshakeCache, e2ee.ServerHandshakeOptions{
 		PSK:                 opts.PSK,
 		Suite:               e2ee.Suite(suite),
-		ChannelID:           opts.ChannelID,
+		ChannelID:           channelID,
 		InitExpireAtUnixS:   opts.InitExpireAtUnixS,
 		ClockSkew:           opts.ClockSkew,
 		ServerFeatures:      opts.ServerFeatures,
@@ -266,9 +267,14 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, err)
 	}
-	if initMsg.ChannelId == "" {
+	channelID := strings.TrimSpace(initMsg.ChannelId)
+	if channelID == "" {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
+	}
+	if channelID != initMsg.ChannelId {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidInput, errors.New("channel_id must not have leading/trailing whitespace"))
 	}
 	if initMsg.Version != e2ee.ProtocolVersion {
 		_ = c.Close()
@@ -280,7 +286,7 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 	}
 
 	resolveInput := DirectHandshakeInit{
-		ChannelID:      initMsg.ChannelId,
+		ChannelID:      channelID,
 		Version:        initMsg.Version,
 		Suite:          Suite(initMsg.Suite),
 		ClientFeatures: initMsg.ClientFeatures,
@@ -309,7 +315,7 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 	secure, err := e2ee.ServerHandshake(handshakeCtx, &replayBinaryTransport{first: firstFrame, t: bt}, opts.HandshakeCache, e2ee.ServerHandshakeOptions{
 		PSK:                 secrets.PSK,
 		Suite:               e2ee.Suite(initMsg.Suite),
-		ChannelID:           initMsg.ChannelId,
+		ChannelID:           channelID,
 		InitExpireAtUnixS:   secrets.InitExpireAtUnixS,
 		ClockSkew:           opts.ClockSkew,
 		ServerFeatures:      opts.ServerFeatures,

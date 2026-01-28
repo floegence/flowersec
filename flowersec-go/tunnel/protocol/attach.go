@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
@@ -67,6 +68,9 @@ func ParseAttachWithConstraints(b []byte, c AttachConstraints) (*tunnelv1.Attach
 	if err := json.Unmarshal(b, &a); err != nil {
 		return nil, ErrAttachInvalidJSON
 	}
+	a.ChannelId = strings.TrimSpace(a.ChannelId)
+	a.Token = strings.TrimSpace(a.Token)
+	a.EndpointInstanceId = strings.TrimSpace(a.EndpointInstanceId)
 	if a.V != AttachVersion {
 		return nil, ErrAttachInvalidVersion
 	}

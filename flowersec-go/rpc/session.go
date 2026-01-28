@@ -69,14 +69,18 @@ func NewServer(rwc io.ReadWriteCloser, router *Router) *Server {
 
 // SetMaxFrameBytes caps incoming JSON frames.
 //
-// Passing n<=0 resets the cap to the library default (1 MiB). The RPC layer does not
+// Passing n==0 resets the cap to the library default (1 MiB). The RPC layer does not
 // support disabling the size guard via this method to avoid memory DoS footguns.
-func (s *Server) SetMaxFrameBytes(n int) {
-	if n <= 0 {
+func (s *Server) SetMaxFrameBytes(n int) error {
+	if n < 0 {
+		return errors.New("max frame bytes must be >= 0")
+	}
+	if n == 0 {
 		s.maxLen = jsonframe.DefaultMaxJSONFrameBytes
-		return
+		return nil
 	}
 	s.maxLen = n
+	return nil
 }
 
 // SetObserver replaces the RPC observer; nil resets to no-op.
@@ -205,14 +209,18 @@ func NewClient(rwc io.ReadWriteCloser) *Client {
 
 // SetMaxFrameBytes caps incoming JSON frames.
 //
-// Passing n<=0 resets the cap to the library default (1 MiB). The RPC layer does not
+// Passing n==0 resets the cap to the library default (1 MiB). The RPC layer does not
 // support disabling the size guard via this method to avoid memory DoS footguns.
-func (c *Client) SetMaxFrameBytes(n int) {
-	if n <= 0 {
+func (c *Client) SetMaxFrameBytes(n int) error {
+	if n < 0 {
+		return errors.New("max frame bytes must be >= 0")
+	}
+	if n == 0 {
 		c.maxLen = jsonframe.DefaultMaxJSONFrameBytes
-		return
+		return nil
 	}
 	c.maxLen = n
+	return nil
 }
 
 // SetObserver replaces the RPC observer; nil resets to no-op.

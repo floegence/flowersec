@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
@@ -12,6 +13,7 @@ import (
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/internal/channelid"
 	"github.com/floegence/flowersec/flowersec-go/internal/timeutil"
 )
 
@@ -70,8 +72,9 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 	if s.Params.IssuerID == "" {
 		return nil, nil, errors.New("missing issuer id")
 	}
-	if channelID == "" {
-		return nil, nil, errors.New("missing channel_id")
+	channelID = strings.TrimSpace(channelID)
+	if err := channelid.Validate(channelID); err != nil {
+		return nil, nil, err
 	}
 	psk, err := randomBytes(32)
 	if err != nil {
@@ -172,7 +175,7 @@ func (s *Service) ReissueToken(grant *controlv1.ChannelInitGrant) (*controlv1.Ch
 	now := s.now()
 	skew := s.Params.ClockSkew
 	if skew < 0 {
-		skew = 0
+		return nil, errors.New("clock_skew must be >= 0")
 	}
 	skew = timeutil.NormalizeSkew(skew)
 	if now.Unix() > timeutil.AddSkewUnix(grant.ChannelInitExpireAtUnixS, skew) {

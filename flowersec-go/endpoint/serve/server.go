@@ -192,7 +192,10 @@ func (s *Server) serveRPC(ctx context.Context, path endpoint.Path, stream io.Rea
 	router := rpc.NewRouter()
 	srv := rpc.NewServer(stream, router)
 	if s.rpc.MaxFrameBytes > 0 {
-		srv.SetMaxFrameBytes(s.rpc.MaxFrameBytes)
+		if err := srv.SetMaxFrameBytes(s.rpc.MaxFrameBytes); err != nil {
+			s.reportError(wrapRPCServeErr(path, err))
+			return
+		}
 	}
 	if s.rpc.Observer != nil {
 		srv.SetObserver(s.rpc.Observer)

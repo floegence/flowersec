@@ -50,6 +50,13 @@ func TestParseAttachValidatesFields(t *testing.T) {
 	}
 
 	attach = makeAttach()
+	attach.ChannelId = " \t\r\n"
+	b, _ = json.Marshal(attach)
+	if _, err := ParseAttach(b); err == nil {
+		t.Fatalf("expected missing channel_id")
+	}
+
+	attach = makeAttach()
 	attach.Role = tunnelv1.Role(99)
 	b, _ = json.Marshal(attach)
 	if _, err := ParseAttach(b); err == nil {
@@ -64,7 +71,21 @@ func TestParseAttachValidatesFields(t *testing.T) {
 	}
 
 	attach = makeAttach()
+	attach.Token = " \t\r\n"
+	b, _ = json.Marshal(attach)
+	if _, err := ParseAttach(b); err == nil {
+		t.Fatalf("expected missing token")
+	}
+
+	attach = makeAttach()
 	attach.EndpointInstanceId = ""
+	b, _ = json.Marshal(attach)
+	if _, err := ParseAttach(b); err == nil {
+		t.Fatalf("expected missing endpoint_instance_id")
+	}
+
+	attach = makeAttach()
+	attach.EndpointInstanceId = " \t\r\n"
 	b, _ = json.Marshal(attach)
 	if _, err := ParseAttach(b); err == nil {
 		t.Fatalf("expected missing endpoint_instance_id")

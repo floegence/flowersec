@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/internal/channelid"
 	"github.com/floegence/flowersec/flowersec-go/internal/timeutil"
 )
 
@@ -45,6 +46,7 @@ var (
 	ErrInitExpired        = errors.New("token init window expired")
 	ErrExpAfterInit       = errors.New("token exp > init_exp")
 	ErrInvalidIdleTimeout = errors.New("token invalid idle timeout")
+	ErrInvalidClockSkew   = errors.New("token invalid clock_skew")
 )
 
 // KeyLookup provides public keys by key ID.
@@ -68,8 +70,27 @@ func Sign(priv ed25519.PrivateKey, payload Payload) (string, error) {
 	if strings.TrimSpace(payload.Aud) == "" {
 		return "", fmt.Errorf("missing aud: %w", ErrInvalidFormat)
 	}
+	payload.ChannelID = channelid.Normalize(payload.ChannelID)
+	if err := channelid.Validate(payload.ChannelID); err != nil {
+		return "", fmt.Errorf("invalid channel_id: %w", ErrInvalidFormat)
+	}
+	if payload.Role != 1 && payload.Role != 2 {
+		return "", fmt.Errorf("invalid role: %w", ErrInvalidFormat)
+	}
 	if strings.TrimSpace(payload.TokenID) == "" {
 		return "", fmt.Errorf("missing token_id: %w", ErrInvalidFormat)
+	}
+	if payload.InitExp <= 0 {
+		return "", fmt.Errorf("missing init_exp: %w", ErrInvalidFormat)
+	}
+	if payload.Iat <= 0 {
+		return "", fmt.Errorf("missing iat: %w", ErrInvalidFormat)
+	}
+	if payload.Exp <= 0 {
+		return "", fmt.Errorf("missing exp: %w", ErrInvalidFormat)
+	}
+	if payload.Exp > payload.InitExp {
+		return "", ErrExpAfterInit
 	}
 	if payload.IdleTimeoutSeconds <= 0 {
 		return "", fmt.Errorf("missing idle_timeout_seconds: %w", ErrInvalidIdleTimeout)
@@ -112,6 +133,16 @@ func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error
 	if err != nil {
 		return Payload{}, err
 	}
+	if strings.TrimSpace(p.Kid) == "" {
+		return Payload{}, fmt.Errorf("missing kid: %w", ErrInvalidFormat)
+	}
+	p.ChannelID = channelid.Normalize(p.ChannelID)
+	if err := channelid.Validate(p.ChannelID); err != nil {
+		return Payload{}, fmt.Errorf("invalid channel_id: %w", ErrInvalidFormat)
+	}
+	if p.Role != 1 && p.Role != 2 {
+		return Payload{}, fmt.Errorf("invalid role: %w", ErrInvalidFormat)
+	}
 	if strings.TrimSpace(p.TokenID) == "" {
 		return Payload{}, fmt.Errorf("missing token_id: %w", ErrInvalidFormat)
 	}
@@ -138,7 +169,7 @@ func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error
 	}
 	skew := opts.ClockSkew
 	if skew < 0 {
-		skew = 0
+		return Payload{}, ErrInvalidClockSkew
 	}
 	skew = timeutil.NormalizeSkew(skew)
 

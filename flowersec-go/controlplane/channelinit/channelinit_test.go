@@ -32,6 +32,9 @@ func TestNewChannelInitValidations(t *testing.T) {
 	if _, _, err := svc.NewChannelInit(""); err == nil {
 		t.Fatalf("expected missing channel_id")
 	}
+	if _, _, err := svc.NewChannelInit(" \t\r\n"); err == nil {
+		t.Fatalf("expected missing channel_id")
+	}
 }
 
 func TestNewChannelInitDefaultsAndTokenExp(t *testing.T) {
@@ -210,6 +213,22 @@ func TestReissueTokenRejectsNegativeTokenExpSeconds(t *testing.T) {
 		t.Fatalf("NewChannelInit failed: %v", err)
 	}
 	svc.Params.TokenExpSeconds = -1
+	if _, err := svc.ReissueToken(grant); err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestReissueTokenRejectsNegativeClockSkew(t *testing.T) {
+	ks, _ := issuer.NewRandom("kid")
+	svc := &Service{
+		Issuer: ks,
+		Params: Params{TunnelURL: "ws://example", TunnelAudience: "aud", IssuerID: "iss", ClockSkew: -1 * time.Second},
+		Now:    func() time.Time { return time.Unix(10, 0) },
+	}
+	grant, _, err := svc.NewChannelInit("ch")
+	if err != nil {
+		t.Fatalf("NewChannelInit failed: %v", err)
+	}
 	if _, err := svc.ReissueToken(grant); err == nil {
 		t.Fatalf("expected error")
 	}

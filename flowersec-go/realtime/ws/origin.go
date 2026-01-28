@@ -17,7 +17,7 @@ import (
 //
 // If the request has no Origin header, allowNoOrigin controls acceptance.
 func IsOriginAllowed(r *http.Request, allowed []string, allowNoOrigin bool) bool {
-	origin := r.Header.Get("Origin")
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		return allowNoOrigin
 	}
@@ -37,7 +37,17 @@ func IsOriginAllowed(r *http.Request, allowed []string, allowNoOrigin bool) bool
 		}
 		// If entry contains a scheme, treat it as a full Origin value match.
 		if strings.Contains(entry, "://") {
-			if origin == entry {
+			entryURL, err := url.Parse(entry)
+			if err == nil {
+				if es, ehp, ok := canonicalSchemeHostPort(entryURL); ok {
+					if os, ohp, ok := canonicalSchemeHostPort(parsed); ok {
+						if os == es && ohp == ehp {
+							return true
+						}
+					}
+				}
+			}
+			if strings.EqualFold(origin, entry) {
 				return true
 			}
 			continue
@@ -74,6 +84,33 @@ func IsOriginAllowed(r *http.Request, allowed []string, allowNoOrigin bool) bool
 		}
 	}
 	return false
+}
+
+func canonicalSchemeHostPort(u *url.URL) (scheme string, hostport string, ok bool) {
+	if u == nil {
+		return "", "", false
+	}
+	scheme = strings.ToLower(strings.TrimSpace(u.Scheme))
+	if scheme == "" {
+		return "", "", false
+	}
+	hostname := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	if hostname == "" {
+		return "", "", false
+	}
+	port := strings.TrimSpace(u.Port())
+	if port == "" {
+		switch scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+	if port != "" {
+		return scheme, net.JoinHostPort(hostname, port), true
+	}
+	return scheme, hostname, true
 }
 
 // NewOriginChecker returns a websocket upgrader CheckOrigin function.

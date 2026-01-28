@@ -29,7 +29,9 @@ func TestRPCServer_SetMaxFrameBytes_ZeroKeepsSizeGuardEnabled(t *testing.T) {
 
 	rwc := &memRWC{r: bytes.NewReader(frame)}
 	srv := rpc.NewServer(rwc, rpc.NewRouter())
-	srv.SetMaxFrameBytes(0) // should reset to default, not disable the guard
+	if err := srv.SetMaxFrameBytes(0); err != nil { // should reset to default, not disable the guard
+		t.Fatalf("SetMaxFrameBytes failed: %v", err)
+	}
 
 	err := srv.Serve(context.Background())
 	if err == nil {

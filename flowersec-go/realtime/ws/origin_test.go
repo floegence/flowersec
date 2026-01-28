@@ -8,12 +8,20 @@ import (
 func TestIsOriginAllowed(t *testing.T) {
 	t.Run("full origin match", func(t *testing.T) {
 		r := httptest.NewRequest("GET", "http://example.com/ws", nil)
-		r.Header.Set("Origin", "http://example.com:5173")
+		r.Header.Set("Origin", "http://ExAmPlE.com:5173")
 		if !IsOriginAllowed(r, []string{"http://example.com:5173"}, false) {
 			t.Fatal("expected origin to be allowed")
 		}
 		if IsOriginAllowed(r, []string{"http://example.com"}, false) {
 			t.Fatal("expected origin to be rejected")
+		}
+	})
+
+	t.Run("full origin match normalizes default ports", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "http://example.com/ws", nil)
+		r.Header.Set("Origin", "https://example.com:443")
+		if !IsOriginAllowed(r, []string{"https://example.com"}, false) {
+			t.Fatal("expected origin to be allowed")
 		}
 	})
 
