@@ -14,6 +14,7 @@ See also:
 Supported binaries (user-facing):
 
 - `flowersec-tunnel` (deployable tunnel server)
+- `flowersec-proxy-gateway` (deployable L7 HTTP/WS gateway; forwards to a server endpoint via `flowersec-proxy/*` streams)
 - `flowersec-issuer-keygen` (helper: generate issuer keypair and tunnel public keyset)
 - `flowersec-channelinit` (helper: mint a `ChannelInitGrant` pair)
 - `flowersec-directinit` (helper: generate a `DirectConnectInfo` JSON object for direct (no tunnel) demos)
@@ -37,6 +38,9 @@ These packages are the recommended integration entrypoints:
 - `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
   - Role: server runtime
   - APIs: `serve.New(...)`, `srv.Handle(...)`, `srv.HandleStream(...)`, `srv.ServeSession(...)`, `serve.ServeTunnel(...)`, `serve.NewDirectHandler(...)`, `serve.NewDirectHandlerResolved(...)`
+- `github.com/floegence/flowersec/flowersec-go/proxy`
+  - Role: server endpoint add-on
+  - APIs: `proxy.Register(...)` (registers `flowersec-proxy/http1` and `flowersec-proxy/ws` stream handlers)
 - `github.com/floegence/flowersec/flowersec-go/rpc`
   - Role: stable RPC client/server/router APIs (used by `Client.RPC()` and `endpoint/serve`)
   - APIs: `rpc.NewRouter(...)`, `rpc.NewServer(...)`, `rpc.NewClient(...)`
@@ -88,6 +92,7 @@ Stable building blocks (advanced, but supported):
 
 - `@floegence/flowersec-core/framing` (length-prefixed JSON framing helpers)
 - `@floegence/flowersec-core/streamio` (stream IO helpers for custom yamux streams)
+- `@floegence/flowersec-core/proxy` (browser runtime helpers for `flowersec-proxy/http1` + `flowersec-proxy/ws`)
 - `@floegence/flowersec-core/rpc` (RPC client/server over length-prefixed JSON frames)
 - `@floegence/flowersec-core/yamux` (yamux framing and session)
 - `@floegence/flowersec-core/e2ee` (record layer and handshake helpers)

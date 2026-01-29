@@ -160,3 +160,9 @@ Current implementation:
 - Go framing: `flowersec-go/framing/jsonframe/jsonframe.go`
 - TS framing: `flowersec-ts/src/framing/jsonframe.ts`
 - Message schemas: `idl/flowersec/rpc/v1/rpc.fidl.json` (generated into `gen/flowersec/rpc/v1`)
+
+## 7. Additional stable stream protocols
+
+Flowersec also defines stable application protocols layered on top of Yamux custom streams.
+
+- HTTP/WS proxying over custom streams: `docs/PROXY.md` (`flowersec-proxy/http1`, `flowersec-proxy/ws`)

@@ -80,6 +80,7 @@ Then open the URLs from `dev.json`:
 
 - Tunnel demo: `browser_tunnel_url`
 - Direct demo: `browser_direct_url`
+- Proxy sandbox demo: `browser_proxy_sandbox_url`
 
 Notes:
 
@@ -180,6 +181,7 @@ python3 -m http.server 5173
 
 - Tunnel demo: open `http://127.0.0.1:5173/examples/ts/browser-tunnel/` and paste the channel JSON (the `channel.json` you minted).
 - Direct demo: open `http://127.0.0.1:5173/examples/ts/browser-direct/` and paste `direct.json`.
+- Proxy sandbox demo (runtime mode): open `http://127.0.0.1:5173/examples/ts/proxy-sandbox/`, paste the channel JSON, click "Connect", then "Open App".
 
 Tip: if you refresh/reconnect in the tunnel demo, mint a new channel init again (one-time token rule).
 

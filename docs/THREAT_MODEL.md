@@ -19,6 +19,24 @@ Roles:
 - **Server endpoint (trusted)**: terminates E2EE, serves Yamux streams and RPC handlers.
 - **Client endpoint (trusted)**: initiates E2EE, opens Yamux streams and RPC calls.
 
+## Proxy: HTTP/WS over Flowersec
+
+Flowersec can also carry application-layer proxy traffic over custom streams (see `docs/PROXY.md`):
+
+- `flowersec-proxy/http1` (HTTP/1.1 request/response over a single stream)
+- `flowersec-proxy/ws` (WebSocket over a single stream)
+
+Two deployment modes exist:
+
+- **Runtime mode (recommended)**: the browser runs a proxy runtime (plus a Service Worker) and connects directly to the agent (server endpoint) over Flowersec E2EE. The tunnel remains untrusted and opaque.
+- **Gateway mode (L7 reverse proxy)**: a gateway accepts browser HTTPS/WSS and forwards to the agent over Flowersec E2EE.
+
+Important boundary:
+
+- In **gateway mode**, the gateway MUST parse plaintext HTTP/WS to act as an L7 reverse proxy. This means the gateway is a trusted plaintext component and cannot be treated as an "untrusted relay that does not decrypt".
+  - If you need an untrusted relay, use runtime mode (browser↔agent E2EE) instead.
+- In **gateway mode**, the gateway is the browser-facing origin and will see browser cookies for that origin. Deploy the gateway on a dedicated cookie scope (for example a separate registrable domain) from any product/controlplane authentication context to avoid leaking unrelated auth cookies to the proxied upstream app.
+
 ## Security goals (what Flowersec aims to provide)
 
 After the E2EE handshake completes:

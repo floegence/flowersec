@@ -21,6 +21,7 @@ import (
 	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/proxy"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
@@ -146,6 +147,13 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	upstreamURL, stopUpstream, err := startProxyDemoUpstream(ctx, logger)
+	if err != nil {
+		logger.Printf("start proxy demo upstream: %v", err)
+		return 1
+	}
+	defer stopUpstream()
+
 	cp, err := client.ConnectDirect(
 		ctx,
 		info,
@@ -207,6 +215,14 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		_ = ctx
 		_, _ = io.Copy(stream, stream)
 	})
+	if err := proxy.Register(streamSrv, proxy.Options{
+		Upstream:       upstreamURL,
+		UpstreamOrigin: proxyUpstreamOriginFromAttachOrigin(origin),
+	}); err != nil {
+		logger.Printf("register proxy handlers: %v", err)
+		return 1
+	}
+	logger.Printf("proxy handlers enabled (upstream=%s)", upstreamURL)
 
 	for {
 		select {

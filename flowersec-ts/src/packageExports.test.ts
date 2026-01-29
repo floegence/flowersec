@@ -55,6 +55,12 @@ describe("package exports", () => {
       assert.equal(typeof streamio.readExactly, "function");
       assert.equal(typeof streamio.readNBytes, "function");
 
+      const proxy = await import("@floegence/flowersec-core/proxy");
+      assert.equal(typeof proxy.createProxyRuntime, "function");
+      assert.equal(typeof proxy.createProxyServiceWorkerScript, "function");
+      assert.equal(typeof proxy.installWebSocketPatch, "function");
+      assert.equal(typeof proxy.disableUpstreamServiceWorkerRegister, "function");
+
       const yamux = await import("@floegence/flowersec-core/yamux");
       assert.equal(typeof yamux.YamuxSession, "function");
       assert.equal(typeof yamux.ByteReader, "function");

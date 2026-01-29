@@ -24,6 +24,7 @@ describe("docs/API_SURFACE.md", () => {
     expect(doc).toContain("`connectBrowser(...)`");
     expect(doc).toContain("`connectTunnelBrowser(...)`");
     expect(doc).toContain("`connectDirectBrowser(...)`");
+
+    expect(doc).toContain("`@floegence/flowersec-core/proxy`");
   });
 });
-

@@ -44,6 +44,10 @@
       "types": "./dist/streamio/index.d.ts",
       "default": "./dist/streamio/index.js"
     },
+    "./proxy": {
+      "types": "./dist/proxy/index.d.ts",
+      "default": "./dist/proxy/index.js"
+    },
     "./rpc": {
       "types": "./dist/rpc/index.d.ts",
       "default": "./dist/rpc/index.js"

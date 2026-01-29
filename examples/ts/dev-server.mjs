@@ -237,6 +237,7 @@ async function main() {
   const origin = args.origin;
   const browserTunnelURL = `${origin}/examples/ts/browser-tunnel/`;
   const browserDirectURL = `${origin}/examples/ts/browser-direct/`;
+  const browserProxySandboxURL = `${origin}/examples/ts/proxy-sandbox/`;
 
   const procs = [];
   const killAll = async () => {
@@ -349,6 +350,7 @@ async function main() {
             origin,
             browser_tunnel_url: browserTunnelURL,
             browser_direct_url: browserDirectURL,
+            browser_proxy_sandbox_url: browserProxySandboxURL,
             ...(controlplane != null ? { controlplane } : {}),
             ...(tunnel != null ? { tunnel } : {}),
             ...(serverEndpoint != null ? { server_endpoint: serverEndpoint } : {}),
@@ -441,9 +443,10 @@ async function main() {
       origin,
       browser_tunnel_url: browserTunnelURL,
       browser_direct_url: browserDirectURL,
+      browser_proxy_sandbox_url: browserProxySandboxURL,
     };
     process.stdout.write(JSON.stringify(ready) + "\n");
-    logErr(`[dev-server] ready: ${browserTunnelURL} (tunnel), ${browserDirectURL} (direct)`);
+    logErr(`[dev-server] ready: ${browserTunnelURL} (tunnel), ${browserDirectURL} (direct), ${browserProxySandboxURL} (proxy-sandbox)`);
   });
 
   devServer.on("error", async (err) => {
