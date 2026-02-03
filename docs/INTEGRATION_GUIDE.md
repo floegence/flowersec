@@ -122,6 +122,71 @@ For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMEN
 
 Note: the TypeScript package currently provides **role=client** connect helpers only. Server endpoints (role=server) are implemented in Go (`flowersec-go/endpoint`).
 
+## TypeScript: runtime proxy (browser SW + runtime)
+
+If you want to carry an upstream web app (for example code-server) over encrypted Flowersec streams, use **runtime mode** (`flowersec-proxy/http1` and `flowersec-proxy/ws`).
+
+This is an integration pattern on top of a normal Flowersec client connection:
+
+1) Establish a Flowersec client (tunnel or direct):
+
+```ts
+import { connectTunnelBrowser } from "@floegence/flowersec-core/browser";
+import { createProxyRuntime, createProxyServiceWorkerScript, registerServiceWorkerAndEnsureControl } from "@floegence/flowersec-core/proxy";
+
+const grant = await getFreshGrantSomehow();
+const client = await connectTunnelBrowser(grant);
+```
+
+2) Start the proxy runtime (in the controlled window):
+
+```ts
+const runtime = createProxyRuntime({ client });
+// Expose runtime on a global if your injected upstream script needs to access it via window.top[...].
+(window as any).__flowersecProxyRuntime = runtime;
+```
+
+3) Serve a proxy Service Worker script (same-origin) and register it:
+
+```ts
+const swScript = createProxyServiceWorkerScript({
+  // Recommended: only proxy same-origin requests (cross-origin should fall through to the network).
+  sameOriginOnly: true,
+  // Avoid proxy recursion / control-plane mistakes.
+  passthrough: {
+    prefixes: ["/assets/", "/api/"],
+    paths: ["/_proxy/sw.js"],
+  },
+  // CSP-friendly injection for strict upstream CSP:
+  injectHTML: { mode: "external_script", scriptUrl: "/_proxy/inject.js", excludePathPrefixes: ["/_proxy/"] },
+});
+
+// You are responsible for serving swScript at "/_proxy/sw.js".
+await registerServiceWorkerAndEnsureControl({ scriptUrl: "/_proxy/sw.js", scope: "/" });
+```
+
+See `docs/PROXY.md` for the stable wire contracts and security requirements.
+
+## TypeScript: reconnect (optional)
+
+Tunnel tokens are one-time use. If you want auto reconnect, you typically need to mint a fresh grant for each attempt.
+
+```ts
+import { createReconnectManager } from "@floegence/flowersec-core/reconnect";
+import { connectTunnelBrowser } from "@floegence/flowersec-core/browser";
+
+const mgr = createReconnectManager();
+mgr.subscribe((s) => console.log("status", s.status, "error", s.error));
+
+await mgr.connect({
+  autoReconnect: { enabled: true },
+  connectOnce: async ({ signal, observer }) => {
+    const grant = await getFreshGrantSomehow(); // MUST be fresh on each attempt (one-time tokens)
+    return await connectTunnelBrowser(grant, { signal, observer });
+  },
+});
+```
+
 ## Choose a topology
 
 ### A) Direct path (no tunnel)

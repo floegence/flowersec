@@ -93,6 +93,13 @@ Stable building blocks (advanced, but supported):
 - `@floegence/flowersec-core/framing` (length-prefixed JSON framing helpers)
 - `@floegence/flowersec-core/streamio` (stream IO helpers for custom yamux streams)
 - `@floegence/flowersec-core/proxy` (browser runtime helpers for `flowersec-proxy/http1` + `flowersec-proxy/ws`)
+  - `createProxyRuntime(...)`
+  - `createProxyServiceWorkerScript(...)`
+  - `registerServiceWorkerAndEnsureControl(...)`
+  - `installWebSocketPatch(...)`
+  - `disableUpstreamServiceWorkerRegister()`
+- `@floegence/flowersec-core/reconnect` (framework-agnostic reconnect state machine)
+  - `createReconnectManager()`
 - `@floegence/flowersec-core/rpc` (RPC client/server over length-prefixed JSON frames)
 - `@floegence/flowersec-core/yamux` (yamux framing and session)
 - `@floegence/flowersec-core/e2ee` (record layer and handshake helpers)

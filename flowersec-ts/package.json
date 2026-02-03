@@ -48,6 +48,10 @@
       "types": "./dist/proxy/index.d.ts",
       "default": "./dist/proxy/index.js"
     },
+    "./reconnect": {
+      "types": "./dist/reconnect/index.d.ts",
+      "default": "./dist/reconnect/index.js"
+    },
     "./rpc": {
       "types": "./dist/rpc/index.d.ts",
       "default": "./dist/rpc/index.js"

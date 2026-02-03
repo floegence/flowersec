@@ -58,8 +58,12 @@ describe("package exports", () => {
       const proxy = await import("@floegence/flowersec-core/proxy");
       assert.equal(typeof proxy.createProxyRuntime, "function");
       assert.equal(typeof proxy.createProxyServiceWorkerScript, "function");
+      assert.equal(typeof proxy.registerServiceWorkerAndEnsureControl, "function");
       assert.equal(typeof proxy.installWebSocketPatch, "function");
       assert.equal(typeof proxy.disableUpstreamServiceWorkerRegister, "function");
+
+      const reconnect = await import("@floegence/flowersec-core/reconnect");
+      assert.equal(typeof reconnect.createReconnectManager, "function");
 
       const yamux = await import("@floegence/flowersec-core/yamux");
       assert.equal(typeof yamux.YamuxSession, "function");

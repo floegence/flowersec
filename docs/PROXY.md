@@ -344,8 +344,14 @@ Requirements:
 - Upstream apps MUST NOT register their own Service Worker within the proxied scope (conflicts with the proxy SW).
   - This repository provides `disableUpstreamServiceWorkerRegister()` in `@floegence/flowersec-core/proxy`.
 - If the upstream app is rendered inside a same-origin iframe, the patch MUST be injected into upstream HTML early (before the app opens WebSockets).
-  - `createProxyServiceWorkerScript({ injectHTML: { proxyModuleUrl, runtimeGlobal } })` can inject a small `<script type="module">` bootstrap into `text/html` responses.
-  - `proxyModuleUrl` MUST be a same-origin module URL that exports `installWebSocketPatch` and `disableUpstreamServiceWorkerRegister`, and MUST NOT be routed back into the proxied upstream (avoid proxy recursion).
+  - `createProxyServiceWorkerScript({ injectHTML: { proxyModuleUrl, runtimeGlobal } })` can inject a small `<script type="module">` bootstrap into `text/html` responses (simple mode).
+  - For strict upstream CSP (no inline scripts), you can inject a CSP-friendly external script instead:
+    - `injectHTML: { mode: "external_script", scriptUrl }` (classic script)
+    - `injectHTML: { mode: "external_module", scriptUrl }` (module script)
+  - `proxyModuleUrl` / `scriptUrl` MUST be same-origin, and MUST NOT be routed back into the proxied upstream (avoid proxy recursion). Use SW passthrough rules to keep these assets on the control-plane/static origin.
+  - When injecting HTML, the proxy SW SHOULD strip validator headers (`etag`, `last-modified`, etc.) and SHOULD avoid caching the modified HTML response (`Cache-Control: no-store`).
+  - The proxy SW SHOULD proxy same-origin requests only; cross-origin requests should fall through to the network to avoid losing scheme/host (the runtime proxy protocol forwards path+query only).
+  - Helper: `registerServiceWorkerAndEnsureControl({ scriptUrl, ... })` (exported from `@floegence/flowersec-core/proxy`) can register the proxy SW and ensure the current page load is controlled (hard reload repair).
 
 ### 6.2 Gateway mode (L7 reverse proxy)
 

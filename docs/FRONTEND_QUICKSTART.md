@@ -64,6 +64,7 @@ client.close();
 ## Common gotchas
 
 - One-time tokens (`code=token_replay`): tunnel channel init tokens are single-use; mint a new grant for every new connection attempt.
+- Auto reconnect: use `@floegence/flowersec-core/reconnect` and ensure your reconnect loop fetches a fresh grant for each attempt.
 - Origin policy: the tunnel and direct demo servers enforce an Origin allow-list by default.
   - Browser Origin is `window.location.origin` and must be explicitly allowed by the server.
   - Node.js must pass an explicit `origin` string (use `connectNode` / `connectTunnelNode` / `connectDirectNode`).
