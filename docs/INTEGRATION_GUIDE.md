@@ -113,6 +113,9 @@ For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMEN
   - Direct server (lower-level): `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandler(...)`, or the resolver variants `endpoint.AcceptDirectWSResolved(...)` / `endpoint.NewDirectHandlerResolved(...)`
 - Stream runtime (recommended for servers): `endpoint/serve` (RPC stream handler + dispatch)
 - Input JSON helpers: `protocolio.DecodeGrantClientJSON(...)`, `protocolio.DecodeDirectConnectInfoJSON(...)`
+- Origin helpers (derive Origin values consistently from URLs):
+  - `origin.FromWSURL(wsURL)`
+  - `origin.ForTunnel(tunnelURL, controlplaneBaseURL)`
 
 **TypeScript**
 
@@ -167,6 +170,9 @@ await registerServiceWorkerAndEnsureControl({ scriptUrl: "/_proxy/sw.js", scope:
 
 See `docs/PROXY.md` for the stable wire contracts and security requirements.
 
+Best practice: do not copy/paste and maintain your own proxy Service Worker implementation.
+Use `createProxyServiceWorkerScript(...)` + `registerServiceWorkerAndEnsureControl(...)` as the source of truth, and keep your app-specific behavior in options (passthrough/injection mode/prefix rules).
+
 ## TypeScript: reconnect (optional)
 
 Tunnel tokens are one-time use. If you want auto reconnect, you typically need to mint a fresh grant for each attempt.
@@ -186,6 +192,9 @@ await mgr.connect({
   },
 });
 ```
+
+Best practice: if you build a framework or UI layer (e.g. a Solid/React provider), keep UI state management in your app/framework,
+but delegate the reconnect state machine to `@floegence/flowersec-core/reconnect` instead of duplicating backoff + cancellation + observer wiring.
 
 ## Choose a topology
 

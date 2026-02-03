@@ -9,6 +9,7 @@ describe("createProxyServiceWorkerScript", () => {
     expect(s).toContain("flowersec-proxy:fetch");
     expect(s).toContain("flowersec-proxy:response_meta");
     expect(s).toContain("flowersec-proxy:abort");
+    expect(s).toContain("event.waitUntil(self.skipWaiting())");
   });
 
   it("defaults to same-origin only proxying (safe)", () => {

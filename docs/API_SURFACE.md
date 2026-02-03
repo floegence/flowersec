@@ -50,6 +50,9 @@ These packages are the recommended integration entrypoints:
 - `github.com/floegence/flowersec/flowersec-go/protocolio`
   - Role: JSON decoding helpers for `ChannelInitGrant` and `DirectConnectInfo`
   - APIs: `protocolio.DecodeGrantClientJSON(...)`, `protocolio.DecodeGrantServerJSON(...)`, `protocolio.DecodeGrantJSON(...)`, `protocolio.DecodeDirectConnectInfoJSON(...)`
+- `github.com/floegence/flowersec/flowersec-go/origin`
+  - Role: origin helpers (derive `http(s)://host[:port]` from `ws(s)://...` / controlplane base URLs)
+  - APIs: `origin.FromWSURL(...)`, `origin.ForTunnel(...)`
 - `github.com/floegence/flowersec/flowersec-go/fserrors`
   - Role: stable error codes (`Path`, `Stage`, `Code`)
 

@@ -177,9 +177,9 @@ const INJECT_STRIP_HEADER_NAMES = new Set(["content-length", "etag", "last-modif
 
 let runtimeClientId = null;
 
-self.addEventListener("install", () => {
+self.addEventListener("install", (event) => {
   // Take over as soon as possible.
-  void self.skipWaiting();
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener("activate", (event) => {
@@ -267,6 +267,10 @@ function injectBootstrap(html) {
   }
 
   const lower = html.toLowerCase();
+  const closeHead = lower.indexOf("</head>");
+  if (closeHead >= 0) {
+    return html.slice(0, closeHead) + snippet + html.slice(closeHead);
+  }
   const idx = lower.indexOf("<head");
   if (idx >= 0) {
     const end = html.indexOf(">", idx);
@@ -401,4 +405,3 @@ async function handleFetch(event) {
 }
 `;
 }
-
