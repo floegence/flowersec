@@ -2,6 +2,8 @@ import { createRequire } from "node:module";
 
 import type { WebSocketLike } from "../ws-client/binaryTransport.js";
 
+import { defaultWsMaxPayload } from "./wsDefaults.js";
+
 type EventType = "open" | "message" | "error" | "close";
 
 type Listener = (ev: any) => void;
@@ -11,6 +13,8 @@ export type NodeWsFactoryOptions = Readonly<{
   //
   // This is a defense-in-depth guard against a single oversized websocket message
   // causing large allocations before Flowersec protocol size checks run.
+  //
+  // Default: a safe value that covers the default handshake payload size and max record bytes.
   maxPayload?: number;
   // perMessageDeflate controls websocket compression negotiation. Default: false.
   //
@@ -26,16 +30,17 @@ export function createNodeWsFactory(opts: NodeWsFactoryOptions = {}): (url: stri
   const wsMod = require("ws") as any;
   const WebSocketCtor = wsMod?.WebSocket ?? wsMod;
 
-  const maxPayload = opts.maxPayload;
-  if (maxPayload !== undefined && (!Number.isSafeInteger(maxPayload) || maxPayload <= 0)) {
+  const maxPayloadRaw = opts.maxPayload ?? defaultWsMaxPayload({});
+  if (!Number.isSafeInteger(maxPayloadRaw) || maxPayloadRaw <= 0) {
     throw new Error("maxPayload must be a positive integer");
   }
+  const maxPayload = maxPayloadRaw;
   const perMessageDeflate = opts.perMessageDeflate ?? false;
 
   return (url: string, origin: string): WebSocketLike => {
     const raw = new WebSocketCtor(url, {
       headers: { Origin: origin },
-      ...(maxPayload !== undefined ? { maxPayload } : {}),
+      maxPayload,
       perMessageDeflate,
     });
 

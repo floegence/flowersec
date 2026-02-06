@@ -18,6 +18,18 @@ describe("createProxyServiceWorkerScript", () => {
     expect(s).toContain("url.origin !== self.location.origin");
   });
 
+  it("enforces safe default limits for request bodies and HTML injection", () => {
+    const s = createProxyServiceWorkerScript();
+    expect(s).toContain("MAX_REQUEST_BODY_BYTES");
+    expect(s).toContain("MAX_INJECT_HTML_BYTES");
+    expect(s).toContain("readRequestBody");
+  });
+
+  it("rejects negative limit options", () => {
+    expect(() => createProxyServiceWorkerScript({ maxRequestBodyBytes: -1 as any })).toThrow(/maxRequestBodyBytes/);
+    expect(() => createProxyServiceWorkerScript({ maxInjectHTMLBytes: -1 as any })).toThrow(/maxInjectHTMLBytes/);
+  });
+
   it("supports passthrough paths and prefixes", () => {
     const s = createProxyServiceWorkerScript({
       passthrough: { paths: ["/_sw.js", "/v1/channel/init/entry"], prefixes: ["/assets/", "/api/"] },
@@ -69,5 +81,12 @@ describe("createProxyServiceWorkerScript", () => {
     expect(s).toContain("content-length");
     expect(s).toContain("etag");
     expect(s).toContain('headers.set("Cache-Control", "no-store")');
+  });
+
+  it("converts early proxy errors to a Response (does not reject fetch)", () => {
+    const s = createProxyServiceWorkerScript();
+    expect(s).toContain("catch (err)");
+    expect(s).toContain("flowersec-proxy error");
+    expect(s).toContain("new Response(");
   });
 });
