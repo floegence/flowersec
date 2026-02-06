@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/client"
+	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
@@ -47,7 +48,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	logger := log.New(stderr, "", log.LstdFlags)
 
 	showVersion := false
-	configPath := envString("FSEC_PROXY_GATEWAY_CONFIG", "")
+	configPath := cmdutil.EnvString("FSEC_PROXY_GATEWAY_CONFIG", "")
 
 	fs := flag.NewFlagSet("flowersec-proxy-gateway", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -194,11 +195,4 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		logger.Print(err)
 		return 1
 	}
-}
-
-func envString(key string, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
 }

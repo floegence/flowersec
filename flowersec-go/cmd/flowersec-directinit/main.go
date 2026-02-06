@@ -9,12 +9,12 @@ import (
 	"io"
 	"math"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/securefile"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
 )
@@ -42,16 +42,16 @@ func main() {
 func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	showVersion := false
 
-	wsURL := envString("FSEC_DIRECT_WS_URL", "")
-	channelID := envString("FSEC_DIRECT_CHANNEL_ID", "")
-	pskB64u := envString("FSEC_DIRECT_PSK_B64U", "")
-	suiteStr := envString("FSEC_DIRECT_SUITE", "x25519")
-	initExpSeconds, err := envInt64WithErr("FSEC_DIRECT_INIT_EXP_SECONDS", 60)
+	wsURL := cmdutil.EnvString("FSEC_DIRECT_WS_URL", "")
+	channelID := cmdutil.EnvString("FSEC_DIRECT_CHANNEL_ID", "")
+	pskB64u := cmdutil.EnvString("FSEC_DIRECT_PSK_B64U", "")
+	suiteStr := cmdutil.EnvString("FSEC_DIRECT_SUITE", "x25519")
+	initExpSeconds, err := cmdutil.EnvInt64("FSEC_DIRECT_INIT_EXP_SECONDS", 60)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_DIRECT_INIT_EXP_SECONDS: %v\n", err)
 		return 2
 	}
-	outFile := envString("FSEC_DIRECT_OUT", "")
+	outFile := cmdutil.EnvString("FSEC_DIRECT_OUT", "")
 	var overwrite bool
 	var pretty bool
 
@@ -190,9 +190,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stdout)
 		return 0
 	}
-	if !overwrite && fileExists(outFile) {
-		fmt.Fprintf(stderr, "refusing to overwrite existing file: %s (use --overwrite)\n", outFile)
-		return 2
+	if err := cmdutil.RefuseOverwrite(outFile, overwrite); err != nil {
+		fmt.Fprintln(stderr, err)
+		if cmdutil.IsUsage(err) {
+			return 2
+		}
+		return 1
 	}
 	if err := securefile.WriteFileAtomic(outFile, b, 0o600); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -212,34 +215,10 @@ func parseSuite(s string) (directv1.Suite, error) {
 	}
 }
 
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 func randomB64u(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := io.ReadFull(randReader, b); err != nil {
 		return "", err
 	}
 	return base64url.Encode(b), nil
-}
-
-func envString(key string, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envInt64WithErr(key string, fallback int64) (int64, error) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback, nil
-	}
-	v, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
 }

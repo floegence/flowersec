@@ -261,15 +261,6 @@ func TestRun_NegativeMaxTotalPendingBytes_IsUsageError(t *testing.T) {
 	}
 }
 
-func TestSplitCSVEnv(t *testing.T) {
-	t.Setenv("FSEC_TUNNEL_ALLOW_ORIGIN", "a,b, c,,")
-	got := splitCSVEnv("FSEC_TUNNEL_ALLOW_ORIGIN")
-	want := []string{"a", "b", "c"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("splitCSVEnv mismatch: got=%v want=%v", got, want)
-	}
-}
-
 func TestSelectAllowedOrigins_FlagOverridesEnv(t *testing.T) {
 	env := []string{"a", "b"}
 	flags := []string{"c"}
@@ -286,24 +277,5 @@ func TestSelectAllowedOrigins_UsesEnvWhenFlagMissing(t *testing.T) {
 	want := []string{"a", "b"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("selectAllowedOrigins mismatch: got=%v want=%v", got, want)
-	}
-}
-
-func TestEnvBoolWithErr(t *testing.T) {
-	t.Setenv("FSEC_TUNNEL_ALLOW_NO_ORIGIN", "true")
-	v, err := envBoolWithErr("FSEC_TUNNEL_ALLOW_NO_ORIGIN", false)
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	if v != true {
-		t.Fatalf("expected true, got %v", v)
-	}
-}
-
-func TestEnvIntWithErr_Invalid(t *testing.T) {
-	t.Setenv("FSEC_TUNNEL_MAX_CONNS", "nope")
-	_, err := envIntWithErr("FSEC_TUNNEL_MAX_CONNS", 0)
-	if err == nil {
-		t.Fatalf("expected error")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/securefile"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
 )
@@ -38,10 +39,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	showVersion := false
 	pretty := false
 
-	kid := envString("FSEC_ISSUER_KID", "k1")
-	outDir := envString("FSEC_ISSUER_OUT_DIR", ".")
-	privFile := envString("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
-	pubFile := envString("FSEC_ISSUER_KEYS_FILE", envString("FSEC_TUNNEL_ISSUER_KEYS_FILE", ""))
+	kid := cmdutil.EnvString("FSEC_ISSUER_KID", "k1")
+	outDir := cmdutil.EnvString("FSEC_ISSUER_OUT_DIR", ".")
+	privFile := cmdutil.EnvString("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
+	pubFile := cmdutil.EnvString("FSEC_ISSUER_KEYS_FILE", cmdutil.EnvString("FSEC_TUNNEL_ISSUER_KEYS_FILE", ""))
 	var overwrite bool
 
 	fs := flag.NewFlagSet("flowersec-issuer-keygen", flag.ContinueOnError)
@@ -122,13 +123,19 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	if !overwrite {
-		if fileExists(privFile) {
-			fmt.Fprintf(stderr, "refusing to overwrite existing file: %s (use --overwrite)\n", privFile)
-			return 2
+		if err := cmdutil.RefuseOverwrite(privFile, overwrite); err != nil {
+			fmt.Fprintln(stderr, err)
+			if cmdutil.IsUsage(err) {
+				return 2
+			}
+			return 1
 		}
-		if fileExists(pubFile) {
-			fmt.Fprintf(stderr, "refusing to overwrite existing file: %s (use --overwrite)\n", pubFile)
-			return 2
+		if err := cmdutil.RefuseOverwrite(pubFile, overwrite); err != nil {
+			fmt.Fprintln(stderr, err)
+			if cmdutil.IsUsage(err) {
+				return 2
+			}
+			return 1
 		}
 	}
 
@@ -186,16 +193,4 @@ func absOr(path string) string {
 		return path
 	}
 	return a
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func envString(key string, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
 }
