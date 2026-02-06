@@ -92,6 +92,7 @@ type Server struct {
 
 	mu       sync.Mutex               // Guards channel state.
 	channels map[string]*channelState // Channel state by channel ID.
+	bw       sync.Map                 // key: channel_id (string), value: *bandwidthEntry
 
 	closed int32 // Set to 1 once Close is called.
 
@@ -328,6 +329,7 @@ type endpointConn struct {
 	role tunnelv1.Role   // Endpoint role (client/server).
 	eid  string          // Endpoint instance ID (base64url).
 	ws   *websocket.Conn // Underlying websocket connection.
+	bw   *bandwidthEntry // Per-channel bandwidth counters (shared across endpoints).
 
 	pending      [][]byte // Buffered frames awaiting peer.
 	pendingBytes int      // Total buffered bytes.
@@ -552,6 +554,7 @@ func (s *Server) closeAll() {
 	var conns []*websocket.Conn
 	var pendingBytes int
 
+	now := time.Now()
 	s.mu.Lock()
 	for id, st := range s.channels {
 		st.mu.Lock()
@@ -564,6 +567,7 @@ func (s *Server) closeAll() {
 		}
 		st.mu.Unlock()
 		delete(s.channels, id)
+		s.markBandwidthClosed(id, now)
 	}
 	channelCount := len(s.channels)
 	s.mu.Unlock()
@@ -642,6 +646,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 	now := time.Now()
 
 	ep := newEndpointConn(a.Role, a.EndpointInstanceId, uc)
+	ep.bw = s.ensureBandwidthEntry(a.ChannelId)
 	s.mu.Lock()
 	st := s.channels[a.ChannelId]
 	if st == nil {
@@ -896,6 +901,14 @@ func (s *Server) writePump(channelID string, role tunnelv1.Role, dst *endpointCo
 			s.closeChannelFrom(channelID, role, dst)
 			return
 		}
+		if dst.bw != nil {
+			n := uint64(len(req.frame))
+			if role == tunnelv1.Role_client {
+				atomic.AddUint64(&dst.bw.toClient, n)
+			} else {
+				atomic.AddUint64(&dst.bw.toServer, n)
+			}
+		}
 	}
 }
 
@@ -1030,6 +1043,9 @@ func (s *Server) closeChannel(channelID string) {
 		st.mu.Unlock()
 	}
 	s.mu.Unlock()
+	if removed {
+		s.markBandwidthClosed(channelID, time.Now())
+	}
 	s.subPendingBytes(pendingBytes)
 	if removed {
 		s.obs.ChannelCount(channelCount)
@@ -1074,6 +1090,7 @@ func (s *Server) closeChannelFrom(channelID string, role tunnelv1.Role, src *end
 	channelCount = len(s.channels)
 	st.mu.Unlock()
 	s.mu.Unlock()
+	s.markBandwidthClosed(channelID, time.Now())
 	s.subPendingBytes(pendingBytes)
 	s.obs.ChannelCount(channelCount)
 	for _, c := range conns {
@@ -1137,6 +1154,7 @@ func (s *Server) untrackConn(c *websocket.Conn) {
 func (s *Server) cleanupLoop() {
 	t := time.NewTicker(s.cfg.CleanupInterval)
 	defer t.Stop()
+	var lastBWPrune time.Time
 	for {
 		select {
 		case <-s.stopCh:
@@ -1145,6 +1163,11 @@ func (s *Server) cleanupLoop() {
 			now := time.Now()
 			nowUnix := now.Unix()
 			s.used.Cleanup(now)
+			// Prune bandwidth stats less frequently than channel cleanup.
+			if lastBWPrune.IsZero() || now.Sub(lastBWPrune) >= 10*time.Second {
+				s.pruneBandwidthStats(now)
+				lastBWPrune = now
+			}
 
 			type closeTarget struct {
 				id     string
