@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/securefile"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
 )
@@ -43,22 +43,22 @@ func main() {
 func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	showVersion := false
 
-	issuerPrivFile := envString("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
-	tunnelURL := envString("FSEC_TUNNEL_URL", "")
-	aud := envString("FSEC_TUNNEL_AUD", "")
-	iss := envString("FSEC_TUNNEL_ISS", envString("FSEC_ISSUER_ID", ""))
-	channelID := envString("FSEC_CHANNEL_ID", "")
-	tokenExpSeconds, err := envInt64WithErr("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", 0)
+	issuerPrivFile := cmdutil.EnvString("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
+	tunnelURL := cmdutil.EnvString("FSEC_TUNNEL_URL", "")
+	aud := cmdutil.EnvString("FSEC_TUNNEL_AUD", "")
+	iss := cmdutil.EnvString("FSEC_TUNNEL_ISS", cmdutil.EnvString("FSEC_ISSUER_ID", ""))
+	channelID := cmdutil.EnvString("FSEC_CHANNEL_ID", "")
+	tokenExpSeconds, err := cmdutil.EnvInt64("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", 0)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_CHANNELINIT_TOKEN_EXP_SECONDS: %v\n", err)
 		return 2
 	}
-	idleTimeoutSeconds, err := envIntWithErr("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", 0)
+	idleTimeoutSeconds, err := cmdutil.EnvInt("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", 0)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS: %v\n", err)
 		return 2
 	}
-	outFile := envString("FSEC_CHANNELINIT_OUT", "")
+	outFile := cmdutil.EnvString("FSEC_CHANNELINIT_OUT", "")
 	var overwrite bool
 	var pretty bool
 
@@ -197,9 +197,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stdout)
 		return 0
 	}
-	if !overwrite && fileExists(outFile) {
-		fmt.Fprintf(stderr, "refusing to overwrite existing file: %s (use --overwrite)\n", outFile)
-		return 2
+	if err := cmdutil.RefuseOverwrite(outFile, overwrite); err != nil {
+		fmt.Fprintln(stderr, err)
+		if cmdutil.IsUsage(err) {
+			return 2
+		}
+		return 1
 	}
 	if err := securefile.WriteFileAtomic(outFile, b, 0o600); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -208,46 +211,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 func randomB64u(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := io.ReadFull(randReader, b); err != nil {
 		return "", err
 	}
 	return base64url.Encode(b), nil
-}
-
-func envString(key string, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envIntWithErr(key string, fallback int) (int, error) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback, nil
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
-}
-
-func envInt64WithErr(key string, fallback int64) (int64, error) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback, nil
-	}
-	v, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
 }

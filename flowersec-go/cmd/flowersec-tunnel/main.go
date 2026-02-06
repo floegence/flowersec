@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
 	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/observability/prom"
@@ -141,47 +142,47 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	logger := log.New(stderr, "", log.LstdFlags)
 
-	listen := envString("FSEC_TUNNEL_LISTEN", "127.0.0.1:0")
-	advertiseHost := envString("FSEC_TUNNEL_ADVERTISE_HOST", "")
-	path := envString("FSEC_TUNNEL_WS_PATH", "/ws")
-	issuerKeysFile := envString("FSEC_TUNNEL_ISSUER_KEYS_FILE", "")
-	aud := envString("FSEC_TUNNEL_AUD", "")
-	iss := envString("FSEC_TUNNEL_ISS", "")
-	metricsListen := envString("FSEC_TUNNEL_METRICS_LISTEN", "")
-	statsListen := envString("FSEC_TUNNEL_STATS_LISTEN", "")
-	tlsCertFile := envString("FSEC_TUNNEL_TLS_CERT_FILE", "")
-	tlsKeyFile := envString("FSEC_TUNNEL_TLS_KEY_FILE", "")
+	listen := cmdutil.EnvString("FSEC_TUNNEL_LISTEN", "127.0.0.1:0")
+	advertiseHost := cmdutil.EnvString("FSEC_TUNNEL_ADVERTISE_HOST", "")
+	path := cmdutil.EnvString("FSEC_TUNNEL_WS_PATH", "/ws")
+	issuerKeysFile := cmdutil.EnvString("FSEC_TUNNEL_ISSUER_KEYS_FILE", "")
+	aud := cmdutil.EnvString("FSEC_TUNNEL_AUD", "")
+	iss := cmdutil.EnvString("FSEC_TUNNEL_ISS", "")
+	metricsListen := cmdutil.EnvString("FSEC_TUNNEL_METRICS_LISTEN", "")
+	statsListen := cmdutil.EnvString("FSEC_TUNNEL_STATS_LISTEN", "")
+	tlsCertFile := cmdutil.EnvString("FSEC_TUNNEL_TLS_CERT_FILE", "")
+	tlsKeyFile := cmdutil.EnvString("FSEC_TUNNEL_TLS_KEY_FILE", "")
 
-	allowedOriginsEnv := splitCSVEnv("FSEC_TUNNEL_ALLOW_ORIGIN")
+	allowedOriginsEnv := cmdutil.SplitCSVEnv("FSEC_TUNNEL_ALLOW_ORIGIN")
 	var allowedOriginsFlag stringSliceFlag
 
-	allowNoOrigin, err := envBoolWithErr("FSEC_TUNNEL_ALLOW_NO_ORIGIN", cfg.AllowNoOrigin)
+	allowNoOrigin, err := cmdutil.EnvBool("FSEC_TUNNEL_ALLOW_NO_ORIGIN", cfg.AllowNoOrigin)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_ALLOW_NO_ORIGIN: %v\n", err)
 		return 2
 	}
 
-	maxConns, err := envIntWithErr("FSEC_TUNNEL_MAX_CONNS", 0)
+	maxConns, err := cmdutil.EnvInt("FSEC_TUNNEL_MAX_CONNS", 0)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_CONNS: %v\n", err)
 		return 2
 	}
-	maxChannels, err := envIntWithErr("FSEC_TUNNEL_MAX_CHANNELS", 0)
+	maxChannels, err := cmdutil.EnvInt("FSEC_TUNNEL_MAX_CHANNELS", 0)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_CHANNELS: %v\n", err)
 		return 2
 	}
-	maxTotalPendingBytes, err := envIntWithErr("FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES", cfg.MaxTotalPendingBytes)
+	maxTotalPendingBytes, err := cmdutil.EnvInt("FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES", cfg.MaxTotalPendingBytes)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES: %v\n", err)
 		return 2
 	}
-	writeTimeout, err := envDurationWithErr("FSEC_TUNNEL_WRITE_TIMEOUT", cfg.WriteTimeout)
+	writeTimeout, err := cmdutil.EnvDuration("FSEC_TUNNEL_WRITE_TIMEOUT", cfg.WriteTimeout)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_WRITE_TIMEOUT: %v\n", err)
 		return 2
 	}
-	maxWriteQueueBytes, err := envIntWithErr("FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES", cfg.MaxWriteQueueBytes)
+	maxWriteQueueBytes, err := cmdutil.EnvInt("FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES", cfg.MaxWriteQueueBytes)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES: %v\n", err)
 		return 2
@@ -540,13 +541,6 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 }
 
-func envString(key string, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
-}
-
 func selectAllowedOrigins(env []string, flags []string) []string {
 	if len(flags) > 0 {
 		return flags
@@ -615,57 +609,4 @@ func resolveAdvertiseHost(bindHostPort string, advertiseHost string) (mainHostPo
 		}
 	}
 	return net.JoinHostPort(hostOnly, bindPort), hostOnly, true, nil
-}
-
-func splitCSVEnv(key string) []string {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		v := strings.TrimSpace(p)
-		if v == "" {
-			continue
-		}
-		out = append(out, v)
-	}
-	return out
-}
-
-func envBoolWithErr(key string, fallback bool) (bool, error) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback, nil
-	}
-	v, err := strconv.ParseBool(raw)
-	if err != nil {
-		return false, err
-	}
-	return v, nil
-}
-
-func envIntWithErr(key string, fallback int) (int, error) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback, nil
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, err
-	}
-	return v, nil
-}
-
-func envDurationWithErr(key string, fallback time.Duration) (time.Duration, error) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback, nil
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, err
-	}
-	return d, nil
 }

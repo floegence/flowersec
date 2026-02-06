@@ -26,6 +26,15 @@ export type { DirectConnectOptions } from "./direct-client/connect.js";
 
 export type ConnectOptions = TunnelConnectOptions | DirectConnectOptions;
 
+type _AssertFalse<T extends false> = T;
+
+// Type-level regression guard: tunnel-only options must not be accepted by direct connects.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type _TunnelOptsNotDirect = _AssertFalse<TunnelConnectOptions extends DirectConnectOptions ? true : false>;
+// Type-level regression guard: direct-only options must not be accepted by tunnel connects.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type _DirectOptsNotTunnel = _AssertFalse<DirectConnectOptions extends TunnelConnectOptions ? true : false>;
+
 export async function connectTunnel(grant: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client>;
 export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions): Promise<Client> {
   return await connectTunnelInternal(grant, opts);

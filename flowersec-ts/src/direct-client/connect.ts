@@ -14,7 +14,13 @@ function hasOwn(o: Record<string, unknown>, key: string): boolean {
 }
 
 // DirectConnectOptions controls transport and handshake limits.
-export type DirectConnectOptions = ConnectOptionsBase;
+export type DirectConnectOptions = ConnectOptionsBase &
+  Readonly<{
+    /** Type-only marker to prevent mixing direct and tunnel option types. */
+    __mode?: "direct";
+    /** Reserved for tunnel connects; forbidden for direct connects. */
+    endpointInstanceId?: never;
+  }>;
 
 // connectDirect connects to a direct websocket endpoint and returns an RPC-ready session.
 export async function connectDirect(info: unknown, opts: DirectConnectOptions): Promise<ClientInternal> {

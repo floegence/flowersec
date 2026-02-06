@@ -10,6 +10,8 @@ import type { ClientInternal } from "../client.js";
 // TunnelConnectOptions controls transport and handshake limits.
 export type TunnelConnectOptions = ConnectOptionsBase &
   Readonly<{
+    /** Type-only marker to prevent mixing direct and tunnel option types. */
+    __mode?: "tunnel";
     /** Optional caller-provided endpoint instance ID (base64url). */
     endpointInstanceId?: string;
   }>;
