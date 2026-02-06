@@ -150,14 +150,19 @@ export function installWebSocketPatch(opts: WebSocketPatchOptions): Readonly<{ u
       this.listeners.off(type, listener);
     }
 
+    private queueWriteFrame(stream: any, op: number, payload: Uint8Array): void {
+      this.writeChain = this.writeChain
+        .then(() => writeWSFrame(stream, op, payload, maxWsFrameBytes))
+        .catch((e) => this.fail(e));
+    }
+
     send(data: any): void {
       if (this.readyState !== PatchedWebSocket.OPEN || this.stream == null) {
         throw new Error("WebSocket is not open");
       }
+      const s = this.stream;
       const sendBytes = (op: number, payload: Uint8Array) => {
-        this.writeChain = this.writeChain
-          .then(() => writeWSFrame(this.stream, op, payload, maxWsFrameBytes))
-          .catch((e) => this.fail(e));
+        this.queueWriteFrame(s, op, payload);
       };
       if (typeof data === "string") {
         sendBytes(1, te.encode(data));
@@ -248,7 +253,8 @@ export function installWebSocketPatch(opts: WebSocketPatchOptions): Readonly<{ u
           const { op, payload } = await readWSFrame(reader, maxWsFrameBytes);
           if (op === 9) {
             // Ping -> Pong (not exposed to WebSocket JS API).
-            await writeWSFrame(stream, 10, payload, maxWsFrameBytes);
+            // Must be serialized with user writes, otherwise concurrent writes can corrupt framing.
+            this.queueWriteFrame(stream, 10, payload);
             continue;
           }
           if (op === 10) continue;
