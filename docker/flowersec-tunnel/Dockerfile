@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM --platform=$BUILDPLATFORM golang:1.25.6-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.25.7-alpine AS build
 
 WORKDIR /src/flowersec-go
 
