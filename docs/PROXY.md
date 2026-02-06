@@ -350,6 +350,9 @@ Requirements:
     - `injectHTML: { mode: "external_module", scriptUrl }` (module script)
   - `proxyModuleUrl` / `scriptUrl` MUST be same-origin, and MUST NOT be routed back into the proxied upstream (avoid proxy recursion). Use SW passthrough rules to keep these assets on the control-plane/static origin.
   - When injecting HTML, the proxy SW SHOULD strip validator headers (`etag`, `last-modified`, etc.) and SHOULD avoid caching the modified HTML response (`Cache-Control: no-store`).
+  - The generated proxy SW enforces safety caps to avoid unbounded buffering:
+    - `maxRequestBodyBytes` (default: 64 MiB) limits buffered request bodies (non-GET/HEAD). Exceeding the cap returns a `413` response.
+    - `maxInjectHTMLBytes` (default: 2 MiB) limits buffered HTML responses when `injectHTML` is enabled. Exceeding the cap returns a `502` response (increase the cap or disable injection).
   - The proxy SW SHOULD proxy same-origin requests only; cross-origin requests should fall through to the network to avoid losing scheme/host (the runtime proxy protocol forwards path+query only).
   - Helper: `registerServiceWorkerAndEnsureControl({ scriptUrl, ... })` (exported from `@floegence/flowersec-core/proxy`) can register the proxy SW and ensure the current page load is controlled (hard reload repair).
 
