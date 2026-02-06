@@ -129,6 +129,7 @@ type ready struct {
 	HTTPURL       string `json:"http_url"`
 	HealthzURL    string `json:"healthz_url"`
 	MetricsURL    string `json:"metrics_url,omitempty"`
+	StatsURL      string `json:"stats_url,omitempty"`
 }
 
 func main() {
@@ -147,6 +148,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	aud := envString("FSEC_TUNNEL_AUD", "")
 	iss := envString("FSEC_TUNNEL_ISS", "")
 	metricsListen := envString("FSEC_TUNNEL_METRICS_LISTEN", "")
+	statsListen := envString("FSEC_TUNNEL_STATS_LISTEN", "")
 	tlsCertFile := envString("FSEC_TUNNEL_TLS_CERT_FILE", "")
 	tlsKeyFile := envString("FSEC_TUNNEL_TLS_KEY_FILE", "")
 
@@ -205,6 +207,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&tlsCertFile, "tls-cert-file", tlsCertFile, "enable TLS with the given certificate file (default: disabled) (env: FSEC_TUNNEL_TLS_CERT_FILE)")
 	fs.StringVar(&tlsKeyFile, "tls-key-file", tlsKeyFile, "enable TLS with the given private key file (default: disabled) (env: FSEC_TUNNEL_TLS_KEY_FILE)")
 	fs.StringVar(&metricsListen, "metrics-listen", metricsListen, "listen address for metrics server (empty disables) (env: FSEC_TUNNEL_METRICS_LISTEN)")
+	fs.StringVar(&statsListen, "stats-listen", statsListen, "listen address for stats server (empty disables) (env: FSEC_TUNNEL_STATS_LISTEN)")
 	fs.IntVar(&maxTotalPendingBytes, "max-total-pending-bytes", maxTotalPendingBytes, "max total pending bytes buffered across all channels (>= 0; 0 disables) (env: FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES)")
 	fs.DurationVar(&writeTimeout, "write-timeout", writeTimeout, "per-frame websocket write timeout (>= 0; 0 disables) (env: FSEC_TUNNEL_WRITE_TIMEOUT)")
 	fs.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", maxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES)")
@@ -266,6 +269,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	aud = strings.TrimSpace(aud)
 	iss = strings.TrimSpace(iss)
 	metricsListen = strings.TrimSpace(metricsListen)
+	statsListen = strings.TrimSpace(statsListen)
 	tlsCertFile = strings.TrimSpace(tlsCertFile)
 	tlsKeyFile = strings.TrimSpace(tlsKeyFile)
 
@@ -364,6 +368,74 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		}()
 	}
 
+	var statsSrv *http.Server
+	var statsLn net.Listener
+	if statsListen != "" {
+		statsMux := http.NewServeMux()
+		statsMux.HandleFunc("/stats/v1/bandwidth", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+
+			// Best-effort JSON endpoint for bandwidth usage collection.
+			// The tunnel is an opaque relay and cannot decrypt, so counters reflect raw encrypted bytes.
+			snap := s.BandwidthSnapshot(time.Now())
+
+			type channel struct {
+				ChannelID      string `json:"channel_id"`
+				BytesToClient  uint64 `json:"bytes_to_client"`
+				BytesToServer  uint64 `json:"bytes_to_server"`
+				ClosedAtUnixMs int64  `json:"closed_at_unix_ms,omitempty"`
+			}
+			type resp struct {
+				NowUnixMs int64     `json:"now_unix_ms"`
+				Channels  []channel `json:"channels"`
+			}
+
+			out := resp{NowUnixMs: snap.NowUnixMs, Channels: make([]channel, 0, len(snap.Channels))}
+			for _, ch := range snap.Channels {
+				out.Channels = append(out.Channels, channel{
+					ChannelID:      ch.ChannelID,
+					BytesToClient:  ch.BytesToClient,
+					BytesToServer:  ch.BytesToServer,
+					ClosedAtUnixMs: ch.ClosedAtUnixMs,
+				})
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			enc := json.NewEncoder(w)
+			_ = enc.Encode(out)
+		})
+
+		statsLn, err = net.Listen("tcp", statsListen)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		statsSrv = newHTTPServer(statsMux)
+		if tlsCertFile != "" {
+			if statsSrv.TLSConfig == nil {
+				statsSrv.TLSConfig = &tls.Config{}
+			}
+			if statsSrv.TLSConfig.MinVersion == 0 {
+				statsSrv.TLSConfig.MinVersion = tls.VersionTLS12
+			}
+		}
+		go func() {
+			var err error
+			if tlsCertFile != "" {
+				err = statsSrv.ServeTLS(statsLn, tlsCertFile, tlsKeyFile)
+			} else {
+				err = statsSrv.Serve(statsLn)
+			}
+			if err != nil && err != http.ErrServerClosed {
+				logger.Fatal(err)
+			}
+		}()
+	}
+
 	// Bind to the listen address and serve HTTP/WebSocket traffic.
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -397,10 +469,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	wsScheme := "ws"
 	httpScheme := "http"
 	metricsScheme := "http"
+	statsScheme := "http"
 	if tlsCertFile != "" {
 		wsScheme = "wss"
 		httpScheme = "https"
 		metricsScheme = "https"
+		statsScheme = "https"
 	}
 	bindAddr := ln.Addr().String()
 	advMainHostPort, advHostOnly, advWasSet, err := resolveAdvertiseHost(bindAddr, advertiseHost)
@@ -430,6 +504,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			}
 		}
 	}
+	if statsLn != nil {
+		statsAddr := statsLn.Addr().String()
+		out.StatsURL = statsScheme + "://" + statsAddr + "/stats/v1/bandwidth"
+		if advWasSet {
+			if _, port, err := net.SplitHostPort(statsAddr); err == nil {
+				out.StatsURL = statsScheme + "://" + net.JoinHostPort(advHostOnly, port) + "/stats/v1/bandwidth"
+			}
+		}
+	}
 	if err := writeReadyJSON(stdout, out, pretty); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -448,6 +531,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		_ = srv.Shutdown(ctx)
 		if metricsSrv != nil {
 			_ = metricsSrv.Shutdown(ctx)
+		}
+		if statsSrv != nil {
+			_ = statsSrv.Shutdown(ctx)
 		}
 		cancel()
 		return 0
