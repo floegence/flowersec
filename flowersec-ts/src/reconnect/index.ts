@@ -81,8 +81,26 @@ export type ReconnectManager = Readonly<{
   state: () => ReconnectState;
   subscribe: (listener: ReconnectListener) => () => void;
   connect: (config: ConnectConfig) => Promise<void>;
+  connectIfNeeded: (config: ConnectConfig) => Promise<void>;
   disconnect: () => void;
 }>;
+
+function isSameConfig(a: ConnectConfig | null, b: ConnectConfig): boolean {
+  if (a == null) return false;
+  if (a.connectOnce !== b.connectOnce) return false;
+  if (a.observer !== b.observer) return false;
+
+  const aa = normalizeAutoReconnect(a.autoReconnect);
+  const bb = normalizeAutoReconnect(b.autoReconnect);
+  return (
+    aa.enabled === bb.enabled &&
+    aa.maxAttempts === bb.maxAttempts &&
+    aa.initialDelayMs === bb.initialDelayMs &&
+    aa.maxDelayMs === bb.maxDelayMs &&
+    aa.factor === bb.factor &&
+    aa.jitterRatio === bb.jitterRatio
+  );
+}
 
 export function createReconnectManager(): ReconnectManager {
   let s: ReconnectState = { status: "disconnected", error: null, client: null };
@@ -101,6 +119,7 @@ export function createReconnectManager(): ReconnectManager {
 
   let token = 0;
   let active: ConnectConfig | null = null;
+  let activeConnectPromise: Promise<void> | null = null;
 
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let retryResolve: (() => void) | null = null;
@@ -139,6 +158,7 @@ export function createReconnectManager(): ReconnectManager {
     cancelRetrySleep();
     abortActiveAttempt();
     active = null;
+    activeConnectPromise = null;
     token += 1;
 
     if (s.client) {
@@ -283,7 +303,24 @@ export function createReconnectManager(): ReconnectManager {
     }
 
     setState({ status: "connecting", error: null, client: null });
-    await connectWithRetry(t, cfg);
+    const p = connectWithRetry(t, cfg);
+    activeConnectPromise = p;
+    try {
+      await p;
+    } finally {
+      if (activeConnectPromise === p) activeConnectPromise = null;
+    }
+  };
+
+  const connectIfNeeded = async (cfg: ConnectConfig): Promise<void> => {
+    if (isSameConfig(active, cfg)) {
+      if (s.status === "connected" && s.client) return;
+      if (s.status === "connecting" && activeConnectPromise) {
+        await activeConnectPromise;
+        return;
+      }
+    }
+    await connect(cfg);
   };
 
   const disconnect = () => {
@@ -305,7 +342,7 @@ export function createReconnectManager(): ReconnectManager {
       };
     },
     connect,
+    connectIfNeeded,
     disconnect,
   };
 }
-

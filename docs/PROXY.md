@@ -355,6 +355,9 @@ Requirements:
     - `maxInjectHTMLBytes` (default: 2 MiB) limits buffered HTML responses when `injectHTML` is enabled. Exceeding the cap returns a `502` response (increase the cap or disable injection).
   - The proxy SW SHOULD proxy same-origin requests only; cross-origin requests should fall through to the network to avoid losing scheme/host (the runtime proxy protocol forwards path+query only).
   - Helper: `registerServiceWorkerAndEnsureControl({ scriptUrl, ... })` (exported from `@floegence/flowersec-core/proxy`) can register the proxy SW and ensure the current page load is controlled (hard reload repair).
+  - If your app needs extra fetch bridge message types (for example `redeven:proxy_fetch`), configure
+    `createProxyServiceWorkerScript({ forwardFetchMessageTypes: [...] })` or use
+    `createProxyIntegrationServiceWorkerScript(...)` with plugins.
 
 ### 6.2 Gateway mode (L7 reverse proxy)
 

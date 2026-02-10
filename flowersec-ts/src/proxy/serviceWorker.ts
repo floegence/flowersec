@@ -86,6 +86,21 @@ export type ProxyServiceWorkerScriptOptions = Readonly<{
   //
   // The injected script disables upstream SW registration and patches WebSocket to route via flowersec-proxy/ws.
   injectHTML?: ProxyServiceWorkerInjectHTMLOptions;
+
+  // Additional message types that should be treated as runtime-proxy fetch bridge messages.
+  //
+  // Each message must be posted with a transferable MessagePort and carry `{ req }` payload,
+  // and the Service Worker forwards it to the runtime as `flowersec-proxy:fetch`.
+  //
+  // Example: ["redeven:proxy_fetch"]
+  forwardFetchMessageTypes?: readonly string[];
+
+  // Optional conflict hints for integrations that need to preserve specific Service Worker scripts.
+  // This field is informational for generated scripts (for debugging/diagnostics) and does not
+  // change runtime behavior by itself.
+  conflictHints?: Readonly<{
+    keepScriptPathSuffixes?: readonly string[];
+  }>;
 }>;
 
 function normalizePathPrefix(name: string, v: unknown): string {
@@ -104,6 +119,18 @@ function normalizePathList(name: string, input: readonly string[] | undefined): 
   for (const raw of input) {
     const s = normalizePathPrefix(name, raw);
     if (s === "") continue;
+    out.push(s);
+  }
+  return Array.from(new Set(out));
+}
+
+function normalizeMessageTypeList(name: string, input: readonly string[] | undefined): string[] {
+  const out: string[] = [];
+  if (input == null || input.length === 0) return out;
+  for (const raw of input) {
+    const s = typeof raw === "string" ? raw.trim() : "";
+    if (s === "") continue;
+    if (/[\r\n]/.test(s)) throw new Error(`${name} must not contain newline`);
     out.push(s);
   }
   return Array.from(new Set(out));
@@ -142,6 +169,8 @@ export function createProxyServiceWorkerScript(opts: ProxyServiceWorkerScriptOpt
 
   const passthroughPaths = normalizePathList("passthrough.paths", opts.passthrough?.paths);
   const passthroughPrefixes = normalizePathList("passthrough.prefixes", opts.passthrough?.prefixes);
+  const forwardFetchMessageTypes = normalizeMessageTypeList("forwardFetchMessageTypes", opts.forwardFetchMessageTypes);
+  const keepScriptPathSuffixes = normalizePathList("conflictHints.keepScriptPathSuffixes", opts.conflictHints?.keepScriptPathSuffixes);
 
   const injectHTML = opts.injectHTML ?? null;
 
@@ -204,6 +233,8 @@ const INJECT_SET_NO_STORE = ${JSON.stringify(setNoStore)};
 
 const MAX_REQUEST_BODY_BYTES = ${JSON.stringify(maxRequestBodyBytes)};
 const MAX_INJECT_HTML_BYTES = ${JSON.stringify(maxInjectHTMLBytes)};
+const FORWARD_FETCH_MESSAGE_TYPES = new Set(${JSON.stringify(forwardFetchMessageTypes)});
+const CONFLICT_HINT_KEEP_SCRIPT_SUFFIXES = ${JSON.stringify(keepScriptPathSuffixes)};
 
 const INJECT_STRIP_HEADER_NAMES = new Set(["content-length", "etag", "last-modified", "content-md5"]);
 
@@ -221,8 +252,32 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
-  if (data.type !== "flowersec-proxy:register-runtime") return;
-  if (event.source && typeof event.source.id === "string") runtimeClientId = event.source.id;
+  const msgType = typeof data.type === "string" ? data.type : "";
+  if (msgType === "flowersec-proxy:register-runtime") {
+    if (event.source && typeof event.source.id === "string") runtimeClientId = event.source.id;
+    return;
+  }
+  if (!FORWARD_FETCH_MESSAGE_TYPES.has(msgType)) return;
+
+  const port = event.ports && event.ports[0];
+  if (!port) return;
+
+  event.waitUntil((async () => {
+    const runtime = await getRuntimeClient();
+    if (!runtime) {
+      try { port.postMessage({ type: "flowersec-proxy:response_error", status: 503, message: "flowersec-proxy runtime not available" }); } catch {}
+      try { port.close(); } catch {}
+      return;
+    }
+
+    try {
+      runtime.postMessage({ type: "flowersec-proxy:fetch", req: data.req }, [port]);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      try { port.postMessage({ type: "flowersec-proxy:response_error", status: 502, message: msg }); } catch {}
+      try { port.close(); } catch {}
+    }
+  })());
 });
 
 async function getRuntimeClient() {

@@ -135,7 +135,13 @@ This is an integration pattern on top of a normal Flowersec client connection:
 
 ```ts
 import { connectTunnelBrowser } from "@floegence/flowersec-core/browser";
-import { createProxyRuntime, createProxyServiceWorkerScript, registerServiceWorkerAndEnsureControl } from "@floegence/flowersec-core/proxy";
+import {
+  createProxyRuntime,
+  createProxyServiceWorkerScript,
+  createProxyIntegrationServiceWorkerScript,
+  registerProxyIntegration,
+  registerServiceWorkerAndEnsureControl,
+} from "@floegence/flowersec-core/proxy";
 
 const grant = await getFreshGrantSomehow();
 const client = await connectTunnelBrowser(grant);
@@ -173,6 +179,41 @@ See `docs/PROXY.md` for the stable wire contracts and security requirements.
 Best practice: do not copy/paste and maintain your own proxy Service Worker implementation.
 Use `createProxyServiceWorkerScript(...)` + `registerServiceWorkerAndEnsureControl(...)` as the source of truth, and keep your app-specific behavior in options (passthrough/injection mode/prefix rules).
 
+For multi-application environments that need plugin-style customization (for example extra message bridges or conflict SW keep-lists),
+prefer `createProxyIntegrationServiceWorkerScript(...)` and `registerProxyIntegration(...)`.
+These helpers keep SW control/repair behavior in one place while allowing app-specific plugin extensions.
+
+Example:
+
+```ts
+const plugin = {
+  name: "redeven-webview",
+  forwardFetchMessageTypes: ["redeven:proxy_fetch"],
+  serviceWorkerConflictPolicy: {
+    keepScriptPathSuffixes: ["/out/vs/workbench/contrib/webview/browser/pre/service-worker.js"],
+  },
+} as const;
+
+const swScript = createProxyIntegrationServiceWorkerScript({
+  baseOptions: {
+    sameOriginOnly: true,
+    injectHTML: { mode: "external_script", scriptUrl: "/_proxy/inject.js", excludePathPrefixes: ["/_proxy/"] },
+  },
+  plugins: [plugin],
+});
+
+const { runtime } = await registerProxyIntegration({
+  client,
+  profile: "codeserver",
+  serviceWorker: {
+    scriptUrl: "/_proxy/sw.js",
+    scope: "/",
+    expectedScriptPathSuffix: "/_proxy/sw.js",
+  },
+  plugins: [plugin],
+});
+```
+
 ## TypeScript: reconnect (optional)
 
 Tunnel tokens are one-time use. If you want auto reconnect, you typically need to mint a fresh grant for each attempt.
@@ -195,6 +236,9 @@ await mgr.connect({
 
 Best practice: if you build a framework or UI layer (e.g. a Solid/React provider), keep UI state management in your app/framework,
 but delegate the reconnect state machine to `@floegence/flowersec-core/reconnect` instead of duplicating backoff + cancellation + observer wiring.
+
+When your app already has a healthy connection and just wants to ensure availability, prefer `connectIfNeeded(...)`
+to avoid unnecessary hard reconnects.
 
 ## Choose a topology
 

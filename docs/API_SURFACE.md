@@ -98,11 +98,15 @@ Stable building blocks (advanced, but supported):
 - `@floegence/flowersec-core/proxy` (browser runtime helpers for `flowersec-proxy/http1` + `flowersec-proxy/ws`)
   - `createProxyRuntime(...)`
   - `createProxyServiceWorkerScript(...)`
+  - `createProxyIntegrationServiceWorkerScript(...)`
+  - `registerProxyIntegration(...)`
   - `registerServiceWorkerAndEnsureControl(...)`
   - `installWebSocketPatch(...)`
   - `disableUpstreamServiceWorkerRegister()`
+  - `resolveProxyProfile(...)`, `PROXY_PROFILE_DEFAULT`, `PROXY_PROFILE_CODESERVER`
 - `@floegence/flowersec-core/reconnect` (framework-agnostic reconnect state machine)
   - `createReconnectManager()`
+  - `ReconnectManager.connectIfNeeded(...)`
 - `@floegence/flowersec-core/rpc` (RPC client/server over length-prefixed JSON frames)
 - `@floegence/flowersec-core/yamux` (yamux framing and session)
 - `@floegence/flowersec-core/e2ee` (record layer and handshake helpers)
