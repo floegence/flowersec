@@ -89,4 +89,25 @@ describe("createProxyServiceWorkerScript", () => {
     expect(s).toContain("flowersec-proxy error");
     expect(s).toContain("new Response(");
   });
+
+  it("supports custom forward fetch message types", () => {
+    const s = createProxyServiceWorkerScript({
+      forwardFetchMessageTypes: ["redeven:proxy_fetch"],
+    });
+    expect(s).toContain("FORWARD_FETCH_MESSAGE_TYPES");
+    expect(s).toContain("redeven:proxy_fetch");
+    expect(s).toContain('runtime.postMessage({ type: "flowersec-proxy:fetch", req: data.req }, [port]);');
+  });
+
+  it("supports conflict hint metadata", () => {
+    const s = createProxyServiceWorkerScript({
+      conflictHints: { keepScriptPathSuffixes: ["/out/vs/workbench/contrib/webview/browser/pre/service-worker.js"] },
+    });
+    expect(s).toContain("CONFLICT_HINT_KEEP_SCRIPT_SUFFIXES");
+    expect(s).toContain("/out/vs/workbench/contrib/webview/browser/pre/service-worker.js");
+  });
+
+  it("rejects invalid forward message types", () => {
+    expect(() => createProxyServiceWorkerScript({ forwardFetchMessageTypes: ["bad\nmsg"] })).toThrow(/forwardFetchMessageTypes/);
+  });
 });

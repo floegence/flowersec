@@ -89,5 +89,34 @@ describe("reconnect manager", () => {
     expect(closed).toBeGreaterThanOrEqual(1);
     expect(mgr.state().status).toBe("connected");
   });
-});
 
+  test("connectIfNeeded keeps healthy connection without hard reconnect", async () => {
+    const mgr = createReconnectManager();
+
+    let created = 0;
+    let closed = 0;
+    const connectOnce = async () => {
+      created += 1;
+      const d = makeDummyClient(`c${created}`, () => {
+        closed += 1;
+      });
+      return d.client as any;
+    };
+
+    const cfg = {
+      connectOnce: async ({ signal }: any) => {
+        if (signal.aborted) throw new Error("canceled");
+        return await connectOnce();
+      },
+      autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0, factor: 1, jitterRatio: 0 },
+    };
+
+    await mgr.connect(cfg);
+    expect(created).toBe(1);
+
+    await mgr.connectIfNeeded(cfg);
+    expect(created).toBe(1);
+    expect(closed).toBe(0);
+    expect(mgr.state().status).toBe("connected");
+  });
+});

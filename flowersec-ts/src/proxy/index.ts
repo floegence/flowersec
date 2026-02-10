@@ -1,8 +1,10 @@
 export * from "./constants.js";
 export * from "./types.js";
 export * from "./cookieJar.js";
+export * from "./profiles.js";
 export * from "./runtime.js";
 export * from "./serviceWorker.js";
 export { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
+export * from "./integration.js";
 export * from "./wsPatch.js";
 export * from "./disableUpstreamServiceWorkerRegister.js";
