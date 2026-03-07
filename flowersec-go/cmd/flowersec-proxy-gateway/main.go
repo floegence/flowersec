@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,10 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
 var (
@@ -60,17 +57,28 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "  flowersec-proxy-gateway --config ./gateway.json")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Examples:")
-		fmt.Fprintln(out, "  # Start an HTTP/WS gateway that forwards to a server endpoint over Flowersec streams.")
+		fmt.Fprintln(out, "  # Route by canonical host and load fresh grants from files managed by an external controller.")
 		fmt.Fprintln(out, "  flowersec-proxy-gateway --config ./gateway.json | tee ready.json")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Config file schema (JSON):")
 		fmt.Fprintln(out, `  {`)
-		fmt.Fprintln(out, `    "listen": "127.0.0.1:0",`)
-		fmt.Fprintln(out, `    "origin": "http://127.0.0.1:5173",`)
+		fmt.Fprintln(out, `    "listen": "127.0.0.1:8080",`)
+		fmt.Fprintln(out, `    "origin": "https://gateway.example.com",`)
 		fmt.Fprintln(out, `    "routes": [`)
-		fmt.Fprintln(out, `      { "host": "code.example.com", "grant_client_file": "./channel.json" }`)
+		fmt.Fprintln(out, `      {`)
+		fmt.Fprintln(out, `        "host": "code.example.com",`)
+		fmt.Fprintln(out, `        "grant": { "file": "./grants/code.example.com.json" }`)
+		fmt.Fprintln(out, `      },`)
+		fmt.Fprintln(out, `      {`)
+		fmt.Fprintln(out, `        "host": "shell.example.com",`)
+		fmt.Fprintln(out, `        "grant": { "command": ["./bin/mint-gateway-grant", "shell.example.com"], "timeout_ms": 10000 }`)
+		fmt.Fprintln(out, `      }`)
 		fmt.Fprintln(out, `    ]`)
 		fmt.Fprintln(out, `  }`)
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "Notes:")
+		fmt.Fprintln(out, "  - routes.host is matched by canonical host only; port is ignored.")
+		fmt.Fprintln(out, "  - grants are one-time; the configured grant source must provide a fresh client grant for reconnects.")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Output:")
 		fmt.Fprintln(out, "  stdout: a single JSON ready object")
@@ -114,47 +122,23 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	// Connect all routes eagerly (fail fast on invalid grants).
-	routeClients := make(map[string]client.Client, len(cfg.Routes))
-	for _, r := range cfg.Routes {
-		grantFile := strings.TrimSpace(r.GrantClientFile)
-		b, err := os.ReadFile(grantFile)
-		if err != nil {
-			logger.Printf("read grant_client_file for host %q: %v", r.Host, err)
-			return 1
-		}
-		grant, err := protocolio.DecodeGrantClientJSON(bytes.NewReader(b))
-		if err != nil {
-			logger.Printf("decode grant_client_file for host %q: %v", r.Host, err)
-			return 1
-		}
-		cli, err := client.ConnectTunnel(
-			ctx,
-			grant,
-			client.WithOrigin(cfg.Origin),
-			client.WithConnectTimeout(10*time.Second),
-			client.WithHandshakeTimeout(10*time.Second),
-			client.WithMaxRecordBytes(1<<20),
-		)
-		if err != nil {
-			logger.Printf("connect tunnel for host %q: %v", r.Host, err)
-			return 1
-		}
-		routeClients[r.Host] = cli
+	routes, closers, err := buildRoutes(cfg)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
 	}
 	defer func() {
-		for _, c := range routeClients {
-			_ = c.Close()
+		for _, closer := range closers {
+			_ = closer.Close()
 		}
 	}()
 
-	gw := newGateway(routeClients, logger)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	listen := cfg.Listen
-	ln, err := net.Listen("tcp", listen)
+	gw := newGateway(routes, logger)
+
+	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		logger.Print(err)
 		return 1
@@ -167,15 +151,17 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	addr := ln.Addr().String()
-	// Print a JSON "ready" line for scripts.
-	_ = json.NewEncoder(stdout).Encode(ready{
+	if err := json.NewEncoder(stdout).Encode(ready{
 		Status:  "ready",
 		Version: version,
 		Commit:  commit,
 		Date:    date,
 		Listen:  addr,
 		HTTPURL: "http://" + addr,
-	})
+	}); err != nil {
+		logger.Print(err)
+		return 1
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -195,4 +181,19 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		logger.Print(err)
 		return 1
 	}
+}
+
+func buildRoutes(cfg *config) (map[string]streamOpener, []*routeManager, error) {
+	routes := make(map[string]streamOpener, len(cfg.Routes))
+	closers := make([]*routeManager, 0, len(cfg.Routes))
+	for _, route := range cfg.Routes {
+		source, err := newGrantSource(route.Grant)
+		if err != nil {
+			return nil, nil, fmt.Errorf("route %q: %w", route.Host, err)
+		}
+		manager := newRouteManager(route.Host, cfg.Origin, source)
+		routes[route.Host] = manager
+		closers = append(closers, manager)
+	}
+	return routes, closers, nil
 }

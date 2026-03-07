@@ -11,7 +11,32 @@ permissions:
   id-token: write
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: flowersec-go/go.mod
+          cache: true
+          cache-dependency-path: |
+            flowersec-go/go.sum
+            examples/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: flowersec-ts/package-lock.json
+
+      - name: Run checks
+        run: make check
+
   release:
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +73,7 @@ jobs:
           npm i -g npm@^11.5.1
           npm --version
 
-      - name: Build tunnel release artifacts
+      - name: Build release artifacts
         run: |
           set -euo pipefail
           VERSION="${{ steps.vars.outputs.version }}"
@@ -131,7 +156,47 @@ jobs:
                 -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
                 -o "../$dir/bin/flowersec-directinit${ext}" ./cmd/flowersec-directinit \
             )
+            ( cd flowersec-go && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-proxy-gateway${ext}" ./cmd/flowersec-proxy-gateway \
+            )
 
+            mkdir -p "$dir/docs"
+            cp docs/PROXY_GATEWAY_DEPLOYMENT.md "$dir/docs/PROXY_GATEWAY_DEPLOYMENT.md"
+
+            cp LICENSE "$dir/"
+
+            if [[ "$archive_ext" == "zip" ]]; then
+              ( cd "$dir" && zip -qr "../dist/${dir}.zip" . )
+            else
+              tar -C "$dir" -czf "dist/${dir}.tar.gz" .
+            fi
+          }
+
+          build_gateway_one() {
+            local os="$1"
+            local arch="$2"
+            local ext=""
+            local archive_ext="tar.gz"
+            if [[ "$os" == "windows" ]]; then
+              ext=".exe"
+              archive_ext="zip"
+            fi
+            local dir="flowersec-proxy-gateway_${VERSION}_${os}_${arch}"
+            rm -rf "$dir"
+            mkdir -p "$dir/bin" "$dir/docs"
+
+            ( cd flowersec-go && \
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=v${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+                -o "../$dir/bin/flowersec-proxy-gateway${ext}" ./cmd/flowersec-proxy-gateway \
+            )
+
+            cp docs/PROXY_GATEWAY_DEPLOYMENT.md "$dir/docs/PROXY_GATEWAY_DEPLOYMENT.md"
+            cp docs/PROXY.md "$dir/docs/PROXY.md"
             cp LICENSE "$dir/"
 
             if [[ "$archive_ext" == "zip" ]]; then
@@ -240,6 +305,12 @@ jobs:
           build_tools_one darwin arm64
           build_tools_one windows amd64
 
+          build_gateway_one linux amd64
+          build_gateway_one linux arm64
+          build_gateway_one darwin amd64
+          build_gateway_one darwin arm64
+          build_gateway_one windows amd64
+
           build_demos_one linux amd64
           build_demos_one linux arm64
           build_demos_one darwin amd64
@@ -274,6 +345,21 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/flowersec-tunnel:${{ steps.vars.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/flowersec-tunnel:latest
+          build-args: |
+            VERSION=v${{ steps.vars.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ steps.vars.outputs.date }}
+
+      - name: Build and push proxy gateway image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/flowersec-proxy-gateway/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/flowersec-proxy-gateway:${{ steps.vars.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/flowersec-proxy-gateway:latest
           build-args: |
             VERSION=v${{ steps.vars.outputs.version }}
             COMMIT=${{ github.sha }}

@@ -25,6 +25,19 @@ describe("docs/API_SURFACE.md", () => {
     expect(doc).toContain("`connectTunnelBrowser(...)`");
     expect(doc).toContain("`connectDirectBrowser(...)`");
 
+    expect(doc).toContain("`@floegence/flowersec-core/framing`");
+    expect(doc).toContain("`@floegence/flowersec-core/streamio`");
     expect(doc).toContain("`@floegence/flowersec-core/proxy`");
+    expect(doc).toContain("`createProxyRuntime(...)`");
+    expect(doc).toContain("`registerProxyIntegration(...)`");
+    expect(doc).toContain("`@floegence/flowersec-core/reconnect`");
+    expect(doc).toContain("`createReconnectManager()`");
+    expect(doc).toContain("`ReconnectManager.connectIfNeeded(...)`");
+    expect(doc).toContain("`@floegence/flowersec-core/rpc`");
+    expect(doc).toContain("`@floegence/flowersec-core/yamux`");
+    expect(doc).toContain("`@floegence/flowersec-core/e2ee`");
+    expect(doc).toContain("`@floegence/flowersec-core/ws`");
+    expect(doc).toContain("`@floegence/flowersec-core/observability`");
+    expect(doc).toContain("`@floegence/flowersec-core/streamhello`");
   });
 });

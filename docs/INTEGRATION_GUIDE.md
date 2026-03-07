@@ -14,7 +14,7 @@ See also:
 
 ## Prerequisites
 
-- Go 1.25.x (required)
+- Go 1.26.x (required)
 - Node.js 22 LTS recommended (TypeScript only)
 
 ## Install
@@ -29,6 +29,12 @@ go get github.com/floegence/flowersec/flowersec-go@latest
 
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
+```
+
+**Proxy gateway (deployable)**
+
+```bash
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@latest
 ```
 
 **Controlplane helper tools (optional, local/dev)**
@@ -98,6 +104,7 @@ npm i ./floegence-flowersec-core-X.Y.Z.tgz
 ```
 
 For Docker deployment examples and operational notes, see `docs/TUNNEL_DEPLOYMENT.md`.
+For gateway-mode deployment notes (grant sources, reconnect model, Docker image), see `docs/PROXY_GATEWAY_DEPLOYMENT.md`.
 
 ## Recommended entrypoints
 

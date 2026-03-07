@@ -8,22 +8,20 @@ import (
 	"errors"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
 	"github.com/gorilla/websocket"
 )
 
 type gateway struct {
-	routes map[string]client.Client
+	routes map[string]streamOpener
 	logger *log.Logger
 }
 
-func newGateway(routes map[string]client.Client, logger *log.Logger) *gateway {
+func newGateway(routes map[string]streamOpener, logger *log.Logger) *gateway {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
@@ -31,21 +29,31 @@ func newGateway(routes map[string]client.Client, logger *log.Logger) *gateway {
 }
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	host := normalizeHost(r.Host)
-	cli := g.routes[host]
-	if cli == nil {
+	if r.Method == http.MethodGet && r.URL.Path == "/_flowersec/healthz" {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok")
+		return
+	}
+
+	host, err := canonicalHostKey(r.Host)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	route := g.routes[host]
+	if route == nil {
 		http.NotFound(w, r)
 		return
 	}
 	if websocket.IsWebSocketUpgrade(r) {
-		g.serveWS(w, r, cli)
+		g.serveWS(w, r, route)
 		return
 	}
-	g.serveHTTP(w, r, cli)
+	g.serveHTTP(w, r, route)
 }
 
-func (g *gateway) serveHTTP(w http.ResponseWriter, r *http.Request, cli client.Client) {
-	stream, err := cli.OpenStream(r.Context(), fsproxy.KindHTTP1)
+func (g *gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route streamOpener) {
+	stream, err := route.OpenStream(r.Context(), fsproxy.KindHTTP1)
 	if err != nil {
 		http.Error(w, "upstream connect failed", http.StatusBadGateway)
 		return
@@ -128,8 +136,8 @@ func (g *gateway) serveHTTP(w http.ResponseWriter, r *http.Request, cli client.C
 	}
 }
 
-func (g *gateway) serveWS(w http.ResponseWriter, r *http.Request, cli client.Client) {
-	stream, err := cli.OpenStream(r.Context(), fsproxy.KindWS)
+func (g *gateway) serveWS(w http.ResponseWriter, r *http.Request, route streamOpener) {
+	stream, err := route.OpenStream(r.Context(), fsproxy.KindWS)
 	if err != nil {
 		http.Error(w, "upstream connect failed", http.StatusBadGateway)
 		return
@@ -265,15 +273,6 @@ func (g *gateway) serveWS(w http.ResponseWriter, r *http.Request, cli client.Cli
 		return
 	}
 }
-
-func normalizeHost(hostport string) string {
-	hostport = strings.TrimSpace(hostport)
-	if host, _, err := net.SplitHostPort(hostport); err == nil {
-		hostport = host
-	}
-	return strings.ToLower(hostport)
-}
-
 func proxyRequestHeaders(h http.Header) []fsproxy.Header {
 	var out []fsproxy.Header
 	for k, vv := range h {

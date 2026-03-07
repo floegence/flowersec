@@ -13,7 +13,7 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@late
 flowersec-tunnel --version
 ```
 
-Note: `go install` requires Go 1.25.x.
+Note: `go install` requires Go 1.26.x.
 
 ### Option B: GitHub Releases
 

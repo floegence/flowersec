@@ -15,7 +15,9 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/origin"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/proxy"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
@@ -55,6 +57,13 @@ var (
 	_ = protocolio.DecodeGrantJSON
 	_ = protocolio.DecodeDirectConnectInfoJSON
 
+	// origin
+	_ = origin.FromWSURL
+	_ = origin.ForTunnel
+
+	// proxy
+	_ = proxy.Register
+
 	// rpc
 	_ = rpc.NewRouter
 	_ = rpc.NewServer
@@ -92,6 +101,7 @@ func TestAPISurfaceDoc_CoversStableGoEntrypoints(t *testing.T) {
 	// Stable CLIs.
 	wantCLI := []string{
 		"flowersec-tunnel",
+		"flowersec-proxy-gateway",
 		"flowersec-issuer-keygen",
 		"flowersec-channelinit",
 		"flowersec-directinit",
@@ -108,9 +118,11 @@ func TestAPISurfaceDoc_CoversStableGoEntrypoints(t *testing.T) {
 		"github.com/floegence/flowersec/flowersec-go/client",
 		"github.com/floegence/flowersec/flowersec-go/endpoint",
 		"github.com/floegence/flowersec/flowersec-go/endpoint/serve",
+		"github.com/floegence/flowersec/flowersec-go/proxy",
 		"github.com/floegence/flowersec/flowersec-go/rpc",
 		"github.com/floegence/flowersec/flowersec-go/framing/jsonframe",
 		"github.com/floegence/flowersec/flowersec-go/protocolio",
+		"github.com/floegence/flowersec/flowersec-go/origin",
 		"github.com/floegence/flowersec/flowersec-go/fserrors",
 		"github.com/floegence/flowersec/flowersec-go/controlplane/issuer",
 		"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit",
@@ -152,6 +164,11 @@ func TestAPISurfaceDoc_CoversStableGoEntrypoints(t *testing.T) {
 		"protocolio.DecodeGrantServerJSON(...)",
 		"protocolio.DecodeGrantJSON(...)",
 		"protocolio.DecodeDirectConnectInfoJSON(...)",
+
+		"origin.FromWSURL(...)",
+		"origin.ForTunnel(...)",
+
+		"proxy.Register(...)",
 
 		"rpc.NewRouter(...)",
 		"rpc.NewServer(...)",

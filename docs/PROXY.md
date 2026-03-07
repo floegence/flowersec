@@ -11,6 +11,7 @@ See also:
 - Custom stream baseline pattern: `docs/STREAMS.md`
 - Core wire format (WS + E2EE + Yamux): `docs/PROTOCOL.md`
 - Threat model and trust boundaries: `docs/THREAT_MODEL.md`
+- Gateway deployment: `docs/PROXY_GATEWAY_DEPLOYMENT.md`
 
 ## 0. Roles and modes
 

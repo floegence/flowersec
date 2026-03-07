@@ -10,29 +10,22 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	"github.com/floegence/flowersec/flowersec-go/proxy"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/gorilla/websocket"
 )
 
-type fakeClient struct {
+type fakeRoute struct {
 	srv *serve.Server
 }
 
-func (c *fakeClient) Path() client.Path          { return client.PathAuto }
-func (c *fakeClient) EndpointInstanceID() string { return "fake" }
-func (c *fakeClient) RPC() *rpc.Client           { return nil }
-func (c *fakeClient) Ping() error                { return nil }
-func (c *fakeClient) Close() error               { return nil }
-func (c *fakeClient) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+func (c *fakeRoute) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
 	a, b := net.Pipe()
 	go c.srv.HandleStream(ctx, kind, b)
 	return a, nil
 }
 
-func TestGateway_HTTP_ProxiesToServerEndpoint(t *testing.T) {
+func TestGatewayHTTPProxiesToServerEndpoint(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/hello" {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -54,8 +47,8 @@ func TestGateway_HTTP_ProxiesToServerEndpoint(t *testing.T) {
 		t.Fatalf("proxy.Register: %v", err)
 	}
 
-	gw := newGateway(map[string]client.Client{
-		"127.0.0.1": &fakeClient{srv: streamSrv},
+	gw := newGateway(map[string]streamOpener{
+		"127.0.0.1": &fakeRoute{srv: streamSrv},
 	}, nil)
 	s := httptest.NewServer(gw)
 	defer s.Close()
@@ -72,7 +65,7 @@ func TestGateway_HTTP_ProxiesToServerEndpoint(t *testing.T) {
 	}
 }
 
-func TestGateway_WS_ProxiesToServerEndpoint(t *testing.T) {
+func TestGatewayWSProxiesToServerEndpoint(t *testing.T) {
 	seen := make(chan map[string]string, 1)
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,8 +107,8 @@ func TestGateway_WS_ProxiesToServerEndpoint(t *testing.T) {
 		t.Fatalf("proxy.Register: %v", err)
 	}
 
-	gw := newGateway(map[string]client.Client{
-		"127.0.0.1": &fakeClient{srv: streamSrv},
+	gw := newGateway(map[string]streamOpener{
+		"127.0.0.1": &fakeRoute{srv: streamSrv},
 	}, nil)
 	s := httptest.NewServer(gw)
 	defer s.Close()
@@ -154,3 +147,46 @@ func TestGateway_WS_ProxiesToServerEndpoint(t *testing.T) {
 		t.Fatalf("unexpected proto: %s", b)
 	}
 }
+
+func TestGatewayCanonicalizesRequestHost(t *testing.T) {
+	called := false
+	gw := newGateway(map[string]streamOpener{
+		"example.com": openerFunc(func(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+			called = true
+			return &noopReadWriteCloser{}, nil
+		}),
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.invalid/hello", nil)
+	req.Host = "Example.COM:8443"
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, req)
+	if !called {
+		t.Fatal("expected canonical host route to be used")
+	}
+}
+
+func TestGatewayHealthz(t *testing.T) {
+	gw := newGateway(nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.invalid/_flowersec/healthz", nil)
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if rr.Body.String() != "ok" {
+		t.Fatalf("unexpected body: %q", rr.Body.String())
+	}
+}
+
+type openerFunc func(ctx context.Context, kind string) (io.ReadWriteCloser, error)
+
+func (fn openerFunc) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+	return fn(ctx, kind)
+}
+
+type noopReadWriteCloser struct{}
+
+func (noopReadWriteCloser) Read(p []byte) (int, error)  { return 0, io.EOF }
+func (noopReadWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (noopReadWriteCloser) Close() error                { return nil }
