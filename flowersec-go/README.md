@@ -9,7 +9,7 @@ This module contains the Go implementation of the Flowersec data-plane protocol 
 
 Status: experimental; not audited.
 
-Prerequisite: Go 1.25.x.
+Prerequisite: Go 1.26.x.
 
 ## Install (Go library)
 
@@ -27,6 +27,14 @@ Versioning note: repository tags for this submodule are prefixed with `flowersec
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
 # Or pin a version:
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@v0.2.0
+```
+
+## Install (proxy gateway binary)
+
+```bash
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@latest
+# Or pin a version:
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@v0.2.0
 ```
 
 ## Install (controlplane helper tools, optional)
@@ -52,3 +60,5 @@ No-Go option: download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) fr
 For a full integration walkthrough, see `docs/INTEGRATION_GUIDE.md` in the repository root.
 
 For tunnel deployment details (Docker examples, operational notes), see `docs/TUNNEL_DEPLOYMENT.md` in the repository root.
+
+For proxy gateway deployment details (grant sources, Docker examples, operational notes), see `docs/PROXY_GATEWAY_DEPLOYMENT.md` in the repository root.

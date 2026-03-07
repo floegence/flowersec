@@ -27,13 +27,14 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 - Integration: `docs/INTEGRATION_GUIDE.md`.
 - Frontend quickstart (TypeScript): `docs/FRONTEND_QUICKSTART.md`.
 - API surface: `docs/API_SURFACE.md`.
+- Proxy gateway deployment: `docs/PROXY_GATEWAY_DEPLOYMENT.md`.
 - Threat model: `docs/THREAT_MODEL.md`.
 - Protocol contracts: `docs/PROTOCOL.md`.
 - Error model: `docs/ERROR_MODEL.md`.
 
 ## CLI conventions
 
-All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-issuer-keygen`, `flowersec-channelinit`, `flowersec-directinit`, `idlgen`) follow these conventions:
+All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `flowersec-issuer-keygen`, `flowersec-channelinit`, `flowersec-directinit`, `idlgen`) follow these conventions:
 
 - `--help` includes copy/paste examples and the output contract.
 - Exit codes: `0` success, `2` usage/flag error, `1` runtime error.
@@ -53,7 +54,7 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@late
 flowersec-tunnel --version
 ```
 
-Note: `go install` requires Go 1.25.x and installs into `$(go env GOBIN)` (or `$(go env GOPATH)/bin`).
+Note: `go install` requires Go 1.26.x and installs into `$(go env GOBIN)` (or `$(go env GOPATH)/bin`).
 
 **Option B: GitHub Releases**
 
@@ -81,6 +82,41 @@ docker run --rm \
 - Metrics: set `FSEC_TUNNEL_METRICS_LISTEN=0.0.0.0:9090` and expose `-p 9090:9090`.
 
 Full deployment notes: `docs/TUNNEL_DEPLOYMENT.md`.
+
+### Proxy gateway (deployable)
+
+**Option A: `go install`**
+
+```bash
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@latest
+flowersec-proxy-gateway --version
+```
+
+The proxy gateway accepts browser HTTP/WS traffic and forwards it to a Flowersec server endpoint over `flowersec-proxy/*` streams.
+
+**Option B: GitHub Releases**
+
+Download either:
+
+- `flowersec-proxy-gateway_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`)
+- `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`), which also includes `bin/flowersec-proxy-gateway`
+
+**Option C: Docker image (recommended for deployments)**
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  -v "$PWD/gateway.json:/etc/flowersec/gateway.json:ro" \
+  -v "$PWD/grants:/etc/flowersec/grants:ro" \
+  -e FSEC_PROXY_GATEWAY_CONFIG=/etc/flowersec/gateway.json \
+  ghcr.io/floegence/flowersec-proxy-gateway:latest
+```
+
+- Health check: `GET /_flowersec/healthz`
+- Route matching is host-only; ports are ignored after canonicalization.
+- Grants are one-time; each route must point to a source that can provide a fresh `grant_client` for reconnects.
+
+Full deployment notes: `docs/PROXY_GATEWAY_DEPLOYMENT.md`.
 
 ### Helper tools (optional, local/dev)
 
@@ -126,6 +162,7 @@ Download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip` on Windows) from 
 
 The tools bundle includes:
 
+- `bin/flowersec-proxy-gateway`
 - `bin/flowersec-issuer-keygen`
 - `bin/flowersec-channelinit`
 - `bin/flowersec-directinit`

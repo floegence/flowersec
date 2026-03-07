@@ -17,12 +17,12 @@ ARG DATE=unknown
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
   go build -trimpath -ldflags="-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE" \
-  -o /out/flowersec-tunnel ./cmd/flowersec-tunnel
+  -o /out/flowersec-proxy-gateway ./cmd/flowersec-proxy-gateway
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=build /out/flowersec-tunnel /usr/local/bin/flowersec-tunnel
+COPY --from=build /out/flowersec-proxy-gateway /usr/local/bin/flowersec-proxy-gateway
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/flowersec-tunnel"]
+ENTRYPOINT ["/usr/local/bin/flowersec-proxy-gateway"]
