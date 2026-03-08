@@ -101,6 +101,29 @@ func TestLoadConfigRejectsInvalidGrantSource(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsAllowNoOriginWithoutAllowedOrigins(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gateway.json")
+	if err := os.WriteFile(path, []byte(`{
+  "browser": {
+    "allow_no_origin": true
+  },
+  "tunnel": {
+    "origin": "https://gateway.example.com"
+  },
+  "routes": [
+    {"host": "example.com", "grant": {"file": "./a.json"}}
+  ]
+}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := loadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "missing browser.allowed_origins") {
+		t.Fatalf("expected missing browser.allowed_origins error, got %v", err)
+	}
+}
+
 func TestLoadConfigNormalizesExecCommand(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gateway.json")

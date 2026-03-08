@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -13,7 +14,7 @@ import (
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/internal/connectcontract"
 	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/internal/endpointid"
@@ -27,26 +28,9 @@ import (
 
 // ConnectTunnel attaches to a tunnel as role=client and returns an RPC-ready session.
 func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts ...ConnectOption) (Client, error) {
-	if grant == nil {
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingGrant, ErrMissingGrant)
-	}
-	if grant.Role != controlv1.Role_client {
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRoleMismatch, ErrExpectedRoleClient)
-	}
-	tunnelURL := strings.TrimSpace(grant.TunnelUrl)
-	if tunnelURL == "" {
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingTunnelURL, ErrMissingTunnelURL)
-	}
-	channelID := strings.TrimSpace(grant.ChannelId)
-	if channelID == "" {
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
-	}
-	tokenStr := strings.TrimSpace(grant.Token)
-	if tokenStr == "" {
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingToken, ErrMissingToken)
-	}
-	if grant.ChannelInitExpireAtUnixS <= 0 {
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingInitExp, ErrMissingInitExp)
+	prepared, err := connectcontract.PrepareTunnelGrant(grant, controlv1.Role_client)
+	if err != nil {
+		return nil, wrapTunnelGrantValidateError(err)
 	}
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
@@ -61,21 +45,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	}
 	keepalive := cfg.keepaliveInterval
 	if !cfg.keepaliveSet {
-		keepalive = defaults.KeepaliveInterval(grant.IdleTimeoutSeconds)
-	}
-	pskB64u := strings.TrimSpace(grant.E2eePskB64u)
-	psk, err := base64url.Decode(pskB64u)
-	if err != nil || len(psk) != 32 {
-		if err == nil {
-			err = ErrInvalidPSK
-		}
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidPSK, err)
-	}
-	suite := e2ee.Suite(grant.DefaultSuite)
-	switch suite {
-	case e2ee.SuiteX25519HKDFAES256GCM, e2ee.SuiteP256HKDFAES256GCM:
-	default:
-		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
+		keepalive = defaults.KeepaliveInterval(prepared.IdleTimeoutSeconds)
 	}
 
 	endpointInstanceID := cfg.endpointInstanceID
@@ -97,7 +67,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 
 	h := cloneHeader(cfg.header)
 	h.Set("Origin", origin)
-	c, _, err := ws.Dial(connectCtx, tunnelURL, ws.DialOptions{Header: h, Dialer: cfg.dialer})
+	c, _, err := ws.Dial(connectCtx, prepared.TunnelURL, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
@@ -105,9 +75,9 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	c.SetReadLimit(wsutil.ReadLimit(cfg.maxHandshakePayload, cfg.maxRecordBytes))
 	attach := tunnelv1.Attach{
 		V:                  1,
-		ChannelId:          channelID,
+		ChannelId:          prepared.ChannelID,
 		Role:               tunnelv1.Role_client,
-		Token:              tokenStr,
+		Token:              prepared.Token,
 		EndpointInstanceId: endpointInstanceID,
 	}
 	attachJSON, _ := json.Marshal(attach)
@@ -118,9 +88,9 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	}
 
 	out, err := dialAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, dialE2EEOptions{
-		psk:               psk,
-		suite:             suite,
-		channelID:         channelID,
+		psk:               prepared.PSK,
+		suite:             prepared.Suite,
+		channelID:         prepared.ChannelID,
 		clientFeatures:    cfg.clientFeatures,
 		maxHandshakeBytes: cfg.maxHandshakePayload,
 		maxRecordBytes:    cfg.maxRecordBytes,
@@ -139,20 +109,6 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 
 // ConnectDirect connects to a direct websocket endpoint and returns an RPC-ready session.
 func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts ...ConnectOption) (Client, error) {
-	if info == nil {
-		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConnectInfo, ErrMissingConnectInfo)
-	}
-	wsURL := strings.TrimSpace(info.WsUrl)
-	if wsURL == "" {
-		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingWSURL, ErrMissingWSURL)
-	}
-	channelID := strings.TrimSpace(info.ChannelId)
-	if channelID == "" {
-		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
-	}
-	if info.ChannelInitExpireAtUnixS <= 0 {
-		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingInitExp, ErrMissingInitExp)
-	}
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
@@ -171,19 +127,9 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	if cfg.endpointInstanceIDSet {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrEndpointInstanceIDNotAllowed)
 	}
-	pskB64u := strings.TrimSpace(info.E2eePskB64u)
-	psk, err := base64url.Decode(pskB64u)
-	if err != nil || len(psk) != 32 {
-		if err == nil {
-			err = ErrInvalidPSK
-		}
-		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidPSK, err)
-	}
-	suite := e2ee.Suite(info.DefaultSuite)
-	switch suite {
-	case e2ee.SuiteX25519HKDFAES256GCM, e2ee.SuiteP256HKDFAES256GCM:
-	default:
-		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
+	prepared, err := connectcontract.PrepareDirectConnectInfo(info)
+	if err != nil {
+		return nil, wrapDirectConnectValidateError(err)
 	}
 
 	connectTimeout := cfg.connectTimeout
@@ -194,7 +140,7 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 
 	h := cloneHeader(cfg.header)
 	h.Set("Origin", origin)
-	c, _, err := ws.Dial(connectCtx, wsURL, ws.DialOptions{Header: h, Dialer: cfg.dialer})
+	c, _, err := ws.Dial(connectCtx, prepared.WSURL, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
@@ -202,9 +148,9 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	c.SetReadLimit(wsutil.ReadLimit(cfg.maxHandshakePayload, cfg.maxRecordBytes))
 
 	out, err := dialAfterAttach(ctx, c, fserrors.PathDirect, "", dialE2EEOptions{
-		psk:               psk,
-		suite:             suite,
-		channelID:         channelID,
+		psk:               prepared.PSK,
+		suite:             prepared.Suite,
+		channelID:         prepared.ChannelID,
 		clientFeatures:    cfg.clientFeatures,
 		maxHandshakeBytes: cfg.maxHandshakePayload,
 		maxRecordBytes:    cfg.maxRecordBytes,
@@ -310,4 +256,50 @@ func cloneHeader(h http.Header) http.Header {
 		out[k] = cp
 	}
 	return out
+}
+
+func wrapTunnelGrantValidateError(err error) error {
+	switch {
+	case errors.Is(err, connectcontract.ErrMissingGrant):
+		return wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingGrant, ErrMissingGrant)
+	case errors.Is(err, connectcontract.ErrRoleMismatch):
+		return wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRoleMismatch, ErrExpectedRoleClient)
+	case errors.Is(err, connectcontract.ErrMissingTunnelURL):
+		return wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingTunnelURL, ErrMissingTunnelURL)
+	case errors.Is(err, connectcontract.ErrMissingChannelID):
+		return wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
+	case errors.Is(err, connectcontract.ErrInvalidChannelID):
+		return wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+	case errors.Is(err, connectcontract.ErrMissingToken):
+		return wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingToken, ErrMissingToken)
+	case errors.Is(err, connectcontract.ErrMissingInitExp):
+		return wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingInitExp, ErrMissingInitExp)
+	case errors.Is(err, connectcontract.ErrInvalidPSK):
+		return wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidPSK, ErrInvalidPSK)
+	case errors.Is(err, connectcontract.ErrInvalidSuite):
+		return wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
+	default:
+		return wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+	}
+}
+
+func wrapDirectConnectValidateError(err error) error {
+	switch {
+	case errors.Is(err, connectcontract.ErrMissingConnectInfo):
+		return wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConnectInfo, ErrMissingConnectInfo)
+	case errors.Is(err, connectcontract.ErrMissingWSURL):
+		return wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingWSURL, ErrMissingWSURL)
+	case errors.Is(err, connectcontract.ErrMissingChannelID):
+		return wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingChannelID, ErrMissingChannelID)
+	case errors.Is(err, connectcontract.ErrInvalidChannelID):
+		return wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+	case errors.Is(err, connectcontract.ErrMissingInitExp):
+		return wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingInitExp, ErrMissingInitExp)
+	case errors.Is(err, connectcontract.ErrInvalidPSK):
+		return wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidPSK, ErrInvalidPSK)
+	case errors.Is(err, connectcontract.ErrInvalidSuite):
+		return wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidSuite, ErrInvalidSuite)
+	default:
+		return wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+	}
 }

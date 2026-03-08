@@ -152,6 +152,14 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_channel_id", path: "tunnel" });
   });
 
+  test("rejects too long channel_id", async () => {
+    const bad = makeGrant();
+    bad.channel_id = "a".repeat(257);
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "tunnel" });
+  });
+
   test("rejects missing token", async () => {
     const bad = makeGrant();
     bad.token = "";
@@ -211,6 +219,23 @@ describe("connectTunnel", () => {
   test("rejects invalid suite", async () => {
     const bad: any = makeGrant();
     bad.default_suite = 999;
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "tunnel" });
+  });
+
+  test("rejects empty allowed_suites", async () => {
+    const bad = makeGrant();
+    bad.allowed_suites = [];
+    const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "tunnel" });
+  });
+
+  test("rejects default_suite outside allowed_suites", async () => {
+    const bad = makeGrant();
+    bad.allowed_suites = [Suite.Suite_P256_HKDF_SHA256_AES_256_GCM];
+    bad.default_suite = Suite.Suite_X25519_HKDF_SHA256_AES_256_GCM;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "tunnel" });

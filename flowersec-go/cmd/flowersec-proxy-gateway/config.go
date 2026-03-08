@@ -83,8 +83,8 @@ func loadConfig(path string) (*config, error) {
 	}
 
 	allowedOrigins := normalizeAllowedOrigins(cfg.Browser.AllowedOrigins)
-	if len(allowedOrigins) == 0 && !cfg.Browser.AllowNoOrigin {
-		return nil, errors.New("missing browser.allowed_origins (or set browser.allow_no_origin)")
+	if len(allowedOrigins) == 0 {
+		return nil, errors.New("missing browser.allowed_origins")
 	}
 	cfg.Browser.AllowedOrigins = allowedOrigins
 

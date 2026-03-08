@@ -6,6 +6,7 @@ var (
 	ErrMissingGrant               = errors.New("missing grant")
 	ErrExpectedRoleServer         = errors.New("expected role=server")
 	ErrMissingTunnelURL           = errors.New("missing tunnel_url")
+	ErrInvalidInput               = errors.New("invalid input")
 	ErrMissingOrigin              = errors.New("missing origin")
 	ErrMissingConn                = errors.New("missing websocket conn")
 	ErrMissingChannelID           = errors.New("missing channel_id")

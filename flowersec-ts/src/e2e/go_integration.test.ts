@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { connectDemoTunnel } from "../_examples/flowersec/demo/v1.facade.gen.js";
+import { connectTunnel } from "../facade.js";
 
 const require = createRequire(import.meta.url);
 const WS = require("ws");
@@ -40,6 +41,30 @@ describe("go<->ts integration", () => {
         p.kill("SIGTERM");
         await once(p, "exit");
       }
+    });
+
+  test("invalid tunnel grant is rejected before websocket dial", async () => {
+      const wsFactory = () => {
+        throw new Error("wsFactory should not be called for invalid grant");
+      };
+
+      const badGrant = {
+        tunnel_url: "ws://example.invalid",
+        channel_id: "contract_ts_integration",
+        channel_init_expire_at_unix_s: Math.floor(Date.now() / 1000) + 120,
+        idle_timeout_seconds: 60,
+        role: 1,
+        token: "tok",
+        e2ee_psk_b64u: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        allowed_suites: [2],
+        default_suite: 1,
+      };
+
+      await expect(connectTunnel(badGrant as any, { origin: "https://app.redeven.com", wsFactory })).rejects.toMatchObject({
+        stage: "validate",
+        code: "invalid_suite",
+        path: "tunnel",
+      });
     });
 });
 

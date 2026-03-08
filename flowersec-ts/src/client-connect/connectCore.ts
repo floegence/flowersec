@@ -17,6 +17,7 @@ import {
   waitOpen,
   withAbortAndTimeout,
 } from "./common.js";
+import { prepareChannelId } from "./contract.js";
 import { isTunnelAttachCloseReason } from "./tunnelAttachCloseReason.js";
 
 export type ConnectOptionsBase = Readonly<{
@@ -121,10 +122,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     invalidOption("maxWsQueuedBytes must be a non-negative integer");
   }
 
-  const channelId = typeof args.channelId === "string" ? args.channelId.trim() : "";
-  if (channelId === "") {
-    throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_channel_id", message: "missing channel_id" });
-  }
+  const channelId = prepareChannelId(args.channelId, args.path);
 
   let psk: Uint8Array;
   try {

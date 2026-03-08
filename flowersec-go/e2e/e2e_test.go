@@ -91,6 +91,39 @@ func TestE2E_RPCOverTunnelE2EEYamux(t *testing.T) {
 	}
 }
 
+func TestE2E_InvalidTunnelGrantRejectedBeforeDial(t *testing.T) {
+	psk := base64url.Encode(make([]byte, 32))
+	grantC := &controlv1.ChannelInitGrant{
+		TunnelUrl:                "ws://example.invalid",
+		ChannelId:                "contract_e2e_client",
+		ChannelInitExpireAtUnixS: time.Now().Add(time.Minute).Unix(),
+		IdleTimeoutSeconds:       60,
+		Role:                     controlv1.Role_client,
+		Token:                    "tok",
+		E2eePskB64u:              psk,
+		AllowedSuites:            []controlv1.Suite{controlv1.Suite_P256_HKDF_SHA256_AES_256_GCM},
+		DefaultSuite:             controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM,
+	}
+	if _, err := client.ConnectTunnel(context.Background(), grantC, client.WithOrigin("https://app.redeven.com")); err == nil {
+		t.Fatal("expected client-side validation error")
+	}
+
+	grantS := &controlv1.ChannelInitGrant{
+		TunnelUrl:                "ws://example.invalid",
+		ChannelId:                strings.Repeat("a", 257),
+		ChannelInitExpireAtUnixS: time.Now().Add(time.Minute).Unix(),
+		IdleTimeoutSeconds:       60,
+		Role:                     controlv1.Role_server,
+		Token:                    "tok",
+		E2eePskB64u:              psk,
+		AllowedSuites:            []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
+		DefaultSuite:             controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM,
+	}
+	if _, err := endpoint.ConnectTunnel(context.Background(), grantS, endpoint.WithOrigin("https://app.redeven.com")); err == nil {
+		t.Fatal("expected endpoint-side validation error")
+	}
+}
+
 func TestE2E_BufferingBeforePair(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
