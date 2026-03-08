@@ -148,6 +148,8 @@ import {
   createProxyIntegrationServiceWorkerScript,
   registerProxyIntegration,
   registerServiceWorkerAndEnsureControl,
+  connectTunnelProxyBrowser,
+  createServiceWorkerControllerGuard,
 } from "@floegence/flowersec-core/proxy";
 
 const grant = await getFreshGrantSomehow();
@@ -209,8 +211,7 @@ const swScript = createProxyIntegrationServiceWorkerScript({
   plugins: [plugin],
 });
 
-const { runtime } = await registerProxyIntegration({
-  client,
+const { client, runtime, dispose } = await connectTunnelProxyBrowser(grant, {
   profile: "codeserver",
   serviceWorker: {
     scriptUrl: "/_proxy/sw.js",
@@ -219,6 +220,23 @@ const { runtime } = await registerProxyIntegration({
   },
   plugins: [plugin],
 });
+
+// If the upstream app renders a same-origin iframe/webview, keep its controller aligned too.
+const frameGuard = createServiceWorkerControllerGuard({
+  targetWindow: iframe.contentWindow!,
+  navigationWindow: window,
+  expectedScriptPathSuffix: "/_proxy/sw.js",
+  conflicts: {
+    keepScriptPathSuffixes: ["/out/vs/workbench/contrib/webview/browser/pre/service-worker.js"],
+  },
+});
+await frameGuard.ensure();
+// `ensure()` resolves only after the target window is controlled.
+// If a mismatch is detected, it may trigger repair navigation and reject to stop dependent work.
+
+// later
+frameGuard.dispose();
+await dispose();
 ```
 
 ## TypeScript: reconnect (optional)

@@ -6,5 +6,7 @@ export * from "./runtime.js";
 export * from "./serviceWorker.js";
 export { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
 export * from "./integration.js";
+export * from "./controllerGuard.js";
+export * from "./bootstrap.js";
 export * from "./wsPatch.js";
 export * from "./disableUpstreamServiceWorkerRegister.js";
