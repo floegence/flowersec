@@ -30,6 +30,8 @@ describe("docs/API_SURFACE.md", () => {
     expect(doc).toContain("`@floegence/flowersec-core/proxy`");
     expect(doc).toContain("`createProxyRuntime(...)`");
     expect(doc).toContain("`registerProxyIntegration(...)`");
+    expect(doc).toContain("`connectTunnelProxyBrowser(...)`");
+    expect(doc).toContain("`createServiceWorkerControllerGuard(...)`");
     expect(doc).toContain("`@floegence/flowersec-core/reconnect`");
     expect(doc).toContain("`createReconnectManager()`");
     expect(doc).toContain("`ReconnectManager.connectIfNeeded(...)`");

@@ -61,6 +61,8 @@ describe("package exports", () => {
       assert.equal(typeof proxy.createProxyIntegrationServiceWorkerScript, "function");
       assert.equal(typeof proxy.registerProxyIntegration, "function");
       assert.equal(typeof proxy.registerServiceWorkerAndEnsureControl, "function");
+      assert.equal(typeof proxy.connectTunnelProxyBrowser, "function");
+      assert.equal(typeof proxy.createServiceWorkerControllerGuard, "function");
       assert.equal(typeof proxy.resolveProxyProfile, "function");
       assert.equal(typeof proxy.installWebSocketPatch, "function");
       assert.equal(typeof proxy.disableUpstreamServiceWorkerRegister, "function");
