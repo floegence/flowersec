@@ -118,7 +118,7 @@ func http1Handler(cfg *compiledOptions) func(ctx context.Context, stream io.Read
 			return
 		}
 		// Apply header filters and inject a fixed Origin (server-controlled).
-		req.Header = filterRequestHeaders(meta.Headers, cfg)
+		req.Header = filterRequestHeaders(meta.Headers, &cfg.compiledHeaderPolicy)
 		req.Header.Set("Origin", cfg.upstreamOrigin)
 
 		resp, err := hc.Do(req)
@@ -160,7 +160,7 @@ func http1Handler(cfg *compiledOptions) func(ctx context.Context, stream io.Read
 			RequestID: meta.RequestID,
 			OK:        true,
 			Status:    resp.StatusCode,
-			Headers:   filterResponseHeaders(resp.Header, cfg),
+			Headers:   filterResponseHeaders(resp.Header, &cfg.compiledHeaderPolicy),
 		}
 		if err := jsonframe.WriteJSONFrame(stream, respMeta); err != nil {
 			return

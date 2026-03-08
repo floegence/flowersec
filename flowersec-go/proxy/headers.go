@@ -60,8 +60,6 @@ func normalizeHeaderNameSet(names []string) (map[string]struct{}, error) {
 }
 
 func isValidHeaderName(n string) bool {
-	// Minimal RFC 7230 token validation: allow visible ASCII token chars.
-	// We keep it strict to avoid request smuggling via malformed header names.
 	for i := 0; i < len(n); i++ {
 		c := n[i]
 		if c >= 'a' && c <= 'z' {
@@ -81,7 +79,6 @@ func isValidHeaderName(n string) bool {
 }
 
 func isSafeHeaderValue(v string) bool {
-	// Prevent header injection / request smuggling.
 	return !strings.ContainsAny(v, "\r\n")
 }
 
@@ -118,14 +115,13 @@ func allowWSHeader(name string, extra map[string]struct{}) bool {
 	return false
 }
 
-func filterRequestHeaders(in []Header, cfg *compiledOptions) http.Header {
+func filterRequestHeaders(in []Header, cfg *compiledHeaderPolicy) http.Header {
 	h := make(http.Header, len(in))
 	for _, p := range in {
 		name := strings.ToLower(strings.TrimSpace(p.Name))
 		if name == "" || !isValidHeaderName(name) {
 			continue
 		}
-		// Never accept these from the client endpoint.
 		switch name {
 		case "host", "authorization":
 			continue
@@ -149,7 +145,7 @@ func filterRequestHeaders(in []Header, cfg *compiledOptions) http.Header {
 	return h
 }
 
-func filterResponseHeaders(in http.Header, cfg *compiledOptions) []Header {
+func filterResponseHeaders(in http.Header, cfg *compiledHeaderPolicy) []Header {
 	var out []Header
 	for k, vv := range in {
 		name := strings.ToLower(strings.TrimSpace(k))
@@ -169,14 +165,13 @@ func filterResponseHeaders(in http.Header, cfg *compiledOptions) []Header {
 	return out
 }
 
-func filterWSOpenHeaders(in []Header, cfg *compiledOptions) http.Header {
+func filterWSOpenHeaders(in []Header, cfg *compiledHeaderPolicy) http.Header {
 	h := make(http.Header, len(in))
 	for _, p := range in {
 		name := strings.ToLower(strings.TrimSpace(p.Name))
 		if name == "" || !isValidHeaderName(name) {
 			continue
 		}
-		// Cookie is special-cased (runtime CookieJar / gateway browser cookies).
 		if name == "cookie" {
 			if !isSafeHeaderValue(p.Value) {
 				continue
@@ -199,7 +194,7 @@ func filterWSOpenHeaders(in []Header, cfg *compiledOptions) http.Header {
 	return h
 }
 
-func filterCookieHeaderValue(v string, cfg *compiledOptions) string {
+func filterCookieHeaderValue(v string, cfg *compiledHeaderPolicy) string {
 	if v == "" {
 		return ""
 	}
@@ -233,4 +228,78 @@ func filterCookieHeaderValue(v string, cfg *compiledOptions) string {
 		return ""
 	}
 	return strings.Join(kept, "; ")
+}
+
+func requestMetaHeadersFromHTTPHeader(in http.Header, cfg *compiledHeaderPolicy) []Header {
+	out := make([]Header, 0, len(in))
+	for k, vv := range in {
+		name := strings.ToLower(strings.TrimSpace(k))
+		if name == "" || !isValidHeaderName(name) {
+			continue
+		}
+		switch name {
+		case "host", "authorization":
+			continue
+		}
+		if !allowRequestHeader(name, cfg.extraReqHeaders) && name != "cookie" {
+			continue
+		}
+		for _, v := range vv {
+			if !isSafeHeaderValue(v) {
+				continue
+			}
+			if name == "cookie" {
+				v = filterCookieHeaderValue(v, cfg)
+				if v == "" {
+					continue
+				}
+			}
+			out = append(out, Header{Name: name, Value: v})
+		}
+	}
+	return out
+}
+
+func wsOpenMetaHeadersFromHTTPHeader(in http.Header, cfg *compiledHeaderPolicy) []Header {
+	out := make([]Header, 0, len(in))
+	for k, vv := range in {
+		name := strings.ToLower(strings.TrimSpace(k))
+		if name == "" || !isValidHeaderName(name) {
+			continue
+		}
+		if !allowWSHeader(name, cfg.extraWSHeaders) && name != "cookie" {
+			continue
+		}
+		for _, v := range vv {
+			if !isSafeHeaderValue(v) {
+				continue
+			}
+			if name == "cookie" {
+				v = filterCookieHeaderValue(v, cfg)
+				if v == "" {
+					continue
+				}
+			}
+			out = append(out, Header{Name: name, Value: v})
+		}
+	}
+	return out
+}
+
+func responseHeadersFromMeta(in []Header, cfg *compiledHeaderPolicy) http.Header {
+	out := make(http.Header, len(in))
+	for _, p := range in {
+		name := strings.ToLower(strings.TrimSpace(p.Name))
+		if name == "" || !isValidHeaderName(name) {
+			continue
+		}
+		if !allowResponseHeader(name, cfg.extraRespHeaders) {
+			continue
+		}
+		if !isSafeHeaderValue(p.Value) {
+			continue
+		}
+		out.Add(http.CanonicalHeaderKey(name), p.Value)
+	}
+	return out
 }

@@ -11,7 +11,15 @@ func TestLoadConfigCanonicalizesHostsAndValidatesGrantSource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gateway.json")
 	if err := os.WriteFile(path, []byte(`{
-  "origin": "https://gateway.example.com",
+  "browser": {
+    "allowed_origins": ["https://gateway.example.com"]
+  },
+  "tunnel": {
+    "origin": "https://gateway.example.com"
+  },
+  "proxy": {
+    "profile": "codeserver"
+  },
   "routes": [
     {"host": "Example.COM:8443", "grant": {"file": "./grant.json"}}
   ]
@@ -26,6 +34,18 @@ func TestLoadConfigCanonicalizesHostsAndValidatesGrantSource(t *testing.T) {
 	if cfg.Listen != defaultListenAddr {
 		t.Fatalf("expected default listen %q, got %q", defaultListenAddr, cfg.Listen)
 	}
+	if cfg.Browser.AllowedOrigins[0] != "https://gateway.example.com" {
+		t.Fatalf("unexpected browser origin: %q", cfg.Browser.AllowedOrigins[0])
+	}
+	if cfg.Tunnel.Origin != "https://gateway.example.com" {
+		t.Fatalf("unexpected tunnel origin: %q", cfg.Tunnel.Origin)
+	}
+	if cfg.Proxy.Profile != "codeserver" {
+		t.Fatalf("unexpected proxy profile: %q", cfg.Proxy.Profile)
+	}
+	if cfg.Proxy.bridgeOptions.MaxWSFrameBytes != 32*1024*1024 {
+		t.Fatalf("expected codeserver ws frame size, got %d", cfg.Proxy.bridgeOptions.MaxWSFrameBytes)
+	}
 	if cfg.Routes[0].Host != "example.com" {
 		t.Fatalf("expected canonical host example.com, got %q", cfg.Routes[0].Host)
 	}
@@ -38,7 +58,12 @@ func TestLoadConfigRejectsDuplicateCanonicalHosts(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gateway.json")
 	if err := os.WriteFile(path, []byte(`{
-  "origin": "https://gateway.example.com",
+  "browser": {
+    "allowed_origins": ["https://gateway.example.com"]
+  },
+  "tunnel": {
+    "origin": "https://gateway.example.com"
+  },
   "routes": [
     {"host": "Example.COM", "grant": {"file": "./a.json"}},
     {"host": "example.com:8443", "grant": {"file": "./b.json"}}
@@ -57,7 +82,12 @@ func TestLoadConfigRejectsInvalidGrantSource(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gateway.json")
 	if err := os.WriteFile(path, []byte(`{
-  "origin": "https://gateway.example.com",
+  "browser": {
+    "allowed_origins": ["https://gateway.example.com"]
+  },
+  "tunnel": {
+    "origin": "https://gateway.example.com"
+  },
   "routes": [
     {"host": "example.com", "grant": {"file": "./a.json", "command": ["mint"]}}
   ]
@@ -75,7 +105,12 @@ func TestLoadConfigNormalizesExecCommand(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gateway.json")
 	if err := os.WriteFile(path, []byte(`{
-  "origin": "https://gateway.example.com",
+  "browser": {
+    "allowed_origins": ["https://gateway.example.com"]
+  },
+  "tunnel": {
+    "origin": "https://gateway.example.com"
+  },
   "routes": [
     {"host": "example.com", "grant": {"command": [" ./mint ", " example.com "], "timeout_ms": 2500}}
   ]
@@ -95,5 +130,47 @@ func TestLoadConfigNormalizesExecCommand(t *testing.T) {
 	}
 	if got := cfg.Routes[0].Grant.timeout(); got.Milliseconds() != 2500 {
 		t.Fatalf("unexpected timeout: %v", got)
+	}
+}
+
+func TestLoadConfigRejectsLegacyOriginField(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gateway.json")
+	if err := os.WriteFile(path, []byte(`{
+  "origin": "https://gateway.example.com",
+  "routes": []
+}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := loadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "unknown field \"origin\"") {
+		t.Fatalf("expected unknown legacy origin error, got %v", err)
+	}
+}
+
+func TestLoadConfigRejectsUnknownProxyProfile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gateway.json")
+	if err := os.WriteFile(path, []byte(`{
+  "browser": {
+    "allowed_origins": ["https://gateway.example.com"]
+  },
+  "tunnel": {
+    "origin": "https://gateway.example.com"
+  },
+  "proxy": {
+    "profile": "legacy"
+  },
+  "routes": [
+    {"host": "example.com", "grant": {"file": "./grant.json"}}
+  ]
+}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := loadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "unknown proxy profile") {
+		t.Fatalf("expected unknown proxy profile error, got %v", err)
 	}
 }

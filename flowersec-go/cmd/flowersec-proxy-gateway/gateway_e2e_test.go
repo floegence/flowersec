@@ -20,6 +20,7 @@ import (
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	"github.com/floegence/flowersec/flowersec-go/proxy"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
+	"github.com/gorilla/websocket"
 )
 
 func TestGatewayHTTPOverRealTunnelAndFreshGrantReconnect(t *testing.T) {
@@ -59,7 +60,7 @@ func TestGatewayHTTPOverRealTunnelAndFreshGrantReconnect(t *testing.T) {
 	cancelServer1, doneServer1 := startServerTunnelSession(ctx, t, origin, streamSrv, grantS1)
 
 	cfgPath := filepath.Join(t.TempDir(), "gateway.json")
-	writeGatewayConfigFile(t, cfgPath, origin, routeHost, grantFile)
+	writeGatewayConfigFile(t, cfgPath, []string{origin}, false, origin, routeHost, grantFile, "default")
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
@@ -74,7 +75,11 @@ func TestGatewayHTTPOverRealTunnelAndFreshGrantReconnect(t *testing.T) {
 		}
 	}()
 
-	gwServer := httptest.NewServer(newGateway(routes, nil))
+	bridge, err := cfg.newBridge()
+	if err != nil {
+		t.Fatalf("cfg.newBridge: %v", err)
+	}
+	gwServer := httptest.NewServer(newGateway(routes, bridge, browserPolicy{allowedOrigins: cfg.Browser.AllowedOrigins, allowNoOrigin: cfg.Browser.AllowNoOrigin}, nil))
 	defer gwServer.Close()
 
 	assertGatewayBody(t, gwServer.URL+"/hello", routeHost, "ok")
@@ -113,6 +118,177 @@ func TestGatewayHTTPOverRealTunnelAndFreshGrantReconnect(t *testing.T) {
 	}
 }
 
+func TestGatewayWSOverRealTunnel(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	origin := "https://gateway.example.com"
+	wsURL, iss, keyFile, cleanupTunnel := newTestTunnel(t, origin)
+	defer cleanupTunnel()
+	defer os.Remove(keyFile)
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		for {
+			mt, msg, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			_ = c.WriteMessage(mt, msg)
+		}
+	}))
+	defer upstream.Close()
+
+	streamSrv, err := endpointserve.New(endpointserve.Options{})
+	if err != nil {
+		t.Fatalf("serve.New: %v", err)
+	}
+	if err := proxy.Register(streamSrv, proxy.Options{
+		Upstream:       upstream.URL,
+		UpstreamOrigin: "http://127.0.0.1:5173",
+	}); err != nil {
+		t.Fatalf("proxy.Register: %v", err)
+	}
+
+	routeHost := "127.0.0.1"
+	grantFile := filepath.Join(t.TempDir(), "grant.json")
+	grantC, grantS := mintTunnelGrants(t, iss, wsURL, "gateway_ws_chan")
+	writeGrantWrapperFile(t, grantFile, grantC)
+	cancelServer, doneServer := startServerTunnelSession(ctx, t, origin, streamSrv, grantS)
+	defer func() {
+		cancelServer()
+		select {
+		case <-doneServer:
+		case <-time.After(2 * time.Second):
+		}
+	}()
+
+	cfgPath := filepath.Join(t.TempDir(), "gateway.json")
+	writeGatewayConfigFile(t, cfgPath, []string{origin}, false, origin, routeHost, grantFile, "default")
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	routes, closers, err := buildRoutes(cfg)
+	if err != nil {
+		t.Fatalf("buildRoutes: %v", err)
+	}
+	defer func() {
+		for _, closer := range closers {
+			_ = closer.Close()
+		}
+	}()
+	bridge, err := cfg.newBridge()
+	if err != nil {
+		t.Fatalf("cfg.newBridge: %v", err)
+	}
+	gwServer := httptest.NewServer(newGateway(routes, bridge, browserPolicy{allowedOrigins: cfg.Browser.AllowedOrigins, allowNoOrigin: cfg.Browser.AllowNoOrigin}, nil))
+	defer gwServer.Close()
+
+	wsGatewayURL := "ws" + strings.TrimPrefix(gwServer.URL, "http") + "/ws"
+	h := http.Header{}
+	h.Set("Origin", origin)
+	conn, _, err := websocket.DefaultDialer.Dial(wsGatewayURL, h)
+	if err != nil {
+		t.Fatalf("dial gateway ws: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("hello")); err != nil {
+		t.Fatalf("write ws: %v", err)
+	}
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws: %v", err)
+	}
+	if string(msg) != "hello" {
+		t.Fatalf("unexpected ws body: %q", string(msg))
+	}
+}
+
+func TestGatewayWSRejectsForeignOriginE2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	origin := "https://gateway.example.com"
+	wsURL, iss, keyFile, cleanupTunnel := newTestTunnel(t, origin)
+	defer cleanupTunnel()
+	defer os.Remove(keyFile)
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+	}))
+	defer upstream.Close()
+
+	streamSrv, err := endpointserve.New(endpointserve.Options{})
+	if err != nil {
+		t.Fatalf("serve.New: %v", err)
+	}
+	if err := proxy.Register(streamSrv, proxy.Options{
+		Upstream:       upstream.URL,
+		UpstreamOrigin: "http://127.0.0.1:5173",
+	}); err != nil {
+		t.Fatalf("proxy.Register: %v", err)
+	}
+
+	routeHost := "127.0.0.1"
+	grantFile := filepath.Join(t.TempDir(), "grant.json")
+	grantC, grantS := mintTunnelGrants(t, iss, wsURL, "gateway_ws_reject_chan")
+	writeGrantWrapperFile(t, grantFile, grantC)
+	cancelServer, doneServer := startServerTunnelSession(ctx, t, origin, streamSrv, grantS)
+	defer func() {
+		cancelServer()
+		select {
+		case <-doneServer:
+		case <-time.After(2 * time.Second):
+		}
+	}()
+
+	cfgPath := filepath.Join(t.TempDir(), "gateway.json")
+	writeGatewayConfigFile(t, cfgPath, []string{origin}, false, origin, routeHost, grantFile, "default")
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	routes, closers, err := buildRoutes(cfg)
+	if err != nil {
+		t.Fatalf("buildRoutes: %v", err)
+	}
+	defer func() {
+		for _, closer := range closers {
+			_ = closer.Close()
+		}
+	}()
+	bridge, err := cfg.newBridge()
+	if err != nil {
+		t.Fatalf("cfg.newBridge: %v", err)
+	}
+	gwServer := httptest.NewServer(newGateway(routes, bridge, browserPolicy{allowedOrigins: cfg.Browser.AllowedOrigins, allowNoOrigin: cfg.Browser.AllowNoOrigin}, nil))
+	defer gwServer.Close()
+
+	wsGatewayURL := "ws" + strings.TrimPrefix(gwServer.URL, "http") + "/ws"
+	_, resp, err := websocket.DefaultDialer.Dial(wsGatewayURL, http.Header{"Origin": []string{"https://evil.example.com"}})
+	if err == nil {
+		t.Fatal("expected dial error")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		if resp == nil {
+			t.Fatalf("expected 403 response, got nil resp (err=%v)", err)
+		}
+		t.Fatalf("expected 403 response, got %d", resp.StatusCode)
+	}
+}
+
 func newTestTunnel(t *testing.T, origin string) (string, *issuer.Keyset, string, func()) {
 	t.Helper()
 	iss, err := issuer.NewRandom("kid-e2e")
@@ -142,13 +318,13 @@ func newTestTunnel(t *testing.T, origin string) (string, *issuer.Keyset, string,
 	mux := http.NewServeMux()
 	untrustedTunnel.Register(mux)
 	ts := httptest.NewServer(mux)
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + tunnelCfg.Path
+	wsTunnelURL := "ws" + strings.TrimPrefix(ts.URL, "http") + tunnelCfg.Path
 
 	cleanup := func() {
 		ts.Close()
 		untrustedTunnel.Close()
 	}
-	return wsURL, iss, keyFile, cleanup
+	return wsTunnelURL, iss, keyFile, cleanup
 }
 
 func mintTunnelGrants(t *testing.T, iss *issuer.Keyset, wsURL string, channelID string) (*controlv1.ChannelInitGrant, *controlv1.ChannelInitGrant) {
@@ -181,18 +357,31 @@ func writeGrantWrapperFile(t *testing.T, path string, grant *controlv1.ChannelIn
 	}
 }
 
-func writeGatewayConfigFile(t *testing.T, path string, origin string, host string, grantFile string) {
+func writeGatewayConfigFile(t *testing.T, path string, browserAllowedOrigins []string, browserAllowNoOrigin bool, tunnelOrigin string, host string, grantFile string, profile string) {
 	t.Helper()
+	originsJSON, err := json.Marshal(browserAllowedOrigins)
+	if err != nil {
+		t.Fatalf("marshal browser origins: %v", err)
+	}
 	body := fmt.Sprintf(`{
   "listen": "127.0.0.1:0",
-  "origin": %q,
+  "browser": {
+    "allowed_origins": %s,
+    "allow_no_origin": %t
+  },
+  "tunnel": {
+    "origin": %q
+  },
+  "proxy": {
+    "profile": %q
+  },
   "routes": [
     {
       "host": %q,
       "grant": { "file": %q }
     }
   ]
-}`, origin, host, grantFile)
+}`, string(originsJSON), browserAllowNoOrigin, tunnelOrigin, profile, host, grantFile)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write gateway config: %v", err)
 	}

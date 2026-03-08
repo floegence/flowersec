@@ -178,9 +178,11 @@ func TestHTTP1Handler_InvalidMetaFrameTooLarge_ReturnsErrorMeta(t *testing.T) {
 	defer up.Close()
 
 	cfg, err := compileOptions(Options{
-		Upstream:          up.URL,
-		UpstreamOrigin:    up.URL,
-		MaxJSONFrameBytes: 16,
+		Upstream:       up.URL,
+		UpstreamOrigin: up.URL,
+		ContractOptions: ContractOptions{
+			MaxJSONFrameBytes: 16,
+		},
 	})
 	if err != nil {
 		t.Fatalf("compileOptions: %v", err)

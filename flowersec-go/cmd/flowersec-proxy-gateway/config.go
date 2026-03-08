@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,9 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
+	proxyprofile "github.com/floegence/flowersec/flowersec-go/proxy/profile"
 )
 
 const (
@@ -17,9 +21,35 @@ const (
 )
 
 type config struct {
-	Listen string        `json:"listen"`
-	Origin string        `json:"origin"`
-	Routes []routeConfig `json:"routes"`
+	Listen  string             `json:"listen"`
+	Browser browserConfig      `json:"browser"`
+	Tunnel  tunnelConfig       `json:"tunnel"`
+	Proxy   gatewayProxyConfig `json:"proxy"`
+	Routes  []routeConfig      `json:"routes"`
+}
+
+type browserConfig struct {
+	AllowedOrigins []string `json:"allowed_origins"`
+	AllowNoOrigin  bool     `json:"allow_no_origin,omitempty"`
+}
+
+type tunnelConfig struct {
+	Origin string `json:"origin"`
+}
+
+type gatewayProxyConfig struct {
+	Profile                     string   `json:"profile,omitempty"`
+	MaxJSONFrameBytes           int      `json:"max_json_frame_bytes,omitempty"`
+	MaxChunkBytes               int      `json:"max_chunk_bytes,omitempty"`
+	MaxBodyBytes                int64    `json:"max_body_bytes,omitempty"`
+	MaxWSFrameBytes             int      `json:"max_ws_frame_bytes,omitempty"`
+	ExtraRequestHeaders         []string `json:"extra_request_headers,omitempty"`
+	ExtraResponseHeaders        []string `json:"extra_response_headers,omitempty"`
+	ExtraWSHeaders              []string `json:"extra_ws_headers,omitempty"`
+	ForbiddenCookieNames        []string `json:"forbidden_cookie_names,omitempty"`
+	ForbiddenCookieNamePrefixes []string `json:"forbidden_cookie_name_prefixes,omitempty"`
+
+	bridgeOptions fsproxy.BridgeOptions `json:"-"`
 }
 
 type routeConfig struct {
@@ -43,18 +73,30 @@ func loadConfig(path string) (*config, error) {
 	}
 
 	var cfg config
-	if err := json.Unmarshal(b, &cfg); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(cfg.Listen) == "" {
 		cfg.Listen = defaultListenAddr
 	}
 
-	origin, err := normalizeOrigin(cfg.Origin)
+	allowedOrigins := normalizeAllowedOrigins(cfg.Browser.AllowedOrigins)
+	if len(allowedOrigins) == 0 && !cfg.Browser.AllowNoOrigin {
+		return nil, errors.New("missing browser.allowed_origins (or set browser.allow_no_origin)")
+	}
+	cfg.Browser.AllowedOrigins = allowedOrigins
+
+	origin, err := normalizeOrigin(cfg.Tunnel.Origin)
 	if err != nil {
+		return nil, fmt.Errorf("invalid tunnel.origin: %w", err)
+	}
+	cfg.Tunnel.Origin = origin
+
+	if err := cfg.Proxy.normalize(); err != nil {
 		return nil, err
 	}
-	cfg.Origin = origin
 
 	if len(cfg.Routes) == 0 {
 		return nil, errors.New("missing routes in config")
@@ -78,10 +120,58 @@ func loadConfig(path string) (*config, error) {
 	return &cfg, nil
 }
 
+func (cfg *config) newBridge() (*fsproxy.Bridge, error) {
+	return fsproxy.NewBridge(cfg.Proxy.bridgeOptions)
+}
+
+func normalizeAllowedOrigins(origins []string) []string {
+	if len(origins) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(origins))
+	seen := make(map[string]struct{}, len(origins))
+	for _, raw := range origins {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func (cfg *gatewayProxyConfig) normalize() error {
+	profileName, err := proxyprofile.Parse(cfg.Profile)
+	if err != nil {
+		return err
+	}
+	bridgeOptions := proxyprofile.ApplyBridgeOptions(fsproxy.BridgeOptions{
+		MaxJSONFrameBytes:           cfg.MaxJSONFrameBytes,
+		MaxChunkBytes:               cfg.MaxChunkBytes,
+		MaxBodyBytes:                cfg.MaxBodyBytes,
+		MaxWSFrameBytes:             cfg.MaxWSFrameBytes,
+		ExtraRequestHeaders:         append([]string(nil), cfg.ExtraRequestHeaders...),
+		ExtraResponseHeaders:        append([]string(nil), cfg.ExtraResponseHeaders...),
+		ExtraWSHeaders:              append([]string(nil), cfg.ExtraWSHeaders...),
+		ForbiddenCookieNames:        append([]string(nil), cfg.ForbiddenCookieNames...),
+		ForbiddenCookieNamePrefixes: append([]string(nil), cfg.ForbiddenCookieNamePrefixes...),
+	}, profileName)
+	if _, err := fsproxy.NewBridge(bridgeOptions); err != nil {
+		return fmt.Errorf("invalid proxy config: %w", err)
+	}
+	cfg.Profile = string(profileName)
+	cfg.bridgeOptions = bridgeOptions
+	return nil
+}
+
 func normalizeOrigin(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", errors.New("missing origin in config")
+		return "", errors.New("missing origin")
 	}
 	originURL, err := url.Parse(raw)
 	if err != nil || originURL == nil {

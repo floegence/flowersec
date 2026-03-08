@@ -63,7 +63,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "Config file schema (JSON):")
 		fmt.Fprintln(out, `  {`)
 		fmt.Fprintln(out, `    "listen": "127.0.0.1:8080",`)
-		fmt.Fprintln(out, `    "origin": "https://gateway.example.com",`)
+		fmt.Fprintln(out, `    "browser": {`)
+		fmt.Fprintln(out, `      "allowed_origins": ["https://gateway.example.com"]`)
+		fmt.Fprintln(out, `    },`)
+		fmt.Fprintln(out, `    "tunnel": {`)
+		fmt.Fprintln(out, `      "origin": "https://gateway.example.com"`)
+		fmt.Fprintln(out, `    },`)
+		fmt.Fprintln(out, `    "proxy": {`)
+		fmt.Fprintln(out, `      "profile": "default"`)
+		fmt.Fprintln(out, `    },`)
 		fmt.Fprintln(out, `    "routes": [`)
 		fmt.Fprintln(out, `      {`)
 		fmt.Fprintln(out, `        "host": "code.example.com",`)
@@ -77,6 +85,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, `  }`)
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Notes:")
+		fmt.Fprintln(out, "  - browser.allowed_origins controls browser -> gateway WS Origin checks.")
+		fmt.Fprintln(out, "  - tunnel.origin controls gateway -> tunnel/client attach Origin.")
 		fmt.Fprintln(out, "  - routes.host is matched by canonical host only; port is ignored.")
 		fmt.Fprintln(out, "  - grants are one-time; the configured grant source must provide a fresh client grant for reconnects.")
 		fmt.Fprintln(out, "")
@@ -136,7 +146,13 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	gw := newGateway(routes, logger)
+	bridge, err := cfg.newBridge()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+
+	gw := newGateway(routes, bridge, browserPolicy{allowedOrigins: append([]string(nil), cfg.Browser.AllowedOrigins...), allowNoOrigin: cfg.Browser.AllowNoOrigin}, logger)
 
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
@@ -191,7 +207,7 @@ func buildRoutes(cfg *config) (map[string]streamOpener, []*routeManager, error) 
 		if err != nil {
 			return nil, nil, fmt.Errorf("route %q: %w", route.Host, err)
 		}
-		manager := newRouteManager(route.Host, cfg.Origin, source)
+		manager := newRouteManager(route.Host, cfg.Tunnel.Origin, source)
 		routes[route.Host] = manager
 		closers = append(closers, manager)
 	}

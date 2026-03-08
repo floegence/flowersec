@@ -14,11 +14,10 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/client"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
 )
 
-type streamOpener interface {
-	OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error)
-}
+type streamOpener = fsproxy.StreamOpener
 
 type grantSource interface {
 	LoadGrant(ctx context.Context) (*controlv1.ChannelInitGrant, error)
