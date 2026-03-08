@@ -367,6 +367,8 @@ Gateway mode is a deployable L7 HTTP/WS reverse proxy that forwards to a server 
 Requirements and boundaries:
 
 - The gateway is a plaintext component by design. It MUST be treated as trusted (see `docs/THREAT_MODEL.md`).
+- The gateway MUST validate browser-side WebSocket Origin against an explicit allow-list before opening an upstream Flowersec stream.
+  - This browser-facing Origin policy is separate from the tunnel attach Origin policy.
 - The gateway origin MUST be on a dedicated cookie scope (for example a separate registrable domain) from any product/controlplane authentication context.
   - This prevents unrelated product cookies from being forwarded to the proxied upstream app.
   - In gateway mode, `cookie` and `set-cookie` MAY be forwarded with normal browser semantics for the gateway origin.

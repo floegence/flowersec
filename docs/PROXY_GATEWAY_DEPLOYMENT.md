@@ -43,7 +43,15 @@ Example:
 ```json
 {
   "listen": "127.0.0.1:8080",
-  "origin": "https://gateway.example.com",
+  "browser": {
+    "allowed_origins": ["https://gateway.example.com"]
+  },
+  "tunnel": {
+    "origin": "https://gateway.example.com"
+  },
+  "proxy": {
+    "profile": "default"
+  },
   "routes": [
     {
       "host": "code.example.com",
@@ -65,11 +73,31 @@ Example:
 Fields:
 
 - `listen`: TCP listen address. Empty uses `127.0.0.1:0`.
-- `origin`: explicit Origin value used for tunnel connects. It must be allowed by the tunnel.
+- `browser.allowed_origins`: browser -> gateway WebSocket Origin allow-list. Use exact origins whenever possible.
+- `browser.allow_no_origin`: optional escape hatch for non-browser clients. Default: `false`.
+- `tunnel.origin`: explicit Origin value used for gateway -> tunnel attaches. It must be allowed by the tunnel.
+- `proxy.profile`: named bridge contract profile. Supported values: `default`, `codeserver`.
+- `proxy.max_json_frame_bytes`: optional bridge override for meta JSON frame size.
+- `proxy.max_chunk_bytes`: optional bridge override for single HTTP chunk size.
+- `proxy.max_body_bytes`: optional bridge override for total HTTP body size per direction.
+- `proxy.max_ws_frame_bytes`: optional bridge override for single WebSocket frame payload size.
+- `proxy.extra_request_headers`: optional request header allow-list extensions.
+- `proxy.extra_response_headers`: optional response header allow-list extensions.
+- `proxy.extra_ws_headers`: optional WebSocket open header allow-list extensions.
+- `proxy.forbidden_cookie_names`: optional cookie names stripped before forwarding.
+- `proxy.forbidden_cookie_name_prefixes`: optional cookie name prefixes stripped before forwarding.
 - `routes[*].host`: canonical route host. Matching is **host-only**; port is ignored.
 - `routes[*].grant.file`: read a fresh client grant from a JSON file.
 - `routes[*].grant.command`: execute a command and read a fresh client grant JSON object from stdout.
 - `routes[*].grant.timeout_ms`: optional timeout for the command source. Default: `10000`.
+
+Important separation:
+
+- `browser.*` protects the browser-facing gateway boundary.
+- `tunnel.origin` controls the gateway's outbound attach Origin.
+- These are intentionally separate and must not be conflated.
+
+The gateway rejects unknown config fields. The legacy top-level `origin` field is no longer accepted.
 
 ## Important: grants are one-time
 
@@ -102,6 +130,16 @@ Examples:
 Ports do not create distinct routes.
 If two configured routes collapse to the same canonical host, startup fails.
 
+## Browser WebSocket Origin policy
+
+The gateway validates browser-side WebSocket Origin **before** it opens an upstream Flowersec stream.
+
+Operational guidance:
+
+- Prefer exact entries like `https://gateway.example.com`.
+- Use `browser.allow_no_origin=true` only for controlled non-browser clients.
+- Keep the browser-facing gateway origin on a dedicated cookie scope.
+
 ## Health check
 
 The gateway exposes a lightweight health endpoint:
@@ -131,5 +169,7 @@ curl http://127.0.0.1:8080/_flowersec/healthz
 
 - The gateway is plaintext at L7 by design. Place TLS termination in front of it for non-local browser traffic.
 - Use a dedicated gateway origin / cookie scope for proxied applications.
-- Keep the gateway `origin` value aligned with the tunnel `allow_origin` configuration.
+- Keep `browser.allowed_origins` aligned with the actual browser-facing gateway URL.
+- Keep `tunnel.origin` aligned with the tunnel `allow_origin` configuration.
 - For production, prefer a grant source that can mint or fetch fresh grants continuously rather than shipping a long-lived static JSON file.
+- Use `proxy.profile="codeserver"` for large WebSocket frame workloads such as code-server.

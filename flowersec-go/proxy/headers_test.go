@@ -21,7 +21,7 @@ func TestFilterRequestHeaders_AllowlistAndBans(t *testing.T) {
 			{Name: "X-Not-Allowed", Value: "x"},
 			{Name: "Content-Type", Value: "application/json"},
 		},
-		cfg,
+		&cfg.compiledHeaderPolicy,
 	)
 	if h.Get("Accept") != "text/html" {
 		t.Fatalf("expected Accept to be kept, got %q", h.Get("Accept"))
@@ -42,10 +42,12 @@ func TestFilterRequestHeaders_AllowlistAndBans(t *testing.T) {
 
 func TestFilterRequestHeaders_CookieFiltersForbiddenNames(t *testing.T) {
 	cfg, err := compileOptions(Options{
-		Upstream:                    "http://127.0.0.1:8080",
-		UpstreamOrigin:              "http://127.0.0.1:8080",
-		ForbiddenCookieNames:        []string{"redeven-access-token"},
-		ForbiddenCookieNamePrefixes: []string{"x-"},
+		Upstream:       "http://127.0.0.1:8080",
+		UpstreamOrigin: "http://127.0.0.1:8080",
+		ContractOptions: ContractOptions{
+			ForbiddenCookieNames:        []string{"redeven-access-token"},
+			ForbiddenCookieNamePrefixes: []string{"x-"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("compileOptions: %v", err)
@@ -54,7 +56,7 @@ func TestFilterRequestHeaders_CookieFiltersForbiddenNames(t *testing.T) {
 		[]Header{
 			{Name: "cookie", Value: "a=1; redeven-access-token=SECRET; x-test=1; b=2"},
 		},
-		cfg,
+		&cfg.compiledHeaderPolicy,
 	)
 	if got := h.Get("Cookie"); got != "a=1; b=2" {
 		t.Fatalf("unexpected Cookie: %q", got)
@@ -72,7 +74,7 @@ func TestFilterResponseHeaders_Allowlist(t *testing.T) {
 	in := make(http.Header)
 	in.Add("Content-Type", "text/plain")
 	in.Add("X-Not-Allowed", "x")
-	out := filterResponseHeaders(in, cfg)
+	out := filterResponseHeaders(in, &cfg.compiledHeaderPolicy)
 	if len(out) != 1 || out[0].Name != "content-type" {
 		t.Fatalf("unexpected out: %#v", out)
 	}

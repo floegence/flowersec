@@ -30,24 +30,11 @@ const (
 	DefaultMaxTimeout = 5 * time.Minute
 )
 
-// Options configures the server endpoint handlers registered by Register.
+// ContractOptions configures the stable flowersec-proxy stream contract.
 //
-// All limits are enforced on untrusted client inputs.
-type Options struct {
-	// Upstream is the fixed upstream base URL to proxy to (required).
-	// Example: "http://127.0.0.1:8080".
-	//
-	// The server endpoint MUST NOT allow the client to pick an arbitrary upstream host/port.
-	Upstream string
-
-	// UpstreamOrigin is the explicit Origin header value used for upstream WebSocket dials.
-	// It must be a valid http(s) origin (scheme + host[:port]) without a path.
-	UpstreamOrigin string
-
-	// AllowedUpstreamHosts is an explicit allow-list for Upstream host validation.
-	// If empty, only "127.0.0.1" is allowed.
-	AllowedUpstreamHosts []string
-
+// These options affect framing limits, header allow-lists, and cookie filtering on the
+// client/server proxy stream contract itself, independent of any upstream host/origin settings.
+type ContractOptions struct {
 	// MaxJSONFrameBytes caps incoming JSON meta frame size.
 	// If == 0, jsonframe.DefaultMaxJSONFrameBytes is used.
 	// If < 0, Register returns an error.
@@ -68,13 +55,6 @@ type Options struct {
 	// If < 0, Register returns an error.
 	MaxWSFrameBytes int
 
-	// DefaultTimeout is used when HTTPRequestMeta.timeout_ms is missing/0.
-	// nil uses DefaultDefaultTimeout; 0 disables timeouts.
-	DefaultTimeout *time.Duration
-	// MaxTimeout caps HTTPRequestMeta.timeout_ms when provided.
-	// nil uses DefaultMaxTimeout; 0 disables the cap.
-	MaxTimeout *time.Duration
-
 	// ExtraRequestHeaders extends the request header allow-list (see docs/PROXY.md).
 	ExtraRequestHeaders []string
 	// ExtraResponseHeaders extends the response header allow-list (see docs/PROXY.md).
@@ -90,19 +70,41 @@ type Options struct {
 	ForbiddenCookieNamePrefixes []string
 }
 
-type compiledOptions struct {
-	upstream       *url.URL
-	upstreamHost   string // host:port
-	upstreamOrigin string
+// BridgeOptions configures the browser/client-facing side of the flowersec-proxy stream contract.
+//
+// It intentionally omits upstream-specific settings because a bridge only speaks the stable stream
+// protocol to an already-selected Flowersec route.
+type BridgeOptions = ContractOptions
 
-	maxJSONFrameBytes int
-	maxChunkBytes     int
-	maxBodyBytes      int64
-	maxWSFrameBytes   int
+// Options configures the server endpoint handlers registered by Register.
+//
+// All limits are enforced on untrusted client inputs.
+type Options struct {
+	// Upstream is the fixed upstream base URL to proxy to (required).
+	// Example: "http://127.0.0.1:8080".
+	//
+	// The server endpoint MUST NOT allow the client to pick an arbitrary upstream host/port.
+	Upstream string
 
-	defaultTimeout time.Duration
-	maxTimeout     time.Duration
+	// UpstreamOrigin is the explicit Origin header value used for upstream WebSocket dials.
+	// It must be a valid http(s) origin (scheme + host[:port]) without a path.
+	UpstreamOrigin string
 
+	// AllowedUpstreamHosts is an explicit allow-list for Upstream host validation.
+	// If empty, only "127.0.0.1" is allowed.
+	AllowedUpstreamHosts []string
+
+	ContractOptions
+
+	// DefaultTimeout is used when HTTPRequestMeta.timeout_ms is missing/0.
+	// nil uses DefaultDefaultTimeout; 0 disables timeouts.
+	DefaultTimeout *time.Duration
+	// MaxTimeout caps HTTPRequestMeta.timeout_ms when provided.
+	// nil uses DefaultMaxTimeout; 0 disables the cap.
+	MaxTimeout *time.Duration
+}
+
+type compiledHeaderPolicy struct {
 	extraReqHeaders  map[string]struct{}
 	extraRespHeaders map[string]struct{}
 	extraWSHeaders   map[string]struct{}
@@ -111,7 +113,110 @@ type compiledOptions struct {
 	forbiddenCookieNamePrefixes []string
 }
 
+type compiledContractOptions struct {
+	compiledHeaderPolicy
+
+	maxJSONFrameBytes int
+	maxChunkBytes     int
+	maxBodyBytes      int64
+	maxWSFrameBytes   int
+}
+
+type compiledOptions struct {
+	compiledContractOptions
+
+	upstream       *url.URL
+	upstreamHost   string // host:port
+	upstreamOrigin string
+
+	defaultTimeout time.Duration
+	maxTimeout     time.Duration
+}
+
+func compileContractOptions(opts ContractOptions) (*compiledContractOptions, error) {
+	maxJSON := opts.MaxJSONFrameBytes
+	if maxJSON < 0 {
+		return nil, errors.New("invalid MaxJSONFrameBytes (must be >= 0)")
+	}
+	if maxJSON == 0 {
+		maxJSON = jsonframe.DefaultMaxJSONFrameBytes
+	}
+
+	maxChunk := opts.MaxChunkBytes
+	if maxChunk < 0 {
+		return nil, errors.New("invalid MaxChunkBytes (must be >= 0)")
+	}
+	if maxChunk == 0 {
+		maxChunk = DefaultMaxChunkBytes
+	}
+
+	maxBody := opts.MaxBodyBytes
+	if maxBody < 0 {
+		return nil, errors.New("invalid MaxBodyBytes (must be >= 0)")
+	}
+	if maxBody == 0 {
+		maxBody = DefaultMaxBodyBytes
+	}
+
+	maxWSFrame := opts.MaxWSFrameBytes
+	if maxWSFrame < 0 {
+		return nil, errors.New("invalid MaxWSFrameBytes (must be >= 0)")
+	}
+	if maxWSFrame == 0 {
+		maxWSFrame = DefaultMaxWSFrameBytes
+	}
+
+	extraReq, err := normalizeHeaderNameSet(opts.ExtraRequestHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ExtraRequestHeaders: %w", err)
+	}
+	extraResp, err := normalizeHeaderNameSet(opts.ExtraResponseHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ExtraResponseHeaders: %w", err)
+	}
+	extraWS, err := normalizeHeaderNameSet(opts.ExtraWSHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ExtraWSHeaders: %w", err)
+	}
+
+	forbiddenCookieNames := make(map[string]struct{}, len(opts.ForbiddenCookieNames))
+	for _, n := range opts.ForbiddenCookieNames {
+		n = strings.ToLower(strings.TrimSpace(n))
+		if n == "" {
+			return nil, errors.New("invalid ForbiddenCookieNames: empty entry")
+		}
+		forbiddenCookieNames[n] = struct{}{}
+	}
+	var forbiddenCookiePrefixes []string
+	for _, p := range opts.ForbiddenCookieNamePrefixes {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			return nil, errors.New("invalid ForbiddenCookieNamePrefixes: empty entry")
+		}
+		forbiddenCookiePrefixes = append(forbiddenCookiePrefixes, p)
+	}
+
+	return &compiledContractOptions{
+		compiledHeaderPolicy: compiledHeaderPolicy{
+			extraReqHeaders:             extraReq,
+			extraRespHeaders:            extraResp,
+			extraWSHeaders:              extraWS,
+			forbiddenCookieNames:        forbiddenCookieNames,
+			forbiddenCookieNamePrefixes: forbiddenCookiePrefixes,
+		},
+		maxJSONFrameBytes: maxJSON,
+		maxChunkBytes:     maxChunk,
+		maxBodyBytes:      maxBody,
+		maxWSFrameBytes:   maxWSFrame,
+	}, nil
+}
+
 func compileOptions(opts Options) (*compiledOptions, error) {
+	contract, err := compileContractOptions(opts.ContractOptions)
+	if err != nil {
+		return nil, err
+	}
+
 	upstreamStr := strings.TrimSpace(opts.Upstream)
 	if upstreamStr == "" {
 		return nil, errors.New("missing Upstream")
@@ -190,41 +295,8 @@ func compileOptions(opts Options) (*compiledOptions, error) {
 	if originURL.RawQuery != "" || originURL.Fragment != "" {
 		return nil, errors.New("invalid UpstreamOrigin: query/fragment not allowed")
 	}
-	// Normalize to scheme://host[:port].
 	originURL.Path = ""
 	upstreamOrigin = originURL.String()
-
-	maxJSON := opts.MaxJSONFrameBytes
-	if maxJSON < 0 {
-		return nil, errors.New("invalid MaxJSONFrameBytes (must be >= 0)")
-	}
-	if maxJSON == 0 {
-		maxJSON = jsonframe.DefaultMaxJSONFrameBytes
-	}
-
-	maxChunk := opts.MaxChunkBytes
-	if maxChunk < 0 {
-		return nil, errors.New("invalid MaxChunkBytes (must be >= 0)")
-	}
-	if maxChunk == 0 {
-		maxChunk = DefaultMaxChunkBytes
-	}
-
-	maxBody := opts.MaxBodyBytes
-	if maxBody < 0 {
-		return nil, errors.New("invalid MaxBodyBytes (must be >= 0)")
-	}
-	if maxBody == 0 {
-		maxBody = DefaultMaxBodyBytes
-	}
-
-	maxWSFrame := opts.MaxWSFrameBytes
-	if maxWSFrame < 0 {
-		return nil, errors.New("invalid MaxWSFrameBytes (must be >= 0)")
-	}
-	if maxWSFrame == 0 {
-		maxWSFrame = DefaultMaxWSFrameBytes
-	}
 
 	defaultTimeout := DefaultDefaultTimeout
 	if opts.DefaultTimeout != nil {
@@ -241,54 +313,12 @@ func compileOptions(opts Options) (*compiledOptions, error) {
 		maxTimeout = *opts.MaxTimeout
 	}
 
-	extraReq, err := normalizeHeaderNameSet(opts.ExtraRequestHeaders)
-	if err != nil {
-		return nil, fmt.Errorf("invalid ExtraRequestHeaders: %w", err)
-	}
-	extraResp, err := normalizeHeaderNameSet(opts.ExtraResponseHeaders)
-	if err != nil {
-		return nil, fmt.Errorf("invalid ExtraResponseHeaders: %w", err)
-	}
-	extraWS, err := normalizeHeaderNameSet(opts.ExtraWSHeaders)
-	if err != nil {
-		return nil, fmt.Errorf("invalid ExtraWSHeaders: %w", err)
-	}
-
-	forbiddenCookieNames := make(map[string]struct{}, len(opts.ForbiddenCookieNames))
-	for _, n := range opts.ForbiddenCookieNames {
-		n = strings.ToLower(strings.TrimSpace(n))
-		if n == "" {
-			return nil, errors.New("invalid ForbiddenCookieNames: empty entry")
-		}
-		forbiddenCookieNames[n] = struct{}{}
-	}
-	var forbiddenCookiePrefixes []string
-	for _, p := range opts.ForbiddenCookieNamePrefixes {
-		p = strings.ToLower(strings.TrimSpace(p))
-		if p == "" {
-			return nil, errors.New("invalid ForbiddenCookieNamePrefixes: empty entry")
-		}
-		forbiddenCookiePrefixes = append(forbiddenCookiePrefixes, p)
-	}
-
 	return &compiledOptions{
-		upstream:       upstreamURL,
-		upstreamHost:   net.JoinHostPort(hostNorm, strconv.Itoa(port)),
-		upstreamOrigin: upstreamOrigin,
-
-		maxJSONFrameBytes: maxJSON,
-		maxChunkBytes:     maxChunk,
-		maxBodyBytes:      maxBody,
-		maxWSFrameBytes:   maxWSFrame,
-
-		defaultTimeout: defaultTimeout,
-		maxTimeout:     maxTimeout,
-
-		extraReqHeaders:  extraReq,
-		extraRespHeaders: extraResp,
-		extraWSHeaders:   extraWS,
-
-		forbiddenCookieNames:        forbiddenCookieNames,
-		forbiddenCookieNamePrefixes: forbiddenCookiePrefixes,
+		compiledContractOptions: *contract,
+		upstream:                upstreamURL,
+		upstreamHost:            net.JoinHostPort(hostNorm, strconv.Itoa(port)),
+		upstreamOrigin:          upstreamOrigin,
+		defaultTimeout:          defaultTimeout,
+		maxTimeout:              maxTimeout,
 	}, nil
 }

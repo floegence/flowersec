@@ -36,6 +36,7 @@ Important boundary:
 - In **gateway mode**, the gateway MUST parse plaintext HTTP/WS to act as an L7 reverse proxy. This means the gateway is a trusted plaintext component and cannot be treated as an "untrusted relay that does not decrypt".
   - If you need an untrusted relay, use runtime mode (browser↔agent E2EE) instead.
 - In **gateway mode**, the gateway is the browser-facing origin and will see browser cookies for that origin. Deploy the gateway on a dedicated cookie scope (for example a separate registrable domain) from any product/controlplane authentication context to avoid leaking unrelated auth cookies to the proxied upstream app.
+- In **gateway mode**, browser-side WebSocket Origin validation and gateway -> tunnel attach Origin are separate policies and must be configured independently.
 
 ## Security goals (what Flowersec aims to provide)
 

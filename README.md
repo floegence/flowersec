@@ -113,6 +113,7 @@ docker run --rm \
 ```
 
 - Health check: `GET /_flowersec/healthz`
+- Config now separates `browser.allowed_origins` (browser -> gateway WS Origin checks) from `tunnel.origin` (gateway -> tunnel attach Origin).
 - Route matching is host-only; ports are ignored after canonicalization.
 - Grants are one-time; each route must point to a source that can provide a fresh `grant_client` for reconnects.
 

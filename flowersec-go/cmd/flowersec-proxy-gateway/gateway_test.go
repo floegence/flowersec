@@ -47,9 +47,10 @@ func TestGatewayHTTPProxiesToServerEndpoint(t *testing.T) {
 		t.Fatalf("proxy.Register: %v", err)
 	}
 
+	bridge := mustBridge(t, proxy.BridgeOptions{})
 	gw := newGateway(map[string]streamOpener{
 		"127.0.0.1": &fakeRoute{srv: streamSrv},
-	}, nil)
+	}, bridge, browserPolicy{allowedOrigins: []string{"https://gateway.example.com"}}, nil)
 	s := httptest.NewServer(gw)
 	defer s.Close()
 
@@ -65,7 +66,7 @@ func TestGatewayHTTPProxiesToServerEndpoint(t *testing.T) {
 	}
 }
 
-func TestGatewayWSProxiesToServerEndpoint(t *testing.T) {
+func TestGatewayWSAllowsConfiguredOriginAndProxiesToServerEndpoint(t *testing.T) {
 	seen := make(chan map[string]string, 1)
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -107,15 +108,17 @@ func TestGatewayWSProxiesToServerEndpoint(t *testing.T) {
 		t.Fatalf("proxy.Register: %v", err)
 	}
 
+	bridge := mustBridge(t, proxy.BridgeOptions{})
 	gw := newGateway(map[string]streamOpener{
 		"127.0.0.1": &fakeRoute{srv: streamSrv},
-	}, nil)
+	}, bridge, browserPolicy{allowedOrigins: []string{"https://gateway.example.com"}}, nil)
 	s := httptest.NewServer(gw)
 	defer s.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(s.URL, "http") + "/ws"
 	d := websocket.Dialer{}
 	h := http.Header{}
+	h.Set("Origin", "https://gateway.example.com")
 	h.Set("Cookie", "a=1")
 	h.Set("Sec-WebSocket-Protocol", "demo")
 	c, _, err := d.Dial(wsURL, h)
@@ -148,14 +151,97 @@ func TestGatewayWSProxiesToServerEndpoint(t *testing.T) {
 	}
 }
 
+func TestGatewayWSRejectsForeignOriginBeforeOpeningRoute(t *testing.T) {
+	called := false
+	bridge := mustBridge(t, proxy.BridgeOptions{})
+	gw := newGateway(map[string]streamOpener{
+		"127.0.0.1": openerFunc(func(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+			called = true
+			return noopReadWriteCloser{}, nil
+		}),
+	}, bridge, browserPolicy{allowedOrigins: []string{"https://gateway.example.com"}}, nil)
+	s := httptest.NewServer(gw)
+	defer s.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(s.URL, "http") + "/ws"
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"https://evil.example.com"}})
+	if err == nil {
+		t.Fatal("expected dial error")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		if resp == nil {
+			t.Fatalf("expected 403 response, got nil resp (err=%v)", err)
+		}
+		t.Fatalf("expected 403 response, got %d", resp.StatusCode)
+	}
+	if called {
+		t.Fatal("expected route to stay unopened on foreign origin")
+	}
+}
+
+func TestGatewayWSAllowsNoOriginWhenConfigured(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		for {
+			mt, msg, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			_ = c.WriteMessage(mt, msg)
+		}
+	}))
+	defer up.Close()
+
+	streamSrv, err := serve.New(serve.Options{})
+	if err != nil {
+		t.Fatalf("serve.New: %v", err)
+	}
+	if err := proxy.Register(streamSrv, proxy.Options{
+		Upstream:       up.URL,
+		UpstreamOrigin: "http://127.0.0.1:5173",
+	}); err != nil {
+		t.Fatalf("proxy.Register: %v", err)
+	}
+
+	bridge := mustBridge(t, proxy.BridgeOptions{})
+	gw := newGateway(map[string]streamOpener{
+		"127.0.0.1": &fakeRoute{srv: streamSrv},
+	}, bridge, browserPolicy{allowNoOrigin: true}, nil)
+	s := httptest.NewServer(gw)
+	defer s.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(s.URL, "http") + "/ws"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+	if err := c.WriteMessage(websocket.TextMessage, []byte("pong")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, msg, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(msg) != "pong" {
+		t.Fatalf("unexpected msg: %q", string(msg))
+	}
+}
+
 func TestGatewayCanonicalizesRequestHost(t *testing.T) {
 	called := false
+	bridge := mustBridge(t, proxy.BridgeOptions{})
 	gw := newGateway(map[string]streamOpener{
 		"example.com": openerFunc(func(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
 			called = true
 			return &noopReadWriteCloser{}, nil
 		}),
-	}, nil)
+	}, bridge, browserPolicy{allowedOrigins: []string{"https://gateway.example.com"}}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.invalid/hello", nil)
 	req.Host = "Example.COM:8443"
@@ -167,7 +253,7 @@ func TestGatewayCanonicalizesRequestHost(t *testing.T) {
 }
 
 func TestGatewayHealthz(t *testing.T) {
-	gw := newGateway(nil, nil)
+	gw := newGateway(nil, nil, browserPolicy{}, nil)
 	req := httptest.NewRequest(http.MethodGet, "http://gateway.invalid/_flowersec/healthz", nil)
 	rr := httptest.NewRecorder()
 	gw.ServeHTTP(rr, req)
@@ -177,6 +263,15 @@ func TestGatewayHealthz(t *testing.T) {
 	if rr.Body.String() != "ok" {
 		t.Fatalf("unexpected body: %q", rr.Body.String())
 	}
+}
+
+func mustBridge(t *testing.T, opts proxy.BridgeOptions) *proxy.Bridge {
+	t.Helper()
+	bridge, err := proxy.NewBridge(opts)
+	if err != nil {
+		t.Fatalf("proxy.NewBridge: %v", err)
+	}
+	return bridge
 }
 
 type openerFunc func(ctx context.Context, kind string) (io.ReadWriteCloser, error)

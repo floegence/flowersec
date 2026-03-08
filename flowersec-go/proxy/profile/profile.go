@@ -1,6 +1,8 @@
 package profile
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
@@ -42,6 +44,20 @@ var (
 	}
 )
 
+func Parse(raw string) (Profile, error) {
+	name := strings.ToLower(strings.TrimSpace(raw))
+	if name == "" {
+		return ProfileDefault, nil
+	}
+	profile := Profile(name)
+	switch profile {
+	case ProfileDefault, ProfileCodeServer:
+		return profile, nil
+	default:
+		return "", fmt.Errorf("unknown proxy profile: %q", raw)
+	}
+}
+
 // Resolve returns defaults for the given profile name.
 // Unknown names fall back to ProfileDefault.
 func Resolve(profile Profile) Defaults {
@@ -53,9 +69,7 @@ func Resolve(profile Profile) Defaults {
 	}
 }
 
-// Apply fills zero-value options using the selected profile defaults.
-// Explicit values in opts are never overridden.
-func Apply(opts fsproxy.Options, profile Profile) fsproxy.Options {
+func applyContractOptions(opts fsproxy.ContractOptions, profile Profile) fsproxy.ContractOptions {
 	d := Resolve(profile)
 	if opts.MaxChunkBytes == 0 {
 		opts.MaxChunkBytes = d.MaxChunkBytes
@@ -66,6 +80,18 @@ func Apply(opts fsproxy.Options, profile Profile) fsproxy.Options {
 	if opts.MaxWSFrameBytes == 0 {
 		opts.MaxWSFrameBytes = d.MaxWSFrameBytes
 	}
+	return opts
+}
+
+func ApplyBridgeOptions(opts fsproxy.BridgeOptions, profile Profile) fsproxy.BridgeOptions {
+	return fsproxy.BridgeOptions(applyContractOptions(fsproxy.ContractOptions(opts), profile))
+}
+
+// Apply fills zero-value options using the selected profile defaults.
+// Explicit values in opts are never overridden.
+func Apply(opts fsproxy.Options, profile Profile) fsproxy.Options {
+	opts.ContractOptions = applyContractOptions(opts.ContractOptions, profile)
+	d := Resolve(profile)
 	if opts.DefaultTimeout == nil {
 		v := d.DefaultTimeout
 		opts.DefaultTimeout = &v

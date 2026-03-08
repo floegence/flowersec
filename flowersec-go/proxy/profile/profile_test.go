@@ -42,9 +42,11 @@ func TestApply(t *testing.T) {
 	explicitDefault := 15 * time.Second
 	explicitMax := 45 * time.Second
 	explicit := fsproxy.Options{
-		MaxWSFrameBytes: 1234,
-		DefaultTimeout:  &explicitDefault,
-		MaxTimeout:      &explicitMax,
+		ContractOptions: fsproxy.ContractOptions{
+			MaxWSFrameBytes: 1234,
+		},
+		DefaultTimeout: &explicitDefault,
+		MaxTimeout:     &explicitMax,
 	}
 	appliedExplicit := Apply(explicit, ProfileCodeServer)
 	if appliedExplicit.MaxWSFrameBytes != 1234 {
