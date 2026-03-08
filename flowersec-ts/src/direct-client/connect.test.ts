@@ -154,6 +154,14 @@ describe("connectDirect", () => {
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_channel_id", path: "direct" });
   });
 
+  test("rejects too long channel_id", async () => {
+    const bad = makeInfo();
+    bad.channel_id = "a".repeat(257);
+    const p = connectDirect(bad, { origin: "https://app.redeven.com" });
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "direct" });
+  });
+
   test("rejects missing init exp", async () => {
     const bad = makeInfo();
     bad.channel_init_expire_at_unix_s = 0;

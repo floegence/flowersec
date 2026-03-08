@@ -86,6 +86,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Notes:")
 		fmt.Fprintln(out, "  - browser.allowed_origins controls browser -> gateway WS Origin checks.")
+		fmt.Fprintln(out, "  - browser.allow_no_origin is additive only; it does not replace browser.allowed_origins.")
 		fmt.Fprintln(out, "  - tunnel.origin controls gateway -> tunnel/client attach Origin.")
 		fmt.Fprintln(out, "  - routes.host is matched by canonical host only; port is ignored.")
 		fmt.Fprintln(out, "  - grants are one-time; the configured grant source must provide a fresh client grant for reconnects.")

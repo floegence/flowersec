@@ -74,7 +74,7 @@ Fields:
 
 - `listen`: TCP listen address. Empty uses `127.0.0.1:0`.
 - `browser.allowed_origins`: browser -> gateway WebSocket Origin allow-list. Use exact origins whenever possible.
-- `browser.allow_no_origin`: optional escape hatch for non-browser clients. Default: `false`.
+- `browser.allow_no_origin`: optional escape hatch for non-browser clients. Default: `false`. It is additive only and does not replace `browser.allowed_origins`.
 - `tunnel.origin`: explicit Origin value used for gateway -> tunnel attaches. It must be allowed by the tunnel.
 - `proxy.profile`: named bridge contract profile. Supported values: `default`, `codeserver`.
 - `proxy.max_json_frame_bytes`: optional bridge override for meta JSON frame size.

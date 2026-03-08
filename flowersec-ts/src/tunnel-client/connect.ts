@@ -5,6 +5,7 @@ import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
 import { FlowersecError } from "../utils/errors.js";
 import { randomBytes } from "../client-connect/common.js";
 import { connectCore, type ConnectOptionsBase } from "../client-connect/connectCore.js";
+import { assertTunnelGrantContract, assertValidPSK, prepareChannelId } from "../client-connect/contract.js";
 import type { ClientInternal } from "../client.js";
 
 // TunnelConnectOptions controls transport and handshake limits.
@@ -97,10 +98,7 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
   if (tunnelUrl === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_tunnel_url", path: "tunnel", message: "missing tunnel_url" });
   }
-  const channelId = checkedGrant.channel_id.trim();
-  if (channelId === "") {
-    throw new FlowersecError({ stage: "validate", code: "missing_channel_id", path: "tunnel", message: "missing channel_id" });
-  }
+  const channelId = prepareChannelId(checkedGrant.channel_id, "tunnel");
   const token = checkedGrant.token.trim();
   if (token === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_token", path: "tunnel", message: "missing token" });
@@ -113,19 +111,9 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
       message: "missing channel_init_expire_at_unix_s",
     });
   }
-  const e2eePskB64u = checkedGrant.e2ee_psk_b64u.trim();
-  try {
-    const psk = base64urlDecode(e2eePskB64u);
-    if (psk.length !== 32) {
-      throw new Error("psk must be 32 bytes");
-    }
-  } catch (e) {
-    throw new FlowersecError({ stage: "validate", code: "invalid_psk", path: "tunnel", message: "invalid e2ee_psk_b64u", cause: e });
-  }
+  assertTunnelGrantContract(checkedGrant, ControlRole.Role_client);
+  const e2eePskB64u = assertValidPSK(checkedGrant.e2ee_psk_b64u, "tunnel");
   const idleTimeoutSeconds = checkedGrant.idle_timeout_seconds;
-  if (checkedGrant.role !== ControlRole.Role_client) {
-    throw new FlowersecError({ stage: "validate", code: "role_mismatch", path: "tunnel", message: "expected role=client" });
-  }
   const endpointInstanceId = opts.endpointInstanceId ?? base64urlEncode(randomBytes(24));
   let eidBytes: Uint8Array;
   try {
