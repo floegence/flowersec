@@ -73,6 +73,16 @@ jobs:
           npm i -g npm@^11.5.1
           npm --version
 
+      - name: Validate tag matches flowersec-ts package version
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.vars.outputs.version }}"
+          TS_VERSION="$(node --input-type=module -e "import fs from 'node:fs'; console.log(JSON.parse(fs.readFileSync('flowersec-ts/package.json', 'utf8')).version);")"
+          if [ "${VERSION}" != "${TS_VERSION}" ]; then
+            echo "Tag version ${VERSION} must match flowersec-ts/package.json version ${TS_VERSION}"
+            exit 1
+          fi
+
       - name: Build release artifacts
         run: |
           set -euo pipefail
@@ -91,7 +101,6 @@ jobs:
           # Pack the TypeScript npm tarball for no-clone installs (from GitHub Releases).
           # This does not publish to npm; it only produces a .tgz artifact.
           ( cd flowersec-ts && \
-            npm version --no-git-tag-version --allow-same-version "${VERSION}" && \
             npm pack --silent && \
             mv "floegence-flowersec-core-${VERSION}.tgz" "../dist/" \
           )

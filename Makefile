@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vulncheck ts-ci ts-audit ts-test ts-lint ts-build fmt fmt-check lint lint-check bench check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-audit ts-test ts-lint ts-build fmt fmt-check lint lint-check bench check
 
 GOVULNCHECK_VERSION ?= v1.1.4
 
@@ -41,6 +41,11 @@ go-test-race:
 	cd examples && go test -race ./...
 	cd tools/idlgen && go test -race ./...
 
+go-vet:
+	cd flowersec-go && go vet ./...
+	cd examples && go vet ./...
+	cd tools/idlgen && go vet ./...
+
 go-vulncheck:
 	cd flowersec-go && go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
@@ -74,9 +79,9 @@ fmt-check:
 		exit 1; \
 	fi
 
-lint: fmt ts-lint
+lint: fmt go-vet ts-lint
 
-lint-check: fmt-check ts-lint
+lint-check: fmt-check go-vet ts-lint
 
 check:
 	$(MAKE) ts-ci

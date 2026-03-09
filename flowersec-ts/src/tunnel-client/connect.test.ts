@@ -57,7 +57,10 @@ vi.mock("../yamux/session.js", () => ({ YamuxSession: mocks.MockYamuxSession }))
 import { connectTunnel } from "./connect.js";
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  clientHandshakeMock.mockReset();
+  openStream.mockReset();
+  rpcClose.mockReset();
+  muxClose.mockReset();
 });
 
 class FakeWebSocket {
@@ -477,6 +480,8 @@ describe("connectTunnel", () => {
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "handshake", code: "handshake_failed", path: "tunnel" });
 
+    expect(observer.onAttach).toHaveBeenCalledWith("fail", "attach_failed");
+    expect(observer.onAttach).not.toHaveBeenCalledWith("ok", undefined);
     expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "handshake_failed", expect.any(Number));
   });
 
@@ -501,6 +506,7 @@ describe("connectTunnel", () => {
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "handshake", code: "timestamp_after_init_exp", path: "tunnel" });
+    expect(observer.onAttach).toHaveBeenCalledWith("fail", "attach_failed");
     expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "timestamp_after_init_exp", expect.any(Number));
   });
 
@@ -526,7 +532,40 @@ describe("connectTunnel", () => {
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ stage: "handshake", code: "timeout", path: "tunnel" });
+    expect(observer.onAttach).toHaveBeenCalledWith("fail", "timeout");
     expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "timeout", expect.any(Number));
+  });
+
+  test("reports attach cancellation when handshake is aborted after attach send", async () => {
+    const ws = new FakeWebSocket();
+    clientHandshakeMock.mockImplementationOnce(() => new Promise(() => {}));
+    const ac = new AbortController();
+    const observer = {
+      onConnect: vi.fn(),
+      onAttach: vi.fn(),
+      onHandshake: vi.fn(),
+      onWsError: vi.fn(),
+      onRpcCall: vi.fn(),
+      onRpcNotify: vi.fn()
+    };
+
+    const p = connectTunnel(makeGrant(), {
+      origin: "https://app.redeven.com",
+      wsFactory: () => ws as any,
+      handshakeTimeoutMs: 1_000,
+      signal: ac.signal,
+      observer
+    });
+
+    setTimeout(() => {
+      ws.emit("open", {});
+      setTimeout(() => ac.abort(new Error("aborted")), 10);
+    }, 0);
+
+    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "canceled", path: "tunnel" });
+    expect(observer.onAttach).toHaveBeenCalledWith("fail", "canceled");
+    expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "canceled", expect.any(Number));
   });
 
   test("close tears down rpc, mux, and secure resources", async () => {

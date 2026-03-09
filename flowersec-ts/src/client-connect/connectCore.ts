@@ -3,7 +3,7 @@ import { ByteReader } from "../yamux/byteReader.js";
 import { YamuxSession } from "../yamux/session.js";
 import { RpcClient } from "../rpc/client.js";
 import { writeStreamHello } from "../streamhello/streamHello.js";
-import { normalizeObserver, nowSeconds, type ClientObserverLike } from "../observability/observer.js";
+import { normalizeObserver, nowSeconds, type AttachReason, type ClientObserverLike } from "../observability/observer.js";
 import { base64urlDecode } from "../utils/base64url.js";
 import { AbortError, FlowersecError, throwIfAborted } from "../utils/errors.js";
 import { WebSocketBinaryTransport, WsCloseError, type WebSocketLike } from "../ws-client/binaryTransport.js";
@@ -61,6 +61,19 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
   const observer = normalizeObserver(args.opts.observer);
   const signal = args.opts.signal;
   const connectStart = nowSeconds();
+  let attachState: "not_started" | "sent" | "accepted" | "failed" = args.path === "tunnel" ? "not_started" : "accepted";
+
+  const reportAttachSuccess = (): void => {
+    if (args.path !== "tunnel" || attachState !== "sent") return;
+    observer.onAttach("ok", undefined);
+    attachState = "accepted";
+  };
+
+  const reportAttachFailure = (reason: AttachReason): void => {
+    if (args.path !== "tunnel" || attachState !== "sent") return;
+    observer.onAttach("fail", reason);
+    attachState = "failed";
+  };
 
   const origin = typeof args.opts.origin === "string" ? args.opts.origin.trim() : "";
   if (origin === "") {
@@ -190,8 +203,10 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     if (args.path === "tunnel") {
       try {
         ws.send(args.attach!.attachJson);
+        attachState = "sent";
       } catch (err) {
         observer.onAttach("fail", "send_failed");
+        attachState = "failed";
         try {
           transport.close();
         } catch {
@@ -222,9 +237,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
           onCancel: () => transport.close(),
         }
       );
-      if (args.path === "tunnel") {
-        observer.onAttach("ok", undefined);
-      }
+      reportAttachSuccess();
       observer.onHandshake(args.path, "ok", undefined, nowSeconds() - handshakeStart);
     } catch (err) {
       const handshakeElapsedSeconds = nowSeconds() - handshakeStart;
@@ -234,13 +247,13 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       if (args.path === "tunnel" && err instanceof WsCloseError) {
         const reason = err.reason;
         if (isTunnelAttachCloseReason(reason)) {
-          observer.onAttach("fail", reason);
+          reportAttachFailure(reason);
           throw new FlowersecError({ path: args.path, stage: "attach", code: reason, message: "tunnel rejected attach", cause: err });
         }
       }
 
       if (args.path === "tunnel") {
-        observer.onAttach("ok", undefined);
+        reportAttachFailure(handshakeCode === "timeout" ? "timeout" : handshakeCode === "canceled" ? "canceled" : "attach_failed");
       }
       observer.onHandshake(args.path, "fail", handshakeCode, handshakeElapsedSeconds);
       throw new FlowersecError({
