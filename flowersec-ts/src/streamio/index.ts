@@ -1,3 +1,5 @@
+import type { Client } from "../client.js";
+import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
 import { AbortError, throwIfAborted } from "../utils/errors.js";
 import { ByteReader } from "../yamux/byteReader.js";
 import type { YamuxStream } from "../yamux/stream.js";
@@ -66,3 +68,60 @@ export async function readNBytes(reader: ByteReader, n: number, opts: ReadNBytes
   return out;
 }
 
+export type JsonFrameChannel = Readonly<{
+  stream: YamuxStream;
+  reader: ByteReader;
+  writeFrame: (value: unknown) => Promise<void>;
+  readFrame: <T = unknown>(
+    opts?: Readonly<{ maxBytes?: number; assert?: (value: unknown) => T }>
+  ) => Promise<T>;
+  close: () => Promise<void>;
+}>;
+
+export type JsonFrameChannelOptions = Readonly<{
+  signal?: AbortSignal;
+  maxJsonFrameBytes?: number;
+}>;
+
+function normalizeMaxJsonFrameBytes(maxBytes: number | undefined): number {
+  const value = maxBytes ?? DEFAULT_MAX_JSON_FRAME_BYTES;
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("maxJsonFrameBytes must be a non-negative finite number");
+  }
+  return Math.floor(value);
+}
+
+export function createJsonFrameChannel(
+  stream: YamuxStream,
+  opts: JsonFrameChannelOptions = {}
+): JsonFrameChannel {
+  const reader = createByteReader(stream, opts.signal == null ? {} : { signal: opts.signal });
+  const defaultMaxBytes = normalizeMaxJsonFrameBytes(opts.maxJsonFrameBytes);
+
+  return {
+    stream,
+    reader,
+    writeFrame: async (value) => {
+      await writeJsonFrame(stream, value);
+    },
+    readFrame: async <T = unknown>(
+      readOpts: Readonly<{ maxBytes?: number; assert?: (value: unknown) => T }> = {}
+    ): Promise<T> => {
+      const raw = await readJsonFrame(reader, normalizeMaxJsonFrameBytes(readOpts.maxBytes ?? defaultMaxBytes));
+      if (readOpts.assert != null) return readOpts.assert(raw);
+      return raw as T;
+    },
+    close: async () => {
+      await stream.close();
+    },
+  };
+}
+
+export async function openJsonFrameChannel(
+  client: Pick<Client, "openStream">,
+  kind: string,
+  opts: JsonFrameChannelOptions = {}
+): Promise<JsonFrameChannel> {
+  const stream = await client.openStream(kind, opts.signal == null ? {} : { signal: opts.signal });
+  return createJsonFrameChannel(stream, opts);
+}

@@ -15,6 +15,7 @@ import type { ProxyRuntime } from "./runtime.js";
 export type ConnectTunnelProxyBrowserOptions = Readonly<{
   connect?: TunnelConnectBrowserOptions;
   profile?: ProxyProfileName | Partial<ProxyProfile>;
+  runtimeGlobalKey?: string;
   runtime?: RegisterProxyIntegrationOptions["runtime"];
   serviceWorker: ProxyIntegrationServiceWorkerOptions;
   plugins?: readonly ProxyIntegrationPlugin[];
@@ -36,6 +37,7 @@ export async function connectTunnelProxyBrowser(
     client,
     serviceWorker: opts.serviceWorker,
     ...(opts.profile === undefined ? {} : { profile: opts.profile }),
+    ...(opts.runtimeGlobalKey === undefined ? {} : { runtimeGlobalKey: opts.runtimeGlobalKey }),
     ...(opts.runtime === undefined ? {} : { runtime: opts.runtime }),
     ...(opts.plugins === undefined ? {} : { plugins: opts.plugins }),
   };

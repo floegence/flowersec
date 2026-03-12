@@ -27,6 +27,8 @@ describe("docs/API_SURFACE.md", () => {
 
     expect(doc).toContain("`@floegence/flowersec-core/framing`");
     expect(doc).toContain("`@floegence/flowersec-core/streamio`");
+    expect(doc).toContain("`createJsonFrameChannel(...)`");
+    expect(doc).toContain("`openJsonFrameChannel(...)`");
     expect(doc).toContain("`@floegence/flowersec-core/proxy`");
     expect(doc).toContain("`createProxyRuntime(...)`");
     expect(doc).toContain("`registerProxyIntegration(...)`");
@@ -36,6 +38,7 @@ describe("docs/API_SURFACE.md", () => {
     expect(doc).toContain("`createReconnectManager()`");
     expect(doc).toContain("`ReconnectManager.connectIfNeeded(...)`");
     expect(doc).toContain("`@floegence/flowersec-core/rpc`");
+    expect(doc).toContain("`RpcProxy`");
     expect(doc).toContain("`@floegence/flowersec-core/yamux`");
     expect(doc).toContain("`@floegence/flowersec-core/e2ee`");
     expect(doc).toContain("`@floegence/flowersec-core/ws`");

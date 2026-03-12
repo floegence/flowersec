@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
 
 import { AbortError } from "../utils/errors.js";
-import { createByteReader, readExactly, readMaybe, readNBytes } from "./index.js";
+import { writeJsonFrame } from "../framing/jsonframe.js";
+import { createByteReader, createJsonFrameChannel, openJsonFrameChannel, readExactly, readMaybe, readNBytes } from "./index.js";
 
 class FakeStream {
   private readonly chunks: Array<Uint8Array | null> = [];
@@ -9,6 +10,8 @@ class FakeStream {
   private err: Error | null = null;
 
   resetCalls: Error[] = [];
+  writeCalls: Uint8Array[] = [];
+  closeCalls = 0;
 
   push(b: Uint8Array): void {
     if (this.waiters.length > 0) {
@@ -37,6 +40,14 @@ class FakeStream {
     this.err = err;
     const ws = this.waiters.splice(0, this.waiters.length);
     for (const w of ws) w.reject(err);
+  }
+
+  async write(b: Uint8Array): Promise<void> {
+    this.writeCalls.push(b);
+  }
+
+  async close(): Promise<void> {
+    this.closeCalls += 1;
   }
 }
 
@@ -93,5 +104,40 @@ describe("streamio", () => {
 
     await expect(p).rejects.toBe(reason);
     expect(s.resetCalls.length).toBe(1);
+  });
+
+  test("createJsonFrameChannel reads and writes framed JSON values", async () => {
+    const s = new FakeStream();
+    const encoded: Uint8Array[] = [];
+    await writeJsonFrame((b) => {
+      encoded.push(b);
+      return Promise.resolve();
+    }, { ok: true, n: 3 });
+    s.push(encoded[0]!);
+
+    const channel = createJsonFrameChannel(s as any);
+    await channel.writeFrame({ hello: "world" });
+    await expect(channel.readFrame<{ ok: boolean; n: number }>()).resolves.toEqual({ ok: true, n: 3 });
+    await channel.close();
+
+    expect(s.writeCalls.length).toBe(1);
+    expect(s.closeCalls).toBe(1);
+  });
+
+  test("openJsonFrameChannel opens the target kind and preserves the abort signal", async () => {
+    const s = new FakeStream();
+    const ac = new AbortController();
+    const calls: Array<{ kind: string; signal?: AbortSignal }> = [];
+    const client = {
+      openStream: async (kind: string, opts?: Readonly<{ signal?: AbortSignal }>) => {
+        calls.push({ kind, signal: opts?.signal });
+        return s as any;
+      },
+    };
+
+    const channel = await openJsonFrameChannel(client, "fs/read_file", { signal: ac.signal });
+
+    expect(calls).toEqual([{ kind: "fs/read_file", signal: ac.signal }]);
+    expect(channel.stream).toBe(s);
   });
 });

@@ -34,6 +34,7 @@ export type ProxyIntegrationServiceWorkerOptions = Readonly<{
 export type RegisterProxyIntegrationOptions = Readonly<{
   client: Client;
   profile?: ProxyProfileName | Partial<ProxyProfile>;
+  runtimeGlobalKey?: string;
   runtime?: Readonly<{
     maxJsonFrameBytes?: number;
     maxChunkBytes?: number;
@@ -265,6 +266,18 @@ function buildRuntimeOptions(profile: ProxyProfile, runtime: RegisterProxyIntegr
   };
 }
 
+function bindRuntimeGlobal(runtime: ProxyRuntime, key: string | undefined): (() => void) | null {
+  const runtimeGlobalKey = String(key ?? "").trim();
+  if (runtimeGlobalKey === "") return null;
+  const target = globalThis as Record<string, unknown>;
+  target[runtimeGlobalKey] = runtime;
+  return () => {
+    if (target[runtimeGlobalKey] === runtime) {
+      delete target[runtimeGlobalKey];
+    }
+  };
+}
+
 export function createProxyIntegrationServiceWorkerScript(
   opts: CreateProxyIntegrationServiceWorkerScriptOptions = {}
 ): string {
@@ -310,6 +323,7 @@ export async function registerProxyIntegration(input: RegisterProxyIntegrationOp
   const profile = resolveProxyProfile(opts.profile);
   const runtimeOpts = buildRuntimeOptions(profile, opts.runtime);
   const runtime = createProxyRuntime({ ...runtimeOpts, client: opts.client });
+  const releaseRuntimeGlobal = bindRuntimeGlobal(runtime, opts.runtimeGlobalKey);
 
   const swCfg = opts.serviceWorker;
   const repairQueryKey = String(swCfg.repair?.queryKey ?? "_flowersec_sw_repair").trim() || "_flowersec_sw_repair";
@@ -387,13 +401,28 @@ export async function registerProxyIntegration(input: RegisterProxyIntegrationOp
   return {
     runtime,
     dispose: async () => {
+      let firstError: unknown = null;
       if (monitorHandler && sw) {
         sw.removeEventListener("controllerchange", monitorHandler);
       }
-      runtime.dispose();
-      for (const plugin of plugins) {
-        await plugin.onDisposed?.();
+      try {
+        runtime.dispose();
+      } catch (error) {
+        firstError = error;
       }
+      for (const plugin of plugins) {
+        try {
+          await plugin.onDisposed?.();
+        } catch (error) {
+          if (firstError == null) firstError = error;
+        }
+      }
+      try {
+        releaseRuntimeGlobal?.();
+      } catch (error) {
+        if (firstError == null) firstError = error;
+      }
+      if (firstError != null) throw firstError;
     },
   };
 }

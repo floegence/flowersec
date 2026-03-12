@@ -26,6 +26,7 @@ describe("connectTunnelProxyBrowser", () => {
 
     const { connectTunnelProxyBrowser } = await import("./bootstrap.js");
     const out = await connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
+      runtimeGlobalKey: "__flowersecProxyRuntime",
       serviceWorker: { scriptUrl: "/proxy-sw.js" },
     });
 
@@ -35,6 +36,7 @@ describe("connectTunnelProxyBrowser", () => {
     expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
       client,
       profile: undefined,
+      runtimeGlobalKey: "__flowersecProxyRuntime",
       runtime: undefined,
       serviceWorker: { scriptUrl: "/proxy-sw.js" },
       plugins: undefined,
