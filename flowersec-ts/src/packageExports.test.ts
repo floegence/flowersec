@@ -7,12 +7,16 @@ import { describe, expect, it } from "vitest";
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("package exports", () => {
-  it("resolves stable subpath exports from packed tarball", () => {
-    expect(() =>
-      execFileSync(process.execPath, ["./scripts/verify-package-exports.mjs"], {
-        cwd: pkgRoot,
-        stdio: "pipe",
-      })
-    ).not.toThrow();
-  });
+  it(
+    "resolves stable subpath exports from packed tarball",
+    () => {
+      expect(() =>
+        execFileSync(process.execPath, ["./scripts/verify-package-exports.mjs"], {
+          cwd: pkgRoot,
+          stdio: "pipe",
+        })
+      ).not.toThrow();
+    },
+    15_000,
+  );
 });

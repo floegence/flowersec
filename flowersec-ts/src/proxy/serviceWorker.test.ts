@@ -96,7 +96,7 @@ describe("createProxyServiceWorkerScript", () => {
     });
     expect(s).toContain("FORWARD_FETCH_MESSAGE_TYPES");
     expect(s).toContain("redeven:proxy_fetch");
-    expect(s).toContain('runtime.postMessage({ type: "flowersec-proxy:fetch", req: data.req }, [port]);');
+    expect(s).toContain('target.postMessage({ type: WINDOW_CLIENT_MESSAGE_TYPE, req: data.req }, [port]);');
   });
 
   it("supports conflict hint metadata", () => {
@@ -109,5 +109,20 @@ describe("createProxyServiceWorkerScript", () => {
 
   it("rejects invalid forward message types", () => {
     expect(() => createProxyServiceWorkerScript({ forwardFetchMessageTypes: ["bad\nmsg"] })).toThrow(/forwardFetchMessageTypes/);
+  });
+
+  it("supports request_client targeting for cross-origin controller/app mode", () => {
+    const s = createProxyServiceWorkerScript({
+      windowTarget: "request_client",
+      windowClientMessageType: "flowersec-proxy:window_fetch",
+    });
+    expect(s).toContain('const WINDOW_TARGET = "request_client";');
+    expect(s).toContain('const WINDOW_CLIENT_MESSAGE_TYPE = "flowersec-proxy:window_fetch";');
+    expect(s).toContain("event.clientId || event.resultingClientId");
+  });
+
+  it("rejects invalid controller window routing options", () => {
+    expect(() => createProxyServiceWorkerScript({ windowTarget: "bad" as any })).toThrow(/windowTarget/);
+    expect(() => createProxyServiceWorkerScript({ windowClientMessageType: "bad\nmsg" })).toThrow(/windowClientMessageType/);
   });
 });

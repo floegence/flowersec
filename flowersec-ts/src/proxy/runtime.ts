@@ -44,9 +44,9 @@ export type ProxyRuntimeLimits = Readonly<{
 }>;
 
 export type ProxyRuntime = Readonly<{
-  cookieJar: CookieJar;
   limits: ProxyRuntimeLimits;
   dispose: () => void;
+  dispatchFetch: (req: ProxyFetchReq, port: MessagePort) => void;
   openWebSocketStream: (
     path: string,
     opts?: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }>
@@ -64,6 +64,7 @@ export type ProxyRuntimeOptions = Readonly<{
   extraRequestHeaders?: readonly string[];
   extraResponseHeaders?: readonly string[];
   extraWsHeaders?: readonly string[];
+  cookieJar?: CookieJar;
 }>;
 
 function randomB64u(bytes: number): string {
@@ -148,7 +149,7 @@ async function readChunkFrames(
 
 export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
   const client = opts.client;
-  const cookieJar = new CookieJar();
+  const cookieJar = opts.cookieJar ?? new CookieJar();
 
   const maxJsonFrameBytes = normalizeMaxBytes("maxJsonFrameBytes", opts.maxJsonFrameBytes, DEFAULT_MAX_JSON_FRAME_BYTES);
   const maxChunkBytes = normalizeMaxBytes("maxChunkBytes", opts.maxChunkBytes, DEFAULT_MAX_CHUNK_BYTES);
@@ -178,7 +179,7 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
     const msg = data as ProxyFetchMsg;
     const port = ev.ports?.[0];
     if (!port) return;
-    void handleFetch(msg.req, port);
+    dispatchFetch(msg.req, port);
   };
 
   const sw = globalThis.navigator?.serviceWorker;
@@ -186,7 +187,7 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
   sw?.addEventListener("controllerchange", registerRuntime);
   registerRuntime();
 
-  async function handleFetch(req: ProxyFetchReq, port: MessagePort): Promise<void> {
+  const dispatchFetch = (req: ProxyFetchReq, port: MessagePort): void => {
     const ac = new AbortController();
     let stream: YamuxStream | null = null;
     port.onmessage = (ev) => {
@@ -196,76 +197,78 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
       }
     };
 
-    try {
-      const path = pathOnly(req.path);
-      const requestID = req.id.trim() !== "" ? req.id : randomB64u(18);
-      stream = await client.openStream(PROXY_KIND_HTTP1, { signal: ac.signal });
-      const reader = createByteReader(stream, { signal: ac.signal });
+    void (async () => {
+      try {
+        const path = pathOnly(req.path);
+        const requestID = req.id.trim() !== "" ? req.id : randomB64u(18);
+        stream = await client.openStream(PROXY_KIND_HTTP1, { signal: ac.signal });
+        const reader = createByteReader(stream, { signal: ac.signal });
 
-      const filteredReqHeaders = filterRequestHeaders(req.headers, { extraAllowed: extraRequestHeaders });
-      const cookieHeader = cookieJar.getCookieHeader(cookiePathFromRequestPath(path));
-      const reqHeaders: Header[] = cookieHeader === "" ? filteredReqHeaders : [...filteredReqHeaders, { name: "cookie", value: cookieHeader }];
+        const filteredReqHeaders = filterRequestHeaders(req.headers, { extraAllowed: extraRequestHeaders });
+        const cookieHeader = cookieJar.getCookieHeader(cookiePathFromRequestPath(path));
+        const reqHeaders: Header[] = cookieHeader === "" ? filteredReqHeaders : [...filteredReqHeaders, { name: "cookie", value: cookieHeader }];
 
-      await writeJsonFrame(stream, {
-        v: PROXY_PROTOCOL_VERSION,
-        request_id: requestID,
-        method: req.method,
-        path,
-        headers: reqHeaders,
-        timeout_ms: timeoutMs
-      });
+        await writeJsonFrame(stream, {
+          v: PROXY_PROTOCOL_VERSION,
+          request_id: requestID,
+          method: req.method,
+          path,
+          headers: reqHeaders,
+          timeout_ms: timeoutMs
+        });
 
-      const body = req.body != null ? new Uint8Array(req.body) : new Uint8Array();
-      await writeChunkFrames(stream, body, Math.min(64 * 1024, maxChunkBytes), maxBodyBytes);
+        const body = req.body != null ? new Uint8Array(req.body) : new Uint8Array();
+        await writeChunkFrames(stream, body, Math.min(64 * 1024, maxChunkBytes), maxBodyBytes);
 
-      const respMeta = (await readJsonFrame(reader, maxJsonFrameBytes)) as HttpResponseMetaV1;
-      if (respMeta.v !== PROXY_PROTOCOL_VERSION || respMeta.request_id !== requestID) {
-        throw new Error("invalid upstream response meta");
-      }
-      if (!respMeta.ok) {
-        const msg = respMeta.error?.message ?? "upstream error";
+        const respMeta = (await readJsonFrame(reader, maxJsonFrameBytes)) as HttpResponseMetaV1;
+        if (respMeta.v !== PROXY_PROTOCOL_VERSION || respMeta.request_id !== requestID) {
+          throw new Error("invalid upstream response meta");
+        }
+        if (!respMeta.ok) {
+          const msg = respMeta.error?.message ?? "upstream error";
+          port.postMessage({ type: "flowersec-proxy:response_error", status: 502, message: msg } satisfies ProxyRespErrMsg);
+          try {
+            stream.reset(new Error(msg));
+          } catch {
+            // Best-effort.
+          }
+          stream = null;
+          return;
+        }
+        const status = Math.max(0, Math.floor(respMeta.status ?? 502));
+        const rawHeaders = Array.isArray(respMeta.headers) ? respMeta.headers : [];
+        const { passthrough, setCookie } = filterResponseHeaders(rawHeaders, { extraAllowed: extraResponseHeaders });
+        cookieJar.updateFromSetCookieHeaders(setCookie);
+
+        port.postMessage({ type: "flowersec-proxy:response_meta", status, headers: passthrough } satisfies ProxyRespMetaMsg);
+
+        const chunks = await readChunkFrames(reader, maxChunkBytes, maxBodyBytes);
+        for await (const chunk of chunks) {
+          // Always transfer an ArrayBuffer (SharedArrayBuffer is not transferable).
+          const ab = chunk.slice().buffer as ArrayBuffer;
+          port.postMessage({ type: "flowersec-proxy:response_chunk", data: ab } satisfies ProxyRespChunkMsg, [ab]);
+        }
+        port.postMessage({ type: "flowersec-proxy:response_end" } satisfies ProxyRespEndMsg);
+
+        await stream.close();
+        stream = null;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         port.postMessage({ type: "flowersec-proxy:response_error", status: 502, message: msg } satisfies ProxyRespErrMsg);
         try {
-          stream.reset(new Error(msg));
+          stream?.reset(new Error(msg));
         } catch {
           // Best-effort.
         }
-        stream = null;
-        return;
+      } finally {
+        try {
+          port.close();
+        } catch {
+          // Best-effort.
+        }
       }
-      const status = Math.max(0, Math.floor(respMeta.status ?? 502));
-      const rawHeaders = Array.isArray(respMeta.headers) ? respMeta.headers : [];
-      const { passthrough, setCookie } = filterResponseHeaders(rawHeaders, { extraAllowed: extraResponseHeaders });
-      cookieJar.updateFromSetCookieHeaders(setCookie);
-
-      port.postMessage({ type: "flowersec-proxy:response_meta", status, headers: passthrough } satisfies ProxyRespMetaMsg);
-
-      const chunks = await readChunkFrames(reader, maxChunkBytes, maxBodyBytes);
-      for await (const chunk of chunks) {
-        // Always transfer an ArrayBuffer (SharedArrayBuffer is not transferable).
-        const ab = chunk.slice().buffer as ArrayBuffer;
-        port.postMessage({ type: "flowersec-proxy:response_chunk", data: ab } satisfies ProxyRespChunkMsg, [ab]);
-      }
-      port.postMessage({ type: "flowersec-proxy:response_end" } satisfies ProxyRespEndMsg);
-
-      await stream.close();
-      stream = null;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      port.postMessage({ type: "flowersec-proxy:response_error", status: 502, message: msg } satisfies ProxyRespErrMsg);
-      try {
-        stream?.reset(new Error(msg));
-      } catch {
-        // Best-effort.
-      }
-    } finally {
-      try {
-        port.close();
-      } catch {
-        // Best-effort.
-      }
-    }
-  }
+    })();
+  };
 
   async function openWebSocketStream(
     pathRaw: string,
@@ -299,8 +302,8 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
   }
 
   return {
-    cookieJar,
     limits: { maxJsonFrameBytes, maxChunkBytes, maxBodyBytes, maxWsFrameBytes },
+    dispatchFetch,
     openWebSocketStream,
     dispose: () => {
       sw?.removeEventListener("message", onMessage);

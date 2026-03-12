@@ -147,6 +147,8 @@ import {
   createProxyServiceWorkerScript,
   createProxyIntegrationServiceWorkerScript,
   registerProxyIntegration,
+  registerProxyControllerWindow,
+  registerProxyAppWindow,
   registerServiceWorkerAndEnsureControl,
   connectTunnelProxyBrowser,
   createServiceWorkerControllerGuard,
@@ -162,6 +164,18 @@ const client = await connectTunnelBrowser(grant);
 const runtime = createProxyRuntime({ client });
 // Expose runtime on a global if your injected upstream script needs to access it via window.top[...].
 (window as any).__flowersecProxyRuntime = runtime;
+```
+
+If your controller window and upstream app window are intentionally cross-origin, do not expose the runtime on a global in the app origin.
+Instead, keep the real runtime in the controller window and install a narrow bridge:
+
+```ts
+const runtime = createProxyRuntime({ client });
+
+const controllerHandle = registerProxyControllerWindow({
+  runtime,
+  allowedOrigins: ["https://app.example.test"],
+});
 ```
 
 3) Serve a proxy Service Worker script (same-origin) and register it:
@@ -182,6 +196,33 @@ const swScript = createProxyServiceWorkerScript({
 // You are responsible for serving swScript at "/_proxy/sw.js".
 await registerServiceWorkerAndEnsureControl({ scriptUrl: "/_proxy/sw.js", scope: "/" });
 ```
+
+For the cross-origin controller/app split, serve a different app-origin SW and app bootstrap:
+
+```ts
+const appOriginSw = createProxyServiceWorkerScript({
+  sameOriginOnly: true,
+  passthrough: {
+    prefixes: ["/assets/"],
+    paths: ["/_proxy/app-sw.js"],
+  },
+  injectHTML: { mode: "external_script", scriptUrl: "/_proxy/inject.js", excludePathPrefixes: ["/_proxy/"] },
+  windowTarget: "request_client",
+  windowClientMessageType: "flowersec-proxy:window_fetch",
+});
+
+await registerServiceWorkerAndEnsureControl({ scriptUrl: "/_proxy/app-sw.js", scope: "/" });
+
+const appHandle = registerProxyAppWindow({
+  controllerOrigin: "https://rt.example.test",
+});
+```
+
+In this mode:
+
+- the Service Worker posts fetches back to the controlled app window (`windowTarget: "request_client"`)
+- `registerProxyAppWindow(...)` forwards those requests to the controller window
+- `installWebSocketPatch({ runtime: appHandle.runtime })` keeps using the same runtime-facing API without giving the app access to the controller's full `ProxyRuntime`
 
 See `docs/PROXY.md` for the stable wire contracts and security requirements.
 
@@ -263,6 +304,9 @@ await mgr.connect({
 When your injected upstream script needs a predictable runtime global (for example `window.top.__flowersecProxyRuntime`),
 prefer `runtimeGlobalKey` on `connectTunnelProxyBrowser(...)` or `registerProxyIntegration(...)`
 instead of assigning `window[...] = runtime` manually in every app.
+
+If the app is cross-origin from the controller, prefer `registerProxyControllerWindow(...)` + `registerProxyAppWindow(...)`
+over trying to reach `window.top.__flowersecProxyRuntime`. Cross-origin pages should only receive the narrow bridge runtime.
 
 Best practice: if you build a framework or UI layer (e.g. a Solid/React provider), keep UI state management in your app/framework,
 but delegate the reconnect state machine to `@floegence/flowersec-core/reconnect` instead of duplicating backoff + cancellation + observer wiring.

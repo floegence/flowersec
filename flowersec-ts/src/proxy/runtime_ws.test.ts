@@ -4,6 +4,7 @@ import type { Client } from "../client.js";
 import { u32be } from "../utils/bin.js";
 
 import { createProxyRuntime } from "./runtime.js";
+import { CookieJar } from "./cookieJar.js";
 import { PROXY_KIND_WS, PROXY_PROTOCOL_VERSION } from "./constants.js";
 
 const te = new TextEncoder();
@@ -60,8 +61,9 @@ describe("createProxyRuntime.openWebSocketStream", () => {
       close: () => {}
     };
 
-    const rt = createProxyRuntime({ client });
-    rt.cookieJar.setCookie("a=1; Path=/");
+    const cookieJar = new CookieJar();
+    cookieJar.setCookie("a=1; Path=/");
+    const rt = createProxyRuntime({ client, cookieJar });
 
     const out = await rt.openWebSocketStream("/ws?x=1", { protocols: ["demo"] });
     expect(out.protocol).toBe("demo");
@@ -78,4 +80,3 @@ describe("createProxyRuntime.openWebSocketStream", () => {
     expect(meta.headers).toContainEqual({ name: "cookie", value: "a=1" });
   });
 });
-

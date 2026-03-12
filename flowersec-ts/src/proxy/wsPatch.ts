@@ -1,8 +1,9 @@
 import { createByteReader } from "../streamio/index.js";
 import { readU32be, u16be, u32be } from "../utils/bin.js";
+import type { YamuxStream } from "../yamux/stream.js";
 
 import { DEFAULT_MAX_WS_FRAME_BYTES } from "./constants.js";
-import type { ProxyRuntime } from "./runtime.js";
+import type { ProxyRuntimeLimits } from "./runtime.js";
 
 function readU16be(buf: Uint8Array, off: number): number {
   return ((buf[off]! << 8) | buf[off + 1]!) >>> 0;
@@ -71,7 +72,13 @@ async function readWSFrame(
 }
 
 export type WebSocketPatchOptions = Readonly<{
-  runtime: ProxyRuntime;
+  runtime: Readonly<{
+    limits: Partial<ProxyRuntimeLimits>;
+    openWebSocketStream: (
+      path: string,
+      opts?: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }>
+    ) => Promise<Readonly<{ stream: YamuxStream; protocol: string }>>;
+  }>;
   // Default: proxy same host/port (including ws<->http and wss<->https scheme mapping).
   shouldProxy?: (url: URL) => boolean;
   maxWsFrameBytes?: number;
