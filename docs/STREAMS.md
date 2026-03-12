@@ -28,6 +28,8 @@ TypeScript:
 
 - `@floegence/flowersec-core/framing` (length-prefixed JSON framing)
 - `@floegence/flowersec-core/streamio` (ByteReader + abort-aware helpers)
+  - `createJsonFrameChannel(...)`
+  - `openJsonFrameChannel(...)`
 
 Go:
 
@@ -59,8 +61,7 @@ Go:
 
 ```ts
 import type { Client } from "@floegence/flowersec-core";
-import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "@floegence/flowersec-core/framing";
-import { createByteReader, readNBytes } from "@floegence/flowersec-core/streamio";
+import { openJsonFrameChannel, readNBytes } from "@floegence/flowersec-core/streamio";
 
 type ReadFileRequest = {
   path: string;
@@ -74,17 +75,16 @@ type ReadFileResponse = {
 };
 
 export async function readFileOverStream(client: Client, req: ReadFileRequest, opts: { signal?: AbortSignal } = {}) {
-  const stream = await client.openStream("fs/read_file", { signal: opts.signal });
-  const reader = createByteReader(stream, { signal: opts.signal });
+  const channel = await openJsonFrameChannel(client, "fs/read_file", { signal: opts.signal });
 
-  await writeJsonFrame(stream, req);
-  const meta = (await readJsonFrame(reader, DEFAULT_MAX_JSON_FRAME_BYTES)) as ReadFileResponse;
+  await channel.writeFrame(req);
+  const meta = await channel.readFrame<ReadFileResponse>();
 
   // Note: readNBytes allocates a single buffer of size content_len. For large downloads,
   // prefer a streaming loop using stream.read() and writing to your sink incrementally.
-  const bytes = await readNBytes(reader, meta.content_len, { signal: opts.signal, chunkSize: 64 * 1024 });
+  const bytes = await readNBytes(channel.reader, meta.content_len, { signal: opts.signal, chunkSize: 64 * 1024 });
 
-  await stream.close();
+  await channel.close();
   return { meta, bytes };
 }
 ```
@@ -159,4 +159,3 @@ func registerHandlers(srv *serve.Server) {
 	})
 }
 ```
-

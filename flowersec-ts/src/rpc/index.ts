@@ -2,4 +2,5 @@ export * from "./caller.js";
 export * from "./client.js";
 export * from "./server.js";
 export * from "./callError.js";
+export * from "./rpcProxy.js";
 export * from "./typed.js";

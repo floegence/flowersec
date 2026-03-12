@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 
-import { RpcProxy } from "./rpcProxy.js";
+import { RpcProxy, RpcProxyDetachedError } from "./rpcProxy.js";
 
 class FakeRpcClient {
   private readonly handlers = new Map<number, Set<(payload: unknown) => void>>();
@@ -60,5 +60,9 @@ describe("RpcProxy", () => {
     c2.trigger(2, { a: 3 });
     expect(handler).toHaveBeenCalledTimes(2);
   });
-});
 
+  test("call throws a stable detached error when no client is attached", async () => {
+    const proxy = new RpcProxy();
+    await expect(proxy.call(1, {})).rejects.toBeInstanceOf(RpcProxyDetachedError);
+  });
+});

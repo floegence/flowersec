@@ -213,6 +213,7 @@ const swScript = createProxyIntegrationServiceWorkerScript({
 
 const { client, runtime, dispose } = await connectTunnelProxyBrowser(grant, {
   profile: "codeserver",
+  runtimeGlobalKey: "__flowersecProxyRuntime",
   serviceWorker: {
     scriptUrl: "/_proxy/sw.js",
     scope: "/",
@@ -259,8 +260,15 @@ await mgr.connect({
 });
 ```
 
+When your injected upstream script needs a predictable runtime global (for example `window.top.__flowersecProxyRuntime`),
+prefer `runtimeGlobalKey` on `connectTunnelProxyBrowser(...)` or `registerProxyIntegration(...)`
+instead of assigning `window[...] = runtime` manually in every app.
+
 Best practice: if you build a framework or UI layer (e.g. a Solid/React provider), keep UI state management in your app/framework,
 but delegate the reconnect state machine to `@floegence/flowersec-core/reconnect` instead of duplicating backoff + cancellation + observer wiring.
+
+If your UI layer needs notify subscriptions to survive client reattachment, use `RpcProxy` from `@floegence/flowersec-core/rpc`
+as the stable transport bridge and attach/detach the current `client.rpc` around reconnects.
 
 When your app already has a healthy connection and just wants to ensure availability, prefer `connectIfNeeded(...)`
 to avoid unnecessary hard reconnects.
