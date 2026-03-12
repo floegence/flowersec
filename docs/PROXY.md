@@ -359,6 +359,13 @@ Requirements:
   - If your app needs extra fetch bridge message types (for example `redeven:proxy_fetch`), configure
     `createProxyServiceWorkerScript({ forwardFetchMessageTypes: [...] })` or use
     `createProxyIntegrationServiceWorkerScript(...)` with plugins.
+- If the upstream app must run on a different origin from the controller/runtime window, use the cross-origin controller/app split:
+  - The controller origin owns `createProxyRuntime(...)` and exposes only a narrow bridge with `registerProxyControllerWindow({ runtime, allowedOrigins })`.
+  - The app origin registers `registerProxyAppWindow({ controllerOrigin })`, which exposes a runtime-compatible object limited to `openWebSocketStream(...)` plus `limits`.
+  - For the app-origin Service Worker, generate the script with
+    `createProxyServiceWorkerScript({ windowTarget: "request_client", windowClientMessageType: "flowersec-proxy:window_fetch" })`
+    so SW fetches are routed back to the controlled app window and then forwarded to the controller window.
+  - This mode is intentionally narrower than same-origin runtime globals: the app origin never receives the raw `ProxyRuntime` object or its internal state.
 
 ### 6.2 Gateway mode (L7 reverse proxy)
 

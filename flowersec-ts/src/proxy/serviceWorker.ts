@@ -90,10 +90,26 @@ export type ProxyServiceWorkerScriptOptions = Readonly<{
   // Additional message types that should be treated as runtime-proxy fetch bridge messages.
   //
   // Each message must be posted with a transferable MessagePort and carry `{ req }` payload,
-  // and the Service Worker forwards it to the runtime as `flowersec-proxy:fetch`.
+  // and the Service Worker forwards it to the configured window target.
   //
   // Example: ["redeven:proxy_fetch"]
   forwardFetchMessageTypes?: readonly string[];
+
+  // Which controlled window should receive proxied fetch requests from the Service Worker.
+  //
+  // - "registered_runtime" (default): send requests to the window that registered itself via
+  //   "flowersec-proxy:register-runtime" (same-origin runtime mode).
+  // - "request_client": send requests back to the client window that triggered the fetch/message
+  //   (cross-origin controller/app mode).
+  windowTarget?: "registered_runtime" | "request_client";
+
+  // Message type posted from the Service Worker to the chosen window target.
+  //
+  // Default: "flowersec-proxy:fetch"
+  //
+  // Example: use "flowersec-proxy:window_fetch" together with registerProxyAppWindow(...)
+  // so an app-origin page can forward fetches to a controller-origin runtime.
+  windowClientMessageType?: string;
 
   // Optional conflict hints for integrations that need to preserve specific Service Worker scripts.
   // This field is informational for generated scripts (for debugging/diagnostics) and does not
@@ -171,6 +187,16 @@ export function createProxyServiceWorkerScript(opts: ProxyServiceWorkerScriptOpt
   const passthroughPrefixes = normalizePathList("passthrough.prefixes", opts.passthrough?.prefixes);
   const forwardFetchMessageTypes = normalizeMessageTypeList("forwardFetchMessageTypes", opts.forwardFetchMessageTypes);
   const keepScriptPathSuffixes = normalizePathList("conflictHints.keepScriptPathSuffixes", opts.conflictHints?.keepScriptPathSuffixes);
+  const windowTarget = opts.windowTarget ?? "registered_runtime";
+  if (windowTarget !== "registered_runtime" && windowTarget !== "request_client") {
+    throw new Error('windowTarget must be either "registered_runtime" or "request_client"');
+  }
+  const windowClientMessageType = (() => {
+    const normalized = typeof opts.windowClientMessageType === "string" ? opts.windowClientMessageType.trim() : "flowersec-proxy:fetch";
+    if (normalized === "") throw new Error("windowClientMessageType must be non-empty");
+    if (/[\r\n]/.test(normalized)) throw new Error("windowClientMessageType must not contain newline");
+    return normalized;
+  })();
 
   const injectHTML = opts.injectHTML ?? null;
 
@@ -234,6 +260,8 @@ const INJECT_SET_NO_STORE = ${JSON.stringify(setNoStore)};
 const MAX_REQUEST_BODY_BYTES = ${JSON.stringify(maxRequestBodyBytes)};
 const MAX_INJECT_HTML_BYTES = ${JSON.stringify(maxInjectHTMLBytes)};
 const FORWARD_FETCH_MESSAGE_TYPES = new Set(${JSON.stringify(forwardFetchMessageTypes)});
+const WINDOW_TARGET = ${JSON.stringify(windowTarget)};
+const WINDOW_CLIENT_MESSAGE_TYPE = ${JSON.stringify(windowClientMessageType)};
 const CONFLICT_HINT_KEEP_SCRIPT_SUFFIXES = ${JSON.stringify(keepScriptPathSuffixes)};
 
 const INJECT_STRIP_HEADER_NAMES = new Set(["content-length", "etag", "last-modified", "content-md5"]);
@@ -263,15 +291,19 @@ self.addEventListener("message", (event) => {
   if (!port) return;
 
   event.waitUntil((async () => {
-    const runtime = await getRuntimeClient();
-    if (!runtime) {
-      try { port.postMessage({ type: "flowersec-proxy:response_error", status: 503, message: "flowersec-proxy runtime not available" }); } catch {}
+    const preferredClientId =
+      WINDOW_TARGET === "request_client" && event.source && typeof event.source.id === "string"
+        ? event.source.id
+        : "";
+    const target = await getWindowClient(preferredClientId);
+    if (!target) {
+      try { port.postMessage({ type: "flowersec-proxy:response_error", status: 503, message: "flowersec-proxy target window not available" }); } catch {}
       try { port.close(); } catch {}
       return;
     }
 
     try {
-      runtime.postMessage({ type: "flowersec-proxy:fetch", req: data.req }, [port]);
+      target.postMessage({ type: WINDOW_CLIENT_MESSAGE_TYPE, req: data.req }, [port]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       try { port.postMessage({ type: "flowersec-proxy:response_error", status: 502, message: msg }); } catch {}
@@ -280,7 +312,16 @@ self.addEventListener("message", (event) => {
   })());
 });
 
-async function getRuntimeClient() {
+async function getWindowClient(preferredClientId) {
+  if (WINDOW_TARGET === "request_client") {
+    if (preferredClientId) {
+      const c = await self.clients.get(preferredClientId);
+      if (c) return c;
+    }
+    const cs = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    return cs.length > 0 ? cs[0] : null;
+  }
+
   if (runtimeClientId) {
     const c = await self.clients.get(runtimeClientId);
     if (c) return c;
@@ -431,8 +472,12 @@ async function handleFetch(event) {
   let lastErrorMessage = "proxy error";
 
   try {
-    const runtime = await getRuntimeClient();
-    if (!runtime) return new Response("flowersec-proxy runtime not available", { status: 503 });
+    const preferredClientId =
+      WINDOW_TARGET === "request_client"
+        ? String(event.clientId || event.resultingClientId || "")
+        : "";
+    const target = await getWindowClient(preferredClientId);
+    if (!target) return new Response("flowersec-proxy target window not available", { status: 503 });
 
     const req = event.request;
     const url = new URL(req.url);
@@ -556,8 +601,8 @@ async function handleFetch(event) {
       path = "/" + rest + url.search;
     }
 
-    runtime.postMessage({
-      type: "flowersec-proxy:fetch",
+    target.postMessage({
+      type: WINDOW_CLIENT_MESSAGE_TYPE,
       req: { id, method: req.method, path, headers: headersToPairs(req.headers), body }
     }, [port2]);
 

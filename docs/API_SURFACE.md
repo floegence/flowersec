@@ -105,6 +105,8 @@ Stable building blocks (advanced, but supported):
   - `registerServiceWorkerAndEnsureControl(...)`
   - `connectTunnelProxyBrowser(...)`
   - `createServiceWorkerControllerGuard(...)`
+  - `registerProxyControllerWindow(...)`
+  - `registerProxyAppWindow(...)`
   - `installWebSocketPatch(...)`
   - `disableUpstreamServiceWorkerRegister()`
   - `resolveProxyProfile(...)`, `PROXY_PROFILE_DEFAULT`, `PROXY_PROFILE_CODESERVER`

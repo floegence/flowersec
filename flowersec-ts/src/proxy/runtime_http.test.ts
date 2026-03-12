@@ -4,6 +4,7 @@ import type { Client } from "../client.js";
 import { u32be } from "../utils/bin.js";
 
 import { PROXY_KIND_HTTP1, PROXY_PROTOCOL_VERSION } from "./constants.js";
+import { CookieJar } from "./cookieJar.js";
 import { createProxyRuntime } from "./runtime.js";
 
 const te = new TextEncoder();
@@ -104,8 +105,9 @@ describe("createProxyRuntime (http1)", () => {
     const oldNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
     Object.defineProperty(globalThis, "navigator", { value: { serviceWorker: sw }, configurable: true });
     try {
-      const rt = createProxyRuntime({ client });
-      rt.cookieJar.setCookie("a=1; Path=/");
+      const cookieJar = new CookieJar();
+      cookieJar.setCookie("a=1; Path=/");
+      createProxyRuntime({ client, cookieJar });
 
       const portMessages: any[] = [];
       let portClosed = false;
@@ -154,7 +156,7 @@ describe("createProxyRuntime (http1)", () => {
       expect(portMessages.find((m) => m?.type === "flowersec-proxy:response_end")).toBeTruthy();
 
       // The Set-Cookie is stored in the runtime CookieJar, not written to browser cookies.
-      expect(rt.cookieJar.getCookieHeader("/")).toBe("a=1; b=2");
+      expect(cookieJar.getCookieHeader("/")).toBe("a=1; b=2");
 
       // Request meta includes CookieJar cookie (not the original request cookie header).
       expect(stream.writes.length).toBe(2);

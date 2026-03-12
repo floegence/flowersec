@@ -89,6 +89,8 @@ function verifyInstalledPackage() {
     assert.equal(typeof proxy.registerServiceWorkerAndEnsureControl, 'function');
     assert.equal(typeof proxy.connectTunnelProxyBrowser, 'function');
     assert.equal(typeof proxy.createServiceWorkerControllerGuard, 'function');
+    assert.equal(typeof proxy.registerProxyControllerWindow, 'function');
+    assert.equal(typeof proxy.registerProxyAppWindow, 'function');
     assert.equal(typeof proxy.resolveProxyProfile, 'function');
     assert.equal(typeof proxy.installWebSocketPatch, 'function');
     assert.equal(typeof proxy.disableUpstreamServiceWorkerRegister, 'function');
