@@ -88,6 +88,8 @@ await mgr.connect(createBrowserReconnectConfig({
 }));
 ```
 
+`requestChannelGrant(...)` and `requestEntryChannelGrant(...)` throw `ControlplaneRequestError` on HTTP failures, preserving `status`, `code`, and the server-provided message so app UIs can render accurate recovery guidance without re-parsing the response body.
+
 ## Next steps
 
 - Integration guide: `docs/INTEGRATION_GUIDE.md`

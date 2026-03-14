@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { requestChannelGrant, requestEntryChannelGrant } from "./controlplane.js";
+import { ControlplaneRequestError, requestChannelGrant, requestEntryChannelGrant } from "./controlplane.js";
 
 function makeGrant(channelID: string) {
   return {
@@ -86,5 +86,48 @@ describe("browser controlplane helpers", () => {
         fetch: vi.fn() as typeof fetch,
       })
     ).rejects.toThrow("payload.endpoint_id must match endpointId");
+  });
+
+  test("preserves structured controlplane errors for callers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: {
+            code: "AGENT_OFFLINE",
+            message: "No agent connected",
+          },
+        }),
+        {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
+    );
+
+    let error: unknown = null;
+    try {
+      await requestChannelGrant({
+        endpointId: "env_3",
+        fetch: fetchMock as typeof fetch,
+      });
+    } catch (nextError) {
+      error = nextError;
+    }
+
+    expect(error).toBeInstanceOf(ControlplaneRequestError);
+    expect(error).toMatchObject({
+      name: "ControlplaneRequestError",
+      message: "No agent connected",
+      status: 503,
+      code: "AGENT_OFFLINE",
+      responseBody: {
+        success: false,
+        error: {
+          code: "AGENT_OFFLINE",
+          message: "No agent connected",
+        },
+      },
+    } satisfies Partial<ControlplaneRequestError>);
   });
 });

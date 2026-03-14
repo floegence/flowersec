@@ -91,6 +91,7 @@ Stable entrypoints:
 - `@floegence/flowersec-core/browser`:
   - `connectBrowser(...)`, `connectTunnelBrowser(...)`, `connectDirectBrowser(...)`
   - `requestChannelGrant(...)`, `requestEntryChannelGrant(...)`
+  - `ControlplaneRequestError`
   - `createBrowserReconnectConfig(...)`, `createTunnelBrowserReconnectConfig(...)`, `createDirectBrowserReconnectConfig(...)`
 
 Stable building blocks (advanced, but supported):
