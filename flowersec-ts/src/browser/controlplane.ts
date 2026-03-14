@@ -17,6 +17,20 @@ export type EntryControlplaneConfig = BaseControlplaneRequestConfig & Readonly<{
   entryTicket: string;
 }>;
 
+export class ControlplaneRequestError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly responseBody: unknown;
+
+  constructor(args: Readonly<{ status: number; message: string; code?: string; responseBody?: unknown }>) {
+    super(args.message);
+    this.name = "ControlplaneRequestError";
+    this.status = args.status;
+    this.code = String(args.code ?? "").trim();
+    this.responseBody = args.responseBody;
+  }
+}
+
 function resolveFetch(fetchImpl: FetchLike | undefined): FetchLike {
   if (fetchImpl) return fetchImpl;
   if (typeof globalThis.fetch === "function") return globalThis.fetch.bind(globalThis);
@@ -53,7 +67,38 @@ async function requestGrant(
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to get channel grant: ${response.status}`);
+    const rawBody = await response.text();
+    const bodyText = String(rawBody ?? "").trim();
+    let responseBody: unknown = bodyText;
+    if (bodyText !== "") {
+      try {
+        responseBody = JSON.parse(bodyText) as unknown;
+      } catch {
+        responseBody = bodyText;
+      }
+    }
+
+    let message = `Failed to get channel grant: ${response.status}`;
+    let code = "";
+    if (responseBody && typeof responseBody === "object") {
+      const error = (responseBody as { error?: { code?: unknown; message?: unknown } }).error;
+      if (error && typeof error === "object") {
+        const nextMessage = String(error.message ?? "").trim();
+        if (nextMessage !== "") {
+          message = nextMessage;
+        }
+        code = String(error.code ?? "").trim();
+      }
+    } else if (typeof responseBody === "string" && responseBody !== "") {
+      message = responseBody;
+    }
+
+    throw new ControlplaneRequestError({
+      status: response.status,
+      message,
+      code,
+      responseBody,
+    });
   }
 
   const data = (await response.json()) as { grant_client?: unknown };
