@@ -90,6 +90,8 @@ Stable entrypoints:
   - `connectNode(...)`, `connectTunnelNode(...)`, `connectDirectNode(...)`, `createNodeWsFactory()`
 - `@floegence/flowersec-core/browser`:
   - `connectBrowser(...)`, `connectTunnelBrowser(...)`, `connectDirectBrowser(...)`
+  - `requestChannelGrant(...)`, `requestEntryChannelGrant(...)`
+  - `createBrowserReconnectConfig(...)`, `createTunnelBrowserReconnectConfig(...)`, `createDirectBrowserReconnectConfig(...)`
 
 Stable building blocks (advanced, but supported):
 
@@ -104,9 +106,11 @@ Stable building blocks (advanced, but supported):
   - `registerProxyIntegration(...)`
   - `registerServiceWorkerAndEnsureControl(...)`
   - `connectTunnelProxyBrowser(...)`
+  - `connectTunnelProxyControllerBrowser(...)`
   - `createServiceWorkerControllerGuard(...)`
   - `registerProxyControllerWindow(...)`
   - `registerProxyAppWindow(...)`
+  - `registerProxyAppWindowWithServiceWorkerControl(...)`
   - `installWebSocketPatch(...)`
   - `disableUpstreamServiceWorkerRegister()`
   - `resolveProxyProfile(...)`, `PROXY_PROFILE_DEFAULT`, `PROXY_PROFILE_CODESERVER`

@@ -1,6 +1,12 @@
 import type { YamuxStream } from "../yamux/stream.js";
 
 import type { ProxyRuntimeLimits } from "./runtime.js";
+import {
+  createServiceWorkerControllerGuard,
+  type ServiceWorkerControllerGuardConflictPolicy,
+  type ServiceWorkerControllerGuardMonitorOptions,
+  type ServiceWorkerControllerGuardRepairOptions,
+} from "./controllerGuard.js";
 import { createMessagePortBackedStream } from "./portStream.js";
 import {
   PROXY_WINDOW_FETCH_FORWARD_MSG_TYPE,
@@ -31,6 +37,19 @@ export type ProxyAppWindowHandle = Readonly<{
     ) => Promise<Readonly<{ stream: YamuxStream; protocol: string }>>;
   }>;
   dispose: () => void;
+}>;
+
+export type ProxyAppServiceWorkerControlOptions = Readonly<{
+  scriptUrl: string;
+  scope?: string;
+  expectedScriptPathSuffix: string;
+  repair?: ServiceWorkerControllerGuardRepairOptions;
+  monitor?: ServiceWorkerControllerGuardMonitorOptions;
+  conflicts?: ServiceWorkerControllerGuardConflictPolicy;
+}>;
+
+export type RegisterProxyAppWindowWithServiceWorkerControlOptions = RegisterProxyAppWindowOptions & Readonly<{
+  serviceWorker: ProxyAppServiceWorkerControlOptions;
 }>;
 
 function resolveTargetWindow(raw: Window | undefined): Window {
@@ -173,4 +192,34 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
       sw?.removeEventListener("message", onServiceWorkerMessage);
     },
   };
+}
+
+export async function registerProxyAppWindowWithServiceWorkerControl(
+  opts: RegisterProxyAppWindowWithServiceWorkerControlOptions
+): Promise<ProxyAppWindowHandle> {
+  const targetWindow = resolveTargetWindow(opts.targetWindow);
+  const sw = targetWindow.navigator?.serviceWorker;
+  if (sw == null || typeof sw.register !== "function") {
+    throw new Error("serviceWorker is not available");
+  }
+
+  await sw.register(opts.serviceWorker.scriptUrl, {
+    ...(opts.serviceWorker.scope === undefined ? {} : { scope: opts.serviceWorker.scope }),
+  });
+
+  const guard = createServiceWorkerControllerGuard({
+    targetWindow,
+    expectedScriptPathSuffix: opts.serviceWorker.expectedScriptPathSuffix,
+    ...(opts.serviceWorker.repair === undefined ? {} : { repair: opts.serviceWorker.repair }),
+    ...(opts.serviceWorker.monitor === undefined ? {} : { monitor: opts.serviceWorker.monitor }),
+    ...(opts.serviceWorker.conflicts === undefined ? {} : { conflicts: opts.serviceWorker.conflicts }),
+  });
+
+  try {
+    await guard.ensure();
+  } finally {
+    guard.dispose();
+  }
+
+  return registerProxyAppWindow(opts);
 }
