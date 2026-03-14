@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const connectTunnelBrowserMock = vi.fn();
 const registerProxyIntegrationMock = vi.fn();
+const createProxyRuntimeMock = vi.fn();
+const registerProxyControllerWindowMock = vi.fn();
 
 vi.mock("../browser/connect.js", () => ({
   connectTunnelBrowser: connectTunnelBrowserMock,
@@ -9,6 +11,14 @@ vi.mock("../browser/connect.js", () => ({
 
 vi.mock("./integration.js", () => ({
   registerProxyIntegration: registerProxyIntegrationMock,
+}));
+
+vi.mock("./runtime.js", () => ({
+  createProxyRuntime: (...args: unknown[]) => createProxyRuntimeMock(...args),
+}));
+
+vi.mock("./controllerWindow.js", () => ({
+  registerProxyControllerWindow: (...args: unknown[]) => registerProxyControllerWindowMock(...args),
 }));
 
 afterEach(() => {
@@ -61,6 +71,37 @@ describe("connectTunnelProxyBrowser", () => {
       })
     ).rejects.toThrow("register failed");
 
+    expect(client.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("connects a controller runtime and disposes both controller + client", async () => {
+    const client = { close: vi.fn() };
+    const runtime = { runtime: true };
+    const controllerDispose = vi.fn();
+
+    connectTunnelBrowserMock.mockResolvedValue(client);
+    createProxyRuntimeMock.mockReturnValue(runtime);
+    registerProxyControllerWindowMock.mockReturnValue({ dispose: controllerDispose });
+
+    const { connectTunnelProxyControllerBrowser } = await import("./bootstrap.js");
+    const out = await connectTunnelProxyControllerBrowser({ tunnel_url: "ws://example.invalid" } as any, {
+      allowedOrigins: ["https://app.example.test"],
+      runtime: { maxWsFrameBytes: 1024 },
+    });
+
+    expect(out.client).toBe(client);
+    expect(out.runtime).toBe(runtime);
+    expect(createProxyRuntimeMock).toHaveBeenCalledWith({
+      client,
+      maxWsFrameBytes: 1024,
+    });
+    expect(registerProxyControllerWindowMock).toHaveBeenCalledWith({
+      runtime,
+      allowedOrigins: ["https://app.example.test"],
+    });
+
+    out.dispose();
+    expect(controllerDispose).toHaveBeenCalledTimes(1);
     expect(client.close).toHaveBeenCalledTimes(1);
   });
 });

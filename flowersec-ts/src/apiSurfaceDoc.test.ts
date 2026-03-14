@@ -24,6 +24,9 @@ describe("docs/API_SURFACE.md", () => {
     expect(doc).toContain("`connectBrowser(...)`");
     expect(doc).toContain("`connectTunnelBrowser(...)`");
     expect(doc).toContain("`connectDirectBrowser(...)`");
+    expect(doc).toContain("`requestChannelGrant(...)`");
+    expect(doc).toContain("`requestEntryChannelGrant(...)`");
+    expect(doc).toContain("`createBrowserReconnectConfig(...)`");
 
     expect(doc).toContain("`@floegence/flowersec-core/framing`");
     expect(doc).toContain("`@floegence/flowersec-core/streamio`");
@@ -33,7 +36,9 @@ describe("docs/API_SURFACE.md", () => {
     expect(doc).toContain("`createProxyRuntime(...)`");
     expect(doc).toContain("`registerProxyIntegration(...)`");
     expect(doc).toContain("`connectTunnelProxyBrowser(...)`");
+    expect(doc).toContain("`connectTunnelProxyControllerBrowser(...)`");
     expect(doc).toContain("`createServiceWorkerControllerGuard(...)`");
+    expect(doc).toContain("`registerProxyAppWindowWithServiceWorkerControl(...)`");
     expect(doc).toContain("`@floegence/flowersec-core/reconnect`");
     expect(doc).toContain("`createReconnectManager()`");
     expect(doc).toContain("`ReconnectManager.connectIfNeeded(...)`");

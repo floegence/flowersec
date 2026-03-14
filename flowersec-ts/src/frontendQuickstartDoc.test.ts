@@ -14,6 +14,8 @@ describe("docs/FRONTEND_QUICKSTART.md", () => {
     // Stable TypeScript entrypoints.
     expect(doc).toContain('from "@floegence/flowersec-core/browser"');
     expect(doc).toContain("connectBrowser");
+    expect(doc).toContain("requestEntryChannelGrant");
+    expect(doc).toContain("createBrowserReconnectConfig");
     expect(doc).toContain('from "@floegence/flowersec-core/node"');
     expect(doc).toContain("connectNode");
 
