@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/timeutil"
@@ -24,12 +23,13 @@ type Config struct {
 	TunnelAudience       string // Expected token audience.
 	TunnelIssuer         string // Expected token issuer.
 	IssuerKeysFile       string // Path to JSON keyset with issuer public keys.
-	MaxAttachBytes       int    // Max bytes for initial attach JSON.
-	MaxRecordBytes       int    // Max bytes for tunneled record frames.
-	MaxPendingBytes      int    // Max bytes buffered before peer connects.
-	MaxTotalPendingBytes int    // Max total bytes buffered across all unpaired endpoints.
-	MaxChannels          int    // Maximum active channels.
-	MaxConns             int    // Maximum concurrent websocket connections.
+	Verifier             AttachVerifier
+	MaxAttachBytes       int // Max bytes for initial attach JSON.
+	MaxRecordBytes       int // Max bytes for tunneled record frames.
+	MaxPendingBytes      int // Max bytes buffered before peer connects.
+	MaxTotalPendingBytes int // Max total bytes buffered across all unpaired endpoints.
+	MaxChannels          int // Maximum active channels.
+	MaxConns             int // Maximum concurrent websocket connections.
 
 	AllowedOrigins []string // Allowed Origin header values.
 	AllowNoOrigin  bool     // Whether to allow empty Origin.
@@ -43,6 +43,11 @@ type Config struct {
 	ReplaceWindow        time.Duration // Sliding window for replace rate limiting.
 	MaxReplacesPerWindow int           // Max replaces allowed per window.
 	ReplaceCloseCode     int           // Close code for rate-limited replace.
+
+	Authorizer            Authorizer
+	PolicyRequestTimeout  time.Duration
+	PolicyObserveInterval time.Duration
+	PolicyBatchSize       int
 
 	Observer observability.TunnelObserver // Optional tunnel metrics observer.
 }
@@ -62,23 +67,26 @@ func configError(msg string) error { return &ConfigError{msg: msg} }
 // DefaultConfig returns conservative defaults for a tunnel server.
 func DefaultConfig() Config {
 	return Config{
-		Path:                 "/ws",
-		MaxAttachBytes:       8 * 1024,
-		MaxRecordBytes:       1 << 20,
-		MaxPendingBytes:      256 * 1024,
-		MaxTotalPendingBytes: 256 * 1024 * 1024,
-		MaxChannels:          6000,
-		MaxConns:             12000,
-		AllowedOrigins:       nil,
-		AllowNoOrigin:        false,
-		ClockSkew:            30 * time.Second,
-		CleanupInterval:      500 * time.Millisecond,
-		WriteTimeout:         10 * time.Second,
-		MaxWriteQueueBytes:   1 << 20,
-		ReplaceWindow:        10 * time.Second,
-		MaxReplacesPerWindow: 5,
-		ReplaceCloseCode:     websocket.CloseTryAgainLater,
-		Observer:             observability.NoopTunnelObserver,
+		Path:                  "/ws",
+		MaxAttachBytes:        8 * 1024,
+		MaxRecordBytes:        1 << 20,
+		MaxPendingBytes:       256 * 1024,
+		MaxTotalPendingBytes:  256 * 1024 * 1024,
+		MaxChannels:           6000,
+		MaxConns:              12000,
+		AllowedOrigins:        nil,
+		AllowNoOrigin:         false,
+		ClockSkew:             30 * time.Second,
+		CleanupInterval:       500 * time.Millisecond,
+		WriteTimeout:          10 * time.Second,
+		MaxWriteQueueBytes:    1 << 20,
+		ReplaceWindow:         10 * time.Second,
+		MaxReplacesPerWindow:  5,
+		ReplaceCloseCode:      websocket.CloseTryAgainLater,
+		PolicyRequestTimeout:  3 * time.Second,
+		PolicyObserveInterval: 10 * time.Second,
+		PolicyBatchSize:       256,
+		Observer:              observability.NoopTunnelObserver,
 	}
 }
 
@@ -86,9 +94,10 @@ func DefaultConfig() Config {
 type Server struct {
 	cfg Config // Immutable runtime configuration.
 
-	keys *IssuerKeyset                // Issuer public keys for token verification.
-	used *TokenUseCache               // Token replay protection cache.
-	obs  observability.TunnelObserver // Metrics observer.
+	verifier AttachVerifier               // Token verifier (single-tenant or multi-tenant).
+	used     *TokenUseCache               // Token replay protection cache.
+	obs      observability.TunnelObserver // Metrics observer.
+	auth     Authorizer                   // Optional attach/runtime authorizer.
 
 	mu       sync.Mutex               // Guards channel state.
 	channels map[string]*channelState // Channel state by channel ID.
@@ -119,18 +128,6 @@ func New(cfg Config) (*Server, error) {
 	}
 	if !strings.HasPrefix(cfg.Path, "/") {
 		return nil, configError("path must start with /")
-	}
-	cfg.IssuerKeysFile = strings.TrimSpace(cfg.IssuerKeysFile)
-	if cfg.IssuerKeysFile == "" {
-		return nil, configError("missing issuer keys file")
-	}
-	cfg.TunnelAudience = strings.TrimSpace(cfg.TunnelAudience)
-	if cfg.TunnelAudience == "" {
-		return nil, configError("missing tunnel audience")
-	}
-	cfg.TunnelIssuer = strings.TrimSpace(cfg.TunnelIssuer)
-	if cfg.TunnelIssuer == "" {
-		return nil, configError("missing tunnel issuer")
 	}
 	if len(cfg.AllowedOrigins) == 0 {
 		return nil, configError("missing allowed origins")
@@ -218,22 +215,60 @@ func New(cfg Config) (*Server, error) {
 	if !isValidWebSocketCloseCode(cfg.ReplaceCloseCode) {
 		return nil, configError("replace close code must be a valid websocket close code")
 	}
+	if cfg.PolicyRequestTimeout < 0 {
+		return nil, configError("policy request timeout must be >= 0")
+	}
+	if cfg.PolicyObserveInterval < 0 {
+		return nil, configError("policy observe interval must be >= 0")
+	}
+	if cfg.PolicyBatchSize < 0 {
+		return nil, configError("policy batch size must be >= 0")
+	}
+	if cfg.PolicyRequestTimeout == 0 {
+		cfg.PolicyRequestTimeout = 3 * time.Second
+	}
+	if cfg.PolicyObserveInterval == 0 {
+		cfg.PolicyObserveInterval = 10 * time.Second
+	}
+	if cfg.PolicyBatchSize == 0 {
+		cfg.PolicyBatchSize = 256
+	}
 	if cfg.Observer == nil {
 		cfg.Observer = observability.NoopTunnelObserver
 	}
-	keys, err := LoadIssuerKeysetFile(cfg.IssuerKeysFile)
-	if err != nil {
-		return nil, err
+	verifier := cfg.Verifier
+	if verifier == nil {
+		cfg.IssuerKeysFile = strings.TrimSpace(cfg.IssuerKeysFile)
+		if cfg.IssuerKeysFile == "" {
+			return nil, configError("missing issuer keys file")
+		}
+		cfg.TunnelAudience = strings.TrimSpace(cfg.TunnelAudience)
+		if cfg.TunnelAudience == "" {
+			return nil, configError("missing tunnel audience")
+		}
+		cfg.TunnelIssuer = strings.TrimSpace(cfg.TunnelIssuer)
+		if cfg.TunnelIssuer == "" {
+			return nil, configError("missing tunnel issuer")
+		}
+		var err error
+		verifier, err = NewStaticVerifier(cfg.TunnelAudience, cfg.TunnelIssuer, cfg.IssuerKeysFile)
+		if err != nil {
+			return nil, err
+		}
 	}
 	s := &Server{
 		cfg:      cfg,
-		keys:     keys,
+		verifier: verifier,
 		used:     NewTokenUseCache(),
 		obs:      cfg.Observer,
+		auth:     cfg.Authorizer,
 		channels: make(map[string]*channelState),
 		stopCh:   make(chan struct{}),
 	}
 	go s.cleanupLoop()
+	if s.auth != nil && s.cfg.PolicyObserveInterval > 0 {
+		go s.observeLoop()
+	}
 	return s, nil
 }
 
@@ -258,14 +293,12 @@ func (s *Server) Stats() Stats {
 	return Stats{ConnCount: connCount, ChannelCount: channelCount}
 }
 
-// ReloadKeys reloads the issuer keyset file on demand.
+// ReloadKeys reloads the verifier backing files on demand.
 func (s *Server) ReloadKeys() error {
-	keys, err := LoadIssuerKeysetFile(s.cfg.IssuerKeysFile)
-	if err != nil {
-		return err
+	if s == nil || s.verifier == nil {
+		return nil
 	}
-	s.keys.Replace(keys.keys)
-	return nil
+	return s.verifier.Reload()
 }
 
 // Register installs the websocket and health endpoints on the mux.
@@ -291,6 +324,7 @@ var (
 	ErrReplaceRateLimited  = errors.New("replace rate limited")
 	errInitExpMismatch     = errors.New("init_exp mismatch")
 	errIdleTimeoutMismatch = errors.New("idle_timeout mismatch")
+	errTenantMismatch      = errors.New("tenant mismatch")
 )
 
 var (
@@ -306,6 +340,10 @@ type channelState struct {
 	id          string                          // Channel identifier.
 	initExp     int64                           // Channel init expiry (Unix seconds).
 	idleTimeout time.Duration                   // Idle timeout enforced for the channel.
+	tenantID    string                          // Optional verifier tenant identifier.
+	audience    string                          // Matched token audience.
+	issuer      string                          // Matched token issuer.
+	leaseUntil  int64                           // Policy lease expiry (Unix milliseconds), 0 means disabled.
 	sawRecord   bool                            // True once an E2EE record frame (FSEC) is observed.
 	flushing    bool                            // True while pairing flush is in progress.
 	firstSeen   time.Time                       // When the first endpoint arrived.
@@ -492,18 +530,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	// Verify the attach token and guard against replay.
 	now := time.Now()
-	p, err := token.Verify(attach.Token, s.keys, token.VerifyOptions{
-		Now:       now,
-		Audience:  s.cfg.TunnelAudience,
-		Issuer:    s.cfg.TunnelIssuer,
-		ClockSkew: s.cfg.ClockSkew,
-	})
+	verified, err := s.verifier.Verify(attach.Token, now, s.cfg.ClockSkew)
 	if err != nil {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonInvalidToken)
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonInvalidToken))
 		s.untrackConn(uc)
 		return
 	}
+	p := verified.Payload
 	if p.ChannelID != attach.ChannelId {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonChannelMismatch)
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonChannelMismatch))
@@ -524,9 +558,46 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	policyDecision := AttachAuthorizationDecision{Allowed: true}
+	if s.auth != nil {
+		authCtx := context.Background()
+		var cancel context.CancelFunc
+		if s.cfg.PolicyRequestTimeout > 0 {
+			authCtx, cancel = context.WithTimeout(authCtx, s.cfg.PolicyRequestTimeout)
+		} else {
+			authCtx, cancel = context.WithCancel(authCtx)
+		}
+		policyDecision, err = s.auth.AuthorizeAttach(authCtx, AttachAuthorizationRequest{
+			ChannelID:          attach.ChannelId,
+			TenantID:           verified.TenantID,
+			Audience:           verified.Audience,
+			Issuer:             verified.Issuer,
+			Role:               roleLabel(attach.Role),
+			EndpointInstanceID: attach.EndpointInstanceId,
+			TokenID:            p.TokenID,
+			InitExpUnix:        p.InitExp,
+			IdleTimeoutSeconds: p.IdleTimeoutSeconds,
+			Origin:             r.Header.Get("Origin"),
+			RemoteAddr:         r.RemoteAddr,
+		})
+		cancel()
+		if err != nil {
+			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonPolicyError)
+			_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonPolicyError))
+			s.untrackConn(uc)
+			return
+		}
+		if !policyDecision.Allowed {
+			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonPolicyDenied)
+			_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonPolicyDenied))
+			s.untrackConn(uc)
+			return
+		}
+	}
+
 	uc.SetReadLimit(int64(s.cfg.MaxRecordBytes))
 	uc.SetReadDeadline(time.Time{})
-	if err := s.addEndpoint(attach, p, uc); err != nil {
+	if err := s.addEndpoint(attach, verified, policyDecision, uc); err != nil {
 		switch {
 		case errors.Is(err, errTooManyChannels):
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonTooManyConnections)
@@ -540,6 +611,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, errIdleTimeoutMismatch):
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonIdleTimeoutMismatch)
 			_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonIdleTimeoutMismatch))
+		case errors.Is(err, errTenantMismatch):
+			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonTenantMismatch)
+			_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonTenantMismatch))
 		default:
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonAttachFailed)
 			_ = c.CloseWithStatus(websocket.CloseInternalServerErr, string(observability.AttachReasonAttachFailed))
@@ -631,7 +705,7 @@ func (s *Server) allowReplaceLocked(st *channelState, role tunnelv1.Role, now ti
 }
 
 // addEndpoint registers the websocket for a channel and starts routing.
-func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.Conn) error {
+func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decision AttachAuthorizationDecision, uc *websocket.Conn) error {
 	var toClose []*websocket.Conn
 	var startPump bool
 	var pairLatency time.Duration
@@ -644,6 +718,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 	var server *endpointConn
 	var droppedPendingBytes int
 	now := time.Now()
+	p := verified.Payload
 
 	ep := newEndpointConn(a.Role, a.EndpointInstanceId, uc)
 	ep.bw = s.ensureBandwidthEntry(a.ChannelId)
@@ -659,6 +734,10 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			id:          a.ChannelId,
 			initExp:     p.InitExp,
 			idleTimeout: time.Duration(p.IdleTimeoutSeconds) * time.Second,
+			tenantID:    verified.TenantID,
+			audience:    verified.Audience,
+			issuer:      verified.Issuer,
+			leaseUntil:  decision.LeaseExpiresAtUnixMs,
 			firstSeen:   now,
 			lastActive:  now,
 			conns:       make(map[tunnelv1.Role]*endpointConn, 2),
@@ -681,6 +760,12 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 			s.mu.Unlock()
 			return errIdleTimeoutMismatch
 		}
+		if st.audience != verified.Audience || st.issuer != verified.Issuer {
+			st.mu.Unlock()
+			s.mu.Unlock()
+			return errTenantMismatch
+		}
+		updateLeaseLocked(st, decision.LeaseExpiresAtUnixMs)
 		if st.conns[a.Role] != nil {
 			if !s.allowReplaceLocked(st, a.Role, now) {
 				st.mu.Unlock()
@@ -703,6 +788,10 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, p token.Payload, uc *websocket.
 				id:          a.ChannelId,
 				initExp:     p.InitExp,
 				idleTimeout: time.Duration(p.IdleTimeoutSeconds) * time.Second,
+				tenantID:    verified.TenantID,
+				audience:    verified.Audience,
+				issuer:      verified.Issuer,
+				leaseUntil:  decision.LeaseExpiresAtUnixMs,
 				firstSeen:   now,
 				lastActive:  now,
 				conns:       make(map[tunnelv1.Role]*endpointConn, 2),
@@ -1182,6 +1271,11 @@ func (s *Server) cleanupLoop() {
 					st.mu.Unlock()
 					continue
 				}
+				if st.leaseUntil > 0 && now.UnixMilli() >= st.leaseUntil {
+					toClose = append(toClose, closeTarget{id: id, reason: observability.CloseReasonPolicyLeaseExpired})
+					st.mu.Unlock()
+					continue
+				}
 				if st.idleTimeout > 0 && now.Sub(st.lastActive) > st.idleTimeout {
 					toClose = append(toClose, closeTarget{id: id, reason: observability.CloseReasonIdleTimeout})
 					st.mu.Unlock()
@@ -1194,6 +1288,132 @@ func (s *Server) cleanupLoop() {
 				s.obs.Close(target.reason)
 				s.closeChannel(target.id)
 			}
+		}
+	}
+}
+
+func updateLeaseLocked(st *channelState, leaseUntil int64) {
+	if st == nil || leaseUntil <= 0 {
+		return
+	}
+	if st.leaseUntil == 0 || leaseUntil > st.leaseUntil {
+		st.leaseUntil = leaseUntil
+	}
+}
+
+func (s *Server) snapshotObservedChannels() []ChannelObservation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]ChannelObservation, 0, len(s.channels))
+	for _, st := range s.channels {
+		st.mu.Lock()
+		channelID := st.id
+		tenantID := st.tenantID
+		audience := st.audience
+		issuer := st.issuer
+		st.mu.Unlock()
+
+		var bytesToClient uint64
+		var bytesToServer uint64
+		if v, ok := s.bw.Load(channelID); ok {
+			if entry, ok := v.(*bandwidthEntry); ok && entry != nil {
+				bytesToClient = atomic.LoadUint64(&entry.toClient)
+				bytesToServer = atomic.LoadUint64(&entry.toServer)
+			}
+		}
+
+		out = append(out, ChannelObservation{
+			ChannelID:     channelID,
+			TenantID:      tenantID,
+			Audience:      audience,
+			Issuer:        issuer,
+			BytesToClient: bytesToClient,
+			BytesToServer: bytesToServer,
+		})
+	}
+	return out
+}
+
+func (s *Server) applyObservationDecisions(decisions []ChannelObservationDecision) {
+	if len(decisions) == 0 {
+		return
+	}
+
+	toClose := make([]string, 0, len(decisions))
+	for _, decision := range decisions {
+		channelID := strings.TrimSpace(decision.ChannelID)
+		if channelID == "" {
+			continue
+		}
+		if !decision.Allowed {
+			toClose = append(toClose, channelID)
+			continue
+		}
+		if decision.LeaseExpiresAtUnixMs <= 0 {
+			continue
+		}
+
+		s.mu.Lock()
+		st := s.channels[channelID]
+		if st != nil {
+			st.mu.Lock()
+			updateLeaseLocked(st, decision.LeaseExpiresAtUnixMs)
+			st.mu.Unlock()
+		}
+		s.mu.Unlock()
+	}
+
+	for _, channelID := range toClose {
+		s.obs.Close(observability.CloseReasonPolicyDenied)
+		s.closeChannel(channelID)
+	}
+}
+
+func (s *Server) observeLoop() {
+	t := time.NewTicker(s.cfg.PolicyObserveInterval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-t.C:
+		}
+
+		channels := s.snapshotObservedChannels()
+		if len(channels) == 0 {
+			continue
+		}
+
+		batchSize := s.cfg.PolicyBatchSize
+		if batchSize <= 0 || batchSize > len(channels) {
+			batchSize = len(channels)
+		}
+
+		nowUnixMs := time.Now().UnixMilli()
+		for start := 0; start < len(channels); start += batchSize {
+			end := start + batchSize
+			if end > len(channels) {
+				end = len(channels)
+			}
+
+			authCtx := context.Background()
+			var cancel context.CancelFunc
+			if s.cfg.PolicyRequestTimeout > 0 {
+				authCtx, cancel = context.WithTimeout(authCtx, s.cfg.PolicyRequestTimeout)
+			} else {
+				authCtx, cancel = context.WithCancel(authCtx)
+			}
+			resp, err := s.auth.ObserveChannels(authCtx, ObserveChannelsRequest{
+				NowUnixMs: nowUnixMs,
+				Channels:  channels[start:end],
+			})
+			cancel()
+			if err != nil {
+				continue
+			}
+			s.applyObservationDecisions(resp.Decisions)
 		}
 	}
 }

@@ -2,12 +2,51 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
 )
+
+func writeTenantConfigForCLI(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	ks, err := issuer.NewRandom("k1")
+	if err != nil {
+		t.Fatalf("issuer.NewRandom() failed: %v", err)
+	}
+	keysJSON, err := ks.ExportTunnelKeyset()
+	if err != nil {
+		t.Fatalf("ExportTunnelKeyset() failed: %v", err)
+	}
+	keysPath := filepath.Join(tmp, "issuer_keys.json")
+	if err := os.WriteFile(keysPath, keysJSON, 0o600); err != nil {
+		t.Fatalf("WriteFile(keys) failed: %v", err)
+	}
+	tenantsPath := filepath.Join(tmp, "tenants.json")
+	payload := map[string]any{
+		"tenants": []map[string]string{{
+			"id":               "tenant-a",
+			"aud":              "aud-a",
+			"iss":              "iss-a",
+			"issuer_keys_file": keysPath,
+		}},
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Marshal(tenants) failed: %v", err)
+	}
+	if err := os.WriteFile(tenantsPath, b, 0o600); err != nil {
+		t.Fatalf("WriteFile(tenants) failed: %v", err)
+	}
+	return tenantsPath
+}
 
 func TestVersionString_UsesLdflags(t *testing.T) {
 	oldVersion := version
@@ -70,6 +109,9 @@ func TestRun_HelpMarksRequiredFlags(t *testing.T) {
 	}
 	if !strings.Contains(help, "expected token audience (required)") {
 		t.Fatalf("expected aud to be marked required, help=%q", help)
+	}
+	if !strings.Contains(help, "multi-tenant verifier config file") {
+		t.Fatalf("expected help to include tenants-file, help=%q", help)
 	}
 }
 
@@ -214,6 +256,66 @@ func TestRun_WhitespaceAllowOrigin_IsTreatedAsMissing(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "missing --allow-origin") {
 		t.Fatalf("expected missing allow-origin message, got %q", stderr.String())
+	}
+}
+
+func TestRun_TenantsFileCannotBeCombinedWithLegacyFlags(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--tenants-file", "tenants.json",
+			"--issuer-keys-file", "issuer_keys.json",
+			"--allow-origin", "https://ok",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "cannot combine --tenants-file") {
+		t.Fatalf("expected tenants-file conflict, got %q", stderr.String())
+	}
+}
+
+func TestRun_TenantsFileAllowsOmittingLegacyFlags(t *testing.T) {
+	tenantsPath := writeTenantConfigForCLI(t)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run(
+		[]string{
+			"--tenants-file", tenantsPath,
+			"--allow-origin", "https://ok",
+			"--max-write-queue-bytes", "1",
+		},
+		&stdout,
+		&stderr,
+	)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d (stderr=%q)", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "missing --issuer-keys-file") {
+		t.Fatalf("tenants-file should satisfy legacy verifier flags, stderr=%q", stderr.String())
+	}
+}
+
+func TestParseHeaderValues(t *testing.T) {
+	headers, err := parseHeaderValues([]string{"X-Test: one", "Authorization: Bearer abc"})
+	if err != nil {
+		t.Fatalf("parseHeaderValues() failed: %v", err)
+	}
+	want := http.Header{
+		"X-Test":        []string{"one"},
+		"Authorization": []string{"Bearer abc"},
+	}
+	if !reflect.DeepEqual(headers, want) {
+		t.Fatalf("headers mismatch: got=%v want=%v", headers, want)
+	}
+
+	if _, err := parseHeaderValues([]string{"invalid"}); err == nil {
+		t.Fatalf("expected invalid header error")
 	}
 }
 

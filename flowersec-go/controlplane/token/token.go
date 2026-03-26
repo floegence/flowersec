@@ -133,6 +133,11 @@ func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error
 	if err != nil {
 		return Payload{}, err
 	}
+	return VerifyParsed(p, signed, sig, keys, opts)
+}
+
+// VerifyParsed validates a previously-parsed token payload and signature.
+func VerifyParsed(p Payload, signed []byte, sig []byte, keys KeyLookup, opts VerifyOptions) (Payload, error) {
 	if strings.TrimSpace(p.Kid) == "" {
 		return Payload{}, fmt.Errorf("missing kid: %w", ErrInvalidFormat)
 	}

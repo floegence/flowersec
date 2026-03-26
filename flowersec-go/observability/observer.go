@@ -27,6 +27,9 @@ const (
 	AttachReasonInitExpMismatch     AttachReason = "init_exp_mismatch"
 	AttachReasonIdleTimeoutMismatch AttachReason = "idle_timeout_mismatch"
 	AttachReasonTokenReplay         AttachReason = "token_replay"
+	AttachReasonTenantMismatch      AttachReason = "tenant_mismatch"
+	AttachReasonPolicyDenied        AttachReason = "policy_denied"
+	AttachReasonPolicyError         AttachReason = "policy_error"
 	AttachReasonReplaceRateLimited  AttachReason = "replace_rate_limited"
 	AttachReasonAttachFailed        AttachReason = "attach_failed"
 	AttachReasonTimeout             AttachReason = "timeout"
@@ -43,15 +46,17 @@ const (
 type CloseReason string
 
 const (
-	CloseReasonPeerClosed      CloseReason = "peer_closed"
-	CloseReasonNonBinaryFrame  CloseReason = "non_binary_frame"
-	CloseReasonRecordTooLarge  CloseReason = "record_too_large"
-	CloseReasonUnknownChannel  CloseReason = "unknown_channel"
-	CloseReasonMissingSrc      CloseReason = "missing_src"
-	CloseReasonPendingOverflow CloseReason = "pending_overflow"
-	CloseReasonWriteError      CloseReason = "write_error"
-	CloseReasonInitExpired     CloseReason = "init_expired"
-	CloseReasonIdleTimeout     CloseReason = "idle_timeout"
+	CloseReasonPeerClosed         CloseReason = "peer_closed"
+	CloseReasonNonBinaryFrame     CloseReason = "non_binary_frame"
+	CloseReasonRecordTooLarge     CloseReason = "record_too_large"
+	CloseReasonUnknownChannel     CloseReason = "unknown_channel"
+	CloseReasonMissingSrc         CloseReason = "missing_src"
+	CloseReasonPendingOverflow    CloseReason = "pending_overflow"
+	CloseReasonWriteError         CloseReason = "write_error"
+	CloseReasonInitExpired        CloseReason = "init_expired"
+	CloseReasonIdleTimeout        CloseReason = "idle_timeout"
+	CloseReasonPolicyDenied       CloseReason = "policy_denied"
+	CloseReasonPolicyLeaseExpired CloseReason = "policy_lease_expired"
 )
 
 type RPCResult string

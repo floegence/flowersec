@@ -41,6 +41,30 @@ func (s *stringSliceFlag) Set(v string) error {
 	return nil
 }
 
+func parseHeaderValues(values []string) (http.Header, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	headers := make(http.Header)
+	for _, raw := range values {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		parts := strings.SplitN(raw, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid --authorizer-header %q", raw)
+		}
+		name := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if name == "" || value == "" {
+			return nil, fmt.Errorf("invalid --authorizer-header %q", raw)
+		}
+		headers.Add(name, value)
+	}
+	return headers, nil
+}
+
 type switchHandler struct {
 	mu      sync.RWMutex
 	handler http.Handler
@@ -145,6 +169,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	listen := cmdutil.EnvString("FSEC_TUNNEL_LISTEN", "127.0.0.1:0")
 	advertiseHost := cmdutil.EnvString("FSEC_TUNNEL_ADVERTISE_HOST", "")
 	path := cmdutil.EnvString("FSEC_TUNNEL_WS_PATH", "/ws")
+	tenantsFile := cmdutil.EnvString("FSEC_TUNNEL_TENANTS_FILE", "")
 	issuerKeysFile := cmdutil.EnvString("FSEC_TUNNEL_ISSUER_KEYS_FILE", "")
 	aud := cmdutil.EnvString("FSEC_TUNNEL_AUD", "")
 	iss := cmdutil.EnvString("FSEC_TUNNEL_ISS", "")
@@ -152,9 +177,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	statsListen := cmdutil.EnvString("FSEC_TUNNEL_STATS_LISTEN", "")
 	tlsCertFile := cmdutil.EnvString("FSEC_TUNNEL_TLS_CERT_FILE", "")
 	tlsKeyFile := cmdutil.EnvString("FSEC_TUNNEL_TLS_KEY_FILE", "")
+	attachAuthorizerURL := cmdutil.EnvString("FSEC_TUNNEL_ATTACH_AUTHORIZER_URL", "")
+	observeAuthorizerURL := cmdutil.EnvString("FSEC_TUNNEL_OBSERVE_AUTHORIZER_URL", "")
 
 	allowedOriginsEnv := cmdutil.SplitCSVEnv("FSEC_TUNNEL_ALLOW_ORIGIN")
 	var allowedOriginsFlag stringSliceFlag
+	var authorizerHeadersFlag stringSliceFlag
 
 	allowNoOrigin, err := cmdutil.EnvBool("FSEC_TUNNEL_ALLOW_NO_ORIGIN", cfg.AllowNoOrigin)
 	if err != nil {
@@ -187,6 +215,21 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES: %v\n", err)
 		return 2
 	}
+	policyRequestTimeout, err := cmdutil.EnvDuration("FSEC_TUNNEL_POLICY_REQUEST_TIMEOUT", cfg.PolicyRequestTimeout)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_POLICY_REQUEST_TIMEOUT: %v\n", err)
+		return 2
+	}
+	policyObserveInterval, err := cmdutil.EnvDuration("FSEC_TUNNEL_POLICY_OBSERVE_INTERVAL", cfg.PolicyObserveInterval)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_POLICY_OBSERVE_INTERVAL: %v\n", err)
+		return 2
+	}
+	policyBatchSize, err := cmdutil.EnvInt("FSEC_TUNNEL_POLICY_BATCH_SIZE", cfg.PolicyBatchSize)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_POLICY_BATCH_SIZE: %v\n", err)
+		return 2
+	}
 
 	fs := flag.NewFlagSet("flowersec-tunnel", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -198,6 +241,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&listen, "listen", listen, "listen address (env: FSEC_TUNNEL_LISTEN)")
 	fs.StringVar(&advertiseHost, "advertise-host", advertiseHost, "public host[:port] for ready URLs (optional; avoids ws://0.0.0.0) (env: FSEC_TUNNEL_ADVERTISE_HOST)")
 	fs.StringVar(&path, "ws-path", path, "websocket path (env: FSEC_TUNNEL_WS_PATH)")
+	fs.StringVar(&tenantsFile, "tenants-file", tenantsFile, "multi-tenant verifier config file (mutually exclusive with --issuer-keys-file/--aud/--iss) (env: FSEC_TUNNEL_TENANTS_FILE)")
 	fs.StringVar(&issuerKeysFile, "issuer-keys-file", issuerKeysFile, "issuer keyset file (kid->ed25519 pubkey) (required) (env: FSEC_TUNNEL_ISSUER_KEYS_FILE)")
 	fs.StringVar(&aud, "aud", aud, "expected token audience (required) (env: FSEC_TUNNEL_AUD)")
 	fs.StringVar(&iss, "iss", iss, "expected token issuer (required; must match token payload 'iss') (env: FSEC_TUNNEL_ISS)")
@@ -212,6 +256,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.IntVar(&maxTotalPendingBytes, "max-total-pending-bytes", maxTotalPendingBytes, "max total pending bytes buffered across all channels (>= 0; 0 disables) (env: FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES)")
 	fs.DurationVar(&writeTimeout, "write-timeout", writeTimeout, "per-frame websocket write timeout (>= 0; 0 disables) (env: FSEC_TUNNEL_WRITE_TIMEOUT)")
 	fs.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", maxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES)")
+	fs.StringVar(&attachAuthorizerURL, "attach-authorizer-url", attachAuthorizerURL, "HTTP authorizer URL for attach decisions (optional) (env: FSEC_TUNNEL_ATTACH_AUTHORIZER_URL)")
+	fs.StringVar(&observeAuthorizerURL, "observe-authorizer-url", observeAuthorizerURL, "HTTP authorizer URL for runtime observe decisions (optional) (env: FSEC_TUNNEL_OBSERVE_AUTHORIZER_URL)")
+	fs.Var(&authorizerHeadersFlag, "authorizer-header", "extra HTTP header for authorizer requests in 'Name: value' form (repeatable)")
+	fs.DurationVar(&policyRequestTimeout, "policy-request-timeout", policyRequestTimeout, "per-request timeout for authorizer calls (>= 0; 0 uses default) (env: FSEC_TUNNEL_POLICY_REQUEST_TIMEOUT)")
+	fs.DurationVar(&policyObserveInterval, "policy-observe-interval", policyObserveInterval, "observe loop interval for runtime policy refresh (>= 0; 0 uses default) (env: FSEC_TUNNEL_POLICY_OBSERVE_INTERVAL)")
+	fs.IntVar(&policyBatchSize, "policy-batch-size", policyBatchSize, "max channels per observe authorizer batch (>= 0; 0 uses default) (env: FSEC_TUNNEL_POLICY_BATCH_SIZE)")
 	fs.Usage = func() {
 		out := fs.Output()
 		fmt.Fprintln(out, "Usage:")
@@ -226,6 +276,16 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "    --aud flowersec-tunnel:dev \\")
 		fmt.Fprintln(out, "    --iss issuer-dev \\")
 		fmt.Fprintln(out, "    --allow-origin http://127.0.0.1:5173")
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "  # Multi-tenant tunnel with an external authorizer.")
+		fmt.Fprintln(out, "  flowersec-tunnel \\")
+		fmt.Fprintln(out, "    --listen 127.0.0.1:8080 \\")
+		fmt.Fprintln(out, "    --ws-path /ws \\")
+		fmt.Fprintln(out, "    --tenants-file ./tenants.json \\")
+		fmt.Fprintln(out, "    --attach-authorizer-url http://127.0.0.1:8081/authorize-attach \\")
+		fmt.Fprintln(out, "    --observe-authorizer-url http://127.0.0.1:8081/observe-channels \\")
+		fmt.Fprintln(out, "    --authorizer-header 'X-Metaserver-Token: secret' \\")
+		fmt.Fprintln(out, "    --allow-origin https://app.example.com")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Output:")
 		fmt.Fprintln(out, "  stdout: stable JSON (ready info)")
@@ -266,6 +326,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	listen = strings.TrimSpace(listen)
 	advertiseHost = strings.TrimSpace(advertiseHost)
 	path = strings.TrimSpace(path)
+	tenantsFile = strings.TrimSpace(tenantsFile)
 	issuerKeysFile = strings.TrimSpace(issuerKeysFile)
 	aud = strings.TrimSpace(aud)
 	iss = strings.TrimSpace(iss)
@@ -273,8 +334,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	statsListen = strings.TrimSpace(statsListen)
 	tlsCertFile = strings.TrimSpace(tlsCertFile)
 	tlsKeyFile = strings.TrimSpace(tlsKeyFile)
+	attachAuthorizerURL = strings.TrimSpace(attachAuthorizerURL)
+	observeAuthorizerURL = strings.TrimSpace(observeAuthorizerURL)
 
-	if issuerKeysFile == "" || aud == "" || iss == "" {
+	usingMultiTenant := tenantsFile != ""
+	if usingMultiTenant {
+		if issuerKeysFile != "" || aud != "" || iss != "" {
+			return usageErr("cannot combine --tenants-file with --issuer-keys-file, --aud, or --iss")
+		}
+	} else if issuerKeysFile == "" || aud == "" || iss == "" {
 		return usageErr("missing --issuer-keys-file, --aud, or --iss")
 	}
 	if err := validateTLSFiles(tlsCertFile, tlsKeyFile); err != nil {
@@ -295,17 +363,30 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if maxWriteQueueBytes < 0 {
 		return usageErr("--max-write-queue-bytes must be >= 0")
 	}
+	if policyRequestTimeout < 0 {
+		return usageErr("--policy-request-timeout must be >= 0")
+	}
+	if policyObserveInterval < 0 {
+		return usageErr("--policy-observe-interval must be >= 0")
+	}
+	if policyBatchSize < 0 {
+		return usageErr("--policy-batch-size must be >= 0")
+	}
+	if observeAuthorizerURL != "" && attachAuthorizerURL == "" {
+		return usageErr("--observe-authorizer-url requires --attach-authorizer-url")
+	}
 	allowedOrigins := normalizeAllowedOrigins(selectAllowedOrigins(allowedOriginsEnv, []string(allowedOriginsFlag)))
 	if len(allowedOrigins) == 0 {
 		return usageErr("missing --allow-origin")
+	}
+	authorizerHeaders, err := parseHeaderValues([]string(authorizerHeadersFlag))
+	if err != nil {
+		return usageErr(err.Error())
 	}
 
 	observer := observability.NewAtomicTunnelObserver()
 	cfg.Observer = observer
 	cfg.Path = path
-	cfg.IssuerKeysFile = issuerKeysFile
-	cfg.TunnelAudience = aud
-	cfg.TunnelIssuer = iss
 	cfg.AllowedOrigins = allowedOrigins
 	cfg.AllowNoOrigin = allowNoOrigin
 	if maxConns > 0 {
@@ -317,6 +398,33 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	cfg.MaxTotalPendingBytes = maxTotalPendingBytes
 	cfg.WriteTimeout = writeTimeout
 	cfg.MaxWriteQueueBytes = maxWriteQueueBytes
+	cfg.PolicyRequestTimeout = policyRequestTimeout
+	cfg.PolicyObserveInterval = policyObserveInterval
+	cfg.PolicyBatchSize = policyBatchSize
+
+	if usingMultiTenant {
+		verifier, err := server.NewMultiTenantVerifier(tenantsFile)
+		if err != nil {
+			return usageErr(err.Error())
+		}
+		cfg.Verifier = verifier
+	} else {
+		cfg.IssuerKeysFile = issuerKeysFile
+		cfg.TunnelAudience = aud
+		cfg.TunnelIssuer = iss
+	}
+
+	if attachAuthorizerURL != "" {
+		authorizer, err := server.NewHTTPAuthorizer(server.HTTPAuthorizerConfig{
+			AttachURL:  attachAuthorizerURL,
+			ObserveURL: observeAuthorizerURL,
+			Headers:    authorizerHeaders,
+		})
+		if err != nil {
+			return usageErr(err.Error())
+		}
+		cfg.Authorizer = authorizer
+	}
 
 	s, err := server.New(cfg)
 	if err != nil {

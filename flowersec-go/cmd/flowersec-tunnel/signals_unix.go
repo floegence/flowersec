@@ -22,7 +22,7 @@ func notifySignals() []os.Signal {
 
 func printSignalHelp(w io.Writer) {
 	fmt.Fprintln(w, "Signals:")
-	fmt.Fprintln(w, "  SIGHUP: reload issuer keyset")
+	fmt.Fprintln(w, "  SIGHUP: reload verifier keyset/config")
 	fmt.Fprintln(w, "  SIGUSR1: enable metrics (requires --metrics-listen)")
 	fmt.Fprintln(w, "  SIGUSR2: disable metrics")
 }
@@ -37,7 +37,7 @@ func handleSignal(sig os.Signal, logger *log.Logger, reloadKeys func() error, me
 		if err := reloadKeys(); err != nil {
 			logger.Printf("reload keys failed: %v", err)
 		} else {
-			logger.Printf("reloaded issuer keyset")
+			logger.Printf("reloaded verifier keyset/config")
 		}
 		return true
 	case syscall.SIGUSR1:
