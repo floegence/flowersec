@@ -81,6 +81,12 @@ docker run --rm \
 - Health check: `GET /healthz` on the tunnel HTTP server.
 - Metrics: set `FSEC_TUNNEL_METRICS_LISTEN=0.0.0.0:9090` and expose `-p 9090:9090`.
 
+For shared-URL, multi-tenant deployments, replace the single `issuer_keys_file + aud + iss` tuple with `FSEC_TUNNEL_TENANTS_FILE=/etc/flowersec/tenants.json`. The tunnel then selects a tenant by token `(aud, iss)` and can optionally call attach/runtime policy backends via:
+
+- `FSEC_TUNNEL_ATTACH_AUTHORIZER_URL`
+- `FSEC_TUNNEL_OBSERVE_AUTHORIZER_URL`
+- `FSEC_TUNNEL_AUTHORIZER_HEADER`
+
 Full deployment notes: `docs/TUNNEL_DEPLOYMENT.md`.
 
 ### Proxy gateway (deployable)
