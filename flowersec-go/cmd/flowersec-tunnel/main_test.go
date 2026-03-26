@@ -381,3 +381,22 @@ func TestSelectAllowedOrigins_UsesEnvWhenFlagMissing(t *testing.T) {
 		t.Fatalf("selectAllowedOrigins mismatch: got=%v want=%v", got, want)
 	}
 }
+
+func TestSelectAuthorizerHeaders_FlagOverridesEnv(t *testing.T) {
+	env := []string{"X-Test: env"}
+	flags := []string{"X-Test: flag"}
+	got := selectAuthorizerHeaders(env, flags)
+	want := []string{"X-Test: flag"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("selectAuthorizerHeaders mismatch: got=%v want=%v", got, want)
+	}
+}
+
+func TestSelectAuthorizerHeaders_UsesEnvWhenFlagMissing(t *testing.T) {
+	env := []string{"X-Test: env", "Authorization: Bearer token"}
+	got := selectAuthorizerHeaders(env, nil)
+	want := []string{"X-Test: env", "Authorization: Bearer token"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("selectAuthorizerHeaders mismatch: got=%v want=%v", got, want)
+	}
+}

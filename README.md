@@ -54,7 +54,7 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@late
 flowersec-tunnel --version
 ```
 
-Note: `go install` requires Go 1.26.x and installs into `$(go env GOBIN)` (or `$(go env GOPATH)/bin`).
+Note: `go install` requires Go 1.25.8+ and installs into `$(go env GOBIN)` (or `$(go env GOPATH)/bin`).
 
 **Option B: GitHub Releases**
 
@@ -86,6 +86,8 @@ For shared-URL, multi-tenant deployments, replace the single `issuer_keys_file +
 - `FSEC_TUNNEL_ATTACH_AUTHORIZER_URL`
 - `FSEC_TUNNEL_OBSERVE_AUTHORIZER_URL`
 - `FSEC_TUNNEL_AUTHORIZER_HEADER`
+
+This lets one tunnel process and one websocket URL safely serve multiple auth scopes, as long as each tenant keeps a distinct `(aud, iss)` pair and keyset binding.
 
 Full deployment notes: `docs/TUNNEL_DEPLOYMENT.md`.
 
@@ -275,6 +277,10 @@ The deployable tunnel binary is `flowersec-go/cmd/flowersec-tunnel/`.
     - TS browser: use `connectTunnelBrowser` / `connectDirectBrowser` from `@floegence/flowersec-core/browser` (uses `window.location.origin`).
     - TS Node: use `connectTunnelNode` / `connectDirectNode` from `@floegence/flowersec-core/node` (auto-injects a `wsFactory` that sets the `Origin` header), or pass `wsFactory` manually.
 - Token issuer (`iss`) is **required**: pass `--iss` and ensure it matches the token payload `iss` minted by your controlplane.
+- Verifier mode:
+  - Single-tenant: `--issuer-keys-file + --aud + --iss`
+  - Multi-tenant: `--tenants-file` (mutually exclusive with single-tenant flags)
+- Policy mode: `--observe-authorizer-url` requires `--attach-authorizer-url`.
 
 Node.js version:
 
@@ -291,6 +297,8 @@ make check
 
 The tunnel binary exposes Prometheus metrics on a dedicated metrics server. The metrics server is disabled by default (empty `--metrics-listen`).
 
+The tunnel can also expose a best-effort bandwidth JSON endpoint on a separate stats server (`--stats-listen`, path `/stats/v1/bandwidth`), primarily for external collectors.
+
 When `--metrics-listen` is set, `GET /metrics` is served immediately.
 You can toggle metrics at runtime:
 
@@ -305,6 +313,7 @@ cd flowersec-go
 go run ./cmd/flowersec-tunnel \
   --listen 127.0.0.1:8080 \
   --metrics-listen 127.0.0.1:9090 \
+  --stats-listen 127.0.0.1:9091 \
   --issuer-keys-file /path/to/keys.json \
   --aud your-audience \
   --iss your-issuer \
@@ -312,6 +321,9 @@ go run ./cmd/flowersec-tunnel \
 
 # scrape metrics
 curl http://127.0.0.1:9090/metrics
+
+# read bandwidth snapshot (optional stats server)
+curl http://127.0.0.1:9091/stats/v1/bandwidth
 ```
 
 Library integrations:
@@ -323,6 +335,6 @@ Library integrations:
 ## Binaries
 
 - Tunnel server (deployable): `flowersec-go/cmd/flowersec-tunnel/`
-  - flags: `--listen`, `--ws-path`, `--issuer-keys-file`, `--aud`, `--iss`, `--allow-origin`, `--allow-no-origin`, `--tls-cert-file`, `--tls-key-file`, `--metrics-listen`, `--max-conns`, `--max-channels`, `--max-total-pending-bytes`, `--write-timeout`, `--max-write-queue-bytes` (see `--help` for full details)
+  - flags: `--listen`, `--advertise-host`, `--ws-path`, verifier mode (`--issuer-keys-file + --aud + --iss` or `--tenants-file`), `--allow-origin`, `--allow-no-origin`, `--tls-cert-file`, `--tls-key-file`, `--metrics-listen`, `--stats-listen`, `--max-conns`, `--max-channels`, `--max-total-pending-bytes`, `--write-timeout`, `--max-write-queue-bytes`, policy flags (`--attach-authorizer-url`, `--observe-authorizer-url`, `--authorizer-header`, `--policy-request-timeout`, `--policy-observe-interval`, `--policy-batch-size`) (see `--help` for full details)
 - Helper tools (local/dev): `flowersec-go/cmd/flowersec-issuer-keygen/`, `flowersec-go/cmd/flowersec-channelinit/`, `flowersec-go/cmd/flowersec-directinit/`
 - Internal tooling (not a supported public CLI surface): `flowersec-go/internal/cmd/*` (interop harnesses, load generator)

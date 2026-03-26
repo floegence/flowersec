@@ -14,7 +14,7 @@ See also:
 
 ## Prerequisites
 
-- Go 1.26.x (required)
+- Go 1.25.8+ (required)
 - Node.js 22 LTS recommended (TypeScript only)
 
 ## Install

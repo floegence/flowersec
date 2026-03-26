@@ -13,7 +13,7 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@late
 flowersec-tunnel --version
 ```
 
-Note: `go install` requires Go 1.26.x.
+Note: `go install` requires Go 1.25.8+.
 
 ### Option B: GitHub Releases
 
@@ -70,6 +70,7 @@ If you need active blocking instead of verify-only attach, the tunnel can call a
 
 - `attach_authorizer_url`: allow/deny at attach time and return a short lease
 - `observe_authorizer_url`: periodically report active channels and receive lease refresh / kill decisions
+- `observe_authorizer_url` requires `attach_authorizer_url`
 
 This keeps tunnel token verification generic while allowing a product-specific control plane to enforce binding, quota, revoke, or abuse policies.
 
@@ -129,6 +130,7 @@ All settings are available as flags. For container deployments, the tunnel also 
 | `--tls-cert-file` | `FSEC_TUNNEL_TLS_CERT_FILE` | enable TLS (requires key file too) |
 | `--tls-key-file` | `FSEC_TUNNEL_TLS_KEY_FILE` | enable TLS (requires cert file too) |
 | `--metrics-listen` | `FSEC_TUNNEL_METRICS_LISTEN` | empty disables metrics server |
+| `--stats-listen` | `FSEC_TUNNEL_STATS_LISTEN` | empty disables `/stats/v1/bandwidth` server |
 | `--max-conns` | `FSEC_TUNNEL_MAX_CONNS` | `>= 0`; `0` uses default |
 | `--max-channels` | `FSEC_TUNNEL_MAX_CHANNELS` | `>= 0`; `0` uses default |
 | `--max-total-pending-bytes` | `FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES` | `>= 0`; `0` disables the global limit |
@@ -136,7 +138,7 @@ All settings are available as flags. For container deployments, the tunnel also 
 | `--max-write-queue-bytes` | `FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES` | `>= 0`; `0` uses default |
 | `--attach-authorizer-url` | `FSEC_TUNNEL_ATTACH_AUTHORIZER_URL` | optional attach policy endpoint |
 | `--observe-authorizer-url` | `FSEC_TUNNEL_OBSERVE_AUTHORIZER_URL` | optional runtime policy endpoint |
-| `--authorizer-header` (repeatable) | `FSEC_TUNNEL_AUTHORIZER_HEADER` | extra HTTP header(s) forwarded to authorizer requests |
+| `--authorizer-header` (repeatable) | `FSEC_TUNNEL_AUTHORIZER_HEADER` | extra HTTP header(s) forwarded to authorizer requests (comma-separated in env) |
 | `--policy-request-timeout` | `FSEC_TUNNEL_POLICY_REQUEST_TIMEOUT` | default `3s` |
 | `--policy-observe-interval` | `FSEC_TUNNEL_POLICY_OBSERVE_INTERVAL` | default `10s` |
 | `--policy-batch-size` | `FSEC_TUNNEL_POLICY_BATCH_SIZE` | default `256` |

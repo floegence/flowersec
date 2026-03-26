@@ -179,6 +179,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	tlsKeyFile := cmdutil.EnvString("FSEC_TUNNEL_TLS_KEY_FILE", "")
 	attachAuthorizerURL := cmdutil.EnvString("FSEC_TUNNEL_ATTACH_AUTHORIZER_URL", "")
 	observeAuthorizerURL := cmdutil.EnvString("FSEC_TUNNEL_OBSERVE_AUTHORIZER_URL", "")
+	authorizerHeadersEnv := cmdutil.SplitCSVEnv("FSEC_TUNNEL_AUTHORIZER_HEADER")
 
 	allowedOriginsEnv := cmdutil.SplitCSVEnv("FSEC_TUNNEL_ALLOW_ORIGIN")
 	var allowedOriginsFlag stringSliceFlag
@@ -258,7 +259,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", maxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES)")
 	fs.StringVar(&attachAuthorizerURL, "attach-authorizer-url", attachAuthorizerURL, "HTTP authorizer URL for attach decisions (optional) (env: FSEC_TUNNEL_ATTACH_AUTHORIZER_URL)")
 	fs.StringVar(&observeAuthorizerURL, "observe-authorizer-url", observeAuthorizerURL, "HTTP authorizer URL for runtime observe decisions (optional) (env: FSEC_TUNNEL_OBSERVE_AUTHORIZER_URL)")
-	fs.Var(&authorizerHeadersFlag, "authorizer-header", "extra HTTP header for authorizer requests in 'Name: value' form (repeatable)")
+	fs.Var(&authorizerHeadersFlag, "authorizer-header", "extra HTTP header for authorizer requests in 'Name: value' form (repeatable) (env: FSEC_TUNNEL_AUTHORIZER_HEADER; comma-separated)")
 	fs.DurationVar(&policyRequestTimeout, "policy-request-timeout", policyRequestTimeout, "per-request timeout for authorizer calls (>= 0; 0 uses default) (env: FSEC_TUNNEL_POLICY_REQUEST_TIMEOUT)")
 	fs.DurationVar(&policyObserveInterval, "policy-observe-interval", policyObserveInterval, "observe loop interval for runtime policy refresh (>= 0; 0 uses default) (env: FSEC_TUNNEL_POLICY_OBSERVE_INTERVAL)")
 	fs.IntVar(&policyBatchSize, "policy-batch-size", policyBatchSize, "max channels per observe authorizer batch (>= 0; 0 uses default) (env: FSEC_TUNNEL_POLICY_BATCH_SIZE)")
@@ -379,7 +380,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(allowedOrigins) == 0 {
 		return usageErr("missing --allow-origin")
 	}
-	authorizerHeaders, err := parseHeaderValues([]string(authorizerHeadersFlag))
+	authorizerHeaders := selectAuthorizerHeaders(authorizerHeadersEnv, []string(authorizerHeadersFlag))
+	parsedAuthorizerHeaders, err := parseHeaderValues(authorizerHeaders)
 	if err != nil {
 		return usageErr(err.Error())
 	}
@@ -418,7 +420,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		authorizer, err := server.NewHTTPAuthorizer(server.HTTPAuthorizerConfig{
 			AttachURL:  attachAuthorizerURL,
 			ObserveURL: observeAuthorizerURL,
-			Headers:    authorizerHeaders,
+			Headers:    parsedAuthorizerHeaders,
 		})
 		if err != nil {
 			return usageErr(err.Error())
@@ -650,6 +652,13 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func selectAllowedOrigins(env []string, flags []string) []string {
+	if len(flags) > 0 {
+		return flags
+	}
+	return env
+}
+
+func selectAuthorizerHeaders(env []string, flags []string) []string {
 	if len(flags) > 0 {
 		return flags
 	}

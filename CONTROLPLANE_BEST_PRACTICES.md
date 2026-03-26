@@ -68,11 +68,20 @@ Idle timeouts are enforced by the tunnel based on a signed token claim:
 - Treat e2ee_psk_b64u as a secret. Deliver grants only over authenticated and encrypted channels.
 - Rotate issuer keys by updating the keyset and reloading the tunnel server. Keep overlapping keys during rotation to avoid validation gaps.
 - Limit allowed_suites to the set you can verify and support.
+- For shared-URL tunnel deployments, keep auth scopes environment-specific:
+  - issue a distinct `(aud, iss)` pair per tenant/environment
+  - register each scope in the tunnel verifier config (`--tenants-file`)
+  - keep keyset ownership at the controlplane boundary
+- If you enable tunnel policy hooks, treat them as enforcement points (not logging only):
+  - attach authorizer decides initial allow/deny
+  - observe authorizer refreshes short leases or triggers channel kill
+  - missing lease refresh should be treated as close/fail-closed
 
 ## Deployment considerations
 
 - Single-instance tunnel servers are supported by the in-memory token replay cache.
 - If you want to scale without shared replay state, do it at the control plane layer by sharding channels across multiple tunnel endpoints (issue different `tunnel_url` values per channel). Each tunnel can remain a single instance.
+- A single tunnel URL can still safely serve multiple tenants when the tunnel runs in multi-tenant verifier mode (`--tenants-file`) and each tenant has a distinct `(aud, iss)` scope.
 - Multi-instance tunnels behind a load balancer require shared token replay state (for example, Redis) or strict session affinity; otherwise token replay protection becomes best-effort and the DoS window increases.
 - Prefer `wss://` for any non-local deployment. The tunnel can terminate TLS directly (optional) or sit behind a TLS-terminating reverse proxy.
 
