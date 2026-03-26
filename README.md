@@ -293,6 +293,11 @@ Run the full local gate:
 make check
 ```
 
+Tunnel server coverage expectations:
+
+- `flowersec-go/e2e/` is the end-to-end layer for real tunnel-server behavior, including shared-URL multi-tenant attach/pairing and HTTP authorizer attach/observe decisions.
+- When changing tunnel verifier or policy lifecycle behavior, update these e2e cases together with package-level unit tests so deployable behavior stays covered.
+
 ## Observability
 
 The tunnel binary exposes Prometheus metrics on a dedicated metrics server. The metrics server is disabled by default (empty `--metrics-listen`).
