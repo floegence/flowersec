@@ -1,13 +1,15 @@
 # flowersec
 
-Flowersec is a Go + TypeScript data-plane library for building an end-to-end encrypted, multiplexed connection over WebSocket.
+Secure remote apps, agents, and private services over a single end-to-end encrypted WebSocket session.
 
-It provides a consistent protocol stack across Go and TypeScript (browser-friendly):
+Flowersec is a Go + TypeScript toolkit for teams that want browser-friendly secure connectivity without giving relays access to application plaintext.
 
-- Tunnel attach: authenticate + pair endpoints (`channel_id` + `role`) and then blindly forward bytes
-- E2EE record layer: PSK-authenticated handshake and encrypted records (`FSEH` / `FSEC` framing)
-- Multiplexing: Yamux over the encrypted byte stream (server endpoint is Yamux server)
-- RPC/events: typed `type_id` routing on a dedicated `rpc` stream
+Use Flowersec when you want to:
+
+- connect browsers or Node clients directly to a service, or through a relay
+- keep tunnel operators blind to application payloads
+- carry RPC, events, HTTP, and WebSocket traffic over one secure session
+- deliver remote web experiences with a deployable tunnel server or proxy gateway
 
 Status: experimental; not audited.
 
@@ -15,61 +17,142 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 
 ![Flowersec secure connection patterns](docs/flowersec-connection-patterns.jpeg)
 
-The illustration above compares Flowersec's two primary connection patterns:
+## Why teams use Flowersec
 
-- **Direct mode**: the client connects straight to the server endpoint over WebSocket, then runs the E2EE + multiplexing stack end-to-end.
-- **Tunnel mode**: the client and server meet through a tunnel attach path, but the end-to-end encrypted channel still runs continuously from client to server endpoint through the tunnel's byte forwarding.
+- **Product-first secure access**: build browser-based remote experiences that feel like normal web apps, but run over an end-to-end encrypted channel.
+- **Direct or relayed connectivity**: connect straight to a server endpoint when you can, or use a tunnel when direct reachability is hard.
+- **Encrypted payloads through relays**: in tunnel mode, the tunnel pairs endpoints and forwards bytes, but does not learn application plaintext.
+- **One session, many flows**: run RPC, events, custom streams, HTTP, and WebSocket traffic over the same secure session.
+- **Practical deployables**: ship with a browser-friendly TypeScript SDK, Go server endpoint APIs, a deployable tunnel server, and a deployable proxy gateway.
 
-## Repository Layout
+## What you can build
 
-- Go library and binaries: `flowersec-go/`
-- TypeScript library (ESM, browser-friendly): `flowersec-ts/`
-- Single-source IDL and codegen: `idl/`, `tools/idlgen/`
-- Demos + scenario cookbook: `examples/README.md`
-  - Includes both high-level client helpers and manual stack examples (Go + TS).
+- Browser-based agent consoles and operator tools
+- Secure access to internal web apps without exposing them directly
+- Real-time control planes with RPC calls and live notifications
+- Browser-to-service encrypted channels for AI tools and internal platforms
+- Full HTTP / WebSocket remote apps carried over Flowersec proxy streams
 
-## Quickstart (no clone)
+## What end users experience
 
-- Demos: download the `flowersec-demos` bundle from GitHub Releases and follow `examples/README.md` (works from the extracted bundle root).
-- Integration: `docs/INTEGRATION_GUIDE.md`.
-- Frontend quickstart (TypeScript): `docs/FRONTEND_QUICKSTART.md`.
-- API surface: `docs/API_SURFACE.md`.
-- Proxy gateway deployment: `docs/PROXY_GATEWAY_DEPLOYMENT.md`.
-- Threat model: `docs/THREAT_MODEL.md`.
-- Protocol contracts: `docs/PROTOCOL.md`.
-- Error model: `docs/ERROR_MODEL.md`.
+1. Open a web app or operator console
+2. Fetch a one-time grant or direct connect info
+3. Connect directly to the server endpoint or through a tunnel
+4. Establish an end-to-end encrypted, multiplexed session
+5. Use the remote app as if it were a normal web experience
 
-## CLI conventions
+## Choose your connection pattern
 
-All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `flowersec-issuer-keygen`, `flowersec-channelinit`, `flowersec-directinit`, `idlgen`) follow these conventions:
+- **Direct mode**
+  - The client connects directly to the server WebSocket endpoint.
+  - Best when the server endpoint is reachable and you want the shortest path.
+  - The encrypted channel starts immediately after the WebSocket connection.
 
-- `--help` includes copy/paste examples and the output contract.
-- Exit codes: `0` success, `2` usage/flag error, `1` runtime error.
-- For JSON-producing tools, stdout is machine-readable JSON; stderr is logs/errors.
-- Many flags support `FSEC_*` environment variable defaults (flags override env).
+- **Tunnel mode**
+  - The client and server endpoint attach to a tunnel with one-time grants.
+  - Best when you need rendezvous, NAT-friendly connection setup, or a relay hop.
+  - The tunnel forwards encrypted bytes; it does not terminate the end-to-end encrypted channel.
 
-## Install (no clone)
+- **Proxy runtime mode**
+  - A browser runtime plus Service Worker carries HTTP and WebSocket traffic over Flowersec proxy streams.
+  - Best when you want a browser to use a remote web app through the encrypted session without putting an L7 plaintext gateway in the middle.
 
-This section is for users who want to install Flowersec tools without cloning this repository.
+- **Proxy gateway mode**
+  - A deployable gateway accepts browser HTTP / WebSocket traffic and forwards it to a Flowersec server endpoint.
+  - Best when you need a browser-facing reverse proxy for remote apps.
+  - Important: the gateway is plaintext at L7 by design; use runtime mode if you need the browser-to-server path to stay end-to-end encrypted through the relay layer.
 
-### Tunnel server (deployable)
+## Try it in 5 minutes
 
-**Option A: `go install`**
+The fastest way to feel the product is the demo bundle in GitHub Releases.
+
+1. Download and extract `flowersec-demos_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) from the `flowersec-go/vX.Y.Z` release.
+2. From the extracted bundle root, start the demo dev server:
+
+```bash
+node ./examples/ts/dev-server.mjs | tee dev.json
+```
+
+3. Open the URLs printed in `dev.json`:
+
+- `browser_tunnel_url`: fetch a one-time grant, then connect through the tunnel
+- `browser_direct_url`: fetch direct connect info, then connect directly
+- `browser_proxy_sandbox_url`: connect once, then open a proxied HTTP / WebSocket app
+
+Full walkthrough: `examples/README.md`
+
+## Quickstart code
+
+### Browser (recommended)
+
+```ts
+import { connectBrowser } from "@floegence/flowersec-core/browser";
+
+const grant = await fetch("/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
+
+const client = await connectBrowser(grant);
+await client.ping();
+client.close();
+```
+
+### Node.js (recommended)
+
+```ts
+import { connectNode } from "@floegence/flowersec-core/node";
+
+const grant = await fetch("https://your-app.example/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
+
+const client = await connectNode(grant, {
+  origin: "https://your-app.example",
+});
+
+await client.ping();
+client.close();
+```
+
+## Deployable pieces
+
+| Piece | Runs where | What it gives you |
+| --- | --- | --- |
+| `@floegence/flowersec-core/browser` | Browser | High-level client helpers for direct and tunnel connects |
+| `@floegence/flowersec-core/node` | Node.js | Node client helpers with correct Origin handling |
+| `flowersec-go/client` | Go services / CLIs | High-level Go client APIs |
+| `flowersec-go/endpoint` + `endpoint/serve` | Go server side | Server endpoints that terminate E2EE and serve streams / RPC |
+| `flowersec-tunnel` | Deployable service | Tunnel rendezvous and byte forwarding for tunnel mode |
+| `flowersec-proxy-gateway` | Deployable service | Browser-facing HTTP / WebSocket gateway over Flowersec proxy streams |
+| helper tools | Local dev / controlplane workflows | Key generation, channel init grants, direct connect info |
+
+## Install and deploy
+
+### TypeScript SDK
+
+```bash
+npm install @floegence/flowersec-core
+```
+
+No-clone install is also supported from GitHub Releases:
+
+- download `floegence-flowersec-core-X.Y.Z.tgz`
+- install with `npm i ./floegence-flowersec-core-X.Y.Z.tgz`
+
+### Go SDK
+
+```bash
+go get github.com/floegence/flowersec/flowersec-go@latest
+```
+
+Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.2.0`).
+
+### Tunnel server
+
+Install:
 
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
 flowersec-tunnel --version
 ```
 
-Note: `go install` requires Go 1.25.8+ and installs into `$(go env GOBIN)` (or `$(go env GOPATH)/bin`).
-
-**Option B: GitHub Releases**
-
-Download prebuilt binaries (and `checksums.txt`) from the GitHub Releases page.
-
-**Option C: Docker image (recommended for deployments)**
-
-The tunnel CLI supports `FSEC_TUNNEL_*` environment variables as defaults (flags override env). Minimal example:
+Minimal Docker deployment:
 
 ```bash
 docker run --rm \
@@ -84,39 +167,24 @@ docker run --rm \
   ghcr.io/floegence/flowersec-tunnel:latest
 ```
 
-- `issuer_keys.json` is the issuer **public keyset** owned by your controlplane (the tunnel uses it to verify tokens). Keep `aud`/`iss` consistent with the controlplane-issued token payload.
-- Health check: `GET /healthz` on the tunnel HTTP server.
-- Metrics: set `FSEC_TUNNEL_METRICS_LISTEN=0.0.0.0:9090` and expose `-p 9090:9090`.
+Notes:
 
-For shared-URL, multi-tenant deployments, replace the single `issuer_keys_file + aud + iss` tuple with `FSEC_TUNNEL_TENANTS_FILE=/etc/flowersec/tenants.json`. The tunnel then selects a tenant by token `(aud, iss)` and can optionally call attach/runtime policy backends via:
+- `issuer_keys.json` is the tunnel verifier public keyset from your controlplane
+- `GET /healthz` is the built-in health check
+- multi-tenant deployments can use `FSEC_TUNNEL_TENANTS_FILE`
 
-- `FSEC_TUNNEL_ATTACH_AUTHORIZER_URL`
-- `FSEC_TUNNEL_OBSERVE_AUTHORIZER_URL`
-- `FSEC_TUNNEL_AUTHORIZER_HEADER`
+Full deployment guide: `docs/TUNNEL_DEPLOYMENT.md`
 
-This lets one tunnel process and one websocket URL safely serve multiple auth scopes, as long as each tenant keeps a distinct `(aud, iss)` pair and keyset binding.
+### Proxy gateway
 
-Full deployment notes: `docs/TUNNEL_DEPLOYMENT.md`.
-
-### Proxy gateway (deployable)
-
-**Option A: `go install`**
+Install:
 
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@latest
 flowersec-proxy-gateway --version
 ```
 
-The proxy gateway accepts browser HTTP/WS traffic and forwards it to a Flowersec server endpoint over `flowersec-proxy/*` streams.
-
-**Option B: GitHub Releases**
-
-Download either:
-
-- `flowersec-proxy-gateway_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`)
-- `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`), which also includes `bin/flowersec-proxy-gateway`
-
-**Option C: Docker image (recommended for deployments)**
+Minimal Docker deployment:
 
 ```bash
 docker run --rm \
@@ -127,18 +195,17 @@ docker run --rm \
   ghcr.io/floegence/flowersec-proxy-gateway:latest
 ```
 
-- Health check: `GET /_flowersec/healthz`
-- Config now separates `browser.allowed_origins` (browser -> gateway WS Origin checks) from `tunnel.origin` (gateway -> tunnel attach Origin).
-- Route matching is host-only; ports are ignored after canonicalization.
-- Grants are one-time; each route must point to a source that can provide a fresh `grant_client` for reconnects.
+Notes:
 
-Full deployment notes: `docs/PROXY_GATEWAY_DEPLOYMENT.md`.
+- `GET /_flowersec/healthz` is the built-in health check
+- route matching is host-only after canonicalization
+- grants are one-time; each route must fetch or mint fresh `grant_client` values for reconnects
 
-### Helper tools (optional, local/dev)
+Full deployment guide: `docs/PROXY_GATEWAY_DEPLOYMENT.md`
 
-These tools help you generate an issuer keypair, mint `ChannelInitGrant` pairs, and generate `DirectConnectInfo` JSON for direct (no tunnel) demos:
+### Helper tools
 
-**Option A: `go install`**
+Install:
 
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
@@ -146,104 +213,60 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-directinit@latest
 ```
 
-- `flowersec-issuer-keygen` writes `issuer_key.json` (private key; keep it secret) and `issuer_keys.json` (public keyset for the tunnel).
-- `flowersec-channelinit` outputs a JSON object containing `grant_client`/`grant_server` (plus version metadata) to stdout (redirect to a file if needed).
-- `flowersec-directinit` outputs a `DirectConnectInfo` JSON object (includes PSK; keep it secret) to stdout (redirect to a file if needed).
+What they do:
 
-Flags override env. For scripting, all tools support env defaults:
+- `flowersec-issuer-keygen`: writes an issuer private key plus a public keyset for the tunnel
+- `flowersec-channelinit`: mints a one-time `ChannelInitGrant` pair
+- `flowersec-directinit`: generates `DirectConnectInfo` JSON for direct demos
 
-```bash
-# Generate issuer keys (private + public keyset for the tunnel).
-export FSEC_ISSUER_OUT_DIR=./keys
-flowersec-issuer-keygen
+The `flowersec-tools_X.Y.Z_<os>_<arch>` release bundle includes these tools and `flowersec-proxy-gateway`.
 
-# Mint a one-time ChannelInitGrant pair (client/server).
-export FSEC_ISSUER_PRIVATE_KEY_FILE=./keys/issuer_key.json
-export FSEC_TUNNEL_URL=ws://127.0.0.1:8080/ws
-export FSEC_TUNNEL_AUD=flowersec-tunnel:dev
-export FSEC_TUNNEL_ISS=issuer-dev
-flowersec-channelinit > channel.json
+### CLI conventions
 
-# Tip: use --pretty for human-readable JSON.
-# flowersec-channelinit --pretty > channel.json
+All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `flowersec-issuer-keygen`, `flowersec-channelinit`, `flowersec-directinit`, `idlgen`) follow these conventions:
 
-# Generate a DirectConnectInfo JSON object for a direct server.
-export FSEC_DIRECT_WS_URL=ws://127.0.0.1:8080/ws
-flowersec-directinit > direct.json
-```
+- `--help` includes copy/paste examples and the output contract
+- exit codes: `0` success, `2` usage error, `1` runtime error
+- JSON-producing tools write machine-readable JSON to stdout and logs/errors to stderr
+- most flags support `FSEC_*` environment variable defaults
 
-**Option B: GitHub Releases (no Go)**
+## Security and operational notes
 
-Download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip` on Windows) from the same GitHub Release tag (`flowersec-go/vX.Y.Z`).
+- **One-time grants**: tunnel attach tokens are single-use; mint a fresh channel init for every new connection attempt.
+- **Untrusted tunnel**: in tunnel mode, the tunnel can pair endpoints and forward bytes, but it cannot decrypt application payloads after the encrypted session is established.
+- **Use `wss://` in production**: the attach layer is plaintext before E2EE starts, so production deployments must use TLS.
+- **Origin checks matter**: browser-facing Origin allow-lists are enabled by default on the tunnel and direct servers.
+- **Direct mode is simpler when reachable**: use it when the server endpoint can be reached directly and you do not need a relay hop.
+- **Runtime vs gateway boundary**: runtime proxy mode keeps the browser-to-server path end-to-end encrypted through the relay layer; gateway mode is a deliberate L7 plaintext component.
+- **Tunnel scaling**: replay protection and pairing state are in memory by default; for multi-instance scale without shared state, shard channels across tunnel URLs at the controlplane layer.
+- **Observability**: the tunnel exposes Prometheus metrics and optional bandwidth stats. See `docs/TUNNEL_DEPLOYMENT.md` and the observability notes below.
 
-The tools bundle includes:
+## Docs map
 
-- `bin/flowersec-proxy-gateway`
-- `bin/flowersec-issuer-keygen`
-- `bin/flowersec-channelinit`
-- `bin/flowersec-directinit`
+- Frontend quickstart: `docs/FRONTEND_QUICKSTART.md`
+- Integration guide: `docs/INTEGRATION_GUIDE.md`
+- API surface: `docs/API_SURFACE.md`
+- Tunnel deployment: `docs/TUNNEL_DEPLOYMENT.md`
+- Proxy gateway deployment: `docs/PROXY_GATEWAY_DEPLOYMENT.md`
+- Proxy stream contract: `docs/PROXY.md`
+- Threat model: `docs/THREAT_MODEL.md`
+- Protocol framing: `docs/PROTOCOL.md`
+- Error model: `docs/ERROR_MODEL.md`
+- Demo cookbook: `examples/README.md`
 
-Note: the `flowersec-demos` bundle also includes these binaries under `bin/` for convenience.
+## Repository layout
 
-## Getting started (no clone, local)
-
-The recommended hands-on entrypoint is the demo bundle shipped in GitHub Releases:
-
-- Download `flowersec-demos_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) from the `flowersec-go/vX.Y.Z` release.
-- Follow `examples/README.md` (copy/paste friendly; does not require a repository checkout).
-
-High-level client entrypoints:
-
-Install the Go module:
-
-```bash
-go get github.com/floegence/flowersec/flowersec-go@latest
-# Or pin a version:
-go get github.com/floegence/flowersec/flowersec-go@v0.2.0
-```
-
-Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.2.0`).
-
-- TypeScript install (no clone): download `floegence-flowersec-core-X.Y.Z.tgz` from the same GitHub Release and install with `npm i ./floegence-flowersec-core-X.Y.Z.tgz`.
-- Go (client): `github.com/floegence/flowersec/flowersec-go/client` (`client.Connect(ctx, input, ...opts)`, `client.ConnectTunnel(ctx, grant, ...opts)`, `client.ConnectDirect(ctx, info, ...opts)`; set Origin via `client.WithOrigin(origin)`)
-- Go (server endpoint): `github.com/floegence/flowersec/flowersec-go/endpoint` (accept/dial `role=server` endpoints)
-- Go (server stream runtime): `github.com/floegence/flowersec/flowersec-go/endpoint/serve` (default stream dispatch + RPC stream handler)
-- Go (input JSON helpers): `github.com/floegence/flowersec/flowersec-go/protocolio` (`DecodeGrantClientJSON`, `DecodeDirectConnectInfoJSON`)
-- Go (RPC): `github.com/floegence/flowersec/flowersec-go/rpc` (router, server, client)
-- TS (stable): `@floegence/flowersec-core` (`connect`, `connectTunnel`, `connectDirect`)
-- TS (Node): `@floegence/flowersec-core/node` (`connectNode`, `connectTunnelNode`, `connectDirectNode`, `createNodeWsFactory`)
-- TS (browser): `@floegence/flowersec-core/browser` (`connectBrowser`, `connectTunnelBrowser`, `connectDirectBrowser`)
-- TS (building blocks): `@floegence/flowersec-core/framing`, `@floegence/flowersec-core/streamio`, `@floegence/flowersec-core/rpc`, `@floegence/flowersec-core/yamux`, `@floegence/flowersec-core/e2ee`, `@floegence/flowersec-core/ws`, `@floegence/flowersec-core/observability`, `@floegence/flowersec-core/streamhello`
-- TS (generated protocol stubs): `@floegence/flowersec-core/gen/flowersec/{controlplane,direct,e2ee,rpc,tunnel}/*`
-- TS (unstable): `@floegence/flowersec-core/internal` (internal glue; not recommended as a stable dependency)
-
-Note: the `demo` IDL used by the cookbook/examples is intentionally NOT part of the public API surface.
-The generated demo stubs live under `examples/gen/` (Go examples module) and `flowersec-ts/src/_examples/` (TS repo-only), and are not exported via `@floegence/flowersec-core`.
-
-It includes:
-
-- Running the deployable tunnel server as an unmodified service
-- Starting a minimal controlplane demo (issuer keys + grant minting)
-- Starting a demo server endpoint (`role=server`) and connecting via TS/Go clients
-
-## Key Concepts
-
-- Endpoint roles: `client` vs `server` are protocol roles.
-- One-time tokens: tunnel attach tokens are single-use; mint a fresh channel init for each attempt.
-- Untrusted tunnel: the tunnel cannot decrypt or interpret application data after attach.
-- Single-instance tunnel: token replay protection is in-memory. To scale without shared state, shard channels across multiple tunnel endpoints at the control plane layer (set different `tunnel_url` values per channel).
-- Idle timeout: the tunnel closes channels that are idle beyond `idle_timeout_seconds` (enforced from the signed token claim). High-level connect helpers enable encrypted keepalive pings by default for tunnel connects (direct connects are opt-in).
-- Handshake init_exp: `channel_init_expire_at` (init_exp) must be a non-zero Unix timestamp.
-- Handshake confirmation: after `E2EE_Ack`, the server sends an encrypted ping record (`FSEC`, `flags=ping`, `seq=1`). Clients wait for this server-finished proof before returning.
-
-## Communication Scenarios
-
-The examples in `examples/README.md` cover two common paths that match the illustration above:
-
-- **Tunnel path (controlplane + tunnel)**: the controlplane issues one-time grants, both endpoints attach to the tunnel, and the tunnel forwards encrypted bytes without learning application plaintext.
-- **Direct path (no tunnel)**: the client connects directly to the server WebSocket endpoint and immediately establishes the encrypted channel without a rendezvous hop.
+- Go library and deployable binaries: `flowersec-go/`
+- TypeScript library (ESM, browser-friendly): `flowersec-ts/`
+- Demos and scenarios: `examples/`
+- Single-source IDL and codegen: `idl/`, `tools/idlgen/`
 
 ## Development
+
+Prerequisites:
+
+- Go `1.25.8+`
+- Node.js `22` LTS recommended (see `.nvmrc`)
 
 Generate code from IDL:
 
@@ -251,43 +274,11 @@ Generate code from IDL:
 make gen
 ```
 
-Codegen is split into:
+Available codegen targets:
 
-- `make gen-core`: stable protocol IDLs (public API surface)
-- `make gen-examples`: example/test-only IDLs (not exported as a public API)
+- `make gen-core`: stable protocol IDLs
+- `make gen-examples`: example and test-only IDLs
 - `make gen`: both
-
-Go workspace:
-
-- Go code lives in the `flowersec-go/` module; examples live in the `examples/` module. Run Go commands from those directories (or use `make go-test`).
-
-## Tunnel defaults (important for deployment)
-
-The deployable tunnel binary is `flowersec-go/cmd/flowersec-tunnel/`.
-
-- TLS is **disabled by default**. For any non-local deployment, use `wss://` (either enable `--tls-cert-file/--tls-key-file` or terminate TLS at a reverse proxy).
-- Origin checks are **enabled by default** and require an explicit allow-list:
-  - `--allow-origin` accepts:
-    - full Origin values (e.g. `https://example.com` or `http://127.0.0.1:5173`)
-    - hostname entries (e.g. `example.com`, port ignored)
-    - hostname:port entries (e.g. `example.com:5173`)
-    - wildcard hostnames (e.g. `*.example.com`; matches subdomains only, not `example.com`)
-    - exact non-standard values (e.g. `null`)
-  - Requests without `Origin` are **rejected by default**; `--allow-no-origin` is intended for non-browser clients (discouraged).
-  - Client helpers:
-    - Go: set an explicit Origin value via `client.WithOrigin(origin)` (for example `client.ConnectTunnel(ctx, grant, client.WithOrigin(origin))`).
-    - TS browser: use `connectTunnelBrowser` / `connectDirectBrowser` from `@floegence/flowersec-core/browser` (uses `window.location.origin`).
-    - TS Node: use `connectTunnelNode` / `connectDirectNode` from `@floegence/flowersec-core/node` (auto-injects a `wsFactory` that sets the `Origin` header), or pass `wsFactory` manually.
-- Token issuer (`iss`) is **required**: pass `--iss` and ensure it matches the token payload `iss` minted by your controlplane.
-- Verifier mode:
-  - Single-tenant: `--issuer-keys-file + --aud + --iss`
-  - Multi-tenant: `--tenants-file` (mutually exclusive with single-tenant flags)
-- Policy mode: `--observe-authorizer-url` requires `--attach-authorizer-url`.
-
-Node.js version:
-
-- Recommended: Node.js 22 (LTS). See `.nvmrc`.
-- CI uses Node.js 22 (see `.github/workflows/ci.yml`).
 
 Run the full local gate:
 
@@ -295,53 +286,14 @@ Run the full local gate:
 make check
 ```
 
-Tunnel server coverage expectations:
+Observability quick notes:
 
-- `flowersec-go/e2e/` is the end-to-end layer for real tunnel-server behavior, including shared-URL multi-tenant attach/pairing and HTTP authorizer attach/observe decisions.
-- When changing tunnel verifier or policy lifecycle behavior, update these e2e cases together with package-level unit tests so deployable behavior stays covered.
+- Prometheus metrics are served from a dedicated metrics server when `--metrics-listen` is set
+- optional bandwidth stats are served from `/stats/v1/bandwidth` when `--stats-listen` is set
+- metrics can be toggled at runtime with `SIGUSR1` / `SIGUSR2`
 
-## Observability
+Go workspace notes:
 
-The tunnel binary exposes Prometheus metrics on a dedicated metrics server. The metrics server is disabled by default (empty `--metrics-listen`).
-
-The tunnel can also expose a best-effort bandwidth JSON endpoint on a separate stats server (`--stats-listen`, path `/stats/v1/bandwidth`), primarily for external collectors.
-
-When `--metrics-listen` is set, `GET /metrics` is served immediately.
-You can toggle metrics at runtime:
-
-- Disable metrics: send `SIGUSR2`
-- Re-enable metrics: send `SIGUSR1`
-
-Example:
-
-```bash
-# run tunnel
-cd flowersec-go
-go run ./cmd/flowersec-tunnel \
-  --listen 127.0.0.1:8080 \
-  --metrics-listen 127.0.0.1:9090 \
-  --stats-listen 127.0.0.1:9091 \
-  --issuer-keys-file /path/to/keys.json \
-  --aud your-audience \
-  --iss your-issuer \
-  --allow-origin http://127.0.0.1:5173
-
-# scrape metrics
-curl http://127.0.0.1:9090/metrics
-
-# read bandwidth snapshot (optional stats server)
-curl http://127.0.0.1:9091/stats/v1/bandwidth
-```
-
-Library integrations:
-
-- Go tunnel: set `server.Config.Observer` if you run the server directly.
-- Go RPC: attach an observer via `rpc.Server.SetObserver(...)` or `rpc.Client.SetObserver(...)`.
-- TS client: pass `observer` into `connectTunnel(...)` / `connectDirect(...)`, `WebSocketBinaryTransport`, or `RpcClient`.
-
-## Binaries
-
-- Tunnel server (deployable): `flowersec-go/cmd/flowersec-tunnel/`
-  - flags: `--listen`, `--advertise-host`, `--ws-path`, verifier mode (`--issuer-keys-file + --aud + --iss` or `--tenants-file`), `--allow-origin`, `--allow-no-origin`, `--tls-cert-file`, `--tls-key-file`, `--metrics-listen`, `--stats-listen`, `--max-conns`, `--max-channels`, `--max-total-pending-bytes`, `--write-timeout`, `--max-write-queue-bytes`, policy flags (`--attach-authorizer-url`, `--observe-authorizer-url`, `--authorizer-header`, `--policy-request-timeout`, `--policy-observe-interval`, `--policy-batch-size`) (see `--help` for full details)
-- Helper tools (local/dev): `flowersec-go/cmd/flowersec-issuer-keygen/`, `flowersec-go/cmd/flowersec-channelinit/`, `flowersec-go/cmd/flowersec-directinit/`
-- Internal tooling (not a supported public CLI surface): `flowersec-go/internal/cmd/*` (interop harnesses, load generator)
+- core Go code lives in `flowersec-go/`
+- examples live in `examples/`
+- run Go commands from those directories, or use the root `Makefile`
