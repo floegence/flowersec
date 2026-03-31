@@ -1,6 +1,26 @@
 # flowersec
 
-Secure remote apps, agents, and private services over a single end-to-end encrypted WebSocket session.
+<p align="center">
+  <strong>Secure remote apps, agents, and private services over a single end-to-end encrypted WebSocket session.</strong>
+</p>
+
+<p align="center">
+  <a href="#run-demo">⚡ Run demos</a> |
+  <a href="#connection-patterns">🧭 Modes</a> |
+  <a href="#deploy">🚀 Deploy</a> |
+  <a href="docs/FRONTEND_QUICKSTART.md">🌐 Browser quickstart</a> |
+  <a href="docs/INTEGRATION_GUIDE.md">🧩 Integration guide</a> |
+  <a href="#docs-map">📚 Docs map</a>
+</p>
+
+![Go Version](https://img.shields.io/badge/Go-1.25.8-00ADD8?logo=go)
+![Node Version](https://img.shields.io/badge/Node.js-22-339933?logo=node.js)
+![Browser Friendly](https://img.shields.io/badge/Browser-Friendly-2563EB)
+![Transport](https://img.shields.io/badge/Transport-WebSocket-111827)
+![Security](https://img.shields.io/badge/Security-End--to--End%20Encrypted-5B2CFF)
+![Modes](https://img.shields.io/badge/Modes-Direct%20%7C%20Tunnel-7A3E00)
+![Multiplexing](https://img.shields.io/badge/Multiplexing-Yamux-7C3AED)
+![Proxy](https://img.shields.io/badge/Proxy-HTTP%20%2F%20WebSocket-0F766E)
 
 Flowersec is a Go + TypeScript toolkit for teams that want browser-friendly secure connectivity without giving relays access to application plaintext.
 
@@ -15,9 +35,29 @@ Status: experimental; not audited.
 
 Security note: in any non-local deployment, use `wss://` (or terminate TLS at a reverse proxy). `ws://` exposes bearer tokens and metadata on the wire.
 
+## At a glance
+
+| Need | Flowersec gives you |
+| --- | --- |
+| 🌐 Browser-friendly secure sessions | TypeScript clients for browsers and Node.js over WebSocket |
+| 🔐 E2EE through relays | Direct mode and tunnel mode with encrypted payloads end-to-end |
+| 🧩 More than one protocol | RPC, events, custom streams, HTTP, and WebSocket over one multiplexed session |
+| 🚀 Deployable building blocks | Tunnel server, proxy gateway, Go server endpoints, and helper CLIs |
+
+## Quick links
+
+| I want to... | Jump |
+| --- | --- |
+| ⚡ Try the demos | [`examples/README.md`](examples/README.md) |
+| 🌐 Start from the browser SDK | [`docs/FRONTEND_QUICKSTART.md`](docs/FRONTEND_QUICKSTART.md) |
+| 🧩 Integrate Flowersec into my app | [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) |
+| 🚇 Deploy the tunnel | [`docs/TUNNEL_DEPLOYMENT.md`](docs/TUNNEL_DEPLOYMENT.md) |
+| 🛡️ Deploy the proxy gateway | [`docs/PROXY_GATEWAY_DEPLOYMENT.md`](docs/PROXY_GATEWAY_DEPLOYMENT.md) |
+| 🔐 Review trust boundaries | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) |
+
 ![Flowersec secure connection patterns](docs/flowersec-connection-patterns.jpeg)
 
-## Why teams use Flowersec
+## ✨ Why teams use Flowersec
 
 - **Product-first secure access**: build browser-based remote experiences that feel like normal web apps, but run over an end-to-end encrypted channel.
 - **Direct or relayed connectivity**: connect straight to a server endpoint when you can, or use a tunnel when direct reachability is hard.
@@ -25,7 +65,7 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 - **One session, many flows**: run RPC, events, custom streams, HTTP, and WebSocket traffic over the same secure session.
 - **Practical deployables**: ship with a browser-friendly TypeScript SDK, Go server endpoint APIs, a deployable tunnel server, and a deployable proxy gateway.
 
-## What you can build
+## 🧩 What you can build
 
 - Browser-based agent consoles and operator tools
 - Secure access to internal web apps without exposing them directly
@@ -33,7 +73,7 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 - Browser-to-service encrypted channels for AI tools and internal platforms
 - Full HTTP / WebSocket remote apps carried over Flowersec proxy streams
 
-## What end users experience
+## 👤 What end users experience
 
 1. Open a web app or operator console
 2. Fetch a one-time grant or direct connect info
@@ -41,7 +81,9 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 4. Establish an end-to-end encrypted, multiplexed session
 5. Use the remote app as if it were a normal web experience
 
-## Choose your connection pattern
+<a id="connection-patterns"></a>
+
+## 🧭 Choose your connection pattern
 
 - **Direct mode**
   - The client connects directly to the server WebSocket endpoint.
@@ -62,7 +104,9 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
   - Best when you need a browser-facing reverse proxy for remote apps.
   - Important: the gateway is plaintext at L7 by design; use runtime mode if you need the browser-to-server path to stay end-to-end encrypted through the relay layer.
 
-## Try it in 5 minutes
+<a id="run-demo"></a>
+
+## ⚡ Try it in 5 minutes
 
 The fastest way to feel the product is the demo bundle in GitHub Releases.
 
@@ -81,7 +125,7 @@ node ./examples/ts/dev-server.mjs | tee dev.json
 
 Full walkthrough: `examples/README.md`
 
-## Quickstart code
+## 🧪 Quickstart code
 
 ### Browser (recommended)
 
@@ -110,7 +154,7 @@ await client.ping();
 client.close();
 ```
 
-## Deployable pieces
+## 📦 Deployable pieces
 
 | Piece | Runs where | What it gives you |
 | --- | --- | --- |
@@ -122,7 +166,9 @@ client.close();
 | `flowersec-proxy-gateway` | Deployable service | Browser-facing HTTP / WebSocket gateway over Flowersec proxy streams |
 | helper tools | Local dev / controlplane workflows | Key generation, channel init grants, direct connect info |
 
-## Install and deploy
+<a id="deploy"></a>
+
+## 🚀 Install and deploy
 
 ### TypeScript SDK
 
@@ -230,7 +276,7 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 - JSON-producing tools write machine-readable JSON to stdout and logs/errors to stderr
 - most flags support `FSEC_*` environment variable defaults
 
-## Security and operational notes
+## 🔐 Security and operational notes
 
 - **One-time grants**: tunnel attach tokens are single-use; mint a fresh channel init for every new connection attempt.
 - **Untrusted tunnel**: in tunnel mode, the tunnel can pair endpoints and forward bytes, but it cannot decrypt application payloads after the encrypted session is established.
@@ -241,7 +287,9 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 - **Tunnel scaling**: replay protection and pairing state are in memory by default; for multi-instance scale without shared state, shard channels across tunnel URLs at the controlplane layer.
 - **Observability**: the tunnel exposes Prometheus metrics and optional bandwidth stats. See `docs/TUNNEL_DEPLOYMENT.md` and the observability notes below.
 
-## Docs map
+<a id="docs-map"></a>
+
+## 📚 Docs map
 
 - Frontend quickstart: `docs/FRONTEND_QUICKSTART.md`
 - Integration guide: `docs/INTEGRATION_GUIDE.md`
@@ -254,14 +302,14 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 - Error model: `docs/ERROR_MODEL.md`
 - Demo cookbook: `examples/README.md`
 
-## Repository layout
+## 🗂️ Repository layout
 
 - Go library and deployable binaries: `flowersec-go/`
 - TypeScript library (ESM, browser-friendly): `flowersec-ts/`
 - Demos and scenarios: `examples/`
 - Single-source IDL and codegen: `idl/`, `tools/idlgen/`
 
-## Development
+## 🧪 Development
 
 Prerequisites:
 
