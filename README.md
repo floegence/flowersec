@@ -13,6 +13,13 @@ Status: experimental; not audited.
 
 Security note: in any non-local deployment, use `wss://` (or terminate TLS at a reverse proxy). `ws://` exposes bearer tokens and metadata on the wire.
 
+![Flowersec secure connection patterns](docs/flowersec-connection-patterns.jpeg)
+
+The illustration above compares Flowersec's two primary connection patterns:
+
+- **Direct mode**: the client connects straight to the server endpoint over WebSocket, then runs the E2EE + multiplexing stack end-to-end.
+- **Tunnel mode**: the client and server meet through a tunnel attach path, but the end-to-end encrypted channel still runs continuously from client to server endpoint through the tunnel's byte forwarding.
+
 ## Repository Layout
 
 - Go library and binaries: `flowersec-go/`
@@ -231,15 +238,10 @@ It includes:
 
 ## Communication Scenarios
 
-The examples in `examples/README.md` cover two common paths. The diagrams below mirror those scenarios.
+The examples in `examples/README.md` cover two common paths that match the illustration above:
 
-### Tunnel path (controlplane + tunnel)
-
-![Tunnel path (controlplane + tunnel)](docs/tunnel-path.svg)
-
-### Direct path (no tunnel)
-
-![Direct path (no tunnel)](docs/direct-path.svg)
+- **Tunnel path (controlplane + tunnel)**: the controlplane issues one-time grants, both endpoints attach to the tunnel, and the tunnel forwards encrypted bytes without learning application plaintext.
+- **Direct path (no tunnel)**: the client connects directly to the server WebSocket endpoint and immediately establishes the encrypted channel without a rendezvous hop.
 
 ## Development
 
