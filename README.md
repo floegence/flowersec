@@ -21,13 +21,16 @@
 ![Modes](https://img.shields.io/badge/Modes-Direct%20%7C%20Tunnel-7A3E00)
 ![Multiplexing](https://img.shields.io/badge/Multiplexing-Yamux-7C3AED)
 ![Proxy](https://img.shields.io/badge/Proxy-HTTP%20%2F%20WebSocket-0F766E)
+![Tunnel](https://img.shields.io/badge/Tunnel-Open%20Source%20Self--Hosted-92400E)
 
 Flowersec is a Go + TypeScript toolkit for teams that want browser-friendly secure connectivity without giving relays access to application plaintext.
 
 Use Flowersec when you want to:
 
 - connect browsers or Node clients directly to a service, or through a relay
+- preserve the familiar browser direct-access experience for end users
 - keep tunnel operators blind to application payloads
+- deploy your own tunnel instead of depending on a third-party tunnel service
 - carry RPC, events, HTTP, and WebSocket traffic over one secure session
 - deliver remote web experiences with a deployable tunnel server or proxy gateway
 
@@ -40,7 +43,9 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 | Need | Flowersec gives you |
 | --- | --- |
 | 🌐 Browser-friendly secure sessions | TypeScript clients for browsers and Node.js over WebSocket |
+| 👤 Familiar browser UX | Remote apps still feel like normal browser-direct access with regular page loads, HTTP, and WebSocket behavior |
 | 🔐 E2EE through relays | Direct mode and tunnel mode with encrypted payloads end-to-end |
+| 🏗️ Own your tunnel layer | An open-source, self-hosted Flowersec tunnel server instead of a required third-party tunnel |
 | 🧩 More than one protocol | RPC, events, custom streams, HTTP, and WebSocket over one multiplexed session |
 | 🚀 Deployable building blocks | Tunnel server, proxy gateway, Go server endpoints, and helper CLIs |
 
@@ -60,8 +65,10 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 ## ✨ Why teams use Flowersec
 
 - **Product-first secure access**: build browser-based remote experiences that feel like normal web apps, but run over an end-to-end encrypted channel.
+- **Browser-native user experience**: for remote web apps, users stay in the familiar direct browser access model instead of switching to a tunnel-specific UX.
 - **Direct or relayed connectivity**: connect straight to a server endpoint when you can, or use a tunnel when direct reachability is hard.
 - **Encrypted payloads through relays**: in tunnel mode, the tunnel pairs endpoints and forwards bytes, but does not learn application plaintext.
+- **Own the relay layer**: Flowersec ships an open-source tunnel you can deploy yourself, so you do not have to depend on a proprietary or third-party tunnel service.
 - **One session, many flows**: run RPC, events, custom streams, HTTP, and WebSocket traffic over the same secure session.
 - **Practical deployables**: ship with a browser-friendly TypeScript SDK, Go server endpoint APIs, a deployable tunnel server, and a deployable proxy gateway.
 
@@ -79,7 +86,7 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 2. Fetch a one-time grant or direct connect info
 3. Connect directly to the server endpoint or through a tunnel
 4. Establish an end-to-end encrypted, multiplexed session
-5. Use the remote app as if it were a normal web experience
+5. Use the remote app through the familiar browser direct-access experience, with page loads, HTTP requests, and WebSocket updates behaving naturally
 
 <a id="connection-patterns"></a>
 
@@ -94,6 +101,7 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
   - The client and server endpoint attach to a tunnel with one-time grants.
   - Best when you need rendezvous, NAT-friendly connection setup, or a relay hop.
   - The tunnel forwards encrypted bytes; it does not terminate the end-to-end encrypted channel.
+  - The relay is the included open-source Flowersec tunnel that you can self-host, rather than a required third-party tunnel dependency.
 
 - **Proxy runtime mode**
   - A browser runtime plus Service Worker carries HTTP and WebSocket traffic over Flowersec proxy streams.
@@ -162,7 +170,7 @@ client.close();
 | `@floegence/flowersec-core/node` | Node.js | Node client helpers with correct Origin handling |
 | `flowersec-go/client` | Go services / CLIs | High-level Go client APIs |
 | `flowersec-go/endpoint` + `endpoint/serve` | Go server side | Server endpoints that terminate E2EE and serve streams / RPC |
-| `flowersec-tunnel` | Deployable service | Tunnel rendezvous and byte forwarding for tunnel mode |
+| `flowersec-tunnel` | Deployable service | Open-source self-hosted rendezvous and byte forwarding for tunnel mode |
 | `flowersec-proxy-gateway` | Deployable service | Browser-facing HTTP / WebSocket gateway over Flowersec proxy streams |
 | helper tools | Local dev / controlplane workflows | Key generation, channel init grants, direct connect info |
 
@@ -217,6 +225,7 @@ Notes:
 
 - `issuer_keys.json` is the tunnel verifier public keyset from your controlplane
 - `GET /healthz` is the built-in health check
+- Flowersec ships this tunnel as an open-source component you can deploy yourself; no third-party tunnel service is required
 - multi-tenant deployments can use `FSEC_TUNNEL_TENANTS_FILE`
 
 Full deployment guide: `docs/TUNNEL_DEPLOYMENT.md`
