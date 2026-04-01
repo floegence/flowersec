@@ -40,6 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Compute version vars
         id: vars
@@ -328,11 +330,20 @@ jobs:
 
           ( cd dist && sha256sum * > checksums.txt )
 
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          go run ./tools/releasenotes \
+            --current-tag "${{ steps.vars.outputs.tag }}" \
+            --current-ref "${GITHUB_SHA}" \
+            --output release-notes.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*
+          body_path: release-notes.md
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
