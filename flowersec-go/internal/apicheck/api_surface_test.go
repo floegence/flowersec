@@ -1,10 +1,11 @@
 package apicheck
 
 import (
-	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/client"
@@ -92,95 +93,50 @@ func TestAPISurfaceDoc_CoversStableGoEntrypoints(t *testing.T) {
 	}
 	dir := filepath.Dir(thisFile)
 
-	docPath := filepath.Join(dir, "..", "..", "..", "docs", "API_SURFACE.md")
+	repoRoot := filepath.Join(dir, "..", "..", "..")
+	docPath := filepath.Join(repoRoot, "docs", "API_SURFACE.md")
 	doc, err := os.ReadFile(docPath)
 	if err != nil {
 		t.Fatalf("read docs/API_SURFACE.md: %v", err)
 	}
 
-	// Stable CLIs.
-	wantCLI := []string{
-		"flowersec-tunnel",
-		"flowersec-proxy-gateway",
-		"flowersec-issuer-keygen",
-		"flowersec-channelinit",
-		"flowersec-directinit",
-		"idlgen",
+	manifestPath := filepath.Join(repoRoot, "stability", "public_api_manifest.json")
+	manifestBytes, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read stability/public_api_manifest.json: %v", err)
 	}
-	for _, v := range wantCLI {
-		if !bytes.Contains(doc, []byte("`"+v+"`")) {
-			t.Fatalf("docs/API_SURFACE.md missing stable CLI: %q", v)
+	var manifest apiSurfaceManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatalf("parse stability/public_api_manifest.json: %v", err)
+	}
+
+	wantTokens := append([]string{}, manifest.Docs.CLITokens...)
+	wantTokens = append(wantTokens, "`docs/API_STABILITY_POLICY.md`", "`stability/public_api_manifest.json`")
+	for _, target := range manifest.Go.CompileTargets {
+		wantTokens = append(wantTokens, target.DocPackageToken)
+		for _, entry := range target.Entries {
+			wantTokens = append(wantTokens, entry.DocToken)
 		}
 	}
 
-	// Stable Go packages.
-	wantPackages := []string{
-		"github.com/floegence/flowersec/flowersec-go/client",
-		"github.com/floegence/flowersec/flowersec-go/endpoint",
-		"github.com/floegence/flowersec/flowersec-go/endpoint/serve",
-		"github.com/floegence/flowersec/flowersec-go/proxy",
-		"github.com/floegence/flowersec/flowersec-go/rpc",
-		"github.com/floegence/flowersec/flowersec-go/framing/jsonframe",
-		"github.com/floegence/flowersec/flowersec-go/protocolio",
-		"github.com/floegence/flowersec/flowersec-go/origin",
-		"github.com/floegence/flowersec/flowersec-go/fserrors",
-		"github.com/floegence/flowersec/flowersec-go/controlplane/issuer",
-		"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit",
-		"github.com/floegence/flowersec/flowersec-go/controlplane/token",
-	}
-	for _, v := range wantPackages {
-		if !bytes.Contains(doc, []byte("`"+v+"`")) {
-			t.Fatalf("docs/API_SURFACE.md missing stable Go package: %q", v)
+	docText := string(doc)
+	for _, token := range wantTokens {
+		if !strings.Contains(docText, token) {
+			t.Fatalf("docs/API_SURFACE.md missing manifest token: %q", token)
 		}
 	}
+}
 
-	// Stable Go entrypoints.
-	wantEntrypoints := []string{
-		"client.Connect(...)",
-		"client.ConnectTunnel(...)",
-		"client.ConnectDirect(...)",
-
-		"endpoint.ConnectTunnel(...)",
-		"endpoint.NewDirectHandler(...)",
-		"endpoint.AcceptDirectWS(...)",
-		"endpoint.NewDirectHandlerResolved(...)",
-		"endpoint.AcceptDirectWSResolved(...)",
-
-		"endpoint.Suite",
-		"SuiteX25519HKDFAES256GCM",
-		"SuiteP256HKDFAES256GCM",
-		"endpoint.UpgraderOptions",
-		"endpoint.HandshakeCache",
-
-		"serve.New(...)",
-		"srv.Handle(...)",
-		"srv.HandleStream(...)",
-		"srv.ServeSession(...)",
-		"serve.ServeTunnel(...)",
-		"serve.NewDirectHandler(...)",
-		"serve.NewDirectHandlerResolved(...)",
-
-		"protocolio.DecodeGrantClientJSON(...)",
-		"protocolio.DecodeGrantServerJSON(...)",
-		"protocolio.DecodeGrantJSON(...)",
-		"protocolio.DecodeDirectConnectInfoJSON(...)",
-
-		"origin.FromWSURL(...)",
-		"origin.ForTunnel(...)",
-
-		"proxy.Register(...)",
-
-		"rpc.NewRouter(...)",
-		"rpc.NewServer(...)",
-		"rpc.NewClient(...)",
-
-		"jsonframe.ReadJSONFrame(...)",
-		"jsonframe.WriteJSONFrame(...)",
-		"jsonframe.ReadJSONFrameDefaultMax(...)",
-	}
-	for _, v := range wantEntrypoints {
-		if !bytes.Contains(doc, []byte("`"+v+"`")) {
-			t.Fatalf("docs/API_SURFACE.md missing stable entrypoint: %q", v)
-		}
-	}
+type apiSurfaceManifest struct {
+	Docs struct {
+		CLITokens []string `json:"cli_tokens"`
+	} `json:"docs"`
+	Go struct {
+		CompileTargets []struct {
+			DocPackageToken string `json:"doc_package_token"`
+			Entries         []struct {
+				DocToken string `json:"doc_token"`
+			} `json:"entries"`
+		} `json:"compile_targets"`
+	} `json:"go"`
 }

@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-audit ts-test ts-lint ts-build fmt fmt-check lint lint-check bench check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-audit ts-test ts-cover-check ts-lint ts-build fmt fmt-check lint lint-check bench check stability-check go-cover-check compat-check nightly-check
 
 GOVULNCHECK_VERSION ?= v1.1.4
 
@@ -35,16 +35,19 @@ go-test:
 	cd flowersec-go && go test ./...
 	cd examples && go test ./...
 	cd tools/idlgen && go test ./...
+	cd tools/stabilitycheck && go test ./...
 
 go-test-race:
 	cd flowersec-go && go test -race ./...
 	cd examples && go test -race ./...
 	cd tools/idlgen && go test -race ./...
+	cd tools/stabilitycheck && go test -race ./...
 
 go-vet:
 	cd flowersec-go && go vet ./...
 	cd examples && go vet ./...
 	cd tools/idlgen && go vet ./...
+	cd tools/stabilitycheck && go vet ./...
 
 go-vulncheck:
 	cd flowersec-go && go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
@@ -56,6 +59,9 @@ ts-test:
 		YAMUX_INTEROP_CLIENT_RST=$(YAMUX_INTEROP_CLIENT_RST) \
 		YAMUX_INTEROP_DEBUG=$(YAMUX_INTEROP_DEBUG) \
 		npm test
+
+ts-cover-check:
+	cd flowersec-ts && npm run test:coverage
 
 ts-ci:
 	cd flowersec-ts && npm ci --audit=false
@@ -83,12 +89,40 @@ lint: fmt go-vet ts-lint
 
 lint-check: fmt-check go-vet ts-lint
 
+stability-check:
+	cd tools/stabilitycheck && go run . verify-manifest
+	cd tools/stabilitycheck && go run . verify-docs
+	cd tools/stabilitycheck && go run . verify-go
+	cd tools/stabilitycheck && go run . report
+
+go-cover-check:
+	cd tools/stabilitycheck && go run . verify-go-coverage
+
+compat-check:
+	cd flowersec-ts && \
+		YAMUX_INTEROP=1 \
+		YAMUX_INTEROP_STRESS=1 \
+		YAMUX_INTEROP_CLIENT_RST=1 \
+		YAMUX_INTEROP_DEBUG=0 \
+		npm test
+
+nightly-check:
+	$(MAKE) ts-ci
+	$(MAKE) stability-check
+	$(MAKE) compat-check
+	cd flowersec-go && go test -run '^$$' -fuzz=FuzzDecodeHandshakeFrame -fuzztime=5s ./crypto/e2ee
+	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAndVerify -fuzztime=5s ./controlplane/token
+	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAttachWithConstraints -fuzztime=5s ./tunnel/protocol
+
 check:
 	$(MAKE) ts-ci
 	$(MAKE) gen-check
+	$(MAKE) stability-check
 	$(MAKE) lint-check
 	$(MAKE) ts-build
 	$(MAKE) test
+	$(MAKE) go-cover-check
+	$(MAKE) ts-cover-check
 	$(MAKE) go-test-race
 	$(MAKE) go-vulncheck
 	$(MAKE) ts-audit

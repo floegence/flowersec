@@ -3,5 +3,6 @@ go 1.25.8
 use (
 	./examples
 	./flowersec-go
+	./tools/stabilitycheck
 	./tools/idlgen
 )
