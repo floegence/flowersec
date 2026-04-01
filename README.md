@@ -335,6 +335,12 @@ Generate code from IDL:
 make gen
 ```
 
+Install the repository-managed git hooks in each new worktree:
+
+```bash
+make install-hooks
+```
+
 Available codegen targets:
 
 - `make gen-core`: stable protocol IDLs
@@ -346,6 +352,14 @@ Run the full local gate:
 ```bash
 make check
 ```
+
+Run the pre-commit gate manually:
+
+```bash
+make precommit
+```
+
+If `flowersec-ts/node_modules` is missing, `make precommit` will bootstrap it with `npm ci --audit=false` before running the TypeScript checks.
 
 Observability quick notes:
 

@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-audit ts-test ts-cover-check ts-lint ts-build fmt fmt-check lint lint-check bench check stability-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts bench check stability-check go-cover-check compat-check nightly-check
 
 GOVULNCHECK_VERSION ?= v1.1.4
 
@@ -66,6 +66,12 @@ ts-cover-check:
 ts-ci:
 	cd flowersec-ts && npm ci --audit=false
 
+ts-ensure-deps:
+	@if [ ! -x flowersec-ts/node_modules/.bin/eslint ] || [ ! -x flowersec-ts/node_modules/.bin/vitest ] || [ ! -x flowersec-ts/node_modules/.bin/tsc ]; then \
+		echo "flowersec-ts dependencies missing; running npm ci --audit=false"; \
+		cd flowersec-ts && npm ci --audit=false; \
+	fi
+
 ts-audit:
 	cd flowersec-ts && npm audit --audit-level=high --omit=dev
 
@@ -74,6 +80,9 @@ ts-lint:
 
 ts-build:
 	cd flowersec-ts && rm -rf dist && npm run build
+
+ts-package-check:
+	cd flowersec-ts && npm run verify:package
 
 fmt:
 	gofmt -w flowersec-go examples/go examples/gen
@@ -88,6 +97,27 @@ fmt-check:
 lint: fmt go-vet ts-lint
 
 lint-check: fmt-check go-vet ts-lint
+
+install-hooks:
+	./scripts/install-git-hooks.sh
+
+precommit-go:
+	$(MAKE) fmt-check
+	$(MAKE) go-vet
+	$(MAKE) go-test
+
+precommit-ts:
+	$(MAKE) ts-ensure-deps
+	$(MAKE) ts-lint
+	$(MAKE) ts-build
+	$(MAKE) ts-test
+	$(MAKE) ts-package-check
+
+precommit:
+	$(MAKE) gen-check
+	$(MAKE) stability-check
+	$(MAKE) precommit-go
+	$(MAKE) precommit-ts
 
 stability-check:
 	cd tools/stabilitycheck && go run . verify-manifest
