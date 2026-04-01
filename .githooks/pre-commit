@@ -1,0 +1,8 @@
+#!/bin/sh
+
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+
+printf '%s\n' '[flowersec] running pre-commit gate (make precommit)'
+exec make -C "$repo_root" precommit
