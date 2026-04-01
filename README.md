@@ -38,6 +38,9 @@ Status: experimental; not audited.
 
 Security note: in any non-local deployment, use `wss://` (or terminate TLS at a reverse proxy). `ws://` exposes bearer tokens and metadata on the wire.
 
+Stable integration entrypoints are documented in `docs/API_SURFACE.md`.
+The stability rules, review checklist, and engineering gate model live in `docs/API_STABILITY_POLICY.md`.
+
 ## At a glance
 
 | Need | Flowersec gives you |
@@ -56,6 +59,7 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 | ⚡ Try the demos | [`examples/README.md`](examples/README.md) |
 | 🌐 Start from the browser SDK | [`docs/FRONTEND_QUICKSTART.md`](docs/FRONTEND_QUICKSTART.md) |
 | 🧩 Integrate Flowersec into my app | [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) |
+| 🧭 Understand API stability | [`docs/API_STABILITY_POLICY.md`](docs/API_STABILITY_POLICY.md) |
 | 🚇 Deploy the tunnel | [`docs/TUNNEL_DEPLOYMENT.md`](docs/TUNNEL_DEPLOYMENT.md) |
 | 🛡️ Deploy the proxy gateway | [`docs/PROXY_GATEWAY_DEPLOYMENT.md`](docs/PROXY_GATEWAY_DEPLOYMENT.md) |
 | 🔐 Review trust boundaries | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) |

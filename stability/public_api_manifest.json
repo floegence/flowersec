@@ -1,0 +1,405 @@
+{
+  "version": 1,
+  "docs": {
+    "api_surface": "docs/API_SURFACE.md",
+    "policy": "docs/API_STABILITY_POLICY.md",
+    "readme": "README.md",
+    "error_model": "docs/ERROR_MODEL.md",
+    "cli_tokens": [
+      "`flowersec-tunnel`",
+      "`flowersec-proxy-gateway`",
+      "`flowersec-issuer-keygen`",
+      "`flowersec-channelinit`",
+      "`flowersec-directinit`",
+      "`idlgen`"
+    ]
+  },
+  "go": {
+    "module_path": "github.com/floegence/flowersec/flowersec-go",
+    "compile_targets": [
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/client",
+        "alias": "client",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/client`",
+        "entries": [
+          { "kind": "func", "expr": "client.Connect", "doc_token": "`client.Connect(...)`" },
+          { "kind": "func", "expr": "client.ConnectTunnel", "doc_token": "`client.ConnectTunnel(...)`" },
+          { "kind": "func", "expr": "client.ConnectDirect", "doc_token": "`client.ConnectDirect(...)`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/endpoint",
+        "alias": "endpoint",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/endpoint`",
+        "entries": [
+          { "kind": "func", "expr": "endpoint.ConnectTunnel", "doc_token": "`endpoint.ConnectTunnel(...)`" },
+          { "kind": "func", "expr": "endpoint.NewDirectHandler", "doc_token": "`endpoint.NewDirectHandler(...)`" },
+          { "kind": "func", "expr": "endpoint.AcceptDirectWS", "doc_token": "`endpoint.AcceptDirectWS(...)`" },
+          { "kind": "func", "expr": "endpoint.NewDirectHandlerResolved", "doc_token": "`endpoint.NewDirectHandlerResolved(...)`" },
+          { "kind": "func", "expr": "endpoint.AcceptDirectWSResolved", "doc_token": "`endpoint.AcceptDirectWSResolved(...)`" },
+          { "kind": "type", "expr": "endpoint.Suite", "doc_token": "`endpoint.Suite`" },
+          { "kind": "const", "expr": "endpoint.SuiteX25519HKDFAES256GCM", "doc_token": "`SuiteX25519HKDFAES256GCM`" },
+          { "kind": "const", "expr": "endpoint.SuiteP256HKDFAES256GCM", "doc_token": "`SuiteP256HKDFAES256GCM`" },
+          { "kind": "type", "expr": "endpoint.UpgraderOptions", "doc_token": "`endpoint.UpgraderOptions`" },
+          { "kind": "type", "expr": "endpoint.HandshakeCache", "doc_token": "`endpoint.HandshakeCache`" },
+          { "kind": "type", "expr": "endpoint.AcceptDirectOptions", "doc_token": "`endpoint.AcceptDirectOptions`" },
+          { "kind": "type", "expr": "endpoint.AcceptDirectResolverOptions", "doc_token": "`endpoint.AcceptDirectResolverOptions`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/endpoint/serve",
+        "alias": "serve",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/endpoint/serve`",
+        "entries": [
+          { "kind": "func", "expr": "serve.New", "doc_token": "`serve.New(...)`" },
+          { "kind": "method", "expr": "(*serve.Server).Handle", "doc_token": "`srv.Handle(...)`" },
+          { "kind": "method", "expr": "(*serve.Server).HandleStream", "doc_token": "`srv.HandleStream(...)`" },
+          { "kind": "method", "expr": "(*serve.Server).ServeSession", "doc_token": "`srv.ServeSession(...)`" },
+          { "kind": "func", "expr": "serve.ServeTunnel", "doc_token": "`serve.ServeTunnel(...)`" },
+          { "kind": "func", "expr": "serve.NewDirectHandler", "doc_token": "`serve.NewDirectHandler(...)`" },
+          { "kind": "func", "expr": "serve.NewDirectHandlerResolved", "doc_token": "`serve.NewDirectHandlerResolved(...)`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/protocolio",
+        "alias": "protocolio",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/protocolio`",
+        "entries": [
+          { "kind": "func", "expr": "protocolio.DecodeGrantClientJSON", "doc_token": "`protocolio.DecodeGrantClientJSON(...)`" },
+          { "kind": "func", "expr": "protocolio.DecodeGrantServerJSON", "doc_token": "`protocolio.DecodeGrantServerJSON(...)`" },
+          { "kind": "func", "expr": "protocolio.DecodeGrantJSON", "doc_token": "`protocolio.DecodeGrantJSON(...)`" },
+          { "kind": "func", "expr": "protocolio.DecodeDirectConnectInfoJSON", "doc_token": "`protocolio.DecodeDirectConnectInfoJSON(...)`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/origin",
+        "alias": "origin",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/origin`",
+        "entries": [
+          { "kind": "func", "expr": "origin.FromWSURL", "doc_token": "`origin.FromWSURL(...)`" },
+          { "kind": "func", "expr": "origin.ForTunnel", "doc_token": "`origin.ForTunnel(...)`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/proxy",
+        "alias": "proxy",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/proxy`",
+        "entries": [
+          { "kind": "func", "expr": "proxy.Register", "doc_token": "`proxy.Register(...)`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/rpc",
+        "alias": "rpc",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/rpc`",
+        "entries": [
+          { "kind": "func", "expr": "rpc.NewRouter", "doc_token": "`rpc.NewRouter(...)`" },
+          { "kind": "func", "expr": "rpc.NewServer", "doc_token": "`rpc.NewServer(...)`" },
+          { "kind": "func", "expr": "rpc.NewClient", "doc_token": "`rpc.NewClient(...)`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/framing/jsonframe",
+        "alias": "jsonframe",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/framing/jsonframe`",
+        "entries": [
+          { "kind": "func", "expr": "jsonframe.ReadJSONFrame", "doc_token": "`jsonframe.ReadJSONFrame(...)`" },
+          { "kind": "func", "expr": "jsonframe.WriteJSONFrame", "doc_token": "`jsonframe.WriteJSONFrame(...)`" },
+          { "kind": "func", "expr": "jsonframe.ReadJSONFrameDefaultMax", "doc_token": "`jsonframe.ReadJSONFrameDefaultMax(...)`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/fserrors",
+        "alias": "fserrors",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`",
+        "entries": [
+          { "kind": "type", "expr": "fserrors.Path", "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`" },
+          { "kind": "type", "expr": "fserrors.Stage", "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`" },
+          { "kind": "type", "expr": "fserrors.Code", "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/issuer",
+        "alias": "issuer",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/issuer`",
+        "entries": [
+          { "kind": "func", "expr": "issuer.NewRandom", "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/issuer`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/channelinit",
+        "alias": "channelinit",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`",
+        "entries": [
+          { "kind": "type", "expr": "channelinit.Service", "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/token",
+        "alias": "token",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/token`",
+        "entries": [
+          { "kind": "func", "expr": "token.Verify", "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/token`" }
+        ]
+      }
+    ]
+  },
+  "ts": {
+    "subpaths": [
+      {
+        "specifier": "@floegence/flowersec-core",
+        "package_json_export": ".",
+        "doc_tokens": [
+          "`@floegence/flowersec-core`",
+          "`connect(...)`",
+          "`connectTunnel(...)`",
+          "`connectDirect(...)`"
+        ],
+        "runtime_exports": [
+          "connect",
+          "connectTunnel",
+          "connectDirect",
+          "FlowersecError",
+          "assertChannelInitGrant",
+          "assertDirectConnectInfo"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/node",
+        "package_json_export": "./node",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/node`",
+          "`connectNode(...)`",
+          "`connectTunnelNode(...)`",
+          "`connectDirectNode(...)`",
+          "`createNodeWsFactory()`"
+        ],
+        "runtime_exports": [
+          "connectNode",
+          "connectTunnelNode",
+          "connectDirectNode",
+          "createNodeWsFactory"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/browser",
+        "package_json_export": "./browser",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/browser`",
+          "`connectBrowser(...)`",
+          "`connectTunnelBrowser(...)`",
+          "`connectDirectBrowser(...)`",
+          "`requestChannelGrant(...)`",
+          "`requestEntryChannelGrant(...)`",
+          "`ControlplaneRequestError`",
+          "`createBrowserReconnectConfig(...)`",
+          "`createTunnelBrowserReconnectConfig(...)`",
+          "`createDirectBrowserReconnectConfig(...)`"
+        ],
+        "runtime_exports": [
+          "connectBrowser",
+          "connectTunnelBrowser",
+          "connectDirectBrowser",
+          "requestChannelGrant",
+          "requestEntryChannelGrant",
+          "ControlplaneRequestError",
+          "createBrowserReconnectConfig",
+          "createTunnelBrowserReconnectConfig",
+          "createDirectBrowserReconnectConfig"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/framing",
+        "package_json_export": "./framing",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/framing`"
+        ],
+        "runtime_exports": [
+          "readJsonFrame",
+          "writeJsonFrame",
+          "JsonFramingError",
+          "DEFAULT_MAX_JSON_FRAME_BYTES"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/streamio",
+        "package_json_export": "./streamio",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/streamio`",
+          "`createJsonFrameChannel(...)`",
+          "`openJsonFrameChannel(...)`"
+        ],
+        "runtime_exports": [
+          "readMaybe",
+          "createByteReader",
+          "readExactly",
+          "readNBytes",
+          "createJsonFrameChannel",
+          "openJsonFrameChannel"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/proxy",
+        "package_json_export": "./proxy",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/proxy`",
+          "`createProxyRuntime(...)`",
+          "`createProxyServiceWorkerScript(...)`",
+          "`createProxyIntegrationServiceWorkerScript(...)`",
+          "`registerProxyIntegration(...)`",
+          "`registerServiceWorkerAndEnsureControl(...)`",
+          "`connectTunnelProxyBrowser(...)`",
+          "`connectTunnelProxyControllerBrowser(...)`",
+          "`createServiceWorkerControllerGuard(...)`",
+          "`registerProxyControllerWindow(...)`",
+          "`registerProxyAppWindow(...)`",
+          "`registerProxyAppWindowWithServiceWorkerControl(...)`",
+          "`installWebSocketPatch(...)`",
+          "`disableUpstreamServiceWorkerRegister()`",
+          "`resolveProxyProfile(...)`",
+          "`PROXY_PROFILE_DEFAULT`",
+          "`PROXY_PROFILE_CODESERVER`"
+        ],
+        "runtime_exports": [
+          "createProxyRuntime",
+          "createProxyServiceWorkerScript",
+          "createProxyIntegrationServiceWorkerScript",
+          "registerProxyIntegration",
+          "registerServiceWorkerAndEnsureControl",
+          "connectTunnelProxyBrowser",
+          "connectTunnelProxyControllerBrowser",
+          "createServiceWorkerControllerGuard",
+          "registerProxyControllerWindow",
+          "registerProxyAppWindow",
+          "registerProxyAppWindowWithServiceWorkerControl",
+          "installWebSocketPatch",
+          "disableUpstreamServiceWorkerRegister",
+          "resolveProxyProfile",
+          "PROXY_PROFILE_DEFAULT",
+          "PROXY_PROFILE_CODESERVER"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/reconnect",
+        "package_json_export": "./reconnect",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/reconnect`",
+          "`createReconnectManager()`",
+          "`ReconnectManager.connectIfNeeded(...)`"
+        ],
+        "runtime_exports": [
+          "createReconnectManager"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/rpc",
+        "package_json_export": "./rpc",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/rpc`",
+          "`RpcProxy`"
+        ],
+        "runtime_exports": [
+          "RpcClient",
+          "RpcServer",
+          "RpcCallError",
+          "RpcProxy",
+          "callTyped"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/yamux",
+        "package_json_export": "./yamux",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/yamux`"
+        ],
+        "runtime_exports": [
+          "YamuxSession",
+          "ByteReader",
+          "StreamEOFError",
+          "isStreamEOFError"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/e2ee",
+        "package_json_export": "./e2ee",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/e2ee`"
+        ],
+        "runtime_exports": [
+          "clientHandshake",
+          "SecureChannel"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/ws",
+        "package_json_export": "./ws",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/ws`"
+        ],
+        "runtime_exports": [
+          "WebSocketBinaryTransport"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/observability",
+        "package_json_export": "./observability",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/observability`"
+        ],
+        "runtime_exports": [
+          "normalizeObserver",
+          "nowSeconds"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/streamhello",
+        "package_json_export": "./streamhello",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/streamhello`"
+        ],
+        "runtime_exports": [
+          "readStreamHello",
+          "writeStreamHello"
+        ]
+      }
+    ]
+  },
+  "coverage": {
+    "go": [
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/client",
+        "min_statements_pct": 68
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/channelinit",
+        "min_statements_pct": 85
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/endpoint",
+        "min_statements_pct": 64
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/endpoint/serve",
+        "min_statements_pct": 77.5
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/observability/prom",
+        "min_statements_pct": 80
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/proxy",
+        "min_statements_pct": 64
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/rpc",
+        "min_statements_pct": 90
+      }
+    ],
+    "ts": {
+      "lines": 72,
+      "functions": 71,
+      "statements": 68,
+      "branches": 59
+    }
+  }
+}

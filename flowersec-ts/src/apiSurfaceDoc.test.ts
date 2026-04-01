@@ -3,51 +3,45 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+type StabilityManifest = {
+  docs: {
+    api_surface: string;
+    cli_tokens: string[];
+  };
+  go: {
+    compile_targets: Array<{
+      doc_package_token: string;
+      entries: Array<{ doc_token: string }>;
+    }>;
+  };
+  ts: {
+    subpaths: Array<{
+      doc_tokens: string[];
+    }>;
+  };
+};
+
 describe("docs/API_SURFACE.md", () => {
-  it("mentions stable TypeScript entrypoints", () => {
-    const docPath = path.join(process.cwd(), "..", "docs", "API_SURFACE.md");
-    const doc = fs.readFileSync(docPath, "utf8");
+  it("covers manifest-defined stable API tokens", () => {
+    const repoRoot = path.join(process.cwd(), "..");
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "stability", "public_api_manifest.json"), "utf8")
+    ) as StabilityManifest;
 
-    expect(doc).toContain("## TypeScript: stable exports");
+    const doc = fs.readFileSync(path.join(repoRoot, manifest.docs.api_surface), "utf8");
+    const tokens = [
+      ...manifest.docs.cli_tokens,
+      "`docs/API_STABILITY_POLICY.md`",
+      "`stability/public_api_manifest.json`",
+      ...manifest.go.compile_targets.flatMap((target) => [
+        target.doc_package_token,
+        ...target.entries.map((entry) => entry.doc_token),
+      ]),
+      ...manifest.ts.subpaths.flatMap((subpath) => subpath.doc_tokens),
+    ];
 
-    expect(doc).toContain("`@floegence/flowersec-core`");
-    expect(doc).toContain("`connect(...)`");
-    expect(doc).toContain("`connectTunnel(...)`");
-    expect(doc).toContain("`connectDirect(...)`");
-
-    expect(doc).toContain("`@floegence/flowersec-core/node`");
-    expect(doc).toContain("`connectNode(...)`");
-    expect(doc).toContain("`connectTunnelNode(...)`");
-    expect(doc).toContain("`connectDirectNode(...)`");
-
-    expect(doc).toContain("`@floegence/flowersec-core/browser`");
-    expect(doc).toContain("`connectBrowser(...)`");
-    expect(doc).toContain("`connectTunnelBrowser(...)`");
-    expect(doc).toContain("`connectDirectBrowser(...)`");
-    expect(doc).toContain("`requestChannelGrant(...)`");
-    expect(doc).toContain("`requestEntryChannelGrant(...)`");
-    expect(doc).toContain("`createBrowserReconnectConfig(...)`");
-
-    expect(doc).toContain("`@floegence/flowersec-core/framing`");
-    expect(doc).toContain("`@floegence/flowersec-core/streamio`");
-    expect(doc).toContain("`createJsonFrameChannel(...)`");
-    expect(doc).toContain("`openJsonFrameChannel(...)`");
-    expect(doc).toContain("`@floegence/flowersec-core/proxy`");
-    expect(doc).toContain("`createProxyRuntime(...)`");
-    expect(doc).toContain("`registerProxyIntegration(...)`");
-    expect(doc).toContain("`connectTunnelProxyBrowser(...)`");
-    expect(doc).toContain("`connectTunnelProxyControllerBrowser(...)`");
-    expect(doc).toContain("`createServiceWorkerControllerGuard(...)`");
-    expect(doc).toContain("`registerProxyAppWindowWithServiceWorkerControl(...)`");
-    expect(doc).toContain("`@floegence/flowersec-core/reconnect`");
-    expect(doc).toContain("`createReconnectManager()`");
-    expect(doc).toContain("`ReconnectManager.connectIfNeeded(...)`");
-    expect(doc).toContain("`@floegence/flowersec-core/rpc`");
-    expect(doc).toContain("`RpcProxy`");
-    expect(doc).toContain("`@floegence/flowersec-core/yamux`");
-    expect(doc).toContain("`@floegence/flowersec-core/e2ee`");
-    expect(doc).toContain("`@floegence/flowersec-core/ws`");
-    expect(doc).toContain("`@floegence/flowersec-core/observability`");
-    expect(doc).toContain("`@floegence/flowersec-core/streamhello`");
+    for (const token of tokens) {
+      expect(doc).toContain(token);
+    }
   });
 });

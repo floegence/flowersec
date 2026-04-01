@@ -108,6 +108,7 @@
     "build": "tsc -p tsconfig.build.json",
     "bench": "vitest bench --run",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
     "verify:package": "node ./scripts/verify-package-exports.mjs",
     "prepack": "npm run build",
@@ -126,6 +127,7 @@
     "@typescript-eslint/parser": "^8.18.0",
     "eslint": "^9.17.0",
     "typescript": "^5.7.2",
-    "vitest": "^4.0.17"
+    "@vitest/coverage-v8": "4.0.17",
+    "vitest": "4.0.17"
   }
 }

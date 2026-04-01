@@ -5,9 +5,12 @@ It is meant to remove guesswork for integrators: which packages and entrypoints 
 
 Status: experimental; not audited.
 
+Canonical source of truth for the stable surface: `stability/public_api_manifest.json`
+
 See also:
 
 - Error model: `docs/ERROR_MODEL.md`
+- API stability policy: `docs/API_STABILITY_POLICY.md`
 
 ## CLI surface
 

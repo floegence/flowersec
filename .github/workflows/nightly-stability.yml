@@ -1,11 +1,12 @@
-name: ci
+name: nightly-stability
 
 on:
-  push:
-  pull_request:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
 
 jobs:
-  check:
+  nightly:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,5 +27,5 @@ jobs:
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
-      - name: Run make check (stability + coverage included)
-        run: make check
+      - name: Run nightly stability checks
+        run: make nightly-check

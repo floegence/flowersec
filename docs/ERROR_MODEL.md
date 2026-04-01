@@ -10,6 +10,12 @@ Both the Go and TypeScript high-level APIs surface a structured error with three
 Always treat `{path, stage, code}` as the primary machine-readable signal.
 Human-readable details live in the error message and the underlying `cause`.
 
+See also:
+
+- Stable API list: `docs/API_SURFACE.md`
+- Stability policy: `docs/API_STABILITY_POLICY.md`
+- Canonical manifest: `stability/public_api_manifest.json`
+
 ## Go
 
 High-level APIs return `*fserrors.Error` (or an alias like `*client.Error` / `*endpoint.Error`).
