@@ -100,6 +100,8 @@ Current stable event codes include:
 - `connect_ok`
 - `attach_ok`
 - `handshake_ok`
+- `scope_ignored_missing_resolver`
+- `scope_ignored_relaxed_validation`
 - `ws_close_local`
 - `ws_close_peer_or_error`
 - `ws_error`

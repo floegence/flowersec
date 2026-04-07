@@ -73,16 +73,15 @@ export async function connect(input: ConnectArtifact, opts: ConnectOptions): Pro
 export async function connect(input: unknown, opts: ConnectOptions): Promise<Client>;
 export async function connect(input: unknown, opts: ConnectOptions): Promise<Client> {
   const normalized = await normalizeConnectInput(input, opts);
-  const nextOpts =
-    normalized.correlation == null
-      ? opts
-      : ({
-          ...opts,
-          observer: withObserverContext(opts.observer, {
-            ...(normalized.correlation.trace_id === undefined ? {} : { traceId: normalized.correlation.trace_id }),
-            ...(normalized.correlation.session_id === undefined ? {} : { sessionId: normalized.correlation.session_id }),
-          }),
-        } as ConnectOptions);
+  const nextObserver =
+    normalized.observer ??
+    (normalized.correlation == null
+      ? opts.observer
+      : withObserverContext(opts.observer, {
+          ...(normalized.correlation.trace_id === undefined ? {} : { traceId: normalized.correlation.trace_id }),
+          ...(normalized.correlation.session_id === undefined ? {} : { sessionId: normalized.correlation.session_id }),
+        }));
+  const nextOpts = (nextObserver === opts.observer ? opts : { ...opts, observer: nextObserver }) as ConnectOptions;
   if (normalized.kind === "direct") {
     return await connectDirectInternal(normalized.input, nextOpts as DirectConnectOptions);
   }

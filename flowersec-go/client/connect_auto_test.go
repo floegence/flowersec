@@ -5,11 +5,46 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
+
+type connectAutoRecordingObserver struct {
+	mu          sync.Mutex
+	diagnostics []observability.DiagnosticEvent
+}
+
+func (o *connectAutoRecordingObserver) OnConnect(fserrors.Path, observability.ConnectResult, observability.ConnectReason, time.Duration) {
+}
+
+func (o *connectAutoRecordingObserver) OnAttach(observability.AttachResult, observability.AttachReason) {
+}
+
+func (o *connectAutoRecordingObserver) OnHandshake(fserrors.Path, observability.HandshakeResult, fserrors.Code, time.Duration) {
+}
+
+func (o *connectAutoRecordingObserver) OnDiagnosticEvent(event observability.DiagnosticEvent) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.diagnostics = append(o.diagnostics, event)
+}
+
+func (o *connectAutoRecordingObserver) hasDiagnostic(code string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, event := range o.diagnostics {
+		if event.Stage == observability.DiagnosticStageScope && event.Code == code && event.Result == observability.DiagnosticResultSkip {
+			return true
+		}
+	}
+	return false
+}
 
 func TestConnect_AutoDetectDirect(t *testing.T) {
 	_, err := Connect(context.Background(), []byte(`{"ws_url":""}`), WithOrigin("http://example.com"))
@@ -175,6 +210,7 @@ func TestConnect_ArtifactCriticalScopeWithoutResolverFailsFast(t *testing.T) {
 }
 
 func TestConnect_ArtifactOptionalScopeWithoutResolverIsIgnored(t *testing.T) {
+	rec := &connectAutoRecordingObserver{}
 	_, err := Connect(context.Background(), protocolio.ConnectArtifact{
 		V:         1,
 		Transport: protocolio.ConnectArtifactTransportDirect,
@@ -188,7 +224,7 @@ func TestConnect_ArtifactOptionalScopeWithoutResolverIsIgnored(t *testing.T) {
 		Scoped: []protocolio.ScopeMetadataEntry{
 			{Scope: "proxy.runtime", ScopeVersion: 2, Critical: false, Payload: protocolio.ScopePayload{"mode": "hint"}},
 		},
-	}, WithOrigin("http://example.com"))
+	}, WithOrigin("http://example.com"), WithObserver(rec))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -198,6 +234,10 @@ func TestConnect_ArtifactOptionalScopeWithoutResolverIsIgnored(t *testing.T) {
 	}
 	if fe.Path != PathDirect || fe.Stage != StageValidate || fe.Code != CodeMissingWSURL {
 		t.Fatalf("unexpected error: %+v", fe)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if !rec.hasDiagnostic("scope_ignored_missing_resolver") {
+		t.Fatalf("expected scope ignore warning, got %+v", rec.diagnostics)
 	}
 }
 
@@ -258,6 +298,7 @@ func TestConnect_ArtifactOptionalScopeResolverFailureFailsFastByDefault(t *testi
 }
 
 func TestConnect_ArtifactOptionalScopeResolverFailureCanBeRelaxed(t *testing.T) {
+	rec := &connectAutoRecordingObserver{}
 	_, err := Connect(context.Background(), protocolio.ConnectArtifact{
 		V:         1,
 		Transport: protocolio.ConnectArtifactTransportDirect,
@@ -273,7 +314,7 @@ func TestConnect_ArtifactOptionalScopeResolverFailureCanBeRelaxed(t *testing.T) 
 		},
 	}, WithOrigin("http://example.com"), WithScopeResolver("proxy.runtime", func(_ context.Context, entry protocolio.ScopeMetadataEntry) error {
 		return errors.New("bad payload")
-	}), WithRelaxedOptionalScopeValidation(true))
+	}), WithRelaxedOptionalScopeValidation(true), WithObserver(rec))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -283,6 +324,10 @@ func TestConnect_ArtifactOptionalScopeResolverFailureCanBeRelaxed(t *testing.T) 
 	}
 	if fe.Path != PathDirect || fe.Stage != StageValidate || fe.Code != CodeMissingWSURL {
 		t.Fatalf("unexpected error: %+v", fe)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if !rec.hasDiagnostic("scope_ignored_relaxed_validation") {
+		t.Fatalf("expected relaxed scope ignore warning, got %+v", rec.diagnostics)
 	}
 }
 

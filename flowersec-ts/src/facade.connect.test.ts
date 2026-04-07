@@ -17,6 +17,11 @@ vi.mock("./tunnel-client/connect.js", () => ({
 
 import { connect } from "./facade.js";
 
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("connect (auto-detect)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -133,6 +138,7 @@ describe("connect (auto-detect)", () => {
 
   test("ignores non-critical scoped artifact when no resolver is registered", async () => {
     mocks.connectDirect.mockResolvedValueOnce({ path: "direct" });
+    const onDiagnosticEvent = vi.fn();
     const input = {
       v: 1,
       transport: "direct",
@@ -145,9 +151,21 @@ describe("connect (auto-detect)", () => {
       },
       scoped: [{ scope: "proxy.runtime", scope_version: 2, critical: false, payload: { mode: "hint" } }],
     };
-    const out = await connect(input, { origin: "https://app.example" });
+    const out = await connect(input, { origin: "https://app.example", observer: { onDiagnosticEvent } });
+    await flushMicrotasks();
     expect(out).toEqual({ path: "direct" });
-    expect(mocks.connectDirect).toHaveBeenCalledWith(input.direct_info, { origin: "https://app.example" });
+    expect(mocks.connectDirect).toHaveBeenCalledWith(
+      input.direct_info,
+      expect.objectContaining({ origin: "https://app.example" })
+    );
+    expect(onDiagnosticEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "scope",
+        code_domain: "event",
+        code: "scope_ignored_missing_resolver",
+        result: "skip",
+      })
+    );
   });
 
   test("passes scope_version into experimental resolver", async () => {
@@ -203,6 +221,7 @@ describe("connect (auto-detect)", () => {
 
   test("supports relaxed handling for optional scope resolver failures", async () => {
     mocks.connectDirect.mockResolvedValueOnce({ path: "direct" });
+    const onDiagnosticEvent = vi.fn();
     const input = {
       v: 1,
       transport: "direct",
@@ -217,6 +236,7 @@ describe("connect (auto-detect)", () => {
     };
     const out = await connect(input, {
       origin: "https://app.example",
+      observer: { onDiagnosticEvent },
       scopeResolvers: {
         "proxy.runtime": () => {
           throw new Error("bad payload");
@@ -224,10 +244,19 @@ describe("connect (auto-detect)", () => {
       },
       relaxedOptionalScopeValidation: true,
     });
+    await flushMicrotasks();
     expect(out).toEqual({ path: "direct" });
     expect(mocks.connectDirect).toHaveBeenCalledWith(
       input.direct_info,
       expect.objectContaining({ origin: "https://app.example", relaxedOptionalScopeValidation: true })
+    );
+    expect(onDiagnosticEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "scope",
+        code_domain: "event",
+        code: "scope_ignored_relaxed_validation",
+        result: "skip",
+      })
     );
   });
 

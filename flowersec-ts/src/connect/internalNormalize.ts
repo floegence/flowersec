@@ -1,4 +1,5 @@
 import { Role as ControlRole } from "../gen/flowersec/controlplane/v1.gen.js";
+import { emitObserverDiagnostic, normalizeObserver, withObserverContext, type ClientObserverLike } from "../observability/observer.js";
 import { FlowersecError, type FlowersecPath } from "../utils/errors.js";
 
 import {
@@ -14,13 +15,14 @@ export type ConnectScopeResolver = (entry: ScopeMetadataEntry) => void | Promise
 export type ConnectScopeResolverMap = Readonly<Record<string, ConnectScopeResolver>>;
 
 type NormalizeOptions = Readonly<{
+  observer?: ClientObserverLike;
   scopeResolvers?: ConnectScopeResolverMap;
   relaxedOptionalScopeValidation?: boolean;
 }>;
 
 export type NormalizedConnectInput =
-  | Readonly<{ kind: "tunnel"; input: unknown; correlation?: CorrelationContext }>
-  | Readonly<{ kind: "direct"; input: unknown; correlation?: CorrelationContext }>;
+  | Readonly<{ kind: "tunnel"; input: unknown; correlation?: CorrelationContext; observer?: ClientObserverLike }>
+  | Readonly<{ kind: "direct"; input: unknown; correlation?: CorrelationContext; observer?: ClientObserverLike }>;
 
 function maybeParseJSON(input: unknown): unknown {
   if (typeof input !== "string") return input;
@@ -40,7 +42,11 @@ function maybeParseJSON(input: unknown): unknown {
   }
 }
 
-async function validateArtifactScopes(artifact: ConnectArtifact, opts: NormalizeOptions): Promise<void> {
+async function validateArtifactScopes(
+  artifact: ConnectArtifact,
+  opts: NormalizeOptions,
+  observer: ClientObserverLike | undefined
+): Promise<void> {
   const scoped = artifact.scoped ?? [];
   if (scoped.length === 0) return;
   const path: FlowersecPath = artifact.transport;
@@ -55,12 +61,26 @@ async function validateArtifactScopes(artifact: ConnectArtifact, opts: Normalize
           message: `missing scope resolver for ${entry.scope}@${entry.scope_version}`,
         });
       }
+      emitObserverDiagnostic(observer, {
+        path,
+        stage: "scope",
+        code_domain: "event",
+        code: "scope_ignored_missing_resolver",
+        result: "skip",
+      });
       continue;
     }
     try {
       await resolver(entry);
     } catch (e) {
       if (!entry.critical && opts.relaxedOptionalScopeValidation === true) {
+        emitObserverDiagnostic(observer, {
+          path,
+          stage: "scope",
+          code_domain: "event",
+          code: "scope_ignored_relaxed_validation",
+          result: "skip",
+        });
         continue;
       }
       throw new FlowersecError({
@@ -142,18 +162,31 @@ export async function normalizeConnectInput(input: unknown, opts: NormalizeOptio
         cause: e,
       });
     }
-    await validateArtifactScopes(artifact, opts);
+    const observer =
+      opts.observer == null
+        ? undefined
+        : normalizeObserver(
+            withObserverContext(opts.observer, {
+              path: artifact.transport,
+              ...(artifact.correlation?.trace_id === undefined ? {} : { traceId: artifact.correlation.trace_id }),
+              ...(artifact.correlation?.session_id === undefined ? {} : { sessionId: artifact.correlation.session_id }),
+            }),
+            { path: artifact.transport }
+          );
+    await validateArtifactScopes(artifact, opts, observer);
     if (artifact.transport === "direct") {
       return {
         kind: "direct",
         input: artifact.direct_info,
         ...(artifact.correlation === undefined ? {} : { correlation: artifact.correlation }),
+        ...(observer === undefined ? {} : { observer }),
       };
     }
     return {
       kind: "tunnel",
       input: artifact.tunnel_grant,
       ...(artifact.correlation === undefined ? {} : { correlation: artifact.correlation }),
+      ...(observer === undefined ? {} : { observer }),
     };
   }
   throw new FlowersecError({

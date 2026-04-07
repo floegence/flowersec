@@ -126,35 +126,35 @@ func connectArtifact(ctx context.Context, artifact *protocolio.ConnectArtifact, 
 	if artifact == nil {
 		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
 	}
-	cfg, err := applyConnectOptions(opts)
-	if err != nil {
-		path := fserrors.PathAuto
-		if artifact.Transport == protocolio.ConnectArtifactTransportTunnel {
-			path = fserrors.PathTunnel
-		} else if artifact.Transport == protocolio.ConnectArtifactTransportDirect {
-			path = fserrors.PathDirect
-		}
-		return nil, wrapErr(path, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
-	}
 	path := fserrors.PathAuto
 	if artifact.Transport == protocolio.ConnectArtifactTransportTunnel {
 		path = fserrors.PathTunnel
 	} else if artifact.Transport == protocolio.ConnectArtifactTransportDirect {
 		path = fserrors.PathDirect
 	}
+	cfg, err := applyConnectOptions(opts)
+	if err != nil {
+		return nil, wrapErr(path, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
+	}
+	if cfg.observer != nil {
+		observerContext := observability.ClientObserverContext{
+			Path: path,
+		}
+		if artifact.Correlation != nil {
+			observerContext.TraceID = artifact.Correlation.TraceID
+			observerContext.SessionID = artifact.Correlation.SessionID
+		}
+		cfg.observer = observability.NormalizeClientObserver(cfg.observer, observerContext)
+		opts = append(opts, WithObserver(cfg.observer))
+	}
 	if err := internalnormalize.ValidateArtifactScopes(ctx, artifact, internalnormalize.ScopeValidationOptions{
 		Resolvers:                      cfg.scopeResolvers,
 		RelaxedOptionalScopeValidation: cfg.relaxedOptionalScopeValidation,
+		WarningSink: func(warning internalnormalize.ScopeWarning) {
+			emitIgnoredOptionalScopeDiagnostic(cfg.observer, path, warning)
+		},
 	}); err != nil {
 		return nil, wrapErr(path, fserrors.StageValidate, fserrors.CodeResolveFailed, err)
-	}
-	if cfg.observer != nil && artifact.Correlation != nil {
-		cfg.observer = observability.WithClientObserverContext(cfg.observer, observability.ClientObserverContext{
-			Path:      path,
-			TraceID:   artifact.Correlation.TraceID,
-			SessionID: artifact.Correlation.SessionID,
-		})
-		opts = append(opts, WithObserver(cfg.observer))
 	}
 	switch artifact.Transport {
 	case protocolio.ConnectArtifactTransportTunnel:
@@ -170,6 +170,23 @@ func connectArtifact(ctx context.Context, artifact *protocolio.ConnectArtifact, 
 	default:
 		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
 	}
+}
+
+func emitIgnoredOptionalScopeDiagnostic(observer observability.ClientObserver, path fserrors.Path, warning internalnormalize.ScopeWarning) {
+	if observer == nil {
+		return
+	}
+	code := "scope_ignored_missing_resolver"
+	if warning.Kind == internalnormalize.ScopeWarningRelaxedValidationIgnored {
+		code = "scope_ignored_relaxed_validation"
+	}
+	observer.OnDiagnosticEvent(observability.DiagnosticEvent{
+		Path:       string(path),
+		Stage:      observability.DiagnosticStageScope,
+		CodeDomain: observability.DiagnosticCodeDomainEvent,
+		Code:       code,
+		Result:     observability.DiagnosticResultSkip,
+	})
 }
 
 func hasArtifactOnlyFields(obj map[string]json.RawMessage) bool {
