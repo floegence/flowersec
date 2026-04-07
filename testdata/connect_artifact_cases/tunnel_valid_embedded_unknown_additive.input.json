@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "transport": "tunnel",
+  "tunnel_grant": {
+    "tunnel_url": "wss://tunnel.example/ws",
+    "channel_id": "channel-003",
+    "channel_init_expire_at_unix_s": 1700000002,
+    "idle_timeout_seconds": 30,
+    "role": 1,
+    "token": "token-003",
+    "e2ee_psk_b64u": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+    "allowed_suites": [1, 2],
+    "default_suite": 1,
+    "issuer_hint": "kept-or-ignored-by-embedded-type"
+  }
+}

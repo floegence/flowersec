@@ -1,94 +1,115 @@
 # Flowersec Error Model
 
-Flowersec aims to make errors easy to handle programmatically and consistent across languages.
-Both the Go and TypeScript high-level APIs surface a structured error with three stable fields:
+Flowersec keeps machine-readable connection failures stable across Go and TypeScript.
 
-- `path`: which top-level connect path failed (`auto`, `tunnel`, `direct`)
-- `stage`: which layer failed (`validate`, `connect`, `attach`, `handshake`, `secure`, `yamux`, `rpc`, `close`)
-- `code`: a stable, language-agnostic error identifier (see below)
-
-Always treat `{path, stage, code}` as the primary machine-readable signal.
-Human-readable details live in the error message and the underlying `cause`.
+For high-level connection APIs, always treat `{ path, stage, code }` as the primary machine-readable contract.
 
 See also:
 
 - Stable API list: `docs/API_SURFACE.md`
 - Stability policy: `docs/API_STABILITY_POLICY.md`
 - Canonical manifest: `stability/public_api_manifest.json`
+- Error registry: `stability/connect_error_code_registry.json`
+- Diagnostics registry: `stability/connect_diagnostics_code_registry.json`
 
-## Go
+## Stable connect error contract
 
-High-level APIs return `*fserrors.Error` (or an alias like `*client.Error` / `*endpoint.Error`).
+High-level APIs surface:
 
-```go
-var fe *fserrors.Error
-if errors.As(err, &fe) {
-  // fe.Path, fe.Stage, fe.Code are stable.
-  // fe.Err is the underlying cause.
-}
-```
+- Go: `*fserrors.Error`
+- TypeScript: `FlowersecError`
 
-## TypeScript
+Stable fields:
 
-High-level APIs throw `FlowersecError`.
+- `path`: top-level connect path (`auto`, `tunnel`, `direct`)
+- `stage`: connect layer (`validate`, `connect`, `attach`, `handshake`, `secure`, `yamux`, `rpc`, `close`)
+- `code`: stable language-agnostic reason token
 
-```ts
-try {
-  await connectTunnelNode(input, { origin });
-} catch (e) {
-  if (e instanceof FlowersecError) {
-    // e.path, e.stage, e.code are stable.
-    // e.cause carries the underlying error.
-  }
-}
-```
+Human-readable detail belongs in the message and underlying cause.
 
-## Stable Codes
+## Stable codes
 
-The following `code` values are intended to be stable across Go and TypeScript:
+The machine-readable source of truth is `stability/connect_error_code_registry.json`.
 
-Validation / configuration:
+Common stable codes include:
 
-- `invalid_input`
-- `invalid_option`
-- `missing_grant`, `missing_connect_info`, `missing_conn`
-- `role_mismatch`
-- `missing_tunnel_url`, `missing_ws_url`
-- `missing_origin`, `missing_channel_id`, `missing_token`, `missing_init_exp`
-- `invalid_psk`, `invalid_suite`, `invalid_version`, `invalid_endpoint_instance_id`
-- `resolve_failed` (direct server: resolver failed)
-- `random_failed` (e.g. endpoint_instance_id generation failed)
+- validation/configuration:
+  - `invalid_input`
+  - `invalid_option`
+  - `missing_grant`
+  - `missing_connect_info`
+  - `missing_conn`
+  - `role_mismatch`
+  - `missing_tunnel_url`
+  - `missing_ws_url`
+  - `missing_origin`
+  - `missing_channel_id`
+  - `missing_token`
+  - `missing_init_exp`
+  - `invalid_psk`
+  - `invalid_suite`
+  - `invalid_version`
+  - `invalid_endpoint_instance_id`
+  - `resolve_failed`
+  - `random_failed`
+- connect/attach:
+  - `dial_failed`
+  - `attach_failed`
+  - `upgrade_failed`
+  - `too_many_connections`
+  - `expected_attach`
+  - `invalid_attach`
+  - `invalid_token`
+  - `channel_mismatch`
+  - `init_exp_mismatch`
+  - `idle_timeout_mismatch`
+  - `token_replay`
+  - `replace_rate_limited`
+  - `timeout`
+  - `canceled`
+- handshake/runtime:
+  - `handshake_failed`
+  - `timestamp_after_init_exp`
+  - `timestamp_out_of_skew`
+  - `auth_tag_mismatch`
+  - `open_stream_failed`
+  - `accept_stream_failed`
+  - `mux_failed`
+  - `stream_hello_failed`
+  - `rpc_failed`
+  - `missing_stream_kind`
+  - `missing_handler`
+  - `ping_failed`
+  - `not_connected`
 
-Connect / attach / upgrade:
+## Diagnostics split
 
-- `dial_failed`, `attach_failed`, `upgrade_failed`
-- `too_many_connections`
-- `expected_attach`, `invalid_attach`
-- `invalid_token`, `channel_mismatch`, `init_exp_mismatch`, `idle_timeout_mismatch`, `token_replay`, `replace_rate_limited`
-- `timeout`, `canceled`
+Flowersec v0.18.x also defines a stable runtime event contract:
 
-Handshake:
+- `DiagnosticEvent`
 
-- `handshake_failed`
-- `timestamp_out_of_skew`, `timestamp_after_init_exp`
-- `auth_tag_mismatch`
-- `timeout`, `canceled`
+Important separation:
 
-Runtime:
+- correlation metadata belongs to the connect artifact
+- `DiagnosticEvent` is runtime observability
+- `code_domain=error` reuses `stability/connect_error_code_registry.json`
+- `code_domain=event` uses `stability/connect_diagnostics_code_registry.json`
 
-- `open_stream_failed`, `accept_stream_failed`, `mux_failed`
-- `stream_hello_failed`, `rpc_failed`, `missing_stream_kind`, `missing_handler`
-- `ping_failed`, `not_connected`
+Current stable event codes include:
 
-Notes:
+- `connect_ok`
+- `attach_ok`
+- `handshake_ok`
+- `ws_close_local`
+- `ws_close_peer_or_error`
+- `ws_error`
+- `diagnostics_overflow`
 
-- `dial_failed` / `attach_failed` are intentionally broad fallbacks. When the tunnel closes the websocket with a recognized rejection reason, clients may surface a more specific `code` (for example `invalid_token` or `token_replay`).
-- You should expect new codes to be added over time as the protocol surface grows, but existing codes should keep their meaning.
-
-## Observability Recommendation
+## Observability guidance
 
 For logs and metrics, prefer aggregating by:
 
-- `path + stage + code`
+- connect failures: `path + stage + code`
+- runtime events: `namespace + stage + code + result`
 
-This yields stable dashboards and alerts across both languages and across future internal refactors.
+This keeps dashboards stable across both languages and across internal refactors.

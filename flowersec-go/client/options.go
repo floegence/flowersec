@@ -3,9 +3,12 @@ package client
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/observability"
+	"github.com/floegence/flowersec/flowersec-go/session/internalnormalize"
 	"github.com/gorilla/websocket"
 )
 
@@ -35,6 +38,10 @@ type connectOptions struct {
 
 	keepaliveInterval time.Duration
 	keepaliveSet      bool
+	observer          observability.ClientObserver
+
+	scopeResolvers                 map[string]internalnormalize.ScopeResolver
+	relaxedOptionalScopeValidation bool
 }
 
 func defaultConnectOptions() connectOptions {
@@ -175,6 +182,39 @@ func WithKeepaliveInterval(d time.Duration) ConnectOption {
 		}
 		cfg.keepaliveInterval = d
 		cfg.keepaliveSet = true
+		return nil
+	}
+}
+
+func WithObserver(observer observability.ClientObserver) ConnectOption {
+	return func(cfg *connectOptions) error {
+		cfg.observer = observer
+		return nil
+	}
+}
+
+type ScopeResolver = internalnormalize.ScopeResolver
+
+func WithScopeResolver(scope string, resolver ScopeResolver) ConnectOption {
+	return func(cfg *connectOptions) error {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			return fmt.Errorf("scope name must be non-empty")
+		}
+		if resolver == nil {
+			return fmt.Errorf("scope resolver must be non-nil")
+		}
+		if cfg.scopeResolvers == nil {
+			cfg.scopeResolvers = make(map[string]internalnormalize.ScopeResolver, 1)
+		}
+		cfg.scopeResolvers[scope] = internalnormalize.ScopeResolver(resolver)
+		return nil
+	}
+}
+
+func WithRelaxedOptionalScopeValidation(enabled bool) ConnectOption {
+	return func(cfg *connectOptions) error {
+		cfg.relaxedOptionalScopeValidation = enabled
 		return nil
 	}
 }

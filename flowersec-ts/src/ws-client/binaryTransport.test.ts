@@ -95,7 +95,7 @@ describe("WebSocketBinaryTransport", () => {
     expect(ws.closed).toBe(true);
     await expect(transport.readBinary()).rejects.toThrow(/ws recv buffer exceeded/);
     expect(onWsError).toHaveBeenCalledWith("recv_buffer_exceeded");
-    expect(onWsClose).toHaveBeenCalledWith("local");
+    expect(onWsClose).toHaveBeenCalledWith("local", undefined);
   });
 
   test("supports array buffer views", async () => {
@@ -171,7 +171,7 @@ describe("WebSocketBinaryTransport", () => {
 
     await expect(read).rejects.toThrow(/websocket closed/);
     expect(ws.closed).toBe(true);
-    expect(onWsClose).toHaveBeenCalledWith("local");
+    expect(onWsClose).toHaveBeenCalledWith("local", undefined);
   });
 
   test("rejects unexpected message types", async () => {

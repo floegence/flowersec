@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "transport": "direct",
+  "direct_info": {
+    "ws_url": "wss://direct.example/ws",
+    "channel_id": "channel-006",
+    "e2ee_psk_b64u": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+    "channel_init_expire_at_unix_s": 1700000005,
+    "default_suite": 1
+  },
+  "extra": true
+}

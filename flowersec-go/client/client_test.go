@@ -6,7 +6,11 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/observability"
+	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	hyamux "github.com/hashicorp/yamux"
 )
@@ -42,6 +46,30 @@ func TestClientCloseNil(t *testing.T) {
 	var c *session
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close() on nil client should be nil, got %v", err)
+	}
+}
+
+func TestSessionGetters(t *testing.T) {
+	c := &session{
+		path:               PathTunnel,
+		endpointInstanceID: "endpoint-1",
+		secure:             &e2ee.SecureChannel{},
+		mux:                &hyamux.Session{},
+		rpc:                &rpc.Client{},
+	}
+	if got := c.Path(); got != PathTunnel {
+		t.Fatalf("Path() = %q, want %q", got, PathTunnel)
+	}
+	if got := c.EndpointInstanceID(); got != "endpoint-1" {
+		t.Fatalf("EndpointInstanceID() = %q", got)
+	}
+	if c.Secure() == nil || c.Mux() == nil || c.RPC() == nil {
+		t.Fatal("expected non-nil underlying handles")
+	}
+
+	var nilClient *session
+	if nilClient.Path() != "" || nilClient.EndpointInstanceID() != "" || nilClient.Secure() != nil || nilClient.Mux() != nil || nilClient.RPC() != nil {
+		t.Fatal("nil session getters should return zero values")
 	}
 }
 
@@ -99,5 +127,37 @@ func TestClientOpenStream_ContextCanceled_ReturnsCanceled(t *testing.T) {
 	}
 	if fe.Path != PathDirect || fe.Stage != StageYamux || fe.Code != CodeCanceled {
 		t.Fatalf("unexpected error: %+v", fe)
+	}
+}
+
+func TestSessionPingNilAndNotConnected(t *testing.T) {
+	var nilClient *session
+	if err := nilClient.Ping(); err == nil {
+		t.Fatal("expected error")
+	}
+	c := &session{path: PathTunnel}
+	if err := c.Ping(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestClassifyConnectObserverReason(t *testing.T) {
+	if got := classifyConnectObserverReason(context.DeadlineExceeded); got != observability.ConnectReasonTimeout {
+		t.Fatalf("timeout reason = %q", got)
+	}
+	if got := classifyConnectObserverReason(context.Canceled); got != observability.ConnectReasonCanceled {
+		t.Fatalf("canceled reason = %q", got)
+	}
+	if got := classifyConnectObserverReason(errors.New("boom")); got != observability.ConnectReasonWebsocketError {
+		t.Fatalf("default reason = %q", got)
+	}
+}
+
+func TestStartKeepaliveZeroIntervalIsNoop(t *testing.T) {
+	c := &session{}
+	c.startKeepalive(0)
+	time.Sleep(10 * time.Millisecond)
+	if c.keepaliveStop != nil {
+		t.Fatal("expected keepalive to remain disabled")
 	}
 }

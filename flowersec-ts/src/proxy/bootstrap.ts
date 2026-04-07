@@ -10,11 +10,14 @@ import {
   type RegisterProxyIntegrationOptions,
 } from "./integration.js";
 import { registerProxyControllerWindow, type RegisterProxyControllerWindowOptions } from "./controllerWindow.js";
+import type { ProxyPresetInput } from "./preset.js";
 import type { ProxyProfile, ProxyProfileName } from "./profiles.js";
 import { createProxyRuntime, type ProxyRuntime } from "./runtime.js";
 
 export type ConnectTunnelProxyBrowserOptions = Readonly<{
   connect?: TunnelConnectBrowserOptions;
+  preset?: ProxyPresetInput;
+  /** @deprecated Use `preset` instead. */
   profile?: ProxyProfileName | Partial<ProxyProfile>;
   runtimeGlobalKey?: string;
   runtime?: RegisterProxyIntegrationOptions["runtime"];
@@ -51,6 +54,7 @@ export async function connectTunnelProxyBrowser(
   const integrationInput: RegisterProxyIntegrationOptions = {
     client,
     serviceWorker: opts.serviceWorker,
+    ...(opts.preset === undefined ? {} : { preset: opts.preset }),
     ...(opts.profile === undefined ? {} : { profile: opts.profile }),
     ...(opts.runtimeGlobalKey === undefined ? {} : { runtimeGlobalKey: opts.runtimeGlobalKey }),
     ...(opts.runtime === undefined ? {} : { runtime: opts.runtime }),

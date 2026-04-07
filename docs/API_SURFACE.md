@@ -1,9 +1,6 @@
 # Flowersec API Surface
 
-This document defines the intended stable ("public") API surface of this repository.
-It is meant to remove guesswork for integrators: which packages and entrypoints you can depend on without importing internal building blocks directly.
-
-Status: experimental; not audited.
+This document defines the stable integration surface for Flowersec v0.18.x.
 
 Canonical source of truth for the stable surface: `stability/public_api_manifest.json`
 
@@ -14,60 +11,92 @@ See also:
 
 ## CLI surface
 
-Supported binaries (user-facing):
+Supported user-facing binaries:
 
-- `flowersec-tunnel` (deployable tunnel server)
-- `flowersec-proxy-gateway` (deployable L7 HTTP/WS gateway; forwards to a server endpoint via `flowersec-proxy/*` streams)
-- `flowersec-issuer-keygen` (helper: generate issuer keypair and tunnel public keyset)
-- `flowersec-channelinit` (helper: mint a `ChannelInitGrant` pair)
-- `flowersec-directinit` (helper: generate a `DirectConnectInfo` JSON object for direct (no tunnel) demos)
-- `idlgen` (code generator for `*.fidl.json` IDL; install via `go install github.com/floegence/flowersec/tools/idlgen@latest`)
+- `flowersec-tunnel`
+- `flowersec-proxy-gateway`
+- `flowersec-issuer-keygen`
+- `flowersec-channelinit`
+- `flowersec-directinit`
+- `idlgen`
 
-Internal tooling (not supported as a public CLI surface):
-
-- `flowersec-go/internal/cmd/*` (interop harnesses, load generators)
+Internal tooling under `flowersec-go/internal/cmd/*` is not a stable CLI surface.
 
 ## Go: stable packages
 
-These packages are the recommended integration entrypoints:
+Recommended integration entrypoints:
 
 - `github.com/floegence/flowersec/flowersec-go/client`
-  - Role: `client`
-  - APIs: `client.Connect(...)`, `client.ConnectTunnel(...)`, `client.ConnectDirect(...)`
+  - `client.Connect(...)`
+  - `client.ConnectTunnel(...)`
+  - `client.ConnectDirect(...)`
+  - `client.WithObserver(...)`
 - `github.com/floegence/flowersec/flowersec-go/endpoint`
-  - Role: `server`
-  - APIs: `endpoint.ConnectTunnel(...)`, `endpoint.NewDirectHandler(...)`, `endpoint.AcceptDirectWS(...)`, `endpoint.NewDirectHandlerResolved(...)`, `endpoint.AcceptDirectWSResolved(...)` (direct server building blocks; most apps should use `endpoint/serve`)
-  - Types: `endpoint.Suite` (`SuiteX25519HKDFAES256GCM`, `SuiteP256HKDFAES256GCM`), `endpoint.UpgraderOptions`, `endpoint.HandshakeCache`, `endpoint.AcceptDirectOptions`, `endpoint.AcceptDirectResolverOptions`
+  - `endpoint.ConnectTunnel(...)`
+  - `endpoint.NewDirectHandler(...)`
+  - `endpoint.AcceptDirectWS(...)`
+  - `endpoint.NewDirectHandlerResolved(...)`
+  - `endpoint.AcceptDirectWSResolved(...)`
+  - `endpoint.Suite`
+  - `SuiteX25519HKDFAES256GCM`
+  - `SuiteP256HKDFAES256GCM`
+  - `endpoint.UpgraderOptions`
+  - `endpoint.HandshakeCache`
+  - `endpoint.AcceptDirectOptions`
+  - `endpoint.AcceptDirectResolverOptions`
 - `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
-  - Role: server runtime
-  - APIs: `serve.New(...)`, `srv.Handle(...)`, `srv.HandleStream(...)`, `srv.ServeSession(...)`, `serve.ServeTunnel(...)`, `serve.NewDirectHandler(...)`, `serve.NewDirectHandlerResolved(...)`
-- `github.com/floegence/flowersec/flowersec-go/proxy`
-  - Role: server endpoint add-on
-  - APIs: `proxy.Register(...)` (registers `flowersec-proxy/http1` and `flowersec-proxy/ws` stream handlers)
-- `github.com/floegence/flowersec/flowersec-go/rpc`
-  - Role: stable RPC client/server/router APIs (used by `Client.RPC()` and `endpoint/serve`)
-  - APIs: `rpc.NewRouter(...)`, `rpc.NewServer(...)`, `rpc.NewClient(...)`
-- `github.com/floegence/flowersec/flowersec-go/framing/jsonframe`
-  - Role: stable JSON framing helpers (length-prefixed JSON frames)
-  - APIs: `jsonframe.ReadJSONFrame(...)`, `jsonframe.WriteJSONFrame(...)`, `jsonframe.ReadJSONFrameDefaultMax(...)`
+  - `serve.New(...)`
+  - `srv.Handle(...)`
+  - `srv.HandleStream(...)`
+  - `srv.ServeSession(...)`
+  - `serve.ServeTunnel(...)`
+  - `serve.NewDirectHandler(...)`
+  - `serve.NewDirectHandlerResolved(...)`
 - `github.com/floegence/flowersec/flowersec-go/protocolio`
-  - Role: JSON decoding helpers for `ChannelInitGrant` and `DirectConnectInfo`
-  - APIs: `protocolio.DecodeGrantClientJSON(...)`, `protocolio.DecodeGrantServerJSON(...)`, `protocolio.DecodeGrantJSON(...)`, `protocolio.DecodeDirectConnectInfoJSON(...)`
+  - `protocolio.DecodeGrantClientJSON(...)`
+  - `protocolio.DecodeGrantServerJSON(...)`
+  - `protocolio.DecodeGrantJSON(...)`
+  - `protocolio.DecodeDirectConnectInfoJSON(...)`
+  - `protocolio.DecodeConnectArtifactJSON(...)`
+  - `protocolio.ConnectArtifact`
+  - `protocolio.CorrelationContext`
+  - `protocolio.CorrelationKV`
+  - `protocolio.ScopeMetadataEntry`
+- `github.com/floegence/flowersec/flowersec-go/controlplane/client`
+  - `client.RequestConnectArtifact(...)`
+  - `client.RequestEntryConnectArtifact(...)`
+  - `client.RequestError`
+- `github.com/floegence/flowersec/flowersec-go/observability`
+  - `observability.DiagnosticEvent`
+  - `observability.ClientObserver`
+  - `observability.NormalizeClientObserver(...)`
+  - `observability.WithClientObserverContext(...)`
 - `github.com/floegence/flowersec/flowersec-go/origin`
-  - Role: origin helpers (derive `http(s)://host[:port]` from `ws(s)://...` / controlplane base URLs)
-  - APIs: `origin.FromWSURL(...)`, `origin.ForTunnel(...)`
+  - `origin.FromWSURL(...)`
+  - `origin.ForTunnel(...)`
+- `github.com/floegence/flowersec/flowersec-go/proxy`
+  - `proxy.Register(...)`
+- `github.com/floegence/flowersec/flowersec-go/proxy/preset`
+  - `preset.Manifest`
+  - `preset.DecodeJSON(...)`
+  - `preset.LoadFile(...)`
+  - `preset.ResolveBuiltin(...)`
+  - `preset.ApplyBridgeOptions(...)`
+- `github.com/floegence/flowersec/flowersec-go/rpc`
+  - `rpc.NewRouter(...)`
+  - `rpc.NewServer(...)`
+  - `rpc.NewClient(...)`
+- `github.com/floegence/flowersec/flowersec-go/framing/jsonframe`
+  - `jsonframe.ReadJSONFrame(...)`
+  - `jsonframe.WriteJSONFrame(...)`
+  - `jsonframe.ReadJSONFrameDefaultMax(...)`
 - `github.com/floegence/flowersec/flowersec-go/fserrors`
-  - Role: stable error codes (`Path`, `Stage`, `Code`)
-
-Controlplane helpers (supported for integration and used by the helper CLIs):
-
+  - stable machine-readable `{path, stage, code}` types
 - `github.com/floegence/flowersec/flowersec-go/controlplane/issuer`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/token`
 
-## Go: stable protocol types (generated)
-
-The stable APIs above use generated protocol types. These packages are safe to depend on:
+Stable generated protocol packages:
 
 - `github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1`
 - `github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1`
@@ -75,35 +104,50 @@ The stable APIs above use generated protocol types. These packages are safe to d
 - `github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1`
 - `github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1`
 
-## Go: building blocks (not a stable surface)
+Compatibility-only Go surface:
 
-The repository also contains lower-level components (crypto, yamux, ws, tunnel internals, and additional framing utilities beyond the stable packages listed above).
-They are useful for contributors and advanced integrations, but are not intended as a stable API surface.
-
-If you rely on these directly, expect breaking changes without deprecation cycles.
+- legacy raw grant / wrapper / direct JSON inputs continue to work through `client.Connect(...)`
+- named proxy profiles remain only as deprecated compatibility helpers; they are not part of the stable core surface
 
 ## TypeScript: stable exports
 
 Stable entrypoints:
 
-- `@floegence/flowersec-core`:
-  - `connect(...)`, `connectTunnel(...)`, `connectDirect(...)`
-  - `Client`, `FlowersecError`, protocol types and asserts
-- `@floegence/flowersec-core/node`:
-  - `connectNode(...)`, `connectTunnelNode(...)`, `connectDirectNode(...)`, `createNodeWsFactory()`
-- `@floegence/flowersec-core/browser`:
-  - `connectBrowser(...)`, `connectTunnelBrowser(...)`, `connectDirectBrowser(...)`
-  - `requestChannelGrant(...)`, `requestEntryChannelGrant(...)`
+- `@floegence/flowersec-core`
+  - `connect(...)`
+  - `connectTunnel(...)`
+  - `connectDirect(...)`
+  - `ConnectArtifact`
+  - `CorrelationContext`
+  - `ScopeMetadataEntry`
+  - `assertConnectArtifact(...)`
+- `@floegence/flowersec-core/node`
+  - `connectNode(...)`
+  - `connectTunnelNode(...)`
+  - `connectDirectNode(...)`
+  - `createNodeWsFactory()`
+  - `assertConnectArtifact(...)`
+- `@floegence/flowersec-core/browser`
+  - `connectBrowser(...)`
+  - `connectTunnelBrowser(...)`
+  - `connectDirectBrowser(...)`
+  - `assertConnectArtifact(...)`
+  - `requestChannelGrant(...)`
+  - `requestEntryChannelGrant(...)`
+  - `requestConnectArtifact(...)`
+  - `requestEntryConnectArtifact(...)`
   - `ControlplaneRequestError`
-  - `createBrowserReconnectConfig(...)`, `createTunnelBrowserReconnectConfig(...)`, `createDirectBrowserReconnectConfig(...)`
+  - `createBrowserReconnectConfig(...)`
+  - `createTunnelBrowserReconnectConfig(...)`
+  - `createDirectBrowserReconnectConfig(...)`
 
-Stable building blocks (advanced, but supported):
+Stable building blocks:
 
-- `@floegence/flowersec-core/framing` (length-prefixed JSON framing helpers)
-- `@floegence/flowersec-core/streamio` (stream IO helpers for custom yamux streams)
+- `@floegence/flowersec-core/framing`
+- `@floegence/flowersec-core/streamio`
   - `createJsonFrameChannel(...)`
   - `openJsonFrameChannel(...)`
-- `@floegence/flowersec-core/proxy` (browser runtime helpers for `flowersec-proxy/http1` + `flowersec-proxy/ws`)
+- `@floegence/flowersec-core/proxy`
   - `createProxyRuntime(...)`
   - `createProxyServiceWorkerScript(...)`
   - `createProxyIntegrationServiceWorkerScript(...)`
@@ -117,18 +161,52 @@ Stable building blocks (advanced, but supported):
   - `registerProxyAppWindowWithServiceWorkerControl(...)`
   - `installWebSocketPatch(...)`
   - `disableUpstreamServiceWorkerRegister()`
-  - `resolveProxyProfile(...)`, `PROXY_PROFILE_DEFAULT`, `PROXY_PROFILE_CODESERVER`
-- `@floegence/flowersec-core/reconnect` (framework-agnostic reconnect state machine)
+  - `assertProxyPresetManifest(...)`
+  - `resolveProxyPreset(...)`
+  - `DEFAULT_PROXY_PRESET_MANIFEST`
+- `@floegence/flowersec-core/reconnect`
   - `createReconnectManager()`
   - `ReconnectManager.connectIfNeeded(...)`
-- `@floegence/flowersec-core/rpc` (RPC client/server over length-prefixed JSON frames)
+- `@floegence/flowersec-core/rpc`
   - `RpcProxy`
-- `@floegence/flowersec-core/yamux` (yamux framing and session)
-- `@floegence/flowersec-core/e2ee` (record layer and handshake helpers)
-- `@floegence/flowersec-core/ws` (WebSocket binary transport)
-- `@floegence/flowersec-core/observability` (observer types)
-- `@floegence/flowersec-core/streamhello` (stream hello helpers)
+- `@floegence/flowersec-core/yamux`
+- `@floegence/flowersec-core/e2ee`
+- `@floegence/flowersec-core/ws`
+- `@floegence/flowersec-core/observability`
+  - `DiagnosticEvent`
+  - `normalizeObserver(...)`
+  - `withObserverContext(...)`
+- `@floegence/flowersec-core/streamhello`
 
-Unstable entrypoint:
+Compatibility-only TypeScript surface:
 
-- `@floegence/flowersec-core/internal` (internal glue; not recommended as a stable dependency)
+- legacy raw grant / wrapper / direct connect inputs remain accepted by `connect(...)`, `connectBrowser(...)`, and `connectNode(...)`
+- hybrid ambiguous inputs and legacy inputs mixed with artifact-only fields now fail fast
+- named proxy profiles are no longer stable core APIs; use preset manifests instead
+
+## Stable vs experimental notes
+
+Stable in v0.18.x:
+
+- client-facing canonical `ConnectArtifact`
+- strict canonical parse / validate rules
+- artifact-aware client connect entrypoints
+- correlation metadata carrier
+- runtime `DiagnosticEvent`
+- artifact fetch helpers
+- proxy preset manifest contract
+
+Still experimental in v0.18.x:
+
+- public normalize helper shapes
+- public scope resolver registration API
+- scoped manifest toolchain/codegen factory
+- concrete scoped payload schemas such as `proxy.runtime`
+- bilateral contract negotiation semantics
+
+## Not part of the stable surface
+
+- `@floegence/flowersec-core/internal`
+- lower-level tunnel / yamux / crypto internals not listed above
+- repository reference assets under `reference/`
+- deprecated named proxy profiles

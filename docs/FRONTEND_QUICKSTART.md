@@ -1,28 +1,16 @@
 # Frontend Quickstart (TypeScript)
 
-This guide is for frontend developers who want to use Flowersec from TypeScript (Browser or Node.js) without learning the full protocol stack upfront.
+This guide is for frontend developers who want the shortest path to a production-shaped Flowersec integration.
 
-If you want the full integration story (controlplane, tunnel deployment, server endpoints), see `docs/INTEGRATION_GUIDE.md`.
+If you need the full backend/controlplane story, see `docs/INTEGRATION_GUIDE.md`.
 
-## 5-minute local demo (no clone)
-
-1) Download and extract the `flowersec-demos` bundle from GitHub Releases.
-
-2) From the extracted bundle root, start the demo dev server:
+## 5-minute local demo
 
 ```bash
-node ./examples/ts/dev-server.mjs | tee dev.json
+node ./examples/ts/dev-server.mjs
 ```
 
-3) Open the browser demo URL printed in `dev.json`:
-
-- Tunnel demo: `browser_tunnel_url` (click "Fetch Grant", then "Connect")
-- Direct demo: `browser_direct_url` (click "Fetch DirectConnectInfo", then "Connect")
-
-Notes:
-
-- Ctrl+C stops everything (the dev server shuts down the spawned Go demo processes).
-- Tunnel grants are one-time use; click "Fetch Grant" again if you refresh/reconnect.
+That demo stack still exercises the stable browser/node entrypoints while giving you a local controlplane/tunnel/direct environment.
 
 ## Install
 
@@ -30,69 +18,90 @@ Notes:
 npm install @floegence/flowersec-core
 ```
 
-## Browser: connect (recommended)
+## Browser: artifact-first connect
 
-In browsers, use `@floegence/flowersec-core/browser` so the Origin header matches `window.location.origin`.
-
-```ts
-import { connectBrowser } from "@floegence/flowersec-core/browser";
-
-// Your backend should mint and return a ChannelInitGrant (or the full {"grant_client": ...} wrapper).
-const grant = await fetch("/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
-
-const client = await connectBrowser(grant);
-await client.ping(); // encrypted keepalive ping (verifies the secure channel)
-client.close();
-```
-
-## Node.js: connect (recommended)
-
-In Node.js, use `@floegence/flowersec-core/node` so the Origin header is set correctly.
+Use `@floegence/flowersec-core/browser` so Origin handling matches the browser environment.
 
 ```ts
-import { connectNode } from "@floegence/flowersec-core/node";
+import { connectBrowser, requestConnectArtifact } from "@floegence/flowersec-core/browser";
 
-const grant = await fetch("https://your-app.example/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
-
-const client = await connectNode(grant, {
-  origin: "https://your-app.example", // must be allowed by the tunnel/direct server Origin policy
+const artifact = await requestConnectArtifact({
+  baseUrl: "https://controlplane.example.com",
+  endpointId: "env_demo",
+  correlation: {
+    traceId: "trace-0001",
+  },
 });
+
+const client = await connectBrowser(artifact, {});
 await client.ping();
 client.close();
 ```
 
-## Common gotchas
-
-- One-time tokens (`code=token_replay`): tunnel channel init tokens are single-use; mint a new grant for every new connection attempt.
-- Auto reconnect: use `@floegence/flowersec-core/reconnect` together with `createBrowserReconnectConfig(...)`, and ensure reconnect paths fetch a fresh grant or direct connect info for each attempt.
-- Origin policy: the tunnel and direct demo servers enforce an Origin allow-list by default.
-  - Browser Origin is `window.location.origin` and must be explicitly allowed by the server.
-  - Node.js must pass an explicit `origin` string (use `connectNode` / `connectTunnelNode` / `connectDirectNode`).
-
-Example:
+## Node: artifact-first connect
 
 ```ts
-import { createBrowserReconnectConfig, requestEntryChannelGrant } from "@floegence/flowersec-core/browser";
+import { connectNode } from "@floegence/flowersec-core/node";
+
+const artifact = await fetch("https://controlplane.example.com/v1/connect/artifact", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ endpoint_id: "env_demo" }),
+}).then((r) => r.json());
+
+const client = await connectNode(artifact, {
+  origin: "https://app.example.com",
+});
+
+await client.ping();
+client.close();
+```
+
+## Browser reconnect
+
+```ts
+import { createBrowserReconnectConfig } from "@floegence/flowersec-core/browser";
 import { createReconnectManager } from "@floegence/flowersec-core/reconnect";
 
 const mgr = createReconnectManager();
 
-await mgr.connect(createBrowserReconnectConfig({
-  getGrant: async () =>
-    await requestEntryChannelGrant({
+await mgr.connect(
+  createBrowserReconnectConfig({
+    artifactControlplane: {
+      baseUrl: "https://controlplane.example.com",
       endpointId: "env_demo",
       entryTicket: "one-time-ticket",
-      payload: { floe_app: "com.example.demo" },
-    }),
-  autoReconnect: { enabled: true },
-}));
+    },
+    autoReconnect: { enabled: true },
+  })
+);
 ```
 
-`requestChannelGrant(...)` and `requestEntryChannelGrant(...)` throw `ControlplaneRequestError` on HTTP failures, preserving `status`, `code`, and the server-provided message so app UIs can render accurate recovery guidance without re-parsing the response body.
+`requestConnectArtifact(...)` and `requestEntryConnectArtifact(...)` throw `ControlplaneRequestError` on HTTP failures, preserving `status`, `code`, and the server message.
+
+## Compatibility notes
+
+Still supported:
+
+- raw `ChannelInitGrant`
+- wrapper `{grant_client: ...}`
+- raw `DirectConnectInfo`
+- `requestEntryChannelGrant(...)`
+
+Now rejected:
+
+- hybrid ambiguous objects
+- legacy inputs mixed with artifact-only fields
+- client-facing `grant_server`
+
+Common tunnel gotcha:
+
+- `token_replay` means the one-time tunnel token was reused; fetch a fresh artifact or grant before reconnecting
 
 ## Next steps
 
-- Integration guide: `docs/INTEGRATION_GUIDE.md`
-- API surface contract: `docs/API_SURFACE.md`
-- Error model: `docs/ERROR_MODEL.md`
+- API surface: `docs/API_SURFACE.md`
+- Connect artifacts: `docs/CONNECT_ARTIFACTS.md`
+- Correlation and diagnostics: `docs/CORRELATION_AND_DIAGNOSTICS.md`
+- Migration guide: `docs/V0_18_MIGRATION.md`
 - Demos cookbook: `examples/README.md`

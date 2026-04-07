@@ -1,6 +1,7 @@
 import type { Client } from "../client.js";
 
-import { resolveProxyProfile, type ProxyProfile, type ProxyProfileName } from "./profiles.js";
+import { profileToPresetManifest, type ProxyProfile, type ProxyProfileName } from "./profiles.js";
+import { resolveProxyPreset, type ProxyPresetInput, type ResolvedProxyPreset } from "./preset.js";
 import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
 import { createProxyRuntime, type ProxyRuntime } from "./runtime.js";
 import { createProxyServiceWorkerScript, type ProxyServiceWorkerScriptOptions } from "./serviceWorker.js";
@@ -33,6 +34,8 @@ export type ProxyIntegrationServiceWorkerOptions = Readonly<{
 
 export type RegisterProxyIntegrationOptions = Readonly<{
   client: Client;
+  preset?: ProxyPresetInput;
+  /** @deprecated Use `preset` instead. */
   profile?: ProxyProfileName | Partial<ProxyProfile>;
   runtimeGlobalKey?: string;
   runtime?: Readonly<{
@@ -49,7 +52,7 @@ export type RegisterProxyIntegrationOptions = Readonly<{
 export type ProxyIntegrationContext = Readonly<{
   runtime: ProxyRuntime;
   options: RegisterProxyIntegrationOptions;
-  profile: ProxyProfile;
+  preset: ResolvedProxyPreset;
 }>;
 
 export type ControllerMismatchContext = Readonly<{
@@ -250,7 +253,16 @@ function shouldIgnoreMismatch(plugins: readonly ProxyIntegrationPlugin[], ctx: C
   return false;
 }
 
-function buildRuntimeOptions(profile: ProxyProfile, runtime: RegisterProxyIntegrationOptions["runtime"]): {
+function resolveIntegrationPreset(opts: RegisterProxyIntegrationOptions): ResolvedProxyPreset {
+  if (opts.preset !== undefined && opts.profile !== undefined) {
+    throw new Error("preset and deprecated profile cannot be used together");
+  }
+  if (opts.preset !== undefined) return resolveProxyPreset(opts.preset);
+  if (opts.profile !== undefined) return resolveProxyPreset(profileToPresetManifest(opts.profile));
+  return resolveProxyPreset();
+}
+
+function buildRuntimeOptions(preset: ResolvedProxyPreset, runtime: RegisterProxyIntegrationOptions["runtime"]): {
   maxJsonFrameBytes: number;
   maxChunkBytes: number;
   maxBodyBytes: number;
@@ -258,11 +270,11 @@ function buildRuntimeOptions(profile: ProxyProfile, runtime: RegisterProxyIntegr
   timeoutMs: number;
 } {
   return {
-    maxJsonFrameBytes: runtime?.maxJsonFrameBytes ?? profile.maxJsonFrameBytes,
-    maxChunkBytes: runtime?.maxChunkBytes ?? profile.maxChunkBytes,
-    maxBodyBytes: runtime?.maxBodyBytes ?? profile.maxBodyBytes,
-    maxWsFrameBytes: runtime?.maxWsFrameBytes ?? profile.maxWsFrameBytes,
-    timeoutMs: runtime?.timeoutMs ?? profile.timeoutMs,
+    maxJsonFrameBytes: runtime?.maxJsonFrameBytes ?? preset.limits.max_json_frame_bytes,
+    maxChunkBytes: runtime?.maxChunkBytes ?? preset.limits.max_chunk_bytes,
+    maxBodyBytes: runtime?.maxBodyBytes ?? preset.limits.max_body_bytes,
+    maxWsFrameBytes: runtime?.maxWsFrameBytes ?? preset.limits.max_ws_frame_bytes,
+    timeoutMs: runtime?.timeoutMs ?? preset.limits.timeout_ms ?? 0,
   };
 }
 
@@ -320,8 +332,8 @@ export function createProxyIntegrationServiceWorkerScript(
 export async function registerProxyIntegration(input: RegisterProxyIntegrationOptions): Promise<ProxyIntegrationHandle> {
   const plugins = input.plugins ?? [];
   const opts = applyPluginMutations(input, plugins);
-  const profile = resolveProxyProfile(opts.profile);
-  const runtimeOpts = buildRuntimeOptions(profile, opts.runtime);
+  const preset = resolveIntegrationPreset(opts);
+  const runtimeOpts = buildRuntimeOptions(preset, opts.runtime);
   const runtime = createProxyRuntime({ ...runtimeOpts, client: opts.client });
   const releaseRuntimeGlobal = bindRuntimeGlobal(runtime, opts.runtimeGlobalKey);
 
@@ -392,7 +404,7 @@ export async function registerProxyIntegration(input: RegisterProxyIntegrationOp
   const ctx: ProxyIntegrationContext = {
     runtime,
     options: opts,
-    profile,
+    preset,
   };
   for (const plugin of plugins) {
     await plugin.onRegistered?.(ctx);

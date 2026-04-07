@@ -1,0 +1,36 @@
+{
+  "v": 1,
+  "transport": "tunnel",
+  "tunnel_grant": {
+    "tunnel_url": "wss://tunnel.example/ws",
+    "channel_id": "channel-001",
+    "channel_init_expire_at_unix_s": 1700000000,
+    "idle_timeout_seconds": 30,
+    "role": 1,
+    "token": "token-001",
+    "e2ee_psk_b64u": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "allowed_suites": [1],
+    "default_suite": 1
+  },
+  "scoped": [
+    {
+      "scope": "proxy.runtime",
+      "scope_version": 1,
+      "critical": false,
+      "payload": {
+        "max_ws_frame_bytes": 1048576
+      }
+    }
+  ],
+  "correlation": {
+    "v": 1,
+    "trace_id": "trace-0001",
+    "session_id": "session-0001",
+    "tags": [
+      {
+        "key": "tenant",
+        "value": "acme"
+      }
+    ]
+  }
+}

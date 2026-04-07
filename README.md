@@ -40,6 +40,13 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 
 Stable integration entrypoints are documented in `docs/API_SURFACE.md`.
 The stability rules, review checklist, and engineering gate model live in `docs/API_STABILITY_POLICY.md`.
+Flowersec v0.18.x recommends an artifact-first integration path documented in:
+
+- `docs/CONNECT_ARTIFACTS.md`
+- `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
+- `docs/CORRELATION_AND_DIAGNOSTICS.md`
+- `docs/PRESETS.md`
+- `docs/V0_18_MIGRATION.md`
 
 ## At a glance
 
@@ -59,6 +66,9 @@ The stability rules, review checklist, and engineering gate model live in `docs/
 | ⚡ Try the demos | [`examples/README.md`](examples/README.md) |
 | 🌐 Start from the browser SDK | [`docs/FRONTEND_QUICKSTART.md`](docs/FRONTEND_QUICKSTART.md) |
 | 🧩 Integrate Flowersec into my app | [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) |
+| 🧱 Adopt the canonical connect artifact | [`docs/CONNECT_ARTIFACTS.md`](docs/CONNECT_ARTIFACTS.md) |
+| 🔁 Migrate to v0.18 | [`docs/V0_18_MIGRATION.md`](docs/V0_18_MIGRATION.md) |
+| 📦 Replace named proxy profiles | [`docs/PRESETS.md`](docs/PRESETS.md) |
 | 🧭 Understand API stability | [`docs/API_STABILITY_POLICY.md`](docs/API_STABILITY_POLICY.md) |
 | 🚇 Deploy the tunnel | [`docs/TUNNEL_DEPLOYMENT.md`](docs/TUNNEL_DEPLOYMENT.md) |
 | 🛡️ Deploy the proxy gateway | [`docs/PROXY_GATEWAY_DEPLOYMENT.md`](docs/PROXY_GATEWAY_DEPLOYMENT.md) |
@@ -142,11 +152,14 @@ Full walkthrough: `examples/README.md`
 ### Browser (recommended)
 
 ```ts
-import { connectBrowser } from "@floegence/flowersec-core/browser";
+import { connectBrowser, requestConnectArtifact } from "@floegence/flowersec-core/browser";
 
-const grant = await fetch("/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
+const artifact = await requestConnectArtifact({
+  baseUrl: "/api/flowersec",
+  endpointId: "env_demo",
+});
 
-const client = await connectBrowser(grant);
+const client = await connectBrowser(artifact);
 await client.ping();
 client.close();
 ```
@@ -156,9 +169,11 @@ client.close();
 ```ts
 import { connectNode } from "@floegence/flowersec-core/node";
 
-const grant = await fetch("https://your-app.example/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
+const artifact = await fetch("https://your-app.example/api/flowersec/connect/artifact", {
+  method: "POST",
+}).then((r) => r.json());
 
-const client = await connectNode(grant, {
+const client = await connectNode(artifact, {
   origin: "https://your-app.example",
 });
 
@@ -307,6 +322,12 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 - Frontend quickstart: `docs/FRONTEND_QUICKSTART.md`
 - Integration guide: `docs/INTEGRATION_GUIDE.md`
 - API surface: `docs/API_SURFACE.md`
+- Connect artifacts: `docs/CONNECT_ARTIFACTS.md`
+- Correlation and diagnostics: `docs/CORRELATION_AND_DIAGNOSTICS.md`
+- Scoped metadata: `docs/SCOPED_METADATA.md`
+- Controlplane artifact fetch: `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
+- Proxy presets: `docs/PRESETS.md`
+- v0.18 migration: `docs/V0_18_MIGRATION.md`
 - Tunnel deployment: `docs/TUNNEL_DEPLOYMENT.md`
 - Proxy gateway deployment: `docs/PROXY_GATEWAY_DEPLOYMENT.md`
 - Proxy stream contract: `docs/PROXY.md`

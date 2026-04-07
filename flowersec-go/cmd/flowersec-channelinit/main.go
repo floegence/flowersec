@@ -17,6 +17,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/securefile"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
+	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
 var (
@@ -59,6 +60,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 	outFile := cmdutil.EnvString("FSEC_CHANNELINIT_OUT", "")
+	serverGrantOut := cmdutil.EnvString("FSEC_CHANNELINIT_SERVER_GRANT_OUT", "")
+	format := cmdutil.EnvString("FSEC_CHANNELINIT_FORMAT", "legacy")
 	var overwrite bool
 	var pretty bool
 
@@ -72,7 +75,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&channelID, "channel-id", channelID, "channel id (default: random) (env: FSEC_CHANNEL_ID)")
 	fs.Int64Var(&tokenExpSeconds, "token-exp-seconds", tokenExpSeconds, "token lifetime in seconds (0 uses default; capped by init exp) (env: FSEC_CHANNELINIT_TOKEN_EXP_SECONDS)")
 	fs.IntVar(&idleTimeoutSeconds, "idle-timeout-seconds", idleTimeoutSeconds, "tunnel idle timeout in seconds (0 uses default; embedded into tokens and enforced by the tunnel) (env: FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS)")
+	fs.StringVar(&format, "format", format, "output format: legacy or artifact (env: FSEC_CHANNELINIT_FORMAT)")
 	fs.StringVar(&outFile, "out", outFile, "output file (default: stdout) (env: FSEC_CHANNELINIT_OUT)")
+	fs.StringVar(&serverGrantOut, "server-grant-out", serverGrantOut, "when --format=artifact, optional output file for the paired raw server grant (env: FSEC_CHANNELINIT_SERVER_GRANT_OUT)")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing --out file")
 	fs.BoolVar(&pretty, "pretty", false, "pretty-print JSON output")
 	fs.Usage = func() {
@@ -90,8 +95,18 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "    --pretty \\")
 		fmt.Fprintln(out, "    > channel.json")
 		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "  # Emit a client-facing ConnectArtifact and write the paired server grant separately.")
+		fmt.Fprintln(out, "  flowersec-channelinit \\")
+		fmt.Fprintln(out, "    --issuer-private-key-file ./keys/issuer_key.json \\")
+		fmt.Fprintln(out, "    --tunnel-url ws://127.0.0.1:8080/ws \\")
+		fmt.Fprintln(out, "    --aud flowersec-tunnel:dev \\")
+		fmt.Fprintln(out, "    --iss issuer-dev \\")
+		fmt.Fprintln(out, "    --format artifact \\")
+		fmt.Fprintln(out, "    --server-grant-out ./server-grant.json \\")
+		fmt.Fprintln(out, "    > connect-artifact.json")
+		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Output:")
-		fmt.Fprintln(out, "  stdout: JSON object with grant_client/grant_server (when --out is not set)")
+		fmt.Fprintln(out, "  stdout: legacy wrapper JSON or ConnectArtifact JSON (when --out is not set)")
 		fmt.Fprintln(out, "  stderr: errors")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Exit codes:")
@@ -130,9 +145,17 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	iss = strings.TrimSpace(iss)
 	channelID = strings.TrimSpace(channelID)
 	outFile = strings.TrimSpace(outFile)
+	serverGrantOut = strings.TrimSpace(serverGrantOut)
+	format = strings.ToLower(strings.TrimSpace(format))
 
 	if issuerPrivFile == "" || tunnelURL == "" || aud == "" || iss == "" {
 		return usageErr("missing --issuer-private-key-file, --tunnel-url, --aud, or --iss")
+	}
+	if format == "" {
+		format = "legacy"
+	}
+	if format != "legacy" && format != "artifact" {
+		return usageErr("invalid --format (want legacy or artifact)")
 	}
 	if tokenExpSeconds < 0 {
 		return usageErr("--token-exp-seconds must be >= 0 (0 uses default)")
@@ -182,33 +205,78 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		GrantServer: server,
 	}
 	var b []byte
-	if pretty {
-		b, err = json.MarshalIndent(out, "", "  ")
-	} else {
-		b, err = json.Marshal(out)
-	}
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 
 	if outFile == "" {
+		var stdoutPayload any = out
+		if format == "artifact" {
+			stdoutPayload = protocolio.ConnectArtifact{
+				V:           1,
+				Transport:   protocolio.ConnectArtifactTransportTunnel,
+				TunnelGrant: client,
+			}
+		}
+		b, err = marshalOutput(stdoutPayload, pretty)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		_, _ = stdout.Write(b)
 		_, _ = fmt.Fprintln(stdout)
-		return 0
-	}
-	if err := cmdutil.RefuseOverwrite(outFile, overwrite); err != nil {
-		fmt.Fprintln(stderr, err)
-		if cmdutil.IsUsage(err) {
-			return 2
+	} else {
+		var filePayload any = out
+		if format == "artifact" {
+			filePayload = protocolio.ConnectArtifact{
+				V:           1,
+				Transport:   protocolio.ConnectArtifactTransportTunnel,
+				TunnelGrant: client,
+			}
 		}
-		return 1
+		b, err = marshalOutput(filePayload, pretty)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := cmdutil.RefuseOverwrite(outFile, overwrite); err != nil {
+			fmt.Fprintln(stderr, err)
+			if cmdutil.IsUsage(err) {
+				return 2
+			}
+			return 1
+		}
+		if err := securefile.WriteFileAtomic(outFile, b, 0o600); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
-	if err := securefile.WriteFileAtomic(outFile, b, 0o600); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+	if format == "artifact" && serverGrantOut != "" {
+		if outFile != "" && outFile == serverGrantOut {
+			return usageErr("--server-grant-out must differ from --out")
+		}
+		serverBytes, err := marshalOutput(server, pretty)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := cmdutil.RefuseOverwrite(serverGrantOut, overwrite); err != nil {
+			fmt.Fprintln(stderr, err)
+			if cmdutil.IsUsage(err) {
+				return 2
+			}
+			return 1
+		}
+		if err := securefile.WriteFileAtomic(serverGrantOut, serverBytes, 0o600); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	return 0
+}
+
+func marshalOutput(v any, pretty bool) ([]byte, error) {
+	if pretty {
+		return json.MarshalIndent(v, "", "  ")
+	}
+	return json.Marshal(v)
 }
 
 func randomB64u(n int) (string, error) {

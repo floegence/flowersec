@@ -1,4 +1,5 @@
 import { assertChannelInitGrant, type ChannelInitGrant } from "../facade.js";
+import { assertConnectArtifact, type ConnectArtifact } from "../connect/artifact.js";
 
 type FetchLike = typeof fetch;
 
@@ -16,6 +17,18 @@ export type ControlplaneConfig = BaseControlplaneRequestConfig;
 export type EntryControlplaneConfig = BaseControlplaneRequestConfig & Readonly<{
   entryTicket: string;
 }>;
+
+export type ConnectArtifactRequestConfig = BaseControlplaneRequestConfig & Readonly<{
+  path?: string;
+  correlation?: Readonly<{
+    traceId?: string;
+  }>;
+}>;
+
+export type EntryConnectArtifactRequestConfig = ConnectArtifactRequestConfig &
+  Readonly<{
+    entryTicket: string;
+  }>;
 
 export class ControlplaneRequestError extends Error {
   readonly status: number;
@@ -59,7 +72,7 @@ function buildPayload(endpointId: string, payload: Record<string, unknown> | und
 async function requestGrant(
   url: string,
   init: RequestInit & Readonly<{ fetch?: FetchLike }>
-): Promise<ChannelInitGrant> {
+): Promise<unknown> {
   const runFetch = resolveFetch(init.fetch);
   const response = await runFetch(url, {
     ...init,
@@ -101,12 +114,7 @@ async function requestGrant(
     });
   }
 
-  const data = (await response.json()) as { grant_client?: unknown };
-  if (!data?.grant_client) {
-    throw new Error("Invalid controlplane response: missing `grant_client`");
-  }
-
-  return assertChannelInitGrant(data.grant_client);
+  return await response.json();
 }
 
 export async function requestChannelGrant(config: ControlplaneConfig): Promise<ChannelInitGrant> {
@@ -115,13 +123,17 @@ export async function requestChannelGrant(config: ControlplaneConfig): Promise<C
     headers.set("Content-Type", "application/json");
   }
 
-  return await requestGrant(buildURL(config.baseUrl, "/v1/channel/init"), {
+  const data = (await requestGrant(buildURL(config.baseUrl, "/v1/channel/init"), {
     ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
     method: "POST",
     credentials: config.credentials ?? "omit",
     headers,
     body: JSON.stringify(buildPayload(config.endpointId, config.payload)),
-  });
+  })) as { grant_client?: unknown };
+  if (!data?.grant_client) {
+    throw new Error("Invalid controlplane response: missing `grant_client`");
+  }
+  return assertChannelInitGrant(data.grant_client);
 }
 
 export async function requestEntryChannelGrant(config: EntryControlplaneConfig): Promise<ChannelInitGrant> {
@@ -135,7 +147,7 @@ export async function requestEntryChannelGrant(config: EntryControlplaneConfig):
     headers.set("Content-Type", "application/json");
   }
 
-  return await requestGrant(
+  const data = (await requestGrant(
     buildURL(config.baseUrl, `/v1/channel/init/entry?endpoint_id=${encodeURIComponent(endpointId)}`),
     {
       ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
@@ -144,5 +156,61 @@ export async function requestEntryChannelGrant(config: EntryControlplaneConfig):
       headers,
       body: JSON.stringify(buildPayload(endpointId, config.payload)),
     }
-  );
+  )) as { grant_client?: unknown };
+  if (!data?.grant_client) {
+    throw new Error("Invalid controlplane response: missing `grant_client`");
+  }
+  return assertChannelInitGrant(data.grant_client);
+}
+
+function buildConnectArtifactPayload(config: ConnectArtifactRequestConfig): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    endpoint_id: String(config.endpointId ?? "").trim(),
+  };
+  if (body.endpoint_id === "") throw new Error("endpointId is required");
+  if (config.payload !== undefined) body.payload = { ...config.payload };
+  const traceId = String(config.correlation?.traceId ?? "").trim();
+  if (traceId !== "") {
+    body.correlation = { trace_id: traceId };
+  }
+  return body;
+}
+
+export async function requestConnectArtifact(config: ConnectArtifactRequestConfig): Promise<ConnectArtifact> {
+  const headers = new Headers(config.headers);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const data = (await requestGrant(buildURL(config.baseUrl, config.path ?? "/v1/connect/artifact"), {
+    ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+    method: "POST",
+    credentials: config.credentials ?? "omit",
+    headers,
+    body: JSON.stringify(buildConnectArtifactPayload(config)),
+  })) as { connect_artifact?: unknown };
+  if (!data?.connect_artifact) {
+    throw new Error("Invalid controlplane response: missing `connect_artifact`");
+  }
+  return assertConnectArtifact(data.connect_artifact);
+}
+
+export async function requestEntryConnectArtifact(config: EntryConnectArtifactRequestConfig): Promise<ConnectArtifact> {
+  const entryTicket = String(config.entryTicket ?? "").trim();
+  if (entryTicket === "") throw new Error("entryTicket is required");
+  const headers = new Headers(config.headers);
+  headers.set("Authorization", `Bearer ${entryTicket}`);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const data = (await requestGrant(buildURL(config.baseUrl, config.path ?? "/v1/connect/artifact/entry"), {
+    ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+    method: "POST",
+    credentials: config.credentials ?? "omit",
+    headers,
+    body: JSON.stringify(buildConnectArtifactPayload(config)),
+  })) as { connect_artifact?: unknown };
+  if (!data?.connect_artifact) {
+    throw new Error("Invalid controlplane response: missing `connect_artifact`");
+  }
+  return assertConnectArtifact(data.connect_artifact);
 }

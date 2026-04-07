@@ -70,7 +70,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, `      "origin": "https://gateway.example.com"`)
 		fmt.Fprintln(out, `    },`)
 		fmt.Fprintln(out, `    "proxy": {`)
-		fmt.Fprintln(out, `      "profile": "default"`)
+		fmt.Fprintln(out, `      "preset_file": "./reference/presets/default/manifest.json"`)
 		fmt.Fprintln(out, `    },`)
 		fmt.Fprintln(out, `    "routes": [`)
 		fmt.Fprintln(out, `      {`)

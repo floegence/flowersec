@@ -9,7 +9,9 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/session/internalnormalize"
 )
 
 // Connect auto-detects tunnel vs direct connect inputs and returns an RPC-ready client session.
@@ -20,6 +22,11 @@ import (
 //   - io.Reader / []byte / string containing JSON (wrapper {"grant_client":{...}} / {"grant_server":{...}} or raw ChannelInitGrant / DirectConnectInfo)
 func Connect(ctx context.Context, input any, opts ...ConnectOption) (Client, error) {
 	switch v := input.(type) {
+	case *protocolio.ConnectArtifact:
+		return connectArtifact(ctx, v, opts...)
+	case protocolio.ConnectArtifact:
+		cp := v
+		return connectArtifact(ctx, &cp, opts...)
 	case *controlv1.ChannelInitGrant:
 		return ConnectTunnel(ctx, v, opts...)
 	case controlv1.ChannelInitGrant:
@@ -67,49 +74,112 @@ func connectJSONBytes(ctx context.Context, b []byte, opts ...ConnectOption) (Cli
 		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
 	}
 
-	if _, ok := obj["ws_url"]; ok {
-		var info directv1.DirectConnectInfo
-		if err := json.Unmarshal(b, &info); err != nil {
-			return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
-		}
-		return ConnectDirect(ctx, &info, opts...)
-	}
-
 	_, hasGrantClient := obj["grant_client"]
 	_, hasGrantServer := obj["grant_server"]
+	_, hasWsURL := obj["ws_url"]
 	_, hasTunnelURL := obj["tunnel_url"]
-	_, hasToken := obj["token"]
-	_, hasRole := obj["role"]
-	if !hasGrantClient && !hasTunnelURL && !hasToken && !hasRole {
-		if hasGrantServer {
-			raw := bytes.TrimSpace(obj["grant_server"])
-			if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-				return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingGrant, ErrMissingGrant)
-			}
-			var grant controlv1.ChannelInitGrant
-			if err := json.Unmarshal(raw, &grant); err != nil {
-				return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
-			}
-			return ConnectTunnel(ctx, &grant, opts...)
-		}
+	hasArtifactFields := hasArtifactOnlyFields(obj)
+	if (hasWsURL && (hasTunnelURL || hasGrantClient || hasGrantServer)) || (hasTunnelURL && (hasGrantClient || hasGrantServer)) {
 		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
 	}
-
-	var grant controlv1.ChannelInitGrant
+	if hasArtifactFields && (hasWsURL || hasTunnelURL || hasGrantClient || hasGrantServer) {
+		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+	}
+	if hasGrantServer {
+		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRoleMismatch, ErrExpectedRoleClient)
+	}
 	if hasGrantClient {
-		raw := bytes.TrimSpace(obj["grant_client"])
-		if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-			return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingGrant, ErrMissingGrant)
-		}
-		if err := json.Unmarshal(raw, &grant); err != nil {
+		grant, err := protocolio.DecodeGrantClientJSON(bytes.NewReader(b))
+		if err != nil {
 			return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
 		}
-	} else {
-		if err := json.Unmarshal(b, &grant); err != nil {
+		return ConnectTunnel(ctx, grant, opts...)
+	}
+	if hasWsURL {
+		info, err := protocolio.DecodeDirectConnectInfoJSON(bytes.NewReader(b))
+		if err != nil {
+			return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
+		}
+		return ConnectDirect(ctx, info, opts...)
+	}
+	if hasTunnelURL {
+		grant, err := protocolio.DecodeGrantJSON(bytes.NewReader(b))
+		if err != nil {
 			return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
+		}
+		if grant.Role == controlv1.Role_server {
+			return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeRoleMismatch, ErrExpectedRoleClient)
+		}
+		return ConnectTunnel(ctx, grant, opts...)
+	}
+	if hasArtifactFields {
+		artifact, err := protocolio.DecodeConnectArtifactJSON(bytes.NewReader(b))
+		if err != nil {
+			return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
+		}
+		return connectArtifact(ctx, artifact, opts...)
+	}
+	return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+}
+
+func connectArtifact(ctx context.Context, artifact *protocolio.ConnectArtifact, opts ...ConnectOption) (Client, error) {
+	if artifact == nil {
+		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+	}
+	cfg, err := applyConnectOptions(opts)
+	if err != nil {
+		path := fserrors.PathAuto
+		if artifact.Transport == protocolio.ConnectArtifactTransportTunnel {
+			path = fserrors.PathTunnel
+		} else if artifact.Transport == protocolio.ConnectArtifactTransportDirect {
+			path = fserrors.PathDirect
+		}
+		return nil, wrapErr(path, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
+	}
+	path := fserrors.PathAuto
+	if artifact.Transport == protocolio.ConnectArtifactTransportTunnel {
+		path = fserrors.PathTunnel
+	} else if artifact.Transport == protocolio.ConnectArtifactTransportDirect {
+		path = fserrors.PathDirect
+	}
+	if err := internalnormalize.ValidateArtifactScopes(ctx, artifact, internalnormalize.ScopeValidationOptions{
+		Resolvers:                      cfg.scopeResolvers,
+		RelaxedOptionalScopeValidation: cfg.relaxedOptionalScopeValidation,
+	}); err != nil {
+		return nil, wrapErr(path, fserrors.StageValidate, fserrors.CodeResolveFailed, err)
+	}
+	if cfg.observer != nil && artifact.Correlation != nil {
+		cfg.observer = observability.WithClientObserverContext(cfg.observer, observability.ClientObserverContext{
+			Path:      path,
+			TraceID:   artifact.Correlation.TraceID,
+			SessionID: artifact.Correlation.SessionID,
+		})
+		opts = append(opts, WithObserver(cfg.observer))
+	}
+	switch artifact.Transport {
+	case protocolio.ConnectArtifactTransportTunnel:
+		if artifact.TunnelGrant == nil {
+			return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+		}
+		return ConnectTunnel(ctx, artifact.TunnelGrant, opts...)
+	case protocolio.ConnectArtifactTransportDirect:
+		if artifact.DirectInfo == nil {
+			return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+		}
+		return ConnectDirect(ctx, artifact.DirectInfo, opts...)
+	default:
+		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
+	}
+}
+
+func hasArtifactOnlyFields(obj map[string]json.RawMessage) bool {
+	for key := range obj {
+		switch key {
+		case "v", "transport", "tunnel_grant", "direct_info", "scoped", "correlation":
+			return true
 		}
 	}
-	return ConnectTunnel(ctx, &grant, opts...)
+	return false
 }
 
 func readAllLimit(r io.Reader, maxBytes int64) ([]byte, error) {

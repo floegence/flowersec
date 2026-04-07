@@ -8,6 +8,7 @@ import { base64urlDecode } from "../utils/base64url.js";
 import { AbortError, FlowersecError, throwIfAborted } from "../utils/errors.js";
 import { WebSocketBinaryTransport, WsCloseError, type WebSocketLike } from "../ws-client/binaryTransport.js";
 import type { ClientInternal } from "../client.js";
+import type { ConnectScopeResolverMap } from "../connect/internalNormalize.js";
 import {
   OriginMismatchError,
   WsFactoryRequiredError,
@@ -43,6 +44,10 @@ export type ConnectOptionsBase = Readonly<{
   wsFactory?: (url: string, origin: string) => WebSocketLike;
   /** Optional observer for client metrics. */
   observer?: ClientObserverLike;
+  /** Experimental scope validators keyed by scope name. */
+  scopeResolvers?: ConnectScopeResolverMap;
+  /** Experimental migration switch for optional scope failures. */
+  relaxedOptionalScopeValidation?: boolean;
   /** Encrypted keepalive ping interval in milliseconds (0 disables). */
   keepaliveIntervalMs?: number;
 }>;
@@ -58,7 +63,7 @@ export type ConnectCoreArgs = Readonly<{
 }>;
 
 export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal> {
-  const observer = normalizeObserver(args.opts.observer);
+  const observer = normalizeObserver(args.opts.observer, { path: args.path });
   const signal = args.opts.signal;
   const connectStart = nowSeconds();
   let attachState: "not_started" | "sent" | "accepted" | "failed" = args.path === "tunnel" ? "not_started" : "accepted";
