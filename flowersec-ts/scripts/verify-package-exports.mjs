@@ -13,6 +13,9 @@ const consumerDir = path.join(tmpRoot, 'consumer');
 const manifest = JSON.parse(
   fs.readFileSync(path.join(repoRoot, 'stability', 'public_api_manifest.json'), 'utf8')
 );
+const forbiddenRuntimeExportsBySubpath = new Map([
+  ['@floegence/flowersec-core/proxy', ['resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST']],
+]);
 
 function run(cmd, args, cwd, input) {
   return execFileSync(cmd, args, {
@@ -66,6 +69,11 @@ function verifyInstalledPackage() {
       );
       lines.push(
         `    assert.notEqual(${moduleVar}[${JSON.stringify(exportName)}], undefined, ${JSON.stringify(subpath.specifier + ' export is undefined: ' + exportName)});`
+      );
+    }
+    for (const exportName of forbiddenRuntimeExportsBySubpath.get(subpath.specifier) ?? []) {
+      lines.push(
+        `    assert.equal(Object.prototype.hasOwnProperty.call(${moduleVar}, ${JSON.stringify(exportName)}), false, ${JSON.stringify(subpath.specifier + ' leaked forbidden export ' + exportName)});`
       );
     }
     return lines.join('\n');

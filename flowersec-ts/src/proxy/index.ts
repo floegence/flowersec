@@ -1,7 +1,8 @@
 export * from "./constants.js";
 export * from "./types.js";
 export * from "./cookieJar.js";
-export * from "./preset.js";
+export type { ProxyPresetInput, ProxyPresetLimits, ProxyPresetManifest, ResolvedProxyPreset } from "./preset.js";
+export { DEFAULT_PROXY_PRESET_MANIFEST, assertProxyPresetManifest, resolveProxyPreset } from "./preset.js";
 export * from "./runtime.js";
 export * from "./serviceWorker.js";
 export { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";

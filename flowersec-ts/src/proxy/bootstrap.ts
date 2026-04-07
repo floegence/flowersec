@@ -6,8 +6,8 @@ import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
 import {
   registerProxyIntegration,
   type ProxyIntegrationPlugin,
-  type ProxyIntegrationServiceWorkerOptions,
   type RegisterProxyIntegrationOptions,
+  type ProxyIntegrationServiceWorkerOptions,
 } from "./integration.js";
 import { registerProxyControllerWindow, type RegisterProxyControllerWindowOptions } from "./controllerWindow.js";
 import type { ProxyPresetInput } from "./preset.js";
@@ -17,13 +17,23 @@ import { createProxyRuntime, type ProxyRuntime } from "./runtime.js";
 export type ConnectTunnelProxyBrowserOptions = Readonly<{
   connect?: TunnelConnectBrowserOptions;
   preset?: ProxyPresetInput;
-  /** @deprecated Use `preset` instead. */
-  profile?: ProxyProfileName | Partial<ProxyProfile>;
   runtimeGlobalKey?: string;
   runtime?: RegisterProxyIntegrationOptions["runtime"];
   serviceWorker: ProxyIntegrationServiceWorkerOptions;
   plugins?: readonly ProxyIntegrationPlugin[];
 }>;
+
+type ConnectTunnelProxyBrowserCompatOptions = ConnectTunnelProxyBrowserOptions &
+  Readonly<{
+    /** @deprecated Runtime-only compatibility alias. Not part of the stable TS surface. */
+    profile?: ProxyProfileName | Partial<ProxyProfile>;
+  }>;
+
+type _AssertFalse<T extends false> = T;
+
+// Type-level regression guard: deprecated profile must stay out of the stable TS surface.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type _ConnectTunnelProxyBrowserOptionsExcludeProfile = _AssertFalse<"profile" extends keyof ConnectTunnelProxyBrowserOptions ? true : false>;
 
 export type ConnectTunnelProxyBrowserHandle = Readonly<{
   client: Client;
@@ -50,12 +60,15 @@ export async function connectTunnelProxyBrowser(
   opts: ConnectTunnelProxyBrowserOptions
 ): Promise<ConnectTunnelProxyBrowserHandle> {
   const client = await connectTunnelBrowser(grant, opts.connect ?? {});
+  const compat = opts as ConnectTunnelProxyBrowserCompatOptions;
 
-  const integrationInput: RegisterProxyIntegrationOptions = {
+  const integrationInput: RegisterProxyIntegrationOptions & {
+    profile?: ProxyProfileName | Partial<ProxyProfile>;
+  } = {
     client,
     serviceWorker: opts.serviceWorker,
     ...(opts.preset === undefined ? {} : { preset: opts.preset }),
-    ...(opts.profile === undefined ? {} : { profile: opts.profile }),
+    ...(compat.profile === undefined ? {} : { profile: compat.profile }),
     ...(opts.runtimeGlobalKey === undefined ? {} : { runtimeGlobalKey: opts.runtimeGlobalKey }),
     ...(opts.runtime === undefined ? {} : { runtime: opts.runtime }),
     ...(opts.plugins === undefined ? {} : { plugins: opts.plugins }),

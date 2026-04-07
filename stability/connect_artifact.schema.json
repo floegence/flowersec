@@ -35,8 +35,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "v",
-        "tags"
+        "v"
       ],
       "properties": {
         "v": {
@@ -44,15 +43,17 @@
         },
         "trace_id": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9._~-]{8,128}$"
+          "description": "If present, the parser trims and validates this shared ID. Invalid strings are sanitized to absence."
         },
         "session_id": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9._~-]{8,128}$"
+          "description": "If present, the parser trims and validates this shared ID. Invalid strings are sanitized to absence."
         },
         "tags": {
           "type": "array",
           "maxItems": 8,
+          "default": [],
+          "description": "Omitted tags normalize to an empty list.",
           "items": {
             "$ref": "#/$defs/CorrelationKV"
           }
