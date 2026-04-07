@@ -24,7 +24,8 @@
         "entries": [
           { "kind": "func", "expr": "client.Connect", "doc_token": "`client.Connect(...)`" },
           { "kind": "func", "expr": "client.ConnectTunnel", "doc_token": "`client.ConnectTunnel(...)`" },
-          { "kind": "func", "expr": "client.ConnectDirect", "doc_token": "`client.ConnectDirect(...)`" }
+          { "kind": "func", "expr": "client.ConnectDirect", "doc_token": "`client.ConnectDirect(...)`" },
+          { "kind": "func", "expr": "client.WithObserver", "doc_token": "`client.WithObserver(...)`" }
         ]
       },
       {
@@ -68,7 +69,33 @@
           { "kind": "func", "expr": "protocolio.DecodeGrantClientJSON", "doc_token": "`protocolio.DecodeGrantClientJSON(...)`" },
           { "kind": "func", "expr": "protocolio.DecodeGrantServerJSON", "doc_token": "`protocolio.DecodeGrantServerJSON(...)`" },
           { "kind": "func", "expr": "protocolio.DecodeGrantJSON", "doc_token": "`protocolio.DecodeGrantJSON(...)`" },
-          { "kind": "func", "expr": "protocolio.DecodeDirectConnectInfoJSON", "doc_token": "`protocolio.DecodeDirectConnectInfoJSON(...)`" }
+          { "kind": "func", "expr": "protocolio.DecodeDirectConnectInfoJSON", "doc_token": "`protocolio.DecodeDirectConnectInfoJSON(...)`" },
+          { "kind": "func", "expr": "protocolio.DecodeConnectArtifactJSON", "doc_token": "`protocolio.DecodeConnectArtifactJSON(...)`" },
+          { "kind": "type", "expr": "protocolio.ConnectArtifact", "doc_token": "`protocolio.ConnectArtifact`" },
+          { "kind": "type", "expr": "protocolio.CorrelationContext", "doc_token": "`protocolio.CorrelationContext`" },
+          { "kind": "type", "expr": "protocolio.CorrelationKV", "doc_token": "`protocolio.CorrelationKV`" },
+          { "kind": "type", "expr": "protocolio.ScopeMetadataEntry", "doc_token": "`protocolio.ScopeMetadataEntry`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/client",
+        "alias": "cpclient",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/client`",
+        "entries": [
+          { "kind": "func", "expr": "cpclient.RequestConnectArtifact", "doc_token": "`client.RequestConnectArtifact(...)`" },
+          { "kind": "func", "expr": "cpclient.RequestEntryConnectArtifact", "doc_token": "`client.RequestEntryConnectArtifact(...)`" },
+          { "kind": "type", "expr": "cpclient.RequestError", "doc_token": "`client.RequestError`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/observability",
+        "alias": "fsobs",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/observability`",
+        "entries": [
+          { "kind": "type", "expr": "fsobs.DiagnosticEvent", "doc_token": "`observability.DiagnosticEvent`" },
+          { "kind": "type", "expr": "fsobs.ClientObserver", "doc_token": "`observability.ClientObserver`" },
+          { "kind": "func", "expr": "fsobs.NormalizeClientObserver", "doc_token": "`observability.NormalizeClientObserver(...)`" },
+          { "kind": "func", "expr": "fsobs.WithClientObserverContext", "doc_token": "`observability.WithClientObserverContext(...)`" }
         ]
       },
       {
@@ -86,6 +113,18 @@
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/proxy`",
         "entries": [
           { "kind": "func", "expr": "proxy.Register", "doc_token": "`proxy.Register(...)`" }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/proxy/preset",
+        "alias": "proxypreset",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/proxy/preset`",
+        "entries": [
+          { "kind": "type", "expr": "proxypreset.Manifest", "doc_token": "`preset.Manifest`" },
+          { "kind": "func", "expr": "proxypreset.DecodeJSON", "doc_token": "`preset.DecodeJSON(...)`" },
+          { "kind": "func", "expr": "proxypreset.LoadFile", "doc_token": "`preset.LoadFile(...)`" },
+          { "kind": "func", "expr": "proxypreset.ResolveBuiltin", "doc_token": "`preset.ResolveBuiltin(...)`" },
+          { "kind": "func", "expr": "proxypreset.ApplyBridgeOptions", "doc_token": "`preset.ApplyBridgeOptions(...)`" }
         ]
       },
       {
@@ -153,7 +192,11 @@
           "`@floegence/flowersec-core`",
           "`connect(...)`",
           "`connectTunnel(...)`",
-          "`connectDirect(...)`"
+          "`connectDirect(...)`",
+          "`ConnectArtifact`",
+          "`CorrelationContext`",
+          "`ScopeMetadataEntry`",
+          "`assertConnectArtifact(...)`"
         ],
         "runtime_exports": [
           "connect",
@@ -161,7 +204,8 @@
           "connectDirect",
           "FlowersecError",
           "assertChannelInitGrant",
-          "assertDirectConnectInfo"
+          "assertDirectConnectInfo",
+          "assertConnectArtifact"
         ]
       },
       {
@@ -172,13 +216,15 @@
           "`connectNode(...)`",
           "`connectTunnelNode(...)`",
           "`connectDirectNode(...)`",
-          "`createNodeWsFactory()`"
+          "`createNodeWsFactory()`",
+          "`assertConnectArtifact(...)`"
         ],
         "runtime_exports": [
           "connectNode",
           "connectTunnelNode",
           "connectDirectNode",
-          "createNodeWsFactory"
+          "createNodeWsFactory",
+          "assertConnectArtifact"
         ]
       },
       {
@@ -189,8 +235,11 @@
           "`connectBrowser(...)`",
           "`connectTunnelBrowser(...)`",
           "`connectDirectBrowser(...)`",
+          "`assertConnectArtifact(...)`",
           "`requestChannelGrant(...)`",
           "`requestEntryChannelGrant(...)`",
+          "`requestConnectArtifact(...)`",
+          "`requestEntryConnectArtifact(...)`",
           "`ControlplaneRequestError`",
           "`createBrowserReconnectConfig(...)`",
           "`createTunnelBrowserReconnectConfig(...)`",
@@ -200,8 +249,11 @@
           "connectBrowser",
           "connectTunnelBrowser",
           "connectDirectBrowser",
+          "assertConnectArtifact",
           "requestChannelGrant",
           "requestEntryChannelGrant",
+          "requestConnectArtifact",
+          "requestEntryConnectArtifact",
           "ControlplaneRequestError",
           "createBrowserReconnectConfig",
           "createTunnelBrowserReconnectConfig",
@@ -256,9 +308,9 @@
           "`registerProxyAppWindowWithServiceWorkerControl(...)`",
           "`installWebSocketPatch(...)`",
           "`disableUpstreamServiceWorkerRegister()`",
-          "`resolveProxyProfile(...)`",
-          "`PROXY_PROFILE_DEFAULT`",
-          "`PROXY_PROFILE_CODESERVER`"
+          "`assertProxyPresetManifest(...)`",
+          "`resolveProxyPreset(...)`",
+          "`DEFAULT_PROXY_PRESET_MANIFEST`"
         ],
         "runtime_exports": [
           "createProxyRuntime",
@@ -274,9 +326,9 @@
           "registerProxyAppWindowWithServiceWorkerControl",
           "installWebSocketPatch",
           "disableUpstreamServiceWorkerRegister",
-          "resolveProxyProfile",
-          "PROXY_PROFILE_DEFAULT",
-          "PROXY_PROFILE_CODESERVER"
+          "assertProxyPresetManifest",
+          "resolveProxyPreset",
+          "DEFAULT_PROXY_PRESET_MANIFEST"
         ]
       },
       {
@@ -344,10 +396,16 @@
         "specifier": "@floegence/flowersec-core/observability",
         "package_json_export": "./observability",
         "doc_tokens": [
-          "`@floegence/flowersec-core/observability`"
+          "`@floegence/flowersec-core/observability`",
+          "`DiagnosticEvent`",
+          "`normalizeObserver(...)`",
+          "`withObserverContext(...)`"
         ],
         "runtime_exports": [
+          "NoopObserver",
           "normalizeObserver",
+          "withObserverContext",
+          "emitObserverDiagnostic",
           "nowSeconds"
         ]
       },

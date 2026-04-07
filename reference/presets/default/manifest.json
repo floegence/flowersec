@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "preset_id": "default",
+  "limits": {
+    "max_json_frame_bytes": 1048576,
+    "max_chunk_bytes": 262144,
+    "max_body_bytes": 67108864,
+    "max_ws_frame_bytes": 1048576
+  }
+}

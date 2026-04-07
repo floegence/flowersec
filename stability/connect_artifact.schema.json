@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://floegence.github.io/flowersec/stability/connect_artifact.schema.json",
+  "title": "Flowersec ConnectArtifact",
+  "description": "Stable client-facing canonical connect artifact for Flowersec v0.18.x.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/TunnelClientConnectArtifact"
+    },
+    {
+      "$ref": "#/$defs/DirectClientConnectArtifact"
+    }
+  ],
+  "$defs": {
+    "CorrelationKV": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "value"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,31}$",
+          "maxLength": 32
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 128
+        }
+      }
+    },
+    "CorrelationContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "tags"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._~-]{8,128}$"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._~-]{8,128}$"
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/CorrelationKV"
+          }
+        }
+      }
+    },
+    "ScopePayload": {
+      "type": "object",
+      "description": "Payload must be a JSON object. Size and depth limits are enforced by the artifact parser using normalized JSON bytes and container depth."
+    },
+    "ScopeMetadataEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "scope_version",
+        "critical",
+        "payload"
+      ],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+          "maxLength": 64
+        },
+        "scope_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "critical": {
+          "type": "boolean"
+        },
+        "payload": {
+          "$ref": "#/$defs/ScopePayload"
+        }
+      }
+    },
+    "TunnelGrant": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "tunnel_url",
+        "channel_id",
+        "channel_init_expire_at_unix_s",
+        "idle_timeout_seconds",
+        "role",
+        "token",
+        "e2ee_psk_b64u",
+        "allowed_suites",
+        "default_suite"
+      ],
+      "properties": {
+        "tunnel_url": {
+          "type": "string"
+        },
+        "channel_id": {
+          "type": "string"
+        },
+        "channel_init_expire_at_unix_s": {
+          "type": "integer"
+        },
+        "idle_timeout_seconds": {
+          "type": "integer"
+        },
+        "role": {
+          "const": 1
+        },
+        "token": {
+          "type": "string"
+        },
+        "e2ee_psk_b64u": {
+          "type": "string"
+        },
+        "allowed_suites": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "default_suite": {
+          "type": "integer"
+        }
+      }
+    },
+    "DirectInfo": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "ws_url",
+        "channel_id",
+        "e2ee_psk_b64u",
+        "channel_init_expire_at_unix_s",
+        "default_suite"
+      ],
+      "properties": {
+        "ws_url": {
+          "type": "string"
+        },
+        "channel_id": {
+          "type": "string"
+        },
+        "e2ee_psk_b64u": {
+          "type": "string"
+        },
+        "channel_init_expire_at_unix_s": {
+          "type": "integer"
+        },
+        "default_suite": {
+          "type": "integer"
+        }
+      }
+    },
+    "TunnelClientConnectArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "transport",
+        "tunnel_grant"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "transport": {
+          "const": "tunnel"
+        },
+        "tunnel_grant": {
+          "$ref": "#/$defs/TunnelGrant"
+        },
+        "scoped": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/ScopeMetadataEntry"
+          }
+        },
+        "correlation": {
+          "$ref": "#/$defs/CorrelationContext"
+        }
+      }
+    },
+    "DirectClientConnectArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "transport",
+        "direct_info"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "transport": {
+          "const": "direct"
+        },
+        "direct_info": {
+          "$ref": "#/$defs/DirectInfo"
+        },
+        "scoped": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/ScopeMetadataEntry"
+          }
+        },
+        "correlation": {
+          "$ref": "#/$defs/CorrelationContext"
+        }
+      }
+    }
+  }
+}

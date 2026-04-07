@@ -1,5 +1,5 @@
 import type { Client } from "../client.js";
-import type { ClientObserverLike, WsCloseKind, WsErrorReason } from "../observability/observer.js";
+import { withObserverContext, type ClientObserverLike, type WsCloseKind, type WsErrorReason } from "../observability/observer.js";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -125,6 +125,7 @@ export function createReconnectManager(): ReconnectManager {
   let retryResolve: (() => void) | null = null;
 
   let attemptAbort: AbortController | null = null;
+  let attemptSeq = 0;
 
   const cancelRetrySleep = () => {
     if (retryTimer) {
@@ -160,6 +161,7 @@ export function createReconnectManager(): ReconnectManager {
     active = null;
     activeConnectPromise = null;
     token += 1;
+    attemptSeq = 0;
 
     if (s.client) {
       try {
@@ -211,9 +213,9 @@ export function createReconnectManager(): ReconnectManager {
     });
   };
 
-  const createObserver = (t: number, cfg: ConnectConfig): ClientObserverLike | undefined => {
+  const createObserver = (t: number, cfg: ConnectConfig, currentAttemptSeq: number): ClientObserverLike | undefined => {
     const user = cfg.observer;
-    return {
+    return withObserverContext({
       onConnect: (...args) => user?.onConnect?.(...args),
       onAttach: (...args) => user?.onAttach?.(...args),
       onHandshake: (...args) => user?.onHandshake?.(...args),
@@ -229,13 +231,15 @@ export function createReconnectManager(): ReconnectManager {
       },
       onRpcCall: (...args) => user?.onRpcCall?.(...args),
       onRpcNotify: (...args) => user?.onRpcNotify?.(...args),
-    };
+    }, {
+      attemptSeq: currentAttemptSeq,
+    });
   };
 
-  const connectOnce = async (t: number, cfg: ConnectConfig): Promise<Client> => {
+  const connectOnce = async (t: number, cfg: ConnectConfig, currentAttemptSeq: number): Promise<Client> => {
     abortActiveAttempt();
     attemptAbort = new AbortController();
-    return await cfg.connectOnce({ signal: attemptAbort.signal, observer: createObserver(t, cfg) ?? {} });
+    return await cfg.connectOnce({ signal: attemptAbort.signal, observer: createObserver(t, cfg, currentAttemptSeq) ?? {} });
   };
 
   const connectWithRetry = async (t: number, cfg: ConnectConfig): Promise<void> => {
@@ -247,8 +251,9 @@ export function createReconnectManager(): ReconnectManager {
       if (active !== cfg) return;
 
       attempts += 1;
+      attemptSeq += 1;
       try {
-        const client = await connectOnce(t, cfg);
+        const client = await connectOnce(t, cfg, attemptSeq);
         if (t !== token) {
           try {
             client.close();
@@ -293,6 +298,7 @@ export function createReconnectManager(): ReconnectManager {
     token += 1;
     const t = token;
     active = cfg;
+    attemptSeq = 0;
 
     if (s.client) {
       try {

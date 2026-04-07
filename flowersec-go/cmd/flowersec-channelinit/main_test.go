@@ -188,6 +188,181 @@ func TestChannelInit_PrettyFlag(t *testing.T) {
 	}
 }
 
+func TestChannelInit_ArtifactFormatToStdout(t *testing.T) {
+	t.Setenv("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
+	t.Setenv("FSEC_TUNNEL_URL", "")
+	t.Setenv("FSEC_TUNNEL_AUD", "")
+	t.Setenv("FSEC_TUNNEL_ISS", "")
+	t.Setenv("FSEC_ISSUER_ID", "")
+	t.Setenv("FSEC_CHANNEL_ID", "")
+	t.Setenv("FSEC_CHANNELINIT_OUT", "")
+	t.Setenv("FSEC_CHANNELINIT_SERVER_GRANT_OUT", "")
+	t.Setenv("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", "")
+	t.Setenv("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", "")
+
+	tmp := t.TempDir()
+	ks, err := issuer.NewRandom("k1")
+	if err != nil {
+		t.Fatalf("new issuer: %v", err)
+	}
+	privJSON, err := ks.ExportPrivateKeyFile()
+	if err != nil {
+		t.Fatalf("export private key: %v", err)
+	}
+	privFile := filepath.Join(tmp, "issuer_key.json")
+	if err := os.WriteFile(privFile, privJSON, 0o600); err != nil {
+		t.Fatalf("write private key file: %v", err)
+	}
+
+	args := []string{
+		"--issuer-private-key-file", privFile,
+		"--tunnel-url", "ws://127.0.0.1:8080/ws",
+		"--aud", "aud",
+		"--iss", "iss",
+		"--channel-id", "ch_1",
+		"--format", "artifact",
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+
+	artifact, err := protocolio.DecodeConnectArtifactJSON(bytes.NewReader(stdout.Bytes()))
+	if err != nil {
+		t.Fatalf("DecodeConnectArtifactJSON: %v (stdout=%q)", err, stdout.String())
+	}
+	if artifact.Transport != protocolio.ConnectArtifactTransportTunnel {
+		t.Fatalf("unexpected transport: %q", artifact.Transport)
+	}
+	if artifact.TunnelGrant == nil || artifact.TunnelGrant.ChannelId != "ch_1" {
+		t.Fatalf("unexpected artifact tunnel grant: %#v", artifact.TunnelGrant)
+	}
+	if strings.Contains(stdout.String(), "\"grant_server\"") {
+		t.Fatalf("artifact stdout must not include legacy server grant wrapper, got %q", stdout.String())
+	}
+}
+
+func TestChannelInit_ArtifactFormatWritesServerGrantPair(t *testing.T) {
+	t.Setenv("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
+	t.Setenv("FSEC_TUNNEL_URL", "")
+	t.Setenv("FSEC_TUNNEL_AUD", "")
+	t.Setenv("FSEC_TUNNEL_ISS", "")
+	t.Setenv("FSEC_ISSUER_ID", "")
+	t.Setenv("FSEC_CHANNEL_ID", "")
+	t.Setenv("FSEC_CHANNELINIT_OUT", "")
+	t.Setenv("FSEC_CHANNELINIT_SERVER_GRANT_OUT", "")
+	t.Setenv("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", "")
+	t.Setenv("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", "")
+
+	tmp := t.TempDir()
+	ks, err := issuer.NewRandom("k1")
+	if err != nil {
+		t.Fatalf("new issuer: %v", err)
+	}
+	privJSON, err := ks.ExportPrivateKeyFile()
+	if err != nil {
+		t.Fatalf("export private key: %v", err)
+	}
+	privFile := filepath.Join(tmp, "issuer_key.json")
+	if err := os.WriteFile(privFile, privJSON, 0o600); err != nil {
+		t.Fatalf("write private key file: %v", err)
+	}
+
+	artifactFile := filepath.Join(tmp, "connect-artifact.json")
+	serverGrantFile := filepath.Join(tmp, "server-grant.json")
+	args := []string{
+		"--issuer-private-key-file", privFile,
+		"--tunnel-url", "ws://127.0.0.1:8080/ws",
+		"--aud", "aud",
+		"--iss", "iss",
+		"--channel-id", "ch_1",
+		"--format", "artifact",
+		"--out", artifactFile,
+		"--server-grant-out", serverGrantFile,
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout when --out is used, got %q", stdout.String())
+	}
+
+	artifactBytes, err := os.ReadFile(artifactFile)
+	if err != nil {
+		t.Fatalf("read artifact file: %v", err)
+	}
+	artifact, err := protocolio.DecodeConnectArtifactJSON(bytes.NewReader(artifactBytes))
+	if err != nil {
+		t.Fatalf("DecodeConnectArtifactJSON: %v", err)
+	}
+	if artifact.TunnelGrant == nil || artifact.TunnelGrant.ChannelId != "ch_1" {
+		t.Fatalf("unexpected artifact tunnel grant: %#v", artifact.TunnelGrant)
+	}
+
+	serverGrantBytes, err := os.ReadFile(serverGrantFile)
+	if err != nil {
+		t.Fatalf("read server grant file: %v", err)
+	}
+	grant, err := protocolio.DecodeGrantJSON(bytes.NewReader(serverGrantBytes))
+	if err != nil {
+		t.Fatalf("DecodeGrantJSON: %v", err)
+	}
+	if grant.Role == 0 {
+		t.Fatalf("expected populated server grant")
+	}
+}
+
+func TestChannelInit_ArtifactFormatRejectsSameOutputPath(t *testing.T) {
+	t.Setenv("FSEC_ISSUER_PRIVATE_KEY_FILE", "")
+	t.Setenv("FSEC_TUNNEL_URL", "")
+	t.Setenv("FSEC_TUNNEL_AUD", "")
+	t.Setenv("FSEC_TUNNEL_ISS", "")
+	t.Setenv("FSEC_ISSUER_ID", "")
+	t.Setenv("FSEC_CHANNEL_ID", "")
+	t.Setenv("FSEC_CHANNELINIT_OUT", "")
+	t.Setenv("FSEC_CHANNELINIT_SERVER_GRANT_OUT", "")
+	t.Setenv("FSEC_CHANNELINIT_TOKEN_EXP_SECONDS", "")
+	t.Setenv("FSEC_CHANNELINIT_IDLE_TIMEOUT_SECONDS", "")
+
+	tmp := t.TempDir()
+	ks, err := issuer.NewRandom("k1")
+	if err != nil {
+		t.Fatalf("new issuer: %v", err)
+	}
+	privJSON, err := ks.ExportPrivateKeyFile()
+	if err != nil {
+		t.Fatalf("export private key: %v", err)
+	}
+	privFile := filepath.Join(tmp, "issuer_key.json")
+	if err := os.WriteFile(privFile, privJSON, 0o600); err != nil {
+		t.Fatalf("write private key file: %v", err)
+	}
+
+	outFile := filepath.Join(tmp, "artifact.json")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"--issuer-private-key-file", privFile,
+		"--tunnel-url", "ws://127.0.0.1:8080/ws",
+		"--aud", "aud",
+		"--iss", "iss",
+		"--channel-id", "ch_1",
+		"--format", "artifact",
+		"--out", outFile,
+		"--server-grant-out", outFile,
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--server-grant-out must differ from --out") {
+		t.Fatalf("expected same-path validation message, got %q", stderr.String())
+	}
+}
+
 func TestChannelInit_OutFileOverwrite_TightensPermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission bits are not reliable on windows")

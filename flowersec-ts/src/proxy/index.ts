@@ -1,7 +1,7 @@
 export * from "./constants.js";
 export * from "./types.js";
 export * from "./cookieJar.js";
-export * from "./profiles.js";
+export * from "./preset.js";
 export * from "./runtime.js";
 export * from "./serviceWorker.js";
 export { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";

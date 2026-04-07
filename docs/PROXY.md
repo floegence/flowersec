@@ -8,10 +8,22 @@ Status: experimental; not audited.
 See also:
 
 - Stable API surface: `docs/API_SURFACE.md`
+- Preset contract: `docs/PRESETS.md`
 - Custom stream baseline pattern: `docs/STREAMS.md`
 - Core wire format (WS + E2EE + Yamux): `docs/PROTOCOL.md`
 - Threat model and trust boundaries: `docs/THREAT_MODEL.md`
 - Gateway deployment: `docs/PROXY_GATEWAY_DEPLOYMENT.md`
+
+## v0.18 surface notes
+
+This document defines the stable proxy stream contracts.
+
+Related v0.18 configuration guidance:
+
+- use preset manifests instead of stable named proxy profiles
+- new strict preset/artifact APIs do not use `0 == default`
+- existing proxy wire compatibility is unchanged for `timeout_ms`:
+  - `omit == 0 == server default`
 
 ## 0. Roles and modes
 

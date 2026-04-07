@@ -144,6 +144,42 @@ func TestDirectInit_PrettyFlag(t *testing.T) {
 	}
 }
 
+func TestDirectInit_ArtifactFormatToStdout(t *testing.T) {
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+
+	args := []string{
+		"--ws-url", "ws://127.0.0.1:8080/ws",
+		"--channel-id", "ch_1",
+		"--psk-b64u", base64.RawURLEncoding.EncodeToString(psk),
+		"--init-exp-seconds", "120",
+		"--suite", "x25519",
+		"--format", "artifact",
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected exit code: %d (stderr=%q)", code, stderr.String())
+	}
+
+	artifact, err := protocolio.DecodeConnectArtifactJSON(bytes.NewReader(stdout.Bytes()))
+	if err != nil {
+		t.Fatalf("DecodeConnectArtifactJSON: %v (stdout=%q)", err, stdout.String())
+	}
+	if artifact.Transport != protocolio.ConnectArtifactTransportDirect {
+		t.Fatalf("unexpected transport: %q", artifact.Transport)
+	}
+	if artifact.DirectInfo == nil || artifact.DirectInfo.ChannelId != "ch_1" {
+		t.Fatalf("unexpected direct artifact: %#v", artifact.DirectInfo)
+	}
+	if strings.Contains(stdout.String(), "\"version\"") {
+		t.Fatalf("artifact stdout must not include legacy wrapper metadata, got %q", stdout.String())
+	}
+}
+
 func TestDirectInit_RejectsInitExpSecondsOverflow(t *testing.T) {
 	psk := make([]byte, 32)
 	for i := range psk {

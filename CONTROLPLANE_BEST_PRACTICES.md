@@ -1,106 +1,72 @@
-# Control Plane Best Practices
+# Controlplane Best Practices
 
-This document describes recommended control plane behaviors for issuing ChannelInitGrant pairs and coordinating reconnections. It is aligned with the current tunnel, token, and E2EE behaviors in this repo.
+This document describes recommended controlplane behavior for Flowersec v0.18.x.
 
-## Scope and goals
+## Core responsibilities
 
-- Issue paired grants for role=client and role=server with a shared channel_id and PSK.
-- Ensure each connection attempt uses fresh tokens and a single consistent init window.
-- Coordinate reconnections to avoid replacement churn and token replay.
+Controlplanes should:
 
-## Data model alignment
+- issue paired tunnel materials with shared `channel_id` and PSK
+- ensure each connection attempt uses fresh one-time tokens
+- expose a client-facing artifact fetch path for modern consumers
+- coordinate reconnect so fresh client/server materials stay aligned
 
-A ChannelInitGrant includes the fields below (names match the generated IDL):
+## Recommended outputs
 
-- tunnel_url
-- channel_id
-- channel_init_expire_at_unix_s
-- idle_timeout_seconds
-- role
-- token
-- e2ee_psk_b64u
-- allowed_suites
-- default_suite
+Preferred v0.18.x output:
 
-The tunnel validates the attach token, and the E2EE handshake validates init_exp. Tokens are single-use and should be treated as ephemeral.
+- `connect_artifact`
 
-Idle timeouts are enforced by the tunnel based on a signed token claim:
+Compatibility outputs still supported:
 
-- The controlplane must embed `idle_timeout_seconds` into the signed token payload.
-- The tunnel enforces the channel idle timeout from the token claim (not from any out-of-band hint).
-- Both endpoints must attach with tokens that agree on `idle_timeout_seconds` for the same `channel_id`.
+- `grant_client`
+- wrapper `{grant_client: ...}`
 
-## Recommended control plane APIs
+Tunnel server-side material may continue to travel out-of-band to the server endpoint.
+For CLI/demo/minting flows, `flowersec-channelinit --format artifact --server-grant-out ...` is the recommended split.
 
-- POST /v1/channel/init
-  - Returns grant_client and coordinates delivery of the paired grant_server to the server endpoint over a secure channel (for example, a persistent control connection).
-  - If channel_id is omitted, generate a random 24-byte base64url ID.
-  - Always generate a new PSK and new tokens for each init request.
+## Correlation guidance
 
-- Optional: POST /v1/channel/reissue
-  - Reissues tokens for an existing grant pair without changing channel_id or PSK.
-  - Only valid while channel_init_expire_at_unix_s has not passed.
-  - Both endpoints must switch to the reissued tokens together.
+If the caller provides a shared `trace_id`:
 
-## Lifecycle guidance
+- copy it into the issued artifact when valid
+- keep it stable across reconnect attempts for the same user-visible session
 
-1. Create a fresh channel via /v1/channel/init.
-2. Deliver grant_client to the client endpoint and grant_server to the server endpoint over a secure channel.
-3. Both endpoints attach to the tunnel and complete the E2EE handshake.
-4. If any layer closes (websocket, secure channel, yamux, or rpc), treat the session as dead and request a new channel.
+If the controlplane issues a new session:
 
-## Reconnect strategy (weak networks)
+- mint a fresh shared `session_id`
 
-- Do not reuse a token after any failure; token replay is rejected by the tunnel.
-- Avoid single-end retries that reuse the same channel_id with the same role, which triggers replacement and closes both sides.
-- Use exponential backoff with jitter for reconnection attempts.
-- Coordinate reconnection so both endpoints receive a new grant pair before reconnecting.
-- If you implement /v1/channel/reissue, use it only within the init window and only when both endpoints can switch at the same time.
+If a caller-provided shared ID is malformed:
 
-## Expiry and time sync
+- treat it as absent in the shared artifact contract
+- do not synthesize a replacement shared ID pretending it came from the controlplane
 
-- Keep token exp short (default 60s) and never beyond init_exp.
-- The init window is short (default 120s). If a reconnect falls outside this window, mint a new channel.
-- Ensure all servers and clients are time-synced (NTP). The E2EE handshake validates timestamp skew.
+## Reconnect guidance
 
-## Security practices
+- never reuse tunnel tokens after failure
+- avoid single-end retries that race against the peer with the same role/channel
+- artifact-aware adapters may carry `trace_id` forward and absorb a new `session_id`
+- framework-agnostic reconnect state machines should stay unaware of controlplane/artifact semantics
 
-- Treat e2ee_psk_b64u as a secret. Deliver grants only over authenticated and encrypted channels.
-- Rotate issuer keys by updating the keyset and reloading the tunnel server. Keep overlapping keys during rotation to avoid validation gaps.
-- Limit allowed_suites to the set you can verify and support.
-- For shared-URL tunnel deployments, keep auth scopes environment-specific:
-  - issue a distinct `(aud, iss)` pair per tenant/environment
-  - register each scope in the tunnel verifier config (`--tenants-file`)
-  - keep keyset ownership at the controlplane boundary
-- If you enable tunnel policy hooks, treat them as enforcement points (not logging only):
-  - attach authorizer decides initial allow/deny
-  - observe authorizer refreshes short leases or triggers channel kill
-  - missing lease refresh should be treated as close/fail-closed
+## Tunnel-specific guidance
 
-## Deployment considerations
+- `ChannelInitGrant` remains pure capability material
+- idle timeout must stay aligned between both paired tunnel grants
+- `channel_init_expire_at_unix_s` should stay short
+- tokens should remain single-use and short-lived
 
-- Single-instance tunnel servers are supported by the in-memory token replay cache.
-- If you want to scale without shared replay state, do it at the control plane layer by sharding channels across multiple tunnel endpoints (issue different `tunnel_url` values per channel). Each tunnel can remain a single instance.
-- A single tunnel URL can still safely serve multiple tenants when the tunnel runs in multi-tenant verifier mode (`--tenants-file`) and each tenant has a distinct `(aud, iss)` scope.
-- Multi-instance tunnels behind a load balancer require shared token replay state (for example, Redis) or strict session affinity; otherwise token replay protection becomes best-effort and the DoS window increases.
-- Prefer `wss://` for any non-local deployment. The tunnel can terminate TLS directly (optional) or sit behind a TLS-terminating reverse proxy.
+## API shape guidance
 
-## Keepalive and idle timeouts
+Recommended request/response semantics are documented in:
 
-- idle_timeout_seconds is advertised in the grant and embedded into the signed token; the tunnel enforces idle timeouts from the token claim.
-- High-level client helpers enable encrypted keepalive pings by default (recommended). You can override/disable it via connect options.
-- If you disable keepalive, ensure your application sends traffic often enough (or call the explicit ping API) to avoid idle timeout closures.
+- `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
 
-Stable ping entrypoints:
+Helper default paths such as `/v1/connect/artifact` are first-party defaults, not a universal Flowersec protocol requirement.
 
-- Go:
-  - `client.Client.Ping()` (role=client)
-  - `endpoint.Session.Ping()` (role=server)
-- TypeScript:
-  - `Client.ping()` (returned by `connectTunnel*` / `connectDirect*`)
+## Security guidance
 
-## Observability and safety limits
-
-- Rate-limit /v1/channel/init to protect issuer keys and tunnel capacity.
-- Record channel_id and token_id in logs for traceability (avoid logging PSK).
-- Track metrics for attach failures, token replay, replacement rate limiting, and idle timeout closures.
+- never log PSKs
+- rotate issuer keys with overlap
+- keep `allowed_suites` explicit
+- use `wss://` for non-local deployments
+- treat policy hooks and auth decisions as enforcement points, not best-effort logging

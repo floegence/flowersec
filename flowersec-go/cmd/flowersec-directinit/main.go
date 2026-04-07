@@ -17,6 +17,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/securefile"
 	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
+	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
 var (
@@ -52,6 +53,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 	outFile := cmdutil.EnvString("FSEC_DIRECT_OUT", "")
+	format := cmdutil.EnvString("FSEC_DIRECT_FORMAT", "legacy")
 	var overwrite bool
 	var pretty bool
 
@@ -63,6 +65,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&pskB64u, "psk-b64u", pskB64u, "base64url-encoded 32-byte PSK (default: random) (env: FSEC_DIRECT_PSK_B64U)")
 	fs.StringVar(&suiteStr, "suite", suiteStr, "cipher suite: x25519 or p256 (default: x25519) (env: FSEC_DIRECT_SUITE)")
 	fs.Int64Var(&initExpSeconds, "init-exp-seconds", initExpSeconds, "handshake init window lifetime in seconds (default: 60) (env: FSEC_DIRECT_INIT_EXP_SECONDS)")
+	fs.StringVar(&format, "format", format, "output format: legacy or artifact (env: FSEC_DIRECT_FORMAT)")
 	fs.StringVar(&outFile, "out", outFile, "output file (default: stdout) (env: FSEC_DIRECT_OUT)")
 	fs.BoolVar(&overwrite, "overwrite", false, "overwrite existing --out file")
 	fs.BoolVar(&pretty, "pretty", false, "pretty-print JSON output")
@@ -75,8 +78,11 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "  # Generate a DirectConnectInfo JSON object (includes a PSK; keep it secret).")
 		fmt.Fprintln(out, "  flowersec-directinit --ws-url ws://127.0.0.1:8080/ws --pretty > direct.json")
 		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "  # Generate a client-facing ConnectArtifact for direct connects.")
+		fmt.Fprintln(out, "  flowersec-directinit --ws-url ws://127.0.0.1:8080/ws --format artifact --pretty > connect-artifact.json")
+		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Output:")
-		fmt.Fprintln(out, "  stdout: DirectConnectInfo JSON (when --out is not set)")
+		fmt.Fprintln(out, "  stdout: DirectConnectInfo JSON or ConnectArtifact JSON (when --out is not set)")
 		fmt.Fprintln(out, "  stderr: errors")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Exit codes:")
@@ -114,9 +120,16 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	pskB64u = strings.TrimSpace(pskB64u)
 	suiteStr = strings.TrimSpace(suiteStr)
 	outFile = strings.TrimSpace(outFile)
+	format = strings.ToLower(strings.TrimSpace(format))
 
 	if wsURL == "" {
 		return usageErr("missing --ws-url")
+	}
+	if format == "" {
+		format = "legacy"
+	}
+	if format != "legacy" && format != "artifact" {
+		return usageErr("invalid --format (want legacy or artifact)")
 	}
 	if initExpSeconds <= 0 {
 		return usageErr("--init-exp-seconds must be > 0")
@@ -174,11 +187,26 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		},
 	}
 
+	var payload any = out
+	if format == "artifact" {
+		payload = protocolio.ConnectArtifact{
+			V:         1,
+			Transport: protocolio.ConnectArtifactTransportDirect,
+			DirectInfo: &directv1.DirectConnectInfo{
+				WsUrl:                    out.WsUrl,
+				ChannelId:                out.ChannelId,
+				E2eePskB64u:              out.E2eePskB64u,
+				ChannelInitExpireAtUnixS: out.ChannelInitExpireAtUnixS,
+				DefaultSuite:             out.DefaultSuite,
+			},
+		}
+	}
+
 	var b []byte
 	if pretty {
-		b, err = json.MarshalIndent(out, "", "  ")
+		b, err = json.MarshalIndent(payload, "", "  ")
 	} else {
-		b, err = json.Marshal(out)
+		b, err = json.Marshal(payload)
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)

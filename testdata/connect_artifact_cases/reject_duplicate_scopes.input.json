@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "transport": "direct",
+  "direct_info": {
+    "ws_url": "wss://direct.example/ws",
+    "channel_id": "channel-007",
+    "e2ee_psk_b64u": "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    "channel_init_expire_at_unix_s": 1700000006,
+    "default_suite": 1
+  },
+  "scoped": [
+    {
+      "scope": "proxy.runtime",
+      "scope_version": 1,
+      "critical": false,
+      "payload": {
+        "max_chunk_bytes": 262144
+      }
+    },
+    {
+      "scope": "proxy.runtime",
+      "scope_version": 1,
+      "critical": true,
+      "payload": {
+        "max_chunk_bytes": 262144
+      }
+    }
+  ]
+}

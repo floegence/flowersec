@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "transport": "direct",
+  "direct_info": {
+    "ws_url": "wss://direct.example/ws",
+    "channel_id": "channel-008",
+    "e2ee_psk_b64u": "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH",
+    "channel_init_expire_at_unix_s": 1700000007,
+    "default_suite": 1
+  },
+  "scoped": [
+    {
+      "scope": "proxy.runtime",
+      "scope_version": 1,
+      "critical": false,
+      "payload": [1, 2, 3]
+    }
+  ]
+}

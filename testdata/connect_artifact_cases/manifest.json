@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "tunnel_valid_basic",
+      "input": "tunnel_valid_basic.input.json",
+      "ok": true,
+      "normalized": "tunnel_valid_basic.expected.json"
+    },
+    {
+      "id": "direct_valid_sanitized_correlation",
+      "input": "direct_valid_sanitized_correlation.input.json",
+      "ok": true,
+      "normalized": "direct_valid_sanitized_correlation.expected.json"
+    },
+    {
+      "id": "tunnel_valid_embedded_unknown_additive",
+      "input": "tunnel_valid_embedded_unknown_additive.input.json",
+      "ok": true
+    },
+    {
+      "id": "reject_unknown_v",
+      "input": "reject_unknown_v.input.json",
+      "ok": false,
+      "error_contains": "bad ConnectArtifact.v"
+    },
+    {
+      "id": "reject_invalid_transport",
+      "input": "reject_invalid_transport.input.json",
+      "ok": false,
+      "error_contains": "bad ConnectArtifact.transport"
+    },
+    {
+      "id": "reject_unknown_top_level",
+      "input": "reject_unknown_top_level.input.json",
+      "ok": false,
+      "error_contains": "bad DirectClientConnectArtifact.extra"
+    },
+    {
+      "id": "reject_duplicate_scopes",
+      "input": "reject_duplicate_scopes.input.json",
+      "ok": false,
+      "error_contains": "bad ConnectArtifact.scoped"
+    },
+    {
+      "id": "reject_scope_payload_array",
+      "input": "reject_scope_payload_array.input.json",
+      "ok": false,
+      "error_contains": "bad ScopeMetadataEntry.payload"
+    },
+    {
+      "id": "reject_scope_payload_too_deep",
+      "input": "reject_scope_payload_too_deep.input.json",
+      "ok": false,
+      "error_contains": "bad ScopeMetadataEntry.payload"
+    },
+    {
+      "id": "reject_scope_payload_too_large",
+      "input": "reject_scope_payload_too_large.input.json",
+      "ok": false,
+      "error_contains": "bad ScopeMetadataEntry.payload"
+    }
+  ]
+}

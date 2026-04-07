@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://floegence.github.io/flowersec/stability/proxy_preset_manifest.schema.json",
+  "title": "Flowersec ProxyPresetManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "preset_id",
+    "limits"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "preset_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+      "maxLength": 64
+    },
+    "deprecated": {
+      "type": "boolean"
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_json_frame_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_chunk_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_body_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_ws_frame_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

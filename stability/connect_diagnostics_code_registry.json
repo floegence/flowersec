@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "namespace": "connect",
+  "domain": "event",
+  "codes": [
+    { "code": "connect_ok", "stage": "connect", "result": "ok" },
+    { "code": "attach_ok", "stage": "attach", "result": "ok" },
+    { "code": "handshake_ok", "stage": "handshake", "result": "ok" },
+    { "code": "ws_close_local", "stage": "close", "result": "skip" },
+    { "code": "ws_close_peer_or_error", "stage": "close", "result": "skip" },
+    { "code": "ws_error", "stage": "close", "result": "skip" },
+    { "code": "diagnostics_overflow", "stage": "reconnect", "result": "skip" }
+  ],
+  "notes": [
+    "code_domain=error reuses stability/connect_error_code_registry.json.",
+    "elapsed_ms is monotonic milliseconds since the current attempt start; reconnect resets the attempt clock and increments attempt_seq."
+  ]
+}

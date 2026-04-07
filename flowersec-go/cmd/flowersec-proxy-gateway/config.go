@@ -11,6 +11,7 @@ import (
 	"time"
 
 	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
+	proxypreset "github.com/floegence/flowersec/flowersec-go/proxy/preset"
 	proxyprofile "github.com/floegence/flowersec/flowersec-go/proxy/profile"
 )
 
@@ -38,6 +39,7 @@ type tunnelConfig struct {
 }
 
 type gatewayProxyConfig struct {
+	PresetFile                  string   `json:"preset_file,omitempty"`
 	Profile                     string   `json:"profile,omitempty"`
 	MaxJSONFrameBytes           int      `json:"max_json_frame_bytes,omitempty"`
 	MaxChunkBytes               int      `json:"max_chunk_bytes,omitempty"`
@@ -145,11 +147,31 @@ func normalizeAllowedOrigins(origins []string) []string {
 }
 
 func (cfg *gatewayProxyConfig) normalize() error {
-	profileName, err := proxyprofile.Parse(cfg.Profile)
-	if err != nil {
-		return err
+	cfg.PresetFile = strings.TrimSpace(cfg.PresetFile)
+	cfg.Profile = strings.TrimSpace(cfg.Profile)
+	if cfg.PresetFile != "" && cfg.Profile != "" {
+		return errors.New("proxy.preset_file and deprecated proxy.profile must not both be set")
 	}
-	bridgeOptions := proxyprofile.ApplyBridgeOptions(fsproxy.BridgeOptions{
+
+	var manifest *proxypreset.Manifest
+	var err error
+	if cfg.PresetFile != "" {
+		manifest, err = proxypreset.LoadFile(cfg.PresetFile)
+		if err != nil {
+			return fmt.Errorf("invalid proxy preset_file: %w", err)
+		}
+	} else {
+		profileName, err := proxyprofile.Parse(cfg.Profile)
+		if err != nil {
+			return err
+		}
+		cfg.Profile = string(profileName)
+		manifest, err = proxyprofile.ResolveManifest(profileName)
+		if err != nil {
+			return err
+		}
+	}
+	bridgeOptions := proxypreset.ApplyBridgeOptions(fsproxy.BridgeOptions{
 		MaxJSONFrameBytes:           cfg.MaxJSONFrameBytes,
 		MaxChunkBytes:               cfg.MaxChunkBytes,
 		MaxBodyBytes:                cfg.MaxBodyBytes,
@@ -159,11 +181,10 @@ func (cfg *gatewayProxyConfig) normalize() error {
 		ExtraWSHeaders:              append([]string(nil), cfg.ExtraWSHeaders...),
 		ForbiddenCookieNames:        append([]string(nil), cfg.ForbiddenCookieNames...),
 		ForbiddenCookieNamePrefixes: append([]string(nil), cfg.ForbiddenCookieNamePrefixes...),
-	}, profileName)
+	}, manifest)
 	if _, err := fsproxy.NewBridge(bridgeOptions); err != nil {
 		return fmt.Errorf("invalid proxy config: %w", err)
 	}
-	cfg.Profile = string(profileName)
 	cfg.bridgeOptions = bridgeOptions
 	return nil
 }

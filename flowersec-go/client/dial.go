@@ -19,6 +19,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/internal/endpointid"
 	"github.com/floegence/flowersec/flowersec-go/internal/wsutil"
+	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
@@ -28,6 +29,7 @@ import (
 
 // ConnectTunnel attaches to a tunnel as role=client and returns an RPC-ready session.
 func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts ...ConnectOption) (Client, error) {
+	start := time.Now()
 	prepared, err := connectcontract.PrepareTunnelGrant(grant, controlv1.Role_client)
 	if err != nil {
 		return nil, wrapTunnelGrantValidateError(err)
@@ -36,6 +38,9 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
 	}
+	observer := observability.NormalizeClientObserver(cfg.observer, observability.ClientObserverContext{
+		Path: fserrors.PathTunnel,
+	})
 	origin := strings.TrimSpace(cfg.origin)
 	if origin == "" {
 		origin = strings.TrimSpace(cfg.header.Get("Origin"))
@@ -69,8 +74,10 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	h.Set("Origin", origin)
 	c, _, err := ws.Dial(connectCtx, prepared.TunnelURL, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
+		observer.OnConnect(fserrors.PathTunnel, observability.ConnectResultFail, classifyConnectObserverReason(err), time.Since(start))
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
+	observer.OnConnect(fserrors.PathTunnel, observability.ConnectResultOK, "", time.Since(start))
 	// Guard against a single oversized websocket message causing an OOM before size checks run.
 	c.SetReadLimit(wsutil.ReadLimit(cfg.maxHandshakePayload, cfg.maxRecordBytes))
 	attach := tunnelv1.Attach{
@@ -83,6 +90,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	attachJSON, _ := json.Marshal(attach)
 	if err := c.WriteMessage(connectCtx, websocket.TextMessage, attachJSON); err != nil {
 		_ = c.Close()
+		observer.OnAttach(observability.AttachResultFail, "send_failed")
 		code := classifyTunnelAttachWriteCode(err)
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageAttach, code, err)
 	}
@@ -96,6 +104,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 		maxRecordBytes:    cfg.maxRecordBytes,
 		maxBufferedBytes:  cfg.maxBufferedBytes,
 		handshakeTimeout:  handshakeTimeout,
+		observer:          observer,
 	})
 	if err != nil {
 		_ = c.Close()
@@ -109,10 +118,14 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 
 // ConnectDirect connects to a direct websocket endpoint and returns an RPC-ready session.
 func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts ...ConnectOption) (Client, error) {
+	start := time.Now()
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
 	}
+	observer := observability.NormalizeClientObserver(cfg.observer, observability.ClientObserverContext{
+		Path: fserrors.PathDirect,
+	})
 	origin := strings.TrimSpace(cfg.origin)
 	if origin == "" {
 		origin = strings.TrimSpace(cfg.header.Get("Origin"))
@@ -142,8 +155,10 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	h.Set("Origin", origin)
 	c, _, err := ws.Dial(connectCtx, prepared.WSURL, ws.DialOptions{Header: h, Dialer: cfg.dialer})
 	if err != nil {
+		observer.OnConnect(fserrors.PathDirect, observability.ConnectResultFail, classifyConnectObserverReason(err), time.Since(start))
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageConnect, fserrors.ClassifyConnectCode(err), err)
 	}
+	observer.OnConnect(fserrors.PathDirect, observability.ConnectResultOK, "", time.Since(start))
 	// Guard against a single oversized websocket message causing an OOM before size checks run.
 	c.SetReadLimit(wsutil.ReadLimit(cfg.maxHandshakePayload, cfg.maxRecordBytes))
 
@@ -156,6 +171,7 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 		maxRecordBytes:    cfg.maxRecordBytes,
 		maxBufferedBytes:  cfg.maxBufferedBytes,
 		handshakeTimeout:  handshakeTimeout,
+		observer:          observer,
 	})
 	if err != nil {
 		_ = c.Close()
@@ -185,9 +201,11 @@ type dialE2EEOptions struct {
 	maxBufferedBytes  int
 
 	handshakeTimeout time.Duration
+	observer         observability.ClientObserver
 }
 
 func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpointInstanceID string, opts dialE2EEOptions) (*session, error) {
+	handshakeStart := time.Now()
 	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, opts.handshakeTimeout)
 	defer handshakeCancel()
 
@@ -206,11 +224,29 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 		// Surface them as attach-layer failures instead of a generic handshake error.
 		if path == fserrors.PathTunnel {
 			if code, ok := fserrors.ClassifyTunnelAttachCloseCode(err); ok {
+				opts.observer.OnAttach(observability.AttachResultFail, observability.AttachReason(code))
+				opts.observer.OnHandshake(path, observability.HandshakeResultFail, code, time.Since(handshakeStart))
 				return nil, wrapErr(path, fserrors.StageAttach, code, err)
 			}
 		}
+		handshakeCode := fserrors.ClassifyHandshakeCode(err)
+		if path == fserrors.PathTunnel {
+			switch handshakeCode {
+			case fserrors.CodeTimeout:
+				opts.observer.OnAttach(observability.AttachResultFail, observability.AttachReasonTimeout)
+			case fserrors.CodeCanceled:
+				opts.observer.OnAttach(observability.AttachResultFail, observability.AttachReasonCanceled)
+			default:
+				opts.observer.OnAttach(observability.AttachResultFail, observability.AttachReasonAttachFailed)
+			}
+		}
+		opts.observer.OnHandshake(path, observability.HandshakeResultFail, handshakeCode, time.Since(handshakeStart))
 		return nil, wrapErr(path, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
 	}
+	if path == fserrors.PathTunnel {
+		opts.observer.OnAttach(observability.AttachResultOK, observability.AttachReasonOK)
+	}
+	opts.observer.OnHandshake(path, observability.HandshakeResultOK, "", time.Since(handshakeStart))
 
 	ycfg := hyamux.DefaultConfig()
 	ycfg.EnableKeepAlive = false
@@ -243,6 +279,17 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 		rpc:                rpcClient,
 	}
 	return out, nil
+}
+
+func classifyConnectObserverReason(err error) observability.ConnectReason {
+	switch fserrors.ClassifyConnectCode(err) {
+	case fserrors.CodeTimeout:
+		return observability.ConnectReasonTimeout
+	case fserrors.CodeCanceled:
+		return observability.ConnectReasonCanceled
+	default:
+		return observability.ConnectReasonWebsocketError
+	}
 }
 
 func cloneHeader(h http.Header) http.Header {

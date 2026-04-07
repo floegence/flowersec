@@ -1,4 +1,9 @@
-import { DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_CHUNK_BYTES, DEFAULT_MAX_WS_FRAME_BYTES } from "./constants.js";
+import {
+  CODESERVER_PROXY_PRESET_MANIFEST,
+  DEFAULT_PROXY_PRESET_MANIFEST,
+  resolveProxyPreset,
+  type ProxyPresetManifest,
+} from "./preset.js";
 
 export type ProxyProfile = Readonly<{
   maxJsonFrameBytes: number;
@@ -10,23 +15,19 @@ export type ProxyProfile = Readonly<{
 
 export type ProxyProfileName = "default" | "codeserver";
 
-const DEFAULT_PROFILE: ProxyProfile = Object.freeze({
-  // Keep aligned with runtime defaults.
-  maxJsonFrameBytes: 0,
-  maxChunkBytes: DEFAULT_MAX_CHUNK_BYTES,
-  maxBodyBytes: DEFAULT_MAX_BODY_BYTES,
-  maxWsFrameBytes: DEFAULT_MAX_WS_FRAME_BYTES,
-  timeoutMs: 0,
-});
+function toLegacyProfile(manifest: ProxyPresetManifest): ProxyProfile {
+  const resolved = resolveProxyPreset(manifest);
+  return Object.freeze({
+    maxJsonFrameBytes: resolved.limits.max_json_frame_bytes,
+    maxChunkBytes: resolved.limits.max_chunk_bytes,
+    maxBodyBytes: resolved.limits.max_body_bytes,
+    maxWsFrameBytes: resolved.limits.max_ws_frame_bytes,
+    timeoutMs: resolved.limits.timeout_ms ?? 0,
+  });
+}
 
-const CODESERVER_PROFILE: ProxyProfile = Object.freeze({
-  maxJsonFrameBytes: 0,
-  maxChunkBytes: DEFAULT_MAX_CHUNK_BYTES,
-  maxBodyBytes: DEFAULT_MAX_BODY_BYTES,
-  // Keep aligned with redeven/redeven-agent production profile.
-  maxWsFrameBytes: 32 * 1024 * 1024,
-  timeoutMs: 0,
-});
+const DEFAULT_PROFILE: ProxyProfile = toLegacyProfile(DEFAULT_PROXY_PRESET_MANIFEST);
+const CODESERVER_PROFILE: ProxyProfile = toLegacyProfile(CODESERVER_PROXY_PRESET_MANIFEST);
 
 export const PROXY_PROFILE_DEFAULT = DEFAULT_PROFILE;
 export const PROXY_PROFILE_CODESERVER = CODESERVER_PROFILE;
@@ -63,5 +64,32 @@ export function resolveProxyProfile(profile?: ProxyProfileName | Partial<ProxyPr
     maxBodyBytes: normalizeSafeInt("maxBodyBytes", profile.maxBodyBytes ?? base.maxBodyBytes),
     maxWsFrameBytes: normalizeSafeInt("maxWsFrameBytes", profile.maxWsFrameBytes ?? base.maxWsFrameBytes),
     timeoutMs: normalizeSafeInt("timeoutMs", profile.timeoutMs ?? base.timeoutMs),
+  });
+}
+
+export function profileToPresetManifest(profile?: ProxyProfileName | Partial<ProxyProfile>): ProxyPresetManifest {
+  if (profile == null) return DEFAULT_PROXY_PRESET_MANIFEST;
+  if (typeof profile === "string") {
+    switch (profile) {
+      case "default":
+        return DEFAULT_PROXY_PRESET_MANIFEST;
+      case "codeserver":
+        return CODESERVER_PROXY_PRESET_MANIFEST;
+      default:
+        throw new Error(`unknown proxy profile: ${profile}`);
+    }
+  }
+  const resolved = resolveProxyProfile(profile);
+  return Object.freeze({
+    v: 1,
+    preset_id: "legacy-profile",
+    deprecated: true,
+    limits: {
+      ...(resolved.maxJsonFrameBytes > 0 ? { max_json_frame_bytes: resolved.maxJsonFrameBytes } : {}),
+      ...(resolved.maxChunkBytes > 0 ? { max_chunk_bytes: resolved.maxChunkBytes } : {}),
+      ...(resolved.maxBodyBytes > 0 ? { max_body_bytes: resolved.maxBodyBytes } : {}),
+      ...(resolved.maxWsFrameBytes > 0 ? { max_ws_frame_bytes: resolved.maxWsFrameBytes } : {}),
+      ...(resolved.timeoutMs > 0 ? { timeout_ms: resolved.timeoutMs } : {}),
+    },
   });
 }

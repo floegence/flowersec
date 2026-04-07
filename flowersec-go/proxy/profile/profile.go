@@ -6,6 +6,7 @@ import (
 	"time"
 
 	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
+	proxypreset "github.com/floegence/flowersec/flowersec-go/proxy/preset"
 )
 
 // Profile is a named proxy tuning profile.
@@ -67,6 +68,10 @@ func Resolve(profile Profile) Defaults {
 	default:
 		return defaultDefaults
 	}
+}
+
+func ResolveManifest(profile Profile) (*proxypreset.Manifest, error) {
+	return proxypreset.ResolveBuiltin(string(profile))
 }
 
 func applyContractOptions(opts fsproxy.ContractOptions, profile Profile) fsproxy.ContractOptions {

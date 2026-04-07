@@ -45,11 +45,8 @@ describe("connectTunnelProxyBrowser", () => {
     expect(connectTunnelBrowserMock).toHaveBeenCalledTimes(1);
     expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
       client,
-      profile: undefined,
       runtimeGlobalKey: "__flowersecProxyRuntime",
-      runtime: undefined,
       serviceWorker: { scriptUrl: "/proxy-sw.js" },
-      plugins: undefined,
     });
 
     await out.dispose();

@@ -9,6 +9,20 @@ import (
 
 func TestLoadConfigCanonicalizesHostsAndValidatesGrantSource(t *testing.T) {
 	dir := t.TempDir()
+	presetPath := filepath.Join(dir, "codeserver-preset.json")
+	if err := os.WriteFile(presetPath, []byte(`{
+  "v": 1,
+  "preset_id": "codeserver",
+  "deprecated": true,
+  "limits": {
+    "max_json_frame_bytes": 1048576,
+    "max_chunk_bytes": 262144,
+    "max_body_bytes": 67108864,
+    "max_ws_frame_bytes": 33554432
+  }
+}`), 0o600); err != nil {
+		t.Fatalf("write preset: %v", err)
+	}
 	path := filepath.Join(dir, "gateway.json")
 	if err := os.WriteFile(path, []byte(`{
   "browser": {
@@ -18,7 +32,7 @@ func TestLoadConfigCanonicalizesHostsAndValidatesGrantSource(t *testing.T) {
     "origin": "https://gateway.example.com"
   },
   "proxy": {
-    "profile": "codeserver"
+    "preset_file": "`+presetPath+`"
   },
   "routes": [
     {"host": "Example.COM:8443", "grant": {"file": "./grant.json"}}
@@ -40,8 +54,8 @@ func TestLoadConfigCanonicalizesHostsAndValidatesGrantSource(t *testing.T) {
 	if cfg.Tunnel.Origin != "https://gateway.example.com" {
 		t.Fatalf("unexpected tunnel origin: %q", cfg.Tunnel.Origin)
 	}
-	if cfg.Proxy.Profile != "codeserver" {
-		t.Fatalf("unexpected proxy profile: %q", cfg.Proxy.Profile)
+	if cfg.Proxy.PresetFile != presetPath {
+		t.Fatalf("unexpected proxy preset file: %q", cfg.Proxy.PresetFile)
 	}
 	if cfg.Proxy.bridgeOptions.MaxWSFrameBytes != 32*1024*1024 {
 		t.Fatalf("expected codeserver ws frame size, got %d", cfg.Proxy.bridgeOptions.MaxWSFrameBytes)
@@ -195,5 +209,45 @@ func TestLoadConfigRejectsUnknownProxyProfile(t *testing.T) {
 	_, err := loadConfig(path)
 	if err == nil || !strings.Contains(err.Error(), "unknown proxy profile") {
 		t.Fatalf("expected unknown proxy profile error, got %v", err)
+	}
+}
+
+func TestLoadConfigRejectsPresetFileAlongsideDeprecatedProfile(t *testing.T) {
+	dir := t.TempDir()
+	presetPath := filepath.Join(dir, "default-preset.json")
+	if err := os.WriteFile(presetPath, []byte(`{
+  "v": 1,
+  "preset_id": "default",
+  "limits": {
+    "max_json_frame_bytes": 1048576,
+    "max_chunk_bytes": 262144,
+    "max_body_bytes": 67108864,
+    "max_ws_frame_bytes": 1048576
+  }
+}`), 0o600); err != nil {
+		t.Fatalf("write preset: %v", err)
+	}
+	path := filepath.Join(dir, "gateway.json")
+	if err := os.WriteFile(path, []byte(`{
+  "browser": {
+    "allowed_origins": ["https://gateway.example.com"]
+  },
+  "tunnel": {
+    "origin": "https://gateway.example.com"
+  },
+  "proxy": {
+    "preset_file": "`+presetPath+`",
+    "profile": "default"
+  },
+  "routes": [
+    {"host": "example.com", "grant": {"file": "./grant.json"}}
+  ]
+}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := loadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "proxy.preset_file and deprecated proxy.profile") {
+		t.Fatalf("expected preset/profile conflict error, got %v", err)
 	}
 }
