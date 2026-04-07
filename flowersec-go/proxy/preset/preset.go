@@ -65,6 +65,11 @@ func builtinCodeServerManifest() *Manifest {
 	}
 }
 
+// ResolveBuiltin returns first-party reference manifests for deprecated named profiles.
+//
+// Deprecated: compatibility-only helper. Stable integrations should load a
+// manifest file or consume a decoded Manifest object instead of depending on a
+// named profile identifier.
 func ResolveBuiltin(name string) (*Manifest, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", "default":

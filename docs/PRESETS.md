@@ -19,8 +19,11 @@ Go stable helpers:
 - `preset.Manifest`
 - `preset.DecodeJSON(...)`
 - `preset.LoadFile(...)`
-- `preset.ResolveBuiltin(...)`
 - `preset.ApplyBridgeOptions(...)`
+
+Compatibility-only Go helper:
+
+- `preset.ResolveBuiltin(...)`
 
 ## Shape
 
@@ -43,6 +46,7 @@ Rules:
 - unknown fields are rejected
 - numeric limits are positive integers when present
 - omission means “not set” at the preset API layer
+- `preset.ResolveBuiltin(...)` only bridges deprecated named profiles to first-party reference manifests; stable integrations should consume manifest files or decoded `ProxyPresetManifest` objects instead
 
 ## Gateway consumption
 

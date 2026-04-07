@@ -123,7 +123,6 @@
           { "kind": "type", "expr": "proxypreset.Manifest", "doc_token": "`preset.Manifest`" },
           { "kind": "func", "expr": "proxypreset.DecodeJSON", "doc_token": "`preset.DecodeJSON(...)`" },
           { "kind": "func", "expr": "proxypreset.LoadFile", "doc_token": "`preset.LoadFile(...)`" },
-          { "kind": "func", "expr": "proxypreset.ResolveBuiltin", "doc_token": "`preset.ResolveBuiltin(...)`" },
           { "kind": "func", "expr": "proxypreset.ApplyBridgeOptions", "doc_token": "`preset.ApplyBridgeOptions(...)`" }
         ]
       },

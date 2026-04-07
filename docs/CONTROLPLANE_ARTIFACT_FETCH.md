@@ -18,6 +18,21 @@ Go:
 
 ## Stable request semantics
 
+Default artifact request:
+
+```http
+POST /v1/connect/artifact
+Content-Type: application/json
+```
+
+Entry artifact request:
+
+```http
+POST /v1/connect/artifact/entry
+Content-Type: application/json
+Authorization: Bearer <entry-ticket>
+```
+
 Request body:
 
 ```json
@@ -53,6 +68,31 @@ Error envelope:
 }
 ```
 
+The stable helper contract freezes the envelope semantics above:
+
+- request fields: `endpoint_id`, optional `payload`, optional `correlation.trace_id`
+- success field: `connect_artifact`
+- error fields: machine-readable `error.code`, human-readable `error.message`
+
+`session_id` is issuer-owned and is returned inside `connect_artifact.correlation` when available; callers do not request it explicitly.
+
+## Stable helper error surfaces
+
+TypeScript `ControlplaneRequestError` preserves:
+
+- `status`
+- `code`
+- `responseBody`
+
+Go `client.RequestError` preserves:
+
+- `Status`
+- `Code`
+- `Message`
+- `ResponseBody`
+
+On non-`2xx` responses, helpers keep the HTTP status plus the structured error envelope when present.
+
 ## Path handling
 
 Helper defaults use first-party reference paths:
@@ -61,7 +101,7 @@ Helper defaults use first-party reference paths:
 - `/v1/connect/artifact/entry`
 
 Those default paths are helper defaults, not a globally frozen Flowersec core protocol requirement.
-Third-party controlplanes may use different URLs and pass them via helper configuration.
+Third-party controlplanes may use different URLs and pass them via helper configuration, as long as the request/response envelope semantics stay equivalent.
 
 ## Reconnect guidance
 
