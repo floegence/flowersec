@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "transport": "direct",
+  "direct_info": {
+    "ws_url": "wss://direct.example/ws",
+    "channel_id": "channel-003",
+    "e2ee_psk_b64u": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+    "channel_init_expire_at_unix_s": 1700000002,
+    "default_suite": 2
+  },
+  "correlation": {
+    "v": 1,
+    "trace_id": "trace-0003"
+  }
+}

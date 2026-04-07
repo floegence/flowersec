@@ -14,6 +14,12 @@
       "normalized": "direct_valid_sanitized_correlation.expected.json"
     },
     {
+      "id": "direct_valid_missing_correlation_tags",
+      "input": "direct_valid_missing_correlation_tags.input.json",
+      "ok": true,
+      "normalized": "direct_valid_missing_correlation_tags.expected.json"
+    },
+    {
       "id": "tunnel_valid_embedded_unknown_additive",
       "input": "tunnel_valid_embedded_unknown_additive.input.json",
       "ok": true
@@ -41,6 +47,12 @@
       "input": "reject_duplicate_scopes.input.json",
       "ok": false,
       "error_contains": "bad ConnectArtifact.scoped"
+    },
+    {
+      "id": "reject_duplicate_correlation_tags",
+      "input": "reject_duplicate_correlation_tags.input.json",
+      "ok": false,
+      "error_contains": "bad CorrelationContext.tags"
     },
     {
       "id": "reject_scope_payload_array",

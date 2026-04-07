@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "transport": "direct",
+  "direct_info": {
+    "ws_url": "wss://direct.example/ws",
+    "channel_id": "channel-004",
+    "e2ee_psk_b64u": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+    "channel_init_expire_at_unix_s": 1700000003,
+    "default_suite": 1
+  },
+  "correlation": {
+    "v": 1,
+    "tags": [
+      {
+        "key": "route",
+        "value": "ingress-a"
+      },
+      {
+        "key": "route",
+        "value": "ingress-b"
+      }
+    ]
+  }
+}

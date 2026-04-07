@@ -24,6 +24,7 @@ Stable fields:
 Rules:
 
 - invalid shared IDs become absent
+- missing `tags` normalize to `[]`
 - duplicate tag keys are rejected
 - tags are bounded and meant for small observability hints, not business payloads
 

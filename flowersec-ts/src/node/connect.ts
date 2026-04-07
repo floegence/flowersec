@@ -4,6 +4,7 @@ import type { TunnelConnectOptions } from "../tunnel-client/connect.js";
 import { connectDirect } from "../direct-client/connect.js";
 import { connectTunnel } from "../tunnel-client/connect.js";
 import { connect, type ConnectOptions } from "../facade.js";
+import type { ConnectArtifact } from "../connect/artifact.js";
 
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
 import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
@@ -13,6 +14,7 @@ import { defaultWsMaxPayload } from "./wsDefaults.js";
 
 export async function connectNode(input: DirectConnectInfo, opts: DirectConnectOptions): Promise<Client>;
 export async function connectNode(input: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client>;
+export async function connectNode(input: ConnectArtifact, opts: ConnectOptions): Promise<Client>;
 export async function connectNode(input: unknown, opts: ConnectOptions): Promise<Client> {
   const wsFactory =
     opts.wsFactory ??

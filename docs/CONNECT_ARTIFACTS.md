@@ -44,6 +44,7 @@ Stable parser rules:
 - tunnel artifacts must carry a client-role `ChannelInitGrant`
 - `scoped[*].payload` must be a JSON object
 - duplicate `scope` entries are rejected
+- missing `correlation.tags` normalize to `[]`
 - `correlation.tags` duplicate keys are rejected
 - invalid shared `trace_id` / `session_id` are sanitized to absence
 
