@@ -30,6 +30,7 @@ Stable invariants:
 - missing resolver may be ignored
 - malformed payload for a known optional scope is treated as validation failure by default
 - relaxed optional validation must be an explicit opt-in
+- ignored optional scopes emit warning diagnostics (`scope_ignored_missing_resolver` or `scope_ignored_relaxed_validation`)
 
 ## Stable vs experimental boundary
 

@@ -6,6 +6,8 @@
     { "code": "connect_ok", "stage": "connect", "result": "ok" },
     { "code": "attach_ok", "stage": "attach", "result": "ok" },
     { "code": "handshake_ok", "stage": "handshake", "result": "ok" },
+    { "code": "scope_ignored_missing_resolver", "stage": "scope", "result": "skip" },
+    { "code": "scope_ignored_relaxed_validation", "stage": "scope", "result": "skip" },
     { "code": "ws_close_local", "stage": "close", "result": "skip" },
     { "code": "ws_close_peer_or_error", "stage": "close", "result": "skip" },
     { "code": "ws_error", "stage": "close", "result": "skip" },

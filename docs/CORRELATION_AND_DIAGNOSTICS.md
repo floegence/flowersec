@@ -80,6 +80,11 @@ Non-guarantees:
 - error-domain codes: `stability/connect_error_code_registry.json`
 - event-domain codes: `stability/connect_diagnostics_code_registry.json`
 
+Notable scope warning events:
+
+- `scope_ignored_missing_resolver`
+- `scope_ignored_relaxed_validation`
+
 ## Where propagation belongs
 
 Artifact-aware adapters may propagate:
