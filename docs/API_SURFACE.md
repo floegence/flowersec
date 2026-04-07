@@ -80,7 +80,6 @@ Recommended integration entrypoints:
   - `preset.Manifest`
   - `preset.DecodeJSON(...)`
   - `preset.LoadFile(...)`
-  - `preset.ResolveBuiltin(...)`
   - `preset.ApplyBridgeOptions(...)`
 - `github.com/floegence/flowersec/flowersec-go/rpc`
   - `rpc.NewRouter(...)`
@@ -107,7 +106,7 @@ Stable generated protocol packages:
 Compatibility-only Go surface:
 
 - legacy raw grant / wrapper / direct JSON inputs continue to work through `client.Connect(...)`
-- named proxy profiles remain only as deprecated compatibility helpers; they are not part of the stable core surface
+- deprecated named profile helpers such as `preset.ResolveBuiltin(...)` and gateway `proxy.profile` remain compatibility-only; they are not part of the stable core surface
 
 ## TypeScript: stable exports
 
