@@ -72,8 +72,7 @@ jobs:
       - name: Ensure npm supports trusted publishing (OIDC)
         run: |
           set -euo pipefail
-          npm i -g npm@^11.5.1
-          npm --version
+          npx -y npm@11.5.1 --version
 
       - name: Validate tag matches flowersec-ts package version
         run: |
@@ -397,4 +396,4 @@ jobs:
             exit 0
           fi
 
-          ( cd flowersec-ts && npm publish --access public )
+          ( cd flowersec-ts && npx -y npm@11.5.1 publish --access public )
