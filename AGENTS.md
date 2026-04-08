@@ -148,8 +148,8 @@ git config --global merge.conflictstyle zdiff3
 - `make precommit` covers the fast high-value local gate:
   - IDL/codegen consistency: `gen-check`
   - stability manifest, API docs, and Go API guard: `stability-check`
-  - Go: `fmt-check`, `go vet`, `go test`
-  - TypeScript: auto `npm ci --audit=false` when dependencies are missing, then `lint`, `build`, `test`, and `verify:package`
+  - Go: `fmt-check`, `go vet`, `go test`, and `go-cover-check`
+  - TypeScript: auto `npm ci --audit=false` when dependencies are missing or incomplete, then `lint`, `build`, `test`, `ts-cover-check`, and `verify:package`
 - `pre-commit` does not replace the pre-merge gate: run `make check` explicitly before integration.
 - `make check` covers:
   - Go: fmt, lint, test, race, and vulncheck

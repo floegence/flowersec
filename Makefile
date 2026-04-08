@@ -71,8 +71,8 @@ ts-ci:
 	cd flowersec-ts && npm ci --audit=false
 
 ts-ensure-deps:
-	@if [ ! -x flowersec-ts/node_modules/.bin/eslint ] || [ ! -x flowersec-ts/node_modules/.bin/vitest ] || [ ! -x flowersec-ts/node_modules/.bin/tsc ]; then \
-		echo "flowersec-ts dependencies missing; running npm ci --audit=false"; \
+	@if [ ! -x flowersec-ts/node_modules/.bin/eslint ] || [ ! -x flowersec-ts/node_modules/.bin/vitest ] || [ ! -x flowersec-ts/node_modules/.bin/tsc ] || [ ! -f flowersec-ts/node_modules/@vitest/coverage-v8/package.json ]; then \
+		echo "flowersec-ts dependencies missing or incomplete; running npm ci --audit=false"; \
 		cd flowersec-ts && npm ci --audit=false; \
 	fi
 
@@ -109,12 +109,14 @@ precommit-go:
 	$(MAKE) fmt-check
 	$(MAKE) go-vet
 	$(MAKE) go-test
+	$(MAKE) go-cover-check
 
 precommit-ts:
 	$(MAKE) ts-ensure-deps
 	$(MAKE) ts-lint
 	$(MAKE) ts-build
 	$(MAKE) ts-test
+	$(MAKE) ts-cover-check
 	$(MAKE) ts-package-check
 
 precommit:

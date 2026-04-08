@@ -178,6 +178,89 @@ func TestServerHandleStreamUnknownCloses(t *testing.T) {
 	<-done
 }
 
+func TestServerHandleStream_OnErrorReportsHandlerPanic(t *testing.T) {
+	t.Parallel()
+
+	errCh := make(chan error, 1)
+	s := newServer(t, Options{
+		OnError: func(err error) {
+			select {
+			case errCh <- err:
+			default:
+			}
+		},
+	})
+	s.Handle("panic", func(_ context.Context, _ io.ReadWriteCloser) {
+		panic("boom")
+	})
+
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.HandleStream(context.Background(), "panic", serverConn)
+	}()
+
+	select {
+	case err := <-errCh:
+		if !strings.Contains(err.Error(), `stream handler panic (kind="panic")`) {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for OnError")
+	}
+
+	<-done
+}
+
+func TestServerHandleStreamRPC_OnErrorReportsRegisterPanics(t *testing.T) {
+	t.Parallel()
+
+	errCh := make(chan error, 1)
+	s := newServer(t, Options{
+		RPC: RPCOptions{
+			Register: func(_ *rpc.Router, _srv *rpc.Server) {
+				panic("boom")
+			},
+		},
+		OnError: func(err error) {
+			select {
+			case errCh <- err:
+			default:
+			}
+		},
+	})
+
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.HandleStream(context.Background(), "rpc", serverConn)
+	}()
+
+	select {
+	case err := <-errCh:
+		var fe *fserrors.Error
+		if !errors.As(err, &fe) {
+			t.Fatalf("expected *fserrors.Error, got %T", err)
+		}
+		if fe.Path != fserrors.PathAuto || fe.Stage != fserrors.StageRPC || fe.Code != fserrors.CodeRPCFailed {
+			t.Fatalf("unexpected error: %+v", fe)
+		}
+		if !strings.Contains(fe.Error(), "rpc register panic") {
+			t.Fatalf("unexpected error: %v", fe)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for OnError")
+	}
+
+	<-done
+}
+
 type fakeSession struct {
 	next []func() (string, io.ReadWriteCloser, error)
 }
