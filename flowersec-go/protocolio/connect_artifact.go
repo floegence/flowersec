@@ -50,6 +50,18 @@ type ConnectArtifact struct {
 	Correlation *CorrelationContext         `json:"correlation,omitempty"`
 }
 
+// TunnelClientConnectArtifact is the named tunnel-client variant of ConnectArtifact.
+//
+// It stays data-only so Go integrations can depend on a stable, exported artifact
+// type without taking on additional codegen/runtime machinery.
+type TunnelClientConnectArtifact = ConnectArtifact
+
+// DirectClientConnectArtifact is the named direct-client variant of ConnectArtifact.
+//
+// It stays data-only so Go integrations can depend on a stable, exported artifact
+// type without taking on additional codegen/runtime machinery.
+type DirectClientConnectArtifact = ConnectArtifact
+
 var (
 	scopeNameRe     = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
 	tagKeyRe        = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,31}$`)
@@ -97,14 +109,11 @@ func decodeConnectArtifactBytes(b []byte) (*ConnectArtifact, error) {
 		if !ok {
 			return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant")
 		}
-		var grant controlv1.ChannelInitGrant
-		if err := json.Unmarshal(grantRaw, &grant); err != nil {
-			return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant: %w", err)
+		grant, err := decodeArtifactTunnelGrant(grantRaw)
+		if err != nil {
+			return nil, err
 		}
-		if grant.Role != controlv1.Role_client {
-			return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.role")
-		}
-		out.TunnelGrant = &grant
+		out.TunnelGrant = grant
 	case string(ConnectArtifactTransportDirect):
 		out.Transport = ConnectArtifactTransportDirect
 		if err := assertAllowedKeys(top, "DirectClientConnectArtifact", map[string]struct{}{
@@ -116,11 +125,11 @@ func decodeConnectArtifactBytes(b []byte) (*ConnectArtifact, error) {
 		if !ok {
 			return nil, fmt.Errorf("bad DirectClientConnectArtifact.direct_info")
 		}
-		var info directv1.DirectConnectInfo
-		if err := json.Unmarshal(infoRaw, &info); err != nil {
-			return nil, fmt.Errorf("bad DirectClientConnectArtifact.direct_info: %w", err)
+		info, err := decodeArtifactDirectInfo(infoRaw)
+		if err != nil {
+			return nil, err
 		}
-		out.DirectInfo = &info
+		out.DirectInfo = info
 	default:
 		return nil, fmt.Errorf("bad ConnectArtifact.transport")
 	}
@@ -172,6 +181,149 @@ func decodeRequiredInt(top map[string]json.RawMessage, key string) (int, error) 
 		return 0, err
 	}
 	return n, nil
+}
+
+func decodeRequiredInt32(top map[string]json.RawMessage, key string) (int32, error) {
+	raw, ok := top[key]
+	if !ok {
+		return 0, fmt.Errorf("missing")
+	}
+	var n int32
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func decodeRequiredInt64(top map[string]json.RawMessage, key string) (int64, error) {
+	raw, ok := top[key]
+	if !ok {
+		return 0, fmt.Errorf("missing")
+	}
+	var n int64
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func decodeRequiredIntSlice(top map[string]json.RawMessage, key string) ([]int, error) {
+	raw, ok := top[key]
+	if !ok {
+		return nil, fmt.Errorf("missing")
+	}
+	var items []int
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func decodeArtifactTunnelGrant(raw json.RawMessage) (*controlv1.ChannelInitGrant, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant: %w", err)
+	}
+	if _, err := decodeRequiredString(top, "tunnel_url"); err != nil {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.tunnel_url")
+	}
+	if _, err := decodeRequiredString(top, "channel_id"); err != nil {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.channel_id")
+	}
+	if _, err := decodeRequiredInt64(top, "channel_init_expire_at_unix_s"); err != nil {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.channel_init_expire_at_unix_s")
+	}
+	if _, err := decodeRequiredInt32(top, "idle_timeout_seconds"); err != nil {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.idle_timeout_seconds")
+	}
+	role, err := decodeRequiredInt(top, "role")
+	if err != nil || !validControlRole(controlv1.Role(role)) {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.role")
+	}
+	if _, err := decodeRequiredString(top, "token"); err != nil {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.token")
+	}
+	if _, err := decodeRequiredString(top, "e2ee_psk_b64u"); err != nil {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.e2ee_psk_b64u")
+	}
+	allowedSuites, err := decodeRequiredIntSlice(top, "allowed_suites")
+	if err != nil || len(allowedSuites) == 0 {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.allowed_suites")
+	}
+	for _, suite := range allowedSuites {
+		if !validControlSuite(controlv1.Suite(suite)) {
+			return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.allowed_suites")
+		}
+	}
+	defaultSuite, err := decodeRequiredInt(top, "default_suite")
+	if err != nil || !validControlSuite(controlv1.Suite(defaultSuite)) {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.default_suite")
+	}
+
+	var grant controlv1.ChannelInitGrant
+	if err := json.Unmarshal(raw, &grant); err != nil {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant: %w", err)
+	}
+	if grant.Role != controlv1.Role_client {
+		return nil, fmt.Errorf("bad TunnelClientConnectArtifact.tunnel_grant.role")
+	}
+	return &grant, nil
+}
+
+func decodeArtifactDirectInfo(raw json.RawMessage) (*directv1.DirectConnectInfo, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return nil, fmt.Errorf("bad DirectClientConnectArtifact.direct_info: %w", err)
+	}
+	if _, err := decodeRequiredString(top, "ws_url"); err != nil {
+		return nil, fmt.Errorf("bad DirectClientConnectArtifact.direct_info.ws_url")
+	}
+	if _, err := decodeRequiredString(top, "channel_id"); err != nil {
+		return nil, fmt.Errorf("bad DirectClientConnectArtifact.direct_info.channel_id")
+	}
+	if _, err := decodeRequiredString(top, "e2ee_psk_b64u"); err != nil {
+		return nil, fmt.Errorf("bad DirectClientConnectArtifact.direct_info.e2ee_psk_b64u")
+	}
+	if _, err := decodeRequiredInt64(top, "channel_init_expire_at_unix_s"); err != nil {
+		return nil, fmt.Errorf("bad DirectClientConnectArtifact.direct_info.channel_init_expire_at_unix_s")
+	}
+	defaultSuite, err := decodeRequiredInt(top, "default_suite")
+	if err != nil || !validDirectSuite(directv1.Suite(defaultSuite)) {
+		return nil, fmt.Errorf("bad DirectClientConnectArtifact.direct_info.default_suite")
+	}
+
+	var info directv1.DirectConnectInfo
+	if err := json.Unmarshal(raw, &info); err != nil {
+		return nil, fmt.Errorf("bad DirectClientConnectArtifact.direct_info: %w", err)
+	}
+	return &info, nil
+}
+
+func validControlRole(role controlv1.Role) bool {
+	switch role {
+	case controlv1.Role_client, controlv1.Role_server:
+		return true
+	default:
+		return false
+	}
+}
+
+func validControlSuite(suite controlv1.Suite) bool {
+	switch suite {
+	case controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM, controlv1.Suite_P256_HKDF_SHA256_AES_256_GCM:
+		return true
+	default:
+		return false
+	}
+}
+
+func validDirectSuite(suite directv1.Suite) bool {
+	switch suite {
+	case directv1.Suite_X25519_HKDF_SHA256_AES_256_GCM, directv1.Suite_P256_HKDF_SHA256_AES_256_GCM:
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeScopedEntries(raw json.RawMessage) ([]ScopeMetadataEntry, error) {

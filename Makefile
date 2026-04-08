@@ -1,6 +1,7 @@
 .PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts bench check stability-check go-cover-check compat-check nightly-check
 
 GOVULNCHECK_VERSION ?= v1.1.4
+GOVULNCHECK_GOTOOLCHAIN ?= go1.25.9
 
 YAMUX_INTEROP ?= 1
 YAMUX_INTEROP_STRESS ?= 0
@@ -53,7 +54,7 @@ go-vet:
 	cd tools/stabilitycheck && go vet ./...
 
 go-vulncheck:
-	cd flowersec-go && go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	cd flowersec-go && GOTOOLCHAIN=$(GOVULNCHECK_GOTOOLCHAIN) go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 ts-test:
 	cd flowersec-ts && \

@@ -59,6 +59,8 @@ Recommended integration entrypoints:
   - `protocolio.DecodeDirectConnectInfoJSON(...)`
   - `protocolio.DecodeConnectArtifactJSON(...)`
   - `protocolio.ConnectArtifact`
+  - `protocolio.TunnelClientConnectArtifact`
+  - `protocolio.DirectClientConnectArtifact`
   - `protocolio.CorrelationContext`
   - `protocolio.CorrelationKV`
   - `protocolio.ScopeMetadataEntry`
@@ -118,6 +120,9 @@ Stable entrypoints:
   - `connectDirect(...)`
   - `ConnectArtifact`
   - `CorrelationContext`
+  - `CorrelationKV`
+  - `TunnelClientConnectArtifact`
+  - `DirectClientConnectArtifact`
   - `ScopeMetadataEntry`
   - `assertConnectArtifact(...)`
 - `@floegence/flowersec-core/node`
@@ -125,11 +130,23 @@ Stable entrypoints:
   - `connectTunnelNode(...)`
   - `connectDirectNode(...)`
   - `createNodeWsFactory()`
+  - `ConnectArtifact`
+  - `CorrelationContext`
+  - `CorrelationKV`
+  - `TunnelClientConnectArtifact`
+  - `DirectClientConnectArtifact`
+  - `ScopeMetadataEntry`
   - `assertConnectArtifact(...)`
 - `@floegence/flowersec-core/browser`
   - `connectBrowser(...)`
   - `connectTunnelBrowser(...)`
   - `connectDirectBrowser(...)`
+  - `ConnectArtifact`
+  - `CorrelationContext`
+  - `CorrelationKV`
+  - `TunnelClientConnectArtifact`
+  - `DirectClientConnectArtifact`
+  - `ScopeMetadataEntry`
   - `assertConnectArtifact(...)`
   - `requestChannelGrant(...)`
   - `requestEntryChannelGrant(...)`
