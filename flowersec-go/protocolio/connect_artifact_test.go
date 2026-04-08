@@ -102,3 +102,19 @@ func TestDecodeConnectArtifactJSON_RejectsDuplicateScopes(t *testing.T) {
 		t.Fatalf("expected duplicate scope rejection, got %v", err)
 	}
 }
+
+func TestDecodeConnectArtifactJSON_RejectsMalformedEmbeddedDirectInfo(t *testing.T) {
+	_, err := DecodeConnectArtifactJSON(strings.NewReader(`{
+		"v": 1,
+		"transport": "direct",
+		"direct_info": {
+			"ws_url": "ws://example.invalid/ws",
+			"channel_id": "chan_1",
+			"e2ee_psk_b64u": "Zm9vYmFyYmF6cXV4eHl6MDEyMzQ1Njc4OWFiY2RlZg",
+			"channel_init_expire_at_unix_s": 123
+		}
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "bad DirectClientConnectArtifact.direct_info.default_suite") {
+		t.Fatalf("expected embedded direct_info validation error, got %v", err)
+	}
+}

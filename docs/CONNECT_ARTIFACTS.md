@@ -85,12 +85,16 @@ TypeScript:
 - `ConnectArtifact`
 - `CorrelationContext`
 - `CorrelationKV`
+- `TunnelClientConnectArtifact`
+- `DirectClientConnectArtifact`
 - `ScopeMetadataEntry`
 - `assertConnectArtifact(...)`
 
 Go:
 
 - `protocolio.ConnectArtifact`
+- `protocolio.TunnelClientConnectArtifact`
+- `protocolio.DirectClientConnectArtifact`
 - `protocolio.CorrelationContext`
 - `protocolio.CorrelationKV`
 - `protocolio.ScopeMetadataEntry`

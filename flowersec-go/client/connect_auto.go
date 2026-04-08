@@ -132,6 +132,11 @@ func connectArtifact(ctx context.Context, artifact *protocolio.ConnectArtifact, 
 	} else if artifact.Transport == protocolio.ConnectArtifactTransportDirect {
 		path = fserrors.PathDirect
 	}
+	canonicalArtifact, err := canonicalizeConnectArtifact(artifact)
+	if err != nil {
+		return nil, wrapErr(path, fserrors.StageValidate, fserrors.CodeInvalidInput, err)
+	}
+	artifact = canonicalArtifact
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(path, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
@@ -170,6 +175,14 @@ func connectArtifact(ctx context.Context, artifact *protocolio.ConnectArtifact, 
 	default:
 		return nil, wrapErr(fserrors.PathAuto, fserrors.StageValidate, fserrors.CodeInvalidInput, ErrInvalidInput)
 	}
+}
+
+func canonicalizeConnectArtifact(artifact *protocolio.ConnectArtifact) (*protocolio.ConnectArtifact, error) {
+	b, err := json.Marshal(artifact)
+	if err != nil {
+		return nil, err
+	}
+	return protocolio.DecodeConnectArtifactJSON(bytes.NewReader(b))
 }
 
 func emitIgnoredOptionalScopeDiagnostic(observer observability.ClientObserver, path fserrors.Path, warning internalnormalize.ScopeWarning) {

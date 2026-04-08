@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+const repoGoToolchain = "go1.25.9"
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
@@ -96,6 +98,7 @@ func verifyGo(repoRoot string, m *manifest) error {
 
 	cmd := exec.Command("go", "test", "-mod=mod", "./...")
 	cmd.Dir = tmpDir
+	cmd.Env = withRepoGoToolchain()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -121,7 +124,7 @@ func renderGoVerifier(goModulePath string, m *manifest) (string, string) {
 		}
 	}
 
-	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.25.8\n\nrequire %s v0.0.0\n\nreplace %s => %s\n", m.Go.ModulePath, m.Go.ModulePath, filepath.ToSlash(goModulePath))
+	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.25.9\n\nrequire %s v0.0.0\n\nreplace %s => %s\n", m.Go.ModulePath, m.Go.ModulePath, filepath.ToSlash(goModulePath))
 	goTest := fmt.Sprintf("package flowersecstabilitychecktmp\n\nimport (\n%s)\n\nfunc TestStableSymbolsCompile(t *testing.T) {\n%s}\n", imports.String()+"\t\"testing\"\n", checks.String())
 	return goMod, goTest
 }
@@ -129,8 +132,9 @@ func renderGoVerifier(goModulePath string, m *manifest) (string, string) {
 var coverageLine = regexp.MustCompile(`^(?:ok|\?)\s+(\S+)\s+.*coverage:\s+([0-9.]+)% of statements$`)
 
 func verifyGoCoverage(repoRoot string, m *manifest) error {
-	cmd := exec.Command("go", "test", "-cover", "./...")
+	cmd := exec.Command("go", "test", "-count=1", "-cover", "./...")
 	cmd.Dir = filepath.Join(repoRoot, "flowersec-go")
+	cmd.Env = withRepoGoToolchain()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -177,4 +181,8 @@ func mustParseFloat(s string) float64 {
 		fracDiv *= 10
 	}
 	return whole + frac/fracDiv
+}
+
+func withRepoGoToolchain() []string {
+	return append(os.Environ(), "GOTOOLCHAIN="+repoGoToolchain)
 }

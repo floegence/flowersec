@@ -182,6 +182,34 @@ func TestConnect_AcceptsTypedDirectArtifact(t *testing.T) {
 	}
 }
 
+func TestConnect_TypedArtifactStrictValidationFailsFast(t *testing.T) {
+	_, err := Connect(context.Background(), protocolio.ConnectArtifact{
+		V:         1,
+		Transport: protocolio.ConnectArtifactTransportDirect,
+		DirectInfo: &directv1.DirectConnectInfo{
+			WsUrl:                    "",
+			ChannelId:                "chan_1",
+			E2eePskB64u:              "Zm9vYmFyYmF6cXV4eHl6MDEyMzQ1Njc4OWFiY2RlZg",
+			ChannelInitExpireAtUnixS: 123,
+			DefaultSuite:             1,
+		},
+		Scoped: []protocolio.ScopeMetadataEntry{
+			{Scope: "proxy.runtime", ScopeVersion: 1, Critical: false, Payload: protocolio.ScopePayload{}},
+			{Scope: "proxy.runtime", ScopeVersion: 1, Critical: false, Payload: protocolio.ScopePayload{}},
+		},
+	}, WithOrigin("http://example.com"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var fe *Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("expected *client.Error, got %T", err)
+	}
+	if fe.Path != PathDirect || fe.Stage != StageValidate || fe.Code != CodeInvalidInput {
+		t.Fatalf("unexpected error: %+v", fe)
+	}
+}
+
 func TestConnect_ArtifactCriticalScopeWithoutResolverFailsFast(t *testing.T) {
 	_, err := Connect(context.Background(), protocolio.ConnectArtifact{
 		V:         1,

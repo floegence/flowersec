@@ -1,6 +1,6 @@
 module github.com/floegence/flowersec-examples
 
-go 1.25.8
+go 1.25.9
 
 require (
 	github.com/floegence/flowersec/flowersec-go v0.0.0
