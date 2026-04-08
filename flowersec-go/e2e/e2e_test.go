@@ -25,6 +25,7 @@ import (
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
@@ -88,6 +89,81 @@ func TestE2E_RPCOverTunnelE2EEYamux(t *testing.T) {
 	got := runBrowserClientEndpoint(ctx, t, wsURL, grantC, psk)
 	if got != `{"ok":true}` {
 		t.Fatalf("unexpected rpc response payload: %s", got)
+	}
+}
+
+func TestE2E_ClientConnect_AutoArtifactPath(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	iss, keyFile := newTestIssuer(t)
+	defer os.Remove(keyFile)
+
+	tunnelCfg := server.DefaultConfig()
+	tunnelCfg.IssuerKeysFile = keyFile
+	tunnelCfg.TunnelAudience = "flowersec-tunnel:dev"
+	tunnelCfg.TunnelIssuer = "issuer-dev"
+	tunnelCfg.AllowedOrigins = []string{tunnelOrigin}
+
+	fixture := newTunnelE2EFixture(t, tunnelCfg)
+
+	ci := &channelinit.Service{
+		Issuer: iss,
+		Params: channelinit.Params{
+			TunnelURL:          fixture.wsURL,
+			TunnelAudience:     tunnelCfg.TunnelAudience,
+			IssuerID:           "issuer-dev",
+			TokenExpSeconds:    60,
+			IdleTimeoutSeconds: 5,
+		},
+	}
+	grantC, grantS, err := ci.NewChannelInit("chan_e2e_artifact_auto_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	serverCh := make(chan endpointConnectResult, 1)
+	go func() {
+		session, err := endpoint.ConnectTunnel(ctx, grantS, endpoint.WithOrigin(tunnelOrigin), endpoint.WithKeepaliveInterval(0))
+		serverCh <- endpointConnectResult{session: session, err: err}
+	}()
+
+	artifact := protocolio.ConnectArtifact{
+		V:           1,
+		Transport:   protocolio.ConnectArtifactTransportTunnel,
+		TunnelGrant: grantC,
+	}
+	cli, err := client.Connect(ctx, artifact, client.WithOrigin(tunnelOrigin), client.WithKeepaliveInterval(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+
+	serverResult := <-serverCh
+	if serverResult.err != nil {
+		t.Fatal(serverResult.err)
+	}
+	defer serverResult.session.Close()
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- serveRPCStream(ctx, serverResult.session)
+	}()
+
+	payload, rpcErr, err := cli.RPC().Call(ctx, 1, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rpcErr != nil {
+		t.Fatalf("rpc error: %v", rpcErr)
+	}
+	if string(payload) != `{"ok":true}` {
+		t.Fatalf("unexpected rpc response payload: %s", payload)
+	}
+
+	_ = cli.Close()
+	if err := <-serverErrCh; err != nil {
+		t.Fatal(err)
 	}
 }
 

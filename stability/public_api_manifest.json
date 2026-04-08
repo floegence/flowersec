@@ -442,38 +442,38 @@
     "go": [
       {
         "package": "github.com/floegence/flowersec/flowersec-go/client",
-        "min_statements_pct": 68
+        "min_statements_pct": 72
       },
       {
         "package": "github.com/floegence/flowersec/flowersec-go/controlplane/channelinit",
-        "min_statements_pct": 85
+        "min_statements_pct": 86
       },
       {
         "package": "github.com/floegence/flowersec/flowersec-go/endpoint",
-        "min_statements_pct": 64
+        "min_statements_pct": 68
       },
       {
         "package": "github.com/floegence/flowersec/flowersec-go/endpoint/serve",
-        "min_statements_pct": 77.5
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/observability/prom",
         "min_statements_pct": 80
       },
       {
+        "package": "github.com/floegence/flowersec/flowersec-go/observability/prom",
+        "min_statements_pct": 90
+      },
+      {
         "package": "github.com/floegence/flowersec/flowersec-go/proxy",
-        "min_statements_pct": 64
+        "min_statements_pct": 67
       },
       {
         "package": "github.com/floegence/flowersec/flowersec-go/rpc",
-        "min_statements_pct": 90
+        "min_statements_pct": 91.5
       }
     ],
     "ts": {
-      "lines": 72,
-      "functions": 71,
-      "statements": 68,
-      "branches": 59
+      "lines": 76,
+      "functions": 77,
+      "statements": 72,
+      "branches": 63
     }
   }
 }
