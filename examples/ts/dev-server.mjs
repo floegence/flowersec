@@ -20,6 +20,36 @@ const DEFAULT_PORT = 5173;
 const DEFAULT_ORIGIN_HOST = "127.0.0.1";
 const DEFAULT_TUNNEL_URL = "ws://127.0.0.1:8080/ws";
 
+function buildDemoProxyRuntimeScope() {
+  return {
+    scope: "proxy.runtime",
+    scope_version: 1,
+    critical: true,
+    payload: {
+      mode: "service_worker",
+      serviceWorker: {
+        scriptUrl: "/examples/ts/proxy-sandbox/sw.js",
+        scope: "/examples/ts/proxy-sandbox/",
+      },
+      preset: {
+        presetId: "default",
+      },
+    },
+  };
+}
+
+export function withDemoProxyRuntimeScope(artifact) {
+  if (artifact == null || typeof artifact !== "object" || Array.isArray(artifact)) {
+    return artifact;
+  }
+  const existing = Array.isArray(artifact.scoped) ? [...artifact.scoped] : [];
+  const filtered = existing.filter((entry) => entry && typeof entry === "object" && entry.scope !== "proxy.runtime");
+  return {
+    ...artifact,
+    scoped: [...filtered, buildDemoProxyRuntimeScope()],
+  };
+}
+
 function usage() {
   return `
 Usage:
@@ -407,25 +437,9 @@ async function main() {
           return;
         }
         const artifactEnvelope = JSON.parse(text);
-        const artifact = artifactEnvelope.connect_artifact;
+        let artifact = artifactEnvelope.connect_artifact;
         if (u.pathname === "/__demo/proxy/artifact") {
-          artifact.scoped = [
-            {
-              scope: "proxy.runtime",
-              scope_version: 1,
-              critical: true,
-              payload: {
-                mode: "service_worker",
-                serviceWorker: {
-                  scriptUrl: "/examples/ts/proxy-sandbox/sw.js",
-                  scope: "/examples/ts/proxy-sandbox/",
-                },
-                preset: {
-                  presetId: "default",
-                },
-              },
-            },
-          ];
+          artifact = withDemoProxyRuntimeScope(artifact);
         }
         res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ connect_artifact: artifact }));
@@ -527,7 +541,11 @@ async function readBody(req, limitBytes) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-main().catch((e) => {
-  logErr(`[dev-server] fatal: ${String(e?.stack ?? e)}`);
-  process.exit(1);
-});
+const isMainModule = process.argv[1] != null && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
+  main().catch((e) => {
+    logErr(`[dev-server] fatal: ${String(e?.stack ?? e)}`);
+    process.exit(1);
+  });
+}

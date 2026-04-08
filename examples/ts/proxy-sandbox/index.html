@@ -21,7 +21,10 @@
       a Service Worker intercepts requests for <span class="mono">/examples/ts/proxy-sandbox/app/</span> and forwards them to a Flowersec runtime.
     </p>
     <p>
-      Paste a <span class="mono">connect_artifact</span> envelope, or use the dev server to mint an artifact-first proxy bootstrap payload.
+      Paste a <span class="mono">connect_artifact</span> envelope, or use the dev server to mint an artifact-first proxy bootstrap payload. The demo now reads the <span class="mono">proxy.runtime</span> scope embedded in the artifact to configure the service worker instead of re-typing it here.
+    </p>
+    <p>
+      Latest runtime scope: <span id="runtime-info" class="mono">none</span>
     </p>
 
     <textarea id="in" spellcheck="false"></textarea>
@@ -94,14 +97,16 @@
         $out.textContent = "";
         setStatus("connecting...");
         try {
-          const obj = JSON.parse($in.value);
-          const artifact = obj?.connect_artifact ?? obj;
-          handle = await connectArtifactProxyBrowser(artifact, {
-            serviceWorker: {
-              scriptUrl: "./sw.js",
-              scope: "./",
-            },
-          });
+        const obj = JSON.parse($in.value);
+        const artifact = obj?.connect_artifact ?? obj;
+        handle = await connectArtifactProxyBrowser(artifact);
+        const runtimeScope = artifact?.scoped?.find((entry) => entry?.scope === "proxy.runtime");
+        const runtimeInfo = document.getElementById("runtime-info");
+        if (runtimeInfo) {
+          runtimeInfo.textContent = runtimeScope
+            ? `${runtimeScope.payload.mode} service_worker=${runtimeScope.payload.serviceWorker?.scriptUrl}`
+            : "missing proxy.runtime scope";
+        }
           // Make runtime discoverable to the injected app bootstrap (same-origin iframe).
           window.__flowersecProxyRuntime = handle.runtime;
           $open.disabled = false;

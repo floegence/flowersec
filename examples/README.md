@@ -6,23 +6,19 @@ v0.19.x makes the artifact-first path the recommended demo path, while keeping t
 
 ## Recommended demo flow
 
-If you have Node.js installed:
+If you have Node.js installed, spin up the dev server and capture its ready JSON:
 
 ```bash
 node ./examples/ts/dev-server.mjs | tee dev.json
 ```
 
-Then open:
+Then use the artifact-first URLs in the generated JSON (`browser_tunnel_url`, `browser_direct_url`, `browser_proxy_sandbox_url`) to drive the browser demos.
 
-- `browser_tunnel_url`
-- `browser_direct_url`
-- `browser_proxy_sandbox_url`
+Recommended quick checks without leaving artifact-first wiring:
 
-Recommended quick checks:
-
-- browser / artifact-first connect: use the dev server pages or call `/__demo/connect/artifact`
-- proxy runtime / artifact-first connect: use `/__demo/proxy/artifact`
-- node / artifact-first connect: `node ./examples/ts/node-artifact-client.mjs`
+- browser / artifact-first connect: open one of the URLs above or POST to `/__demo/connect/artifact`
+- proxy runtime / artifact-first connect: POST to `/__demo/proxy/artifact` and use the returned artifact bundle in `examples/ts/proxy-sandbox`
+- node / artifact-first connect: pull `controlplane_http_url` from `dev.json` (`jq -r '.controlplane_http_url' dev.json`) and start `FSEC_CONTROLPLANE_BASE_URL=$(jq -r '.controlplane_http_url' dev.json) node ./examples/ts/node-artifact-client.mjs`
 
 ## Artifact-aware CLI helpers
 
