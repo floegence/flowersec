@@ -223,10 +223,10 @@ Stable building blocks:
   - `withObserverContext(...)`
 - `@floegence/flowersec-core/streamhello`
 
-Compatibility-only TypeScript surface:
+Compatibility and alias TypeScript notes:
 
 - legacy raw grant / wrapper / direct connect inputs remain accepted by `connect(...)`, `connectBrowser(...)`, and `connectNode(...)`
-- browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain stable aliases of `@floegence/flowersec-core/controlplane`
+- browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain stable aliases of `@floegence/flowersec-core/controlplane`; new code should prefer the canonical `@floegence/flowersec-core/controlplane` import
 - `requestChannelGrant(...)` / `requestEntryChannelGrant(...)` remain supported for compatibility and bootstrap fallback flows, but they are no longer the preferred controlplane contract
 - `connectTunnelProxyBrowser(...)` and `connectTunnelProxyControllerBrowser(...)` remain stable deprecated aliases over the artifact-first proxy bootstrap cores
 - hybrid ambiguous inputs and legacy inputs mixed with artifact-only fields fail fast

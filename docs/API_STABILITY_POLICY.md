@@ -89,8 +89,8 @@ Breaking changes to stable TypeScript APIs require:
 - packed tarball export verification
 - stable browser/node wrapper paths staying green
 
-`@floegence/flowersec-core/controlplane` is the canonical stable artifact-fetch entry.
-Browser re-exports of `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain stable aliases during the compatibility window.
+`@floegence/flowersec-core/controlplane` is the canonical stable artifact-fetch entry for new TypeScript code.
+Browser re-exports of `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain stable aliases during the compatibility window, but they do not replace the canonical controlplane import in docs or quickstarts.
 
 ### Scoped metadata and proxy runtime
 
@@ -135,7 +135,7 @@ At the same time, these compatibility edges remain intentionally supported:
 - raw direct path
 - `requestChannelGrant(...)` / `requestEntryChannelGrant(...)`
 - existing proxy wire `timeout_ms` compatibility (`omit == 0 == server default`)
-- browser stable aliases for the shared controlplane helpers
+- browser stable aliases for the shared controlplane helpers while `@floegence/flowersec-core/controlplane` stays the preferred import
 
 ## Review checklist
 

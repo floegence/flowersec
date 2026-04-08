@@ -507,6 +507,9 @@ async function main() {
       browser_tunnel_url: browserTunnelURL,
       browser_direct_url: browserDirectURL,
       browser_proxy_sandbox_url: browserProxySandboxURL,
+      ...(controlplane != null && typeof controlplane.controlplane_http_url === "string" && controlplane.controlplane_http_url !== ""
+        ? { controlplane_http_url: controlplane.controlplane_http_url }
+        : {}),
     };
     process.stdout.write(JSON.stringify(ready) + "\n");
     logErr(`[dev-server] ready: ${browserTunnelURL} (tunnel), ${browserDirectURL} (direct), ${browserProxySandboxURL} (proxy-sandbox)`);

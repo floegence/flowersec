@@ -139,11 +139,13 @@ The fastest way to feel the product is the demo bundle in GitHub Releases.
 node ./examples/ts/dev-server.mjs | tee dev.json
 ```
 
-3. Open the URLs printed in `dev.json`:
+3. Use the artifact-first fields printed in `dev.json`:
 
-- `browser_tunnel_url`: fetch a one-time grant, then connect through the tunnel
-- `browser_direct_url`: fetch direct connect info, then connect directly
-- `browser_proxy_sandbox_url`: connect once, then open a proxied HTTP / WebSocket app
+- `browser_proxy_sandbox_url`: recommended end-to-end proxy runtime demo driven by `connect_artifact` + `proxy.runtime`
+- `controlplane_http_url`: canonical controlplane base URL for scripts such as `node ./examples/ts/node-artifact-client.mjs`
+- `browser_tunnel_url` / `browser_direct_url`: browser demos that remain available for compatibility and transport-specific walkthroughs
+
+The preferred helper import for these artifact-first demos is `@floegence/flowersec-core/controlplane`.
 
 Full walkthrough: `examples/README.md`
 
