@@ -18,7 +18,8 @@ func TestLoadConfigCanonicalizesHostsAndValidatesGrantSource(t *testing.T) {
     "max_json_frame_bytes": 1048576,
     "max_chunk_bytes": 262144,
     "max_body_bytes": 67108864,
-    "max_ws_frame_bytes": 33554432
+    "max_ws_frame_bytes": 33554432,
+    "timeout_ms": 30000
   }
 }`), 0o600); err != nil {
 		t.Fatalf("write preset: %v", err)
@@ -59,6 +60,9 @@ func TestLoadConfigCanonicalizesHostsAndValidatesGrantSource(t *testing.T) {
 	}
 	if cfg.Proxy.bridgeOptions.MaxWSFrameBytes != 32*1024*1024 {
 		t.Fatalf("expected codeserver ws frame size, got %d", cfg.Proxy.bridgeOptions.MaxWSFrameBytes)
+	}
+	if cfg.Proxy.bridgeOptions.DefaultHTTPRequestTimeoutMS == nil || *cfg.Proxy.bridgeOptions.DefaultHTTPRequestTimeoutMS != 30000 {
+		t.Fatalf("expected preset timeout_ms to populate bridge timeout, got %#v", cfg.Proxy.bridgeOptions.DefaultHTTPRequestTimeoutMS)
 	}
 	if cfg.Routes[0].Host != "example.com" {
 		t.Fatalf("expected canonical host example.com, got %q", cfg.Routes[0].Host)
@@ -249,5 +253,71 @@ func TestLoadConfigRejectsPresetFileAlongsideDeprecatedProfile(t *testing.T) {
 	_, err := loadConfig(path)
 	if err == nil || !strings.Contains(err.Error(), "proxy.preset_file and deprecated proxy.profile") {
 		t.Fatalf("expected preset/profile conflict error, got %v", err)
+	}
+}
+
+func TestLoadConfigProxyTimeoutOverrideWinsPreset(t *testing.T) {
+	dir := t.TempDir()
+	presetPath := filepath.Join(dir, "default-preset.json")
+	if err := os.WriteFile(presetPath, []byte(`{
+  "v": 1,
+  "preset_id": "default",
+  "limits": {
+    "timeout_ms": 30000
+  }
+}`), 0o600); err != nil {
+		t.Fatalf("write preset: %v", err)
+	}
+	path := filepath.Join(dir, "gateway.json")
+	if err := os.WriteFile(path, []byte(`{
+  "browser": {
+    "allowed_origins": ["https://gateway.example.com"]
+  },
+  "tunnel": {
+    "origin": "https://gateway.example.com"
+  },
+  "proxy": {
+    "preset_file": "`+presetPath+`",
+    "timeout_ms": 12000
+  },
+  "routes": [
+    {"host": "example.com", "grant": {"file": "./grant.json"}}
+  ]
+}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.Proxy.bridgeOptions.DefaultHTTPRequestTimeoutMS == nil || *cfg.Proxy.bridgeOptions.DefaultHTTPRequestTimeoutMS != 12000 {
+		t.Fatalf("expected explicit proxy.timeout_ms to win, got %#v", cfg.Proxy.bridgeOptions.DefaultHTTPRequestTimeoutMS)
+	}
+}
+
+func TestLoadConfigRejectsZeroProxyTimeout(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gateway.json")
+	if err := os.WriteFile(path, []byte(`{
+  "browser": {
+    "allowed_origins": ["https://gateway.example.com"]
+  },
+  "tunnel": {
+    "origin": "https://gateway.example.com"
+  },
+  "proxy": {
+    "timeout_ms": 0
+  },
+  "routes": [
+    {"host": "example.com", "grant": {"file": "./grant.json"}}
+  ]
+}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := loadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "proxy.timeout_ms must be > 0") {
+		t.Fatalf("expected proxy.timeout_ms validation error, got %v", err)
 	}
 }

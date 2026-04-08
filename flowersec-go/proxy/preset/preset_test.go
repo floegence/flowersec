@@ -49,17 +49,38 @@ func TestDecodeJSONRejectsOwnerDocAndZeroTimeout(t *testing.T) {
 }
 
 func TestApplyBridgeOptionsFillsZeroValuesOnly(t *testing.T) {
-	manifest, err := ResolveBuiltin("codeserver")
+	manifest, err := DecodeJSON(strings.NewReader(`{
+	  "v": 1,
+	  "preset_id": "codeserver",
+	  "deprecated": true,
+	  "limits": {
+	    "max_json_frame_bytes": 1048576,
+	    "max_chunk_bytes": 262144,
+	    "max_body_bytes": 67108864,
+	    "max_ws_frame_bytes": 33554432,
+	    "timeout_ms": 45000
+	  }
+	}`))
 	if err != nil {
-		t.Fatalf("ResolveBuiltin: %v", err)
+		t.Fatalf("DecodeJSON: %v", err)
 	}
 	opts := ApplyBridgeOptions(fsproxy.BridgeOptions{}, manifest)
 	if opts.MaxWSFrameBytes != 32*1024*1024 {
 		t.Fatalf("unexpected ws frame bytes: %d", opts.MaxWSFrameBytes)
 	}
+	if opts.DefaultHTTPRequestTimeoutMS == nil || *opts.DefaultHTTPRequestTimeoutMS != 45000 {
+		t.Fatalf("unexpected default timeout: %#v", opts.DefaultHTTPRequestTimeoutMS)
+	}
 
-	explicit := ApplyBridgeOptions(fsproxy.BridgeOptions{MaxWSFrameBytes: 2048}, manifest)
+	explicitTimeout := int64(15000)
+	explicit := ApplyBridgeOptions(fsproxy.BridgeOptions{
+		MaxWSFrameBytes:             2048,
+		DefaultHTTPRequestTimeoutMS: &explicitTimeout,
+	}, manifest)
 	if explicit.MaxWSFrameBytes != 2048 {
 		t.Fatalf("explicit value must win, got %d", explicit.MaxWSFrameBytes)
+	}
+	if explicit.DefaultHTTPRequestTimeoutMS == nil || *explicit.DefaultHTTPRequestTimeoutMS != explicitTimeout {
+		t.Fatalf("explicit timeout must win, got %#v", explicit.DefaultHTTPRequestTimeoutMS)
 	}
 }

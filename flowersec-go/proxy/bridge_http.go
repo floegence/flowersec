@@ -34,6 +34,9 @@ func (b *Bridge) ProxyHTTP(w http.ResponseWriter, r *http.Request, route StreamO
 		Headers:   requestMetaHeadersFromHTTPHeader(r.Header, &b.cfg.compiledHeaderPolicy),
 		TimeoutMS: 0,
 	}
+	if b.cfg.defaultHTTPRequestTimeoutMS != nil {
+		meta.TimeoutMS = *b.cfg.defaultHTTPRequestTimeoutMS
+	}
 	if err := jsonframe.WriteJSONFrame(stream, meta); err != nil {
 		return writeBridgeHTTPError(w, "stream_write_failed", http.StatusBadGateway, "upstream write failed", err)
 	}
