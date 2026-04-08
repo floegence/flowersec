@@ -15,10 +15,13 @@ npm install @floegence/flowersec-core
 Browser (recommended):
 
 ```ts
-import { connectBrowser } from "@floegence/flowersec-core/browser";
+import { connectBrowser, requestConnectArtifact } from "@floegence/flowersec-core/browser";
 
-const grant = await fetch("/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
-const client = await connectBrowser(grant);
+const artifact = await requestConnectArtifact({
+  endpointId: "env_demo",
+});
+
+const client = await connectBrowser(artifact);
 await client.ping();
 client.close();
 ```
@@ -28,8 +31,15 @@ Node.js (recommended):
 ```ts
 import { connectNode } from "@floegence/flowersec-core/node";
 
-const grant = await fetch("https://your-app.example/api/flowersec/channel/init", { method: "POST" }).then((r) => r.json());
-const client = await connectNode(grant, { origin: "https://your-app.example" });
+const artifactEnvelope = await fetch("https://your-app.example/api/flowersec/connect/artifact", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ endpoint_id: "env_demo" }),
+}).then((r) => r.json());
+
+const client = await connectNode(artifactEnvelope.connect_artifact, {
+  origin: "https://your-app.example",
+});
 await client.ping();
 client.close();
 ```

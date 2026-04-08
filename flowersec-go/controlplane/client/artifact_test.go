@@ -129,3 +129,23 @@ func TestRequestConnectArtifact_PreservesStructuredError(t *testing.T) {
 		t.Fatalf("unexpected request error: %+v", reqErr)
 	}
 }
+
+func TestRequestConnectArtifact_RejectsMissingArtifactEnvelope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+		})
+	}))
+	defer srv.Close()
+
+	_, err := RequestConnectArtifact(context.Background(), ConnectArtifactRequestConfig{
+		BaseURL:    srv.URL,
+		EndpointID: "env_art_missing",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "invalid controlplane response: missing connect_artifact" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

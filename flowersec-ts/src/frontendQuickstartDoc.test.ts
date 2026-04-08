@@ -18,6 +18,8 @@ describe("docs/FRONTEND_QUICKSTART.md", () => {
     expect(doc).toContain("createBrowserReconnectConfig");
     expect(doc).toContain('from "@floegence/flowersec-core/node"');
     expect(doc).toContain("connectNode");
+    expect(doc).toContain("artifactEnvelope.connect_artifact");
+    expect(doc).toContain("Manual `fetch(...)` callers must unwrap the stable `connect_artifact` envelope");
 
     // Stable error code contract example (one-time tokens).
     expect(doc).toContain("token_replay");

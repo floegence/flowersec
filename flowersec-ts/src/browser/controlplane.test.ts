@@ -203,4 +203,20 @@ describe("browser controlplane helpers", () => {
     expect(headers.get("Authorization")).toBe("Bearer ticket_2");
     expect(JSON.parse(String(init?.body ?? "{}"))).toEqual({ endpoint_id: "env_art_2" });
   });
+
+  test("requestConnectArtifact rejects malformed success envelopes that omit connect_artifact", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    await expect(
+      requestConnectArtifact({
+        endpointId: "env_art_missing",
+        fetch: fetchMock as typeof fetch,
+      })
+    ).rejects.toThrow("Invalid controlplane response: missing `connect_artifact`");
+  });
 });

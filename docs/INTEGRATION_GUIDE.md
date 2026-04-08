@@ -105,13 +105,13 @@ client.close();
 ```ts
 import { connectNode } from "@floegence/flowersec-core/node";
 
-const artifact = await fetch("https://controlplane.example.com/v1/connect/artifact", {
+const artifactEnvelope = await fetch("https://controlplane.example.com/v1/connect/artifact", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({ endpoint_id: "env_demo" }),
 }).then((r) => r.json());
 
-const client = await connectNode(artifact, {
+const client = await connectNode(artifactEnvelope.connect_artifact, {
   origin: "https://app.example.com",
 });
 ```

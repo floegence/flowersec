@@ -4,8 +4,10 @@ import { once } from "node:events";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { connectDemoTunnel } from "../_examples/flowersec/demo/v1.facade.gen.js";
+import { connectDemoTunnel, createDemoSession } from "../_examples/flowersec/demo/v1.facade.gen.js";
+import type { ConnectArtifact } from "../connect/artifact.js";
 import { connectTunnel } from "../facade.js";
+import { connectNode } from "../node/index.js";
 
 const require = createRequire(import.meta.url);
 const WS = require("ws");
@@ -65,6 +67,43 @@ describe("go<->ts integration", () => {
         code: "invalid_suite",
         path: "tunnel",
       });
+    });
+
+  test("artifact-first connectNode path talks to the Go tunnel harness", { timeout: 60000 }, async () => {
+      const goCwd = path.join(process.cwd(), "..", "flowersec-go");
+      const p = spawn("go", ["run", "./internal/cmd/flowersec-e2e-harness"], {
+        cwd: goCwd,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+
+      let line = "";
+      p.stdout.setEncoding("utf8");
+      p.stdout.on("data", (d: string) => {
+        line += d;
+      });
+
+      await waitForLine(() => line, 20000);
+      const firstLine = line.split("\n")[0]!;
+      const ready = JSON.parse(firstLine) as { grant_client: any };
+      const artifact: ConnectArtifact = {
+        v: 1,
+        transport: "tunnel",
+        tunnel_grant: ready.grant_client,
+      };
+
+      const client = await connectNode(artifact, {
+        origin: "https://app.redeven.com",
+      });
+      const sess = createDemoSession(client);
+      try {
+        const notified = waitNotify(sess.demo, 2000);
+        await expect(sess.demo.ping({})).resolves.toEqual({ ok: true });
+        await expect(notified).resolves.toEqual({ hello: "world" });
+      } finally {
+        sess.close();
+        p.kill("SIGTERM");
+        await once(p, "exit");
+      }
     });
 });
 
