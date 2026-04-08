@@ -90,6 +90,29 @@
         ]
       },
       {
+        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/http",
+        "alias": "cphttp",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/http`",
+        "entries": [
+          { "kind": "const", "expr": "cphttp.DefaultMaxBodyBytes", "doc_token": "`controlplanehttp.DefaultMaxBodyBytes`" },
+          { "kind": "type", "expr": "cphttp.ArtifactRequest", "doc_token": "`controlplanehttp.ArtifactRequest`" },
+          { "kind": "type", "expr": "cphttp.ArtifactEnvelope", "doc_token": "`controlplanehttp.ArtifactEnvelope`" },
+          { "kind": "type", "expr": "cphttp.ErrorEnvelope", "doc_token": "`controlplanehttp.ErrorEnvelope`" },
+          { "kind": "type", "expr": "cphttp.ArtifactRequestMetadata", "doc_token": "`controlplanehttp.ArtifactRequestMetadata`" },
+          { "kind": "type", "expr": "cphttp.ArtifactIssueInput", "doc_token": "`controlplanehttp.ArtifactIssueInput`" },
+          { "kind": "type", "expr": "cphttp.ArtifactHandlerOptions", "doc_token": "`controlplanehttp.ArtifactHandlerOptions`" },
+          { "kind": "type", "expr": "cphttp.RequestError", "doc_token": "`controlplanehttp.RequestError`" },
+          { "kind": "func", "expr": "cphttp.NewRequestError", "doc_token": "`controlplanehttp.NewRequestError(...)`" },
+          { "kind": "func", "expr": "cphttp.DecodeArtifactRequest", "doc_token": "`controlplanehttp.DecodeArtifactRequest(...)`" },
+          { "kind": "func", "expr": "cphttp.WriteArtifactEnvelope", "doc_token": "`controlplanehttp.WriteArtifactEnvelope(...)`" },
+          { "kind": "func", "expr": "cphttp.WriteErrorEnvelope", "doc_token": "`controlplanehttp.WriteErrorEnvelope(...)`" },
+          { "kind": "func", "expr": "cphttp.NewArtifactHandler", "doc_token": "`controlplanehttp.NewArtifactHandler(...)`" },
+          { "kind": "func", "expr": "cphttp.NewEntryArtifactHandler", "doc_token": "`controlplanehttp.NewEntryArtifactHandler(...)`" },
+          { "kind": "func", "expr": "cphttp.DefaultRequestMetadata", "doc_token": "`controlplanehttp.DefaultRequestMetadata(...)`" },
+          { "kind": "func", "expr": "cphttp.IssueArtifact", "doc_token": "`controlplanehttp.IssueArtifact(...)`" }
+        ]
+      },
+      {
         "package": "github.com/floegence/flowersec/flowersec-go/observability",
         "alias": "fsobs",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/observability`",
@@ -220,6 +243,9 @@
           "`connectNode(...)`",
           "`connectTunnelNode(...)`",
           "`connectDirectNode(...)`",
+          "`createNodeReconnectConfig(...)`",
+          "`createTunnelNodeReconnectConfig(...)`",
+          "`createDirectNodeReconnectConfig(...)`",
           "`createNodeWsFactory()`",
           "`ConnectArtifact`",
           "`CorrelationContext`",
@@ -233,6 +259,9 @@
           "connectNode",
           "connectTunnelNode",
           "connectDirectNode",
+          "createNodeReconnectConfig",
+          "createTunnelNodeReconnectConfig",
+          "createDirectNodeReconnectConfig",
           "createNodeWsFactory",
           "assertConnectArtifact"
         ]
@@ -277,6 +306,25 @@
         ]
       },
       {
+        "specifier": "@floegence/flowersec-core/controlplane",
+        "package_json_export": "./controlplane",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/controlplane`",
+          "`requestConnectArtifact(...)`",
+          "`requestEntryConnectArtifact(...)`",
+          "`ControlplaneRequestError`",
+          "`DEFAULT_CONNECT_ARTIFACT_PATH`",
+          "`DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`"
+        ],
+        "runtime_exports": [
+          "requestConnectArtifact",
+          "requestEntryConnectArtifact",
+          "ControlplaneRequestError",
+          "DEFAULT_CONNECT_ARTIFACT_PATH",
+          "DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH"
+        ]
+      },
+      {
         "specifier": "@floegence/flowersec-core/framing",
         "package_json_export": "./framing",
         "doc_tokens": [
@@ -316,6 +364,8 @@
           "`createProxyIntegrationServiceWorkerScript(...)`",
           "`registerProxyIntegration(...)`",
           "`registerServiceWorkerAndEnsureControl(...)`",
+          "`connectArtifactProxyBrowser(...)`",
+          "`connectArtifactProxyControllerBrowser(...)`",
           "`connectTunnelProxyBrowser(...)`",
           "`connectTunnelProxyControllerBrowser(...)`",
           "`createServiceWorkerControllerGuard(...)`",
@@ -334,6 +384,8 @@
           "createProxyIntegrationServiceWorkerScript",
           "registerProxyIntegration",
           "registerServiceWorkerAndEnsureControl",
+          "connectArtifactProxyBrowser",
+          "connectArtifactProxyControllerBrowser",
           "connectTunnelProxyBrowser",
           "connectTunnelProxyControllerBrowser",
           "createServiceWorkerControllerGuard",

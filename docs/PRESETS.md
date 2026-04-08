@@ -1,6 +1,6 @@
 # Proxy Presets
 
-Flowersec v0.18.x replaces stable named proxy profiles with a stable preset manifest contract.
+Flowersec v0.19.x keeps preset manifests as the stable replacement for named proxy profiles.
 
 ## Stable contract
 

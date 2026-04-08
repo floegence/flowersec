@@ -82,9 +82,44 @@ Common stable codes include:
   - `ping_failed`
   - `not_connected`
 
+## Stable controlplane helper contract
+
+Artifact-fetch helpers use a separate, minimal stable contract:
+
+- success: `{ "connect_artifact": ... }`
+- failure: `{ "error": { "code": string, "message": string } }`
+
+TypeScript:
+
+- `ControlplaneRequestError`
+  - `status`
+  - `code`
+  - `responseBody`
+
+Go client:
+
+- `client.RequestError`
+  - `Status`
+  - `Code`
+  - `Message`
+  - `ResponseBody`
+
+Go server helper:
+
+- `controlplanehttp.RequestError`
+  - `Status`
+  - `Code`
+  - `Message`
+  - `Cause`
+
+Important separation:
+
+- connect errors describe the encrypted connection attempt
+- controlplane helper errors describe the HTTP contract used to fetch a `ConnectArtifact`
+
 ## Diagnostics split
 
-Flowersec v0.18.x also defines a stable runtime event contract:
+Flowersec v0.19.x also defines a stable runtime event contract:
 
 - `DiagnosticEvent`
 
@@ -112,6 +147,7 @@ Current stable event codes include:
 For logs and metrics, prefer aggregating by:
 
 - connect failures: `path + stage + code`
+- controlplane HTTP failures: `status + error.code`
 - runtime events: `namespace + stage + code + result`
 
 This keeps dashboards stable across both languages and across internal refactors.

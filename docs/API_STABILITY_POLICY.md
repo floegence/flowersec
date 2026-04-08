@@ -25,13 +25,13 @@ Stable means:
 
 Experimental APIs may ship in the repository, but they are not covered by the same compatibility commitment as the stable surface.
 
-In v0.18.x this explicitly includes:
+In v0.19.x this explicitly includes:
 
 - public normalize helper shapes
 - public scope resolver registration model
-- scoped manifest toolchain/codegen factory
-- concrete scoped payload schemas such as `proxy.runtime`
+- scoped manifest toolchain/codegen factory outside the frozen `proxy.runtime@1` helper contract
 - bilateral scope negotiation semantics
+- direct-transport proxy helper expansion beyond the documented browser/runtime path
 
 ### Internal
 
@@ -46,10 +46,11 @@ Stable source-of-truth artifacts:
 - `stability/connect_error_code_registry.json`
 - `stability/connect_diagnostics_code_registry.json`
 - `stability/proxy_preset_manifest.schema.json`
+- `stability/scopes/proxy.runtime.manifest.json`
 
 Experimental source-of-truth artifacts:
 
-- `stability/scopes/*.manifest.json`
+- `stability/scopes/*.manifest.json` except the frozen `proxy.runtime` v1 manifest above
 - `tools/manifestgen/`
 
 The stable manifest drives:
@@ -72,6 +73,11 @@ Breaking changes to stable Go APIs require:
 - stability checks passing
 - updated interop/parser fixtures when wire-facing JSON contracts change
 
+`github.com/floegence/flowersec/flowersec-go/controlplane/http` is intentionally helper-first:
+
+- stable: request/response contract, decode/write helpers, optional handler assembly points
+- not stable: application-specific policy inside `ExtractMetadata`, `ValidateRequest`, or `IssueArtifact`
+
 ### TypeScript
 
 The stable TypeScript surface is the root package plus documented subpath exports listed in `docs/API_SURFACE.md` and encoded in the manifest.
@@ -83,27 +89,44 @@ Breaking changes to stable TypeScript APIs require:
 - packed tarball export verification
 - stable browser/node wrapper paths staying green
 
+`@floegence/flowersec-core/controlplane` is the canonical stable artifact-fetch entry.
+Browser re-exports of `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain stable aliases during the compatibility window.
+
+### Scoped metadata and proxy runtime
+
+Stable in v0.19.x:
+
+- the `scoped` carrier on `ConnectArtifact`
+- critical fail-fast meaning
+- `proxy.runtime@1` when consumed by the stable proxy helper entrypoints
+
+Experimental in v0.19.x:
+
+- public resolver registration APIs used by generic `connect(...)`
+- relaxed negotiation / dual-read stories across future scope versions
+- ad hoc scope manifests that are not explicitly listed as stable
+
 ### Error and diagnostics contract
 
 For high-level connection APIs, the stable machine-readable contracts are:
 
 - connect result: `{ path, stage, code }`
 - runtime diagnostics: `DiagnosticEvent`
+- controlplane HTTP envelope: `{ connect_artifact }` on success and `{ error: { code, message } }` on failure
 
 Registry sources:
 
 - `stability/connect_error_code_registry.json`
 - `stability/connect_diagnostics_code_registry.json`
 
-## v0.18.x compatibility posture
+## v0.19.x compatibility posture
 
-Flowersec v0.18.x intentionally tightens a few inputs and behaviors to keep the long-term core surface elegant:
+Flowersec v0.19.x keeps the long-term core surface small, but makes the artifact-first path materially easier to adopt:
 
-- hybrid ambiguous connect inputs fail fast
-- client-facing connect helpers reject `grant_server` / server-role raw inputs early
-- new strict APIs no longer use `0 == default`
-- observer callbacks no longer affect connect success semantics
-- named proxy profiles are removed from the stable core surface in favor of preset manifests
+- `@floegence/flowersec-core/controlplane` becomes the recommended TypeScript controlplane entry
+- browser/node reconnect adapters become artifact-aware without duplicating reconnect core logic
+- proxy same-origin and controller-origin helper paths become artifact-first
+- Go gets a thin `controlplane/http` reference layer instead of forcing every integrator to rebuild the same decode/write contract
 
 At the same time, these compatibility edges remain intentionally supported:
 
@@ -112,6 +135,7 @@ At the same time, these compatibility edges remain intentionally supported:
 - raw direct path
 - `requestChannelGrant(...)` / `requestEntryChannelGrant(...)`
 - existing proxy wire `timeout_ms` compatibility (`omit == 0 == server default`)
+- browser stable aliases for the shared controlplane helpers
 
 ## Review checklist
 
@@ -124,7 +148,7 @@ Any change that touches a stable API should answer all of the following:
 5. Do Go compile-time stable symbol checks still pass?
 6. Do TypeScript packed tarball export checks still pass?
 7. Are coverage gates for the affected key packages still green?
-8. Do browser/node/reconnect/controlplane migration paths still have test coverage?
+8. Do browser/node/reconnect/controlplane/proxy migration paths still have test coverage?
 
 ## CI gate mapping
 
@@ -153,4 +177,4 @@ When possible, prefer:
 3. keep old stable API working during the transition window
 4. remove only after an explicit compatibility review
 
-For v0.18.x, named proxy profiles follow this rule: the stable replacement is preset manifests plus gateway `proxy.preset_file`, while the old profile helpers remain compatibility-only and are no longer part of the stable core surface.
+For v0.19.x, grant-first browser helpers and grant-first proxy bootstrap helpers follow this rule: the stable replacement is artifact-first controlplane + proxy helper flows, while the older APIs remain compatibility-only or stable deprecated aliases during the transition window.

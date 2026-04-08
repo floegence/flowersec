@@ -3,9 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   ControlplaneRequestError,
   requestChannelGrant,
-  requestConnectArtifact,
   requestEntryChannelGrant,
-  requestEntryConnectArtifact,
 } from "./controlplane.js";
 
 function makeGrant(channelID: string) {
@@ -19,20 +17,6 @@ function makeGrant(channelID: string) {
     e2ee_psk_b64u: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     allowed_suites: [1],
     default_suite: 1,
-  };
-}
-
-function makeArtifact(channelID: string) {
-  return {
-    v: 1,
-    transport: "tunnel",
-    tunnel_grant: makeGrant(channelID),
-    correlation: {
-      v: 1,
-      trace_id: "trace-0001",
-      session_id: "session-0001",
-      tags: [{ key: "flow", value: "demo" }],
-    },
   };
 }
 
@@ -151,72 +135,12 @@ describe("browser controlplane helpers", () => {
     } satisfies Partial<ControlplaneRequestError>);
   });
 
-  test("requestConnectArtifact posts the stable artifact envelope", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ connect_artifact: makeArtifact("chan_art_1") }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    );
+  test("re-exports the stable artifact helper aliases from the shared controlplane module", async () => {
+    const browser = await import("./controlplane.js");
+    const controlplane = await import("../controlplane/index.js");
 
-    const out = await requestConnectArtifact({
-      baseUrl: "https://cp.example.com/",
-      endpointId: "env_art_1",
-      payload: { floe_app: "demo.app" },
-      correlation: { traceId: "trace-0001" },
-      fetch: fetchMock as typeof fetch,
-    });
-
-    expect(out.transport).toBe("tunnel");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://cp.example.com/v1/connect/artifact",
-      expect.objectContaining({
-        method: "POST",
-        credentials: "omit",
-        body: JSON.stringify({
-          endpoint_id: "env_art_1",
-          payload: { floe_app: "demo.app" },
-          correlation: { trace_id: "trace-0001" },
-        }),
-      })
-    );
-  });
-
-  test("requestEntryConnectArtifact sends bearer token", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ connect_artifact: makeArtifact("chan_art_2") }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    );
-
-    const out = await requestEntryConnectArtifact({
-      endpointId: "env_art_2",
-      entryTicket: "ticket_2",
-      fetch: fetchMock as typeof fetch,
-    });
-
-    expect(out.transport).toBe("tunnel");
-    const [url, init] = fetchMock.mock.calls[0] ?? [];
-    expect(url).toBe("/v1/connect/artifact/entry");
-    const headers = init?.headers as Headers;
-    expect(headers.get("Authorization")).toBe("Bearer ticket_2");
-    expect(JSON.parse(String(init?.body ?? "{}"))).toEqual({ endpoint_id: "env_art_2" });
-  });
-
-  test("requestConnectArtifact rejects malformed success envelopes that omit connect_artifact", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    );
-
-    await expect(
-      requestConnectArtifact({
-        endpointId: "env_art_missing",
-        fetch: fetchMock as typeof fetch,
-      })
-    ).rejects.toThrow("Invalid controlplane response: missing `connect_artifact`");
+    expect(browser.requestConnectArtifact).toBe(controlplane.requestConnectArtifact);
+    expect(browser.requestEntryConnectArtifact).toBe(controlplane.requestEntryConnectArtifact);
+    expect(browser.ControlplaneRequestError).toBe(controlplane.ControlplaneRequestError);
   });
 });

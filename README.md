@@ -40,13 +40,13 @@ Security note: in any non-local deployment, use `wss://` (or terminate TLS at a 
 
 Stable integration entrypoints are documented in `docs/API_SURFACE.md`.
 The stability rules, review checklist, and engineering gate model live in `docs/API_STABILITY_POLICY.md`.
-Flowersec v0.18.x recommends an artifact-first integration path documented in:
+Flowersec v0.19.x recommends an artifact-first integration path documented in:
 
 - `docs/CONNECT_ARTIFACTS.md`
 - `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
 - `docs/CORRELATION_AND_DIAGNOSTICS.md`
 - `docs/PRESETS.md`
-- `docs/V0_18_MIGRATION.md`
+- `docs/V0_19_MIGRATION.md`
 
 ## At a glance
 
@@ -67,7 +67,7 @@ Flowersec v0.18.x recommends an artifact-first integration path documented in:
 | 🌐 Start from the browser SDK | [`docs/FRONTEND_QUICKSTART.md`](docs/FRONTEND_QUICKSTART.md) |
 | 🧩 Integrate Flowersec into my app | [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) |
 | 🧱 Adopt the canonical connect artifact | [`docs/CONNECT_ARTIFACTS.md`](docs/CONNECT_ARTIFACTS.md) |
-| 🔁 Migrate to v0.18 | [`docs/V0_18_MIGRATION.md`](docs/V0_18_MIGRATION.md) |
+| 🔁 Migrate to v0.19 | [`docs/V0_19_MIGRATION.md`](docs/V0_19_MIGRATION.md) |
 | 📦 Replace named proxy profiles | [`docs/PRESETS.md`](docs/PRESETS.md) |
 | 🧭 Understand API stability | [`docs/API_STABILITY_POLICY.md`](docs/API_STABILITY_POLICY.md) |
 | 🚇 Deploy the tunnel | [`docs/TUNNEL_DEPLOYMENT.md`](docs/TUNNEL_DEPLOYMENT.md) |
@@ -152,7 +152,8 @@ Full walkthrough: `examples/README.md`
 ### Browser (recommended)
 
 ```ts
-import { connectBrowser, requestConnectArtifact } from "@floegence/flowersec-core/browser";
+import { connectBrowser } from "@floegence/flowersec-core/browser";
+import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
 
 const artifact = await requestConnectArtifact({
   baseUrl: "/api/flowersec",
@@ -167,20 +168,30 @@ client.close();
 ### Node.js (recommended)
 
 ```ts
-import { connectNode } from "@floegence/flowersec-core/node";
+import { connectNode, createNodeReconnectConfig } from "@floegence/flowersec-core/node";
+import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
 
-const artifactEnvelope = await fetch("https://your-app.example/api/flowersec/connect/artifact", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ endpoint_id: "env_demo" }),
-}).then((r) => r.json());
+const artifact = await requestConnectArtifact({
+  baseUrl: "https://your-app.example/api/flowersec",
+  endpointId: "env_demo",
+});
 
-const client = await connectNode(artifactEnvelope.connect_artifact, {
+const client = await connectNode(artifact, {
   origin: "https://your-app.example",
 });
 
 await client.ping();
 client.close();
+
+const reconnectConfig = createNodeReconnectConfig({
+  artifactControlplane: {
+    baseUrl: "https://your-app.example/api/flowersec",
+    endpointId: "env_demo",
+  },
+  connect: {
+    origin: "https://your-app.example",
+  },
+});
 ```
 
 ## 📦 Deployable pieces
@@ -189,11 +200,13 @@ client.close();
 | --- | --- | --- |
 | `@floegence/flowersec-core/browser` | Browser | High-level client helpers for direct and tunnel connects |
 | `@floegence/flowersec-core/node` | Node.js | Node client helpers with correct Origin handling |
+| `@floegence/flowersec-core/controlplane` | Browser / Node.js | Stable artifact-fetch helpers and error contract |
 | `flowersec-go/client` | Go services / CLIs | High-level Go client APIs |
+| `flowersec-go/controlplane/http` | Go controlplanes | Thin HTTP request/response helpers for artifact issuance |
 | `flowersec-go/endpoint` + `endpoint/serve` | Go server side | Server endpoints that terminate E2EE and serve streams / RPC |
 | `flowersec-tunnel` | Deployable service | Open-source self-hosted rendezvous and byte forwarding for tunnel mode |
 | `flowersec-proxy-gateway` | Deployable service | Browser-facing HTTP / WebSocket gateway over Flowersec proxy streams |
-| helper tools | Local dev / controlplane workflows | Key generation, channel init grants, direct connect info |
+| helper tools | Local dev / controlplane workflows | Key generation, connect artifacts, channel init grants, direct connect info |
 
 <a id="deploy"></a>
 
@@ -329,7 +342,7 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 - Scoped metadata: `docs/SCOPED_METADATA.md`
 - Controlplane artifact fetch: `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
 - Proxy presets: `docs/PRESETS.md`
-- v0.18 migration: `docs/V0_18_MIGRATION.md`
+- v0.19 migration: `docs/V0_19_MIGRATION.md`
 - Tunnel deployment: `docs/TUNNEL_DEPLOYMENT.md`
 - Proxy gateway deployment: `docs/PROXY_GATEWAY_DEPLOYMENT.md`
 - Proxy stream contract: `docs/PROXY.md`

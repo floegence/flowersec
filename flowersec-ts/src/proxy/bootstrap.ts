@@ -1,6 +1,7 @@
 import type { Client } from "../client.js";
-import type { TunnelConnectBrowserOptions } from "../browser/connect.js";
-import { connectTunnelBrowser } from "../browser/connect.js";
+import type { ConnectArtifact } from "../connect/artifact.js";
+import type { ConnectBrowserOptions, TunnelConnectBrowserOptions } from "../browser/connect.js";
+import { connectBrowser, connectTunnelBrowser } from "../browser/connect.js";
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
 
 import {
@@ -12,6 +13,13 @@ import {
 import { registerProxyControllerWindow, type RegisterProxyControllerWindowOptions } from "./controllerWindow.js";
 import type { ProxyPresetInput } from "./preset.js";
 import type { ProxyProfile, ProxyProfileName } from "./profiles.js";
+import {
+  extractProxyRuntimeScopeV1,
+  resolvePresetInputFromScope,
+  resolveRuntimeLimitsFromScope,
+  resolveRuntimePresetLimits,
+  type ProxyRuntimeScopeV1,
+} from "./runtimeScope.js";
 import { createProxyRuntime, type ProxyRuntime } from "./runtime.js";
 
 export type ConnectTunnelProxyBrowserOptions = Readonly<{
@@ -41,6 +49,15 @@ export type ConnectTunnelProxyBrowserHandle = Readonly<{
   dispose: () => Promise<void>;
 }>;
 
+export type ConnectArtifactProxyBrowserOptions = Readonly<{
+  connect?: ConnectBrowserOptions;
+  preset?: ProxyPresetInput;
+  runtimeGlobalKey?: string;
+  runtime?: RegisterProxyIntegrationOptions["runtime"];
+  serviceWorker?: ProxyIntegrationServiceWorkerOptions;
+  plugins?: readonly ProxyIntegrationPlugin[];
+}>;
+
 export type ConnectTunnelProxyControllerBrowserOptions = Readonly<{
   connect?: TunnelConnectBrowserOptions;
   runtime?: RegisterProxyIntegrationOptions["runtime"];
@@ -55,11 +72,41 @@ export type ConnectTunnelProxyControllerBrowserHandle = Readonly<{
   dispose: () => void;
 }>;
 
-export async function connectTunnelProxyBrowser(
-  grant: ChannelInitGrant,
+export type ConnectArtifactProxyControllerBrowserOptions = Readonly<{
+  connect?: ConnectBrowserOptions;
+  runtime?: RegisterProxyIntegrationOptions["runtime"];
+  allowedOrigins?: RegisterProxyControllerWindowOptions["allowedOrigins"];
+  targetWindow?: RegisterProxyControllerWindowOptions["targetWindow"];
+  expectedSource?: RegisterProxyControllerWindowOptions["expectedSource"];
+}>;
+
+function scopeRuntimeToIntegrationOptions(
+  scope: Extract<ProxyRuntimeScopeV1, { mode: "service_worker" }>,
+  opts: ConnectArtifactProxyBrowserOptions
+): Omit<RegisterProxyIntegrationOptions, "client"> {
+  const runtimeLimits = resolveRuntimeLimitsFromScope(scope, opts.runtime);
+  const presetFromScope = resolvePresetInputFromScope(scope, opts.preset);
+  const presetFromLimits = presetFromScope ?? resolveRuntimePresetLimits(scope);
+  const serviceWorker = opts.serviceWorker ?? (scope.mode === "service_worker" ? {
+    scriptUrl: scope.serviceWorker.scriptUrl,
+    scope: scope.serviceWorker.scope,
+  } : undefined);
+  if (!serviceWorker) {
+    throw new Error("service worker config is required for proxy runtime mode");
+  }
+  return {
+    ...(presetFromLimits === undefined ? {} : { preset: presetFromLimits }),
+    ...(opts.runtimeGlobalKey === undefined ? {} : { runtimeGlobalKey: opts.runtimeGlobalKey }),
+    ...(runtimeLimits === undefined ? {} : { runtime: runtimeLimits }),
+    serviceWorker,
+    ...(opts.plugins === undefined ? {} : { plugins: opts.plugins }),
+  };
+}
+
+async function connectProxyBrowserClient(
+  client: Client,
   opts: ConnectTunnelProxyBrowserOptions
 ): Promise<ConnectTunnelProxyBrowserHandle> {
-  const client = await connectTunnelBrowser(grant, opts.connect ?? {});
   const compat = opts as ConnectTunnelProxyBrowserCompatOptions;
 
   const integrationInput: RegisterProxyIntegrationOptions & {
@@ -107,11 +154,15 @@ export async function connectTunnelProxyBrowser(
   };
 }
 
-export async function connectTunnelProxyControllerBrowser(
-  grant: ChannelInitGrant,
-  opts: ConnectTunnelProxyControllerBrowserOptions
-): Promise<ConnectTunnelProxyControllerBrowserHandle> {
-  const client = await connectTunnelBrowser(grant, opts.connect ?? {});
+function connectProxyControllerClient(
+  client: Client,
+  opts: Readonly<{
+    runtime?: RegisterProxyIntegrationOptions["runtime"];
+    allowedOrigins: RegisterProxyControllerWindowOptions["allowedOrigins"];
+    targetWindow?: RegisterProxyControllerWindowOptions["targetWindow"];
+    expectedSource?: RegisterProxyControllerWindowOptions["expectedSource"];
+  }>
+): ConnectTunnelProxyControllerBrowserHandle {
   let runtime: ProxyRuntime | null = null;
   let controller: ReturnType<typeof registerProxyControllerWindow> | null = null;
 
@@ -143,4 +194,45 @@ export async function connectTunnelProxyControllerBrowser(
       client.close();
     },
   };
+}
+
+export async function connectTunnelProxyBrowser(
+  grant: ChannelInitGrant,
+  opts: ConnectTunnelProxyBrowserOptions
+): Promise<ConnectTunnelProxyBrowserHandle> {
+  const client = await connectTunnelBrowser(grant, opts.connect ?? {});
+  return await connectProxyBrowserClient(client, opts);
+}
+
+export async function connectArtifactProxyBrowser(
+  artifact: ConnectArtifact,
+  opts: ConnectArtifactProxyBrowserOptions = {}
+): Promise<ConnectTunnelProxyBrowserHandle> {
+  const scope = extractProxyRuntimeScopeV1(artifact, "service_worker") as Extract<ProxyRuntimeScopeV1, { mode: "service_worker" }>;
+  const client = await connectBrowser(artifact, opts.connect ?? {});
+  const nextOpts = scopeRuntimeToIntegrationOptions(scope, opts);
+  return await connectProxyBrowserClient(client, nextOpts);
+}
+
+export async function connectTunnelProxyControllerBrowser(
+  grant: ChannelInitGrant,
+  opts: ConnectTunnelProxyControllerBrowserOptions
+): Promise<ConnectTunnelProxyControllerBrowserHandle> {
+  const client = await connectTunnelBrowser(grant, opts.connect ?? {});
+  return connectProxyControllerClient(client, opts);
+}
+
+export async function connectArtifactProxyControllerBrowser(
+  artifact: ConnectArtifact,
+  opts: ConnectArtifactProxyControllerBrowserOptions = {}
+): Promise<ConnectTunnelProxyControllerBrowserHandle> {
+  const scope = extractProxyRuntimeScopeV1(artifact, "controller_bridge") as Extract<ProxyRuntimeScopeV1, { mode: "controller_bridge" }>;
+  const client = await connectBrowser(artifact, opts.connect ?? {});
+  const runtime = resolveRuntimeLimitsFromScope(scope, opts.runtime);
+  return connectProxyControllerClient(client, {
+    ...(runtime === undefined ? {} : { runtime }),
+    allowedOrigins: opts.allowedOrigins ?? scope.controllerBridge.allowedOrigins,
+    ...(opts.targetWindow === undefined ? {} : { targetWindow: opts.targetWindow }),
+    ...(opts.expectedSource === undefined ? {} : { expectedSource: opts.expectedSource }),
+  });
 }

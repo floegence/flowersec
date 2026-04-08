@@ -14,6 +14,9 @@ vi.mock("./connect.js", () => ({
 
 vi.mock("./controlplane.js", () => ({
   requestChannelGrant: (...args: unknown[]) => requestChannelGrantMock(...args),
+}));
+
+vi.mock("../controlplane/index.js", () => ({
   requestConnectArtifact: (...args: unknown[]) => requestConnectArtifactMock(...args),
   requestEntryConnectArtifact: (...args: unknown[]) => requestConnectArtifactMock(...args),
 }));
@@ -82,19 +85,30 @@ describe("createBrowserReconnectConfig", () => {
       artifactControlplane: { baseUrl: "https://cp.example.com", endpointId: "env_art_1" },
     });
 
-    await config.connectOnce({ signal: new AbortController().signal, observer: {} });
-    await config.connectOnce({ signal: new AbortController().signal, observer: {} });
+    const ac1 = new AbortController();
+    const ac2 = new AbortController();
+
+    await config.connectOnce({ signal: ac1.signal, observer: {} });
+    await config.connectOnce({ signal: ac2.signal, observer: {} });
 
     expect(requestConnectArtifactMock).toHaveBeenNthCalledWith(1, {
       baseUrl: "https://cp.example.com",
       endpointId: "env_art_1",
       correlation: undefined,
+      signal: ac1.signal,
     });
     expect(requestConnectArtifactMock).toHaveBeenNthCalledWith(2, {
       baseUrl: "https://cp.example.com",
       endpointId: "env_art_1",
       correlation: { traceId: "trace-0001" },
+      signal: ac2.signal,
     });
     expect(connectBrowserMock).toHaveBeenCalledTimes(2);
+    expect(connectBrowserMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        correlation: expect.objectContaining({ session_id: "session-0002" }),
+      }),
+      expect.anything()
+    );
   });
 });

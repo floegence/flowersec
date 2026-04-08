@@ -23,18 +23,20 @@ import (
 
 	"github.com/floegence/flowersec-examples/go/exampleutil"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
+	controlplanehttp "github.com/floegence/flowersec/flowersec-go/controlplane/http"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
 // controlplane_demo is a minimal controlplane service used by the examples:
 // - owns an issuer keypair in-process
 // - writes a tunnel keyset file (kid -> ed25519 pubkey) for the tunnel server to load
-// - exposes HTTP endpoint POST /v1/channel/init to mint grant_client and push grant_server to server endpoints over a direct Flowersec control channel
+// - exposes HTTP endpoints POST /v1/channel/init and POST /v1/connect/artifact to mint client bootstrap material and push grant_server to server endpoints over a direct Flowersec control channel
 //
 // Notes:
 // - Tunnel attach tokens are one-time use. Clients must request a new channel init for each connection attempt.
@@ -203,6 +205,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/v1/channel/init", channelInitHandler(ci, controlEndpoints))
+	mux.Handle("/v1/connect/artifact", connectArtifactHandler(ci, controlEndpoints))
 	handshakeTimeout := 30 * time.Second
 	controlWSHandler, err := endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
 		Upgrader: endpoint.UpgraderOptions{
@@ -439,41 +442,91 @@ func channelInitHandler(ci *channelinit.Service, endpoints *serverEndpointRegist
 			return
 		}
 
-		chID := req.ChannelID
-		if chID == "" {
-			id, err := exampleutil.RandomB64u(24, nil)
-			if err != nil {
-				log.Printf("generate random channel id: %v", err)
-				http.Error(w, "internal error", http.StatusInternalServerError)
+		grantC, _, err := issueTunnelGrantPair(ci, endpoints, req.EndpointID, req.ChannelID)
+		if err != nil {
+			if reqErr, ok := err.(*controlplanehttp.RequestError); ok {
+				http.Error(w, reqErr.Message, reqErr.Status)
 				return
 			}
-			chID = id
-		}
-		// Mint a client grant (role=client) and a server grant (role=server) for the same channel.
-		grantC, grantS, err := ci.NewChannelInit(chID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		if endpoints == nil {
-			http.Error(w, "control channel disabled", http.StatusServiceUnavailable)
-			return
-		}
-		sink, ok := endpoints.Pick(req.EndpointID)
-		if !ok {
-			http.Error(w, "no server endpoint connected", http.StatusServiceUnavailable)
-			return
-		}
-		grantJSON, _ := json.Marshal(grantS)
-		if err := sink.Notify(controlRPCTypeGrantServer, grantJSON); err != nil {
-			http.Error(w, "failed to deliver grant_server", http.StatusServiceUnavailable)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(channelInitResponse{GrantClient: grantC})
 	}
+}
+
+func connectArtifactHandler(ci *channelinit.Service, endpoints *serverEndpointRegistry) http.Handler {
+	return controlplanehttp.NewArtifactHandler(controlplanehttp.ArtifactHandlerOptions{
+		IssueArtifact: func(_ context.Context, input controlplanehttp.ArtifactIssueInput) (*protocolio.ConnectArtifact, error) {
+			artifact, err := issueTunnelArtifact(ci, endpoints, input.EndpointID, payloadChannelID(input.Payload))
+			if err != nil {
+				return nil, err
+			}
+			traceID := strings.TrimSpace(input.TraceID)
+			if traceID != "" {
+				artifact.Correlation = &protocolio.CorrelationContext{
+					V:       1,
+					TraceID: &traceID,
+					Tags:    []protocolio.CorrelationKV{},
+				}
+			}
+			return artifact, nil
+		},
+	})
+}
+
+func issueTunnelArtifact(ci *channelinit.Service, endpoints *serverEndpointRegistry, endpointID string, channelID string) (*protocolio.ConnectArtifact, error) {
+	grantC, _, err := issueTunnelGrantPair(ci, endpoints, endpointID, channelID)
+	if err != nil {
+		return nil, err
+	}
+	return &protocolio.ConnectArtifact{
+		V:           1,
+		Transport:   protocolio.ConnectArtifactTransportTunnel,
+		TunnelGrant: grantC,
+	}, nil
+}
+
+func issueTunnelGrantPair(ci *channelinit.Service, endpoints *serverEndpointRegistry, endpointID string, channelID string) (*controlv1.ChannelInitGrant, *controlv1.ChannelInitGrant, error) {
+	chID := strings.TrimSpace(channelID)
+	if chID == "" {
+		id, err := exampleutil.RandomB64u(24, nil)
+		if err != nil {
+			return nil, nil, controlplanehttp.NewRequestError(http.StatusInternalServerError, "internal_error", "failed to generate channel id", err)
+		}
+		chID = id
+	}
+
+	grantC, grantS, err := ci.NewChannelInit(chID)
+	if err != nil {
+		return nil, nil, controlplanehttp.NewRequestError(http.StatusBadRequest, "invalid_request", err.Error(), err)
+	}
+
+	if endpoints == nil {
+		return nil, nil, controlplanehttp.NewRequestError(http.StatusServiceUnavailable, "unavailable", "control channel disabled", nil)
+	}
+	sink, ok := endpoints.Pick(endpointID)
+	if !ok {
+		return nil, nil, controlplanehttp.NewRequestError(http.StatusServiceUnavailable, "unavailable", "no server endpoint connected", nil)
+	}
+	grantJSON, _ := json.Marshal(grantS)
+	if err := sink.Notify(controlRPCTypeGrantServer, grantJSON); err != nil {
+		return nil, nil, controlplanehttp.NewRequestError(http.StatusServiceUnavailable, "delivery_failed", "failed to deliver grant_server", err)
+	}
+	return grantC, grantS, nil
+}
+
+func payloadChannelID(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	raw, ok := payload["channel_id"].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(raw)
 }
 
 func writeTunnelKeysetFile(ks *issuer.Keyset, out string) error {

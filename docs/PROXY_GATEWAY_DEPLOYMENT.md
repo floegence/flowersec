@@ -25,7 +25,7 @@ docker pull ghcr.io/floegence/flowersec-proxy-gateway:latest
 
 Configuration is a JSON file passed via `--config` or `FSEC_PROXY_GATEWAY_CONFIG`.
 
-Recommended v0.18.x shape:
+Recommended v0.19.x shape:
 
 ```json
 {

@@ -14,16 +14,22 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
+	controlplanehttp "github.com/floegence/flowersec/flowersec-go/controlplane/http"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	demov1 "github.com/floegence/flowersec/flowersec-go/internal/testgen/flowersec/demo/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/yamuxinterop"
+	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
@@ -83,14 +89,57 @@ func main() {
 			TokenExpSeconds: 60,
 		},
 	}
-	grantC, grantS, err := ci.NewChannelInit("chan_e2e_ts_1")
+	grantC, grantS, psk, err := newGrantPair(ci, "chan_e2e_ts")
 	if err != nil {
 		log.Fatal(err)
 	}
-	psk, err := base64url.Decode(grantC.E2eePskB64u)
-	if err != nil {
-		log.Fatal(err)
+
+	var sessionSeq atomic.Uint64
+	const entryTicket = "entry-ticket-demo"
+	issueArtifact := func(input controlplanehttp.ArtifactIssueInput) (*protocolio.ConnectArtifact, error) {
+		if input.IsEntry && strings.TrimSpace(input.EntryTicket) != entryTicket {
+			return nil, controlplanehttp.NewRequestError(http.StatusForbidden, "forbidden", "entry ticket is not valid for this endpoint", nil)
+		}
+
+		grantClient, grantServer, nextPSK, err := newGrantPair(ci, "chan_e2e_ts_cp")
+		if err != nil {
+			return nil, err
+		}
+		go runServerEndpoint(ctx, wsURL, grantServer.ChannelId, grantServer.Token, nextPSK, grantServer.ChannelInitExpireAtUnixS)
+
+		artifact := &protocolio.ConnectArtifact{
+			V:           1,
+			Transport:   protocolio.ConnectArtifactTransportTunnel,
+			TunnelGrant: grantClient,
+		}
+		traceID := strings.TrimSpace(input.TraceID)
+		sessionID := "session-" + strconv.FormatUint(sessionSeq.Add(1), 10)
+		if traceID != "" || sessionID != "" {
+			correlation := &protocolio.CorrelationContext{
+				V:    1,
+				Tags: []protocolio.CorrelationKV{},
+			}
+			if traceID != "" {
+				correlation.TraceID = &traceID
+			}
+			correlation.SessionID = &sessionID
+			artifact.Correlation = correlation
+		}
+		if scope := buildProxyRuntimeScope(input.Payload); scope != nil {
+			artifact.Scoped = append(artifact.Scoped, *scope)
+		}
+		return artifact, nil
 	}
+	mux.Handle("/v1/connect/artifact", controlplanehttp.NewArtifactHandler(controlplanehttp.ArtifactHandlerOptions{
+		IssueArtifact: func(_ context.Context, input controlplanehttp.ArtifactIssueInput) (*protocolio.ConnectArtifact, error) {
+			return issueArtifact(input)
+		},
+	}))
+	mux.Handle("/v1/connect/artifact/entry", controlplanehttp.NewEntryArtifactHandler(controlplanehttp.ArtifactHandlerOptions{
+		IssueArtifact: func(_ context.Context, input controlplanehttp.ArtifactIssueInput) (*protocolio.ConnectArtifact, error) {
+			return issueArtifact(input)
+		},
+	}))
 
 	if scenarioJSON != "" {
 		var scenario yamuxinterop.Scenario
@@ -118,8 +167,10 @@ func main() {
 		}()
 
 		ready := map[string]any{
-			"ws_url":       wsURL,
-			"grant_client": grantC,
+			"ws_url":                wsURL,
+			"grant_client":          grantC,
+			"controlplane_base_url": "http://" + ln.Addr().String(),
+			"entry_ticket":          entryTicket,
 		}
 		_ = json.NewEncoder(os.Stdout).Encode(ready)
 
@@ -140,8 +191,10 @@ func main() {
 	go runServerEndpoint(ctx, wsURL, grantS.ChannelId, grantS.Token, psk, grantS.ChannelInitExpireAtUnixS)
 
 	ready := map[string]any{
-		"ws_url":       wsURL,
-		"grant_client": grantC,
+		"ws_url":                wsURL,
+		"grant_client":          grantC,
+		"controlplane_base_url": "http://" + ln.Addr().String(),
+		"entry_ticket":          entryTicket,
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(ready)
 
@@ -293,6 +346,99 @@ func shutdownHTTPServer(srv *http.Server) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+}
+
+func newGrantPair(ci *channelinit.Service, prefix string) (*controlv1.ChannelInitGrant, *controlv1.ChannelInitGrant, []byte, error) {
+	channelID := prefix + "_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	grantClient, grantServer, err := ci.NewChannelInit(channelID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	psk, err := base64url.Decode(grantClient.E2eePskB64u)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return grantClient, grantServer, psk, nil
+}
+
+func buildProxyRuntimeScope(payload map[string]any) *protocolio.ScopeMetadataEntry {
+	if payload == nil {
+		return nil
+	}
+	mode := strings.TrimSpace(anyString(payload["proxy_mode"]))
+	if mode == "" {
+		return nil
+	}
+	scopeVersion := anyInt(payload["scope_version"], 1)
+	critical := anyBool(payload["critical"])
+	entry := &protocolio.ScopeMetadataEntry{
+		Scope:        "proxy.runtime",
+		ScopeVersion: scopeVersion,
+		Critical:     critical,
+		Payload: protocolio.ScopePayload{
+			"mode": mode,
+			"preset": map[string]any{
+				"presetId": "default",
+			},
+		},
+	}
+	switch mode {
+	case "service_worker":
+		entry.Payload["serviceWorker"] = map[string]any{
+			"scriptUrl": firstNonEmpty(anyString(payload["service_worker_script_url"]), "/proxy-sw.js"),
+			"scope":     firstNonEmpty(anyString(payload["service_worker_scope"]), "/"),
+		}
+	case "controller_bridge":
+		entry.Payload["controllerBridge"] = map[string]any{
+			"allowedOrigins": []string{firstNonEmpty(anyString(payload["allowed_origin"]), "https://app.redeven.com")},
+		}
+	default:
+		entry.Payload["mode"] = mode
+	}
+	return entry
+}
+
+func anyString(value any) string {
+	s, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+func anyBool(value any) bool {
+	b, ok := value.(bool)
+	return ok && b
+}
+
+func anyInt(value any, fallback int) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case float64:
+		if v == float64(int(v)) {
+			return int(v)
+		}
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return int(n)
+		}
+	}
+	return fallback
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // mustTestIssuer creates a deterministic issuer keyset and writes it to disk.

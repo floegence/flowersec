@@ -9,6 +9,7 @@ export { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.j
 export * from "./integration.js";
 export * from "./controllerGuard.js";
 export * from "./bootstrap.js";
+export * from "./runtimeScope.js";
 export * from "./controllerWindow.js";
 export * from "./appWindow.js";
 export * from "./wsPatch.js";

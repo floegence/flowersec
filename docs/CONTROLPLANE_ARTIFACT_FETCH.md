@@ -1,20 +1,29 @@
 # Controlplane Artifact Fetch
 
-Flowersec v0.18.x adds stable helper semantics for fetching a client-facing `ConnectArtifact` from a controlplane.
+Flowersec v0.19.x keeps one stable client-facing contract for fetching a `ConnectArtifact` from a controlplane.
 
 ## Stable helper surface
 
 TypeScript:
 
-- `requestConnectArtifact(...)`
-- `requestEntryConnectArtifact(...)`
-- `ControlplaneRequestError`
+- `@floegence/flowersec-core/controlplane`
+  - `requestConnectArtifact(...)`
+  - `requestEntryConnectArtifact(...)`
+  - `ControlplaneRequestError`
+  - `DEFAULT_CONNECT_ARTIFACT_PATH`
+  - `DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`
+- `@floegence/flowersec-core/browser`
+  - `requestConnectArtifact(...)`
+  - `requestEntryConnectArtifact(...)`
+  - `ControlplaneRequestError`
 
 Go:
 
 - `client.RequestConnectArtifact(...)`
 - `client.RequestEntryConnectArtifact(...)`
 - `client.RequestError`
+- `controlplanehttp.NewArtifactHandler(...)`
+- `controlplanehttp.NewEntryArtifactHandler(...)`
 
 ## Stable request semantics
 
@@ -91,6 +100,14 @@ Go `client.RequestError` preserves:
 - `Message`
 - `ResponseBody`
 
+Go `controlplane/http` keeps the same outward envelope while letting applications own auth, audit, and policy:
+
+- `controlplanehttp.DecodeArtifactRequest(...)`
+- `controlplanehttp.WriteArtifactEnvelope(...)`
+- `controlplanehttp.WriteErrorEnvelope(...)`
+- `controlplanehttp.ArtifactRequestMetadata`
+- `controlplanehttp.ArtifactIssueInput`
+
 On non-`2xx` responses, helpers keep the HTTP status plus the structured error envelope when present.
 
 Manual callers that fetch the controlplane endpoint directly must unwrap `connect_artifact` before passing it into client connect helpers.
@@ -121,11 +138,15 @@ Helper defaults use first-party reference paths:
 Those default paths are helper defaults, not a globally frozen Flowersec core protocol requirement.
 Third-party controlplanes may use different URLs and pass them via helper configuration, as long as the request/response envelope semantics stay equivalent.
 
+`path` is an advanced override.
+Quickstart and recommended integrations should treat the default endpoints above as the stable baseline.
+
 ## Reconnect guidance
 
 Artifact-aware reconnect adapters should:
 
 - carry forward the previous shared `trace_id`
 - ingest a newly issued `session_id` from the fresh artifact
+- forward `signal` so canceled reconnect attempts also cancel artifact fetch/refresh
 
 The reconnect core itself should remain transport/framework agnostic.

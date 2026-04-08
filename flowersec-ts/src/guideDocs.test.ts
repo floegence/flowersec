@@ -8,25 +8,27 @@ function readRepoFile(...parts: string[]): string {
 }
 
 describe("documentation contracts", () => {
-  it("README quickstart stays aligned with artifact-first browser and node flows", () => {
+  it("README quickstart stays aligned with artifact-first browser, controlplane, and node flows", () => {
     const doc = readRepoFile("README.md");
 
-    expect(doc).toContain('import { connectBrowser, requestConnectArtifact } from "@floegence/flowersec-core/browser";');
+    expect(doc).toContain('import { connectBrowser } from "@floegence/flowersec-core/browser";');
+    expect(doc).toContain('import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";');
     expect(doc).toContain("connectBrowser(artifact)");
-    expect(doc).toContain('import { connectNode } from "@floegence/flowersec-core/node";');
-    expect(doc).toContain("const artifactEnvelope = await fetch(");
-    expect(doc).toContain("connectNode(artifactEnvelope.connect_artifact");
-    expect(doc).toContain('body: JSON.stringify({ endpoint_id: "env_demo" })');
+    expect(doc).toContain('import { connectNode, createNodeReconnectConfig } from "@floegence/flowersec-core/node";');
+    expect(doc).toContain("const artifact = await requestConnectArtifact({");
+    expect(doc).toContain("createNodeReconnectConfig({");
+    expect(doc).toContain('baseUrl: "https://your-app.example/api/flowersec"');
   });
 
   it("package README keeps the TypeScript package examples on the recommended artifact-first path", () => {
     const doc = fs.readFileSync(path.join(process.cwd(), "README.md"), "utf8");
 
-    expect(doc).toContain('import { connectBrowser, requestConnectArtifact } from "@floegence/flowersec-core/browser";');
+    expect(doc).toContain('import { connectBrowser } from "@floegence/flowersec-core/browser";');
+    expect(doc).toContain('import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";');
     expect(doc).toContain("requestConnectArtifact({");
     expect(doc).toContain("connectBrowser(artifact)");
-    expect(doc).toContain("const artifactEnvelope = await fetch(");
-    expect(doc).toContain("connectNode(artifactEnvelope.connect_artifact");
+    expect(doc).toContain("createNodeReconnectConfig({");
+    expect(doc).toContain("connectNode(artifact");
   });
 
   it("integration guide keeps browser and node examples aligned with the stable helper contract", () => {
@@ -35,7 +37,8 @@ describe("documentation contracts", () => {
     expect(doc).toContain("requestConnectArtifact(...)");
     expect(doc).toContain("requestEntryConnectArtifact(...)");
     expect(doc).toContain("connectBrowser(artifact, {})");
-    expect(doc).toContain("connectNode(artifactEnvelope.connect_artifact");
+    expect(doc).toContain("createNodeReconnectConfig(...)");
+    expect(doc).toContain("controlplanehttp.NewArtifactHandler(...)");
     expect(doc).toContain("client.RequestConnectArtifact(...)");
   });
 
@@ -55,7 +58,8 @@ describe("documentation contracts", () => {
     expect(doc).toContain('"connect_artifact"');
     expect(doc).toContain("ControlplaneRequestError");
     expect(doc).toContain("client.RequestError");
-    expect(doc).toContain("artifactEnvelope.connect_artifact");
+    expect(doc).toContain("controlplanehttp.NewArtifactHandler(...)");
+    expect(doc).toContain("connectNode(artifactEnvelope.connect_artifact");
     expect(doc).toContain("error.code");
     expect(doc).toContain("error.message");
   });

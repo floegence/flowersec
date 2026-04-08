@@ -1,6 +1,7 @@
-# Flowersec v0.18 Migration
+# Flowersec v0.18 Migration (Historical)
 
 This guide summarizes the compatibility changes and the preferred migration path for Flowersec v0.18.x.
+For current integrations, prefer `docs/V0_19_MIGRATION.md`.
 
 ## Recommended migration path
 

@@ -184,4 +184,84 @@ describe("registerProxyControllerWindow", () => {
     await waitFor(() => stream.writes.length === 1 && stream.closeCalls === 1);
     expect(stream.writes[0]).toEqual(new Uint8Array([9, 8]));
   });
+
+  it("rejects bridge messages from unexpected origins", () => {
+    const targetWindow = new FakeWindow();
+    const runtime = {
+      dispatchFetch: vi.fn(),
+      openWebSocketStream: vi.fn(),
+      limits: {},
+      dispose: () => {},
+    };
+
+    registerProxyControllerWindow({
+      runtime: runtime as any,
+      allowedOrigins: ["https://app.example.test"],
+      targetWindow: targetWindow as unknown as Window,
+    });
+
+    const channel = createFakeMessageChannel();
+    targetWindow.emit({
+      origin: "https://evil.example.test",
+      data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req: { id: "req-1", method: "GET", path: "/", headers: [] } },
+      ports: [channel.port1],
+      source: null,
+    } as MessageEvent);
+
+    expect(runtime.dispatchFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects bridge messages from an unexpected source window", () => {
+    const targetWindow = new FakeWindow();
+    const expectedSource = {} as Window;
+    const runtime = {
+      dispatchFetch: vi.fn(),
+      openWebSocketStream: vi.fn(),
+      limits: {},
+      dispose: () => {},
+    };
+
+    registerProxyControllerWindow({
+      runtime: runtime as any,
+      allowedOrigins: ["https://app.example.test"],
+      expectedSource,
+      targetWindow: targetWindow as unknown as Window,
+    });
+
+    const channel = createFakeMessageChannel();
+    targetWindow.emit({
+      origin: "https://app.example.test",
+      data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req: { id: "req-2", method: "GET", path: "/", headers: [] } },
+      ports: [channel.port1],
+      source: {} as MessageEventSource,
+    } as MessageEvent);
+
+    expect(runtime.dispatchFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects bridge messages when current app origin is not allowlisted", () => {
+    const targetWindow = new FakeWindow();
+    const runtime = {
+      dispatchFetch: vi.fn(),
+      openWebSocketStream: vi.fn(),
+      limits: {},
+      dispose: () => {},
+    };
+
+    registerProxyControllerWindow({
+      runtime: runtime as any,
+      allowedOrigins: ["https://different.example.test"],
+      targetWindow: targetWindow as unknown as Window,
+    });
+
+    const channel = createFakeMessageChannel();
+    targetWindow.emit({
+      origin: "https://app.example.test",
+      data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req: { id: "req-3", method: "GET", path: "/", headers: [] } },
+      ports: [channel.port1],
+      source: null,
+    } as MessageEvent);
+
+    expect(runtime.dispatchFetch).not.toHaveBeenCalled();
+  });
 });

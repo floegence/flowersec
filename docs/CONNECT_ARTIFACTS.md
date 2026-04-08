@@ -1,8 +1,8 @@
 # Connect Artifacts
 
-Flowersec v0.18.x introduces a stable client-facing canonical connect artifact: `ConnectArtifact`.
+Flowersec v0.19.x keeps one stable client-facing canonical connect artifact: `ConnectArtifact`.
 
-It is the recommended integration shape for new controlplanes, browser helpers, Node helpers, and CLI/demo minting flows.
+It is the recommended integration shape for new controlplanes, browser helpers, Node helpers, reconnect adapters, and CLI/demo minting flows.
 
 ## Why it exists
 
@@ -50,6 +50,45 @@ Stable parser rules:
 
 Embedded `ChannelInitGrant` / `DirectConnectInfo` keep additive unknown-field tolerance.
 
+## `proxy.runtime`
+
+`proxy.runtime` is the first frozen scoped payload carried by `ConnectArtifact`.
+
+Stable helper-level contract:
+
+- `scope = "proxy.runtime"`
+- `scope_version = 1`
+- `mode = "service_worker" | "controller_bridge"`
+
+Recommended helper entrypoints:
+
+- `connectArtifactProxyBrowser(...)`
+- `connectArtifactProxyControllerBrowser(...)`
+
+These helper entrypoints fail fast when `proxy.runtime@1` is missing, malformed, or uses an unsupported `scope_version`.
+
+## Stable language-level exports
+
+TypeScript:
+
+- `ConnectArtifact`
+- `CorrelationContext`
+- `CorrelationKV`
+- `TunnelClientConnectArtifact`
+- `DirectClientConnectArtifact`
+- `ScopeMetadataEntry`
+- `assertConnectArtifact(...)`
+
+Go:
+
+- `protocolio.ConnectArtifact`
+- `protocolio.TunnelClientConnectArtifact`
+- `protocolio.DirectClientConnectArtifact`
+- `protocolio.CorrelationContext`
+- `protocolio.CorrelationKV`
+- `protocolio.ScopeMetadataEntry`
+- `protocolio.DecodeConnectArtifactJSON(...)`
+
 ## Examples
 
 Tunnel artifact:
@@ -78,35 +117,13 @@ Direct artifact:
 }
 ```
 
-## Stable language-level exports
-
-TypeScript:
-
-- `ConnectArtifact`
-- `CorrelationContext`
-- `CorrelationKV`
-- `TunnelClientConnectArtifact`
-- `DirectClientConnectArtifact`
-- `ScopeMetadataEntry`
-- `assertConnectArtifact(...)`
-
-Go:
-
-- `protocolio.ConnectArtifact`
-- `protocolio.TunnelClientConnectArtifact`
-- `protocolio.DirectClientConnectArtifact`
-- `protocolio.CorrelationContext`
-- `protocolio.CorrelationKV`
-- `protocolio.ScopeMetadataEntry`
-- `protocolio.DecodeConnectArtifactJSON(...)`
-
 ## Recommended usage
 
 TypeScript:
 
 ```ts
 import { connect } from "@floegence/flowersec-core";
-import { requestConnectArtifact } from "@floegence/flowersec-core/browser";
+import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
 
 const artifact = await requestConnectArtifact({ endpointId: "demo" });
 const client = await connect(artifact, {});
@@ -124,11 +141,11 @@ client, err := client.Connect(ctx, artifact, client.WithOrigin(origin))
 
 ## Compatibility notes
 
-Flowersec still accepts legacy raw inputs, but v0.18.x now rejects:
+Flowersec still accepts legacy raw inputs, but v0.19.x now rejects:
 
 - hybrid ambiguous objects
 - legacy objects mixed with artifact-only fields
 - client-facing `grant_server` / server-role inputs
 - `token` / `role` heuristics as auto-detect shortcuts
 
-See `docs/V0_18_MIGRATION.md` for the exact migration guidance.
+See `docs/V0_19_MIGRATION.md` for the exact migration guidance.

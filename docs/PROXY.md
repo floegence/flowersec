@@ -3,7 +3,7 @@
 This document defines the stable, cross-language contract for **flowersec-proxy**:
 carrying HTTP/1.1 and WebSocket traffic over Flowersec custom Yamux streams.
 
-Status: experimental; not audited.
+Status: proxy stream contract stable, helper ergonomics evolving; not audited.
 
 See also:
 
@@ -14,11 +14,22 @@ See also:
 - Threat model and trust boundaries: `docs/THREAT_MODEL.md`
 - Gateway deployment: `docs/PROXY_GATEWAY_DEPLOYMENT.md`
 
-## v0.18 surface notes
+## v0.19 surface notes
 
-This document defines the stable proxy stream contracts.
+This document defines the stable proxy stream contracts and the recommended artifact-first browser helper paths.
 
-Related v0.18 configuration guidance:
+Recommended helper entrypoints:
+
+- same-origin service worker: `connectArtifactProxyBrowser(...)`
+- controller-origin/runtime-isolation: `connectArtifactProxyControllerBrowser(...)`
+- app-origin bridge: `registerProxyAppWindow(...)`
+
+Compatibility paths still available:
+
+- `connectTunnelProxyBrowser(...)`
+- `connectTunnelProxyControllerBrowser(...)`
+
+Related v0.19 configuration guidance:
 
 - use preset manifests instead of stable named proxy profiles
 - new strict preset/artifact APIs do not use `0 == default`
@@ -378,6 +389,15 @@ Requirements:
     `createProxyServiceWorkerScript({ windowTarget: "request_client", windowClientMessageType: "flowersec-proxy:window_fetch" })`
     so SW fetches are routed back to the controlled app window and then forwarded to the controller window.
   - This mode is intentionally narrower than same-origin runtime globals: the app origin never receives the raw `ProxyRuntime` object or its internal state.
+
+Artifact-first helper boundary:
+
+- `connectArtifactProxyBrowser(...)` consumes `proxy.runtime@1` with `mode = "service_worker"`.
+- `connectArtifactProxyControllerBrowser(...)` consumes `proxy.runtime@1` with `mode = "controller_bridge"`.
+- `allowedOrigins` is the frozen controller-bridge security input.
+- deployment-specific path details stay caller-provided or boot-payload-specific; they are not frozen as proxy helper API surface.
+- service-worker registration details may still be caller-provided overrides even when the artifact scope pre-populates them.
+- direct transport is not a stable proxy helper path in v0.19.x; the artifact-first helpers are tunnel-first browser integrations.
 
 ### 6.2 Gateway mode (L7 reverse proxy)
 

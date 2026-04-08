@@ -1,6 +1,6 @@
 # Correlation And Diagnostics
 
-Flowersec v0.18.x separates two concerns that used to blur together:
+Flowersec v0.19.x keeps two stable concepts separate:
 
 - connect artifact correlation metadata
 - runtime diagnostics events
@@ -92,5 +92,8 @@ Artifact-aware adapters may propagate:
 
 - prior `trace_id`
 - newly issued `session_id`
+- cancellation via `signal` during artifact refresh
 
 Framework-agnostic reconnect core should remain unaware of artifact/controlplane specifics.
+
+`requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, `createBrowserReconnectConfig(...)`, and `createNodeReconnectConfig(...)` should preserve this boundary instead of inventing a second correlation contract.

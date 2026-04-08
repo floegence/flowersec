@@ -13,12 +13,16 @@ describe("docs/FRONTEND_QUICKSTART.md", () => {
 
     // Stable TypeScript entrypoints.
     expect(doc).toContain('from "@floegence/flowersec-core/browser"');
+    expect(doc).toContain('from "@floegence/flowersec-core/controlplane"');
     expect(doc).toContain("connectBrowser");
-    expect(doc).toContain("requestEntryChannelGrant");
+    expect(doc).toContain("connectArtifactProxyBrowser");
+    expect(doc).toContain("connectArtifactProxyControllerBrowser");
+    expect(doc).toContain("registerProxyAppWindow");
     expect(doc).toContain("createBrowserReconnectConfig");
     expect(doc).toContain('from "@floegence/flowersec-core/node"');
     expect(doc).toContain("connectNode");
-    expect(doc).toContain("artifactEnvelope.connect_artifact");
+    expect(doc).toContain("createNodeReconnectConfig");
+    expect(doc).toContain("connectNode(artifact");
     expect(doc).toContain("Manual `fetch(...)` callers must unwrap the stable `connect_artifact` envelope");
 
     // Stable error code contract example (one-time tokens).

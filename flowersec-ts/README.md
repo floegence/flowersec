@@ -1,6 +1,6 @@
 # @floegence/flowersec-core
 
-Flowersec core TypeScript library for building an end-to-end encrypted, multiplexed connection over WebSocket (browser-friendly).
+Flowersec core TypeScript library for building end-to-end encrypted, multiplexed connections over WebSocket in browsers and Node.js.
 
 Status: experimental; not audited.
 
@@ -10,12 +10,13 @@ Status: experimental; not audited.
 npm install @floegence/flowersec-core
 ```
 
-## Usage
+## Recommended usage
 
-Browser (recommended):
+Browser:
 
 ```ts
-import { connectBrowser, requestConnectArtifact } from "@floegence/flowersec-core/browser";
+import { connectBrowser } from "@floegence/flowersec-core/browser";
+import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
 
 const artifact = await requestConnectArtifact({
   endpointId: "env_demo",
@@ -26,27 +27,41 @@ await client.ping();
 client.close();
 ```
 
-Node.js (recommended):
+Node.js:
 
 ```ts
-import { connectNode } from "@floegence/flowersec-core/node";
+import { connectNode, createNodeReconnectConfig } from "@floegence/flowersec-core/node";
+import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
 
-const artifactEnvelope = await fetch("https://your-app.example/api/flowersec/connect/artifact", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ endpoint_id: "env_demo" }),
-}).then((r) => r.json());
+const artifact = await requestConnectArtifact({
+  baseUrl: "https://your-app.example/api/flowersec",
+  endpointId: "env_demo",
+});
 
-const client = await connectNode(artifactEnvelope.connect_artifact, {
+const client = await connectNode(artifact, {
   origin: "https://your-app.example",
 });
 await client.ping();
 client.close();
+
+const reconnectConfig = createNodeReconnectConfig({
+  artifactControlplane: {
+    baseUrl: "https://your-app.example/api/flowersec",
+    endpointId: "env_demo",
+  },
+  connect: {
+    origin: "https://your-app.example",
+  },
+});
 ```
+
+Browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain available from `@floegence/flowersec-core/browser` as stable aliases.
 
 ## Docs
 
 - Frontend quickstart: `docs/FRONTEND_QUICKSTART.md`
 - Integration guide: `docs/INTEGRATION_GUIDE.md`
 - API surface contract: `docs/API_SURFACE.md`
+- Controlplane artifact fetch: `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
 - Error model: `docs/ERROR_MODEL.md`
+- Migration guide: `docs/V0_19_MIGRATION.md`

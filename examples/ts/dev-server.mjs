@@ -382,6 +382,55 @@ async function main() {
         res.end(text);
         return;
       }
+      if (u.pathname === "/__demo/connect/artifact" || u.pathname === "/__demo/proxy/artifact") {
+        if (controlplane == null || typeof controlplane.controlplane_http_url !== "string" || controlplane.controlplane_http_url === "") {
+          res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "tunnel stack not started" }));
+          return;
+        }
+        if (req.method !== "POST") {
+          res.writeHead(405, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "method not allowed" }));
+          return;
+        }
+        const body = await readBody(req, 8 * 1024);
+        const url = new URL("/v1/connect/artifact", controlplane.controlplane_http_url);
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: body ?? JSON.stringify({ endpoint_id: "server-1" }),
+        });
+        const text = await resp.text();
+        if (!resp.ok) {
+          res.writeHead(resp.status, { "content-type": resp.headers.get("content-type") ?? "application/json; charset=utf-8" });
+          res.end(text);
+          return;
+        }
+        const artifactEnvelope = JSON.parse(text);
+        const artifact = artifactEnvelope.connect_artifact;
+        if (u.pathname === "/__demo/proxy/artifact") {
+          artifact.scoped = [
+            {
+              scope: "proxy.runtime",
+              scope_version: 1,
+              critical: true,
+              payload: {
+                mode: "service_worker",
+                serviceWorker: {
+                  scriptUrl: "/examples/ts/proxy-sandbox/sw.js",
+                  scope: "/examples/ts/proxy-sandbox/",
+                },
+                preset: {
+                  presetId: "default",
+                },
+              },
+            },
+          ];
+        }
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ connect_artifact: artifact }));
+        return;
+      }
       if (u.pathname === "/__demo/direct/info") {
         if (direct == null) {
           res.writeHead(503, { "content-type": "application/json; charset=utf-8" });

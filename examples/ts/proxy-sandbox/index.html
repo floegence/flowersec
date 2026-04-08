@@ -21,13 +21,13 @@
       a Service Worker intercepts requests for <span class="mono">/examples/ts/proxy-sandbox/app/</span> and forwards them to a Flowersec runtime.
     </p>
     <p>
-      Paste JSON from <span class="mono">/v1/channel/init</span> (either the full object or <span class="mono">grant_client</span> only).
+      Paste a <span class="mono">connect_artifact</span> envelope, or use the dev server to mint an artifact-first proxy bootstrap payload.
     </p>
 
     <textarea id="in" spellcheck="false"></textarea>
 
     <div class="row">
-      <button id="fetch" disabled>Fetch Grant</button>
+      <button id="fetch" disabled>Fetch Artifact</button>
       <button id="connect">Connect</button>
       <button id="open" disabled>Open App</button>
       <button id="close" disabled>Close</button>
@@ -39,8 +39,7 @@
     <iframe id="app" title="proxied app"></iframe>
 
     <script type="module">
-      import { connectTunnelBrowser } from "../../../flowersec-ts/dist/browser/index.js";
-      import { createProxyRuntime } from "../../../flowersec-ts/dist/proxy/index.js";
+      import { connectArtifactProxyBrowser } from "../../../flowersec-ts/dist/proxy/index.js";
 
       const $in = document.getElementById("in");
       const $out = document.getElementById("out");
@@ -51,8 +50,7 @@
       const $status = document.getElementById("status");
       const $app = document.getElementById("app");
 
-      let client = null;
-      let runtime = null;
+      let handle = null;
 
       function logLine(s) {
         $out.textContent += s + "\n";
@@ -74,9 +72,9 @@
 
       $fetch.addEventListener("click", async () => {
         $out.textContent = "";
-        setStatus("fetching grant...");
+        setStatus("fetching artifact...");
         try {
-          const resp = await fetch("/__demo/channel/init", {
+          const resp = await fetch("/__demo/proxy/artifact", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: "{}",
@@ -85,33 +83,30 @@
           if (!resp.ok) throw new Error(`fetch failed (${resp.status}): ${text}`);
           const obj = JSON.parse(text);
           $in.value = JSON.stringify(obj, null, 2);
-          setStatus("grant loaded");
+          setStatus("artifact loaded");
         } catch (e) {
           setStatus("fetch failed");
           logLine(String(e?.stack ?? e));
         }
       });
 
-      async function ensureServiceWorker() {
-        // The SW is scoped to /examples/ts/proxy-sandbox/ but only proxies /examples/ts/proxy-sandbox/app/.
-        const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
-        await navigator.serviceWorker.ready;
-        return reg;
-      }
-
       $connect.addEventListener("click", async () => {
         $out.textContent = "";
         setStatus("connecting...");
         try {
           const obj = JSON.parse($in.value);
-          client = await connectTunnelBrowser(obj);
-          runtime = createProxyRuntime({ client });
-          // Make runtime discoverable to the injected app bootstrap (SW-injected <script>).
-          window.__flowersecProxyRuntime = runtime;
-          await ensureServiceWorker();
+          const artifact = obj?.connect_artifact ?? obj;
+          handle = await connectArtifactProxyBrowser(artifact, {
+            serviceWorker: {
+              scriptUrl: "./sw.js",
+              scope: "./",
+            },
+          });
+          // Make runtime discoverable to the injected app bootstrap (same-origin iframe).
+          window.__flowersecProxyRuntime = handle.runtime;
           $open.disabled = false;
           $close.disabled = false;
-          setStatus("connected (sw ready)");
+          setStatus("connected (artifact-first proxy ready)");
         } catch (e) {
           setStatus("connect failed");
           logLine(String(e?.stack ?? e));
@@ -119,20 +114,19 @@
       });
 
       $open.addEventListener("click", async () => {
-        if (!runtime) return;
+        if (!handle?.runtime) return;
         $app.src = "./app/";
       });
 
       $close.addEventListener("click", async () => {
         try {
           $app.src = "about:blank";
-          runtime?.dispose();
-          client?.close();
+          await handle?.dispose?.();
         } catch {
           // ignore
         } finally {
-          client = null;
-          runtime = null;
+          handle = null;
+          window.__flowersecProxyRuntime = null;
           $open.disabled = true;
           $close.disabled = true;
           setStatus("closed");
@@ -148,4 +142,3 @@
     </script>
   </body>
 </html>
-

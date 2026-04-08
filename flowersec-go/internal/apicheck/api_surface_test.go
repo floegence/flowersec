@@ -10,15 +10,19 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
+	cpclient "github.com/floegence/flowersec/flowersec-go/controlplane/client"
+	cphttp "github.com/floegence/flowersec/flowersec-go/controlplane/http"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/origin"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/proxy"
+	proxypreset "github.com/floegence/flowersec/flowersec-go/proxy/preset"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 )
 
@@ -57,6 +61,42 @@ var (
 	_ = protocolio.DecodeGrantServerJSON
 	_ = protocolio.DecodeGrantJSON
 	_ = protocolio.DecodeDirectConnectInfoJSON
+	_ = protocolio.DecodeConnectArtifactJSON
+	_ protocolio.ConnectArtifact
+	_ protocolio.TunnelClientConnectArtifact
+	_ protocolio.DirectClientConnectArtifact
+	_ protocolio.CorrelationContext
+	_ protocolio.CorrelationKV
+	_ protocolio.ScopeMetadataEntry
+
+	// controlplane/client
+	_ = cpclient.RequestConnectArtifact
+	_ = cpclient.RequestEntryConnectArtifact
+	_ cpclient.RequestError
+
+	// controlplane/http
+	_ int64 = cphttp.DefaultMaxBodyBytes
+	_ cphttp.ArtifactRequest
+	_ cphttp.ArtifactEnvelope
+	_ cphttp.ErrorEnvelope
+	_ cphttp.ArtifactRequestMetadata
+	_ cphttp.ArtifactIssueInput
+	_ cphttp.ArtifactHandlerOptions
+	_ cphttp.RequestError
+	_ = cphttp.NewRequestError
+	_ = cphttp.DecodeArtifactRequest
+	_ = cphttp.WriteArtifactEnvelope
+	_ = cphttp.WriteErrorEnvelope
+	_ = cphttp.NewArtifactHandler
+	_ = cphttp.NewEntryArtifactHandler
+	_ = cphttp.DefaultRequestMetadata
+	_ = cphttp.IssueArtifact
+
+	// observability
+	_ observability.DiagnosticEvent
+	_ observability.ClientObserver = nil
+	_                              = observability.NormalizeClientObserver
+	_                              = observability.WithClientObserverContext
 
 	// origin
 	_ = origin.FromWSURL
@@ -64,6 +104,12 @@ var (
 
 	// proxy
 	_ = proxy.Register
+
+	// proxy/preset
+	_ proxypreset.Manifest
+	_ = proxypreset.DecodeJSON
+	_ = proxypreset.LoadFile
+	_ = proxypreset.ApplyBridgeOptions
 
 	// rpc
 	_ = rpc.NewRouter

@@ -2,7 +2,7 @@
 
 This folder is the demo cookbook for Flowersec.
 
-v0.18.x adds an artifact-first path on top of the existing raw grant/direct demos.
+v0.19.x makes the artifact-first path the recommended demo path, while keeping the older raw grant/direct demos available as advanced compatibility references.
 
 ## Recommended demo flow
 
@@ -17,6 +17,12 @@ Then open:
 - `browser_tunnel_url`
 - `browser_direct_url`
 - `browser_proxy_sandbox_url`
+
+Recommended quick checks:
+
+- browser / artifact-first connect: use the dev server pages or call `/__demo/connect/artifact`
+- proxy runtime / artifact-first connect: use `/__demo/proxy/artifact`
+- node / artifact-first connect: `node ./examples/ts/node-artifact-client.mjs`
 
 ## Artifact-aware CLI helpers
 
@@ -56,6 +62,11 @@ Still supported in demos:
 Preferred in new demos/scripts:
 
 - `ConnectArtifact`
+
+Advanced compatibility demos:
+
+- browser pages that accept raw `grant_client`
+- node tunnel clients that accept raw grant JSON
 
 ## Troubleshooting
 

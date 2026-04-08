@@ -13,6 +13,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
 // These tests validate the minimal controlplane demo HTTP handler contract:
@@ -121,6 +122,50 @@ func TestChannelInitHandlerRejectsOversizedBody(t *testing.T) {
 
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusRequestEntityTooLarge, w.Body.String())
+	}
+}
+
+func TestConnectArtifactHandlerReturnsConnectArtifact(t *testing.T) {
+	ks, err := issuer.NewRandom("k1")
+	if err != nil {
+		t.Fatalf("NewRandom failed: %v", err)
+	}
+	ci := &channelinit.Service{
+		Issuer: ks,
+		Params: channelinit.Params{
+			TunnelURL:       "ws://127.0.0.1:8080/ws",
+			TunnelAudience:  "aud",
+			IssuerID:        "issuer",
+			TokenExpSeconds: 60,
+		},
+	}
+
+	sink := &stubNotifySink{}
+	endpoints := newServerEndpointRegistry()
+	endpoints.Register("server-1", sink)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/connect/artifact", strings.NewReader(`{"endpoint_id":"server-1","correlation":{"trace_id":"trace-0001"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	connectArtifactHandler(ci, endpoints).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var env struct {
+		ConnectArtifact *protocolio.ConnectArtifact `json:"connect_artifact"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(w.Body.Bytes())).Decode(&env); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if env.ConnectArtifact == nil || env.ConnectArtifact.TunnelGrant == nil {
+		t.Fatalf("expected tunnel connect_artifact, got %#v", env.ConnectArtifact)
+	}
+	if env.ConnectArtifact.Correlation == nil || env.ConnectArtifact.Correlation.TraceID == nil || *env.ConnectArtifact.Correlation.TraceID != "trace-0001" {
+		t.Fatalf("expected trace_id to round-trip, got %#v", env.ConnectArtifact.Correlation)
+	}
+	if len(sink.calls) != 1 {
+		t.Fatalf("expected 1 notify call, got %d", len(sink.calls))
 	}
 }
 

@@ -1,6 +1,6 @@
 # Flowersec API Surface
 
-This document defines the stable integration surface for Flowersec v0.18.x.
+This document defines the stable integration surface for Flowersec v0.19.x.
 
 Canonical source of truth for the stable surface: `stability/public_api_manifest.json`
 
@@ -68,6 +68,23 @@ Recommended integration entrypoints:
   - `client.RequestConnectArtifact(...)`
   - `client.RequestEntryConnectArtifact(...)`
   - `client.RequestError`
+- `github.com/floegence/flowersec/flowersec-go/controlplane/http`
+  - `controlplanehttp.DefaultMaxBodyBytes`
+  - `controlplanehttp.ArtifactRequest`
+  - `controlplanehttp.ArtifactEnvelope`
+  - `controlplanehttp.ErrorEnvelope`
+  - `controlplanehttp.ArtifactRequestMetadata`
+  - `controlplanehttp.ArtifactIssueInput`
+  - `controlplanehttp.ArtifactHandlerOptions`
+  - `controlplanehttp.RequestError`
+  - `controlplanehttp.NewRequestError(...)`
+  - `controlplanehttp.DecodeArtifactRequest(...)`
+  - `controlplanehttp.WriteArtifactEnvelope(...)`
+  - `controlplanehttp.WriteErrorEnvelope(...)`
+  - `controlplanehttp.NewArtifactHandler(...)`
+  - `controlplanehttp.NewEntryArtifactHandler(...)`
+  - `controlplanehttp.DefaultRequestMetadata(...)`
+  - `controlplanehttp.IssueArtifact(...)`
 - `github.com/floegence/flowersec/flowersec-go/observability`
   - `observability.DiagnosticEvent`
   - `observability.ClientObserver`
@@ -108,6 +125,7 @@ Stable generated protocol packages:
 Compatibility-only Go surface:
 
 - legacy raw grant / wrapper / direct JSON inputs continue to work through `client.Connect(...)`
+- `controlplane/client` stays the recommended Go client-side artifact fetch entry; `controlplane/http` is the recommended server-side helper-first reference layer
 - deprecated named profile helpers such as `preset.ResolveBuiltin(...)` and gateway `proxy.profile` remain compatibility-only; they are not part of the stable core surface
 
 ## TypeScript: stable exports
@@ -129,6 +147,9 @@ Stable entrypoints:
   - `connectNode(...)`
   - `connectTunnelNode(...)`
   - `connectDirectNode(...)`
+  - `createNodeReconnectConfig(...)`
+  - `createTunnelNodeReconnectConfig(...)`
+  - `createDirectNodeReconnectConfig(...)`
   - `createNodeWsFactory()`
   - `ConnectArtifact`
   - `CorrelationContext`
@@ -156,6 +177,12 @@ Stable entrypoints:
   - `createBrowserReconnectConfig(...)`
   - `createTunnelBrowserReconnectConfig(...)`
   - `createDirectBrowserReconnectConfig(...)`
+- `@floegence/flowersec-core/controlplane`
+  - `requestConnectArtifact(...)`
+  - `requestEntryConnectArtifact(...)`
+  - `ControlplaneRequestError`
+  - `DEFAULT_CONNECT_ARTIFACT_PATH`
+  - `DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`
 
 Stable building blocks:
 
@@ -169,6 +196,8 @@ Stable building blocks:
   - `createProxyIntegrationServiceWorkerScript(...)`
   - `registerProxyIntegration(...)`
   - `registerServiceWorkerAndEnsureControl(...)`
+  - `connectArtifactProxyBrowser(...)`
+  - `connectArtifactProxyControllerBrowser(...)`
   - `connectTunnelProxyBrowser(...)`
   - `connectTunnelProxyControllerBrowser(...)`
   - `createServiceWorkerControllerGuard(...)`
@@ -197,32 +226,31 @@ Stable building blocks:
 Compatibility-only TypeScript surface:
 
 - legacy raw grant / wrapper / direct connect inputs remain accepted by `connect(...)`, `connectBrowser(...)`, and `connectNode(...)`
-- hybrid ambiguous inputs and legacy inputs mixed with artifact-only fields now fail fast
+- browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain stable aliases of `@floegence/flowersec-core/controlplane`
+- `requestChannelGrant(...)` / `requestEntryChannelGrant(...)` remain supported for compatibility and bootstrap fallback flows, but they are no longer the preferred controlplane contract
+- `connectTunnelProxyBrowser(...)` and `connectTunnelProxyControllerBrowser(...)` remain stable deprecated aliases over the artifact-first proxy bootstrap cores
+- hybrid ambiguous inputs and legacy inputs mixed with artifact-only fields fail fast
 - named proxy profiles are no longer stable core APIs; use preset manifests instead
 
 ## Stable vs experimental notes
 
-Stable in v0.18.x:
+Stable in v0.19.x:
 
 - client-facing canonical `ConnectArtifact`
 - strict canonical parse / validate rules
-- artifact-aware client connect entrypoints
+- artifact-aware browser, node, and Go client connect entrypoints
+- `@floegence/flowersec-core/controlplane` helper contract
+- Node/browser artifact-aware reconnect adapters
+- `controlplane/http` helper-first Go reference layer
 - correlation metadata carrier
 - runtime `DiagnosticEvent`
-- artifact fetch helpers
 - proxy preset manifest contract
+- `proxy.runtime@1` when consumed through stable proxy helper entrypoints
 
-Still experimental in v0.18.x:
+Still experimental in v0.19.x:
 
 - public normalize helper shapes
 - public scope resolver registration API
-- scoped manifest toolchain/codegen factory
-- concrete scoped payload schemas such as `proxy.runtime`
-- bilateral contract negotiation semantics
-
-## Not part of the stable surface
-
-- `@floegence/flowersec-core/internal`
-- lower-level tunnel / yamux / crypto internals not listed above
-- repository reference assets under `reference/`
-- deprecated named proxy profiles
+- scoped manifest toolchain/codegen factory outside the frozen `proxy.runtime@1` contract
+- bilateral scope negotiation semantics
+- direct-transport proxy helper support beyond the documented tunnel-first browser flows

@@ -2,13 +2,14 @@
   "version": 1,
   "scope": "proxy.runtime",
   "scope_version": 1,
-  "stability": "experimental",
+  "stability": "stable",
   "carrier": "ConnectArtifact.scoped[]",
   "payload_kind": "json_object",
   "critical_default": false,
-  "resolver_contract": "experimental",
+  "resolver_contract": "stable_for_proxy_helpers_only",
   "notes": [
-    "This manifest is an experimental source of truth for scoped metadata validation only.",
-    "The carrier is stable in v0.18.x, but resolver registration and concrete payload semantics remain experimental."
+    "This manifest freezes the proxy helper contract for proxy.runtime@1.",
+    "Stable helper entrypoints consume only scope_version=1 and fail fast on invalid payloads.",
+    "Generic scope resolver registration and future bilateral negotiation remain experimental."
   ]
 }
