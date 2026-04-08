@@ -118,6 +118,10 @@ func ApplyBridgeOptions(opts fsproxy.BridgeOptions, manifest *Manifest) fsproxy.
 	if opts.MaxWSFrameBytes == 0 && manifest.Limits.MaxWSFrameBytes != nil {
 		opts.MaxWSFrameBytes = *manifest.Limits.MaxWSFrameBytes
 	}
+	if opts.DefaultHTTPRequestTimeoutMS == nil && manifest.Limits.TimeoutMS != nil {
+		timeout := int64(*manifest.Limits.TimeoutMS)
+		opts.DefaultHTTPRequestTimeoutMS = &timeout
+	}
 	return opts
 }
 

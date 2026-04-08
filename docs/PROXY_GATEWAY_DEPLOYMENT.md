@@ -37,7 +37,8 @@ Recommended v0.18.x shape:
     "origin": "https://gateway.example.com"
   },
   "proxy": {
-    "preset_file": "./reference/presets/default/manifest.json"
+    "preset_file": "./reference/presets/default/manifest.json",
+    "timeout_ms": 30000
   },
   "routes": [
     {
@@ -54,11 +55,13 @@ Recommended v0.18.x shape:
 Important fields:
 
 - `proxy.preset_file`: stable preset manifest path
+- `proxy.timeout_ms`: optional gateway-wide default request timeout override
 - `proxy.profile`: deprecated compatibility alias
 
 Rules:
 
 - do not set `proxy.preset_file` and `proxy.profile` together
+- `proxy.timeout_ms`, when set, must be a positive integer and overrides the preset `limits.timeout_ms`
 - unknown config fields are rejected
 - the old top-level `origin` field remains invalid
 

@@ -55,6 +55,11 @@ type ContractOptions struct {
 	// If < 0, Register returns an error.
 	MaxWSFrameBytes int
 
+	// DefaultHTTPRequestTimeoutMS, when non-nil, is written into outgoing
+	// HTTPRequestMeta.timeout_ms for bridge-originated HTTP requests that do
+	// not otherwise specify an explicit timeout.
+	DefaultHTTPRequestTimeoutMS *int64
+
 	// ExtraRequestHeaders extends the request header allow-list (see docs/PROXY.md).
 	ExtraRequestHeaders []string
 	// ExtraResponseHeaders extends the response header allow-list (see docs/PROXY.md).
@@ -120,6 +125,8 @@ type compiledContractOptions struct {
 	maxChunkBytes     int
 	maxBodyBytes      int64
 	maxWSFrameBytes   int
+
+	defaultHTTPRequestTimeoutMS *int64
 }
 
 type compiledOptions struct {
@@ -166,6 +173,15 @@ func compileContractOptions(opts ContractOptions) (*compiledContractOptions, err
 		maxWSFrame = DefaultMaxWSFrameBytes
 	}
 
+	var defaultHTTPRequestTimeoutMS *int64
+	if opts.DefaultHTTPRequestTimeoutMS != nil {
+		if *opts.DefaultHTTPRequestTimeoutMS <= 0 {
+			return nil, errors.New("invalid DefaultHTTPRequestTimeoutMS (must be > 0)")
+		}
+		timeout := *opts.DefaultHTTPRequestTimeoutMS
+		defaultHTTPRequestTimeoutMS = &timeout
+	}
+
 	extraReq, err := normalizeHeaderNameSet(opts.ExtraRequestHeaders)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ExtraRequestHeaders: %w", err)
@@ -208,6 +224,8 @@ func compileContractOptions(opts ContractOptions) (*compiledContractOptions, err
 		maxChunkBytes:     maxChunk,
 		maxBodyBytes:      maxBody,
 		maxWSFrameBytes:   maxWSFrame,
+
+		defaultHTTPRequestTimeoutMS: defaultHTTPRequestTimeoutMS,
 	}, nil
 }
 

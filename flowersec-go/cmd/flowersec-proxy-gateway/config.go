@@ -41,6 +41,7 @@ type tunnelConfig struct {
 type gatewayProxyConfig struct {
 	PresetFile                  string   `json:"preset_file,omitempty"`
 	Profile                     string   `json:"profile,omitempty"`
+	TimeoutMS                   *int64   `json:"timeout_ms,omitempty"`
 	MaxJSONFrameBytes           int      `json:"max_json_frame_bytes,omitempty"`
 	MaxChunkBytes               int      `json:"max_chunk_bytes,omitempty"`
 	MaxBodyBytes                int64    `json:"max_body_bytes,omitempty"`
@@ -152,6 +153,9 @@ func (cfg *gatewayProxyConfig) normalize() error {
 	if cfg.PresetFile != "" && cfg.Profile != "" {
 		return errors.New("proxy.preset_file and deprecated proxy.profile must not both be set")
 	}
+	if cfg.TimeoutMS != nil && *cfg.TimeoutMS <= 0 {
+		return errors.New("proxy.timeout_ms must be > 0")
+	}
 
 	var manifest *proxypreset.Manifest
 	var err error
@@ -172,6 +176,7 @@ func (cfg *gatewayProxyConfig) normalize() error {
 		}
 	}
 	bridgeOptions := proxypreset.ApplyBridgeOptions(fsproxy.BridgeOptions{
+		DefaultHTTPRequestTimeoutMS: cfg.TimeoutMS,
 		MaxJSONFrameBytes:           cfg.MaxJSONFrameBytes,
 		MaxChunkBytes:               cfg.MaxChunkBytes,
 		MaxBodyBytes:                cfg.MaxBodyBytes,
