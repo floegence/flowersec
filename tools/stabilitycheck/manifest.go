@@ -80,7 +80,7 @@ func repoRootFromWD() (string, error) {
 		return "", err
 	}
 	root := filepath.Clean(filepath.Join(wd, "..", ".."))
-	if _, err := os.Stat(filepath.Join(root, ".develop.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "AGENTS.md")); err != nil {
 		return "", fmt.Errorf("resolve repo root from %q: %w", wd, err)
 	}
 	return root, nil
