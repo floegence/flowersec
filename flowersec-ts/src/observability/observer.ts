@@ -1,7 +1,11 @@
 import type { ClientPath } from "../client.js";
 
 export type ConnectResult = "ok" | "fail";
-export type ConnectReason = "websocket_error" | "websocket_closed" | "timeout" | "canceled";
+export type ConnectReason =
+  | "websocket_error"
+  | "websocket_closed"
+  | "timeout"
+  | "canceled";
 
 export type AttachResult = "ok" | "fail";
 export type AttachReason =
@@ -15,6 +19,9 @@ export type AttachReason =
   | "init_exp_mismatch"
   | "idle_timeout_mismatch"
   | "token_replay"
+  | "tenant_mismatch"
+  | "policy_denied"
+  | "policy_error"
   | "replace_rate_limited"
   | "attach_failed"
   | "timeout"
@@ -50,7 +57,15 @@ export type DiagnosticEvent = Readonly<{
   v: 1;
   namespace: "connect";
   path: ClientPath | "auto";
-  stage: "validate" | "normalize" | "scope" | "connect" | "attach" | "handshake" | "close" | "reconnect";
+  stage:
+    | "validate"
+    | "normalize"
+    | "scope"
+    | "connect"
+    | "attach"
+    | "handshake"
+    | "close"
+    | "reconnect";
   code_domain: "error" | "event";
   code: string;
   result: "ok" | "fail" | "retry" | "skip";
@@ -75,13 +90,25 @@ type DeliveryItem = Readonly<{
 }>;
 
 const OBSERVER_CONTEXT = Symbol.for("floegence.flowersec.observer_context");
-const NORMALIZED_OBSERVER = Symbol.for("floegence.flowersec.normalized_observer");
+const NORMALIZED_OBSERVER = Symbol.for(
+  "floegence.flowersec.normalized_observer",
+);
 const DEFAULT_MAX_QUEUED_ITEMS = 64;
 
 export type ClientObserver = {
-  onConnect(path: ClientPath, result: ConnectResult, reason: ConnectReason | undefined, elapsedSeconds: number): void;
+  onConnect(
+    path: ClientPath,
+    result: ConnectResult,
+    reason: ConnectReason | undefined,
+    elapsedSeconds: number,
+  ): void;
   onAttach(result: AttachResult, reason: AttachReason | undefined): void;
-  onHandshake(path: ClientPath, result: HandshakeResult, reason: HandshakeReason | undefined, elapsedSeconds: number): void;
+  onHandshake(
+    path: ClientPath,
+    result: HandshakeResult,
+    reason: HandshakeReason | undefined,
+    elapsedSeconds: number,
+  ): void;
   onWsClose(kind: WsCloseKind, code?: number): void;
   onWsError(reason: WsErrorReason): void;
   onRpcCall(result: RpcCallResult, elapsedSeconds: number): void;
@@ -91,7 +118,16 @@ export type ClientObserver = {
 
 export type ClientObserverLike = Partial<ClientObserver>;
 
-type DiagnosticEventInput = Omit<DiagnosticEvent, "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id" | "path"> &
+type DiagnosticEventInput = Omit<
+  DiagnosticEvent,
+  | "v"
+  | "namespace"
+  | "elapsed_ms"
+  | "attempt_seq"
+  | "trace_id"
+  | "session_id"
+  | "path"
+> &
   Partial<Pick<DiagnosticEvent, "path">>;
 
 type InternalNormalizedObserver = ClientObserver & {
@@ -112,7 +148,9 @@ export const NoopObserver: ClientObserver = {
 };
 
 function getObserverContext(observer?: ClientObserverLike): ObserverContext {
-  const context = (observer as Record<symbol, unknown> | undefined)?.[OBSERVER_CONTEXT];
+  const context = (observer as Record<symbol, unknown> | undefined)?.[
+    OBSERVER_CONTEXT
+  ];
   if (context == null || typeof context !== "object") return {};
   return context as ObserverContext;
 }
@@ -142,7 +180,7 @@ function hasAnyHandlers(observer?: ClientObserverLike): boolean {
 
 function buildDiagnosticEvent(
   context: ObserverContext,
-  event: DiagnosticEventInput
+  event: DiagnosticEventInput,
 ): DiagnosticEvent {
   return Object.freeze({
     v: 1,
@@ -152,35 +190,70 @@ function buildDiagnosticEvent(
     code_domain: event.code_domain,
     code: event.code,
     result: event.result,
-    elapsed_ms: Math.max(0, Math.floor(nowMilliseconds() - (context.attemptStartMs ?? nowMilliseconds()))),
+    elapsed_ms: Math.max(
+      0,
+      Math.floor(
+        nowMilliseconds() - (context.attemptStartMs ?? nowMilliseconds()),
+      ),
+    ),
     attempt_seq: Math.max(1, Math.floor(context.attemptSeq ?? 1)),
     ...(context.traceId === undefined ? {} : { trace_id: context.traceId }),
-    ...(context.sessionId === undefined ? {} : { session_id: context.sessionId }),
+    ...(context.sessionId === undefined
+      ? {}
+      : { session_id: context.sessionId }),
   });
 }
 
-function mapConnectDiagnostic(path: ClientPath, result: ConnectResult, reason: ConnectReason | undefined): Omit<DiagnosticEvent, "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id"> {
+function mapConnectDiagnostic(
+  path: ClientPath,
+  result: ConnectResult,
+  reason: ConnectReason | undefined,
+): Omit<
+  DiagnosticEvent,
+  "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id"
+> {
   if (result === "ok") {
-    return { path, stage: "connect", code_domain: "event", code: "connect_ok", result: "ok" };
+    return {
+      path,
+      stage: "connect",
+      code_domain: "event",
+      code: "connect_ok",
+      result: "ok",
+    };
   }
   return {
     path,
     stage: "connect",
     code_domain: "error",
-    code: reason === "timeout" || reason === "canceled" ? reason : "dial_failed",
+    code:
+      reason === "timeout" || reason === "canceled" ? reason : "dial_failed",
     result: "fail",
   };
 }
 
-function mapAttachDiagnostic(result: AttachResult, reason: AttachReason | undefined, path: ClientPath | "auto"): Omit<DiagnosticEvent, "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id"> {
+function mapAttachDiagnostic(
+  result: AttachResult,
+  reason: AttachReason | undefined,
+  path: ClientPath | "auto",
+): Omit<
+  DiagnosticEvent,
+  "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id"
+> {
   if (result === "ok") {
-    return { path, stage: "attach", code_domain: "event", code: "attach_ok", result: "ok" };
+    return {
+      path,
+      stage: "attach",
+      code_domain: "event",
+      code: "attach_ok",
+      result: "ok",
+    };
   }
   return {
     path,
     stage: "attach",
     code_domain: "error",
-    code: reason === "send_failed" ? "attach_failed" : (reason ?? "attach_failed"),
+    code:
+      reason === "send_failed" ? "attach_failed" : (reason ?? "attach_failed"),
     result: "fail",
   };
 }
@@ -188,10 +261,19 @@ function mapAttachDiagnostic(result: AttachResult, reason: AttachReason | undefi
 function mapHandshakeDiagnostic(
   path: ClientPath,
   result: HandshakeResult,
-  reason: HandshakeReason | undefined
-): Omit<DiagnosticEvent, "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id"> {
+  reason: HandshakeReason | undefined,
+): Omit<
+  DiagnosticEvent,
+  "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id"
+> {
   if (result === "ok") {
-    return { path, stage: "handshake", code_domain: "event", code: "handshake_ok", result: "ok" };
+    return {
+      path,
+      stage: "handshake",
+      code_domain: "event",
+      code: "handshake_ok",
+      result: "ok",
+    };
   }
   return {
     path,
@@ -202,7 +284,13 @@ function mapHandshakeDiagnostic(
   };
 }
 
-function mapWsCloseDiagnostic(kind: WsCloseKind, path: ClientPath | "auto"): Omit<DiagnosticEvent, "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id"> {
+function mapWsCloseDiagnostic(
+  kind: WsCloseKind,
+  path: ClientPath | "auto",
+): Omit<
+  DiagnosticEvent,
+  "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id"
+> {
   return {
     path,
     stage: "close",
@@ -212,7 +300,12 @@ function mapWsCloseDiagnostic(kind: WsCloseKind, path: ClientPath | "auto"): Omi
   };
 }
 
-function mapWsErrorDiagnostic(path: ClientPath | "auto"): Omit<DiagnosticEvent, "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id"> {
+function mapWsErrorDiagnostic(
+  path: ClientPath | "auto",
+): Omit<
+  DiagnosticEvent,
+  "v" | "namespace" | "elapsed_ms" | "attempt_seq" | "trace_id" | "session_id"
+> {
   return {
     path,
     stage: "close",
@@ -235,36 +328,82 @@ class ObserverDispatcher implements InternalNormalizedObserver {
   constructor(observer: ClientObserverLike, context: ObserverContext) {
     this.observer = observer;
     this[OBSERVER_CONTEXT] = context;
-    this.maxQueuedItems = Math.max(4, Math.floor(context.maxQueuedItems ?? DEFAULT_MAX_QUEUED_ITEMS));
+    this.maxQueuedItems = Math.max(
+      4,
+      Math.floor(context.maxQueuedItems ?? DEFAULT_MAX_QUEUED_ITEMS),
+    );
   }
 
-  onConnect(path: ClientPath, result: ConnectResult, reason: ConnectReason | undefined, elapsedSeconds: number): void {
+  onConnect(
+    path: ClientPath,
+    result: ConnectResult,
+    reason: ConnectReason | undefined,
+    elapsedSeconds: number,
+  ): void {
     const diagnostic = mapConnectDiagnostic(path, result, reason);
-    this.enqueueCombined(() => this.observer.onConnect?.(path, result, reason, elapsedSeconds), diagnostic, result === "fail");
+    this.enqueueCombined(
+      () => this.observer.onConnect?.(path, result, reason, elapsedSeconds),
+      diagnostic,
+      result === "fail",
+    );
   }
 
   onAttach(result: AttachResult, reason: AttachReason | undefined): void {
-    const diagnostic = mapAttachDiagnostic(result, reason, this[OBSERVER_CONTEXT].path ?? "auto");
-    this.enqueueCombined(() => this.observer.onAttach?.(result, reason), diagnostic, result === "fail");
+    const diagnostic = mapAttachDiagnostic(
+      result,
+      reason,
+      this[OBSERVER_CONTEXT].path ?? "auto",
+    );
+    this.enqueueCombined(
+      () => this.observer.onAttach?.(result, reason),
+      diagnostic,
+      result === "fail",
+    );
   }
 
-  onHandshake(path: ClientPath, result: HandshakeResult, reason: HandshakeReason | undefined, elapsedSeconds: number): void {
+  onHandshake(
+    path: ClientPath,
+    result: HandshakeResult,
+    reason: HandshakeReason | undefined,
+    elapsedSeconds: number,
+  ): void {
     const diagnostic = mapHandshakeDiagnostic(path, result, reason);
-    this.enqueueCombined(() => this.observer.onHandshake?.(path, result, reason, elapsedSeconds), diagnostic, result === "fail");
+    this.enqueueCombined(
+      () => this.observer.onHandshake?.(path, result, reason, elapsedSeconds),
+      diagnostic,
+      result === "fail",
+    );
   }
 
   onWsClose(kind: WsCloseKind, code?: number): void {
-    const diagnostic = mapWsCloseDiagnostic(kind, this[OBSERVER_CONTEXT].path ?? "auto");
-    this.enqueueCombined(() => this.observer.onWsClose?.(kind, code), diagnostic, false);
+    const diagnostic = mapWsCloseDiagnostic(
+      kind,
+      this[OBSERVER_CONTEXT].path ?? "auto",
+    );
+    this.enqueueCombined(
+      () => this.observer.onWsClose?.(kind, code),
+      diagnostic,
+      false,
+    );
   }
 
   onWsError(reason: WsErrorReason): void {
-    const diagnostic = mapWsErrorDiagnostic(this[OBSERVER_CONTEXT].path ?? "auto");
-    this.enqueueCombined(() => this.observer.onWsError?.(reason), diagnostic, false);
+    const diagnostic = mapWsErrorDiagnostic(
+      this[OBSERVER_CONTEXT].path ?? "auto",
+    );
+    this.enqueueCombined(
+      () => this.observer.onWsError?.(reason),
+      diagnostic,
+      false,
+    );
   }
 
   onRpcCall(result: RpcCallResult, elapsedSeconds: number): void {
-    this.enqueueCombined(() => this.observer.onRpcCall?.(result, elapsedSeconds), undefined, false);
+    this.enqueueCombined(
+      () => this.observer.onRpcCall?.(result, elapsedSeconds),
+      undefined,
+      false,
+    );
   }
 
   onRpcNotify(): void {
@@ -272,15 +411,22 @@ class ObserverDispatcher implements InternalNormalizedObserver {
   }
 
   onDiagnosticEvent(event: DiagnosticEvent): void {
-    this.enqueueCombined(() => this.observer.onDiagnosticEvent?.(event), undefined, event.result === "fail");
+    this.enqueueCombined(
+      () => this.observer.onDiagnosticEvent?.(event),
+      undefined,
+      event.result === "fail",
+    );
   }
 
-  emitDiagnosticEvent(
-    event: DiagnosticEventInput
-  ): void {
+  emitDiagnosticEvent(event: DiagnosticEventInput): void {
     const diagnostic = buildDiagnosticEvent(this[OBSERVER_CONTEXT], event);
     this.enqueue({
-      kind: event.code === "diagnostics_overflow" ? "overflow" : event.result === "fail" ? "terminal" : "normal",
+      kind:
+        event.code === "diagnostics_overflow"
+          ? "overflow"
+          : event.result === "fail"
+            ? "terminal"
+            : "normal",
       deliver: () => this.observer.onDiagnosticEvent?.(diagnostic),
     });
   }
@@ -288,10 +434,13 @@ class ObserverDispatcher implements InternalNormalizedObserver {
   private enqueueCombined(
     callback: (() => void) | undefined,
     diagnostic: DiagnosticEventInput | undefined,
-    terminal: boolean
+    terminal: boolean,
   ): void {
     if (callback == null && diagnostic == null) return;
-    const event = diagnostic == null ? undefined : buildDiagnosticEvent(this[OBSERVER_CONTEXT], diagnostic);
+    const event =
+      diagnostic == null
+        ? undefined
+        : buildDiagnosticEvent(this[OBSERVER_CONTEXT], diagnostic);
     this.enqueue({
       kind: terminal ? "terminal" : "normal",
       deliver: () => {
@@ -318,7 +467,9 @@ class ObserverDispatcher implements InternalNormalizedObserver {
   }
 
   private makeRoom(kind: DeliveryItem["kind"]): boolean {
-    const removableIndex = this.queue.findIndex((entry) => entry.kind === "normal");
+    const removableIndex = this.queue.findIndex(
+      (entry) => entry.kind === "normal",
+    );
     if (removableIndex >= 0) {
       this.queue.splice(removableIndex, 1);
       if (kind === "normal") {
@@ -350,8 +501,8 @@ class ObserverDispatcher implements InternalNormalizedObserver {
               code_domain: "event",
               code: "diagnostics_overflow",
               result: "skip",
-            })
-          )
+            }),
+          ),
         );
       },
     });
@@ -377,7 +528,10 @@ class ObserverDispatcher implements InternalNormalizedObserver {
   }
 }
 
-export function withObserverContext(observer: ClientObserverLike | undefined, context: ObserverContext): ClientObserverLike | undefined {
+export function withObserverContext(
+  observer: ClientObserverLike | undefined,
+  context: ObserverContext,
+): ClientObserverLike | undefined {
   if (observer == null && Object.keys(context).length === 0) return observer;
   const previous = getObserverContext(observer);
   return Object.assign({}, observer ?? {}, {
@@ -390,18 +544,29 @@ export function withObserverContext(observer: ClientObserverLike | undefined, co
 
 export function emitObserverDiagnostic(
   observer: ClientObserverLike | undefined,
-  event: DiagnosticEventInput
+  event: DiagnosticEventInput,
 ): void {
   const normalized = normalizeObserver(observer);
   if ((normalized as Partial<InternalNormalizedObserver>).emitDiagnosticEvent) {
     (normalized as InternalNormalizedObserver).emitDiagnosticEvent(event);
     return;
   }
-  safeInvoke(() => normalized.onDiagnosticEvent(buildDiagnosticEvent(getObserverContext(observer), event)));
+  safeInvoke(() =>
+    normalized.onDiagnosticEvent(
+      buildDiagnosticEvent(getObserverContext(observer), event),
+    ),
+  );
 }
 
-export function normalizeObserver(observer?: ClientObserverLike, context: ObserverContext = {}): ClientObserver {
-  if ((observer as Partial<InternalNormalizedObserver> | undefined)?.[NORMALIZED_OBSERVER] === true) {
+export function normalizeObserver(
+  observer?: ClientObserverLike,
+  context: ObserverContext = {},
+): ClientObserver {
+  if (
+    (observer as Partial<InternalNormalizedObserver> | undefined)?.[
+      NORMALIZED_OBSERVER
+    ] === true
+  ) {
     return observer as InternalNormalizedObserver;
   }
   if (!hasAnyHandlers(observer)) return NoopObserver;
@@ -418,7 +583,10 @@ export function nowSeconds(): number {
 }
 
 function nowMilliseconds(): number {
-  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+  if (
+    typeof performance !== "undefined" &&
+    typeof performance.now === "function"
+  ) {
     return performance.now();
   }
   return Date.now();

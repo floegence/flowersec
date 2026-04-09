@@ -15,13 +15,13 @@ For the recommended custom stream patterns (meta + bytes), see `docs/STREAMS.md`
 
 The Flowersec stack is:
 
-1) **WebSocket**
-2) *(Tunnel path only)* **Attach (plaintext JSON)**
-3) **E2EE handshake** (`FSEH` frames)
-4) **E2EE record layer** (`FSEC` frames)
-5) **Yamux** multiplexing (over the encrypted byte stream)
-6) **Stream hello** (a small per-stream identifier)
-7) **RPC** framing (length-prefixed JSON on the `rpc` stream)
+1. **WebSocket**
+2. _(Tunnel path only)_ **Attach (plaintext JSON)**
+3. **E2EE handshake** (`FSEH` frames)
+4. **E2EE record layer** (`FSEC` frames)
+5. **Yamux** multiplexing (over the encrypted byte stream)
+6. **Stream hello** (a small per-stream identifier)
+7. **RPC** framing (length-prefixed JSON on the `rpc` stream)
 
 ## 1. Tunnel attach (tunnel path only)
 
@@ -40,7 +40,7 @@ Official clients map these reason tokens to stable error codes (see `docs/ERROR_
 
 - `too_many_connections`
 - `expected_attach`, `invalid_attach`
-- `invalid_token`, `channel_mismatch`, `init_exp_mismatch`, `idle_timeout_mismatch`, `role_mismatch`, `token_replay`, `replace_rate_limited`, `attach_failed`
+- `invalid_token`, `channel_mismatch`, `init_exp_mismatch`, `idle_timeout_mismatch`, `role_mismatch`, `token_replay`, `tenant_mismatch`, `policy_denied`, `policy_error`, `replace_rate_limited`, `attach_failed`
 - `timeout`, `canceled`
 
 ## 2. E2EE handshake framing (`FSEH`)
@@ -66,10 +66,10 @@ Current implementation:
 
 The flow is:
 
-1) Client → Server: `handshake_type=init` (JSON: `E2EE_Init`)
-2) Server → Client: `handshake_type=resp` (JSON: `E2EE_Resp`)
-3) Client → Server: `handshake_type=ack` (JSON: `E2EE_Ack`)
-4) Server → Client: an **encrypted ping record** (`FSEC`, `seq=1`) as a "server-finished" confirmation
+1. Client → Server: `handshake_type=init` (JSON: `E2EE_Init`)
+2. Server → Client: `handshake_type=resp` (JSON: `E2EE_Resp`)
+3. Client → Server: `handshake_type=ack` (JSON: `E2EE_Ack`)
+4. Server → Client: an **encrypted ping record** (`FSEC`, `seq=1`) as a "server-finished" confirmation
 
 The handshake uses:
 

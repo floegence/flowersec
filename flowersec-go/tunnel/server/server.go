@@ -110,8 +110,10 @@ type Server struct {
 
 	totalPendingBytes int64 // Total buffered pending bytes across all channels.
 
-	stopOnce sync.Once     // Ensures shutdown only happens once.
-	stopCh   chan struct{} // Signals background cleanup to stop.
+	stopOnce        sync.Once          // Ensures shutdown only happens once.
+	stopCh          chan struct{}      // Signals background cleanup to stop.
+	lifecycleCtx    context.Context    // Canceled when Close starts so policy RPCs stop promptly.
+	lifecycleCancel context.CancelFunc // Cancels lifecycleCtx.
 }
 
 // Stats captures a snapshot of tunnel server counts.
@@ -256,14 +258,17 @@ func New(cfg Config) (*Server, error) {
 			return nil, err
 		}
 	}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	s := &Server{
-		cfg:      cfg,
-		verifier: verifier,
-		used:     NewTokenUseCache(),
-		obs:      cfg.Observer,
-		auth:     cfg.Authorizer,
-		channels: make(map[string]*channelState),
-		stopCh:   make(chan struct{}),
+		cfg:             cfg,
+		verifier:        verifier,
+		used:            NewTokenUseCache(),
+		obs:             cfg.Observer,
+		auth:            cfg.Authorizer,
+		channels:        make(map[string]*channelState),
+		stopCh:          make(chan struct{}),
+		lifecycleCtx:    lifecycleCtx,
+		lifecycleCancel: lifecycleCancel,
 	}
 	go s.cleanupLoop()
 	if s.auth != nil && s.cfg.PolicyObserveInterval > 0 {
@@ -315,9 +320,43 @@ func (s *Server) Register(mux *http.ServeMux) {
 func (s *Server) Close() {
 	s.stopOnce.Do(func() {
 		atomic.StoreInt32(&s.closed, 1)
-		close(s.stopCh)
+		if s.lifecycleCancel != nil {
+			s.lifecycleCancel()
+		}
+		if s.stopCh != nil {
+			close(s.stopCh)
+		}
 		s.closeAll()
 	})
+}
+
+func (s *Server) policyContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+
+	ctx, cancel := context.WithCancel(parent)
+	stopLifecycle := func() bool { return false }
+	if s != nil && s.lifecycleCtx != nil {
+		stopLifecycle = context.AfterFunc(s.lifecycleCtx, cancel)
+		if s.lifecycleCtx.Err() != nil {
+			cancel()
+		}
+	}
+
+	if s != nil && s.cfg.PolicyRequestTimeout > 0 {
+		timeoutCtx, timeoutCancel := context.WithTimeout(ctx, s.cfg.PolicyRequestTimeout)
+		return timeoutCtx, func() {
+			_ = stopLifecycle()
+			timeoutCancel()
+			cancel()
+		}
+	}
+
+	return ctx, func() {
+		_ = stopLifecycle()
+		cancel()
+	}
 }
 
 var (
@@ -363,6 +402,20 @@ type writeReq struct {
 	done  chan error
 }
 
+type prefetchedWSRead struct {
+	messageType int
+	payload     []byte
+	err         error
+}
+
+type attachReadPrefetch struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+
+	mu     sync.Mutex
+	result *prefetchedWSRead
+}
+
 type endpointConn struct {
 	role tunnelv1.Role   // Endpoint role (client/server).
 	eid  string          // Endpoint instance ID (base64url).
@@ -379,12 +432,70 @@ type endpointConn struct {
 	outBytes  int        // Buffered bytes in outQueue.
 	outClosed bool       // True once the write queue is closed.
 	outErr    error      // Sticky error for blocked writers.
+
+	prefetch *attachReadPrefetch // The first post-attach frame/error captured during policy evaluation.
 }
 
 func newEndpointConn(role tunnelv1.Role, eid string, ws *websocket.Conn) *endpointConn {
 	ep := &endpointConn{role: role, eid: eid, ws: ws}
 	ep.outCond = sync.NewCond(&ep.outMu)
 	return ep
+}
+
+func startAttachReadPrefetch(c *ws.Conn, onError func(error)) *attachReadPrefetch {
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &attachReadPrefetch{
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	go func() {
+		mt, payload, err := c.ReadMessage(ctx)
+		if err == nil || !errors.Is(err, context.Canceled) {
+			p.mu.Lock()
+			p.result = &prefetchedWSRead{messageType: mt, payload: payload, err: err}
+			p.mu.Unlock()
+			if err != nil && onError != nil {
+				onError(err)
+			}
+		}
+		close(p.done)
+	}()
+	return p
+}
+
+func (p *attachReadPrefetch) wait() (*prefetchedWSRead, bool) {
+	if p == nil {
+		return nil, false
+	}
+	<-p.done
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.result == nil {
+		return nil, false
+	}
+	return p.result, true
+}
+
+func (p *attachReadPrefetch) cancelAndWait() (*prefetchedWSRead, bool) {
+	if p == nil {
+		return nil, false
+	}
+	p.cancel()
+	return p.wait()
+}
+
+func (ep *endpointConn) takePrefetchedRead() (int, []byte, error, bool) {
+	if ep == nil || ep.prefetch == nil {
+		return 0, nil, nil, false
+	}
+	prefetch := ep.prefetch
+	ep.prefetch = nil
+	res, ok := prefetch.wait()
+	if !ok {
+		return 0, nil, nil, false
+	}
+	return res.messageType, res.payload, res.err, true
 }
 
 func (ep *endpointConn) closeWriteQueue(err error) {
@@ -558,15 +669,16 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	uc.SetReadLimit(int64(s.cfg.MaxRecordBytes))
+	uc.SetReadDeadline(time.Time{})
+
 	policyDecision := AttachAuthorizationDecision{Allowed: true}
+	var attachPrefetch *attachReadPrefetch
 	if s.auth != nil {
-		authCtx := context.Background()
-		var cancel context.CancelFunc
-		if s.cfg.PolicyRequestTimeout > 0 {
-			authCtx, cancel = context.WithTimeout(authCtx, s.cfg.PolicyRequestTimeout)
-		} else {
-			authCtx, cancel = context.WithCancel(authCtx)
-		}
+		authCtx, cancel := s.policyContext(r.Context())
+		attachPrefetch = startAttachReadPrefetch(c, func(error) {
+			cancel()
+		})
 		policyDecision, err = s.auth.AuthorizeAttach(authCtx, AttachAuthorizationRequest{
 			ChannelID:          attach.ChannelId,
 			TenantID:           verified.TenantID,
@@ -582,22 +694,28 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		})
 		cancel()
 		if err != nil {
+			if _, ok := attachPrefetch.cancelAndWait(); ok {
+				// The prefetched frame/error was only used to cancel the policy request.
+			}
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonPolicyError)
 			_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonPolicyError))
 			s.untrackConn(uc)
 			return
 		}
 		if !policyDecision.Allowed {
+			if _, ok := attachPrefetch.cancelAndWait(); ok {
+				// No handoff is needed when attach authorization fails.
+			}
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonPolicyDenied)
 			_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonPolicyDenied))
 			s.untrackConn(uc)
 			return
 		}
 	}
-
-	uc.SetReadLimit(int64(s.cfg.MaxRecordBytes))
-	uc.SetReadDeadline(time.Time{})
-	if err := s.addEndpoint(attach, verified, policyDecision, uc); err != nil {
+	if err := s.addEndpoint(attach, verified, policyDecision, attachPrefetch, uc); err != nil {
+		if _, ok := attachPrefetch.cancelAndWait(); ok {
+			// No handoff is needed when the endpoint never becomes active.
+		}
 		switch {
 		case errors.Is(err, errTooManyChannels):
 			s.obs.Attach(observability.AttachResultFail, observability.AttachReasonTooManyConnections)
@@ -705,7 +823,7 @@ func (s *Server) allowReplaceLocked(st *channelState, role tunnelv1.Role, now ti
 }
 
 // addEndpoint registers the websocket for a channel and starts routing.
-func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decision AttachAuthorizationDecision, uc *websocket.Conn) error {
+func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decision AttachAuthorizationDecision, prefetch *attachReadPrefetch, uc *websocket.Conn) error {
 	var toClose []*websocket.Conn
 	var startPump bool
 	var pairLatency time.Duration
@@ -722,6 +840,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decisio
 
 	ep := newEndpointConn(a.Role, a.EndpointInstanceId, uc)
 	ep.bw = s.ensureBandwidthEntry(a.ChannelId)
+	ep.prefetch = prefetch
 	s.mu.Lock()
 	st := s.channels[a.ChannelId]
 	if st == nil {
@@ -897,7 +1016,10 @@ func (s *Server) flushPending(st *channelState, client *endpointConn, server *en
 func (s *Server) pump(channelID string, role tunnelv1.Role, src *endpointConn) {
 	var lastWriteDone <-chan error
 	for {
-		mt, b, err := src.ws.ReadMessage()
+		mt, b, err, ok := src.takePrefetchedRead()
+		if !ok {
+			mt, b, err = src.ws.ReadMessage()
+		}
 		if err != nil {
 			s.waitWriteDone(lastWriteDone)
 			s.obs.Close(observability.CloseReasonPeerClosed)
@@ -1398,13 +1520,7 @@ func (s *Server) observeLoop() {
 				end = len(channels)
 			}
 
-			authCtx := context.Background()
-			var cancel context.CancelFunc
-			if s.cfg.PolicyRequestTimeout > 0 {
-				authCtx, cancel = context.WithTimeout(authCtx, s.cfg.PolicyRequestTimeout)
-			} else {
-				authCtx, cancel = context.WithCancel(authCtx)
-			}
+			authCtx, cancel := s.policyContext(s.lifecycleCtx)
 			resp, err := s.auth.ObserveChannels(authCtx, ObserveChannelsRequest{
 				NowUnixMs: nowUnixMs,
 				Channels:  channels[start:end],

@@ -62,6 +62,9 @@ const (
 	CodeInitExpMismatch           = fserrors.CodeInitExpMismatch
 	CodeIdleTimeoutMismatch       = fserrors.CodeIdleTimeoutMismatch
 	CodeTokenReplay               = fserrors.CodeTokenReplay
+	CodeTenantMismatch            = fserrors.CodeTenantMismatch
+	CodePolicyDenied              = fserrors.CodePolicyDenied
+	CodePolicyError               = fserrors.CodePolicyError
 	CodeReplaceRateLimited        = fserrors.CodeReplaceRateLimited
 	CodeHandshakeFailed           = fserrors.CodeHandshakeFailed
 	CodePingFailed                = fserrors.CodePingFailed

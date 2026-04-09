@@ -79,6 +79,12 @@ func ClassifyTunnelAttachCloseCode(err error) (Code, bool) {
 		return CodeRoleMismatch, true
 	case "token_replay":
 		return CodeTokenReplay, true
+	case "tenant_mismatch":
+		return CodeTenantMismatch, true
+	case "policy_denied":
+		return CodePolicyDenied, true
+	case "policy_error":
+		return CodePolicyError, true
 	case "replace_rate_limited":
 		return CodeReplaceRateLimited, true
 	case "attach_failed":

@@ -35,24 +35,21 @@ const mocks = vi.hoisted(() => {
     muxClose,
     openStream,
     MockRpcClient,
-    MockYamuxSession
+    MockYamuxSession,
   };
 });
 
-const {
-  clientHandshakeMock,
-  rpcClose,
-  muxClose,
-  openStream
-} = mocks;
+const { clientHandshakeMock, rpcClose, muxClose, openStream } = mocks;
 
 vi.mock("../e2ee/handshake.js", () => ({
-  clientHandshake: (...args: unknown[]) => mocks.clientHandshakeMock(...args)
+  clientHandshake: (...args: unknown[]) => mocks.clientHandshakeMock(...args),
 }));
 
 vi.mock("../rpc/client.js", () => ({ RpcClient: mocks.MockRpcClient }));
 
-vi.mock("../yamux/session.js", () => ({ YamuxSession: mocks.MockYamuxSession }));
+vi.mock("../yamux/session.js", () => ({
+  YamuxSession: mocks.MockYamuxSession,
+}));
 
 import { connectTunnel } from "./connect.js";
 
@@ -76,13 +73,19 @@ class FakeWebSocket {
     this.emit("close", {});
   }
 
-  addEventListener(type: "open" | "message" | "error" | "close", listener: (ev: any) => void): void {
+  addEventListener(
+    type: "open" | "message" | "error" | "close",
+    listener: (ev: any) => void,
+  ): void {
     const set = this.listeners.get(type) ?? new Set<(ev: any) => void>();
     set.add(listener);
     this.listeners.set(type, set);
   }
 
-  removeEventListener(type: "open" | "message" | "error" | "close", listener: (ev: any) => void): void {
+  removeEventListener(
+    type: "open" | "message" | "error" | "close",
+    listener: (ev: any) => void,
+  ): void {
     this.listeners.get(type)?.delete(listener);
   }
 
@@ -104,15 +107,21 @@ function makeGrant(): ChannelInitGrant {
     token: "tok",
     e2ee_psk_b64u: psk,
     allowed_suites: [Suite.Suite_X25519_HKDF_SHA256_AES_256_GCM],
-    default_suite: 1
+    default_suite: 1,
   };
 }
 
 describe("connectTunnel", () => {
   test("wraps invalid grant payloads", async () => {
-    const p = connectTunnel("bad" as any, { origin: "https://app.redeven.com" });
+    const p = connectTunnel("bad" as any, {
+      origin: "https://app.redeven.com",
+    });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "invalid_input",
+      path: "tunnel",
+    });
   });
 
   test("rejects missing tunnel_url", async () => {
@@ -120,7 +129,11 @@ describe("connectTunnel", () => {
     bad.tunnel_url = "";
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_tunnel_url", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_tunnel_url",
+      path: "tunnel",
+    });
   });
 
   test("rejects whitespace tunnel_url", async () => {
@@ -128,7 +141,11 @@ describe("connectTunnel", () => {
     bad.tunnel_url = "  \t  ";
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_tunnel_url", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_tunnel_url",
+      path: "tunnel",
+    });
   });
 
   test("rejects missing tunnel_url field", async () => {
@@ -136,7 +153,11 @@ describe("connectTunnel", () => {
     delete bad.tunnel_url;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_tunnel_url", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_tunnel_url",
+      path: "tunnel",
+    });
   });
 
   test("rejects missing channel_id", async () => {
@@ -144,7 +165,11 @@ describe("connectTunnel", () => {
     bad.channel_id = "";
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_channel_id", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_channel_id",
+      path: "tunnel",
+    });
   });
 
   test("rejects missing channel_id field", async () => {
@@ -152,7 +177,11 @@ describe("connectTunnel", () => {
     delete bad.channel_id;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_channel_id", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_channel_id",
+      path: "tunnel",
+    });
   });
 
   test("rejects too long channel_id", async () => {
@@ -160,7 +189,11 @@ describe("connectTunnel", () => {
     bad.channel_id = "a".repeat(257);
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "invalid_input",
+      path: "tunnel",
+    });
   });
 
   test("rejects missing token", async () => {
@@ -168,7 +201,11 @@ describe("connectTunnel", () => {
     bad.token = "";
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_token", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_token",
+      path: "tunnel",
+    });
   });
 
   test("rejects whitespace token", async () => {
@@ -176,7 +213,11 @@ describe("connectTunnel", () => {
     bad.token = "  \t  ";
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_token", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_token",
+      path: "tunnel",
+    });
   });
 
   test("rejects missing token field", async () => {
@@ -184,7 +225,11 @@ describe("connectTunnel", () => {
     delete bad.token;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_token", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_token",
+      path: "tunnel",
+    });
   });
 
   test("rejects missing init exp", async () => {
@@ -192,7 +237,11 @@ describe("connectTunnel", () => {
     bad.channel_init_expire_at_unix_s = 0;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_init_exp",
+      path: "tunnel",
+    });
   });
 
   test("rejects missing init exp field", async () => {
@@ -200,7 +249,11 @@ describe("connectTunnel", () => {
     delete bad.channel_init_expire_at_unix_s;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_init_exp", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_init_exp",
+      path: "tunnel",
+    });
   });
 
   test("rejects missing e2ee_psk_b64u field", async () => {
@@ -208,7 +261,11 @@ describe("connectTunnel", () => {
     delete bad.e2ee_psk_b64u;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_psk", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "invalid_psk",
+      path: "tunnel",
+    });
   });
 
   test("rejects missing default_suite field", async () => {
@@ -216,7 +273,11 @@ describe("connectTunnel", () => {
     delete bad.default_suite;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "invalid_suite",
+      path: "tunnel",
+    });
   });
 
   test("rejects invalid suite", async () => {
@@ -224,7 +285,11 @@ describe("connectTunnel", () => {
     bad.default_suite = 999;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "invalid_suite",
+      path: "tunnel",
+    });
   });
 
   test("rejects empty allowed_suites", async () => {
@@ -232,7 +297,11 @@ describe("connectTunnel", () => {
     bad.allowed_suites = [];
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "invalid_suite",
+      path: "tunnel",
+    });
   });
 
   test("rejects default_suite outside allowed_suites", async () => {
@@ -241,7 +310,11 @@ describe("connectTunnel", () => {
     bad.default_suite = Suite.Suite_X25519_HKDF_SHA256_AES_256_GCM;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_suite", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "invalid_suite",
+      path: "tunnel",
+    });
   });
 
   test("rejects invalid psk length", async () => {
@@ -249,49 +322,77 @@ describe("connectTunnel", () => {
     bad.e2ee_psk_b64u = base64urlEncode(new Uint8Array(31).fill(1));
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_psk", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "invalid_psk",
+      path: "tunnel",
+    });
   });
 
   test("rejects invalid endpointInstanceId encoding", async () => {
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
-      endpointInstanceId: "!!!"
+      endpointInstanceId: "!!!",
     });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_endpoint_instance_id", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "invalid_endpoint_instance_id",
+      path: "tunnel",
+    });
   });
 
   test("rejects endpointInstanceId length out of range", async () => {
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
-      endpointInstanceId: base64urlEncode(new Uint8Array(8).fill(1))
+      endpointInstanceId: base64urlEncode(new Uint8Array(8).fill(1)),
     });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_endpoint_instance_id", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "invalid_endpoint_instance_id",
+      path: "tunnel",
+    });
   });
 
   test("rejects non-client role grants", async () => {
     const bad = makeGrant();
     bad.role = Role.Role_server;
     const p = connectTunnel(bad, {
-      origin: "https://app.redeven.com"
+      origin: "https://app.redeven.com",
     });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "role_mismatch", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "role_mismatch",
+      path: "tunnel",
+    });
   });
 
   test("rejects grant_server wrapper inputs with role mismatch", async () => {
     const bad = makeGrant();
     bad.role = Role.Role_server;
-    const p = connectTunnel({ grant_server: bad } as any, { origin: "https://app.redeven.com" });
+    const p = connectTunnel({ grant_server: bad } as any, {
+      origin: "https://app.redeven.com",
+    });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "role_mismatch", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "role_mismatch",
+      path: "tunnel",
+    });
   });
 
   test("rejects grant_client wrapper with null payload", async () => {
-    const p = connectTunnel({ grant_client: null } as any, { origin: "https://app.redeven.com" });
+    const p = connectTunnel({ grant_client: null } as any, {
+      origin: "https://app.redeven.com",
+    });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "missing_grant", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "missing_grant",
+      path: "tunnel",
+    });
   });
 
   test("rejects invalid role values as role_mismatch", async () => {
@@ -299,7 +400,11 @@ describe("connectTunnel", () => {
     bad.role = 999;
     const p = connectTunnel(bad, { origin: "https://app.redeven.com" });
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "role_mismatch", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "validate",
+      code: "role_mismatch",
+      path: "tunnel",
+    });
   });
 
   test("reports websocket error on connect", async () => {
@@ -310,46 +415,67 @@ describe("connectTunnel", () => {
       onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
+      onRpcNotify: vi.fn(),
     };
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
-      observer
+      observer,
     });
 
     setTimeout(() => ws.emit("error", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "connect", code: "dial_failed", path: "tunnel" });
-
-    expect(observer.onConnect).toHaveBeenCalledWith("tunnel", "fail", "websocket_error", expect.any(Number));
-  });
-
-  test("maps tunnel attach rejection close reasons to stable attach codes", async () => {
-    const ws = new FakeWebSocket();
-    clientHandshakeMock.mockRejectedValueOnce(new WsCloseError(1008, "invalid_token"));
-    const observer = {
-      onConnect: vi.fn(),
-      onAttach: vi.fn(),
-      onHandshake: vi.fn(),
-      onWsError: vi.fn(),
-      onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
-    };
-
-    const p = connectTunnel(makeGrant(), {
-      origin: "https://app.redeven.com",
-      wsFactory: () => ws as any,
-      observer
+    await expect(p).rejects.toMatchObject({
+      stage: "connect",
+      code: "dial_failed",
+      path: "tunnel",
     });
 
-    setTimeout(() => ws.emit("open", {}), 0);
-    await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "attach", code: "invalid_token", path: "tunnel" });
-    expect(observer.onAttach).toHaveBeenCalledWith("fail", "invalid_token");
-    expect(observer.onHandshake).not.toHaveBeenCalled();
+    expect(observer.onConnect).toHaveBeenCalledWith(
+      "tunnel",
+      "fail",
+      "websocket_error",
+      expect.any(Number),
+    );
   });
+
+  test.each([
+    "invalid_token",
+    "tenant_mismatch",
+    "policy_denied",
+    "policy_error",
+  ] as const)(
+    "maps tunnel attach rejection close reason %s to a stable attach code",
+    async (reason) => {
+      const ws = new FakeWebSocket();
+      clientHandshakeMock.mockRejectedValueOnce(new WsCloseError(1008, reason));
+      const observer = {
+        onConnect: vi.fn(),
+        onAttach: vi.fn(),
+        onHandshake: vi.fn(),
+        onWsError: vi.fn(),
+        onRpcCall: vi.fn(),
+        onRpcNotify: vi.fn(),
+      };
+
+      const p = connectTunnel(makeGrant(), {
+        origin: "https://app.redeven.com",
+        wsFactory: () => ws as any,
+        observer,
+      });
+
+      setTimeout(() => ws.emit("open", {}), 0);
+      await expect(p).rejects.toBeInstanceOf(FlowersecError);
+      await expect(p).rejects.toMatchObject({
+        stage: "attach",
+        code: reason,
+        path: "tunnel",
+      });
+      expect(observer.onAttach).toHaveBeenCalledWith("fail", reason);
+      expect(observer.onHandshake).not.toHaveBeenCalled();
+    },
+  );
 
   test("does not lose tunnel attach close reasons when peer closes immediately after open", async () => {
     const ws = new FakeWebSocket();
@@ -363,14 +489,14 @@ describe("connectTunnel", () => {
       onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
+      onRpcNotify: vi.fn(),
     };
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       handshakeTimeoutMs: 30,
-      observer
+      observer,
     });
 
     setTimeout(() => {
@@ -378,7 +504,11 @@ describe("connectTunnel", () => {
       ws.emit("close", { code: 1008, reason: "invalid_token" });
     }, 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "attach", code: "invalid_token", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "attach",
+      code: "invalid_token",
+      path: "tunnel",
+    });
     expect(observer.onAttach).toHaveBeenCalledWith("fail", "invalid_token");
     expect(observer.onHandshake).not.toHaveBeenCalled();
   });
@@ -391,19 +521,28 @@ describe("connectTunnel", () => {
       onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
+      onRpcNotify: vi.fn(),
     };
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       connectTimeoutMs: 30,
-      observer
+      observer,
     });
 
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "connect", code: "timeout", path: "tunnel" });
-    expect(observer.onConnect).toHaveBeenCalledWith("tunnel", "fail", "timeout", expect.any(Number));
+    await expect(p).rejects.toMatchObject({
+      stage: "connect",
+      code: "timeout",
+      path: "tunnel",
+    });
+    expect(observer.onConnect).toHaveBeenCalledWith(
+      "tunnel",
+      "fail",
+      "timeout",
+      expect.any(Number),
+    );
   });
 
   test("reports connect cancellation", async () => {
@@ -415,20 +554,29 @@ describe("connectTunnel", () => {
       onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
+      onRpcNotify: vi.fn(),
     };
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       signal: ac.signal,
-      observer
+      observer,
     });
 
     setTimeout(() => ac.abort(), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "connect", code: "canceled", path: "tunnel" });
-    expect(observer.onConnect).toHaveBeenCalledWith("tunnel", "fail", "canceled", expect.any(Number));
+    await expect(p).rejects.toMatchObject({
+      stage: "connect",
+      code: "canceled",
+      path: "tunnel",
+    });
+    expect(observer.onConnect).toHaveBeenCalledWith(
+      "tunnel",
+      "fail",
+      "canceled",
+      expect.any(Number),
+    );
   });
 
   test("reports attach send failures", async () => {
@@ -442,18 +590,22 @@ describe("connectTunnel", () => {
       onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
+      onRpcNotify: vi.fn(),
     };
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
-      observer
+      observer,
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "attach", code: "attach_failed", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "attach",
+      code: "attach_failed",
+      path: "tunnel",
+    });
 
     expect(observer.onAttach).toHaveBeenCalledWith("fail", "send_failed");
   });
@@ -467,47 +619,70 @@ describe("connectTunnel", () => {
       onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
+      onRpcNotify: vi.fn(),
     };
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
-      observer
+      observer,
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "handshake_failed", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "handshake",
+      code: "handshake_failed",
+      path: "tunnel",
+    });
 
     expect(observer.onAttach).toHaveBeenCalledWith("fail", "attach_failed");
     expect(observer.onAttach).not.toHaveBeenCalledWith("ok", undefined);
-    expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "handshake_failed", expect.any(Number));
+    expect(observer.onHandshake).toHaveBeenCalledWith(
+      "tunnel",
+      "fail",
+      "handshake_failed",
+      expect.any(Number),
+    );
   });
 
   test("classifies handshake timestamp failures", async () => {
     const ws = new FakeWebSocket();
-    clientHandshakeMock.mockRejectedValueOnce(new E2EEHandshakeError("timestamp_after_init_exp", "timestamp after init_exp"));
+    clientHandshakeMock.mockRejectedValueOnce(
+      new E2EEHandshakeError(
+        "timestamp_after_init_exp",
+        "timestamp after init_exp",
+      ),
+    );
     const observer = {
       onConnect: vi.fn(),
       onAttach: vi.fn(),
       onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
+      onRpcNotify: vi.fn(),
     };
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
-      observer
+      observer,
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "timestamp_after_init_exp", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "handshake",
+      code: "timestamp_after_init_exp",
+      path: "tunnel",
+    });
     expect(observer.onAttach).toHaveBeenCalledWith("fail", "attach_failed");
-    expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "timestamp_after_init_exp", expect.any(Number));
+    expect(observer.onHandshake).toHaveBeenCalledWith(
+      "tunnel",
+      "fail",
+      "timestamp_after_init_exp",
+      expect.any(Number),
+    );
   });
 
   test("reports handshake timeout", async () => {
@@ -519,21 +694,30 @@ describe("connectTunnel", () => {
       onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
+      onRpcNotify: vi.fn(),
     };
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
       wsFactory: () => ws as any,
       handshakeTimeoutMs: 30,
-      observer
+      observer,
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "timeout", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "handshake",
+      code: "timeout",
+      path: "tunnel",
+    });
     expect(observer.onAttach).toHaveBeenCalledWith("fail", "timeout");
-    expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "timeout", expect.any(Number));
+    expect(observer.onHandshake).toHaveBeenCalledWith(
+      "tunnel",
+      "fail",
+      "timeout",
+      expect.any(Number),
+    );
   });
 
   test("reports attach cancellation when handshake is aborted after attach send", async () => {
@@ -546,7 +730,7 @@ describe("connectTunnel", () => {
       onHandshake: vi.fn(),
       onWsError: vi.fn(),
       onRpcCall: vi.fn(),
-      onRpcNotify: vi.fn()
+      onRpcNotify: vi.fn(),
     };
 
     const p = connectTunnel(makeGrant(), {
@@ -554,7 +738,7 @@ describe("connectTunnel", () => {
       wsFactory: () => ws as any,
       handshakeTimeoutMs: 1_000,
       signal: ac.signal,
-      observer
+      observer,
     });
 
     setTimeout(() => {
@@ -563,9 +747,18 @@ describe("connectTunnel", () => {
     }, 0);
 
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "handshake", code: "canceled", path: "tunnel" });
+    await expect(p).rejects.toMatchObject({
+      stage: "handshake",
+      code: "canceled",
+      path: "tunnel",
+    });
     expect(observer.onAttach).toHaveBeenCalledWith("fail", "canceled");
-    expect(observer.onHandshake).toHaveBeenCalledWith("tunnel", "fail", "canceled", expect.any(Number));
+    expect(observer.onHandshake).toHaveBeenCalledWith(
+      "tunnel",
+      "fail",
+      "canceled",
+      expect.any(Number),
+    );
   });
 
   test("close tears down rpc, mux, and secure resources", async () => {
@@ -574,17 +767,17 @@ describe("connectTunnel", () => {
     clientHandshakeMock.mockResolvedValueOnce({
       read: vi.fn(),
       write: vi.fn(),
-      close: secureClose
+      close: secureClose,
     });
     openStream.mockResolvedValueOnce({
       read: vi.fn().mockResolvedValue(new Uint8Array()),
       write: vi.fn(),
-      close: vi.fn()
+      close: vi.fn(),
     });
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
-      wsFactory: () => ws as any
+      wsFactory: () => ws as any,
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
@@ -604,17 +797,17 @@ describe("connectTunnel", () => {
       read: vi.fn(),
       write: vi.fn(),
       close: secureClose,
-      sendPing: securePing
+      sendPing: securePing,
     });
     openStream.mockResolvedValueOnce({
       read: vi.fn().mockResolvedValue(new Uint8Array()),
       write: vi.fn(),
-      close: vi.fn()
+      close: vi.fn(),
     });
 
     const p = connectTunnel(makeGrant(), {
       origin: "https://app.redeven.com",
-      wsFactory: () => ws as any
+      wsFactory: () => ws as any,
     });
 
     setTimeout(() => ws.emit("open", {}), 0);
@@ -622,7 +815,11 @@ describe("connectTunnel", () => {
 
     const pp = conn.ping();
     await expect(pp).rejects.toBeInstanceOf(FlowersecError);
-    await expect(pp).rejects.toMatchObject({ stage: "secure", code: "ping_failed", path: "tunnel" });
+    await expect(pp).rejects.toMatchObject({
+      stage: "secure",
+      code: "ping_failed",
+      path: "tunnel",
+    });
     expect(securePing).toHaveBeenCalledTimes(1);
 
     conn.close();

@@ -10,15 +10,20 @@ export const tunnelAttachCloseReasons = [
   "idle_timeout_mismatch",
   "role_mismatch",
   "token_replay",
+  "tenant_mismatch",
+  "policy_denied",
+  "policy_error",
   "replace_rate_limited",
   "attach_failed",
   "timeout",
-  "canceled"
+  "canceled",
 ] as const satisfies readonly FlowersecErrorCode[];
 
 export type TunnelAttachCloseReason = (typeof tunnelAttachCloseReasons)[number];
 
-export function isTunnelAttachCloseReason(v: string | undefined): v is TunnelAttachCloseReason {
+export function isTunnelAttachCloseReason(
+  v: string | undefined,
+): v is TunnelAttachCloseReason {
   if (v == null) return false;
   return (tunnelAttachCloseReasons as readonly string[]).includes(v);
 }

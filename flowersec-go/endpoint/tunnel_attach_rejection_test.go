@@ -26,6 +26,9 @@ func TestConnectTunnel_MapsAttachRejectionCloseReason(t *testing.T) {
 		{"invalid_token", "invalid_token", endpoint.CodeInvalidToken},
 		{"init_exp_mismatch", "init_exp_mismatch", endpoint.CodeInitExpMismatch},
 		{"idle_timeout_mismatch", "idle_timeout_mismatch", endpoint.CodeIdleTimeoutMismatch},
+		{"tenant_mismatch", "tenant_mismatch", endpoint.CodeTenantMismatch},
+		{"policy_denied", "policy_denied", endpoint.CodePolicyDenied},
+		{"policy_error", "policy_error", endpoint.CodePolicyError},
 	}
 
 	for _, tc := range cases {

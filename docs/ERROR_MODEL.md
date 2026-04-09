@@ -64,6 +64,9 @@ Common stable codes include:
   - `init_exp_mismatch`
   - `idle_timeout_mismatch`
   - `token_replay`
+  - `tenant_mismatch`
+  - `policy_denied`
+  - `policy_error`
   - `replace_rate_limited`
   - `timeout`
   - `canceled`

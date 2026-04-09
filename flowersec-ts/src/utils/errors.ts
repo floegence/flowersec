@@ -14,7 +14,15 @@ export class AbortError extends Error {
 
 export type FlowersecPath = "auto" | "tunnel" | "direct";
 
-export type FlowersecStage = "validate" | "connect" | "attach" | "handshake" | "secure" | "yamux" | "rpc" | "close";
+export type FlowersecStage =
+  | "validate"
+  | "connect"
+  | "attach"
+  | "handshake"
+  | "secure"
+  | "yamux"
+  | "rpc"
+  | "close";
 
 export type FlowersecErrorCode =
   | "timeout"
@@ -53,6 +61,9 @@ export type FlowersecErrorCode =
   | "init_exp_mismatch"
   | "idle_timeout_mismatch"
   | "token_replay"
+  | "tenant_mismatch"
+  | "policy_denied"
+  | "policy_error"
   | "replace_rate_limited"
   | "handshake_failed"
   | "ping_failed"
@@ -69,10 +80,24 @@ export class FlowersecError extends Error {
   readonly path: FlowersecPath;
   override readonly cause?: unknown;
 
-  constructor(args: Readonly<{ code: FlowersecErrorCode; stage: FlowersecStage; path: FlowersecPath; message?: string; cause?: unknown }>) {
+  constructor(
+    args: Readonly<{
+      code: FlowersecErrorCode;
+      stage: FlowersecStage;
+      path: FlowersecPath;
+      message?: string;
+      cause?: unknown;
+    }>,
+  ) {
     const prefix = `${args.path} ${args.stage} (${args.code})`;
-    const message = args.message != null && args.message !== "" ? `${prefix}: ${args.message}` : prefix;
-    super(message, args.cause !== undefined ? { cause: args.cause } : undefined);
+    const message =
+      args.message != null && args.message !== ""
+        ? `${prefix}: ${args.message}`
+        : prefix;
+    super(
+      message,
+      args.cause !== undefined ? { cause: args.cause } : undefined,
+    );
     this.name = "FlowersecError";
     this.code = args.code;
     this.stage = args.stage;
