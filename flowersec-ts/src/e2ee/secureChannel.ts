@@ -135,7 +135,6 @@ export class SecureChannel {
   // read resolves with the next plaintext chunk or throws on errors/close.
   async read(): Promise<Uint8Array> {
     while (true) {
-      if (this.readErr != null) throw this.readErr;
       if (this.recvQueueHead < this.recvQueue.length) {
         const b = this.recvQueue[this.recvQueueHead]!;
         this.recvQueueHead++;
@@ -146,6 +145,7 @@ export class SecureChannel {
         this.recvQueueBytes -= b.length;
         return b;
       }
+      if (this.readErr != null) throw this.readErr;
       if (this.closed) throw new Error("closed");
       await new Promise<void>((resolve) => this.recvWaiters.push(resolve));
     }
@@ -159,9 +159,6 @@ export class SecureChannel {
     this.rejectQueuedSenders(this.sendErr ?? new Error("closed"));
     this.wakeSendWaiters();
     this.transport.close();
-    this.recvQueue.length = 0;
-    this.recvQueueHead = 0;
-    this.recvQueueBytes = 0;
     const ws = this.recvWaiters;
     this.recvWaiters = [];
     for (const w of ws) w();

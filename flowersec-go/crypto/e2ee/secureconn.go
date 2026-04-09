@@ -49,8 +49,10 @@ type SecureChannel struct {
 var ErrRecvBufferExceeded = errors.New("recv buffer exceeded")
 
 type sendReq struct {
-	frame []byte     // Encrypted record frame to write.
-	done  chan error // Completion signal for the send.
+	frame  []byte                  // Encrypted record frame to write.
+	done   chan error              // Completion signal for the send.
+	ctx    context.Context         // Per-send cancellation for timed-out or aborted writes.
+	cancel context.CancelCauseFunc // Cancels ctx with a stable cause.
 }
 
 // NewSecureChannel wraps a BinaryTransport with record encryption and buffering.
@@ -67,6 +69,15 @@ func NewSecureChannel(t BinaryTransport, keys RecordKeyState, maxRecordBytes int
 	go c.writeLoop()
 	go c.readLoop()
 	return c
+}
+
+func newSendReq() sendReq {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	return sendReq{
+		done:   make(chan error, 1),
+		ctx:    ctx,
+		cancel: cancel,
+	}
 }
 
 func (c *SecureChannel) signalReadLocked() {
@@ -99,13 +110,17 @@ func (c *SecureChannel) writeLoop() {
 			err = io.ErrClosedPipe
 		}
 		if err == nil {
-			err = c.t.WriteBinary(context.Background(), req.frame)
+			err = c.t.WriteBinary(req.ctx, req.frame)
+			if cause := context.Cause(req.ctx); cause != nil && errors.Is(err, context.Canceled) {
+				err = cause
+			}
 			if err != nil {
 				c.setSendErr(err)
 				_ = c.Close()
 			}
 		}
 		req.done <- err
+		req.cancel(nil)
 	}
 }
 
@@ -223,7 +238,7 @@ func (c *SecureChannel) Write(p []byte) (int, error) {
 
 		// Allocate seq + build + enqueue under sendMu to guarantee that
 		// send order matches seq order (otherwise receiver seq checks can fail).
-		req := sendReq{done: make(chan error, 1)}
+		req := newSendReq()
 		c.sendMu.Lock()
 		if c.sendClosed {
 			c.sendMu.Unlock()
@@ -247,7 +262,7 @@ func (c *SecureChannel) Write(p []byte) (int, error) {
 		c.sendQueue = append(c.sendQueue, req)
 		c.sendCond.Signal()
 		c.sendMu.Unlock()
-		if err := c.waitSend(req.done); err != nil {
+		if err := c.waitSend(&req); err != nil {
 			return total, err
 		}
 
@@ -303,7 +318,7 @@ func (c *SecureChannel) SetDeadline(t time.Time) error {
 
 // Ping writes a keepalive record with an empty payload.
 func (c *SecureChannel) Ping() error {
-	req := sendReq{done: make(chan error, 1)}
+	req := newSendReq()
 	c.sendMu.Lock()
 	if c.sendClosed {
 		c.sendMu.Unlock()
@@ -327,12 +342,12 @@ func (c *SecureChannel) Ping() error {
 	c.sendQueue = append(c.sendQueue, req)
 	c.sendCond.Signal()
 	c.sendMu.Unlock()
-	return c.waitSend(req.done)
+	return c.waitSend(&req)
 }
 
 // Rekey injects a rekey record and advances the send key.
 func (c *SecureChannel) Rekey() error {
-	req := sendReq{done: make(chan error, 1)}
+	req := newSendReq()
 	c.sendMu.Lock()
 	if c.sendClosed {
 		c.sendMu.Unlock()
@@ -369,10 +384,10 @@ func (c *SecureChannel) Rekey() error {
 	}
 	c.keys.SendKey = newKey
 	c.sendMu.Unlock()
-	return c.waitSend(req.done)
+	return c.waitSend(&req)
 }
 
-func (c *SecureChannel) waitSend(done <-chan error) error {
+func (c *SecureChannel) waitSend(req *sendReq) error {
 	for {
 		c.sendMu.Lock()
 		ch := c.writeNotify
@@ -381,7 +396,7 @@ func (c *SecureChannel) waitSend(done <-chan error) error {
 
 		if deadline.IsZero() {
 			select {
-			case err := <-done:
+			case err := <-req.done:
 				return err
 			case <-ch:
 				continue
@@ -389,20 +404,34 @@ func (c *SecureChannel) waitSend(done <-chan error) error {
 		}
 		d := time.Until(deadline)
 		if d <= 0 {
-			return os.ErrDeadlineExceeded
+			return c.timeoutSend(req)
 		}
 		timer := time.NewTimer(d)
 		select {
-		case err := <-done:
+		case err := <-req.done:
 			timer.Stop()
 			return err
 		case <-timer.C:
-			return os.ErrDeadlineExceeded
+			select {
+			case err := <-req.done:
+				return err
+			default:
+			}
+			return c.timeoutSend(req)
 		case <-ch:
 			timer.Stop()
 			continue
 		}
 	}
+}
+
+func (c *SecureChannel) timeoutSend(req *sendReq) error {
+	req.cancel(os.ErrDeadlineExceeded)
+	_ = c.Close()
+	if err := <-req.done; err == nil {
+		return nil
+	}
+	return os.ErrDeadlineExceeded
 }
 
 // dummyAddr provides a stable net.Addr for in-memory transports.

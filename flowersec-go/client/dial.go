@@ -257,17 +257,13 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeMuxFailed, err)
 	}
 
-	rpcStream, err := sess.OpenStream()
+	rpcStream, err := openBootstrapStream(handshakeCtx, path, secure, func() (io.ReadWriteCloser, error) {
+		return sess.OpenStream()
+	})
 	if err != nil {
 		_ = sess.Close()
 		_ = secure.Close()
-		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
-	}
-	if err := streamhello.WriteStreamHello(rpcStream, "rpc"); err != nil {
-		_ = rpcStream.Close()
-		_ = sess.Close()
-		_ = secure.Close()
-		return nil, wrapErr(path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
+		return nil, err
 	}
 	rpcClient := rpc.NewClient(rpcStream)
 
@@ -279,6 +275,98 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 		rpc:                rpcClient,
 	}
 	return out, nil
+}
+
+func openBootstrapStream(ctx context.Context, path fserrors.Path, secure interface{ SetWriteDeadline(time.Time) error }, open func() (io.ReadWriteCloser, error)) (io.ReadWriteCloser, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, wrapErr(path, fserrors.StageYamux, classifyContextCode(err), err)
+	}
+
+	restoreSecureDeadline := armDeadlineWake(ctx, func(t time.Time) error {
+		return secure.SetWriteDeadline(t)
+	})
+	defer restoreSecureDeadline()
+
+	stream, err := open()
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, wrapErr(path, fserrors.StageYamux, classifyContextCode(cerr), cerr)
+		}
+		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
+	}
+
+	stopStreamWake := armStreamCancel(ctx, stream)
+	defer stopStreamWake()
+
+	if d, ok := ctx.Deadline(); ok {
+		if ds, ok := any(stream).(interface{ SetWriteDeadline(time.Time) error }); ok {
+			_ = ds.SetWriteDeadline(d)
+			defer func() { _ = ds.SetWriteDeadline(time.Time{}) }()
+		}
+	}
+	if err := streamhello.WriteStreamHello(stream, "rpc"); err != nil {
+		_ = stream.Close()
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, wrapErr(path, fserrors.StageYamux, classifyContextCode(cerr), cerr)
+		}
+		return nil, wrapErr(path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = stream.Close()
+		return nil, wrapErr(path, fserrors.StageYamux, classifyContextCode(err), err)
+	}
+	return stream, nil
+}
+
+func armDeadlineWake(ctx context.Context, setDeadline func(time.Time) error) func() {
+	if ctx == nil {
+		return func() {}
+	}
+	if d, ok := ctx.Deadline(); ok {
+		_ = setDeadline(d)
+	}
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = setDeadline(time.Now())
+		case <-stop:
+		}
+	}()
+	return func() {
+		close(stop)
+		_ = setDeadline(time.Time{})
+	}
+}
+
+func armStreamCancel(ctx context.Context, stream io.Closer) func() {
+	if ctx == nil {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = stream.Close()
+		case <-stop:
+		}
+	}()
+	return func() {
+		close(stop)
+	}
 }
 
 func classifyConnectObserverReason(err error) observability.ConnectReason {

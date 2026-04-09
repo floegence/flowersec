@@ -220,6 +220,36 @@ describe("SecureChannel", () => {
     await expect(readPromise).rejects.toThrow(/closed/);
   });
 
+  test("read drains buffered plaintext before surfacing close errors", async () => {
+    const key = new Uint8Array(32).fill(1);
+    const noncePrefix = new Uint8Array(4).fill(2);
+    const rekeyBase = new Uint8Array(32).fill(3);
+    const transcriptHash = new Uint8Array(32).fill(4);
+    const maxRecordBytes = 1 << 20;
+
+    const { transport, push, close } = makeQueueTransport();
+    const sc = new SecureChannel({
+      transport,
+      maxRecordBytes,
+      maxBufferedBytes: 0,
+      sendKey: key,
+      recvKey: key,
+      sendNoncePrefix: noncePrefix,
+      recvNoncePrefix: noncePrefix,
+      rekeyBase,
+      transcriptHash,
+      sendDir: 1,
+      recvDir: 2
+    });
+
+    const appFrame = encryptRecord(key, noncePrefix, RECORD_FLAG_APP, 1n, new Uint8Array([7, 8, 9]), maxRecordBytes);
+    push(appFrame);
+    close();
+
+    await expect(sc.read()).resolves.toEqual(new Uint8Array([7, 8, 9]));
+    await expect(sc.read()).rejects.toThrow(/closed/);
+  });
+
   test("close rejects new writes", async () => {
     const { transport, close } = makeQueueTransport();
     const sc = new SecureChannel({
