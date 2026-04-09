@@ -257,7 +257,14 @@ func runServerEndpoint(ctx context.Context, wsURL string, channelID string, toke
 		go func() {
 			defer stream.Close()
 			h, err := streamhello.ReadStreamHello(stream, 8*1024)
-			if err != nil || h.Kind != "rpc" {
+			if err != nil {
+				return
+			}
+			if h.Kind == "echo" {
+				_, _ = io.Copy(stream, stream)
+				return
+			}
+			if h.Kind != "rpc" {
 				return
 			}
 			router := rpc.NewRouter()

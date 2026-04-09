@@ -1,12 +1,12 @@
 import process from "node:process";
 
-import { connectDirectNode } from "../../flowersec-ts/dist/node/index.js";
+import { connectNode } from "../../flowersec-ts/dist/node/index.js";
 import { createDemoSession } from "../../flowersec-ts/dist/_examples/flowersec/demo/v1.facade.gen.js";
 import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
 
 // node-direct-client is the "simple" Node.js direct (no tunnel) client example.
 //
-// It uses the high-level helper connectDirectNode(), which internally performs:
+// It uses the high-level helper connectNode(), which internally performs:
 // - WebSocket connect (requires explicit Origin in Node)
 // - E2EE handshake
 // - Yamux session
@@ -14,8 +14,8 @@ import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
 //
 // Notes:
 // - The direct demo server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
-// - In Node, connectDirectNode() automatically sets wsFactory so the Origin header is sent correctly.
-// - Input JSON is the output of examples/go/direct_demo.
+// - In Node, connectNode() automatically sets wsFactory so the Origin header is sent correctly.
+// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, or the ready JSON from examples/go/direct_demo.
 
 async function readStdinUtf8() {
   const chunks = [];
@@ -42,13 +42,15 @@ function waitHello(demo, timeoutMs) {
 async function main() {
   const input = await readStdinUtf8();
   const info = JSON.parse(input);
+  const bootstrap = info?.connect_artifact ?? info;
 
   // Explicit Origin header value used by the server allow-list.
   const origin = process.env.FSEC_ORIGIN ?? "";
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
-  // connectDirectNode() returns an RPC-ready session and supports extra yamux streams via openStream(kind).
-  const sess = createDemoSession(await connectDirectNode(info, { origin }));
+  // connectNode() auto-detects direct artifacts/info and returns an RPC-ready session.
+  // It also supports extra yamux streams via openStream(kind).
+  const sess = createDemoSession(await connectNode(bootstrap, { origin }));
 
   try {
     const notified = waitHello(sess.demo, 2000);

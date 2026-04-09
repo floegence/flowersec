@@ -21,7 +21,7 @@ import { createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
 //
 // Notes:
 // - The direct demo server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
-// - Input JSON is the output of examples/go/direct_demo.
+// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, or the output of examples/go/direct_demo.
 async function readStdinUtf8() {
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
@@ -79,9 +79,19 @@ function waitNotify(proxy, typeId, timeoutMs) {
   });
 }
 
+function pickDirectInfo(obj) {
+  if (obj && typeof obj === "object" && obj.connect_artifact && typeof obj.connect_artifact === "object") {
+    return pickDirectInfo(obj.connect_artifact);
+  }
+  if (obj && typeof obj === "object" && obj.transport === "direct" && obj.direct_info != null) {
+    return obj.direct_info;
+  }
+  return obj;
+}
+
 async function main() {
   const input = await readStdinUtf8();
-  const info = JSON.parse(input);
+  const info = pickDirectInfo(JSON.parse(input));
 
   // Explicit Origin header value used by the server allow-list.
   const origin = process.env.FSEC_ORIGIN ?? "";

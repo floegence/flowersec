@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,12 +18,13 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
-// go_client_direct_simple demonstrates the minimal direct (no tunnel) client using the high-level Go helpers:
-// WS -> E2EE -> Yamux -> RPC, plus an extra "echo" stream roundtrip.
+// go_client_direct_simple demonstrates the minimal direct (no tunnel) client using the high-level Go helper:
+// client.Connect auto-detects the current bootstrap format and builds WS -> E2EE -> Yamux -> RPC,
+// plus an extra "echo" stream roundtrip.
 //
 // Notes:
 // - You must provide an explicit Origin header value (the direct demo server enforces an allow-list).
-// - Input JSON is the output of examples/go/direct_demo (it includes ws_url, channel_id, and e2ee_psk_b64u).
+// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, or the ready JSON from examples/go/direct_demo.
 var (
 	version = "dev"
 	commit  = "unknown"
@@ -41,7 +43,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("flowersec-go-client-direct", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.BoolVar(&showVersion, "version", false, "print version and exit")
-	fs.StringVar(&infoPath, "info", infoPath, "path to JSON output from direct_demo (default: stdin)")
+	fs.StringVar(&infoPath, "info", infoPath, "path to direct bootstrap JSON (ConnectArtifact or direct_demo ready JSON; default: stdin)")
 	fs.StringVar(&origin, "origin", origin, "explicit Origin header value (required) (env: FSEC_ORIGIN)")
 	fs.Usage = func() {
 		out := fs.Output()
@@ -49,10 +51,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "  flowersec-go-client-direct [flags] < direct.json")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Examples:")
-		fmt.Fprintln(out, "  # Run the direct demo server and capture its ready JSON.")
+		fmt.Fprintln(out, "  # Run the direct demo server, wrap its ready JSON as a ConnectArtifact, then connect.")
 		fmt.Fprintln(out, "  flowersec-direct-demo --allow-origin http://127.0.0.1:5173 | tee direct.json")
+		fmt.Fprintln(out, "  jq -c '{v:1, transport:\"direct\", direct_info:{ws_url, channel_id, e2ee_psk_b64u, channel_init_expire_at_unix_s, default_suite}}' < direct.json \\")
+		fmt.Fprintln(out, "    | FSEC_ORIGIN=http://127.0.0.1:5173 flowersec-go-client-direct")
 		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "  # Run this Go client using the ready JSON from stdin (Origin via env).")
+		fmt.Fprintln(out, "  # Legacy direct_demo ready JSON remains supported too.")
 		fmt.Fprintln(out, "  FSEC_ORIGIN=http://127.0.0.1:5173 flowersec-go-client-direct < direct.json")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Output:")
@@ -102,18 +106,17 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		defer f.Close()
 		infoReader = f
 	}
-	info, err := protocolio.DecodeDirectConnectInfoJSON(infoReader)
+	connectInput, err := unwrapConnectArtifactEnvelope(infoReader)
 	if err != nil {
-		fmt.Fprintln(stderr, fmt.Errorf("decode direct connect info JSON: %w", err))
+		fmt.Fprintln(stderr, fmt.Errorf("decode direct bootstrap JSON: %w", err))
 		return 1
 	}
-
-	// This helper builds the full protocol stack and returns an RPC-ready client:
+	// This helper auto-detects ConnectArtifact vs legacy direct bootstrap input and returns an RPC-ready client:
 	// - c.OpenStream(ctx, kind): open extra streams (e.g. "echo")
 	// - c.RPC(): typed request/notify API over the dedicated "rpc" stream
-	c, err := client.ConnectDirect(
+	c, err := client.Connect(
 		context.Background(),
-		info,
+		bytes.NewReader(connectInput),
 		client.WithOrigin(origin),
 		client.WithConnectTimeout(10*time.Second),
 		client.WithHandshakeTimeout(10*time.Second),
@@ -177,4 +180,23 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "echo response: %q\n", string(buf))
 	return 0
+}
+
+func unwrapConnectArtifactEnvelope(r io.Reader) ([]byte, error) {
+	lr := &io.LimitedReader{R: r, N: int64(protocolio.DefaultMaxJSONBytes) + 1}
+	b, err := io.ReadAll(lr)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > protocolio.DefaultMaxJSONBytes {
+		return nil, protocolio.ErrInputTooLarge
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(b, &top); err != nil {
+		return b, nil
+	}
+	if raw, ok := top["connect_artifact"]; ok && len(raw) > 0 {
+		return raw, nil
+	}
+	return b, nil
 }

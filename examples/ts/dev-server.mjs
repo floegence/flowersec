@@ -38,6 +38,23 @@ function buildDemoProxyRuntimeScope() {
   };
 }
 
+function buildDirectArtifact(direct) {
+  if (direct == null || typeof direct !== "object" || Array.isArray(direct)) {
+    return null;
+  }
+  return {
+    v: 1,
+    transport: "direct",
+    direct_info: {
+      ws_url: direct.ws_url,
+      channel_id: direct.channel_id,
+      e2ee_psk_b64u: direct.e2ee_psk_b64u,
+      channel_init_expire_at_unix_s: direct.channel_init_expire_at_unix_s,
+      default_suite: direct.default_suite,
+    },
+  };
+}
+
 export function withDemoProxyRuntimeScope(artifact) {
   if (artifact == null || typeof artifact !== "object" || Array.isArray(artifact)) {
     return artifact;
@@ -342,6 +359,7 @@ async function main() {
       "server-endpoint-demo",
       {
         ...serverEndpointRunner,
+        args: [...serverEndpointRunner.args, "--endpoint-id", "server-1"],
         env: { ...process.env, FSEC_ORIGIN: origin },
       },
       { stdinText: JSON.stringify(controlplane) + "\n", readyTimeoutMs: 20000 }
@@ -453,6 +471,17 @@ async function main() {
         }
         res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
         res.end(JSON.stringify(direct));
+        return;
+      }
+      if (u.pathname === "/__demo/direct/artifact") {
+        if (direct == null) {
+          res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "direct demo not started" }));
+          return;
+        }
+        const artifact = buildDirectArtifact(direct);
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ connect_artifact: artifact }));
         return;
       }
       if (u.pathname.startsWith("/__demo/")) {

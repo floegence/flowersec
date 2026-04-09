@@ -13,11 +13,11 @@
   </head>
   <body>
     <h1>Flowersec Direct Demo (Browser)</h1>
-    <p>This page uses the high-level client helper. For the manual stack, open <a href="./advanced.html">advanced.html</a>.</p>
-    <p>Paste JSON from <code>examples/go/direct_demo</code>.</p>
+    <p>This page uses the high-level auto-connect helper. For the manual stack, open <a href="./advanced.html">advanced.html</a>.</p>
+    <p>Paste a <code>connect_artifact</code> envelope, or legacy direct ready JSON if you are checking backward compatibility.</p>
     <textarea id="in" spellcheck="false"></textarea>
     <div style="margin: 12px 0">
-      <button id="fetch" disabled>Fetch DirectConnectInfo</button>
+      <button id="fetch" disabled>Fetch Artifact</button>
       <button id="connect">Connect</button>
       <button id="close" disabled>Close</button>
       <span id="status" style="margin-left: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;"></span>
@@ -25,7 +25,7 @@
     <pre id="out"></pre>
 
     <script type="module">
-      import { connectDirectBrowser } from "../../../flowersec-ts/dist/browser/index.js";
+      import { connectBrowser } from "../../../flowersec-ts/dist/browser/index.js";
       import { createDemoSession } from "../../../flowersec-ts/dist/_examples/flowersec/demo/v1.facade.gen.js";
       import { createByteReader } from "../../../flowersec-ts/dist/streamio/index.js";
 
@@ -78,14 +78,14 @@
 
       $fetch.addEventListener("click", async () => {
         $out.textContent = "";
-        setStatus("fetching info...");
+        setStatus("fetching artifact...");
         try {
-          const resp = await fetch("/__demo/direct/info");
+          const resp = await fetch("/__demo/direct/artifact");
           const text = await resp.text();
           if (!resp.ok) throw new Error(`fetch failed (${resp.status}): ${text}`);
           const obj = JSON.parse(text);
           $in.value = JSON.stringify(obj, null, 2);
-          setStatus("info loaded");
+          setStatus("artifact loaded");
         } catch (e) {
           setStatus("fetch failed");
           logLine(String(e?.stack ?? e));
@@ -97,8 +97,9 @@
         setStatus("connecting...");
         try {
           const info = JSON.parse($in.value);
-          // High-level helper: it performs E2EE handshake + yamux + RPC.
-          sess = createDemoSession(await connectDirectBrowser(info));
+          const bootstrap = info?.connect_artifact ?? info;
+          // High-level helper: it auto-detects the connect input and performs E2EE + yamux + RPC.
+          sess = createDemoSession(await connectBrowser(bootstrap));
           $close.disabled = false;
           setStatus("connected");
 

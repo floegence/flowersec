@@ -15,7 +15,7 @@
     <h1>Flowersec Tunnel Demo (Browser, Advanced)</h1>
     <p>This page shows the manual stack: WS Attach → E2EE → Yamux → RPC.</p>
     <p>For the high-level helper, open <a href="./index.html">index.html</a>.</p>
-    <p>Paste JSON from the controlplane <code>/v1/channel/init</code> response (either the full object or <code>grant_client</code> only).</p>
+    <p>Paste a <code>connect_artifact</code> envelope, or legacy tunnel grant JSON (<code>grant_client</code> wrapper/raw grant) if you want to inspect the low-level flow.</p>
     <textarea id="in" spellcheck="false"></textarea>
     <div style="margin: 12px 0">
       <button id="connect">Connect</button>
@@ -49,6 +49,10 @@
       }
 
       function pickGrantClient(obj) {
+        if (obj && typeof obj === "object" && obj.connect_artifact && typeof obj.connect_artifact === "object") {
+          return pickGrantClient(obj.connect_artifact);
+        }
+        if (obj && typeof obj === "object" && obj.transport === "tunnel" && obj.tunnel_grant != null) return obj.tunnel_grant;
         if (obj && typeof obj === "object" && obj.grant_client != null) return obj.grant_client;
         return obj;
       }

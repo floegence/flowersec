@@ -23,8 +23,8 @@ import { Role as TunnelRole } from "../../flowersec-ts/dist/gen/flowersec/tunnel
 //
 // Notes:
 // - The tunnel server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
-// - Tunnel attach tokens are one-time use; mint a new channel init for each connection attempt.
-// - Input JSON can be either the controlplane response {"grant_client":...}
+// - Tunnel attach tokens are one-time use; mint a new artifact/grant for each connection attempt.
+// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, {"grant_client":...},
 //   or just the grant_client object itself.
 async function readStdinUtf8() {
   const chunks = [];
@@ -33,6 +33,12 @@ async function readStdinUtf8() {
 }
 
 function pickGrantClient(obj) {
+  if (obj && typeof obj === "object" && obj.connect_artifact && typeof obj.connect_artifact === "object") {
+    return pickGrantClient(obj.connect_artifact);
+  }
+  if (obj && typeof obj === "object" && obj.transport === "tunnel" && obj.tunnel_grant != null) {
+    return obj.tunnel_grant;
+  }
   if (obj && typeof obj === "object" && obj.grant_client != null) return obj.grant_client;
   return obj;
 }

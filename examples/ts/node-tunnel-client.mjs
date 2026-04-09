@@ -1,12 +1,12 @@
 import process from "node:process";
 
-import { connectTunnelNode } from "../../flowersec-ts/dist/node/index.js";
+import { connectNode } from "../../flowersec-ts/dist/node/index.js";
 import { createDemoSession } from "../../flowersec-ts/dist/_examples/flowersec/demo/v1.facade.gen.js";
 import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
 
 // node-tunnel-client is the "simple" Node.js tunnel client example.
 //
-// It uses the high-level helper connectTunnelNode(), which internally performs:
+// It uses the high-level helper connectNode(), which internally performs:
 // - WebSocket connect (requires explicit Origin in Node)
 // - tunnel attach (text)
 // - E2EE handshake
@@ -15,9 +15,9 @@ import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
 //
 // Notes:
 // - The tunnel server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
-// - In Node, connectTunnelNode() automatically sets wsFactory so the Origin header is sent correctly.
-// - Tunnel attach tokens are one-time use; mint a new channel init for each connection attempt.
-// - Input JSON can be either the controlplane response {"grant_client":...}
+// - In Node, connectNode() automatically sets wsFactory so the Origin header is sent correctly.
+// - Tunnel attach tokens are one-time use; mint a new artifact/grant for each connection attempt.
+// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, {"grant_client":...},
 //   or just the grant_client object itself.
 async function readStdinUtf8() {
   const chunks = [];
@@ -44,13 +44,15 @@ function waitHello(demo, timeoutMs) {
 async function main() {
   const input = await readStdinUtf8();
   const readyOrGrant = JSON.parse(input);
+  const bootstrap = readyOrGrant?.connect_artifact ?? readyOrGrant;
 
   // Explicit Origin header value used by the tunnel allow-list.
   const origin = process.env.FSEC_ORIGIN ?? "";
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
-  // connectTunnelNode() returns an RPC-ready session and supports extra yamux streams via openStream(kind).
-  const sess = createDemoSession(await connectTunnelNode(readyOrGrant, { origin }));
+  // connectNode() auto-detects tunnel artifacts/grants and returns an RPC-ready session.
+  // It also supports extra yamux streams via openStream(kind).
+  const sess = createDemoSession(await connectNode(bootstrap, { origin }));
 
   try {
     const notified = waitHello(sess.demo, 2000);

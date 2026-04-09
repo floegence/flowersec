@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,13 +18,14 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
-// go_client_tunnel_simple demonstrates the minimal tunnel client using the high-level Go helpers:
-// tunnel attach (text) -> E2EE -> Yamux -> RPC, plus an extra "echo" stream roundtrip.
+// go_client_tunnel_simple demonstrates the minimal tunnel client using the high-level Go helper:
+// client.Connect auto-detects the current bootstrap format and builds tunnel attach (text) -> E2EE -> Yamux -> RPC,
+// plus an extra "echo" stream roundtrip.
 //
 // Notes:
 //   - You must provide an explicit Origin header value (the tunnel enforces an allow-list).
-//   - Tunnel attach tokens are one-time use; mint a new channel init for every new connection attempt.
-//   - Input JSON can be either the controlplane response {"grant_client":...}
+//   - Tunnel attach tokens are one-time use; mint a new artifact/grant for every new connection attempt.
+//   - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, {"grant_client":...},
 //     or just the grant_client object itself.
 var (
 	version = "dev"
@@ -43,7 +45,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("flowersec-go-client-tunnel", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.BoolVar(&showVersion, "version", false, "print version and exit")
-	fs.StringVar(&grantPath, "grant", grantPath, "path to JSON-encoded ChannelInitGrant for role=client (default: stdin)")
+	fs.StringVar(&grantPath, "grant", grantPath, "path to tunnel bootstrap JSON (ConnectArtifact or client grant; default: stdin)")
 	fs.StringVar(&origin, "origin", origin, "explicit Origin header value (required) (env: FSEC_ORIGIN)")
 	fs.Usage = func() {
 		out := fs.Output()
@@ -51,12 +53,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "  flowersec-go-client-tunnel [flags] < channel.json")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Examples:")
-		fmt.Fprintln(out, "  # Start the controlplane demo and capture its grants JSON.")
-		fmt.Fprintln(out, "  flowersec-controlplane-demo | tee controlplane.json")
+		fmt.Fprintln(out, "  # Fetch an artifact from the controlplane demo and connect with the high-level client.")
+		fmt.Fprintln(out, "  curl -sS -X POST http://127.0.0.1:8080/v1/connect/artifact \\")
+		fmt.Fprintln(out, "    -H 'content-type: application/json' \\")
+		fmt.Fprintln(out, "    -d '{\"endpoint_id\":\"server-1\"}' \\")
+		fmt.Fprintln(out, "    | jq -c .connect_artifact \\")
+		fmt.Fprintln(out, "    | FSEC_ORIGIN=http://127.0.0.1:5173 flowersec-go-client-tunnel")
 		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "  # Extract the client grant, then run this Go client (Origin via env).")
-		fmt.Fprintln(out, "  jq -r .grant_client < controlplane.json | tee grant_client.json")
-		fmt.Fprintln(out, "  FSEC_ORIGIN=http://127.0.0.1:5173 flowersec-go-client-tunnel < grant_client.json")
+		fmt.Fprintln(out, "  # Legacy input remains supported too (wrapper/raw client grant).")
+		fmt.Fprintln(out, "  jq -r .grant_client < controlplane.json | FSEC_ORIGIN=http://127.0.0.1:5173 flowersec-go-client-tunnel")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Output:")
 		fmt.Fprintln(out, "  stdout: demo RPC response/notify + echo stream output (human-readable)")
@@ -105,18 +110,17 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		defer f.Close()
 		grantReader = f
 	}
-	grant, err := protocolio.DecodeGrantClientJSON(grantReader)
+	connectInput, err := unwrapConnectArtifactEnvelope(grantReader)
 	if err != nil {
-		fmt.Fprintln(stderr, fmt.Errorf("decode grant JSON: %w", err))
+		fmt.Fprintln(stderr, fmt.Errorf("decode tunnel bootstrap JSON: %w", err))
 		return 1
 	}
-
-	// This helper builds the full protocol stack and returns an RPC-ready client:
+	// This helper auto-detects ConnectArtifact vs legacy tunnel grant input and returns an RPC-ready client:
 	// - c.OpenStream(ctx, kind): open extra streams (e.g. "echo")
 	// - c.RPC(): typed request/notify API over the dedicated "rpc" stream
-	c, err := client.ConnectTunnel(
+	c, err := client.Connect(
 		context.Background(),
-		grant,
+		bytes.NewReader(connectInput),
 		client.WithOrigin(origin),
 		client.WithConnectTimeout(10*time.Second),
 		client.WithHandshakeTimeout(10*time.Second),
@@ -180,4 +184,23 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "echo response: %q\n", string(buf))
 	return 0
+}
+
+func unwrapConnectArtifactEnvelope(r io.Reader) ([]byte, error) {
+	lr := &io.LimitedReader{R: r, N: int64(protocolio.DefaultMaxJSONBytes) + 1}
+	b, err := io.ReadAll(lr)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > protocolio.DefaultMaxJSONBytes {
+		return nil, protocolio.ErrInputTooLarge
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(b, &top); err != nil {
+		return b, nil
+	}
+	if raw, ok := top["connect_artifact"]; ok && len(raw) > 0 {
+		return raw, nil
+	}
+	return b, nil
 }

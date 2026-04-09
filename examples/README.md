@@ -17,8 +17,11 @@ Then use the artifact-first URLs in the generated JSON (`browser_tunnel_url`, `b
 Recommended quick checks without leaving artifact-first wiring:
 
 - browser / artifact-first connect: open one of the URLs above or POST to `/__demo/connect/artifact`
+- browser / direct artifact-first connect: open `browser_direct_url` or GET `/__demo/direct/artifact`
 - proxy runtime / artifact-first connect: POST to `/__demo/proxy/artifact` and use the returned artifact bundle in `examples/ts/proxy-sandbox`
 - node / artifact-first connect: pull `controlplane_http_url` from `dev.json` (`jq -r '.controlplane_http_url' dev.json`) and start `FSEC_CONTROLPLANE_BASE_URL=$(jq -r '.controlplane_http_url' dev.json) node ./examples/ts/node-artifact-client.mjs`
+- node / tunnel artifact from stdin: `curl -sS -X POST $(jq -r '.controlplane_http_url' dev.json)/v1/connect/artifact -H 'content-type: application/json' -d '{"endpoint_id":"server-1"}' | jq -c .connect_artifact | FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-tunnel-client.mjs`
+- node / direct artifact from stdin: `curl -sS http://127.0.0.1:5173/__demo/direct/artifact | jq -c .connect_artifact | FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-direct-client.mjs`
 
 ## Artifact-aware CLI helpers
 
