@@ -170,6 +170,36 @@ func TestNewChannelInitRejectsDefaultSuiteNotAllowed(t *testing.T) {
 	}
 }
 
+func TestNewChannelInitRejectsUnsupportedAllowedSuite(t *testing.T) {
+	ks, _ := issuer.NewRandom("kid")
+	svc := &Service{Issuer: ks}
+	svc.Params.TunnelURL = "ws://example"
+	svc.Params.TunnelAudience = "aud"
+	svc.Params.IssuerID = "iss"
+	svc.Params.AllowedSuites = []e2eev1.Suite{0, e2eev1.Suite(99)}
+
+	if _, _, err := svc.NewChannelInit("ch"); err == nil {
+		t.Fatalf("expected unsupported allowed suite error")
+	}
+}
+
+func TestNewChannelInitRejectsUnsupportedDefaultSuite(t *testing.T) {
+	ks, _ := issuer.NewRandom("kid")
+	svc := &Service{Issuer: ks}
+	svc.Params.TunnelURL = "ws://example"
+	svc.Params.TunnelAudience = "aud"
+	svc.Params.IssuerID = "iss"
+	svc.Params.AllowedSuites = []e2eev1.Suite{
+		e2eev1.Suite_X25519_HKDF_SHA256_AES_256_GCM,
+		e2eev1.Suite(99),
+	}
+	svc.Params.DefaultSuite = e2eev1.Suite(99)
+
+	if _, _, err := svc.NewChannelInit("ch"); err == nil {
+		t.Fatalf("expected unsupported default suite error")
+	}
+}
+
 func TestReissueToken(t *testing.T) {
 	svc := &Service{}
 	if _, err := svc.ReissueToken(nil); err == nil {

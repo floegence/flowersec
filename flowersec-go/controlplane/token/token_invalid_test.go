@@ -103,6 +103,7 @@ func TestVerifyRejectsAudienceIssuerAndTime(t *testing.T) {
 
 	initExpired := base
 	initExpired.InitExp = 15
+	initExpired.Exp = 15
 	initExpiredToken := signUnchecked(t, priv, initExpired)
 	if _, err := Verify(initExpiredToken, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)}); !errors.Is(err, ErrInitExpired) {
 		t.Fatalf("expected init expired, got %v", err)
@@ -169,6 +170,49 @@ func TestVerifyRejectsNegativeClockSkew(t *testing.T) {
 
 	if _, err := Verify(good, StaticKeyset{"kid": pub}, VerifyOptions{Now: now, ClockSkew: -1 * time.Second}); err == nil || !errors.Is(err, ErrInvalidClockSkew) {
 		t.Fatalf("expected invalid clock skew, got %v", err)
+	}
+}
+
+func TestSignRejectsIATAfterExp(t *testing.T) {
+	priv := newKeypair()
+	_, err := Sign(priv, Payload{
+		Kid:                "kid",
+		Aud:                "aud",
+		Iss:                "iss",
+		ChannelID:          "ch",
+		Role:               1,
+		TokenID:            "tid",
+		InitExp:            100,
+		IdleTimeoutSeconds: 60,
+		Iat:                51,
+		Exp:                50,
+	})
+	if err == nil || !errors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected invalid format for iat after exp, got %v", err)
+	}
+}
+
+func TestVerifyRejectsIATAfterExp(t *testing.T) {
+	priv := newKeypair()
+	pub := priv.Public().(ed25519.PublicKey)
+	tokenStr := signUnchecked(t, priv, Payload{
+		Kid:                "kid",
+		Aud:                "aud",
+		Iss:                "iss",
+		ChannelID:          "ch",
+		Role:               1,
+		TokenID:            "tid",
+		InitExp:            20,
+		IdleTimeoutSeconds: 60,
+		Iat:                12,
+		Exp:                11,
+	})
+
+	if _, err := Verify(tokenStr, StaticKeyset{"kid": pub}, VerifyOptions{
+		Now:       time.Unix(10, 0),
+		ClockSkew: 2 * time.Second,
+	}); err == nil || !errors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected invalid format for iat after exp, got %v", err)
 	}
 }
 

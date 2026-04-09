@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 )
 
@@ -41,6 +42,13 @@ func TestReissueTokenRoundsSkewToWholeSeconds(t *testing.T) {
 	}
 	if out.Token == "" {
 		t.Fatalf("expected token to be set")
+	}
+	p, _, _, err := token.Parse(out.Token)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if p.Iat != initExp || p.Exp != initExp {
+		t.Fatalf("expected reissued token to clamp iat/exp to init_exp=%d, got iat=%d exp=%d", initExp, p.Iat, p.Exp)
 	}
 
 	s.Now = func() time.Time { return time.Unix(initExp+3, 0) }

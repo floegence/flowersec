@@ -89,8 +89,8 @@ func Sign(priv ed25519.PrivateKey, payload Payload) (string, error) {
 	if payload.Exp <= 0 {
 		return "", fmt.Errorf("missing exp: %w", ErrInvalidFormat)
 	}
-	if payload.Exp > payload.InitExp {
-		return "", ErrExpAfterInit
+	if err := validateTimestamps(payload.InitExp, payload.Iat, payload.Exp); err != nil {
+		return "", err
 	}
 	if payload.IdleTimeoutSeconds <= 0 {
 		return "", fmt.Errorf("missing idle_timeout_seconds: %w", ErrInvalidIdleTimeout)
@@ -167,6 +167,9 @@ func VerifyParsed(p Payload, signed []byte, sig []byte, keys KeyLookup, opts Ver
 	if opts.Issuer != "" && subtle.ConstantTimeCompare([]byte(p.Iss), []byte(opts.Issuer)) != 1 {
 		return Payload{}, ErrInvalidIssuer
 	}
+	if err := validateTimestamps(p.InitExp, p.Iat, p.Exp); err != nil {
+		return Payload{}, err
+	}
 
 	now := opts.Now
 	if now.IsZero() {
@@ -185,17 +188,25 @@ func VerifyParsed(p Payload, signed []byte, sig []byte, keys KeyLookup, opts Ver
 	if iat.After(now.Add(skew)) {
 		return Payload{}, ErrIATInFuture
 	}
-	if exp.Before(now.Add(-skew)) {
-		return Payload{}, ErrExpired
-	}
 	if initExp.Before(now.Add(-skew)) {
 		return Payload{}, ErrInitExpired
 	}
-	if p.Exp > p.InitExp {
-		return Payload{}, ErrExpAfterInit
+	if exp.Before(now.Add(-skew)) {
+		return Payload{}, ErrExpired
 	}
 
 	return p, nil
+}
+
+func validateTimestamps(initExp int64, iat int64, exp int64) error {
+	if exp > initExp {
+		return ErrExpAfterInit
+	}
+	// Once exp <= init_exp is enforced, iat <= exp also guarantees iat <= init_exp.
+	if iat > exp {
+		return fmt.Errorf("iat after exp: %w", ErrInvalidFormat)
+	}
+	return nil
 }
 
 // StaticKeyset is a simple in-memory key lookup map.

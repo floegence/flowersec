@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -103,7 +104,10 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 	if len(allowedSuitesE2EE) == 0 {
 		allowedSuitesE2EE = []e2eev1.Suite{e2eev1.Suite_X25519_HKDF_SHA256_AES_256_GCM}
 	}
-	allowedSuitesE2EE = normalizeSuites(allowedSuitesE2EE)
+	allowedSuitesE2EE, err = normalizeSuites(allowedSuitesE2EE)
+	if err != nil {
+		return nil, nil, err
+	}
 	if len(allowedSuitesE2EE) == 0 {
 		return nil, nil, errors.New("no allowed suites")
 	}
@@ -115,6 +119,9 @@ func (s *Service) NewChannelInit(channelID string) (client *controlv1.ChannelIni
 	if defaultSuiteE2EE == 0 {
 		// If the caller does not specify a default, prefer the first allowed suite.
 		defaultSuiteE2EE = allowedSuitesE2EE[0]
+	}
+	if !isSupportedSuite(defaultSuiteE2EE) {
+		return nil, nil, fmt.Errorf("unsupported default suite: %d", defaultSuiteE2EE)
 	}
 	if !containsSuite(allowedSuitesE2EE, defaultSuiteE2EE) {
 		return nil, nil, errors.New("default suite not allowed")
@@ -204,6 +211,11 @@ func (s *Service) signRoleToken(channelID string, role uint8, initExp int64, idl
 		return "", err
 	}
 	iat := now.Unix()
+	if iat > initExp {
+		// Reissues may still be allowed within skew after init_exp. Clamp iat so the
+		// refreshed token remains self-consistent and expires immediately.
+		iat = initExp
+	}
 	exp := iat
 	if tokenExpSeconds > 0 {
 		// Avoid time.Duration overflow when tokenExpSeconds is very large.
@@ -248,9 +260,9 @@ func MarshalGrantJSON(g *controlv1.ChannelInitGrant) ([]byte, error) {
 	return json.Marshal(g)
 }
 
-func normalizeSuites(in []e2eev1.Suite) []e2eev1.Suite {
+func normalizeSuites(in []e2eev1.Suite) ([]e2eev1.Suite, error) {
 	if len(in) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]e2eev1.Suite, 0, len(in))
 	seen := make(map[e2eev1.Suite]struct{}, len(in))
@@ -258,13 +270,25 @@ func normalizeSuites(in []e2eev1.Suite) []e2eev1.Suite {
 		if s == 0 {
 			continue
 		}
+		if !isSupportedSuite(s) {
+			return nil, fmt.Errorf("unsupported suite: %d", s)
+		}
 		if _, ok := seen[s]; ok {
 			continue
 		}
 		seen[s] = struct{}{}
 		out = append(out, s)
 	}
-	return out
+	return out, nil
+}
+
+func isSupportedSuite(suite e2eev1.Suite) bool {
+	switch suite {
+	case e2eev1.Suite_X25519_HKDF_SHA256_AES_256_GCM, e2eev1.Suite_P256_HKDF_SHA256_AES_256_GCM:
+		return true
+	default:
+		return false
+	}
 }
 
 func containsSuite(list []e2eev1.Suite, want e2eev1.Suite) bool {
