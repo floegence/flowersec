@@ -231,7 +231,7 @@ No-clone install is also supported from GitHub Releases:
 go get github.com/floegence/flowersec/flowersec-go@latest
 ```
 
-Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.2.0`).
+Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.X.Y`).
 
 ### Tunnel server
 
@@ -307,8 +307,8 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-directinit@
 What they do:
 
 - `flowersec-issuer-keygen`: writes an issuer private key plus a public keyset for the tunnel
-- `flowersec-channelinit`: mints a one-time `ChannelInitGrant` pair
-- `flowersec-directinit`: generates `DirectConnectInfo` JSON for direct demos
+- `flowersec-channelinit`: mints paired tunnel grants, or a client `ConnectArtifact` plus server grant split with `--format artifact`
+- `flowersec-directinit`: generates raw `DirectConnectInfo` JSON, or a direct `ConnectArtifact` with `--format artifact`
 
 The `flowersec-tools_X.Y.Z_<os>_<arch>` release bundle includes these tools and `flowersec-proxy-gateway`.
 
@@ -319,14 +319,14 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 - `--help` includes copy/paste examples and the output contract
 - exit codes: `0` success, `2` usage error, `1` runtime error
 - JSON-producing tools write machine-readable JSON to stdout and logs/errors to stderr
-- most flags support `FSEC_*` environment variable defaults
+- Flowersec service/tools CLIs commonly support `FSEC_*` environment variable defaults; `idlgen` is flag-only
 
 ## 🔐 Security and operational notes
 
 - **One-time grants**: tunnel attach tokens are single-use; mint a fresh channel init for every new connection attempt.
 - **Untrusted tunnel**: in tunnel mode, the tunnel can pair endpoints and forward bytes, but it cannot decrypt application payloads after the encrypted session is established.
 - **Use `wss://` in production**: the attach layer is plaintext before E2EE starts, so production deployments must use TLS.
-- **Origin checks matter**: browser-facing Origin allow-lists are enabled by default on the tunnel and direct servers.
+- **Origin checks matter**: tunnel and direct servers require an explicit Origin allow-list (or a custom origin checker) for browser traffic.
 - **Direct mode is simpler when reachable**: use it when the server endpoint can be reached directly and you do not need a relay hop.
 - **Runtime vs gateway boundary**: runtime proxy mode keeps the browser-to-server path end-to-end encrypted through the relay layer; gateway mode is a deliberate L7 plaintext component.
 - **Tunnel scaling**: replay protection and pairing state are in memory by default; for multi-instance scale without shared state, shard channels across tunnel URLs at the controlplane layer.
@@ -403,7 +403,7 @@ Observability quick notes:
 
 - Prometheus metrics are served from a dedicated metrics server when `--metrics-listen` is set
 - optional bandwidth stats are served from `/stats/v1/bandwidth` when `--stats-listen` is set
-- metrics can be toggled at runtime with `SIGUSR1` / `SIGUSR2`
+- on Unix-like systems, metrics can be toggled at runtime with `SIGUSR1` / `SIGUSR2`
 
 Go workspace notes:
 

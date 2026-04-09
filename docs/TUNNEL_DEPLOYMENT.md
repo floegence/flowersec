@@ -157,7 +157,7 @@ The tunnel exposes Prometheus metrics on a dedicated metrics server (disabled by
 
 - Enable: set `--metrics-listen 0.0.0.0:9090` (or `FSEC_TUNNEL_METRICS_LISTEN=0.0.0.0:9090`)
 - Scrape: `GET /metrics`
-- Toggle at runtime:
+- Toggle at runtime (Unix-like systems only):
   - Disable metrics: send `SIGUSR2`
   - Re-enable metrics: send `SIGUSR1`
 
@@ -166,7 +166,7 @@ The tunnel exposes Prometheus metrics on a dedicated metrics server (disabled by
 To rotate issuer keys without downtime:
 
 1. Update the issuer keyset JSON file on disk (keep overlapping keys during rotation).
-2. Send `SIGHUP` to the tunnel process to reload the verifier backing config (`--issuer-keys-file` or `--tenants-file`).
+2. On Unix-like systems, send `SIGHUP` to the tunnel process to reload the verifier backing config (`--issuer-keys-file` or `--tenants-file`).
 
 ## Policy authorizer
 

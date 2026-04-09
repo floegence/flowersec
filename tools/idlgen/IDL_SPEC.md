@@ -30,7 +30,7 @@ make gen
 Generated outputs:
 
 - Go: `flowersec-go/gen/flowersec/<domain>/<version>/types.gen.go` (and `rpc.gen.go` if `services` is present)
-- TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.gen.ts` (and `<version>.rpc.gen.ts` if `services` is present)
+- TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.gen.ts` (and `<version>.rpc.gen.ts` plus `<version>.facade.gen.ts` if `services` is present)
 
 ## File layout and namespace
 

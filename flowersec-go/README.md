@@ -9,24 +9,24 @@ This module contains the Go implementation of the Flowersec data-plane protocol 
 
 Status: experimental; not audited.
 
-Prerequisite: Go 1.26.x.
+Prerequisite: Go 1.25.9+.
 
 ## Install (Go library)
 
 ```bash
 go get github.com/floegence/flowersec/flowersec-go@latest
 # Or pin a version:
-go get github.com/floegence/flowersec/flowersec-go@v0.2.0
+go get github.com/floegence/flowersec/flowersec-go@v0.X.Y
 ```
 
-Versioning note: repository tags for this submodule are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.2.0`).
+Versioning note: repository tags for this submodule are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.X.Y`).
 
 ## Install (tunnel binary)
 
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
 # Or pin a version:
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@v0.2.0
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@v0.X.Y
 ```
 
 ## Install (proxy gateway binary)
@@ -34,16 +34,17 @@ go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@v0.2
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@latest
 # Or pin a version:
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@v0.2.0
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@v0.X.Y
 ```
 
-## Install (controlplane helper tools, optional)
+## Install (helper tools, optional)
 
 These tools are intended for local development and demos (keep private keys secret):
 
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit@latest
+go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-directinit@latest
 ```
 
 No-Go option: download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) from the GitHub Release and run the binaries from `bin/`.
