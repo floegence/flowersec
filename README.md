@@ -365,7 +365,7 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 Prerequisites:
 
 - Go `1.25.9+`
-- Node.js `22` LTS recommended (see `.nvmrc`)
+- Node.js `24` LTS recommended (see `.nvmrc`)
 
 Generate code from IDL:
 
