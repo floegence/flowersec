@@ -14,7 +14,7 @@
 </p>
 
 ![Go Version](https://img.shields.io/badge/Go-1.25.9-00ADD8?logo=go)
-![Node Version](https://img.shields.io/badge/Node.js-22-339933?logo=node.js)
+![Node Version](https://img.shields.io/badge/Node.js-24-339933?logo=node.js)
 ![Browser Friendly](https://img.shields.io/badge/Browser-Friendly-2563EB)
 ![Transport](https://img.shields.io/badge/Transport-WebSocket-111827)
 ![Security](https://img.shields.io/badge/Security-End--to--End%20Encrypted-5B2CFF)
