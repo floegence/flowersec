@@ -107,6 +107,7 @@ Server endpoint → client endpoint:
   "method": "GET",
   "path": "/vscode?x=1",
   "headers": [{ "name": "accept", "value": "text/html" }],
+  "external_origin": "https://env-123.example.com",
   "timeout_ms": 30000
 }
 ```
@@ -118,6 +119,10 @@ Fields:
 - `method` (required): HTTP method (non-empty after trim).
 - `path` (required): absolute-path + optional query (must start with `/`; MUST NOT include scheme/host).
 - `headers` (required): list of `{name,value}` pairs.
+- `external_origin` (optional): browser-visible external origin (`scheme://host[:port]`) derived from the intercepted request URL.
+  - This exists for request classes that omit the HTTP `Origin` header (for example same-origin document navigations).
+  - Clients MUST only send same-origin values they derived from the intercepted request URL; servers MUST treat it as policy context only and MUST NOT use it to change the fixed upstream dial target.
+  - When present, servers MAY project its scheme/host into upstream request context (for example `Host` / `X-Forwarded-Proto`) so origin-aware runtimes can apply the same hardening rules to navigations and subresource requests.
 - `timeout_ms` (optional):
   - `undefined` or `0`: server default timeout.
   - `> 0`: per-request timeout in milliseconds (capped by server max).
@@ -209,6 +214,8 @@ Rules:
 - `authorization` MUST NOT be accepted from the client endpoint.
 - HTTP `origin`, when present, MUST be forwarded as received from the browser/client request.
   - Gateway mode MUST NOT rewrite a browser-supplied HTTP Origin into a fixed trusted value.
+- `external_origin` is the companion field for same-origin navigations and other request classes that legitimately omit the HTTP `Origin` header.
+  - It carries the browser-visible authority context without letting the client choose a new upstream destination.
 - `cookie` is mode-specific:
   - Runtime mode: MAY be injected by the runtime CookieJar (see 3.5.3); it MUST NOT be copied from the browser cookie store.
   - Gateway mode: MAY be forwarded from the inbound browser `Cookie` header of the gateway origin (normal browser semantics for that origin).

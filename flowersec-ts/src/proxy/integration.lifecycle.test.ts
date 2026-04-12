@@ -2,16 +2,19 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 const {
   createProxyRuntimeMock,
+  ensureServiceWorkerRuntimeRegisteredMock,
   resolveProxyPresetMock,
   registerServiceWorkerAndEnsureControlMock,
 } = vi.hoisted(() => ({
   createProxyRuntimeMock: vi.fn(),
+  ensureServiceWorkerRuntimeRegisteredMock: vi.fn(),
   resolveProxyPresetMock: vi.fn(),
   registerServiceWorkerAndEnsureControlMock: vi.fn(),
 }));
 
 vi.mock("./runtime.js", () => ({
   createProxyRuntime: (...args: unknown[]) => createProxyRuntimeMock(...args),
+  ensureServiceWorkerRuntimeRegistered: (...args: unknown[]) => ensureServiceWorkerRuntimeRegisteredMock(...args),
 }));
 
 vi.mock("./preset.js", async () => {
@@ -33,9 +36,14 @@ function installProxyIntegrationEnv(args: { href?: string; controllerScriptURL?:
   const replace = vi.fn();
   const reload = vi.fn();
   const getRegistrations = vi.fn().mockResolvedValue([]);
+  const controllerPostMessage = vi.fn((_msg: unknown, transfer?: Transferable[]) => {
+    const port = transfer?.[0] as MessagePort | undefined;
+    port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok: true });
+    port?.close();
+  });
 
   const serviceWorker = {
-    controller: args.controllerScriptURL == null ? null : { scriptURL: args.controllerScriptURL },
+    controller: args.controllerScriptURL == null ? null : { scriptURL: args.controllerScriptURL, postMessage: controllerPostMessage },
     addEventListener: vi.fn((type: string, handler: ControllerChangeHandler) => {
       if (type === "controllerchange") controllerHandlers.add(handler);
     }),
@@ -62,7 +70,7 @@ function installProxyIntegrationEnv(args: { href?: string; controllerScriptURL?:
     },
   });
 
-  return { serviceWorker, controllerHandlers, replace, reload, getRegistrations };
+  return { serviceWorker, controllerHandlers, replace, reload, getRegistrations, controllerPostMessage };
 }
 
 afterEach(() => {
@@ -94,6 +102,7 @@ describe("registerProxyIntegration", () => {
       },
     });
     createProxyRuntimeMock.mockReturnValue(runtime);
+    ensureServiceWorkerRuntimeRegisteredMock.mockResolvedValue(undefined);
     registerServiceWorkerAndEnsureControlMock.mockResolvedValue(undefined);
 
     const { registerProxyIntegration } = await import("./integration.js");
@@ -133,6 +142,7 @@ describe("registerProxyIntegration", () => {
       maxRepairAttempts: 2,
       controllerTimeoutMs: 8000,
     });
+    expect(ensureServiceWorkerRuntimeRegisteredMock).toHaveBeenCalledWith({ timeoutMs: 8000 });
     expect(createProxyRuntimeMock).toHaveBeenCalledWith({
       client: expect.any(Object),
       maxJsonFrameBytes: 11,
@@ -178,6 +188,7 @@ describe("registerProxyIntegration", () => {
       },
     });
     registerServiceWorkerAndEnsureControlMock.mockResolvedValue(undefined);
+    ensureServiceWorkerRuntimeRegisteredMock.mockResolvedValue(undefined);
 
     const onControllerMismatch = vi.fn().mockReturnValue("ignore");
     const { registerProxyIntegration } = await import("./integration.js");
@@ -232,6 +243,7 @@ describe("registerProxyIntegration", () => {
       },
     });
     registerServiceWorkerAndEnsureControlMock.mockResolvedValue(undefined);
+    ensureServiceWorkerRuntimeRegisteredMock.mockResolvedValue(undefined);
 
     const { registerProxyIntegration } = await import("./integration.js");
     const handle = await registerProxyIntegration({

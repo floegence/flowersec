@@ -14,9 +14,9 @@ describe("docs/PROXY.md", () => {
     // v1 meta fields we rely on cross-language.
     expect(doc).toContain("\"v\": 1");
     expect(doc).toContain("\"request_id\"");
+    expect(doc).toContain("\"external_origin\"");
     expect(doc).toContain("\"timeout_ms\"");
     expect(doc).toContain("\"conn_id\"");
     expect(doc).toContain("\"sec-websocket-protocol\"");
   });
 });
-

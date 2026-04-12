@@ -20,6 +20,8 @@ func TestHTTP1Handler_GET_EndToEnd(t *testing.T) {
 		path   string
 		auth   string
 		origin string
+		host   string
+		proto  string
 	}
 	seenCh := make(chan seen, 1)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +30,8 @@ func TestHTTP1Handler_GET_EndToEnd(t *testing.T) {
 			path:   r.URL.Path,
 			auth:   r.Header.Get("Authorization"),
 			origin: r.Header.Get("Origin"),
+			host:   r.Host,
+			proto:  r.Header.Get("X-Forwarded-Proto"),
 		}
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = io.WriteString(w, "world")
@@ -103,6 +107,85 @@ func TestHTTP1Handler_GET_EndToEnd(t *testing.T) {
 	}
 	if s.origin != "https://gateway.example.com" {
 		t.Fatalf("unexpected upstream origin: %q", s.origin)
+	}
+	if s.host == "" {
+		t.Fatalf("expected upstream host to be set")
+	}
+}
+
+func TestHTTP1Handler_GET_UsesExternalOriginWhenBrowserOriginIsAbsent(t *testing.T) {
+	type seen struct {
+		host   string
+		proto  string
+		origin string
+		path   string
+	}
+	seenCh := make(chan seen, 1)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenCh <- seen{
+			host:   r.Host,
+			proto:  r.Header.Get("X-Forwarded-Proto"),
+			origin: r.Header.Get("Origin"),
+			path:   r.URL.Path,
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(w, "env")
+	}))
+	defer up.Close()
+
+	cfg, err := compileOptions(Options{
+		Upstream:       up.URL,
+		UpstreamOrigin: up.URL,
+	})
+	if err != nil {
+		t.Fatalf("compileOptions: %v", err)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	go http1Handler(cfg)(context.Background(), serverConn)
+
+	reqMeta := HTTPRequestMeta{
+		V:              ProtocolVersion,
+		RequestID:      "r-ext",
+		Method:         "GET",
+		Path:           "/_redeven_proxy/env/",
+		Headers:        []Header{{Name: "accept", Value: "text/html"}},
+		ExternalOrigin: "https://env-123.example.com",
+	}
+	if err := jsonframe.WriteJSONFrame(clientConn, reqMeta); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+	if err := writeChunkTerminator(clientConn); err != nil {
+		t.Fatalf("write terminator: %v", err)
+	}
+
+	if _, err := jsonframe.ReadJSONFrame(clientConn, cfg.maxJSONFrameBytes); err != nil {
+		t.Fatalf("read resp meta: %v", err)
+	}
+	var tmp int64
+	for {
+		_, done, err := readChunkFrame(clientConn, cfg.maxChunkBytes, cfg.maxBodyBytes, &tmp)
+		if err != nil {
+			t.Fatalf("read body chunk: %v", err)
+		}
+		if done {
+			break
+		}
+	}
+
+	s := <-seenCh
+	if s.path != "/_redeven_proxy/env/" {
+		t.Fatalf("unexpected upstream path: %q", s.path)
+	}
+	if s.origin != "" {
+		t.Fatalf("expected upstream origin to stay empty, got %q", s.origin)
+	}
+	if s.host != "env-123.example.com" {
+		t.Fatalf("unexpected upstream host: %q", s.host)
+	}
+	if s.proto != "https" {
+		t.Fatalf("unexpected upstream proto: %q", s.proto)
 	}
 }
 

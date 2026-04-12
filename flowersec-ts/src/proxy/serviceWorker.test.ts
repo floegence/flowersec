@@ -6,7 +6,9 @@ describe("createProxyServiceWorkerScript", () => {
   it("contains the runtime registration and fetch bridge markers", () => {
     const s = createProxyServiceWorkerScript();
     expect(s).toContain("flowersec-proxy:register-runtime");
+    expect(s).toContain("flowersec-proxy:register-runtime-ack");
     expect(s).toContain("flowersec-proxy:fetch");
+    expect(s).toContain("external_origin");
     expect(s).toContain("flowersec-proxy:response_meta");
     expect(s).toContain("flowersec-proxy:abort");
     expect(s).toContain("event.waitUntil(self.skipWaiting())");

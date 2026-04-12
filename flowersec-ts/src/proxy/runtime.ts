@@ -22,12 +22,14 @@ type ProxyFetchReq = Readonly<{
   method: string;
   path: string;
   headers: readonly Header[];
+  external_origin?: string;
   body?: ArrayBuffer;
 }>;
 
 type ProxyFetchMsg = Readonly<{ type: "flowersec-proxy:fetch"; req: ProxyFetchReq }>;
 
 type ProxyServiceWorkerRegisterMsg = Readonly<{ type: "flowersec-proxy:register-runtime" }>;
+type ProxyServiceWorkerRegisterAckMsg = Readonly<{ type: "flowersec-proxy:register-runtime-ack"; ok: boolean }>;
 
 type ProxyAbortMsg = Readonly<{ type: "flowersec-proxy:abort" }>;
 
@@ -67,6 +69,10 @@ export type ProxyRuntimeOptions = Readonly<{
   cookieJar?: CookieJar;
 }>;
 
+export type EnsureServiceWorkerRuntimeRegisteredOptions = Readonly<{
+  timeoutMs?: number;
+}>;
+
 function randomB64u(bytes: number): string {
   const b = new Uint8Array(bytes);
   if (globalThis.crypto?.getRandomValues) {
@@ -95,6 +101,26 @@ function normalizeTimeoutMs(timeoutMs: number | undefined): number {
   const v = Math.floor(timeoutMs ?? 0);
   if (v < 0) throw new Error("timeout_ms must be >= 0");
   return v;
+}
+
+function normalizeExternalOrigin(externalOriginRaw: string | undefined): string | undefined {
+  if (typeof externalOriginRaw !== "string") return undefined;
+  const externalOrigin = externalOriginRaw.trim();
+  if (externalOrigin === "") return undefined;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(externalOrigin);
+  } catch {
+    throw new Error("external_origin must be an http(s) origin");
+  }
+  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.host === "") {
+    throw new Error("external_origin must be an http(s) origin");
+  }
+  if (parsed.username !== "" || parsed.password !== "" || (parsed.pathname !== "" && parsed.pathname !== "/") || parsed.search !== "" || parsed.hash !== "") {
+    throw new Error("external_origin must be an origin without credentials, path, query, or fragment");
+  }
+  return parsed.origin;
 }
 
 function normalizeMaxBytes(name: string, v: number | undefined, defaultValue: number): number {
@@ -162,14 +188,11 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
   const extraResponseHeaders = opts.extraResponseHeaders ?? [];
   const extraWsHeaders = opts.extraWsHeaders ?? [];
 
-	  const registerRuntime = () => {
-	    try {
-	      const ctl = globalThis.navigator?.serviceWorker?.controller;
-	      ctl?.postMessage({ type: "flowersec-proxy:register-runtime" } satisfies ProxyServiceWorkerRegisterMsg);
-	    } catch {
-	      // Best-effort: controllerchange will retry once the active Service Worker is ready.
-	    }
-	  };
+  const registerRuntime = () => {
+    void ensureServiceWorkerRuntimeRegistered({ timeoutMs: 2_000 }).catch(() => {
+      // Best-effort: controllerchange will retry once the active Service Worker is ready.
+    });
+  };
 
   const onMessage = (ev: MessageEvent) => {
     const data = ev.data as ProxyFetchMsg | unknown;
@@ -201,6 +224,7 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
       try {
         const path = pathOnly(req.path);
         const requestID = req.id.trim() !== "" ? req.id : randomB64u(18);
+        const externalOrigin = normalizeExternalOrigin(req.external_origin);
         stream = await client.openStream(PROXY_KIND_HTTP1, { signal: ac.signal });
         const reader = createByteReader(stream, { signal: ac.signal });
 
@@ -214,6 +238,7 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
           method: req.method,
           path,
           headers: reqHeaders,
+          ...(externalOrigin === undefined ? {} : { external_origin: externalOrigin }),
           timeout_ms: timeoutMs
         });
 
@@ -310,4 +335,63 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
       sw?.removeEventListener("controllerchange", registerRuntime);
     }
   };
+}
+
+export async function ensureServiceWorkerRuntimeRegistered(
+  opts: EnsureServiceWorkerRuntimeRegisteredOptions = {}
+): Promise<void> {
+  const ctl = globalThis.navigator?.serviceWorker?.controller;
+  if (!ctl || typeof ctl.postMessage !== "function") return;
+
+  const timeoutMs = Math.max(0, Math.floor(opts.timeoutMs ?? 2_000));
+  const ch = new MessageChannel();
+
+  await new Promise<void>((resolve, reject) => {
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = (error?: unknown) => {
+      if (done) return;
+      done = true;
+      if (timer != null) clearTimeout(timer);
+      ch.port1.onmessage = null;
+      ch.port1.onmessageerror = null;
+      try {
+        ch.port1.close();
+      } catch {
+        // Best-effort.
+      }
+      if (error == null) {
+        resolve();
+        return;
+      }
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+
+    ch.port1.onmessage = (ev: MessageEvent) => {
+      const data = ev.data as ProxyServiceWorkerRegisterAckMsg | unknown;
+      if (data == null || typeof data !== "object") return;
+      if ((data as ProxyServiceWorkerRegisterAckMsg).type !== "flowersec-proxy:register-runtime-ack") return;
+      if ((data as ProxyServiceWorkerRegisterAckMsg).ok !== true) {
+        finish(new Error("service worker runtime registration was rejected"));
+        return;
+      }
+      finish();
+    };
+    ch.port1.onmessageerror = () => {
+      finish(new Error("service worker runtime registration failed"));
+    };
+
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        finish(new Error("service worker runtime registration timed out"));
+      }, timeoutMs);
+    }
+
+    try {
+      ctl.postMessage({ type: "flowersec-proxy:register-runtime" } satisfies ProxyServiceWorkerRegisterMsg, [ch.port2]);
+    } catch (error) {
+      finish(error);
+    }
+  });
 }

@@ -8,6 +8,7 @@ export type HttpRequestMetaV1 = Readonly<{
   method: string;
   path: string;
   headers: Header[];
+  external_origin?: string;
   timeout_ms?: number;
 }>;
 
@@ -34,4 +35,3 @@ export type WsOpenRespV1 = Readonly<{
   protocol?: string;
   error?: ProxyError;
 }>;
-

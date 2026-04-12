@@ -15,6 +15,7 @@ export type ProxyWindowFetchRequest = Readonly<{
   method: string;
   path: string;
   headers: readonly Header[];
+  external_origin?: string;
   body?: ArrayBuffer;
 }>;
 

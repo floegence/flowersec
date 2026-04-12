@@ -122,6 +122,10 @@ func http1Handler(cfg *compiledOptions) func(ctx context.Context, stream io.Read
 		if strings.TrimSpace(req.Header.Get("Origin")) == "" {
 			req.Header.Del("Origin")
 		}
+		if err := applyExternalOrigin(req, meta.ExternalOrigin); err != nil {
+			_ = writeHTTPError(stream, meta.RequestID, "invalid_request_meta", err)
+			return
+		}
 
 		resp, err := hc.Do(req)
 		if err != nil {
@@ -192,6 +196,47 @@ func http1Handler(cfg *compiledOptions) func(ctx context.Context, stream io.Read
 			}
 		}
 	}
+}
+
+func applyExternalOrigin(req *http.Request, raw string) error {
+	if req == nil {
+		return errors.New("request is required")
+	}
+	externalOrigin := strings.TrimSpace(raw)
+	if externalOrigin == "" {
+		return nil
+	}
+
+	u, err := url.Parse(externalOrigin)
+	if err != nil || u == nil {
+		return errors.New("invalid external_origin")
+	}
+	scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+	host := strings.ToLower(strings.TrimSpace(u.Host))
+	if (scheme != "http" && scheme != "https") || host == "" {
+		return errors.New("invalid external_origin")
+	}
+	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("invalid external_origin")
+	}
+
+	if origin := strings.TrimSpace(req.Header.Get("Origin")); origin != "" {
+		originURL, err := url.Parse(origin)
+		if err != nil || originURL == nil {
+			return errors.New("invalid origin header")
+		}
+		originScheme := strings.ToLower(strings.TrimSpace(originURL.Scheme))
+		originHost := strings.ToLower(strings.TrimSpace(originURL.Host))
+		if originScheme != scheme || originHost != host {
+			return errors.New("external_origin conflicts with origin header")
+		}
+	}
+
+	req.Host = host
+	if strings.TrimSpace(req.Header.Get("X-Forwarded-Proto")) == "" {
+		req.Header.Set("X-Forwarded-Proto", scheme)
+	}
+	return nil
 }
 
 func resolveTimeout(cfg *compiledOptions, timeoutMS int64) (time.Duration, error) {

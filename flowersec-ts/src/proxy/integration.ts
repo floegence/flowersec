@@ -3,7 +3,7 @@ import type { Client } from "../client.js";
 import { profileToPresetManifest, type ProxyProfile, type ProxyProfileName } from "./profiles.js";
 import { resolveProxyPreset, type ProxyPresetInput, type ResolvedProxyPreset } from "./preset.js";
 import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
-import { createProxyRuntime, type ProxyRuntime } from "./runtime.js";
+import { createProxyRuntime, ensureServiceWorkerRuntimeRegistered, type ProxyRuntime } from "./runtime.js";
 import { createProxyServiceWorkerScript, type ProxyServiceWorkerScriptOptions } from "./serviceWorker.js";
 
 export type ProxyIntegrationMonitorOptions = Readonly<{
@@ -365,6 +365,7 @@ export async function registerProxyIntegration(input: RegisterProxyIntegrationOp
     maxRepairAttempts,
     controllerTimeoutMs,
   });
+  await ensureServiceWorkerRuntimeRegistered({ timeoutMs: controllerTimeoutMs });
 
   if (expectedScriptPathSuffix !== "") {
     const ok = await waitForControllerSuffix(expectedScriptPathSuffix, controllerTimeoutMs);

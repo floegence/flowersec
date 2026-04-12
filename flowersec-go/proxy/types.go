@@ -16,12 +16,13 @@ type Error struct {
 
 // HTTPRequestMeta is the JSON meta message for KindHTTP1 (client -> server).
 type HTTPRequestMeta struct {
-	V         int      `json:"v"`
-	RequestID string   `json:"request_id"`
-	Method    string   `json:"method"`
-	Path      string   `json:"path"`
-	Headers   []Header `json:"headers"`
-	TimeoutMS int64    `json:"timeout_ms,omitempty"`
+	V              int      `json:"v"`
+	RequestID      string   `json:"request_id"`
+	Method         string   `json:"method"`
+	Path           string   `json:"path"`
+	Headers        []Header `json:"headers"`
+	ExternalOrigin string   `json:"external_origin,omitempty"`
+	TimeoutMS      int64    `json:"timeout_ms,omitempty"`
 }
 
 // HTTPResponseMeta is the JSON meta message for KindHTTP1 (server -> client).

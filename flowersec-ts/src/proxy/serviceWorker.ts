@@ -283,7 +283,13 @@ self.addEventListener("message", (event) => {
   if (!data || typeof data !== "object") return;
   const msgType = typeof data.type === "string" ? data.type : "";
   if (msgType === "flowersec-proxy:register-runtime") {
-    if (event.source && typeof event.source.id === "string") runtimeClientId = event.source.id;
+    const ok = Boolean(event.source && typeof event.source.id === "string");
+    if (ok) runtimeClientId = event.source.id;
+    const port = event.ports && event.ports[0];
+    if (port) {
+      try { port.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok }); } catch {}
+      try { port.close(); } catch {}
+    }
     return;
   }
   if (!FORWARD_FETCH_MESSAGE_TYPES.has(msgType)) return;
@@ -477,6 +483,7 @@ async function handleFetch(event) {
     const req = event.request;
     const url = new URL(req.url);
     const id = Math.random().toString(16).slice(2) + Date.now().toString(16);
+    const externalOrigin = url.origin === self.location.origin ? url.origin : "";
 
     let body;
     if (req.method === "GET" || req.method === "HEAD") {
@@ -598,7 +605,14 @@ async function handleFetch(event) {
 
     target.postMessage({
       type: WINDOW_CLIENT_MESSAGE_TYPE,
-      req: { id, method: req.method, path, headers: headersToPairs(req.headers), body }
+      req: {
+        id,
+        method: req.method,
+        path,
+        headers: headersToPairs(req.headers),
+        ...(externalOrigin ? { external_origin: externalOrigin } : {}),
+        body
+      }
     }, [port2]);
 
     const meta = await metaPromise;
