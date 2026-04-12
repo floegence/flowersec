@@ -238,7 +238,7 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
         const status = Math.max(0, Math.floor(respMeta.status ?? 502));
         const rawHeaders = Array.isArray(respMeta.headers) ? respMeta.headers : [];
         const { passthrough, setCookie } = filterResponseHeaders(rawHeaders, { extraAllowed: extraResponseHeaders });
-        cookieJar.updateFromSetCookieHeaders(setCookie);
+        cookieJar.updateFromSetCookieHeaders(setCookie, path);
 
         port.postMessage({ type: "flowersec-proxy:response_meta", status, headers: passthrough } satisfies ProxyRespMetaMsg);
 

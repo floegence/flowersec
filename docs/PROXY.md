@@ -250,6 +250,10 @@ Rules:
 - The client runtime MUST maintain an in-memory CookieJar for the proxied upstream app.
 - On response: `set-cookie` headers update the CookieJar, and MUST be removed from the response visible to the browser (so the browser does not persist them).
 - On request: the runtime CookieJar is the only source of the `cookie` request header.
+- CookieJar entries MUST be keyed by cookie identity that preserves both `name` and `path`, so same-name cookies with different paths can coexist.
+- When `Set-Cookie` omits `Path` (or provides an invalid non-absolute path), the runtime MUST derive the default cookie path from the proxied request path.
+- Request cookie selection MUST use RFC 6265-style path matching, so `/admin` matches `/admin` and `/admin/...` but not `/administrator` or `/admin-api`.
+- When multiple cookies match a request, longer paths MUST be serialized before shorter paths.
 
 ### 3.6 Error codes (stable reason tokens)
 

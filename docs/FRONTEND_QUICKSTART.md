@@ -65,6 +65,8 @@ const proxy = await connectArtifactProxyBrowser(artifact, {
 
 The stable `proxy.runtime@1` payload can prefill the same `serviceWorker.scriptUrl` / `serviceWorker.scope` fields, but caller-provided values still win when you need deployment-specific overrides.
 
+In runtime mode, upstream cookies stay inside the proxy runtime's in-memory CookieJar rather than the browser cookie store. Cookie path scoping follows the proxied request path, including RFC-style path matching and request-path-derived defaults when `Set-Cookie` omits `Path`.
+
 ## Browser proxy: controller-origin / runtime-isolation
 
 Controller origin:

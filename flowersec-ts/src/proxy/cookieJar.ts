@@ -3,6 +3,7 @@ type Cookie = Readonly<{
   value: string;
   path: string;
   expiresAtMs?: number;
+  createdAtSeq: number;
 }>;
 
 function nowMs(): number {
@@ -18,10 +19,52 @@ function parseCookieNameValue(s: string): { name: string; value: string } | null
   return { name, value };
 }
 
+function cookieStorageKey(name: string, path: string): string {
+  return `${name}\u0000${path}`;
+}
+
+function requestPathOnly(path: string): string {
+  const raw = path.trim();
+  if (!raw.startsWith("/")) return "/";
+  const q = raw.indexOf("?");
+  const out = q >= 0 ? raw.slice(0, q) : raw;
+  return out === "" ? "/" : out;
+}
+
+function defaultCookiePathFromRequestPath(requestPath: string): string {
+  const path = requestPathOnly(requestPath);
+  if (path === "/") return "/";
+  const lastSlash = path.lastIndexOf("/");
+  if (lastSlash <= 0) return "/";
+  return path.slice(0, lastSlash);
+}
+
+function normalizeCookiePath(pathAttr: string | undefined, requestPath: string): string {
+  const path = pathAttr?.trim() ?? "";
+  if (path === "" || !path.startsWith("/")) return defaultCookiePathFromRequestPath(requestPath);
+  return path;
+}
+
+function pathMatchesCookiePath(requestPath: string, cookiePath: string): boolean {
+  const path = requestPathOnly(requestPath);
+  if (cookiePath === "/") return true;
+  if (path === cookiePath) return true;
+  if (!path.startsWith(cookiePath)) return false;
+  if (cookiePath.endsWith("/")) return true;
+  return path.charAt(cookiePath.length) === "/";
+}
+
+function compareCookiesForHeader(a: Cookie, b: Cookie): number {
+  const pathLenDiff = b.path.length - a.path.length;
+  if (pathLenDiff !== 0) return pathLenDiff;
+  return a.createdAtSeq - b.createdAtSeq;
+}
+
 export class CookieJar {
   private readonly cookies = new Map<string, Cookie>();
+  private nextCreatedAtSeq = 0;
 
-  setCookie(setCookieHeader: string): void {
+  setCookie(setCookieHeader: string, requestPath = "/"): void {
     const raw = setCookieHeader.trim();
     if (raw === "") return;
 
@@ -31,29 +74,28 @@ export class CookieJar {
     const nv = parseCookieNameValue(parts[0] ?? "");
     if (nv == null) return;
 
-    let path = "/";
+    let pathAttr: string | undefined;
     let expiresAtMs: number | undefined;
+    let maxAgeSeen = false;
 
     for (let i = 1; i < parts.length; i++) {
       const p = parts[i]!;
       const lower = p.toLowerCase();
       if (lower.startsWith("path=")) {
         const v = p.slice("path=".length).trim();
-        if (v !== "") path = v;
+        if (v !== "") pathAttr = v;
         continue;
       }
       if (lower.startsWith("max-age=")) {
         const v = p.slice("max-age=".length).trim();
         const n = Number.parseInt(v, 10);
         if (!Number.isFinite(n)) continue;
-        if (n <= 0) {
-          this.cookies.delete(nv.name);
-          return;
-        }
-        expiresAtMs = nowMs() + n * 1000;
+        maxAgeSeen = true;
+        expiresAtMs = n <= 0 ? 0 : nowMs() + n * 1000;
         continue;
       }
       if (lower.startsWith("expires=")) {
+        if (maxAgeSeen) continue;
         const v = p.slice("expires=".length).trim();
         const t = Date.parse(v);
         if (!Number.isFinite(t)) continue;
@@ -62,34 +104,38 @@ export class CookieJar {
       }
     }
 
-    // Expired via Expires.
+    const path = normalizeCookiePath(pathAttr, requestPath);
+    const key = cookieStorageKey(nv.name, path);
+
     if (expiresAtMs != null && expiresAtMs <= nowMs()) {
-      this.cookies.delete(nv.name);
+      this.cookies.delete(key);
       return;
     }
 
+    const createdAtSeq = this.cookies.get(key)?.createdAtSeq ?? this.nextCreatedAtSeq++;
     if (expiresAtMs == null) {
-      this.cookies.set(nv.name, { name: nv.name, value: nv.value, path });
+      this.cookies.set(key, { name: nv.name, value: nv.value, path, createdAtSeq });
     } else {
-      this.cookies.set(nv.name, { name: nv.name, value: nv.value, path, expiresAtMs });
+      this.cookies.set(key, { name: nv.name, value: nv.value, path, expiresAtMs, createdAtSeq });
     }
   }
 
-  updateFromSetCookieHeaders(headers: readonly string[]): void {
-    for (const h of headers) this.setCookie(h);
+  updateFromSetCookieHeaders(headers: readonly string[], requestPath = "/"): void {
+    for (const h of headers) this.setCookie(h, requestPath);
   }
 
   getCookieHeader(path: string): string {
     const now = nowMs();
-    const pairs: string[] = [];
-    for (const c of this.cookies.values()) {
+    const matched: Cookie[] = [];
+    for (const [key, c] of this.cookies.entries()) {
       if (c.expiresAtMs != null && c.expiresAtMs <= now) {
-        this.cookies.delete(c.name);
+        this.cookies.delete(key);
         continue;
       }
-      if (c.path !== "/" && !path.startsWith(c.path)) continue;
-      pairs.push(`${c.name}=${c.value}`);
+      if (!pathMatchesCookiePath(path, c.path)) continue;
+      matched.push(c);
     }
-    return pairs.join("; ");
+    matched.sort(compareCookiesForHeader);
+    return matched.map((c) => `${c.name}=${c.value}`).join("; ");
   }
 }

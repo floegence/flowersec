@@ -204,6 +204,114 @@ describe("createProxyRuntime (http1)", () => {
     }
   });
 
+  it("derives default cookie paths from the response request path in runtime mode", async () => {
+    const streams = [
+      new FakeStream([
+        jsonFrame({
+          v: PROXY_PROTOCOL_VERSION,
+          request_id: "req1",
+          ok: true,
+          status: 200,
+          headers: [{ name: "set-cookie", value: "sid=1" }]
+        }),
+        chunkFrame(te.encode("one")),
+        u32be(0)
+      ]),
+      new FakeStream([
+        jsonFrame({
+          v: PROXY_PROTOCOL_VERSION,
+          request_id: "req2",
+          ok: true,
+          status: 200,
+          headers: [{ name: "content-type", value: "text/plain; charset=utf-8" }]
+        }),
+        chunkFrame(te.encode("two")),
+        u32be(0)
+      ]),
+      new FakeStream([
+        jsonFrame({
+          v: PROXY_PROTOCOL_VERSION,
+          request_id: "req3",
+          ok: true,
+          status: 200,
+          headers: [{ name: "content-type", value: "text/plain; charset=utf-8" }]
+        }),
+        chunkFrame(te.encode("three")),
+        u32be(0)
+      ])
+    ];
+
+    let openCount = 0;
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async (kind: string) => {
+        expect(kind).toBe(PROXY_KIND_HTTP1);
+        const stream = streams[openCount];
+        openCount++;
+        if (!stream) throw new Error("unexpected openStream");
+        return stream as any;
+      },
+      ping: async () => {},
+      close: () => {}
+    };
+
+    const sw = new FakeServiceWorker();
+    const oldNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: { serviceWorker: sw }, configurable: true });
+    try {
+      const cookieJar = new CookieJar();
+      createProxyRuntime({ client, cookieJar });
+
+      const dispatchFetch = async (id: string, path: string): Promise<any[]> => {
+        const portMessages: any[] = [];
+        const port = {
+          onmessage: null as null | ((ev: any) => void),
+          postMessage: (msg: any) => portMessages.push(msg),
+          close: () => {}
+        };
+
+        sw.emit("message", {
+          data: {
+            type: "flowersec-proxy:fetch",
+            req: {
+              id,
+              method: "GET",
+              path,
+              headers: [{ name: "accept", value: "text/plain" }]
+            }
+          },
+          ports: [port]
+        });
+
+        for (let i = 0; i < 100 && portMessages.find((m) => m?.type === "flowersec-proxy:response_end") == null; i++) {
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        await new Promise((r) => setTimeout(r, 0));
+        return portMessages;
+      };
+
+      await dispatchFetch("req1", "/admin/panel?tab=security");
+      expect(cookieJar.getCookieHeader("/admin/next")).toBe("sid=1");
+      expect(cookieJar.getCookieHeader("/administrator")).toBe("");
+
+      await dispatchFetch("req2", "/admin/next");
+      await dispatchFetch("req3", "/administrator");
+
+      const req2Write = streams[1]!.writes[0]!;
+      const req2Len = readU32be(req2Write, 0);
+      const req2Meta = JSON.parse(td.decode(req2Write.subarray(4, 4 + req2Len))) as any;
+      expect(req2Meta.headers).toContainEqual({ name: "cookie", value: "sid=1" });
+
+      const req3Write = streams[2]!.writes[0]!;
+      const req3Len = readU32be(req3Write, 0);
+      const req3Meta = JSON.parse(td.decode(req3Write.subarray(4, 4 + req3Len))) as any;
+      expect((req3Meta.headers ?? []).find((h: any) => (h.name ?? "").toLowerCase() === "cookie")).toBeFalsy();
+    } finally {
+      if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
+    }
+  });
+
   it("fails on oversized response chunks (maxChunkBytes enforced)", async () => {
     const respMeta = jsonFrame({
       v: PROXY_PROTOCOL_VERSION,

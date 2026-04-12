@@ -178,6 +178,64 @@ func TestServerHandleStreamUnknownCloses(t *testing.T) {
 	<-done
 }
 
+func TestServerHandle_RegisterRemoveAndHandleStreamWithNilContext(t *testing.T) {
+	t.Parallel()
+
+	s := newServer(t, Options{})
+	s.Handle("", func(_ context.Context, _ io.ReadWriteCloser) {
+		t.Fatal("empty kind must not be registered")
+	})
+
+	ctxCh := make(chan context.Context, 1)
+	s.Handle("echo", func(ctx context.Context, _ io.ReadWriteCloser) {
+		ctxCh <- ctx
+	})
+
+	serverConn, clientConn := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.HandleStream(nil, "echo", serverConn)
+	}()
+
+	select {
+	case gotCtx := <-ctxCh:
+		if gotCtx == nil {
+			t.Fatal("expected non-nil context")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for handler")
+	}
+
+	_ = clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, err := clientConn.Read(make([]byte, 1))
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("expected EOF, got %v", err)
+	}
+	_ = clientConn.Close()
+	<-done
+
+	s.Handle("echo", nil)
+	if got := s.lookup("echo"); got != nil {
+		t.Fatal("expected handler to be removed")
+	}
+
+	serverConn2, clientConn2 := net.Pipe()
+	done2 := make(chan struct{})
+	go func() {
+		defer close(done2)
+		s.HandleStream(nil, "", serverConn2)
+	}()
+
+	_ = clientConn2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, err = clientConn2.Read(make([]byte, 1))
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("expected EOF for empty kind stream, got %v", err)
+	}
+	_ = clientConn2.Close()
+	<-done2
+}
+
 func TestServerHandleStream_OnErrorReportsHandlerPanic(t *testing.T) {
 	t.Parallel()
 

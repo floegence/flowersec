@@ -79,4 +79,44 @@ describe("createProxyRuntime.openWebSocketStream", () => {
     expect(meta.headers).toContainEqual({ name: "sec-websocket-protocol", value: "demo" });
     expect(meta.headers).toContainEqual({ name: "cookie", value: "a=1" });
   });
+
+  it("selects websocket cookies with RFC path matching", async () => {
+    const streams = [
+      new FakeStream([jsonFrame({ v: PROXY_PROTOCOL_VERSION, conn_id: "x", ok: true, protocol: "" })]),
+      new FakeStream([jsonFrame({ v: PROXY_PROTOCOL_VERSION, conn_id: "y", ok: true, protocol: "" })])
+    ];
+
+    let openCount = 0;
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async (kind: string) => {
+        expect(kind).toBe(PROXY_KIND_WS);
+        const stream = streams[openCount];
+        openCount++;
+        if (!stream) throw new Error("unexpected openStream");
+        return stream as any;
+      },
+      ping: async () => {},
+      close: () => {}
+    };
+
+    const cookieJar = new CookieJar();
+    cookieJar.setCookie("sid=root; Path=/");
+    cookieJar.setCookie("sid=admin; Path=/admin");
+    const rt = createProxyRuntime({ client, cookieJar });
+
+    await rt.openWebSocketStream("/admin/socket");
+    await rt.openWebSocketStream("/administrator/socket");
+
+    const adminWrite = streams[0]!.writes[0]!;
+    const adminLen = readU32be(adminWrite, 0);
+    const adminMeta = JSON.parse(td.decode(adminWrite.subarray(4, 4 + adminLen))) as any;
+    expect(adminMeta.headers).toContainEqual({ name: "cookie", value: "sid=admin; sid=root" });
+
+    const siblingWrite = streams[1]!.writes[0]!;
+    const siblingLen = readU32be(siblingWrite, 0);
+    const siblingMeta = JSON.parse(td.decode(siblingWrite.subarray(4, 4 + siblingLen))) as any;
+    expect(siblingMeta.headers).toContainEqual({ name: "cookie", value: "sid=root" });
+  });
 });
