@@ -55,6 +55,15 @@ export class ControlplaneRequestError extends Error {
 export const DEFAULT_CONNECT_ARTIFACT_PATH = "/v1/connect/artifact";
 export const DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH = "/v1/connect/artifact/entry";
 
+const DEFAULT_MAX_CONTROLPLANE_RESPONSE_BYTES = 1 << 20;
+
+class ControlplaneResponseTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`controlplane response exceeded ${maxBytes} bytes`);
+    this.name = "ControlplaneResponseTooLargeError";
+  }
+}
+
 function resolveFetch(fetchImpl: FetchLike | undefined): FetchLike {
   if (fetchImpl) return fetchImpl;
   if (typeof globalThis.fetch === "function") return globalThis.fetch.bind(globalThis);
@@ -75,6 +84,45 @@ function parseMaybeJSON(bodyText: string): unknown {
   } catch {
     return trimmed;
   }
+}
+
+function parseContentLength(headerValue: string | null): number | null {
+  const raw = String(headerValue ?? "").trim();
+  if (raw === "") return null;
+  if (!/^[0-9]+$/.test(raw)) return null;
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+async function readControlplaneText(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = parseContentLength(response.headers.get("Content-Length"));
+  if (contentLength !== null && contentLength > maxBytes) {
+    throw new ControlplaneResponseTooLargeError(maxBytes);
+  }
+
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    totalBytes += chunk.value.byteLength;
+    if (totalBytes > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch {}
+      throw new ControlplaneResponseTooLargeError(maxBytes);
+    }
+    text += decoder.decode(chunk.value, { stream: true });
+  }
+  text += decoder.decode();
+  return text;
 }
 
 function decodeErrorMessage(status: number, responseBody: unknown): Readonly<{ code: string; message: string }> {
@@ -106,7 +154,18 @@ export async function requestControlplaneJSON(
     ...init,
     cache: "no-store",
   });
-  const rawBody = await response.text();
+  let rawBody = "";
+  try {
+    rawBody = await readControlplaneText(response, DEFAULT_MAX_CONTROLPLANE_RESPONSE_BYTES);
+  } catch (err) {
+    if (err instanceof ControlplaneResponseTooLargeError && !response.ok) {
+      throw new ControlplaneRequestError({
+        status: response.status,
+        message: err.message,
+      });
+    }
+    throw err;
+  }
   const responseBody = parseMaybeJSON(rawBody);
 
   if (!response.ok) {

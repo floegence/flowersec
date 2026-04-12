@@ -169,6 +169,13 @@ handler := controlplanehttp.NewArtifactHandler(controlplanehttp.ArtifactHandlerO
 
 `controlplane/http` deliberately leaves auth, same-origin binding, replay policy, and audit decisions in application-owned hooks.
 
+That division of responsibility is part of the stable integration contract:
+
+- Flowersec helpers own the controlplane request/response envelope and bounded artifact parsing.
+- Your application owns who may call the endpoint, which origins are trusted, how replay is prevented, and how issuance is audited.
+
+For the detailed artifact-fetch contract, including the bounded 1 MiB response rule and helper error semantics, see `docs/CONTROLPLANE_ARTIFACT_FETCH.md`.
+
 ## Reconnect guidance
 
 For browser and Node reconnect flows:
@@ -190,6 +197,8 @@ For browser runtime mode, prefer:
 
 - `connectArtifactProxyBrowser(...)` for same-origin service-worker mode
 - `connectArtifactProxyControllerBrowser(...)` plus `registerProxyAppWindow(...)` for controller-origin/runtime-isolation mode
+
+Choose gateway mode only when you intentionally accept a trusted plaintext L7 relay. Runtime mode and gateway mode are different trust models, not interchangeable deployment skins.
 
 Reference first-party files live under `reference/presets/`.
 

@@ -405,6 +405,7 @@ Artifact-first helper boundary:
 - deployment-specific path details stay caller-provided or boot-payload-specific; they are not frozen as proxy helper API surface.
 - service-worker registration details may still be caller-provided overrides even when the artifact scope pre-populates them.
 - direct transport is not a stable proxy helper path in v0.19.x; the artifact-first helpers are tunnel-first browser integrations.
+- artifact fetch is a separate controlplane contract; fetching a `connect_artifact` does not imply that a deployment must introduce a plaintext gateway component.
 
 ### 6.2 Gateway mode (L7 reverse proxy)
 

@@ -34,6 +34,8 @@ function makeArtifact(channelID: string) {
   };
 }
 
+const MAX_CONTROLPLANE_RESPONSE_BYTES = 1 << 20;
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -139,6 +141,73 @@ describe("controlplane artifact helpers", () => {
       status: 502,
       code: "",
     } satisfies Partial<ControlplaneRequestError>);
+  });
+
+  test("rejects oversized success responses before JSON validation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          connect_artifact: makeArtifact("chan_art_oversize"),
+          padding: "x".repeat(MAX_CONTROLPLANE_RESPONSE_BYTES + 256),
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
+    );
+
+    await expect(
+      requestConnectArtifact({
+        endpointId: "env_art_oversize_success",
+        fetch: fetchMock as typeof fetch,
+      })
+    ).rejects.toThrow(`controlplane response exceeded ${MAX_CONTROLPLANE_RESPONSE_BYTES} bytes`);
+  });
+
+  test("preserves HTTP status when oversized error responses are rejected", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "TOO_BIG",
+            message: "x".repeat(MAX_CONTROLPLANE_RESPONSE_BYTES + 256),
+          },
+        }),
+        {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
+    );
+
+    await expect(
+      requestConnectArtifact({
+        endpointId: "env_art_oversize_error",
+        fetch: fetchMock as typeof fetch,
+      })
+    ).rejects.toMatchObject({
+      name: "ControlplaneRequestError",
+      message: `controlplane response exceeded ${MAX_CONTROLPLANE_RESPONSE_BYTES} bytes`,
+      status: 503,
+      code: "",
+    } satisfies Partial<ControlplaneRequestError>);
+  });
+
+  test("rejects empty success bodies after the bounded reader path", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    await expect(
+      requestConnectArtifact({
+        endpointId: "env_art_empty",
+        fetch: fetchMock as typeof fetch,
+      })
+    ).rejects.toThrow("Invalid controlplane response: expected JSON body");
   });
 
   test("rejects malformed success envelopes that omit connect_artifact", async () => {

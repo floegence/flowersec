@@ -84,8 +84,11 @@ The stable helper contract freezes the envelope semantics above:
 - request fields: `endpoint_id`, optional `payload`, optional `correlation.trace_id`
 - success field: `connect_artifact`
 - error fields: machine-readable `error.code`, human-readable `error.message`
+- bounded-body rule: helpers treat the response as a small controlplane document and reject bodies larger than 1 MiB before JSON validation
 
 `session_id` is issuer-owned and is returned inside `connect_artifact.correlation` when available; callers do not request it explicitly.
+
+This helper surface is intentionally for controlplane bootstrap documents, not for arbitrary bulk payload delivery. If an integration needs large payloads, it should expose a different application-owned endpoint instead of stretching the artifact-fetch contract.
 
 ## Stable helper error surfaces
 
@@ -111,6 +114,7 @@ Go `controlplane/http` keeps the same outward envelope while letting application
 - `controlplanehttp.ArtifactIssueInput`
 
 On non-`2xx` responses, helpers keep the HTTP status plus the structured error envelope when present.
+If a response body exceeds the helper limit, the helper fails closed before envelope parsing; non-`2xx` paths still preserve the HTTP status through `ControlplaneRequestError`.
 
 Manual callers that fetch the controlplane endpoint directly must unwrap `connect_artifact` before passing it into client connect helpers.
 
@@ -142,6 +146,35 @@ Third-party controlplanes may use different URLs and pass them via helper config
 
 `path` is an advanced override.
 Quickstart and recommended integrations should treat the default endpoints above as the stable baseline.
+
+## Ownership boundary
+
+The artifact-fetch helper contract is intentionally narrow:
+
+- helper-owned concerns: request envelope shape, response envelope shape, bounded response parsing, and client-side validation of `connect_artifact`
+- application-owned concerns: auth, same-origin binding, replay policy, ticket semantics, auditing, and endpoint routing
+
+`controlplane/http` is a reference envelope layer, not a complete policy framework. Browser deployments that treat artifact fetch as a privileged bootstrap step must still enforce their own same-origin or equivalent boundary at the application layer.
+
+## Request / response sequence
+
+Success path:
+
+1. Caller issues `requestConnectArtifact(...)` or `requestEntryConnectArtifact(...)`.
+2. Helper sends the stable POST request to the configured controlplane path.
+3. Helper reads the response through the bounded 1 MiB reader.
+4. Helper parses the JSON envelope and validates `connect_artifact`.
+5. Caller receives the validated artifact.
+
+Error path:
+
+1. Caller issues the same helper request.
+2. Controlplane returns a non-`2xx` response.
+3. Helper reads the body through the same bounded reader.
+4. Helper preserves the HTTP status and decodes the structured `error` envelope when present.
+5. Caller receives `ControlplaneRequestError`.
+
+The artifact-fetch contract is independent from whether the later proxy data-plane runs in runtime mode or gateway mode. See `docs/PROXY.md` for those trust boundaries.
 
 ## Reconnect guidance
 
