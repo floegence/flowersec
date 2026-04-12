@@ -54,6 +54,7 @@ func TestHTTP1Handler_GET_EndToEnd(t *testing.T) {
 		Headers: []Header{
 			{Name: "accept", Value: "text/plain"},
 			{Name: "authorization", Value: "Bearer secret"},
+			{Name: "origin", Value: "https://gateway.example.com"},
 		},
 	}
 	if err := jsonframe.WriteJSONFrame(clientConn, reqMeta); err != nil {
@@ -100,8 +101,8 @@ func TestHTTP1Handler_GET_EndToEnd(t *testing.T) {
 	if s.auth != "" {
 		t.Fatalf("expected Authorization to be filtered, got %q", s.auth)
 	}
-	if s.origin == "" {
-		t.Fatalf("expected Origin to be injected")
+	if s.origin != "https://gateway.example.com" {
+		t.Fatalf("unexpected upstream origin: %q", s.origin)
 	}
 }
 

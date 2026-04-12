@@ -66,6 +66,104 @@ func TestGatewayHTTPProxiesToServerEndpoint(t *testing.T) {
 	}
 }
 
+func TestGatewayHTTPRejectsCrossSitePOSTBeforeOpeningRoute(t *testing.T) {
+	called := false
+	bridge := mustBridge(t, proxy.BridgeOptions{})
+	gw := newGateway(map[string]streamOpener{
+		"127.0.0.1": openerFunc(func(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+			called = true
+			return noopReadWriteCloser{}, nil
+		}),
+	}, bridge, browserPolicy{allowedOrigins: []string{"https://gateway.example.com"}}, nil)
+	s := httptest.NewServer(gw)
+	defer s.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, s.URL+"/submit", strings.NewReader("x=1"))
+	req.Header.Set("Origin", "https://evil.example.com")
+	req.Header.Set("Cookie", "sess=1")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status want=%d got=%d", http.StatusForbidden, resp.StatusCode)
+	}
+	if called {
+		t.Fatal("expected route to stay unopened on cross-site POST")
+	}
+}
+
+func TestGatewayHTTPRejectsCrossSiteCredentialedGETWithoutOrigin(t *testing.T) {
+	called := false
+	bridge := mustBridge(t, proxy.BridgeOptions{})
+	gw := newGateway(map[string]streamOpener{
+		"127.0.0.1": openerFunc(func(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+			called = true
+			return noopReadWriteCloser{}, nil
+		}),
+	}, bridge, browserPolicy{allowedOrigins: []string{"https://gateway.example.com"}}, nil)
+	s := httptest.NewServer(gw)
+	defer s.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, s.URL+"/hello", nil)
+	req.Header.Set("Cookie", "sess=1")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status want=%d got=%d", http.StatusForbidden, resp.StatusCode)
+	}
+	if called {
+		t.Fatal("expected route to stay unopened on cross-site credentialed GET")
+	}
+}
+
+func TestGatewayHTTPAllowsSameOriginNavigationWithoutOrigin(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer up.Close()
+
+	streamSrv, err := serve.New(serve.Options{})
+	if err != nil {
+		t.Fatalf("serve.New: %v", err)
+	}
+	if err := proxy.Register(streamSrv, proxy.Options{
+		Upstream:       up.URL,
+		UpstreamOrigin: "http://127.0.0.1:5173",
+	}); err != nil {
+		t.Fatalf("proxy.Register: %v", err)
+	}
+
+	bridge := mustBridge(t, proxy.BridgeOptions{})
+	gw := newGateway(map[string]streamOpener{
+		"127.0.0.1": &fakeRoute{srv: streamSrv},
+	}, bridge, browserPolicy{allowedOrigins: []string{"https://gateway.example.com"}}, nil)
+	s := httptest.NewServer(gw)
+	defer s.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, s.URL+"/hello", nil)
+	req.Header.Set("Cookie", "sess=1")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status want=%d got=%d", http.StatusOK, resp.StatusCode)
+	}
+}
+
 func TestGatewayWSAllowsConfiguredOriginAndProxiesToServerEndpoint(t *testing.T) {
 	seen := make(chan map[string]string, 1)
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}

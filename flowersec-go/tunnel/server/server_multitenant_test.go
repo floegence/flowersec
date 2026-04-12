@@ -99,6 +99,82 @@ func TestAttachWithMultiTenantVerifierAcceptsMatchingScope(t *testing.T) {
 	t.Fatalf("expected multi-tenant attach to register a channel")
 }
 
+func TestAttachWithMultiTenantVerifierNamespacesChannelAndTokenIDs(t *testing.T) {
+	verifier, privA, privB := newMultiTenantAttachVerifier(t)
+
+	cfg := DefaultConfig()
+	cfg.Verifier = verifier
+	cfg.AllowedOrigins = []string{"https://ok"}
+
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	t.Cleanup(s.Close)
+
+	mux := http.NewServeMux()
+	s.Register(mux)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + cfg.Path
+
+	attachClient := func(priv ed25519.PrivateKey, aud string, iss string, endpointID string) *websocket.Conn {
+		t.Helper()
+
+		c, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"https://ok"}})
+		if err != nil {
+			t.Fatalf("Dial() failed: %v", err)
+		}
+
+		now := time.Now()
+		tokenStr, err := token.Sign(priv, token.Payload{
+			Kid:                "kid",
+			Aud:                aud,
+			Iss:                iss,
+			ChannelID:          "ch_shared",
+			Role:               uint8(tunnelv1.Role_client),
+			TokenID:            "tok_shared",
+			InitExp:            now.Add(2 * time.Minute).Unix(),
+			IdleTimeoutSeconds: 60,
+			Iat:                now.Add(-10 * time.Second).Unix(),
+			Exp:                now.Add(30 * time.Second).Unix(),
+		})
+		if err != nil {
+			t.Fatalf("token.Sign() failed: %v", err)
+		}
+
+		attachJSON, err := json.Marshal(tunnelv1.Attach{
+			V:                  1,
+			ChannelId:          "ch_shared",
+			Role:               tunnelv1.Role_client,
+			Token:              tokenStr,
+			EndpointInstanceId: endpointID,
+		})
+		if err != nil {
+			t.Fatalf("Marshal(attach) failed: %v", err)
+		}
+		if err := c.WriteMessage(websocket.TextMessage, attachJSON); err != nil {
+			t.Fatalf("WriteMessage() failed: %v", err)
+		}
+		return c
+	}
+
+	cA := attachClient(privA, "aud-a", "iss-a", base64url.Encode(make([]byte, 16)))
+	defer cA.Close()
+	cB := attachClient(privB, "aud-b", "iss-b", base64url.Encode([]byte("bbbbbbbbbbbbbbbb")))
+	defer cB.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.Stats().ChannelCount == 2 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected shared channel_id/token_id to stay isolated across tenants")
+}
+
 func TestAttachWithMultiTenantVerifierRejectsUnknownScope(t *testing.T) {
 	verifier, privA, _ := newMultiTenantAttachVerifier(t)
 

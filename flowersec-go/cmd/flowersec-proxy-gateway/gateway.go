@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
@@ -19,6 +20,83 @@ type browserPolicy struct {
 
 func (p browserPolicy) checkOrigin(r *http.Request) bool {
 	return realtimews.IsOriginAllowed(r, p.allowedOrigins, p.allowNoOrigin)
+}
+
+func (p browserPolicy) allowHTTPRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if strings.TrimSpace(r.Header.Get("Origin")) != "" {
+		return p.checkOrigin(r)
+	}
+	if !httpRequestNeedsBrowserBoundary(r) {
+		return true
+	}
+	switch browserFetchSite(r) {
+	case "same-origin", "none":
+		return true
+	case "same-site", "cross-site":
+		return false
+	default:
+		if sameOriginReferer(r) {
+			return true
+		}
+		return p.allowNoOrigin
+	}
+}
+
+func httpRequestNeedsBrowserBoundary(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if !isSafeHTTPMethod(r.Method) {
+		return true
+	}
+	return strings.TrimSpace(r.Header.Get("Cookie")) != ""
+}
+
+func isSafeHTTPMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return true
+	default:
+		return false
+	}
+}
+
+func browserFetchSite(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	switch v := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); v {
+	case "same-origin", "same-site", "cross-site", "none":
+		return v
+	default:
+		return ""
+	}
+}
+
+func sameOriginReferer(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	ref := strings.TrimSpace(r.Header.Get("Referer"))
+	if ref == "" {
+		return false
+	}
+	refURL, err := url.Parse(ref)
+	if err != nil || refURL == nil || refURL.Host == "" {
+		return false
+	}
+	refHost, err := canonicalHostKey(refURL.Host)
+	if err != nil {
+		return false
+	}
+	reqHost, err := canonicalHostKey(r.Host)
+	if err != nil {
+		return false
+	}
+	return refHost == reqHost
 }
 
 type gateway struct {
@@ -63,6 +141,10 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route streamOpener) {
+	if !g.browser.allowHTTPRequest(r) {
+		http.Error(w, "request origin not allowed", http.StatusForbidden)
+		return
+	}
 	if err := g.bridge.ProxyHTTP(w, r, route); err != nil {
 		g.logProxyError(r, err)
 	}

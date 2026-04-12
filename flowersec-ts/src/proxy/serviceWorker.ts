@@ -274,6 +274,7 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
+  runtimeClientId = null;
   event.waitUntil(self.clients.claim());
 });
 
@@ -322,16 +323,10 @@ async function getWindowClient(preferredClientId) {
     return cs.length > 0 ? cs[0] : null;
   }
 
-  if (runtimeClientId) {
-    const c = await self.clients.get(runtimeClientId);
-    if (c) return c;
-    runtimeClientId = null;
-  }
-  const cs = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  if (cs.length > 0) {
-    runtimeClientId = cs[0].id;
-    return cs[0];
-  }
+  if (!runtimeClientId) return null;
+  const c = await self.clients.get(runtimeClientId);
+  if (c) return c;
+  runtimeClientId = null;
   return null;
 }
 

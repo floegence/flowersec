@@ -48,6 +48,24 @@ func TestTokenUseCacheHonorsSkewWindow(t *testing.T) {
 	}
 }
 
+func TestTokenUseCacheScopesReplayKeysByTenant(t *testing.T) {
+	c := NewTokenUseCache()
+	now := time.Unix(100, 0)
+
+	scopeA := scopedTokenUseKey(tenantScopeKey("aud-a", "iss-a"), "tok")
+	scopeB := scopedTokenUseKey(tenantScopeKey("aud-b", "iss-b"), "tok")
+
+	if !c.TryUse(scopeA, 200, now) {
+		t.Fatalf("expected first use in scope A to succeed")
+	}
+	if !c.TryUse(scopeB, 200, now) {
+		t.Fatalf("expected first use in scope B to succeed")
+	}
+	if c.TryUse(scopeA, 200, now) {
+		t.Fatalf("expected reuse in scope A to fail")
+	}
+}
+
 func TestAddSkewUnix(t *testing.T) {
 	if got := addSkewUnix(100, 0); got != 100 {
 		t.Fatalf("expected no skew to keep value, got %d", got)

@@ -117,9 +117,11 @@ func http1Handler(cfg *compiledOptions) func(ctx context.Context, stream io.Read
 			_ = writeHTTPError(stream, meta.RequestID, "invalid_request_meta", err)
 			return
 		}
-		// Apply header filters and inject a fixed Origin (server-controlled).
+		// Apply header filters and preserve the browser/client HTTP Origin when present.
 		req.Header = filterRequestHeaders(meta.Headers, &cfg.compiledHeaderPolicy)
-		req.Header.Set("Origin", cfg.upstreamOrigin)
+		if strings.TrimSpace(req.Header.Get("Origin")) == "" {
+			req.Header.Del("Origin")
+		}
 
 		resp, err := hc.Do(req)
 		if err != nil {

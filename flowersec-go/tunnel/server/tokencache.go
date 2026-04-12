@@ -8,7 +8,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/timeutil"
 )
 
-// TokenUseCache provides in-memory single-use enforcement for token_id values.
+// TokenUseCache provides in-memory single-use enforcement for replay keys.
 //
 // # Security Model
 //
@@ -41,28 +41,28 @@ import (
 //     replay window after restart.
 type TokenUseCache struct {
 	mu   sync.Mutex       // Guards the used map.
-	used map[string]int64 // key: tokenID, value: usedUntilUnix
+	used map[string]int64 // key: scoped replay key, value: usedUntilUnix
 }
 
 func NewTokenUseCache() *TokenUseCache {
 	return &TokenUseCache{used: make(map[string]int64)}
 }
 
-// TryUse marks tokenID as used until usedUntilUnix (Unix seconds).
+// TryUse marks replayKey as used until usedUntilUnix (Unix seconds).
 //
 // Callers should pass a usedUntilUnix that matches the acceptance window of the
 // token verifier (e.g. exp + clockSkewSeconds). Otherwise, replays can slip
 // through when exp is already in the past but still within clock skew.
-func (c *TokenUseCache) TryUse(tokenID string, usedUntilUnix int64, now time.Time) bool {
+func (c *TokenUseCache) TryUse(replayKey string, usedUntilUnix int64, now time.Time) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if tokenID == "" {
+	if replayKey == "" {
 		return false
 	}
-	if prev, ok := c.used[tokenID]; ok && prev >= now.Unix() {
+	if prev, ok := c.used[replayKey]; ok && prev >= now.Unix() {
 		return false
 	}
-	c.used[tokenID] = usedUntilUnix
+	c.used[replayKey] = usedUntilUnix
 	return true
 }
 

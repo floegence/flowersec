@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Client } from "../client.js";
 import { u32be } from "../utils/bin.js";
@@ -73,6 +73,35 @@ function readU32be(buf: Uint8Array, off: number): number {
 }
 
 describe("createProxyRuntime (http1)", () => {
+  it("registers the runtime with the active service worker controller and retries on controllerchange", () => {
+    const firstPostMessage = vi.fn();
+    const secondPostMessage = vi.fn();
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async () => {
+        throw new Error("unexpected openStream");
+      },
+      ping: async () => {},
+      close: () => {}
+    };
+
+    const sw = new FakeServiceWorker();
+    sw.controller = { postMessage: firstPostMessage };
+    const oldNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: { serviceWorker: sw }, configurable: true });
+    try {
+      createProxyRuntime({ client });
+      expect(firstPostMessage).toHaveBeenCalledWith({ type: "flowersec-proxy:register-runtime" });
+
+      sw.controller = { postMessage: secondPostMessage };
+      sw.emit("controllerchange", {});
+      expect(secondPostMessage).toHaveBeenCalledWith({ type: "flowersec-proxy:register-runtime" });
+    } finally {
+      if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
+    }
+  });
+
   it("writes http_request_meta with CookieJar cookie and streams response body (set-cookie stripped)", async () => {
     const respMeta = jsonFrame({
       v: PROXY_PROTOCOL_VERSION,

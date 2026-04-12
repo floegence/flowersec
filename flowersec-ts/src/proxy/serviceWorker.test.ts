@@ -121,6 +121,12 @@ describe("createProxyServiceWorkerScript", () => {
     expect(s).toContain("event.clientId || event.resultingClientId");
   });
 
+  it("fails closed in registered_runtime mode when the runtime window is not registered", () => {
+    const s = createProxyServiceWorkerScript();
+    expect(s).toContain("if (!runtimeClientId) return null;");
+    expect(s).not.toContain("runtimeClientId = cs[0].id;");
+  });
+
   it("rejects invalid controller window routing options", () => {
     expect(() => createProxyServiceWorkerScript({ windowTarget: "bad" as any })).toThrow(/windowTarget/);
     expect(() => createProxyServiceWorkerScript({ windowClientMessageType: "bad\nmsg" })).toThrow(/windowClientMessageType/);

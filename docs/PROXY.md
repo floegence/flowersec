@@ -198,6 +198,7 @@ Default allow-list (case-insensitive):
 - `if-modified-since`
 - `if-none-match`
 - `if-unmodified-since`
+- `origin`
 - `pragma`
 - `range`
 - `x-requested-with`
@@ -206,6 +207,8 @@ Rules:
 
 - `host` MUST NOT be accepted from the client endpoint.
 - `authorization` MUST NOT be accepted from the client endpoint.
+- HTTP `origin`, when present, MUST be forwarded as received from the browser/client request.
+  - Gateway mode MUST NOT rewrite a browser-supplied HTTP Origin into a fixed trusted value.
 - `cookie` is mode-specific:
   - Runtime mode: MAY be injected by the runtime CookieJar (see 3.5.3); it MUST NOT be copied from the browser cookie store.
   - Gateway mode: MAY be forwarded from the inbound browser `Cookie` header of the gateway origin (normal browser semantics for that origin).
@@ -406,8 +409,10 @@ Gateway mode is a deployable L7 HTTP/WS reverse proxy that forwards to a server 
 Requirements and boundaries:
 
 - The gateway is a plaintext component by design. It MUST be treated as trusted (see `docs/THREAT_MODEL.md`).
-- The gateway MUST validate browser-side WebSocket Origin against an explicit allow-list before opening an upstream Flowersec stream.
-  - This browser-facing Origin policy is separate from the tunnel attach Origin policy.
+- The gateway MUST enforce a browser boundary for both HTTP and WebSocket traffic before opening an upstream Flowersec stream.
+  - For HTTP, unsafe methods and credentialed requests MUST fail closed unless the browser boundary indicates an allowed same-origin/allowed-origin request.
+  - When the browser sends an HTTP Origin header, the gateway MUST preserve that Origin upstream.
+  - This browser-facing policy is separate from the tunnel attach Origin policy.
 - The gateway origin MUST be on a dedicated cookie scope (for example a separate registrable domain) from any product/controlplane authentication context.
   - This prevents unrelated product cookies from being forwarded to the proxied upstream app.
   - In gateway mode, `cookie` and `set-cookie` MAY be forwarded with normal browser semantics for the gateway origin.

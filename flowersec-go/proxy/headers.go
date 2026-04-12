@@ -16,6 +16,7 @@ var (
 		"if-modified-since":   {},
 		"if-none-match":       {},
 		"if-unmodified-since": {},
+		"origin":              {},
 		"pragma":              {},
 		"range":               {},
 		"x-requested-with":    {},

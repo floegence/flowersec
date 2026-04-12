@@ -82,10 +82,12 @@ It does not replay partially streamed HTTP bodies after mid-stream failure.
 
 Keep these separate:
 
-- `browser.allowed_origins`: browser -> gateway boundary
+- `browser.allowed_origins`: browser -> gateway HTTP/WS boundary
 - `tunnel.origin`: gateway -> tunnel attach Origin
 
 The gateway is L7 plaintext by design. Put TLS in front of it for real browser traffic.
+
+For HTTP requests, the gateway rejects unsafe or credentialed browser traffic unless the browser boundary is satisfied, and it preserves the browser's real HTTP `Origin` header upstream instead of rewriting it to `tunnel.origin`.
 
 ## Reference presets
 

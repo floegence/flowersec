@@ -100,8 +100,8 @@ type Server struct {
 	auth     Authorizer                   // Optional attach/runtime authorizer.
 
 	mu       sync.Mutex               // Guards channel state.
-	channels map[string]*channelState // Channel state by channel ID.
-	bw       sync.Map                 // key: channel_id (string), value: *bandwidthEntry
+	channels map[string]*channelState // key: scoped channel key, value: *channelState
+	bw       sync.Map                 // key: scoped channel key (string), value: *bandwidthEntry
 
 	closed int32 // Set to 1 once Close is called.
 
@@ -377,6 +377,7 @@ var (
 type channelState struct {
 	mu          sync.Mutex                      // Guards channel state.
 	id          string                          // Channel identifier.
+	key         string                          // Internal scoped channel key.
 	initExp     int64                           // Channel init expiry (Unix seconds).
 	idleTimeout time.Duration                   // Idle timeout enforced for the channel.
 	tenantID    string                          // Optional verifier tenant identifier.
@@ -434,6 +435,18 @@ type endpointConn struct {
 	outErr    error      // Sticky error for blocked writers.
 
 	prefetch *attachReadPrefetch // The first post-attach frame/error captured during policy evaluation.
+}
+
+func verifiedScopeKey(verified VerifiedToken) string {
+	return tenantScopeKey(verified.Audience, verified.Issuer)
+}
+
+func scopedTokenUseKey(scopeKey string, tokenID string) string {
+	return scopeKey + "\x00" + strings.TrimSpace(tokenID)
+}
+
+func scopedChannelKey(scopeKey string, channelID string) string {
+	return scopeKey + "\x00" + channelID
 }
 
 func newEndpointConn(role tunnelv1.Role, eid string, ws *websocket.Conn) *endpointConn {
@@ -662,7 +675,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	usedUntilUnix := addSkewUnix(p.Exp, s.cfg.ClockSkew)
-	if !s.used.TryUse(p.TokenID, usedUntilUnix, now) {
+	scopeKey := verifiedScopeKey(verified)
+	if !s.used.TryUse(scopedTokenUseKey(scopeKey, p.TokenID), usedUntilUnix, now) {
 		s.obs.Attach(observability.AttachResultFail, observability.AttachReasonTokenReplay)
 		_ = c.CloseWithStatus(websocket.ClosePolicyViolation, string(observability.AttachReasonTokenReplay))
 		s.untrackConn(uc)
@@ -712,7 +726,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.addEndpoint(attach, verified, policyDecision, attachPrefetch, uc); err != nil {
+	if err := s.addEndpoint(attach, verified, scopeKey, policyDecision, attachPrefetch, uc); err != nil {
 		if _, ok := attachPrefetch.cancelAndWait(); ok {
 			// No handoff is needed when the endpoint never becomes active.
 		}
@@ -748,7 +762,7 @@ func (s *Server) closeAll() {
 
 	now := time.Now()
 	s.mu.Lock()
-	for id, st := range s.channels {
+	for key, st := range s.channels {
 		st.mu.Lock()
 		for _, e := range st.conns {
 			pendingBytes += e.pendingBytes
@@ -758,8 +772,8 @@ func (s *Server) closeAll() {
 			conns = append(conns, e.ws)
 		}
 		st.mu.Unlock()
-		delete(s.channels, id)
-		s.markBandwidthClosed(id, now)
+		delete(s.channels, key)
+		s.markBandwidthClosed(key, now)
 	}
 	channelCount := len(s.channels)
 	s.mu.Unlock()
@@ -823,7 +837,7 @@ func (s *Server) allowReplaceLocked(st *channelState, role tunnelv1.Role, now ti
 }
 
 // addEndpoint registers the websocket for a channel and starts routing.
-func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decision AttachAuthorizationDecision, prefetch *attachReadPrefetch, uc *websocket.Conn) error {
+func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, scopeKey string, decision AttachAuthorizationDecision, prefetch *attachReadPrefetch, uc *websocket.Conn) error {
 	var toClose []*websocket.Conn
 	var startPump bool
 	var pairLatency time.Duration
@@ -837,12 +851,13 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decisio
 	var droppedPendingBytes int
 	now := time.Now()
 	p := verified.Payload
+	channelKey := scopedChannelKey(scopeKey, a.ChannelId)
 
 	ep := newEndpointConn(a.Role, a.EndpointInstanceId, uc)
-	ep.bw = s.ensureBandwidthEntry(a.ChannelId)
+	ep.bw = s.ensureBandwidthEntry(channelKey, a.ChannelId)
 	ep.prefetch = prefetch
 	s.mu.Lock()
-	st := s.channels[a.ChannelId]
+	st := s.channels[channelKey]
 	if st == nil {
 		if s.cfg.MaxChannels > 0 && len(s.channels) >= s.cfg.MaxChannels {
 			s.mu.Unlock()
@@ -851,6 +866,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decisio
 		// First endpoint for the channel.
 		st = &channelState{
 			id:          a.ChannelId,
+			key:         channelKey,
 			initExp:     p.InitExp,
 			idleTimeout: time.Duration(p.IdleTimeoutSeconds) * time.Second,
 			tenantID:    verified.TenantID,
@@ -862,7 +878,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decisio
 			conns:       make(map[tunnelv1.Role]*endpointConn, 2),
 		}
 		st.conns[a.Role] = ep
-		s.channels[a.ChannelId] = st
+		s.channels[channelKey] = st
 		channelCount = len(s.channels)
 		setChannelCount = true
 		startPump = true
@@ -901,10 +917,11 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decisio
 				e.closeWriteQueue(nil)
 				toClose = append(toClose, e.ws)
 			}
-			delete(s.channels, a.ChannelId)
+			delete(s.channels, channelKey)
 			old := st
 			st = &channelState{
 				id:          a.ChannelId,
+				key:         channelKey,
 				initExp:     p.InitExp,
 				idleTimeout: time.Duration(p.IdleTimeoutSeconds) * time.Second,
 				tenantID:    verified.TenantID,
@@ -917,7 +934,7 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decisio
 				replace:     replaceState,
 			}
 			st.conns[a.Role] = ep
-			s.channels[a.ChannelId] = st
+			s.channels[channelKey] = st
 			replaceResult = observability.ReplaceResultOK
 			setReplaceResult = true
 			startPump = true
@@ -956,13 +973,13 @@ func (s *Server) addEndpoint(a *tunnelv1.Attach, verified VerifiedToken, decisio
 	}
 
 	if startPump {
-		go s.pump(a.ChannelId, a.Role, ep)
-		go s.writePump(a.ChannelId, a.Role, ep)
+		go s.pump(channelKey, a.Role, ep)
+		go s.writePump(channelKey, a.Role, ep)
 	}
 	if paired {
 		if err := s.flushPending(st, client, server); err != nil {
 			s.obs.Close(observability.CloseReasonWriteError)
-			s.closeChannel(a.ChannelId)
+			s.closeChannel(channelKey)
 			return err
 		}
 	}
@@ -1423,6 +1440,35 @@ func updateLeaseLocked(st *channelState, leaseUntil int64) {
 	}
 }
 
+func (s *Server) lookupChannelKeys(decision ChannelObservationDecision) []string {
+	channelID := strings.TrimSpace(decision.ChannelID)
+	if channelID == "" {
+		return nil
+	}
+
+	audience := strings.TrimSpace(decision.Audience)
+	issuer := strings.TrimSpace(decision.Issuer)
+	if audience != "" && issuer != "" {
+		return []string{scopedChannelKey(tenantScopeKey(audience, issuer), channelID)}
+	}
+
+	tenantID := strings.TrimSpace(decision.TenantID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	keys := make([]string, 0, 1)
+	for key, st := range s.channels {
+		if st == nil || st.id != channelID {
+			continue
+		}
+		if tenantID != "" && st.tenantID != tenantID {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 func (s *Server) snapshotObservedChannels() []ChannelObservation {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1431,6 +1477,7 @@ func (s *Server) snapshotObservedChannels() []ChannelObservation {
 	for _, st := range s.channels {
 		st.mu.Lock()
 		channelID := st.id
+		channelKey := st.key
 		tenantID := st.tenantID
 		audience := st.audience
 		issuer := st.issuer
@@ -1438,7 +1485,7 @@ func (s *Server) snapshotObservedChannels() []ChannelObservation {
 
 		var bytesToClient uint64
 		var bytesToServer uint64
-		if v, ok := s.bw.Load(channelID); ok {
+		if v, ok := s.bw.Load(channelKey); ok {
 			if entry, ok := v.(*bandwidthEntry); ok && entry != nil {
 				bytesToClient = atomic.LoadUint64(&entry.toClient)
 				bytesToServer = atomic.LoadUint64(&entry.toServer)
@@ -1464,12 +1511,12 @@ func (s *Server) applyObservationDecisions(decisions []ChannelObservationDecisio
 
 	toClose := make([]string, 0, len(decisions))
 	for _, decision := range decisions {
-		channelID := strings.TrimSpace(decision.ChannelID)
-		if channelID == "" {
+		channelKeys := s.lookupChannelKeys(decision)
+		if len(channelKeys) == 0 {
 			continue
 		}
 		if !decision.Allowed {
-			toClose = append(toClose, channelID)
+			toClose = append(toClose, channelKeys...)
 			continue
 		}
 		if decision.LeaseExpiresAtUnixMs <= 0 {
@@ -1477,8 +1524,11 @@ func (s *Server) applyObservationDecisions(decisions []ChannelObservationDecisio
 		}
 
 		s.mu.Lock()
-		st := s.channels[channelID]
-		if st != nil {
+		for _, channelKey := range channelKeys {
+			st := s.channels[channelKey]
+			if st == nil {
+				continue
+			}
 			st.mu.Lock()
 			updateLeaseLocked(st, decision.LeaseExpiresAtUnixMs)
 			st.mu.Unlock()
@@ -1486,9 +1536,9 @@ func (s *Server) applyObservationDecisions(decisions []ChannelObservationDecisio
 		s.mu.Unlock()
 	}
 
-	for _, channelID := range toClose {
+	for _, channelKey := range toClose {
 		s.obs.Close(observability.CloseReasonPolicyDenied)
-		s.closeChannel(channelID)
+		s.closeChannel(channelKey)
 	}
 }
 

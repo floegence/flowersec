@@ -162,14 +162,14 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
   const extraResponseHeaders = opts.extraResponseHeaders ?? [];
   const extraWsHeaders = opts.extraWsHeaders ?? [];
 
-  const registerRuntime = () => {
-    try {
-      const ctl = globalThis.navigator?.serviceWorker?.controller;
-      ctl?.postMessage({ type: "flowersec-proxy:register-runtime" } satisfies ProxyServiceWorkerRegisterMsg);
-    } catch {
-      // Best-effort: runtime can still work if SW picks it via matchAll().
-    }
-  };
+	  const registerRuntime = () => {
+	    try {
+	      const ctl = globalThis.navigator?.serviceWorker?.controller;
+	      ctl?.postMessage({ type: "flowersec-proxy:register-runtime" } satisfies ProxyServiceWorkerRegisterMsg);
+	    } catch {
+	      // Best-effort: controllerchange will retry once the active Service Worker is ready.
+	    }
+	  };
 
   const onMessage = (ev: MessageEvent) => {
     const data = ev.data as ProxyFetchMsg | unknown;

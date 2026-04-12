@@ -30,26 +30,28 @@ type BandwidthSnapshot struct {
 
 // bandwidthEntry is stored in Server.bw and updated by the write pumps.
 type bandwidthEntry struct {
+	channelID string
+
 	toClient uint64
 	toServer uint64
 	// closedAtUnixMs is set once the channel is closed and retained for a short period.
 	closedAtUnixMs int64
 }
 
-func (s *Server) ensureBandwidthEntry(channelID string) *bandwidthEntry {
-	if s == nil || channelID == "" {
+func (s *Server) ensureBandwidthEntry(channelKey string, channelID string) *bandwidthEntry {
+	if s == nil || channelKey == "" || channelID == "" {
 		return nil
 	}
 
-	if v, ok := s.bw.Load(channelID); ok {
+	if v, ok := s.bw.Load(channelKey); ok {
 		e := v.(*bandwidthEntry)
 		// Re-open if the same channel_id is reused (e.g. reconnect within init window).
 		atomic.StoreInt64(&e.closedAtUnixMs, 0)
 		return e
 	}
 
-	e := &bandwidthEntry{}
-	actual, loaded := s.bw.LoadOrStore(channelID, e)
+	e := &bandwidthEntry{channelID: channelID}
+	actual, loaded := s.bw.LoadOrStore(channelKey, e)
 	if loaded {
 		e = actual.(*bandwidthEntry)
 	}
@@ -111,13 +113,12 @@ func (s *Server) BandwidthSnapshot(now time.Time) BandwidthSnapshot {
 
 	out := BandwidthSnapshot{NowUnixMs: now.UnixMilli()}
 	s.bw.Range(func(key, value any) bool {
-		channelID, _ := key.(string)
 		e, ok := value.(*bandwidthEntry)
-		if channelID == "" || !ok || e == nil {
+		if !ok || e == nil || e.channelID == "" {
 			return true
 		}
 		out.Channels = append(out.Channels, BandwidthChannelStats{
-			ChannelID:      channelID,
+			ChannelID:      e.channelID,
 			BytesToClient:  atomic.LoadUint64(&e.toClient),
 			BytesToServer:  atomic.LoadUint64(&e.toServer),
 			ClosedAtUnixMs: atomic.LoadInt64(&e.closedAtUnixMs),
