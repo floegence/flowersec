@@ -386,7 +386,8 @@ Requirements:
   - For strict upstream CSP (no inline scripts), you can inject a CSP-friendly external script instead:
     - `injectHTML: { mode: "external_script", scriptUrl }` (classic script)
     - `injectHTML: { mode: "external_module", scriptUrl }` (module script)
-  - `proxyModuleUrl` / `scriptUrl` MUST be same-origin, and MUST NOT be routed back into the proxied upstream (avoid proxy recursion). Use SW passthrough rules to keep these assets on the control-plane/static origin.
+  - `proxyModuleUrl` MUST be same-origin, and MUST NOT be routed back into the proxied upstream (avoid proxy recursion). Use SW passthrough rules to keep this asset on the control-plane/static origin.
+  - External `scriptUrl` values MUST be root-relative same-origin paths (for example `/_proxy/inject.js`). Absolute URLs, protocol-relative URLs, whitespace/control characters, backslashes, and HTML attribute delimiters are rejected at SW generation time; generated external script attributes are escaped before injection. Root-relative here means "relative to the page origin controlled by this SW", not a fixed deployment hostname.
   - When injecting HTML, the proxy SW SHOULD strip validator headers (`etag`, `last-modified`, etc.) and SHOULD avoid caching the modified HTML response (`Cache-Control: no-store`).
   - The generated proxy SW enforces safety caps to avoid unbounded buffering:
     - `maxRequestBodyBytes` (default: 64 MiB) limits buffered request bodies (non-GET/HEAD). Exceeding the cap returns a `413` response.

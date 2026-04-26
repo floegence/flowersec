@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
+import vm from "node:vm";
 
 import { createProxyServiceWorkerScript } from "./serviceWorker.js";
+
+function runGeneratedServiceWorker(script: string): { injectBootstrap?: (html: string) => string; self: unknown } {
+  const context = {
+    self: {
+      addEventListener() {},
+      clients: {},
+      location: { origin: "https://app.example.test" },
+    },
+  };
+  vm.runInNewContext(script, context);
+  return context;
+}
 
 describe("createProxyServiceWorkerScript", () => {
   it("contains the runtime registration and fetch bridge markers", () => {
@@ -74,6 +87,60 @@ describe("createProxyServiceWorkerScript", () => {
     expect(s).toContain("data-flowersec-runtime-global");
     expect(s).toContain("INJECT_EXCLUDE_PREFIXES");
     expect(s).toContain("shouldSkipInject");
+  });
+
+  it("rejects unsafe external script URLs", () => {
+    const badScriptUrls: unknown[] = [
+      42,
+      "",
+      " /_proxy/inject.js",
+      "/_proxy/inject.js ",
+      "inject.js",
+      "./inject.js",
+      "https://example.com/inject.js",
+      "//example.com/inject.js",
+      "/https://example.com/inject.js",
+      "/_proxy\\inject.js",
+      "/_proxy/inject js",
+      "/_proxy/inject\n.js",
+      '/_proxy/"inject".js',
+      "/_proxy/'inject'.js",
+      "/_proxy/<inject>.js",
+      "/_proxy/`inject`.js",
+    ];
+
+    for (const scriptUrl of badScriptUrls) {
+      expect(() =>
+        createProxyServiceWorkerScript({
+          injectHTML: { mode: "external_script", scriptUrl: scriptUrl as string },
+        }),
+      ).toThrow(/injectHTML\.scriptUrl/);
+    }
+  });
+
+  it("applies the same script URL hardening to external modules", () => {
+    expect(() =>
+      createProxyServiceWorkerScript({
+        injectHTML: { mode: "external_module", scriptUrl: "https://example.com/inject.js" },
+      }),
+    ).toThrow(/injectHTML\.scriptUrl/);
+  });
+
+  it("escapes external script attributes in injected HTML", () => {
+    const s = createProxyServiceWorkerScript({
+      injectHTML: {
+        mode: "external_script",
+        scriptUrl: "/_proxy/inject.js?version=1&channel=stable",
+        runtimeGlobal: '__flowersec"Proxy<&Runtime>\'=',
+      },
+    });
+    const context = runGeneratedServiceWorker(s);
+    expect(context.injectBootstrap).toBeTypeOf("function");
+    if (!context.injectBootstrap) throw new Error("missing injectBootstrap");
+    const injected = context.injectBootstrap("<html><head></head><body></body></html>");
+
+    expect(injected).toContain('src="/_proxy/inject.js?version&#61;1&amp;channel&#61;stable"');
+    expect(injected).toContain('data-flowersec-runtime-global="__flowersec&quot;Proxy&lt;&amp;Runtime&gt;&#39;&#61;"');
   });
 
   it("strips validator headers and sets no-store when injecting HTML", () => {

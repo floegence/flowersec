@@ -129,6 +129,20 @@ function normalizePathPrefix(name: string, v: unknown): string {
   return s;
 }
 
+function normalizeRootRelativeScriptURL(name: string, v: unknown): string {
+  if (typeof v !== "string") throw new Error(`${name} must be a string`);
+  const s = v.trim();
+  if (s === "") throw new Error(`${name} must be non-empty`);
+  if (s !== v) throw new Error(`${name} must not contain leading or trailing whitespace`);
+  if (!s.startsWith("/")) throw new Error(`${name} must start with "/"`);
+  if (s.startsWith("//")) throw new Error(`${name} must not start with "//"`);
+  if (s.includes("://")) throw new Error(`${name} must not include scheme/host`);
+  if (s.includes("\\")) throw new Error(`${name} must not contain backslash`);
+  if (/[\s\u0000-\u001f\u007f]/.test(s)) throw new Error(`${name} must not contain whitespace or control characters`);
+  if (/[<>"'`]/.test(s)) throw new Error(`${name} must not contain HTML attribute delimiters`);
+  return s;
+}
+
 function normalizePathList(name: string, input: readonly string[] | undefined): string[] {
   const out: string[] = [];
   if (input == null || input.length === 0) return out;
@@ -230,13 +244,8 @@ export function createProxyServiceWorkerScript(opts: ProxyServiceWorkerScriptOpt
         throw new Error("injectHTML.proxyModuleUrl must be non-empty");
       }
     } else {
-      injectScriptUrl =
-        "scriptUrl" in injectHTML && typeof injectHTML.scriptUrl === "string"
-          ? injectHTML.scriptUrl.trim()
-          : "";
-      if (injectScriptUrl === "") {
-        throw new Error("injectHTML.scriptUrl must be non-empty");
-      }
+      if (!("scriptUrl" in injectHTML)) throw new Error("injectHTML.scriptUrl must be non-empty");
+      injectScriptUrl = normalizeRootRelativeScriptURL("injectHTML.scriptUrl", injectHTML.scriptUrl);
     }
   }
 
@@ -430,16 +439,16 @@ function injectBootstrap(html) {
   } else if (INJECT_MODE === "external_module") {
     snippet =
       '<script type="module" src="' +
-      INJECT_SCRIPT_URL +
+      escapeHTMLAttributeValue(INJECT_SCRIPT_URL) +
       '"' +
-      (RUNTIME_GLOBAL ? ' data-flowersec-runtime-global="' + RUNTIME_GLOBAL + '"' : "") +
+      (RUNTIME_GLOBAL ? ' data-flowersec-runtime-global="' + escapeHTMLAttributeValue(RUNTIME_GLOBAL) + '"' : "") +
       "></script>";
   } else if (INJECT_MODE === "external_script") {
     snippet =
       '<script src="' +
-      INJECT_SCRIPT_URL +
+      escapeHTMLAttributeValue(INJECT_SCRIPT_URL) +
       '"' +
-      (RUNTIME_GLOBAL ? ' data-flowersec-runtime-global="' + RUNTIME_GLOBAL + '"' : "") +
+      (RUNTIME_GLOBAL ? ' data-flowersec-runtime-global="' + escapeHTMLAttributeValue(RUNTIME_GLOBAL) + '"' : "") +
       "></script>";
   }
 
@@ -454,6 +463,21 @@ function injectBootstrap(html) {
     if (end >= 0) return html.slice(0, end + 1) + snippet + html.slice(end + 1);
   }
   return snippet + html;
+}
+
+function escapeHTMLAttributeValue(value) {
+  return String(value).replace(/[&<>"'\`=]/g, (ch) => {
+    switch (ch) {
+      case "&": return "&amp;";
+      case "<": return "&lt;";
+      case ">": return "&gt;";
+      case '"': return "&quot;";
+      case "'": return "&#39;";
+      case "\`": return "&#96;";
+      case "=": return "&#61;";
+      default: return ch;
+    }
+  });
 }
 
 self.addEventListener("fetch", (event) => {
