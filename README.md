@@ -13,7 +13,7 @@
   <a href="#docs-map">📚 Docs map</a>
 </p>
 
-![Go Version](https://img.shields.io/badge/Go-1.25.9-00ADD8?logo=go)
+![Go Version](https://img.shields.io/badge/Go-1.26.3-00ADD8?logo=go)
 ![Node Version](https://img.shields.io/badge/Node.js-24-339933?logo=node.js)
 ![Browser Friendly](https://img.shields.io/badge/Browser-Friendly-2563EB)
 ![Transport](https://img.shields.io/badge/Transport-WebSocket-111827)
@@ -364,7 +364,7 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 
 Prerequisites:
 
-- Go `1.25.9+`
+- Go `1.26.3+`
 - Node.js `24` LTS recommended (see `.nvmrc`)
 
 Generate code from IDL:
