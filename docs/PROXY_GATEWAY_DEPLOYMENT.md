@@ -74,7 +74,7 @@ Each route therefore needs a fresh-grant source:
 - `grant.file`
 - `grant.command`
 
-The gateway keeps a live session cache per route, reconnects lazily, fetches fresh grant material when needed, and retries stream open once.
+The gateway keeps a live session cache per route, reconnects lazily, fetches fresh grant material when needed, and retries stream open once. If the fresh grant load or fresh session open fails, the request fails; the gateway must not fall back to a previous one-time grant or turn reconnect into a generic retry loop.
 
 It does not replay partially streamed HTTP bodies after mid-stream failure.
 
@@ -104,3 +104,12 @@ First-party preset examples:
 - keep tunnel origin allow-lists aligned
 - prefer command/file sources that can mint continuously
 - use the health check at `GET /_flowersec/healthz`
+
+## Go reconnect/keepalive checklist
+
+- Go tunnel clients and endpoints use encrypted ping records only as idle-prevention keepalives; health checks, policy watch/lease state, and authorization state stay outside that path.
+- Direct Go connects keep keepalive disabled by default unless the caller opts in.
+- Gateway stream open retries at most once after invalidating the stale cached session and loading fresh grant material.
+- Fresh grant failure fails the request and never reuses an old one-time attach token.
+- Tunnel replacement keeps compatibility constraints for same `channel_id` attaches: `init_exp`, `idle_timeout_seconds`, tenant, and rate limits remain enforced.
+- Tunnel websocket writes use the configured per-frame write timeout so blackholed or half-open peers are closed instead of pinning the relay.

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -100,6 +101,108 @@ func TestRouteManagerReconnectsAfterOpenStreamFailure(t *testing.T) {
 	}
 	if first.closed.Load() != 1 {
 		t.Fatalf("expected first client to be closed once, got %d", first.closed.Load())
+	}
+}
+
+func TestRouteManagerRetriesFreshGrantOnlyOnce(t *testing.T) {
+	var loads atomic.Int32
+	source := grantSourceFunc(func(ctx context.Context) (*controlv1.ChannelInitGrant, error) {
+		loads.Add(1)
+		return &controlv1.ChannelInitGrant{Role: controlv1.Role_client}, nil
+	})
+
+	first := &fakeManagedClient{
+		open: func(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+			return nil, errors.New("stale session")
+		},
+	}
+	second := &fakeManagedClient{
+		open: func(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+			return nil, errors.New("fresh session failed")
+		},
+	}
+
+	var dials atomic.Int32
+	mgr := newRouteManager("example.com", "https://gateway.example.com", source)
+	mgr.dial = func(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) (client.Client, error) {
+		switch dials.Add(1) {
+		case 1:
+			return first, nil
+		case 2:
+			return second, nil
+		default:
+			return nil, fmt.Errorf("unexpected extra dial")
+		}
+	}
+
+	_, err := mgr.OpenStream(helperContext(t), "flowersec-proxy/http1")
+	if err == nil {
+		t.Fatalf("expected OpenStream to fail")
+	}
+	if !strings.Contains(err.Error(), "fresh session failed") {
+		t.Fatalf("expected final fresh-session error, got %v", err)
+	}
+	if loads.Load() != 2 {
+		t.Fatalf("expected 2 grant loads, got %d", loads.Load())
+	}
+	if dials.Load() != 2 {
+		t.Fatalf("expected exactly one reconnect dial, got %d", dials.Load())
+	}
+	if first.closed.Load() != 1 {
+		t.Fatalf("expected stale client to be closed once, got %d", first.closed.Load())
+	}
+	if second.closed.Load() != 1 {
+		t.Fatalf("expected failed fresh client to be closed once, got %d", second.closed.Load())
+	}
+
+	_, err = mgr.OpenStream(helperContext(t), "flowersec-proxy/http1")
+	if err == nil {
+		t.Fatalf("expected second OpenStream to fail")
+	}
+	if dials.Load() != 3 {
+		t.Fatalf("expected next request to make a new first attempt only, got %d dials", dials.Load())
+	}
+}
+
+func TestRouteManagerDoesNotFallbackToOldClientWhenFreshGrantLoadFails(t *testing.T) {
+	var loads atomic.Int32
+	source := grantSourceFunc(func(ctx context.Context) (*controlv1.ChannelInitGrant, error) {
+		switch loads.Add(1) {
+		case 1:
+			return &controlv1.ChannelInitGrant{Role: controlv1.Role_client}, nil
+		default:
+			return nil, errors.New("grant source unavailable")
+		}
+	})
+
+	stale := &fakeManagedClient{
+		open: func(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+			return nil, errors.New("stale session")
+		},
+	}
+
+	var dials atomic.Int32
+	mgr := newRouteManager("example.com", "https://gateway.example.com", source)
+	mgr.dial = func(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) (client.Client, error) {
+		dials.Add(1)
+		return stale, nil
+	}
+
+	_, err := mgr.OpenStream(helperContext(t), "flowersec-proxy/http1")
+	if err == nil {
+		t.Fatalf("expected OpenStream to fail")
+	}
+	if !strings.Contains(err.Error(), "grant source unavailable") {
+		t.Fatalf("expected fresh grant load error, got %v", err)
+	}
+	if loads.Load() != 2 {
+		t.Fatalf("expected initial and fresh grant loads, got %d", loads.Load())
+	}
+	if dials.Load() != 1 {
+		t.Fatalf("expected no dial after fresh grant load failure, got %d", dials.Load())
+	}
+	if stale.closed.Load() != 1 {
+		t.Fatalf("expected stale client to be closed once, got %d", stale.closed.Load())
 	}
 }
 

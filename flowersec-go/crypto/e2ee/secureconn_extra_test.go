@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -95,6 +97,153 @@ func TestSecureChannelWriteSplitsFrames(t *testing.T) {
 	}
 	if got := len(tr.writeCh); got < 2 {
 		t.Fatalf("expected multiple frames, got %d", got)
+	}
+}
+
+func TestSecureChannelPingUsesKeepaliveFlagAndAdvancesSeq(t *testing.T) {
+	tr := newRecordingTransport()
+	var key [32]byte
+	var nonce [4]byte
+	keys := RecordKeyState{SendKey: key, RecvKey: key, SendNoncePre: nonce, RecvNoncePre: nonce, SendDir: DirC2S, RecvDir: DirS2C, SendSeq: 7, RecvSeq: 1}
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
+	defer conn.Close()
+
+	if err := conn.Ping(); err != nil {
+		t.Fatalf("Ping failed: %v", err)
+	}
+
+	frame := <-tr.writeCh
+	flags, seq, plain, err := DecryptRecord(key, nonce, frame, 7, 1<<20)
+	if err != nil {
+		t.Fatalf("decrypt ping failed: %v", err)
+	}
+	if flags != RecordFlagPing {
+		t.Fatalf("expected ping flag, got %v", flags)
+	}
+	if seq != 7 {
+		t.Fatalf("expected seq 7, got %d", seq)
+	}
+	if len(plain) != 0 {
+		t.Fatalf("expected empty plaintext, got %d bytes", len(plain))
+	}
+}
+
+func TestSecureChannelPingHonorsWriteDeadline(t *testing.T) {
+	tr := newCancelAwareWriteTransport()
+	var key [32]byte
+	var nonce [4]byte
+	keys := RecordKeyState{SendKey: key, RecvKey: key, SendNoncePre: nonce, RecvNoncePre: nonce, SendDir: DirC2S, RecvDir: DirS2C, SendSeq: 1, RecvSeq: 1}
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
+	defer conn.Close()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- conn.Ping()
+	}()
+
+	select {
+	case <-tr.writeCh:
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for ping write to start")
+	}
+
+	_ = conn.SetWriteDeadline(time.Now().Add(50 * time.Millisecond))
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatalf("expected timeout error")
+		}
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("expected deadline exceeded, got %T: %v", err, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for Ping to return")
+	}
+}
+
+type blockingMessageTransport struct {
+	writeStarted sync.Once
+	writeCh      chan struct{}
+	releaseCh    chan struct{}
+	closed       chan struct{}
+}
+
+func newBlockingMessageTransport() *blockingMessageTransport {
+	return &blockingMessageTransport{
+		writeCh:   make(chan struct{}),
+		releaseCh: make(chan struct{}),
+		closed:    make(chan struct{}),
+	}
+}
+
+func (t *blockingMessageTransport) ReadMessage(_ context.Context) (int, []byte, error) {
+	<-t.closed
+	return 0, nil, io.EOF
+}
+
+func (t *blockingMessageTransport) WriteMessage(ctx context.Context, _ int, _ []byte) error {
+	t.writeStarted.Do(func() { close(t.writeCh) })
+	select {
+	case <-t.releaseCh:
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+		return ctx.Err()
+	case <-t.closed:
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return io.EOF
+	}
+}
+
+func (t *blockingMessageTransport) Close() error {
+	select {
+	case <-t.closed:
+		return nil
+	default:
+		close(t.closed)
+		return nil
+	}
+}
+
+func TestWebSocketMessageTransportWriteBinaryHonorsContextCancelWithoutDeadline(t *testing.T) {
+	tr := newBlockingMessageTransport()
+	transport := NewWebSocketMessageTransport(tr)
+
+	writeCtx, writeCancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- transport.WriteBinary(writeCtx, []byte("hello"))
+	}()
+
+	select {
+	case <-tr.writeCh:
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for WriteBinary to start")
+	}
+
+	writeCancel()
+
+	select {
+	case err := <-errCh:
+		if err == nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("WriteBinary did not return after context cancellation")
 	}
 }
 

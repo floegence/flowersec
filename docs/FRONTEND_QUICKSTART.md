@@ -122,7 +122,7 @@ Manual `fetch(...)` callers must unwrap the stable `connect_artifact` envelope b
 
 ## Compatibility notes
 
-Still supported:
+Still supported during the compatibility window:
 
 - raw `ChannelInitGrant`
 - wrapper `{grant_client: ...}`

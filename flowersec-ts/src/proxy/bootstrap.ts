@@ -108,10 +108,7 @@ async function connectProxyBrowserClient(
   opts: ConnectTunnelProxyBrowserOptions
 ): Promise<ConnectTunnelProxyBrowserHandle> {
   const compat = opts as ConnectTunnelProxyBrowserCompatOptions;
-
-  const integrationInput: RegisterProxyIntegrationOptions & {
-    profile?: ProxyProfileName | Partial<ProxyProfile>;
-  } = {
+  const integrationInput: RegisterProxyIntegrationOptions & Pick<ConnectTunnelProxyBrowserCompatOptions, "profile"> = {
     client,
     serviceWorker: opts.serviceWorker,
     ...(opts.preset === undefined ? {} : { preset: opts.preset }),

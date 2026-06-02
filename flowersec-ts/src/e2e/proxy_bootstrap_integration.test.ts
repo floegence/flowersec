@@ -27,7 +27,7 @@ describe("proxy bootstrap public integration", () => {
     const proxy = await import("../proxy/index.js");
     const out = await proxy.connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
       connect: { signal: undefined },
-      profile: "codeserver",
+      preset: { presetId: "default" },
       serviceWorker: {
         scriptUrl: "/_proxy/sw.js",
         scope: "/",
@@ -39,7 +39,7 @@ describe("proxy bootstrap public integration", () => {
     expect(out.runtime).toBe(runtime);
     expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
       client,
-      profile: "codeserver",
+      preset: { presetId: "default" },
       runtime: undefined,
       serviceWorker: {
         scriptUrl: "/_proxy/sw.js",

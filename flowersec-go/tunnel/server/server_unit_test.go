@@ -1,10 +1,16 @@
 package server
 
 import (
+	"bufio"
 	"crypto/ed25519"
+	"crypto/sha1"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -466,3 +472,71 @@ func TestCleanupLoopDoesNotCloseInitExpiredWithinSkew(t *testing.T) {
 		t.Fatalf("timeout waiting for cleanup loop to stop")
 	}
 }
+
+func TestWriteFrameHonorsWriteTimeoutAgainstBlackhole(t *testing.T) {
+	s := &Server{cfg: Config{WriteTimeout: 50 * time.Millisecond}}
+	c, cleanup := newBlackholeWebSocketConn(t)
+	defer cleanup()
+
+	dst := &endpointConn{ws: c}
+	err := s.writeFrame(dst, []byte("hello"))
+	if err == nil {
+		t.Fatal("expected write timeout error")
+	}
+	ne, ok := err.(interface{ Timeout() bool })
+	if !ok || !ne.Timeout() {
+		t.Fatalf("expected timeout error, got %T: %v", err, err)
+	}
+}
+
+func newBlackholeWebSocketConn(t *testing.T) (*websocket.Conn, func()) {
+	t.Helper()
+
+	clientConn, serverConn := net.Pipe()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverConn.Close()
+
+		br := bufio.NewReader(serverConn)
+		req, err := http.ReadRequest(br)
+		if err != nil {
+			return
+		}
+		key := strings.TrimSpace(req.Header.Get("Sec-Websocket-Key"))
+		if key == "" {
+			return
+		}
+		sum := sha1.Sum([]byte(key + websocketGUID))
+		accept := base64.StdEncoding.EncodeToString(sum[:])
+		_, _ = fmt.Fprintf(serverConn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", accept)
+		<-stop
+	}()
+
+	u, err := url.Parse("ws://example.invalid/ws")
+	if err != nil {
+		t.Fatalf("url.Parse failed: %v", err)
+	}
+	c, _, err := websocket.NewClient(clientConn, u, http.Header{}, 1024, 1024)
+	if err != nil {
+		_ = clientConn.Close()
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	cleanup := func() {
+		_ = c.Close()
+		_ = clientConn.Close()
+		select {
+		case <-stop:
+		default:
+			close(stop)
+		}
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+	}
+	return c, cleanup
+}
+
+const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"

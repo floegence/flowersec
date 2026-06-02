@@ -231,6 +231,58 @@ describe("connectTunnelProxyBrowser", () => {
     expect(client.close).toHaveBeenCalledTimes(1);
   });
 
+
+  it("prefers preset over deprecated profile on the stable bootstrap path", async () => {
+    const client = { close: vi.fn() };
+    const runtime = { dispose: vi.fn() };
+    const integrationDispose = vi.fn().mockResolvedValue(undefined);
+
+    connectTunnelBrowserMock.mockResolvedValue(client);
+    registerProxyIntegrationMock.mockResolvedValue({ runtime, dispose: integrationDispose });
+
+    const { connectTunnelProxyBrowser } = await import("./bootstrap.js");
+    const out = await connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
+      preset: { presetId: "default" },
+      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
+      runtimeGlobalKey: "__flowersecProxyRuntime",
+    });
+
+    expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
+      client,
+      preset: { presetId: "default" },
+      runtimeGlobalKey: "__flowersecProxyRuntime",
+      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
+    });
+    expect(registerProxyIntegrationMock.mock.calls[0]?.[0]).not.toHaveProperty("profile");
+
+    await out.dispose();
+    expect(integrationDispose).toHaveBeenCalledTimes(1);
+    expect(client.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves deprecated runtime profile compatibility without exposing it on the stable type surface", async () => {
+    const client = { close: vi.fn() };
+    const runtime = { dispose: vi.fn() };
+    const integrationDispose = vi.fn().mockResolvedValue(undefined);
+
+    connectTunnelBrowserMock.mockResolvedValue(client);
+    registerProxyIntegrationMock.mockResolvedValue({ runtime, dispose: integrationDispose });
+
+    const { connectTunnelProxyBrowser } = await import("./bootstrap.js");
+    const out = await connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
+      profile: "codeserver",
+      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
+    } as any);
+
+    expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
+      client,
+      profile: "codeserver",
+      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
+    });
+
+    await out.dispose();
+  });
+
   it("connects a controller runtime from artifact scope and uses allowed origins from the scope", async () => {
     const client = { close: vi.fn() };
     const runtime = { runtime: true };
