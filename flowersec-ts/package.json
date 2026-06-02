@@ -1,6 +1,6 @@
 {
   "name": "@floegence/flowersec-core",
-  "version": "0.19.5",
+  "version": "0.19.6",
   "description": "Flowersec core TypeScript library (browser-friendly E2EE + multiplexing over WebSocket).",
   "license": "MIT",
   "repository": {
@@ -134,10 +134,10 @@
     "@types/ws": "^8.5.12",
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
-    "@vitest/coverage-v8": "4.0.17",
+    "@vitest/coverage-v8": "4.1.0",
     "eslint": "^9.17.0",
     "typescript": "^5.7.2",
     "vite": "^7.3.2",
-    "vitest": "4.0.17"
+    "vitest": "4.1.0"
   }
 }
