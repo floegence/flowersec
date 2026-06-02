@@ -1,5 +1,5 @@
 import type { Client } from "../client.js";
-import { withObserverContext, type ClientObserverLike, type WsCloseKind, type WsErrorReason } from "../observability/observer.js";
+import { emitObserverDiagnostic, withObserverContext, type ClientObserverLike, type WsCloseKind, type WsErrorReason } from "../observability/observer.js";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -252,6 +252,13 @@ export function createReconnectManager(): ReconnectManager {
 
       attempts += 1;
       attemptSeq += 1;
+      emitObserverDiagnostic(withObserverContext(cfg.observer, { attemptSeq }), {
+        path: "auto",
+        stage: "reconnect",
+        code_domain: "event",
+        code: attempts === 1 ? "reconnect_attempt" : "reconnect_retry_attempt",
+        result: "retry",
+      });
       try {
         const client = await connectOnce(t, cfg, attemptSeq);
         if (t !== token) {
@@ -272,6 +279,13 @@ export function createReconnectManager(): ReconnectManager {
         }
 
         setState({ status: "connected", client, error: null });
+        emitObserverDiagnostic(withObserverContext(cfg.observer, { attemptSeq }), {
+          path: "auto",
+          stage: "reconnect",
+          code_domain: "event",
+          code: "reconnect_connected",
+          result: "ok",
+        });
         return;
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err));
@@ -281,11 +295,25 @@ export function createReconnectManager(): ReconnectManager {
         const canRetry = ar.enabled && attempts < ar.maxAttempts;
         if (!canRetry) {
           setState({ status: "error", error: e, client: null });
+          emitObserverDiagnostic(withObserverContext(cfg.observer, { attemptSeq }), {
+            path: "auto",
+            stage: "reconnect",
+            code_domain: "event",
+            code: "reconnect_exhausted",
+            result: "fail",
+          });
           throw e;
         }
 
         setState({ status: "connecting", error: e, client: null });
         const delay = backoffDelayMs(attempts - 1, ar);
+        emitObserverDiagnostic(withObserverContext(cfg.observer, { attemptSeq }), {
+          path: "auto",
+          stage: "reconnect",
+          code_domain: "event",
+          code: "reconnect_scheduled",
+          result: "retry",
+        });
         await sleep(delay);
       }
     }

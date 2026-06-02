@@ -41,11 +41,16 @@ function createServiceWorkerContainer(args: {
 }
 
 function createFakeWindow(args: { href?: string; serviceWorker?: ReturnType<typeof createServiceWorkerContainer> }) {
-  const replace = vi.fn();
-  const reload = vi.fn();
+  let href = args.href ?? "https://example.test/app";
+  const replace = vi.fn((nextHref: string) => {
+    href = nextHref;
+  });
+  const reload = vi.fn(() => {});
   return {
     location: {
-      href: args.href ?? "https://example.test/app",
+      get href() {
+        return href;
+      },
       replace,
       reload,
     },
@@ -153,6 +158,25 @@ describe("createServiceWorkerControllerGuard", () => {
 
     expect(win.location.replace).toHaveBeenCalledTimes(1);
     expect(win.location.replace).toHaveBeenCalledWith("https://example.test/app?_repair=1");
+    guard.dispose();
+  });
+
+  it("uses reload strategy and stops after maxAttempts", async () => {
+    const sw = createServiceWorkerContainer({ controllerScriptURL: "https://example.test/other/sw.js" });
+    const win = createFakeWindow({ href: "https://example.test/app?_repair=1", serviceWorker: sw });
+
+    const guard = createServiceWorkerControllerGuard({
+      targetWindow: win,
+      expectedScriptPathSuffix: "/_proxy/sw.js",
+      repair: { strategy: "reload", maxAttempts: 1, controllerTimeoutMs: 0 },
+    });
+
+    await expect(guard.ensure()).rejects.toThrow("Proxy Service Worker is installed but not controlling the target window");
+    expect(win.location.reload).toHaveBeenCalledTimes(1);
+    expect(win.location.replace).not.toHaveBeenCalled();
+
+    await expect(guard.ensure()).rejects.toThrow("Proxy Service Worker is installed but not controlling the target window");
+    expect(win.location.reload).toHaveBeenCalledTimes(1);
     guard.dispose();
   });
 });

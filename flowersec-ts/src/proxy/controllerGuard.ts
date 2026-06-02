@@ -192,21 +192,23 @@ async function uninstallConflictingServiceWorkers(
 
 function triggerRepairNavigation(
   navigationWindow: ControllerWindowLike,
-  repair: ServiceWorkerControllerGuardRepairOptions | undefined
+  repair: ServiceWorkerControllerGuardRepairOptions | undefined,
+  attempt: number
 ): boolean {
   const queryKey = String(repair?.queryKey ?? "_flowersec_sw_repair").trim() || "_flowersec_sw_repair";
   const maxAttempts = Math.max(0, Math.floor(repair?.maxAttempts ?? 2));
   const strategy = repair?.strategy ?? "replace";
+  const hrefAttempt = parseRepairAttemptFromHref(navigationWindow.location.href, queryKey);
+  const effectiveAttempt = Math.max(attempt, hrefAttempt);
 
-  const attempt = parseRepairAttemptFromHref(navigationWindow.location.href, queryKey);
-  if (attempt >= maxAttempts) return false;
+  if (effectiveAttempt >= maxAttempts) return false;
 
   if (strategy === "reload") {
     navigationWindow.location.reload();
     return true;
   }
 
-  const next = buildHrefWithRepairAttempt(navigationWindow.location.href, queryKey, attempt + 1);
+  const next = buildHrefWithRepairAttempt(navigationWindow.location.href, queryKey, effectiveAttempt + 1);
   navigationWindow.location.replace(next);
   return true;
 }
@@ -228,6 +230,7 @@ export function createServiceWorkerControllerGuard(
   let disposed = false;
   let monitorHandler: (() => void) | null = null;
   let lastMonitorRepairAt = 0;
+  let repairAttempts = 0;
 
   const handleMismatch = async (stage: "ensure" | "monitor"): Promise<"ignored" | "repaired" | "skipped"> => {
     const actualScriptURL = String(getServiceWorker(targetWindow)?.controller?.scriptURL ?? "").trim();
@@ -241,7 +244,9 @@ export function createServiceWorkerControllerGuard(
     if (action === "ignore") return "ignored";
 
     await uninstallConflictingServiceWorkers(targetWindow, opts.conflicts);
-    return triggerRepairNavigation(navigationWindow, opts.repair) ? "repaired" : "skipped";
+    const repaired = triggerRepairNavigation(navigationWindow, opts.repair, repairAttempts);
+    if (repaired) repairAttempts += 1;
+    return repaired ? "repaired" : "skipped";
   };
 
   const attachMonitor = () => {

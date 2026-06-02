@@ -1,6 +1,11 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createReconnectManager } from "./index.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 function makeDummyClient(label: string, onClose: () => void) {
   let closed = false;
@@ -118,5 +123,101 @@ describe("reconnect manager", () => {
     expect(created).toBe(1);
     expect(closed).toBe(0);
     expect(mgr.state().status).toBe("connected");
+  });
+
+  test("uses fake timers and deterministic random for jittered retry scheduling", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(1);
+
+    const mgr = createReconnectManager();
+    const events: string[] = [];
+    let attempts = 0;
+
+    const p = mgr.connect({
+      connectOnce: async () => {
+        attempts += 1;
+        if (attempts < 2) throw new Error("dial failed");
+        return makeDummyClient(`c${attempts}`, () => {}).client as any;
+      },
+      observer: {
+        onDiagnosticEvent: (event) => events.push(`${event.code}:${event.attempt_seq}`),
+      },
+      autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 100, maxDelayMs: 100, factor: 1, jitterRatio: 0.5 },
+    });
+
+    await vi.waitFor(() => {
+      expect(attempts).toBe(1);
+    });
+    expect(mgr.state().status).toBe("connecting");
+
+    await vi.advanceTimersByTimeAsync(149);
+    expect(attempts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await p;
+
+    expect(attempts).toBe(2);
+    expect(mgr.state().status).toBe("connected");
+    await vi.runAllTimersAsync();
+    expect(events).toContain("reconnect_attempt:1");
+    expect(events).toContain("reconnect_scheduled:1");
+    expect(events).toContain("reconnect_retry_attempt:2");
+    expect(events).toContain("reconnect_connected:2");
+  });
+
+  test("reports reconnect exhausted without expanding the stable state set", async () => {
+    const mgr = createReconnectManager();
+    const statuses: string[] = [];
+    const events: string[] = [];
+    const reasons: string[] = [];
+
+    mgr.subscribe((state) => statuses.push(state.status));
+
+    await expect(
+      mgr.connect({
+        connectOnce: async () => {
+          throw new Error("dial failed");
+        },
+        observer: {
+          onDiagnosticEvent: (event) => {
+            events.push(event.code);
+            if (event.code === "reconnect_exhausted") reasons.push(event.result);
+          },
+        },
+        autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0, factor: 1, jitterRatio: 0 },
+      })
+    ).rejects.toThrow("dial failed");
+
+    expect(mgr.state().status).toBe("error");
+    expect(new Set(statuses)).toEqual(new Set(["disconnected", "connecting", "error"]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toContain("reconnect_exhausted");
+    expect(reasons).toEqual(["fail"]);
+  });
+
+  test("uses configured backoff delay before retrying", async () => {
+    vi.useFakeTimers();
+    const mgr = createReconnectManager();
+    let attempts = 0;
+
+    const p = mgr.connect({
+      connectOnce: async () => {
+        attempts += 1;
+        throw new Error("dial failed");
+      },
+      autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 25, maxDelayMs: 25, factor: 1, jitterRatio: 0 },
+    });
+    const rejected = expect(p).rejects.toThrow("dial failed");
+
+    await vi.waitFor(() => {
+      expect(attempts).toBe(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(24);
+    expect(attempts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await rejected;
+    expect(attempts).toBe(2);
   });
 });

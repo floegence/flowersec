@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
@@ -30,6 +31,7 @@ type testObserver struct {
 	connCounts []int64
 	encrypted  int
 	closes     []observability.CloseReason
+	replaces   []observability.ReplaceResult
 }
 
 func (o *testObserver) ConnCount(n int64) {
@@ -40,7 +42,11 @@ func (o *testObserver) ConnCount(n int64) {
 func (o *testObserver) ChannelCount(_ int) {}
 func (o *testObserver) Attach(_ observability.AttachResult, _ observability.AttachReason) {
 }
-func (o *testObserver) Replace(_ observability.ReplaceResult) {}
+func (o *testObserver) Replace(result observability.ReplaceResult) {
+	o.mu.Lock()
+	o.replaces = append(o.replaces, result)
+	o.mu.Unlock()
+}
 func (o *testObserver) Close(r observability.CloseReason) {
 	o.mu.Lock()
 	o.closes = append(o.closes, r)
@@ -264,6 +270,119 @@ func TestAllowReplaceLocked(t *testing.T) {
 	}
 }
 
+func testVerifiedToken(role tunnelv1.Role, channelID, tokenID string, now time.Time) VerifiedToken {
+	return VerifiedToken{
+		Audience: "aud",
+		Issuer:   "iss",
+		Payload: token.Payload{
+			Kid:                "kid",
+			Aud:                "aud",
+			Iss:                "iss",
+			ChannelID:          channelID,
+			Role:               uint8(role),
+			TokenID:            tokenID,
+			InitExp:            now.Add(2 * time.Minute).Unix(),
+			IdleTimeoutSeconds: 60,
+			Iat:                now.Add(-10 * time.Second).Unix(),
+			Exp:                now.Add(30 * time.Second).Unix(),
+		},
+	}
+}
+
+func testAttach(role tunnelv1.Role, channelID, endpointID string) *tunnelv1.Attach {
+	return &tunnelv1.Attach{
+		V:                  1,
+		ChannelId:          channelID,
+		Role:               role,
+		Token:              "token",
+		EndpointInstanceId: endpointID,
+	}
+}
+
+func TestAddEndpointSameChannelReplacementResetsExistingPair(t *testing.T) {
+	obs := &testObserver{}
+	s := &Server{
+		cfg:      Config{MaxWriteQueueBytes: 1024, MaxRecordBytes: 1024},
+		obs:      obs,
+		channels: make(map[string]*channelState),
+		bw:       sync.Map{},
+	}
+
+	oldClientWS, oldClientCleanup := newBlackholeWebSocketConn(t)
+	defer oldClientCleanup()
+	oldServerWS, oldServerCleanup := newBlackholeWebSocketConn(t)
+	defer oldServerCleanup()
+	newClientWS, newClientCleanup := newBlackholeWebSocketConn(t)
+	defer newClientCleanup()
+
+	now := time.Now()
+	verifiedClient := testVerifiedToken(tunnelv1.Role_client, "ch", "tok-client-1", now)
+	verifiedServer := testVerifiedToken(tunnelv1.Role_server, "ch", "tok-server-1", now)
+	scopeKey := verifiedScopeKey(verifiedClient)
+
+	if err := s.addEndpoint(testAttach(tunnelv1.Role_client, "ch", "client-1"), verifiedClient, scopeKey, AttachAuthorizationDecision{Allowed: true}, nil, oldClientWS); err != nil {
+		t.Fatalf("add old client: %v", err)
+	}
+	if err := s.addEndpoint(testAttach(tunnelv1.Role_server, "ch", "server-1"), verifiedServer, scopeKey, AttachAuthorizationDecision{Allowed: true}, nil, oldServerWS); err != nil {
+		t.Fatalf("add old server: %v", err)
+	}
+	if err := s.addEndpoint(testAttach(tunnelv1.Role_client, "ch", "client-2"), testVerifiedToken(tunnelv1.Role_client, "ch", "tok-client-2", now), scopeKey, AttachAuthorizationDecision{Allowed: true}, nil, newClientWS); err != nil {
+		t.Fatalf("replace client: %v", err)
+	}
+
+	st := s.channels[scopedChannelKey(scopeKey, "ch")]
+	if st == nil {
+		t.Fatalf("expected replacement channel to exist")
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if len(st.conns) != 1 {
+		t.Fatalf("expected replacement to reset old pair and keep one endpoint, got %d", len(st.conns))
+	}
+	if got := st.conns[tunnelv1.Role_client]; got == nil || got.eid != "client-2" {
+		t.Fatalf("expected new client endpoint, got %#v", got)
+	}
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if len(obs.replaces) != 1 || obs.replaces[0] != observability.ReplaceResultOK {
+		t.Fatalf("expected one ok replace event, got %v", obs.replaces)
+	}
+}
+
+func TestAddEndpointSameChannelDifferentScopeDoesNotReplace(t *testing.T) {
+	s := &Server{
+		cfg:      Config{MaxWriteQueueBytes: 1024, MaxRecordBytes: 1024},
+		obs:      observability.NoopTunnelObserver,
+		channels: make(map[string]*channelState),
+		bw:       sync.Map{},
+	}
+
+	ws1, cleanup1 := newBlackholeWebSocketConn(t)
+	defer cleanup1()
+	ws2, cleanup2 := newBlackholeWebSocketConn(t)
+	defer cleanup2()
+
+	now := time.Now()
+	verified1 := testVerifiedToken(tunnelv1.Role_client, "shared", "tok-1", now)
+	verified2 := testVerifiedToken(tunnelv1.Role_client, "shared", "tok-2", now)
+	verified2.Audience = "other-aud"
+	scope1 := verifiedScopeKey(verified1)
+	scope2 := verifiedScopeKey(verified2)
+
+	if err := s.addEndpoint(testAttach(tunnelv1.Role_client, "shared", "client-1"), verified1, scope1, AttachAuthorizationDecision{Allowed: true}, nil, ws1); err != nil {
+		t.Fatalf("add first scoped endpoint: %v", err)
+	}
+	if err := s.addEndpoint(testAttach(tunnelv1.Role_client, "shared", "client-2"), verified2, scope2, AttachAuthorizationDecision{Allowed: true}, nil, ws2); err != nil {
+		t.Fatalf("add second scoped endpoint: %v", err)
+	}
+	if len(s.channels) != 2 {
+		t.Fatalf("expected same channel id in different scopes to remain separate, got %d channels", len(s.channels))
+	}
+	if s.channels[scopedChannelKey(scope1, "shared")] == nil || s.channels[scopedChannelKey(scope2, "shared")] == nil {
+		t.Fatalf("expected both scoped channel keys to be present")
+	}
+}
+
 func TestRouteOrBufferBehavior(t *testing.T) {
 	obs := &testObserver{}
 	s := &Server{cfg: Config{MaxPendingBytes: 4, MaxRecordBytes: 1 << 20}, obs: obs, channels: make(map[string]*channelState)}
@@ -304,6 +423,54 @@ func TestRouteOrBufferGlobalPendingOverflow(t *testing.T) {
 	_, _, err = s.routeOrBuffer("ch", tunnelv1.Role_client, src, frame)
 	if err == nil {
 		t.Fatalf("expected global pending overflow")
+	}
+}
+
+func TestEndpointConnEnqueueWriteWaitsForCapacityAndUnblocksOnClose(t *testing.T) {
+	ep := newEndpointConn(tunnelv1.Role_client, "eid", &websocket.Conn{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := ep.enqueueWrite([]byte("ab"), 2); err != nil {
+			t.Errorf("enqueue first failed: %v", err)
+			return
+		}
+		if _, err := ep.enqueueWrite([]byte("cd"), 2); err == nil {
+			t.Errorf("expected second enqueue to block or fail on close")
+		}
+	}()
+
+	select {
+	case <-done:
+		t.Fatalf("expected enqueue to block until close")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	ep.closeWriteQueue(errWriteQueueClosed)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("enqueue did not unblock after close")
+	}
+}
+
+func TestEndpointConnCloseWriteQueueDeliversStickyError(t *testing.T) {
+	ep := newEndpointConn(tunnelv1.Role_client, "eid", &websocket.Conn{})
+	done1, err := ep.enqueueWrite([]byte("a"), 10)
+	if err != nil {
+		t.Fatalf("enqueue first: %v", err)
+	}
+	done2, err := ep.enqueueWrite([]byte("b"), 10)
+	if err != nil {
+		t.Fatalf("enqueue second: %v", err)
+	}
+
+	ep.closeWriteQueue(errors.New("closed"))
+	if err := <-done1; err == nil || err.Error() != "closed" {
+		t.Fatalf("expected sticky close error on first waiter, got %v", err)
+	}
+	if err := <-done2; err == nil || err.Error() != "closed" {
+		t.Fatalf("expected sticky close error on second waiter, got %v", err)
 	}
 }
 

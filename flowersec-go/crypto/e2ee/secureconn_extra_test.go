@@ -162,6 +162,105 @@ func TestSecureChannelPingHonorsWriteDeadline(t *testing.T) {
 	}
 }
 
+func TestSecureChannelReadBlackholeUnblocksOnClose(t *testing.T) {
+	tr := newNeverReadTransport()
+	var key [32]byte
+	var nonce [4]byte
+	keys := RecordKeyState{SendKey: key, RecvKey: key, SendNoncePre: nonce, RecvNoncePre: nonce, SendDir: DirC2S, RecvDir: DirS2C, SendSeq: 1, RecvSeq: 1}
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
+
+	readErr := make(chan error, 1)
+	go func() {
+		var b [1]byte
+		_, err := conn.Read(b[:])
+		readErr <- err
+	}()
+
+	select {
+	case <-tr.readStarted:
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for blackholed read to start")
+	}
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	select {
+	case err := <-readErr:
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("expected EOF after close, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Read did not unblock after Close")
+	}
+}
+
+func TestSecureChannelWriteBlockingUnblocksOnClose(t *testing.T) {
+	tr := newCancelAwareWriteTransport()
+	var key [32]byte
+	var nonce [4]byte
+	keys := RecordKeyState{SendKey: key, RecvKey: key, SendNoncePre: nonce, RecvNoncePre: nonce, SendDir: DirC2S, RecvDir: DirS2C, SendSeq: 1, RecvSeq: 1}
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := conn.Write([]byte("hello"))
+		errCh <- err
+	}()
+
+	select {
+	case <-tr.writeCh:
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for blocking write to start")
+	}
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatalf("expected write error after Close")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Write did not unblock after Close")
+	}
+}
+
+type neverReadTransport struct {
+	readStarted chan struct{}
+	closed      chan struct{}
+	once        sync.Once
+}
+
+func newNeverReadTransport() *neverReadTransport {
+	return &neverReadTransport{
+		readStarted: make(chan struct{}),
+		closed:      make(chan struct{}),
+	}
+}
+
+func (t *neverReadTransport) ReadBinary(_ context.Context) ([]byte, error) {
+	t.once.Do(func() { close(t.readStarted) })
+	<-t.closed
+	return nil, io.EOF
+}
+
+func (t *neverReadTransport) WriteBinary(_ context.Context, _ []byte) error {
+	return nil
+}
+
+func (t *neverReadTransport) Close() error {
+	select {
+	case <-t.closed:
+	default:
+		close(t.closed)
+	}
+	return nil
+}
+
 type blockingMessageTransport struct {
 	writeStarted sync.Once
 	writeCh      chan struct{}
