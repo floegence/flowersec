@@ -36,6 +36,15 @@ type Direction = 1 | 2;
 
 type SendKind = "app" | "ping" | "rekey";
 
+const maxRecordSeq = (1n << 64n) - 1n;
+
+class RecordSeqExhaustedError extends Error {
+  constructor() {
+    super("record seq exhausted");
+    this.name = "RecordSeqExhaustedError";
+  }
+}
+
 type SendReq = {
   /** Outbound frame category (app payload, ping, rekey). */
   kind: SendKind;
@@ -247,6 +256,17 @@ export class SecureChannel {
     this.wakeSendWaiters();
   }
 
+  private reserveSendSeq(): bigint {
+    if (this.sendSeq >= maxRecordSeq) {
+      const err = new RecordSeqExhaustedError();
+      this.failSend(err);
+      throw err;
+    }
+    const seq = this.sendSeq;
+    this.sendSeq++;
+    return seq;
+  }
+
   private async sendLoop(): Promise<void> {
     while (true) {
       const req = await this.nextSend();
@@ -262,13 +282,13 @@ export class SecureChannel {
       try {
         let frame: Uint8Array;
         if (req.kind === "app") {
-          const seq = this.sendSeq++;
+          const seq = this.reserveSendSeq();
           frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_APP, seq, req.payload ?? new Uint8Array(), this.maxRecordBytes);
         } else if (req.kind === "ping") {
-          const seq = this.sendSeq++;
+          const seq = this.reserveSendSeq();
           frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_PING, seq, new Uint8Array(), this.maxRecordBytes);
         } else {
-          const seq = this.sendSeq++;
+          const seq = this.reserveSendSeq();
           frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_REKEY, seq, new Uint8Array(), this.maxRecordBytes);
           // Update the send key after enqueuing the rekey frame.
           this.sendKey = deriveRekeyKey(this.rekeyBase, this.transcriptHash, seq, this.sendDir);
@@ -295,6 +315,9 @@ export class SecureChannel {
           this.recvSeq,
           this.maxRecordBytes
         );
+        if (seq >= maxRecordSeq) {
+          throw new RecordSeqExhaustedError();
+        }
         this.recvSeq = seq + 1n;
         if (flags === RECORD_FLAG_APP) {
           if (this.maxBufferedBytes > 0 && this.recvQueueBytes + plaintext.length > this.maxBufferedBytes) {

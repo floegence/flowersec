@@ -204,6 +204,17 @@
         "entries": [
           { "kind": "func", "expr": "token.Verify", "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/token`" }
         ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/tunnel/server",
+        "alias": "tunnelserver",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/tunnel/server`",
+        "entries": [
+          { "kind": "type", "expr": "tunnelserver.Config", "doc_token": "`server.Config`" },
+          { "kind": "type", "expr": "tunnelserver.ReplayCache", "doc_token": "`server.ReplayCache`" },
+          { "kind": "type", "expr": "tunnelserver.TokenUseCache", "doc_token": "`server.TokenUseCache`" },
+          { "kind": "func", "expr": "tunnelserver.NewTokenUseCache", "doc_token": "`server.NewTokenUseCache(...)`" }
+        ]
       }
     ]
   },

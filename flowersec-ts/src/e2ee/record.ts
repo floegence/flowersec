@@ -10,6 +10,13 @@ export type RecordFlag = typeof RECORD_FLAG_APP | typeof RECORD_FLAG_PING | type
 // RecordError marks record parsing or cryptographic failures.
 export class RecordError extends Error {}
 
+// maxRecordSeq is the sequence boundary where a key epoch must stop before uint64 wrap.
+const maxRecordSeq = (1n << 64n) - 1n;
+
+function assertRecordSeq(seq: bigint): void {
+  if (seq < 0n || seq > maxRecordSeq) throw new RecordError("record seq out of range");
+}
+
 // maxPlaintextBytes returns the payload cap derived from a record size limit.
 export function maxPlaintextBytes(maxRecordBytes: number): number {
   if (maxRecordBytes <= 0) return 0;
@@ -27,6 +34,7 @@ export function encryptRecord(
 ): Uint8Array {
   if (key.length !== 32) throw new RecordError("key must be 32 bytes");
   if (noncePrefix.length !== 4) throw new RecordError("noncePrefix must be 4 bytes");
+  assertRecordSeq(seq);
   const cipherLen = plaintext.length + 16;
   if (cipherLen > 0xffffffff) throw new RecordError("record too large");
   const header = new Uint8Array(4 + 1 + 1 + 8 + 4);

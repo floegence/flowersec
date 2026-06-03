@@ -8,6 +8,15 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/timeutil"
 )
 
+// ReplayCache enforces single-use semantics for scoped tunnel attach replay keys.
+//
+// Implementations backed by shared storage should fail closed by returning false
+// when the replay decision cannot be recorded atomically.
+type ReplayCache interface {
+	TryUse(replayKey string, usedUntilUnix int64, now time.Time) bool
+	Cleanup(now time.Time)
+}
+
 // TokenUseCache provides in-memory single-use enforcement for replay keys.
 //
 // # Security Model

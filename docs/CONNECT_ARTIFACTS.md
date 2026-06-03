@@ -67,6 +67,10 @@ Recommended helper entrypoints:
 
 These helper entrypoints fail fast when `proxy.runtime@1` is missing, malformed, or uses an unsupported `scope_version`.
 
+`proxy.runtime@1` does not carry every deployment hardening option.
+Runtime `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin`, and controller/app bridge `capabilityNonce` are explicit helper/runtime options for v0.19.x.
+Do not expand the v1 schema to carry them; use explicit options, or introduce a future `proxy.runtime@2` when those fields need to become part of a stable artifact contract.
+
 ## Stable language-level exports
 
 TypeScript:

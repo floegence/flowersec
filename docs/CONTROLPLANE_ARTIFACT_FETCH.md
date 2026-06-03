@@ -85,6 +85,7 @@ The stable helper contract freezes the envelope semantics above:
 - success field: `connect_artifact`
 - error fields: machine-readable `error.code`, human-readable `error.message`
 - bounded-body rule: helpers treat the response as a small controlplane document and reject bodies larger than 1 MiB before JSON validation
+- JSON response headers: artifact and error envelopes should be served with `Content-Type: application/json` and `Cache-Control: no-store, no-cache, must-revalidate, private`
 
 `session_id` is issuer-owned and is returned inside `connect_artifact.correlation` when available; callers do not request it explicitly.
 
@@ -112,6 +113,9 @@ Go `controlplane/http` keeps the same outward envelope while letting application
 - `controlplanehttp.WriteErrorEnvelope(...)`
 - `controlplanehttp.ArtifactRequestMetadata`
 - `controlplanehttp.ArtifactIssueInput`
+
+The `controlplane/http` writer helpers set JSON/no-store headers for both success and error envelopes.
+Custom controlplanes that write envelopes manually should do the same so one-time grants, scoped runtime metadata, and structured error bodies are not persisted by browsers, shared proxies, or framework caches.
 
 On non-`2xx` responses, helpers keep the HTTP status plus the structured error envelope when present.
 If a response body exceeds the helper limit, the helper fails closed before envelope parsing; non-`2xx` paths still preserve the HTTP status through `ControlplaneRequestError`.

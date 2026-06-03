@@ -2,6 +2,7 @@ package controlplanehttp
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -43,6 +44,7 @@ func TestWriteErrorEnvelope_WritesStableJSONEnvelope(t *testing.T) {
 	if errorBody["code"] != "AGENT_OFFLINE" || errorBody["message"] != "No agent connected" {
 		t.Fatalf("unexpected error body: %#v", errorBody)
 	}
+	assertNoStoreHeaders(t, rec.Result().Header)
 }
 
 func TestWriteArtifactEnvelope_WritesStableArtifactEnvelope(t *testing.T) {
@@ -59,5 +61,19 @@ func TestWriteArtifactEnvelope_WritesStableArtifactEnvelope(t *testing.T) {
 	}
 	if _, ok := body["connect_artifact"]; !ok {
 		t.Fatalf("missing connect_artifact: %#v", body)
+	}
+	assertNoStoreHeaders(t, rec.Result().Header)
+}
+
+func assertNoStoreHeaders(t *testing.T, h http.Header) {
+	t.Helper()
+	if got := h.Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, private" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	if got := h.Get("Pragma"); got != "no-cache" {
+		t.Fatalf("Pragma = %q", got)
+	}
+	if got := h.Get("Expires"); got != "0" {
+		t.Fatalf("Expires = %q", got)
 	}
 }

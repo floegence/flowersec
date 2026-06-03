@@ -37,7 +37,8 @@ type AcceptDirectOptions struct {
 	Suite     Suite
 
 	InitExpireAtUnixS int64
-	ClockSkew         time.Duration
+	// ClockSkew is the allowed E2EE handshake timestamp skew. A value of 0 is strict.
+	ClockSkew time.Duration
 
 	HandshakeTimeout *time.Duration // Total E2EE handshake timeout (nil uses default; 0 disables).
 
@@ -93,6 +94,7 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("clock skew must be >= 0"))
 	}
+	clockSkew := opts.ClockSkew
 	if opts.MaxHandshakePayload < 0 {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max handshake payload must be >= 0"))
@@ -117,7 +119,7 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 		Suite:               e2ee.Suite(suite),
 		ChannelID:           channelID,
 		InitExpireAtUnixS:   opts.InitExpireAtUnixS,
-		ClockSkew:           opts.ClockSkew,
+		ClockSkew:           clockSkew,
 		ServerFeatures:      opts.ServerFeatures,
 		MaxHandshakePayload: opts.MaxHandshakePayload,
 		MaxRecordBytes:      opts.MaxRecordBytes,
@@ -166,6 +168,7 @@ type DirectHandshakeSecrets struct {
 type AcceptDirectResolverOptions struct {
 	HandshakeTimeout *time.Duration // Total E2EE handshake timeout (nil uses default; 0 disables).
 
+	// ClockSkew is the allowed E2EE handshake timestamp skew. A value of 0 is strict.
 	ClockSkew time.Duration
 
 	ServerFeatures uint32
@@ -224,6 +227,7 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("clock skew must be >= 0"))
 	}
+	clockSkew := opts.ClockSkew
 	if opts.MaxHandshakePayload < 0 {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max handshake payload must be >= 0"))
@@ -317,7 +321,7 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 		Suite:               e2ee.Suite(initMsg.Suite),
 		ChannelID:           channelID,
 		InitExpireAtUnixS:   secrets.InitExpireAtUnixS,
-		ClockSkew:           opts.ClockSkew,
+		ClockSkew:           clockSkew,
 		ServerFeatures:      opts.ServerFeatures,
 		MaxHandshakePayload: opts.MaxHandshakePayload,
 		MaxRecordBytes:      opts.MaxRecordBytes,
@@ -383,6 +387,10 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 	if maxHello == 0 {
 		maxHello = DefaultMaxStreamHelloBytes
 	}
+	handshake := opts.Handshake
+	if handshake.ClockSkew == 0 {
+		handshake.ClockSkew = defaults.HandshakeClockSkew
+	}
 	upgrader := ws.UpgraderOptions{
 		ReadBufferSize:  opts.Upgrader.ReadBufferSize,
 		WriteBufferSize: opts.Upgrader.WriteBufferSize,
@@ -409,7 +417,7 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 			return
 		}
 		defer c.Close()
-		sess, err := AcceptDirectWS(r.Context(), c.Underlying(), opts.Handshake)
+		sess, err := AcceptDirectWS(r.Context(), c.Underlying(), handshake)
 		if err != nil {
 			onErr(err)
 			return
@@ -497,6 +505,10 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 	if maxHello == 0 {
 		maxHello = DefaultMaxStreamHelloBytes
 	}
+	handshake := opts.Handshake
+	if handshake.ClockSkew == 0 {
+		handshake.ClockSkew = defaults.HandshakeClockSkew
+	}
 	upgrader := ws.UpgraderOptions{
 		ReadBufferSize:  opts.Upgrader.ReadBufferSize,
 		WriteBufferSize: opts.Upgrader.WriteBufferSize,
@@ -523,7 +535,7 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 			return
 		}
 		defer c.Close()
-		sess, err := AcceptDirectWSResolved(r.Context(), c.Underlying(), opts.Handshake)
+		sess, err := AcceptDirectWSResolved(r.Context(), c.Underlying(), handshake)
 		if err != nil {
 			onErr(err)
 			return

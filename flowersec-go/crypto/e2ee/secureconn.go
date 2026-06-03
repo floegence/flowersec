@@ -136,6 +136,10 @@ func (c *SecureChannel) readLoop() {
 			c.failRead(err)
 			return
 		}
+		if seq == MaxRecordSeq {
+			c.failRead(ErrRecordSeqExhausted)
+			return
+		}
 		c.keys.RecvSeq = seq + 1
 		switch flags {
 		case RecordFlagApp:
@@ -181,6 +185,18 @@ func (c *SecureChannel) setSendErr(err error) {
 		c.sendErr = err
 	}
 	c.sendMu.Unlock()
+}
+
+func (c *SecureChannel) reserveSendSeqLocked() (uint64, error) {
+	if c.keys.SendSeq == MaxRecordSeq {
+		if c.sendErr == nil {
+			c.sendErr = ErrRecordSeqExhausted
+		}
+		return 0, ErrRecordSeqExhausted
+	}
+	seq := c.keys.SendSeq
+	c.keys.SendSeq++
+	return seq, nil
 }
 
 func (c *SecureChannel) Read(p []byte) (int, error) {
@@ -240,19 +256,23 @@ func (c *SecureChannel) Write(p []byte) (int, error) {
 		// send order matches seq order (otherwise receiver seq checks can fail).
 		req := newSendReq()
 		c.sendMu.Lock()
-		if c.sendClosed {
-			c.sendMu.Unlock()
-			return total, io.ErrClosedPipe
-		}
 		if c.sendErr != nil {
 			err := c.sendErr
 			c.sendMu.Unlock()
 			return total, err
 		}
+		if c.sendClosed {
+			c.sendMu.Unlock()
+			return total, io.ErrClosedPipe
+		}
 		key := c.keys.SendKey
 		noncePre := c.keys.SendNoncePre
-		seq := c.keys.SendSeq
-		c.keys.SendSeq++
+		seq, err := c.reserveSendSeqLocked()
+		if err != nil {
+			c.sendMu.Unlock()
+			_ = c.Close()
+			return total, err
+		}
 		frame, err := EncryptRecord(key, noncePre, RecordFlagApp, seq, chunk, c.maxRecordBytes)
 		if err != nil {
 			c.sendMu.Unlock()
@@ -320,19 +340,23 @@ func (c *SecureChannel) SetDeadline(t time.Time) error {
 func (c *SecureChannel) Ping() error {
 	req := newSendReq()
 	c.sendMu.Lock()
-	if c.sendClosed {
-		c.sendMu.Unlock()
-		return io.ErrClosedPipe
-	}
 	if c.sendErr != nil {
 		err := c.sendErr
 		c.sendMu.Unlock()
 		return err
 	}
+	if c.sendClosed {
+		c.sendMu.Unlock()
+		return io.ErrClosedPipe
+	}
 	key := c.keys.SendKey
 	noncePre := c.keys.SendNoncePre
-	seq := c.keys.SendSeq
-	c.keys.SendSeq++
+	seq, err := c.reserveSendSeqLocked()
+	if err != nil {
+		c.sendMu.Unlock()
+		_ = c.Close()
+		return err
+	}
 	frame, err := EncryptRecord(key, noncePre, RecordFlagPing, seq, nil, c.maxRecordBytes)
 	if err != nil {
 		c.sendMu.Unlock()
@@ -349,22 +373,26 @@ func (c *SecureChannel) Ping() error {
 func (c *SecureChannel) Rekey() error {
 	req := newSendReq()
 	c.sendMu.Lock()
-	if c.sendClosed {
-		c.sendMu.Unlock()
-		return io.ErrClosedPipe
-	}
 	if c.sendErr != nil {
 		err := c.sendErr
 		c.sendMu.Unlock()
 		return err
+	}
+	if c.sendClosed {
+		c.sendMu.Unlock()
+		return io.ErrClosedPipe
 	}
 	key := c.keys.SendKey
 	noncePre := c.keys.SendNoncePre
 	rekeyBase := c.keys.RekeyBase
 	transcript := c.keys.Transcript
 	sendDir := c.keys.SendDir
-	seq := c.keys.SendSeq
-	c.keys.SendSeq++
+	seq, err := c.reserveSendSeqLocked()
+	if err != nil {
+		c.sendMu.Unlock()
+		_ = c.Close()
+		return err
+	}
 
 	frame, err := EncryptRecord(key, noncePre, RecordFlagRekey, seq, nil, c.maxRecordBytes)
 	if err != nil {

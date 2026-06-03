@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-func TestTokenUseCache(t *testing.T) {
-	c := NewTokenUseCache()
+func exerciseReplayCacheContract(t *testing.T, c ReplayCache) {
+	t.Helper()
 	now := time.Unix(100, 0)
 
 	if c.TryUse("", 200, now) {
@@ -24,6 +24,14 @@ func TestTokenUseCache(t *testing.T) {
 	if !c.TryUse("tok", 400, time.Unix(300, 0)) {
 		t.Fatalf("expected reuse after cleanup to succeed")
 	}
+}
+
+func TestTokenUseCache(t *testing.T) {
+	exerciseReplayCacheContract(t, NewTokenUseCache())
+}
+
+func TestReplayCacheContractForInMemoryImplementation(t *testing.T) {
+	exerciseReplayCacheContract(t, NewTokenUseCache())
 }
 
 func TestTokenUseCacheHonorsSkewWindow(t *testing.T) {
@@ -45,6 +53,54 @@ func TestTokenUseCacheHonorsSkewWindow(t *testing.T) {
 	}
 	if !c.TryUse("tok", usedUntil, time.Unix(usedUntil+1, 0)) {
 		t.Fatalf("expected reuse after usedUntil to succeed")
+	}
+}
+
+type testReplayCache struct {
+	delegate     ReplayCache
+	tryUseCalls  int
+	cleanupCalls int
+}
+
+func (c *testReplayCache) TryUse(replayKey string, usedUntilUnix int64, now time.Time) bool {
+	c.tryUseCalls++
+	return c.delegate.TryUse(replayKey, usedUntilUnix, now)
+}
+
+func (c *testReplayCache) Cleanup(now time.Time) {
+	c.cleanupCalls++
+	c.delegate.Cleanup(now)
+}
+
+type testReplayVerifier struct{}
+
+func (testReplayVerifier) Verify(string, time.Time, time.Duration) (VerifiedToken, error) {
+	return VerifiedToken{}, nil
+}
+
+func (testReplayVerifier) Reload() error { return nil }
+
+func TestServerUsesConfiguredReplayCache(t *testing.T) {
+	cache := &testReplayCache{delegate: NewTokenUseCache()}
+	cfg := DefaultConfig()
+	cfg.AllowedOrigins = []string{"https://ok"}
+	cfg.Verifier = testReplayVerifier{}
+	cfg.ReplayCache = cache
+
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	t.Cleanup(s.Close)
+
+	if s.used != cache {
+		t.Fatalf("expected server to use configured replay cache")
+	}
+	if !s.used.TryUse("scope\x00tok", time.Now().Add(time.Minute).Unix(), time.Now()) {
+		t.Fatalf("expected configured replay cache to accept first use")
+	}
+	if cache.tryUseCalls != 1 {
+		t.Fatalf("expected configured replay cache to observe TryUse, got %d", cache.tryUseCalls)
 	}
 }
 

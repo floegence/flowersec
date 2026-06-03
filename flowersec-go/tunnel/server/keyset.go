@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
@@ -31,17 +32,22 @@ func LoadIssuerKeysetFile(path string) (*IssuerKeyset, error) {
 	}
 	keys := make(map[string]ed25519.PublicKey, len(f.Keys))
 	for _, k := range f.Keys {
-		if k.KID == "" || k.PubKeyB64 == "" {
+		kid := strings.TrimSpace(k.KID)
+		pubKeyB64 := strings.TrimSpace(k.PubKeyB64)
+		if kid == "" || kid != k.KID || pubKeyB64 == "" || pubKeyB64 != k.PubKeyB64 {
 			return nil, errors.New("invalid key entry")
 		}
-		pub, err := base64url.Decode(k.PubKeyB64)
+		if _, ok := keys[kid]; ok {
+			return nil, errors.New("duplicate key id")
+		}
+		pub, err := base64url.Decode(pubKeyB64)
 		if err != nil {
 			return nil, err
 		}
 		if len(pub) != ed25519.PublicKeySize {
 			return nil, errors.New("invalid pubkey size")
 		}
-		keys[k.KID] = ed25519.PublicKey(pub)
+		keys[kid] = ed25519.PublicKey(pub)
 	}
 	return &IssuerKeyset{keys: keys}, nil
 }

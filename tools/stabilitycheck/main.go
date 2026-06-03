@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const repoGoToolchain = "go1.26.3"
+const repoGoToolchain = "go1.26.4"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -124,7 +124,7 @@ func renderGoVerifier(goModulePath string, m *manifest) (string, string) {
 		}
 	}
 
-	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.26.3\n\nrequire %s v0.0.0\n\nreplace %s => %s\n", m.Go.ModulePath, m.Go.ModulePath, filepath.ToSlash(goModulePath))
+	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.26.4\n\nrequire %s v0.0.0\n\nreplace %s => %s\n", m.Go.ModulePath, m.Go.ModulePath, filepath.ToSlash(goModulePath))
 	goTest := fmt.Sprintf("package flowersecstabilitychecktmp\n\nimport (\n%s)\n\nfunc TestStableSymbolsCompile(t *testing.T) {\n%s}\n", imports.String()+"\t\"testing\"\n", checks.String())
 	return goMod, goTest
 }

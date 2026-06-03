@@ -43,6 +43,10 @@ func TestDecryptRecordValidations(t *testing.T) {
 		t.Fatalf("expected bad seq")
 	}
 
+	if _, _, _, err := DecryptRecord(key, nonce, frame, 0, 1<<20); err == nil {
+		t.Fatalf("expected seq 0 to be checked strictly")
+	}
+
 	badLen := append([]byte{}, frame...)
 	badLen[14] = 0
 	badLen[15] = 0

@@ -14,6 +14,8 @@ var (
 	ErrRecordTooLarge = errors.New("record too large")
 	// ErrRecordBadSeq indicates a sequence mismatch when strict ordering is enabled.
 	ErrRecordBadSeq = errors.New("record bad seq")
+	// ErrRecordSeqExhausted indicates the record sequence space is exhausted.
+	ErrRecordSeqExhausted = errors.New("record seq exhausted")
 	// ErrRecordDecrypt indicates AEAD decryption failed.
 	ErrRecordDecrypt = errors.New("record decrypt failed")
 	// ErrRecordBadFlag indicates an unknown record flag.
@@ -26,6 +28,9 @@ var (
 type RecordFlag uint8
 
 const (
+	// MaxRecordSeq is the sequence boundary where a key epoch must stop before uint64 wrap.
+	MaxRecordSeq = ^uint64(0)
+
 	// RecordFlagApp carries application payload.
 	RecordFlagApp RecordFlag = 0
 	// RecordFlagPing is a keepalive frame with empty payload.
@@ -118,7 +123,7 @@ func DecryptRecord(recvKey [32]byte, noncePrefix [4]byte, frame []byte, expectSe
 		return 0, 0, nil, ErrRecordBadFlag
 	}
 	seq = bin.U64BE(frame[6:14])
-	if expectSeq != 0 && seq != expectSeq {
+	if seq != expectSeq {
 		return 0, 0, nil, ErrRecordBadSeq
 	}
 	n := int(bin.U32BE(frame[14:18]))

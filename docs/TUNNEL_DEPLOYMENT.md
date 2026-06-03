@@ -262,7 +262,17 @@ Notes:
 If you insist on putting tunnels behind a load balancer, you must provide **session affinity** by `channel_id` (so pairing works),
 and you should also share token replay state (for example via Redis) to preserve `token_id` single-use semantics across instances.
 
-This repository does not currently ship a built-in shared `TokenUseCache` implementation.
+The Go tunnel server exposes `server.Config.ReplayCache` for this purpose.
+The default `TokenUseCache` is in-memory and process-local; it is appropriate for a single tunnel instance or for sharded deployments where a given `channel_id` always maps to one public tunnel URL.
+
+For multi-instance deployments behind one public URL:
+
+- provide a shared `ReplayCache` implementation with atomic "use if absent until expiry" semantics
+- store replay keys until at least the verifier acceptance window (`exp` plus configured clock skew)
+- fail closed when the shared store is unavailable or the atomic replay decision cannot be recorded
+- keep load-balancer affinity by `channel_id`; shared replay state does not replace pairing affinity
+
+This repository does not currently ship a built-in shared `ReplayCache` implementation.
 
 ## Docker examples
 

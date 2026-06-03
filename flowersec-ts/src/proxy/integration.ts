@@ -3,7 +3,7 @@ import type { Client } from "../client.js";
 import { profileToPresetManifest, type ProxyProfile, type ProxyProfileName } from "./profiles.js";
 import { resolveProxyPreset, type ProxyPresetInput, type ResolvedProxyPreset } from "./preset.js";
 import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
-import { createProxyRuntime, ensureServiceWorkerRuntimeRegistered, type ProxyRuntime } from "./runtime.js";
+import { createProxyRuntime, ensureServiceWorkerRuntimeRegistered, type ProxyRuntime, type ProxyRuntimePathPolicy } from "./runtime.js";
 import { createProxyServiceWorkerScript, type ProxyServiceWorkerScriptOptions } from "./serviceWorker.js";
 
 export type ProxyIntegrationMonitorOptions = Readonly<{
@@ -42,6 +42,9 @@ export type RegisterProxyIntegrationOptions = Readonly<{
     maxBodyBytes?: number;
     maxWsFrameBytes?: number;
     timeoutMs?: number;
+    pathPolicy?: ProxyRuntimePathPolicy;
+    externalOrigin?: string;
+    runtimeRegistrationToken?: string;
   }>;
   serviceWorker: ProxyIntegrationServiceWorkerOptions;
   plugins?: readonly ProxyIntegrationPlugin[];
@@ -278,6 +281,9 @@ function buildRuntimeOptions(preset: ResolvedProxyPreset, runtime: RegisterProxy
   maxBodyBytes: number;
   maxWsFrameBytes: number;
   timeoutMs: number;
+  pathPolicy?: ProxyRuntimePathPolicy;
+  externalOrigin?: string;
+  runtimeRegistrationToken?: string;
 } {
   return {
     maxJsonFrameBytes: runtime?.maxJsonFrameBytes ?? preset.limits.max_json_frame_bytes,
@@ -285,6 +291,9 @@ function buildRuntimeOptions(preset: ResolvedProxyPreset, runtime: RegisterProxy
     maxBodyBytes: runtime?.maxBodyBytes ?? preset.limits.max_body_bytes,
     maxWsFrameBytes: runtime?.maxWsFrameBytes ?? preset.limits.max_ws_frame_bytes,
     timeoutMs: runtime?.timeoutMs ?? preset.limits.timeout_ms ?? 0,
+    ...(runtime?.pathPolicy === undefined ? {} : { pathPolicy: runtime.pathPolicy }),
+    ...(runtime?.externalOrigin === undefined ? {} : { externalOrigin: runtime.externalOrigin }),
+    ...(runtime?.runtimeRegistrationToken === undefined ? {} : { runtimeRegistrationToken: runtime.runtimeRegistrationToken }),
   };
 }
 
@@ -365,7 +374,10 @@ export async function registerProxyIntegration(input: RegisterProxyIntegrationOp
     maxRepairAttempts,
     controllerTimeoutMs,
   });
-  await ensureServiceWorkerRuntimeRegistered({ timeoutMs: controllerTimeoutMs });
+  await ensureServiceWorkerRuntimeRegistered({
+    timeoutMs: controllerTimeoutMs,
+    ...(runtimeOpts.runtimeRegistrationToken === undefined ? {} : { runtimeRegistrationToken: runtimeOpts.runtimeRegistrationToken }),
+  });
 
   if (expectedScriptPathSuffix !== "") {
     const ok = await waitForControllerSuffix(expectedScriptPathSuffix, controllerTimeoutMs);

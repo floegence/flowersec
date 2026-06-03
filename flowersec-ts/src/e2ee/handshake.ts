@@ -86,6 +86,13 @@ function ioWriteOpts(signal: AbortSignal | undefined): { signal?: AbortSignal } 
   return signal != null ? { signal } : {};
 }
 
+function normalizeClockSkewSeconds(clockSkewSeconds: number): number {
+  if (!Number.isFinite(clockSkewSeconds) || !Number.isSafeInteger(clockSkewSeconds) || clockSkewSeconds < 0) {
+    throw new Error("invalid clock_skew");
+  }
+  return clockSkewSeconds;
+}
+
 function randomBytes(n: number): Uint8Array {
   const out = new Uint8Array(n);
   crypto.getRandomValues(out);
@@ -306,6 +313,7 @@ export async function serverHandshake(
   opts: HandshakeServerOptions
 ): Promise<SecureChannel> {
   if (opts.initExpireAtUnixS <= 0) throw new Error("missing init_exp");
+  const clockSkewSeconds = normalizeClockSkewSeconds(opts.clockSkewSeconds);
   const deadlineMs = handshakeDeadlineMs(opts.timeoutMs);
   const initFrame = await transport.readBinary(ioReadOpts(opts.signal, deadlineMs));
   const decodedInit = decodeHandshakeFrame(initFrame, opts.maxHandshakePayload);
@@ -353,8 +361,8 @@ export async function serverHandshake(
   if (ack.handshake_id !== entry.handshakeId) throw new Error("handshake_id mismatch");
 
   const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - ack.timestamp_unix_s) > opts.clockSkewSeconds) throw new E2EEHandshakeError("timestamp_out_of_skew", "timestamp skew");
-  if (ack.timestamp_unix_s > opts.initExpireAtUnixS + opts.clockSkewSeconds) throw new E2EEHandshakeError("timestamp_after_init_exp", "timestamp after init_exp");
+  if (Math.abs(now - ack.timestamp_unix_s) > clockSkewSeconds) throw new E2EEHandshakeError("timestamp_out_of_skew", "timestamp skew");
+  if (ack.timestamp_unix_s > opts.initExpireAtUnixS + clockSkewSeconds) throw new E2EEHandshakeError("timestamp_after_init_exp", "timestamp after init_exp");
 
   const th = transcriptHash({
     version: PROTOCOL_VERSION,

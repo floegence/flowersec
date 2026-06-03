@@ -49,7 +49,8 @@ type Config struct {
 	PolicyObserveInterval time.Duration
 	PolicyBatchSize       int
 
-	Observer observability.TunnelObserver // Optional tunnel metrics observer.
+	ReplayCache ReplayCache                  // Optional shared replay cache for attach token single-use enforcement.
+	Observer    observability.TunnelObserver // Optional tunnel metrics observer.
 }
 
 // ConfigError is returned when the server configuration is invalid.
@@ -95,7 +96,7 @@ type Server struct {
 	cfg Config // Immutable runtime configuration.
 
 	verifier AttachVerifier               // Token verifier (single-tenant or multi-tenant).
-	used     *TokenUseCache               // Token replay protection cache.
+	used     ReplayCache                  // Token replay protection cache.
 	obs      observability.TunnelObserver // Metrics observer.
 	auth     Authorizer                   // Optional attach/runtime authorizer.
 
@@ -238,6 +239,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Observer == nil {
 		cfg.Observer = observability.NoopTunnelObserver
 	}
+	if cfg.ReplayCache == nil {
+		cfg.ReplayCache = NewTokenUseCache()
+	}
 	verifier := cfg.Verifier
 	if verifier == nil {
 		cfg.IssuerKeysFile = strings.TrimSpace(cfg.IssuerKeysFile)
@@ -262,7 +266,7 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{
 		cfg:             cfg,
 		verifier:        verifier,
-		used:            NewTokenUseCache(),
+		used:            cfg.ReplayCache,
 		obs:             cfg.Observer,
 		auth:            cfg.Authorizer,
 		channels:        make(map[string]*channelState),

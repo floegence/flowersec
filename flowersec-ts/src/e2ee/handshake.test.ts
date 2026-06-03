@@ -225,6 +225,22 @@ describe("serverHandshake", () => {
     })).rejects.toThrow(/bad version/);
   });
 
+  test("rejects invalid clock skew before reading transport", async () => {
+    const transport = new ScriptedTransport([]);
+    await expect(serverHandshake(transport, new ServerHandshakeCache(), {
+      channelId: "ch_1",
+      suite: 1,
+      psk: crypto.getRandomValues(new Uint8Array(32)),
+      serverFeatures: 0,
+      initExpireAtUnixS: 100,
+      clockSkewSeconds: -1,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20
+    })).rejects.toThrow(/invalid clock_skew/);
+
+    expect(transport.writes.length).toBe(0);
+  });
+
   test("rejects bad role", async () => {
     const { init } = makeInit({ channelId: "ch_1", suite: 1 });
     const badInit = { ...init, role: 2 };
@@ -302,6 +318,35 @@ describe("serverHandshake", () => {
       serverFeatures: 0,
       initExpireAtUnixS: 1000,
       clockSkewSeconds: 10,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20
+    })).rejects.toThrow(/timestamp skew/);
+
+    vi.useRealTimers();
+  });
+
+  test("treats zero clock skew as strict", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(100 * 1000));
+
+    const psk = crypto.getRandomValues(new Uint8Array(32));
+    const { init, initFrame } = makeInit({ channelId: "ch_1", suite: 1 });
+    const transport = new ScriptedTransport([initFrame]);
+
+    transport.onWrite = (frame) => {
+      const decoded = decodeHandshakeFrame(frame, 8 * 1024);
+      const resp = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Resp;
+      const ackFrame = buildAckFrame({ init, resp, psk, timestamp: 101 });
+      transport.pushRead(ackFrame);
+    };
+
+    await expect(serverHandshake(transport, new ServerHandshakeCache(), {
+      channelId: "ch_1",
+      suite: 1,
+      psk,
+      serverFeatures: 0,
+      initExpireAtUnixS: 120,
+      clockSkewSeconds: 0,
       maxHandshakePayload: 8 * 1024,
       maxRecordBytes: 1 << 20
     })).rejects.toThrow(/timestamp skew/);

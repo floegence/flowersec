@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import vm from "node:vm";
 
 import { createProxyServiceWorkerScript } from "./serviceWorker.js";
@@ -13,6 +13,57 @@ function runGeneratedServiceWorker(script: string): { injectBootstrap?: (html: s
   };
   vm.runInNewContext(script, context);
   return context;
+}
+
+function runGeneratedServiceWorkerWithClients(
+  script: string,
+  clientsById: Map<string, { id: string; url: string }>
+): {
+  emitMessage: (event: any) => Promise<void>;
+} {
+  const listeners = new Map<string, Array<(event: any) => void>>();
+  const context = {
+    URL,
+    self: {
+      addEventListener(type: string, cb: (event: any) => void) {
+        listeners.set(type, [...(listeners.get(type) ?? []), cb]);
+      },
+      clients: {
+        get: vi.fn(async (id: string) => clientsById.get(id) ?? null),
+        matchAll: vi.fn(async () => Array.from(clientsById.values())),
+      },
+      location: { origin: "https://app.example.test" },
+      skipWaiting: vi.fn(),
+    },
+  };
+  vm.runInNewContext(script, context);
+  return {
+    emitMessage: async (event: any) => {
+      const waitUntil: Promise<unknown>[] = [];
+      const ev = {
+        ...event,
+        waitUntil: (p: Promise<unknown>) => waitUntil.push(p),
+      };
+      for (const cb of listeners.get("message") ?? []) cb(ev);
+      await Promise.all(waitUntil);
+    },
+  };
+}
+
+function makeAckPort(): { port: MessagePort; messages: any[]; closed: boolean } {
+  const out = {
+    messages: [] as any[],
+    closed: false,
+    port: {
+      postMessage(message: any) {
+        out.messages.push(message);
+      },
+      close() {
+        out.closed = true;
+      },
+    } as unknown as MessagePort,
+  };
+  return out;
 }
 
 describe("createProxyServiceWorkerScript", () => {
@@ -199,5 +250,84 @@ describe("createProxyServiceWorkerScript", () => {
   it("rejects invalid controller window routing options", () => {
     expect(() => createProxyServiceWorkerScript({ windowTarget: "bad" as any })).toThrow(/windowTarget/);
     expect(() => createProxyServiceWorkerScript({ windowClientMessageType: "bad\nmsg" })).toThrow(/windowClientMessageType/);
+  });
+
+  it("keeps legacy runtime registration compatible when no token/path policy is configured", async () => {
+    const clients = new Map([["client-1", { id: "client-1", url: "https://app.example.test/anywhere" }]]);
+    const sw = runGeneratedServiceWorkerWithClients(createProxyServiceWorkerScript(), clients);
+    const ack = makeAckPort();
+
+    await sw.emitMessage({
+      data: { type: "flowersec-proxy:register-runtime" },
+      source: { id: "client-1" },
+      ports: [ack.port],
+    });
+
+    expect(ack.messages).toContainEqual({ type: "flowersec-proxy:register-runtime-ack", ok: true });
+    expect(ack.closed).toBe(true);
+  });
+
+  it("requires the runtime registration token when configured", async () => {
+    const clients = new Map([["client-1", { id: "client-1", url: "https://app.example.test/_redeven_boot/" }]]);
+    const sw = runGeneratedServiceWorkerWithClients(
+      createProxyServiceWorkerScript({ runtimeRegistrationToken: "tok_123" }),
+      clients,
+    );
+
+    const missing = makeAckPort();
+    await sw.emitMessage({
+      data: { type: "flowersec-proxy:register-runtime" },
+      source: { id: "client-1" },
+      ports: [missing.port],
+    });
+    expect(missing.messages).toContainEqual({ type: "flowersec-proxy:register-runtime-ack", ok: false });
+
+    const ok = makeAckPort();
+    await sw.emitMessage({
+      data: { type: "flowersec-proxy:register-runtime", token: "tok_123" },
+      source: { id: "client-1" },
+      ports: [ok.port],
+    });
+    expect(ok.messages).toContainEqual({ type: "flowersec-proxy:register-runtime-ack", ok: true });
+  });
+
+  it("checks runtime client path and allows repair when the previous runtime client is gone", async () => {
+    const clients = new Map<string, { id: string; url: string }>([
+      ["client-1", { id: "client-1", url: "https://app.example.test/_redeven_boot/" }],
+      ["client-2", { id: "client-2", url: "https://app.example.test/evil/" }],
+    ]);
+    const sw = runGeneratedServiceWorkerWithClients(
+      createProxyServiceWorkerScript({
+        runtimeRegistrationToken: "tok_123",
+        runtimeClientPathPrefix: "/_redeven_boot/",
+      }),
+      clients,
+    );
+
+    const first = makeAckPort();
+    await sw.emitMessage({
+      data: { type: "flowersec-proxy:register-runtime", token: "tok_123" },
+      source: { id: "client-1" },
+      ports: [first.port],
+    });
+    expect(first.messages).toContainEqual({ type: "flowersec-proxy:register-runtime-ack", ok: true });
+
+    const badPath = makeAckPort();
+    await sw.emitMessage({
+      data: { type: "flowersec-proxy:register-runtime", token: "tok_123" },
+      source: { id: "client-2" },
+      ports: [badPath.port],
+    });
+    expect(badPath.messages).toContainEqual({ type: "flowersec-proxy:register-runtime-ack", ok: false });
+
+    clients.delete("client-1");
+    clients.set("client-3", { id: "client-3", url: "https://app.example.test/_redeven_boot/repaired" });
+    const repair = makeAckPort();
+    await sw.emitMessage({
+      data: { type: "flowersec-proxy:register-runtime", token: "tok_123" },
+      source: { id: "client-3" },
+      ports: [repair.port],
+    });
+    expect(repair.messages).toContainEqual({ type: "flowersec-proxy:register-runtime-ack", ok: true });
   });
 });

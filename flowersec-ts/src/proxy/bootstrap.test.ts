@@ -213,6 +213,7 @@ describe("connectTunnelProxyBrowser", () => {
     const out = await connectTunnelProxyControllerBrowser({ tunnel_url: "ws://example.invalid" } as any, {
       allowedOrigins: ["https://app.example.test"],
       runtime: { maxWsFrameBytes: 1024 },
+      capabilityNonce: "bridge_tok",
     });
 
     expect(out.client).toBe(client);
@@ -224,11 +225,64 @@ describe("connectTunnelProxyBrowser", () => {
     expect(registerProxyControllerWindowMock).toHaveBeenCalledWith({
       runtime,
       allowedOrigins: ["https://app.example.test"],
+      capabilityNonce: "bridge_tok",
     });
 
     out.dispose();
     expect(controllerDispose).toHaveBeenCalledTimes(1);
     expect(client.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes optional controller bridge capability through grant and artifact helpers", async () => {
+    const tunnelClient = { close: vi.fn() };
+    const artifactClient = { close: vi.fn() };
+    const runtime1 = { runtime: 1 };
+    const runtime2 = { runtime: 2 };
+    const controllerDispose = vi.fn();
+
+    connectTunnelBrowserMock.mockResolvedValueOnce(tunnelClient);
+    connectBrowserMock.mockResolvedValueOnce(artifactClient);
+    createProxyRuntimeMock.mockReturnValueOnce(runtime1).mockReturnValueOnce(runtime2);
+    registerProxyControllerWindowMock.mockReturnValue({ dispose: controllerDispose });
+
+    const { connectTunnelProxyControllerBrowser, connectArtifactProxyControllerBrowser } = await import("./bootstrap.js");
+    await connectTunnelProxyControllerBrowser({ tunnel_url: "ws://example.invalid" } as any, {
+      allowedOrigins: ["https://app.example.test"],
+      capabilityNonce: "bridge_tok",
+    });
+
+    await connectArtifactProxyControllerBrowser({
+      ...makeArtifact(),
+      scoped: [
+        {
+          scope: "proxy.runtime",
+          scope_version: 1,
+          critical: false,
+          payload: {
+            mode: "controller_bridge",
+            controllerBridge: {
+              allowedOrigins: ["https://app.example.test"],
+            },
+            preset: {
+              presetId: "default",
+            },
+          },
+        },
+      ],
+    } as any, {
+      capabilityNonce: "bridge_tok",
+    });
+
+    expect(registerProxyControllerWindowMock).toHaveBeenNthCalledWith(1, {
+      runtime: runtime1,
+      allowedOrigins: ["https://app.example.test"],
+      capabilityNonce: "bridge_tok",
+    });
+    expect(registerProxyControllerWindowMock).toHaveBeenNthCalledWith(2, {
+      runtime: runtime2,
+      allowedOrigins: ["https://app.example.test"],
+      capabilityNonce: "bridge_tok",
+    });
   });
 
 
@@ -272,7 +326,7 @@ describe("connectTunnelProxyBrowser", () => {
     const out = await connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
       profile: "codeserver",
       serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
-    } as any);
+    });
 
     expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
       client,
@@ -314,7 +368,9 @@ describe("connectTunnelProxyBrowser", () => {
           },
         },
       ],
-    } as any);
+    } as any, {
+      capabilityNonce: "bridge_tok",
+    });
 
     expect(out.client).toBe(client);
     expect(createProxyRuntimeMock).toHaveBeenCalledWith({
@@ -324,6 +380,7 @@ describe("connectTunnelProxyBrowser", () => {
     expect(registerProxyControllerWindowMock).toHaveBeenCalledWith({
       runtime,
       allowedOrigins: ["https://app.example.test"],
+      capabilityNonce: "bridge_tok",
     });
   });
 
@@ -343,6 +400,7 @@ describe("connectTunnelProxyBrowser", () => {
     const tunnelHandle = await connectTunnelProxyControllerBrowser({ tunnel_url: "ws://example.invalid" } as any, {
       allowedOrigins: ["https://app.example.test"],
       runtime: { maxWsFrameBytes: 4096 },
+      capabilityNonce: "bridge_tok",
     });
     const artifactHandle = await connectArtifactProxyControllerBrowser({
       ...makeArtifact(),
@@ -365,7 +423,9 @@ describe("connectTunnelProxyBrowser", () => {
           },
         },
       ],
-    } as any);
+    } as any, {
+      capabilityNonce: "bridge_tok",
+    });
 
     expect(createProxyRuntimeMock).toHaveBeenNthCalledWith(1, {
       client: tunnelClient,
@@ -378,10 +438,12 @@ describe("connectTunnelProxyBrowser", () => {
     expect(registerProxyControllerWindowMock).toHaveBeenNthCalledWith(1, {
       runtime: runtime1,
       allowedOrigins: ["https://app.example.test"],
+      capabilityNonce: "bridge_tok",
     });
     expect(registerProxyControllerWindowMock).toHaveBeenNthCalledWith(2, {
       runtime: runtime2,
       allowedOrigins: ["https://app.example.test"],
+      capabilityNonce: "bridge_tok",
     });
 
     tunnelHandle.dispose();

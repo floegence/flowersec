@@ -3,6 +3,8 @@ import { decryptRecord, encryptRecord, maxPlaintextBytes, RecordError } from "./
 import { RECORD_FLAG_APP } from "./constants.js";
 import { u32be } from "../utils/bin.js";
 
+const MAX_UINT64_SEQ = (1n << 64n) - 1n;
+
 function makeFrame(): { key: Uint8Array; noncePrefix: Uint8Array; frame: Uint8Array } {
   const key = new Uint8Array(32).fill(1);
   const noncePrefix = new Uint8Array(4).fill(2);
@@ -22,6 +24,13 @@ describe("record", () => {
     const key = new Uint8Array(32).fill(1);
     const nonce = new Uint8Array(4).fill(2);
     expect(() => encryptRecord(key, nonce, RECORD_FLAG_APP, 1n, new Uint8Array(10), 10)).toThrow(/record too large/);
+  });
+
+  test("encryptRecord rejects sequence numbers outside uint64 range", () => {
+    const key = new Uint8Array(32).fill(1);
+    const nonce = new Uint8Array(4).fill(2);
+    expect(() => encryptRecord(key, nonce, RECORD_FLAG_APP, -1n, new Uint8Array(), 1 << 20)).toThrow(/record seq out of range/);
+    expect(() => encryptRecord(key, nonce, RECORD_FLAG_APP, MAX_UINT64_SEQ + 1n, new Uint8Array(), 1 << 20)).toThrow(/record seq out of range/);
   });
 
   test("decryptRecord validates key and nonce length", () => {
@@ -46,6 +55,7 @@ describe("record", () => {
     expect(() => decryptRecord(key, noncePrefix, badFlag, 1n, 1 << 20)).toThrow(/bad record flag/);
 
     expect(() => decryptRecord(key, noncePrefix, frame, 2n, 1 << 20)).toThrow(/bad seq/);
+    expect(() => decryptRecord(key, noncePrefix, frame, 0n, 1 << 20)).toThrow(/bad seq/);
   });
 
   test("decryptRecord validates length mismatch", () => {

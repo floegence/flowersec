@@ -311,6 +311,56 @@ func TestServerHandshakeTimestampChecks(t *testing.T) {
 	_ = init
 }
 
+func TestServerHandshakeZeroClockSkewIsStrict(t *testing.T) {
+	psk := make([]byte, 32)
+	_, frame := makeInit(t, SuiteX25519HKDFAES256GCM)
+	transport := &scriptedTransport{reads: [][]byte{frame}}
+
+	transport.onWrite = func(respFrame []byte) {
+		_, payload, err := DecodeHandshakeFrame(respFrame, 8*1024)
+		if err != nil {
+			return
+		}
+		var resp e2eev1.E2EE_Resp
+		_ = json.Unmarshal(payload, &resp)
+		ack := e2eev1.E2EE_Ack{
+			HandshakeId:    resp.HandshakeId,
+			TimestampUnixS: uint64(time.Now().Add(time.Second).Unix()),
+			AuthTagB64u:    base64url.Encode(make([]byte, 32)),
+		}
+		b, _ := json.Marshal(ack)
+		transport.reads = append(transport.reads, EncodeHandshakeFrame(HandshakeTypeAck, b))
+	}
+
+	_, err := ServerHandshake(context.Background(), transport, nil, ServerHandshakeOptions{
+		PSK:               psk,
+		ChannelID:         "ch_1",
+		Suite:             SuiteX25519HKDFAES256GCM,
+		InitExpireAtUnixS: time.Now().Add(time.Minute).Unix(),
+		ClockSkew:         0,
+	})
+	if err == nil || !errors.Is(err, ErrTimestampOutOfSkew) {
+		t.Fatalf("expected timestamp skew, got %v", err)
+	}
+}
+
+func TestServerHandshakeRejectsNegativeClockSkew(t *testing.T) {
+	transport := &stubTransport{}
+	_, err := ServerHandshake(context.Background(), transport, nil, ServerHandshakeOptions{
+		PSK:               make([]byte, 32),
+		ChannelID:         "ch_1",
+		Suite:             SuiteX25519HKDFAES256GCM,
+		InitExpireAtUnixS: time.Now().Add(time.Minute).Unix(),
+		ClockSkew:         -time.Second,
+	})
+	if err == nil || !errors.Is(err, ErrInvalidClockSkew) {
+		t.Fatalf("expected invalid clock skew, got %v", err)
+	}
+	if transport.readCalled || transport.writeCalled {
+		t.Fatalf("unexpected transport usage: read=%v write=%v", transport.readCalled, transport.writeCalled)
+	}
+}
+
 func TestServerHandshakeCacheMaxEntries(t *testing.T) {
 	cache := NewServerHandshakeCache()
 	if err := cache.SetLimits(0, 1); err != nil {

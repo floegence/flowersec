@@ -2,6 +2,7 @@ package endpoint_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
 	"github.com/gorilla/websocket"
 )
@@ -227,6 +230,84 @@ func TestAcceptDirectWSResolved_WhitespaceChannelID_ReturnsMissingChannelID(t *t
 			t.Fatalf("expected *endpoint.Error, got %T: %v", err, err)
 		}
 		if fe.Path != endpoint.PathDirect || fe.Stage != endpoint.StageValidate || fe.Code != endpoint.CodeMissingChannelID {
+			t.Fatalf("unexpected error: %+v", fe)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for error")
+	}
+}
+
+func TestAcceptDirectWS_ZeroClockSkewDoesNotUseDefaultAcceptanceWindow(t *testing.T) {
+	t.Parallel()
+
+	origin := "http://example.com"
+	channelID := "ch_1"
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = 1
+	}
+	initExp := time.Now().Add(-2 * time.Second).Unix()
+	errCh := make(chan error, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		defer c.Close()
+
+		_, err = endpoint.AcceptDirectWS(context.Background(), c, endpoint.AcceptDirectOptions{
+			ChannelID:           channelID,
+			PSK:                 psk,
+			Suite:               endpoint.SuiteX25519HKDFAES256GCM,
+			InitExpireAtUnixS:   initExp,
+			ClockSkew:           0,
+			HandshakeTimeout:    durationPtr(2 * time.Second),
+			MaxHandshakePayload: 8 * 1024,
+			MaxRecordBytes:      1 << 20,
+		})
+		errCh <- err
+	}))
+	t.Cleanup(srv.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	info := &directv1.DirectConnectInfo{
+		WsUrl:                    wsURL,
+		ChannelId:                channelID,
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(psk),
+		ChannelInitExpireAtUnixS: initExp,
+		DefaultSuite:             directv1.Suite_X25519_HKDF_SHA256_AES_256_GCM,
+	}
+
+	_, err := client.ConnectDirect(
+		context.Background(),
+		info,
+		client.WithOrigin(origin),
+		client.WithConnectTimeout(2*time.Second),
+		client.WithHandshakeTimeout(2*time.Second),
+		client.WithMaxRecordBytes(1<<20),
+	)
+	if err == nil {
+		t.Fatalf("expected client handshake error")
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatalf("expected error")
+		}
+		var fe *endpoint.Error
+		if !errors.As(err, &fe) {
+			t.Fatalf("expected *endpoint.Error, got %T: %v", err, err)
+		}
+		if fe.Path != endpoint.PathDirect || fe.Stage != endpoint.StageHandshake {
+			t.Fatalf("unexpected error: %+v", fe)
+		}
+		switch fe.Code {
+		case endpoint.CodeTimestampAfterInitExp, endpoint.CodeTimestampOutOfSkew:
+		default:
 			t.Fatalf("unexpected error: %+v", fe)
 		}
 	case <-time.After(2 * time.Second):

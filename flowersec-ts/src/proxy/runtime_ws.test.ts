@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Client } from "../client.js";
 import { u32be } from "../utils/bin.js";
@@ -118,5 +118,60 @@ describe("createProxyRuntime.openWebSocketStream", () => {
     const siblingLen = readU32be(siblingWrite, 0);
     const siblingMeta = JSON.parse(td.decode(siblingWrite.subarray(4, 4 + siblingLen))) as any;
     expect(siblingMeta.headers).toContainEqual({ name: "cookie", value: "sid=root" });
+  });
+
+  it("rejects denied websocket paths before opening a stream or reading cookies", async () => {
+    let openCalls = 0;
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async () => {
+        openCalls++;
+        throw new Error("unexpected openStream");
+      },
+      ping: async () => {},
+      close: () => {}
+    };
+
+    const cookieJar = {
+      getCookieHeader: vi.fn(() => "sid=1"),
+      updateFromSetCookieHeaders: vi.fn(),
+    } as unknown as CookieJar;
+
+    const rt = createProxyRuntime({
+      client,
+      cookieJar,
+      pathPolicy: {
+        allowedPathPrefixes: ["/app/"],
+        deniedWebSocketPathPrefixes: ["/app/admin/"],
+      },
+    });
+
+    await expect(rt.openWebSocketStream("/app/admin/socket?x=1")).rejects.toThrow(/denied/);
+    expect(openCalls).toBe(0);
+    expect(cookieJar.getCookieHeader).not.toHaveBeenCalled();
+  });
+
+  it("uses websocket-specific allowlist when configured", async () => {
+    const wsOpenResp = jsonFrame({ v: PROXY_PROTOCOL_VERSION, conn_id: "x", ok: true, protocol: "" });
+    const stream = new FakeStream([wsOpenResp]);
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async () => stream as any,
+      ping: async () => {},
+      close: () => {}
+    };
+
+    const rt = createProxyRuntime({
+      client,
+      pathPolicy: {
+        allowedPathPrefixes: ["/http-only/"],
+        allowedWebSocketPathPrefixes: ["/ws/"],
+      },
+    });
+
+    await rt.openWebSocketStream("/ws/socket");
+    await expect(rt.openWebSocketStream("/http-only/socket")).rejects.toThrow(/not allowed/);
   });
 });

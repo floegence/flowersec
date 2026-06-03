@@ -46,6 +46,25 @@ func TestLoadIssuerKeysetFileValidations(t *testing.T) {
 	if _, err := LoadIssuerKeysetFile(p); err == nil {
 		t.Fatalf("expected invalid pubkey size error")
 	}
+
+	goodKey := base64url.Encode(make([]byte, ed25519.PublicKeySize))
+	p = writeTempKeyset(t, issuer.TunnelKeysetFile{Keys: []issuer.TunnelKey{
+		{KID: "kid", PubKeyB64: goodKey},
+		{KID: "kid", PubKeyB64: goodKey},
+	}})
+	if _, err := LoadIssuerKeysetFile(p); err == nil {
+		t.Fatalf("expected duplicate kid error")
+	}
+
+	p = writeTempKeyset(t, issuer.TunnelKeysetFile{Keys: []issuer.TunnelKey{{KID: " kid ", PubKeyB64: goodKey}}})
+	if _, err := LoadIssuerKeysetFile(p); err == nil {
+		t.Fatalf("expected whitespace kid error")
+	}
+
+	p = writeTempKeyset(t, issuer.TunnelKeysetFile{Keys: []issuer.TunnelKey{{KID: "kid", PubKeyB64: " " + goodKey}}})
+	if _, err := LoadIssuerKeysetFile(p); err == nil {
+		t.Fatalf("expected whitespace pubkey error")
+	}
 }
 
 func TestIssuerKeysetLookup(t *testing.T) {

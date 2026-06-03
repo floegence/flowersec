@@ -4,6 +4,8 @@ import { SecureChannel } from "./secureChannel.js";
 import { RECORD_FLAG_APP, RECORD_FLAG_PING, RECORD_FLAG_REKEY } from "./constants.js";
 import { deriveRekeyKey } from "./kdf.js";
 
+const MAX_UINT64_SEQ = (1n << 64n) - 1n;
+
 type BinaryTransport = {
   readBinary(): Promise<Uint8Array>;
   writeBinary(frame: Uint8Array): Promise<void>;
@@ -308,5 +310,74 @@ describe("SecureChannel", () => {
     await expect(sc.write(new Uint8Array([2]))).rejects.toThrow(/boom/);
 
     expect(writes.length).toBe(2);
+  });
+
+  test("send sequence exhaustion fails closed before writing", async () => {
+    const writes: Uint8Array[] = [];
+    let readReject: ((e: unknown) => void) | null = null;
+    const transport: BinaryTransport = {
+      async readBinary() {
+        return await new Promise<Uint8Array>((_resolve, reject) => {
+          readReject = reject;
+        });
+      },
+      async writeBinary(frame) {
+        writes.push(frame);
+      },
+      close() {
+        readReject?.(new Error("closed"));
+      }
+    };
+    const sc = new SecureChannel({
+      transport,
+      maxRecordBytes: 1 << 20,
+      maxBufferedBytes: 0,
+      sendKey: new Uint8Array(32).fill(1),
+      recvKey: new Uint8Array(32).fill(1),
+      sendNoncePrefix: new Uint8Array(4),
+      recvNoncePrefix: new Uint8Array(4),
+      rekeyBase: new Uint8Array(32),
+      transcriptHash: new Uint8Array(32),
+      sendDir: 1,
+      recvDir: 2,
+      sendSeq: MAX_UINT64_SEQ
+    });
+
+    await expect(sc.write(new Uint8Array([1]))).rejects.toThrow(/record seq exhausted/);
+    await expect(sc.sendPing()).rejects.toThrow(/record seq exhausted|closed/);
+    expect(writes.length).toBe(0);
+  });
+
+  test("receive sequence exhaustion fails closed without delivering plaintext", async () => {
+    const key = new Uint8Array(32).fill(1);
+    const noncePrefix = new Uint8Array(4).fill(2);
+    const rekeyBase = new Uint8Array(32).fill(3);
+    const transcriptHash = new Uint8Array(32).fill(4);
+    const maxRecordBytes = 1 << 20;
+
+    const { transport, push, close } = makeQueueTransport();
+    const sc = new SecureChannel({
+      transport,
+      maxRecordBytes,
+      maxBufferedBytes: 0,
+      sendKey: key,
+      recvKey: key,
+      sendNoncePrefix: noncePrefix,
+      recvNoncePrefix: noncePrefix,
+      rekeyBase,
+      transcriptHash,
+      sendDir: 1,
+      recvDir: 2,
+      recvSeq: MAX_UINT64_SEQ
+    });
+
+    const appFrame = encryptRecord(key, noncePrefix, RECORD_FLAG_APP, MAX_UINT64_SEQ, new Uint8Array([7]), maxRecordBytes);
+    const readPromise = sc.read();
+    push(appFrame);
+
+    await expect(readPromise).rejects.toThrow(/record seq exhausted/);
+
+    sc.close();
+    close();
   });
 });

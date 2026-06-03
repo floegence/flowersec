@@ -44,6 +44,7 @@ func defaultConnectOptions() connectOptions {
 	return connectOptions{
 		connectTimeout:   defaults.ConnectTimeout,
 		handshakeTimeout: defaults.HandshakeTimeout,
+		clockSkew:        defaults.HandshakeClockSkew,
 	}
 }
 

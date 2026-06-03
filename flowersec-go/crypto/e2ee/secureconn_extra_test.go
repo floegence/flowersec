@@ -424,3 +424,105 @@ func TestSecureChannelRekeyUpdatesSendKey(t *testing.T) {
 		t.Fatalf("expected decrypt with old key to fail")
 	}
 }
+
+func TestSecureChannelSendSeqExhaustionFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		call func(*SecureChannel) error
+	}{
+		{
+			name: "write",
+			call: func(conn *SecureChannel) error {
+				_, err := conn.Write([]byte("hi"))
+				return err
+			},
+		},
+		{
+			name: "ping",
+			call: func(conn *SecureChannel) error {
+				return conn.Ping()
+			},
+		},
+		{
+			name: "rekey",
+			call: func(conn *SecureChannel) error {
+				return conn.Rekey()
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tr := newNeverReadTransport()
+			var key [32]byte
+			var nonce [4]byte
+			keys := RecordKeyState{
+				SendKey:      key,
+				RecvKey:      key,
+				SendNoncePre: nonce,
+				RecvNoncePre: nonce,
+				SendDir:      DirC2S,
+				RecvDir:      DirS2C,
+				SendSeq:      MaxRecordSeq,
+				RecvSeq:      1,
+			}
+			conn := NewSecureChannel(tr, keys, 1<<20, 0)
+
+			err := tt.call(conn)
+			if !errors.Is(err, ErrRecordSeqExhausted) {
+				t.Fatalf("expected ErrRecordSeqExhausted, got %v", err)
+			}
+			if err := conn.Ping(); !errors.Is(err, ErrRecordSeqExhausted) {
+				t.Fatalf("expected sticky ErrRecordSeqExhausted, got %v", err)
+			}
+		})
+	}
+}
+
+func TestSecureChannelRecvSeqExhaustionFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	tr := newRecordingTransport()
+	var key [32]byte
+	var nonce [4]byte
+	keys := RecordKeyState{
+		SendKey:      key,
+		RecvKey:      key,
+		SendNoncePre: nonce,
+		RecvNoncePre: nonce,
+		SendDir:      DirC2S,
+		RecvDir:      DirS2C,
+		SendSeq:      1,
+		RecvSeq:      MaxRecordSeq,
+	}
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
+	defer conn.Close()
+
+	frame, err := EncryptRecord(key, nonce, RecordFlagApp, MaxRecordSeq, []byte("hi"), 1<<20)
+	if err != nil {
+		t.Fatalf("EncryptRecord failed: %v", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 2)
+		_, err := conn.Read(buf)
+		errCh <- err
+	}()
+
+	tr.readCh <- frame
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, ErrRecordSeqExhausted) {
+			t.Fatalf("expected ErrRecordSeqExhausted, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for read error")
+	}
+}

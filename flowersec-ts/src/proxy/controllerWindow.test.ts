@@ -107,6 +107,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
 describe("registerProxyControllerWindow", () => {
   it("forwards fetch bridge messages to runtime.dispatchFetch", () => {
     const targetWindow = new FakeWindow();
+    const expectedSource = {} as Window;
     const runtime = {
       dispatchFetch: vi.fn(),
       openWebSocketStream: vi.fn(),
@@ -117,6 +118,7 @@ describe("registerProxyControllerWindow", () => {
     const handle = registerProxyControllerWindow({
       runtime: runtime as any,
       allowedOrigins: ["https://app.example.test"],
+      expectedSource,
       targetWindow: targetWindow as unknown as Window,
     });
 
@@ -126,7 +128,7 @@ describe("registerProxyControllerWindow", () => {
       origin: "https://app.example.test",
       data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req },
       ports: [channel.port1],
-      source: null,
+      source: expectedSource as MessageEventSource,
     } as MessageEvent);
 
     expect(runtime.dispatchFetch).toHaveBeenCalledTimes(1);
@@ -139,13 +141,14 @@ describe("registerProxyControllerWindow", () => {
       origin: "https://app.example.test",
       data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req },
       ports: [channel.port1],
-      source: null,
+      source: expectedSource as MessageEventSource,
     } as MessageEvent);
     expect(runtime.dispatchFetch).toHaveBeenCalledTimes(1);
   });
 
   it("bridges websocket traffic over MessagePort", async () => {
     const targetWindow = new FakeWindow();
+    const expectedSource = {} as Window;
     const stream = new FakeStream([new Uint8Array([1, 2, 3]), null]);
     const runtime = {
       dispatchFetch: vi.fn(),
@@ -157,6 +160,7 @@ describe("registerProxyControllerWindow", () => {
     registerProxyControllerWindow({
       runtime: runtime as any,
       allowedOrigins: ["https://app.example.test"],
+      expectedSource,
       targetWindow: targetWindow as unknown as Window,
     });
 
@@ -167,7 +171,7 @@ describe("registerProxyControllerWindow", () => {
       origin: "https://app.example.test",
       data: { type: PROXY_WINDOW_WS_OPEN_MSG_TYPE, path: "/ws", protocols: ["demo"] },
       ports: [channel.port1],
-      source: null,
+      source: expectedSource as MessageEventSource,
     } as MessageEvent);
 
     await waitFor(() => runtime.openWebSocketStream.mock.calls.length === 1);
@@ -187,6 +191,7 @@ describe("registerProxyControllerWindow", () => {
 
   it("rejects bridge messages from unexpected origins", () => {
     const targetWindow = new FakeWindow();
+    const expectedSource = {} as Window;
     const runtime = {
       dispatchFetch: vi.fn(),
       openWebSocketStream: vi.fn(),
@@ -197,6 +202,7 @@ describe("registerProxyControllerWindow", () => {
     registerProxyControllerWindow({
       runtime: runtime as any,
       allowedOrigins: ["https://app.example.test"],
+      expectedSource,
       targetWindow: targetWindow as unknown as Window,
     });
 
@@ -205,7 +211,7 @@ describe("registerProxyControllerWindow", () => {
       origin: "https://evil.example.test",
       data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req: { id: "req-1", method: "GET", path: "/", headers: [] } },
       ports: [channel.port1],
-      source: null,
+      source: expectedSource as MessageEventSource,
     } as MessageEvent);
 
     expect(runtime.dispatchFetch).not.toHaveBeenCalled();
@@ -241,6 +247,7 @@ describe("registerProxyControllerWindow", () => {
 
   it("rejects bridge messages when current app origin is not allowlisted", () => {
     const targetWindow = new FakeWindow();
+    const expectedSource = {} as Window;
     const runtime = {
       dispatchFetch: vi.fn(),
       openWebSocketStream: vi.fn(),
@@ -251,6 +258,7 @@ describe("registerProxyControllerWindow", () => {
     registerProxyControllerWindow({
       runtime: runtime as any,
       allowedOrigins: ["https://different.example.test"],
+      expectedSource,
       targetWindow: targetWindow as unknown as Window,
     });
 
@@ -259,9 +267,98 @@ describe("registerProxyControllerWindow", () => {
       origin: "https://app.example.test",
       data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req: { id: "req-3", method: "GET", path: "/", headers: [] } },
       ports: [channel.port1],
-      source: null,
+      source: expectedSource as MessageEventSource,
     } as MessageEvent);
 
     expect(runtime.dispatchFetch).not.toHaveBeenCalled();
+  });
+
+  it("requires expectedSource or capability nonce at registration", () => {
+    const targetWindow = new FakeWindow();
+    const runtime = {
+      dispatchFetch: vi.fn(),
+      openWebSocketStream: vi.fn(),
+      limits: {},
+      dispose: () => {},
+    };
+
+    expect(() =>
+      registerProxyControllerWindow({
+        runtime: runtime as any,
+        allowedOrigins: ["https://app.example.test"],
+        targetWindow: targetWindow as unknown as Window,
+      }),
+    ).toThrow(/expectedSource or capabilityNonce/);
+  });
+
+  it("requires capability nonce when expectedSource is not configured", () => {
+    const targetWindow = new FakeWindow();
+    const runtime = {
+      dispatchFetch: vi.fn(),
+      openWebSocketStream: vi.fn(),
+      limits: {},
+      dispose: () => {},
+    };
+
+    registerProxyControllerWindow({
+      runtime: runtime as any,
+      allowedOrigins: ["https://app.example.test"],
+      capabilityNonce: "bridge_tok",
+      targetWindow: targetWindow as unknown as Window,
+    });
+
+    const req = { id: "req-4", method: "GET", path: "/", headers: [] };
+    targetWindow.emit({
+      origin: "https://app.example.test",
+      data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req },
+      ports: [createFakeMessageChannel().port1],
+      source: null,
+    } as MessageEvent);
+    expect(runtime.dispatchFetch).not.toHaveBeenCalled();
+
+    const channel = createFakeMessageChannel();
+    targetWindow.emit({
+      origin: "https://app.example.test",
+      data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req, capabilityNonce: "bridge_tok" },
+      ports: [channel.port1],
+      source: null,
+    } as MessageEvent);
+    expect(runtime.dispatchFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires both expectedSource and capability nonce when both are configured", () => {
+    const targetWindow = new FakeWindow();
+    const expectedSource = {} as Window;
+    const runtime = {
+      dispatchFetch: vi.fn(),
+      openWebSocketStream: vi.fn(),
+      limits: {},
+      dispose: () => {},
+    };
+
+    registerProxyControllerWindow({
+      runtime: runtime as any,
+      allowedOrigins: ["https://app.example.test"],
+      expectedSource,
+      capabilityNonce: "bridge_tok",
+      targetWindow: targetWindow as unknown as Window,
+    });
+
+    const req = { id: "req-5", method: "GET", path: "/", headers: [] };
+    targetWindow.emit({
+      origin: "https://app.example.test",
+      data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req, capabilityNonce: "bridge_tok" },
+      ports: [createFakeMessageChannel().port1],
+      source: {} as MessageEventSource,
+    } as MessageEvent);
+    expect(runtime.dispatchFetch).not.toHaveBeenCalled();
+
+    targetWindow.emit({
+      origin: "https://app.example.test",
+      data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req, capabilityNonce: "bridge_tok" },
+      ports: [createFakeMessageChannel().port1],
+      source: expectedSource as MessageEventSource,
+    } as MessageEvent);
+    expect(runtime.dispatchFetch).toHaveBeenCalledTimes(1);
   });
 });

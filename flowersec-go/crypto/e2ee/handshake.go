@@ -84,6 +84,7 @@ var (
 	ErrTimestampOutOfSkew    = errors.New("timestamp out of skew")
 	ErrTimestampAfterInitExp = errors.New("timestamp after init_exp")
 	ErrAuthTagMismatch       = errors.New("auth tag mismatch")
+	ErrInvalidClockSkew      = errors.New("invalid clock_skew")
 )
 
 // SetLimits configures cache bounds. A zero value disables the corresponding limit.
@@ -283,8 +284,8 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	if opts.InitExpireAtUnixS <= 0 {
 		return nil, errors.New("missing init_exp")
 	}
-	if opts.ClockSkew == 0 {
-		opts.ClockSkew = 30 * time.Second
+	if opts.ClockSkew < 0 {
+		return nil, ErrInvalidClockSkew
 	}
 
 	var initMsg e2eev1.E2EE_Init
@@ -428,9 +429,6 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 
 	now := time.Now()
 	skew := opts.ClockSkew
-	if skew < 0 {
-		skew = 0
-	}
 	skew = timeutil.NormalizeSkew(skew)
 	ts := time.Unix(int64(ack.TimestampUnixS), 0)
 	if ts.Before(now.Add(-skew)) || ts.After(now.Add(skew)) {

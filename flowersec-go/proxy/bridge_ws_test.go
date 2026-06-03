@@ -145,6 +145,65 @@ func TestBridgeProxyWSRejectsOriginBeforeOpeningRoute(t *testing.T) {
 	}
 }
 
+func TestBridgeProxyWSDefaultOriginRejectsBeforeOpeningRoute(t *testing.T) {
+	bridge, err := NewBridge(BridgeOptions{})
+	if err != nil {
+		t.Fatalf("NewBridge: %v", err)
+	}
+	opened := false
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = bridge.ProxyWS(w, r, openerFunc(func(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+			opened = true
+			return noopBridgeReadWriteCloser{}, nil
+		}), websocket.Upgrader{})
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"https://evil.example.com"}})
+	if err == nil {
+		t.Fatal("expected dial error")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		if resp == nil {
+			t.Fatalf("expected 403 response, got nil resp (err=%v)", err)
+		}
+		t.Fatalf("expected 403 response, got %d", resp.StatusCode)
+	}
+	if opened {
+		t.Fatal("expected route to remain unopened")
+	}
+}
+
+func TestBridgeProxyWSDefaultOriginAllowsNoOriginCompatibility(t *testing.T) {
+	bridge, err := NewBridge(BridgeOptions{})
+	if err != nil {
+		t.Fatalf("NewBridge: %v", err)
+	}
+	opened := false
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = bridge.ProxyWS(w, r, openerFunc(func(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+			opened = true
+			return noopBridgeReadWriteCloser{}, nil
+		}), websocket.Upgrader{})
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	req := httptest.NewRequest(http.MethodGet, server.URL, nil)
+	req.Host = strings.TrimPrefix(server.URL, "http://")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusForbidden {
+		t.Fatal("expected no-Origin request to pass default origin check")
+	}
+	if !opened {
+		t.Fatal("expected route to open for no-Origin request")
+	}
+}
+
 type openerFunc func(ctx context.Context, kind string) (io.ReadWriteCloser, error)
 
 func (fn openerFunc) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {

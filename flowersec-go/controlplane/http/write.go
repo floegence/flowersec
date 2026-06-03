@@ -22,8 +22,15 @@ func WriteErrorEnvelope(w stdhttp.ResponseWriter, status int, code, message stri
 
 func writeJSON(w stdhttp.ResponseWriter, status int, value any) error {
 	w.Header().Set("Content-Type", "application/json")
+	setNoStoreHeaders(w.Header())
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(value)
+}
+
+func setNoStoreHeaders(h stdhttp.Header) {
+	h.Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+	h.Set("Pragma", "no-cache")
+	h.Set("Expires", "0")
 }
 
 func writeRequestError(w stdhttp.ResponseWriter, err error) {

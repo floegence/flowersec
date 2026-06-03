@@ -22,6 +22,7 @@ export type RegisterProxyControllerWindowOptions = Readonly<{
   allowedOrigins: readonly string[];
   targetWindow?: Window;
   expectedSource?: Window | null;
+  capabilityNonce?: string;
 }>;
 
 export type ProxyControllerWindowHandle = Readonly<{
@@ -44,6 +45,28 @@ function cloneChunk(chunk: Uint8Array): ArrayBuffer {
   const out = new Uint8Array(chunk.byteLength);
   out.set(chunk);
   return out.buffer;
+}
+
+function normalizeCapabilityNonce(value: string | undefined): string {
+  if (value == null) return "";
+  const s = String(value);
+  if (s === "") return "";
+  if (s.trim() !== s || /[\s\u0000-\u001f\u007f]/.test(s)) {
+    throw new Error("capabilityNonce must not contain whitespace or control characters");
+  }
+  return s;
+}
+
+function requireBridgeCapability(expectedSource: Window | null | undefined, capabilityNonce: string): void {
+  if (expectedSource == null && capabilityNonce === "") {
+    throw new Error("expectedSource or capabilityNonce is required");
+  }
+}
+
+function hasExpectedCapability(data: unknown, capabilityNonce: string): boolean {
+  if (capabilityNonce === "") return true;
+  if (data == null || typeof data !== "object") return false;
+  return (data as { capabilityNonce?: unknown }).capabilityNonce === capabilityNonce;
 }
 
 function bridgeWebSocket(runtime: ProxyRuntime, msg: ProxyWindowWsOpenMsg, port: MessagePort): void {
@@ -123,6 +146,8 @@ export function registerProxyControllerWindow(opts: RegisterProxyControllerWindo
   if (allowedOrigins.length === 0) {
     throw new Error("allowedOrigins is required");
   }
+  const capabilityNonce = normalizeCapabilityNonce(opts.capabilityNonce);
+  requireBridgeCapability(opts.expectedSource, capabilityNonce);
 
   const targetWindow = opts.targetWindow ?? globalThis.window;
   if (targetWindow == null) {
@@ -135,6 +160,7 @@ export function registerProxyControllerWindow(opts: RegisterProxyControllerWindo
 
     const data = ev.data as ProxyWindowFetchMsg | ProxyWindowWsOpenMsg | unknown;
     if (data == null || typeof data !== "object") return;
+    if (!hasExpectedCapability(data, capabilityNonce)) return;
 
     const type = typeof (data as { type?: unknown }).type === "string" ? (data as { type: string }).type : "";
     const port = ev.ports?.[0];

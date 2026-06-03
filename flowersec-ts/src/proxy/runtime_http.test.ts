@@ -102,6 +102,28 @@ describe("createProxyRuntime (http1)", () => {
     }
   });
 
+  it("sends the configured runtime registration token", async () => {
+    const postMessage = vi.fn((_msg: unknown, transfer?: Transferable[]) => {
+      const port = transfer?.[0] as MessagePort | undefined;
+      port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok: true });
+      port?.close();
+    });
+
+    const sw = new FakeServiceWorker();
+    sw.controller = { postMessage };
+    const oldNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: { serviceWorker: sw }, configurable: true });
+    try {
+      await ensureServiceWorkerRuntimeRegistered({ timeoutMs: 100, runtimeRegistrationToken: "tok_123" });
+      expect(postMessage).toHaveBeenCalledWith(
+        { type: "flowersec-proxy:register-runtime", token: "tok_123" },
+        expect.arrayContaining([expect.any(MessagePort)]),
+      );
+    } finally {
+      if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
+    }
+  });
+
   it("registers the runtime with the active service worker controller and retries on controllerchange", () => {
     const firstPostMessage = vi.fn((_msg: unknown, transfer?: Transferable[]) => {
       const port = transfer?.[0] as MessagePort | undefined;
@@ -138,6 +160,49 @@ describe("createProxyRuntime (http1)", () => {
       sw.emit("controllerchange", {});
       expect(secondPostMessage).toHaveBeenCalledWith(
         { type: "flowersec-proxy:register-runtime" },
+        expect.arrayContaining([expect.any(MessagePort)]),
+      );
+    } finally {
+      if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
+    }
+  });
+
+  it("reuses the runtime registration token when controllerchange retries", () => {
+    const firstPostMessage = vi.fn((_msg: unknown, transfer?: Transferable[]) => {
+      const port = transfer?.[0] as MessagePort | undefined;
+      port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok: true });
+      port?.close();
+    });
+    const secondPostMessage = vi.fn((_msg: unknown, transfer?: Transferable[]) => {
+      const port = transfer?.[0] as MessagePort | undefined;
+      port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok: true });
+      port?.close();
+    });
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async () => {
+        throw new Error("unexpected openStream");
+      },
+      ping: async () => {},
+      close: () => {}
+    };
+
+    const sw = new FakeServiceWorker();
+    sw.controller = { postMessage: firstPostMessage };
+    const oldNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: { serviceWorker: sw }, configurable: true });
+    try {
+      createProxyRuntime({ client, runtimeRegistrationToken: "tok_456" });
+      expect(firstPostMessage).toHaveBeenCalledWith(
+        { type: "flowersec-proxy:register-runtime", token: "tok_456" },
+        expect.arrayContaining([expect.any(MessagePort)]),
+      );
+
+      sw.controller = { postMessage: secondPostMessage };
+      sw.emit("controllerchange", {});
+      expect(secondPostMessage).toHaveBeenCalledWith(
+        { type: "flowersec-proxy:register-runtime", token: "tok_456" },
         expect.arrayContaining([expect.any(MessagePort)]),
       );
     } finally {
@@ -495,6 +560,120 @@ describe("createProxyRuntime (http1)", () => {
       expect(errMsg).toBeTruthy();
       expect(String(errMsg.message)).toContain("external_origin");
       expect(openCalls).toBe(0);
+    } finally {
+      if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
+    }
+  });
+
+  it("rejects denied HTTP paths before opening a stream or reading cookies", async () => {
+    let openCalls = 0;
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async () => {
+        openCalls++;
+        throw new Error("unexpected openStream");
+      },
+      ping: async () => {},
+      close: () => {}
+    };
+
+    const sw = new FakeServiceWorker();
+    const oldNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: { serviceWorker: sw }, configurable: true });
+    try {
+      const cookieJar = {
+        getCookieHeader: vi.fn(() => "sid=1"),
+        updateFromSetCookieHeaders: vi.fn(),
+      } as unknown as CookieJar;
+      createProxyRuntime({
+        client,
+        cookieJar,
+        pathPolicy: {
+          allowedPathPrefixes: ["/app/"],
+          deniedPathPrefixes: ["/app/admin/"],
+        },
+      });
+
+      const portMessages: any[] = [];
+      const port = {
+        onmessage: null as null | ((ev: any) => void),
+        postMessage: (msg: any) => portMessages.push(msg),
+        close: () => {}
+      };
+
+      sw.emit("message", {
+        data: { type: "flowersec-proxy:fetch", req: { id: "req1", method: "GET", path: "/app/admin/panel?x=1", headers: [] } },
+        ports: [port]
+      });
+
+      for (let i = 0; i < 100 && portMessages.find((m) => m?.type === "flowersec-proxy:response_error") == null; i++) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+
+      const errMsg = portMessages.find((m) => m?.type === "flowersec-proxy:response_error");
+      expect(errMsg).toBeTruthy();
+      expect(errMsg.status).toBe(403);
+      expect(String(errMsg.message)).toContain("denied");
+      expect(openCalls).toBe(0);
+      expect(cookieJar.getCookieHeader).not.toHaveBeenCalled();
+    } finally {
+      if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
+    }
+  });
+
+  it("uses a trusted configured external origin before app-supplied external_origin", async () => {
+    const respMeta = jsonFrame({
+      v: PROXY_PROTOCOL_VERSION,
+      request_id: "req1",
+      ok: true,
+      status: 200,
+      headers: [{ name: "content-type", value: "text/plain" }]
+    });
+    const stream = new FakeStream([respMeta, u32be(0)]);
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async () => stream as any,
+      ping: async () => {},
+      close: () => {}
+    };
+
+    const sw = new FakeServiceWorker();
+    const oldNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: { serviceWorker: sw }, configurable: true });
+    try {
+      createProxyRuntime({ client, externalOrigin: "https://trusted.example.test" });
+
+      const portMessages: any[] = [];
+      const port = {
+        onmessage: null as null | ((ev: any) => void),
+        postMessage: (msg: any) => portMessages.push(msg),
+        close: () => {}
+      };
+
+      sw.emit("message", {
+        data: {
+          type: "flowersec-proxy:fetch",
+          req: {
+            id: "req1",
+            method: "GET",
+            path: "/hello",
+            headers: [],
+            external_origin: "https://untrusted.example.test",
+          }
+        },
+        ports: [port]
+      });
+
+      for (let i = 0; i < 100 && portMessages.find((m) => m?.type === "flowersec-proxy:response_end") == null; i++) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+
+      const firstWrite = stream.writes[0]!;
+      const n = readU32be(firstWrite, 0);
+      const reqMeta = JSON.parse(td.decode(firstWrite.subarray(4, 4 + n))) as any;
+      expect(reqMeta.external_origin).toBe("https://trusted.example.test");
     } finally {
       if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
     }

@@ -77,6 +77,13 @@ The handshake uses:
 - An ephemeral ECDH exchange (suite dependent)
 - A transcript hash binding the session keys and rekeys
 
+Clock-skew semantics:
+
+- Implementations may expose a convenience default when callers omit the clock-skew option.
+- Once normalized and passed to the E2EE handshake, `clock_skew = 0` means exact timestamp validation, not "use default".
+- Negative clock skew is invalid.
+- Endpoints that use zero skew should expect legitimate connections to fail unless their clocks are synchronized tightly enough for second-level timestamp checks.
+
 Current implementation:
 
 - Go: `flowersec-go/crypto/e2ee/handshake.go`
@@ -105,6 +112,10 @@ Nonces are 12 bytes:
 
 - `nonce_prefix` (4 bytes) derived from the handshake keys
 - `seq` (8 bytes) big-endian
+
+Sequence numbers are monotonic per direction.
+If an implementation would wrap or exhaust the `uint64` record sequence space, it MUST stop sending records and fail the secure connection closed.
+It MUST NOT reuse a nonce/key pair by wrapping the sequence number.
 
 Current implementation:
 

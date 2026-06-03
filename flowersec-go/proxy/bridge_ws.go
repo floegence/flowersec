@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -210,8 +211,20 @@ func containsString(items []string, target string) bool {
 }
 
 func wsUpgraderCheckOriginDenied(upgrader websocket.Upgrader, r *http.Request) bool {
-	if upgrader.CheckOrigin == nil {
+	if upgrader.CheckOrigin != nil {
+		return !upgrader.CheckOrigin(r)
+	}
+	return !defaultWSCheckOrigin(r)
+}
+
+func defaultWSCheckOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
 		return false
 	}
-	return !upgrader.CheckOrigin(r)
+	return strings.EqualFold(u.Host, r.Host)
 }

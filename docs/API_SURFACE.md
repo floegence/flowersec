@@ -113,6 +113,11 @@ Recommended integration entrypoints:
 - `github.com/floegence/flowersec/flowersec-go/controlplane/issuer`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/token`
+- `github.com/floegence/flowersec/flowersec-go/tunnel/server`
+  - `server.Config`
+  - `server.ReplayCache`
+  - `server.TokenUseCache`
+  - `server.NewTokenUseCache(...)`
 
 Stable generated protocol packages:
 

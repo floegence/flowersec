@@ -26,6 +26,7 @@ export type RegisterProxyAppWindowOptions = Readonly<{
   controllerWindow?: Window | null;
   targetWindow?: Window;
   maxWsFrameBytes?: number;
+  capabilityNonce?: string;
 }>;
 
 export type ProxyAppWindowHandle = Readonly<{
@@ -86,6 +87,16 @@ function postFetchError(port: MessagePort, message: string): void {
   }
 }
 
+function normalizeCapabilityNonce(value: string | undefined): string {
+  if (value == null) return "";
+  const s = String(value);
+  if (s === "") return "";
+  if (s.trim() !== s || /[\s\u0000-\u001f\u007f]/.test(s)) {
+    throw new Error("capabilityNonce must not contain whitespace or control characters");
+  }
+  return s;
+}
+
 export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): ProxyAppWindowHandle {
   const controllerOrigin = String(opts.controllerOrigin ?? "").trim();
   if (controllerOrigin === "") {
@@ -94,6 +105,7 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
 
   const targetWindow = resolveTargetWindow(opts.targetWindow);
   const controllerWindow = resolveControllerWindow(targetWindow, opts.controllerWindow);
+  const capabilityNonce = normalizeCapabilityNonce(opts.capabilityNonce);
 
   const sw = targetWindow.navigator?.serviceWorker;
   const onServiceWorkerMessage = (ev: MessageEvent) => {
@@ -106,7 +118,11 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
 
     try {
       controllerWindow.postMessage(
-        { type: PROXY_WINDOW_FETCH_MSG_TYPE, req: (data as ProxyWindowFetchForwardMsg).req } satisfies ProxyWindowFetchMsg,
+        {
+          type: PROXY_WINDOW_FETCH_MSG_TYPE,
+          req: (data as ProxyWindowFetchForwardMsg).req,
+          ...(capabilityNonce === "" ? {} : { capabilityNonce }),
+        } satisfies ProxyWindowFetchMsg,
         controllerOrigin,
         [port],
       );
@@ -175,6 +191,7 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
               type: PROXY_WINDOW_WS_OPEN_MSG_TYPE,
               path,
               ...(wsOpts.protocols === undefined ? {} : { protocols: wsOpts.protocols }),
+              ...(capabilityNonce === "" ? {} : { capabilityNonce }),
             } satisfies ProxyWindowWsOpenMsg,
             controllerOrigin,
             [channel.port2],

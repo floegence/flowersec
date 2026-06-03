@@ -342,6 +342,9 @@ Rules:
 - The server endpoint MUST set the upstream WebSocket `Origin` header to a fixed, integration-provided value.
   - The client endpoint MUST NOT control the upstream Origin.
   - Upstream apps that enforce Origin MUST allow that configured Origin.
+- Browser-facing gateways and bridges MUST validate the incoming browser WebSocket `Origin` before opening an upstream route or Flowersec stream.
+  - Rejections should happen before route selection performs upstream work.
+  - This precheck is separate from the fixed upstream `Origin` used by the server endpoint when dialing the local upstream app.
 - In runtime mode, `cookie` MUST come from the proxy runtime CookieJar and MUST NOT be copied from the browser cookie store.
 - In gateway mode, `cookie` MAY come from the inbound browser `Cookie` header of the gateway origin.
 - Hop-by-hop / upgrade headers are not accepted from the client (`upgrade`, `connection`, `sec-websocket-key`, ...).
@@ -377,6 +380,12 @@ Runtime mode is meant to proxy an upstream web app (for example code-server) wit
 Requirements:
 
 - HTTP resource requests MUST be intercepted by a Service Worker (SW). Patching `fetch` / `XMLHttpRequest` is not sufficient for browser-native resource loads (`<script src>`, `<link>`, `<img>`, navigation).
+- The proxy SW scope is security-sensitive because same-origin Service Workers can control navigations and subresource requests inside their scope.
+  - Register the proxy SW on the narrowest same-origin scope that still covers the proxied app.
+  - Keep controlplane/auth UI outside that scope, or configure passthrough/path-prefix rules so privileged bootstrap endpoints are never proxied.
+  - Same-origin runtime registration is also security-sensitive: use a high-entropy `runtimeRegistrationToken` and, when possible, a `runtimeClientPathPrefix` so an unrelated controlled same-origin page cannot become the active proxy runtime.
+  - Existing browser-controlled pages may need a hard reload after SW registration before they are controlled; this compatibility behavior is expected and should be handled by the helper/guard flow rather than by broadening SW scope.
+  - If another first-party SW already owns the same scope, treat it as a deployment conflict. Do not silently replace product-critical SW behavior unless the integration has an explicit migration/repair policy.
 - WebSocket traffic MUST be patched in the proxied app JS context (a SW cannot intercept WebSocket).
   - This repository provides `installWebSocketPatch(...)` in `@floegence/flowersec-core/proxy`.
 - Upstream apps MUST NOT register their own Service Worker within the proxied scope (conflicts with the proxy SW).
@@ -397,13 +406,25 @@ Requirements:
   - If your app needs extra fetch bridge message types (for example `redeven:proxy_fetch`), configure
     `createProxyServiceWorkerScript({ forwardFetchMessageTypes: [...] })` or use
     `createProxyIntegrationServiceWorkerScript(...)` with plugins.
+- Runtime path policy should be explicit:
+  - `pathPolicy.allowedPathPrefixes` / `pathPolicy.deniedPathPrefixes` constrain HTTP fetches.
+  - `pathPolicy.allowedWebSocketPathPrefixes` / `pathPolicy.deniedWebSocketPathPrefixes` constrain patched WebSocket opens.
+  - Deny rules take precedence; allow rules fail closed when configured.
+  - Prefixes are path-only, root-relative values and MUST NOT include scheme, host, query, whitespace, or `//`.
+- `external_origin` is trusted only when it is derived by the generated same-origin SW or supplied through an explicit trusted runtime option.
+  - The runtime may set `externalOrigin` to a deployment-owned origin when the app is mounted behind a stable external URL.
+  - A runtime-level trusted `externalOrigin` override takes precedence over app-supplied bridge metadata.
+  - Do not let arbitrary app-window messages choose `external_origin`; treat it as policy context for the fixed upstream target, not as routing input.
 - If the upstream app must run on a different origin from the controller/runtime window, use the cross-origin controller/app split:
-  - The controller origin owns `createProxyRuntime(...)` and exposes only a narrow bridge with `registerProxyControllerWindow({ runtime, allowedOrigins })`.
+  - The controller origin owns `createProxyRuntime(...)` and exposes only a narrow bridge with `registerProxyControllerWindow({ runtime, allowedOrigins, expectedSource })` or `registerProxyControllerWindow({ runtime, allowedOrigins, capabilityNonce })`.
   - The app origin registers `registerProxyAppWindow({ controllerOrigin })`, which exposes a runtime-compatible object limited to `openWebSocketStream(...)` plus `limits`.
   - For the app-origin Service Worker, generate the script with
     `createProxyServiceWorkerScript({ windowTarget: "request_client", windowClientMessageType: "flowersec-proxy:window_fetch" })`
     so SW fetches are routed back to the controlled app window and then forwarded to the controller window.
   - This mode is intentionally narrower than same-origin runtime globals: the app origin never receives the raw `ProxyRuntime` object or its internal state.
+  - `controllerBridge.allowedOrigins` is mandatory and must list the app origins allowed to post bridge messages.
+  - Origin-only controller bridge registration is rejected; use `expectedSource` when the controller can identify the app iframe/window.
+  - Use `capabilityNonce` when the app source is not available at registration time or the embedding relationship is not uniquely identified by source alone. The app window and controller window must present the same high-entropy nonce; messages without it are ignored.
 
 Artifact-first helper boundary:
 
@@ -411,6 +432,8 @@ Artifact-first helper boundary:
 - `connectArtifactProxyControllerBrowser(...)` consumes `proxy.runtime@1` with `mode = "controller_bridge"`.
 - `allowedOrigins` is the frozen controller-bridge security input.
 - deployment-specific path details stay caller-provided or boot-payload-specific; they are not frozen as proxy helper API surface.
+- `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin`, and `capabilityNonce` stay explicit options; they are not added to the frozen `proxy.runtime@1` schema.
+- If these controls need to become artifact-carried stable fields, introduce a future `proxy.runtime@2` with a reviewed manifest instead of extending v1 in place.
 - service-worker registration details may still be caller-provided overrides even when the artifact scope pre-populates them.
 - direct transport is not a stable proxy helper path in v0.19.x; the artifact-first helpers are tunnel-first browser integrations.
 - artifact fetch is a separate controlplane contract; fetching a `connect_artifact` does not imply that a deployment must introduce a plaintext gateway component.
@@ -424,6 +447,7 @@ Requirements and boundaries:
 - The gateway is a plaintext component by design. It MUST be treated as trusted (see `docs/THREAT_MODEL.md`).
 - The gateway MUST enforce a browser boundary for both HTTP and WebSocket traffic before opening an upstream Flowersec stream.
   - For HTTP, unsafe methods and credentialed requests MUST fail closed unless the browser boundary indicates an allowed same-origin/allowed-origin request.
+  - For WebSocket, the browser `Origin` precheck MUST run before opening the route/stream to the server endpoint.
   - When the browser sends an HTTP Origin header, the gateway MUST preserve that Origin upstream.
   - This browser-facing policy is separate from the tunnel attach Origin policy.
 - The gateway origin MUST be on a dedicated cookie scope (for example a separate registrable domain) from any product/controlplane authentication context.

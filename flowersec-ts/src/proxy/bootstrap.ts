@@ -64,6 +64,7 @@ export type ConnectTunnelProxyControllerBrowserOptions = Readonly<{
   allowedOrigins: RegisterProxyControllerWindowOptions["allowedOrigins"];
   targetWindow?: RegisterProxyControllerWindowOptions["targetWindow"];
   expectedSource?: RegisterProxyControllerWindowOptions["expectedSource"];
+  capabilityNonce?: RegisterProxyControllerWindowOptions["capabilityNonce"];
 }>;
 
 export type ConnectTunnelProxyControllerBrowserHandle = Readonly<{
@@ -78,6 +79,7 @@ export type ConnectArtifactProxyControllerBrowserOptions = Readonly<{
   allowedOrigins?: RegisterProxyControllerWindowOptions["allowedOrigins"];
   targetWindow?: RegisterProxyControllerWindowOptions["targetWindow"];
   expectedSource?: RegisterProxyControllerWindowOptions["expectedSource"];
+  capabilityNonce?: RegisterProxyControllerWindowOptions["capabilityNonce"];
 }>;
 
 function scopeRuntimeToIntegrationOptions(
@@ -158,6 +160,7 @@ function connectProxyControllerClient(
     allowedOrigins: RegisterProxyControllerWindowOptions["allowedOrigins"];
     targetWindow?: RegisterProxyControllerWindowOptions["targetWindow"];
     expectedSource?: RegisterProxyControllerWindowOptions["expectedSource"];
+    capabilityNonce?: RegisterProxyControllerWindowOptions["capabilityNonce"];
   }>
 ): ConnectTunnelProxyControllerBrowserHandle {
   let runtime: ProxyRuntime | null = null;
@@ -173,6 +176,7 @@ function connectProxyControllerClient(
       allowedOrigins: opts.allowedOrigins,
       ...(opts.targetWindow === undefined ? {} : { targetWindow: opts.targetWindow }),
       ...(opts.expectedSource === undefined ? {} : { expectedSource: opts.expectedSource }),
+      ...(opts.capabilityNonce === undefined ? {} : { capabilityNonce: opts.capabilityNonce }),
     });
   } catch (error) {
     try {
@@ -231,5 +235,6 @@ export async function connectArtifactProxyControllerBrowser(
     allowedOrigins: opts.allowedOrigins ?? scope.controllerBridge.allowedOrigins,
     ...(opts.targetWindow === undefined ? {} : { targetWindow: opts.targetWindow }),
     ...(opts.expectedSource === undefined ? {} : { expectedSource: opts.expectedSource }),
+    ...(opts.capabilityNonce === undefined ? {} : { capabilityNonce: opts.capabilityNonce }),
   });
 }

@@ -111,6 +111,17 @@ export type ProxyServiceWorkerScriptOptions = Readonly<{
   // so an app-origin page can forward fetches to a controller-origin runtime.
   windowClientMessageType?: string;
 
+  // Optional high-entropy token required by "flowersec-proxy:register-runtime".
+  //
+  // Leave unset for compatibility with static Service Worker deployments. When set, only runtime clients that
+  // present the same token are accepted, and later foreign registrations are rejected.
+  runtimeRegistrationToken?: string;
+
+  // Optional same-origin runtime client pathname prefix allowed to register as the runtime target.
+  //
+  // Example: "/_redeven_boot/"
+  runtimeClientPathPrefix?: string;
+
   // Optional conflict hints for integrations that need to preserve specific Service Worker scripts.
   // This field is informational for generated scripts (for debugging/diagnostics) and does not
   // change runtime behavior by itself.
@@ -166,6 +177,15 @@ function normalizeMessageTypeList(name: string, input: readonly string[] | undef
   return Array.from(new Set(out));
 }
 
+function normalizeOptionalToken(name: string, input: string | undefined): string {
+  if (input == null) return "";
+  const s = String(input);
+  if (s === "") return "";
+  if (s.trim() !== s) throw new Error(`${name} must not contain leading or trailing whitespace`);
+  if (/[\s\u0000-\u001f\u007f]/.test(s)) throw new Error(`${name} must not contain whitespace or control characters`);
+  return s;
+}
+
 const defaultMaxInjectHTMLBytes = 2 * 1024 * 1024;
 
 function normalizeMaxBytes(name: string, v: unknown, defaultValue: number): number {
@@ -211,6 +231,8 @@ export function createProxyServiceWorkerScript(opts: ProxyServiceWorkerScriptOpt
     if (/[\r\n]/.test(normalized)) throw new Error("windowClientMessageType must not contain newline");
     return normalized;
   })();
+  const runtimeRegistrationToken = normalizeOptionalToken("runtimeRegistrationToken", opts.runtimeRegistrationToken);
+  const runtimeClientPathPrefix = normalizePathPrefix("runtimeClientPathPrefix", opts.runtimeClientPathPrefix);
 
   const injectHTML = opts.injectHTML ?? null;
 
@@ -271,6 +293,8 @@ const MAX_INJECT_HTML_BYTES = ${JSON.stringify(maxInjectHTMLBytes)};
 const FORWARD_FETCH_MESSAGE_TYPES = new Set(${JSON.stringify(forwardFetchMessageTypes)});
 const WINDOW_TARGET = ${JSON.stringify(windowTarget)};
 const WINDOW_CLIENT_MESSAGE_TYPE = ${JSON.stringify(windowClientMessageType)};
+const RUNTIME_REGISTRATION_TOKEN = ${JSON.stringify(runtimeRegistrationToken)};
+const RUNTIME_CLIENT_PATH_PREFIX = ${JSON.stringify(runtimeClientPathPrefix)};
 const CONFLICT_HINT_KEEP_SCRIPT_SUFFIXES = ${JSON.stringify(keepScriptPathSuffixes)};
 
 const INJECT_STRIP_HEADER_NAMES = new Set(["content-length", "etag", "last-modified", "content-md5"]);
@@ -292,13 +316,40 @@ self.addEventListener("message", (event) => {
   if (!data || typeof data !== "object") return;
   const msgType = typeof data.type === "string" ? data.type : "";
   if (msgType === "flowersec-proxy:register-runtime") {
-    const ok = Boolean(event.source && typeof event.source.id === "string");
-    if (ok) runtimeClientId = event.source.id;
-    const port = event.ports && event.ports[0];
-    if (port) {
-      try { port.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok }); } catch {}
-      try { port.close(); } catch {}
-    }
+    event.waitUntil((async () => {
+      const sourceId = event.source && typeof event.source.id === "string" ? event.source.id : "";
+      let ok = sourceId !== "";
+      if (ok && RUNTIME_REGISTRATION_TOKEN) {
+        ok = typeof data.token === "string" && data.token === RUNTIME_REGISTRATION_TOKEN;
+      }
+      if (ok && RUNTIME_CLIENT_PATH_PREFIX) {
+        const c = await self.clients.get(sourceId);
+        if (!c || typeof c.url !== "string") {
+          ok = false;
+        } else {
+          try {
+            const u = new URL(c.url);
+            ok = u.origin === self.location.origin && u.pathname.startsWith(RUNTIME_CLIENT_PATH_PREFIX);
+          } catch {
+            ok = false;
+          }
+        }
+      }
+      if (ok && runtimeClientId && runtimeClientId !== sourceId) {
+        const existing = await self.clients.get(runtimeClientId);
+        if (existing) {
+          ok = false;
+        } else {
+          runtimeClientId = null;
+        }
+      }
+      if (ok) runtimeClientId = sourceId;
+      const port = event.ports && event.ports[0];
+      if (port) {
+        try { port.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok }); } catch {}
+        try { port.close(); } catch {}
+      }
+    })());
     return;
   }
   if (!FORWARD_FETCH_MESSAGE_TYPES.has(msgType)) return;

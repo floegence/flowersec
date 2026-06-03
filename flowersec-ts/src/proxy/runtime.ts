@@ -28,7 +28,7 @@ type ProxyFetchReq = Readonly<{
 
 type ProxyFetchMsg = Readonly<{ type: "flowersec-proxy:fetch"; req: ProxyFetchReq }>;
 
-type ProxyServiceWorkerRegisterMsg = Readonly<{ type: "flowersec-proxy:register-runtime" }>;
+type ProxyServiceWorkerRegisterMsg = Readonly<{ type: "flowersec-proxy:register-runtime"; token?: string }>;
 type ProxyServiceWorkerRegisterAckMsg = Readonly<{ type: "flowersec-proxy:register-runtime-ack"; ok: boolean }>;
 
 type ProxyAbortMsg = Readonly<{ type: "flowersec-proxy:abort" }>;
@@ -37,6 +37,10 @@ type ProxyRespMetaMsg = Readonly<{ type: "flowersec-proxy:response_meta"; status
 type ProxyRespChunkMsg = Readonly<{ type: "flowersec-proxy:response_chunk"; data: ArrayBuffer }>;
 type ProxyRespEndMsg = Readonly<{ type: "flowersec-proxy:response_end" }>;
 type ProxyRespErrMsg = Readonly<{ type: "flowersec-proxy:response_error"; status: number; message: string }>;
+
+class ProxyRuntimePolicyError extends Error {
+  readonly status = 403;
+}
 
 export type ProxyRuntimeLimits = Readonly<{
   maxJsonFrameBytes: number;
@@ -55,6 +59,13 @@ export type ProxyRuntime = Readonly<{
   ) => Promise<Readonly<{ stream: YamuxStream; protocol: string }>>;
 }>;
 
+export type ProxyRuntimePathPolicy = Readonly<{
+  allowedPathPrefixes?: readonly string[];
+  deniedPathPrefixes?: readonly string[];
+  allowedWebSocketPathPrefixes?: readonly string[];
+  deniedWebSocketPathPrefixes?: readonly string[];
+}>;
+
 export type ProxyRuntimeOptions = Readonly<{
   client: Client;
   maxJsonFrameBytes?: number;
@@ -67,10 +78,14 @@ export type ProxyRuntimeOptions = Readonly<{
   extraResponseHeaders?: readonly string[];
   extraWsHeaders?: readonly string[];
   cookieJar?: CookieJar;
+  pathPolicy?: ProxyRuntimePathPolicy;
+  externalOrigin?: string;
+  runtimeRegistrationToken?: string;
 }>;
 
 export type EnsureServiceWorkerRuntimeRegisteredOptions = Readonly<{
   timeoutMs?: number;
+  runtimeRegistrationToken?: string;
 }>;
 
 function randomB64u(bytes: number): string {
@@ -92,9 +107,13 @@ function pathOnly(path: string): string {
   return p;
 }
 
-function cookiePathFromRequestPath(path: string): string {
+function requestPathname(path: string): string {
   const q = path.indexOf("?");
   return q >= 0 ? path.slice(0, q) : path;
+}
+
+function cookiePathFromRequestPath(path: string): string {
+  return requestPathname(path);
 }
 
 function normalizeTimeoutMs(timeoutMs: number | undefined): number {
@@ -121,6 +140,58 @@ function normalizeExternalOrigin(externalOriginRaw: string | undefined): string 
     throw new Error("external_origin must be an origin without credentials, path, query, or fragment");
   }
   return parsed.origin;
+}
+
+function normalizeOptionalToken(name: string, input: string | undefined): string | undefined {
+  if (input == null) return undefined;
+  const s = String(input);
+  if (s === "") return undefined;
+  if (s.trim() !== s || /[\s\u0000-\u001f\u007f]/.test(s)) {
+    throw new Error(`${name} must not contain whitespace or control characters`);
+  }
+  return s;
+}
+
+function normalizePathPolicyPrefixes(name: string, input: readonly string[] | undefined): string[] {
+  const out: string[] = [];
+  if (input == null || input.length === 0) return out;
+  for (const raw of input) {
+    const s = pathOnly(String(raw ?? ""));
+    if (s.includes("?")) throw new Error(`${name} must not include query`);
+    if (!out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
+function normalizePathPolicy(policy: ProxyRuntimePathPolicy | undefined): Required<ProxyRuntimePathPolicy> {
+  return {
+    allowedPathPrefixes: normalizePathPolicyPrefixes("pathPolicy.allowedPathPrefixes", policy?.allowedPathPrefixes),
+    deniedPathPrefixes: normalizePathPolicyPrefixes("pathPolicy.deniedPathPrefixes", policy?.deniedPathPrefixes),
+    allowedWebSocketPathPrefixes: normalizePathPolicyPrefixes("pathPolicy.allowedWebSocketPathPrefixes", policy?.allowedWebSocketPathPrefixes),
+    deniedWebSocketPathPrefixes: normalizePathPolicyPrefixes("pathPolicy.deniedWebSocketPathPrefixes", policy?.deniedWebSocketPathPrefixes),
+  };
+}
+
+function assertPathPolicyAllows(
+  kind: "http" | "websocket",
+  path: string,
+  policy: Required<ProxyRuntimePathPolicy>
+): void {
+  const pathname = requestPathname(path);
+  const denied = kind === "websocket" ? [...policy.deniedPathPrefixes, ...policy.deniedWebSocketPathPrefixes] : policy.deniedPathPrefixes;
+  for (const prefix of denied) {
+    if (pathname.startsWith(prefix)) throw new ProxyRuntimePolicyError(`${kind} path is denied by proxy runtime policy`);
+  }
+
+  const allowed =
+    kind === "websocket" && policy.allowedWebSocketPathPrefixes.length > 0
+      ? policy.allowedWebSocketPathPrefixes
+      : policy.allowedPathPrefixes;
+  if (allowed.length === 0) return;
+  for (const prefix of allowed) {
+    if (pathname.startsWith(prefix)) return;
+  }
+  throw new ProxyRuntimePolicyError(`${kind} path is not allowed by proxy runtime policy`);
 }
 
 function normalizeMaxBytes(name: string, v: number | undefined, defaultValue: number): number {
@@ -187,9 +258,15 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
   const extraRequestHeaders = opts.extraRequestHeaders ?? [];
   const extraResponseHeaders = opts.extraResponseHeaders ?? [];
   const extraWsHeaders = opts.extraWsHeaders ?? [];
+  const pathPolicy = normalizePathPolicy(opts.pathPolicy);
+  const externalOriginOverride = normalizeExternalOrigin(opts.externalOrigin);
+  const runtimeRegistrationToken = normalizeOptionalToken("runtimeRegistrationToken", opts.runtimeRegistrationToken);
 
   const registerRuntime = () => {
-    void ensureServiceWorkerRuntimeRegistered({ timeoutMs: 2_000 }).catch(() => {
+    void ensureServiceWorkerRuntimeRegistered({
+      timeoutMs: 2_000,
+      ...(runtimeRegistrationToken === undefined ? {} : { runtimeRegistrationToken }),
+    }).catch(() => {
       // Best-effort: controllerchange will retry once the active Service Worker is ready.
     });
   };
@@ -223,8 +300,9 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
     void (async () => {
       try {
         const path = pathOnly(req.path);
+        assertPathPolicyAllows("http", path, pathPolicy);
         const requestID = req.id.trim() !== "" ? req.id : randomB64u(18);
-        const externalOrigin = normalizeExternalOrigin(req.external_origin);
+        const externalOrigin = externalOriginOverride ?? normalizeExternalOrigin(req.external_origin);
         stream = await client.openStream(PROXY_KIND_HTTP1, { signal: ac.signal });
         const reader = createByteReader(stream, { signal: ac.signal });
 
@@ -279,7 +357,8 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
         stream = null;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        port.postMessage({ type: "flowersec-proxy:response_error", status: 502, message: msg } satisfies ProxyRespErrMsg);
+        const status = e instanceof ProxyRuntimePolicyError ? e.status : 502;
+        port.postMessage({ type: "flowersec-proxy:response_error", status, message: msg } satisfies ProxyRespErrMsg);
         try {
           stream?.reset(new Error(msg));
         } catch {
@@ -300,6 +379,7 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
     wsOpts: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }> = {}
   ): Promise<Readonly<{ stream: YamuxStream; protocol: string }>> {
     const path = pathOnly(pathRaw);
+    assertPathPolicyAllows("websocket", path, pathPolicy);
     const openOpts = wsOpts.signal ? { signal: wsOpts.signal } : undefined;
     const stream = await client.openStream(PROXY_KIND_WS, openOpts);
     const reader = createByteReader(stream, openOpts);
@@ -344,6 +424,7 @@ export async function ensureServiceWorkerRuntimeRegistered(
   if (!ctl || typeof ctl.postMessage !== "function") return;
 
   const timeoutMs = Math.max(0, Math.floor(opts.timeoutMs ?? 2_000));
+  const runtimeRegistrationToken = normalizeOptionalToken("runtimeRegistrationToken", opts.runtimeRegistrationToken);
   const ch = new MessageChannel();
 
   await new Promise<void>((resolve, reject) => {
@@ -389,7 +470,10 @@ export async function ensureServiceWorkerRuntimeRegistered(
     }
 
     try {
-      ctl.postMessage({ type: "flowersec-proxy:register-runtime" } satisfies ProxyServiceWorkerRegisterMsg, [ch.port2]);
+      ctl.postMessage({
+        type: "flowersec-proxy:register-runtime",
+        ...(runtimeRegistrationToken === undefined ? {} : { token: runtimeRegistrationToken }),
+      } satisfies ProxyServiceWorkerRegisterMsg, [ch.port2]);
     } catch (error) {
       finish(error);
     }

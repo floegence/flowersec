@@ -100,6 +100,10 @@ Stable in v0.19.x:
 - critical fail-fast meaning
 - `proxy.runtime@1` when consumed by the stable proxy helper entrypoints
 
+`proxy.runtime@1` is intentionally frozen narrowly.
+Deployment hardening controls such as runtime path policy, runtime registration tokens, trusted external-origin overrides, and bridge capability nonces belong to explicit helper/runtime options in v0.19.x.
+They must not be added to the v1 scope payload or manifest as an in-place extension; artifact-carried versions require a future reviewed scope version such as `proxy.runtime@2`.
+
 Experimental in v0.19.x:
 
 - public resolver registration APIs used by generic `connect(...)`

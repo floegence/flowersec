@@ -27,12 +27,14 @@ export type ProxyWindowFetchForwardMsg = Readonly<{
 export type ProxyWindowFetchMsg = Readonly<{
   type: typeof PROXY_WINDOW_FETCH_MSG_TYPE;
   req: ProxyWindowFetchRequest;
+  capabilityNonce?: string;
 }>;
 
 export type ProxyWindowWsOpenMsg = Readonly<{
   type: typeof PROXY_WINDOW_WS_OPEN_MSG_TYPE;
   path: string;
   protocols?: readonly string[];
+  capabilityNonce?: string;
 }>;
 
 export type ProxyWindowWsOpenAckMsg = Readonly<{
