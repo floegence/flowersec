@@ -74,7 +74,7 @@ Flowersec v0.19.x recommends an artifact-first integration path documented in:
 | 🛡️ Deploy the proxy gateway | [`docs/PROXY_GATEWAY_DEPLOYMENT.md`](docs/PROXY_GATEWAY_DEPLOYMENT.md) |
 | 🔐 Review trust boundaries | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) |
 
-![Flowersec secure connection patterns](docs/flowersec-connection-patterns.jpeg)
+![Flowersec secure connection patterns](docs/flowersec-connection-patterns-whiteboard.png)
 
 ## ✨ Why teams use Flowersec
 
@@ -97,7 +97,7 @@ Flowersec v0.19.x recommends an artifact-first integration path documented in:
 ## 👤 What end users experience
 
 1. Open a web app or operator console
-2. Fetch a one-time grant or direct connect info
+2. Prepare direct connect info, or fetch tunnel grants from your controlplane
 3. Connect directly to the server endpoint or through a tunnel
 4. Establish an end-to-end encrypted, multiplexed session
 5. Use the remote app through the familiar browser direct-access experience, with page loads, HTTP requests, and WebSocket updates behaving naturally
@@ -109,11 +109,14 @@ Flowersec v0.19.x recommends an artifact-first integration path documented in:
 - **Direct mode**
   - The client connects directly to the server WebSocket endpoint.
   - Best when the server endpoint is reachable and you want the shortest path.
+  - No online controlplane is required for the direct data path.
   - The encrypted channel starts immediately after the WebSocket connection.
 
 - **Tunnel mode**
-  - The client and server endpoint attach to a tunnel with one-time grants.
+  - The controlplane issues one-time grants to the client and server endpoint.
+  - The client and server endpoint use those grants to attach to the same tunnel.
   - Best when you need rendezvous, NAT-friendly connection setup, or a relay hop.
+  - The controlplane is setup-only; it is not in the end-to-end encrypted data path.
   - The tunnel forwards encrypted bytes; it does not terminate the end-to-end encrypted channel.
   - The relay is the included open-source Flowersec tunnel that you can self-host, rather than a required third-party tunnel dependency.
 
@@ -327,7 +330,7 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 - **Untrusted tunnel**: in tunnel mode, the tunnel can pair endpoints and forward bytes, but it cannot decrypt application payloads after the encrypted session is established.
 - **Use `wss://` in production**: the attach layer is plaintext before E2EE starts, so production deployments must use TLS.
 - **Origin checks matter**: tunnel and direct servers require an explicit Origin allow-list (or a custom origin checker) for browser traffic.
-- **Direct mode is simpler when reachable**: use it when the server endpoint can be reached directly and you do not need a relay hop.
+- **Direct mode is simpler when reachable**: use it when the server endpoint can be reached directly and you do not need a relay hop or online controlplane setup.
 - **Runtime vs gateway boundary**: runtime proxy mode keeps the browser-to-server path end-to-end encrypted through the relay layer; gateway mode is a deliberate L7 plaintext component.
 - **Tunnel scaling**: replay protection and pairing state are in memory by default; for multi-instance scale without shared state, shard channels across tunnel URLs at the controlplane layer.
 - **Observability**: the tunnel exposes Prometheus metrics and optional bandwidth stats. See `docs/TUNNEL_DEPLOYMENT.md` and the observability notes below.
