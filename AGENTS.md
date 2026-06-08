@@ -102,6 +102,11 @@ Additional rules:
 
 - Remote `main` should move directly to the latest local `main` tip whenever `main` is pushed.
 - If local `main` has unpublished commits before you merge the current feature, publish those local `main` commits first, then merge, then push the updated `main` tip.
+- Integration and conflict resolution must preserve the semantic intent of all involved branches, not just produce text that compiles.
+- Before resolving merge or rebase conflicts, review the substantive commits on each side for new features, bug fixes, behavior changes, tests, and user-facing workflows.
+- Do not drop, overwrite, or silently weaken current or historical functionality unless the user explicitly approves that product decision.
+- If two branches introduce incompatible behavior, surface the product or architecture tradeoff instead of choosing one side silently.
+- After resolving conflicts, run focused checks for the affected behavior in addition to the repository quality gate.
 - If a feature branch has already been pushed and someone else depends on it, stop treating it as a private rebase branch. Coordinate a separate conservative flow instead of forcing the beauty-first default.
 
 Conflict resolution principles:
@@ -114,6 +119,7 @@ Conflict resolution principles:
 - For renames, file moves, formatting changes, or import reshuffles: keep the latest `main` layout, then restore the feature logic in the new location.
 - For generated files, snapshots, and lockfiles: prefer regenerating rather than manually stitching conflict markers.
 - For shared contracts, IDL-generated artifacts, stability manifests, and cross-package schema fields: never blindly take one side; align the semantics manually.
+- For behavior conflicts that are not obvious from conflict markers, inspect the relevant commit history and tests so that fixes and existing product behavior are not regressed.
 - If you are unsure whether the resolution is correct, abort the rebase and start over from the backup branch.
 
 Recommended Git config:
