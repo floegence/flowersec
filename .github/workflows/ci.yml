@@ -31,3 +31,11 @@ jobs:
 
       - name: Run make check (stability + coverage included)
         run: make check
+
+  swift-check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Swift package checks
+        run: make swift-check

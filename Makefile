@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts bench check stability-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift bench check stability-check go-cover-check compat-check nightly-check
 
 GOVULNCHECK_VERSION ?= v1.1.4
 GOVULNCHECK_GOTOOLCHAIN ?= go1.26.4
@@ -88,6 +88,23 @@ ts-build:
 ts-package-check:
 	cd flowersec-ts && npm run verify:package
 
+swift-package-check:
+	swift package describe >/dev/null
+
+swift-source-guard:
+	@if rg -n 'Redeven|redeven|RedevenFlowersec|RedevenRPCClient|FlowersecDirectClient|FlowersecDirectSession|FlowersecDirectError|RuntimeFS|RuntimeGit|RuntimeTerminal|RuntimeFlower|RuntimeTypedRPC|RuntimeJSONValue|RuntimeRPCPayload|FlowerMessage|TerminalSession|MonitorSnapshot|direct runtime' flowersec-swift/Sources Package.swift; then \
+		echo "Swift SDK contains downstream product semantics"; \
+		exit 1; \
+	fi
+
+swift-build:
+	swift build
+
+swift-test:
+	swift test
+
+swift-check: swift-package-check swift-source-guard swift-build swift-test
+
 fmt:
 	gofmt -w flowersec-go examples/go examples/gen
 
@@ -119,11 +136,15 @@ precommit-ts:
 	$(MAKE) ts-cover-check
 	$(MAKE) ts-package-check
 
+precommit-swift:
+	$(MAKE) swift-check
+
 precommit:
 	$(MAKE) gen-check
 	$(MAKE) stability-check
 	$(MAKE) precommit-go
 	$(MAKE) precommit-ts
+	$(MAKE) precommit-swift
 
 stability-check:
 	cd tools/stabilitycheck && go run . verify-manifest
@@ -156,6 +177,7 @@ check:
 	$(MAKE) stability-check
 	$(MAKE) lint-check
 	$(MAKE) ts-build
+	$(MAKE) swift-check
 	$(MAKE) test
 	$(MAKE) go-cover-check
 	$(MAKE) ts-cover-check

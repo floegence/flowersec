@@ -20,6 +20,11 @@ coverage/
 playwright-report/
 test-results/
 
+# Swift
+.build/
+Package.resolved
+DerivedData/
+
 # IDE
 .idea/
 .vscode/
