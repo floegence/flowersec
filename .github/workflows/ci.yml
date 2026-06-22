@@ -37,6 +37,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: flowersec-go/go.mod
+          cache: true
+          cache-dependency-path: |
+            flowersec-go/go.sum
+            examples/go.sum
+
       - name: Run Swift package checks
         run: |
           set -euo pipefail
