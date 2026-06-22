@@ -25,10 +25,18 @@ type releaseNotes struct {
 	CurrentTag  string
 	PreviousTag string
 	Version     string
+	Kind        releaseKind
 	Sections    []section
 }
 
-func buildReleaseNotes(currentTag, previousTag string, commits []commit) *releaseNotes {
+type releaseKind string
+
+const (
+	releaseKindGo    releaseKind = "go"
+	releaseKindSwift releaseKind = "swift"
+)
+
+func buildReleaseNotes(currentTag, previousTag string, kind releaseKind, commits []commit) *releaseNotes {
 	features := make([]string, 0)
 	fixes := make([]string, 0)
 	auxiliary := make([]string, 0)
@@ -73,9 +81,17 @@ func buildReleaseNotes(currentTag, previousTag string, commits []commit) *releas
 	return &releaseNotes{
 		CurrentTag:  currentTag,
 		PreviousTag: previousTag,
-		Version:     strings.TrimPrefix(currentTag, "flowersec-go/v"),
+		Version:     versionFromTag(currentTag, kind),
+		Kind:        kind,
 		Sections:    sections,
 	}
+}
+
+func versionFromTag(tag string, kind releaseKind) string {
+	if kind == releaseKindGo {
+		return strings.TrimPrefix(tag, "flowersec-go/v")
+	}
+	return strings.TrimPrefix(tag, "v")
 }
 
 func renderMarkdown(notes *releaseNotes) string {
@@ -96,12 +112,16 @@ func renderMarkdown(notes *releaseNotes) string {
 	}
 
 	fmt.Fprintf(&b, "## Release Assets\n\n")
-	fmt.Fprintf(&b, "- `flowersec-tunnel_%s_<os>_<arch>` bundles for tunnel runtime installs.\n", notes.Version)
-	fmt.Fprintf(&b, "- `flowersec-tools_%s_<os>_<arch>` bundles for issuer/channel/direct setup tools.\n", notes.Version)
-	fmt.Fprintf(&b, "- `flowersec-proxy-gateway_%s_<os>_<arch>` bundles for proxy gateway deployments.\n", notes.Version)
-	fmt.Fprintf(&b, "- `flowersec-demos_%s_<os>_<arch>` bundles for demo and evaluation flows.\n", notes.Version)
-	fmt.Fprintf(&b, "- `floegence-flowersec-core-%s.tgz` for no-clone TypeScript installs.\n", notes.Version)
-	b.WriteString("- GHCR tunnel and proxy gateway images are also published for this version.\n")
+	if notes.Kind == releaseKindSwift {
+		fmt.Fprintf(&b, "- SwiftPM package tag `%s` for the `Flowersec` library product.\n", notes.CurrentTag)
+	} else {
+		fmt.Fprintf(&b, "- `flowersec-tunnel_%s_<os>_<arch>` bundles for tunnel runtime installs.\n", notes.Version)
+		fmt.Fprintf(&b, "- `flowersec-tools_%s_<os>_<arch>` bundles for issuer/channel/direct setup tools.\n", notes.Version)
+		fmt.Fprintf(&b, "- `flowersec-proxy-gateway_%s_<os>_<arch>` bundles for proxy gateway deployments.\n", notes.Version)
+		fmt.Fprintf(&b, "- `flowersec-demos_%s_<os>_<arch>` bundles for demo and evaluation flows.\n", notes.Version)
+		fmt.Fprintf(&b, "- `floegence-flowersec-core-%s.tgz` for no-clone TypeScript installs.\n", notes.Version)
+		b.WriteString("- GHCR tunnel and proxy gateway images are also published for this version.\n")
+	}
 	return b.String()
 }
 

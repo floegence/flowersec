@@ -836,19 +836,13 @@ private struct AnyCodingKey: CodingKey {
 public struct ConnectOptions: Sendable {
   public var origin: String?
   public var connectTimeout: Duration
-  public var handshakeTimeout: Duration
-  public var keepaliveInterval: Duration?
 
   public init(
     origin: String? = nil,
-    connectTimeout: Duration = .seconds(8),
-    handshakeTimeout: Duration = .seconds(8),
-    keepaliveInterval: Duration? = nil
+    connectTimeout: Duration = .seconds(8)
   ) {
     self.origin = origin
     self.connectTimeout = connectTimeout
-    self.handshakeTimeout = handshakeTimeout
-    self.keepaliveInterval = keepaliveInterval
   }
 }
 
@@ -877,38 +871,38 @@ public struct FlowersecError: LocalizedError, Equatable, Sendable {
 }
 
 extension FlowersecError {
-  static func invalidConnectInfo(_ message: String) -> FlowersecError {
+  public static func invalidConnectInfo(_ message: String) -> FlowersecError {
     FlowersecError(path: .direct, stage: .validate, code: .invalidInput, message: message)
   }
 
-  static func invalidHandshake(_ message: String) -> FlowersecError {
+  public static func invalidHandshake(_ message: String) -> FlowersecError {
     FlowersecError(path: .direct, stage: .handshake, code: .handshakeFailed, message: message)
   }
 
-  static func invalidRecord(_ message: String) -> FlowersecError {
+  public static func invalidRecord(_ message: String) -> FlowersecError {
     FlowersecError(path: .direct, stage: .secure, code: .invalidInput, message: message)
   }
 
-  static func invalidYamux(_ message: String) -> FlowersecError {
+  public static func invalidYamux(_ message: String) -> FlowersecError {
     FlowersecError(path: .direct, stage: .yamux, code: .openStreamFailed, message: message)
   }
 
-  static func invalidRPC(_ message: String) -> FlowersecError {
+  public static func invalidRPC(_ message: String) -> FlowersecError {
     FlowersecError(path: .direct, stage: .rpc, code: .rpcFailed, message: message)
   }
 
-  static func webSocket(_ message: String) -> FlowersecError {
+  public static func webSocket(_ message: String) -> FlowersecError {
     FlowersecError(path: .direct, stage: .connect, code: .websocketFailed, message: message)
   }
 
-  static let closed = FlowersecError(
+  public static let closed = FlowersecError(
     path: .direct,
     stage: .close,
     code: .notConnected,
     message: "The Flowersec session closed."
   )
 
-  static let timeout = FlowersecError(
+  public static let timeout = FlowersecError(
     path: .direct,
     stage: .connect,
     code: .timeout,

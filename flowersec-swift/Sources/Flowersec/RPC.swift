@@ -24,7 +24,7 @@ public struct RPCSubscription: Sendable {
   }
 }
 
-protocol FlowersecRPCStream: AnyObject, FlowersecByteStream {}
+public protocol FlowersecRPCStream: AnyObject, FlowersecByteStream {}
 
 public protocol FlowersecByteStream: Sendable {
   func write(_ data: Data) async throws
@@ -45,11 +45,11 @@ public actor RPCClient {
   private var readTask: Task<Void, Never>?
   private var closed = false
 
-  init(stream: any FlowersecRPCStream) {
+  public init(stream: any FlowersecRPCStream) {
     self.stream = stream
   }
 
-  func start() {
+  public func start() {
     guard readTask == nil else { return }
     readTask = Task { await self.readLoop() }
   }
@@ -340,14 +340,14 @@ public enum Flowersec {
   }
 }
 
-struct RPCEnvelope {
-  var typeID: UInt32
-  var requestID: UInt64
-  var responseTo: UInt64
-  var payload: Data
-  var error: RPCErrorPayload?
+public struct RPCEnvelope: Equatable, Sendable {
+  public var typeID: UInt32
+  public var requestID: UInt64
+  public var responseTo: UInt64
+  public var payload: Data
+  public var error: RPCErrorPayload?
 
-  init(
+  public init(
     typeID: UInt32, requestID: UInt64, responseTo: UInt64, payload: Data, error: RPCErrorPayload?
   ) {
     self.typeID = typeID
@@ -357,7 +357,7 @@ struct RPCEnvelope {
     self.error = error
   }
 
-  init(data: Data) throws {
+  public init(data: Data) throws {
     guard
       let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
       let typeNumber = root["type_id"] as? NSNumber,
@@ -380,7 +380,7 @@ struct RPCEnvelope {
     payload = try Self.encodeRawJSONObject(root["payload"] ?? [:])
   }
 
-  func encoded() throws -> Data {
+  public func encoded() throws -> Data {
     var root: [String: Any] = [
       "type_id": NSNumber(value: typeID),
       "request_id": NSNumber(value: requestID),
@@ -412,9 +412,14 @@ struct RPCEnvelope {
   }
 }
 
-struct RPCErrorPayload {
-  var code: UInt32
-  var message: String
+public struct RPCErrorPayload: Equatable, Sendable {
+  public var code: UInt32
+  public var message: String
+
+  public init(code: UInt32, message: String) {
+    self.code = code
+    self.message = message
+  }
 }
 
 private struct StreamHello {
@@ -429,8 +434,8 @@ private struct StreamHello {
   }
 }
 
-enum FlowersecJSONFrame {
-  static func write(_ data: Data, to stream: any FlowersecByteStream) async throws {
+public enum FlowersecJSONFrame {
+  public static func write(_ data: Data, to stream: any FlowersecByteStream) async throws {
     guard data.count <= FlowersecWire.jsonFrameMaxBytes else {
       throw FlowersecError.invalidRPC("JSON frame is too large.")
     }
@@ -440,7 +445,7 @@ enum FlowersecJSONFrame {
     try await stream.write(frame)
   }
 
-  static func read(from stream: any FlowersecByteStream) async throws -> Data {
+  public static func read(from stream: any FlowersecByteStream) async throws -> Data {
     let header = try await stream.readExact(4)
     guard header.count == 4 else {
       throw FlowersecError.invalidRPC("JSON frame ended before the length header.")

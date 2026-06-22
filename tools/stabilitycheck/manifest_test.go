@@ -85,3 +85,28 @@ func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 		t.Fatalf("expected function guard in generated verifier, got:\n%s", testFile)
 	}
 }
+
+func TestDiffSwiftSymbolsDetectsMissingAndExtra(t *testing.T) {
+	diff := diffSwiftSymbols(
+		[]swiftSymbol{{Kind: "swift.struct", Name: "Expected"}},
+		[]swiftSymbol{{Kind: "swift.struct", Name: "Actual"}},
+	)
+	if !strings.Contains(diff, "missing public symbols from source") {
+		t.Fatalf("expected missing section, got:\n%s", diff)
+	}
+	if !strings.Contains(diff, "extra public symbols not listed in manifest") {
+		t.Fatalf("expected extra section, got:\n%s", diff)
+	}
+}
+
+func TestMakefileStabilityCheckRunsSwiftVerifier(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	target := text[strings.Index(text, "stability-check:"):]
+	if !strings.Contains(target, "verify-swift") {
+		t.Fatalf("stability-check must run verify-swift, got:\n%s", target)
+	}
+}

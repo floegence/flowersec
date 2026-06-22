@@ -1,0 +1,48 @@
+name: swift-release
+
+on:
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: flowersec-go/go.mod
+          cache: true
+          cache-dependency-path: |
+            flowersec-go/go.sum
+            examples/go.sum
+
+      - name: Validate SwiftPM package
+        run: |
+          set -euo pipefail
+          make stability-check
+          make swift-check
+
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          go run ./tools/releasenotes \
+            --current-tag "${GITHUB_REF_NAME}" \
+            --current-ref "${GITHUB_SHA}" \
+            --output release-notes.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md

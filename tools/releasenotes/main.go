@@ -20,7 +20,7 @@ func run(args []string) error {
 	fs.SetOutput(os.Stderr)
 
 	repo := fs.String("repo", ".", "path to the git repository")
-	currentTag := fs.String("current-tag", "", "current release tag, for example flowersec-go/v0.17.1")
+	currentTag := fs.String("current-tag", "", "current release tag, for example flowersec-go/v0.17.1 or 0.19.11")
 	currentRef := fs.String("current-ref", "", "git ref or commit to inspect; defaults to --current-tag")
 	output := fs.String("output", "", "optional output file; stdout when empty")
 	if err := fs.Parse(args); err != nil {

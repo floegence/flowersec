@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -14,7 +15,11 @@ type commit struct {
 }
 
 func loadReleaseNotes(repoPath, currentTag, currentRef string) (*releaseNotes, error) {
-	previousTag, err := findPreviousTag(repoPath, currentRef, currentTag)
+	kind, err := releaseKindForTag(currentTag)
+	if err != nil {
+		return nil, err
+	}
+	previousTag, err := findPreviousTag(repoPath, currentRef, currentTag, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -22,15 +27,22 @@ func loadReleaseNotes(repoPath, currentTag, currentRef string) (*releaseNotes, e
 	if err != nil {
 		return nil, err
 	}
-	return buildReleaseNotes(currentTag, previousTag, commits), nil
+	return buildReleaseNotes(currentTag, previousTag, kind, commits), nil
 }
 
-func findPreviousTag(repoPath, currentRef, currentTag string) (string, error) {
-	lines, err := gitLines(repoPath, "tag", "--merged", currentRef, "--list", "flowersec-go/v*", "--sort=version:refname")
+func findPreviousTag(repoPath, currentRef, currentTag string, kind releaseKind) (string, error) {
+	tagPattern := "flowersec-go/v*"
+	if kind == releaseKindSwift {
+		tagPattern = "[0-9]*"
+	}
+	lines, err := gitLines(repoPath, "tag", "--merged", currentRef, "--list", tagPattern, "--sort=version:refname")
 	if err != nil {
 		return "", err
 	}
 	if len(lines) == 0 {
+		if kind == releaseKindSwift {
+			return latestMergedTag(repoPath, currentRef, "flowersec-go/v*")
+		}
 		return "", nil
 	}
 	for i, tag := range lines {
@@ -42,7 +54,34 @@ func findPreviousTag(repoPath, currentRef, currentTag string) (string, error) {
 		}
 		return lines[i-1], nil
 	}
+	if kind == releaseKindSwift {
+		return lines[len(lines)-1], nil
+	}
 	return "", fmt.Errorf("current tag %q not found among tags merged into %s", currentTag, currentRef)
+}
+
+func latestMergedTag(repoPath, currentRef, pattern string) (string, error) {
+	lines, err := gitLines(repoPath, "tag", "--merged", currentRef, "--list", pattern, "--sort=version:refname")
+	if err != nil {
+		return "", err
+	}
+	if len(lines) == 0 {
+		return "", nil
+	}
+	return lines[len(lines)-1], nil
+}
+
+var swiftSemverTag = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
+
+func releaseKindForTag(tag string) (releaseKind, error) {
+	switch {
+	case strings.HasPrefix(tag, "flowersec-go/v"):
+		return releaseKindGo, nil
+	case swiftSemverTag.MatchString(tag):
+		return releaseKindSwift, nil
+	default:
+		return "", fmt.Errorf("unsupported release tag %q", tag)
+	}
 }
 
 func collectCommits(repoPath, currentRef, previousTag string) ([]commit, error) {

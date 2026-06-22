@@ -22,10 +22,26 @@
         "alias": "client",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/client`",
         "entries": [
-          { "kind": "func", "expr": "client.Connect", "doc_token": "`client.Connect(...)`" },
-          { "kind": "func", "expr": "client.ConnectTunnel", "doc_token": "`client.ConnectTunnel(...)`" },
-          { "kind": "func", "expr": "client.ConnectDirect", "doc_token": "`client.ConnectDirect(...)`" },
-          { "kind": "func", "expr": "client.WithObserver", "doc_token": "`client.WithObserver(...)`" }
+          {
+            "kind": "func",
+            "expr": "client.Connect",
+            "doc_token": "`client.Connect(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.ConnectTunnel",
+            "doc_token": "`client.ConnectTunnel(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.ConnectDirect",
+            "doc_token": "`client.ConnectDirect(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.WithObserver",
+            "doc_token": "`client.WithObserver(...)`"
+          }
         ]
       },
       {
@@ -33,18 +49,66 @@
         "alias": "endpoint",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/endpoint`",
         "entries": [
-          { "kind": "func", "expr": "endpoint.ConnectTunnel", "doc_token": "`endpoint.ConnectTunnel(...)`" },
-          { "kind": "func", "expr": "endpoint.NewDirectHandler", "doc_token": "`endpoint.NewDirectHandler(...)`" },
-          { "kind": "func", "expr": "endpoint.AcceptDirectWS", "doc_token": "`endpoint.AcceptDirectWS(...)`" },
-          { "kind": "func", "expr": "endpoint.NewDirectHandlerResolved", "doc_token": "`endpoint.NewDirectHandlerResolved(...)`" },
-          { "kind": "func", "expr": "endpoint.AcceptDirectWSResolved", "doc_token": "`endpoint.AcceptDirectWSResolved(...)`" },
-          { "kind": "type", "expr": "endpoint.Suite", "doc_token": "`endpoint.Suite`" },
-          { "kind": "const", "expr": "endpoint.SuiteX25519HKDFAES256GCM", "doc_token": "`SuiteX25519HKDFAES256GCM`" },
-          { "kind": "const", "expr": "endpoint.SuiteP256HKDFAES256GCM", "doc_token": "`SuiteP256HKDFAES256GCM`" },
-          { "kind": "type", "expr": "endpoint.UpgraderOptions", "doc_token": "`endpoint.UpgraderOptions`" },
-          { "kind": "type", "expr": "endpoint.HandshakeCache", "doc_token": "`endpoint.HandshakeCache`" },
-          { "kind": "type", "expr": "endpoint.AcceptDirectOptions", "doc_token": "`endpoint.AcceptDirectOptions`" },
-          { "kind": "type", "expr": "endpoint.AcceptDirectResolverOptions", "doc_token": "`endpoint.AcceptDirectResolverOptions`" }
+          {
+            "kind": "func",
+            "expr": "endpoint.ConnectTunnel",
+            "doc_token": "`endpoint.ConnectTunnel(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.NewDirectHandler",
+            "doc_token": "`endpoint.NewDirectHandler(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.AcceptDirectWS",
+            "doc_token": "`endpoint.AcceptDirectWS(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.NewDirectHandlerResolved",
+            "doc_token": "`endpoint.NewDirectHandlerResolved(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.AcceptDirectWSResolved",
+            "doc_token": "`endpoint.AcceptDirectWSResolved(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "endpoint.Suite",
+            "doc_token": "`endpoint.Suite`"
+          },
+          {
+            "kind": "const",
+            "expr": "endpoint.SuiteX25519HKDFAES256GCM",
+            "doc_token": "`SuiteX25519HKDFAES256GCM`"
+          },
+          {
+            "kind": "const",
+            "expr": "endpoint.SuiteP256HKDFAES256GCM",
+            "doc_token": "`SuiteP256HKDFAES256GCM`"
+          },
+          {
+            "kind": "type",
+            "expr": "endpoint.UpgraderOptions",
+            "doc_token": "`endpoint.UpgraderOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "endpoint.HandshakeCache",
+            "doc_token": "`endpoint.HandshakeCache`"
+          },
+          {
+            "kind": "type",
+            "expr": "endpoint.AcceptDirectOptions",
+            "doc_token": "`endpoint.AcceptDirectOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "endpoint.AcceptDirectResolverOptions",
+            "doc_token": "`endpoint.AcceptDirectResolverOptions`"
+          }
         ]
       },
       {
@@ -52,13 +116,41 @@
         "alias": "serve",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/endpoint/serve`",
         "entries": [
-          { "kind": "func", "expr": "serve.New", "doc_token": "`serve.New(...)`" },
-          { "kind": "method", "expr": "(*serve.Server).Handle", "doc_token": "`srv.Handle(...)`" },
-          { "kind": "method", "expr": "(*serve.Server).HandleStream", "doc_token": "`srv.HandleStream(...)`" },
-          { "kind": "method", "expr": "(*serve.Server).ServeSession", "doc_token": "`srv.ServeSession(...)`" },
-          { "kind": "func", "expr": "serve.ServeTunnel", "doc_token": "`serve.ServeTunnel(...)`" },
-          { "kind": "func", "expr": "serve.NewDirectHandler", "doc_token": "`serve.NewDirectHandler(...)`" },
-          { "kind": "func", "expr": "serve.NewDirectHandlerResolved", "doc_token": "`serve.NewDirectHandlerResolved(...)`" }
+          {
+            "kind": "func",
+            "expr": "serve.New",
+            "doc_token": "`serve.New(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*serve.Server).Handle",
+            "doc_token": "`srv.Handle(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*serve.Server).HandleStream",
+            "doc_token": "`srv.HandleStream(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*serve.Server).ServeSession",
+            "doc_token": "`srv.ServeSession(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "serve.ServeTunnel",
+            "doc_token": "`serve.ServeTunnel(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "serve.NewDirectHandler",
+            "doc_token": "`serve.NewDirectHandler(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "serve.NewDirectHandlerResolved",
+            "doc_token": "`serve.NewDirectHandlerResolved(...)`"
+          }
         ]
       },
       {
@@ -66,17 +158,61 @@
         "alias": "protocolio",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/protocolio`",
         "entries": [
-          { "kind": "func", "expr": "protocolio.DecodeGrantClientJSON", "doc_token": "`protocolio.DecodeGrantClientJSON(...)`" },
-          { "kind": "func", "expr": "protocolio.DecodeGrantServerJSON", "doc_token": "`protocolio.DecodeGrantServerJSON(...)`" },
-          { "kind": "func", "expr": "protocolio.DecodeGrantJSON", "doc_token": "`protocolio.DecodeGrantJSON(...)`" },
-          { "kind": "func", "expr": "protocolio.DecodeDirectConnectInfoJSON", "doc_token": "`protocolio.DecodeDirectConnectInfoJSON(...)`" },
-          { "kind": "func", "expr": "protocolio.DecodeConnectArtifactJSON", "doc_token": "`protocolio.DecodeConnectArtifactJSON(...)`" },
-          { "kind": "type", "expr": "protocolio.ConnectArtifact", "doc_token": "`protocolio.ConnectArtifact`" },
-          { "kind": "type", "expr": "protocolio.TunnelClientConnectArtifact", "doc_token": "`protocolio.TunnelClientConnectArtifact`" },
-          { "kind": "type", "expr": "protocolio.DirectClientConnectArtifact", "doc_token": "`protocolio.DirectClientConnectArtifact`" },
-          { "kind": "type", "expr": "protocolio.CorrelationContext", "doc_token": "`protocolio.CorrelationContext`" },
-          { "kind": "type", "expr": "protocolio.CorrelationKV", "doc_token": "`protocolio.CorrelationKV`" },
-          { "kind": "type", "expr": "protocolio.ScopeMetadataEntry", "doc_token": "`protocolio.ScopeMetadataEntry`" }
+          {
+            "kind": "func",
+            "expr": "protocolio.DecodeGrantClientJSON",
+            "doc_token": "`protocolio.DecodeGrantClientJSON(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "protocolio.DecodeGrantServerJSON",
+            "doc_token": "`protocolio.DecodeGrantServerJSON(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "protocolio.DecodeGrantJSON",
+            "doc_token": "`protocolio.DecodeGrantJSON(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "protocolio.DecodeDirectConnectInfoJSON",
+            "doc_token": "`protocolio.DecodeDirectConnectInfoJSON(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "protocolio.DecodeConnectArtifactJSON",
+            "doc_token": "`protocolio.DecodeConnectArtifactJSON(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "protocolio.ConnectArtifact",
+            "doc_token": "`protocolio.ConnectArtifact`"
+          },
+          {
+            "kind": "type",
+            "expr": "protocolio.TunnelClientConnectArtifact",
+            "doc_token": "`protocolio.TunnelClientConnectArtifact`"
+          },
+          {
+            "kind": "type",
+            "expr": "protocolio.DirectClientConnectArtifact",
+            "doc_token": "`protocolio.DirectClientConnectArtifact`"
+          },
+          {
+            "kind": "type",
+            "expr": "protocolio.CorrelationContext",
+            "doc_token": "`protocolio.CorrelationContext`"
+          },
+          {
+            "kind": "type",
+            "expr": "protocolio.CorrelationKV",
+            "doc_token": "`protocolio.CorrelationKV`"
+          },
+          {
+            "kind": "type",
+            "expr": "protocolio.ScopeMetadataEntry",
+            "doc_token": "`protocolio.ScopeMetadataEntry`"
+          }
         ]
       },
       {
@@ -84,9 +220,21 @@
         "alias": "cpclient",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/client`",
         "entries": [
-          { "kind": "func", "expr": "cpclient.RequestConnectArtifact", "doc_token": "`client.RequestConnectArtifact(...)`" },
-          { "kind": "func", "expr": "cpclient.RequestEntryConnectArtifact", "doc_token": "`client.RequestEntryConnectArtifact(...)`" },
-          { "kind": "type", "expr": "cpclient.RequestError", "doc_token": "`client.RequestError`" }
+          {
+            "kind": "func",
+            "expr": "cpclient.RequestConnectArtifact",
+            "doc_token": "`client.RequestConnectArtifact(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "cpclient.RequestEntryConnectArtifact",
+            "doc_token": "`client.RequestEntryConnectArtifact(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "cpclient.RequestError",
+            "doc_token": "`client.RequestError`"
+          }
         ]
       },
       {
@@ -94,22 +242,86 @@
         "alias": "cphttp",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/http`",
         "entries": [
-          { "kind": "const", "expr": "cphttp.DefaultMaxBodyBytes", "doc_token": "`controlplanehttp.DefaultMaxBodyBytes`" },
-          { "kind": "type", "expr": "cphttp.ArtifactRequest", "doc_token": "`controlplanehttp.ArtifactRequest`" },
-          { "kind": "type", "expr": "cphttp.ArtifactEnvelope", "doc_token": "`controlplanehttp.ArtifactEnvelope`" },
-          { "kind": "type", "expr": "cphttp.ErrorEnvelope", "doc_token": "`controlplanehttp.ErrorEnvelope`" },
-          { "kind": "type", "expr": "cphttp.ArtifactRequestMetadata", "doc_token": "`controlplanehttp.ArtifactRequestMetadata`" },
-          { "kind": "type", "expr": "cphttp.ArtifactIssueInput", "doc_token": "`controlplanehttp.ArtifactIssueInput`" },
-          { "kind": "type", "expr": "cphttp.ArtifactHandlerOptions", "doc_token": "`controlplanehttp.ArtifactHandlerOptions`" },
-          { "kind": "type", "expr": "cphttp.RequestError", "doc_token": "`controlplanehttp.RequestError`" },
-          { "kind": "func", "expr": "cphttp.NewRequestError", "doc_token": "`controlplanehttp.NewRequestError(...)`" },
-          { "kind": "func", "expr": "cphttp.DecodeArtifactRequest", "doc_token": "`controlplanehttp.DecodeArtifactRequest(...)`" },
-          { "kind": "func", "expr": "cphttp.WriteArtifactEnvelope", "doc_token": "`controlplanehttp.WriteArtifactEnvelope(...)`" },
-          { "kind": "func", "expr": "cphttp.WriteErrorEnvelope", "doc_token": "`controlplanehttp.WriteErrorEnvelope(...)`" },
-          { "kind": "func", "expr": "cphttp.NewArtifactHandler", "doc_token": "`controlplanehttp.NewArtifactHandler(...)`" },
-          { "kind": "func", "expr": "cphttp.NewEntryArtifactHandler", "doc_token": "`controlplanehttp.NewEntryArtifactHandler(...)`" },
-          { "kind": "func", "expr": "cphttp.DefaultRequestMetadata", "doc_token": "`controlplanehttp.DefaultRequestMetadata(...)`" },
-          { "kind": "func", "expr": "cphttp.IssueArtifact", "doc_token": "`controlplanehttp.IssueArtifact(...)`" }
+          {
+            "kind": "const",
+            "expr": "cphttp.DefaultMaxBodyBytes",
+            "doc_token": "`controlplanehttp.DefaultMaxBodyBytes`"
+          },
+          {
+            "kind": "type",
+            "expr": "cphttp.ArtifactRequest",
+            "doc_token": "`controlplanehttp.ArtifactRequest`"
+          },
+          {
+            "kind": "type",
+            "expr": "cphttp.ArtifactEnvelope",
+            "doc_token": "`controlplanehttp.ArtifactEnvelope`"
+          },
+          {
+            "kind": "type",
+            "expr": "cphttp.ErrorEnvelope",
+            "doc_token": "`controlplanehttp.ErrorEnvelope`"
+          },
+          {
+            "kind": "type",
+            "expr": "cphttp.ArtifactRequestMetadata",
+            "doc_token": "`controlplanehttp.ArtifactRequestMetadata`"
+          },
+          {
+            "kind": "type",
+            "expr": "cphttp.ArtifactIssueInput",
+            "doc_token": "`controlplanehttp.ArtifactIssueInput`"
+          },
+          {
+            "kind": "type",
+            "expr": "cphttp.ArtifactHandlerOptions",
+            "doc_token": "`controlplanehttp.ArtifactHandlerOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "cphttp.RequestError",
+            "doc_token": "`controlplanehttp.RequestError`"
+          },
+          {
+            "kind": "func",
+            "expr": "cphttp.NewRequestError",
+            "doc_token": "`controlplanehttp.NewRequestError(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "cphttp.DecodeArtifactRequest",
+            "doc_token": "`controlplanehttp.DecodeArtifactRequest(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "cphttp.WriteArtifactEnvelope",
+            "doc_token": "`controlplanehttp.WriteArtifactEnvelope(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "cphttp.WriteErrorEnvelope",
+            "doc_token": "`controlplanehttp.WriteErrorEnvelope(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "cphttp.NewArtifactHandler",
+            "doc_token": "`controlplanehttp.NewArtifactHandler(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "cphttp.NewEntryArtifactHandler",
+            "doc_token": "`controlplanehttp.NewEntryArtifactHandler(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "cphttp.DefaultRequestMetadata",
+            "doc_token": "`controlplanehttp.DefaultRequestMetadata(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "cphttp.IssueArtifact",
+            "doc_token": "`controlplanehttp.IssueArtifact(...)`"
+          }
         ]
       },
       {
@@ -117,10 +329,26 @@
         "alias": "fsobs",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/observability`",
         "entries": [
-          { "kind": "type", "expr": "fsobs.DiagnosticEvent", "doc_token": "`observability.DiagnosticEvent`" },
-          { "kind": "type", "expr": "fsobs.ClientObserver", "doc_token": "`observability.ClientObserver`" },
-          { "kind": "func", "expr": "fsobs.NormalizeClientObserver", "doc_token": "`observability.NormalizeClientObserver(...)`" },
-          { "kind": "func", "expr": "fsobs.WithClientObserverContext", "doc_token": "`observability.WithClientObserverContext(...)`" }
+          {
+            "kind": "type",
+            "expr": "fsobs.DiagnosticEvent",
+            "doc_token": "`observability.DiagnosticEvent`"
+          },
+          {
+            "kind": "type",
+            "expr": "fsobs.ClientObserver",
+            "doc_token": "`observability.ClientObserver`"
+          },
+          {
+            "kind": "func",
+            "expr": "fsobs.NormalizeClientObserver",
+            "doc_token": "`observability.NormalizeClientObserver(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "fsobs.WithClientObserverContext",
+            "doc_token": "`observability.WithClientObserverContext(...)`"
+          }
         ]
       },
       {
@@ -128,8 +356,16 @@
         "alias": "origin",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/origin`",
         "entries": [
-          { "kind": "func", "expr": "origin.FromWSURL", "doc_token": "`origin.FromWSURL(...)`" },
-          { "kind": "func", "expr": "origin.ForTunnel", "doc_token": "`origin.ForTunnel(...)`" }
+          {
+            "kind": "func",
+            "expr": "origin.FromWSURL",
+            "doc_token": "`origin.FromWSURL(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "origin.ForTunnel",
+            "doc_token": "`origin.ForTunnel(...)`"
+          }
         ]
       },
       {
@@ -137,7 +373,11 @@
         "alias": "proxy",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/proxy`",
         "entries": [
-          { "kind": "func", "expr": "proxy.Register", "doc_token": "`proxy.Register(...)`" }
+          {
+            "kind": "func",
+            "expr": "proxy.Register",
+            "doc_token": "`proxy.Register(...)`"
+          }
         ]
       },
       {
@@ -145,10 +385,26 @@
         "alias": "proxypreset",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/proxy/preset`",
         "entries": [
-          { "kind": "type", "expr": "proxypreset.Manifest", "doc_token": "`preset.Manifest`" },
-          { "kind": "func", "expr": "proxypreset.DecodeJSON", "doc_token": "`preset.DecodeJSON(...)`" },
-          { "kind": "func", "expr": "proxypreset.LoadFile", "doc_token": "`preset.LoadFile(...)`" },
-          { "kind": "func", "expr": "proxypreset.ApplyBridgeOptions", "doc_token": "`preset.ApplyBridgeOptions(...)`" }
+          {
+            "kind": "type",
+            "expr": "proxypreset.Manifest",
+            "doc_token": "`preset.Manifest`"
+          },
+          {
+            "kind": "func",
+            "expr": "proxypreset.DecodeJSON",
+            "doc_token": "`preset.DecodeJSON(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "proxypreset.LoadFile",
+            "doc_token": "`preset.LoadFile(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "proxypreset.ApplyBridgeOptions",
+            "doc_token": "`preset.ApplyBridgeOptions(...)`"
+          }
         ]
       },
       {
@@ -156,9 +412,21 @@
         "alias": "rpc",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/rpc`",
         "entries": [
-          { "kind": "func", "expr": "rpc.NewRouter", "doc_token": "`rpc.NewRouter(...)`" },
-          { "kind": "func", "expr": "rpc.NewServer", "doc_token": "`rpc.NewServer(...)`" },
-          { "kind": "func", "expr": "rpc.NewClient", "doc_token": "`rpc.NewClient(...)`" }
+          {
+            "kind": "func",
+            "expr": "rpc.NewRouter",
+            "doc_token": "`rpc.NewRouter(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "rpc.NewServer",
+            "doc_token": "`rpc.NewServer(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "rpc.NewClient",
+            "doc_token": "`rpc.NewClient(...)`"
+          }
         ]
       },
       {
@@ -166,9 +434,21 @@
         "alias": "jsonframe",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/framing/jsonframe`",
         "entries": [
-          { "kind": "func", "expr": "jsonframe.ReadJSONFrame", "doc_token": "`jsonframe.ReadJSONFrame(...)`" },
-          { "kind": "func", "expr": "jsonframe.WriteJSONFrame", "doc_token": "`jsonframe.WriteJSONFrame(...)`" },
-          { "kind": "func", "expr": "jsonframe.ReadJSONFrameDefaultMax", "doc_token": "`jsonframe.ReadJSONFrameDefaultMax(...)`" }
+          {
+            "kind": "func",
+            "expr": "jsonframe.ReadJSONFrame",
+            "doc_token": "`jsonframe.ReadJSONFrame(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "jsonframe.WriteJSONFrame",
+            "doc_token": "`jsonframe.WriteJSONFrame(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "jsonframe.ReadJSONFrameDefaultMax",
+            "doc_token": "`jsonframe.ReadJSONFrameDefaultMax(...)`"
+          }
         ]
       },
       {
@@ -176,9 +456,21 @@
         "alias": "fserrors",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`",
         "entries": [
-          { "kind": "type", "expr": "fserrors.Path", "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`" },
-          { "kind": "type", "expr": "fserrors.Stage", "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`" },
-          { "kind": "type", "expr": "fserrors.Code", "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`" }
+          {
+            "kind": "type",
+            "expr": "fserrors.Path",
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`"
+          },
+          {
+            "kind": "type",
+            "expr": "fserrors.Stage",
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`"
+          },
+          {
+            "kind": "type",
+            "expr": "fserrors.Code",
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`"
+          }
         ]
       },
       {
@@ -186,7 +478,11 @@
         "alias": "issuer",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/issuer`",
         "entries": [
-          { "kind": "func", "expr": "issuer.NewRandom", "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/issuer`" }
+          {
+            "kind": "func",
+            "expr": "issuer.NewRandom",
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/issuer`"
+          }
         ]
       },
       {
@@ -194,7 +490,11 @@
         "alias": "channelinit",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`",
         "entries": [
-          { "kind": "type", "expr": "channelinit.Service", "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`" }
+          {
+            "kind": "type",
+            "expr": "channelinit.Service",
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`"
+          }
         ]
       },
       {
@@ -202,7 +502,11 @@
         "alias": "token",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/token`",
         "entries": [
-          { "kind": "func", "expr": "token.Verify", "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/token`" }
+          {
+            "kind": "func",
+            "expr": "token.Verify",
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/token`"
+          }
         ]
       },
       {
@@ -210,10 +514,26 @@
         "alias": "tunnelserver",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/tunnel/server`",
         "entries": [
-          { "kind": "type", "expr": "tunnelserver.Config", "doc_token": "`server.Config`" },
-          { "kind": "type", "expr": "tunnelserver.ReplayCache", "doc_token": "`server.ReplayCache`" },
-          { "kind": "type", "expr": "tunnelserver.TokenUseCache", "doc_token": "`server.TokenUseCache`" },
-          { "kind": "func", "expr": "tunnelserver.NewTokenUseCache", "doc_token": "`server.NewTokenUseCache(...)`" }
+          {
+            "kind": "type",
+            "expr": "tunnelserver.Config",
+            "doc_token": "`server.Config`"
+          },
+          {
+            "kind": "type",
+            "expr": "tunnelserver.ReplayCache",
+            "doc_token": "`server.ReplayCache`"
+          },
+          {
+            "kind": "type",
+            "expr": "tunnelserver.TokenUseCache",
+            "doc_token": "`server.TokenUseCache`"
+          },
+          {
+            "kind": "func",
+            "expr": "tunnelserver.NewTokenUseCache",
+            "doc_token": "`server.NewTokenUseCache(...)`"
+          }
         ]
       }
     ]
@@ -498,6 +818,717 @@
           "readStreamHello",
           "writeStreamHello"
         ]
+      }
+    ]
+  },
+  "swift": {
+    "package_name": "Flowersec",
+    "product": "Flowersec",
+    "module": "Flowersec",
+    "doc_tokens": [
+      "`Flowersec`",
+      "`import Flowersec`"
+    ],
+    "symbols": [
+      {
+        "kind": "swift.class",
+        "name": "FlowersecClient"
+      },
+      {
+        "kind": "swift.class",
+        "name": "RPCClient"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ConnectArtifact"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "Flowersec"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecCode"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecJSONFrame"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecPath"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecStage"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ScopePayloadValue"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "Suite"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectArtifact.direct(_:metadata:)"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectArtifact.tunnel(_:metadata:)"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.authTagMismatch"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.canceled"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.handshakeFailed"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.invalidInput"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.invalidOption"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.invalidPSK"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.invalidSuite"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingChannelID"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingConnectInfo"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingInitExp"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingWSURL"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.notConnected"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.openStreamFailed"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.rpcFailed"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.streamHelloFailed"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.timeout"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.websocketFailed"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecPath.auto"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecPath.direct"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecPath.tunnel"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.attach"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.close"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.connect"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.handshake"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.rpc"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.secure"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.validate"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.yamux"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.array(_:)"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.bool(_:)"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.null"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.number(_:)"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.object(_:)"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.string(_:)"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "Suite.p256HKDFSHA256AES256GCM"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "Suite.x25519HKDFSHA256AES256GCM"
+      },
+      {
+        "kind": "swift.func.op",
+        "name": "ChannelInitGrant.==(_:_:)"
+      },
+      {
+        "kind": "swift.func.op",
+        "name": "DirectConnectInfo.==(_:_:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ChannelInitGrant.init(from:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ChannelInitGrant.init(tunnelURL:channelID:channelInitExpiresAtUnixS:idleTimeoutSeconds:role:token:psk:allowedSuites:defaultSuite:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectArtifact.init(from:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectArtifactMetadata.init(scoped:correlation:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectOptions.init(origin:connectTimeout:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "CorrelationContext.init(from:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "CorrelationContext.init(traceID:sessionID:tags:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "CorrelationKV.init(from:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "CorrelationKV.init(key:value:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "DirectConnectInfo.init(from:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "DirectConnectInfo.init(wsURL:channelID:psk:channelInitExpiresAtUnixS:defaultSuite:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecCode.init(rawValue:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecError.init(path:stage:code:message:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecPath.init(rawValue:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecRPCError.init(code:message:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecStage.init(rawValue:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCClient.init(stream:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCEnvelope.init(data:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCEnvelope.init(typeID:requestID:responseTo:payload:error:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCErrorPayload.init(code:message:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCSubscription.init(cancelHandler:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ScopeMetadataEntry.init(from:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ScopeMetadataEntry.init(scope:scopeVersion:critical:payload:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ScopePayload.init(_:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ScopePayload.init(from:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ScopePayloadValue.init(from:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "Suite.init(rawValue:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "ChannelInitGrant.encode(to:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "ConnectArtifact.encode(to:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "CorrelationContext.encode(to:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "DirectConnectInfo.encode(to:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "FlowersecByteStream.close()"
+      },
+      {
+        "kind": "swift.method",
+        "name": "FlowersecByteStream.readExact(_:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "FlowersecByteStream.write(_:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "FlowersecClient.close()"
+      },
+      {
+        "kind": "swift.method",
+        "name": "FlowersecClient.openStream(kind:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCClient.call(_:_:timeout:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCClient.close()"
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCClient.notify(_:_:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCClient.onNotify(_:handler:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCClient.start()"
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCEnvelope.encoded()"
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCSubscription.cancel()"
+      },
+      {
+        "kind": "swift.method",
+        "name": "ScopeMetadataEntry.encode(to:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "ScopePayload.encode(to:)"
+      },
+      {
+        "kind": "swift.method",
+        "name": "ScopePayloadValue.encode(to:)"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ChannelInitGrant.allowedSuites"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ChannelInitGrant.channelID"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ChannelInitGrant.channelInitExpiresAtUnixS"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ChannelInitGrant.defaultSuite"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ChannelInitGrant.idleTimeoutSeconds"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ChannelInitGrant.psk"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ChannelInitGrant.role"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ChannelInitGrant.token"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ChannelInitGrant.tunnelURL"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectArtifact.directInfo"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectArtifact.metadata"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectArtifact.tunnelGrant"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectArtifactMetadata.correlation"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectArtifactMetadata.scoped"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectOptions.connectTimeout"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectOptions.origin"
+      },
+      {
+        "kind": "swift.property",
+        "name": "CorrelationContext.sessionID"
+      },
+      {
+        "kind": "swift.property",
+        "name": "CorrelationContext.tags"
+      },
+      {
+        "kind": "swift.property",
+        "name": "CorrelationContext.traceID"
+      },
+      {
+        "kind": "swift.property",
+        "name": "CorrelationKV.key"
+      },
+      {
+        "kind": "swift.property",
+        "name": "CorrelationKV.value"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectConnectInfo.channelID"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectConnectInfo.channelInitExpiresAtUnixS"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectConnectInfo.defaultSuite"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectConnectInfo.psk"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectConnectInfo.wsURL"
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecClient.rpc"
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecError.code"
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecError.errorDescription"
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecError.message"
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecError.path"
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecError.stage"
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecRPCError.code"
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecRPCError.errorDescription"
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecRPCError.message"
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCEnvelope.error"
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCEnvelope.payload"
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCEnvelope.requestID"
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCEnvelope.responseTo"
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCEnvelope.typeID"
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCErrorPayload.code"
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCErrorPayload.message"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ScopeMetadataEntry.critical"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ScopeMetadataEntry.payload"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ScopeMetadataEntry.scope"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ScopeMetadataEntry.scopeVersion"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ScopePayload.object"
+      },
+      {
+        "kind": "swift.protocol",
+        "name": "FlowersecByteStream"
+      },
+      {
+        "kind": "swift.protocol",
+        "name": "FlowersecRPCStream"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ChannelInitGrant"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ConnectArtifactMetadata"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ConnectOptions"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "CorrelationContext"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "CorrelationKV"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "DirectConnectInfo"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "FlowersecError"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "FlowersecRPCError"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "RPCEnvelope"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "RPCErrorPayload"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "RPCSubscription"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ScopeMetadataEntry"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ScopePayload"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "Flowersec.connect(_:options:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "Flowersec.connectDirect(_:options:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "Flowersec.connectDirect(info:origin:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "Flowersec.connectTunnel(_:options:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.invalidConnectInfo(_:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.invalidHandshake(_:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.invalidRPC(_:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.invalidRecord(_:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.invalidYamux(_:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.webSocket(_:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecJSONFrame.read(from:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecJSONFrame.write(_:to:)"
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "ConnectArtifactMetadata.empty"
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecError.closed"
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecError.timeout"
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "DirectConnectOptions"
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "TunnelConnectOptions"
       }
     ]
   },

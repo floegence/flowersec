@@ -17,6 +17,7 @@ type manifest struct {
 	Docs     docsManifest     `json:"docs"`
 	Go       goManifest       `json:"go"`
 	TS       tsManifest       `json:"ts"`
+	Swift    swiftManifest    `json:"swift"`
 	Coverage coverageManifest `json:"coverage"`
 }
 
@@ -55,6 +56,20 @@ type tsSubpath struct {
 	PackageJSONExport string   `json:"package_json_export"`
 	DocTokens         []string `json:"doc_tokens"`
 	RuntimeExports    []string `json:"runtime_exports"`
+}
+
+type swiftManifest struct {
+	PackageName string        `json:"package_name"`
+	Product     string        `json:"product"`
+	Module      string        `json:"module"`
+	DocTokens   []string      `json:"doc_tokens"`
+	Symbols     []swiftSymbol `json:"symbols"`
+}
+
+type swiftSymbol struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	DocToken string `json:"doc_token"`
 }
 
 type coverageManifest struct {
@@ -198,6 +213,38 @@ func validateManifest(repoRoot string, m *manifest) error {
 		return err
 	}
 	if err := requireUnique("ts.subpaths.package_json_export", exports); err != nil {
+		return err
+	}
+
+	if strings.TrimSpace(m.Swift.PackageName) == "" {
+		return errors.New("swift.package_name must not be empty")
+	}
+	if strings.TrimSpace(m.Swift.Product) == "" {
+		return errors.New("swift.product must not be empty")
+	}
+	if strings.TrimSpace(m.Swift.Module) == "" {
+		return errors.New("swift.module must not be empty")
+	}
+	if len(m.Swift.DocTokens) == 0 {
+		return errors.New("swift.doc_tokens must not be empty")
+	}
+	if err := requireUnique("swift.doc_tokens", m.Swift.DocTokens); err != nil {
+		return err
+	}
+	if len(m.Swift.Symbols) == 0 {
+		return errors.New("swift.symbols must not be empty")
+	}
+	swiftNames := make([]string, 0, len(m.Swift.Symbols))
+	for _, symbol := range m.Swift.Symbols {
+		if !strings.HasPrefix(symbol.Kind, "swift.") {
+			return fmt.Errorf("swift symbol %q has unsupported kind %q", symbol.Name, symbol.Kind)
+		}
+		if strings.TrimSpace(symbol.Name) == "" {
+			return errors.New("swift.symbols.name must not be empty")
+		}
+		swiftNames = append(swiftNames, symbol.Kind+"\x00"+symbol.Name)
+	}
+	if err := requireUnique("swift.symbols", swiftNames); err != nil {
 		return err
 	}
 

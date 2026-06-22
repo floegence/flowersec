@@ -237,6 +237,60 @@ Compatibility and alias TypeScript notes:
 - hybrid ambiguous inputs and legacy inputs mixed with artifact-only fields fail fast
 - named proxy profiles are no longer stable core APIs; use preset manifests instead
 
+## SwiftPM: stable module
+
+Stable package:
+
+- `Flowersec`
+  - SwiftPM product: `Flowersec`
+  - module import: `import Flowersec`
+
+Stable connection and session entrypoints:
+
+- `Flowersec.connect(...)`
+- `Flowersec.connectTunnel(...)`
+- `Flowersec.connectDirect(...)`
+- `FlowersecClient`
+- `FlowersecClient.rpc`
+- `FlowersecClient.openStream(...)`
+- `FlowersecClient.close()`
+- `ConnectOptions`
+- `DirectConnectOptions`
+- `TunnelConnectOptions`
+
+Stable RPC and stream building blocks:
+
+- `RPCClient`
+- `RPCClient.start()`
+- `RPCClient.call(...)`
+- `RPCClient.notify(...)`
+- `RPCClient.onNotify(...)`
+- `RPCClient.close()`
+- `FlowersecRPCStream`
+- `FlowersecByteStream`
+- `RPCSubscription`
+- `RPCEnvelope`
+- `RPCErrorPayload`
+- `FlowersecRPCError`
+- `FlowersecJSONFrame`
+
+Stable artifact and wire value types:
+
+- `ConnectArtifact`
+- `ConnectArtifactMetadata`
+- `DirectConnectInfo`
+- `ChannelInitGrant`
+- `ScopeMetadataEntry`
+- `ScopePayload`
+- `ScopePayloadValue`
+- `CorrelationContext`
+- `CorrelationKV`
+- `Suite`
+- `FlowersecError`
+- `FlowersecPath`
+- `FlowersecStage`
+- `FlowersecCode`
+
 ## Stable vs experimental notes
 
 Stable in v0.19.x:
@@ -244,6 +298,7 @@ Stable in v0.19.x:
 - client-facing canonical `ConnectArtifact`
 - strict canonical parse / validate rules
 - artifact-aware browser, node, and Go client connect entrypoints
+- artifact-aware SwiftPM client connect entrypoints
 - `@floegence/flowersec-core/controlplane` helper contract
 - Node/browser artifact-aware reconnect adapters
 - `controlplane/http` helper-first Go reference layer

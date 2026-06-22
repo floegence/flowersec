@@ -150,6 +150,7 @@ stability-check:
 	cd tools/stabilitycheck && go run . verify-manifest
 	cd tools/stabilitycheck && go run . verify-docs
 	cd tools/stabilitycheck && go run . verify-go
+	cd tools/stabilitycheck && go run . verify-swift
 	cd tools/stabilitycheck && go run . report
 
 go-cover-check:

@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -35,10 +37,12 @@ func run(args []string) error {
 
 	switch args[0] {
 	case "verify-manifest":
-		fmt.Printf("manifest OK: %d go targets, %d ts subpaths\n", len(m.Go.CompileTargets), len(m.TS.Subpaths))
+		fmt.Printf("manifest OK: %d go targets, %d ts subpaths, %d swift symbols\n", len(m.Go.CompileTargets), len(m.TS.Subpaths), len(m.Swift.Symbols))
 		return nil
 	case "verify-go":
 		return verifyGo(repoRoot, m)
+	case "verify-swift":
+		return verifySwift(repoRoot, m)
 	case "verify-docs":
 		return verifyDocs(repoRoot, m)
 	case "verify-go-coverage":
@@ -47,6 +51,7 @@ func run(args []string) error {
 		fmt.Printf("manifest=%s\n", manifestPath)
 		fmt.Printf("go_targets=%d\n", len(m.Go.CompileTargets))
 		fmt.Printf("ts_subpaths=%d\n", len(m.TS.Subpaths))
+		fmt.Printf("swift_symbols=%d\n", len(m.Swift.Symbols))
 		fmt.Printf("go_coverage_packages=%d\n", len(m.Coverage.Go))
 		fmt.Printf("ts_coverage=%d/%d/%d/%d\n", m.Coverage.TS.Lines, m.Coverage.TS.Functions, m.Coverage.TS.Statements, m.Coverage.TS.Branches)
 		return nil
@@ -72,6 +77,7 @@ func verifyDocs(repoRoot string, m *manifest) error {
 	for _, subpath := range m.TS.Subpaths {
 		required = append(required, subpath.DocTokens...)
 	}
+	required = append(required, m.Swift.DocTokens...)
 	for _, token := range required {
 		if !strings.Contains(doc, token) {
 			return fmt.Errorf("%s missing token %s", m.Docs.APISurface, token)
@@ -79,6 +85,198 @@ func verifyDocs(repoRoot string, m *manifest) error {
 	}
 	fmt.Printf("docs OK: %d tokens verified in %s\n", len(required), m.Docs.APISurface)
 	return nil
+}
+
+func verifySwift(repoRoot string, m *manifest) error {
+	packageData, err := os.ReadFile(filepath.Join(repoRoot, "Package.swift"))
+	if err != nil {
+		return err
+	}
+	packageText := string(packageData)
+	for _, token := range []string{
+		`name: "` + m.Swift.PackageName + `"`,
+		`.library(name: "` + m.Swift.Product + `"`,
+		`name: "` + m.Swift.Module + `"`,
+	} {
+		if !strings.Contains(packageText, token) {
+			return fmt.Errorf("Package.swift missing Swift package token %s", token)
+		}
+	}
+
+	symbols, err := dumpSwiftPublicSymbols(repoRoot, m.Swift.Module)
+	if err != nil {
+		return err
+	}
+	actual := make([]swiftSymbol, 0, len(symbols))
+	for _, symbol := range symbols {
+		actual = append(actual, swiftSymbol{Kind: symbol.Kind, Name: symbol.Name})
+	}
+	if diff := diffSwiftSymbols(m.Swift.Symbols, actual); diff != "" {
+		return errors.New(diff)
+	}
+	fmt.Printf("swift symbols OK: %d symbols verified\n", len(m.Swift.Symbols))
+	return nil
+}
+
+type dumpedSwiftSymbol struct {
+	Kind string
+	Name string
+}
+
+type swiftSymbolGraph struct {
+	Symbols []struct {
+		Kind struct {
+			Identifier string `json:"identifier"`
+		} `json:"kind"`
+		PathComponents []string `json:"pathComponents"`
+		AccessLevel    string   `json:"accessLevel"`
+		Identifier     struct {
+			InterfaceLanguage string `json:"interfaceLanguage"`
+		} `json:"identifier"`
+	} `json:"symbols"`
+}
+
+func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error) {
+	if err := removeSwiftSymbolGraphs(repoRoot, module); err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(
+		"swift",
+		"package",
+		"dump-symbol-graph",
+		"--minimum-access-level",
+		"public",
+		"--skip-synthesized-members",
+	)
+	cmd.Dir = repoRoot
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("swift package dump-symbol-graph failed:\n%s", out.String())
+	}
+	graphPath, err := findSwiftSymbolGraph(repoRoot, module)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(graphPath)
+	if err != nil {
+		return nil, err
+	}
+	var graph swiftSymbolGraph
+	if err := json.Unmarshal(data, &graph); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", graphPath, err)
+	}
+	symbols := make([]dumpedSwiftSymbol, 0, len(graph.Symbols))
+	for _, item := range graph.Symbols {
+		if item.AccessLevel != "public" || item.Identifier.InterfaceLanguage != "swift" {
+			continue
+		}
+		symbols = append(symbols, dumpedSwiftSymbol{
+			Kind: item.Kind.Identifier,
+			Name: strings.Join(item.PathComponents, "."),
+		})
+	}
+	slices.SortFunc(symbols, func(a, b dumpedSwiftSymbol) int {
+		return strings.Compare(a.Kind+"\x00"+a.Name, b.Kind+"\x00"+b.Name)
+	})
+	return symbols, nil
+}
+
+func removeSwiftSymbolGraphs(repoRoot, module string) error {
+	buildRoot := filepath.Join(repoRoot, ".build")
+	if _, err := os.Stat(buildRoot); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return filepath.WalkDir(buildRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Base(path) != module+".symbols.json" {
+			return nil
+		}
+		return os.Remove(path)
+	})
+}
+
+func findSwiftSymbolGraph(repoRoot, module string) (string, error) {
+	buildRoot := filepath.Join(repoRoot, ".build")
+	matches := make([]string, 0, 1)
+	err := filepath.WalkDir(buildRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Base(path) != module+".symbols.json" {
+			return nil
+		}
+		matches = append(matches, path)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("swift symbol graph for module %q was not generated", module)
+	}
+	slices.Sort(matches)
+	return matches[0], nil
+}
+
+func diffSwiftSymbols(expected, actual []swiftSymbol) string {
+	expectedSet := make(map[string]struct{}, len(expected))
+	actualSet := make(map[string]struct{}, len(actual))
+	for _, symbol := range expected {
+		expectedSet[symbol.Kind+"\x00"+symbol.Name] = struct{}{}
+	}
+	for _, symbol := range actual {
+		actualSet[symbol.Kind+"\x00"+symbol.Name] = struct{}{}
+	}
+
+	missing := make([]string, 0)
+	for key := range expectedSet {
+		if _, ok := actualSet[key]; !ok {
+			missing = append(missing, formatSwiftSymbolKey(key))
+		}
+	}
+	extra := make([]string, 0)
+	for key := range actualSet {
+		if _, ok := expectedSet[key]; !ok {
+			extra = append(extra, formatSwiftSymbolKey(key))
+		}
+	}
+	slices.Sort(missing)
+	slices.Sort(extra)
+	if len(missing) == 0 && len(extra) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Swift public symbol manifest is out of sync")
+	if len(missing) > 0 {
+		b.WriteString("\nmissing public symbols from source:")
+		for _, item := range missing {
+			b.WriteString("\n  - ")
+			b.WriteString(item)
+		}
+	}
+	if len(extra) > 0 {
+		b.WriteString("\nextra public symbols not listed in manifest:")
+		for _, item := range extra {
+			b.WriteString("\n  - ")
+			b.WriteString(item)
+		}
+	}
+	return b.String()
+}
+
+func formatSwiftSymbolKey(key string) string {
+	parts := strings.SplitN(key, "\x00", 2)
+	if len(parts) != 2 {
+		return key
+	}
+	return parts[0] + " " + parts[1]
 }
 
 func verifyGo(repoRoot string, m *manifest) error {

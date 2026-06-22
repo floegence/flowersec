@@ -9,7 +9,7 @@ import (
 )
 
 func TestBuildReleaseNotesSkipsReleaseHousekeeping(t *testing.T) {
-	notes := buildReleaseNotes("flowersec-go/v0.18.0", "flowersec-go/v0.17.1", []commit{
+	notes := buildReleaseNotes("flowersec-go/v0.18.0", "flowersec-go/v0.17.1", releaseKindGo, []commit{
 		{Hash: "1", Subject: "feat: add browser orchestration helpers"},
 		{Hash: "2", Subject: "fix: preserve browser controlplane error details"},
 		{Hash: "3", Subject: "docs: refresh README for product storytelling"},
@@ -35,6 +35,23 @@ func TestBuildReleaseNotesSkipsReleaseHousekeeping(t *testing.T) {
 	}
 }
 
+func TestBuildSwiftReleaseNotesUsesRootTagAndSwiftPMAssets(t *testing.T) {
+	notes := buildReleaseNotes("0.19.11", "", releaseKindSwift, []commit{
+		{Hash: "1", Subject: "feat(swift): publish flowersec swift client"},
+	})
+
+	md := renderMarkdown(notes)
+	if !strings.Contains(md, "# Flowersec 0.19.11") {
+		t.Fatalf("expected Swift release heading, got:\n%s", md)
+	}
+	if !strings.Contains(md, "SwiftPM package tag `0.19.11`") {
+		t.Fatalf("expected SwiftPM asset note, got:\n%s", md)
+	}
+	if strings.Contains(md, "flowersec-tunnel_0.19.11") || strings.Contains(md, "GHCR tunnel") {
+		t.Fatalf("Swift release notes must not list Go release assets, got:\n%s", md)
+	}
+}
+
 func TestFindPreviousTagAndCollectCommits(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -55,7 +72,7 @@ func TestFindPreviousTagAndCollectCommits(t *testing.T) {
 	runGit(t, repo, "commit", "-m", "fix: include feature summaries in releases")
 	runGit(t, repo, "tag", "flowersec-go/v0.18.0")
 
-	prev, err := findPreviousTag(repo, "HEAD", "flowersec-go/v0.18.0")
+	prev, err := findPreviousTag(repo, "HEAD", "flowersec-go/v0.18.0", releaseKindGo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +92,98 @@ func TestFindPreviousTagAndCollectCommits(t *testing.T) {
 	}
 	if commits[1].Subject != "fix: include feature summaries in releases" {
 		t.Fatalf("unexpected second commit: %#v", commits[1])
+	}
+}
+
+func TestFindPreviousSwiftRootTagAndCollectCommits(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.name", "Codex")
+	runGit(t, repo, "config", "user.email", "codex@example.com")
+
+	writeFile(t, filepath.Join(repo, "Package.swift"), "package\n")
+	runGit(t, repo, "add", "Package.swift")
+	runGit(t, repo, "commit", "-m", "feat(swift): add package manifest")
+	runGit(t, repo, "tag", "0.19.10")
+
+	writeFile(t, filepath.Join(repo, "Swift.swift"), "sdk\n")
+	runGit(t, repo, "add", "Swift.swift")
+	runGit(t, repo, "commit", "-m", "feat(swift): expose rpc client")
+	runGit(t, repo, "tag", "0.19.11")
+
+	prev, err := findPreviousTag(repo, "HEAD", "0.19.11", releaseKindSwift)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prev != "0.19.10" {
+		t.Fatalf("expected previous tag 0.19.10, got %q", prev)
+	}
+
+	commits, err := collectCommits(repo, "HEAD", prev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 1 {
+		t.Fatalf("expected 1 commit, got %d", len(commits))
+	}
+	if commits[0].Subject != "feat(swift): expose rpc client" {
+		t.Fatalf("unexpected commit: %#v", commits[0])
+	}
+}
+
+func TestFirstSwiftRootTagFallsBackToLatestGoTag(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.name", "Codex")
+	runGit(t, repo, "config", "user.email", "codex@example.com")
+
+	writeFile(t, filepath.Join(repo, "README.md"), "go release\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "fix: publish go baseline")
+	runGit(t, repo, "tag", "flowersec-go/v0.19.10")
+
+	writeFile(t, filepath.Join(repo, "Package.swift"), "swift package\n")
+	runGit(t, repo, "add", "Package.swift")
+	runGit(t, repo, "commit", "-m", "feat(swift): publish swift package")
+
+	notes, err := loadReleaseNotes(repo, "0.19.11", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notes.PreviousTag != "flowersec-go/v0.19.10" {
+		t.Fatalf("expected previous Go baseline, got %q", notes.PreviousTag)
+	}
+	md := renderMarkdown(notes)
+	if !strings.Contains(md, "Publish swift package") {
+		t.Fatalf("expected Swift commit in notes, got:\n%s", md)
+	}
+	if strings.Contains(md, "Publish go baseline") {
+		t.Fatalf("first Swift notes must not include prior Go history, got:\n%s", md)
+	}
+}
+
+func TestReleaseKindForTag(t *testing.T) {
+	tests := []struct {
+		tag  string
+		kind releaseKind
+	}{
+		{tag: "flowersec-go/v0.19.10", kind: releaseKindGo},
+		{tag: "0.19.11", kind: releaseKindSwift},
+	}
+	for _, tt := range tests {
+		got, err := releaseKindForTag(tt.tag)
+		if err != nil {
+			t.Fatalf("releaseKindForTag(%q): %v", tt.tag, err)
+		}
+		if got != tt.kind {
+			t.Fatalf("releaseKindForTag(%q) = %q, want %q", tt.tag, got, tt.kind)
+		}
+	}
+	if _, err := releaseKindForTag("release-1"); err == nil {
+		t.Fatal("expected unsupported tag error")
+	}
+	if _, err := releaseKindForTag("v0.19.11"); err == nil {
+		t.Fatal("expected prefixed Swift tag error")
 	}
 }
 
