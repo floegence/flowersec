@@ -162,6 +162,34 @@ func TestFirstSwiftRootTagFallsBackToLatestGoTag(t *testing.T) {
 	}
 }
 
+func TestSwiftReleaseNotesDereferenceAnnotatedTag(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.name", "Codex")
+	runGit(t, repo, "config", "user.email", "codex@example.com")
+
+	writeFile(t, filepath.Join(repo, "README.md"), "go release\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "fix: publish go baseline")
+	runGit(t, repo, "tag", "flowersec-go/v0.19.10")
+
+	writeFile(t, filepath.Join(repo, "Package.swift"), "swift package\n")
+	runGit(t, repo, "add", "Package.swift")
+	runGit(t, repo, "commit", "-m", "feat(swift): publish swift package")
+	runGit(t, repo, "tag", "-a", "0.19.11", "-m", "Flowersec Swift 0.19.11")
+
+	notes, err := loadReleaseNotes(repo, "0.19.11", "0.19.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notes.PreviousTag != "flowersec-go/v0.19.10" {
+		t.Fatalf("expected previous Go baseline, got %q", notes.PreviousTag)
+	}
+	if notes.Sections[0].Items[0] != "Publish swift package" {
+		t.Fatalf("unexpected notes: %#v", notes.Sections)
+	}
+}
+
 func TestReleaseKindForTag(t *testing.T) {
 	tests := []struct {
 		tag  string

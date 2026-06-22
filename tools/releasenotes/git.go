@@ -19,15 +19,27 @@ func loadReleaseNotes(repoPath, currentTag, currentRef string) (*releaseNotes, e
 	if err != nil {
 		return nil, err
 	}
-	previousTag, err := findPreviousTag(repoPath, currentRef, currentTag, kind)
+	currentCommit, err := resolveCommitRef(repoPath, currentRef)
 	if err != nil {
 		return nil, err
 	}
-	commits, err := collectCommits(repoPath, currentRef, previousTag)
+	previousTag, err := findPreviousTag(repoPath, currentCommit, currentTag, kind)
+	if err != nil {
+		return nil, err
+	}
+	commits, err := collectCommits(repoPath, currentCommit, previousTag)
 	if err != nil {
 		return nil, err
 	}
 	return buildReleaseNotes(currentTag, previousTag, kind, commits), nil
+}
+
+func resolveCommitRef(repoPath, ref string) (string, error) {
+	out, err := gitOutput(repoPath, "rev-parse", ref+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func findPreviousTag(repoPath, currentRef, currentTag string, kind releaseKind) (string, error) {
@@ -50,6 +62,9 @@ func findPreviousTag(repoPath, currentRef, currentTag string, kind releaseKind) 
 			continue
 		}
 		if i == 0 {
+			if kind == releaseKindSwift {
+				return latestMergedTag(repoPath, currentRef, "flowersec-go/v*")
+			}
 			return "", nil
 		}
 		return lines[i-1], nil
