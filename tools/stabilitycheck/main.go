@@ -136,29 +136,47 @@ type swiftSymbolGraph struct {
 	} `json:"symbols"`
 }
 
+type swiftTargetInfo struct {
+	Target struct {
+		Triple   string `json:"triple"`
+		Platform string `json:"platform"`
+	} `json:"target"`
+}
+
 func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error) {
-	if err := removeSwiftSymbolGraphs(repoRoot, module); err != nil {
+	if err := buildSwiftTarget(repoRoot, module); err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(
-		"swift",
-		"package",
-		"dump-symbol-graph",
-		"--minimum-access-level",
-		"public",
-		"--skip-synthesized-members",
-	)
-	cmd.Dir = repoRoot
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("swift package dump-symbol-graph failed:\n%s", out.String())
-	}
-	graphPath, err := findSwiftSymbolGraph(repoRoot, module)
+	binPath, err := swiftBuildBinPath(repoRoot)
 	if err != nil {
 		return nil, err
 	}
+	target, err := swiftBuildTargetInfo(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	sdkPath, err := swiftSDKPath(target.Target.Platform)
+	if err != nil {
+		return nil, err
+	}
+	graphDir := filepath.Join(repoRoot, ".build", "stability-symbolgraph")
+	if err := os.RemoveAll(graphDir); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(graphDir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := extractSwiftSymbolGraph(
+		repoRoot,
+		module,
+		target.Target.Triple,
+		filepath.Join(binPath, "Modules"),
+		sdkPath,
+		graphDir,
+	); err != nil {
+		return nil, err
+	}
+	graphPath := filepath.Join(graphDir, module+".symbols.json")
 	data, err := os.ReadFile(graphPath)
 	if err != nil {
 		return nil, err
@@ -183,46 +201,106 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 	return symbols, nil
 }
 
-func removeSwiftSymbolGraphs(repoRoot, module string) error {
-	buildRoot := filepath.Join(repoRoot, ".build")
-	if _, err := os.Stat(buildRoot); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
+func buildSwiftTarget(repoRoot, module string) error {
+	cmd := exec.Command("swift", "build", "--target", module)
+	cmd.Dir = repoRoot
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("swift build --target %s failed:\n%s", module, out.String())
 	}
-	return filepath.WalkDir(buildRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || filepath.Base(path) != module+".symbols.json" {
-			return nil
-		}
-		return os.Remove(path)
-	})
+	return nil
 }
 
-func findSwiftSymbolGraph(repoRoot, module string) (string, error) {
-	buildRoot := filepath.Join(repoRoot, ".build")
-	matches := make([]string, 0, 1)
-	err := filepath.WalkDir(buildRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || filepath.Base(path) != module+".symbols.json" {
-			return nil
-		}
-		matches = append(matches, path)
-		return nil
-	})
-	if err != nil {
-		return "", err
+func swiftBuildBinPath(repoRoot string) (string, error) {
+	cmd := exec.Command("swift", "build", "--show-bin-path")
+	cmd.Dir = repoRoot
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("swift build --show-bin-path failed:\n%s", out.String())
 	}
-	if len(matches) == 0 {
-		return "", fmt.Errorf("swift symbol graph for module %q was not generated", module)
+	path := strings.TrimSpace(out.String())
+	if path == "" {
+		return "", errors.New("swift build --show-bin-path returned an empty path")
 	}
-	slices.Sort(matches)
-	return matches[0], nil
+	return path, nil
+}
+
+func swiftBuildTargetInfo(repoRoot string) (*swiftTargetInfo, error) {
+	cmd := exec.Command("swift", "-print-target-info")
+	cmd.Dir = repoRoot
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("swift -print-target-info failed:\n%s", out.String())
+	}
+	var info swiftTargetInfo
+	if err := json.Unmarshal(out.Bytes(), &info); err != nil {
+		return nil, fmt.Errorf("parse swift target info: %w", err)
+	}
+	if strings.TrimSpace(info.Target.Triple) == "" {
+		return nil, errors.New("swift target info missing target triple")
+	}
+	return &info, nil
+}
+
+func swiftSDKPath(platform string) (string, error) {
+	if !strings.Contains(strings.ToLower(platform), "macos") {
+		return "", nil
+	}
+	if _, err := exec.LookPath("xcrun"); err != nil {
+		return "", nil
+	}
+	cmd := exec.Command("xcrun", "--sdk", "macosx", "--show-sdk-path")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("xcrun --sdk macosx --show-sdk-path failed:\n%s", out.String())
+	}
+	return strings.TrimSpace(out.String()), nil
+}
+
+func extractSwiftSymbolGraph(
+	repoRoot string,
+	module string,
+	targetTriple string,
+	modulePath string,
+	sdkPath string,
+	outputDir string,
+) error {
+	command := "swift-symbolgraph-extract"
+	args := []string{
+		"-module-name", module,
+		"-target", targetTriple,
+		"-I", modulePath,
+		"-output-dir", outputDir,
+		"-minimum-access-level", "public",
+		"-skip-synthesized-members",
+	}
+	if sdkPath != "" {
+		args = append(args, "-sdk", sdkPath)
+	}
+	if _, err := exec.LookPath(command); err != nil {
+		if _, xcrunErr := exec.LookPath("xcrun"); xcrunErr != nil {
+			return fmt.Errorf("swift-symbolgraph-extract not found: %w", err)
+		}
+		args = append([]string{command}, args...)
+		command = "xcrun"
+	}
+	cmd := exec.Command(command, args...)
+	cmd.Dir = repoRoot
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("swift-symbolgraph-extract failed:\n%s", out.String())
+	}
+	return nil
 }
 
 func diffSwiftSymbols(expected, actual []swiftSymbol) string {

@@ -19,7 +19,7 @@ The package is intentionally product-neutral. It does not contain downstream app
 The repository root exposes the Swift package:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.11")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.12")
 ```
 
 Use the `Flowersec` product:

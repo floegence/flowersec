@@ -1,13 +1,46 @@
 import Foundation
+#if canImport(Security)
 import Security
+#elseif os(Linux)
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
+#endif
 
 extension Data {
   static func secureRandom(count: Int) throws -> Data {
     var bytes = [UInt8](repeating: 0, count: count)
+    #if canImport(Security)
     let status = SecRandomCopyBytes(kSecRandomDefault, count, &bytes)
     guard status == errSecSuccess else {
       throw FlowersecError.invalidHandshake("Secure random generation failed.")
     }
+    #elseif os(Linux)
+    var filled = 0
+    while filled < bytes.count {
+      let result = bytes.withUnsafeMutableBytes { rawBuffer -> Int in
+        guard let baseAddress = rawBuffer.baseAddress else { return 0 }
+        return getrandom(baseAddress.advanced(by: filled), bytes.count - filled, 0)
+      }
+      if result < 0 {
+        if errno == EINTR {
+          continue
+        }
+        throw FlowersecError.invalidHandshake("Secure random generation failed.")
+      }
+      guard result > 0 else {
+        throw FlowersecError.invalidHandshake("Secure random generation failed.")
+      }
+      filled += result
+    }
+    #else
+    var generator = SystemRandomNumberGenerator()
+    for index in bytes.indices {
+      bytes[index] = UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
+    }
+    #endif
     return Data(bytes)
   }
 
@@ -66,13 +99,10 @@ extension Data {
   }
 
   func readUInt64BE(at offset: Int) -> UInt64 {
-    (UInt64(self[offset]) << 56)
-      | (UInt64(self[offset + 1]) << 48)
-      | (UInt64(self[offset + 2]) << 40)
-      | (UInt64(self[offset + 3]) << 32)
-      | (UInt64(self[offset + 4]) << 24)
-      | (UInt64(self[offset + 5]) << 16)
-      | (UInt64(self[offset + 6]) << 8)
-      | UInt64(self[offset + 7])
+    var value: UInt64 = 0
+    for index in 0..<8 {
+      value = (value << 8) | UInt64(self[offset + index])
+    }
+    return value
   }
 }
