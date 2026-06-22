@@ -117,6 +117,18 @@ func TestSwiftSymbolGraphExtractCandidatesIncludeRuntimeToolchainBin(t *testing.
 	}
 }
 
+func TestSwiftMacOSTargetDetectionFallsBackToTriple(t *testing.T) {
+	if !isSwiftMacOSTarget("", "arm64-apple-macosx15.0") {
+		t.Fatal("expected macOS target detection from macosx triple")
+	}
+	if !isSwiftMacOSTarget("", "arm64-apple-darwin24.0") {
+		t.Fatal("expected macOS target detection from darwin triple")
+	}
+	if isSwiftMacOSTarget("linux", "x86_64-unknown-linux-gnu") {
+		t.Fatal("linux target must not require a macOS SDK")
+	}
+}
+
 func TestMakefileStabilityCheckRunsSwiftVerifier(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	if err != nil {

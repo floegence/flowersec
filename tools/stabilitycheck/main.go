@@ -162,7 +162,7 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 	if err != nil {
 		return nil, err
 	}
-	sdkPath, err := swiftSDKPath(target.Target.Platform)
+	sdkPath, err := swiftSDKPath(target.Target.Platform, target.Target.Triple)
 	if err != nil {
 		return nil, err
 	}
@@ -278,8 +278,8 @@ func swiftBuildTargetInfo(repoRoot string) (*swiftTargetInfo, error) {
 	return &info, nil
 }
 
-func swiftSDKPath(platform string) (string, error) {
-	if !strings.Contains(strings.ToLower(platform), "macos") {
+func swiftSDKPath(platform, triple string) (string, error) {
+	if !isSwiftMacOSTarget(platform, triple) {
 		return "", nil
 	}
 	if _, err := exec.LookPath("xcrun"); err != nil {
@@ -293,6 +293,14 @@ func swiftSDKPath(platform string) (string, error) {
 		return "", fmt.Errorf("xcrun --sdk macosx --show-sdk-path failed:\n%s", out.String())
 	}
 	return strings.TrimSpace(out.String()), nil
+}
+
+func isSwiftMacOSTarget(platform, triple string) bool {
+	platform = strings.ToLower(platform)
+	triple = strings.ToLower(triple)
+	return strings.Contains(platform, "macos") ||
+		strings.Contains(triple, "apple-macos") ||
+		strings.Contains(triple, "apple-darwin")
 }
 
 func extractSwiftSymbolGraph(

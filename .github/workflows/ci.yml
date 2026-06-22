@@ -38,4 +38,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Swift package checks
-        run: make swift-check
+        run: |
+          set -euo pipefail
+          make stability-check
+          make swift-check
