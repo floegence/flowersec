@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const demoOrigin = "https://app.redeven.com"
+const demoOrigin = "https://app.example.com"
 
 type controlplaneReady struct {
 	ControlplaneHTTPURL   string          `json:"controlplane_http_url"`

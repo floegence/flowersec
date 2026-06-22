@@ -8,6 +8,7 @@ YAMUX_INTEROP_STRESS ?= 0
 YAMUX_INTEROP_CLIENT_RST ?= 0
 YAMUX_INTEROP_DEBUG ?= 0
 SWIFT_SOURCE_GUARD_PATTERN := Redeven|redeven|RedevenFlowersec|RedevenRPCClient|FlowersecDirectClient|FlowersecDirectSession|FlowersecDirectError|RuntimeFS|RuntimeGit|RuntimeTerminal|RuntimeFlower|RuntimeTypedRPC|RuntimeJSONValue|RuntimeRPCPayload|FlowerMessage|TerminalSession|MonitorSnapshot|direct runtime
+SWIFT_SOURCE_GUARD_PATHS := flowersec-swift/Sources Package.swift README.md flowersec-swift/README.md docs examples .github
 
 gen: gen-core gen-examples
 
@@ -95,13 +96,13 @@ swift-package-check:
 swift-source-guard:
 	@status=1; \
 	if command -v rg >/dev/null 2>&1; then \
-		if rg -n '$(SWIFT_SOURCE_GUARD_PATTERN)' flowersec-swift/Sources Package.swift; then \
+		if rg -n '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \
 			status=0; \
 		else \
 			status=$$?; \
 		fi; \
 	else \
-		if grep -RInE '$(SWIFT_SOURCE_GUARD_PATTERN)' flowersec-swift/Sources Package.swift; then \
+		if grep -RInE '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \
 			status=0; \
 		else \
 			status=$$?; \

@@ -12,7 +12,29 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  linux-swiftpm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: flowersec-go/go.mod
+          cache: true
+          cache-dependency-path: |
+            flowersec-go/go.sum
+            examples/go.sum
+
+      - name: Validate SwiftPM package on Linux
+        run: |
+          set -euo pipefail
+          make stability-check
+          make swift-check
+
+  macos-swiftpm:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,11 +50,30 @@ jobs:
             flowersec-go/go.sum
             examples/go.sum
 
-      - name: Validate SwiftPM package
+      - name: Validate SwiftPM package on macOS
         run: |
           set -euo pipefail
           make stability-check
           make swift-check
+
+  release:
+    needs:
+      - linux-swiftpm
+      - macos-swiftpm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: flowersec-go/go.mod
+          cache: true
+          cache-dependency-path: |
+            flowersec-go/go.sum
+            examples/go.sum
 
       - name: Generate release notes
         run: |

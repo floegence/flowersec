@@ -49,7 +49,7 @@ Tenant file format:
   "tenants": [
     {
       "id": "env_env_123",
-      "aud": "redeven-custom-tunnel:env_env_123",
+      "aud": "tenant-custom-tunnel:env_env_123",
       "iss": "https://region.example/custom/env/env_env_123",
       "issuer_keys_file": "/etc/flowersec/issuer_keys.json"
     }

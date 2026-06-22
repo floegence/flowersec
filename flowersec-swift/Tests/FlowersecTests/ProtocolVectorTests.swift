@@ -1,4 +1,5 @@
 import Foundation
+import Crypto
 import XCTest
 
 @testable import Flowersec
@@ -59,6 +60,51 @@ final class ProtocolVectorTests: XCTestCase {
     XCTAssertEqual(transcript.base64URLEncodedString(), unwrapped.expected.transcriptHashB64u)
   }
 
+  func testP256HandshakeSessionKeyGoldenVector() throws {
+    let vector = try e2eeVectors().handshakeP256.first { $0.caseID == "handshake_p256_basic" }
+    let unwrapped = try XCTUnwrap(vector)
+    let input = unwrapped.inputs
+    let clientPrivateKey = try P256.KeyAgreement.PrivateKey(
+      rawRepresentation: try XCTUnwrap(Data(base64URLEncoded: input.clientEphPrivB64u))
+    )
+    let serverPrivateKey = try P256.KeyAgreement.PrivateKey(
+      rawRepresentation: try XCTUnwrap(Data(base64URLEncoded: input.serverEphPrivB64u))
+    )
+    let clientPublicKey = clientPrivateKey.publicKey.x963Representation
+    let serverPublicKey = serverPrivateKey.publicKey.x963Representation
+    XCTAssertEqual(clientPublicKey.base64URLEncodedString(), input.clientEphPubB64u)
+    XCTAssertEqual(serverPublicKey.base64URLEncodedString(), input.serverEphPubB64u)
+
+    let serverPeerKey = try P256.KeyAgreement.PublicKey(x963Representation: serverPublicKey)
+    let sharedSecret = try clientPrivateKey.sharedSecretFromKeyAgreement(with: serverPeerKey)
+    let sharedSecretData = sharedSecret.withUnsafeBytes { Data($0) }
+    XCTAssertEqual(sharedSecretData.base64URLEncodedString(), unwrapped.expected.sharedSecretB64u)
+
+    let transcript = try FlowersecHandshake.transcriptHash(
+      input: FlowersecHandshakeTranscriptInput(
+        suite: try XCTUnwrap(Suite(rawValue: input.suite)),
+        channelID: input.channelID,
+        nonceC: try XCTUnwrap(Data(base64URLEncoded: input.nonceCB64u)),
+        nonceS: try XCTUnwrap(Data(base64URLEncoded: input.nonceSB64u)),
+        clientPublicKey: clientPublicKey,
+        serverPublicKey: serverPublicKey,
+        serverFeatures: UInt32(input.serverFeatures)
+      )
+    )
+    XCTAssertEqual(transcript.base64URLEncodedString(), unwrapped.expected.transcriptHashB64u)
+
+    let keys = FlowersecHandshake.deriveSessionKeys(
+      psk: try XCTUnwrap(Data(base64URLEncoded: input.pskB64u)),
+      sharedSecret: sharedSecretData,
+      transcript: transcript
+    )
+    XCTAssertEqual(keys.c2sKey.base64URLEncodedString(), unwrapped.expected.c2sKeyB64u)
+    XCTAssertEqual(keys.s2cKey.base64URLEncodedString(), unwrapped.expected.s2cKeyB64u)
+    XCTAssertEqual(keys.c2sNoncePrefix.base64URLEncodedString(), unwrapped.expected.c2sNoncePrefixB64u)
+    XCTAssertEqual(keys.s2cNoncePrefix.base64URLEncodedString(), unwrapped.expected.s2cNoncePrefixB64u)
+    XCTAssertEqual(keys.rekeyBase.base64URLEncodedString(), unwrapped.expected.rekeyBaseB64u)
+  }
+
   private func e2eeVectors() throws -> E2EEVectors {
     let url = packageRoot()
       .appendingPathComponent("idl/flowersec/testdata/v1/e2ee_vectors.json")
@@ -70,10 +116,12 @@ final class ProtocolVectorTests: XCTestCase {
 private struct E2EEVectors: Decodable {
   var transcriptHashes: [TranscriptHashVector]
   var recordFrames: [RecordFrameVector]
+  var handshakeP256: [HandshakeP256Vector]
 
   private enum CodingKeys: String, CodingKey {
     case transcriptHashes = "transcript_hash"
     case recordFrames = "record_frame"
+    case handshakeP256 = "handshake_p256"
   }
 }
 
@@ -150,6 +198,64 @@ private struct RecordFrameExpected: Decodable {
 
   private enum CodingKeys: String, CodingKey {
     case frameB64u = "frame_b64u"
+  }
+}
+
+private struct HandshakeP256Vector: Decodable {
+  var caseID: String
+  var inputs: HandshakeP256Inputs
+  var expected: HandshakeP256Expected
+
+  private enum CodingKeys: String, CodingKey {
+    case caseID = "case_id"
+    case inputs
+    case expected
+  }
+}
+
+private struct HandshakeP256Inputs: Decodable {
+  var suite: Int
+  var serverFeatures: Int
+  var channelID: String
+  var nonceCB64u: String
+  var nonceSB64u: String
+  var clientEphPrivB64u: String
+  var serverEphPrivB64u: String
+  var clientEphPubB64u: String
+  var serverEphPubB64u: String
+  var pskB64u: String
+
+  private enum CodingKeys: String, CodingKey {
+    case suite
+    case serverFeatures = "server_features"
+    case channelID = "channel_id"
+    case nonceCB64u = "nonce_c_b64u"
+    case nonceSB64u = "nonce_s_b64u"
+    case clientEphPrivB64u = "client_eph_priv_b64u"
+    case serverEphPrivB64u = "server_eph_priv_b64u"
+    case clientEphPubB64u = "client_eph_pub_b64u"
+    case serverEphPubB64u = "server_eph_pub_b64u"
+    case pskB64u = "psk_b64u"
+  }
+}
+
+private struct HandshakeP256Expected: Decodable {
+  var sharedSecretB64u: String
+  var transcriptHashB64u: String
+  var c2sKeyB64u: String
+  var s2cKeyB64u: String
+  var c2sNoncePrefixB64u: String
+  var s2cNoncePrefixB64u: String
+  var rekeyBaseB64u: String
+
+  private enum CodingKeys: String, CodingKey {
+    case sharedSecretB64u = "shared_secret_b64u"
+    case transcriptHashB64u = "transcript_hash_b64u"
+    case c2sKeyB64u = "c2s_key_b64u"
+    case s2cKeyB64u = "s2c_key_b64u"
+    case c2sNoncePrefixB64u = "c2s_nonce_prefix_b64u"
+    case s2cNoncePrefixB64u = "s2c_nonce_prefix_b64u"
+    case rekeyBaseB64u = "rekey_base_b64u"
   }
 }
 
