@@ -239,10 +239,10 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 ### Swift SDK
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.14")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.15")
 ```
 
-Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.19.14`.
+Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.19.15`.
 
 ### Tunnel server
 
