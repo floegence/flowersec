@@ -99,6 +99,24 @@ func TestDiffSwiftSymbolsDetectsMissingAndExtra(t *testing.T) {
 	}
 }
 
+func TestSwiftSymbolGraphExtractCandidatesIncludeRuntimeToolchainBin(t *testing.T) {
+	root := t.TempDir()
+	swiftPath := filepath.Join(root, "usr", "bin", "swift")
+	runtimePath := filepath.Join(root, "usr", "lib", "swift")
+	candidates := swiftSymbolGraphExtractCandidates(swiftPath, runtimePath)
+	expected := filepath.Join(root, "usr", "bin", "swift-symbolgraph-extract")
+	found := false
+	for _, candidate := range candidates {
+		if candidate == expected {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected candidates to include %s, got %#v", expected, candidates)
+	}
+}
+
 func TestMakefileStabilityCheckRunsSwiftVerifier(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	if err != nil {

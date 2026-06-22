@@ -141,6 +141,9 @@ type swiftTargetInfo struct {
 		Triple   string `json:"triple"`
 		Platform string `json:"platform"`
 	} `json:"target"`
+	Paths struct {
+		RuntimeResourcePath string `json:"runtimeResourcePath"`
+	} `json:"paths"`
 }
 
 func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error) {
@@ -176,6 +179,7 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 		target.Target.Triple,
 		modulePaths,
 		sdkPath,
+		target.Paths.RuntimeResourcePath,
 		graphDir,
 	); err != nil {
 		return nil, err
@@ -297,9 +301,13 @@ func extractSwiftSymbolGraph(
 	targetTriple string,
 	modulePaths []string,
 	sdkPath string,
+	runtimeResourcePath string,
 	outputDir string,
 ) error {
-	command := "swift-symbolgraph-extract"
+	command, commandPrefix, err := swiftSymbolGraphExtractCommand(sdkPath, runtimeResourcePath)
+	if err != nil {
+		return err
+	}
 	args := []string{
 		"-module-name", module,
 		"-target", targetTriple,
@@ -313,19 +321,7 @@ func extractSwiftSymbolGraph(
 	if sdkPath != "" {
 		args = append(args, "-sdk", sdkPath)
 	}
-	if sdkPath != "" {
-		if _, err := exec.LookPath("xcrun"); err != nil {
-			return fmt.Errorf("xcrun not found for macOS swift-symbolgraph-extract: %w", err)
-		}
-		args = append([]string{command}, args...)
-		command = "xcrun"
-	} else if _, err := exec.LookPath(command); err != nil {
-		if _, xcrunErr := exec.LookPath("xcrun"); xcrunErr != nil {
-			return fmt.Errorf("swift-symbolgraph-extract not found: %w", err)
-		}
-		args = append([]string{command}, args...)
-		command = "xcrun"
-	}
+	args = append(commandPrefix, args...)
 	cmd := exec.Command(command, args...)
 	cmd.Dir = repoRoot
 	if sdkPath != "" {
@@ -338,6 +334,66 @@ func extractSwiftSymbolGraph(
 		return fmt.Errorf("swift-symbolgraph-extract failed:\n%s", out.String())
 	}
 	return nil
+}
+
+func swiftSymbolGraphExtractCommand(sdkPath, runtimeResourcePath string) (string, []string, error) {
+	const tool = "swift-symbolgraph-extract"
+	if sdkPath != "" {
+		if _, err := exec.LookPath("xcrun"); err != nil {
+			return "", nil, fmt.Errorf("xcrun not found for macOS %s: %w", tool, err)
+		}
+		return "xcrun", []string{tool}, nil
+	}
+	if command, err := exec.LookPath(tool); err == nil {
+		return command, nil, nil
+	}
+	swiftPath, _ := exec.LookPath("swift")
+	for _, candidate := range swiftSymbolGraphExtractCandidates(swiftPath, runtimeResourcePath) {
+		if isExecutableFile(candidate) {
+			return candidate, nil, nil
+		}
+	}
+	return "", nil, fmt.Errorf(
+		"%s not found in PATH or Swift toolchain candidates: %s",
+		tool,
+		strings.Join(swiftSymbolGraphExtractCandidates(swiftPath, runtimeResourcePath), ", "),
+	)
+}
+
+func swiftSymbolGraphExtractCandidates(swiftPath, runtimeResourcePath string) []string {
+	const tool = "swift-symbolgraph-extract"
+	candidates := make([]string, 0, 4)
+	addCandidate := func(path string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		if !slices.Contains(candidates, path) {
+			candidates = append(candidates, path)
+		}
+	}
+	if swiftPath != "" {
+		addCandidate(filepath.Join(filepath.Dir(swiftPath), tool))
+		if resolved, err := filepath.EvalSymlinks(swiftPath); err == nil {
+			addCandidate(filepath.Join(filepath.Dir(resolved), tool))
+		}
+	}
+	if runtimeResourcePath != "" {
+		for dir, depth := filepath.Clean(runtimeResourcePath), 0; depth < 5; depth++ {
+			addCandidate(filepath.Join(dir, "bin", tool))
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	return candidates
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }
 
 func diffSwiftSymbols(expected, actual []swiftSymbol) string {
