@@ -76,19 +76,37 @@ final class SourceGuardTests: XCTestCase {
   }
 
   private func textFiles(under root: URL) throws -> [URL] {
-    let keys: [URLResourceKey] = [.isRegularFileKey]
-    if (try? root.resourceValues(forKeys: Set(keys)).isRegularFile) == true {
+    let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey]
+    let rootValues = try root.resourceValues(forKeys: Set(keys))
+    if rootValues.isRegularFile == true {
       return [root]
     }
-    let urls = FileManager.default.enumerator(
+    guard rootValues.isDirectory == true else {
+      return []
+    }
+    guard let enumerator = FileManager.default.enumerator(
       at: root,
       includingPropertiesForKeys: keys
-    )?
-      .compactMap { $0 as? URL } ?? []
-    return try urls.filter { url in
-      let values = try url.resourceValues(forKeys: Set(keys))
-      return values.isRegularFile == true && isTextFile(url)
+    ) else {
+      throw NSError(
+        domain: "FlowersecSourceGuard",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Unable to enumerate \(root.path)"]
+      )
     }
+
+    var files: [URL] = []
+    for case let url as URL in enumerator {
+      let values = try url.resourceValues(forKeys: Set(keys))
+      if values.isDirectory == true && ignoredDirectoryNames.contains(url.lastPathComponent) {
+        enumerator.skipDescendants()
+        continue
+      }
+      if values.isRegularFile == true && isTextFile(url) {
+        files.append(url)
+      }
+    }
+    return files
   }
 
   private func isTextFile(_ url: URL) -> Bool {
@@ -98,5 +116,9 @@ final class SourceGuardTests: XCTestCase {
     default:
       return false
     }
+  }
+
+  private var ignoredDirectoryNames: Set<String> {
+    [".build", ".git", ".swiftpm", "dist", "node_modules"]
   }
 }

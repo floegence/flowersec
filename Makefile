@@ -9,6 +9,8 @@ YAMUX_INTEROP_CLIENT_RST ?= 0
 YAMUX_INTEROP_DEBUG ?= 0
 SWIFT_SOURCE_GUARD_PATTERN := Redeven|redeven|RedevenFlowersec|RedevenRPCClient|FlowersecDirectClient|FlowersecDirectSession|FlowersecDirectError|RuntimeFS|RuntimeGit|RuntimeTerminal|RuntimeFlower|RuntimeTypedRPC|RuntimeJSONValue|RuntimeRPCPayload|FlowerMessage|TerminalSession|MonitorSnapshot|direct runtime
 SWIFT_SOURCE_GUARD_PATHS := flowersec-swift/Sources Package.swift README.md flowersec-swift/README.md docs examples .github
+SWIFT_SOURCE_GUARD_PRUNE := .build .git .swiftpm dist node_modules
+SWIFT_SOURCE_GUARD_FILE_GLOBS := -name '*.go' -o -name '*.json' -o -name '*.md' -o -name '*.mjs' -o -name '*.swift' -o -name '*.ts' -o -name '*.tsx' -o -name '*.txt' -o -name '*.yaml' -o -name '*.yml'
 
 gen: gen-core gen-examples
 
@@ -96,16 +98,18 @@ swift-package-check:
 swift-source-guard:
 	@status=1; \
 	if command -v rg >/dev/null 2>&1; then \
-		if rg -n '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \
+		if rg -n --glob '!.build/**' --glob '!.git/**' --glob '!.swiftpm/**' --glob '!dist/**' --glob '!node_modules/**' '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \
 			status=0; \
 		else \
 			status=$$?; \
 		fi; \
 	else \
-		if grep -RInE '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \
+		matches=$$(find $(SWIFT_SOURCE_GUARD_PATHS) $$(printf ' -name %s -o' $(SWIFT_SOURCE_GUARD_PRUNE) | sed 's/ -o$$//') -prune -o -type f \( $(SWIFT_SOURCE_GUARD_FILE_GLOBS) \) -exec grep -InE '$(SWIFT_SOURCE_GUARD_PATTERN)' {} +); \
+		if [ -n "$$matches" ]; then \
+			printf "%s\n" "$$matches"; \
 			status=0; \
 		else \
-			status=$$?; \
+			status=1; \
 		fi; \
 	fi; \
 	if [ "$$status" = "0" ]; then \

@@ -151,6 +151,10 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 	if err != nil {
 		return nil, err
 	}
+	modulePaths, err := swiftBuildModulePaths(binPath)
+	if err != nil {
+		return nil, err
+	}
 	target, err := swiftBuildTargetInfo(repoRoot)
 	if err != nil {
 		return nil, err
@@ -170,7 +174,7 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 		repoRoot,
 		module,
 		target.Target.Triple,
-		filepath.Join(binPath, "Modules"),
+		modulePaths,
 		sdkPath,
 		graphDir,
 	); err != nil {
@@ -229,6 +233,28 @@ func swiftBuildBinPath(repoRoot string) (string, error) {
 	return path, nil
 }
 
+func swiftBuildModulePaths(binPath string) ([]string, error) {
+	candidates := []string{
+		filepath.Join(binPath, "Modules"),
+		binPath,
+	}
+	paths := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err == nil && info.IsDir() {
+			paths = append(paths, candidate)
+			continue
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("swift build output %s does not contain module search paths", binPath)
+	}
+	return paths, nil
+}
+
 func swiftBuildTargetInfo(repoRoot string) (*swiftTargetInfo, error) {
 	cmd := exec.Command("swift", "-print-target-info")
 	cmd.Dir = repoRoot
@@ -269,7 +295,7 @@ func extractSwiftSymbolGraph(
 	repoRoot string,
 	module string,
 	targetTriple string,
-	modulePath string,
+	modulePaths []string,
 	sdkPath string,
 	outputDir string,
 ) error {
@@ -277,15 +303,23 @@ func extractSwiftSymbolGraph(
 	args := []string{
 		"-module-name", module,
 		"-target", targetTriple,
-		"-I", modulePath,
 		"-output-dir", outputDir,
 		"-minimum-access-level", "public",
 		"-skip-synthesized-members",
 	}
+	for _, modulePath := range modulePaths {
+		args = append(args, "-I", modulePath)
+	}
 	if sdkPath != "" {
 		args = append(args, "-sdk", sdkPath)
 	}
-	if _, err := exec.LookPath(command); err != nil {
+	if sdkPath != "" {
+		if _, err := exec.LookPath("xcrun"); err != nil {
+			return fmt.Errorf("xcrun not found for macOS swift-symbolgraph-extract: %w", err)
+		}
+		args = append([]string{command}, args...)
+		command = "xcrun"
+	} else if _, err := exec.LookPath(command); err != nil {
 		if _, xcrunErr := exec.LookPath("xcrun"); xcrunErr != nil {
 			return fmt.Errorf("swift-symbolgraph-extract not found: %w", err)
 		}
@@ -294,6 +328,9 @@ func extractSwiftSymbolGraph(
 	}
 	cmd := exec.Command(command, args...)
 	cmd.Dir = repoRoot
+	if sdkPath != "" {
+		cmd.Env = append(os.Environ(), "SDKROOT="+sdkPath)
+	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

@@ -165,9 +165,9 @@ git config --global merge.conflictstyle zdiff3
 ## 4. Release / tag policy
 
 - Go SDK (`flowersec-go`) releases use the tag format `flowersec-go/v<version>` such as `flowersec-go/v0.9.0`.
-- SwiftPM releases use root semantic-version tags with no prefix, such as `0.19.13`.
+- SwiftPM releases use root semantic-version tags with no prefix, such as `0.19.14`.
   - The root `Package.swift` must describe a buildable Swift package at that tag.
-  - Downstream Swift packages should prefer version ranges such as `.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.13")`.
+  - Downstream Swift packages should prefer version ranges such as `.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.14")`.
   - Use `.exact(...)`, `.revision(...)`, or local path dependencies only for temporary integration work, not for a completed downstream upgrade.
 - When a downstream repository needs a new capability, use an upstream-first flow:
   - implement and validate the change in this repository first

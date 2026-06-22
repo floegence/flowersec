@@ -19,6 +19,14 @@ final class ProtocolVectorTests: XCTestCase {
     XCTAssertEqual(data.readUInt64BE(at: 6), 0x0102_0304_0506_0708)
   }
 
+  func testSecureRandomRejectsNegativeCount() throws {
+    XCTAssertEqual(try Data.secureRandom(count: 0), Data())
+    XCTAssertEqual(try Data.secureRandom(count: 33).count, 33)
+    XCTAssertThrowsError(try Data.secureRandom(count: -1)) { error in
+      XCTAssertEqual((error as? FlowersecError)?.code, .invalidInput)
+    }
+  }
+
   func testRecordFrameGoldenVector() throws {
     let vector = try e2eeVectors().recordFrames.first { $0.caseID == "record_app_hello" }
     let unwrapped = try XCTUnwrap(vector)
