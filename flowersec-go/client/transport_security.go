@@ -1,0 +1,59 @@
+package client
+
+import (
+	"context"
+
+	"github.com/floegence/flowersec/flowersec-go/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/observability"
+	"github.com/floegence/flowersec/flowersec-go/transportsecurity"
+)
+
+type TransportRuntime = transportsecurity.Runtime
+type TransportSecurityPolicyInput = transportsecurity.Input
+type TransportSecurityPolicy = transportsecurity.Policy
+
+const TransportRuntimeNative = transportsecurity.RuntimeNative
+
+var ErrTransportPolicyDenied = transportsecurity.ErrDenied
+
+// RequireTLS allows only wss:// URLs.
+func RequireTLS(ctx context.Context, input TransportSecurityPolicyInput) error {
+	return transportsecurity.RequireTLS(ctx, input)
+}
+
+// AllowPlaintextForLoopback allows wss:// and ws:// for literal loopback hosts.
+// It never resolves DNS names.
+func AllowPlaintextForLoopback(ctx context.Context, input TransportSecurityPolicyInput) error {
+	return transportsecurity.AllowPlaintextForLoopback(ctx, input)
+}
+
+// AllowPlaintext allows ws:// and wss:// URLs.
+func AllowPlaintext(ctx context.Context, input TransportSecurityPolicyInput) error {
+	return transportsecurity.AllowPlaintext(ctx, input)
+}
+
+func evaluateTransportSecurity(
+	ctx context.Context,
+	rawURL string,
+	path fserrors.Path,
+	policy TransportSecurityPolicy,
+	observer observability.ClientObserver,
+) error {
+	input, err := transportsecurity.Evaluate(ctx, rawURL, path, transportsecurity.RuntimeNative, policy)
+	if err != nil {
+		return wrapErr(path, fserrors.StageValidate, fserrors.CodeTransportPolicyDenied, ErrTransportPolicyDenied)
+	}
+	if policy == nil {
+		if input.Scheme == "ws" {
+			observer.OnDiagnosticEvent(observability.DiagnosticEvent{
+				Path:       string(path),
+				Stage:      observability.DiagnosticStageValidate,
+				CodeDomain: observability.DiagnosticCodeDomainEvent,
+				Code:       "plaintext_transport",
+				Result:     observability.DiagnosticResultSkip,
+			})
+		}
+		return nil
+	}
+	return nil
+}

@@ -49,6 +49,8 @@ export type FlowersecErrorCode =
   | "timestamp_out_of_skew"
   | "auth_tag_mismatch"
   | "resolve_failed"
+  | "transport_policy_denied"
+  | "credential_commit_failed"
   | "random_failed"
   | "upgrade_failed"
   | "dial_failed"

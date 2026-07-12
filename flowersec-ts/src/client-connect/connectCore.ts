@@ -20,6 +20,7 @@ import {
 } from "./common.js";
 import { prepareChannelId } from "./contract.js";
 import { isTunnelAttachCloseReason } from "./tunnelAttachCloseReason.js";
+import { enforceTransportSecurity, type TransportSecurityPolicy } from "./transportSecurity.js";
 
 export type ConnectOptionsBase = Readonly<{
   /** Explicit Origin value (required). In browsers this must match window.location.origin. */
@@ -44,6 +45,8 @@ export type ConnectOptionsBase = Readonly<{
   wsFactory?: (url: string, origin: string) => WebSocketLike;
   /** Optional observer for client metrics. */
   observer?: ClientObserverLike;
+  /** Policy evaluated before any WebSocket network activity. */
+  transportSecurityPolicy?: TransportSecurityPolicy;
   /** Experimental scope validators keyed by scope name. */
   scopeResolvers?: ConnectScopeResolverMap;
   /** Experimental migration switch for optional scope failures. */
@@ -99,6 +102,13 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     const code = args.path === "tunnel" ? "missing_tunnel_url" : "missing_ws_url";
     throw new FlowersecError({ path: args.path, stage: "validate", code, message: "missing websocket url" });
   }
+
+  await enforceTransportSecurity({
+    rawUrl: wsUrl,
+    path: args.path,
+    ...(args.opts.transportSecurityPolicy === undefined ? {} : { policy: args.opts.transportSecurityPolicy }),
+    ...(args.opts.observer === undefined ? {} : { observer: args.opts.observer }),
+  });
 
   const invalidOption = (message: string): never => {
     throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_option", message });

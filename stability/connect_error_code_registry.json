@@ -20,6 +20,8 @@
     { "code": "invalid_version", "stages": ["handshake"] },
     { "code": "invalid_endpoint_instance_id", "stages": ["validate"] },
     { "code": "resolve_failed", "stages": ["validate"] },
+    { "code": "transport_policy_denied", "stages": ["validate"] },
+    { "code": "credential_commit_failed", "stages": ["handshake"] },
     { "code": "random_failed", "stages": ["validate"] },
     { "code": "dial_failed", "stages": ["connect"] },
     { "code": "attach_failed", "stages": ["attach"] },

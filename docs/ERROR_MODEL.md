@@ -1,6 +1,7 @@
 # Flowersec Error Model
 
 Flowersec keeps machine-readable connection failures stable across Go and TypeScript.
+Swift uses the same stable `FlowersecCode` values for its high-level client.
 
 For high-level connection APIs, always treat `{ path, stage, code }` as the primary machine-readable contract.
 
@@ -51,6 +52,7 @@ Common stable codes include:
   - `invalid_version`
   - `invalid_endpoint_instance_id`
   - `resolve_failed`
+  - `transport_policy_denied`
   - `random_failed`
 - connect/attach:
   - `dial_failed`
@@ -75,6 +77,7 @@ Common stable codes include:
   - `timestamp_after_init_exp`
   - `timestamp_out_of_skew`
   - `auth_tag_mismatch`
+  - `credential_commit_failed`
   - `open_stream_failed`
   - `accept_stream_failed`
   - `mux_failed`
@@ -138,6 +141,7 @@ Current stable event codes include:
 - `connect_ok`
 - `attach_ok`
 - `handshake_ok`
+- `plaintext_transport`
 - `scope_ignored_missing_resolver`
 - `scope_ignored_relaxed_validation`
 - `ws_close_local`

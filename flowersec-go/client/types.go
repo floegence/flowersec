@@ -50,6 +50,8 @@ const (
 	CodeInvalidEndpointInstanceID = fserrors.CodeInvalidEndpointInstanceID
 	CodeInvalidOption             = fserrors.CodeInvalidOption
 	CodeResolveFailed             = fserrors.CodeResolveFailed
+	CodeTransportPolicyDenied     = fserrors.CodeTransportPolicyDenied
+	CodeCredentialCommitFailed    = fserrors.CodeCredentialCommitFailed
 	CodeRandomFailed              = fserrors.CodeRandomFailed
 	CodeUpgradeFailed             = fserrors.CodeUpgradeFailed
 	CodeNotConnected              = fserrors.CodeNotConnected

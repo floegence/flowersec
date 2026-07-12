@@ -36,9 +36,10 @@ type connectOptions struct {
 	endpointInstanceID    string
 	endpointInstanceIDSet bool
 
-	keepaliveInterval time.Duration
-	keepaliveSet      bool
-	observer          observability.ClientObserver
+	keepaliveInterval       time.Duration
+	keepaliveSet            bool
+	observer                observability.ClientObserver
+	transportSecurityPolicy TransportSecurityPolicy
 
 	scopeResolvers                 map[string]internalnormalize.ScopeResolver
 	relaxedOptionalScopeValidation bool
@@ -189,6 +190,18 @@ func WithKeepaliveInterval(d time.Duration) ConnectOption {
 func WithObserver(observer observability.ClientObserver) ConnectOption {
 	return func(cfg *connectOptions) error {
 		cfg.observer = observer
+		return nil
+	}
+}
+
+// WithTransportSecurityPolicy sets the policy evaluated before a high-level WebSocket dial.
+// Omit it to preserve the v0.19 plaintext-compatible behavior with diagnostics.
+func WithTransportSecurityPolicy(policy TransportSecurityPolicy) ConnectOption {
+	return func(cfg *connectOptions) error {
+		if policy == nil {
+			return fmt.Errorf("transport security policy must be non-nil")
+		}
+		cfg.transportSecurityPolicy = policy
 		return nil
 	}
 }

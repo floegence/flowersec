@@ -41,6 +41,26 @@
             "kind": "func",
             "expr": "client.WithObserver",
             "doc_token": "`client.WithObserver(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.WithTransportSecurityPolicy",
+            "doc_token": "`client.WithTransportSecurityPolicy(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.RequireTLS",
+            "doc_token": "`client.RequireTLS`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.AllowPlaintextForLoopback",
+            "doc_token": "`client.AllowPlaintextForLoopback`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.AllowPlaintext",
+            "doc_token": "`client.AllowPlaintext`"
           }
         ]
       },
@@ -108,6 +128,48 @@
             "kind": "type",
             "expr": "endpoint.AcceptDirectResolverOptions",
             "doc_token": "`endpoint.AcceptDirectResolverOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "endpoint.DirectHandshakeCredential",
+            "doc_token": "`endpoint.DirectHandshakeCredential`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.WithTransportSecurityPolicy",
+            "doc_token": "`endpoint.WithTransportSecurityPolicy(...)`"
+          }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/transportsecurity",
+        "alias": "transportsecurity",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/transportsecurity`",
+        "entries": [
+          {
+            "kind": "type",
+            "expr": "transportsecurity.Policy",
+            "doc_token": "`transportsecurity.Policy`"
+          },
+          {
+            "kind": "type",
+            "expr": "transportsecurity.Input",
+            "doc_token": "`transportsecurity.Input`"
+          },
+          {
+            "kind": "func",
+            "expr": "transportsecurity.RequireTLS",
+            "doc_token": "`transportsecurity.RequireTLS(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "transportsecurity.AllowPlaintextForLoopback",
+            "doc_token": "`transportsecurity.AllowPlaintextForLoopback(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "transportsecurity.AllowPlaintext",
+            "doc_token": "`transportsecurity.AllowPlaintext(...)`"
           }
         ]
       },
@@ -563,7 +625,10 @@
           "FlowersecError",
           "assertChannelInitGrant",
           "assertDirectConnectInfo",
-          "assertConnectArtifact"
+          "assertConnectArtifact",
+          "RequireTLS",
+          "AllowPlaintextForLoopback",
+          "AllowPlaintext"
         ]
       },
       {
@@ -594,7 +659,10 @@
           "createTunnelNodeReconnectConfig",
           "createDirectNodeReconnectConfig",
           "createNodeWsFactory",
-          "assertConnectArtifact"
+          "assertConnectArtifact",
+          "RequireTLS",
+          "AllowPlaintextForLoopback",
+          "AllowPlaintext"
         ]
       },
       {
@@ -633,7 +701,10 @@
           "ControlplaneRequestError",
           "createBrowserReconnectConfig",
           "createTunnelBrowserReconnectConfig",
-          "createDirectBrowserReconnectConfig"
+          "createDirectBrowserReconnectConfig",
+          "RequireTLS",
+          "AllowPlaintextForLoopback",
+          "AllowPlaintext"
         ]
       },
       {
@@ -830,6 +901,110 @@
       "`import Flowersec`"
     ],
     "symbols": [
+      {
+        "kind": "swift.enum",
+        "name": "TransportRuntime"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "TransportSecurityPolicy"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.credentialCommitFailed"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.transportPolicyDenied"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportRuntime.swift"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportSecurityPolicy.allowPlaintext"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportSecurityPolicy.allowPlaintextForLoopback"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportSecurityPolicy.custom(_:)"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportSecurityPolicy.requireTLS"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectOptions.init(origin:connectTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "TransportRuntime.init(rawValue:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "TransportSecurityDiagnostic.init(code:path:scheme:host:runtime:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "TransportSecurityPolicyInput.init(path:scheme:host:runtime:)"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectOptions.onTransportSecurityDiagnostic"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectOptions.transportSecurityPolicy"
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityDiagnostic.code"
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityDiagnostic.host"
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityDiagnostic.path"
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityDiagnostic.runtime"
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityDiagnostic.scheme"
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityPolicyInput.host"
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityPolicyInput.path"
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityPolicyInput.runtime"
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityPolicyInput.scheme"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "TransportSecurityDiagnostic"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "TransportSecurityPolicyInput"
+      },
       {
         "kind": "swift.class",
         "name": "FlowersecClient"

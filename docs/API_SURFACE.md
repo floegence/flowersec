@@ -31,6 +31,10 @@ Recommended integration entrypoints:
   - `client.ConnectTunnel(...)`
   - `client.ConnectDirect(...)`
   - `client.WithObserver(...)`
+  - `client.WithTransportSecurityPolicy(...)`
+  - `client.RequireTLS`
+  - `client.AllowPlaintextForLoopback`
+  - `client.AllowPlaintext`
 - `github.com/floegence/flowersec/flowersec-go/endpoint`
   - `endpoint.ConnectTunnel(...)`
   - `endpoint.NewDirectHandler(...)`
@@ -44,6 +48,14 @@ Recommended integration entrypoints:
   - `endpoint.HandshakeCache`
   - `endpoint.AcceptDirectOptions`
   - `endpoint.AcceptDirectResolverOptions`
+  - `endpoint.DirectHandshakeCredential`
+  - `endpoint.WithTransportSecurityPolicy(...)`
+- `github.com/floegence/flowersec/flowersec-go/transportsecurity`
+  - `transportsecurity.Policy`
+  - `transportsecurity.Input`
+  - `transportsecurity.RequireTLS(...)`
+  - `transportsecurity.AllowPlaintextForLoopback(...)`
+  - `transportsecurity.AllowPlaintext(...)`
 - `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
   - `serve.New(...)`
   - `srv.Handle(...)`
@@ -148,6 +160,10 @@ Stable entrypoints:
   - `DirectClientConnectArtifact`
   - `ScopeMetadataEntry`
   - `assertConnectArtifact(...)`
+  - `RequireTLS`
+  - `AllowPlaintextForLoopback`
+  - `AllowPlaintext`
+  - `TransportSecurityPolicy`
 - `@floegence/flowersec-core/node`
   - `connectNode(...)`
   - `connectTunnelNode(...)`
@@ -163,6 +179,9 @@ Stable entrypoints:
   - `DirectClientConnectArtifact`
   - `ScopeMetadataEntry`
   - `assertConnectArtifact(...)`
+  - `RequireTLS`
+  - `AllowPlaintextForLoopback`
+  - `AllowPlaintext`
 - `@floegence/flowersec-core/browser`
   - `connectBrowser(...)`
   - `connectTunnelBrowser(...)`
@@ -182,6 +201,9 @@ Stable entrypoints:
   - `createBrowserReconnectConfig(...)`
   - `createTunnelBrowserReconnectConfig(...)`
   - `createDirectBrowserReconnectConfig(...)`
+  - `RequireTLS`
+  - `AllowPlaintextForLoopback`
+  - `AllowPlaintext`
 - `@floegence/flowersec-core/controlplane`
   - `requestConnectArtifact(...)`
   - `requestEntryConnectArtifact(...)`
@@ -257,6 +279,10 @@ Stable connection and session entrypoints:
 - `ConnectOptions`
 - `DirectConnectOptions`
 - `TunnelConnectOptions`
+- `TransportSecurityPolicy`
+- `TransportSecurityPolicyInput`
+- `TransportSecurityDiagnostic`
+- `TransportRuntime`
 
 Stable RPC and stream building blocks:
 

@@ -12,6 +12,7 @@ export * from "./e2ee/secureChannel.js";
 export * from "./e2ee/handshake.js";
 export * from "./e2ee/errors.js";
 export * from "./client.js";
+export * from "./client-connect/transportSecurity.js";
 export * from "./observability/index.js";
 export * from "./ws-client/binaryTransport.js";
 export * from "./yamux/index.js";

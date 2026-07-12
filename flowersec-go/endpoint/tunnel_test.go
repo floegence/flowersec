@@ -6,9 +6,35 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 )
+
+func TestConnectTunnel_TransportPolicyRejectsBeforeDial(t *testing.T) {
+	t.Parallel()
+	grant := &controlv1.ChannelInitGrant{
+		TunnelUrl:                "ws://example.invalid/ws",
+		ChannelId:                "ch_transport_policy",
+		ChannelInitExpireAtUnixS: time.Now().Add(time.Minute).Unix(),
+		IdleTimeoutSeconds:       60,
+		Role:                     controlv1.Role_server,
+		Token:                    "token",
+		E2eePskB64u:              base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		AllowedSuites:            []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
+		DefaultSuite:             controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM,
+	}
+	_, err := ConnectTunnel(
+		context.Background(),
+		grant,
+		WithOrigin("https://example.test"),
+		WithTransportSecurityPolicy(RequireTLS),
+	)
+	var structured *Error
+	if !errors.As(err, &structured) || structured.Stage != StageValidate || structured.Code != CodeTransportPolicyDenied {
+		t.Fatalf("ConnectTunnel() error = %v, want transport policy denial", err)
+	}
+}
 
 func TestConnectTunnel_RejectsMissingToken(t *testing.T) {
 	grant := &controlv1.ChannelInitGrant{

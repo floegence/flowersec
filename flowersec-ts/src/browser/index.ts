@@ -1,5 +1,15 @@
 export type { ConnectBrowserOptions, DirectConnectBrowserOptions, TunnelConnectBrowserOptions } from "./connect.js";
 export { connectBrowser, connectDirectBrowser, connectTunnelBrowser } from "./connect.js";
+export {
+  AllowPlaintext,
+  AllowPlaintextForLoopback,
+  RequireTLS,
+} from "../client-connect/transportSecurity.js";
+export type {
+  TransportSecurityPolicy,
+  TransportSecurityPolicyInput,
+  TransportSecurityPolicyPreset,
+} from "../client-connect/transportSecurity.js";
 export type {
   ConnectArtifact,
   CorrelationContext,

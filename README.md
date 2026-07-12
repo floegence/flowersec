@@ -13,7 +13,7 @@
   <a href="#docs-map">📚 Docs map</a>
 </p>
 
-![Go Version](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go)
+![Go Version](https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go)
 ![Node Version](https://img.shields.io/badge/Node.js-24-339933?logo=node.js)
 ![Browser Friendly](https://img.shields.io/badge/Browser-Friendly-2563EB)
 ![Transport](https://img.shields.io/badge/Transport-WebSocket-111827)
@@ -239,10 +239,10 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 ### Swift SDK
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.15")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.16")
 ```
 
-Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.19.15`.
+Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.19.16`.
 
 ### Tunnel server
 
@@ -375,7 +375,7 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 
 Prerequisites:
 
-- Go `1.26.4+`
+- Go `1.26.5+`
 - Node.js `24` LTS recommended (see `.nvmrc`)
 
 Generate code from IDL:

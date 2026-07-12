@@ -24,6 +24,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/proxy"
 	proxypreset "github.com/floegence/flowersec/flowersec-go/proxy/preset"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
+	"github.com/floegence/flowersec/flowersec-go/transportsecurity"
 )
 
 // Compile-time checks for the intended stable Go API surface. If an entrypoint is renamed or
@@ -33,6 +34,8 @@ var (
 	_ = client.Connect
 	_ = client.ConnectTunnel
 	_ = client.ConnectDirect
+	_ = client.WithTransportSecurityPolicy
+	_ = client.RequireTLS
 
 	// endpoint
 	_                = endpoint.ConnectTunnel
@@ -46,6 +49,8 @@ var (
 	_ endpoint.HandshakeCache
 	_ endpoint.AcceptDirectOptions
 	_ endpoint.AcceptDirectResolverOptions
+	_ endpoint.DirectHandshakeCredential
+	_ = endpoint.WithTransportSecurityPolicy
 
 	// endpoint/serve
 	_ = serve.New
@@ -101,6 +106,11 @@ var (
 	// origin
 	_ = origin.FromWSURL
 	_ = origin.ForTunnel
+
+	// transportsecurity
+	_ transportsecurity.Policy
+	_ transportsecurity.Input
+	_ = transportsecurity.RequireTLS
 
 	// proxy
 	_ = proxy.Register

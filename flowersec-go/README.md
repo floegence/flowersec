@@ -9,7 +9,7 @@ This module contains the Go implementation of the Flowersec data-plane protocol 
 
 Status: experimental; not audited.
 
-Prerequisite: Go 1.26.4+.
+Prerequisite: Go 1.26.5+.
 
 ## Install (Go library)
 
@@ -59,6 +59,10 @@ No-Go option: download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) fr
 - Input JSON helpers: `github.com/floegence/flowersec/flowersec-go/protocolio`
 
 For a full integration walkthrough, see `docs/INTEGRATION_GUIDE.md` in the repository root.
+
+High-level WebSocket connects accept an explicit transport security policy. Use `client.RequireTLS`
+or `endpoint.RequireTLS` for remote deployments, and `AllowPlaintextForLoopback` only for literal
+local development targets. Omitting a policy preserves v0.19 compatibility with a plaintext diagnostic.
 
 For tunnel deployment details (Docker examples, operational notes), see `docs/TUNNEL_DEPLOYMENT.md` in the repository root.
 

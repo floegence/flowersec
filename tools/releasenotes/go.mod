@@ -1,3 +1,3 @@
 module github.com/floegence/flowersec/tools/releasenotes
 
-go 1.26.4
+go 1.26.5

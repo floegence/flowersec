@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
@@ -22,6 +23,12 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
 	"github.com/gorilla/websocket"
 )
+
+func allowTestLoopbackTunnel(managers []*routeManager) {
+	for _, manager := range managers {
+		manager.dial = transportPolicyClientFactory(client.AllowPlaintextForLoopback)
+	}
+}
 
 func TestGatewayHTTPOverRealTunnelAndFreshGrantReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -69,6 +76,7 @@ func TestGatewayHTTPOverRealTunnelAndFreshGrantReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildRoutes: %v", err)
 	}
+	allowTestLoopbackTunnel(closers)
 	defer func() {
 		for _, closer := range closers {
 			_ = closer.Close()
@@ -178,6 +186,7 @@ func TestGatewayWSOverRealTunnel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildRoutes: %v", err)
 	}
+	allowTestLoopbackTunnel(closers)
 	defer func() {
 		for _, closer := range closers {
 			_ = closer.Close()
@@ -264,6 +273,7 @@ func TestGatewayWSRejectsForeignOriginE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildRoutes: %v", err)
 	}
+	allowTestLoopbackTunnel(closers)
 	defer func() {
 		for _, closer := range closers {
 			_ = closer.Close()

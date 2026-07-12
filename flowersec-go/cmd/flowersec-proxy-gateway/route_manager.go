@@ -26,16 +26,21 @@ type grantSource interface {
 
 type clientFactory func(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) (client.Client, error)
 
-func defaultClientFactory(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) (client.Client, error) {
-	return client.ConnectTunnel(
-		ctx,
-		grant,
-		client.WithOrigin(origin),
-		client.WithConnectTimeout(10*time.Second),
-		client.WithHandshakeTimeout(10*time.Second),
-		client.WithMaxRecordBytes(1<<20),
-	)
+func transportPolicyClientFactory(policy client.TransportSecurityPolicy) clientFactory {
+	return func(ctx context.Context, origin string, grant *controlv1.ChannelInitGrant) (client.Client, error) {
+		return client.ConnectTunnel(
+			ctx,
+			grant,
+			client.WithOrigin(origin),
+			client.WithTransportSecurityPolicy(policy),
+			client.WithConnectTimeout(10*time.Second),
+			client.WithHandshakeTimeout(10*time.Second),
+			client.WithMaxRecordBytes(1<<20),
+		)
+	}
 }
+
+var defaultClientFactory = transportPolicyClientFactory(client.RequireTLS)
 
 type routeManager struct {
 	host   string

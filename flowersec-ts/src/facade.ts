@@ -37,6 +37,16 @@ export type { Client, ClientPath } from "./client.js";
 
 export type { FlowersecErrorCode, FlowersecPath, FlowersecStage } from "./utils/errors.js";
 export { FlowersecError } from "./utils/errors.js";
+export {
+  AllowPlaintext,
+  AllowPlaintextForLoopback,
+  RequireTLS,
+} from "./client-connect/transportSecurity.js";
+export type {
+  TransportSecurityPolicy,
+  TransportSecurityPolicyInput,
+  TransportSecurityPolicyPreset,
+} from "./client-connect/transportSecurity.js";
 
 export type { TunnelConnectOptions } from "./tunnel-client/connect.js";
 

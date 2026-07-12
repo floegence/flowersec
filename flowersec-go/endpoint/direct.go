@@ -163,6 +163,13 @@ type DirectHandshakeSecrets struct {
 	InitExpireAtUnixS int64
 }
 
+// DirectHandshakeCredential delays one-time credential consumption until the peer proves
+// possession of the PSK. CommitAuthenticated runs after E2EE authentication and before Yamux.
+type DirectHandshakeCredential struct {
+	Secrets             DirectHandshakeSecrets
+	CommitAuthenticated func(context.Context) error
+}
+
 // AcceptDirectResolverOptions configures a direct handshake where per-channel secrets are resolved
 // at runtime based on the client handshake init.
 type AcceptDirectResolverOptions struct {
@@ -182,6 +189,10 @@ type AcceptDirectResolverOptions struct {
 
 	// Resolve returns the PSK and init_exp for the given client init. It must not panic.
 	Resolve func(ctx context.Context, init DirectHandshakeInit) (DirectHandshakeSecrets, error)
+
+	// ResolveCredential resolves secrets without consuming them. When set, CommitAuthenticated
+	// is invoked after PSK authentication succeeds and before a Yamux session is created.
+	ResolveCredential func(ctx context.Context, init DirectHandshakeInit) (DirectHandshakeCredential, error)
 }
 
 type replayBinaryTransport struct {
@@ -210,9 +221,13 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 	if c == nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConn, ErrMissingConn)
 	}
-	if opts.Resolve == nil {
+	if opts.Resolve == nil && opts.ResolveCredential == nil {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrMissingResolver)
+	}
+	if opts.Resolve != nil && opts.ResolveCredential != nil {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrMultipleResolvers)
 	}
 
 	handshakeTimeout := defaults.HandshakeTimeout
@@ -295,11 +310,17 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 		Suite:          Suite(initMsg.Suite),
 		ClientFeatures: initMsg.ClientFeatures,
 	}
-	secrets, err := safeResolve(handshakeCtx, opts.Resolve, resolveInput)
+	credential := DirectHandshakeCredential{}
+	if opts.ResolveCredential != nil {
+		credential, err = safeResolveCredential(handshakeCtx, opts.ResolveCredential, resolveInput)
+	} else {
+		credential.Secrets, err = safeResolve(handshakeCtx, opts.Resolve, resolveInput)
+	}
 	if err != nil {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeResolveFailed, err)
 	}
+	secrets := credential.Secrets
 	if secrets.InitExpireAtUnixS <= 0 {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingInitExp, ErrMissingInitExp)
@@ -330,6 +351,12 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 	if err != nil {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
+	}
+	if credential.CommitAuthenticated != nil {
+		if err := safeCommitAuthenticated(handshakeCtx, credential.CommitAuthenticated); err != nil {
+			_ = secure.Close()
+			return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeCredentialCommitFailed, err)
+		}
 	}
 
 	mux, err := hyamux.Server(secure, ycfg)
@@ -590,4 +617,23 @@ func safeResolve(ctx context.Context, resolve func(context.Context, DirectHandsh
 		}
 	}()
 	return resolve(ctx, init)
+}
+
+func safeResolveCredential(ctx context.Context, resolve func(context.Context, DirectHandshakeInit) (DirectHandshakeCredential, error), init DirectHandshakeInit) (out DirectHandshakeCredential, err error) {
+	defer func() {
+		if recover() != nil {
+			out = DirectHandshakeCredential{}
+			err = errors.New("direct credential resolve panic")
+		}
+	}()
+	return resolve(ctx, init)
+}
+
+func safeCommitAuthenticated(ctx context.Context, commit func(context.Context) error) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errors.New("direct credential commit panic")
+		}
+	}()
+	return commit(ctx)
 }

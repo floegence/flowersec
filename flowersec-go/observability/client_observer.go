@@ -276,7 +276,17 @@ func (o *queuedClientObserver) OnHandshake(path fserrors.Path, result HandshakeR
 }
 
 func (o *queuedClientObserver) OnDiagnosticEvent(event DiagnosticEvent) {
-	o.enqueueCombined(func() { o.observer.OnDiagnosticEvent(event) }, event, event.Result == DiagnosticResultFail)
+	o.fillDiagnosticEvent(&event)
+	kind := queuedClientObserverNormal
+	if event.Result == DiagnosticResultFail {
+		kind = queuedClientObserverTerminal
+	}
+	o.enqueue(queuedClientObserverItem{
+		kind: kind,
+		deliver: func() {
+			safeObserverCall(func() { o.observer.OnDiagnosticEvent(event) })
+		},
+	})
 }
 
 func (o *queuedClientObserver) enqueueCombined(deliver func(), event DiagnosticEvent, terminal bool) {

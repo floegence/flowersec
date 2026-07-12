@@ -118,6 +118,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		context.Background(),
 		bytes.NewReader(connectInput),
 		client.WithOrigin(origin),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 		client.WithConnectTimeout(10*time.Second),
 		client.WithHandshakeTimeout(10*time.Second),
 		client.WithMaxRecordBytes(1<<20),

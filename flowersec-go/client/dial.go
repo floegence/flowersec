@@ -45,6 +45,9 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if origin == "" {
 		origin = strings.TrimSpace(cfg.header.Get("Origin"))
 	}
+	if err := evaluateTransportSecurity(ctx, prepared.TunnelURL, fserrors.PathTunnel, cfg.transportSecurityPolicy, observer); err != nil {
+		return nil, err
+	}
 	if origin == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
@@ -143,6 +146,9 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	prepared, err := connectcontract.PrepareDirectConnectInfo(info)
 	if err != nil {
 		return nil, wrapDirectConnectValidateError(err)
+	}
+	if err := evaluateTransportSecurity(ctx, prepared.WSURL, fserrors.PathDirect, cfg.transportSecurityPolicy, observer); err != nil {
+		return nil, err
 	}
 
 	connectTimeout := cfg.connectTimeout

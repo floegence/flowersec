@@ -86,6 +86,10 @@ Notable scope warning events:
 - `scope_ignored_missing_resolver`
 - `scope_ignored_relaxed_validation`
 
+Transport warning event:
+
+- `plaintext_transport`: a high-level client dialed `ws://` without an explicit transport security policy; the event contains no URL query, userinfo, token, or PSK.
+
 ## Where propagation belongs
 
 Artifact-aware adapters may propagate:

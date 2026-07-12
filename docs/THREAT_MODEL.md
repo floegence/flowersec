@@ -53,6 +53,8 @@ Attach layer (tunnel path):
 - **Attach is plaintext by design**: the first tunnel message is JSON attach metadata (plus a bearer token) sent over the websocket before E2EE. Anyone who can observe `ws://` traffic can see the attach JSON and token.
 - **Tokens are bearer credentials**: do not log tokens, do not store them in client-visible locations, and do not reuse them after any failure.
 - **Use `wss://` in production**: for any non-local deployment, always use TLS (`wss://`) or terminate TLS at a trusted reverse proxy.
+- **Transport policy is caller-owned**: high-level clients accept explicit `RequireTLS`, `AllowPlaintextForLoopback`, and `AllowPlaintext` policies. Omitting a policy preserves v0.19 compatibility and emits a best-effort `plaintext_transport` diagnostic for `ws://`. Choosing `AllowPlaintext` explicitly accepts exposure of pre-E2EE attach metadata and bearer tokens.
+- **Loopback means a literal target**: `AllowPlaintextForLoopback` recognizes only `localhost`, canonical `127.0.0.0/8` IPv4 literals, and `::1`. It does not resolve DNS names.
 
 Untrusted tunnel:
 
@@ -69,6 +71,7 @@ Key and secret handling:
 
 - **Never log secrets**: do not log `e2ee_psk_b64u`, issuer private keys, or full bearer tokens.
 - **Origin policy matters**: browsers enforce Origin rules and the tunnel/server should validate Origins. Avoid allowing `null`/no-Origin unless you fully control your clients. Wildcards like `*.example.com` match subdomains only; list the apex (`example.com`) explicitly if you need it.
+- **Resolve before consume**: one-time direct credentials should be resolved without consumption, authenticated through the PSK handshake, and atomically committed before Yamux. Flowersec's `ResolveCredential` contract enforces this ordering but the credential store remains an integrator responsibility.
 
 ## Implementation references (current code)
 

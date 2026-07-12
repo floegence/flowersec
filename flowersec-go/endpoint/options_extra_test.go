@@ -27,6 +27,7 @@ func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 		WithHandshakeCache(cache),
 		WithYamuxConfig(yamuxCfg),
 		WithKeepaliveInterval(0),
+		WithTransportSecurityPolicy(RequireTLS),
 	})
 	if err != nil {
 		t.Fatalf("applyConnectOptions() failed: %v", err)
@@ -71,6 +72,9 @@ func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 	if cfg.keepaliveInterval != 0 || !cfg.keepaliveSet {
 		t.Fatalf("keepaliveInterval = %v set=%v", cfg.keepaliveInterval, cfg.keepaliveSet)
 	}
+	if cfg.transportSecurityPolicy == nil {
+		t.Fatal("transport security policy missing")
+	}
 }
 
 func TestConnectOptions_RejectInvalidStableValues(t *testing.T) {
@@ -85,6 +89,7 @@ func TestConnectOptions_RejectInvalidStableValues(t *testing.T) {
 		{name: "zero max buffered bytes", opt: WithMaxBufferedBytes(0)},
 		{name: "negative clock skew", opt: WithClockSkew(-time.Second)},
 		{name: "negative keepalive", opt: WithKeepaliveInterval(-time.Second)},
+		{name: "nil transport policy", opt: WithTransportSecurityPolicy(nil)},
 	}
 
 	for _, tt := range tests {

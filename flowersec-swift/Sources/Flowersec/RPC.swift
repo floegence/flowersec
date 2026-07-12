@@ -263,6 +263,7 @@ public enum Flowersec {
     _ info: DirectConnectInfo,
     options: DirectConnectOptions = DirectConnectOptions()
   ) async throws -> FlowersecClient {
+    try await FlowersecTransportSecurity.enforce(url: info.wsURL, path: .direct, options: options)
     let transport = FlowersecWebSocketBinaryTransport(
       url: info.wsURL,
       origin: options.origin,
@@ -298,6 +299,7 @@ public enum Flowersec {
         message: "Default suite must be included in allowed_suites."
       )
     }
+    try await FlowersecTransportSecurity.enforce(url: grant.tunnelURL, path: .tunnel, options: options)
     let transport = FlowersecWebSocketBinaryTransport(
       url: grant.tunnelURL,
       origin: options.origin,

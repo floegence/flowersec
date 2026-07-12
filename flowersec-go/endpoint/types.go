@@ -50,6 +50,8 @@ const (
 	CodeInvalidSuite              = fserrors.CodeInvalidSuite
 	CodeInvalidOption             = fserrors.CodeInvalidOption
 	CodeResolveFailed             = fserrors.CodeResolveFailed
+	CodeTransportPolicyDenied     = fserrors.CodeTransportPolicyDenied
+	CodeCredentialCommitFailed    = fserrors.CodeCredentialCommitFailed
 	CodeRandomFailed              = fserrors.CodeRandomFailed
 	CodeUpgradeFailed             = fserrors.CodeUpgradeFailed
 	CodeDialFailed                = fserrors.CodeDialFailed

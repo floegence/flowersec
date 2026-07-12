@@ -19,7 +19,7 @@ The package is intentionally product-neutral. It does not contain downstream app
 The repository root exposes the Swift package:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.15")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.16")
 ```
 
 Use the `Flowersec` product:
@@ -43,13 +43,16 @@ let info = DirectConnectInfo(
 
 let client = try await Flowersec.connectDirect(
   info,
-  options: DirectConnectOptions(origin: origin)
+  options: DirectConnectOptions(origin: origin, transportSecurityPolicy: .requireTLS)
 )
 
 let response: PingResponse = try await client.rpc.call(4001, PingRequest())
 let stream = try await client.openStream(kind: "custom")
 await client.close()
 ```
+
+Use `.allowPlaintextForLoopback` only for literal local development targets. The low-level WebSocket
+transport remains scheme-neutral; high-level callers choose the deployment policy explicitly.
 
 ## Connect Artifacts
 

@@ -17,6 +17,7 @@ var (
 	ErrInvalidSuite               = errors.New("invalid suite")
 	ErrInvalidMaxStreamHelloBytes = errors.New("invalid max_stream_hello_bytes")
 	ErrMissingResolver            = errors.New("missing resolver")
+	ErrMultipleResolvers          = errors.New("configure only one direct resolver")
 	ErrNotConnected               = errors.New("endpoint is not connected")
 	ErrMissingHandler             = errors.New("missing handler")
 	ErrMissingStreamKind          = errors.New("missing stream kind")

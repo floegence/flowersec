@@ -28,6 +28,8 @@ public enum FlowersecCode: String, Codable, Equatable, Sendable {
   case invalidSuite = "invalid_suite"
   case invalidPSK = "invalid_psk"
   case invalidOption = "invalid_option"
+  case transportPolicyDenied = "transport_policy_denied"
+  case credentialCommitFailed = "credential_commit_failed"
   case authTagMismatch = "auth_tag_mismatch"
   case handshakeFailed = "handshake_failed"
   case notConnected = "not_connected"
@@ -836,6 +838,8 @@ private struct AnyCodingKey: CodingKey {
 public struct ConnectOptions: Sendable {
   public var origin: String?
   public var connectTimeout: Duration
+  public var transportSecurityPolicy: TransportSecurityPolicy?
+  public var onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)?
 
   public init(
     origin: String? = nil,
@@ -843,6 +847,20 @@ public struct ConnectOptions: Sendable {
   ) {
     self.origin = origin
     self.connectTimeout = connectTimeout
+    self.transportSecurityPolicy = nil
+    self.onTransportSecurityDiagnostic = nil
+  }
+
+  public init(
+    origin: String? = nil,
+    connectTimeout: Duration = .seconds(8),
+    transportSecurityPolicy: TransportSecurityPolicy,
+    onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)? = nil
+  ) {
+    self.origin = origin
+    self.connectTimeout = connectTimeout
+    self.transportSecurityPolicy = transportSecurityPolicy
+    self.onTransportSecurityDiagnostic = onTransportSecurityDiagnostic
   }
 }
 

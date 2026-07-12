@@ -1,7 +1,7 @@
 .PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift bench check stability-check go-cover-check compat-check nightly-check
 
 GOVULNCHECK_VERSION ?= v1.1.4
-GOVULNCHECK_GOTOOLCHAIN ?= go1.26.4
+GOVULNCHECK_GOTOOLCHAIN ?= go1.26.5
 
 YAMUX_INTEROP ?= 1
 YAMUX_INTEROP_STRESS ?= 0

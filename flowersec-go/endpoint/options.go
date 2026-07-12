@@ -36,8 +36,20 @@ type connectOptions struct {
 	handshakeCache        *HandshakeCache
 	yamuxConfig           *hyamux.Config
 
-	keepaliveInterval time.Duration
-	keepaliveSet      bool
+	keepaliveInterval       time.Duration
+	keepaliveSet            bool
+	transportSecurityPolicy TransportSecurityPolicy
+}
+
+// WithTransportSecurityPolicy sets the policy evaluated before a high-level WebSocket dial.
+func WithTransportSecurityPolicy(policy TransportSecurityPolicy) ConnectOption {
+	return func(cfg *connectOptions) error {
+		if policy == nil {
+			return fmt.Errorf("transport security policy must be non-nil")
+		}
+		cfg.transportSecurityPolicy = policy
+		return nil
+	}
 }
 
 func defaultConnectOptions() connectOptions {

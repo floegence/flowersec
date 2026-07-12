@@ -37,6 +37,9 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if origin == "" {
 		origin = strings.TrimSpace(cfg.header.Get("Origin"))
 	}
+	if err := evaluateTransportSecurity(ctx, prepared.TunnelURL, fserrors.PathTunnel, cfg.transportSecurityPolicy); err != nil {
+		return nil, err
+	}
 	if origin == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
