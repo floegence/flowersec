@@ -3,6 +3,7 @@ import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "../
 import { createByteReader } from "../streamio/index.js";
 import { base64urlEncode } from "../utils/base64url.js";
 import { readU32be, u32be } from "../utils/bin.js";
+import { AbortError, FlowersecError, isFlowersecError } from "../utils/errors.js";
 import type { YamuxStream } from "../yamux/stream.js";
 
 import { CookieJar } from "./cookieJar.js";
@@ -47,6 +48,8 @@ export type ProxyRuntimeLimits = Readonly<{
   maxChunkBytes: number;
   maxBodyBytes: number;
   maxWsFrameBytes: number;
+  maxConcurrentHttpStreams: number;
+  maxQueuedHttpRequests: number;
 }>;
 
 export type ProxyRuntime = Readonly<{
@@ -72,6 +75,8 @@ export type ProxyRuntimeOptions = Readonly<{
   maxChunkBytes?: number;
   maxBodyBytes?: number;
   maxWsFrameBytes?: number;
+  maxConcurrentHttpStreams?: number;
+  maxQueuedHttpRequests?: number;
   // timeoutMs is written into http_request_meta.timeout_ms (0 uses server default).
   timeoutMs?: number;
   extraRequestHeaders?: readonly string[];
@@ -204,6 +209,139 @@ function normalizeMaxBytes(name: string, v: number | undefined, defaultValue: nu
   return n;
 }
 
+const DEFAULT_MAX_CONCURRENT_HTTP_STREAMS = 24;
+const DEFAULT_MAX_QUEUED_HTTP_REQUESTS = 128;
+
+function normalizePositiveLimit(name: string, value: number | undefined, defaultValue: number): number {
+  if (value == null) return defaultValue;
+  if (!Number.isFinite(value) || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function normalizeNonNegativeLimit(name: string, value: number | undefined, defaultValue: number): number {
+  if (value == null) return defaultValue;
+  if (!Number.isFinite(value) || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+type AdmissionRelease = () => void;
+
+type AdmissionWaiter = {
+  readonly signal?: AbortSignal;
+  readonly resolve: (release: AdmissionRelease) => void;
+  readonly reject: (error: Error) => void;
+  onAbort?: () => void;
+};
+
+class HttpStreamAdmission {
+  private active = 0;
+  private readonly pending: AdmissionWaiter[] = [];
+  private closed = false;
+
+  constructor(
+    private readonly path: Client["path"],
+    private readonly maxConcurrent: number,
+    private readonly maxQueued: number,
+  ) {}
+
+  acquire(signal?: AbortSignal): Promise<AdmissionRelease> {
+    if (this.closed) return Promise.reject(this.closedError());
+    if (signal?.aborted) return Promise.reject(this.abortedError());
+
+    if (this.active < this.maxConcurrent && this.pending.length === 0) {
+      this.active++;
+      return Promise.resolve(this.createRelease());
+    }
+
+    if (this.pending.length >= this.maxQueued) {
+      return Promise.reject(
+        new FlowersecError({
+          path: this.path,
+          stage: "yamux",
+          code: "resource_exhausted",
+          message: "proxy runtime HTTP request queue is full",
+        }),
+      );
+    }
+
+    return new Promise<AdmissionRelease>((resolve, reject) => {
+      const waiter: AdmissionWaiter = {
+        resolve,
+        reject,
+        ...(signal === undefined ? {} : { signal }),
+      };
+      waiter.onAbort = () => {
+        const index = this.pending.indexOf(waiter);
+        if (index < 0) return;
+        this.pending.splice(index, 1);
+        this.cleanupWaiter(waiter);
+        reject(this.abortedError());
+      };
+      signal?.addEventListener("abort", waiter.onAbort, { once: true });
+      this.pending.push(waiter);
+    });
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const waiter of this.pending.splice(0)) {
+      this.cleanupWaiter(waiter);
+      waiter.reject(this.closedError());
+    }
+  }
+
+  assertOpen(): void {
+    if (this.closed) throw this.closedError();
+  }
+
+  private createRelease(): AdmissionRelease {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.active = Math.max(0, this.active - 1);
+      this.drain();
+    };
+  }
+
+  private drain(): void {
+    while (!this.closed && this.active < this.maxConcurrent && this.pending.length > 0) {
+      const waiter = this.pending.shift()!;
+      this.cleanupWaiter(waiter);
+      if (waiter.signal?.aborted) {
+        waiter.reject(this.abortedError());
+        continue;
+      }
+      this.active++;
+      waiter.resolve(this.createRelease());
+    }
+  }
+
+  private cleanupWaiter(waiter: AdmissionWaiter): void {
+    if (waiter.onAbort != null) {
+      waiter.signal?.removeEventListener("abort", waiter.onAbort);
+    }
+  }
+
+  private abortedError(): AbortError {
+    return new AbortError("proxy HTTP request canceled while waiting for stream admission");
+  }
+
+  private closedError(): FlowersecError {
+    return new FlowersecError({
+      path: this.path,
+      stage: "close",
+      code: "not_connected",
+      message: "proxy runtime is disposed",
+    });
+  }
+}
+
 async function writeChunkFrames(
   stream: YamuxStream,
   body: Uint8Array,
@@ -252,6 +390,21 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
   const maxChunkBytes = normalizeMaxBytes("maxChunkBytes", opts.maxChunkBytes, DEFAULT_MAX_CHUNK_BYTES);
   const maxBodyBytes = normalizeMaxBytes("maxBodyBytes", opts.maxBodyBytes, DEFAULT_MAX_BODY_BYTES);
   const maxWsFrameBytes = normalizeMaxBytes("maxWsFrameBytes", opts.maxWsFrameBytes, DEFAULT_MAX_WS_FRAME_BYTES);
+  const maxConcurrentHttpStreams = normalizePositiveLimit(
+    "maxConcurrentHttpStreams",
+    opts.maxConcurrentHttpStreams,
+    DEFAULT_MAX_CONCURRENT_HTTP_STREAMS,
+  );
+  const maxQueuedHttpRequests = normalizeNonNegativeLimit(
+    "maxQueuedHttpRequests",
+    opts.maxQueuedHttpRequests,
+    DEFAULT_MAX_QUEUED_HTTP_REQUESTS,
+  );
+  const httpStreamAdmission = new HttpStreamAdmission(
+    client.path,
+    maxConcurrentHttpStreams,
+    maxQueuedHttpRequests,
+  );
 
   const timeoutMs = normalizeTimeoutMs(opts.timeoutMs);
 
@@ -290,6 +443,7 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
   const dispatchFetch = (req: ProxyFetchReq, port: MessagePort): void => {
     const ac = new AbortController();
     let stream: YamuxStream | null = null;
+    let releaseAdmission: AdmissionRelease | null = null;
     port.onmessage = (ev) => {
       const m = ev.data as ProxyAbortMsg | unknown;
       if (m && typeof m === "object" && (m as ProxyAbortMsg).type === "flowersec-proxy:abort") {
@@ -303,6 +457,8 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
         assertPathPolicyAllows("http", path, pathPolicy);
         const requestID = req.id.trim() !== "" ? req.id : randomB64u(18);
         const externalOrigin = externalOriginOverride ?? normalizeExternalOrigin(req.external_origin);
+        releaseAdmission = await httpStreamAdmission.acquire(ac.signal);
+        httpStreamAdmission.assertOpen();
         stream = await client.openStream(PROXY_KIND_HTTP1, { signal: ac.signal });
         const reader = createByteReader(stream, { signal: ac.signal });
 
@@ -357,14 +513,25 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
         stream = null;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        const status = e instanceof ProxyRuntimePolicyError ? e.status : 502;
-        port.postMessage({ type: "flowersec-proxy:response_error", status, message: msg } satisfies ProxyRespErrMsg);
+        const code = isFlowersecError(e) ? e.code : undefined;
+        const status =
+          e instanceof ProxyRuntimePolicyError
+            ? e.status
+            : code === "resource_exhausted" || code === "not_connected"
+              ? 503
+              : 502;
+        port.postMessage({
+          type: "flowersec-proxy:response_error",
+          status,
+          message: msg,
+        } satisfies ProxyRespErrMsg);
         try {
           stream?.reset(new Error(msg));
         } catch {
           // Best-effort.
         }
       } finally {
+        releaseAdmission?.();
         try {
           port.close();
         } catch {
@@ -407,10 +574,18 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
   }
 
   return {
-    limits: { maxJsonFrameBytes, maxChunkBytes, maxBodyBytes, maxWsFrameBytes },
+    limits: {
+      maxJsonFrameBytes,
+      maxChunkBytes,
+      maxBodyBytes,
+      maxWsFrameBytes,
+      maxConcurrentHttpStreams,
+      maxQueuedHttpRequests,
+    },
     dispatchFetch,
     openWebSocketStream,
     dispose: () => {
+      httpStreamAdmission.close();
       sw?.removeEventListener("message", onMessage);
       sw?.removeEventListener("controllerchange", registerRuntime);
     }

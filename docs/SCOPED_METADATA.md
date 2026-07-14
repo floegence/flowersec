@@ -68,8 +68,8 @@ Important boundary:
 
 - `allowedOrigins` is the frozen controller-bridge security input
 - deployment-specific path details remain caller-owned configuration, not stable scope fields
-- `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin` overrides, and bridge `capabilityNonce` are explicit runtime/bootstrap options, not `proxy.runtime@1` payload fields
-- do not expand the `proxy.runtime@1` schema for deployment hardening switches; use explicit helper options for v0.19.x, or introduce a future `proxy.runtime@2` with a reviewed manifest if the artifact contract needs new stable fields
+- `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin` overrides, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, and bridge `capabilityNonce` are explicit runtime/bootstrap options, not `proxy.runtime@1` payload fields
+- do not expand the `proxy.runtime@1` schema for deployment hardening switches; use explicit helper options for v0.20.x, or introduce a future `proxy.runtime@2` with a reviewed manifest if the artifact contract needs new stable fields
 
 ## Stable vs experimental boundary
 

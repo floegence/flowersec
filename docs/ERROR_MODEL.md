@@ -90,6 +90,8 @@ Common stable codes include:
 
 `resource_exhausted` means a configured generic transport, secure-channel, multiplexing, RPC, or queue limit was reached. Callers should apply backpressure, reduce concurrency, or reconnect with a fresh session as appropriate. It must not be used to encode an application-specific quota or policy. Transport implementations map their limit failures to the nearest stable high-level stage, such as `connect`, `secure`, `yamux`, `rpc`, or `close`.
 
+The browser proxy runtime maps a full HTTP stream-admission queue to HTTP `503`. Its error message retains the stable `resource_exhausted` code; the Service Worker bridge wire is otherwise unchanged.
+
 ## Stable controlplane helper contract
 
 Artifact-fetch helpers use a separate, minimal stable contract:

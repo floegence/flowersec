@@ -13,11 +13,15 @@ Flowersec remains a generic communication library. The v0.20 APIs expose transpo
 
 ## Release coordinates
 
-- Go module tag: `flowersec-go/v0.20.0`
-- npm package: `@floegence/flowersec-core@0.20.0`
-- SwiftPM root tag: `0.20.0`
+- Go module tag: `flowersec-go/v0.20.1`
+- npm package: `@floegence/flowersec-core@0.20.1`
+- SwiftPM root tag: `0.20.1`
 
 Upgrade downstream dependencies from published registries or releases. Do not use `replace`, `file:`, `link:`, `workspace:`, sibling aliases, or copied source as a completed upgrade path.
+
+### v0.20.1 proxy runtime patch
+
+The TypeScript proxy runtime now admits at most `24` concurrent HTTP streams by default and queues at most `128` additional HTTP requests in FIFO order. Configure `maxConcurrentHttpStreams` and `maxQueuedHttpRequests` as explicit runtime options when a deployment needs different bounded values. Queueing is abort-aware, permits cover the complete HTTP stream lifecycle, and WebSocket opens remain independent. A full queue returns HTTP `503` with stable `resource_exhausted` semantics.
 
 ## TLS is now the high-level default
 

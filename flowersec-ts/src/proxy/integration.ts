@@ -41,6 +41,8 @@ export type RegisterProxyIntegrationOptions = Readonly<{
     maxChunkBytes?: number;
     maxBodyBytes?: number;
     maxWsFrameBytes?: number;
+    maxConcurrentHttpStreams?: number;
+    maxQueuedHttpRequests?: number;
     timeoutMs?: number;
     pathPolicy?: ProxyRuntimePathPolicy;
     externalOrigin?: string;
@@ -281,6 +283,8 @@ function buildRuntimeOptions(preset: ResolvedProxyPreset, runtime: RegisterProxy
   maxBodyBytes: number;
   maxWsFrameBytes: number;
   timeoutMs: number;
+  maxConcurrentHttpStreams?: number;
+  maxQueuedHttpRequests?: number;
   pathPolicy?: ProxyRuntimePathPolicy;
   externalOrigin?: string;
   runtimeRegistrationToken?: string;
@@ -291,6 +295,12 @@ function buildRuntimeOptions(preset: ResolvedProxyPreset, runtime: RegisterProxy
     maxBodyBytes: runtime?.maxBodyBytes ?? preset.limits.max_body_bytes,
     maxWsFrameBytes: runtime?.maxWsFrameBytes ?? preset.limits.max_ws_frame_bytes,
     timeoutMs: runtime?.timeoutMs ?? preset.limits.timeout_ms ?? 0,
+    ...(runtime?.maxConcurrentHttpStreams === undefined
+      ? {}
+      : { maxConcurrentHttpStreams: runtime.maxConcurrentHttpStreams }),
+    ...(runtime?.maxQueuedHttpRequests === undefined
+      ? {}
+      : { maxQueuedHttpRequests: runtime.maxQueuedHttpRequests }),
     ...(runtime?.pathPolicy === undefined ? {} : { pathPolicy: runtime.pathPolicy }),
     ...(runtime?.externalOrigin === undefined ? {} : { externalOrigin: runtime.externalOrigin }),
     ...(runtime?.runtimeRegistrationToken === undefined ? {} : { runtimeRegistrationToken: runtime.runtimeRegistrationToken }),

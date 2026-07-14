@@ -411,6 +411,12 @@ Requirements:
   - `pathPolicy.allowedWebSocketPathPrefixes` / `pathPolicy.deniedWebSocketPathPrefixes` constrain patched WebSocket opens.
   - Deny rules take precedence; allow rules fail closed when configured.
   - Prefixes are path-only, root-relative values and MUST NOT include scheme, host, query, whitespace, or `//`.
+- Runtime HTTP stream admission is bounded and independent from WebSocket opens:
+  - `maxConcurrentHttpStreams` defaults to `24`, leaving headroom below the default Yamux inbound stream limit for RPC and WebSocket traffic.
+  - `maxQueuedHttpRequests` defaults to `128` and may be set to `0` to reject instead of queueing when all HTTP permits are occupied.
+  - Queued requests are FIFO and abort-aware. A permit is held for the complete HTTP stream lifecycle, including response streaming and cleanup.
+  - A full admission queue fails with HTTP `503` and the stable generic `resource_exhausted` error code. Increase the queue only with a corresponding memory and latency budget; do not raise concurrency above the peer's stream capacity.
+  - `dispose()` rejects queued and future HTTP requests while allowing already-admitted stream cleanup to finish. WebSocket opens do not consume HTTP permits.
 - `external_origin` is trusted only when it is derived by the generated same-origin SW or supplied through an explicit trusted runtime option.
   - The runtime may set `externalOrigin` to a deployment-owned origin when the app is mounted behind a stable external URL.
   - A runtime-level trusted `externalOrigin` override takes precedence over app-supplied bridge metadata.
@@ -432,7 +438,7 @@ Artifact-first helper boundary:
 - `connectArtifactProxyControllerBrowser(...)` consumes `proxy.runtime@1` with `mode = "controller_bridge"`.
 - `allowedOrigins` is the frozen controller-bridge security input.
 - deployment-specific path details stay caller-provided or boot-payload-specific; they are not frozen as proxy helper API surface.
-- `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin`, and `capabilityNonce` stay explicit options; they are not added to the frozen `proxy.runtime@1` schema.
+- `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin`, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, and `capabilityNonce` stay explicit options; they are not added to the frozen `proxy.runtime@1` schema.
 - If these controls need to become artifact-carried stable fields, introduce a future `proxy.runtime@2` with a reviewed manifest instead of extending v1 in place.
 - service-worker registration details may still be caller-provided overrides even when the artifact scope pre-populates them.
 - direct transport is not a stable proxy helper path in v0.19.x; the artifact-first helpers are tunnel-first browser integrations.

@@ -237,6 +237,8 @@ export function resolveRuntimeLimitsFromScope(
     maxChunkBytes?: number;
     maxBodyBytes?: number;
     maxWsFrameBytes?: number;
+    maxConcurrentHttpStreams?: number;
+    maxQueuedHttpRequests?: number;
     timeoutMs?: number;
   }> | undefined
 ): Readonly<{
@@ -244,6 +246,8 @@ export function resolveRuntimeLimitsFromScope(
   maxChunkBytes?: number;
   maxBodyBytes?: number;
   maxWsFrameBytes?: number;
+  maxConcurrentHttpStreams?: number;
+  maxQueuedHttpRequests?: number;
   timeoutMs?: number;
 }> | undefined {
   const merged = {

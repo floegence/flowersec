@@ -241,6 +241,8 @@ Stable building blocks:
   - `openJsonFrameChannel(...)`
 - `@floegence/flowersec-core/proxy`
   - `createProxyRuntime(...)`
+  - `maxConcurrentHttpStreams`
+  - `maxQueuedHttpRequests`
   - `createProxyServiceWorkerScript(...)`
   - `createProxyIntegrationServiceWorkerScript(...)`
   - `registerProxyIntegration(...)`

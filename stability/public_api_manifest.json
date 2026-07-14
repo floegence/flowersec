@@ -850,6 +850,8 @@
         "doc_tokens": [
           "`@floegence/flowersec-core/proxy`",
           "`createProxyRuntime(...)`",
+          "`maxConcurrentHttpStreams`",
+          "`maxQueuedHttpRequests`",
           "`createProxyServiceWorkerScript(...)`",
           "`createProxyIntegrationServiceWorkerScript(...)`",
           "`registerProxyIntegration(...)`",
