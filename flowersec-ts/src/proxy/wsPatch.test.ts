@@ -20,6 +20,51 @@ class FakeYamuxStream {
   reset(_err: Error): void {}
 }
 
+async function waitFor(predicate: () => boolean, message = "condition"): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`timed out waiting for ${message}`);
+}
+
+function parseFrames(chunks: readonly Uint8Array[]): Array<{ op: number; payload: Uint8Array }> {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const bytes = new Uint8Array(total);
+  let writeOffset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, writeOffset);
+    writeOffset += chunk.byteLength;
+  }
+
+  const frames: Array<{ op: number; payload: Uint8Array }> = [];
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    const length = (
+      (bytes[offset + 1]! << 24) |
+      (bytes[offset + 2]! << 16) |
+      (bytes[offset + 3]! << 8) |
+      bytes[offset + 4]!
+    ) >>> 0;
+    const op = bytes[offset]!;
+    offset += 5;
+    frames.push({ op, payload: bytes.slice(offset, offset + length) });
+    offset += length;
+  }
+  return frames;
+}
+
+class DelayedBlob extends Blob {
+  constructor(parts: BlobPart[], private readonly delayMs: number) {
+    super(parts);
+  }
+
+  override async arrayBuffer(): Promise<ArrayBuffer> {
+    await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    return await super.arrayBuffer();
+  }
+}
+
 describe("installWebSocketPatch", () => {
   it("proxies same host/port ws URLs by default (ws<->http scheme mapping)", async () => {
     const oldWS = (globalThis as any).WebSocket;
@@ -103,6 +148,7 @@ describe("installWebSocketPatch", () => {
 
     try {
       expect(() => installWebSocketPatch({ runtime, maxWsFrameBytes: -1 })).toThrow(/maxWsFrameBytes/);
+      expect(() => installWebSocketPatch({ runtime, maxWsBufferedAmountBytes: -1 })).toThrow(/maxWsBufferedAmountBytes/);
 
       installWebSocketPatch({ runtime, maxWsFrameBytes: 0 });
       const ws = new (globalThis as any).WebSocket("/ws");
@@ -120,6 +166,146 @@ describe("installWebSocketPatch", () => {
         await new Promise((r) => setTimeout(r, 1));
       }
       expect(closedReason).toContain("ws payload too large");
+    } finally {
+      (globalThis as any).WebSocket = oldWS;
+      (globalThis as any).location = oldLoc;
+    }
+  });
+
+  it("tracks bufferedAmount until the complete user message write finishes", async () => {
+    const oldWS = (globalThis as any).WebSocket;
+    const oldLoc = (globalThis as any).location;
+    let releaseFirstWrite!: () => void;
+    const blocked = new Promise<void>((resolve) => { releaseFirstWrite = resolve; });
+    let firstWriteStarted!: () => void;
+    const started = new Promise<void>((resolve) => { firstWriteStarted = resolve; });
+    let writeCalls = 0;
+    const stream = {
+      async write(_chunk: Uint8Array): Promise<void> {
+        writeCalls++;
+        if (writeCalls === 1) {
+          firstWriteStarted();
+          await blocked;
+        }
+      },
+      async read(): Promise<Uint8Array | null> { return await new Promise(() => {}); },
+      async close(): Promise<void> {},
+      reset(): void {},
+    };
+    class OriginalWebSocket {}
+    const runtime = {
+      limits: { maxWsFrameBytes: 1024, maxWsBufferedAmountBytes: 16 },
+      openWebSocketStream: async () => ({ stream: stream as any, protocol: "" }),
+    };
+
+    (globalThis as any).WebSocket = OriginalWebSocket;
+    (globalThis as any).location = {
+      href: "http://127.0.0.1:5173/",
+      protocol: "http:",
+      hostname: "127.0.0.1",
+      port: "5173",
+    };
+
+    try {
+      installWebSocketPatch({ runtime });
+      const ws = new (globalThis as any).WebSocket("/ws");
+      await waitFor(() => ws.readyState === 1, "patched websocket open");
+      ws.send("abc");
+      expect(ws.bufferedAmount).toBe(3);
+      await started;
+      expect(ws.bufferedAmount).toBe(3);
+      releaseFirstWrite();
+      await waitFor(() => ws.bufferedAmount === 0, "bufferedAmount drain");
+      expect(writeCalls).toBe(2);
+    } finally {
+      (globalThis as any).WebSocket = oldWS;
+      (globalThis as any).location = oldLoc;
+    }
+  });
+
+  it("preserves send order across Blob decoding and binary payloads", async () => {
+    const oldWS = (globalThis as any).WebSocket;
+    const oldLoc = (globalThis as any).location;
+    const stream = {
+      writes: [] as Uint8Array[],
+      async write(chunk: Uint8Array): Promise<void> { this.writes.push(chunk.slice()); },
+      async read(): Promise<Uint8Array | null> { return await new Promise(() => {}); },
+      async close(): Promise<void> {},
+      reset(): void {},
+    };
+    class OriginalWebSocket {}
+    const runtime = {
+      limits: { maxWsFrameBytes: 1024, maxWsBufferedAmountBytes: 64 },
+      openWebSocketStream: async () => ({ stream: stream as any, protocol: "" }),
+    };
+
+    (globalThis as any).WebSocket = OriginalWebSocket;
+    (globalThis as any).location = {
+      href: "http://127.0.0.1:5173/",
+      protocol: "http:",
+      hostname: "127.0.0.1",
+      port: "5173",
+    };
+
+    try {
+      installWebSocketPatch({ runtime });
+      const ws = new (globalThis as any).WebSocket("/ws");
+      await waitFor(() => ws.readyState === 1, "patched websocket open");
+      ws.send(new DelayedBlob([new Uint8Array([1])], 20));
+      ws.send("second");
+      ws.send(new Uint8Array([3]));
+
+      await waitFor(() => stream.writes.length === 6, "serialized websocket writes");
+      const frames = parseFrames(stream.writes);
+      expect(frames.map((frame) => frame.op)).toEqual([2, 1, 2]);
+      expect(Array.from(frames[0]!.payload)).toEqual([1]);
+      expect(new TextDecoder().decode(frames[1]!.payload)).toBe("second");
+      expect(Array.from(frames[2]!.payload)).toEqual([3]);
+      expect(ws.bufferedAmount).toBe(0);
+    } finally {
+      (globalThis as any).WebSocket = oldWS;
+      (globalThis as any).location = oldLoc;
+    }
+  });
+
+  it("closes and resets the stream when bufferedAmount exceeds the hard limit", async () => {
+    const oldWS = (globalThis as any).WebSocket;
+    const oldLoc = (globalThis as any).location;
+    const resetReasons: string[] = [];
+    const stream = {
+      async write(_chunk: Uint8Array): Promise<void> { return await new Promise(() => {}); },
+      async read(): Promise<Uint8Array | null> { return await new Promise(() => {}); },
+      async close(): Promise<void> {},
+      reset(error: Error): void { resetReasons.push(error.message); },
+    };
+    class OriginalWebSocket {}
+    const runtime = {
+      limits: { maxWsFrameBytes: 1024, maxWsBufferedAmountBytes: 4 },
+      openWebSocketStream: async () => ({ stream: stream as any, protocol: "" }),
+    };
+
+    (globalThis as any).WebSocket = OriginalWebSocket;
+    (globalThis as any).location = {
+      href: "http://127.0.0.1:5173/",
+      protocol: "http:",
+      hostname: "127.0.0.1",
+      port: "5173",
+    };
+
+    try {
+      installWebSocketPatch({ runtime });
+      const ws = new (globalThis as any).WebSocket("/ws");
+      await waitFor(() => ws.readyState === 1, "patched websocket open");
+      let closeReason = "";
+      ws.onclose = (event: { reason?: string }) => { closeReason = String(event.reason ?? ""); };
+      ws.send("abc");
+      expect(ws.bufferedAmount).toBe(3);
+      ws.send("de");
+
+      expect(ws.readyState).toBe(3);
+      expect(ws.bufferedAmount).toBe(0);
+      expect(closeReason).toContain("bufferedAmount limit exceeded");
+      expect(resetReasons).toEqual([expect.stringContaining("bufferedAmount limit exceeded")]);
     } finally {
       (globalThis as any).WebSocket = oldWS;
       (globalThis as any).location = oldLoc;
@@ -211,9 +397,7 @@ describe("installWebSocketPatch", () => {
           await this.firstChunkWritten;
           return encodeFrame(9, new Uint8Array([1, 2, 3, 4]));
         }
-        // End the stream after a short delay.
-        await new Promise((r) => setTimeout(r, 10));
-        return null;
+        return await new Promise(() => {});
       }
 
       async close(): Promise<void> {}

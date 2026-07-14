@@ -82,6 +82,7 @@ export type WebSocketPatchOptions = Readonly<{
   // Default: proxy same host/port (including ws<->http and wss<->https scheme mapping).
   shouldProxy?: (url: URL) => boolean;
   maxWsFrameBytes?: number;
+  maxWsBufferedAmountBytes?: number;
 }>;
 
 export function installWebSocketPatch(opts: WebSocketPatchOptions): Readonly<{ uninstall: () => void }> {
@@ -115,6 +116,24 @@ export function installWebSocketPatch(opts: WebSocketPatchOptions): Readonly<{ u
   const maxWsFrameBytesFloor = Math.floor(maxWsFrameBytesRaw);
   if (maxWsFrameBytesFloor < 0) throw new Error("maxWsFrameBytes must be >= 0");
   const maxWsFrameBytes = maxWsFrameBytesFloor === 0 ? runtimeMaxWsFrameBytes : maxWsFrameBytesFloor;
+  const defaultMaxWsBufferedAmountBytes = 4 * (1 << 20);
+  const runtimeMaxWsBufferedAmountBytesRaw = runtime.limits?.maxWsBufferedAmountBytes;
+  if (
+    runtimeMaxWsBufferedAmountBytesRaw !== undefined &&
+    (!Number.isSafeInteger(runtimeMaxWsBufferedAmountBytesRaw) || runtimeMaxWsBufferedAmountBytesRaw < 0)
+  ) {
+    throw new Error("runtime maxWsBufferedAmountBytes must be a non-negative safe integer");
+  }
+  const runtimeMaxWsBufferedAmountBytes = runtimeMaxWsBufferedAmountBytesRaw == null || runtimeMaxWsBufferedAmountBytesRaw === 0
+    ? defaultMaxWsBufferedAmountBytes
+    : runtimeMaxWsBufferedAmountBytesRaw;
+  const maxWsBufferedAmountBytesRaw = opts.maxWsBufferedAmountBytes ?? runtimeMaxWsBufferedAmountBytes;
+  if (!Number.isSafeInteger(maxWsBufferedAmountBytesRaw) || maxWsBufferedAmountBytesRaw < 0) {
+    throw new Error("maxWsBufferedAmountBytes must be a non-negative safe integer");
+  }
+  const maxWsBufferedAmountBytes = maxWsBufferedAmountBytesRaw === 0
+    ? runtimeMaxWsBufferedAmountBytes
+    : maxWsBufferedAmountBytesRaw;
 
   class PatchedWebSocket {
     static readonly CONNECTING = 0;
@@ -157,10 +176,31 @@ export function installWebSocketPatch(opts: WebSocketPatchOptions): Readonly<{ u
       this.listeners.off(type, listener);
     }
 
-    private queueWriteFrame(stream: any, op: number, payload: Uint8Array): void {
+    private queueWriteFrame(
+      stream: any,
+      op: number,
+      payload: Uint8Array | (() => Promise<Uint8Array>),
+      bufferedBytes = 0,
+    ): void {
       this.writeChain = this.writeChain
-        .then(() => writeWSFrame(stream, op, payload, maxWsFrameBytes))
-        .catch((e) => this.fail(e));
+        .then(async () => {
+          if (this.readyState === PatchedWebSocket.CLOSED) return;
+          const resolved = typeof payload === "function" ? await payload() : payload;
+          await writeWSFrame(stream, op, resolved, maxWsFrameBytes);
+        })
+        .catch((e) => this.fail(e))
+        .finally(() => {
+          this.bufferedAmount = Math.max(0, this.bufferedAmount - bufferedBytes);
+        });
+    }
+
+    private reserveBufferedAmount(bytes: number): boolean {
+      if (this.bufferedAmount + bytes > maxWsBufferedAmountBytes) {
+        this.fail(new Error("WebSocket bufferedAmount limit exceeded"));
+        return false;
+      }
+      this.bufferedAmount += bytes;
+      return true;
     }
 
     send(data: any): void {
@@ -168,26 +208,36 @@ export function installWebSocketPatch(opts: WebSocketPatchOptions): Readonly<{ u
         throw new Error("WebSocket is not open");
       }
       const s = this.stream;
-      const sendBytes = (op: number, payload: Uint8Array) => {
-        this.queueWriteFrame(s, op, payload);
+      const sendBytes = (op: number, byteLength: number, copyPayload: () => Uint8Array) => {
+        if (!this.reserveBufferedAmount(byteLength)) return;
+        try {
+          this.queueWriteFrame(s, op, copyPayload(), byteLength);
+        } catch (error) {
+          this.bufferedAmount = Math.max(0, this.bufferedAmount - byteLength);
+          throw error;
+        }
       };
       if (typeof data === "string") {
-        sendBytes(1, te.encode(data));
+        const payload = te.encode(data);
+        sendBytes(1, payload.byteLength, () => payload);
         return;
       }
       if (data instanceof ArrayBuffer) {
-        sendBytes(2, new Uint8Array(data));
+        sendBytes(2, data.byteLength, () => new Uint8Array(data).slice());
         return;
       }
       if (ArrayBuffer.isView(data)) {
-        sendBytes(2, new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+        sendBytes(2, data.byteLength, () => new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice());
         return;
       }
       if (typeof Blob !== "undefined" && data instanceof Blob) {
-        void data
-          .arrayBuffer()
-          .then((ab) => sendBytes(2, new Uint8Array(ab)))
-          .catch((e) => this.fail(e));
+        if (!this.reserveBufferedAmount(data.size)) return;
+        this.queueWriteFrame(
+          s,
+          2,
+          async () => new Uint8Array(await data.arrayBuffer()),
+          data.size,
+        );
         return;
       }
       throw new Error("unsupported WebSocket send payload");
@@ -298,10 +348,13 @@ export function installWebSocketPatch(opts: WebSocketPatchOptions): Readonly<{ u
     }
 
     private fail(e: any): void {
+      if (this.readyState === PatchedWebSocket.CLOSED) return;
       this.readyState = PatchedWebSocket.CLOSED;
       const msg = e instanceof Error ? e.message : String(e);
+      this.bufferedAmount = 0;
       this.emit("error", { type: "error", message: msg });
       this.emit("close", { type: "close", code: 1006, reason: msg, wasClean: false });
+      this.stream = null;
       try {
         this.ac.abort(msg);
       } catch {

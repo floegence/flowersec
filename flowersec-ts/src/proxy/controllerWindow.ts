@@ -5,13 +5,16 @@ import {
   PROXY_WINDOW_STREAM_CLOSE_MSG_TYPE,
   PROXY_WINDOW_STREAM_END_MSG_TYPE,
   PROXY_WINDOW_STREAM_RESET_MSG_TYPE,
+  PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE,
   PROXY_WINDOW_WS_ERROR_MSG_TYPE,
   PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE,
   PROXY_WINDOW_WS_OPEN_MSG_TYPE,
+  PROXY_WINDOW_WS_WRITE_ACK_CAPABILITY,
   type ProxyWindowFetchMsg,
   type ProxyWindowStreamChunkMsg,
   type ProxyWindowStreamCloseMsg,
   type ProxyWindowStreamResetMsg,
+  type ProxyWindowStreamWriteAckMsg,
   type ProxyWindowWsOpenAckMsg,
   type ProxyWindowWsErrorMsg,
   type ProxyWindowWsOpenMsg,
@@ -71,7 +74,12 @@ function hasExpectedCapability(data: unknown, capabilityNonce: string): boolean 
 
 function bridgeWebSocket(runtime: ProxyRuntime, msg: ProxyWindowWsOpenMsg, port: MessagePort): void {
   const ac = new AbortController();
-  let streamClosed = false;
+  let terminal = false;
+  let acceptingWrites = true;
+  let stream: Awaited<ReturnType<ProxyRuntime["openWebSocketStream"]>>["stream"] | null = null;
+  let pendingWriteBytes = 0;
+  let writeChain: Promise<void> = Promise.resolve();
+  const maxBufferedBytes = runtime.limits.maxWsBufferedAmountBytes ?? 4 * (1 << 20);
 
   const closePort = () => {
     try {
@@ -81,13 +89,40 @@ function bridgeWebSocket(runtime: ProxyRuntime, msg: ProxyWindowWsOpenMsg, port:
     }
   };
 
+  const failBridge = (error: unknown) => {
+    if (terminal) return;
+    terminal = true;
+    acceptingWrites = false;
+    const err = error instanceof Error ? error : new Error(String(error));
+    try {
+      stream?.reset(err);
+    } catch {
+      // Best-effort.
+    }
+    try {
+      ac.abort(err.message);
+    } catch {
+      // Best-effort.
+    }
+    try {
+      port.postMessage({
+        type: PROXY_WINDOW_STREAM_RESET_MSG_TYPE,
+        message: err.message,
+      } satisfies ProxyWindowStreamResetMsg);
+    } catch {
+      // Best-effort.
+    }
+    closePort();
+  };
+
   void (async () => {
     try {
       const wsOpts: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }> = {
         signal: ac.signal,
         ...(msg.protocols === undefined ? {} : { protocols: msg.protocols }),
       };
-      const { stream, protocol } = await runtime.openWebSocketStream(msg.path, wsOpts);
+      const opened = await runtime.openWebSocketStream(msg.path, wsOpts);
+      stream = opened.stream;
 
       port.onmessage = (ev) => {
         const data = ev.data as
@@ -99,20 +134,45 @@ function bridgeWebSocket(runtime: ProxyRuntime, msg: ProxyWindowWsOpenMsg, port:
         const type = typeof (data as { type?: unknown }).type === "string" ? (data as { type: string }).type : "";
         switch (type) {
           case PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE: {
+            if (!acceptingWrites || stream == null) return;
             const raw = (data as ProxyWindowStreamChunkMsg).data;
             if (!(raw instanceof ArrayBuffer)) return;
-            void stream.write(new Uint8Array(raw));
+            if (pendingWriteBytes + raw.byteLength > maxBufferedBytes) {
+              failBridge(new Error("proxy WebSocket outbound buffer exceeded"));
+              return;
+            }
+            const rawWriteId = (data as ProxyWindowStreamChunkMsg).writeId;
+            const writeId = Number.isSafeInteger(rawWriteId) && Number(rawWriteId) > 0
+              ? Number(rawWriteId)
+              : undefined;
+            const chunk = new Uint8Array(raw);
+            pendingWriteBytes += chunk.byteLength;
+            writeChain = writeChain
+              .then(async () => {
+                if (terminal || stream == null) throw new Error("stream is closed");
+                await stream.write(chunk);
+                if (terminal || writeId === undefined) return;
+                port.postMessage({
+                  type: PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE,
+                  writeId,
+                } satisfies ProxyWindowStreamWriteAckMsg);
+              })
+              .catch((error) => failBridge(error))
+              .finally(() => {
+                pendingWriteBytes = Math.max(0, pendingWriteBytes - chunk.byteLength);
+              });
             return;
           }
           case PROXY_WINDOW_STREAM_CLOSE_MSG_TYPE:
-            void stream.close();
+            if (!acceptingWrites || stream == null) return;
+            acceptingWrites = false;
+            writeChain = writeChain
+              .then(() => stream?.close())
+              .catch((error) => failBridge(error)) as Promise<void>;
             return;
           case PROXY_WINDOW_STREAM_RESET_MSG_TYPE: {
             const message = String((data as ProxyWindowStreamResetMsg).message ?? "stream reset");
-            stream.reset(new Error(message));
-            streamClosed = true;
-            ac.abort(message);
-            closePort();
+            failBridge(new Error(message));
             return;
           }
           default:
@@ -120,12 +180,17 @@ function bridgeWebSocket(runtime: ProxyRuntime, msg: ProxyWindowWsOpenMsg, port:
         }
       };
       port.start?.();
-      port.postMessage({ type: PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE, protocol } satisfies ProxyWindowWsOpenAckMsg);
+      port.postMessage({
+        type: PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE,
+        protocol: opened.protocol,
+        capabilities: [PROXY_WINDOW_WS_WRITE_ACK_CAPABILITY],
+      } satisfies ProxyWindowWsOpenAckMsg);
 
-      while (!streamClosed) {
+      while (!terminal) {
         const chunk = await stream.read();
         if (chunk == null) {
-          streamClosed = true;
+          terminal = true;
+          acceptingWrites = false;
           port.postMessage({ type: PROXY_WINDOW_STREAM_END_MSG_TYPE });
           closePort();
           return;
@@ -135,8 +200,12 @@ function bridgeWebSocket(runtime: ProxyRuntime, msg: ProxyWindowWsOpenMsg, port:
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      port.postMessage({ type: PROXY_WINDOW_WS_ERROR_MSG_TYPE, message } satisfies ProxyWindowWsErrorMsg);
-      closePort();
+      if (stream == null) {
+        port.postMessage({ type: PROXY_WINDOW_WS_ERROR_MSG_TYPE, message } satisfies ProxyWindowWsErrorMsg);
+        closePort();
+        return;
+      }
+      failBridge(error);
     }
   })();
 }

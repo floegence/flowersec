@@ -5,9 +5,11 @@ import {
   PROXY_WINDOW_STREAM_CLOSE_MSG_TYPE,
   PROXY_WINDOW_STREAM_END_MSG_TYPE,
   PROXY_WINDOW_STREAM_RESET_MSG_TYPE,
+  PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE,
   type ProxyWindowStreamChunkMsg,
   type ProxyWindowStreamCloseMsg,
   type ProxyWindowStreamResetMsg,
+  type ProxyWindowStreamWriteAckMsg,
 } from "./windowBridgeProtocol.js";
 
 function cloneChunk(chunk: Uint8Array): ArrayBuffer {
@@ -18,11 +20,16 @@ function cloneChunk(chunk: Uint8Array): ArrayBuffer {
 
 type ReadQueueItem = Uint8Array | null;
 
-export function createMessagePortBackedStream(port: MessagePort): YamuxStream {
+export function createMessagePortBackedStream(
+  port: MessagePort,
+  opts: Readonly<{ writeAcknowledgements?: boolean }> = {},
+): YamuxStream {
   let closed = false;
   let error: Error | null = null;
   const queue: ReadQueueItem[] = [];
   const waiters: Array<(value: ReadQueueItem | Error) => void> = [];
+  const pendingWrites = new Map<number, Readonly<{ resolve: () => void; reject: (error: Error) => void }>>();
+  let nextWriteId = 1;
 
   const resolveWaiter = (value: ReadQueueItem | Error) => {
     const waiter = waiters.shift();
@@ -44,10 +51,17 @@ export function createMessagePortBackedStream(port: MessagePort): YamuxStream {
     while (resolveWaiter(err)) {
       // Drain waiters.
     }
+    for (const pending of pendingWrites.values()) pending.reject(err);
+    pendingWrites.clear();
   };
 
   port.onmessage = (ev) => {
-    const data = ev.data as ProxyWindowStreamChunkMsg | ProxyWindowStreamCloseMsg | ProxyWindowStreamResetMsg | unknown;
+    const data = ev.data as
+      | ProxyWindowStreamChunkMsg
+      | ProxyWindowStreamCloseMsg
+      | ProxyWindowStreamResetMsg
+      | ProxyWindowStreamWriteAckMsg
+      | unknown;
     if (data == null || typeof data !== "object") return;
     const type = typeof (data as { type?: unknown }).type === "string" ? (data as { type: string }).type : "";
     switch (type) {
@@ -60,8 +74,19 @@ export function createMessagePortBackedStream(port: MessagePort): YamuxStream {
       case PROXY_WINDOW_STREAM_END_MSG_TYPE:
       case PROXY_WINDOW_STREAM_CLOSE_MSG_TYPE:
         closed = true;
+        for (const pending of pendingWrites.values()) pending.reject(new Error("stream is closed"));
+        pendingWrites.clear();
         pushValue(null);
         return;
+      case PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE: {
+        const writeId = (data as ProxyWindowStreamWriteAckMsg).writeId;
+        if (!Number.isSafeInteger(writeId) || writeId <= 0) return;
+        const pending = pendingWrites.get(writeId);
+        if (pending == null) return;
+        pendingWrites.delete(writeId);
+        pending.resolve();
+        return;
+      }
       case PROXY_WINDOW_STREAM_RESET_MSG_TYPE: {
         closed = true;
         const message = String((data as ProxyWindowStreamResetMsg).message ?? "stream reset");
@@ -97,12 +122,29 @@ export function createMessagePortBackedStream(port: MessagePort): YamuxStream {
       if (error != null) throw error;
       if (closed) throw new Error("stream is closed");
       const ab = cloneChunk(chunk);
-      port.postMessage({ type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE, data: ab } satisfies ProxyWindowStreamChunkMsg, [ab]);
+      if (opts.writeAcknowledgements !== true) {
+        port.postMessage({ type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE, data: ab } satisfies ProxyWindowStreamChunkMsg, [ab]);
+        return;
+      }
+
+      const writeId = nextWriteId++;
+      await new Promise<void>((resolve, reject) => {
+        pendingWrites.set(writeId, { resolve, reject });
+        try {
+          port.postMessage({ type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE, data: ab, writeId } satisfies ProxyWindowStreamChunkMsg, [ab]);
+        } catch (error) {
+          pendingWrites.delete(writeId);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
     },
 
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
+      const closeError = new Error("stream is closed");
+      for (const pending of pendingWrites.values()) pending.reject(closeError);
+      pendingWrites.clear();
       try {
         port.postMessage({ type: PROXY_WINDOW_STREAM_CLOSE_MSG_TYPE } satisfies ProxyWindowStreamCloseMsg);
       } finally {

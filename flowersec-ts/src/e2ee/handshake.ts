@@ -33,6 +33,8 @@ export type HandshakeClientOptions = Readonly<{
   outboundRecordChunkBytes?: number;
   /** Maximum buffered plaintext bytes for the secure channel. */
   maxBufferedBytes?: number;
+  /** Maximum queued outbound plaintext bytes for the secure channel. */
+  maxOutboundBufferedBytes?: number;
   /** Optional AbortSignal to cancel the handshake. */
   signal?: AbortSignal;
   /** Optional total handshake timeout in milliseconds (>= 0; 0 disables). */
@@ -61,6 +63,8 @@ export type HandshakeServerOptions = Readonly<{
   outboundRecordChunkBytes?: number;
   /** Maximum buffered plaintext bytes for the secure channel. */
   maxBufferedBytes?: number;
+  /** Maximum queued outbound plaintext bytes for the secure channel. */
+  maxOutboundBufferedBytes?: number;
   /** Optional AbortSignal to cancel the handshake. */
   signal?: AbortSignal;
   /** Optional total handshake timeout in milliseconds (>= 0; 0 disables). */
@@ -220,6 +224,7 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
     maxRecordBytes: opts.maxRecordBytes,
     ...(opts.outboundRecordChunkBytes !== undefined ? { outboundRecordChunkBytes: opts.outboundRecordChunkBytes } : {}),
     ...(opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: opts.maxBufferedBytes } : {}),
+    ...(opts.maxOutboundBufferedBytes !== undefined ? { maxOutboundBufferedBytes: opts.maxOutboundBufferedBytes } : {}),
     sendKey: keys.c2sKey,
     recvKey: keys.s2cKey,
     sendNoncePrefix: keys.c2sNoncePrefix,
@@ -411,6 +416,7 @@ export async function serverHandshake(
     maxRecordBytes: opts.maxRecordBytes,
     ...(opts.outboundRecordChunkBytes !== undefined ? { outboundRecordChunkBytes: opts.outboundRecordChunkBytes } : {}),
     ...(opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: opts.maxBufferedBytes } : {}),
+    ...(opts.maxOutboundBufferedBytes !== undefined ? { maxOutboundBufferedBytes: opts.maxOutboundBufferedBytes } : {}),
     sendKey: keys.s2cKey,
     recvKey: keys.c2sKey,
     sendNoncePrefix: keys.s2cNoncePrefix,

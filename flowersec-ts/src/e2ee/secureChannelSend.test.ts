@@ -26,6 +26,89 @@ function makeTransport() {
 }
 
 describe("SecureChannel send queue", () => {
+  test("bounds queued and in-flight outbound plaintext bytes", async () => {
+    const key = new Uint8Array(32).fill(1);
+    const noncePrefix = new Uint8Array(4).fill(2);
+    let releaseWrite!: () => void;
+    const blocked = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    let firstStarted!: () => void;
+    const started = new Promise<void>((resolve) => { firstStarted = resolve; });
+    let writeCalls = 0;
+    const transport = {
+      async readBinary(): Promise<Uint8Array> { return await new Promise(() => {}); },
+      async writeBinary(): Promise<void> {
+        writeCalls++;
+        if (writeCalls === 1) {
+          firstStarted();
+          await blocked;
+        }
+      },
+      close(): void {},
+    };
+    const sc = new SecureChannel({
+      transport,
+      maxRecordBytes: 1 << 20,
+      maxOutboundBufferedBytes: 4,
+      sendKey: key,
+      recvKey: key,
+      sendNoncePrefix: noncePrefix,
+      recvNoncePrefix: noncePrefix,
+      rekeyBase: new Uint8Array(32).fill(3),
+      transcriptHash: new Uint8Array(32).fill(4),
+      sendDir: 1,
+      recvDir: 2,
+    });
+
+    const first = sc.write(new Uint8Array([1, 2, 3]));
+    await started;
+    await expect(sc.write(new Uint8Array([4, 5]))).rejects.toThrow("outbound buffer exceeded");
+
+    releaseWrite();
+    await first;
+    await expect(sc.write(new Uint8Array([6, 7, 8, 9]))).resolves.toBeUndefined();
+    sc.close();
+  });
+
+  test("validates the outbound byte limit", () => {
+    const key = new Uint8Array(32).fill(1);
+    const noncePrefix = new Uint8Array(4).fill(2);
+    const { transport } = makeTransport();
+    expect(() => new SecureChannel({
+      transport,
+      maxRecordBytes: 1 << 20,
+      maxOutboundBufferedBytes: -1,
+      sendKey: key,
+      recvKey: key,
+      sendNoncePrefix: noncePrefix,
+      recvNoncePrefix: noncePrefix,
+      rekeyBase: new Uint8Array(32).fill(3),
+      transcriptHash: new Uint8Array(32).fill(4),
+      sendDir: 1,
+      recvDir: 2,
+    })).toThrow("maxOutboundBufferedBytes");
+  });
+
+  test("defaults the outbound byte limit to 4 MiB", async () => {
+    const key = new Uint8Array(32).fill(1);
+    const noncePrefix = new Uint8Array(4).fill(2);
+    const { transport } = makeTransport();
+    const sc = new SecureChannel({
+      transport,
+      maxRecordBytes: 1 << 20,
+      sendKey: key,
+      recvKey: key,
+      sendNoncePrefix: noncePrefix,
+      recvNoncePrefix: noncePrefix,
+      rekeyBase: new Uint8Array(32).fill(3),
+      transcriptHash: new Uint8Array(32).fill(4),
+      sendDir: 1,
+      recvDir: 2,
+    });
+
+    await expect(sc.write(new Uint8Array(4 * (1 << 20) + 1))).rejects.toThrow("outbound buffer exceeded");
+    sc.close();
+  });
+
   test("defaults outbound application records to 64 KiB plaintext chunks", async () => {
     const key = new Uint8Array(32).fill(1);
     const noncePrefix = new Uint8Array(4).fill(2);

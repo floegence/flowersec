@@ -48,8 +48,10 @@ export type ProxyRuntimeLimits = Readonly<{
   maxChunkBytes: number;
   maxBodyBytes: number;
   maxWsFrameBytes: number;
+  maxWsBufferedAmountBytes: number;
   maxConcurrentHttpStreams: number;
   maxQueuedHttpRequests: number;
+  maxQueuedHttpBodyBytes: number;
 }>;
 
 export type ProxyRuntime = Readonly<{
@@ -75,8 +77,10 @@ export type ProxyRuntimeOptions = Readonly<{
   maxChunkBytes?: number;
   maxBodyBytes?: number;
   maxWsFrameBytes?: number;
+  maxWsBufferedAmountBytes?: number;
   maxConcurrentHttpStreams?: number;
   maxQueuedHttpRequests?: number;
+  maxQueuedHttpBodyBytes?: number;
   // timeoutMs is written into http_request_meta.timeout_ms (0 uses server default).
   timeoutMs?: number;
   extraRequestHeaders?: readonly string[];
@@ -211,6 +215,8 @@ function normalizeMaxBytes(name: string, v: number | undefined, defaultValue: nu
 
 const DEFAULT_MAX_CONCURRENT_HTTP_STREAMS = 24;
 const DEFAULT_MAX_QUEUED_HTTP_REQUESTS = 128;
+const DEFAULT_MAX_QUEUED_HTTP_BODY_BYTES = 64 * (1 << 20);
+const DEFAULT_MAX_WS_BUFFERED_AMOUNT_BYTES = 4 * (1 << 20);
 
 function normalizePositiveLimit(name: string, value: number | undefined, defaultValue: number): number {
   if (value == null) return defaultValue;
@@ -232,6 +238,7 @@ type AdmissionRelease = () => void;
 
 type AdmissionWaiter = {
   readonly signal?: AbortSignal;
+  readonly bodyBytes: number;
   readonly resolve: (release: AdmissionRelease) => void;
   readonly reject: (error: Error) => void;
   onAbort?: () => void;
@@ -240,15 +247,17 @@ type AdmissionWaiter = {
 class HttpStreamAdmission {
   private active = 0;
   private readonly pending: AdmissionWaiter[] = [];
+  private pendingBodyBytes = 0;
   private closed = false;
 
   constructor(
     private readonly path: Client["path"],
     private readonly maxConcurrent: number,
     private readonly maxQueued: number,
+    private readonly maxQueuedBodyBytes: number,
   ) {}
 
-  acquire(signal?: AbortSignal): Promise<AdmissionRelease> {
+  acquire(bodyBytes: number, signal?: AbortSignal): Promise<AdmissionRelease> {
     if (this.closed) return Promise.reject(this.closedError());
     if (signal?.aborted) return Promise.reject(this.abortedError());
 
@@ -267,9 +276,20 @@ class HttpStreamAdmission {
         }),
       );
     }
+    if (this.pendingBodyBytes + bodyBytes > this.maxQueuedBodyBytes) {
+      return Promise.reject(
+        new FlowersecError({
+          path: this.path,
+          stage: "yamux",
+          code: "resource_exhausted",
+          message: "proxy runtime HTTP request body queue is full",
+        }),
+      );
+    }
 
     return new Promise<AdmissionRelease>((resolve, reject) => {
       const waiter: AdmissionWaiter = {
+        bodyBytes,
         resolve,
         reject,
         ...(signal === undefined ? {} : { signal }),
@@ -278,11 +298,13 @@ class HttpStreamAdmission {
         const index = this.pending.indexOf(waiter);
         if (index < 0) return;
         this.pending.splice(index, 1);
+        this.pendingBodyBytes = Math.max(0, this.pendingBodyBytes - waiter.bodyBytes);
         this.cleanupWaiter(waiter);
         reject(this.abortedError());
       };
       signal?.addEventListener("abort", waiter.onAbort, { once: true });
       this.pending.push(waiter);
+      this.pendingBodyBytes += bodyBytes;
     });
   }
 
@@ -290,6 +312,7 @@ class HttpStreamAdmission {
     if (this.closed) return;
     this.closed = true;
     for (const waiter of this.pending.splice(0)) {
+      this.pendingBodyBytes = Math.max(0, this.pendingBodyBytes - waiter.bodyBytes);
       this.cleanupWaiter(waiter);
       waiter.reject(this.closedError());
     }
@@ -312,6 +335,7 @@ class HttpStreamAdmission {
   private drain(): void {
     while (!this.closed && this.active < this.maxConcurrent && this.pending.length > 0) {
       const waiter = this.pending.shift()!;
+      this.pendingBodyBytes = Math.max(0, this.pendingBodyBytes - waiter.bodyBytes);
       this.cleanupWaiter(waiter);
       if (waiter.signal?.aborted) {
         waiter.reject(this.abortedError());
@@ -390,6 +414,11 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
   const maxChunkBytes = normalizeMaxBytes("maxChunkBytes", opts.maxChunkBytes, DEFAULT_MAX_CHUNK_BYTES);
   const maxBodyBytes = normalizeMaxBytes("maxBodyBytes", opts.maxBodyBytes, DEFAULT_MAX_BODY_BYTES);
   const maxWsFrameBytes = normalizeMaxBytes("maxWsFrameBytes", opts.maxWsFrameBytes, DEFAULT_MAX_WS_FRAME_BYTES);
+  const maxWsBufferedAmountBytes = normalizeMaxBytes(
+    "maxWsBufferedAmountBytes",
+    opts.maxWsBufferedAmountBytes,
+    DEFAULT_MAX_WS_BUFFERED_AMOUNT_BYTES,
+  );
   const maxConcurrentHttpStreams = normalizePositiveLimit(
     "maxConcurrentHttpStreams",
     opts.maxConcurrentHttpStreams,
@@ -400,10 +429,16 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
     opts.maxQueuedHttpRequests,
     DEFAULT_MAX_QUEUED_HTTP_REQUESTS,
   );
+  const maxQueuedHttpBodyBytes = normalizeNonNegativeLimit(
+    "maxQueuedHttpBodyBytes",
+    opts.maxQueuedHttpBodyBytes,
+    DEFAULT_MAX_QUEUED_HTTP_BODY_BYTES,
+  );
   const httpStreamAdmission = new HttpStreamAdmission(
     client.path,
     maxConcurrentHttpStreams,
     maxQueuedHttpRequests,
+    maxQueuedHttpBodyBytes,
   );
 
   const timeoutMs = normalizeTimeoutMs(opts.timeoutMs);
@@ -457,7 +492,9 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
         assertPathPolicyAllows("http", path, pathPolicy);
         const requestID = req.id.trim() !== "" ? req.id : randomB64u(18);
         const externalOrigin = externalOriginOverride ?? normalizeExternalOrigin(req.external_origin);
-        releaseAdmission = await httpStreamAdmission.acquire(ac.signal);
+        const body = req.body != null ? new Uint8Array(req.body) : new Uint8Array();
+        if (maxBodyBytes > 0 && body.length > maxBodyBytes) throw new Error("request body too large");
+        releaseAdmission = await httpStreamAdmission.acquire(body.byteLength, ac.signal);
         httpStreamAdmission.assertOpen();
         stream = await client.openStream(PROXY_KIND_HTTP1, { signal: ac.signal });
         const reader = createByteReader(stream, { signal: ac.signal });
@@ -476,7 +513,6 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
           timeout_ms: timeoutMs
         });
 
-        const body = req.body != null ? new Uint8Array(req.body) : new Uint8Array();
         await writeChunkFrames(stream, body, Math.min(64 * 1024, maxChunkBytes), maxBodyBytes);
 
         const respMeta = (await readJsonFrame(reader, maxJsonFrameBytes)) as HttpResponseMetaV1;
@@ -579,8 +615,10 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
       maxChunkBytes,
       maxBodyBytes,
       maxWsFrameBytes,
+      maxWsBufferedAmountBytes,
       maxConcurrentHttpStreams,
       maxQueuedHttpRequests,
+      maxQueuedHttpBodyBytes,
     },
     dispatchFetch,
     openWebSocketStream,

@@ -14,6 +14,7 @@ import {
   PROXY_WINDOW_WS_ERROR_MSG_TYPE,
   PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE,
   PROXY_WINDOW_WS_OPEN_MSG_TYPE,
+  PROXY_WINDOW_WS_WRITE_ACK_CAPABILITY,
   type ProxyWindowFetchForwardMsg,
   type ProxyWindowFetchMsg,
   type ProxyWindowWsErrorMsg,
@@ -26,6 +27,7 @@ export type RegisterProxyAppWindowOptions = Readonly<{
   controllerWindow?: Window | null;
   targetWindow?: Window;
   maxWsFrameBytes?: number;
+  maxWsBufferedAmountBytes?: number;
   capabilityNonce?: string;
 }>;
 
@@ -135,7 +137,12 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
   sw?.addEventListener("message", onServiceWorkerMessage);
 
   const runtime = {
-    limits: opts.maxWsFrameBytes === undefined ? {} : { maxWsFrameBytes: opts.maxWsFrameBytes },
+    limits: {
+      ...(opts.maxWsFrameBytes === undefined ? {} : { maxWsFrameBytes: opts.maxWsFrameBytes }),
+      ...(opts.maxWsBufferedAmountBytes === undefined
+        ? {}
+        : { maxWsBufferedAmountBytes: opts.maxWsBufferedAmountBytes }),
+    },
     openWebSocketStream: async (
       path: string,
       wsOpts: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }> = {},
@@ -158,10 +165,17 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
           reject(error instanceof Error ? error : new Error(String(error)));
         };
 
-        const finishResolve = (protocol: string) => {
+        const finishResolve = (ack: ProxyWindowWsOpenAckMsg) => {
           if (settled) return;
           settled = true;
-          resolve({ stream: createMessagePortBackedStream(port), protocol });
+          const capabilities = Array.isArray(ack.capabilities)
+            ? ack.capabilities.filter((value): value is string => typeof value === "string")
+            : [];
+          const writeAcknowledgements = capabilities.includes(PROXY_WINDOW_WS_WRITE_ACK_CAPABILITY);
+          resolve({
+            stream: createMessagePortBackedStream(port, { writeAcknowledgements }),
+            protocol: String(ack.protocol ?? ""),
+          });
         };
 
         port.onmessage = (ev) => {
@@ -169,7 +183,7 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
           if (data == null || typeof data !== "object") return;
           const type = typeof (data as { type?: unknown }).type === "string" ? (data as { type: string }).type : "";
           if (type === PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE) {
-            finishResolve(String((data as ProxyWindowWsOpenAckMsg).protocol ?? ""));
+            finishResolve(data as ProxyWindowWsOpenAckMsg);
             return;
           }
           if (type === PROXY_WINDOW_WS_ERROR_MSG_TYPE) {

@@ -132,7 +132,8 @@ describe("registerProxyAppWindow", () => {
       capabilityNonce: "bridge_tok",
     });
 
-    await handle.runtime.openWebSocketStream("/ws", { protocols: ["demo"] });
+    const opened = await handle.runtime.openWebSocketStream("/ws", { protocols: ["demo"] });
+    await expect(opened.stream.write(new Uint8Array([1]))).resolves.toBeUndefined();
 
     expect(postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -145,6 +146,63 @@ describe("registerProxyAppWindow", () => {
       expect.arrayContaining([expect.any(MessagePort)]),
     );
 
+    handle.dispose();
+  });
+
+  test("waits for negotiated controller write acknowledgements", async () => {
+    const addEventListener = vi.fn();
+    let controllerPort: MessagePort | null = null;
+    let seenWrite: { writeId: number; data: ArrayBuffer } | null = null;
+    let resolveSeenWrite!: () => void;
+    const writeSeen = new Promise<void>((resolve) => { resolveSeenWrite = resolve; });
+    const postMessage = vi.fn((_message: unknown, _origin: string, transfer?: Transferable[]) => {
+      controllerPort = transfer?.[0] as MessagePort | undefined ?? null;
+      if (controllerPort == null) return;
+      controllerPort.onmessage = (event) => {
+        const data = event.data as { type?: string; writeId?: number; data?: ArrayBuffer };
+        if (data.type !== "flowersec-proxy:stream_chunk" || data.data == null || data.writeId == null) return;
+        seenWrite = { writeId: data.writeId, data: data.data };
+        resolveSeenWrite();
+      };
+      controllerPort.start?.();
+      queueMicrotask(() => {
+        controllerPort?.postMessage({
+          type: "flowersec-proxy:ws_open_ack",
+          protocol: "demo",
+          capabilities: ["stream_write_ack_v1"],
+        });
+      });
+    });
+    const targetWindow = {
+      navigator: {
+        serviceWorker: {
+          addEventListener,
+          removeEventListener: vi.fn(),
+        },
+      },
+      parent: { postMessage },
+      top: { postMessage },
+    };
+
+    const { registerProxyAppWindow } = await import("./appWindow.js");
+    const handle = registerProxyAppWindow({
+      controllerOrigin: "https://controller.example.test",
+      controllerWindow: targetWindow.parent as any,
+      targetWindow: targetWindow as any,
+    });
+    const opened = await handle.runtime.openWebSocketStream("/ws");
+    let writeSettled = false;
+    const writePromise = opened.stream.write(new Uint8Array([1, 2, 3])).then(() => { writeSettled = true; });
+    await writeSeen;
+    expect(writeSettled).toBe(false);
+    expect(new Uint8Array(seenWrite!.data)).toEqual(new Uint8Array([1, 2, 3]));
+
+    controllerPort!.postMessage({
+      type: "flowersec-proxy:stream_write_ack",
+      writeId: seenWrite!.writeId,
+    });
+    await writePromise;
+    expect(writeSettled).toBe(true);
     handle.dispose();
   });
 });

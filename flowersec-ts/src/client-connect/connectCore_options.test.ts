@@ -22,6 +22,7 @@ describe("connectCore option validation", () => {
     ["maxHandshakePayload", { maxHandshakePayload: -1 }, "maxHandshakePayload"],
     ["maxRecordBytes", { maxRecordBytes: -1 }, "maxRecordBytes"],
     ["maxBufferedBytes", { maxBufferedBytes: -1 }, "maxBufferedBytes"],
+    ["maxOutboundBufferedBytes", { maxOutboundBufferedBytes: -1 }, "maxOutboundBufferedBytes"],
     ["outboundRecordChunkBytes", { outboundRecordChunkBytes: -1 }, "outboundRecordChunkBytes"]
   ])("rejects invalid %s", async (_name, extra, needle) => {
     const p = connectCore({

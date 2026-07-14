@@ -5,7 +5,11 @@ import {
   PROXY_WINDOW_FETCH_MSG_TYPE,
   PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE,
   PROXY_WINDOW_STREAM_CLOSE_MSG_TYPE,
+  PROXY_WINDOW_STREAM_RESET_MSG_TYPE,
+  PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE,
+  PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE,
   PROXY_WINDOW_WS_OPEN_MSG_TYPE,
+  PROXY_WINDOW_WS_WRITE_ACK_CAPABILITY,
 } from "./windowBridgeProtocol.js";
 
 class FakeWindow {
@@ -80,7 +84,9 @@ class FakeStream {
   }
 
   async read(): Promise<Uint8Array | null> {
-    return this.reads.shift() ?? null;
+    const next = this.reads.shift();
+    if (next !== undefined) return next;
+    return await new Promise(() => {});
   }
 
   async write(chunk: Uint8Array): Promise<void> {
@@ -149,7 +155,7 @@ describe("registerProxyControllerWindow", () => {
   it("bridges websocket traffic over MessagePort", async () => {
     const targetWindow = new FakeWindow();
     const expectedSource = {} as Window;
-    const stream = new FakeStream([new Uint8Array([1, 2, 3]), null]);
+    const stream = new FakeStream([new Uint8Array([1, 2, 3])]);
     const runtime = {
       dispatchFetch: vi.fn(),
       openWebSocketStream: vi.fn(async () => ({ stream: stream as any, protocol: "demo" })),
@@ -179,6 +185,11 @@ describe("registerProxyControllerWindow", () => {
       "/ws",
       expect.objectContaining({ protocols: ["demo"] }),
     );
+    await waitFor(() => (channel.port2 as unknown as FakeMessagePort).messages.length > 0);
+    expect((channel.port2 as unknown as FakeMessagePort).messages[0]).toMatchObject({
+      type: PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE,
+      capabilities: [PROXY_WINDOW_WS_WRITE_ACK_CAPABILITY],
+    });
 
     channel.port2.postMessage({
       type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE,
@@ -187,6 +198,139 @@ describe("registerProxyControllerWindow", () => {
     channel.port2.postMessage({ type: PROXY_WINDOW_STREAM_CLOSE_MSG_TYPE });
     await waitFor(() => stream.writes.length === 1 && stream.closeCalls === 1);
     expect(stream.writes[0]).toEqual(new Uint8Array([9, 8]));
+  });
+
+  it("serializes acknowledged writes and acknowledges only after Yamux completion", async () => {
+    const targetWindow = new FakeWindow();
+    const expectedSource = {} as Window;
+    let releaseFirstWrite!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirstWrite = resolve; });
+    let firstStarted!: () => void;
+    const started = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const writes: Uint8Array[] = [];
+    let writeCalls = 0;
+    const stream = {
+      async read(): Promise<Uint8Array | null> { return await new Promise(() => {}); },
+      async write(chunk: Uint8Array): Promise<void> {
+        writeCalls++;
+        if (writeCalls === 1) {
+          firstStarted();
+          await firstBlocked;
+        }
+        writes.push(chunk.slice());
+      },
+      async close(): Promise<void> {},
+      reset(): void {},
+    };
+    const runtime = {
+      dispatchFetch: vi.fn(),
+      openWebSocketStream: vi.fn(async () => ({ stream: stream as any, protocol: "demo" })),
+      limits: { maxWsBufferedAmountBytes: 16 },
+      dispose: () => {},
+    };
+
+    registerProxyControllerWindow({
+      runtime: runtime as any,
+      allowedOrigins: ["https://app.example.test"],
+      expectedSource,
+      targetWindow: targetWindow as unknown as Window,
+    });
+    const channel = createFakeMessageChannel();
+    (channel.port2 as unknown as FakeMessagePort).start();
+    targetWindow.emit({
+      origin: "https://app.example.test",
+      data: { type: PROXY_WINDOW_WS_OPEN_MSG_TYPE, path: "/ws" },
+      ports: [channel.port1],
+      source: expectedSource as MessageEventSource,
+    } as MessageEvent);
+    await waitFor(() => (channel.port2 as unknown as FakeMessagePort).messages.length > 0);
+
+    channel.port2.postMessage({
+      type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE,
+      data: new Uint8Array([1, 2]).buffer,
+      writeId: 1,
+    });
+    channel.port2.postMessage({
+      type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE,
+      data: new Uint8Array([3]).buffer,
+      writeId: 2,
+    });
+    await started;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(writeCalls).toBe(1);
+    expect((channel.port2 as unknown as FakeMessagePort).messages.some(
+      (message) => (message as { type?: string }).type === PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE,
+    )).toBe(false);
+
+    releaseFirstWrite();
+    await waitFor(() => writes.length === 2);
+    await waitFor(() => (channel.port2 as unknown as FakeMessagePort).messages.filter(
+      (message) => (message as { type?: string }).type === PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE,
+    ).length === 2);
+    expect(writes).toEqual([new Uint8Array([1, 2]), new Uint8Array([3])]);
+    expect((channel.port2 as unknown as FakeMessagePort).messages.filter(
+      (message) => (message as { type?: string }).type === PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE,
+    )).toEqual([
+      { type: PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE, writeId: 1 },
+      { type: PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE, writeId: 2 },
+    ]);
+  });
+
+  it("resets the bridge when controller-side queued write bytes exceed the limit", async () => {
+    const targetWindow = new FakeWindow();
+    const expectedSource = {} as Window;
+    let firstStarted!: () => void;
+    const started = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const resetReasons: string[] = [];
+    const stream = {
+      async read(): Promise<Uint8Array | null> { return await new Promise(() => {}); },
+      async write(): Promise<void> {
+        firstStarted();
+        return await new Promise(() => {});
+      },
+      async close(): Promise<void> {},
+      reset(error: Error): void { resetReasons.push(error.message); },
+    };
+    const runtime = {
+      dispatchFetch: vi.fn(),
+      openWebSocketStream: vi.fn(async () => ({ stream: stream as any, protocol: "" })),
+      limits: { maxWsBufferedAmountBytes: 3 },
+      dispose: () => {},
+    };
+
+    registerProxyControllerWindow({
+      runtime: runtime as any,
+      allowedOrigins: ["https://app.example.test"],
+      expectedSource,
+      targetWindow: targetWindow as unknown as Window,
+    });
+    const channel = createFakeMessageChannel();
+    (channel.port2 as unknown as FakeMessagePort).start();
+    targetWindow.emit({
+      origin: "https://app.example.test",
+      data: { type: PROXY_WINDOW_WS_OPEN_MSG_TYPE, path: "/ws" },
+      ports: [channel.port1],
+      source: expectedSource as MessageEventSource,
+    } as MessageEvent);
+    await waitFor(() => (channel.port2 as unknown as FakeMessagePort).messages.length > 0);
+
+    channel.port2.postMessage({
+      type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE,
+      data: new Uint8Array([1, 2]).buffer,
+      writeId: 1,
+    });
+    await started;
+    channel.port2.postMessage({
+      type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE,
+      data: new Uint8Array([3, 4]).buffer,
+      writeId: 2,
+    });
+
+    await waitFor(() => resetReasons.length === 1);
+    expect(resetReasons[0]).toContain("outbound buffer exceeded");
+    await waitFor(() => (channel.port2 as unknown as FakeMessagePort).messages.some(
+      (message) => (message as { type?: string }).type === PROXY_WINDOW_STREAM_RESET_MSG_TYPE,
+    ));
   });
 
   it("rejects bridge messages from unexpected origins", () => {

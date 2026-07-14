@@ -371,8 +371,10 @@ describe("connectTunnelProxyBrowser", () => {
     } as any, {
       capabilityNonce: "bridge_tok",
       runtime: {
+        maxWsBufferedAmountBytes: 8192,
         maxConcurrentHttpStreams: 20,
         maxQueuedHttpRequests: 0,
+        maxQueuedHttpBodyBytes: 1024,
       },
     });
 
@@ -380,8 +382,10 @@ describe("connectTunnelProxyBrowser", () => {
     expect(createProxyRuntimeMock).toHaveBeenCalledWith({
       client,
       maxWsFrameBytes: 4096,
+      maxWsBufferedAmountBytes: 8192,
       maxConcurrentHttpStreams: 20,
       maxQueuedHttpRequests: 0,
+      maxQueuedHttpBodyBytes: 1024,
     });
     expect(registerProxyControllerWindowMock).toHaveBeenCalledWith({
       runtime,

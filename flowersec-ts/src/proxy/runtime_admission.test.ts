@@ -129,10 +129,16 @@ class ImmediateWebSocketStream {
   reset(): void {}
 }
 
-function dispatch(runtime: ProxyRuntime, id: string, onClose?: () => void): TestPort {
+function dispatch(runtime: ProxyRuntime, id: string, onClose?: () => void, bodyBytes = 0): TestPort {
   const port = new TestPort(onClose);
   runtime.dispatchFetch(
-    { id, method: "GET", path: `/${id}.js`, headers: [] },
+    {
+      id,
+      method: "GET",
+      path: `/${id}.js`,
+      headers: [],
+      ...(bodyBytes === 0 ? {} : { body: new Uint8Array(bodyBytes).buffer }),
+    },
     port as unknown as MessagePort,
   );
   return port;
@@ -187,6 +193,8 @@ describe("proxy runtime HTTP stream admission", () => {
 
     expect(runtime.limits.maxConcurrentHttpStreams).toBe(24);
     expect(runtime.limits.maxQueuedHttpRequests).toBe(128);
+    expect(runtime.limits.maxQueuedHttpBodyBytes).toBe(64 * (1 << 20));
+    expect(runtime.limits.maxWsBufferedAmountBytes).toBe(4 * (1 << 20));
     await waitFor(() => controlled.streams.length === 24, "first admission batch");
     expect(controlled.peakActive()).toBe(24);
 
@@ -257,6 +265,61 @@ describe("proxy runtime HTTP stream admission", () => {
     await waitFor(() => controlled.streams.length === 2, "queued request admission");
     controlled.streams[1]!.finish("queued");
     await waitFor(() => active.has("flowersec-proxy:response_end") && queued.has("flowersec-proxy:response_end"));
+    runtime.dispose();
+  });
+
+  it("bounds queued request bodies by bytes and releases canceled reservations", async () => {
+    const controlled = createControlledClient();
+    const runtime = createProxyRuntime({
+      client: controlled.client,
+      maxConcurrentHttpStreams: 1,
+      maxQueuedHttpRequests: 2,
+      maxQueuedHttpBodyBytes: 4,
+    });
+
+    const active = dispatch(runtime, "active", undefined, 8);
+    await waitFor(() => controlled.streams.length === 1, "active request");
+    const canceled = dispatch(runtime, "canceled", undefined, 3);
+    const overflow = dispatch(runtime, "overflow", undefined, 2);
+    await waitFor(() => overflow.has("flowersec-proxy:response_error"), "body queue overflow response");
+    expect(overflow.find("flowersec-proxy:response_error")).toMatchObject({ status: 503 });
+    expect(String(overflow.find("flowersec-proxy:response_error")?.message)).toContain("body queue is full");
+
+    canceled.abort();
+    await waitFor(() => canceled.closed, "queued body cancellation");
+    const replacement = dispatch(runtime, "replacement", undefined, 4);
+    expect(replacement.has("flowersec-proxy:response_error")).toBe(false);
+
+    controlled.streams[0]!.finish("active");
+    await waitFor(() => controlled.streams.length === 2, "replacement admission");
+    controlled.streams[1]!.finish("replacement");
+    await waitFor(() => active.has("flowersec-proxy:response_end") && replacement.has("flowersec-proxy:response_end"));
+    runtime.dispose();
+  });
+
+  it("releases queued body bytes when a waiter becomes active", async () => {
+    const controlled = createControlledClient();
+    const runtime = createProxyRuntime({
+      client: controlled.client,
+      maxConcurrentHttpStreams: 1,
+      maxQueuedHttpRequests: 2,
+      maxQueuedHttpBodyBytes: 4,
+    });
+
+    const first = dispatch(runtime, "first");
+    await waitFor(() => controlled.streams.length === 1, "first request");
+    const second = dispatch(runtime, "second", undefined, 4);
+    controlled.streams[0]!.finish("first");
+    await waitFor(() => controlled.streams.length === 2, "second request");
+
+    const third = dispatch(runtime, "third", undefined, 4);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(third.has("flowersec-proxy:response_error")).toBe(false);
+
+    controlled.streams[1]!.finish("second");
+    await waitFor(() => controlled.streams.length === 3, "third request");
+    controlled.streams[2]!.finish("third");
+    await waitFor(() => [first, second, third].every((port) => port.has("flowersec-proxy:response_end")));
     runtime.dispose();
   });
 
@@ -374,6 +437,12 @@ describe("proxy runtime HTTP stream admission", () => {
       /non-negative safe integer/,
     );
     expect(() => createProxyRuntime({ client: controlled.client, maxQueuedHttpRequests: 1.5 })).toThrow(
+      /non-negative safe integer/,
+    );
+    expect(() => createProxyRuntime({ client: controlled.client, maxQueuedHttpBodyBytes: -1 })).toThrow(
+      /non-negative safe integer/,
+    );
+    expect(() => createProxyRuntime({ client: controlled.client, maxQueuedHttpBodyBytes: 1.5 })).toThrow(
       /non-negative safe integer/,
     );
   });

@@ -47,6 +47,8 @@ export type ConnectOptionsBase = Readonly<{
   maxRecordBytes?: number;
   /** Maximum buffered plaintext bytes in the secure channel (0 uses default). */
   maxBufferedBytes?: number;
+  /** Maximum queued outbound plaintext bytes in the secure channel (default 4 MiB; 0 uses default). */
+  maxOutboundBufferedBytes?: number;
   /** Preferred plaintext bytes per outbound encrypted record (default 64 KiB). */
   outboundRecordChunkBytes?: number;
   /** WebSocket inbound and outbound queue limits. */
@@ -144,6 +146,10 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
   const maxBufferedBytes = args.opts.maxBufferedBytes ?? 0;
   if (!Number.isSafeInteger(maxBufferedBytes) || maxBufferedBytes < 0) {
     invalidOption("maxBufferedBytes must be a non-negative integer");
+  }
+  const maxOutboundBufferedBytes = args.opts.maxOutboundBufferedBytes ?? 0;
+  if (!Number.isSafeInteger(maxOutboundBufferedBytes) || maxOutboundBufferedBytes < 0) {
+    invalidOption("maxOutboundBufferedBytes must be a non-negative integer");
   }
   const effectiveMaxRecordBytes = maxRecordBytes > 0 ? maxRecordBytes : (1 << 20);
   const outboundRecordChunkBytes = args.opts.outboundRecordChunkBytes ?? 64 * 1024;
@@ -257,6 +263,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
           maxRecordBytes: effectiveMaxRecordBytes,
           outboundRecordChunkBytes,
           ...(maxBufferedBytes > 0 ? { maxBufferedBytes } : {}),
+          ...(maxOutboundBufferedBytes > 0 ? { maxOutboundBufferedBytes } : {}),
           timeoutMs: handshakeTimeoutMs,
           ...(signal !== undefined ? { signal } : {}),
         }),

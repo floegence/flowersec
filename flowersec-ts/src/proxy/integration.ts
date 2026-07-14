@@ -41,8 +41,10 @@ export type RegisterProxyIntegrationOptions = Readonly<{
     maxChunkBytes?: number;
     maxBodyBytes?: number;
     maxWsFrameBytes?: number;
+    maxWsBufferedAmountBytes?: number;
     maxConcurrentHttpStreams?: number;
     maxQueuedHttpRequests?: number;
+    maxQueuedHttpBodyBytes?: number;
     timeoutMs?: number;
     pathPolicy?: ProxyRuntimePathPolicy;
     externalOrigin?: string;
@@ -282,9 +284,11 @@ function buildRuntimeOptions(preset: ResolvedProxyPreset, runtime: RegisterProxy
   maxChunkBytes: number;
   maxBodyBytes: number;
   maxWsFrameBytes: number;
+  maxWsBufferedAmountBytes?: number;
   timeoutMs: number;
   maxConcurrentHttpStreams?: number;
   maxQueuedHttpRequests?: number;
+  maxQueuedHttpBodyBytes?: number;
   pathPolicy?: ProxyRuntimePathPolicy;
   externalOrigin?: string;
   runtimeRegistrationToken?: string;
@@ -294,6 +298,9 @@ function buildRuntimeOptions(preset: ResolvedProxyPreset, runtime: RegisterProxy
     maxChunkBytes: runtime?.maxChunkBytes ?? preset.limits.max_chunk_bytes,
     maxBodyBytes: runtime?.maxBodyBytes ?? preset.limits.max_body_bytes,
     maxWsFrameBytes: runtime?.maxWsFrameBytes ?? preset.limits.max_ws_frame_bytes,
+    ...(runtime?.maxWsBufferedAmountBytes === undefined
+      ? {}
+      : { maxWsBufferedAmountBytes: runtime.maxWsBufferedAmountBytes }),
     timeoutMs: runtime?.timeoutMs ?? preset.limits.timeout_ms ?? 0,
     ...(runtime?.maxConcurrentHttpStreams === undefined
       ? {}
@@ -301,6 +308,9 @@ function buildRuntimeOptions(preset: ResolvedProxyPreset, runtime: RegisterProxy
     ...(runtime?.maxQueuedHttpRequests === undefined
       ? {}
       : { maxQueuedHttpRequests: runtime.maxQueuedHttpRequests }),
+    ...(runtime?.maxQueuedHttpBodyBytes === undefined
+      ? {}
+      : { maxQueuedHttpBodyBytes: runtime.maxQueuedHttpBodyBytes }),
     ...(runtime?.pathPolicy === undefined ? {} : { pathPolicy: runtime.pathPolicy }),
     ...(runtime?.externalOrigin === undefined ? {} : { externalOrigin: runtime.externalOrigin }),
     ...(runtime?.runtimeRegistrationToken === undefined ? {} : { runtimeRegistrationToken: runtime.runtimeRegistrationToken }),
