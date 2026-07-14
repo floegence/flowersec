@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PROXY_PROFILE_CODESERVER,
   PROXY_PROFILE_DEFAULT,
   resolveProxyProfile,
 } from "./profiles.js";
@@ -10,7 +9,7 @@ describe("proxy profiles", () => {
   it("resolves named profiles", () => {
     expect(resolveProxyProfile()).toEqual(PROXY_PROFILE_DEFAULT);
     expect(resolveProxyProfile("default")).toEqual(PROXY_PROFILE_DEFAULT);
-    expect(resolveProxyProfile("codeserver")).toEqual(PROXY_PROFILE_CODESERVER);
+    expect(() => resolveProxyProfile("codeserver" as never)).toThrow(/unknown proxy profile/);
   });
 
   it("supports partial override", () => {

@@ -1,5 +1,5 @@
 # codeserver preset
 
-Deprecated first-party compatibility preset for older large-frame code-server style deployments.
+Static migration example for older large-frame code-server style deployments.
 
-It remains available as a deprecated migration preset in v0.19.x, but named profiles are no longer part of the stable core surface.
+Flowersec v0.21 keeps this manifest file as a loadable example, but removes the `codeserver` named profile and built-in preset exports from the Go and TypeScript core packages.

@@ -324,13 +324,13 @@ describe("connectTunnelProxyBrowser", () => {
 
     const { connectTunnelProxyBrowser } = await import("./bootstrap.js");
     const out = await connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
-      profile: "codeserver",
+      profile: "default",
       serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
     });
 
     expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
       client,
-      profile: "codeserver",
+      profile: "default",
       serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
     });
 

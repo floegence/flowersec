@@ -222,4 +222,4 @@ v0.20.x intentionally changes unsafe or ambiguous configuration APIs:
 - reconnect accepts only a discriminated `ArtifactSource`
 - old keepalive, WebSocket queue, Yamux third-party config, and reconnect-source fields are removed
 
-See `docs/V0_20_MIGRATION.md` for the full list.
+See `docs/V0_20_MIGRATION.md` for the v0.20 transport changes and `docs/V0_21_MIGRATION.md` for the compatibility cleanup.

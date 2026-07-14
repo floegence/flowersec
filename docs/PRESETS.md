@@ -1,6 +1,6 @@
 # Proxy Presets
 
-Flowersec v0.19.x keeps preset manifests as the stable replacement for named proxy profiles.
+Flowersec v0.21 keeps preset manifests as the stable replacement for named proxy profiles.
 
 ## Stable contract
 
@@ -47,7 +47,8 @@ Rules:
 - numeric limits are positive integers when present
 - omission means “not set” at the preset API layer
 - `limits.timeout_ms`, when present, becomes the default `HTTPRequestMeta.timeout_ms` for bridge/gateway and browser proxy integrations
-- `preset.ResolveBuiltin(...)` only bridges deprecated named profiles to first-party reference manifests; stable integrations should consume manifest files or decoded `ProxyPresetManifest` objects instead
+- `preset.ResolveBuiltin(...)` only preserves the deprecated `default` compatibility name; `codeserver` is no longer a built-in name in v0.21
+- stable integrations should consume manifest files or decoded `ProxyPresetManifest` objects instead
 
 ## Gateway consumption
 
@@ -70,3 +71,4 @@ First-party reference files live under:
 - `reference/presets/codeserver/manifest.json`
 
 These reference files are distribution assets, not the core stable contract itself.
+The `codeserver` file is a static migration example and remains loadable through the generic manifest APIs. It is not exported as a Go or TypeScript built-in preset and is not accepted as a named profile.

@@ -47,24 +47,6 @@ func builtinDefaultManifest() *Manifest {
 	}
 }
 
-func builtinCodeServerManifest() *Manifest {
-	maxJSON := jsonframe.DefaultMaxJSONFrameBytes
-	maxChunk := fsproxy.DefaultMaxChunkBytes
-	maxBody := int64(fsproxy.DefaultMaxBodyBytes)
-	maxWS := 32 * 1024 * 1024
-	return &Manifest{
-		V:          1,
-		PresetID:   "codeserver",
-		Deprecated: true,
-		Limits: Limits{
-			MaxJSONFrameBytes: &maxJSON,
-			MaxChunkBytes:     &maxChunk,
-			MaxBodyBytes:      &maxBody,
-			MaxWSFrameBytes:   &maxWS,
-		},
-	}
-}
-
 // ResolveBuiltin returns first-party reference manifests for deprecated named profiles.
 //
 // Deprecated: compatibility-only helper. Stable integrations should load a
@@ -74,8 +56,6 @@ func ResolveBuiltin(name string) (*Manifest, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", "default":
 		return builtinDefaultManifest(), nil
-	case "codeserver":
-		return builtinCodeServerManifest(), nil
 	default:
 		return nil, fmt.Errorf("unknown proxy profile: %q", name)
 	}

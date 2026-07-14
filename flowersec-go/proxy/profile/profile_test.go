@@ -12,30 +12,25 @@ func TestResolve(t *testing.T) {
 	if d.MaxWSFrameBytes != fsproxy.DefaultMaxWSFrameBytes {
 		t.Fatalf("default max ws frame mismatch: got=%d", d.MaxWSFrameBytes)
 	}
+}
 
-	cs := Resolve(ProfileCodeServer)
-	if cs.MaxWSFrameBytes != 32*1024*1024 {
-		t.Fatalf("codeserver max ws frame mismatch: got=%d", cs.MaxWSFrameBytes)
-	}
-	if cs.DefaultTimeout != 10*time.Minute {
-		t.Fatalf("codeserver default timeout mismatch: got=%s", cs.DefaultTimeout)
-	}
-	if cs.MaxTimeout != 30*time.Minute {
-		t.Fatalf("codeserver max timeout mismatch: got=%s", cs.MaxTimeout)
+func TestParseRejectsRemovedCodeServerProfile(t *testing.T) {
+	if _, err := Parse("codeserver"); err == nil {
+		t.Fatal("expected removed codeserver profile to be rejected")
 	}
 }
 
 func TestApply(t *testing.T) {
 	var opts fsproxy.Options
-	applied := Apply(opts, ProfileCodeServer)
+	applied := Apply(opts, ProfileDefault)
 
-	if applied.MaxWSFrameBytes != 32*1024*1024 {
+	if applied.MaxWSFrameBytes != fsproxy.DefaultMaxWSFrameBytes {
 		t.Fatalf("apply max ws frame mismatch: got=%d", applied.MaxWSFrameBytes)
 	}
-	if applied.DefaultTimeout == nil || *applied.DefaultTimeout != 10*time.Minute {
+	if applied.DefaultTimeout == nil || *applied.DefaultTimeout != fsproxy.DefaultDefaultTimeout {
 		t.Fatalf("apply default timeout mismatch")
 	}
-	if applied.MaxTimeout == nil || *applied.MaxTimeout != 30*time.Minute {
+	if applied.MaxTimeout == nil || *applied.MaxTimeout != fsproxy.DefaultMaxTimeout {
 		t.Fatalf("apply max timeout mismatch")
 	}
 
@@ -48,7 +43,7 @@ func TestApply(t *testing.T) {
 		DefaultTimeout: &explicitDefault,
 		MaxTimeout:     &explicitMax,
 	}
-	appliedExplicit := Apply(explicit, ProfileCodeServer)
+	appliedExplicit := Apply(explicit, ProfileDefault)
 	if appliedExplicit.MaxWSFrameBytes != 1234 {
 		t.Fatalf("explicit max ws frame must be preserved")
 	}

@@ -50,18 +50,6 @@ export const DEFAULT_PROXY_PRESET_MANIFEST: ProxyPresetManifest = Object.freeze(
   },
 });
 
-export const CODESERVER_PROXY_PRESET_MANIFEST: ProxyPresetManifest = Object.freeze({
-  v: 1,
-  preset_id: "codeserver",
-  deprecated: true,
-  limits: {
-    max_json_frame_bytes: DEFAULT_MAX_JSON_FRAME_BYTES,
-    max_chunk_bytes: DEFAULT_MAX_CHUNK_BYTES,
-    max_body_bytes: DEFAULT_MAX_BODY_BYTES,
-    max_ws_frame_bytes: 32 * 1024 * 1024,
-  },
-});
-
 export type ProxyPresetInput = ProxyPresetManifest | Partial<ProxyPresetLimits>;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -123,8 +111,6 @@ export function resolveNamedProxyPreset(name: string): ProxyPresetManifest {
     case "":
     case "default":
       return DEFAULT_PROXY_PRESET_MANIFEST;
-    case "codeserver":
-      return CODESERVER_PROXY_PRESET_MANIFEST;
     default:
       throw new Error(`unknown proxy preset: ${name}`);
   }

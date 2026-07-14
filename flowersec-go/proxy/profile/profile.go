@@ -13,8 +13,7 @@ import (
 type Profile string
 
 const (
-	ProfileDefault    Profile = "default"
-	ProfileCodeServer Profile = "codeserver"
+	ProfileDefault Profile = "default"
 )
 
 // Defaults contains proxy default values that can be applied to fsproxy.Options.
@@ -35,14 +34,6 @@ var (
 		DefaultTimeout:  fsproxy.DefaultDefaultTimeout,
 		MaxTimeout:      fsproxy.DefaultMaxTimeout,
 	}
-
-	codeServerDefaults = Defaults{
-		MaxChunkBytes:   fsproxy.DefaultMaxChunkBytes,
-		MaxBodyBytes:    fsproxy.DefaultMaxBodyBytes,
-		MaxWSFrameBytes: 32 * 1024 * 1024,
-		DefaultTimeout:  10 * time.Minute,
-		MaxTimeout:      30 * time.Minute,
-	}
 )
 
 func Parse(raw string) (Profile, error) {
@@ -52,7 +43,7 @@ func Parse(raw string) (Profile, error) {
 	}
 	profile := Profile(name)
 	switch profile {
-	case ProfileDefault, ProfileCodeServer:
+	case ProfileDefault:
 		return profile, nil
 	default:
 		return "", fmt.Errorf("unknown proxy profile: %q", raw)
@@ -63,8 +54,6 @@ func Parse(raw string) (Profile, error) {
 // Unknown names fall back to ProfileDefault.
 func Resolve(profile Profile) Defaults {
 	switch profile {
-	case ProfileCodeServer:
-		return codeServerDefaults
 	default:
 		return defaultDefaults
 	}

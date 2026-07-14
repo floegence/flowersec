@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  CODESERVER_PROXY_PRESET_MANIFEST,
   DEFAULT_PROXY_PRESET_MANIFEST,
   assertProxyPresetManifest,
   resolveNamedProxyPreset,
@@ -11,7 +10,7 @@ import {
 describe("proxy presets", () => {
   it("resolves named presets", () => {
     expect(resolveNamedProxyPreset("default")).toEqual(DEFAULT_PROXY_PRESET_MANIFEST);
-    expect(resolveNamedProxyPreset("codeserver")).toEqual(CODESERVER_PROXY_PRESET_MANIFEST);
+    expect(() => resolveNamedProxyPreset("codeserver")).toThrow(/unknown proxy preset/);
   });
 
   it("builds resolved concrete limits", () => {

@@ -96,7 +96,7 @@ First-party preset examples:
 - `reference/presets/default/manifest.json`
 - `reference/presets/codeserver/manifest.json`
 
-`codeserver` remains available as a deprecated migration preset, but named profiles are no longer part of the stable core surface.
+`codeserver` remains available only as a static migration manifest. Flowersec v0.21 no longer accepts it through gateway `proxy.profile` or any Go/TypeScript built-in preset resolver.
 
 ## Operational checklist
 

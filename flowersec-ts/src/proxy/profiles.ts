@@ -1,5 +1,4 @@
 import {
-  CODESERVER_PROXY_PRESET_MANIFEST,
   DEFAULT_PROXY_PRESET_MANIFEST,
   resolveProxyPreset,
   type ProxyPresetManifest,
@@ -13,7 +12,7 @@ export type ProxyProfile = Readonly<{
   timeoutMs: number;
 }>;
 
-export type ProxyProfileName = "default" | "codeserver";
+export type ProxyProfileName = "default";
 
 function toLegacyProfile(manifest: ProxyPresetManifest): ProxyProfile {
   const resolved = resolveProxyPreset(manifest);
@@ -27,10 +26,7 @@ function toLegacyProfile(manifest: ProxyPresetManifest): ProxyProfile {
 }
 
 const DEFAULT_PROFILE: ProxyProfile = toLegacyProfile(DEFAULT_PROXY_PRESET_MANIFEST);
-const CODESERVER_PROFILE: ProxyProfile = toLegacyProfile(CODESERVER_PROXY_PRESET_MANIFEST);
-
 export const PROXY_PROFILE_DEFAULT = DEFAULT_PROFILE;
-export const PROXY_PROFILE_CODESERVER = CODESERVER_PROFILE;
 
 function normalizeSafeInt(name: string, value: number): number {
   if (!Number.isFinite(value)) throw new Error(`${name} must be a finite number`);
@@ -44,8 +40,6 @@ function resolveNamedProfile(name: ProxyProfileName): ProxyProfile {
   switch (name) {
     case "default":
       return DEFAULT_PROFILE;
-    case "codeserver":
-      return CODESERVER_PROFILE;
     default:
       throw new Error(`unknown proxy profile: ${name}`);
   }
@@ -73,8 +67,6 @@ export function profileToPresetManifest(profile?: ProxyProfileName | Partial<Pro
     switch (profile) {
       case "default":
         return DEFAULT_PROXY_PRESET_MANIFEST;
-      case "codeserver":
-        return CODESERVER_PROXY_PRESET_MANIFEST;
       default:
         throw new Error(`unknown proxy profile: ${profile}`);
     }

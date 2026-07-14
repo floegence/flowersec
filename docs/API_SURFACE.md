@@ -166,7 +166,7 @@ Compatibility-only Go surface:
 
 - legacy raw grant / wrapper / direct JSON inputs continue to work through `client.Connect(...)`
 - `controlplane/client` stays the recommended Go client-side artifact fetch entry; `controlplane/http` is the recommended server-side helper-first reference layer
-- deprecated named profile helpers such as `preset.ResolveBuiltin(...)` and gateway `proxy.profile` remain compatibility-only; they are not part of the stable core surface
+- deprecated named profile helpers such as `preset.ResolveBuiltin(...)` and gateway `proxy.profile` remain compatibility-only for `default`; the removed `codeserver` name is represented only by the static migration manifest
 
 ## TypeScript: stable exports
 

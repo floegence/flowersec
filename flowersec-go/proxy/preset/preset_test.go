@@ -16,12 +16,8 @@ func TestResolveBuiltin(t *testing.T) {
 		t.Fatalf("unexpected preset id: %q", manifest.PresetID)
 	}
 
-	codeServer, err := ResolveBuiltin("codeserver")
-	if err != nil {
-		t.Fatalf("ResolveBuiltin(codeserver): %v", err)
-	}
-	if codeServer.Limits.MaxWSFrameBytes == nil || *codeServer.Limits.MaxWSFrameBytes != 32*1024*1024 {
-		t.Fatalf("unexpected codeserver ws frame limit: %+v", codeServer.Limits)
+	if _, err := ResolveBuiltin("codeserver"); err == nil {
+		t.Fatal("expected removed codeserver builtin to be rejected")
 	}
 }
 
