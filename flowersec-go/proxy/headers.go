@@ -23,19 +23,28 @@ var (
 		// "cookie" is special-cased (runtime CookieJar only).
 	}
 	defaultResponseHeaderAllowlist = map[string]struct{}{
-		"cache-control":       {},
-		"content-disposition": {},
-		"content-encoding":    {},
-		"content-language":    {},
-		"content-type":        {},
-		"etag":                {},
-		"expires":             {},
-		"last-modified":       {},
-		"location":            {},
-		"pragma":              {},
-		"set-cookie":          {},
-		"vary":                {},
-		"www-authenticate":    {},
+		"cache-control":                       {},
+		"content-disposition":                 {},
+		"content-encoding":                    {},
+		"content-language":                    {},
+		"content-security-policy":             {},
+		"content-security-policy-report-only": {},
+		"content-type":                        {},
+		"cross-origin-embedder-policy":        {},
+		"cross-origin-opener-policy":          {},
+		"cross-origin-resource-policy":        {},
+		"etag":                                {},
+		"expires":                             {},
+		"last-modified":                       {},
+		"location":                            {},
+		"permissions-policy":                  {},
+		"pragma":                              {},
+		"referrer-policy":                     {},
+		"set-cookie":                          {},
+		"vary":                                {},
+		"www-authenticate":                    {},
+		"x-content-type-options":              {},
+		"x-frame-options":                     {},
 	}
 	defaultWSHeaderAllowlist = map[string]struct{}{
 		"sec-websocket-protocol": {},
@@ -105,6 +114,14 @@ func allowResponseHeader(name string, extra map[string]struct{}) bool {
 	return false
 }
 
+func blockResponseHeader(name string, blocked map[string]struct{}) bool {
+	if blocked == nil {
+		return false
+	}
+	_, ok := blocked[name]
+	return ok
+}
+
 func allowWSHeader(name string, extra map[string]struct{}) bool {
 	if _, ok := defaultWSHeaderAllowlist[name]; ok {
 		return true
@@ -151,6 +168,9 @@ func filterResponseHeaders(in http.Header, cfg *compiledHeaderPolicy) []Header {
 	for k, vv := range in {
 		name := strings.ToLower(strings.TrimSpace(k))
 		if name == "" || !isValidHeaderName(name) {
+			continue
+		}
+		if blockResponseHeader(name, cfg.blockedRespHeaders) {
 			continue
 		}
 		if !allowResponseHeader(name, cfg.extraRespHeaders) {

@@ -138,6 +138,37 @@ describe("RpcClient extra behavior", () => {
     client.close();
   });
 
+  test("readLoop reports unexpected termination once", async () => {
+    const q = new ByteQueue();
+    const terminal: Error[] = [];
+    const client = new RpcClient(q.readExactly.bind(q), async () => {}, {
+      onTerminal: (error) => terminal.push(error),
+    });
+
+    q.close(new Error("rpc transport closed"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    q.close(new Error("second close"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0]?.message).toContain("rpc transport closed");
+    client.close();
+  });
+
+  test("explicit close does not report unexpected termination", async () => {
+    const q = new ByteQueue();
+    const terminal: Error[] = [];
+    const client = new RpcClient(q.readExactly.bind(q), async () => {}, {
+      onTerminal: (error) => terminal.push(error),
+    });
+
+    client.close();
+    q.close(new Error("closed after client close"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(terminal).toEqual([]);
+  });
+
   test("observer records rpc_error and handler_not_found", async () => {
     const q = new ByteQueue();
     const results: string[] = [];

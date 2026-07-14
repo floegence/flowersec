@@ -230,20 +230,31 @@ Default allow-list (case-insensitive):
 - `content-disposition`
 - `content-encoding`
 - `content-language`
+- `content-security-policy`
+- `content-security-policy-report-only`
 - `content-type`
+- `cross-origin-embedder-policy`
+- `cross-origin-opener-policy`
+- `cross-origin-resource-policy`
 - `etag`
 - `expires`
 - `last-modified`
 - `location`
+- `permissions-policy`
 - `pragma`
+- `referrer-policy`
 - `vary`
 - `www-authenticate`
 - `set-cookie` (mode-specific)
+- `x-content-type-options`
+- `x-frame-options`
 
 Rules:
 
 - Hop-by-hop headers MUST NOT be forwarded.
 - Implementations SHOULD omit `content-length` (the proxy body is chunk-framed).
+- `strict-transport-security` is intentionally not forwarded by default because the proxy must not impose the upstream origin's HSTS policy on the external proxy origin.
+- Go integrations may use `BlockedResponseHeaders` to remove default or explicitly allowed response headers. Blocking takes precedence over both allow-lists.
 - `set-cookie` is mode-specific:
   - Runtime mode: `set-cookie` MUST be captured into the runtime CookieJar and MUST NOT be exposed to the browser response headers.
   - Gateway mode: `set-cookie` MAY be forwarded to the browser (normal cookie semantics for the gateway origin).

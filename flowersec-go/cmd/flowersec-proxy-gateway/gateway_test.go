@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +17,24 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/proxy"
 	"github.com/gorilla/websocket"
 )
+
+func TestGatewayProxyErrorLogRedactsQueryValues(t *testing.T) {
+	var logs bytes.Buffer
+	g := &gateway{logger: log.New(&logs, "", 0)}
+	req := httptest.NewRequest(http.MethodGet, "https://app.example.test/path%20name?token=secret-value", nil)
+
+	g.logProxyError(req, errors.New("upstream failed for token=secret-value"))
+
+	got := logs.String()
+	if strings.Contains(got, "secret-value") || strings.Contains(got, "token=") {
+		t.Fatalf("log contains query data: %q", got)
+	}
+	for _, want := range []string{"path=/path%20name", "query_present=true", "error_type=*errors.errorString"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("log %q does not contain %q", got, want)
+		}
+	}
+}
 
 type fakeRoute struct {
 	srv *serve.Server

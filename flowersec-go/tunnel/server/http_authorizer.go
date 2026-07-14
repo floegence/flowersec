@@ -7,8 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+)
+
+const (
+	defaultHTTPAuthorizerMaxResponseBytes = 1 << 20
+	maxHTTPAuthorizerErrorBodyBytes       = 4 << 10
 )
 
 type HTTPAuthorizerConfig struct {
@@ -16,13 +22,16 @@ type HTTPAuthorizerConfig struct {
 	ObserveURL string
 	Headers    http.Header
 	HTTPClient *http.Client
+	// MaxResponseBytes caps the authorizer response body. Zero uses 1 MiB.
+	MaxResponseBytes int64
 }
 
 type HTTPAuthorizer struct {
-	attachURL  string
-	observeURL string
-	headers    http.Header
-	client     *http.Client
+	attachURL        string
+	observeURL       string
+	headers          http.Header
+	client           *http.Client
+	maxResponseBytes int64
 }
 
 type httpAuthorizerEnvelope struct {
@@ -35,21 +44,33 @@ type httpAuthorizerEnvelope struct {
 }
 
 func NewHTTPAuthorizer(cfg HTTPAuthorizerConfig) (Authorizer, error) {
-	attachURL := strings.TrimSpace(cfg.AttachURL)
-	if attachURL == "" {
-		return nil, fmt.Errorf("missing attach authorizer url")
+	attachURL, err := validateHTTPAuthorizerURL("attach", cfg.AttachURL, true)
+	if err != nil {
+		return nil, err
 	}
-	observeURL := strings.TrimSpace(cfg.ObserveURL)
+	observeURL, err := validateHTTPAuthorizerURL("observe", cfg.ObserveURL, false)
+	if err != nil {
+		return nil, err
+	}
+	maxResponseBytes := cfg.MaxResponseBytes
+	if maxResponseBytes < 0 {
+		return nil, fmt.Errorf("max authorizer response bytes must be >= 0")
+	}
+	if maxResponseBytes == 0 {
+		maxResponseBytes = defaultHTTPAuthorizerMaxResponseBytes
+	}
 
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
+	client = authorizerHTTPClient(client)
 	return &HTTPAuthorizer{
-		attachURL:  attachURL,
-		observeURL: observeURL,
-		headers:    cloneHeader(cfg.Headers),
-		client:     client,
+		attachURL:        attachURL,
+		observeURL:       observeURL,
+		headers:          cloneHeader(cfg.Headers),
+		client:           client,
+		maxResponseBytes: maxResponseBytes,
 	}, nil
 }
 
@@ -94,13 +115,19 @@ func (a *HTTPAuthorizer) doJSON(ctx context.Context, rawURL string, reqBody any,
 		return fmt.Errorf("authorizer request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.ContentLength > a.maxResponseBytes {
+		return fmt.Errorf("authorizer response exceeds %d bytes", a.maxResponseBytes)
+	}
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, a.maxResponseBytes+1))
 	if err != nil {
 		return fmt.Errorf("read authorizer response: %w", err)
 	}
+	if int64(len(respBody)) > a.maxResponseBytes {
+		return fmt.Errorf("authorizer response exceeds %d bytes", a.maxResponseBytes)
+	}
 	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("authorizer http %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return fmt.Errorf("authorizer http %d: %s", resp.StatusCode, authorizerErrorBody(respBody))
 	}
 	if len(bytes.TrimSpace(respBody)) == 0 {
 		return nil
@@ -127,6 +154,72 @@ func (a *HTTPAuthorizer) doJSON(ctx context.Context, rawURL string, reqBody any,
 		return fmt.Errorf("decode authorizer response: %w", err)
 	}
 	return nil
+}
+
+func validateHTTPAuthorizerURL(name string, raw string, required bool) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		if required {
+			return "", fmt.Errorf("missing %s authorizer url", name)
+		}
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u == nil || u.Host == "" {
+		return "", fmt.Errorf("invalid %s authorizer url", name)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("invalid %s authorizer url scheme", name)
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("invalid %s authorizer url userinfo", name)
+	}
+	return u.String(), nil
+}
+
+func authorizerHTTPClient(base *http.Client) *http.Client {
+	client := *base
+	originalCheckRedirect := base.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) > 0 && !sameHTTPOrigin(via[0].URL, req.URL) {
+			return fmt.Errorf("authorizer redirect must remain on the original origin")
+		}
+		if originalCheckRedirect != nil {
+			return originalCheckRedirect(req, via)
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &client
+}
+
+func sameHTTPOrigin(a *url.URL, b *url.URL) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		effectiveHTTPPort(a) == effectiveHTTPPort(b)
+}
+
+func effectiveHTTPPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
+}
+
+func authorizerErrorBody(body []byte) string {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) <= maxHTTPAuthorizerErrorBodyBytes {
+		return string(trimmed)
+	}
+	return string(trimmed[:maxHTTPAuthorizerErrorBodyBytes]) + "..."
 }
 
 func cloneHeader(in http.Header) http.Header {

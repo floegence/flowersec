@@ -1,4 +1,5 @@
 import type { Client } from "../client.js";
+import { getClientTermination } from "../client-connect/termination.js";
 import { emitObserverDiagnostic, withObserverContext, type ClientObserverLike, type DiagnosticEvent, type WsCloseKind, type WsErrorReason } from "../observability/observer.js";
 
 export type { ArtifactAcquireContext, ArtifactSource } from "./artifactControlplane.js";
@@ -288,6 +289,13 @@ export function createReconnectManager(): ReconnectManager {
         }
 
         setState({ status: "connected", client, error: null });
+        const termination = getClientTermination(client);
+        if (termination != null) {
+          void termination.then(({ error }) => {
+            if (s.client !== client) return;
+            startReconnect(t, cfg, error);
+          });
+        }
         emitObserverDiagnostic(withObserverContext(cfg.observer, { attemptSeq }), {
           path: "auto",
           stage: "reconnect",

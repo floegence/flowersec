@@ -64,6 +64,9 @@ type ContractOptions struct {
 	ExtraRequestHeaders []string
 	// ExtraResponseHeaders extends the response header allow-list (see docs/PROXY.md).
 	ExtraResponseHeaders []string
+	// BlockedResponseHeaders removes response headers after applying the default
+	// and extra allow-lists. Blocking always takes precedence over allowing.
+	BlockedResponseHeaders []string
 	// ExtraWSHeaders extends the WS open header allow-list (see docs/PROXY.md).
 	ExtraWSHeaders []string
 
@@ -110,9 +113,10 @@ type Options struct {
 }
 
 type compiledHeaderPolicy struct {
-	extraReqHeaders  map[string]struct{}
-	extraRespHeaders map[string]struct{}
-	extraWSHeaders   map[string]struct{}
+	extraReqHeaders    map[string]struct{}
+	extraRespHeaders   map[string]struct{}
+	blockedRespHeaders map[string]struct{}
+	extraWSHeaders     map[string]struct{}
 
 	forbiddenCookieNames        map[string]struct{}
 	forbiddenCookieNamePrefixes []string
@@ -190,6 +194,10 @@ func compileContractOptions(opts ContractOptions) (*compiledContractOptions, err
 	if err != nil {
 		return nil, fmt.Errorf("invalid ExtraResponseHeaders: %w", err)
 	}
+	blockedResp, err := normalizeHeaderNameSet(opts.BlockedResponseHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("invalid BlockedResponseHeaders: %w", err)
+	}
 	extraWS, err := normalizeHeaderNameSet(opts.ExtraWSHeaders)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ExtraWSHeaders: %w", err)
@@ -216,6 +224,7 @@ func compileContractOptions(opts ContractOptions) (*compiledContractOptions, err
 		compiledHeaderPolicy: compiledHeaderPolicy{
 			extraReqHeaders:             extraReq,
 			extraRespHeaders:            extraResp,
+			blockedRespHeaders:          blockedResp,
 			extraWSHeaders:              extraWS,
 			forbiddenCookieNames:        forbiddenCookieNames,
 			forbiddenCookieNamePrefixes: forbiddenCookiePrefixes,

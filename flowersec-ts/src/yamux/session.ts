@@ -60,6 +60,8 @@ export type YamuxSessionOptions = Readonly<{
   limits?: Partial<YamuxLimits>;
   /** Optional generic resource diagnostic callback. */
   onDiagnostic?: (event: YamuxDiagnostic) => void;
+  /** Internal lifecycle callback for unexpected session termination. */
+  onTerminal?: (error: Error) => void;
 }>;
 
 // YamuxSession multiplexes multiple streams over a single byte stream.
@@ -75,6 +77,7 @@ export class YamuxSession {
   // Maximum allowed DATA frame length.
   private readonly limits: YamuxLimits;
   private readonly onDiagnostic: ((event: YamuxDiagnostic) => void) | undefined;
+  private readonly onTerminal: ((error: Error) => void) | undefined;
 
   // True when this side is the yamux client (odd local stream IDs).
   private readonly client: boolean;
@@ -93,24 +96,20 @@ export class YamuxSession {
 
   constructor(conn: ByteDuplex, opts: YamuxSessionOptions) {
     this.conn = conn;
-    this.reader = new ByteReader(async () => {
-      try {
-        return await this.conn.read();
-      } catch {
-        return null;
-      }
-    });
+    this.reader = new ByteReader(() => this.conn.read());
     this.onIncomingStream = opts.onIncomingStream;
     this.limits = normalizeYamuxLimits({ ...opts.limits, ...(opts.maxFrameBytes === undefined ? {} : { maxFrameBytes: opts.maxFrameBytes }) });
     this.onDiagnostic = opts.onDiagnostic;
+    this.onTerminal = opts.onTerminal;
     this.client = opts.client;
     this.nextStreamId = opts.client ? 1 : 2;
     void this.readLoop();
   }
 
   // openStream allocates a new stream and performs the SYN handshake.
-  async openStream(): Promise<YamuxStream> {
+  async openStream(opts: Readonly<{ signal?: AbortSignal }> = {}): Promise<YamuxStream> {
     if (this.closed) throw new Error("session closed");
+    if (opts.signal?.aborted) throw abortError(opts.signal);
     if (this.streams.size >= this.limits.maxActiveStreams) {
       const error = new YamuxResourceExhaustedError("active_streams", this.streams.size, this.limits.maxActiveStreams);
       this.diagnostic({ code: "resource_limit_reached", resource: error.resource, current: error.current, limit: error.limit });
@@ -121,7 +120,9 @@ export class YamuxSession {
     const s = new YamuxStream(this, id, "init");
     this.streams.set(id, s);
     try {
-      await s.open();
+      await raceAbort(s.open(), opts.signal, () => {
+        void s.reset(abortError(opts.signal!));
+      });
       return s;
     } catch (error) {
       this.onStreamClosed(id);
@@ -136,7 +137,12 @@ export class YamuxSession {
 
   // writeRaw writes a raw yamux frame to the underlying connection.
   async writeRaw(chunk: Uint8Array): Promise<void> {
-    await this.conn.write(chunk);
+    try {
+      await this.conn.write(chunk);
+    } catch (error) {
+      this.fail(error);
+      throw error;
+    }
   }
 
   outboundFrameBytes(): number {
@@ -171,8 +177,9 @@ export class YamuxSession {
     return await new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pingWaiters.delete(opaque);
-        reject(new Error("yamux ping timeout"));
-        this.close();
+        const error = new Error("yamux ping timeout");
+        reject(error);
+        this.fail(error);
       }, timeoutMs);
       (timer as any)?.unref?.();
       this.pingWaiters.set(opaque, { startedAt, resolve, reject, timer });
@@ -183,6 +190,7 @@ export class YamuxSession {
         this.pingWaiters.delete(opaque);
         clearTimeout(waiter.timer);
         reject(err);
+        this.fail(err);
       });
     });
   }
@@ -190,8 +198,8 @@ export class YamuxSession {
   // sendRst sends a reset frame and removes the stream.
   async sendRst(id: number): Promise<void> {
     const hdr = encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_RST, streamId: id, length: 0 });
+    this.onStreamClosed(id);
     if (this.closed) {
-      this.onStreamClosed(id);
       return;
     }
     try {
@@ -199,7 +207,6 @@ export class YamuxSession {
     } catch {
       // Best-effort reset; ignore errors when the session is closing.
     }
-    this.onStreamClosed(id);
   }
 
   // notifySendWindow wakes any writers waiting on window credit.
@@ -243,6 +250,21 @@ export class YamuxSession {
 
   // close terminates the session and resets all streams.
   close(): void {
+    this.closeInternal();
+  }
+
+  private fail(error: unknown): void {
+    if (this.closed) return;
+    const terminalError = error instanceof Error ? error : new Error(String(error));
+    this.closeInternal();
+    try {
+      this.onTerminal?.(terminalError);
+    } catch {
+      // Lifecycle callbacks must not affect session shutdown.
+    }
+  }
+
+  private closeInternal(): void {
     if (this.closed) return;
     this.closed = true;
     this.conn.close();
@@ -270,16 +292,16 @@ export class YamuxSession {
         const hdrBytes = await this.reader.readExactly(HEADER_LEN);
         const h = decodeHeader(hdrBytes, 0);
         if (h.version !== YAMUX_VERSION) {
-          this.close();
+          this.fail(new Error("unsupported yamux version"));
           return;
         }
         if (h.type === TYPE_DATA) {
           if (h.length > this.limits.maxFrameBytes) {
-            this.close();
+            this.fail(new Error("yamux frame exceeds limit"));
             return;
           }
           if (h.streamId === 0) {
-            this.close();
+            this.fail(new Error("yamux data frame has stream id zero"));
             return;
           }
           const existing = this.streams.get(h.streamId);
@@ -306,7 +328,7 @@ export class YamuxSession {
           }
           if (this.sessionReceiveBytes + h.length > this.limits.maxSessionReceiveBytes) {
             this.diagnostic({ code: "resource_limit_reached", resource: "session_receive_bytes", current: this.sessionReceiveBytes + h.length, limit: this.limits.maxSessionReceiveBytes });
-            this.close();
+            this.fail(new Error("yamux session receive limit reached"));
             return;
           }
           const data = h.length > 0 ? await this.reader.readExactly(h.length) : new Uint8Array();
@@ -324,14 +346,14 @@ export class YamuxSession {
           continue;
         }
         if (h.type === TYPE_GO_AWAY) {
-          this.close();
+          this.fail(new Error("yamux peer sent go away"));
           return;
         }
-        this.close();
+        this.fail(new Error("unsupported yamux frame type"));
         return;
       }
-    } catch {
-      this.close();
+    } catch (error) {
+      this.fail(error);
     }
   }
 
@@ -352,7 +374,7 @@ export class YamuxSession {
 
   private async handleDataFrame(streamId: number, flags: number, data: Uint8Array): Promise<boolean> {
     if (streamId === 0) {
-      this.close();
+      this.fail(new Error("yamux data frame has stream id zero"));
       return false;
     }
     let s = this.streams.get(streamId);
@@ -381,7 +403,7 @@ export class YamuxSession {
 
   private async handleWindowUpdateFrame(streamId: number, flags: number, delta: number): Promise<void> {
     if (streamId === 0) {
-      this.close();
+      this.fail(new Error("yamux window update has stream id zero"));
       return;
     }
     let s = this.streams.get(streamId);
@@ -406,7 +428,7 @@ export class YamuxSession {
       }
     }
     if (!s.onWindowUpdate(delta, flags)) {
-      this.close();
+      this.fail(new Error("yamux send window overflow"));
     }
   }
 
@@ -422,6 +444,38 @@ export class YamuxSession {
   private diagnostic(event: YamuxDiagnostic): void {
     try { this.onDiagnostic?.(event); } catch { /* Diagnostics cannot affect transport behavior. */ }
   }
+}
+
+function abortError(signal: AbortSignal): Error {
+  const reason = signal.reason;
+  if (reason instanceof Error) return reason;
+  if (typeof reason === "string" && reason !== "") return new Error(reason);
+  return new Error("yamux open stream aborted");
+}
+
+async function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined, onAbort: () => void): Promise<T> {
+  if (signal == null) return await promise;
+  if (signal.aborted) {
+    onAbort();
+    throw abortError(signal);
+  }
+  return await new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      onAbort();
+      reject(abortError(signal));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function normalizeYamuxLimits(input: Partial<YamuxLimits> | undefined): YamuxLimits {

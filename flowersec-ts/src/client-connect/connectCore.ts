@@ -24,6 +24,7 @@ import { isTunnelAttachCloseReason } from "./tunnelAttachCloseReason.js";
 import { enforceTransportSecurity, type TransportSecurityPolicy } from "./transportSecurity.js";
 import { maxPlaintextBytes } from "../e2ee/record.js";
 import { isYamuxResourceExhaustedError } from "../yamux/errors.js";
+import { registerClientTermination } from "./termination.js";
 
 export type LivenessOptions = Readonly<{
   intervalMs?: number;
@@ -306,9 +307,25 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       write: (b: Uint8Array) => secure.write(b),
       close: () => secure.close(),
     };
+    let resolveTermination!: (termination: Readonly<{ error: Error }>) => void;
+    const termination = new Promise<Readonly<{ error: Error }>>((resolve) => {
+      resolveTermination = resolve;
+    });
+    let terminationReported = false;
+    let closeAll = () => {
+      try { secure.close(); } catch { /* ignore */ }
+    };
+    const reportTermination = (error: Error) => {
+      if (terminationReported) return;
+      terminationReported = true;
+      closeAll();
+      resolveTermination({ error });
+    };
+
     const mux = new YamuxSession(conn, {
       client: true,
       ...(args.opts.yamuxLimits === undefined ? {} : { limits: args.opts.yamuxLimits }),
+      onTerminal: reportTermination,
       onDiagnostic: (event) => emitObserverDiagnostic(args.opts.observer, {
         path: args.path,
         stage: "yamux",
@@ -320,10 +337,14 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         limit: event.limit,
       }),
     });
+    closeAll = () => {
+      try { mux.close(); } catch { /* ignore */ }
+      try { secure.close(); } catch { /* ignore */ }
+    };
 
     let rpcStream: Awaited<ReturnType<YamuxSession["openStream"]>>;
     try {
-      rpcStream = await mux.openStream();
+      rpcStream = await mux.openStream(signal === undefined ? {} : { signal });
     } catch (e) {
       mux.close();
       secure.close();
@@ -353,7 +374,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       });
     }
 
-    const rpc = new RpcClient(readExactly, write, { observer });
+    const rpc = new RpcClient(readExactly, write, { observer, onTerminal: reportTermination });
 
     const ping = async (): Promise<void> => {
       try {
@@ -384,7 +405,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       clearInterval(livenessTimer);
       livenessTimer = undefined;
     };
-    const closeAll = () => {
+    closeAll = () => {
       stopLiveness();
       try {
         rpc.close();
@@ -417,7 +438,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       (livenessTimer as any)?.unref?.();
     }
 
-    return {
+    const client: ClientInternal = {
       path: args.path,
       ...(args.attach != null ? { endpointInstanceId: args.attach.endpointInstanceId } : {}),
       secure,
@@ -446,8 +467,11 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         let abortListener: (() => void) | undefined;
         let s: Awaited<ReturnType<YamuxSession["openStream"]>>;
         try {
-          s = await mux.openStream();
+          s = await mux.openStream(signal === undefined ? {} : { signal });
         } catch (e) {
+          if (signal?.aborted) {
+            throw new FlowersecError({ path: args.path, stage: "yamux", code: "canceled", message: "open stream aborted", cause: signal.reason });
+          }
           const exhausted = isYamuxResourceExhaustedError(e);
           throw new FlowersecError({ path: args.path, stage: "yamux", code: exhausted ? "resource_exhausted" : "open_stream_failed", message: exhausted ? "yamux stream limit reached" : "open stream failed", cause: e });
         }
@@ -518,6 +542,8 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       },
       close: closeAll,
     };
+    registerClientTermination(client, termination);
+    return client;
   } catch (e) {
     try {
       transport.close();

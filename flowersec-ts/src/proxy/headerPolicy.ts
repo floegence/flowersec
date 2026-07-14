@@ -19,15 +19,24 @@ const DEFAULT_RESPONSE_HEADER_ALLOWLIST = new Set<string>([
   "content-disposition",
   "content-encoding",
   "content-language",
+  "content-security-policy",
+  "content-security-policy-report-only",
   "content-type",
+  "cross-origin-embedder-policy",
+  "cross-origin-opener-policy",
+  "cross-origin-resource-policy",
   "etag",
   "expires",
   "last-modified",
   "location",
+  "permissions-policy",
   "pragma",
+  "referrer-policy",
   "vary",
   "www-authenticate",
-  "set-cookie"
+  "set-cookie",
+  "x-content-type-options",
+  "x-frame-options"
 ]);
 
 const DEFAULT_WS_HEADER_ALLOWLIST = new Set<string>(["sec-websocket-protocol", "cookie"]);
@@ -124,4 +133,3 @@ export function filterWsOpenHeaders(input: readonly Header[], opts: FilterHeader
   }
   return out;
 }
-

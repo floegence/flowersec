@@ -165,5 +165,16 @@ func (g *gateway) logProxyError(r *http.Request, err error) {
 	if errors.As(err, &bridgeErr) && bridgeErr.Status > 0 && bridgeErr.Status < 500 {
 		return
 	}
-	g.logger.Printf("proxy gateway request failed method=%s host=%s path=%s err=%v", r.Method, strings.TrimSpace(r.Host), r.URL.RequestURI(), err)
+	path := r.URL.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	g.logger.Printf(
+		"proxy gateway request failed method=%s host=%s path=%s query_present=%t error_type=%T",
+		r.Method,
+		strings.TrimSpace(r.Host),
+		path,
+		r.URL.RawQuery != "",
+		err,
+	)
 }

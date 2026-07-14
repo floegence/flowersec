@@ -42,6 +42,19 @@ class QueueConn {
   }
 }
 
+class FirstWriteBlockedConn extends QueueConn {
+  private writeCount = 0;
+
+  override async write(chunk: Uint8Array): Promise<void> {
+    this.writeCount += 1;
+    if (this.writeCount === 1) {
+      await new Promise<void>(() => {});
+      return;
+    }
+    await super.write(chunk);
+  }
+}
+
 async function tick(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -101,14 +114,41 @@ describe("YamuxSession", () => {
 
   test("streamId 0 data closes session", async () => {
     const conn = new QueueConn();
-    const session = new YamuxSession(conn, { client: true });
+    const terminal: Error[] = [];
+    const session = new YamuxSession(conn, { client: true, onTerminal: (error) => terminal.push(error) });
 
     const data = encodeHeader({ type: TYPE_DATA, flags: 0, streamId: 0, length: 0 });
     conn.enqueue(data);
 
     await tick();
     expect(conn.closed).toBe(true);
+    expect(terminal).toHaveLength(1);
     session.close();
+  });
+
+  test("abort removes a stream whose SYN write is blocked", async () => {
+    const conn = new FirstWriteBlockedConn();
+    const session = new YamuxSession(conn, { client: true });
+    const ctrl = new AbortController();
+
+    const opening = session.openStream({ signal: ctrl.signal });
+    ctrl.abort(new Error("open canceled"));
+
+    await expect(opening).rejects.toThrow(/open canceled/);
+    expect(session.getStream(1)).toBeUndefined();
+    await expect(session.openStream()).resolves.toBeDefined();
+    session.close();
+  });
+
+  test("explicit close does not report terminal failure", async () => {
+    const conn = new QueueConn();
+    const terminal: Error[] = [];
+    const session = new YamuxSession(conn, { client: true, onTerminal: (error) => terminal.push(error) });
+
+    session.close();
+    await tick();
+
+    expect(terminal).toEqual([]);
   });
 
   test("maxFrameBytes closes session", async () => {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createReconnectManager } from "./index.js";
+import { registerClientTermination, type ClientTermination } from "../client-connect/termination.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -29,6 +30,14 @@ function makeDummyClient(label: string, onClose: () => void) {
       },
     },
   };
+}
+
+function deferredTermination() {
+  let resolve!: (termination: ClientTermination) => void;
+  const promise = new Promise<ClientTermination>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 describe("reconnect manager", () => {
@@ -92,6 +101,89 @@ describe("reconnect manager", () => {
 
     expect(created).toBe(2);
     expect(closed).toBeGreaterThanOrEqual(1);
+    expect(mgr.state().status).toBe("connected");
+  });
+
+  test("auto reconnects once on internal session termination", async () => {
+    const mgr = createReconnectManager();
+    const terminations: Array<ReturnType<typeof deferredTermination>> = [];
+    let created = 0;
+
+    await mgr.connect({
+      connectOnce: async () => {
+        created += 1;
+        const d = makeDummyClient(`c${created}`, () => {});
+        const termination = deferredTermination();
+        terminations.push(termination);
+        registerClientTermination(d.client as any, termination.promise);
+        return d.client as any;
+      },
+      autoReconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 0, maxDelayMs: 0, factor: 1, jitterRatio: 0 },
+    });
+
+    terminations[0]!.resolve({ error: new Error("rpc read failed") });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(created).toBe(2);
+    expect(mgr.state().status).toBe("connected");
+  });
+
+  test("explicit disconnect ignores later session termination", async () => {
+    const mgr = createReconnectManager();
+    const termination = deferredTermination();
+    let created = 0;
+
+    await mgr.connect({
+      connectOnce: async () => {
+        created += 1;
+        const d = makeDummyClient(`c${created}`, () => {});
+        registerClientTermination(d.client as any, termination.promise);
+        return d.client as any;
+      },
+      autoReconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 0, maxDelayMs: 0, factor: 1, jitterRatio: 0 },
+    });
+
+    mgr.disconnect();
+    termination.resolve({ error: new Error("late close") });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(created).toBe(1);
+    expect(mgr.state().status).toBe("disconnected");
+  });
+
+  test("stale client termination does not affect a newer connection", async () => {
+    const mgr = createReconnectManager();
+    const firstTermination = deferredTermination();
+    let firstCreated = 0;
+    let secondCreated = 0;
+    let secondClient: any;
+    const firstConfig = {
+      connectOnce: async () => {
+        firstCreated += 1;
+        const d = makeDummyClient(`first-${firstCreated}`, () => {});
+        registerClientTermination(d.client as any, firstTermination.promise);
+        return d.client as any;
+      },
+      autoReconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 0, maxDelayMs: 0, factor: 1, jitterRatio: 0 },
+    };
+    const secondConfig = {
+      connectOnce: async () => {
+        secondCreated += 1;
+        secondClient = makeDummyClient(`second-${secondCreated}`, () => {}).client as any;
+        return secondClient;
+      },
+      autoReconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 0, maxDelayMs: 0, factor: 1, jitterRatio: 0 },
+    };
+
+    await mgr.connect(firstConfig);
+    await mgr.connect(secondConfig);
+    firstTermination.resolve({ error: new Error("stale close") });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(firstCreated).toBe(1);
+    expect(secondCreated).toBe(1);
+    expect(mgr.state().client).toBe(secondClient);
     expect(mgr.state().status).toBe("connected");
   });
 

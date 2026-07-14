@@ -18,13 +18,15 @@ export class RpcClient {
   private closed = false;
   // Observer for RPC events.
   private readonly observer: ClientObserver;
+  private readonly onTerminal: ((error: Error) => void) | undefined;
 
   constructor(
     private readonly readExactly: (n: number) => Promise<Uint8Array>,
     private readonly write: (b: Uint8Array) => Promise<void>,
-    opts: Readonly<{ observer?: ClientObserverLike }> = {}
+    opts: Readonly<{ observer?: ClientObserverLike; onTerminal?: (error: Error) => void }> = {}
   ) {
     this.observer = normalizeObserver(opts.observer);
+    this.onTerminal = opts.onTerminal;
     void this.readLoop();
   }
 
@@ -135,9 +137,17 @@ export class RpcClient {
         }
       }
     } catch (e) {
+      const unexpected = !this.closed;
       this.closed = true;
       for (const [, p] of this.pending) p.reject(e);
       this.pending.clear();
+      if (unexpected) {
+        try {
+          this.onTerminal?.(e instanceof Error ? e : new Error(String(e)));
+        } catch {
+          // Lifecycle callbacks must not escape the read loop.
+        }
+      }
     }
   }
 }

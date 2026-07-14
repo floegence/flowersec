@@ -23,6 +23,23 @@ describe("proxy header policy", () => {
     expect(out.setCookie).toEqual(["a=1; Path=/"]);
   });
 
+  it("preserves browser security headers by default", () => {
+    const headers = [
+      "content-security-policy",
+      "content-security-policy-report-only",
+      "x-frame-options",
+      "x-content-type-options",
+      "referrer-policy",
+      "permissions-policy",
+      "cross-origin-opener-policy",
+      "cross-origin-embedder-policy",
+      "cross-origin-resource-policy",
+    ].map((name) => ({ name, value: "value" }));
+
+    expect(filterResponseHeaders(headers).passthrough).toEqual(headers);
+    expect(filterResponseHeaders([{ name: "strict-transport-security", value: "max-age=31536000" }]).passthrough).toEqual([]);
+  });
+
   it("allows ws open headers: sec-websocket-protocol and cookie", () => {
     const out = filterWsOpenHeaders([
       { name: "sec-websocket-protocol", value: "demo" },
@@ -35,4 +52,3 @@ describe("proxy header policy", () => {
     ]);
   });
 });
-
