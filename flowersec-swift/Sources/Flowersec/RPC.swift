@@ -257,12 +257,12 @@ public enum Flowersec {
     case .direct(let info, metadata: let metadata):
       return try await connectDirect(
         info,
-        options: try artifactOptions(options, metadata: metadata, path: .direct)
+        options: try await artifactOptions(options, metadata: metadata, path: .direct)
       )
     case .tunnel(let grant, metadata: let metadata):
       return try await connectTunnel(
         grant,
-        options: try artifactOptions(options, metadata: metadata, path: .tunnel)
+        options: try await artifactOptions(options, metadata: metadata, path: .tunnel)
       )
     }
   }
@@ -524,7 +524,7 @@ public enum Flowersec {
     _ options: ConnectOptions,
     metadata: ConnectArtifactMetadata,
     path: FlowersecPath
-  ) throws -> ConnectOptions {
+  ) async throws -> ConnectOptions {
     var resolved = options
     if let correlation = metadata.correlation, let observer = options.onDiagnosticEvent {
       resolved.onDiagnosticEvent = { event in
@@ -539,23 +539,48 @@ public enum Flowersec {
       }
     }
     for entry in metadata.scoped {
-      if entry.critical {
+      guard let resolver = options.scopeResolvers[entry.scope] else {
+        if entry.critical {
+          throw FlowersecError(
+            path: path,
+            stage: .validate,
+            code: .resolveFailed,
+            message: "Missing scope resolver for \(entry.scope)@\(entry.scopeVersion)."
+          )
+        }
+        resolved.onDiagnosticEvent?(
+          DiagnosticEvent(
+            path: path,
+            stage: .scope,
+            codeDomain: .event,
+            code: "scope_ignored_missing_resolver",
+            result: .skip
+          )
+        )
+        continue
+      }
+      do {
+        try await resolver(entry)
+      } catch {
+        if !entry.critical, options.relaxedOptionalScopeValidation {
+          resolved.onDiagnosticEvent?(
+            DiagnosticEvent(
+              path: path,
+              stage: .scope,
+              codeDomain: .event,
+              code: "scope_ignored_relaxed_validation",
+              result: .skip
+            )
+          )
+          continue
+        }
         throw FlowersecError(
           path: path,
           stage: .validate,
-          code: .invalidInput,
-          message: "Missing scope resolver for \(entry.scope)@\(entry.scopeVersion)."
+          code: .resolveFailed,
+          message: "Scope validation failed for \(entry.scope)@\(entry.scopeVersion)."
         )
       }
-      resolved.onDiagnosticEvent?(
-        DiagnosticEvent(
-          path: path,
-          stage: .validate,
-          codeDomain: .event,
-          code: "scope_ignored_missing_resolver",
-          result: .skip
-        )
-      )
     }
     return resolved
   }

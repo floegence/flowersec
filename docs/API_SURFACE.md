@@ -322,6 +322,10 @@ Stable connection and session entrypoints:
   - `ConnectOptions.connectTimeout`
   - `ConnectOptions.handshakeTimeout`
   - `ConnectOptions.maxOutboundBufferedBytes`
+  - `ConnectOptions.scopeResolvers`
+  - `ConnectOptions.relaxedOptionalScopeValidation`
+- `ConnectScopeResolver`
+- `ConnectScopeResolverMap`
 - `DirectConnectOptions`
 - `TunnelConnectOptions`
 - `TransportSecurityPolicy`

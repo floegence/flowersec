@@ -8,6 +8,7 @@ public enum FlowersecPath: String, Codable, Equatable, Sendable {
 
 public enum FlowersecStage: String, Codable, Equatable, Sendable {
   case validate
+  case scope
   case connect
   case transport
   case attach
@@ -107,6 +108,7 @@ public enum FlowersecCode: String, Codable, Equatable, Sendable {
   case invalidSuite = "invalid_suite"
   case invalidPSK = "invalid_psk"
   case invalidOption = "invalid_option"
+  case resolveFailed = "resolve_failed"
   case transportPolicyDenied = "transport_policy_denied"
   case credentialCommitFailed = "credential_commit_failed"
   case authTagMismatch = "auth_tag_mismatch"
@@ -915,6 +917,10 @@ private struct AnyCodingKey: CodingKey {
   }
 }
 
+public typealias ConnectScopeResolver = @Sendable (ScopeMetadataEntry) async throws -> Void
+
+public typealias ConnectScopeResolverMap = [String: ConnectScopeResolver]
+
 public struct ConnectOptions: Sendable {
   public var origin: String?
   public var connectTimeout: Duration
@@ -926,6 +932,8 @@ public struct ConnectOptions: Sendable {
   public var maxOutboundBufferedBytes: Int
   public var yamuxLimits: YamuxLimits
   public var liveness: LivenessOptions
+  public var scopeResolvers: ConnectScopeResolverMap
+  public var relaxedOptionalScopeValidation: Bool
 
   public init(
     origin: String? = nil,
@@ -973,6 +981,8 @@ public struct ConnectOptions: Sendable {
     self.maxOutboundBufferedBytes = maxOutboundBufferedBytes
     self.yamuxLimits = yamuxLimits
     self.liveness = liveness
+    self.scopeResolvers = [:]
+    self.relaxedOptionalScopeValidation = false
   }
 
   public init(
@@ -998,6 +1008,36 @@ public struct ConnectOptions: Sendable {
       yamuxLimits: yamuxLimits,
       liveness: liveness
     )
+  }
+
+  public init(
+    origin: String? = nil,
+    connectTimeout: Duration = .seconds(8),
+    handshakeTimeout: Duration = .seconds(8),
+    transportSecurityPolicy: TransportSecurityPolicy = .requireTLS,
+    onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)? = nil,
+    onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil,
+    outboundRecordChunkBytes: Int = 64 * 1024,
+    maxOutboundBufferedBytes: Int = 4 * 1024 * 1024,
+    yamuxLimits: YamuxLimits = YamuxLimits(),
+    liveness: LivenessOptions = .pathDefault,
+    scopeResolvers: ConnectScopeResolverMap,
+    relaxedOptionalScopeValidation: Bool = false
+  ) {
+    self.init(
+      origin: origin,
+      connectTimeout: connectTimeout,
+      handshakeTimeout: handshakeTimeout,
+      transportSecurityPolicy: transportSecurityPolicy,
+      onTransportSecurityDiagnostic: onTransportSecurityDiagnostic,
+      onDiagnosticEvent: onDiagnosticEvent,
+      outboundRecordChunkBytes: outboundRecordChunkBytes,
+      maxOutboundBufferedBytes: maxOutboundBufferedBytes,
+      yamuxLimits: yamuxLimits,
+      liveness: liveness
+    )
+    self.scopeResolvers = scopeResolvers
+    self.relaxedOptionalScopeValidation = relaxedOptionalScopeValidation
   }
 }
 

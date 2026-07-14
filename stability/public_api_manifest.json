@@ -1047,6 +1047,10 @@
       },
       {
         "kind": "swift.init",
+        "name": "ConnectOptions.init(origin:connectTimeout:handshakeTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:liveness:scopeResolvers:relaxedOptionalScopeValidation:)"
+      },
+      {
+        "kind": "swift.init",
         "name": "ConnectOptions.init(origin:connectTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:liveness:)"
       },
       {
@@ -1343,6 +1347,10 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "FlowersecCode.resolveFailed"
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "FlowersecCode.streamHelloFailed"
       },
       {
@@ -1400,6 +1408,10 @@
       {
         "kind": "swift.enum.case",
         "name": "FlowersecStage.rpc"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.scope"
       },
       {
         "kind": "swift.enum.case",
@@ -1723,6 +1735,14 @@
       },
       {
         "kind": "swift.property",
+        "name": "ConnectOptions.relaxedOptionalScopeValidation"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectOptions.scopeResolvers"
+      },
+      {
+        "kind": "swift.property",
         "name": "ConnectOptions.yamuxLimits"
       },
       {
@@ -2004,6 +2024,14 @@
       {
         "kind": "swift.type.property",
         "name": "FlowersecError.timeout"
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "ConnectScopeResolver"
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "ConnectScopeResolverMap"
       },
       {
         "kind": "swift.typealias",

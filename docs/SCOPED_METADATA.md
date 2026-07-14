@@ -1,6 +1,6 @@
 # Scoped Metadata
 
-Flowersec v0.20.x stabilizes the `scoped` carrier on `ConnectArtifact` and freezes one concrete scope payload: `proxy.runtime@1` for the stable proxy helper entrypoints.
+Flowersec stabilizes the `scoped` carrier on `ConnectArtifact` and freezes one concrete scope payload: `proxy.runtime@1` for the stable proxy helper entrypoints.
 
 ## Stable carrier
 
@@ -35,7 +35,17 @@ Stable invariants:
 The stable proxy helper entrypoints do not opt into relaxed downgrade behavior for `proxy.runtime`.
 If `connectArtifactProxyBrowser(...)` or `connectArtifactProxyControllerBrowser(...)` sees an invalid `proxy.runtime@1` payload, it fails fast regardless of `critical`.
 
-Swift 0.20.2 does not yet expose the generic resolver API: artifact-based connect rejects every critical scope before networking and ignores optional scopes with `scope_ignored_missing_resolver`. Generic Swift scope resolvers are deferred to 0.21.0.
+Swift 0.21.0 aligns artifact scope validation with Go and TypeScript. Register asynchronous validators by exact scope name through `ConnectOptions.scopeResolvers`. Resolver execution completes before transport policy evaluation or any network activity.
+
+All SDKs apply the same behavior:
+
+- missing critical resolver: fail with `resolve_failed`
+- missing optional resolver: continue and emit `scope_ignored_missing_resolver`
+- registered resolver failure: fail with `resolve_failed` by default
+- registered optional resolver failure with explicit relaxed validation: continue and emit `scope_ignored_relaxed_validation`
+- registered critical resolver failure: always fail, including when relaxed optional validation is enabled
+
+Swift enables the migration-only downgrade with `ConnectOptions.relaxedOptionalScopeValidation`. The option does not affect scopes without a resolver and never exposes resolver errors or payload values in diagnostics.
 
 ## `proxy.runtime@1`
 
@@ -82,9 +92,8 @@ Stable in v0.20.x:
 - critical fail-fast meaning
 - `proxy.runtime@1` when consumed through the stable proxy helper entrypoints
 
-Experimental in v0.20.x:
+Experimental:
 
-- public resolver registration API
 - normalize helper return types
 - generic `connect(...)` scope negotiation semantics
 - scope manifest toolchain outside the frozen `proxy.runtime` v1 manifest

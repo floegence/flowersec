@@ -63,7 +63,7 @@ Use `ConnectOptions.onDiagnosticEvent` for generic transport, Yamux, liveness, a
 `ConnectArtifact` is the canonical wire model for direct and tunnel client setup.
 Both variants carry `ConnectArtifactMetadata`:
 
-- `scoped`: up to eight unique `ScopeMetadataEntry` values. In 0.20.2, connect rejects critical scopes because Swift does not yet expose scope resolvers; optional scopes are ignored with a diagnostic. Product-specific payload interpretation remains outside Flowersec.
+- `scoped`: up to eight unique `ScopeMetadataEntry` values. Register product-owned validators with `ConnectOptions.scopeResolvers`. Missing critical resolvers and resolver failures fail before networking. Missing optional resolvers are ignored with a diagnostic; known optional resolver failures remain fail-closed unless `relaxedOptionalScopeValidation` is explicitly enabled.
 - `correlation`: optional `CorrelationContext` with sanitized trace/session IDs and up to eight unique tags. Artifact-based connect copies trace and session IDs into emitted diagnostics.
 
 ```swift
@@ -76,6 +76,25 @@ case .tunnel(let grant, metadata: let metadata):
   print(grant.channelID, metadata.correlation?.tags ?? [])
 }
 ```
+
+Scope resolvers are asynchronous, product-neutral validators keyed by the exact scope name:
+
+```swift
+let options = ConnectOptions(
+  scopeResolvers: [
+    "example.capability": { entry in
+      guard entry.scopeVersion == 1 else {
+        throw UnsupportedScopeVersion()
+      }
+      try validateCapabilityPayload(entry.payload)
+    }
+  ]
+)
+
+let client = try await Flowersec.connect(artifact, options: options)
+```
+
+`relaxedOptionalScopeValidation` applies only when a registered resolver rejects an optional scope. It never downgrades critical scopes. Both ignored cases emit the stable low-cardinality diagnostics `scope_ignored_missing_resolver` or `scope_ignored_relaxed_validation` with `stage=scope`; resolver errors and payloads are not included.
 
 ## Boundaries
 

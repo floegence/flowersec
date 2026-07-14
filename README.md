@@ -68,6 +68,7 @@ Flowersec v0.20.x recommends an artifact-first integration path documented in:
 | 🌐 Start from the browser SDK | [`docs/FRONTEND_QUICKSTART.md`](docs/FRONTEND_QUICKSTART.md) |
 | 🧩 Integrate Flowersec into my app | [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) |
 | 🧱 Adopt the canonical connect artifact | [`docs/CONNECT_ARTIFACTS.md`](docs/CONNECT_ARTIFACTS.md) |
+| 🔁 Migrate to v0.20 | [`docs/V0_20_MIGRATION.md`](docs/V0_20_MIGRATION.md) |
 | 🔁 Migrate to v0.21 | [`docs/V0_21_MIGRATION.md`](docs/V0_21_MIGRATION.md) |
 | 📦 Replace named proxy profiles | [`docs/PRESETS.md`](docs/PRESETS.md) |
 | 🧭 Understand API stability | [`docs/API_STABILITY_POLICY.md`](docs/API_STABILITY_POLICY.md) |

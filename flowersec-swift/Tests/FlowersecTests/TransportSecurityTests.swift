@@ -123,6 +123,8 @@ final class TransportSecurityTests: XCTestCase {
     XCTAssertEqual(options.maxOutboundBufferedBytes, 4 * 1024 * 1024)
     XCTAssertEqual(options.yamuxLimits, YamuxLimits())
     XCTAssertEqual(options.liveness, .pathDefault)
+    XCTAssertTrue(options.scopeResolvers.isEmpty)
+    XCTAssertFalse(options.relaxedOptionalScopeValidation)
   }
 
   func testConnectRejectsNonPositiveHandshakeAndOutboundBufferLimits() async throws {

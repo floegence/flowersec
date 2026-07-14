@@ -96,7 +96,7 @@ final class ConnectArtifactTests: XCTestCase {
     } catch let error as FlowersecError {
       XCTAssertEqual(error.path, .direct)
       XCTAssertEqual(error.stage, .validate)
-      XCTAssertEqual(error.code, .invalidInput)
+      XCTAssertEqual(error.code, .resolveFailed)
       XCTAssertEqual(error.message, "Missing scope resolver for proxy.runtime@2.")
     }
     await fulfillment(of: [policyCalled], timeout: 0.05)
@@ -123,7 +123,7 @@ final class ConnectArtifactTests: XCTestCase {
     let options = ConnectOptions(onDiagnosticEvent: { event in
       guard event.code == "scope_ignored_missing_resolver" else { return }
       XCTAssertEqual(event.path, .direct)
-      XCTAssertEqual(event.stage, .validate)
+      XCTAssertEqual(event.stage, .scope)
       XCTAssertEqual(event.result, .skip)
       XCTAssertEqual(event.traceID, "trace-optional-001")
       XCTAssertEqual(event.sessionID, "session-optional-001")
@@ -137,6 +137,132 @@ final class ConnectArtifactTests: XCTestCase {
       XCTAssertEqual(error.code, .transportPolicyDenied)
     }
     await fulfillment(of: [emitted], timeout: 1)
+  }
+
+  func testConnectRunsRegisteredScopeResolverBeforeTransportPolicy() async throws {
+    let resolved = expectation(description: "scope resolved")
+    let policyCalled = expectation(description: "transport policy")
+    let entry = try ScopeMetadataEntry(
+      scope: "proxy.runtime",
+      scopeVersion: 2,
+      critical: true,
+      payload: ScopePayload(["mode": .string("strict")])
+    )
+    let artifact = ConnectArtifact.direct(
+      validDirectInfo(),
+      metadata: try ConnectArtifactMetadata(scoped: [entry])
+    )
+    let options = ConnectOptions(
+      transportSecurityPolicy: .custom { _ in
+        policyCalled.fulfill()
+        return false
+      },
+      scopeResolvers: [
+        "proxy.runtime": { received in
+          XCTAssertEqual(received, entry)
+          resolved.fulfill()
+        }
+      ]
+    )
+
+    do {
+      _ = try await Flowersec.connect(artifact, options: options)
+      XCTFail("Expected the transport policy to reject the test connection")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.code, .transportPolicyDenied)
+    }
+    await fulfillment(of: [resolved, policyCalled], timeout: 1)
+  }
+
+  func testOptionalScopeResolverFailureFailsFastByDefault() async throws {
+    let policyCalled = expectation(description: "transport policy")
+    policyCalled.isInverted = true
+    let artifact = try artifactWithScope(critical: false)
+    let options = ConnectOptions(
+      transportSecurityPolicy: .custom { _ in
+        policyCalled.fulfill()
+        return true
+      },
+      scopeResolvers: [
+        "proxy.runtime": { _ in throw ScopeResolverTestError.rejected }
+      ]
+    )
+
+    do {
+      _ = try await Flowersec.connect(artifact, options: options)
+      XCTFail("Expected optional resolver failure to fail closed")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .direct)
+      XCTAssertEqual(error.stage, .validate)
+      XCTAssertEqual(error.code, .resolveFailed)
+      XCTAssertEqual(error.message, "Scope validation failed for proxy.runtime@2.")
+    }
+    await fulfillment(of: [policyCalled], timeout: 0.05)
+  }
+
+  func testRelaxedOptionalScopeResolverFailureIsIgnoredWithCorrelatedDiagnostic() async throws {
+    let emitted = expectation(description: "relaxed scope diagnostic")
+    let policyCalled = expectation(description: "transport policy")
+    let metadata = try ConnectArtifactMetadata(
+      scoped: [scopeEntry(critical: false)],
+      correlation: CorrelationContext(
+        traceID: "trace-relaxed-001",
+        sessionID: "session-relaxed-001"
+      )
+    )
+    let artifact = ConnectArtifact.direct(validDirectInfo(), metadata: metadata)
+    let options = ConnectOptions(
+      transportSecurityPolicy: .custom { _ in
+        policyCalled.fulfill()
+        return false
+      },
+      onDiagnosticEvent: { event in
+        guard event.code == "scope_ignored_relaxed_validation" else { return }
+        XCTAssertEqual(event.path, .direct)
+        XCTAssertEqual(event.stage, .scope)
+        XCTAssertEqual(event.result, .skip)
+        XCTAssertEqual(event.traceID, "trace-relaxed-001")
+        XCTAssertEqual(event.sessionID, "session-relaxed-001")
+        emitted.fulfill()
+      },
+      scopeResolvers: [
+        "proxy.runtime": { _ in throw ScopeResolverTestError.rejected }
+      ],
+      relaxedOptionalScopeValidation: true
+    )
+
+    do {
+      _ = try await Flowersec.connect(artifact, options: options)
+      XCTFail("Expected the transport policy to reject the test connection")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.code, .transportPolicyDenied)
+    }
+    await fulfillment(of: [emitted, policyCalled], timeout: 1)
+  }
+
+  func testRelaxedValidationNeverIgnoresCriticalResolverFailure() async throws {
+    let policyCalled = expectation(description: "transport policy")
+    policyCalled.isInverted = true
+    let artifact = try artifactWithScope(critical: true)
+    let options = ConnectOptions(
+      transportSecurityPolicy: .custom { _ in
+        policyCalled.fulfill()
+        return true
+      },
+      scopeResolvers: [
+        "proxy.runtime": { _ in throw ScopeResolverTestError.rejected }
+      ],
+      relaxedOptionalScopeValidation: true
+    )
+
+    do {
+      _ = try await Flowersec.connect(artifact, options: options)
+      XCTFail("Expected critical resolver failure to fail closed")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.stage, .validate)
+      XCTAssertEqual(error.code, .resolveFailed)
+    }
+    await fulfillment(of: [policyCalled], timeout: 0.05)
   }
 
   private func assertSemanticShape(_ artifact: ConnectArtifact, id: String) throws {
@@ -197,6 +323,22 @@ final class ConnectArtifactTests: XCTestCase {
     )
   }
 
+  private func artifactWithScope(critical: Bool) throws -> ConnectArtifact {
+    ConnectArtifact.direct(
+      validDirectInfo(),
+      metadata: try ConnectArtifactMetadata(scoped: [scopeEntry(critical: critical)])
+    )
+  }
+
+  private func scopeEntry(critical: Bool) throws -> ScopeMetadataEntry {
+    try ScopeMetadataEntry(
+      scope: "proxy.runtime",
+      scopeVersion: 2,
+      critical: critical,
+      payload: ScopePayload(["mode": .string("test")])
+    )
+  }
+
   private func artifactManifest() throws -> ArtifactManifest {
     let data = try Data(contentsOf: fixtureURL("manifest.json"))
     return try JSONDecoder().decode(ArtifactManifest.self, from: data)
@@ -212,6 +354,10 @@ final class ConnectArtifactTests: XCTestCase {
     let canonical = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     return String(decoding: canonical, as: UTF8.self)
   }
+}
+
+private enum ScopeResolverTestError: Error {
+  case rejected
 }
 
 private struct ArtifactManifest: Decodable {
