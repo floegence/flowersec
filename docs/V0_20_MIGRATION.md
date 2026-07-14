@@ -69,6 +69,13 @@ Encrypted-record receive limits remain 1 MiB by default. High-level senders now 
 
 The configured chunk must fit within the maximum encrypted record.
 
+TypeScript and Swift also bound the total plaintext retained by the secure-channel send queue. The default is 4 MiB:
+
+- TypeScript: `maxOutboundBufferedBytes`
+- Swift: `ConnectOptions.maxOutboundBufferedBytes`
+
+An over-limit write fails with `resource_exhausted`; the rejected payload is not retained.
+
 TypeScript removes `maxWsQueuedBytes`. Use `webSocketLimits` instead:
 
 ```ts
@@ -85,6 +92,10 @@ const client = await connectNode(artifact, {
 ```
 
 `WebSocketLike.bufferedAmount` is required. Writes are serialized. Crossing the high watermark pauses new sends until the low watermark is reached; crossing the hard limit or drain timeout closes the transport and rejects pending operations. Swift applies an equivalent serialized write queue with a 4 MiB pending hard cap.
+
+Swift now separates WebSocket establishment and E2EE handshake deadlines. `ConnectOptions.connectTimeout` continues to bound the WebSocket open, while `ConnectOptions.handshakeTimeout` defaults to 8 seconds and closes the active transport on timeout or task cancellation. Setup failures release the RPC client, RPC stream, Yamux session, secure channel, and transport in reverse ownership order.
+
+Swift artifact-based connect propagates artifact trace/session correlation into diagnostics. Until the generic Swift scope resolver API lands in 0.21.0, critical scopes fail before networking and optional scopes are ignored with a diagnostic.
 
 ## Yamux limits and liveness
 

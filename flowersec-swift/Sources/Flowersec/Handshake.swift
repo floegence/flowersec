@@ -5,7 +5,10 @@ enum FlowersecHandshake {
   static func runClientHandshake(
     transport: any FlowersecBinaryTransport,
     info: DirectConnectInfo,
-    outboundRecordChunkBytes: Int = 64 * 1024
+    outboundRecordChunkBytes: Int = 64 * 1024,
+    maxOutboundBufferedBytes: Int = 4 * 1024 * 1024,
+    path: FlowersecPath = .direct,
+    onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil
   ) async throws -> FlowersecSecureChannel {
     try validate(info: info)
     let material = try ClientHandshakeMaterial(info: info)
@@ -28,7 +31,10 @@ enum FlowersecHandshake {
     return secureChannel(
       transport: transport,
       sessionKeys: sessionKeys,
-      outboundRecordChunkBytes: outboundRecordChunkBytes
+      outboundRecordChunkBytes: outboundRecordChunkBytes,
+      maxOutboundBufferedBytes: maxOutboundBufferedBytes,
+      path: path,
+      onDiagnosticEvent: onDiagnosticEvent
     )
   }
 
@@ -132,7 +138,10 @@ enum FlowersecHandshake {
   private static func secureChannel(
     transport: any FlowersecBinaryTransport,
     sessionKeys: FlowersecSessionKeys,
-    outboundRecordChunkBytes: Int
+    outboundRecordChunkBytes: Int,
+    maxOutboundBufferedBytes: Int,
+    path: FlowersecPath,
+    onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)?
   ) -> FlowersecSecureChannel {
     FlowersecSecureChannel(
       transport: transport,
@@ -148,7 +157,10 @@ enum FlowersecHandshake {
         sendSeq: 1,
         recvSeq: 2
       ),
-      outboundRecordChunkBytes: outboundRecordChunkBytes
+      outboundRecordChunkBytes: outboundRecordChunkBytes,
+      maxOutboundBufferedBytes: maxOutboundBufferedBytes,
+      path: path,
+      onDiagnosticEvent: onDiagnosticEvent
     )
   }
 

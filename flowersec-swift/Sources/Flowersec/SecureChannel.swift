@@ -16,22 +16,56 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   private var keys: FlowersecRecordKeyState
   private var readBuffer = Data()
   private var pendingWrites: [PendingWrite] = []
+  private var pendingWriteBytes = 0
   private var writeInProgress = false
   private var closed = false
   private let outboundRecordChunkBytes: Int
+  private let maxOutboundBufferedBytes: Int
+  private let path: FlowersecPath
+  private let onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)?
 
   init(
     transport: any FlowersecBinaryTransport,
     keys: FlowersecRecordKeyState,
-    outboundRecordChunkBytes: Int = 64 * 1024
+    outboundRecordChunkBytes: Int = 64 * 1024,
+    maxOutboundBufferedBytes: Int = 4 * 1024 * 1024,
+    path: FlowersecPath = .direct,
+    onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil
   ) {
     self.transport = transport
     self.keys = keys
     self.outboundRecordChunkBytes = outboundRecordChunkBytes
+    self.maxOutboundBufferedBytes = maxOutboundBufferedBytes
+    self.path = path
+    self.onDiagnosticEvent = onDiagnosticEvent
   }
 
   func write(_ data: Data) async throws {
     guard !closed else { throw FlowersecError.closed }
+    let availableBytes = maxOutboundBufferedBytes > pendingWriteBytes
+      ? maxOutboundBufferedBytes - pendingWriteBytes : 0
+    guard maxOutboundBufferedBytes > 0, data.count <= availableBytes else {
+      let (currentBytes, overflow) = pendingWriteBytes.addingReportingOverflow(data.count)
+      let current = overflow ? Int.max : currentBytes
+      onDiagnosticEvent?(
+        DiagnosticEvent(
+          path: path,
+          stage: .secure,
+          codeDomain: .event,
+          code: "resource_limit_reached",
+          result: .fail,
+          resource: "secure_channel_pending_write_bytes",
+          current: current,
+          limit: maxOutboundBufferedBytes
+        )
+      )
+      throw FlowersecError.resourceExhausted(
+        path: path,
+        stage: .secure,
+        "The secure-channel pending write limit was reached."
+      )
+    }
+    pendingWriteBytes += data.count
     try await withCheckedThrowingContinuation { continuation in
       pendingWrites.append(PendingWrite(data: data, continuation: continuation))
       startWriteIfNeeded()
@@ -39,6 +73,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   }
 
   var queuedWriteCount: Int { pendingWrites.count }
+  var queuedWriteBytes: Int { pendingWriteBytes }
 
   private func writeRecords(_ data: Data) async throws {
     var offset = 0
@@ -89,6 +124,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
       return
     }
     let write = pendingWrites.removeFirst()
+    pendingWriteBytes -= write.data.count
     writeInProgress = false
     switch result {
     case .success:
@@ -105,6 +141,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   private func failPendingWrites(with error: Error) {
     let writes = pendingWrites
     pendingWrites.removeAll()
+    pendingWriteBytes = 0
     writeInProgress = false
     for write in writes {
       write.continuation.resume(throwing: error)

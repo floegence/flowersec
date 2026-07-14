@@ -918,10 +918,12 @@ private struct AnyCodingKey: CodingKey {
 public struct ConnectOptions: Sendable {
   public var origin: String?
   public var connectTimeout: Duration
+  public var handshakeTimeout: Duration
   public var transportSecurityPolicy: TransportSecurityPolicy
   public var onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)?
   public var onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)?
   public var outboundRecordChunkBytes: Int
+  public var maxOutboundBufferedBytes: Int
   public var yamuxLimits: YamuxLimits
   public var liveness: LivenessOptions
 
@@ -935,14 +937,67 @@ public struct ConnectOptions: Sendable {
     yamuxLimits: YamuxLimits = YamuxLimits(),
     liveness: LivenessOptions = .pathDefault
   ) {
+    self.init(
+      origin: origin,
+      connectTimeout: connectTimeout,
+      handshakeTimeout: .seconds(8),
+      transportSecurityPolicy: transportSecurityPolicy,
+      onTransportSecurityDiagnostic: onTransportSecurityDiagnostic,
+      onDiagnosticEvent: onDiagnosticEvent,
+      outboundRecordChunkBytes: outboundRecordChunkBytes,
+      maxOutboundBufferedBytes: 4 * 1024 * 1024,
+      yamuxLimits: yamuxLimits,
+      liveness: liveness
+    )
+  }
+
+  public init(
+    origin: String? = nil,
+    connectTimeout: Duration = .seconds(8),
+    handshakeTimeout: Duration,
+    transportSecurityPolicy: TransportSecurityPolicy = .requireTLS,
+    onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)? = nil,
+    onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil,
+    outboundRecordChunkBytes: Int = 64 * 1024,
+    maxOutboundBufferedBytes: Int = 4 * 1024 * 1024,
+    yamuxLimits: YamuxLimits = YamuxLimits(),
+    liveness: LivenessOptions = .pathDefault
+  ) {
     self.origin = origin
     self.connectTimeout = connectTimeout
+    self.handshakeTimeout = handshakeTimeout
     self.transportSecurityPolicy = transportSecurityPolicy
     self.onTransportSecurityDiagnostic = onTransportSecurityDiagnostic
     self.onDiagnosticEvent = onDiagnosticEvent
     self.outboundRecordChunkBytes = outboundRecordChunkBytes
+    self.maxOutboundBufferedBytes = maxOutboundBufferedBytes
     self.yamuxLimits = yamuxLimits
     self.liveness = liveness
+  }
+
+  public init(
+    origin: String? = nil,
+    connectTimeout: Duration = .seconds(8),
+    transportSecurityPolicy: TransportSecurityPolicy = .requireTLS,
+    onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)? = nil,
+    onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil,
+    outboundRecordChunkBytes: Int = 64 * 1024,
+    maxOutboundBufferedBytes: Int,
+    yamuxLimits: YamuxLimits = YamuxLimits(),
+    liveness: LivenessOptions = .pathDefault
+  ) {
+    self.init(
+      origin: origin,
+      connectTimeout: connectTimeout,
+      handshakeTimeout: .seconds(8),
+      transportSecurityPolicy: transportSecurityPolicy,
+      onTransportSecurityDiagnostic: onTransportSecurityDiagnostic,
+      onDiagnosticEvent: onDiagnosticEvent,
+      outboundRecordChunkBytes: outboundRecordChunkBytes,
+      maxOutboundBufferedBytes: maxOutboundBufferedBytes,
+      yamuxLimits: yamuxLimits,
+      liveness: liveness
+    )
   }
 }
 

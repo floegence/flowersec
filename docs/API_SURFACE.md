@@ -312,6 +312,9 @@ Stable connection and session entrypoints:
 - `FlowersecClient.probeLiveness(...)`
 - `FlowersecClient.close()`
 - `ConnectOptions`
+  - `ConnectOptions.connectTimeout`
+  - `ConnectOptions.handshakeTimeout`
+  - `ConnectOptions.maxOutboundBufferedBytes`
 - `DirectConnectOptions`
 - `TunnelConnectOptions`
 - `TransportSecurityPolicy`

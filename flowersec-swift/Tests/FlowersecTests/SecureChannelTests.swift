@@ -88,6 +88,50 @@ final class FlowersecSecureChannelTests: XCTestCase {
     await channel.close()
   }
 
+  func testOutboundWriteBudgetRejectsExcessWithoutClosingChannel() async throws {
+    let transport = PausingBinaryTransport()
+    let diagnostics = DiagnosticRecorder()
+    let key = Data(repeating: 0x31, count: 32)
+    let noncePrefix = Data([1, 2, 3, 4])
+    let channel = FlowersecSecureChannel(
+      transport: transport,
+      keys: keyState(key: key, noncePrefix: noncePrefix),
+      outboundRecordChunkBytes: 8,
+      maxOutboundBufferedBytes: 8,
+      path: .tunnel,
+      onDiagnosticEvent: diagnostics.record
+    )
+
+    let first = Task { try await channel.write(Data("abcdefgh".utf8)) }
+    await transport.waitUntilFirstWriteIsPaused()
+    let initialQueuedBytes = await channel.queuedWriteBytes
+    XCTAssertEqual(initialQueuedBytes, 8)
+
+    do {
+      try await channel.write(Data("x".utf8))
+      XCTFail("Expected the secure-channel write budget to reject the write")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .secure)
+      XCTAssertEqual(error.code, .resourceExhausted)
+    }
+    let rejectedQueuedBytes = await channel.queuedWriteBytes
+    XCTAssertEqual(rejectedQueuedBytes, 8)
+
+    let event = try XCTUnwrap(diagnostics.events().last)
+    XCTAssertEqual(event.code, "resource_limit_reached")
+    XCTAssertEqual(event.resource, "secure_channel_pending_write_bytes")
+    XCTAssertEqual(event.current, 9)
+    XCTAssertEqual(event.limit, 8)
+
+    await transport.resumeFirstWrite()
+    try await first.value
+    let drainedQueuedBytes = await channel.queuedWriteBytes
+    XCTAssertEqual(drainedQueuedBytes, 0)
+    try await channel.write(Data("y".utf8))
+    await channel.close()
+  }
+
   private func keyState(key: Data, noncePrefix: Data) -> FlowersecRecordKeyState {
     FlowersecRecordKeyState(
       sendKey: key,
@@ -101,6 +145,23 @@ final class FlowersecSecureChannelTests: XCTestCase {
       sendSeq: 1,
       recvSeq: 1
     )
+  }
+}
+
+private final class DiagnosticRecorder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: [DiagnosticEvent] = []
+
+  func record(_ event: DiagnosticEvent) {
+    lock.lock()
+    stored.append(event)
+    lock.unlock()
+  }
+
+  func events() -> [DiagnosticEvent] {
+    lock.lock()
+    defer { lock.unlock() }
+    return stored
   }
 }
 

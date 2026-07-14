@@ -118,8 +118,34 @@ final class TransportSecurityTests: XCTestCase {
     if case .requireTLS = options.transportSecurityPolicy {} else {
       XCTFail("Expected TLS by default")
     }
+    XCTAssertEqual(options.handshakeTimeout, .seconds(8))
     XCTAssertEqual(options.outboundRecordChunkBytes, 64 * 1024)
+    XCTAssertEqual(options.maxOutboundBufferedBytes, 4 * 1024 * 1024)
     XCTAssertEqual(options.yamuxLimits, YamuxLimits())
     XCTAssertEqual(options.liveness, .pathDefault)
+  }
+
+  func testConnectRejectsNonPositiveHandshakeAndOutboundBufferLimits() async throws {
+    let info = DirectConnectInfo(
+      wsURL: URL(string: "wss://example.invalid/ws")!,
+      channelID: "channel-option-test",
+      psk: Data(repeating: 0x2a, count: 32),
+      channelInitExpiresAtUnixS: Int64(Date().timeIntervalSince1970) + 60,
+      defaultSuite: .x25519HKDFSHA256AES256GCM
+    )
+    let invalidOptions = [
+      ConnectOptions(handshakeTimeout: .zero),
+      ConnectOptions(maxOutboundBufferedBytes: 0),
+    ]
+    for options in invalidOptions {
+      do {
+        _ = try await Flowersec.connectDirect(info, options: options)
+        XCTFail("Expected invalid connect options to fail before opening the transport")
+      } catch let error as FlowersecError {
+        XCTAssertEqual(error.path, .direct)
+        XCTAssertEqual(error.stage, .validate)
+        XCTAssertEqual(error.code, .invalidOption)
+      }
+    }
   }
 }

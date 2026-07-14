@@ -19,7 +19,7 @@ The package is intentionally product-neutral. It does not contain downstream app
 The repository root exposes the Swift package:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.20.1")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.20.2")
 ```
 
 Use the `Flowersec` product:
@@ -54,6 +54,8 @@ await client.close()
 
 High-level connects use `.requireTLS` by default. Use `.allowPlaintextForLoopback` only for literal local development targets. The low-level WebSocket transport remains scheme-neutral; high-level callers choose the deployment policy explicitly. Automatic liveness is disabled for direct sessions by default; configure `ConnectOptions.liveness` when a direct deployment needs periodic acknowledged probes.
 
+`ConnectOptions.connectTimeout` bounds WebSocket establishment. `ConnectOptions.handshakeTimeout` separately bounds the E2EE handshake and defaults to 8 seconds. `ConnectOptions.maxOutboundBufferedBytes` bounds pending secure-channel writes and defaults to 4 MiB; exceeding it fails the write with `resource_exhausted` without retaining the rejected `Data`.
+
 Use `ConnectOptions.onDiagnosticEvent` for generic transport, Yamux, liveness, and resource-limit events. Events contain only low-cardinality communication metadata and optional `resource`, `current`, and `limit` values; they never include URL queries, credentials, stream kinds, RPC type IDs, or application payloads.
 
 ## Connect Artifacts
@@ -61,8 +63,8 @@ Use `ConnectOptions.onDiagnosticEvent` for generic transport, Yamux, liveness, a
 `ConnectArtifact` is the canonical wire model for direct and tunnel client setup.
 Both variants carry `ConnectArtifactMetadata`:
 
-- `scoped`: up to eight unique `ScopeMetadataEntry` values. Flowersec Swift preserves and validates scoped metadata, but it does not interpret product-specific scope payloads.
-- `correlation`: optional `CorrelationContext` with sanitized trace/session IDs and up to eight unique tags.
+- `scoped`: up to eight unique `ScopeMetadataEntry` values. In 0.20.2, connect rejects critical scopes because Swift does not yet expose scope resolvers; optional scopes are ignored with a diagnostic. Product-specific payload interpretation remains outside Flowersec.
+- `correlation`: optional `CorrelationContext` with sanitized trace/session IDs and up to eight unique tags. Artifact-based connect copies trace and session IDs into emitted diagnostics.
 
 ```swift
 let artifact = try JSONDecoder().decode(ConnectArtifact.self, from: data)

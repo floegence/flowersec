@@ -1043,6 +1043,14 @@
       },
       {
         "kind": "swift.init",
+        "name": "ConnectOptions.init(origin:connectTimeout:handshakeTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:liveness:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectOptions.init(origin:connectTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:liveness:)"
+      },
+      {
+        "kind": "swift.init",
         "name": "ConnectOptions.init(origin:connectTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:yamuxLimits:liveness:)"
       },
       {
@@ -1695,7 +1703,15 @@
       },
       {
         "kind": "swift.property",
+        "name": "ConnectOptions.handshakeTimeout"
+      },
+      {
+        "kind": "swift.property",
         "name": "ConnectOptions.liveness"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectOptions.maxOutboundBufferedBytes"
       },
       {
         "kind": "swift.property",

@@ -242,16 +242,28 @@ public final class FlowersecClient: @unchecked Sendable {
   }
 }
 
+private enum HandshakeRaceResult: @unchecked Sendable {
+  case completed(FlowersecSecureChannel)
+  case failed(any Error)
+  case timedOut
+}
+
 public enum Flowersec {
   public static func connect(
     _ artifact: ConnectArtifact,
     options: ConnectOptions = ConnectOptions()
   ) async throws -> FlowersecClient {
     switch artifact {
-    case .direct(let info, metadata: _):
-      return try await connectDirect(info, options: options)
-    case .tunnel(let grant, metadata: _):
-      return try await connectTunnel(grant, options: options)
+    case .direct(let info, metadata: let metadata):
+      return try await connectDirect(
+        info,
+        options: try artifactOptions(options, metadata: metadata, path: .direct)
+      )
+    case .tunnel(let grant, metadata: let metadata):
+      return try await connectTunnel(
+        grant,
+        options: try artifactOptions(options, metadata: metadata, path: .tunnel)
+      )
     }
   }
 
@@ -277,24 +289,13 @@ public enum Flowersec {
       onDiagnosticEvent: options.onDiagnosticEvent
     )
     await transport.resume()
-    let secure = try await FlowersecHandshake.runClientHandshake(
+    return try await establishConnection(
+      info,
       transport: transport,
-      info: info,
-      outboundRecordChunkBytes: options.outboundRecordChunkBytes
-    )
-    let yamux = FlowersecYamuxClient(
-      channel: secure,
-      limits: options.yamuxLimits,
-      automaticLiveness: try resolvedLiveness(options.liveness, path: .direct, idleTimeout: nil),
+      options: options,
       path: .direct,
-      onDiagnosticEvent: options.onDiagnosticEvent
+      idleTimeout: nil
     )
-    let stream = try await yamux.openStream()
-    try await FlowersecJSONFrame.write(StreamHello(kind: "rpc", version: 1).encoded(), to: stream)
-    let rpc = RPCClient(stream: stream)
-    await rpc.start()
-    await yamux.start()
-    return FlowersecClient(rpc: rpc, yamux: yamux)
   }
 
   public static func connectTunnel(
@@ -327,17 +328,22 @@ public enum Flowersec {
       onDiagnosticEvent: options.onDiagnosticEvent
     )
     await transport.resume()
-    try await transport.writeText(
-      TunnelAttach(
-        v: 1,
-        channelID: grant.channelID,
-        role: grant.role,
-        token: grant.token,
-        endpointInstanceID: Data.secureRandom(count: 16).base64URLEncodedString(),
-        caps: nil
-      ).encoded()
-    )
-    return try await connectDirect(
+    do {
+      try await transport.writeText(
+        TunnelAttach(
+          v: 1,
+          channelID: grant.channelID,
+          role: grant.role,
+          token: grant.token,
+          endpointInstanceID: Data.secureRandom(count: 16).base64URLEncodedString(),
+          caps: nil
+        ).encoded()
+      )
+    } catch {
+      await transport.close()
+      throw error
+    }
+    return try await establishConnection(
       DirectConnectInfo(
         wsURL: grant.tunnelURL,
         channelID: grant.channelID,
@@ -347,38 +353,66 @@ public enum Flowersec {
       ),
       transport: transport,
       options: options,
+      path: .tunnel,
       idleTimeout: .seconds(max(0, grant.idleTimeoutSeconds))
     )
   }
 
-  private static func connectDirect(
+  static func establishConnection(
     _ info: DirectConnectInfo,
-    transport: FlowersecWebSocketBinaryTransport,
+    transport: any FlowersecBinaryTransport,
     options: ConnectOptions,
-    idleTimeout: Duration
+    path: FlowersecPath,
+    idleTimeout: Duration?
   ) async throws -> FlowersecClient {
-    let secure = try await FlowersecHandshake.runClientHandshake(
-      transport: transport,
-      info: info,
-      outboundRecordChunkBytes: options.outboundRecordChunkBytes
-    )
-    let yamux = FlowersecYamuxClient(
-      channel: secure,
-      limits: options.yamuxLimits,
-      automaticLiveness: try resolvedLiveness(
+    var secure: FlowersecSecureChannel?
+    var yamux: FlowersecYamuxClient?
+    var stream: FlowersecYamuxStream?
+    var rpc: RPCClient?
+    do {
+      let automaticLiveness = try resolvedLiveness(
         options.liveness,
-        path: .tunnel,
+        path: path,
         idleTimeout: idleTimeout
-      ),
-      path: .tunnel,
-      onDiagnosticEvent: options.onDiagnosticEvent
-    )
-    let stream = try await yamux.openStream()
-    try await FlowersecJSONFrame.write(StreamHello(kind: "rpc", version: 1).encoded(), to: stream)
-    let rpc = RPCClient(stream: stream)
-    await rpc.start()
-    await yamux.start()
-    return FlowersecClient(rpc: rpc, yamux: yamux)
+      )
+      let establishedSecure = try await runHandshake(
+        transport: transport,
+        info: info,
+        options: options,
+        path: path
+      )
+      secure = establishedSecure
+      let establishedYamux = FlowersecYamuxClient(
+        channel: establishedSecure,
+        limits: options.yamuxLimits,
+        automaticLiveness: automaticLiveness,
+        path: path,
+        onDiagnosticEvent: options.onDiagnosticEvent
+      )
+      yamux = establishedYamux
+      let establishedStream = try await establishedYamux.openStream()
+      stream = establishedStream
+      try await FlowersecJSONFrame.write(
+        StreamHello(kind: "rpc", version: 1).encoded(),
+        to: establishedStream
+      )
+      let establishedRPC = RPCClient(stream: establishedStream)
+      rpc = establishedRPC
+      await establishedRPC.start()
+      await establishedYamux.start()
+      try Task.checkCancellation()
+      return FlowersecClient(rpc: establishedRPC, yamux: establishedYamux)
+    } catch {
+      await rpc?.close()
+      await stream?.close()
+      await yamux?.close()
+      await secure?.close()
+      await transport.close()
+      if Task.isCancelled {
+        throw CancellationError()
+      }
+      throw error
+    }
   }
 
   private static func validate(options: ConnectOptions, path: FlowersecPath) throws {
@@ -393,6 +427,22 @@ public enum Flowersec {
         message: "outboundRecordChunkBytes must fit within the record plaintext limit."
       )
     }
+    guard options.handshakeTimeout > .zero else {
+      throw FlowersecError(
+        path: path,
+        stage: .validate,
+        code: .invalidOption,
+        message: "handshakeTimeout must be positive."
+      )
+    }
+    guard options.maxOutboundBufferedBytes > 0 else {
+      throw FlowersecError(
+        path: path,
+        stage: .validate,
+        code: .invalidOption,
+        message: "maxOutboundBufferedBytes must be positive."
+      )
+    }
     do {
       try options.yamuxLimits.validate()
       _ = try resolvedLiveness(options.liveness, path: path, idleTimeout: .seconds(1))
@@ -402,6 +452,112 @@ public enum Flowersec {
       error.code = .invalidOption
       throw error
     }
+  }
+
+  private static func runHandshake(
+    transport: any FlowersecBinaryTransport,
+    info: DirectConnectInfo,
+    options: ConnectOptions,
+    path: FlowersecPath
+  ) async throws -> FlowersecSecureChannel {
+    try await withTaskCancellationHandler {
+      try await withThrowingTaskGroup(of: HandshakeRaceResult.self) { group in
+        group.addTask {
+          do {
+            return .completed(
+              try await FlowersecHandshake.runClientHandshake(
+                transport: transport,
+                info: info,
+                outboundRecordChunkBytes: options.outboundRecordChunkBytes,
+                maxOutboundBufferedBytes: options.maxOutboundBufferedBytes,
+                path: path,
+                onDiagnosticEvent: options.onDiagnosticEvent
+              )
+            )
+          } catch {
+            return .failed(error)
+          }
+        }
+        group.addTask {
+          do {
+            try await Task.sleep(for: options.handshakeTimeout)
+            return .timedOut
+          } catch {
+            return .failed(error)
+          }
+        }
+
+        guard let result = try await group.next() else {
+          throw FlowersecError(
+            path: path,
+            stage: .handshake,
+            code: .handshakeFailed,
+            message: "The Flowersec handshake ended without a result."
+          )
+        }
+        group.cancelAll()
+        if Task.isCancelled {
+          await transport.close()
+          throw CancellationError()
+        }
+        switch result {
+        case .completed(let channel):
+          return channel
+        case .failed(let error):
+          throw error
+        case .timedOut:
+          await transport.close()
+          throw FlowersecError(
+            path: path,
+            stage: .handshake,
+            code: .timeout,
+            message: "The Flowersec handshake timed out."
+          )
+        }
+      }
+    } onCancel: {
+      Task { await transport.close() }
+    }
+  }
+
+  private static func artifactOptions(
+    _ options: ConnectOptions,
+    metadata: ConnectArtifactMetadata,
+    path: FlowersecPath
+  ) throws -> ConnectOptions {
+    var resolved = options
+    if let correlation = metadata.correlation, let observer = options.onDiagnosticEvent {
+      resolved.onDiagnosticEvent = { event in
+        var correlated = event
+        if let traceID = correlation.traceID {
+          correlated.traceID = traceID
+        }
+        if let sessionID = correlation.sessionID {
+          correlated.sessionID = sessionID
+        }
+        observer(correlated)
+      }
+    }
+    for entry in metadata.scoped {
+      if entry.critical {
+        throw FlowersecError(
+          path: path,
+          stage: .validate,
+          code: .invalidInput,
+          message: "Missing scope resolver for \(entry.scope)@\(entry.scopeVersion)."
+        )
+      }
+      resolved.onDiagnosticEvent?(
+        DiagnosticEvent(
+          path: path,
+          stage: .validate,
+          codeDomain: .event,
+          code: "scope_ignored_missing_resolver",
+          result: .skip
+        )
+      )
+    }
+    return resolved
   }
 
   private static func resolvedLiveness(
