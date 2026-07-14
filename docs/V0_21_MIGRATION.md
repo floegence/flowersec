@@ -10,6 +10,14 @@ The following contracts are unchanged:
 - the Yamux frame format
 - StreamHello and application RPC type IDs
 
+## Release coordinates
+
+- Go module tag: `flowersec-go/v0.21.0`
+- npm package: `@floegence/flowersec-core@0.21.0`
+- SwiftPM root tag: `0.21.0`
+
+Upgrade downstream dependencies from published registries or releases. Do not use `replace`, `file:`, `link:`, `workspace:`, sibling aliases, or copied source as a completed upgrade path.
+
 ## Codeserver preset migration
 
 The Go and TypeScript core packages no longer export or resolve the `codeserver` profile or built-in preset name.

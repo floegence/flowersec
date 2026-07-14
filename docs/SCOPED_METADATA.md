@@ -81,16 +81,17 @@ Important boundary:
 - `allowedOrigins` is the frozen controller-bridge security input
 - deployment-specific path details remain caller-owned configuration, not stable scope fields
 - `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin` overrides, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, `maxQueuedHttpBodyBytes`, `maxWsBufferedAmountBytes`, and bridge `capabilityNonce` are explicit runtime/bootstrap options, not `proxy.runtime@1` payload fields
-- do not expand the `proxy.runtime@1` schema for deployment hardening switches; use explicit helper options for v0.20.x, or introduce a future `proxy.runtime@2` with a reviewed manifest if the artifact contract needs new stable fields
+- do not expand the `proxy.runtime@1` schema for deployment hardening switches; use explicit helper options, or introduce a future `proxy.runtime@2` with a reviewed manifest if the artifact contract needs new stable fields
 
 ## Stable vs experimental boundary
 
-Stable in v0.20.x:
+Stable in v0.21.0:
 
 - `scoped` field on `ConnectArtifact`
 - parser invariants
 - critical fail-fast meaning
 - `proxy.runtime@1` when consumed through the stable proxy helper entrypoints
+- Swift artifact scope resolver registration and optional-scope validation
 
 Experimental:
 
@@ -110,4 +111,4 @@ Experimental:
 - `tools/manifestgen/`
 
 These files exist to keep scope evolution disciplined.
-Only the frozen `proxy.runtime@1` manifest is part of the stable proxy-helper contract in v0.20.x.
+Only the frozen `proxy.runtime@1` manifest is part of the stable proxy-helper contract in v0.21.0.

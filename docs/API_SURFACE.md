@@ -1,6 +1,6 @@
 # Flowersec API Surface
 
-This document defines the stable integration surface for Flowersec v0.20.x.
+This document defines the stable integration surface for Flowersec v0.21.0.
 
 Canonical source of truth for the stable surface: `stability/public_api_manifest.json`
 
@@ -373,7 +373,7 @@ Stable artifact and wire value types:
 
 ## Stable vs experimental notes
 
-Stable in v0.20.x:
+Stable in v0.21.0:
 
 - client-facing canonical `ConnectArtifact`
 - strict canonical parse / validate rules
@@ -390,11 +390,12 @@ Stable in v0.20.x:
 - discriminated one-time and refreshable artifact sources
 - proxy preset manifest contract
 - `proxy.runtime@1` when consumed through stable proxy helper entrypoints
+- Swift artifact scope resolver registration and optional-scope validation listed above
 
-Still experimental in v0.20.x:
+Still experimental in v0.21.0:
 
 - public normalize helper shapes
-- public scope resolver registration API
+- unlisted generic scope normalization and resolver helper APIs
 - scoped manifest toolchain/codegen factory outside the frozen `proxy.runtime@1` contract
 - bilateral scope negotiation semantics
 - direct-transport proxy helper support beyond the documented tunnel-first browser flows
