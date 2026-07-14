@@ -79,7 +79,8 @@ func NewServerHandshakeCache() *ServerHandshakeCache {
 }
 
 var (
-	ErrTooManyPendingHandshakes = errors.New("too many pending handshakes")
+	ErrTooManyPendingHandshakes  = errors.New("too many pending handshakes")
+	errHandshakeStateUnavailable = errors.New("handshake state unavailable")
 
 	// Handshake errors surfaced for programmatic handling at higher levels.
 	ErrHandshakeIDMismatch   = errors.New("handshake_id mismatch")
@@ -424,6 +425,11 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 		if ht != HandshakeTypeAck {
 			return nil, fmt.Errorf("unexpected handshake type: %d", ht)
 		}
+		consumed := cache.take(st.Key, st)
+		if consumed == nil {
+			return nil, errHandshakeStateUnavailable
+		}
+		st = consumed
 		if err := json.Unmarshal(payload, &ack); err != nil {
 			return nil, err
 		}
@@ -491,8 +497,6 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	if err != nil {
 		return nil, err
 	}
-
-	cache.delete(st.Key)
 
 	// Server-finished confirmation: immediately send an encrypted ping record (seq=1)
 	// so the client can detect successful key agreement before returning.
@@ -566,10 +570,15 @@ func (c *ServerHandshakeCache) getOrCreate(initMsg e2eev1.E2EE_Init, suite Suite
 	return st, nil
 }
 
-func (c *ServerHandshakeCache) delete(key string) {
+func (c *ServerHandshakeCache) take(key string, expected *serverHandshakeState) *serverHandshakeState {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	current, ok := c.m[key]
+	if !ok || current != expected {
+		return nil
+	}
 	delete(c.m, key)
-	c.mu.Unlock()
+	return current
 }
 
 func (c *ServerHandshakeCache) cleanupLocked(now time.Time) {

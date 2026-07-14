@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,113 @@ func (t *scriptedTransport) WriteBinary(_ context.Context, b []byte) error {
 }
 
 func (t *scriptedTransport) Close() error { return nil }
+
+type handshakeResponseBarrier struct {
+	mu        sync.Mutex
+	count     int
+	responses chan struct{}
+}
+
+func newHandshakeResponseBarrier() *handshakeResponseBarrier {
+	return &handshakeResponseBarrier{responses: make(chan struct{})}
+}
+
+func (b *handshakeResponseBarrier) arrive() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.count++
+	if b.count == 2 {
+		close(b.responses)
+	}
+}
+
+type concurrentAckTransport struct {
+	init      e2eev1.E2EE_Init
+	initFrame []byte
+	psk       []byte
+	barrier   *handshakeResponseBarrier
+	readCount int
+	ackFrame  []byte
+}
+
+func (t *concurrentAckTransport) ReadBinary(ctx context.Context) ([]byte, error) {
+	t.readCount++
+	if t.readCount == 1 {
+		return t.initFrame, nil
+	}
+	if t.readCount != 2 {
+		return nil, errors.New("unexpected read")
+	}
+	select {
+	case <-t.barrier.responses:
+		return t.ackFrame, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (t *concurrentAckTransport) WriteBinary(_ context.Context, frame []byte) error {
+	ht, payload, err := DecodeHandshakeFrame(frame, 8*1024)
+	if err != nil || ht != HandshakeTypeResp {
+		return nil
+	}
+	var resp e2eev1.E2EE_Resp
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		return err
+	}
+	clientPub, err := base64url.Decode(t.init.ClientEphPubB64u)
+	if err != nil {
+		return err
+	}
+	nonceCBytes, err := base64url.Decode(t.init.NonceCB64u)
+	if err != nil {
+		return err
+	}
+	serverPub, err := base64url.Decode(resp.ServerEphPubB64u)
+	if err != nil {
+		return err
+	}
+	nonceSBytes, err := base64url.Decode(resp.NonceSB64u)
+	if err != nil {
+		return err
+	}
+	var nonceC, nonceS [32]byte
+	copy(nonceC[:], nonceCBytes)
+	copy(nonceS[:], nonceSBytes)
+	th, err := TranscriptHash(TranscriptInputs{
+		Version:        ProtocolVersion,
+		Suite:          uint16(t.init.Suite),
+		Role:           uint8(e2eev1.Role_client),
+		ClientFeatures: t.init.ClientFeatures,
+		ServerFeatures: resp.ServerFeatures,
+		ChannelID:      t.init.ChannelId,
+		NonceC:         nonceC,
+		NonceS:         nonceS,
+		ClientEphPub:   clientPub,
+		ServerEphPub:   serverPub,
+	})
+	if err != nil {
+		return err
+	}
+	timestamp := uint64(time.Now().Unix())
+	tag, err := ComputeAuthTag(t.psk, th, timestamp)
+	if err != nil {
+		return err
+	}
+	ackJSON, err := json.Marshal(e2eev1.E2EE_Ack{
+		HandshakeId:    resp.HandshakeId,
+		TimestampUnixS: timestamp,
+		AuthTagB64u:    base64url.Encode(tag[:]),
+	})
+	if err != nil {
+		return err
+	}
+	t.ackFrame = EncodeHandshakeFrame(HandshakeTypeAck, ackJSON)
+	t.barrier.arrive()
+	return nil
+}
+
+func (*concurrentAckTransport) Close() error { return nil }
 
 func makeInit(t *testing.T, suite Suite) (e2eev1.E2EE_Init, []byte) {
 	t.Helper()
@@ -216,8 +324,10 @@ func TestServerHandshakeRejectsRoleAndSuite(t *testing.T) {
 
 func TestServerHandshakeAuthTagMismatch(t *testing.T) {
 	psk := make([]byte, 32)
-	_, frame := makeInit(t, SuiteX25519HKDFAES256GCM)
+	init, frame := makeInit(t, SuiteX25519HKDFAES256GCM)
 	transport := &scriptedTransport{reads: [][]byte{frame}}
+	cache := NewServerHandshakeCache()
+	var firstHandshakeID string
 
 	transport.onWrite = func(respFrame []byte) {
 		_, payload, err := DecodeHandshakeFrame(respFrame, 8*1024)
@@ -226,6 +336,7 @@ func TestServerHandshakeAuthTagMismatch(t *testing.T) {
 		}
 		var resp e2eev1.E2EE_Resp
 		_ = json.Unmarshal(payload, &resp)
+		firstHandshakeID = resp.HandshakeId
 		ack := e2eev1.E2EE_Ack{
 			HandshakeId:    resp.HandshakeId,
 			TimestampUnixS: uint64(time.Now().Unix()),
@@ -235,7 +346,7 @@ func TestServerHandshakeAuthTagMismatch(t *testing.T) {
 		transport.reads = append(transport.reads, EncodeHandshakeFrame(HandshakeTypeAck, b))
 	}
 
-	_, err := ServerHandshake(context.Background(), transport, nil, ServerHandshakeOptions{
+	_, err := ServerHandshake(context.Background(), transport, cache, ServerHandshakeOptions{
 		PSK:               psk,
 		ChannelID:         "ch_1",
 		Suite:             SuiteX25519HKDFAES256GCM,
@@ -244,6 +355,65 @@ func TestServerHandshakeAuthTagMismatch(t *testing.T) {
 	})
 	if err == nil || !errors.Is(err, ErrAuthTagMismatch) {
 		t.Fatalf("expected auth tag mismatch, got %v", err)
+	}
+	next, err := cache.getOrCreate(init, SuiteX25519HKDFAES256GCM, 0)
+	if err != nil {
+		t.Fatalf("create replacement handshake state: %v", err)
+	}
+	if next.HandshakeID == firstHandshakeID {
+		t.Fatal("failed ACK left the consumed handshake state in the cache")
+	}
+}
+
+func TestServerHandshakeConsumesSharedStateOnce(t *testing.T) {
+	psk := make([]byte, 32)
+	for i := range psk {
+		psk[i] = byte(i + 1)
+	}
+	init, initFrame := makeInit(t, SuiteX25519HKDFAES256GCM)
+	cache := NewServerHandshakeCache()
+	barrier := newHandshakeResponseBarrier()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	results := make(chan error, 2)
+	for range 2 {
+		transport := &concurrentAckTransport{
+			init:      init,
+			initFrame: initFrame,
+			psk:       psk,
+			barrier:   barrier,
+		}
+		go func() {
+			secure, err := ServerHandshake(ctx, transport, cache, ServerHandshakeOptions{
+				PSK:               psk,
+				ChannelID:         init.ChannelId,
+				Suite:             SuiteX25519HKDFAES256GCM,
+				InitExpireAtUnixS: time.Now().Add(time.Minute).Unix(),
+				ClockSkew:         30 * time.Second,
+			})
+			if secure != nil {
+				_ = secure.Close()
+			}
+			results <- err
+		}()
+	}
+
+	succeeded := 0
+	failedUnavailable := 0
+	for range 2 {
+		err := <-results
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, errHandshakeStateUnavailable):
+			failedUnavailable++
+		default:
+			t.Fatalf("unexpected handshake result: %v", err)
+		}
+	}
+	if succeeded != 1 || failedUnavailable != 1 {
+		t.Fatalf("handshake results: succeeded=%d unavailable=%d", succeeded, failedUnavailable)
 	}
 }
 

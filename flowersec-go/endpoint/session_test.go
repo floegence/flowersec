@@ -402,6 +402,43 @@ func TestSessionOpenStream_ContextCanceled_ReturnsCanceled(t *testing.T) {
 	}
 }
 
+func TestSessionOpenStream_ContextDeadlineCancelsBlockedOpen(t *testing.T) {
+	local, remote := net.Pipe()
+	mux, err := fsyamux.NewServer(local, fsyamux.YamuxLimits{MaxActiveStreams: 2, MaxInboundStreams: 1}, fsyamux.LivenessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mux.Close()
+	defer remote.Close()
+	first, err := mux.OpenStream()
+	if err != nil {
+		t.Fatalf("first OpenStream() failed: %v", err)
+	}
+	defer first.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := (&session{path: PathDirect, mux: mux}).OpenStream(ctx, "echo")
+		errCh <- err
+	}()
+
+	select {
+	case err := <-errCh:
+		var fe *Error
+		if !errors.As(err, &fe) {
+			t.Fatalf("expected *endpoint.Error, got %T", err)
+		}
+		if fe.Path != PathDirect || fe.Stage != StageYamux || fe.Code != CodeTimeout {
+			t.Fatalf("unexpected error: %+v", fe)
+		}
+	case <-time.After(time.Second):
+		_ = mux.Close()
+		t.Fatal("OpenStream did not stop after context deadline")
+	}
+}
+
 func TestSessionServeStreams_ContextCanceled_ReturnsStructuredError(t *testing.T) {
 	_, srv, closeFn := newYamuxPair(t)
 	defer closeFn()

@@ -388,12 +388,15 @@ describe("serverHandshake", () => {
     vi.setSystemTime(new Date(100 * 1000));
 
     const psk = crypto.getRandomValues(new Uint8Array(32));
-    const { initFrame } = makeInit({ channelId: "ch_1", suite: 1 });
+    const { init, initFrame } = makeInit({ channelId: "ch_1", suite: 1 });
     const transport = new ScriptedTransport([initFrame]);
+    const cache = new ServerHandshakeCache();
+    let firstHandshakeId = "";
 
     transport.onWrite = (frame) => {
       const decoded = decodeHandshakeFrame(frame, 8 * 1024);
       const resp = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Resp;
+      firstHandshakeId = resp.handshake_id;
       const ack: E2EE_Ack = {
         handshake_id: resp.handshake_id,
         timestamp_unix_s: 100,
@@ -402,7 +405,7 @@ describe("serverHandshake", () => {
       transport.pushRead(encodeHandshakeFrame(HANDSHAKE_TYPE_ACK, te.encode(JSON.stringify(ack))));
     };
 
-    await expect(serverHandshake(transport, new ServerHandshakeCache(), {
+    await expect(serverHandshake(transport, cache, {
       channelId: "ch_1",
       suite: 1,
       psk,
@@ -413,7 +416,86 @@ describe("serverHandshake", () => {
       maxRecordBytes: 1 << 20
     })).rejects.toThrow(/auth tag mismatch/);
 
+    const retryTransport = new ScriptedTransport([initFrame]);
+    let replacementHandshakeId = "";
+    retryTransport.onWrite = (frame) => {
+      if (td.decode(frame.subarray(0, 4)) !== "FSEH") return;
+      const decoded = decodeHandshakeFrame(frame, 8 * 1024);
+      const resp = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Resp;
+      replacementHandshakeId = resp.handshake_id;
+      retryTransport.pushRead(buildAckFrame({ init, resp, psk, timestamp: 100 }));
+    };
+    const replacement = await serverHandshake(retryTransport, cache, {
+      channelId: "ch_1",
+      suite: 1,
+      psk,
+      serverFeatures: 0,
+      initExpireAtUnixS: 200,
+      clockSkewSeconds: 30,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20
+    });
+    replacement.close();
+    expect(replacementHandshakeId).not.toBe(firstHandshakeId);
+
     vi.useRealTimers();
+  });
+
+  test("allows only one concurrent ACK to consume shared state", async () => {
+    const psk = crypto.getRandomValues(new Uint8Array(32));
+    const { init, initFrame } = makeInit({ channelId: "ch_1", suite: 1 });
+    const cache = new ServerHandshakeCache();
+    let responseCount = 0;
+    let releaseResponses!: () => void;
+    const responsesReady = new Promise<void>((resolve) => {
+      releaseResponses = resolve;
+    });
+
+    const createTransport = (): BinaryTransport => {
+      let readCount = 0;
+      let ackFrame: Uint8Array | undefined;
+      return {
+        async readBinary() {
+          readCount++;
+          if (readCount === 1) return initFrame;
+          if (readCount !== 2) throw new Error("unexpected read");
+          await responsesReady;
+          if (ackFrame == null) throw new Error("missing ACK");
+          return ackFrame;
+        },
+        async writeBinary(frame) {
+          if (td.decode(frame.subarray(0, 4)) !== "FSEH") return;
+          const decoded = decodeHandshakeFrame(frame, 8 * 1024);
+          const resp = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Resp;
+          ackFrame = buildAckFrame({ init, resp, psk, timestamp: Math.floor(Date.now() / 1000) });
+          responseCount++;
+          if (responseCount === 2) releaseResponses();
+        },
+        close() {}
+      };
+    };
+
+    const opts = {
+      channelId: "ch_1",
+      suite: 1 as const,
+      psk,
+      serverFeatures: 0,
+      initExpireAtUnixS: Math.floor(Date.now() / 1000) + 120,
+      clockSkewSeconds: 30,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20
+    };
+    const results = await Promise.allSettled([
+      serverHandshake(createTransport(), cache, opts),
+      serverHandshake(createTransport(), cache, opts)
+    ]);
+    const fulfilled = results.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof serverHandshake>>> => result.status === "fulfilled");
+    const rejected = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    for (const result of fulfilled) result.value.close();
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toMatchObject({ message: "handshake state unavailable" });
   });
 
   test("rejects unexpected init retry parameters", async () => {

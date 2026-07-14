@@ -273,15 +273,18 @@ func (s *session) OpenStream(ctx context.Context, kind string) (io.ReadWriteClos
 		return nil, wrapErr(s.path, fserrors.StageYamux, classifyContextCode(err), err)
 	}
 
-	st, err := s.mux.OpenStream()
+	st, err := s.mux.OpenStreamContext(ctx)
 	if err != nil {
 		if errors.Is(err, fsyamux.ErrResourceExhausted) {
 			return nil, wrapErr(s.path, fserrors.StageYamux, fserrors.CodeResourceExhausted, err)
 		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, wrapErr(s.path, fserrors.StageYamux, classifyContextCode(err), err)
+		}
 		return nil, wrapErr(s.path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
 	}
 
-	// Honor ctx deadline/cancel during the StreamHello write (opening the stream itself is not context-aware).
+	// Continue honoring ctx during the StreamHello write after the stream is open.
 	if d, ok := ctx.Deadline(); ok {
 		if ds, ok := any(st).(interface{ SetWriteDeadline(time.Time) error }); ok {
 			_ = ds.SetWriteDeadline(d)

@@ -111,6 +111,27 @@ func TestProbeReturnsACKRoundTrip(t *testing.T) {
 	}
 }
 
+func TestOpenStreamContextCancelsBlockedOpen(t *testing.T) {
+	local, remote := net.Pipe()
+	client, err := NewClient(local, YamuxLimits{MaxActiveStreams: 2, MaxInboundStreams: 1}, LivenessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	defer remote.Close()
+	first, err := client.OpenStream()
+	if err != nil {
+		t.Fatalf("first OpenStream() failed: %v", err)
+	}
+	defer first.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := client.OpenStreamContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("OpenStreamContext() error = %v, want deadline exceeded", err)
+	}
+}
+
 func TestAutomaticLivenessFailureClosesSession(t *testing.T) {
 	a, b := net.Pipe()
 	defer a.Close()

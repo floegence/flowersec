@@ -85,10 +85,18 @@ func (s *Stream) SetWriteDeadline(t time.Time) error { return s.inner.SetWriteDe
 
 // OpenStream opens an outbound stream.
 func (s *Session) OpenStream() (*Stream, error) {
+	return s.OpenStreamContext(context.Background())
+}
+
+// OpenStreamContext opens an outbound stream and honors context cancellation while opening it.
+func (s *Session) OpenStreamContext(ctx context.Context) (*Stream, error) {
 	if s == nil || s.inner == nil {
 		return nil, io.ErrClosedPipe
 	}
-	stream, err := s.inner.OpenStream(context.Background())
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stream, err := s.inner.OpenStream(ctx)
 	if err != nil {
 		return nil, err
 	}

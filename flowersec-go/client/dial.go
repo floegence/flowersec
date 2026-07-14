@@ -266,7 +266,7 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 	}
 
 	rpcStream, err := openBootstrapStream(handshakeCtx, path, secure, func() (io.ReadWriteCloser, error) {
-		return sess.OpenStream()
+		return sess.OpenStreamContext(handshakeCtx)
 	})
 	if err != nil {
 		_ = sess.Close()

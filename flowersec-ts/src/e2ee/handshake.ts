@@ -269,6 +269,7 @@ export class ServerHandshakeCache {
     }
     this.ttlMs = ttlMs;
     this.maxEntries = maxEntries;
+    serverHandshakeCacheStores.set(this, this.m);
   }
 
   private cleanup(nowMs: number): void {
@@ -309,6 +310,16 @@ export class ServerHandshakeCache {
     const initKey = fingerprintInit(init);
     this.m.delete(initKey);
   }
+}
+
+const serverHandshakeCacheStores = new WeakMap<ServerHandshakeCache, Map<string, ServerCacheEntry>>();
+
+function takeServerHandshakeState(cache: ServerHandshakeCache, expected: ServerCacheEntry): ServerCacheEntry | undefined {
+  const store = serverHandshakeCacheStores.get(cache);
+  const current = store?.get(expected.initKey);
+  if (current !== expected) return undefined;
+  store!.delete(expected.initKey);
+  return current;
 }
 
 // serverHandshake performs the server side of the E2EE handshake.
@@ -360,6 +371,7 @@ export async function serverHandshake(
       continue;
     }
     if (decoded.handshakeType !== HANDSHAKE_TYPE_ACK) throw new Error("unexpected handshake type");
+    if (takeServerHandshakeState(cache, entry) == null) throw new Error("handshake state unavailable");
     ack = JSON.parse(td.decode(decoded.payloadJsonUtf8)) as E2EE_Ack;
     break;
   }
@@ -388,7 +400,6 @@ export async function serverHandshake(
 
   const shared = suiteSharedSecret(suite, entry.serverPriv, clientPub);
   const keys = deriveSessionKeys(opts.psk, shared, th);
-  cache.delete(init);
 
   // Server-finished confirmation: send an encrypted ping record (seq=1) immediately after the handshake.
   const pingFrame = encryptRecord(keys.s2cKey, keys.s2cNoncePrefix, RECORD_FLAG_PING, 1n, new Uint8Array(), opts.maxRecordBytes);
