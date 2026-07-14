@@ -425,9 +425,11 @@ Requirements:
 - Runtime HTTP stream admission is bounded and independent from WebSocket opens:
   - `maxConcurrentHttpStreams` defaults to `24`, leaving headroom below the default Yamux inbound stream limit for RPC and WebSocket traffic.
   - `maxQueuedHttpRequests` defaults to `128` and may be set to `0` to reject instead of queueing when all HTTP permits are occupied.
+  - `maxQueuedHttpBodyBytes` defaults to `64 MiB` and counts only request bodies waiting for admission. Admission, cancellation, failure, and `dispose()` release the reserved bytes.
   - Queued requests are FIFO and abort-aware. A permit is held for the complete HTTP stream lifecycle, including response streaming and cleanup.
   - A full admission queue fails with HTTP `503` and the stable generic `resource_exhausted` error code. Increase the queue only with a corresponding memory and latency budget; do not raise concurrency above the peer's stream capacity.
   - `dispose()` rejects queued and future HTTP requests while allowing already-admitted stream cleanup to finish. WebSocket opens do not consume HTTP permits.
+- Patched WebSocket text, binary, and Blob sends share one serial queue. `maxWsBufferedAmountBytes` defaults to `4 MiB`, and `bufferedAmount` reports user bytes whose writes have not completed.
 - `external_origin` is trusted only when it is derived by the generated same-origin SW or supplied through an explicit trusted runtime option.
   - The runtime may set `externalOrigin` to a deployment-owned origin when the app is mounted behind a stable external URL.
   - A runtime-level trusted `externalOrigin` override takes precedence over app-supplied bridge metadata.
@@ -442,6 +444,8 @@ Requirements:
   - `controllerBridge.allowedOrigins` is mandatory and must list the app origins allowed to post bridge messages.
   - Origin-only controller bridge registration is rejected; use `expectedSource` when the controller can identify the app iframe/window.
   - Use `capabilityNonce` when the app source is not available at registration time or the embedding relationship is not uniquely identified by source alone. The app window and controller window must present the same high-entropy nonce; messages without it are ignored.
+  - New app/controller pairs negotiate write acknowledgements during open. When supported, an app-side write completes only after the controller finishes the Yamux write. Older controllers remain compatible without acknowledgements.
+  - The controller serializes writes and independently enforces the WebSocket pending-byte limit, including callers that bypass the patched WebSocket and write directly through the bridge.
 
 Artifact-first helper boundary:
 
@@ -449,10 +453,10 @@ Artifact-first helper boundary:
 - `connectArtifactProxyControllerBrowser(...)` consumes `proxy.runtime@1` with `mode = "controller_bridge"`.
 - `allowedOrigins` is the frozen controller-bridge security input.
 - deployment-specific path details stay caller-provided or boot-payload-specific; they are not frozen as proxy helper API surface.
-- `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin`, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, and `capabilityNonce` stay explicit options; they are not added to the frozen `proxy.runtime@1` schema.
+- `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin`, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, `maxQueuedHttpBodyBytes`, `maxWsBufferedAmountBytes`, and `capabilityNonce` stay explicit options; they are not added to the frozen `proxy.runtime@1` schema.
 - If these controls need to become artifact-carried stable fields, introduce a future `proxy.runtime@2` with a reviewed manifest instead of extending v1 in place.
 - service-worker registration details may still be caller-provided overrides even when the artifact scope pre-populates them.
-- direct transport is not a stable proxy helper path in v0.19.x; the artifact-first helpers are tunnel-first browser integrations.
+- direct transport is not a stable proxy helper path in v0.20.x; the artifact-first helpers are tunnel-first browser integrations.
 - artifact fetch is a separate controlplane contract; fetching a `connect_artifact` does not imply that a deployment must introduce a plaintext gateway component.
 
 ### 6.2 Gateway mode (L7 reverse proxy)

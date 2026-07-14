@@ -13,15 +13,25 @@ Flowersec remains a generic communication library. The v0.20 APIs expose transpo
 
 ## Release coordinates
 
-- Go module tag: `flowersec-go/v0.20.1`
-- npm package: `@floegence/flowersec-core@0.20.1`
-- SwiftPM root tag: `0.20.1`
+- Go module tag: `flowersec-go/v0.20.2`
+- npm package: `@floegence/flowersec-core@0.20.2`
+- SwiftPM root tag: `0.20.2`
 
 Upgrade downstream dependencies from published registries or releases. Do not use `replace`, `file:`, `link:`, `workspace:`, sibling aliases, or copied source as a completed upgrade path.
 
 ### v0.20.1 proxy runtime patch
 
 The TypeScript proxy runtime now admits at most `24` concurrent HTTP streams by default and queues at most `128` additional HTTP requests in FIFO order. Configure `maxConcurrentHttpStreams` and `maxQueuedHttpRequests` as explicit runtime options when a deployment needs different bounded values. Queueing is abort-aware, permits cover the complete HTTP stream lifecycle, and WebSocket opens remain independent. A full queue returns HTTP `503` with stable `resource_exhausted` semantics.
+
+### v0.20.2 communication stack patch
+
+This patch makes E2EE handshake state single-consumer, adds cancellable Go/TypeScript stream opens, bounds TypeScript and Swift outbound secure-channel memory, and reconnects on internal RPC/Yamux/secure-session termination. Explicit disconnects and stale connection attempts remain non-reconnecting.
+
+TypeScript proxy defaults now include a 64 MiB aggregate body budget for HTTP requests waiting for admission and a 4 MiB WebSocket pending-write budget. Text, binary, and Blob sends share one ordered queue. Controller bridges negotiate write acknowledgements with older controllers and enforce the same byte limit independently.
+
+Go proxy response filtering preserves browser security headers by default. `proxy.Options.BlockedResponseHeaders` can remove deployment-incompatible headers, with blocking taking precedence over allow-lists. `HTTPAuthorizerConfig.MaxResponseBytes` defaults to 1 MiB; redirects must remain same-origin and HTTP error bodies are capped in diagnostics.
+
+These additions are local runtime/API controls. `ConnectArtifact v1`, `proxy.runtime@1`, encrypted records, Yamux frames, StreamHello, and application RPC type IDs are unchanged.
 
 ## TLS is now the high-level default
 

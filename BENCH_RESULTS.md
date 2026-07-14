@@ -1,6 +1,6 @@
 # Benchmark Results
 
-Run date: Tue Jul 14 10:01:24 CST 2026
+Run date: Tue Jul 14 21:44:32 CST 2026
 
 ## Environment
 
@@ -35,23 +35,23 @@ GOMAXPROCS=2 GOMEMLIMIT=1024MiB go run ./internal/cmd/flowersec-loadgen --mode=f
 
 | Benchmark | ns/op | B/op | allocs/op |
 | --- | ---: | ---: | ---: |
-| BenchmarkLooksLikeRecordFrame-2 | 0.8716 | 0 | 0 |
-| BenchmarkHandshakeSuiteX25519-2 | 158438 | 20813 | 249 |
-| BenchmarkHandshakeSuiteP256-2 | 118401 | 22809 | 261 |
-| BenchmarkEncryptRecord/256B-2 | 399.2 | 1928 | 6 |
-| BenchmarkEncryptRecord/1024B-2 | 612.9 | 3624 | 6 |
-| BenchmarkEncryptRecord/8192B-2 | 2475 | 20264 | 6 |
-| BenchmarkEncryptRecord/65536B-2 | 16431 | 148776 | 6 |
-| BenchmarkEncryptRecord/1048576B-2 | 319662 | 2115118 | 6 |
-| BenchmarkDecryptRecord/256B-2 | 480.8 | 1552 | 4 |
-| BenchmarkDecryptRecord/1024B-2 | 501.6 | 2320 | 4 |
-| BenchmarkDecryptRecord/8192B-2 | 1820 | 9488 | 4 |
-| BenchmarkDecryptRecord/65536B-2 | 11537 | 66834 | 4 |
-| BenchmarkDecryptRecord/1048576B-2 | 203960 | 1050401 | 4 |
-| BenchmarkSecureChannelRoundTrip/256B-2 | 2851 | 4560 | 21 |
-| BenchmarkSecureChannelRoundTrip/1024B-2 | 3654 | 7856 | 21 |
-| BenchmarkSecureChannelRoundTrip/8192B-2 | 8415 | 39984 | 21 |
-| BenchmarkSecureChannelRoundTrip/65536B-2 | 48378 | 290103 | 21 |
+| BenchmarkLooksLikeRecordFrame-2 | 0.8228 | 0 | 0 |
+| BenchmarkHandshakeSuiteX25519-2 | 156293 | 20813 | 249 |
+| BenchmarkHandshakeSuiteP256-2 | 119878 | 22809 | 261 |
+| BenchmarkEncryptRecord/256B-2 | 391.6 | 1928 | 6 |
+| BenchmarkEncryptRecord/1024B-2 | 616.1 | 3624 | 6 |
+| BenchmarkEncryptRecord/8192B-2 | 2443 | 20264 | 6 |
+| BenchmarkEncryptRecord/65536B-2 | 16461 | 148777 | 6 |
+| BenchmarkEncryptRecord/1048576B-2 | 261251 | 2115099 | 6 |
+| BenchmarkDecryptRecord/256B-2 | 345.6 | 1552 | 4 |
+| BenchmarkDecryptRecord/1024B-2 | 481.9 | 2320 | 4 |
+| BenchmarkDecryptRecord/8192B-2 | 1801 | 9488 | 4 |
+| BenchmarkDecryptRecord/65536B-2 | 14955 | 66833 | 4 |
+| BenchmarkDecryptRecord/1048576B-2 | 201362 | 1050505 | 4 |
+| BenchmarkSecureChannelRoundTrip/256B-2 | 2762 | 4560 | 21 |
+| BenchmarkSecureChannelRoundTrip/1024B-2 | 3270 | 7856 | 21 |
+| BenchmarkSecureChannelRoundTrip/8192B-2 | 8522 | 39984 | 21 |
+| BenchmarkSecureChannelRoundTrip/65536B-2 | 43827 | 290103 | 21 |
 
 ### 64 KiB Round-Trip Throughput Gate
 
@@ -59,15 +59,15 @@ The baseline was measured from `origin/main` under the environment and Go constr
 
 | Samples | Baseline ns/op | Median ns/op | Regression | Allowed regression |
 | ---: | ---: | ---: | ---: | ---: |
-| 10 | 40824.0 | 42327.0 | 3.68% | 10.00% |
+| 10 | 40824.0 | 41965.0 | 2.79% | 10.00% |
 
 ### Tunnel Server Hot Path (ns/op, B/op, allocs/op)
 
 | Benchmark | ns/op | B/op | allocs/op |
 | --- | ---: | ---: | ---: |
-| BenchmarkRouteOrBufferPaired-2 | 48.50 | 0 | 0 |
-| BenchmarkRouteOrBufferPending-2 | 93.20 | 320 | 1 |
-| BenchmarkAllowReplaceLocked-2 | 14.59 | 0 | 0 |
+| BenchmarkRouteOrBufferPaired-2 | 47.04 | 0 | 0 |
+| BenchmarkRouteOrBufferPending-2 | 92.30 | 320 | 1 |
+| BenchmarkAllowReplaceLocked-2 | 14.55 | 0 | 0 |
 
 ## TypeScript Benchmarks
 
@@ -75,29 +75,29 @@ The baseline was measured from `origin/main` under the environment and Go constr
 
 | Benchmark | ops/s (hz) | mean (ms) | p99 (ms) | max (ms) |
 | --- | ---: | ---: | ---: | ---: |
-| handshake_x25519 | 273.93 | 3.6506 | 6.9879 | 7.5342 |
-| handshake_p256 | 191.12 | 5.2322 | 11.0747 | 11.0747 |
+| handshake_x25519 | 354.18 | 2.8234 | 3.2363 | 3.2448 |
+| handshake_p256 | 229.81 | 4.3514 | 5.1975 | 7.7978 |
 
 ### E2EE Record (ms)
 
 | Benchmark | ops/s (hz) | mean (ms) | p99 (ms) | max (ms) |
 | --- | ---: | ---: | ---: | ---: |
-| encrypt_256B | 51,871.98 | 0.0193 | 0.1112 | 12.7717 |
-| decrypt_256B | 68,770.54 | 0.0145 | 0.0732 | 1.0168 |
-| encrypt_1024B | 34,455.15 | 0.0290 | 0.1107 | 1.2977 |
-| decrypt_1024B | 39,647.57 | 0.0252 | 0.0355 | 0.2334 |
-| encrypt_8192B | 7,583.77 | 0.1319 | 0.3172 | 0.6258 |
-| decrypt_8192B | 7,205.40 | 0.1388 | 0.3461 | 0.8070 |
-| encrypt_65536B | 937.44 | 1.0667 | 2.4510 | 6.8562 |
-| decrypt_65536B | 942.50 | 1.0610 | 2.7795 | 7.9911 |
-| encrypt_1048576B | 68.8384 | 14.5268 | 16.0100 | 16.0100 |
-| decrypt_1048576B | 73.8588 | 13.5393 | 15.5506 | 15.5506 |
+| encrypt_256B | 83,200.21 | 0.0120 | 0.0169 | 0.2212 |
+| decrypt_256B | 85,195.42 | 0.0117 | 0.0161 | 0.1461 |
+| encrypt_1024B | 38,938.54 | 0.0257 | 0.0697 | 1.8865 |
+| decrypt_1024B | 38,050.06 | 0.0263 | 0.0626 | 5.4034 |
+| encrypt_8192B | 7,709.71 | 0.1297 | 0.2500 | 1.5851 |
+| decrypt_8192B | 8,312.43 | 0.1203 | 0.1626 | 0.4212 |
+| encrypt_65536B | 1,097.01 | 0.9116 | 1.1783 | 1.3789 |
+| decrypt_65536B | 1,047.81 | 0.9544 | 2.2906 | 4.0932 |
+| encrypt_1048576B | 70.4752 | 14.1894 | 18.5097 | 18.5097 |
+| decrypt_1048576B | 66.7181 | 14.9884 | 20.1764 | 20.1764 |
 
 ### Yamux (ms)
 
 | Benchmark | ops/s (hz) | mean (ms) | p99 (ms) | max (ms) |
 | --- | ---: | ---: | ---: | ---: |
-| open_stream | 78,674.33 | 0.0127 | 0.0159 | 0.1717 |
+| open_stream | 89,935.74 | 0.0111 | 0.0220 | 1.3321 |
 
 ## Load Generator (full mode)
 
@@ -109,7 +109,7 @@ The baseline was measured from `origin/main` under the environment and Go constr
 | success | 1000 |
 | failure | 0 |
 | success_rate | 1 |
-| duration_seconds | 40.6463 |
+| duration_seconds | 40.6481 |
 | peak_conn_per_sec | 200 |
 | active_peak | 1000 |
 
@@ -143,19 +143,19 @@ The baseline was measured from `origin/main` under the environment and Go constr
 
 | Stage | p50 | p95 | p99 | mean | min | max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| ws_open | 0.332625 | 0.498625 | 0.785250 | 0.354486 | 0.145542 | 4.142542 |
-| attach_send | 0.006375 | 0.010542 | 0.021750 | 0.007007 | 0.003083 | 0.047416 |
-| pair_ready | 0.273291 | 0.429958 | 0.816458 | 0.295958 | 0.185416 | 1.412042 |
-| handshake | 0.513916 | 0.794625 | 1.265084 | 0.541587 | 0.345916 | 2.621375 |
-| rpc_call | 0.344167 | 0.582208 | 0.890125 | 0.393080 | 0.191958 | 5.957167 |
+| ws_open | 0.292334 | 0.552125 | 1.232792 | 0.337782 | 0.152042 | 3.743958 |
+| attach_send | 0.006375 | 0.012875 | 0.030500 | 0.007394 | 0.003125 | 0.056708 |
+| pair_ready | 0.271542 | 0.486792 | 1.496542 | 0.335729 | 0.174625 | 9.951041 |
+| handshake | 0.492542 | 0.882833 | 4.016833 | 0.604744 | 0.338708 | 10.751459 |
+| rpc_call | 0.297750 | 0.596166 | 1.233875 | 0.378136 | 0.183583 | 4.407000 |
 
 ### Resources (peak)
 
 | Metric | Value |
 | --- | ---: |
-| max_heap_alloc_bytes | 102,967,896 |
-| max_heap_inuse_bytes | 109,928,448 |
-| max_sys_bytes | 166,017,336 |
+| max_heap_alloc_bytes | 115,733,480 |
+| max_heap_inuse_bytes | 120,406,016 |
+| max_sys_bytes | 174,663,976 |
 | max_goroutines | 10,015 |
 | baseline_goroutines | 6 |
 | after_close_goroutines | 7 |

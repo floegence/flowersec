@@ -1,6 +1,6 @@
 # Scoped Metadata
 
-Flowersec v0.19.x stabilizes the `scoped` carrier on `ConnectArtifact` and freezes one concrete scope payload: `proxy.runtime@1` for the stable proxy helper entrypoints.
+Flowersec v0.20.x stabilizes the `scoped` carrier on `ConnectArtifact` and freezes one concrete scope payload: `proxy.runtime@1` for the stable proxy helper entrypoints.
 
 ## Stable carrier
 
@@ -35,6 +35,8 @@ Stable invariants:
 The stable proxy helper entrypoints do not opt into relaxed downgrade behavior for `proxy.runtime`.
 If `connectArtifactProxyBrowser(...)` or `connectArtifactProxyControllerBrowser(...)` sees an invalid `proxy.runtime@1` payload, it fails fast regardless of `critical`.
 
+Swift 0.20.2 does not yet expose the generic resolver API: artifact-based connect rejects every critical scope before networking and ignores optional scopes with `scope_ignored_missing_resolver`. Generic Swift scope resolvers are deferred to 0.21.0.
+
 ## `proxy.runtime@1`
 
 Frozen scope name and version:
@@ -68,19 +70,19 @@ Important boundary:
 
 - `allowedOrigins` is the frozen controller-bridge security input
 - deployment-specific path details remain caller-owned configuration, not stable scope fields
-- `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin` overrides, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, and bridge `capabilityNonce` are explicit runtime/bootstrap options, not `proxy.runtime@1` payload fields
+- `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin` overrides, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, `maxQueuedHttpBodyBytes`, `maxWsBufferedAmountBytes`, and bridge `capabilityNonce` are explicit runtime/bootstrap options, not `proxy.runtime@1` payload fields
 - do not expand the `proxy.runtime@1` schema for deployment hardening switches; use explicit helper options for v0.20.x, or introduce a future `proxy.runtime@2` with a reviewed manifest if the artifact contract needs new stable fields
 
 ## Stable vs experimental boundary
 
-Stable in v0.19.x:
+Stable in v0.20.x:
 
 - `scoped` field on `ConnectArtifact`
 - parser invariants
 - critical fail-fast meaning
 - `proxy.runtime@1` when consumed through the stable proxy helper entrypoints
 
-Experimental in v0.19.x:
+Experimental in v0.20.x:
 
 - public resolver registration API
 - normalize helper return types
@@ -99,4 +101,4 @@ Experimental:
 - `tools/manifestgen/`
 
 These files exist to keep scope evolution disciplined.
-Only the frozen `proxy.runtime@1` manifest is part of the stable proxy-helper contract in v0.19.x.
+Only the frozen `proxy.runtime@1` manifest is part of the stable proxy-helper contract in v0.20.x.

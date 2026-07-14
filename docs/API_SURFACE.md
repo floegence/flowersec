@@ -121,6 +121,7 @@ Recommended integration entrypoints:
   - `origin.ForTunnel(...)`
 - `github.com/floegence/flowersec/flowersec-go/proxy`
   - `proxy.Register(...)`
+  - `proxy.Options.BlockedResponseHeaders`
 - `github.com/floegence/flowersec/flowersec-go/proxy/preset`
   - `preset.Manifest`
   - `preset.DecodeJSON(...)`
@@ -149,6 +150,9 @@ Recommended integration entrypoints:
   - `server.ReplayCache`
   - `server.TokenUseCache`
   - `server.NewTokenUseCache(...)`
+  - `server.HTTPAuthorizerConfig.MaxResponseBytes`
+- `github.com/floegence/flowersec/flowersec-go/mux/yamux`
+  - `yamux.Session.OpenStreamContext(...)`
 
 Stable generated protocol packages:
 
@@ -186,6 +190,7 @@ Stable entrypoints:
   - `LivenessOptions`
   - `WebSocketLimits`
   - `YamuxLimits`
+  - connect option `maxOutboundBufferedBytes`
 - `@floegence/flowersec-core/node`
   - `connectNode(...)`
   - `connectTunnelNode(...)`
@@ -241,8 +246,10 @@ Stable building blocks:
   - `openJsonFrameChannel(...)`
 - `@floegence/flowersec-core/proxy`
   - `createProxyRuntime(...)`
-  - `maxConcurrentHttpStreams`
-  - `maxQueuedHttpRequests`
+  - `ProxyRuntimeOptions` field `maxConcurrentHttpStreams`
+  - `ProxyRuntimeOptions` field `maxQueuedHttpRequests`
+  - `ProxyRuntimeOptions` field `maxQueuedHttpBodyBytes`
+  - `ProxyRuntimeOptions` field `maxWsBufferedAmountBytes`
   - `createProxyServiceWorkerScript(...)`
   - `createProxyIntegrationServiceWorkerScript(...)`
   - `registerProxyIntegration(...)`

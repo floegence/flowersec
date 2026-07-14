@@ -1,6 +1,6 @@
 # Connect Artifacts
 
-Flowersec v0.19.x keeps one stable client-facing canonical connect artifact: `ConnectArtifact`.
+Flowersec v0.20.x keeps one stable client-facing canonical connect artifact: `ConnectArtifact`.
 
 It is the recommended integration shape for new controlplanes, browser helpers, Node helpers, reconnect adapters, and CLI/demo minting flows.
 
@@ -68,7 +68,7 @@ Recommended helper entrypoints:
 These helper entrypoints fail fast when `proxy.runtime@1` is missing, malformed, or uses an unsupported `scope_version`.
 
 `proxy.runtime@1` does not carry every deployment hardening option.
-Runtime `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin`, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, and controller/app bridge `capabilityNonce` are explicit helper/runtime options rather than `proxy.runtime@1` payload fields.
+Runtime `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin`, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, `maxQueuedHttpBodyBytes`, `maxWsBufferedAmountBytes`, and controller/app bridge `capabilityNonce` are explicit helper/runtime options rather than `proxy.runtime@1` payload fields.
 Do not expand the v1 schema to carry them; use explicit options, or introduce a future `proxy.runtime@2` when those fields need to become part of a stable artifact contract.
 
 ## Stable language-level exports
@@ -145,11 +145,11 @@ client, err := client.Connect(ctx, artifact, client.WithOrigin(origin))
 
 ## Compatibility notes
 
-Flowersec still accepts legacy raw inputs, but v0.19.x now rejects:
+Flowersec still accepts legacy raw inputs, but v0.20.x rejects:
 
 - hybrid ambiguous objects
 - legacy objects mixed with artifact-only fields
 - client-facing `grant_server` / server-role inputs
 - `token` / `role` heuristics as auto-detect shortcuts
 
-See `docs/V0_19_MIGRATION.md` for the exact migration guidance.
+See `docs/V0_20_MIGRATION.md` for the current migration guidance.
