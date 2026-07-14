@@ -34,6 +34,9 @@ export { assertConnectArtifact } from "./connect/artifact.js";
 export type { ClientObserverLike } from "./observability/observer.js";
 
 export type { Client, ClientPath } from "./client.js";
+export type { LivenessOptions } from "./client-connect/connectCore.js";
+export type { WebSocketLimits } from "./ws-client/binaryTransport.js";
+export type { YamuxLimits } from "./yamux/session.js";
 
 export type { FlowersecErrorCode, FlowersecPath, FlowersecStage } from "./utils/errors.js";
 export { FlowersecError } from "./utils/errors.js";

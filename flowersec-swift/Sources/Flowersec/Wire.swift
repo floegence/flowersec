@@ -9,12 +9,91 @@ public enum FlowersecPath: String, Codable, Equatable, Sendable {
 public enum FlowersecStage: String, Codable, Equatable, Sendable {
   case validate
   case connect
+  case transport
   case attach
   case handshake
   case secure
   case yamux
   case rpc
   case close
+}
+
+public enum DiagnosticCodeDomain: String, Codable, Equatable, Sendable {
+  case error
+  case event
+}
+
+public enum DiagnosticResult: String, Codable, Equatable, Sendable {
+  case ok
+  case fail
+  case retry
+  case skip
+}
+
+public struct DiagnosticEvent: Codable, Equatable, Sendable {
+  public var v: Int
+  public var namespace: String
+  public var path: FlowersecPath
+  public var stage: FlowersecStage
+  public var codeDomain: DiagnosticCodeDomain
+  public var code: String
+  public var result: DiagnosticResult
+  public var elapsedMS: Double
+  public var attemptSeq: Int
+  public var traceID: String?
+  public var sessionID: String?
+  public var resource: String?
+  public var current: Int?
+  public var limit: Int?
+
+  public init(
+    v: Int = 1,
+    namespace: String = "connect",
+    path: FlowersecPath,
+    stage: FlowersecStage,
+    codeDomain: DiagnosticCodeDomain,
+    code: String,
+    result: DiagnosticResult,
+    elapsedMS: Double = 0,
+    attemptSeq: Int = 1,
+    traceID: String? = nil,
+    sessionID: String? = nil,
+    resource: String? = nil,
+    current: Int? = nil,
+    limit: Int? = nil
+  ) {
+    self.v = v
+    self.namespace = namespace
+    self.path = path
+    self.stage = stage
+    self.codeDomain = codeDomain
+    self.code = code
+    self.result = result
+    self.elapsedMS = elapsedMS
+    self.attemptSeq = attemptSeq
+    self.traceID = traceID
+    self.sessionID = sessionID
+    self.resource = resource
+    self.current = current
+    self.limit = limit
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case v
+    case namespace
+    case path
+    case stage
+    case codeDomain = "code_domain"
+    case code
+    case result
+    case elapsedMS = "elapsed_ms"
+    case attemptSeq = "attempt_seq"
+    case traceID = "trace_id"
+    case sessionID = "session_id"
+    case resource
+    case current
+    case limit
+  }
 }
 
 public enum FlowersecCode: String, Codable, Equatable, Sendable {
@@ -37,6 +116,7 @@ public enum FlowersecCode: String, Codable, Equatable, Sendable {
   case streamHelloFailed = "stream_hello_failed"
   case rpcFailed = "rpc_failed"
   case websocketFailed = "websocket_failed"
+  case resourceExhausted = "resource_exhausted"
 }
 
 public enum Suite: Int, Codable, Equatable, Sendable {
@@ -838,29 +918,31 @@ private struct AnyCodingKey: CodingKey {
 public struct ConnectOptions: Sendable {
   public var origin: String?
   public var connectTimeout: Duration
-  public var transportSecurityPolicy: TransportSecurityPolicy?
+  public var transportSecurityPolicy: TransportSecurityPolicy
   public var onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)?
-
-  public init(
-    origin: String? = nil,
-    connectTimeout: Duration = .seconds(8)
-  ) {
-    self.origin = origin
-    self.connectTimeout = connectTimeout
-    self.transportSecurityPolicy = nil
-    self.onTransportSecurityDiagnostic = nil
-  }
+  public var onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)?
+  public var outboundRecordChunkBytes: Int
+  public var yamuxLimits: YamuxLimits
+  public var liveness: LivenessOptions
 
   public init(
     origin: String? = nil,
     connectTimeout: Duration = .seconds(8),
-    transportSecurityPolicy: TransportSecurityPolicy,
-    onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)? = nil
+    transportSecurityPolicy: TransportSecurityPolicy = .requireTLS,
+    onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)? = nil,
+    onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil,
+    outboundRecordChunkBytes: Int = 64 * 1024,
+    yamuxLimits: YamuxLimits = YamuxLimits(),
+    liveness: LivenessOptions = .pathDefault
   ) {
     self.origin = origin
     self.connectTimeout = connectTimeout
     self.transportSecurityPolicy = transportSecurityPolicy
     self.onTransportSecurityDiagnostic = onTransportSecurityDiagnostic
+    self.onDiagnosticEvent = onDiagnosticEvent
+    self.outboundRecordChunkBytes = outboundRecordChunkBytes
+    self.yamuxLimits = yamuxLimits
+    self.liveness = liveness
   }
 }
 
@@ -903,6 +985,20 @@ extension FlowersecError {
 
   public static func invalidYamux(_ message: String) -> FlowersecError {
     FlowersecError(path: .direct, stage: .yamux, code: .openStreamFailed, message: message)
+  }
+
+  public static func resourceExhausted(
+    path: FlowersecPath = .direct,
+    stage: FlowersecStage,
+    _ message: String
+  ) -> FlowersecError {
+    FlowersecError(path: path, stage: stage, code: .resourceExhausted, message: message)
+  }
+
+  public static func livenessTimeout(_ message: String = "The yamux liveness probe timed out.")
+    -> FlowersecError
+  {
+    FlowersecError(path: .direct, stage: .yamux, code: .timeout, message: message)
   }
 
   public static func invalidRPC(_ message: String) -> FlowersecError {

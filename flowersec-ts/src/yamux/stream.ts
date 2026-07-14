@@ -44,6 +44,9 @@ export class YamuxStream {
   private readWaiters: Array<() => void> = [];
   // Terminal error (reset/overflow) for the stream.
   private error: unknown = null;
+  private resetTask: Promise<void> | undefined;
+  private writeChain: Promise<void> = Promise.resolve();
+  private finalized = false;
 
   constructor(session: YamuxSession, id: number, state: StreamState) {
     this.session = session;
@@ -57,26 +60,35 @@ export class YamuxStream {
   }
 
   // onData handles inbound DATA frames and updates receive window.
-  onData(data: Uint8Array, flags: number): void {
-    this.processFlags(flags);
-    if (data.length === 0) return;
-    if (data.length > this.recvWindow) {
-      this.reset(new Error("recv window exceeded"));
-      return;
+  onData(data: Uint8Array, flags: number): boolean {
+    this.processFlags(flags & ~FLAG_FIN);
+    if (this.state === "reset" || this.state === "closed") return false;
+    if (data.length > 0) {
+      if (data.length > this.recvWindow) {
+        void this.reset(new Error("recv window exceeded"));
+        return false;
+      }
+      this.recvWindow -= data.length;
+      this.recvQueue.push(data);
+      this.recvQueueBytes += data.length;
     }
-    this.recvWindow -= data.length;
-    this.recvQueue.push(data);
-    this.recvQueueBytes += data.length;
+    this.processFlags(flags & FLAG_FIN);
     const ws = this.readWaiters;
     this.readWaiters = [];
     for (const w of ws) w();
+    return true;
   }
 
   // onWindowUpdate applies flow-control credits from peer.
-  onWindowUpdate(delta: number, flags: number): void {
+  onWindowUpdate(delta: number, flags: number): boolean {
     this.processFlags(flags);
-    this.sendWindow += delta >>> 0;
+    const credit = delta >>> 0;
+    if (credit > DEFAULT_MAX_STREAM_WINDOW - this.sendWindow) {
+      return false;
+    }
+    this.sendWindow += credit;
     this.session.notifySendWindow(this.id);
+    return true;
   }
 
   // read resolves with the next data chunk, null on EOF, or throws on reset/errors.
@@ -86,7 +98,9 @@ export class YamuxStream {
       const b = this.shiftRecv();
       if (b != null) {
         this.recvQueueBytes -= b.length;
+        this.session.releaseReceiveBytes(b.length);
         await this.sendWindowUpdate();
+        if (this.recvQueueBytes === 0 && this.state === "closed") this.finalizeClosed();
         return b;
       }
       if (this.state === "closed" || this.state === "remoteClose") return null;
@@ -96,12 +110,19 @@ export class YamuxStream {
 
   // write sends DATA frames, respecting the send window.
   async write(data: Uint8Array): Promise<void> {
+    const payload = data.slice();
+    const write = this.writeChain.then(() => this.writeSerial(payload));
+    this.writeChain = write.catch(() => {});
+    await write;
+  }
+
+  private async writeSerial(data: Uint8Array): Promise<void> {
     this.ensureWritable();
 
     let off = 0;
     while (off < data.length) {
       this.ensureWritable();
-      const chunk = data.subarray(off);
+      const chunk = data.subarray(off, off + this.session.outboundFrameBytes());
       const allowed = await this.waitForSendWindow(chunk.length);
       this.ensureWritable();
       const sendChunk = chunk.subarray(0, allowed);
@@ -134,24 +155,41 @@ export class YamuxStream {
     try {
       await this.session.writeRaw(hdr);
     } finally {
-      if (wasRemoteClose) this.finalizeClosed();
+      if (wasRemoteClose && this.recvQueueBytes === 0) this.finalizeClosed();
     }
   }
 
   // reset tears down the stream and notifies the peer.
-  reset(err: Error): void {
-    if (this.state === "reset") return;
+  reset(err: Error): Promise<void> {
+    if (this.resetTask != null) return this.resetTask;
+    if (!this.fail(err)) return Promise.resolve();
+    this.resetTask = this.session.sendRst(this.id);
+    return this.resetTask;
+  }
+
+  private fail(err: Error): boolean {
+    if (this.state === "reset") return false;
     this.state = "reset";
     this.error = err;
     // Drop any buffered data to free memory on terminal errors.
-    this.recvQueue.length = 0;
-    this.recvQueueHead = 0;
-    this.recvQueueBytes = 0;
+    this.session.releaseReceiveBytes(this.releaseBufferedReceiveBytes());
     const ws = this.readWaiters;
     this.readWaiters = [];
     for (const w of ws) w();
     this.session.notifySendWindow(this.id);
-    void this.session.sendRst(this.id);
+    return true;
+  }
+
+  bufferedReceiveBytes(): number {
+    return this.recvQueueBytes;
+  }
+
+  releaseBufferedReceiveBytes(): number {
+    const bytes = this.recvQueueBytes;
+    this.recvQueue.length = 0;
+    this.recvQueueHead = 0;
+    this.recvQueueBytes = 0;
+    return bytes;
   }
 
   // processFlags updates the state machine for ACK/FIN/RST.
@@ -163,7 +201,7 @@ export class YamuxStream {
     if ((flags & FLAG_FIN) !== 0) {
       if (this.state === "localClose") {
         this.state = "closed";
-        this.finalizeClosed();
+        if (this.recvQueueBytes === 0) this.finalizeClosed();
       } else if (this.state === "established" || this.state === "synSent" || this.state === "synReceived") {
         this.state = "remoteClose";
       }
@@ -172,11 +210,13 @@ export class YamuxStream {
       for (const w of ws) w();
     }
     if ((flags & FLAG_RST) !== 0) {
-      this.reset(new Error("rst"));
+      if (this.fail(new Error("rst"))) this.session.onStreamClosed(this.id);
     }
   }
 
   private finalizeClosed(): void {
+    if (this.finalized) return;
+    this.finalized = true;
     const ws = this.readWaiters;
     this.readWaiters = [];
     for (const w of ws) w();

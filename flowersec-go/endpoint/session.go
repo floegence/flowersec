@@ -10,8 +10,8 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
-	hyamux "github.com/hashicorp/yamux"
 )
 
 const DefaultMaxStreamHelloBytes = 8 * 1024
@@ -27,6 +27,7 @@ type Session interface {
 	ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser), opts ...ServeStreamsOption) error
 	OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error)
 	Ping() error
+	ProbeLiveness(ctx context.Context) (time.Duration, error)
 	Close() error
 }
 
@@ -36,7 +37,7 @@ type Session interface {
 type SessionInternal interface {
 	Session
 	Secure() *e2ee.SecureChannel
-	Mux() *hyamux.Session
+	Mux() *fsyamux.Session
 }
 
 type session struct {
@@ -44,12 +45,10 @@ type session struct {
 	endpointInstanceID string
 
 	secure *e2ee.SecureChannel
-	mux    *hyamux.Session
+	mux    *fsyamux.Session
 
 	closeOnce sync.Once
 	closeErr  error
-
-	keepaliveStop chan struct{}
 }
 
 func (s *session) Path() Path {
@@ -73,11 +72,29 @@ func (s *session) Secure() *e2ee.SecureChannel {
 	return s.secure
 }
 
-func (s *session) Mux() *hyamux.Session {
+func (s *session) Mux() *fsyamux.Session {
 	if s == nil {
 		return nil
 	}
 	return s.mux
+}
+
+func (s *session) ProbeLiveness(ctx context.Context) (time.Duration, error) {
+	if s == nil || s.mux == nil {
+		var path Path
+		if s != nil {
+			path = s.path
+		}
+		return 0, wrapErr(path, fserrors.StageYamux, fserrors.CodeNotConnected, ErrNotConnected)
+	}
+	rtt, err := s.mux.Probe(ctx)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			_ = s.Close()
+		}
+		return 0, wrapErr(s.path, fserrors.StageYamux, classifyContextOrCode(err, fserrors.CodePingFailed), err)
+	}
+	return rtt, nil
 }
 
 func (s *session) Ping() error {
@@ -100,9 +117,6 @@ func (s *session) Close() error {
 	}
 	s.closeOnce.Do(func() {
 		var firstErr error
-		if s.keepaliveStop != nil {
-			close(s.keepaliveStop)
-		}
 		if s.mux != nil {
 			if err := s.mux.Close(); err != nil && firstErr == nil {
 				firstErr = err
@@ -135,6 +149,9 @@ func (s *session) AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteClos
 	}
 	stream, err := s.mux.AcceptStream()
 	if err != nil {
+		if errors.Is(err, fsyamux.ErrResourceExhausted) {
+			return "", nil, wrapErr(s.path, fserrors.StageYamux, fserrors.CodeResourceExhausted, err)
+		}
 		return "", nil, wrapErr(s.path, fserrors.StageYamux, fserrors.CodeAcceptStreamFailed, err)
 	}
 	h, err := streamhello.ReadStreamHello(stream, maxHelloBytes)
@@ -196,6 +213,9 @@ func (s *session) ServeStreams(ctx context.Context, maxHelloBytes int, handler f
 			if ctx.Err() != nil {
 				return wrapCtxErr(s.path, ctx.Err())
 			}
+			if errors.Is(err, fsyamux.ErrResourceExhausted) {
+				return wrapErr(s.path, fserrors.StageYamux, fserrors.CodeResourceExhausted, err)
+			}
 			return wrapErr(s.path, fserrors.StageYamux, fserrors.CodeAcceptStreamFailed, err)
 		}
 		h, err := streamhello.ReadStreamHello(stream, maxHelloBytes)
@@ -255,6 +275,9 @@ func (s *session) OpenStream(ctx context.Context, kind string) (io.ReadWriteClos
 
 	st, err := s.mux.OpenStream()
 	if err != nil {
+		if errors.Is(err, fsyamux.ErrResourceExhausted) {
+			return nil, wrapErr(s.path, fserrors.StageYamux, fserrors.CodeResourceExhausted, err)
+		}
 		return nil, wrapErr(s.path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
 	}
 
@@ -304,28 +327,12 @@ func classifyContextCode(err error) fserrors.Code {
 	return fserrors.CodeCanceled
 }
 
-func (s *session) startKeepalive(interval time.Duration) {
-	if s == nil || s.secure == nil || interval <= 0 {
-		return
+func classifyContextOrCode(err error, fallback fserrors.Code) fserrors.Code {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fserrors.CodeTimeout
 	}
-	if s.keepaliveStop != nil {
-		return
+	if errors.Is(err, context.Canceled) {
+		return fserrors.CodeCanceled
 	}
-	stop := make(chan struct{})
-	s.keepaliveStop = stop
-	go func() {
-		t := time.NewTicker(interval)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				if err := s.Ping(); err != nil {
-					_ = s.Close()
-					return
-				}
-			case <-stop:
-				return
-			}
-		}
-	}()
+	return fallback
 }

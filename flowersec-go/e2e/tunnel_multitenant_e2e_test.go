@@ -75,7 +75,7 @@ func TestE2E_TunnelSharedURLRejectsUnknownTenantScope(t *testing.T) {
 
 	grantC, _ := unknownTenant.newGrantPair(t, fixture.wsURL, "ch_mt_reject", 5)
 
-	_, err = client.ConnectTunnel(ctx, grantC, client.WithOrigin(tunnelOrigin), client.WithKeepaliveInterval(0))
+	_, err = client.ConnectTunnel(ctx, grantC, client.WithOrigin(tunnelOrigin), client.WithLivenessDisabled(), client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback))
 	if err == nil {
 		t.Fatal("expected attach rejection for unknown tenant scope")
 	}

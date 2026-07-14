@@ -32,6 +32,8 @@ type RPCOptions struct {
 	MaxFrameBytes int
 	// Observer attaches an optional metrics observer to each rpc.Server.
 	Observer observability.RPCObserver
+	// Server bounds handler concurrency and request/notification queues.
+	Server rpc.ServerOptions
 }
 
 // Options configures a Server.
@@ -190,7 +192,11 @@ func (s *Server) lookup(kind string) StreamHandler {
 
 func (s *Server) serveRPC(ctx context.Context, path endpoint.Path, stream io.ReadWriteCloser) {
 	router := rpc.NewRouter()
-	srv := rpc.NewServer(stream, router)
+	srv, err := rpc.NewServerWithOptions(stream, router, s.rpc.Server)
+	if err != nil {
+		s.reportError(wrapRPCServeErr(path, err))
+		return
+	}
 	if s.rpc.MaxFrameBytes > 0 {
 		if err := srv.SetMaxFrameBytes(s.rpc.MaxFrameBytes); err != nil {
 			s.reportError(wrapRPCServeErr(path, err))

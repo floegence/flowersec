@@ -65,18 +65,61 @@ final class TransportSecurityTests: XCTestCase {
     await fulfillment(of: [called], timeout: 1)
   }
 
-  func testMissingPolicyEmitsPlaintextDiagnostic() async throws {
+  func testDefaultPolicyRejectsPlaintextWithoutDiagnostic() async throws {
     let emitted = expectation(description: "plaintext diagnostic")
+    emitted.isInverted = true
     let url = try XCTUnwrap(URL(string: "ws://example.com/ws"))
     var options = ConnectOptions()
-    options.onTransportSecurityDiagnostic = { event in
-      XCTAssertEqual(event.code, "plaintext_transport")
-      XCTAssertEqual(event.path, .direct)
-      XCTAssertEqual(event.scheme, "ws")
-      XCTAssertEqual(event.host, "example.com")
-      emitted.fulfill()
+    options.onTransportSecurityDiagnostic = { _ in emitted.fulfill() }
+    do {
+      try await FlowersecTransportSecurity.enforce(url: url, path: .direct, options: options)
+      XCTFail("Expected the default policy to deny plaintext")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.code, .transportPolicyDenied)
     }
-    try await FlowersecTransportSecurity.enforce(url: url, path: .direct, options: options)
-    await fulfillment(of: [emitted], timeout: 1)
+    await fulfillment(of: [emitted], timeout: 0.05)
+  }
+
+  func testExplicitPlaintextPolicyEmitsDiagnostic() async throws {
+    for (policy, rawURL) in [
+      (TransportSecurityPolicy.allowPlaintext, "ws://example.com/ws"),
+      (.allowPlaintextForLoopback, "ws://localhost/ws"),
+    ] {
+      let emitted = expectation(description: "plaintext diagnostic")
+      let genericEmitted = expectation(description: "generic plaintext diagnostic")
+      let url = try XCTUnwrap(URL(string: rawURL))
+      let options = ConnectOptions(
+        transportSecurityPolicy: policy,
+        onTransportSecurityDiagnostic: { event in
+          XCTAssertEqual(event.code, "plaintext_transport")
+          XCTAssertEqual(event.path, .direct)
+          XCTAssertEqual(event.scheme, "ws")
+          emitted.fulfill()
+        },
+        onDiagnosticEvent: { event in
+          XCTAssertEqual(event.v, 1)
+          XCTAssertEqual(event.namespace, "connect")
+          XCTAssertEqual(event.path, .direct)
+          XCTAssertEqual(event.stage, .transport)
+          XCTAssertEqual(event.codeDomain, .event)
+          XCTAssertEqual(event.code, "plaintext_transport")
+          XCTAssertEqual(event.result, .skip)
+          XCTAssertEqual(event.resource, "websocket_transport")
+          genericEmitted.fulfill()
+        }
+      )
+      try await FlowersecTransportSecurity.enforce(url: url, path: .direct, options: options)
+      await fulfillment(of: [emitted, genericEmitted], timeout: 1)
+    }
+  }
+
+  func testConnectOptionHardeningDefaults() {
+    let options = ConnectOptions()
+    if case .requireTLS = options.transportSecurityPolicy {} else {
+      XCTFail("Expected TLS by default")
+    }
+    XCTAssertEqual(options.outboundRecordChunkBytes, 64 * 1024)
+    XCTAssertEqual(options.yamuxLimits, YamuxLimits())
+    XCTAssertEqual(options.liveness, .pathDefault)
   }
 }

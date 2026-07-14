@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/gorilla/websocket"
-	hyamux "github.com/hashicorp/yamux"
 )
 
 // ConnectOption configures dialing, timeouts, and limits for endpoint connects.
@@ -24,20 +24,21 @@ type connectOptions struct {
 	connectTimeout   time.Duration
 	handshakeTimeout time.Duration
 
-	maxHandshakePayload int
-	maxRecordBytes      int
-	maxBufferedBytes    int
+	maxHandshakePayload      int
+	maxRecordBytes           int
+	maxBufferedBytes         int
+	outboundRecordChunkBytes int
+	yamuxLimits              YamuxLimits
 
 	serverFeatures uint32
 	clockSkew      time.Duration
 
-	endpointInstanceID    string
-	endpointInstanceIDSet bool
-	handshakeCache        *HandshakeCache
-	yamuxConfig           *hyamux.Config
-
-	keepaliveInterval       time.Duration
-	keepaliveSet            bool
+	endpointInstanceID      string
+	endpointInstanceIDSet   bool
+	handshakeCache          *HandshakeCache
+	liveness                LivenessOptions
+	livenessSet             bool
+	livenessDisabled        bool
 	transportSecurityPolicy TransportSecurityPolicy
 }
 
@@ -54,11 +55,20 @@ func WithTransportSecurityPolicy(policy TransportSecurityPolicy) ConnectOption {
 
 func defaultConnectOptions() connectOptions {
 	return connectOptions{
-		connectTimeout:   defaults.ConnectTimeout,
-		handshakeTimeout: defaults.HandshakeTimeout,
-		clockSkew:        defaults.HandshakeClockSkew,
+		connectTimeout:           defaults.ConnectTimeout,
+		handshakeTimeout:         defaults.HandshakeTimeout,
+		clockSkew:                defaults.HandshakeClockSkew,
+		outboundRecordChunkBytes: 64 * 1024,
+		yamuxLimits:              YamuxLimits(fsyamux.DefaultLimits()),
+		transportSecurityPolicy:  RequireTLS,
 	}
 }
+
+// LivenessOptions configures ACK-based session liveness probes.
+type LivenessOptions = fsyamux.LivenessOptions
+
+// YamuxLimits bounds high-level multiplexing concurrency, frames, and receive memory.
+type YamuxLimits = fsyamux.YamuxLimits
 
 func applyConnectOptions(opts []ConnectOption) (connectOptions, error) {
 	cfg := defaultConnectOptions()
@@ -166,6 +176,28 @@ func WithMaxBufferedBytes(n int) ConnectOption {
 	}
 }
 
+// WithOutboundRecordChunkBytes sets the preferred plaintext bytes per encrypted record.
+func WithOutboundRecordChunkBytes(n int) ConnectOption {
+	return func(cfg *connectOptions) error {
+		if n <= 0 {
+			return fmt.Errorf("outbound record chunk bytes must be > 0")
+		}
+		cfg.outboundRecordChunkBytes = n
+		return nil
+	}
+}
+
+// WithYamuxLimits overrides the hardened high-level multiplexing limits.
+func WithYamuxLimits(limits YamuxLimits) ConnectOption {
+	return func(cfg *connectOptions) error {
+		if _, err := fsyamux.ValidateLimits(limits); err != nil {
+			return err
+		}
+		cfg.yamuxLimits = limits
+		return nil
+	}
+}
+
 // WithServerFeatures sets the feature bitset advertised during the E2EE handshake.
 func WithServerFeatures(features uint32) ConnectOption {
 	return func(cfg *connectOptions) error {
@@ -202,22 +234,25 @@ func WithHandshakeCache(cache *HandshakeCache) ConnectOption {
 	}
 }
 
-// WithYamuxConfig overrides the default yamux server config.
-func WithYamuxConfig(ycfg *hyamux.Config) ConnectOption {
+// WithLiveness enables periodic ACK-based session liveness probes.
+func WithLiveness(options LivenessOptions) ConnectOption {
 	return func(cfg *connectOptions) error {
-		cfg.yamuxConfig = ycfg
+		if options.Interval <= 0 || options.Timeout <= 0 {
+			return fmt.Errorf("liveness interval and timeout must be > 0")
+		}
+		cfg.liveness = options
+		cfg.livenessSet = true
+		cfg.livenessDisabled = false
 		return nil
 	}
 }
 
-// WithKeepaliveInterval sets the encrypted keepalive ping interval (0 disables).
-func WithKeepaliveInterval(d time.Duration) ConnectOption {
+// WithLivenessDisabled disables automatic session probes.
+func WithLivenessDisabled() ConnectOption {
 	return func(cfg *connectOptions) error {
-		if d < 0 {
-			return fmt.Errorf("keepalive interval must be >= 0")
-		}
-		cfg.keepaliveInterval = d
-		cfg.keepaliveSet = true
+		cfg.liveness = LivenessOptions{}
+		cfg.livenessSet = true
+		cfg.livenessDisabled = true
 		return nil
 	}
 }

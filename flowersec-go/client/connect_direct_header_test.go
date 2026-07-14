@@ -99,6 +99,7 @@ func TestConnectDirect_SendsOriginAndExtraHeadersAndUsesDialer(t *testing.T) {
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	)
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)
@@ -180,6 +181,7 @@ func TestConnectDirect_OriginFallsBackToHeader(t *testing.T) {
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	)
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)
@@ -253,6 +255,7 @@ func TestConnectDirect_WithOriginOverridesHeaderOrigin(t *testing.T) {
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	)
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)

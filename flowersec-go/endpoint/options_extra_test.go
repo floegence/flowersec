@@ -5,13 +5,12 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	hyamux "github.com/hashicorp/yamux"
 )
 
 func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 	dialer := &websocket.Dialer{HandshakeTimeout: 3 * time.Second}
 	cache := NewHandshakeCache()
-	yamuxCfg := hyamux.DefaultConfig()
+	yamuxLimits := YamuxLimits{MaxActiveStreams: 8, MaxInboundStreams: 4}
 
 	cfg, err := applyConnectOptions([]ConnectOption{
 		WithOrigin("https://app.example.com"),
@@ -25,8 +24,9 @@ func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 		WithClockSkew(2 * time.Second),
 		WithEndpointInstanceID("endpoint-instance-1"),
 		WithHandshakeCache(cache),
-		WithYamuxConfig(yamuxCfg),
-		WithKeepaliveInterval(0),
+		WithYamuxLimits(yamuxLimits),
+		WithLivenessDisabled(),
+		WithOutboundRecordChunkBytes(32 * 1024),
 		WithTransportSecurityPolicy(RequireTLS),
 	})
 	if err != nil {
@@ -66,11 +66,14 @@ func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 	if cfg.handshakeCache != cache {
 		t.Fatal("handshake cache mismatch")
 	}
-	if cfg.yamuxConfig != yamuxCfg {
-		t.Fatal("yamux config mismatch")
+	if cfg.yamuxLimits.MaxActiveStreams != 8 || cfg.yamuxLimits.MaxInboundStreams != 4 {
+		t.Fatal("yamux limits mismatch")
 	}
-	if cfg.keepaliveInterval != 0 || !cfg.keepaliveSet {
-		t.Fatalf("keepaliveInterval = %v set=%v", cfg.keepaliveInterval, cfg.keepaliveSet)
+	if !cfg.livenessDisabled || !cfg.livenessSet {
+		t.Fatalf("livenessDisabled = %v set=%v", cfg.livenessDisabled, cfg.livenessSet)
+	}
+	if cfg.outboundRecordChunkBytes != 32*1024 {
+		t.Fatalf("outboundRecordChunkBytes = %d", cfg.outboundRecordChunkBytes)
 	}
 	if cfg.transportSecurityPolicy == nil {
 		t.Fatal("transport security policy missing")
@@ -88,7 +91,8 @@ func TestConnectOptions_RejectInvalidStableValues(t *testing.T) {
 		{name: "zero max record bytes", opt: WithMaxRecordBytes(0)},
 		{name: "zero max buffered bytes", opt: WithMaxBufferedBytes(0)},
 		{name: "negative clock skew", opt: WithClockSkew(-time.Second)},
-		{name: "negative keepalive", opt: WithKeepaliveInterval(-time.Second)},
+		{name: "zero liveness interval", opt: WithLiveness(LivenessOptions{Timeout: time.Second})},
+		{name: "zero outbound chunk", opt: WithOutboundRecordChunkBytes(0)},
 		{name: "nil transport policy", opt: WithTransportSecurityPolicy(nil)},
 	}
 
@@ -98,5 +102,18 @@ func TestConnectOptions_RejectInvalidStableValues(t *testing.T) {
 				t.Fatal("expected error")
 			}
 		})
+	}
+}
+
+func TestConnectOptions_DefaultToRequireTLS(t *testing.T) {
+	cfg, err := applyConnectOptions(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.transportSecurityPolicy == nil {
+		t.Fatal("expected default transport security policy")
+	}
+	if err := cfg.transportSecurityPolicy(t.Context(), TransportSecurityPolicyInput{Scheme: "ws"}); err == nil {
+		t.Fatal("expected default policy to reject plaintext")
 	}
 }

@@ -52,6 +52,7 @@ func TestConnectDirect_EnforcesWebSocketReadLimit(t *testing.T) {
 		client.WithOrigin("http://example.com"),
 		client.WithMaxHandshakePayload(16),
 		client.WithMaxRecordBytes(64),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	)
 	if err == nil {
 		t.Fatal("expected error")

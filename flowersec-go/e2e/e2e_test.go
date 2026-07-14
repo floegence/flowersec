@@ -124,7 +124,7 @@ func TestE2E_ClientConnect_AutoArtifactPath(t *testing.T) {
 
 	serverCh := make(chan endpointConnectResult, 1)
 	go func() {
-		session, err := endpoint.ConnectTunnel(ctx, grantS, endpoint.WithOrigin(tunnelOrigin), endpoint.WithKeepaliveInterval(0))
+		session, err := endpoint.ConnectTunnel(ctx, grantS, endpoint.WithOrigin(tunnelOrigin), endpoint.WithLivenessDisabled(), endpoint.WithTransportSecurityPolicy(endpoint.AllowPlaintextForLoopback))
 		serverCh <- endpointConnectResult{session: session, err: err}
 	}()
 
@@ -133,7 +133,7 @@ func TestE2E_ClientConnect_AutoArtifactPath(t *testing.T) {
 		Transport:   protocolio.ConnectArtifactTransportTunnel,
 		TunnelGrant: grantC,
 	}
-	cli, err := client.Connect(ctx, artifact, client.WithOrigin(tunnelOrigin), client.WithKeepaliveInterval(0))
+	cli, err := client.Connect(ctx, artifact, client.WithOrigin(tunnelOrigin), client.WithLivenessDisabled(), client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,12 +423,12 @@ func TestE2E_DefaultKeepalivePreventsIdleTimeout(t *testing.T) {
 	serverCh := make(chan serverResult, 1)
 	go func() {
 		// Disable endpoint keepalive to ensure the client default keepalive keeps the channel alive.
-		sess, err := endpoint.ConnectTunnel(ctx, grantS, endpoint.WithOrigin("https://app.redeven.com"), endpoint.WithKeepaliveInterval(0))
+		sess, err := endpoint.ConnectTunnel(ctx, grantS, endpoint.WithOrigin("https://app.redeven.com"), endpoint.WithLivenessDisabled(), endpoint.WithTransportSecurityPolicy(endpoint.AllowPlaintextForLoopback))
 		serverCh <- serverResult{sess: sess, err: err}
 	}()
 
 	// Client keepalive is enabled by default for tunnel connects.
-	c, err := client.ConnectTunnel(ctx, grantC, client.WithOrigin("https://app.redeven.com"))
+	c, err := client.ConnectTunnel(ctx, grantC, client.WithOrigin("https://app.redeven.com"), client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback))
 	if err != nil {
 		t.Fatal(err)
 	}

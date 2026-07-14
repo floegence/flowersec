@@ -11,23 +11,20 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
-	hyamux "github.com/hashicorp/yamux"
 )
 
-func newYamuxPair(t *testing.T) (client *hyamux.Session, server *hyamux.Session, closeFn func()) {
+func newYamuxPair(t *testing.T) (client *fsyamux.Session, server *fsyamux.Session, closeFn func()) {
 	t.Helper()
 	a, b := net.Pipe()
-	cfg := hyamux.DefaultConfig()
-	cfg.EnableKeepAlive = false
-	cfg.LogOutput = io.Discard
-	srv, err := hyamux.Server(a, cfg)
+	srv, err := fsyamux.NewServer(a, fsyamux.YamuxLimits{}, fsyamux.LivenessOptions{})
 	if err != nil {
 		_ = a.Close()
 		_ = b.Close()
 		t.Fatalf("yamux server: %v", err)
 	}
-	cli, err := hyamux.Client(b, cfg)
+	cli, err := fsyamux.NewClient(b, fsyamux.YamuxLimits{}, fsyamux.LivenessOptions{})
 	if err != nil {
 		_ = srv.Close()
 		_ = a.Close()

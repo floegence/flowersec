@@ -53,7 +53,7 @@ Attach layer (tunnel path):
 - **Attach is plaintext by design**: the first tunnel message is JSON attach metadata (plus a bearer token) sent over the websocket before E2EE. Anyone who can observe `ws://` traffic can see the attach JSON and token.
 - **Tokens are bearer credentials**: do not log tokens, do not store them in client-visible locations, and do not reuse them after any failure.
 - **Use `wss://` in production**: for any non-local deployment, always use TLS (`wss://`) or terminate TLS at a trusted reverse proxy.
-- **Transport policy is caller-owned**: high-level clients accept explicit `RequireTLS`, `AllowPlaintextForLoopback`, and `AllowPlaintext` policies. Omitting a policy preserves v0.19 compatibility and emits a best-effort `plaintext_transport` diagnostic for `ws://`. Choosing `AllowPlaintext` explicitly accepts exposure of pre-E2EE attach metadata and bearer tokens.
+- **Transport policy is fail-closed by default**: high-level clients use `RequireTLS` when the caller omits a policy. `AllowPlaintextForLoopback` and `AllowPlaintext` are explicit opt-ins; `plaintext_transport` is emitted only when an opt-in policy actually permits `ws://`. Choosing `AllowPlaintext` explicitly accepts exposure of pre-E2EE attach metadata and bearer tokens.
 - **Loopback means a literal target**: `AllowPlaintextForLoopback` recognizes only `localhost`, canonical `127.0.0.0/8` IPv4 literals, and `::1`. It does not resolve DNS names.
 
 Untrusted tunnel:

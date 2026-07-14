@@ -4,10 +4,12 @@ import { WebSocketBinaryTransport, WsCloseError, type WebSocketLike } from "./bi
 class FakeWebSocket implements WebSocketLike {
   binaryType = "arraybuffer";
   readyState = 1;
+  bufferedAmount = 0;
   closed = false;
   private readonly listeners = new Map<string, Set<(ev: any) => void>>();
 
-  send(_data: string | ArrayBuffer | Uint8Array): void {}
+  readonly sent: Array<string | ArrayBuffer | Uint8Array> = [];
+  send(data: string | ArrayBuffer | Uint8Array): void { this.sent.push(data); }
 
   close(): void {
     this.closed = true;
@@ -86,7 +88,7 @@ describe("WebSocketBinaryTransport", () => {
     const ws = new FakeWebSocket();
     const onWsError = vi.fn();
     const onWsClose = vi.fn();
-    const transport = new WebSocketBinaryTransport(ws, { maxQueuedBytes: 4, observer: { onWsClose, onWsError } });
+    const transport = new WebSocketBinaryTransport(ws, { webSocketLimits: { maxInboundQueuedBytes: 4 }, observer: { onWsClose, onWsError } });
 
     ws.emit("message", { data: new Uint8Array([1, 2, 3]).buffer });
     ws.emit("message", { data: new Uint8Array([4, 5]).buffer });
@@ -204,9 +206,9 @@ describe("WebSocketBinaryTransport", () => {
     expect(onWsError).toHaveBeenCalledWith("error");
   });
 
-  test("maxQueuedBytes allows exact limit then fails on overflow", async () => {
+  test("maxInboundQueuedBytes allows exact limit then fails on overflow", async () => {
     const ws = new FakeWebSocket();
-    const transport = new WebSocketBinaryTransport(ws, { maxQueuedBytes: 3 });
+    const transport = new WebSocketBinaryTransport(ws, { webSocketLimits: { maxInboundQueuedBytes: 3 } });
 
     ws.emit("message", { data: new Uint8Array([1, 2, 3]).buffer });
     const read = transport.readBinary();
@@ -214,6 +216,72 @@ describe("WebSocketBinaryTransport", () => {
 
     ws.emit("message", { data: new Uint8Array([4, 5, 6, 7]).buffer });
     await waitForClosed(ws);
+    expect(ws.closed).toBe(true);
+  });
+
+  test("serializes writes while the websocket drains below its low watermark", async () => {
+    vi.useFakeTimers();
+    try {
+      const ws = new FakeWebSocket();
+      ws.bufferedAmount = 5;
+      const transport = new WebSocketBinaryTransport(ws, { webSocketLimits: {
+        outboundLowWatermarkBytes: 1,
+        outboundHighWatermarkBytes: 4,
+        outboundHardLimitBytes: 10,
+        outboundDrainTimeoutMs: 100,
+      } });
+      const first = transport.writeBinary(new Uint8Array([1]));
+      const second = transport.writeBinary(new Uint8Array([2]));
+      await vi.advanceTimersByTimeAsync(20);
+      expect(ws.sent).toHaveLength(0);
+      ws.bufferedAmount = 3;
+      await vi.advanceTimersByTimeAsync(10);
+      expect(ws.sent).toHaveLength(0);
+      ws.bufferedAmount = 1;
+      await vi.advanceTimersByTimeAsync(10);
+      await Promise.all([first, second]);
+      expect(ws.sent.map((b) => Array.from(b as Uint8Array))).toEqual([[1], [2]]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  test("closes when outbound drain exceeds the configured timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const ws = new FakeWebSocket();
+      ws.bufferedAmount = 5;
+      const onDiagnosticEvent = vi.fn();
+      const transport = new WebSocketBinaryTransport(ws, { observer: { onDiagnosticEvent }, webSocketLimits: {
+        outboundLowWatermarkBytes: 1,
+        outboundHighWatermarkBytes: 4,
+        outboundHardLimitBytes: 10,
+        outboundDrainTimeoutMs: 20,
+      } });
+      const write = transport.writeBinary(new Uint8Array([1]));
+      const expected = expect(write).rejects.toThrow(/drain timeout/);
+      await vi.advanceTimersByTimeAsync(30);
+      await expected;
+      expect(ws.closed).toBe(true);
+      expect(onDiagnosticEvent).toHaveBeenCalledWith(expect.objectContaining({
+        code_domain: "event",
+        code: "queue_pressure",
+        stage: "transport",
+      }));
+    } finally { vi.useRealTimers(); }
+  });
+
+  test("counts queued serialized writes against the outbound hard limit", async () => {
+    const ws = new FakeWebSocket();
+    ws.bufferedAmount = 5;
+    const transport = new WebSocketBinaryTransport(ws, { webSocketLimits: {
+      outboundLowWatermarkBytes: 1,
+      outboundHighWatermarkBytes: 4,
+      outboundHardLimitBytes: 10,
+      outboundDrainTimeoutMs: 100,
+    } });
+    const first = transport.writeBinary(new Uint8Array(3));
+    const firstRejected = expect(first).rejects.toThrow();
+    await expect(transport.writeBinary(new Uint8Array(3))).rejects.toThrow(/hard limit/);
+    await firstRejected;
     expect(ws.closed).toBe(true);
   });
 });

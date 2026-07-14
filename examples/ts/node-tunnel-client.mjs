@@ -1,6 +1,6 @@
 import process from "node:process";
 
-import { connectNode } from "../../flowersec-ts/dist/node/index.js";
+import { AllowPlaintextForLoopback, connectNode } from "../../flowersec-ts/dist/node/index.js";
 import { createDemoSession } from "../../flowersec-ts/dist/_examples/flowersec/demo/v1.facade.gen.js";
 import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
 
@@ -52,7 +52,9 @@ async function main() {
 
   // connectNode() auto-detects tunnel artifacts/grants and returns an RPC-ready session.
   // It also supports extra yamux streams via openStream(kind).
-  const sess = createDemoSession(await connectNode(bootstrap, { origin }));
+  const sess = createDemoSession(
+    await connectNode(bootstrap, { origin, transportSecurityPolicy: AllowPlaintextForLoopback }),
+  );
 
   try {
     const notified = waitHello(sess.demo, 2000);

@@ -98,13 +98,13 @@ func TestTrackConnLimits(t *testing.T) {
 	}
 }
 
-func TestNewRejectsNegativeMaxTotalPendingBytes(t *testing.T) {
+func TestNewRejectsNegativeMaxTotalQueuedBytes(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.TunnelAudience = "aud"
 	cfg.TunnelIssuer = "iss"
 	cfg.IssuerKeysFile = "does-not-matter.json"
 	cfg.AllowedOrigins = []string{"https://ok"}
-	cfg.MaxTotalPendingBytes = -1
+	cfg.MaxTotalQueuedBytes = -1
 	if _, err := New(cfg); err == nil {
 		t.Fatalf("expected error for negative max total pending bytes")
 	}
@@ -405,14 +405,16 @@ func TestRouteOrBufferBehavior(t *testing.T) {
 func TestRouteOrBufferGlobalPendingOverflow(t *testing.T) {
 	obs := &testObserver{}
 	s := &Server{
-		cfg:      Config{MaxPendingBytes: 1024, MaxTotalPendingBytes: 4, MaxRecordBytes: 1 << 20},
-		obs:      obs,
-		channels: make(map[string]*channelState),
+		cfg:               Config{MaxPendingBytes: 1024, MaxTotalQueuedBytes: 4, MaxRecordBytes: 1 << 20},
+		obs:               obs,
+		channels:          make(map[string]*channelState),
+		resourceObs:       observability.NoopTunnelResourceObserver,
+		tenantQueuedBytes: make(map[string]int64),
 	}
 
 	st := &channelState{conns: make(map[tunnelv1.Role]*endpointConn)}
 	s.channels["ch"] = st
-	src := &endpointConn{role: tunnelv1.Role_client}
+	src := &endpointConn{role: tunnelv1.Role_client, server: s, tenantKey: "tenant"}
 	st.conns = map[tunnelv1.Role]*endpointConn{tunnelv1.Role_client: src}
 
 	frame := []byte{1, 2, 3}
@@ -423,6 +425,126 @@ func TestRouteOrBufferGlobalPendingOverflow(t *testing.T) {
 	_, _, err = s.routeOrBuffer("ch", tunnelv1.Role_client, src, frame)
 	if err == nil {
 		t.Fatalf("expected global pending overflow")
+	}
+}
+
+func TestQueuedByteBudgetsAreTenantScopedAndGlobal(t *testing.T) {
+	s := &Server{
+		cfg:               Config{MaxTenantQueuedBytes: 4, MaxTotalQueuedBytes: 6},
+		resourceObs:       observability.NoopTunnelResourceObserver,
+		tenantQueuedBytes: make(map[string]int64),
+	}
+	if !s.tryReserveQueuedBytes("tenant-a", 4) {
+		t.Fatal("expected tenant-a reservation")
+	}
+	if s.tryReserveQueuedBytes("tenant-a", 1) {
+		t.Fatal("expected tenant budget exhaustion")
+	}
+	if !s.tryReserveQueuedBytes("tenant-b", 2) {
+		t.Fatal("expected tenant-b reservation")
+	}
+	if s.tryReserveQueuedBytes("tenant-c", 1) {
+		t.Fatal("expected global budget exhaustion")
+	}
+	s.releaseQueuedBytes("tenant-a", 4)
+	if !s.tryReserveQueuedBytes("tenant-c", 1) {
+		t.Fatal("expected capacity after release")
+	}
+}
+
+func TestWriteQueueBytesReleaseAfterWriteCompletion(t *testing.T) {
+	s := &Server{
+		cfg:               Config{MaxTenantQueuedBytes: 4, MaxTotalQueuedBytes: 4},
+		resourceObs:       observability.NoopTunnelResourceObserver,
+		tenantQueuedBytes: make(map[string]int64),
+	}
+	ep := newEndpointConn(tunnelv1.Role_client, "eid", &websocket.Conn{})
+	ep.server = s
+	ep.tenantKey = "tenant"
+	done, err := ep.enqueueWrite([]byte("abcd"), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.totalQueuedBytes; got != 4 {
+		t.Fatalf("queued bytes = %d", got)
+	}
+	req, err := ep.nextWrite()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep.finishWrite(req, nil)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := s.totalQueuedBytes; got != 0 {
+		t.Fatalf("queued bytes after finish = %d", got)
+	}
+}
+
+func TestEndpointWritePumpLifecycleRestartsWithoutDroppingFrames(t *testing.T) {
+	s := &Server{
+		cfg:               Config{MaxTenantQueuedBytes: 8, MaxTotalQueuedBytes: 8},
+		resourceObs:       observability.NoopTunnelResourceObserver,
+		tenantQueuedBytes: make(map[string]int64),
+	}
+	ep := newEndpointConn(tunnelv1.Role_client, "eid", &websocket.Conn{})
+	ep.server = s
+	ep.tenantKey = "tenant"
+
+	drain := func(frames ...string) {
+		t.Helper()
+		done := make([]<-chan error, 0, len(frames))
+		for _, frame := range frames {
+			ch, err := ep.enqueueWrite([]byte(frame), 8)
+			if err != nil {
+				t.Fatalf("enqueueWrite(%q) failed: %v", frame, err)
+			}
+			done = append(done, ch)
+		}
+		if !ep.claimWritePump() {
+			t.Fatal("expected queued frames to start a write pump")
+		}
+		if ep.claimWritePump() {
+			t.Fatal("expected only one active write pump")
+		}
+		for i, want := range frames {
+			req, err := ep.nextWrite()
+			if err != nil {
+				t.Fatalf("nextWrite(%d) failed: %v", i, err)
+			}
+			if got := string(req.frame); got != want {
+				t.Fatalf("frame %d = %q, want %q", i, got, want)
+			}
+			ep.finishWrite(req, nil)
+		}
+		if _, err := ep.nextWrite(); !errors.Is(err, errWriteQueueIdle) {
+			t.Fatalf("nextWrite after drain = %v, want %v", err, errWriteQueueIdle)
+		}
+		for i, ch := range done {
+			if err := <-ch; err != nil {
+				t.Fatalf("completion %d failed: %v", i, err)
+			}
+		}
+		ep.outMu.Lock()
+		running := ep.outRunning
+		queuedBytes := ep.outBytes
+		ep.outMu.Unlock()
+		if running || queuedBytes != 0 {
+			t.Fatalf("writer state after drain: running=%v queued_bytes=%d", running, queuedBytes)
+		}
+		if got := s.totalQueuedBytes; got != 0 {
+			t.Fatalf("total queued bytes after drain = %d", got)
+		}
+		if got := s.tenantQueuedBytes["tenant"]; got != 0 {
+			t.Fatalf("tenant queued bytes after drain = %d", got)
+		}
+	}
+
+	drain("a", "b")
+	drain("c", "d")
+	ep.closeWriteQueue(nil)
+	if got := s.totalQueuedBytes; got != 0 {
+		t.Fatalf("total queued bytes after close = %d", got)
 	}
 }
 

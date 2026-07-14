@@ -57,16 +57,18 @@ const (
 	CloseReasonIdleTimeout        CloseReason = "idle_timeout"
 	CloseReasonPolicyDenied       CloseReason = "policy_denied"
 	CloseReasonPolicyLeaseExpired CloseReason = "policy_lease_expired"
+	CloseReasonResourceExhausted  CloseReason = "resource_exhausted"
 )
 
 type RPCResult string
 
 const (
-	RPCResultOK              RPCResult = "ok"
-	RPCResultRPCError        RPCResult = "rpc_error"
-	RPCResultHandlerNotFound RPCResult = "handler_not_found"
-	RPCResultTransportError  RPCResult = "transport_error"
-	RPCResultCanceled        RPCResult = "canceled"
+	RPCResultOK                RPCResult = "ok"
+	RPCResultRPCError          RPCResult = "rpc_error"
+	RPCResultHandlerNotFound   RPCResult = "handler_not_found"
+	RPCResultTransportError    RPCResult = "transport_error"
+	RPCResultCanceled          RPCResult = "canceled"
+	RPCResultResourceExhausted RPCResult = "resource_exhausted"
 )
 
 type RPCFrameDirection string
@@ -75,6 +77,19 @@ const (
 	RPCFrameRead  RPCFrameDirection = "read"
 	RPCFrameWrite RPCFrameDirection = "write"
 )
+
+type TunnelResourceLimit string
+
+const (
+	TunnelResourceLimitTenantQueuedBytes TunnelResourceLimit = "tenant_queued_bytes"
+	TunnelResourceLimitTotalQueuedBytes  TunnelResourceLimit = "total_queued_bytes"
+)
+
+// TunnelResourceObserver receives optional tunnel queue resource events.
+type TunnelResourceObserver interface {
+	QueuedBytes(tenantID string, tenantBytes int64, totalBytes int64)
+	ResourceExhausted(tenantID string, limit TunnelResourceLimit)
+}
 
 // TunnelObserver receives tunnel-level metric events.
 type TunnelObserver interface {
@@ -120,6 +135,51 @@ var NoopTunnelObserver TunnelObserver = noopTunnelObserver{}
 // NoopRPCObserver is a zero-cost observer used when metrics are disabled.
 var NoopRPCObserver RPCObserver = noopRPCObserver{}
 
+type noopTunnelResourceObserver struct{}
+
+func (noopTunnelResourceObserver) QueuedBytes(string, int64, int64)              {}
+func (noopTunnelResourceObserver) ResourceExhausted(string, TunnelResourceLimit) {}
+
+// NoopTunnelResourceObserver is used when resource metrics are disabled.
+var NoopTunnelResourceObserver TunnelResourceObserver = noopTunnelResourceObserver{}
+
+// AtomicTunnelResourceObserver swaps its delegate at runtime.
+type AtomicTunnelResourceObserver struct {
+	once sync.Once
+	v    atomic.Value
+}
+
+type tunnelResourceObserverHolder struct {
+	obs TunnelResourceObserver
+}
+
+func NewAtomicTunnelResourceObserver() *AtomicTunnelResourceObserver {
+	a := &AtomicTunnelResourceObserver{}
+	a.once.Do(func() { a.v.Store(&tunnelResourceObserverHolder{obs: NoopTunnelResourceObserver}) })
+	return a
+}
+
+func (a *AtomicTunnelResourceObserver) Set(obs TunnelResourceObserver) {
+	if obs == nil {
+		obs = NoopTunnelResourceObserver
+	}
+	a.once.Do(func() { a.v.Store(&tunnelResourceObserverHolder{obs: NoopTunnelResourceObserver}) })
+	a.v.Store(&tunnelResourceObserverHolder{obs: obs})
+}
+
+func (a *AtomicTunnelResourceObserver) load() TunnelResourceObserver {
+	a.once.Do(func() { a.v.Store(&tunnelResourceObserverHolder{obs: NoopTunnelResourceObserver}) })
+	return a.v.Load().(*tunnelResourceObserverHolder).obs
+}
+
+func (a *AtomicTunnelResourceObserver) QueuedBytes(tenantID string, tenantBytes int64, totalBytes int64) {
+	a.load().QueuedBytes(tenantID, tenantBytes, totalBytes)
+}
+
+func (a *AtomicTunnelResourceObserver) ResourceExhausted(tenantID string, limit TunnelResourceLimit) {
+	a.load().ResourceExhausted(tenantID, limit)
+}
+
 // AtomicTunnelObserver swaps its delegate at runtime.
 type AtomicTunnelObserver struct {
 	once sync.Once
@@ -160,6 +220,16 @@ func (a *AtomicTunnelObserver) Replace(result ReplaceResult) { a.load().Replace(
 func (a *AtomicTunnelObserver) Close(reason CloseReason)     { a.load().Close(reason) }
 func (a *AtomicTunnelObserver) PairLatency(d time.Duration)  { a.load().PairLatency(d) }
 func (a *AtomicTunnelObserver) Encrypted()                   { a.load().Encrypted() }
+func (a *AtomicTunnelObserver) QueuedBytes(tenantID string, tenantBytes int64, totalBytes int64) {
+	if obs, ok := a.load().(TunnelResourceObserver); ok {
+		obs.QueuedBytes(tenantID, tenantBytes, totalBytes)
+	}
+}
+func (a *AtomicTunnelObserver) ResourceExhausted(tenantID string, limit TunnelResourceLimit) {
+	if obs, ok := a.load().(TunnelResourceObserver); ok {
+		obs.ResourceExhausted(tenantID, limit)
+	}
+}
 
 // AtomicRPCObserver swaps its delegate at runtime.
 type AtomicRPCObserver struct {

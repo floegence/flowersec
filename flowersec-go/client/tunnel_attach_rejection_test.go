@@ -74,7 +74,7 @@ func TestConnectTunnel_MapsAttachRejectionCloseReason(t *testing.T) {
 				DefaultSuite:             controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM,
 			}
 
-			_, err := client.ConnectTunnel(context.Background(), grant, client.WithOrigin("https://example.test"))
+			_, err := client.ConnectTunnel(context.Background(), grant, client.WithOrigin("https://example.test"), client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback))
 			if err == nil {
 				t.Fatal("expected error")
 			}

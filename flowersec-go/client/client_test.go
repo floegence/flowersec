@@ -3,31 +3,27 @@ package client
 import (
 	"context"
 	"errors"
-	"io"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
-	hyamux "github.com/hashicorp/yamux"
 )
 
-func newYamuxPair(t *testing.T) (client *hyamux.Session, server *hyamux.Session, closeFn func()) {
+func newYamuxPair(t *testing.T) (client *fsyamux.Session, server *fsyamux.Session, closeFn func()) {
 	t.Helper()
 	a, b := net.Pipe()
-	cfg := hyamux.DefaultConfig()
-	cfg.EnableKeepAlive = false
-	cfg.LogOutput = io.Discard
-	srv, err := hyamux.Server(a, cfg)
+	srv, err := fsyamux.NewServer(a, fsyamux.YamuxLimits{}, fsyamux.LivenessOptions{})
 	if err != nil {
 		_ = a.Close()
 		_ = b.Close()
 		t.Fatalf("yamux server: %v", err)
 	}
-	cli, err := hyamux.Client(b, cfg)
+	cli, err := fsyamux.NewClient(b, fsyamux.YamuxLimits{}, fsyamux.LivenessOptions{})
 	if err != nil {
 		_ = srv.Close()
 		_ = a.Close()
@@ -49,12 +45,37 @@ func TestClientCloseNil(t *testing.T) {
 	}
 }
 
+func TestWatchLivenessEmitsStableDiagnostic(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	mux, err := fsyamux.NewClient(a, fsyamux.YamuxLimits{}, fsyamux.LivenessOptions{
+		Interval: 10 * time.Millisecond,
+		Timeout:  20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &transportDiagnosticObserver{events: make(chan observability.DiagnosticEvent, 1)}
+	observer := observability.NormalizeClientObserver(recorder, observability.ClientObserverContext{Path: PathTunnel})
+	client := &session{path: PathTunnel, mux: mux, observer: observer}
+	go client.watchLiveness()
+	select {
+	case event := <-recorder.events:
+		if event.Stage != observability.DiagnosticStageYamux || event.Code != "liveness_timeout" || event.Result != observability.DiagnosticResultFail {
+			t.Fatalf("unexpected diagnostic: %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing liveness_timeout diagnostic")
+	}
+}
+
 func TestSessionGetters(t *testing.T) {
 	c := &session{
 		path:               PathTunnel,
 		endpointInstanceID: "endpoint-1",
 		secure:             &e2ee.SecureChannel{},
-		mux:                &hyamux.Session{},
+		mux:                &fsyamux.Session{},
 		rpc:                &rpc.Client{},
 	}
 	if got := c.Path(); got != PathTunnel {
@@ -150,14 +171,5 @@ func TestClassifyConnectObserverReason(t *testing.T) {
 	}
 	if got := classifyConnectObserverReason(errors.New("boom")); got != observability.ConnectReasonWebsocketError {
 		t.Fatalf("default reason = %q", got)
-	}
-}
-
-func TestStartKeepaliveZeroIntervalIsNoop(t *testing.T) {
-	c := &session{}
-	c.startKeepalive(0)
-	time.Sleep(10 * time.Millisecond)
-	if c.keepaliveStop != nil {
-		t.Fatal("expected keepalive to remain disabled")
 	}
 }

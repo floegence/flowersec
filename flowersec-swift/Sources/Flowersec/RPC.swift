@@ -224,6 +224,10 @@ public final class FlowersecClient: @unchecked Sendable {
     await yamux.close()
   }
 
+  public func probeLiveness(timeout: Duration = .seconds(10)) async throws -> Duration {
+    try await yamux.probeLiveness(timeout: timeout)
+  }
+
   public func openStream(kind: String) async throws -> any FlowersecByteStream {
     let trimmedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedKind.isEmpty else {
@@ -263,19 +267,33 @@ public enum Flowersec {
     _ info: DirectConnectInfo,
     options: DirectConnectOptions = DirectConnectOptions()
   ) async throws -> FlowersecClient {
+    try validate(options: options, path: .direct)
     try await FlowersecTransportSecurity.enforce(url: info.wsURL, path: .direct, options: options)
     let transport = FlowersecWebSocketBinaryTransport(
       url: info.wsURL,
       origin: options.origin,
-      connectTimeout: options.connectTimeout
+      connectTimeout: options.connectTimeout,
+      path: .direct,
+      onDiagnosticEvent: options.onDiagnosticEvent
     )
     await transport.resume()
-    let secure = try await FlowersecHandshake.runClientHandshake(transport: transport, info: info)
-    let yamux = FlowersecYamuxClient(channel: secure)
+    let secure = try await FlowersecHandshake.runClientHandshake(
+      transport: transport,
+      info: info,
+      outboundRecordChunkBytes: options.outboundRecordChunkBytes
+    )
+    let yamux = FlowersecYamuxClient(
+      channel: secure,
+      limits: options.yamuxLimits,
+      automaticLiveness: try resolvedLiveness(options.liveness, path: .direct, idleTimeout: nil),
+      path: .direct,
+      onDiagnosticEvent: options.onDiagnosticEvent
+    )
     let stream = try await yamux.openStream()
     try await FlowersecJSONFrame.write(StreamHello(kind: "rpc", version: 1).encoded(), to: stream)
     let rpc = RPCClient(stream: stream)
     await rpc.start()
+    await yamux.start()
     return FlowersecClient(rpc: rpc, yamux: yamux)
   }
 
@@ -299,11 +317,14 @@ public enum Flowersec {
         message: "Default suite must be included in allowed_suites."
       )
     }
+    try validate(options: options, path: .tunnel)
     try await FlowersecTransportSecurity.enforce(url: grant.tunnelURL, path: .tunnel, options: options)
     let transport = FlowersecWebSocketBinaryTransport(
       url: grant.tunnelURL,
       origin: options.origin,
-      connectTimeout: options.connectTimeout
+      connectTimeout: options.connectTimeout,
+      path: .tunnel,
+      onDiagnosticEvent: options.onDiagnosticEvent
     )
     await transport.resume()
     try await transport.writeText(
@@ -324,21 +345,85 @@ public enum Flowersec {
         channelInitExpiresAtUnixS: grant.channelInitExpiresAtUnixS,
         defaultSuite: grant.defaultSuite
       ),
-      transport: transport
+      transport: transport,
+      options: options,
+      idleTimeout: .seconds(max(0, grant.idleTimeoutSeconds))
     )
   }
 
   private static func connectDirect(
     _ info: DirectConnectInfo,
-    transport: FlowersecWebSocketBinaryTransport
+    transport: FlowersecWebSocketBinaryTransport,
+    options: ConnectOptions,
+    idleTimeout: Duration
   ) async throws -> FlowersecClient {
-    let secure = try await FlowersecHandshake.runClientHandshake(transport: transport, info: info)
-    let yamux = FlowersecYamuxClient(channel: secure)
+    let secure = try await FlowersecHandshake.runClientHandshake(
+      transport: transport,
+      info: info,
+      outboundRecordChunkBytes: options.outboundRecordChunkBytes
+    )
+    let yamux = FlowersecYamuxClient(
+      channel: secure,
+      limits: options.yamuxLimits,
+      automaticLiveness: try resolvedLiveness(
+        options.liveness,
+        path: .tunnel,
+        idleTimeout: idleTimeout
+      ),
+      path: .tunnel,
+      onDiagnosticEvent: options.onDiagnosticEvent
+    )
     let stream = try await yamux.openStream()
     try await FlowersecJSONFrame.write(StreamHello(kind: "rpc", version: 1).encoded(), to: stream)
     let rpc = RPCClient(stream: stream)
     await rpc.start()
+    await yamux.start()
     return FlowersecClient(rpc: rpc, yamux: yamux)
+  }
+
+  private static func validate(options: ConnectOptions, path: FlowersecPath) throws {
+    let maxPlaintext = FlowersecWire.maxRecordBytes - 18 - 16
+    guard options.outboundRecordChunkBytes > 0,
+      options.outboundRecordChunkBytes <= maxPlaintext
+    else {
+      throw FlowersecError(
+        path: path,
+        stage: .validate,
+        code: .invalidOption,
+        message: "outboundRecordChunkBytes must fit within the record plaintext limit."
+      )
+    }
+    do {
+      try options.yamuxLimits.validate()
+      _ = try resolvedLiveness(options.liveness, path: path, idleTimeout: .seconds(1))
+    } catch var error as FlowersecError {
+      error.path = path
+      error.stage = .validate
+      error.code = .invalidOption
+      throw error
+    }
+  }
+
+  private static func resolvedLiveness(
+    _ options: LivenessOptions,
+    path: FlowersecPath,
+    idleTimeout: Duration?
+  ) throws -> (interval: Duration, timeout: Duration)? {
+    switch options {
+    case .disabled:
+      return nil
+    case .pathDefault:
+      guard path == .tunnel, let idleTimeout, idleTimeout > .zero else { return nil }
+      let interval = max(.milliseconds(500), idleTimeout / 2)
+      return (interval, min(.seconds(10), interval))
+    case .enabled(let interval, let timeout):
+      guard interval > .zero, timeout > .zero else {
+        throw FlowersecError.invalidConnectInfo(
+          "Liveness interval and timeout must both be positive."
+        )
+      }
+      return (interval, timeout)
+    }
   }
 }
 

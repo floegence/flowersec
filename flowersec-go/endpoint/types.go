@@ -78,4 +78,5 @@ const (
 	CodeMissingStreamKind         = fserrors.CodeMissingStreamKind
 	CodeStreamHelloFailed         = fserrors.CodeStreamHelloFailed
 	CodeRPCFailed                 = fserrors.CodeRPCFailed
+	CodeResourceExhausted         = fserrors.CodeResourceExhausted
 )

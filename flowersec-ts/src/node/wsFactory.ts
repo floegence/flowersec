@@ -95,6 +95,9 @@ export function createNodeWsFactory(opts: NodeWsFactoryOptions = {}): (url: stri
       get readyState() {
         return raw.readyState as number;
       },
+      get bufferedAmount() {
+        return raw.bufferedAmount as number;
+      },
       send(data: string | ArrayBuffer | Uint8Array): void {
         raw.send(data);
       },

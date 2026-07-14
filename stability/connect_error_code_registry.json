@@ -51,7 +51,8 @@
     { "code": "rpc_failed", "stages": ["rpc"] },
     { "code": "missing_stream_kind", "stages": ["rpc"] },
     { "code": "missing_handler", "stages": ["rpc"] },
-    { "code": "ping_failed", "stages": ["close"] },
-    { "code": "not_connected", "stages": ["close", "rpc"] }
+    { "code": "ping_failed", "stages": ["secure", "yamux", "close"] },
+    { "code": "not_connected", "stages": ["close", "rpc"] },
+    { "code": "resource_exhausted", "stages": ["connect", "secure", "yamux", "rpc", "close"] }
   ]
 }

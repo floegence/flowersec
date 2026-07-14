@@ -143,24 +143,24 @@ export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions):
     endpoint_instance_id: endpointInstanceId
   };
   const attachJson = JSON.stringify(attach);
-  const keepaliveIntervalMs = opts.keepaliveIntervalMs ?? defaultKeepaliveIntervalMs(idleTimeoutSeconds);
+  const liveness = opts.liveness ?? defaultLiveness(idleTimeoutSeconds);
   return await connectCore({
     path: "tunnel",
     wsUrl: tunnelUrl,
     channelId,
     e2eePskB64u,
     defaultSuite: checkedGrant.default_suite,
-    opts: { ...opts, keepaliveIntervalMs },
+    opts: { ...opts, liveness },
     attach: { attachJson, endpointInstanceId }
   });
 }
 
-function defaultKeepaliveIntervalMs(idleTimeoutSeconds: number): number {
-  if (!Number.isFinite(idleTimeoutSeconds) || idleTimeoutSeconds <= 0) return 0;
+function defaultLiveness(idleTimeoutSeconds: number): false | { intervalMs: number; timeoutMs: number } {
+  if (!Number.isFinite(idleTimeoutSeconds) || idleTimeoutSeconds <= 0) return false;
   const idleMs = Math.floor(idleTimeoutSeconds * 1000);
-  if (idleMs <= 0) return 0;
+  if (idleMs <= 0) return false;
   let interval = Math.floor(idleMs / 2);
   if (interval < 500) interval = 500;
   if (interval >= idleMs) interval = Math.floor(idleMs / 2);
-  return interval;
+  return { intervalMs: interval, timeoutMs: Math.min(10_000, interval) };
 }

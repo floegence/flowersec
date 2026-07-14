@@ -7,22 +7,44 @@ protocol FlowersecYamuxChannel: Sendable {
 }
 
 actor FlowersecSecureChannel: FlowersecYamuxChannel {
-  private let transport: FlowersecWebSocketBinaryTransport
+  private struct PendingWrite {
+    var data: Data
+    var continuation: CheckedContinuation<Void, Error>
+  }
+
+  private let transport: any FlowersecBinaryTransport
   private var keys: FlowersecRecordKeyState
   private var readBuffer = Data()
+  private var pendingWrites: [PendingWrite] = []
+  private var writeInProgress = false
   private var closed = false
+  private let outboundRecordChunkBytes: Int
 
-  init(transport: FlowersecWebSocketBinaryTransport, keys: FlowersecRecordKeyState) {
+  init(
+    transport: any FlowersecBinaryTransport,
+    keys: FlowersecRecordKeyState,
+    outboundRecordChunkBytes: Int = 64 * 1024
+  ) {
     self.transport = transport
     self.keys = keys
+    self.outboundRecordChunkBytes = outboundRecordChunkBytes
   }
 
   func write(_ data: Data) async throws {
     guard !closed else { throw FlowersecError.closed }
-    let maxPlaintext = max(1, FlowersecWire.maxRecordBytes - 18 - 16)
+    try await withCheckedThrowingContinuation { continuation in
+      pendingWrites.append(PendingWrite(data: data, continuation: continuation))
+      startWriteIfNeeded()
+    }
+  }
+
+  var queuedWriteCount: Int { pendingWrites.count }
+
+  private func writeRecords(_ data: Data) async throws {
     var offset = 0
     while offset < data.count {
-      let end = min(data.count, offset + maxPlaintext)
+      guard !closed else { throw FlowersecError.closed }
+      let end = min(data.count, offset + outboundRecordChunkBytes)
       let chunk = data.subdata(in: offset..<end)
       try await writeRecord(chunk)
       offset = end
@@ -42,8 +64,51 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   }
 
   func close() async {
+    guard !closed else { return }
     closed = true
+    failPendingWrites(with: FlowersecError.closed)
     await transport.close()
+  }
+
+  private func startWriteIfNeeded() {
+    guard !closed, !writeInProgress, let write = pendingWrites.first else { return }
+    writeInProgress = true
+    Task {
+      do {
+        try await writeRecords(write.data)
+        finishWrite(result: .success(()))
+      } catch {
+        finishWrite(result: .failure(error))
+      }
+    }
+  }
+
+  private func finishWrite(result: Result<Void, Error>) {
+    guard !pendingWrites.isEmpty else {
+      writeInProgress = false
+      return
+    }
+    let write = pendingWrites.removeFirst()
+    writeInProgress = false
+    switch result {
+    case .success:
+      write.continuation.resume()
+      startWriteIfNeeded()
+    case .failure(let error):
+      closed = true
+      write.continuation.resume(throwing: error)
+      failPendingWrites(with: error)
+      Task { await transport.close() }
+    }
+  }
+
+  private func failPendingWrites(with error: Error) {
+    let writes = pendingWrites
+    pendingWrites.removeAll()
+    writeInProgress = false
+    for write in writes {
+      write.continuation.resume(throwing: error)
+    }
   }
 
   private func writeRecord(_ plaintext: Data) async throws {

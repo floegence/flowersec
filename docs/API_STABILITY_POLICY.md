@@ -25,7 +25,7 @@ Stable means:
 
 Experimental APIs may ship in the repository, but they are not covered by the same compatibility commitment as the stable surface.
 
-In v0.19.x this explicitly includes:
+In v0.20.x this explicitly includes:
 
 - public normalize helper shapes
 - public scope resolver registration model
@@ -94,17 +94,17 @@ Browser re-exports of `requestConnectArtifact(...)`, `requestEntryConnectArtifac
 
 ### Scoped metadata and proxy runtime
 
-Stable in v0.19.x:
+Stable in v0.20.x:
 
 - the `scoped` carrier on `ConnectArtifact`
 - critical fail-fast meaning
 - `proxy.runtime@1` when consumed by the stable proxy helper entrypoints
 
 `proxy.runtime@1` is intentionally frozen narrowly.
-Deployment hardening controls such as runtime path policy, runtime registration tokens, trusted external-origin overrides, and bridge capability nonces belong to explicit helper/runtime options in v0.19.x.
+Deployment hardening controls such as runtime path policy, runtime registration tokens, trusted external-origin overrides, and bridge capability nonces belong to explicit helper/runtime options in v0.20.x.
 They must not be added to the v1 scope payload or manifest as an in-place extension; artifact-carried versions require a future reviewed scope version such as `proxy.runtime@2`.
 
-Experimental in v0.19.x:
+Experimental in v0.20.x:
 
 - public resolver registration APIs used by generic `connect(...)`
 - relaxed negotiation / dual-read stories across future scope versions
@@ -123,16 +123,17 @@ Registry sources:
 - `stability/connect_error_code_registry.json`
 - `stability/connect_diagnostics_code_registry.json`
 
-## v0.19.x compatibility posture
+## v0.20.x compatibility posture
 
-Flowersec v0.19.x keeps the long-term core surface small, but makes the artifact-first path materially easier to adopt:
+Flowersec v0.20.x keeps wire compatibility for `ConnectArtifact v1`, encrypted records, and Yamux while intentionally breaking unsafe or ambiguous configuration APIs:
 
-- `@floegence/flowersec-core/controlplane` becomes the recommended TypeScript controlplane entry
-- browser/node reconnect adapters become artifact-aware without duplicating reconnect core logic
-- proxy same-origin and controller-origin helper paths become artifact-first
-- Go gets a thin `controlplane/http` reference layer instead of forcing every integrator to rebuild the same decode/write contract
+- high-level WebSocket connects default to TLS-only
+- plaintext requires an explicit policy decision
+- record, WebSocket, Yamux, RPC, and tunnel queues have stable bounded defaults
+- liveness uses acknowledged Yamux PING round trips
+- browser and Node reconnect adapters accept only a discriminated `ArtifactSource`
 
-At the same time, these compatibility edges remain intentionally supported:
+The following compatibility edges remain intentionally supported:
 
 - raw grant path
 - wrapper path
@@ -140,6 +141,8 @@ At the same time, these compatibility edges remain intentionally supported:
 - `requestChannelGrant(...)` / `requestEntryChannelGrant(...)`
 - existing proxy wire `timeout_ms` compatibility (`omit == 0 == server default`)
 - browser stable aliases for the shared controlplane helpers while `@floegence/flowersec-core/controlplane` stays the preferred import
+
+The removed keepalive and overlapping reconnect-source fields do not have a compatibility layer. See `docs/V0_20_MIGRATION.md`.
 
 ## Review checklist
 
@@ -181,4 +184,4 @@ When possible, prefer:
 3. keep old stable API working during the transition window
 4. remove only after an explicit compatibility review
 
-For v0.19.x, grant-first browser helpers and grant-first proxy bootstrap helpers follow this rule: the stable replacement is artifact-first controlplane + proxy helper flows, while the older APIs remain compatibility-only or stable deprecated aliases during the transition window.
+For v0.20.x, grant-first browser helpers and grant-first proxy bootstrap helpers follow this rule: the stable replacement is artifact-first controlplane + proxy helper flows, while the older APIs remain compatibility-only or stable deprecated aliases during the transition window. The explicitly removed keepalive and reconnect-source fields are an exception covered by the v0.20 breaking-release review.

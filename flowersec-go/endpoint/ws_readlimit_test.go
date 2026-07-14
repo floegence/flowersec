@@ -121,6 +121,7 @@ func TestConnectTunnel_EnforcesWebSocketReadLimit(t *testing.T) {
 		WithOrigin("http://example.com"),
 		WithMaxHandshakePayload(16),
 		WithMaxRecordBytes(64),
+		WithTransportSecurityPolicy(AllowPlaintextForLoopback),
 	)
 	if err == nil {
 		t.Fatal("expected error")

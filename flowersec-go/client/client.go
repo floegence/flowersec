@@ -9,9 +9,10 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
-	hyamux "github.com/hashicorp/yamux"
 )
 
 // Client is a high-level session intended as the default user entrypoint.
@@ -24,6 +25,7 @@ type Client interface {
 	RPC() *rpc.Client
 	OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error)
 	Ping() error
+	ProbeLiveness(ctx context.Context) (time.Duration, error)
 	Close() error
 }
 
@@ -33,21 +35,40 @@ type Client interface {
 type ClientInternal interface {
 	Client
 	Secure() *e2ee.SecureChannel
-	Mux() *hyamux.Session
+	Mux() *fsyamux.Session
 }
 
 type session struct {
 	path               Path
 	endpointInstanceID string // Only for PathTunnel; empty for PathDirect.
 
-	secure *e2ee.SecureChannel
-	mux    *hyamux.Session
-	rpc    *rpc.Client
+	secure   *e2ee.SecureChannel
+	mux      *fsyamux.Session
+	rpc      *rpc.Client
+	observer observability.ClientObserver
 
 	closeOnce sync.Once
 	closeErr  error
+}
 
-	keepaliveStop chan struct{}
+func (c *session) watchLiveness() {
+	if c == nil || c.mux == nil {
+		return
+	}
+	err, ok := <-c.mux.LivenessFailures()
+	if !ok || err == nil {
+		return
+	}
+	if c.observer != nil {
+		c.observer.OnDiagnosticEvent(observability.DiagnosticEvent{
+			Path:       string(c.path),
+			Stage:      observability.DiagnosticStageYamux,
+			CodeDomain: observability.DiagnosticCodeDomainEvent,
+			Code:       "liveness_timeout",
+			Result:     observability.DiagnosticResultFail,
+		})
+	}
+	_ = c.Close()
 }
 
 func (c *session) Path() Path {
@@ -71,11 +92,38 @@ func (c *session) Secure() *e2ee.SecureChannel {
 	return c.secure
 }
 
-func (c *session) Mux() *hyamux.Session {
+func (c *session) Mux() *fsyamux.Session {
 	if c == nil {
 		return nil
 	}
 	return c.mux
+}
+
+func (c *session) ProbeLiveness(ctx context.Context) (time.Duration, error) {
+	if c == nil || c.mux == nil {
+		var path Path
+		if c != nil {
+			path = c.path
+		}
+		return 0, wrapErr(path, fserrors.StageYamux, fserrors.CodeNotConnected, ErrNotConnected)
+	}
+	rtt, err := c.mux.Probe(ctx)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			if c.observer != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, fsyamux.ErrLivenessTimeout)) {
+				c.observer.OnDiagnosticEvent(observability.DiagnosticEvent{
+					Path:       string(c.path),
+					Stage:      observability.DiagnosticStageYamux,
+					CodeDomain: observability.DiagnosticCodeDomainEvent,
+					Code:       "liveness_timeout",
+					Result:     observability.DiagnosticResultFail,
+				})
+			}
+			_ = c.Close()
+		}
+		return 0, wrapErr(c.path, fserrors.StageYamux, classifyContextOrCode(err, fserrors.CodePingFailed), err)
+	}
+	return rtt, nil
 }
 
 func (c *session) RPC() *rpc.Client {
@@ -106,9 +154,6 @@ func (c *session) Close() error {
 	}
 	c.closeOnce.Do(func() {
 		var firstErr error
-		if c.keepaliveStop != nil {
-			close(c.keepaliveStop)
-		}
 		if c.rpc != nil {
 			if err := c.rpc.Close(); err != nil && firstErr == nil {
 				firstErr = err
@@ -153,6 +198,9 @@ func (c *session) OpenStream(ctx context.Context, kind string) (io.ReadWriteClos
 
 	s, err := c.mux.OpenStream()
 	if err != nil {
+		if errors.Is(err, fsyamux.ErrResourceExhausted) {
+			return nil, wrapErr(c.path, fserrors.StageYamux, fserrors.CodeResourceExhausted, err)
+		}
 		return nil, wrapErr(c.path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
 	}
 
@@ -202,28 +250,12 @@ func classifyContextCode(err error) fserrors.Code {
 	return fserrors.CodeCanceled
 }
 
-func (c *session) startKeepalive(interval time.Duration) {
-	if c == nil || c.secure == nil || interval <= 0 {
-		return
+func classifyContextOrCode(err error, fallback fserrors.Code) fserrors.Code {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fserrors.CodeTimeout
 	}
-	if c.keepaliveStop != nil {
-		return
+	if errors.Is(err, context.Canceled) {
+		return fserrors.CodeCanceled
 	}
-	stop := make(chan struct{})
-	c.keepaliveStop = stop
-	go func() {
-		t := time.NewTicker(interval)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				if err := c.Ping(); err != nil {
-					_ = c.Close()
-					return
-				}
-			case <-stop:
-				return
-			}
-		}
-	}()
+	return fallback
 }

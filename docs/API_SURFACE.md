@@ -1,6 +1,6 @@
 # Flowersec API Surface
 
-This document defines the stable integration surface for Flowersec v0.19.x.
+This document defines the stable integration surface for Flowersec v0.20.x.
 
 Canonical source of truth for the stable surface: `stability/public_api_manifest.json`
 
@@ -32,6 +32,13 @@ Recommended integration entrypoints:
   - `client.ConnectDirect(...)`
   - `client.WithObserver(...)`
   - `client.WithTransportSecurityPolicy(...)`
+  - `client.WithOutboundRecordChunkBytes(...)`
+  - `client.WithYamuxLimits(...)`
+  - `client.WithLiveness(...)`
+  - `client.WithLivenessDisabled()`
+  - `client.LivenessOptions`
+  - `client.YamuxLimits`
+  - `client.Client.ProbeLiveness(...)`
   - `client.RequireTLS`
   - `client.AllowPlaintextForLoopback`
   - `client.AllowPlaintext`
@@ -50,6 +57,13 @@ Recommended integration entrypoints:
   - `endpoint.AcceptDirectResolverOptions`
   - `endpoint.DirectHandshakeCredential`
   - `endpoint.WithTransportSecurityPolicy(...)`
+  - `endpoint.WithOutboundRecordChunkBytes(...)`
+  - `endpoint.WithYamuxLimits(...)`
+  - `endpoint.WithLiveness(...)`
+  - `endpoint.WithLivenessDisabled()`
+  - `endpoint.LivenessOptions`
+  - `endpoint.YamuxLimits`
+  - `endpoint.Session.ProbeLiveness(...)`
 - `github.com/floegence/flowersec/flowersec-go/transportsecurity`
   - `transportsecurity.Policy`
   - `transportsecurity.Input`
@@ -115,6 +129,8 @@ Recommended integration entrypoints:
 - `github.com/floegence/flowersec/flowersec-go/rpc`
   - `rpc.NewRouter(...)`
   - `rpc.NewServer(...)`
+  - `rpc.NewServerWithOptions(...)`
+  - `rpc.ServerOptions`
   - `rpc.NewClient(...)`
 - `github.com/floegence/flowersec/flowersec-go/framing/jsonframe`
   - `jsonframe.ReadJSONFrame(...)`
@@ -122,11 +138,14 @@ Recommended integration entrypoints:
   - `jsonframe.ReadJSONFrameDefaultMax(...)`
 - `github.com/floegence/flowersec/flowersec-go/fserrors`
   - stable machine-readable `{path, stage, code}` types
+  - `fserrors.CodeResourceExhausted`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/issuer`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/token`
 - `github.com/floegence/flowersec/flowersec-go/tunnel/server`
   - `server.Config`
+    - `MaxTenantQueuedBytes`
+    - `MaxTotalQueuedBytes`
   - `server.ReplayCache`
   - `server.TokenUseCache`
   - `server.NewTokenUseCache(...)`
@@ -164,6 +183,9 @@ Stable entrypoints:
   - `AllowPlaintextForLoopback`
   - `AllowPlaintext`
   - `TransportSecurityPolicy`
+  - `LivenessOptions`
+  - `WebSocketLimits`
+  - `YamuxLimits`
 - `@floegence/flowersec-core/node`
   - `connectNode(...)`
   - `connectTunnelNode(...)`
@@ -239,11 +261,21 @@ Stable building blocks:
 - `@floegence/flowersec-core/reconnect`
   - `createReconnectManager()`
   - `ReconnectManager.connectIfNeeded(...)`
+  - `ArtifactSource`
+  - `createArtifactResolver(...)`
+  - `createControlplaneArtifactSource(...)`
 - `@floegence/flowersec-core/rpc`
   - `RpcProxy`
+  - `RpcServer`
+  - `RpcServerOptions`
+  - `RpcServerTransport`
 - `@floegence/flowersec-core/yamux`
+  - `YamuxLimits`
+  - `DEFAULT_YAMUX_LIMITS`
 - `@floegence/flowersec-core/e2ee`
 - `@floegence/flowersec-core/ws`
+  - `WebSocketLimits`
+  - `DEFAULT_WEB_SOCKET_LIMITS`
 - `@floegence/flowersec-core/observability`
   - `DiagnosticEvent`
   - `normalizeObserver(...)`
@@ -275,6 +307,7 @@ Stable connection and session entrypoints:
 - `FlowersecClient`
 - `FlowersecClient.rpc`
 - `FlowersecClient.openStream(...)`
+- `FlowersecClient.probeLiveness(...)`
 - `FlowersecClient.close()`
 - `ConnectOptions`
 - `DirectConnectOptions`
@@ -283,6 +316,11 @@ Stable connection and session entrypoints:
 - `TransportSecurityPolicyInput`
 - `TransportSecurityDiagnostic`
 - `TransportRuntime`
+- `DiagnosticEvent`
+- `DiagnosticCodeDomain`
+- `DiagnosticResult`
+- `LivenessOptions`
+- `YamuxLimits`
 
 Stable RPC and stream building blocks:
 
@@ -319,7 +357,7 @@ Stable artifact and wire value types:
 
 ## Stable vs experimental notes
 
-Stable in v0.19.x:
+Stable in v0.20.x:
 
 - client-facing canonical `ConnectArtifact`
 - strict canonical parse / validate rules
@@ -330,10 +368,14 @@ Stable in v0.19.x:
 - `controlplane/http` helper-first Go reference layer
 - correlation metadata carrier
 - runtime `DiagnosticEvent`
+- fail-closed high-level transport security defaults
+- bounded encrypted-record, WebSocket, Yamux, RPC, and tunnel resources
+- acknowledged Yamux liveness probes
+- discriminated one-time and refreshable artifact sources
 - proxy preset manifest contract
 - `proxy.runtime@1` when consumed through stable proxy helper entrypoints
 
-Still experimental in v0.19.x:
+Still experimental in v0.20.x:
 
 - public normalize helper shapes
 - public scope resolver registration API

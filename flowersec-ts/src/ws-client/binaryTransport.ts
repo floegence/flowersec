@@ -1,4 +1,4 @@
-import { normalizeObserver, type ClientObserver, type ClientObserverLike, type WsErrorReason } from "../observability/observer.js";
+import { emitObserverDiagnostic, normalizeObserver, type ClientObserver, type ClientObserverLike, type WsErrorReason } from "../observability/observer.js";
 import { AbortError, TimeoutError, throwIfAborted } from "../utils/errors.js";
 
 export class WsCloseError extends Error {
@@ -25,11 +25,34 @@ export class WsCloseError extends Error {
 export type WebSocketLike = {
   binaryType: string;
   readyState: number;
+  /** Bytes accepted by send() but not yet transmitted by the implementation. */
+  readonly bufferedAmount: number;
   send(data: string | ArrayBuffer | Uint8Array): void;
   close(code?: number, reason?: string): void;
   addEventListener(type: "open" | "message" | "error" | "close", listener: (ev: any) => void): void;
   removeEventListener(type: "open" | "message" | "error" | "close", listener: (ev: any) => void): void;
 };
+
+export type WebSocketLimits = Readonly<{
+  maxInboundQueuedBytes: number;
+  outboundLowWatermarkBytes: number;
+  outboundHighWatermarkBytes: number;
+  outboundHardLimitBytes: number;
+  outboundDrainTimeoutMs: number;
+}>;
+
+export const DEFAULT_WEB_SOCKET_LIMITS: WebSocketLimits = Object.freeze({
+  maxInboundQueuedBytes: 4 * (1 << 20),
+  outboundLowWatermarkBytes: 256 * 1024,
+  outboundHighWatermarkBytes: 1 << 20,
+  outboundHardLimitBytes: 4 * (1 << 20),
+  outboundDrainTimeoutMs: 10_000,
+});
+
+export type WebSocketBinaryTransportOptions = Readonly<{
+  webSocketLimits?: Partial<WebSocketLimits>;
+  observer?: ClientObserverLike;
+}>;
 
 type ReadWaiter = {
   resolve: (b: Uint8Array) => void;
@@ -51,7 +74,7 @@ export class WebSocketBinaryTransport {
   // Current buffered byte count for backpressure.
   private queueBytes = 0;
   // Maximum buffered bytes before closing the socket.
-  private readonly maxQueuedBytes: number;
+  private readonly limits: WebSocketLimits;
   // Pending readers waiting for the next frame.
   private waiters: ReadWaiter[] = [];
   // Read cursor for waiters to avoid Array.shift() O(n).
@@ -64,14 +87,17 @@ export class WebSocketBinaryTransport {
   private error: unknown = null;
   // Tracks whether the close is initiated locally to avoid double-reporting.
   private localCloseRequested = false;
+  // Promise tail used to preserve write order and apply one shared backpressure lane.
+  private writeChain: Promise<void> = Promise.resolve();
+  private pendingOutboundBytes = 0;
 
   constructor(
     ws: WebSocketLike,
-    opts: Readonly<{ maxQueuedBytes?: number; observer?: ClientObserverLike }> = {}
+    opts: WebSocketBinaryTransportOptions = {}
   ) {
     this.ws = ws;
     this.observer = normalizeObserver(opts.observer);
-    this.maxQueuedBytes = Math.max(0, opts.maxQueuedBytes ?? 4 * (1 << 20));
+    this.limits = normalizeWebSocketLimits(opts.webSocketLimits);
     this.ws.binaryType = "arraybuffer";
     this.ws.addEventListener("message", this.onMessage);
     this.ws.addEventListener("error", this.onError);
@@ -137,7 +163,26 @@ export class WebSocketBinaryTransport {
   async writeBinary(frame: Uint8Array, opts: Readonly<{ signal?: AbortSignal }> = {}): Promise<void> {
     throwIfAborted(opts.signal, "write aborted");
     if (this.error != null) throw this.error;
-    this.ws.send(frame);
+    if (frame.byteLength > this.limits.outboundHardLimitBytes ||
+        this.pendingOutboundBytes + this.ws.bufferedAmount + frame.byteLength > this.limits.outboundHardLimitBytes) {
+      const err = new Error("ws send queue exceeds hard limit");
+      this.failAndClose(err, "send_buffer_exceeded");
+      throw err;
+    }
+    this.pendingOutboundBytes += frame.byteLength;
+    let handedToWebSocket = false;
+    const write = this.writeChain
+      .then(() => this.sendWithBackpressure(frame, opts.signal, () => {
+        handedToWebSocket = true;
+        this.pendingOutboundBytes = Math.max(0, this.pendingOutboundBytes - frame.byteLength);
+      }))
+      .finally(() => {
+        if (!handedToWebSocket) {
+          this.pendingOutboundBytes = Math.max(0, this.pendingOutboundBytes - frame.byteLength);
+        }
+      });
+    this.writeChain = write.catch(() => {});
+    await write;
   }
 
   // close tears down listeners and rejects pending readers.
@@ -168,7 +213,7 @@ export class WebSocketBinaryTransport {
       return;
     }
     if (data instanceof ArrayBuffer) {
-      if (this.maxQueuedBytes > 0 && this.queueBytes + data.byteLength > this.maxQueuedBytes) {
+      if (this.queueBytes + data.byteLength > this.limits.maxInboundQueuedBytes) {
         this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
         this.localCloseRequested = true;
         this.observer.onWsClose("local");
@@ -180,7 +225,7 @@ export class WebSocketBinaryTransport {
     }
     if (ArrayBuffer.isView(data)) {
       const view = data as ArrayBufferView;
-      if (this.maxQueuedBytes > 0 && this.queueBytes + view.byteLength > this.maxQueuedBytes) {
+      if (this.queueBytes + view.byteLength > this.limits.maxInboundQueuedBytes) {
         this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
         this.localCloseRequested = true;
         this.observer.onWsClose("local");
@@ -191,7 +236,7 @@ export class WebSocketBinaryTransport {
       return;
     }
     if (typeof Blob !== "undefined" && data instanceof Blob) {
-      if (this.maxQueuedBytes > 0 && this.queueBytes + data.size > this.maxQueuedBytes) {
+      if (this.queueBytes + data.size > this.limits.maxInboundQueuedBytes) {
         this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
         this.localCloseRequested = true;
         this.observer.onWsClose("local");
@@ -240,7 +285,7 @@ export class WebSocketBinaryTransport {
       w.resolve(b);
       return;
     }
-    if (this.maxQueuedBytes > 0 && this.queueBytes + b.length > this.maxQueuedBytes) {
+    if (this.queueBytes + b.length > this.limits.maxInboundQueuedBytes) {
       this.fail(new Error("ws recv buffer exceeded"), "recv_buffer_exceeded");
       this.localCloseRequested = true;
       this.observer.onWsClose("local");
@@ -249,6 +294,61 @@ export class WebSocketBinaryTransport {
     }
     this.queue.push(b);
     this.queueBytes += b.length;
+  }
+
+  private async sendWithBackpressure(frame: Uint8Array, signal: AbortSignal | undefined, onHandedToWebSocket: () => void): Promise<void> {
+    throwIfAborted(signal, "write aborted");
+    if (this.error != null) throw this.error;
+    if (frame.byteLength > this.limits.outboundHardLimitBytes) {
+      const err = new Error("ws send frame exceeds hard limit");
+      this.failAndClose(err, "send_buffer_exceeded");
+      throw err;
+    }
+
+    const startedAt = Date.now();
+    const mustDrain =
+      this.ws.bufferedAmount + frame.byteLength > this.limits.outboundHighWatermarkBytes ||
+      this.ws.bufferedAmount + frame.byteLength > this.limits.outboundHardLimitBytes;
+    while (mustDrain) {
+      throwIfAborted(signal, "write aborted");
+      if (this.error != null) throw this.error;
+      if (Date.now() - startedAt >= this.limits.outboundDrainTimeoutMs) {
+        const err = new TimeoutError("ws send buffer drain timeout");
+        this.failAndClose(err, "send_buffer_timeout");
+        throw err;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      if (this.ws.bufferedAmount <= this.limits.outboundLowWatermarkBytes &&
+          this.ws.bufferedAmount + frame.byteLength <= this.limits.outboundHardLimitBytes) {
+        break;
+      }
+    }
+
+    this.ws.send(frame);
+    onHandedToWebSocket();
+    if (this.ws.bufferedAmount > this.limits.outboundHardLimitBytes) {
+      const err = new Error("ws send buffer exceeded");
+      this.failAndClose(err, "send_buffer_exceeded");
+      throw err;
+    }
+  }
+
+  private failAndClose(err: Error, reason: WsErrorReason): void {
+    emitObserverDiagnostic(this.observer, {
+      stage: "transport",
+      code_domain: "event",
+      code: reason === "send_buffer_timeout" ? "queue_pressure" : "resource_limit_reached",
+      result: "fail",
+      resource: "websocket_outbound_bytes",
+      current: this.ws.bufferedAmount + this.pendingOutboundBytes,
+      limit: this.limits.outboundHardLimitBytes,
+    });
+    this.fail(err, reason);
+    if (!this.localCloseRequested) {
+      this.localCloseRequested = true;
+      this.observer.onWsClose("local");
+      this.ws.close();
+    }
   }
 
   private shiftQueue(): Uint8Array | undefined {
@@ -320,4 +420,25 @@ export class WebSocketBinaryTransport {
       w.reject(err);
     }
   }
+}
+
+function normalizeWebSocketLimits(input: Partial<WebSocketLimits> | undefined): WebSocketLimits {
+  const limits: WebSocketLimits = {
+    maxInboundQueuedBytes: input?.maxInboundQueuedBytes ?? DEFAULT_WEB_SOCKET_LIMITS.maxInboundQueuedBytes,
+    outboundLowWatermarkBytes: input?.outboundLowWatermarkBytes ?? DEFAULT_WEB_SOCKET_LIMITS.outboundLowWatermarkBytes,
+    outboundHighWatermarkBytes: input?.outboundHighWatermarkBytes ?? DEFAULT_WEB_SOCKET_LIMITS.outboundHighWatermarkBytes,
+    outboundHardLimitBytes: input?.outboundHardLimitBytes ?? DEFAULT_WEB_SOCKET_LIMITS.outboundHardLimitBytes,
+    outboundDrainTimeoutMs: input?.outboundDrainTimeoutMs ?? DEFAULT_WEB_SOCKET_LIMITS.outboundDrainTimeoutMs,
+  };
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative integer`);
+  }
+  if (limits.maxInboundQueuedBytes === 0 || limits.outboundHardLimitBytes === 0 || limits.outboundDrainTimeoutMs === 0) {
+    throw new TypeError("websocket hard limits and drain timeout must be positive");
+  }
+  if (limits.outboundLowWatermarkBytes > limits.outboundHighWatermarkBytes ||
+      limits.outboundHighWatermarkBytes > limits.outboundHardLimitBytes) {
+    throw new TypeError("websocket outbound watermarks must satisfy low <= high <= hard");
+  }
+  return Object.freeze(limits);
 }

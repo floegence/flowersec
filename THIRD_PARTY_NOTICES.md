@@ -26,6 +26,8 @@ For authoritative license texts and copyright notices, refer to each upstream pr
 - github.com/json-iterator/go v1.1.12 (License: MIT; File: LICENSE)
 - github.com/julienschmidt/httprouter v1.3.0 (License: BSD-3-Clause; File: LICENSE)
 - github.com/klauspost/compress v1.17.9 (License: Apache-2.0; File: LICENSE)
+- github.com/libp2p/go-buffer-pool v0.0.2 (License: MIT; File: LICENSE)
+- github.com/libp2p/go-yamux/v5 v5.1.0 (License: MPL-2.0; File: LICENSE)
 - github.com/kr/pretty v0.3.1 (License: MIT; File: License)
 - github.com/kylelemons/godebug v1.1.0 (License: Apache-2.0; File: LICENSE)
 - github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd (License: Apache-2.0; File: LICENSE)

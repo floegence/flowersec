@@ -162,11 +162,11 @@ func connectTunnelPair(ctx context.Context, t *testing.T, grantC *controlv1.Chan
 
 	serverCh := make(chan endpointConnectResult, 1)
 	go func() {
-		session, err := endpoint.ConnectTunnel(ctx, grantS, endpoint.WithOrigin(tunnelOrigin), endpoint.WithKeepaliveInterval(0))
+		session, err := endpoint.ConnectTunnel(ctx, grantS, endpoint.WithOrigin(tunnelOrigin), endpoint.WithLivenessDisabled(), endpoint.WithTransportSecurityPolicy(endpoint.AllowPlaintextForLoopback))
 		serverCh <- endpointConnectResult{session: session, err: err}
 	}()
 
-	cli, err := client.ConnectTunnel(ctx, grantC, client.WithOrigin(tunnelOrigin), client.WithKeepaliveInterval(0))
+	cli, err := client.ConnectTunnel(ctx, grantC, client.WithOrigin(tunnelOrigin), client.WithLivenessDisabled(), client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +232,8 @@ func serveRPCStream(ctx context.Context, sess endpoint.Session) error {
 	case errors.Is(err, context.Canceled):
 		return nil
 	case errors.Is(err, io.EOF):
+		return nil
+	case strings.Contains(err.Error(), "stream reset: connection closed"):
 		return nil
 	default:
 		return err

@@ -1,6 +1,6 @@
 # Flowersec Integration Guide
 
-This guide covers the recommended stable integration path for Flowersec v0.19.x.
+This guide covers the recommended stable integration path for Flowersec v0.20.x.
 
 See also:
 
@@ -115,6 +115,7 @@ client.close();
 ```ts
 import { connectNode, createNodeReconnectConfig } from "@floegence/flowersec-core/node";
 import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
+import { createControlplaneArtifactSource } from "@floegence/flowersec-core/reconnect";
 
 const artifact = await requestConnectArtifact({
   baseUrl: "https://controlplane.example.com",
@@ -126,10 +127,10 @@ const client = await connectNode(artifact, {
 });
 
 const reconnectConfig = createNodeReconnectConfig({
-  artifactControlplane: {
+  source: createControlplaneArtifactSource({
     baseUrl: "https://controlplane.example.com",
     endpointId: "env_demo",
-  },
+  }),
   connect: {
     origin: "https://app.example.com",
   },
@@ -181,8 +182,17 @@ For the detailed artifact-fetch contract, including the bounded 1 MiB response r
 For browser and Node reconnect flows:
 
 - use `createBrowserReconnectConfig(...)` or `createNodeReconnectConfig(...)`
-- supply `artifact`, `getArtifact`, or `artifactControlplane`
+- supply a discriminated `source`: `{kind: "once", artifact}` or `{kind: "refreshable", acquire}`
+- prefer `createControlplaneArtifactSource(...)` for automatic reconnect
 - let the adapter carry forward `trace_id`, absorb the new `session_id`, and pass through cancellation `signal`
+
+A `once` source can be consumed once and cannot enable automatic reconnect. Flowersec v0.20 does not accept the removed overlapping artifact, grant, or direct-info source fields.
+
+## Transport security and liveness
+
+High-level Go, TypeScript, and Swift connects require TLS by default. Use the loopback plaintext policy only for literal local development targets. Use unrestricted plaintext only when the caller explicitly accepts pre-E2EE metadata and credential exposure.
+
+Use `ProbeLiveness` / `probeLiveness()` for an acknowledged Yamux round trip. `Ping()` remains a local encrypted-record send operation. Automatic probes are disabled for direct connections by default and derived from the idle timeout for tunnel connections.
 
 Do not push artifact/controlplane semantics down into the framework-agnostic reconnect core.
 
@@ -204,12 +214,12 @@ Reference first-party files live under `reference/presets/`.
 
 ## Migration notes
 
-v0.19.x intentionally tightens a few compatibility edges:
+v0.20.x intentionally changes unsafe or ambiguous configuration APIs:
 
-- hybrid ambiguous inputs fail fast
-- legacy inputs mixed with artifact-only fields fail fast
-- client-facing connect rejects `grant_server`
-- bare `token` / `role` auto-detect heuristics are gone
-- stable proxy helpers consume `proxy.runtime@1` only; experimental `scope_version = 2` is not dual-read by default
+- TLS is the default for all high-level connects
+- WebSocket, Yamux, RPC, and tunnel queues are bounded
+- liveness uses acknowledged Yamux PING frames
+- reconnect accepts only a discriminated `ArtifactSource`
+- old keepalive, WebSocket queue, Yamux third-party config, and reconnect-source fields are removed
 
-See `docs/V0_19_MIGRATION.md` for the full list.
+See `docs/V0_20_MIGRATION.md` for the full list.

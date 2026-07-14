@@ -1,6 +1,6 @@
 # Correlation And Diagnostics
 
-Flowersec v0.19.x keeps two stable concepts separate:
+Flowersec v0.20.x keeps two stable concepts separate:
 
 - connect artifact correlation metadata
 - runtime diagnostics events
@@ -45,6 +45,9 @@ Stable fields:
 - `attempt_seq`
 - optional `trace_id`
 - optional `session_id`
+- optional `resource`
+- optional `current`
+- optional `limit`
 
 ## Timing semantics
 
@@ -88,7 +91,16 @@ Notable scope warning events:
 
 Transport warning event:
 
-- `plaintext_transport`: a high-level client dialed `ws://` without an explicit transport security policy; the event contains no URL query, userinfo, token, or PSK.
+- `plaintext_transport`: a high-level client explicitly allowed and then dialed `ws://`; the event contains no URL query, userinfo, token, or PSK.
+
+Resource and liveness events:
+
+- `liveness_timeout`
+- `queue_pressure`
+- `stream_rejected`
+- `resource_limit_reached`
+
+Resource names must remain generic and low-cardinality. Diagnostic events must never include URL queries, bearer tokens, PSKs, stream kinds, RPC type IDs, or application payloads.
 
 ## Where propagation belongs
 

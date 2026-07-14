@@ -1,7 +1,6 @@
 # Flowersec Error Model
 
-Flowersec keeps machine-readable connection failures stable across Go and TypeScript.
-Swift uses the same stable `FlowersecCode` values for its high-level client.
+Flowersec keeps machine-readable connection failures stable across Go, TypeScript, and Swift.
 
 For high-level connection APIs, always treat `{ path, stage, code }` as the primary machine-readable contract.
 
@@ -87,6 +86,9 @@ Common stable codes include:
   - `missing_handler`
   - `ping_failed`
   - `not_connected`
+  - `resource_exhausted`
+
+`resource_exhausted` means a configured generic transport, secure-channel, multiplexing, RPC, or queue limit was reached. Callers should apply backpressure, reduce concurrency, or reconnect with a fresh session as appropriate. It must not be used to encode an application-specific quota or policy. Transport implementations map their limit failures to the nearest stable high-level stage, such as `connect`, `secure`, `yamux`, `rpc`, or `close`.
 
 ## Stable controlplane helper contract
 
@@ -125,9 +127,17 @@ Important separation:
 
 ## Diagnostics split
 
-Flowersec v0.19.x also defines a stable runtime event contract:
+Flowersec v0.20.x also defines a stable runtime event contract:
 
 - `DiagnosticEvent`
+
+In addition to the existing fields, a resource-related event may contain:
+
+- `resource`: a low-cardinality generic resource name
+- `current`: the observed count or byte total
+- `limit`: the configured limit
+
+These fields must not contain URL queries, credentials, tokens, stream kinds, RPC type IDs, or application payload data.
 
 Important separation:
 
@@ -148,6 +158,12 @@ Current stable event codes include:
 - `ws_close_peer_or_error`
 - `ws_error`
 - `diagnostics_overflow`
+- `liveness_timeout`
+- `queue_pressure`
+- `stream_rejected`
+- `resource_limit_reached`
+
+The four liveness/resource names above use `code_domain=event`. A failed operation that reaches a stable limit uses the error-domain code `resource_exhausted` instead.
 
 ## Observability guidance
 

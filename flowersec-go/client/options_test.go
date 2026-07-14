@@ -73,3 +73,22 @@ func TestWithMaxBufferedBytes_RejectsNonPositive(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestConnectOptions_DefaultToRequireTLSAndHardenedLimits(t *testing.T) {
+	cfg, err := applyConnectOptions(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.transportSecurityPolicy == nil {
+		t.Fatal("expected default transport security policy")
+	}
+	if err := cfg.transportSecurityPolicy(t.Context(), TransportSecurityPolicyInput{Scheme: "ws"}); err == nil {
+		t.Fatal("expected default policy to reject plaintext")
+	}
+	if cfg.outboundRecordChunkBytes != 64*1024 {
+		t.Fatalf("outbound record chunk default = %d", cfg.outboundRecordChunkBytes)
+	}
+	if cfg.yamuxLimits.MaxActiveStreams != 64 || cfg.yamuxLimits.MaxInboundStreams != 32 {
+		t.Fatalf("unexpected yamux defaults: %+v", cfg.yamuxLimits)
+	}
+}

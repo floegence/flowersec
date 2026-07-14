@@ -79,6 +79,7 @@ const (
 	CodeOpenStreamFailed          Code = "open_stream_failed"
 	CodeStreamHelloFailed         Code = "stream_hello_failed"
 	CodeRPCFailed                 Code = "rpc_failed"
+	CodeResourceExhausted         Code = "resource_exhausted"
 )
 
 // Error is a structured, programmatically identifiable error for user-facing operations.

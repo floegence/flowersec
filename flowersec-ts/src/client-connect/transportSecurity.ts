@@ -46,30 +46,27 @@ export async function enforceTransportSecurity(args: Readonly<{
     runtime: detectRuntime(),
   };
 
-  if (args.policy === undefined) {
-    if (target.scheme === "ws") {
-      emitObserverDiagnostic(args.observer, {
-        path: args.path,
-        stage: "validate",
-        code_domain: "event",
-        code: "plaintext_transport",
-        result: "skip",
-      });
-    }
-    return;
-  }
-
   let allowed = false;
+  const policy = args.policy ?? RequireTLS;
   try {
-    if (typeof args.policy === "function") {
-      allowed = await args.policy(input);
+    if (typeof policy === "function") {
+      allowed = await policy(input);
     } else {
-      allowed = evaluatePreset(args.policy, target);
+      allowed = evaluatePreset(policy, target);
     }
   } catch (cause) {
     throw denied(args.path, cause);
   }
   if (!allowed) throw denied(args.path);
+  if (target.scheme === "ws") {
+    emitObserverDiagnostic(args.observer, {
+      path: args.path,
+      stage: "transport",
+      code_domain: "event",
+      code: "plaintext_transport",
+      result: "skip",
+    });
+  }
 }
 
 function denied(path: ClientPath, cause?: unknown): FlowersecError {

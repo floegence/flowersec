@@ -15,6 +15,43 @@ type recordingTransport struct {
 	writeCh chan []byte
 }
 
+type gatedRecordingTransport struct {
+	writes    chan []byte
+	releases  chan struct{}
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newGatedRecordingTransport() *gatedRecordingTransport {
+	return &gatedRecordingTransport{
+		writes:   make(chan []byte, 4),
+		releases: make(chan struct{}, 4),
+		closed:   make(chan struct{}),
+	}
+}
+
+func (t *gatedRecordingTransport) ReadBinary(_ context.Context) ([]byte, error) {
+	<-t.closed
+	return nil, io.EOF
+}
+
+func (t *gatedRecordingTransport) WriteBinary(ctx context.Context, frame []byte) error {
+	t.writes <- append([]byte(nil), frame...)
+	select {
+	case <-t.releases:
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-t.closed:
+		return io.EOF
+	}
+}
+
+func (t *gatedRecordingTransport) Close() error {
+	t.closeOnce.Do(func() { close(t.closed) })
+	return nil
+}
+
 func newRecordingTransport() *recordingTransport {
 	return &recordingTransport{readCh: make(chan []byte, 4), writeCh: make(chan []byte, 4)}
 }
@@ -100,6 +137,148 @@ func TestSecureChannelWriteSplitsFrames(t *testing.T) {
 	}
 }
 
+func TestSecureChannelConcurrentWritesRemainContiguousAcrossRecords(t *testing.T) {
+	tr := newGatedRecordingTransport()
+	var key [32]byte
+	var nonce [4]byte
+	key[0] = 1
+	nonce[0] = 2
+	keys := RecordKeyState{
+		SendKey:      key,
+		RecvKey:      key,
+		SendNoncePre: nonce,
+		RecvNoncePre: nonce,
+		SendDir:      DirC2S,
+		RecvDir:      DirS2C,
+		SendSeq:      1,
+		RecvSeq:      1,
+	}
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
+	defer conn.Close()
+	if err := conn.SetOutboundRecordChunkBytes(4); err != nil {
+		t.Fatalf("SetOutboundRecordChunkBytes failed: %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := conn.Write([]byte("AAAABBBB"))
+		firstDone <- err
+	}()
+	firstFrame := <-tr.writes
+
+	secondStarted := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		close(secondStarted)
+		_, err := conn.Write([]byte("CCCC"))
+		secondDone <- err
+	}()
+	<-secondStarted
+
+	// Give the second goroutine time to contend while the first record is blocked.
+	// It must not reserve a sequence number until the first logical Write completes.
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		conn.sendMu.Lock()
+		nextSeq := conn.keys.SendSeq
+		conn.sendMu.Unlock()
+		if nextSeq != 2 {
+			t.Fatalf("concurrent Write reserved sequence %d before the first Write completed", nextSeq)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	tr.releases <- struct{}{}
+	secondFrame := <-tr.writes
+	tr.releases <- struct{}{}
+	thirdFrame := <-tr.writes
+	tr.releases <- struct{}{}
+
+	for name, errCh := range map[string]<-chan error{
+		"first":  firstDone,
+		"second": secondDone,
+	} {
+		if err := <-errCh; err != nil {
+			t.Fatalf("%s Write failed: %v", name, err)
+		}
+	}
+
+	for i, test := range []struct {
+		frame []byte
+		want  string
+	}{
+		{frame: firstFrame, want: "AAAA"},
+		{frame: secondFrame, want: "BBBB"},
+		{frame: thirdFrame, want: "CCCC"},
+	} {
+		_, _, plain, err := DecryptRecord(key, nonce, test.frame, uint64(i+1), 1<<20)
+		if err != nil {
+			t.Fatalf("decrypt frame %d failed: %v", i, err)
+		}
+		if got := string(plain); got != test.want {
+			t.Fatalf("frame %d payload = %q, want %q", i, got, test.want)
+		}
+	}
+}
+
+func TestSecureChannelWriterStopsWhenIdleAndRestartsInOrder(t *testing.T) {
+	tr := newRecordingTransport()
+	var key [32]byte
+	var nonce [4]byte
+	key[0] = 1
+	nonce[0] = 2
+	keys := RecordKeyState{
+		SendKey:      key,
+		RecvKey:      key,
+		SendNoncePre: nonce,
+		RecvNoncePre: nonce,
+		SendDir:      DirC2S,
+		RecvDir:      DirS2C,
+		SendSeq:      1,
+		RecvSeq:      1,
+	}
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
+	defer conn.Close()
+
+	writeAndWaitForIdle := func(payload string) {
+		t.Helper()
+		if _, err := conn.Write([]byte(payload)); err != nil {
+			t.Fatalf("Write(%q) failed: %v", payload, err)
+		}
+		deadline := time.Now().Add(time.Second)
+		for {
+			conn.sendMu.Lock()
+			running := conn.sendRunning
+			queued := len(conn.sendQueue)
+			conn.sendMu.Unlock()
+			if !running && queued == 0 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("writer did not become idle after Write(%q)", payload)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	writeAndWaitForIdle("first")
+	writeAndWaitForIdle("second")
+
+	for i, want := range []string{"first", "second"} {
+		frame := <-tr.writeCh
+		_, seq, plain, err := DecryptRecord(key, nonce, frame, uint64(i+1), 1<<20)
+		if err != nil {
+			t.Fatalf("decrypt frame %d failed: %v", i, err)
+		}
+		if seq != uint64(i+1) {
+			t.Fatalf("frame %d sequence = %d, want %d", i, seq, i+1)
+		}
+		if got := string(plain); got != want {
+			t.Fatalf("frame %d payload = %q, want %q", i, got, want)
+		}
+	}
+}
+
 func TestSecureChannelPingUsesKeepaliveFlagAndAdvancesSeq(t *testing.T) {
 	tr := newRecordingTransport()
 	var key [32]byte
@@ -125,6 +304,34 @@ func TestSecureChannelPingUsesKeepaliveFlagAndAdvancesSeq(t *testing.T) {
 	}
 	if len(plain) != 0 {
 		t.Fatalf("expected empty plaintext, got %d bytes", len(plain))
+	}
+}
+
+func TestSecureChannelDefaultsOutboundRecordsTo64KiB(t *testing.T) {
+	tr := newRecordingTransport()
+	var key [32]byte
+	key[0] = 1
+	keys := RecordKeyState{SendKey: key, RecvKey: key, SendSeq: 1, RecvSeq: 1}
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
+	defer conn.Close()
+
+	payload := make([]byte, DefaultOutboundRecordChunkBytes+1)
+	done := make(chan error, 1)
+	go func() {
+		_, err := conn.Write(payload)
+		done <- err
+	}()
+
+	first := <-tr.writeCh
+	second := <-tr.writeCh
+	if got := len(first); got != recordHeaderLen+16+DefaultOutboundRecordChunkBytes {
+		t.Fatalf("first record bytes = %d", got)
+	}
+	if got := len(second); got != recordHeaderLen+16+1 {
+		t.Fatalf("second record bytes = %d", got)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Write() failed: %v", err)
 	}
 }
 

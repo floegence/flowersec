@@ -38,6 +38,7 @@ function makeClient(): ClientInternal {
     rpc: {} as any,
     openStream: async () => ({} as any),
     ping: async () => {},
+    probeLiveness: async () => 1,
     close: () => {},
     secure: {} as any,
     mux: {} as any
@@ -54,7 +55,7 @@ describe("connectTunnel keepalive defaults", () => {
     await connectTunnel(makeGrant(60), { origin: "https://app.example" });
     expect(mocks.connectCore).toHaveBeenCalledTimes(1);
     const args: any = mocks.connectCore.mock.calls[0]?.[0];
-    expect(args.opts.keepaliveIntervalMs).toBe(30_000);
+    expect(args.opts.liveness).toEqual({ intervalMs: 30_000, timeoutMs: 10_000 });
   });
 
   test("default interval is always strictly less than idle", async () => {
@@ -62,7 +63,7 @@ describe("connectTunnel keepalive defaults", () => {
     await connectTunnel(makeGrant(1), { origin: "https://app.example" });
     expect(mocks.connectCore).toHaveBeenCalledTimes(1);
     const args: any = mocks.connectCore.mock.calls[0]?.[0];
-    expect(args.opts.keepaliveIntervalMs).toBe(500);
-    expect(args.opts.keepaliveIntervalMs).toBeLessThan(1_000);
+    expect(args.opts.liveness).toEqual({ intervalMs: 500, timeoutMs: 500 });
+    expect(args.opts.liveness.intervalMs).toBeLessThan(1_000);
   });
 });

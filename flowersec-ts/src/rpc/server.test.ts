@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import type { RpcEnvelope } from "../gen/flowersec/rpc/v1.gen.js";
 import { writeJsonFrame } from "../framing/jsonframe.js";
-import { RpcServer } from "./server.js";
+import { RpcServer, type RpcServerTransport } from "./server.js";
 import { readU32be } from "../utils/bin.js";
 
 class ByteQueue {
@@ -101,13 +101,64 @@ async function waitFor(condition: () => boolean, timeoutMs = 200): Promise<void>
   }
 }
 
+function makeTransport(
+  queue: ByteQueue,
+  write: (bytes: Uint8Array) => Promise<void>,
+  close: (error: unknown) => void = (error) => { queue.close(error); },
+): RpcServerTransport {
+  return {
+    readExactly: queue.readExactly.bind(queue),
+    write,
+    close,
+  };
+}
+
 describe("RpcServer", () => {
+  test("executes requests concurrently and writes responses by completion order", async () => {
+    const q = new ByteQueue();
+    const writes: Uint8Array[] = [];
+    let releaseSlow!: () => void;
+    const slow = new Promise<void>((resolve) => { releaseSlow = resolve; });
+    const server = new RpcServer(makeTransport(q, async (b) => { writes.push(b); }), { maxConcurrentRequests: 2 });
+    server.register(1, async (payload) => { await slow; return { payload }; });
+    server.register(2, async (payload) => ({ payload }));
+    await q.write(await makeFrame({ type_id: 1, request_id: 1, response_to: 0, payload: "slow" }));
+    await q.write(await makeFrame({ type_id: 2, request_id: 2, response_to: 0, payload: "fast" }));
+    const serve = server.serve();
+    await waitFor(() => writes.length === 1);
+    expect(decodeEnvelope(writes[0]!).response_to).toBe(2);
+    releaseSlow();
+    await waitFor(() => writes.length === 2);
+    q.close(new Error("eof"));
+    await expect(serve).rejects.toThrow(/eof/);
+    expect(decodeEnvelope(writes[1]!).response_to).toBe(1);
+  });
+
+  test("returns 429 when the bounded request queue is full", async () => {
+    const q = new ByteQueue();
+    const writes: Uint8Array[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const server = new RpcServer(makeTransport(q, async (b) => { writes.push(b); }), { maxConcurrentRequests: 1, maxQueuedRequests: 1 });
+    server.register(1, async (payload) => { await blocked; return { payload }; });
+    await q.write(await makeFrame({ type_id: 1, request_id: 1, response_to: 0, payload: 1 }));
+    await q.write(await makeFrame({ type_id: 1, request_id: 2, response_to: 0, payload: 2 }));
+    await q.write(await makeFrame({ type_id: 1, request_id: 3, response_to: 0, payload: 3 }));
+    const serve = server.serve();
+    await waitFor(() => writes.some((frame) => decodeEnvelope(frame).error?.code === 429));
+    expect(writes.map(decodeEnvelope).find((env) => env.error?.code === 429)).toMatchObject({ response_to: 3, error: { message: "server overloaded" } });
+    release();
+    await waitFor(() => writes.length === 3);
+    q.close(new Error("eof"));
+    await expect(serve).rejects.toThrow(/eof/);
+  });
+
   test("returns handler_not_found when handler is missing", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];
-    const server = new RpcServer(q.readExactly.bind(q), async (b) => {
+    const server = new RpcServer(makeTransport(q, async (b) => {
       writes.push(b);
-    });
+    }));
 
     const request = await makeFrame({ type_id: 7, request_id: 9, response_to: 0, payload: { x: 1 } });
     await q.write(request);
@@ -126,9 +177,9 @@ describe("RpcServer", () => {
   test("notification handler errors do not stop serve loop", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];
-    const server = new RpcServer(q.readExactly.bind(q), async (b) => {
+    const server = new RpcServer(makeTransport(q, async (b) => {
       writes.push(b);
-    });
+    }));
     server.register(1, async () => {
       throw new Error("boom");
     });
@@ -153,9 +204,9 @@ describe("RpcServer", () => {
   test("request handler errors do not stop serve loop", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];
-    const server = new RpcServer(q.readExactly.bind(q), async (b) => {
+    const server = new RpcServer(makeTransport(q, async (b) => {
       writes.push(b);
-    });
+    }));
     server.register(1, async () => {
       throw new Error("boom");
     });
@@ -183,9 +234,9 @@ describe("RpcServer", () => {
   test("ignores response_to frames", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];
-    const server = new RpcServer(q.readExactly.bind(q), async (b) => {
+    const server = new RpcServer(makeTransport(q, async (b) => {
       writes.push(b);
-    });
+    }));
     const respFrame = await makeFrame({ type_id: 1, request_id: 0, response_to: 99, payload: { ignore: true } });
     await q.write(respFrame);
 
@@ -199,7 +250,7 @@ describe("RpcServer", () => {
 
   test("abort signal stops serve before reading", async () => {
     const q = new ByteQueue();
-    const server = new RpcServer(q.readExactly.bind(q), async () => {});
+    const server = new RpcServer(makeTransport(q, async () => {}));
     const ctrl = new AbortController();
     ctrl.abort(new Error("aborted"));
     await expect(server.serve(ctrl.signal)).rejects.toThrow(/aborted/);
@@ -207,9 +258,9 @@ describe("RpcServer", () => {
 
   test("write failures surface to caller", async () => {
     const q = new ByteQueue();
-    const server = new RpcServer(q.readExactly.bind(q), async () => {
+    const server = new RpcServer(makeTransport(q, async () => {
       throw new Error("write failed");
-    });
+    }));
     server.register(1, async (payload) => ({ payload }));
 
     const req = await makeFrame({ type_id: 1, request_id: 2, response_to: 0, payload: { ok: true } });
@@ -220,9 +271,9 @@ describe("RpcServer", () => {
   test("register accepts typeId normalization", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];
-    const server = new RpcServer(q.readExactly.bind(q), async (b) => {
+    const server = new RpcServer(makeTransport(q, async (b) => {
       writes.push(b);
-    });
+    }));
     const handler = vi.fn(async (payload) => ({ payload }));
     server.register(-1, handler);
 
@@ -235,5 +286,25 @@ describe("RpcServer", () => {
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(writes.length).toBe(1);
+  });
+
+  test("notification queue overflow closes the RPC transport", async () => {
+    const q = new ByteQueue();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const close = vi.fn((error: unknown) => { q.close(error); });
+    const server = new RpcServer(makeTransport(q, async () => {}, close), {
+      maxConcurrentRequests: 1,
+      maxQueuedNotifications: 1,
+    });
+    server.register(1, async () => { await blocked; return { payload: null }; });
+    await q.write(await makeFrame({ type_id: 1, request_id: 0, response_to: 0, payload: 1 }));
+    await q.write(await makeFrame({ type_id: 1, request_id: 0, response_to: 0, payload: 2 }));
+    await q.write(await makeFrame({ type_id: 1, request_id: 0, response_to: 0, payload: 3 }));
+
+    await expect(server.serve()).rejects.toThrow(/notification queue exhausted/);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(close.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ message: "rpc notification queue exhausted" }));
+    release();
   });
 });

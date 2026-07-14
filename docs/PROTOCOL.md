@@ -147,7 +147,7 @@ Notes:
 
 Current implementation:
 
-- Go: `github.com/hashicorp/yamux` via `flowersec-go/endpoint/session.go`
+- Go: Flowersec's `flowersec-go/mux/yamux` wrapper over `github.com/libp2p/go-yamux/v5`
 - TS: `flowersec-ts/src/yamux/*` (see `flowersec-ts/YAMUX_ALIGNMENT.md` for alignment notes)
 
 ## 5. Stream hello

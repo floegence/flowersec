@@ -79,6 +79,7 @@ func TestConnectTunnel_MapsAttachRejectionCloseReason(t *testing.T) {
 				endpoint.WithOrigin("https://example.test"),
 				endpoint.WithConnectTimeout(2*time.Second),
 				endpoint.WithHandshakeTimeout(2*time.Second),
+				endpoint.WithTransportSecurityPolicy(endpoint.AllowPlaintextForLoopback),
 			)
 			if err == nil {
 				t.Fatal("expected error")

@@ -341,7 +341,7 @@ func TestRun_ServerConfigErrors_AreUsageErrors(t *testing.T) {
 	}
 }
 
-func TestRun_NegativeMaxTotalPendingBytes_IsUsageError(t *testing.T) {
+func TestRun_NegativeMaxTotalQueuedBytes_IsUsageError(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := run(
@@ -350,7 +350,7 @@ func TestRun_NegativeMaxTotalPendingBytes_IsUsageError(t *testing.T) {
 			"--aud", "aud",
 			"--iss", "iss",
 			"--allow-origin", "https://ok",
-			"--max-total-pending-bytes", "-1",
+			"--max-total-queued-bytes", "-1",
 		},
 		&stdout,
 		&stderr,
@@ -358,7 +358,7 @@ func TestRun_NegativeMaxTotalPendingBytes_IsUsageError(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected exit 2, got %d (stderr=%q)", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "--max-total-pending-bytes must be >= 0") {
+	if !strings.Contains(stderr.String(), "--max-total-queued-bytes must be >= 0") {
 		t.Fatalf("expected error message in stderr, got %q", stderr.String())
 	}
 }

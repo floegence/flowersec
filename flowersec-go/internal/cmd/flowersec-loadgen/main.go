@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -30,11 +29,11 @@ import (
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
 	"github.com/gorilla/websocket"
-	hyamux "github.com/hashicorp/yamux"
 )
 
 const (
@@ -63,6 +62,20 @@ type loadConfig struct {
 	maxPendingBytes int
 	idleTimeout     time.Duration
 	cleanupInterval time.Duration
+}
+
+func (c loadConfig) livenessOptions() fsyamux.LivenessOptions {
+	if c.idleTimeout <= 0 {
+		return fsyamux.LivenessOptions{}
+	}
+	interval := c.idleTimeout / 2
+	if interval < 500*time.Millisecond {
+		interval = 500 * time.Millisecond
+	}
+	if interval >= c.idleTimeout {
+		interval = c.idleTimeout / 2
+	}
+	return fsyamux.LivenessOptions{Interval: interval, Timeout: min(10*time.Second, interval)}
 }
 
 type connMetrics struct {
@@ -102,10 +115,14 @@ type latencyStats struct {
 }
 
 type resourceStats struct {
-	MaxHeapAlloc  uint64 `json:"max_heap_alloc_bytes"`
-	MaxHeapInuse  uint64 `json:"max_heap_inuse_bytes"`
-	MaxSysBytes   uint64 `json:"max_sys_bytes"`
-	MaxGoroutines int    `json:"max_goroutines"`
+	mu                   sync.Mutex
+	done                 chan struct{}
+	MaxHeapAlloc         uint64 `json:"max_heap_alloc_bytes"`
+	MaxHeapInuse         uint64 `json:"max_heap_inuse_bytes"`
+	MaxSysBytes          uint64 `json:"max_sys_bytes"`
+	MaxGoroutines        int    `json:"max_goroutines"`
+	BaselineGoroutines   int    `json:"baseline_goroutines"`
+	AfterCloseGoroutines int    `json:"after_close_goroutines"`
 }
 
 type liveRegistry struct {
@@ -118,6 +135,70 @@ type liveRegistry struct {
 type serverHandle struct {
 	ready chan error
 	close func()
+}
+
+type serverResourceOwner struct {
+	mu     sync.Mutex
+	closed bool
+	cancel context.CancelFunc
+	ws     *websocket.Conn
+	secure *e2ee.SecureChannel
+	mux    *fsyamux.Session
+}
+
+func (o *serverResourceOwner) setWebSocket(c *websocket.Conn) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.closed {
+		return false
+	}
+	o.ws = c
+	return true
+}
+
+func (o *serverResourceOwner) setSecure(secure *e2ee.SecureChannel) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.closed {
+		return false
+	}
+	o.secure = secure
+	return true
+}
+
+func (o *serverResourceOwner) setMux(mux *fsyamux.Session) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.closed {
+		return false
+	}
+	o.mux = mux
+	return true
+}
+
+func (o *serverResourceOwner) close() {
+	o.mu.Lock()
+	if o.closed {
+		o.mu.Unlock()
+		return
+	}
+	o.closed = true
+	cancel := o.cancel
+	mux := o.mux
+	secure := o.secure
+	wsConn := o.ws
+	o.mu.Unlock()
+
+	cancel()
+	if mux != nil {
+		_ = mux.Close()
+	}
+	if secure != nil {
+		_ = secure.Close()
+	}
+	if wsConn != nil {
+		_ = wsConn.Close()
+	}
 }
 
 type timingTransport struct {
@@ -254,7 +335,7 @@ func main() {
 	}()
 
 	live := &liveRegistry{}
-	sampler := startResourceSampler(ctx, cfg.reportInterval)
+	sampler := startResourceSampler(ctx, cfg.reportInterval, runtime.NumGoroutine())
 
 	if cfg.reportInterval > 0 {
 		go func() {
@@ -301,7 +382,12 @@ func main() {
 	}
 
 	live.closeAll()
+	afterCloseGoroutines := waitForGoroutineBaseline(sampler.BaselineGoroutines, 5*time.Second)
+	sampler.mu.Lock()
+	sampler.AfterCloseGoroutines = afterCloseGoroutines
+	sampler.mu.Unlock()
 	cancel()
+	<-sampler.done
 
 	output := buildOutput(cfg, total, stats, live, sampler)
 	enc := json.NewEncoder(os.Stdout)
@@ -400,7 +486,7 @@ func runConnection(ctx context.Context, svc *channelinit.Service, wsURL string, 
 
 	var wsConn *websocket.Conn
 	var secure *e2ee.SecureChannel
-	var sess *hyamux.Session
+	var sess *fsyamux.Session
 	keepOpen := false
 	defer func() {
 		if keepOpen {
@@ -497,10 +583,7 @@ func runConnection(ctx context.Context, svc *channelinit.Service, wsURL string, 
 		return out
 	}
 
-	ycfg := hyamux.DefaultConfig()
-	ycfg.EnableKeepAlive = false
-	ycfg.LogOutput = io.Discard
-	sess, err = hyamux.Client(secure, ycfg)
+	sess, err = fsyamux.NewClient(secure, fsyamux.YamuxLimits{}, cfg.livenessOptions())
 	if err != nil {
 		out.errStage = "yamux_client"
 		return out
@@ -544,6 +627,7 @@ func runConnection(ctx context.Context, svc *channelinit.Service, wsURL string, 
 func startServerEndpoint(ctx context.Context, wsURL string, grant *controlv1.ChannelInitGrant, psk []byte, cfg loadConfig) serverHandle {
 	ready := make(chan error, 1)
 	serverCtx, cancel := context.WithCancel(ctx)
+	owner := &serverResourceOwner{cancel: cancel}
 
 	go func() {
 		c, _, err := dialTunnel(serverCtx, wsURL)
@@ -551,7 +635,11 @@ func startServerEndpoint(ctx context.Context, wsURL string, grant *controlv1.Cha
 			ready <- err
 			return
 		}
-		defer c.Close()
+		if !owner.setWebSocket(c) {
+			_ = c.Close()
+			ready <- context.Canceled
+			return
+		}
 
 		attach := tunnelv1.Attach{
 			V:                  1,
@@ -588,58 +676,53 @@ func startServerEndpoint(ctx context.Context, wsURL string, grant *controlv1.Cha
 			ready <- err
 			return
 		}
-		defer secure.Close()
-
-		if cfg.mode == modeHandshakeOnly {
-			ready <- nil
-			<-serverCtx.Done()
+		if !owner.setSecure(secure) {
+			_ = secure.Close()
+			ready <- context.Canceled
 			return
 		}
 
-		ycfg := hyamux.DefaultConfig()
-		ycfg.EnableKeepAlive = false
-		ycfg.LogOutput = io.Discard
-		sess, err := hyamux.Server(secure, ycfg)
+		if cfg.mode == modeHandshakeOnly {
+			ready <- nil
+			return
+		}
+
+		sess, err := fsyamux.NewServer(secure, fsyamux.YamuxLimits{}, cfg.livenessOptions())
 		if err != nil {
 			ready <- err
 			return
 		}
-		defer sess.Close()
+		if !owner.setMux(sess) {
+			_ = sess.Close()
+			ready <- context.Canceled
+			return
+		}
 
 		ready <- nil
 
-		go func() {
-			<-serverCtx.Done()
-			sess.Close()
-		}()
-
-		for {
-			stream, err := sess.AcceptStream()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer stream.Close()
-				h, err := streamhello.ReadStreamHello(stream, 8*1024)
-				if err != nil || h.Kind != "rpc" {
-					return
-				}
-				router := rpc.NewRouter()
-				srv := rpc.NewServer(stream, router)
-				router.Register(1, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
-					_ = ctx
-					_ = payload
-					_ = srv.Notify(2, json.RawMessage(`{"hello":"world"}`))
-					return json.RawMessage(`{"ok":true}`), nil
-				})
-				_ = srv.Serve(serverCtx)
-			}()
+		stream, err := sess.AcceptStream()
+		if err != nil {
+			return
 		}
+		defer stream.Close()
+		h, err := streamhello.ReadStreamHello(stream, 8*1024)
+		if err != nil || h.Kind != "rpc" {
+			return
+		}
+		router := rpc.NewRouter()
+		srv := rpc.NewServer(stream, router)
+		router.Register(1, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
+			_ = ctx
+			_ = payload
+			_ = srv.Notify(2, json.RawMessage(`{"hello":"world"}`))
+			return json.RawMessage(`{"ok":true}`), nil
+		})
+		_ = srv.Serve(serverCtx)
 	}()
 
 	return serverHandle{
 		ready: ready,
-		close: cancel,
+		close: owner.close,
 	}
 }
 
@@ -710,24 +793,27 @@ func buildOutput(cfg loadConfig, total int, stats *statsCollector, live *liveReg
 		}
 	}
 	config := map[string]any{
-		"mode":                cfg.mode,
-		"channels":            cfg.targetChannels,
-		"rate_per_sec":        cfg.ratePerSec,
-		"ramp_step":           cfg.rampStep,
-		"ramp_interval_ms":    cfg.rampInterval.Milliseconds(),
-		"steady_duration_ms":  cfg.steadyDuration.Milliseconds(),
-		"workers":             cfg.workers,
-		"conn_timeout_ms":     cfg.connTimeout.Milliseconds(),
-		"report_interval_ms":  cfg.reportInterval.Milliseconds(),
-		"rpc_timeout_ms":      cfg.rpcTimeout.Milliseconds(),
-		"max_handshake_bytes": cfg.maxHandshakeSize,
-		"max_record_bytes":    cfg.maxRecordBytes,
-		"max_buffered_bytes":  cfg.maxBufferedBytes,
-		"max_conns":           cfg.maxConns,
-		"max_channels":        cfg.maxChannels,
-		"max_pending_bytes":   cfg.maxPendingBytes,
-		"idle_timeout_ms":     cfg.idleTimeout.Milliseconds(),
-		"cleanup_interval_ms": cfg.cleanupInterval.Milliseconds(),
+		"mode":                 cfg.mode,
+		"channels":             cfg.targetChannels,
+		"rate_per_sec":         cfg.ratePerSec,
+		"ramp_step":            cfg.rampStep,
+		"ramp_interval_ms":     cfg.rampInterval.Milliseconds(),
+		"steady_duration_ms":   cfg.steadyDuration.Milliseconds(),
+		"workers":              cfg.workers,
+		"conn_timeout_ms":      cfg.connTimeout.Milliseconds(),
+		"report_interval_ms":   cfg.reportInterval.Milliseconds(),
+		"rpc_timeout_ms":       cfg.rpcTimeout.Milliseconds(),
+		"max_handshake_bytes":  cfg.maxHandshakeSize,
+		"max_record_bytes":     cfg.maxRecordBytes,
+		"max_buffered_bytes":   cfg.maxBufferedBytes,
+		"max_conns":            cfg.maxConns,
+		"max_channels":         cfg.maxChannels,
+		"max_pending_bytes":    cfg.maxPendingBytes,
+		"idle_timeout_ms":      cfg.idleTimeout.Milliseconds(),
+		"cleanup_interval_ms":  cfg.cleanupInterval.Milliseconds(),
+		"liveness_interval_ms": cfg.livenessOptions().Interval.Milliseconds(),
+		"liveness_timeout_ms":  cfg.livenessOptions().Timeout.Milliseconds(),
+		"rpc_stream_residency": "closed_after_verified_call",
 	}
 	out := map[string]any{
 		"config": config,
@@ -858,12 +944,14 @@ func (l *liveRegistry) dec() {
 	atomic.AddInt64(&l.active, -1)
 }
 
-func startResourceSampler(ctx context.Context, interval time.Duration) *resourceStats {
-	stats := &resourceStats{}
+func startResourceSampler(ctx context.Context, interval time.Duration, baselineGoroutines int) *resourceStats {
+	stats := &resourceStats{BaselineGoroutines: baselineGoroutines, done: make(chan struct{})}
 	if interval <= 0 {
+		close(stats.done)
 		return stats
 	}
 	go func() {
+		defer close(stats.done)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -873,16 +961,32 @@ func startResourceSampler(ctx context.Context, interval time.Duration) *resource
 			case <-ticker.C:
 				var ms runtime.MemStats
 				runtime.ReadMemStats(&ms)
+				stats.mu.Lock()
 				stats.MaxHeapAlloc = maxU64(stats.MaxHeapAlloc, ms.HeapAlloc)
 				stats.MaxHeapInuse = maxU64(stats.MaxHeapInuse, ms.HeapInuse)
 				stats.MaxSysBytes = maxU64(stats.MaxSysBytes, ms.Sys)
 				if g := runtime.NumGoroutine(); g > stats.MaxGoroutines {
 					stats.MaxGoroutines = g
 				}
+				stats.mu.Unlock()
 			}
 		}
 	}()
 	return stats
+}
+
+func waitForGoroutineBaseline(baseline int, timeout time.Duration) int {
+	deadline := time.Now().Add(timeout)
+	last := runtime.NumGoroutine()
+	for time.Now().Before(deadline) {
+		runtime.GC()
+		last = runtime.NumGoroutine()
+		if last <= baseline+16 {
+			return last
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return last
 }
 
 func maxU64(a, b uint64) uint64 {

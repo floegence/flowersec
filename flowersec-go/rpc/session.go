@@ -15,6 +15,19 @@ import (
 
 const maxInvalidJSONFrames = 3
 
+const (
+	defaultMaxConcurrentRequests  = 32
+	defaultMaxQueuedRequests      = 128
+	defaultMaxQueuedNotifications = 128
+)
+
+// ServerOptions bounds server-side handler concurrency and queues.
+type ServerOptions struct {
+	MaxConcurrentRequests  int
+	MaxQueuedRequests      int
+	MaxQueuedNotifications int
+}
+
 // Handler processes an RPC request and returns payload or an RPC error.
 type Handler func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError)
 
@@ -60,11 +73,42 @@ type Server struct {
 	maxLen  int                       // Max frame size for jsonframe.ReadJSONFrame.
 	writeMu sync.Mutex                // Serializes writes on the stream.
 	obs     observability.RPCObserver // Metrics observer.
+	options ServerOptions
 }
 
 // NewServer creates a server over a read/write stream.
 func NewServer(rwc io.ReadWriteCloser, router *Router) *Server {
-	return &Server{r: rwc, router: router, maxLen: jsonframe.DefaultMaxJSONFrameBytes, obs: observability.NoopRPCObserver}
+	server, _ := NewServerWithOptions(rwc, router, ServerOptions{})
+	return server
+}
+
+// NewServerWithOptions creates a server with explicit bounded concurrency.
+func NewServerWithOptions(rwc io.ReadWriteCloser, router *Router, options ServerOptions) (*Server, error) {
+	if rwc == nil {
+		return nil, errors.New("rpc stream must be non-nil")
+	}
+	if router == nil {
+		return nil, errors.New("rpc router must be non-nil")
+	}
+	if options.MaxConcurrentRequests < 0 || options.MaxQueuedRequests < 0 || options.MaxQueuedNotifications < 0 {
+		return nil, errors.New("rpc server limits must be >= 0")
+	}
+	if options.MaxConcurrentRequests == 0 {
+		options.MaxConcurrentRequests = defaultMaxConcurrentRequests
+	}
+	if options.MaxQueuedRequests == 0 {
+		options.MaxQueuedRequests = defaultMaxQueuedRequests
+	}
+	if options.MaxQueuedNotifications == 0 {
+		options.MaxQueuedNotifications = defaultMaxQueuedNotifications
+	}
+	return &Server{
+		r:       rwc,
+		router:  router,
+		maxLen:  jsonframe.DefaultMaxJSONFrameBytes,
+		obs:     observability.NoopRPCObserver,
+		options: options,
+	}, nil
 }
 
 // SetMaxFrameBytes caps incoming JSON frames.
@@ -116,15 +160,50 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	done := make(chan struct{})
+	if s.options.MaxConcurrentRequests == 0 {
+		s.options.MaxConcurrentRequests = defaultMaxConcurrentRequests
+	}
+	if s.options.MaxQueuedRequests == 0 {
+		s.options.MaxQueuedRequests = defaultMaxQueuedRequests
+	}
+	if s.options.MaxQueuedNotifications == 0 {
+		s.options.MaxQueuedNotifications = defaultMaxQueuedNotifications
+	}
+	stopContextClose := context.AfterFunc(ctx, func() { _ = s.r.Close() })
+	defer stopContextClose()
+	workerCtx, cancelWorkers := context.WithCancel(ctx)
+	requests := make(chan rpcv1.RpcEnvelope, s.options.MaxQueuedRequests)
+	notifications := make(chan rpcv1.RpcEnvelope, s.options.MaxQueuedNotifications)
+	var workers sync.WaitGroup
+	defer workers.Wait()
+	defer cancelWorkers()
+	for range s.options.MaxConcurrentRequests {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case env := <-requests:
+					s.handleRequest(workerCtx, env)
+				}
+			}
+		}()
+	}
+	workers.Add(1)
 	go func() {
-		select {
-		case <-ctx.Done():
-			_ = s.r.Close()
-		case <-done:
+		defer workers.Done()
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case env := <-notifications:
+				_, rpcErr := s.router.handle(workerCtx, env.TypeId, env.Payload)
+				s.obs.ServerRequest(rpcResultFromError(rpcErr))
+			}
 		}
 	}()
-	defer close(done)
 	invalidJSONFrames := 0
 	for {
 		select {
@@ -156,25 +235,45 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		if env.RequestId == 0 {
 			// Notification: response_to=0 and request_id=0.
-			_, rpcErr := s.router.handle(ctx, env.TypeId, env.Payload)
-			s.obs.ServerRequest(rpcResultFromError(rpcErr))
+			select {
+			case notifications <- env:
+			default:
+				s.obs.ServerRequest(observability.RPCResultResourceExhausted)
+				_ = s.r.Close()
+				return errors.New("rpc notification queue exhausted")
+			}
 			continue
 		}
-		respPayload, rpcErr := s.router.handle(ctx, env.TypeId, env.Payload)
-		s.obs.ServerRequest(rpcResultFromError(rpcErr))
-		resp := rpcv1.RpcEnvelope{
-			TypeId:     env.TypeId,
-			RequestId:  0,
-			ResponseTo: env.RequestId,
-			Payload:    respPayload,
-			Error:      rpcErr,
+		select {
+		case requests <- env:
+		default:
+			s.obs.ServerRequest(observability.RPCResultResourceExhausted)
+			s.writeResponse(rpcv1.RpcEnvelope{
+				TypeId:     env.TypeId,
+				ResponseTo: env.RequestId,
+				Error:      &rpcv1.RpcError{Code: 429, Message: strPtr("server overloaded")},
+			})
 		}
-		s.writeMu.Lock()
-		if err := jsonframe.WriteJSONFrame(s.r, resp); err != nil {
-			s.obs.ServerFrameError(observability.RPCFrameWrite)
-		}
-		s.writeMu.Unlock()
 	}
+}
+
+func (s *Server) handleRequest(ctx context.Context, env rpcv1.RpcEnvelope) {
+	respPayload, rpcErr := s.router.handle(ctx, env.TypeId, env.Payload)
+	s.obs.ServerRequest(rpcResultFromError(rpcErr))
+	s.writeResponse(rpcv1.RpcEnvelope{
+		TypeId:     env.TypeId,
+		ResponseTo: env.RequestId,
+		Payload:    respPayload,
+		Error:      rpcErr,
+	})
+}
+
+func (s *Server) writeResponse(resp rpcv1.RpcEnvelope) {
+	s.writeMu.Lock()
+	if err := jsonframe.WriteJSONFrame(s.r, resp); err != nil {
+		s.obs.ServerFrameError(observability.RPCFrameWrite)
+	}
+	s.writeMu.Unlock()
 }
 
 // Client issues RPC calls and receives notifications.
@@ -427,6 +526,9 @@ func rpcResultFromError(err *rpcv1.RpcError) observability.RPCResult {
 	}
 	if err.Code == 404 {
 		return observability.RPCResultHandlerNotFound
+	}
+	if err.Code == 429 {
+		return observability.RPCResultResourceExhausted
 	}
 	return observability.RPCResultRPCError
 }

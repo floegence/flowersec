@@ -91,18 +91,20 @@ func (h *switchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type metricsController struct {
-	mu       sync.Mutex
-	enabled  bool
-	handler  *switchHandler
-	observer *observability.AtomicTunnelObserver
-	srv      *server.Server
+	mu               sync.Mutex
+	enabled          bool
+	handler          *switchHandler
+	observer         *observability.AtomicTunnelObserver
+	resourceObserver *observability.AtomicTunnelResourceObserver
+	srv              *server.Server
 }
 
-func newMetricsController(handler *switchHandler, observer *observability.AtomicTunnelObserver, srv *server.Server) *metricsController {
+func newMetricsController(handler *switchHandler, observer *observability.AtomicTunnelObserver, resourceObserver *observability.AtomicTunnelResourceObserver, srv *server.Server) *metricsController {
 	return &metricsController{
-		handler:  handler,
-		observer: observer,
-		srv:      srv,
+		handler:          handler,
+		observer:         observer,
+		resourceObserver: resourceObserver,
+		srv:              srv,
 	}
 }
 
@@ -116,6 +118,7 @@ func (c *metricsController) Enable() {
 	tunnelObs := prom.NewTunnelObserver(reg)
 	c.handler.Set(prom.Handler(reg))
 	c.observer.Set(tunnelObs)
+	c.resourceObserver.Set(tunnelObs)
 	stats := c.srv.Stats()
 	tunnelObs.ConnCount(stats.ConnCount)
 	tunnelObs.ChannelCount(stats.ChannelCount)
@@ -130,6 +133,7 @@ func (c *metricsController) Disable() {
 	}
 	c.handler.Set(nil)
 	c.observer.Set(observability.NoopTunnelObserver)
+	c.resourceObserver.Set(observability.NoopTunnelResourceObserver)
 	c.enabled = false
 }
 
@@ -201,9 +205,14 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_CHANNELS: %v\n", err)
 		return 2
 	}
-	maxTotalPendingBytes, err := cmdutil.EnvInt("FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES", cfg.MaxTotalPendingBytes)
+	maxTenantQueuedBytes, err := cmdutil.EnvInt64("FSEC_TUNNEL_MAX_TENANT_QUEUED_BYTES", cfg.MaxTenantQueuedBytes)
 	if err != nil {
-		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES: %v\n", err)
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_TENANT_QUEUED_BYTES: %v\n", err)
+		return 2
+	}
+	maxTotalQueuedBytes, err := cmdutil.EnvInt64("FSEC_TUNNEL_MAX_TOTAL_QUEUED_BYTES", cfg.MaxTotalQueuedBytes)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_TOTAL_QUEUED_BYTES: %v\n", err)
 		return 2
 	}
 	writeTimeout, err := cmdutil.EnvDuration("FSEC_TUNNEL_WRITE_TIMEOUT", cfg.WriteTimeout)
@@ -254,7 +263,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.StringVar(&tlsKeyFile, "tls-key-file", tlsKeyFile, "enable TLS with the given private key file (default: disabled) (env: FSEC_TUNNEL_TLS_KEY_FILE)")
 	fs.StringVar(&metricsListen, "metrics-listen", metricsListen, "listen address for metrics server (empty disables) (env: FSEC_TUNNEL_METRICS_LISTEN)")
 	fs.StringVar(&statsListen, "stats-listen", statsListen, "listen address for stats server (empty disables) (env: FSEC_TUNNEL_STATS_LISTEN)")
-	fs.IntVar(&maxTotalPendingBytes, "max-total-pending-bytes", maxTotalPendingBytes, "max total pending bytes buffered across all channels (>= 0; 0 disables) (env: FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES)")
+	fs.Int64Var(&maxTenantQueuedBytes, "max-tenant-queued-bytes", maxTenantQueuedBytes, "max pending and write-queued bytes per tenant (>= 0; 0 disables) (env: FSEC_TUNNEL_MAX_TENANT_QUEUED_BYTES)")
+	fs.Int64Var(&maxTotalQueuedBytes, "max-total-queued-bytes", maxTotalQueuedBytes, "max pending and write-queued bytes across all tenants (>= 0; 0 disables) (env: FSEC_TUNNEL_MAX_TOTAL_QUEUED_BYTES)")
 	fs.DurationVar(&writeTimeout, "write-timeout", writeTimeout, "per-frame websocket write timeout (>= 0; 0 disables) (env: FSEC_TUNNEL_WRITE_TIMEOUT)")
 	fs.IntVar(&maxWriteQueueBytes, "max-write-queue-bytes", maxWriteQueueBytes, "max buffered bytes for websocket writes per endpoint (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES)")
 	fs.StringVar(&attachAuthorizerURL, "attach-authorizer-url", attachAuthorizerURL, "HTTP authorizer URL for attach decisions (optional) (env: FSEC_TUNNEL_ATTACH_AUTHORIZER_URL)")
@@ -355,8 +365,11 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if maxChannels < 0 {
 		return usageErr("--max-channels must be >= 0")
 	}
-	if maxTotalPendingBytes < 0 {
-		return usageErr("--max-total-pending-bytes must be >= 0")
+	if maxTenantQueuedBytes < 0 {
+		return usageErr("--max-tenant-queued-bytes must be >= 0")
+	}
+	if maxTotalQueuedBytes < 0 {
+		return usageErr("--max-total-queued-bytes must be >= 0")
 	}
 	if writeTimeout < 0 {
 		return usageErr("--write-timeout must be >= 0")
@@ -387,7 +400,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	observer := observability.NewAtomicTunnelObserver()
+	resourceObserver := observability.NewAtomicTunnelResourceObserver()
 	cfg.Observer = observer
+	cfg.ResourceObserver = resourceObserver
 	cfg.Path = path
 	cfg.AllowedOrigins = allowedOrigins
 	cfg.AllowNoOrigin = allowNoOrigin
@@ -397,7 +412,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if maxChannels > 0 {
 		cfg.MaxChannels = maxChannels
 	}
-	cfg.MaxTotalPendingBytes = maxTotalPendingBytes
+	cfg.MaxTenantQueuedBytes = maxTenantQueuedBytes
+	cfg.MaxTotalQueuedBytes = maxTotalQueuedBytes
 	cfg.WriteTimeout = writeTimeout
 	cfg.MaxWriteQueueBytes = maxWriteQueueBytes
 	cfg.PolicyRequestTimeout = policyRequestTimeout
@@ -449,7 +465,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		metricsMux := http.NewServeMux()
 		metricsHandler := newSwitchHandler()
 		metricsMux.Handle("/metrics", metricsHandler)
-		metrics = newMetricsController(metricsHandler, observer, s)
+		metrics = newMetricsController(metricsHandler, observer, resourceObserver, s)
 		metrics.Enable()
 
 		metricsLn, err = net.Listen("tcp", metricsListen)

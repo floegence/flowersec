@@ -23,6 +23,7 @@ type SecureChannel struct {
 	t                BinaryTransport // Underlying transport for encrypted frames.
 	maxRecordBytes   int             // Max encoded record size in bytes.
 	maxBufferedBytes int             // Max buffered plaintext bytes before failing.
+	outboundChunk    int             // Preferred maximum plaintext bytes per outbound record.
 
 	mu      sync.Mutex   // Guards read buffer and read state.
 	buf     bytes.Buffer // Buffered plaintext awaiting Read.
@@ -32,12 +33,15 @@ type SecureChannel struct {
 	readNotify   chan struct{} // Closed+replaced to wake Read waiters (data, errors, close, deadline changes).
 	readDeadline time.Time     // Read deadline for net.Conn Read; zero means no deadline.
 
-	sendMu     sync.Mutex // Guards send queue and send state.
-	sendCond   *sync.Cond // Signals sender when frames are queued.
-	sendQueue  []sendReq  // Pending frames to send.
-	sendClosed bool       // Indicates no more sends are allowed.
-	sendErr    error      // Sticky send error from writeLoop.
-	sendOnce   sync.Once  // Ensures send shutdown happens once.
+	writeCallMu sync.Mutex // Keeps every logical application write contiguous across record chunks.
+
+	sendMu      sync.Mutex // Guards send queue and send state.
+	sendQueue   []sendReq  // Pending frames to send.
+	sendWake    chan struct{}
+	sendRunning bool      // True while the on-demand writer is draining sendQueue.
+	sendClosed  bool      // Indicates no more sends are allowed.
+	sendErr     error     // Sticky send error from writeLoop.
+	sendOnce    sync.Once // Ensures send shutdown happens once.
 
 	writeNotify   chan struct{} // Closed+replaced to wake Write waiters (deadline changes, close).
 	writeDeadline time.Time     // Write deadline for net.Conn Write; zero means no deadline.
@@ -47,6 +51,10 @@ type SecureChannel struct {
 
 // ErrRecvBufferExceeded indicates buffered plaintext exceeded the configured cap.
 var ErrRecvBufferExceeded = errors.New("recv buffer exceeded")
+
+const DefaultOutboundRecordChunkBytes = 64 * 1024
+
+const sendWorkerIdleTimeout = 10 * time.Millisecond
 
 type sendReq struct {
 	frame  []byte                  // Encrypted record frame to write.
@@ -61,14 +69,33 @@ func NewSecureChannel(t BinaryTransport, keys RecordKeyState, maxRecordBytes int
 		t:                t,
 		maxRecordBytes:   maxRecordBytes,
 		maxBufferedBytes: maxBufferedBytes,
+		outboundChunk:    DefaultOutboundRecordChunkBytes,
 		readNotify:       make(chan struct{}),
 		writeNotify:      make(chan struct{}),
+		sendWake:         make(chan struct{}, 1),
 		keys:             keys,
 	}
-	c.sendCond = sync.NewCond(&c.sendMu)
-	go c.writeLoop()
 	go c.readLoop()
 	return c
+}
+
+// SetOutboundRecordChunkBytes sets the preferred outbound plaintext record size.
+// A zero value restores the 64 KiB default.
+func (c *SecureChannel) SetOutboundRecordChunkBytes(n int) error {
+	if n < 0 {
+		return errors.New("outbound record chunk bytes must be >= 0")
+	}
+	if n == 0 {
+		n = DefaultOutboundRecordChunkBytes
+	}
+	maxPlain := MaxPlaintextBytes(c.maxRecordBytes)
+	if maxPlain > 0 && n > maxPlain {
+		n = maxPlain
+	}
+	c.sendMu.Lock()
+	c.outboundChunk = n
+	c.sendMu.Unlock()
+	return nil
 }
 
 func newSendReq() sendReq {
@@ -93,12 +120,25 @@ func (c *SecureChannel) signalWriteLocked() {
 func (c *SecureChannel) writeLoop() {
 	for {
 		c.sendMu.Lock()
-		for len(c.sendQueue) == 0 && !c.sendClosed {
-			c.sendCond.Wait()
-		}
-		if len(c.sendQueue) == 0 && c.sendClosed {
+		if len(c.sendQueue) == 0 {
 			c.sendMu.Unlock()
-			return
+			timer := time.NewTimer(sendWorkerIdleTimeout)
+			select {
+			case <-c.sendWake:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				continue
+			case <-timer.C:
+				c.sendMu.Lock()
+				if len(c.sendQueue) == 0 {
+					c.sendRunning = false
+					c.sendMu.Unlock()
+					return
+				}
+				c.sendMu.Unlock()
+				continue
+			}
 		}
 		req := c.sendQueue[0]
 		c.sendQueue = c.sendQueue[1:]
@@ -122,6 +162,18 @@ func (c *SecureChannel) writeLoop() {
 		req.done <- err
 		req.cancel(nil)
 	}
+}
+
+func (c *SecureChannel) startWriteLoopLocked() {
+	select {
+	case c.sendWake <- struct{}{}:
+	default:
+	}
+	if c.sendRunning {
+		return
+	}
+	c.sendRunning = true
+	go c.writeLoop()
 }
 
 func (c *SecureChannel) readLoop() {
@@ -241,9 +293,18 @@ func (c *SecureChannel) Read(p []byte) (int, error) {
 
 // Write splits payloads into record-sized chunks and enqueues them for sending.
 func (c *SecureChannel) Write(p []byte) (int, error) {
+	c.writeCallMu.Lock()
+	defer c.writeCallMu.Unlock()
+
 	maxPlain := MaxPlaintextBytes(c.maxRecordBytes)
 	if maxPlain <= 0 {
 		maxPlain = len(p)
+	}
+	c.sendMu.Lock()
+	outboundChunk := c.outboundChunk
+	c.sendMu.Unlock()
+	if outboundChunk > 0 && outboundChunk < maxPlain {
+		maxPlain = outboundChunk
 	}
 	total := 0
 	for len(p) > 0 {
@@ -280,7 +341,7 @@ func (c *SecureChannel) Write(p []byte) (int, error) {
 		}
 		req.frame = frame
 		c.sendQueue = append(c.sendQueue, req)
-		c.sendCond.Signal()
+		c.startWriteLoopLocked()
 		c.sendMu.Unlock()
 		if err := c.waitSend(&req); err != nil {
 			return total, err
@@ -305,7 +366,6 @@ func (c *SecureChannel) Close() error {
 		c.sendMu.Lock()
 		c.sendClosed = true
 		c.signalWriteLocked()
-		c.sendCond.Broadcast()
 		c.sendMu.Unlock()
 	})
 	return c.t.Close()
@@ -364,7 +424,7 @@ func (c *SecureChannel) Ping() error {
 	}
 	req.frame = frame
 	c.sendQueue = append(c.sendQueue, req)
-	c.sendCond.Signal()
+	c.startWriteLoopLocked()
 	c.sendMu.Unlock()
 	return c.waitSend(&req)
 }
@@ -401,7 +461,7 @@ func (c *SecureChannel) Rekey() error {
 	}
 	req.frame = frame
 	c.sendQueue = append(c.sendQueue, req)
-	c.sendCond.Signal()
+	c.startWriteLoopLocked()
 
 	// Update the send key while still holding sendMu so that any later enqueued app records
 	// are guaranteed to be encrypted under the new key and ordered after the rekey frame.

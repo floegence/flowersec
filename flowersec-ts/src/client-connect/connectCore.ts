@@ -1,12 +1,13 @@
 import { clientHandshake } from "../e2ee/handshake.js";
 import { ByteReader } from "../yamux/byteReader.js";
 import { YamuxSession } from "../yamux/session.js";
+import { DEFAULT_YAMUX_LIMITS, type YamuxLimits } from "../yamux/session.js";
 import { RpcClient } from "../rpc/client.js";
 import { writeStreamHello } from "../streamhello/streamHello.js";
-import { normalizeObserver, nowSeconds, type AttachReason, type ClientObserverLike } from "../observability/observer.js";
+import { emitObserverDiagnostic, normalizeObserver, nowSeconds, type AttachReason, type ClientObserverLike } from "../observability/observer.js";
 import { base64urlDecode } from "../utils/base64url.js";
 import { AbortError, FlowersecError, throwIfAborted } from "../utils/errors.js";
-import { WebSocketBinaryTransport, WsCloseError, type WebSocketLike } from "../ws-client/binaryTransport.js";
+import { DEFAULT_WEB_SOCKET_LIMITS, WebSocketBinaryTransport, WsCloseError, type WebSocketLike, type WebSocketLimits } from "../ws-client/binaryTransport.js";
 import type { ClientInternal } from "../client.js";
 import type { ConnectScopeResolverMap } from "../connect/internalNormalize.js";
 import {
@@ -21,6 +22,13 @@ import {
 import { prepareChannelId } from "./contract.js";
 import { isTunnelAttachCloseReason } from "./tunnelAttachCloseReason.js";
 import { enforceTransportSecurity, type TransportSecurityPolicy } from "./transportSecurity.js";
+import { maxPlaintextBytes } from "../e2ee/record.js";
+import { isYamuxResourceExhaustedError } from "../yamux/errors.js";
+
+export type LivenessOptions = Readonly<{
+  intervalMs?: number;
+  timeoutMs?: number;
+}>;
 
 export type ConnectOptionsBase = Readonly<{
   /** Explicit Origin value (required). In browsers this must match window.location.origin. */
@@ -39,8 +47,12 @@ export type ConnectOptionsBase = Readonly<{
   maxRecordBytes?: number;
   /** Maximum buffered plaintext bytes in the secure channel (0 uses default). */
   maxBufferedBytes?: number;
-  /** Maximum queued websocket bytes before backpressure (0 uses default). */
-  maxWsQueuedBytes?: number;
+  /** Preferred plaintext bytes per outbound encrypted record (default 64 KiB). */
+  outboundRecordChunkBytes?: number;
+  /** WebSocket inbound and outbound queue limits. */
+  webSocketLimits?: Partial<WebSocketLimits>;
+  /** Yamux stream, frame, and receive-memory limits. */
+  yamuxLimits?: Partial<YamuxLimits>;
   /** Optional factory for creating the WebSocket instance. */
   wsFactory?: (url: string, origin: string) => WebSocketLike;
   /** Optional observer for client metrics. */
@@ -51,8 +63,8 @@ export type ConnectOptionsBase = Readonly<{
   scopeResolvers?: ConnectScopeResolverMap;
   /** Experimental migration switch for optional scope failures. */
   relaxedOptionalScopeValidation?: boolean;
-  /** Encrypted keepalive ping interval in milliseconds (0 disables). */
-  keepaliveIntervalMs?: number;
+  /** Acknowledged Yamux liveness checks, or false to disable automatic checks. */
+  liveness?: false | LivenessOptions;
 }>;
 
 export type ConnectCoreArgs = Readonly<{
@@ -88,6 +100,10 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_origin", message: "missing origin" });
   }
 
+  const invalidOption = (message: string): never => {
+    throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_option", message });
+  };
+
   if (args.path === "tunnel" && args.attach == null) {
     throw new FlowersecError({
       path: args.path,
@@ -103,17 +119,6 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     throw new FlowersecError({ path: args.path, stage: "validate", code, message: "missing websocket url" });
   }
 
-  await enforceTransportSecurity({
-    rawUrl: wsUrl,
-    path: args.path,
-    ...(args.opts.transportSecurityPolicy === undefined ? {} : { policy: args.opts.transportSecurityPolicy }),
-    ...(args.opts.observer === undefined ? {} : { observer: args.opts.observer }),
-  });
-
-  const invalidOption = (message: string): never => {
-    throw new FlowersecError({ path: args.path, stage: "validate", code: "invalid_option", message });
-  };
-
   const connectTimeoutMs = args.opts.connectTimeoutMs ?? 10_000;
   if (!Number.isFinite(connectTimeoutMs) || connectTimeoutMs < 0) {
     invalidOption("connectTimeoutMs must be a non-negative number");
@@ -121,11 +126,6 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
   const handshakeTimeoutMs = args.opts.handshakeTimeoutMs ?? 10_000;
   if (!Number.isFinite(handshakeTimeoutMs) || handshakeTimeoutMs < 0) {
     invalidOption("handshakeTimeoutMs must be a non-negative number");
-  }
-
-  const keepaliveIntervalMs = args.opts.keepaliveIntervalMs ?? 0;
-  if (!Number.isFinite(keepaliveIntervalMs) || keepaliveIntervalMs < 0) {
-    invalidOption("keepaliveIntervalMs must be a non-negative number");
   }
 
   const clientFeatures = args.opts.clientFeatures ?? 0;
@@ -145,10 +145,23 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
   if (!Number.isSafeInteger(maxBufferedBytes) || maxBufferedBytes < 0) {
     invalidOption("maxBufferedBytes must be a non-negative integer");
   }
-  const maxWsQueuedBytes = args.opts.maxWsQueuedBytes ?? 0;
-  if (!Number.isSafeInteger(maxWsQueuedBytes) || maxWsQueuedBytes < 0) {
-    invalidOption("maxWsQueuedBytes must be a non-negative integer");
+  const effectiveMaxRecordBytes = maxRecordBytes > 0 ? maxRecordBytes : (1 << 20);
+  const outboundRecordChunkBytes = args.opts.outboundRecordChunkBytes ?? 64 * 1024;
+  if (!Number.isSafeInteger(outboundRecordChunkBytes) || outboundRecordChunkBytes <= 0 || outboundRecordChunkBytes > maxPlaintextBytes(effectiveMaxRecordBytes)) {
+    invalidOption("outboundRecordChunkBytes must be a positive integer within maxRecordBytes");
   }
+  validateLimitObject(args.opts.webSocketLimits, "webSocketLimits", invalidOption);
+  validateLimitObject(args.opts.yamuxLimits, "yamuxLimits", invalidOption);
+  validateWebSocketLimitRelationships(args.opts.webSocketLimits, invalidOption);
+  validateYamuxLimitRelationships(args.opts.yamuxLimits, invalidOption);
+  const liveness = normalizeLiveness(args.opts.liveness, invalidOption);
+
+  await enforceTransportSecurity({
+    rawUrl: wsUrl,
+    path: args.path,
+    ...(args.opts.transportSecurityPolicy === undefined ? {} : { policy: args.opts.transportSecurityPolicy }),
+    ...(args.opts.observer === undefined ? {} : { observer: args.opts.observer }),
+  });
 
   const channelId = prepareChannelId(args.channelId, args.path);
 
@@ -184,7 +197,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
   // Install close/error/message listeners before waiting for "open" to avoid a gap where a peer close
   // (for example a tunnel attach rejection with a reason token) can be missed and misclassified as a handshake timeout.
   const transport = new WebSocketBinaryTransport(ws, {
-    ...(maxWsQueuedBytes > 0 ? { maxQueuedBytes: maxWsQueuedBytes } : {}),
+    ...(args.opts.webSocketLimits === undefined ? {} : { webSocketLimits: args.opts.webSocketLimits }),
     observer,
   });
 
@@ -241,7 +254,8 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
           psk,
           clientFeatures,
           maxHandshakePayload: maxHandshakePayload > 0 ? maxHandshakePayload : 8 * 1024,
-          maxRecordBytes: maxRecordBytes > 0 ? maxRecordBytes : (1 << 20),
+          maxRecordBytes: effectiveMaxRecordBytes,
+          outboundRecordChunkBytes,
           ...(maxBufferedBytes > 0 ? { maxBufferedBytes } : {}),
           timeoutMs: handshakeTimeoutMs,
           ...(signal !== undefined ? { signal } : {}),
@@ -285,7 +299,20 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       write: (b: Uint8Array) => secure.write(b),
       close: () => secure.close(),
     };
-    const mux = new YamuxSession(conn, { client: true });
+    const mux = new YamuxSession(conn, {
+      client: true,
+      ...(args.opts.yamuxLimits === undefined ? {} : { limits: args.opts.yamuxLimits }),
+      onDiagnostic: (event) => emitObserverDiagnostic(args.opts.observer, {
+        path: args.path,
+        stage: "yamux",
+        code_domain: "event",
+        code: event.code,
+        result: "fail",
+        resource: event.resource,
+        current: event.current,
+        limit: event.limit,
+      }),
+    });
 
     let rpcStream: Awaited<ReturnType<YamuxSession["openStream"]>>;
     try {
@@ -329,15 +356,29 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       }
     };
 
-    let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
-    let keepaliveInFlight = false;
-    const stopKeepalive = () => {
-      if (keepaliveTimer === undefined) return;
-      clearInterval(keepaliveTimer);
-      keepaliveTimer = undefined;
+    const probeLiveness = async (): Promise<number> => {
+      try {
+        return await mux.probeLiveness(liveness.timeoutMs);
+      } catch (e) {
+        if (String((e as Error)?.message).includes("ping timeout")) {
+          emitObserverDiagnostic(args.opts.observer, { path: args.path, stage: "yamux", code_domain: "event", code: "liveness_timeout", result: "fail" });
+        }
+        try { rpc.close(); } catch { /* ignore */ }
+        try { mux.close(); } catch { /* ignore */ }
+        try { secure.close(); } catch { /* ignore */ }
+        throw new FlowersecError({ path: args.path, stage: "yamux", code: "ping_failed", message: "liveness probe failed", cause: e });
+      }
+    };
+
+    let livenessTimer: ReturnType<typeof setInterval> | undefined;
+    let livenessInFlight = false;
+    const stopLiveness = () => {
+      if (livenessTimer === undefined) return;
+      clearInterval(livenessTimer);
+      livenessTimer = undefined;
     };
     const closeAll = () => {
-      stopKeepalive();
+      stopLiveness();
       try {
         rpc.close();
       } catch {
@@ -354,19 +395,19 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         // ignore
       }
     };
-    if (keepaliveIntervalMs > 0) {
-      keepaliveTimer = setInterval(() => {
-        if (keepaliveInFlight) return;
-        keepaliveInFlight = true;
-        ping()
+    if (liveness.intervalMs > 0) {
+      livenessTimer = setInterval(() => {
+        if (livenessInFlight) return;
+        livenessInFlight = true;
+        probeLiveness()
           .catch(() => {
-            closeAll();
+            stopLiveness();
           })
           .finally(() => {
-            keepaliveInFlight = false;
+            livenessInFlight = false;
           });
-      }, keepaliveIntervalMs);
-      (keepaliveTimer as any)?.unref?.();
+      }, liveness.intervalMs);
+      (livenessTimer as any)?.unref?.();
     }
 
     return {
@@ -376,6 +417,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       mux,
       rpc,
       ping,
+      probeLiveness,
       openStream: async (kind: string, opts: Readonly<{ signal?: AbortSignal }> = {}) => {
         if (kind == null || kind === "") throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_stream_kind", message: "missing stream kind" });
         if (opts.signal?.aborted) {
@@ -399,7 +441,8 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         try {
           s = await mux.openStream();
         } catch (e) {
-          throw new FlowersecError({ path: args.path, stage: "yamux", code: "open_stream_failed", message: "open stream failed", cause: e });
+          const exhausted = isYamuxResourceExhaustedError(e);
+          throw new FlowersecError({ path: args.path, stage: "yamux", code: exhausted ? "resource_exhausted" : "open_stream_failed", message: exhausted ? "yamux stream limit reached" : "open stream failed", cause: e });
         }
         if (signal != null) {
           abortListener = () => {
@@ -476,4 +519,50 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     }
     throw e;
   }
+}
+
+function validateLimitObject(
+  input: Readonly<Record<string, number | undefined>> | undefined,
+  name: string,
+  invalid: (message: string) => never,
+): void {
+  if (input === undefined) return;
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) invalid(`${name}.${key} must be a positive integer`);
+  }
+}
+
+function normalizeLiveness(
+  input: false | LivenessOptions | undefined,
+  invalid: (message: string) => never,
+): { intervalMs: number; timeoutMs: number } {
+  if (input === false || input === undefined) return { intervalMs: 0, timeoutMs: 10_000 };
+  const intervalMs = input.intervalMs ?? 0;
+  const timeoutMs = input.timeoutMs ?? (intervalMs > 0 ? Math.min(10_000, intervalMs) : 10_000);
+  if (!Number.isFinite(intervalMs) || intervalMs < 0) invalid("liveness.intervalMs must be a non-negative number");
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) invalid("liveness.timeoutMs must be a positive number");
+  return { intervalMs, timeoutMs };
+}
+
+function validateWebSocketLimitRelationships(input: Partial<WebSocketLimits> | undefined, invalid: (message: string) => never): void {
+  if (input === undefined) return;
+  const low = input.outboundLowWatermarkBytes ?? DEFAULT_WEB_SOCKET_LIMITS.outboundLowWatermarkBytes;
+  const high = input.outboundHighWatermarkBytes ?? DEFAULT_WEB_SOCKET_LIMITS.outboundHighWatermarkBytes;
+  const hard = input.outboundHardLimitBytes ?? DEFAULT_WEB_SOCKET_LIMITS.outboundHardLimitBytes;
+  if (low > high || high > hard) invalid("webSocketLimits outbound watermarks must satisfy low <= high <= hard");
+}
+
+function validateYamuxLimitRelationships(input: Partial<YamuxLimits> | undefined, invalid: (message: string) => never): void {
+  if (input === undefined) return;
+  const active = input.maxActiveStreams ?? DEFAULT_YAMUX_LIMITS.maxActiveStreams;
+  const inbound = input.maxInboundStreams ?? DEFAULT_YAMUX_LIMITS.maxInboundStreams;
+  const frame = input.maxFrameBytes ?? DEFAULT_YAMUX_LIMITS.maxFrameBytes;
+  const outbound = input.preferredOutboundFrameBytes ?? Math.min(DEFAULT_YAMUX_LIMITS.preferredOutboundFrameBytes, frame);
+  const streamReceive = input.maxStreamReceiveBytes ?? DEFAULT_YAMUX_LIMITS.maxStreamReceiveBytes;
+  const sessionReceive = input.maxSessionReceiveBytes ?? DEFAULT_YAMUX_LIMITS.maxSessionReceiveBytes;
+  if (inbound > active) invalid("yamuxLimits.maxInboundStreams must not exceed maxActiveStreams");
+  if (outbound > frame) invalid("yamuxLimits.preferredOutboundFrameBytes must not exceed maxFrameBytes");
+  if (frame > streamReceive) invalid("yamuxLimits.maxFrameBytes must not exceed maxStreamReceiveBytes");
+  if (streamReceive < DEFAULT_YAMUX_LIMITS.maxStreamReceiveBytes) invalid("yamuxLimits.maxStreamReceiveBytes must cover the 256 KiB initial stream window");
+  if (streamReceive > sessionReceive) invalid("yamuxLimits.maxStreamReceiveBytes must not exceed maxSessionReceiveBytes");
 }

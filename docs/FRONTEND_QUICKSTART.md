@@ -25,6 +25,7 @@ Use `@floegence/flowersec-core/browser` for the browser client and `@floegence/f
 ```ts
 import { connectBrowser, createBrowserReconnectConfig } from "@floegence/flowersec-core/browser";
 import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
+import { createControlplaneArtifactSource } from "@floegence/flowersec-core/reconnect";
 
 const artifact = await requestConnectArtifact({
   baseUrl: "https://controlplane.example.com",
@@ -39,11 +40,11 @@ await client.ping();
 client.close();
 
 const reconnectConfig = createBrowserReconnectConfig({
-  artifactControlplane: {
+  source: createControlplaneArtifactSource({
     baseUrl: "https://controlplane.example.com",
     endpointId: "env_demo",
     entryTicket: "one-time-ticket",
-  },
+  }),
   autoReconnect: { enabled: true },
 });
 ```
@@ -94,6 +95,7 @@ This split keeps the raw runtime on the controller origin and exposes only the n
 ```ts
 import { connectNode, createNodeReconnectConfig } from "@floegence/flowersec-core/node";
 import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
+import { createControlplaneArtifactSource } from "@floegence/flowersec-core/reconnect";
 
 const artifact = await requestConnectArtifact({
   baseUrl: "https://controlplane.example.com",
@@ -105,13 +107,14 @@ const client = await connectNode(artifact, {
 });
 
 await client.ping();
+const rttMs = await client.probeLiveness();
 client.close();
 
 const reconnectConfig = createNodeReconnectConfig({
-  artifactControlplane: {
+  source: createControlplaneArtifactSource({
     baseUrl: "https://controlplane.example.com",
     endpointId: "env_demo",
-  },
+  }),
   connect: {
     origin: "https://app.example.com",
   },
@@ -139,10 +142,12 @@ Common tunnel gotcha:
 
 - `token_replay` means the one-time tunnel token was reused; fetch a fresh artifact or grant before reconnecting
 
+High-level connects require TLS by default. For local `ws://` development, pass `AllowPlaintextForLoopback` explicitly. Use `client.probeLiveness()` when you need an acknowledged round trip; `client.ping()` only confirms that the encrypted ping record was accepted locally for sending.
+
 ## Next steps
 
 - API surface: `docs/API_SURFACE.md`
 - Connect artifacts: `docs/CONNECT_ARTIFACTS.md`
 - Correlation and diagnostics: `docs/CORRELATION_AND_DIAGNOSTICS.md`
-- Migration guide: `docs/V0_19_MIGRATION.md`
+- Migration guide: `docs/V0_20_MIGRATION.md`
 - Demos cookbook: `examples/README.md`

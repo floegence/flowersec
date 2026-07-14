@@ -7,7 +7,7 @@ describe("connectCore option validation", () => {
   const psk = base64urlEncode(new Uint8Array(32).fill(1));
   const baseArgs = {
     path: "direct" as const,
-    wsUrl: "ws://example.invalid",
+    wsUrl: "wss://example.invalid",
     channelId: "ch_1",
     e2eePskB64u: psk,
     defaultSuite: 1,
@@ -17,12 +17,12 @@ describe("connectCore option validation", () => {
   test.each([
     ["connectTimeoutMs", { connectTimeoutMs: -1 }, "connectTimeoutMs"],
     ["handshakeTimeoutMs", { handshakeTimeoutMs: -1 }, "handshakeTimeoutMs"],
-    ["keepaliveIntervalMs", { keepaliveIntervalMs: -1 }, "keepaliveIntervalMs"],
+    ["liveness.intervalMs", { liveness: { intervalMs: -1 } }, "liveness.intervalMs"],
     ["clientFeatures", { clientFeatures: -1 }, "clientFeatures"],
     ["maxHandshakePayload", { maxHandshakePayload: -1 }, "maxHandshakePayload"],
     ["maxRecordBytes", { maxRecordBytes: -1 }, "maxRecordBytes"],
     ["maxBufferedBytes", { maxBufferedBytes: -1 }, "maxBufferedBytes"],
-    ["maxWsQueuedBytes", { maxWsQueuedBytes: -1 }, "maxWsQueuedBytes"]
+    ["outboundRecordChunkBytes", { outboundRecordChunkBytes: -1 }, "outboundRecordChunkBytes"]
   ])("rejects invalid %s", async (_name, extra, needle) => {
     const p = connectCore({
       ...baseArgs,
@@ -60,6 +60,23 @@ describe("connectCore option validation", () => {
     } as any);
     await expect(p).rejects.toBeInstanceOf(FlowersecError);
     await expect(p).rejects.toMatchObject({ path: "direct", stage: "validate", code: "missing_origin" });
+  });
+
+  test("rejects a receive limit below the initial yamux window before WebSocket creation", async () => {
+    let factoryCalls = 0;
+    const p = connectCore({
+      ...baseArgs,
+      opts: {
+        ...baseArgs.opts,
+        yamuxLimits: { maxFrameBytes: 1024, maxStreamReceiveBytes: 1024 },
+        wsFactory: () => {
+          factoryCalls += 1;
+          throw new Error("unexpected");
+        },
+      },
+    } as any);
+    await expect(p).rejects.toMatchObject({ path: "direct", stage: "validate", code: "invalid_option" });
+    expect(factoryCalls).toBe(0);
   });
 
   test("trims origin before passing it to wsFactory", async () => {

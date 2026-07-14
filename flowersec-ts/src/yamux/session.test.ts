@@ -64,6 +64,41 @@ describe("YamuxSession", () => {
     session.close();
   });
 
+  test("probeLiveness correlates ACK and returns RTT", async () => {
+    const conn = new QueueConn();
+    const session = new YamuxSession(conn, { client: true });
+    const probe = session.probeLiveness(1000);
+    await tick();
+    const sent = decodeHeader(conn.writes[0]!, 0);
+    expect(sent.type).toBe(TYPE_PING);
+    expect(sent.flags & FLAG_SYN).toBe(FLAG_SYN);
+    conn.enqueue(encodeHeader({ type: TYPE_PING, flags: FLAG_ACK, streamId: 0, length: sent.length }));
+    await expect(probe).resolves.toBeGreaterThanOrEqual(0);
+    session.close();
+  });
+
+  test("concurrent liveness callers share one outstanding ping", async () => {
+    const conn = new QueueConn();
+    const session = new YamuxSession(conn, { client: true });
+    const first = session.probeLiveness(1000);
+    const second = session.probeLiveness(1000);
+    await tick();
+    expect(conn.writes).toHaveLength(1);
+    const sent = decodeHeader(conn.writes[0]!, 0);
+    conn.enqueue(encodeHeader({ type: TYPE_PING, flags: FLAG_ACK, streamId: 0, length: sent.length }));
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toBe(b);
+    session.close();
+  });
+
+  test("rejects local streams at the active stream limit", async () => {
+    const conn = new QueueConn();
+    const session = new YamuxSession(conn, { client: true, limits: { maxActiveStreams: 1, maxInboundStreams: 1 } });
+    await session.openStream();
+    await expect(session.openStream()).rejects.toThrow(/limit/);
+    session.close();
+  });
+
   test("streamId 0 data closes session", async () => {
     const conn = new QueueConn();
     const session = new YamuxSession(conn, { client: true });
@@ -100,7 +135,7 @@ describe("YamuxSession", () => {
     });
 
     // When acting as the client, inbound (server-initiated) streams must be even.
-    const hdr = encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_SYN, streamId: 6, length: 128 });
+    const hdr = encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: FLAG_SYN, streamId: 6, length: 0 });
     conn.enqueue(hdr);
 
     await tick();
@@ -108,6 +143,15 @@ describe("YamuxSession", () => {
     expect(session.getStream(6)).toBeDefined();
 
     session.close();
+  });
+
+  test("window update overflow closes the session", async () => {
+    const conn = new QueueConn();
+    const session = new YamuxSession(conn, { client: true });
+    const stream = await session.openStream();
+    conn.enqueue(encodeHeader({ type: TYPE_WINDOW_UPDATE, flags: 0, streamId: stream.id, length: 1 }));
+    await tick();
+    expect(conn.closed).toBe(true);
   });
 
   test("inbound SYN with wrong streamId parity is RST and does not create stream", async () => {

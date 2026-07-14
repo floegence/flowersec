@@ -1,12 +1,47 @@
 package observability
 
 import (
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
 )
+
+func TestDiagnosticEventResourceFieldsAreOptionalAndGeneric(t *testing.T) {
+	resource := "session_receive_bytes"
+	current := int64(1025)
+	limit := int64(1024)
+	event := DiagnosticEvent{
+		V:          1,
+		Namespace:  "connect",
+		Path:       "direct",
+		Stage:      DiagnosticStageYamux,
+		CodeDomain: DiagnosticCodeDomainEvent,
+		Code:       "resource_limit_reached",
+		Result:     DiagnosticResultFail,
+		Resource:   &resource,
+		Current:    &current,
+		Limit:      &limit,
+	}
+	b, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["resource"] != resource || got["current"] != float64(current) || got["limit"] != float64(limit) {
+		t.Fatalf("unexpected resource diagnostic: %s", b)
+	}
+	for _, forbidden := range []string{"url", "query", "token", "stream_kind", "payload"} {
+		if _, ok := got[forbidden]; ok {
+			t.Fatalf("diagnostic includes forbidden field %q: %s", forbidden, b)
+		}
+	}
+}
 
 type recordingClientObserver struct {
 	mu          sync.Mutex

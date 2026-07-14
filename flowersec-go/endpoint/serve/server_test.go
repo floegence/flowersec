@@ -331,8 +331,9 @@ func (s *fakeSession) OpenStream(context.Context, string) (io.ReadWriteCloser, e
 func (s *fakeSession) ServeStreams(context.Context, int, func(string, io.ReadWriteCloser), ...endpoint.ServeStreamsOption) error {
 	return errors.New("not implemented")
 }
-func (s *fakeSession) Ping() error  { return nil }
-func (s *fakeSession) Close() error { return nil }
+func (s *fakeSession) Ping() error                                          { return nil }
+func (s *fakeSession) ProbeLiveness(context.Context) (time.Duration, error) { return 0, nil }
+func (s *fakeSession) Close() error                                         { return nil }
 
 func (s *fakeSession) AcceptStreamHello(_ int) (string, io.ReadWriteCloser, error) {
 	if len(s.next) == 0 {

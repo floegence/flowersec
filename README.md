@@ -23,7 +23,7 @@
 ![Proxy](https://img.shields.io/badge/Proxy-HTTP%20%2F%20WebSocket-0F766E)
 ![Tunnel](https://img.shields.io/badge/Tunnel-Open%20Source%20Self--Hosted-92400E)
 
-Flowersec is a Go + TypeScript toolkit for teams that want browser-friendly secure connectivity without giving relays access to application plaintext.
+Flowersec is a Go, TypeScript, and Swift communication toolkit for teams that want browser-friendly secure connectivity without giving relays access to application plaintext.
 
 Use Flowersec when you want to:
 
@@ -36,17 +36,17 @@ Use Flowersec when you want to:
 
 Status: experimental; not audited.
 
-Security note: in any non-local deployment, use `wss://` (or terminate TLS at a reverse proxy). `ws://` exposes bearer tokens and metadata on the wire.
+Security note: high-level connections require `wss://` by default. Local `ws://` development requires an explicit loopback policy; unrestricted plaintext requires an explicit policy that accepts bearer-token and metadata exposure before E2EE starts.
 
 Stable integration entrypoints are documented in `docs/API_SURFACE.md`.
 The stability rules, review checklist, and engineering gate model live in `docs/API_STABILITY_POLICY.md`.
-Flowersec v0.19.x recommends an artifact-first integration path documented in:
+Flowersec v0.20.x recommends an artifact-first integration path documented in:
 
 - `docs/CONNECT_ARTIFACTS.md`
 - `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
 - `docs/CORRELATION_AND_DIAGNOSTICS.md`
 - `docs/PRESETS.md`
-- `docs/V0_19_MIGRATION.md`
+- `docs/V0_20_MIGRATION.md`
 
 ## At a glance
 
@@ -67,7 +67,7 @@ Flowersec v0.19.x recommends an artifact-first integration path documented in:
 | 🌐 Start from the browser SDK | [`docs/FRONTEND_QUICKSTART.md`](docs/FRONTEND_QUICKSTART.md) |
 | 🧩 Integrate Flowersec into my app | [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) |
 | 🧱 Adopt the canonical connect artifact | [`docs/CONNECT_ARTIFACTS.md`](docs/CONNECT_ARTIFACTS.md) |
-| 🔁 Migrate to v0.19 | [`docs/V0_19_MIGRATION.md`](docs/V0_19_MIGRATION.md) |
+| 🔁 Migrate to v0.20 | [`docs/V0_20_MIGRATION.md`](docs/V0_20_MIGRATION.md) |
 | 📦 Replace named proxy profiles | [`docs/PRESETS.md`](docs/PRESETS.md) |
 | 🧭 Understand API stability | [`docs/API_STABILITY_POLICY.md`](docs/API_STABILITY_POLICY.md) |
 | 🚇 Deploy the tunnel | [`docs/TUNNEL_DEPLOYMENT.md`](docs/TUNNEL_DEPLOYMENT.md) |
@@ -175,6 +175,7 @@ client.close();
 ```ts
 import { connectNode, createNodeReconnectConfig } from "@floegence/flowersec-core/node";
 import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
+import { createControlplaneArtifactSource } from "@floegence/flowersec-core/reconnect";
 
 const artifact = await requestConnectArtifact({
   baseUrl: "https://your-app.example/api/flowersec",
@@ -186,13 +187,14 @@ const client = await connectNode(artifact, {
 });
 
 await client.ping();
+const rttMs = await client.probeLiveness();
 client.close();
 
 const reconnectConfig = createNodeReconnectConfig({
-  artifactControlplane: {
+  source: createControlplaneArtifactSource({
     baseUrl: "https://your-app.example/api/flowersec",
     endpointId: "env_demo",
-  },
+  }),
   connect: {
     origin: "https://your-app.example",
   },
@@ -239,10 +241,10 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 ### Swift SDK
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.16")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.20.0")
 ```
 
-Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.19.16`.
+Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.20.0`.
 
 ### Tunnel server
 
@@ -355,7 +357,7 @@ All user-facing Flowersec CLIs (`flowersec-tunnel`, `flowersec-proxy-gateway`, `
 - Scoped metadata: `docs/SCOPED_METADATA.md`
 - Controlplane artifact fetch: `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
 - Proxy presets: `docs/PRESETS.md`
-- v0.19 migration: `docs/V0_19_MIGRATION.md`
+- v0.20 migration: `docs/V0_20_MIGRATION.md`
 - Tunnel deployment: `docs/TUNNEL_DEPLOYMENT.md`
 - Proxy gateway deployment: `docs/PROXY_GATEWAY_DEPLOYMENT.md`
 - Proxy stream contract: `docs/PROXY.md`

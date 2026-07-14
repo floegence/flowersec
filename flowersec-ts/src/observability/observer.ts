@@ -43,6 +43,8 @@ export type WsCloseKind = "local" | "peer_or_error";
 export type WsErrorReason =
   | "error"
   | "recv_buffer_exceeded"
+  | "send_buffer_exceeded"
+  | "send_buffer_timeout"
   | "unexpected_text_frame"
   | "unexpected_message_type";
 
@@ -64,6 +66,9 @@ export type DiagnosticEvent = Readonly<{
     | "connect"
     | "attach"
     | "handshake"
+    | "transport"
+    | "yamux"
+    | "rpc"
     | "close"
     | "reconnect";
   code_domain: "error" | "event";
@@ -73,6 +78,9 @@ export type DiagnosticEvent = Readonly<{
   attempt_seq: number;
   trace_id?: string;
   session_id?: string;
+  resource?: string;
+  current?: number;
+  limit?: number;
 }>;
 
 type ObserverContext = Readonly<{
@@ -201,6 +209,9 @@ function buildDiagnosticEvent(
     ...(context.sessionId === undefined
       ? {}
       : { session_id: context.sessionId }),
+    ...(event.resource === undefined ? {} : { resource: event.resource }),
+    ...(event.current === undefined ? {} : { current: event.current }),
+    ...(event.limit === undefined ? {} : { limit: event.limit }),
   });
 }
 

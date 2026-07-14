@@ -251,6 +251,9 @@ func (c *fakeManagedClient) Path() client.Path          { return client.PathTunn
 func (c *fakeManagedClient) EndpointInstanceID() string { return "fake" }
 func (c *fakeManagedClient) RPC() *rpc.Client           { return nil }
 func (c *fakeManagedClient) Ping() error                { return nil }
+func (c *fakeManagedClient) ProbeLiveness(context.Context) (time.Duration, error) {
+	return 0, nil
+}
 func (c *fakeManagedClient) Close() error {
 	c.closed.Add(1)
 	return nil

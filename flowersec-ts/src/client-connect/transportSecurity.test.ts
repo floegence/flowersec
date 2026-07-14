@@ -46,20 +46,12 @@ describe("transport security policy", () => {
     expect(JSON.stringify(policy.mock.calls)).not.toContain("secret");
   });
 
-  test("missing policy preserves plaintext compatibility and emits a diagnostic", async () => {
-    const onDiagnosticEvent = vi.fn();
-    await enforceTransportSecurity({
+  test("missing policy requires TLS", async () => {
+    const run = enforceTransportSecurity({
       rawUrl: "ws://example.com/ws",
       path: "direct",
-      observer: { onDiagnosticEvent },
     });
-    await vi.waitFor(() => expect(onDiagnosticEvent).toHaveBeenCalled());
-    expect(onDiagnosticEvent).toHaveBeenCalledWith(expect.objectContaining({
-      code: "plaintext_transport",
-      code_domain: "event",
-      path: "direct",
-      result: "skip",
-    }));
+    await expect(run).rejects.toMatchObject({ code: "transport_policy_denied" });
   });
 
   test("malformed URLs use the caller path and never invoke a policy", async () => {

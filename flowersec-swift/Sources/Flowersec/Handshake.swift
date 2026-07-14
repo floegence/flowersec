@@ -3,8 +3,9 @@ import Foundation
 
 enum FlowersecHandshake {
   static func runClientHandshake(
-    transport: FlowersecWebSocketBinaryTransport,
-    info: DirectConnectInfo
+    transport: any FlowersecBinaryTransport,
+    info: DirectConnectInfo,
+    outboundRecordChunkBytes: Int = 64 * 1024
   ) async throws -> FlowersecSecureChannel {
     try validate(info: info)
     let material = try ClientHandshakeMaterial(info: info)
@@ -24,7 +25,11 @@ enum FlowersecHandshake {
       transport: transport
     )
     try await verifyFinished(sessionKeys: sessionKeys, transport: transport)
-    return secureChannel(transport: transport, sessionKeys: sessionKeys)
+    return secureChannel(
+      transport: transport,
+      sessionKeys: sessionKeys,
+      outboundRecordChunkBytes: outboundRecordChunkBytes
+    )
   }
 
   private static func validate(info: DirectConnectInfo) throws {
@@ -41,7 +46,7 @@ enum FlowersecHandshake {
 
   private static func sendInit(
     material: ClientHandshakeMaterial,
-    transport: FlowersecWebSocketBinaryTransport
+    transport: any FlowersecBinaryTransport
   ) async throws {
     let initJSON = try JSONEncoder.flowersecWire.encode(material.initMessage)
     try await transport.writeBinary(
@@ -50,7 +55,7 @@ enum FlowersecHandshake {
   }
 
   private static func receiveResponse(
-    transport: FlowersecWebSocketBinaryTransport
+    transport: any FlowersecBinaryTransport
   ) async throws -> E2EEResponseMessage {
     let responseFrame = try await transport.readBinary()
     let responsePayload = try FlowersecHandshakeFrame.decode(
@@ -93,7 +98,7 @@ enum FlowersecHandshake {
     response: E2EEResponseMessage,
     info: DirectConnectInfo,
     transcript: Data,
-    transport: FlowersecWebSocketBinaryTransport
+    transport: any FlowersecBinaryTransport
   ) async throws {
     let timestamp = UInt64(Date().timeIntervalSince1970)
     let authTag = try computeAuthTag(psk: info.psk, transcript: transcript, timestamp: timestamp)
@@ -110,7 +115,7 @@ enum FlowersecHandshake {
 
   private static func verifyFinished(
     sessionKeys: FlowersecSessionKeys,
-    transport: FlowersecWebSocketBinaryTransport
+    transport: any FlowersecBinaryTransport
   ) async throws {
     let finishedFrame = try await transport.readBinary()
     let finished = try FlowersecRecordCodec.decrypt(
@@ -125,8 +130,9 @@ enum FlowersecHandshake {
   }
 
   private static func secureChannel(
-    transport: FlowersecWebSocketBinaryTransport,
-    sessionKeys: FlowersecSessionKeys
+    transport: any FlowersecBinaryTransport,
+    sessionKeys: FlowersecSessionKeys,
+    outboundRecordChunkBytes: Int
   ) -> FlowersecSecureChannel {
     FlowersecSecureChannel(
       transport: transport,
@@ -141,7 +147,8 @@ enum FlowersecHandshake {
         recvDirection: 2,
         sendSeq: 1,
         recvSeq: 2
-      )
+      ),
+      outboundRecordChunkBytes: outboundRecordChunkBytes
     )
   }
 

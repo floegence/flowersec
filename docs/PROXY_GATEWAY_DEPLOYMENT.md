@@ -25,7 +25,7 @@ docker pull ghcr.io/floegence/flowersec-proxy-gateway:latest
 
 Configuration is a JSON file passed via `--config` or `FSEC_PROXY_GATEWAY_CONFIG`.
 
-Recommended v0.19.x shape:
+Recommended v0.20.x shape:
 
 ```json
 {
@@ -105,10 +105,11 @@ First-party preset examples:
 - prefer command/file sources that can mint continuously
 - use the health check at `GET /_flowersec/healthz`
 
-## Go reconnect/keepalive checklist
+## Go reconnect/liveness checklist
 
-- Go tunnel clients and endpoints use encrypted ping records only as idle-prevention keepalives; health checks, policy watch/lease state, and authorization state stay outside that path.
-- Direct Go connects keep keepalive disabled by default unless the caller opts in.
+- Go tunnel clients and endpoints use acknowledged Yamux PING probes for connection liveness. Policy watch/lease state and authorization state stay outside that path.
+- Direct Go connects keep automatic liveness disabled by default unless the caller opts in.
+- Encrypted-record `Ping()` reports local send completion only and must not be treated as a peer health check.
 - Gateway stream open retries at most once after invalidating the stale cached session and loading fresh grant material.
 - Fresh grant failure fails the request and never reuses an old one-time attach token.
 - Tunnel replacement keeps compatibility constraints for same `channel_id` attaches: `init_exp`, `idle_timeout_seconds`, tenant, and rate limits remain enforced.

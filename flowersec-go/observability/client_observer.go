@@ -39,6 +39,9 @@ const (
 	DiagnosticStageConnect   DiagnosticStage = "connect"
 	DiagnosticStageAttach    DiagnosticStage = "attach"
 	DiagnosticStageHandshake DiagnosticStage = "handshake"
+	DiagnosticStageTransport DiagnosticStage = "transport"
+	DiagnosticStageYamux     DiagnosticStage = "yamux"
+	DiagnosticStageRPC       DiagnosticStage = "rpc"
 	DiagnosticStageClose     DiagnosticStage = "close"
 	DiagnosticStageReconnect DiagnosticStage = "reconnect"
 )
@@ -71,6 +74,9 @@ type DiagnosticEvent struct {
 	AttemptSeq int                  `json:"attempt_seq"`
 	TraceID    *string              `json:"trace_id,omitempty"`
 	SessionID  *string              `json:"session_id,omitempty"`
+	Resource   *string              `json:"resource,omitempty"`
+	Current    *int64               `json:"current,omitempty"`
+	Limit      *int64               `json:"limit,omitempty"`
 }
 
 type ClientObserver interface {

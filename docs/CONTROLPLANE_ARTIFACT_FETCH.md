@@ -1,6 +1,6 @@
 # Controlplane Artifact Fetch
 
-Flowersec v0.19.x keeps one stable client-facing contract for fetching a `ConnectArtifact` from a controlplane.
+Flowersec v0.20.x keeps one stable client-facing contract for fetching a `ConnectArtifact` from a controlplane.
 
 ## Stable helper surface
 
@@ -187,5 +187,8 @@ Artifact-aware reconnect adapters should:
 - carry forward the previous shared `trace_id`
 - ingest a newly issued `session_id` from the fresh artifact
 - forward `signal` so canceled reconnect attempts also cancel artifact fetch/refresh
+- use a `refreshable` `ArtifactSource` when automatic reconnect is enabled
+
+A `once` source is consumed at most once and cannot enable automatic reconnect. `createControlplaneArtifactSource(...)` returns a refreshable source.
 
 The reconnect core itself should remain transport/framework agnostic.

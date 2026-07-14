@@ -44,7 +44,8 @@ func TestMetricsController_EnableDisable(t *testing.T) {
 
 	h := newSwitchHandler()
 	obs := observability.NewAtomicTunnelObserver()
-	mc := newMetricsController(h, obs, srv)
+	resourceObs := observability.NewAtomicTunnelResourceObserver()
+	mc := newMetricsController(h, obs, resourceObs, srv)
 
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/metrics", nil)
 

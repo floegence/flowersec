@@ -3,6 +3,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import statistics
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -43,6 +44,21 @@ def parse_go(path: str):
     return out
 
 
+def parse_go_roundtrip_samples(path: str):
+    benchmark = re.compile(
+        r"^BenchmarkSecureChannelRoundTrip/65536B-\d+\s+\d+\s+([0-9.]+) ns/op(?:\s|$)"
+    )
+    samples = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            match = benchmark.match(strip_ansi(line).strip())
+            if match is not None:
+                samples.append(float(match.group(1)))
+    if len(samples) != 10:
+        raise ValueError(f"expected 10 Go round-trip samples, got {len(samples)}")
+    return samples
+
+
 def parse_ts(path: str):
     section = None
     out = {"handshake": [], "record": [], "yamux": []}
@@ -62,12 +78,14 @@ def parse_ts(path: str):
             if not line.startswith("·") or section is None:
                 continue
             parts = line.replace("·", "").split()
-            if len(parts) < 5:
+            if len(parts) < 8:
                 continue
             name = parts[0]
             hz = parts[1]
             mean = parts[4]
-            out[section].append({"name": name, "hz": hz, "mean_ms": mean})
+            p99 = parts[6]
+            maximum = parts[3]
+            out[section].append({"name": name, "hz": hz, "mean_ms": mean, "p99_ms": p99, "max_ms": maximum})
     return out
 
 
@@ -82,6 +100,9 @@ def fmt_float(v, places=6):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--go-output", required=True)
+    parser.add_argument("--go-roundtrip-output", required=True)
+    parser.add_argument("--go-roundtrip-baseline-ns", type=float, required=True)
+    parser.add_argument("--go-roundtrip-max-regression-percent", type=float, required=True)
     parser.add_argument("--ts-output", required=True)
     parser.add_argument("--loadgen-output", required=True)
     parser.add_argument("--out", required=True)
@@ -95,6 +116,7 @@ def main():
     parser.add_argument("--gomemlimit", required=True)
     parser.add_argument("--node-options", required=True)
     parser.add_argument("--go-command", required=True)
+    parser.add_argument("--go-roundtrip-command", required=True)
     parser.add_argument("--ts-command", required=True)
     parser.add_argument("--loadgen-command", required=True)
     args = parser.parse_args()
@@ -102,6 +124,11 @@ def main():
     run_date = args.run_date or dt.datetime.now().strftime("%c")
 
     go_bench = parse_go(args.go_output)
+    go_roundtrip_samples = parse_go_roundtrip_samples(args.go_roundtrip_output)
+    go_roundtrip_median = statistics.median(go_roundtrip_samples)
+    go_roundtrip_regression = (
+        go_roundtrip_median / args.go_roundtrip_baseline_ns - 1
+    ) * 100
     ts_bench = parse_ts(args.ts_output)
 
     with open(args.loadgen_output, "r", encoding="utf-8") as f:
@@ -129,15 +156,15 @@ def main():
     )
 
     handshake_table = "\n".join(
-        f"| {r['name']} | {r['hz']} | {r['mean_ms']} |"
+        f"| {r['name']} | {r['hz']} | {r['mean_ms']} | {r['p99_ms']} | {r['max_ms']} |"
         for r in ts_bench["handshake"]
     )
     record_table = "\n".join(
-        f"| {r['name']} | {r['hz']} | {r['mean_ms']} |"
+        f"| {r['name']} | {r['hz']} | {r['mean_ms']} | {r['p99_ms']} | {r['max_ms']} |"
         for r in ts_bench["record"]
     )
     yamux_table = "\n".join(
-        f"| {r['name']} | {r['hz']} | {r['mean_ms']} |"
+        f"| {r['name']} | {r['hz']} | {r['mean_ms']} | {r['p99_ms']} | {r['max_ms']} |"
         for r in ts_bench["yamux"]
     )
 
@@ -179,6 +206,9 @@ def main():
         "max_buffered_bytes",
         "max_pending_bytes",
         "idle_timeout_ms",
+        "liveness_interval_ms",
+        "liveness_timeout_ms",
+        "rpc_stream_residency",
         "cleanup_interval_ms",
         "max_conns",
         "max_channels",
@@ -194,6 +224,8 @@ def main():
             f"| max_heap_inuse_bytes | {fmt_int(resources.get('max_heap_inuse_bytes', 0))} |",
             f"| max_sys_bytes | {fmt_int(resources.get('max_sys_bytes', 0))} |",
             f"| max_goroutines | {fmt_int(resources.get('max_goroutines', 0))} |",
+            f"| baseline_goroutines | {fmt_int(resources.get('baseline_goroutines', 0))} |",
+            f"| after_close_goroutines | {fmt_int(resources.get('after_close_goroutines', 0))} |",
         ]
     )
 
@@ -223,6 +255,9 @@ Run date: {run_date}
 # Go micro benches
 {args.go_command}
 
+# Go 64 KiB round-trip throughput gate
+{args.go_roundtrip_command}
+
 # TS micro benches
 {args.ts_command}
 
@@ -238,6 +273,14 @@ Run date: {run_date}
 | --- | ---: | ---: | ---: |
 {go_table}
 
+### 64 KiB Round-Trip Throughput Gate
+
+The baseline was measured from `origin/main` under the environment and Go constraints above.
+
+| Samples | Baseline ns/op | Median ns/op | Regression | Allowed regression |
+| ---: | ---: | ---: | ---: | ---: |
+| {len(go_roundtrip_samples)} | {args.go_roundtrip_baseline_ns:.1f} | {go_roundtrip_median:.1f} | {go_roundtrip_regression:.2f}% | {args.go_roundtrip_max_regression_percent:.2f}% |
+
 ### Tunnel Server Hot Path (ns/op, B/op, allocs/op)
 
 | Benchmark | ns/op | B/op | allocs/op |
@@ -246,22 +289,22 @@ Run date: {run_date}
 
 ## TypeScript Benchmarks
 
-### E2EE Handshake (ops/s, mean ms)
+### E2EE Handshake (ms)
 
-| Benchmark | ops/s (hz) | mean (ms) |
-| --- | ---: | ---: |
+| Benchmark | ops/s (hz) | mean (ms) | p99 (ms) | max (ms) |
+| --- | ---: | ---: | ---: | ---: |
 {handshake_table}
 
-### E2EE Record (ops/s, mean ms)
+### E2EE Record (ms)
 
-| Benchmark | ops/s (hz) | mean (ms) |
-| --- | ---: | ---: |
+| Benchmark | ops/s (hz) | mean (ms) | p99 (ms) | max (ms) |
+| --- | ---: | ---: | ---: | ---: |
 {record_table}
 
-### Yamux (ops/s, mean ms)
+### Yamux (ms)
 
-| Benchmark | ops/s (hz) | mean (ms) |
-| --- | ---: | ---: |
+| Benchmark | ops/s (hz) | mean (ms) | p99 (ms) | max (ms) |
+| --- | ---: | ---: | ---: | ---: |
 {yamux_table}
 
 ## Load Generator (full mode)

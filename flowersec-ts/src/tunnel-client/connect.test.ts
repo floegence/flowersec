@@ -63,6 +63,7 @@ beforeEach(() => {
 class FakeWebSocket {
   binaryType = "arraybuffer";
   readyState = 1;
+  bufferedAmount = 0;
   closed = false;
   private readonly listeners = new Map<string, Set<(ev: any) => void>>();
 
@@ -99,7 +100,7 @@ class FakeWebSocket {
 function makeGrant(): ChannelInitGrant {
   const psk = base64urlEncode(new Uint8Array(32).fill(1));
   return {
-    tunnel_url: "ws://example.invalid",
+    tunnel_url: "wss://example.invalid",
     channel_id: "ch_1",
     channel_init_expire_at_unix_s: Math.floor(Date.now() / 1000) + 120,
     idle_timeout_seconds: 60,

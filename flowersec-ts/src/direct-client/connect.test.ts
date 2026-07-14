@@ -61,6 +61,7 @@ beforeEach(() => {
 class FakeWebSocket {
   binaryType = "arraybuffer";
   readyState = 1;
+  bufferedAmount = 0;
   closed = false;
   private readonly listeners = new Map<string, Set<(ev: any) => void>>();
 
@@ -91,7 +92,7 @@ class FakeWebSocket {
 function makeInfo(): DirectConnectInfo {
   const psk = base64urlEncode(new Uint8Array(32).fill(1));
   return {
-    ws_url: "ws://example.invalid",
+    ws_url: "wss://example.invalid",
     channel_id: "ch_1",
     e2ee_psk_b64u: psk,
     channel_init_expire_at_unix_s: Math.floor(Date.now() / 1000) + 120,
@@ -396,12 +397,12 @@ describe("connectDirect", () => {
     expect(secureClose).toHaveBeenCalledTimes(1);
   });
 
-  test("keepalive ping failures tear down rpc, mux, and secure resources", async () => {
+  test("liveness probe failures tear down rpc, mux, and secure resources", async () => {
     vi.useFakeTimers();
     try {
       const ws = new FakeWebSocket();
       const secureClose = vi.fn();
-      const sendPing = vi.fn().mockRejectedValueOnce(new Error("ping failed"));
+      const sendPing = vi.fn();
       clientHandshakeMock.mockResolvedValueOnce({
         read: vi.fn(),
         write: vi.fn(),
@@ -413,11 +414,14 @@ describe("connectDirect", () => {
         write: vi.fn(),
         close: vi.fn()
       });
+      mocks.MockYamuxSession.prototype.probeLiveness = vi.fn().mockRejectedValueOnce(new Error("ping timeout"));
+      const onDiagnosticEvent = vi.fn();
 
       const p = connectDirect(makeInfo(), {
         origin: "https://app.redeven.com",
         wsFactory: () => ws as any,
-        keepaliveIntervalMs: 10
+        liveness: { intervalMs: 10, timeoutMs: 5 },
+        observer: { onDiagnosticEvent }
       });
 
       setTimeout(() => ws.emit("open", {}), 0);
@@ -426,10 +430,15 @@ describe("connectDirect", () => {
 
       await vi.advanceTimersByTimeAsync(10);
 
-      expect(sendPing).toHaveBeenCalledTimes(1);
+      expect(mocks.MockYamuxSession.prototype.probeLiveness).toHaveBeenCalledTimes(1);
       expect(rpcClose).toHaveBeenCalledTimes(1);
       expect(muxClose).toHaveBeenCalledTimes(1);
       expect(secureClose).toHaveBeenCalledTimes(1);
+      expect(onDiagnosticEvent).toHaveBeenCalledWith(expect.objectContaining({
+        code_domain: "event",
+        code: "liveness_timeout",
+        stage: "yamux",
+      }));
     } finally {
       vi.useRealTimers();
     }

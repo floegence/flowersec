@@ -7,8 +7,9 @@ import { describe, expect, test } from "vitest";
 import { createDemoSession, connectDemoTunnel } from "../_examples/flowersec/demo/v1.facade.gen.js";
 import type { ConnectArtifact } from "../connect/artifact.js";
 import { requestConnectArtifact, requestEntryConnectArtifact } from "../controlplane/index.js";
-import { connect, connectTunnel } from "../facade.js";
+import { AllowPlaintextForLoopback, connect, connectTunnel } from "../facade.js";
 import { connectNode, createNodeReconnectConfig } from "../node/index.js";
+import { createControlplaneArtifactSource } from "../reconnect/index.js";
 import { extractProxyRuntimeScopeV1 } from "../proxy/runtimeScope.js";
 
 import { createLineReader, readJsonLine } from "./interopUtils.js";
@@ -29,6 +30,7 @@ describe("go<->ts integration", () => {
       const sess = await connectDemoTunnel(ready.grant_client as any, {
         origin: "https://app.redeven.com",
         wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } }),
+        transportSecurityPolicy: AllowPlaintextForLoopback,
       });
       try {
         const notified = waitNotify(sess.demo, 2000);
@@ -74,6 +76,7 @@ describe("go<->ts integration", () => {
 
       const client = await connectNode(artifact, {
         origin: "https://app.redeven.com",
+        transportSecurityPolicy: AllowPlaintextForLoopback,
       });
       const sess = createDemoSession(client);
       try {
@@ -97,6 +100,7 @@ describe("go<->ts integration", () => {
       const client = await connect(artifact, {
         origin: "https://app.redeven.com",
         wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } }),
+        transportSecurityPolicy: AllowPlaintextForLoopback,
       });
       const sess = createDemoSession(client);
       try {
@@ -121,7 +125,7 @@ describe("go<->ts integration", () => {
       expect(artifact.correlation?.trace_id).toBe("trace-go-helper-1");
       expect(artifact.correlation?.session_id).toMatch(/^session-/);
 
-      const client = await connectNode(artifact, { origin: "https://app.redeven.com" });
+      const client = await connectNode(artifact, { origin: "https://app.redeven.com", transportSecurityPolicy: AllowPlaintextForLoopback });
       const sess = createDemoSession(client);
       try {
         await expect(sess.demo.ping({})).resolves.toEqual({ ok: true });
@@ -139,7 +143,7 @@ describe("go<->ts integration", () => {
         entryTicket: ready.entry_ticket,
       });
 
-      const client = await connectNode(artifact, { origin: "https://app.redeven.com" });
+      const client = await connectNode(artifact, { origin: "https://app.redeven.com", transportSecurityPolicy: AllowPlaintextForLoopback });
       const sess = createDemoSession(client);
       try {
         await expect(sess.demo.ping({})).resolves.toEqual({ ok: true });
@@ -152,12 +156,13 @@ describe("go<->ts integration", () => {
   test("node reconnect config fetches fresh artifacts from Go controlplane/http", { timeout: 60000 }, async () => {
     await withGoHarness(async (ready) => {
       const reconnectConfig = createNodeReconnectConfig({
-        artifactControlplane: {
+        source: createControlplaneArtifactSource({
           baseUrl: ready.controlplane_base_url,
           endpointId: "server-1",
-        },
+        }),
         connect: {
           origin: "https://app.redeven.com",
+          transportSecurityPolicy: AllowPlaintextForLoopback,
         },
       });
 

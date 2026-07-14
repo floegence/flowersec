@@ -410,6 +410,7 @@ func startServerTunnelSession(parent context.Context, t *testing.T, origin strin
 			endpoint.WithConnectTimeout(10*time.Second),
 			endpoint.WithHandshakeTimeout(10*time.Second),
 			endpoint.WithMaxRecordBytes(1<<20),
+			endpoint.WithTransportSecurityPolicy(endpoint.AllowPlaintextForLoopback),
 		)
 	}()
 	return cancel, done

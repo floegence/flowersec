@@ -23,6 +23,8 @@ func TestTunnelObserverExportsMetrics(t *testing.T) {
 	observer.Close(observability.CloseReasonIdleTimeout)
 	observer.PairLatency(1500 * time.Millisecond)
 	observer.Encrypted()
+	observer.QueuedBytes("tenant-a", 1024, 2048)
+	observer.ResourceExhausted("tenant-a", observability.TunnelResourceLimitTenantQueuedBytes)
 
 	if got := metricValue(t, reg, "flowersec_tunnel_connections", nil); got != 3 {
 		t.Fatalf("unexpected conn gauge: %v", got)
@@ -44,6 +46,15 @@ func TestTunnelObserverExportsMetrics(t *testing.T) {
 	}
 	if got := metricValue(t, reg, "flowersec_tunnel_pair_latency_seconds", nil); got <= 0 {
 		t.Fatalf("expected positive histogram count/sum, got %v", got)
+	}
+	if got := metricValue(t, reg, "flowersec_tunnel_tenant_queued_bytes", map[string]string{"tenant": "tenant-a"}); got != 1024 {
+		t.Fatalf("unexpected tenant queued bytes: %v", got)
+	}
+	if got := metricValue(t, reg, "flowersec_tunnel_queued_bytes", nil); got != 2048 {
+		t.Fatalf("unexpected total queued bytes: %v", got)
+	}
+	if got := metricValue(t, reg, "flowersec_tunnel_resource_exhausted_total", map[string]string{"tenant": "tenant-a", "limit": "tenant_queued_bytes"}); got != 1 {
+		t.Fatalf("unexpected resource exhausted counter: %v", got)
 	}
 }
 

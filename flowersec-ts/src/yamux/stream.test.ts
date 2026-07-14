@@ -7,15 +7,30 @@ class FakeSession {
   readonly writes: Uint8Array[] = [];
   readonly rst: number[] = [];
   established: number[] = [];
+  closed: number[] = [];
+  blockWrites = false;
+  private releaseWrite: (() => void) | undefined;
+  private readonly windowWaiters: Array<() => void> = [];
+
+  outboundFrameBytes(): number { return 64 * 1024; }
+  releaseReceiveBytes(_bytes: number): void {}
 
   async writeRaw(chunk: Uint8Array): Promise<void> {
     this.writes.push(chunk);
+    if (this.blockWrites) {
+      this.blockWrites = false;
+      await new Promise<void>((resolve) => { this.releaseWrite = resolve; });
+    }
   }
 
-  notifySendWindow(_streamId: number): void {}
+  resumeWrite(): void { this.releaseWrite?.(); }
+
+  notifySendWindow(_streamId: number): void {
+    for (const waiter of this.windowWaiters.splice(0)) waiter();
+  }
 
   async waitForSendWindow(_streamId: number): Promise<void> {
-    return;
+    await new Promise<void>((resolve) => this.windowWaiters.push(resolve));
   }
 
   async sendRst(id: number): Promise<void> {
@@ -24,6 +39,10 @@ class FakeSession {
 
   onStreamEstablished(id: number): void {
     this.established.push(id);
+  }
+
+  onStreamClosed(id: number): void {
+    this.closed.push(id);
   }
 }
 
@@ -87,11 +106,20 @@ describe("YamuxStream", () => {
     await expect(stream.read()).resolves.toBeNull();
   });
 
+  test("DATA with FIN remains readable after local close", async () => {
+    const session = new FakeSession();
+    const stream = new YamuxStream(session as any, 1, "established");
+    await stream.close();
+    expect(stream.onData(new Uint8Array([7, 8, 9]), FLAG_FIN)).toBe(true);
+    await expect(stream.read()).resolves.toEqual(new Uint8Array([7, 8, 9]));
+  });
+
   test("reset marks stream as closed", async () => {
     const session = new FakeSession();
     const stream = new YamuxStream(session as any, 1, "established");
 
-    stream.reset(new Error("boom"));
+    await stream.reset(new Error("boom"));
+    expect(session.rst).toEqual([1]);
     await expect(stream.read()).rejects.toThrow(/boom/);
     await expect(stream.write(new Uint8Array([1]))).rejects.toThrow(/stream reset/);
   });
@@ -104,5 +132,30 @@ describe("YamuxStream", () => {
 
     await (stream as any).sendWindowUpdate();
     expect(session.writes.length).toBe(0);
+  });
+
+  test("rejects window updates that exceed the protocol window", () => {
+    const session = new FakeSession();
+    const stream = new YamuxStream(session as any, 1, "established");
+    expect(stream.onWindowUpdate(1, 0)).toBe(false);
+    expect(session.established).toEqual([]);
+  });
+
+  test("serializes concurrent writes before consuming send window", async () => {
+    const session = new FakeSession();
+    session.blockWrites = true;
+    const stream = new YamuxStream(session as any, 1, "established");
+    const first = stream.write(new Uint8Array(200 * 1024));
+    while (session.writes.length < 1) await tick();
+    const second = stream.write(new Uint8Array(200 * 1024));
+    await tick();
+    expect(session.writes).toHaveLength(1);
+
+    session.resumeWrite();
+    while (session.writes.length < 4) await tick();
+    expect(session.writes.reduce((total, frame) => total + decodeHeader(frame, 0).length, 0)).toBe(DEFAULT_MAX_STREAM_WINDOW);
+    stream.onWindowUpdate(144 * 1024, 0);
+    await Promise.all([first, second]);
+    expect(session.writes.reduce((total, frame) => total + decodeHeader(frame, 0).length, 0)).toBe(400 * 1024);
   });
 });

@@ -395,7 +395,7 @@ async function runRstMidWriteTs(streams: YamuxStream[], scenario: Scenario): Pro
   const rstAfter = Math.max(1, Math.min(scenario.rst_after_bytes ?? 0, scenario.bytes_per_stream));
   const results = await runInBatches(streams, batchSize, async (stream) => {
     const writeRes = await writeExactly(stream, rstAfter, scenario.chunk_bytes, scenario.write_delay_ms ?? 0);
-    stream.reset(new Error("test reset"));
+    await stream.reset(new Error("test reset"));
     const afterReset = await writeOnce(stream, new Uint8Array([0]));
     return { writeRes, readRes: { bytes: 0, error: null }, afterReset };
   });

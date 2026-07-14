@@ -1,7 +1,6 @@
 import { ByteReader } from "./byteReader.js";
 import { decodeHeader, encodeHeader, HEADER_LEN } from "./header.js";
 import {
-  DEFAULT_MAX_STREAM_WINDOW,
   FLAG_ACK,
   FLAG_RST,
   FLAG_SYN,
@@ -12,6 +11,32 @@ import {
   YAMUX_VERSION
 } from "./constants.js";
 import { YamuxStream } from "./stream.js";
+import { YamuxResourceExhaustedError } from "./errors.js";
+
+export type YamuxDiagnostic = Readonly<{
+  code: "stream_rejected" | "resource_limit_reached";
+  resource: string;
+  current: number;
+  limit: number;
+}>;
+
+export type YamuxLimits = Readonly<{
+  maxActiveStreams: number;
+  maxInboundStreams: number;
+  maxFrameBytes: number;
+  preferredOutboundFrameBytes: number;
+  maxStreamReceiveBytes: number;
+  maxSessionReceiveBytes: number;
+}>;
+
+export const DEFAULT_YAMUX_LIMITS: YamuxLimits = Object.freeze({
+  maxActiveStreams: 64,
+  maxInboundStreams: 32,
+  maxFrameBytes: 256 * 1024,
+  preferredOutboundFrameBytes: 64 * 1024,
+  maxStreamReceiveBytes: 256 * 1024,
+  maxSessionReceiveBytes: 16 * (1 << 20),
+});
 
 // ByteDuplex is a minimal async read/write/close abstraction.
 export type ByteDuplex = {
@@ -31,6 +56,10 @@ export type YamuxSessionOptions = Readonly<{
   onIncomingStream?: (s: YamuxStream) => void;
   /** Maximum frame payload bytes accepted per stream frame. */
   maxFrameBytes?: number;
+  /** Generic stream and receive-memory limits. */
+  limits?: Partial<YamuxLimits>;
+  /** Optional generic resource diagnostic callback. */
+  onDiagnostic?: (event: YamuxDiagnostic) => void;
 }>;
 
 // YamuxSession multiplexes multiple streams over a single byte stream.
@@ -44,7 +73,8 @@ export class YamuxSession {
   // Callback for inbound streams created from SYN frames.
   private readonly onIncomingStream: ((s: YamuxStream) => void) | undefined;
   // Maximum allowed DATA frame length.
-  private readonly maxFrameBytes: number;
+  private readonly limits: YamuxLimits;
+  private readonly onDiagnostic: ((event: YamuxDiagnostic) => void) | undefined;
 
   // True when this side is the yamux client (odd local stream IDs).
   private readonly client: boolean;
@@ -55,6 +85,11 @@ export class YamuxSession {
   private closed = false;
   // Writers waiting for send window credits per stream.
   private readonly sendWindowWaiters = new Map<number, Array<() => void>>();
+  private readonly inboundStreams = new Set<number>();
+  private sessionReceiveBytes = 0;
+  private nextPingId = 1;
+  private readonly pingWaiters = new Map<number, { startedAt: number; resolve: (rttMs: number) => void; reject: (e: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
+  private activeProbe: Promise<number> | undefined;
 
   constructor(conn: ByteDuplex, opts: YamuxSessionOptions) {
     this.conn = conn;
@@ -66,7 +101,8 @@ export class YamuxSession {
       }
     });
     this.onIncomingStream = opts.onIncomingStream;
-    this.maxFrameBytes = Math.max(0, opts.maxFrameBytes ?? DEFAULT_MAX_STREAM_WINDOW);
+    this.limits = normalizeYamuxLimits({ ...opts.limits, ...(opts.maxFrameBytes === undefined ? {} : { maxFrameBytes: opts.maxFrameBytes }) });
+    this.onDiagnostic = opts.onDiagnostic;
     this.client = opts.client;
     this.nextStreamId = opts.client ? 1 : 2;
     void this.readLoop();
@@ -74,12 +110,23 @@ export class YamuxSession {
 
   // openStream allocates a new stream and performs the SYN handshake.
   async openStream(): Promise<YamuxStream> {
+    if (this.closed) throw new Error("session closed");
+    if (this.streams.size >= this.limits.maxActiveStreams) {
+      const error = new YamuxResourceExhaustedError("active_streams", this.streams.size, this.limits.maxActiveStreams);
+      this.diagnostic({ code: "resource_limit_reached", resource: error.resource, current: error.current, limit: error.limit });
+      throw error;
+    }
     const id = this.nextStreamId;
     this.nextStreamId += 2;
     const s = new YamuxStream(this, id, "init");
     this.streams.set(id, s);
-    await s.open();
-    return s;
+    try {
+      await s.open();
+      return s;
+    } catch (error) {
+      this.onStreamClosed(id);
+      throw error;
+    }
   }
 
   // getStream returns the stream for an ID, if any.
@@ -90,6 +137,54 @@ export class YamuxSession {
   // writeRaw writes a raw yamux frame to the underlying connection.
   async writeRaw(chunk: Uint8Array): Promise<void> {
     await this.conn.write(chunk);
+  }
+
+  outboundFrameBytes(): number {
+    return this.limits.preferredOutboundFrameBytes;
+  }
+
+  releaseReceiveBytes(bytes: number): void {
+    this.sessionReceiveBytes = Math.max(0, this.sessionReceiveBytes - Math.max(0, bytes));
+  }
+
+  // probeLiveness performs a correlated yamux PING SYN/ACK round trip.
+  async probeLiveness(timeoutMs = 10_000): Promise<number> {
+    if (this.activeProbe != null) return await this.activeProbe;
+    const probe = this.startLivenessProbe(timeoutMs);
+    this.activeProbe = probe;
+    try {
+      return await probe;
+    } finally {
+      if (this.activeProbe === probe) this.activeProbe = undefined;
+    }
+  }
+
+  private async startLivenessProbe(timeoutMs: number): Promise<number> {
+    if (this.closed) throw new Error("session closed");
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError("timeoutMs must be positive");
+    let opaque = this.nextPingId >>> 0;
+    do {
+      opaque = this.nextPingId++ >>> 0;
+      if (this.nextPingId > 0xffffffff) this.nextPingId = 1;
+    } while (opaque === 0 || this.pingWaiters.has(opaque));
+    const startedAt = monotonicMilliseconds();
+    return await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pingWaiters.delete(opaque);
+        reject(new Error("yamux ping timeout"));
+        this.close();
+      }, timeoutMs);
+      (timer as any)?.unref?.();
+      this.pingWaiters.set(opaque, { startedAt, resolve, reject, timer });
+      const hdr = encodeHeader({ type: TYPE_PING, flags: FLAG_SYN, streamId: 0, length: opaque });
+      void this.writeRaw(hdr).catch((err) => {
+        const waiter = this.pingWaiters.get(opaque);
+        if (waiter == null) return;
+        this.pingWaiters.delete(opaque);
+        clearTimeout(waiter.timer);
+        reject(err);
+      });
+    });
   }
 
   // sendRst sends a reset frame and removes the stream.
@@ -139,7 +234,10 @@ export class YamuxSession {
 
   // onStreamClosed removes the stream and wakes any per-stream waiters.
   onStreamClosed(streamId: number): void {
+    const stream = this.streams.get(streamId);
+    if (stream != null) this.releaseReceiveBytes(stream.releaseBufferedReceiveBytes());
     this.streams.delete(streamId);
+    this.inboundStreams.delete(streamId);
     this.notifySendWindow(streamId);
   }
 
@@ -149,6 +247,11 @@ export class YamuxSession {
     this.closed = true;
     this.conn.close();
     this.wakeSendWindowWaiters();
+    for (const waiter of this.pingWaiters.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error("session closed"));
+    }
+    this.pingWaiters.clear();
     const streams = Array.from(this.streams.values());
     this.streams.clear();
     for (const s of streams) s.reset(new Error("session closed"));
@@ -171,12 +274,45 @@ export class YamuxSession {
           return;
         }
         if (h.type === TYPE_DATA) {
-          if (this.maxFrameBytes > 0 && h.length > this.maxFrameBytes) {
+          if (h.length > this.limits.maxFrameBytes) {
+            this.close();
+            return;
+          }
+          if (h.streamId === 0) {
+            this.close();
+            return;
+          }
+          const existing = this.streams.get(h.streamId);
+          if (existing == null) {
+            const inboundAllowed = (h.flags & FLAG_SYN) !== 0 && this.isInboundStreamIdValid(h.streamId);
+            const resourceAllowed = this.streams.size < this.limits.maxActiveStreams && this.inboundStreams.size < this.limits.maxInboundStreams;
+            if (!inboundAllowed || !resourceAllowed || h.length > this.limits.maxStreamReceiveBytes) {
+              await this.reader.discardExactly(h.length);
+              this.diagnostic({
+                code: "stream_rejected",
+                resource: !resourceAllowed ? "inbound_streams" : "stream_receive_bytes",
+                current: !resourceAllowed ? this.inboundStreams.size : h.length,
+                limit: !resourceAllowed ? this.limits.maxInboundStreams : this.limits.maxStreamReceiveBytes,
+              });
+              await this.sendRst(h.streamId);
+              continue;
+            }
+          }
+          if (existing != null && existing.bufferedReceiveBytes() + h.length > this.limits.maxStreamReceiveBytes) {
+            await this.reader.discardExactly(h.length);
+            this.diagnostic({ code: "resource_limit_reached", resource: "stream_receive_bytes", current: existing.bufferedReceiveBytes() + h.length, limit: this.limits.maxStreamReceiveBytes });
+            await this.sendRst(h.streamId);
+            continue;
+          }
+          if (this.sessionReceiveBytes + h.length > this.limits.maxSessionReceiveBytes) {
+            this.diagnostic({ code: "resource_limit_reached", resource: "session_receive_bytes", current: this.sessionReceiveBytes + h.length, limit: this.limits.maxSessionReceiveBytes });
             this.close();
             return;
           }
           const data = h.length > 0 ? await this.reader.readExactly(h.length) : new Uint8Array();
-          await this.handleDataFrame(h.streamId, h.flags, data);
+          if (data.length > 0) this.sessionReceiveBytes += data.length;
+          const accepted = await this.handleDataFrame(h.streamId, h.flags, data);
+          if (!accepted) this.releaseReceiveBytes(data.length);
           continue;
         }
         if (h.type === TYPE_WINDOW_UPDATE) {
@@ -205,30 +341,42 @@ export class YamuxSession {
       await this.writeRaw(hdr);
       return;
     }
+    if ((flags & FLAG_ACK) !== 0) {
+      const waiter = this.pingWaiters.get(opaque >>> 0);
+      if (waiter == null) return;
+      this.pingWaiters.delete(opaque >>> 0);
+      clearTimeout(waiter.timer);
+      waiter.resolve(Math.max(0, monotonicMilliseconds() - waiter.startedAt));
+    }
   }
 
-  private async handleDataFrame(streamId: number, flags: number, data: Uint8Array): Promise<void> {
+  private async handleDataFrame(streamId: number, flags: number, data: Uint8Array): Promise<boolean> {
     if (streamId === 0) {
       this.close();
-      return;
+      return false;
     }
     let s = this.streams.get(streamId);
     if (s == null) {
       if ((flags & FLAG_SYN) !== 0) {
         if (!this.isInboundStreamIdValid(streamId)) {
           await this.sendRst(streamId);
-          return;
+          return false;
+        }
+        if (this.streams.size >= this.limits.maxActiveStreams || this.inboundStreams.size >= this.limits.maxInboundStreams || data.length > this.limits.maxStreamReceiveBytes) {
+          await this.sendRst(streamId);
+          return false;
         }
         s = new YamuxStream(this, streamId, "synReceived");
         this.streams.set(streamId, s);
+        this.inboundStreams.add(streamId);
         await s.open();
         this.onIncomingStream?.(s);
       } else {
         await this.sendRst(streamId);
-        return;
+        return false;
       }
     }
-    s.onData(data, flags);
+    return s.onData(data, flags);
   }
 
   private async handleWindowUpdateFrame(streamId: number, flags: number, delta: number): Promise<void> {
@@ -243,8 +391,13 @@ export class YamuxSession {
           await this.sendRst(streamId);
           return;
         }
+        if (this.streams.size >= this.limits.maxActiveStreams || this.inboundStreams.size >= this.limits.maxInboundStreams) {
+          await this.sendRst(streamId);
+          return;
+        }
         s = new YamuxStream(this, streamId, "synReceived");
         this.streams.set(streamId, s);
+        this.inboundStreams.add(streamId);
         await s.open();
         this.onIncomingStream?.(s);
       } else {
@@ -252,7 +405,9 @@ export class YamuxSession {
         return;
       }
     }
-    s.onWindowUpdate(delta, flags);
+    if (!s.onWindowUpdate(delta, flags)) {
+      this.close();
+    }
   }
 
   private isInboundStreamIdValid(streamId: number): boolean {
@@ -263,4 +418,33 @@ export class YamuxSession {
     // When we are the server, the peer is the client and must initiate odd IDs.
     return (streamId & 1) === (this.client ? 0 : 1);
   }
+
+  private diagnostic(event: YamuxDiagnostic): void {
+    try { this.onDiagnostic?.(event); } catch { /* Diagnostics cannot affect transport behavior. */ }
+  }
+}
+
+function normalizeYamuxLimits(input: Partial<YamuxLimits> | undefined): YamuxLimits {
+  const maxFrameBytes = input?.maxFrameBytes ?? DEFAULT_YAMUX_LIMITS.maxFrameBytes;
+  const limits: YamuxLimits = {
+    maxActiveStreams: input?.maxActiveStreams ?? DEFAULT_YAMUX_LIMITS.maxActiveStreams,
+    maxInboundStreams: input?.maxInboundStreams ?? DEFAULT_YAMUX_LIMITS.maxInboundStreams,
+    maxFrameBytes,
+    preferredOutboundFrameBytes: input?.preferredOutboundFrameBytes ?? Math.min(DEFAULT_YAMUX_LIMITS.preferredOutboundFrameBytes, maxFrameBytes),
+    maxStreamReceiveBytes: input?.maxStreamReceiveBytes ?? DEFAULT_YAMUX_LIMITS.maxStreamReceiveBytes,
+    maxSessionReceiveBytes: input?.maxSessionReceiveBytes ?? DEFAULT_YAMUX_LIMITS.maxSessionReceiveBytes,
+  };
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive integer`);
+  }
+  if (limits.maxInboundStreams > limits.maxActiveStreams) throw new RangeError("maxInboundStreams must not exceed maxActiveStreams");
+  if (limits.preferredOutboundFrameBytes > limits.maxFrameBytes) throw new RangeError("preferredOutboundFrameBytes must not exceed maxFrameBytes");
+  if (limits.maxFrameBytes > limits.maxStreamReceiveBytes) throw new RangeError("maxFrameBytes must not exceed maxStreamReceiveBytes");
+  if (limits.maxStreamReceiveBytes < DEFAULT_YAMUX_LIMITS.maxStreamReceiveBytes) throw new RangeError("maxStreamReceiveBytes must cover the 256 KiB initial stream window");
+  if (limits.maxStreamReceiveBytes > limits.maxSessionReceiveBytes) throw new RangeError("maxStreamReceiveBytes must not exceed maxSessionReceiveBytes");
+  return Object.freeze(limits);
+}
+
+function monotonicMilliseconds(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
 }

@@ -1,5 +1,8 @@
 import type { Client } from "../client.js";
-import { emitObserverDiagnostic, withObserverContext, type ClientObserverLike, type WsCloseKind, type WsErrorReason } from "../observability/observer.js";
+import { emitObserverDiagnostic, withObserverContext, type ClientObserverLike, type DiagnosticEvent, type WsCloseKind, type WsErrorReason } from "../observability/observer.js";
+
+export type { ArtifactAcquireContext, ArtifactSource } from "./artifactControlplane.js";
+export { createArtifactResolver, createControlplaneArtifactSource } from "./artifactControlplane.js";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -231,6 +234,12 @@ export function createReconnectManager(): ReconnectManager {
       },
       onRpcCall: (...args) => user?.onRpcCall?.(...args),
       onRpcNotify: (...args) => user?.onRpcNotify?.(...args),
+      onDiagnosticEvent: (event: DiagnosticEvent) => {
+        user?.onDiagnosticEvent?.(event);
+        if (event.code === "liveness_timeout") {
+          startReconnect(t, cfg, new Error("liveness timeout"));
+        }
+      },
     }, {
       attemptSeq: currentAttemptSeq,
     });

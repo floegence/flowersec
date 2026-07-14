@@ -1,6 +1,6 @@
 import process from "node:process";
 
-import { connectNode } from "../../../flowersec-ts/dist/node/index.js";
+import { AllowPlaintextForLoopback, connectNode } from "../../../flowersec-ts/dist/node/index.js";
 import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "../../../flowersec-ts/dist/framing/index.js";
 import { createByteReader, readNBytes } from "../../../flowersec-ts/dist/streamio/index.js";
 
@@ -39,7 +39,7 @@ async function main() {
   const wantBytes = Math.max(0, Math.floor(Number(process.env.FSEC_META_BYTES ?? "65536")));
   const fillByte = Math.max(0, Math.min(255, Math.floor(Number(process.env.FSEC_META_FILL_BYTE ?? "97"))));
 
-  const client = await connectNode(bootstrap, { origin });
+  const client = await connectNode(bootstrap, { origin, transportSecurityPolicy: AllowPlaintextForLoopback });
   try {
     const stream = await client.openStream("meta_bytes");
     const reader = createByteReader(stream);

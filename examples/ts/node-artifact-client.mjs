@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { connectNode } from "../../flowersec-ts/dist/node/index.js";
+import { AllowPlaintextForLoopback, connectNode } from "../../flowersec-ts/dist/node/index.js";
 import { requestConnectArtifact } from "../../flowersec-ts/dist/controlplane/index.js";
 
 const baseUrl = process.env.FSEC_CONTROLPLANE_BASE_URL || "http://127.0.0.1:8080";
@@ -12,7 +12,7 @@ const artifact = await requestConnectArtifact({
   endpointId,
 });
 
-const client = await connectNode(artifact, { origin });
+const client = await connectNode(artifact, { origin, transportSecurityPolicy: AllowPlaintextForLoopback });
 try {
   await client.ping();
   process.stdout.write("ok\n");

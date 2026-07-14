@@ -6,50 +6,46 @@ import {
   type RequestEntryConnectArtifactInput,
 } from "../controlplane/index.js";
 
-export type ArtifactFactoryArgs = Readonly<{
+export type ArtifactAcquireContext = Readonly<{
   traceId?: string;
   signal?: AbortSignal;
 }>;
 
-export type ArtifactAwareReconnectConfig = Readonly<{
-  artifact?: ConnectArtifact;
-  getArtifact?: (args: ArtifactFactoryArgs) => Promise<ConnectArtifact>;
-  artifactControlplane?: RequestConnectArtifactInput | RequestEntryConnectArtifactInput;
-}>;
+export type ArtifactSource =
+  | Readonly<{ kind: "once"; artifact: ConnectArtifact }>
+  | Readonly<{ kind: "refreshable"; acquire: (context: ArtifactAcquireContext) => Promise<ConnectArtifact> }>;
 
-export async function resolveConnectArtifact(
-  config: ArtifactAwareReconnectConfig,
-  traceId?: string,
-  signal?: AbortSignal
-): Promise<ConnectArtifact> {
-  if (config.getArtifact) {
-    return await config.getArtifact({
-      ...(traceId === undefined ? {} : { traceId }),
-      ...(signal === undefined ? {} : { signal }),
-    });
-  }
-  if (config.artifact) return config.artifact;
-  if (config.artifactControlplane) {
-    const correlation =
-      traceId === undefined
-        ? config.artifactControlplane.correlation
-        : ({ traceId } satisfies Readonly<{ traceId?: string }>);
-    if ("entryTicket" in config.artifactControlplane) {
-      const input: RequestEntryConnectArtifactInput = {
-        ...config.artifactControlplane,
+export function createControlplaneArtifactSource(
+  input: RequestConnectArtifactInput | RequestEntryConnectArtifactInput,
+): ArtifactSource {
+  return {
+    kind: "refreshable",
+    acquire: async ({ traceId, signal }) => {
+      const correlation = traceId === undefined ? input.correlation : { traceId };
+      if ("entryTicket" in input) {
+        return await requestEntryConnectArtifact({
+          ...input,
+          ...(correlation === undefined ? {} : { correlation }),
+          ...(signal === undefined ? {} : { signal }),
+        });
+      }
+      return await requestConnectArtifact({
+        ...input,
         ...(correlation === undefined ? {} : { correlation }),
         ...(signal === undefined ? {} : { signal }),
-      };
-      return await requestEntryConnectArtifact(input);
-    }
-    const input: RequestConnectArtifactInput = {
-      ...config.artifactControlplane,
-      ...(correlation === undefined ? {} : { correlation }),
-      ...(signal === undefined ? {} : { signal }),
-    };
-    return await requestConnectArtifact(input);
-  }
-  throw new Error("Artifact reconnect config requires `getArtifact`, `artifact`, or `artifactControlplane`");
+      });
+    },
+  };
+}
+
+export function createArtifactResolver(source: ArtifactSource): (context: ArtifactAcquireContext) => Promise<ConnectArtifact> {
+  let consumed = false;
+  return async (context) => {
+    if (source.kind === "refreshable") return await source.acquire(context);
+    if (consumed) throw new Error("one-time artifact source has already been consumed");
+    consumed = true;
+    return source.artifact;
+  };
 }
 
 export function updateTraceId(current: string | undefined, artifact: ConnectArtifact): string | undefined {

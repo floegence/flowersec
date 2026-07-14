@@ -43,17 +43,14 @@ func evaluateTransportSecurity(
 	if err != nil {
 		return wrapErr(path, fserrors.StageValidate, fserrors.CodeTransportPolicyDenied, ErrTransportPolicyDenied)
 	}
-	if policy == nil {
-		if input.Scheme == "ws" {
-			observer.OnDiagnosticEvent(observability.DiagnosticEvent{
-				Path:       string(path),
-				Stage:      observability.DiagnosticStageValidate,
-				CodeDomain: observability.DiagnosticCodeDomainEvent,
-				Code:       "plaintext_transport",
-				Result:     observability.DiagnosticResultSkip,
-			})
-		}
-		return nil
+	if policy != nil && input.Scheme == "ws" {
+		observer.OnDiagnosticEvent(observability.DiagnosticEvent{
+			Path:       string(path),
+			Stage:      observability.DiagnosticStageTransport,
+			CodeDomain: observability.DiagnosticCodeDomainEvent,
+			Code:       "plaintext_transport",
+			Result:     observability.DiagnosticResultSkip,
+		})
 	}
 	return nil
 }

@@ -25,9 +25,10 @@ type ClientHandshakeOptions struct {
 
 	ClientFeatures uint32 // Feature bitset advertised in init.
 
-	MaxHandshakePayload int // Maximum handshake JSON payload size.
-	MaxRecordBytes      int // Maximum encrypted record size on the wire.
-	MaxBufferedBytes    int // Maximum buffered plaintext bytes in SecureChannel.
+	MaxHandshakePayload      int // Maximum handshake JSON payload size.
+	MaxRecordBytes           int // Maximum encrypted record size on the wire.
+	MaxBufferedBytes         int // Maximum buffered plaintext bytes in SecureChannel.
+	OutboundRecordChunkBytes int // Preferred maximum plaintext bytes per outbound record.
 }
 
 // ServerHandshakeOptions configures the server side of the E2EE handshake.
@@ -41,9 +42,10 @@ type ServerHandshakeOptions struct {
 
 	ServerFeatures uint32 // Feature bitset advertised in resp.
 
-	MaxHandshakePayload int // Maximum handshake JSON payload size.
-	MaxRecordBytes      int // Maximum encrypted record size on the wire.
-	MaxBufferedBytes    int // Maximum buffered plaintext bytes in SecureChannel.
+	MaxHandshakePayload      int // Maximum handshake JSON payload size.
+	MaxRecordBytes           int // Maximum encrypted record size on the wire.
+	MaxBufferedBytes         int // Maximum buffered plaintext bytes in SecureChannel.
+	OutboundRecordChunkBytes int // Preferred maximum plaintext bytes per outbound record.
 }
 
 // ServerHandshakeCache caches server-side handshake state to support retries.
@@ -247,7 +249,7 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts ClientHandshak
 	}
 
 	// Client sends application data using the C2S direction keys.
-	return NewSecureChannel(t, RecordKeyState{
+	secure := NewSecureChannel(t, RecordKeyState{
 		SendKey:      keys.C2SKey,
 		RecvKey:      keys.S2CKey,
 		SendNoncePre: keys.C2SNoncePre,
@@ -258,7 +260,12 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts ClientHandshak
 		RecvDir:      DirS2C,
 		SendSeq:      1,
 		RecvSeq:      2,
-	}, opts.MaxRecordBytes, opts.MaxBufferedBytes), nil
+	}, opts.MaxRecordBytes, opts.MaxBufferedBytes)
+	if err := secure.SetOutboundRecordChunkBytes(opts.OutboundRecordChunkBytes); err != nil {
+		_ = secure.Close()
+		return nil, err
+	}
+	return secure, nil
 }
 
 // ServerHandshake performs the E2EE handshake from the server perspective.
@@ -498,7 +505,7 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	}
 
 	// Server sends application data using the S2C direction keys.
-	return NewSecureChannel(t, RecordKeyState{
+	secure := NewSecureChannel(t, RecordKeyState{
 		SendKey:      keys.S2CKey,
 		RecvKey:      keys.C2SKey,
 		SendNoncePre: keys.S2CNoncePre,
@@ -509,7 +516,12 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 		RecvDir:      DirC2S,
 		SendSeq:      2,
 		RecvSeq:      1,
-	}, opts.MaxRecordBytes, opts.MaxBufferedBytes), nil
+	}, opts.MaxRecordBytes, opts.MaxBufferedBytes)
+	if err := secure.SetOutboundRecordChunkBytes(opts.OutboundRecordChunkBytes); err != nil {
+		_ = secure.Close()
+		return nil, err
+	}
+	return secure, nil
 }
 
 func (c *ServerHandshakeCache) getOrCreate(initMsg e2eev1.E2EE_Init, suite Suite, serverFeatures uint32) (*serverHandshakeState, error) {

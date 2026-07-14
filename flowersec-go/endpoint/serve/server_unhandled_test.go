@@ -46,8 +46,9 @@ func (s *fakeSessionUnhandled) ServeStreams(context.Context, int, func(string, i
 func (s *fakeSessionUnhandled) OpenStream(context.Context, string) (io.ReadWriteCloser, error) {
 	return nil, errors.New("not implemented")
 }
-func (s *fakeSessionUnhandled) Ping() error  { return nil }
-func (s *fakeSessionUnhandled) Close() error { return nil }
+func (s *fakeSessionUnhandled) Ping() error                                          { return nil }
+func (s *fakeSessionUnhandled) ProbeLiveness(context.Context) (time.Duration, error) { return 0, nil }
+func (s *fakeSessionUnhandled) Close() error                                         { return nil }
 
 func TestServer_ServeSession_OnError_UnhandledStreamKind(t *testing.T) {
 	errCh := make(chan error, 1)

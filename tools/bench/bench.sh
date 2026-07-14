@@ -16,22 +16,33 @@ LOADGEN_RAMP_STEP="${LOADGEN_RAMP_STEP:-200}"
 LOADGEN_RAMP_INTERVAL="${LOADGEN_RAMP_INTERVAL:-2s}"
 LOADGEN_STEADY="${LOADGEN_STEADY:-30s}"
 LOADGEN_REPORT_INTERVAL="${LOADGEN_REPORT_INTERVAL:-1s}"
+GO_ROUNDTRIP_BASELINE_NS="${GO_ROUNDTRIP_BASELINE_NS:-40824}"
+GO_ROUNDTRIP_MAX_REGRESSION_PERCENT="${GO_ROUNDTRIP_MAX_REGRESSION_PERCENT:-10}"
 
 GO_BENCH_CMD="GOMAXPROCS=${GOMAXPROCS} GOMEMLIMIT=${GOMEMLIMIT} go test -bench . -benchmem ./crypto/e2ee ./tunnel/server"
+GO_ROUNDTRIP_CMD="GOMAXPROCS=${GOMAXPROCS} GOMEMLIMIT=${GOMEMLIMIT} go test -run '^$' -bench '^BenchmarkSecureChannelRoundTrip/65536B$' -benchmem -count=10 ./crypto/e2ee"
 TS_BENCH_CMD="NODE_OPTIONS=${NODE_OPTIONS} npm run bench"
 LOADGEN_CMD="GOMAXPROCS=${GOMAXPROCS} GOMEMLIMIT=${GOMEMLIMIT} go run ./internal/cmd/flowersec-loadgen --mode=full --channels=${LOADGEN_CHANNELS} --rate=${LOADGEN_RATE} --ramp-step=${LOADGEN_RAMP_STEP} --ramp-interval=${LOADGEN_RAMP_INTERVAL} --steady=${LOADGEN_STEADY} --report-interval=${LOADGEN_REPORT_INTERVAL}"
 
 GO_OUT="$(mktemp)"
+GO_ROUNDTRIP_OUT="$(mktemp)"
 TS_OUT="$(mktemp)"
 LOADGEN_OUT="$(mktemp)"
 
 cleanup() {
-  rm -f "${GO_OUT}" "${TS_OUT}" "${LOADGEN_OUT}"
+  rm -f "${GO_OUT}" "${GO_ROUNDTRIP_OUT}" "${TS_OUT}" "${LOADGEN_OUT}"
 }
 trap cleanup EXIT
 
 echo "[bench] running go benchmarks..."
 (cd "${GO_DIR}" && GOMAXPROCS="${GOMAXPROCS}" GOMEMLIMIT="${GOMEMLIMIT}" go test -bench . -benchmem ./crypto/e2ee ./tunnel/server) | tee "${GO_OUT}"
+
+echo "[bench] running repeated go 64 KiB round-trip benchmark..."
+(cd "${GO_DIR}" && GOMAXPROCS="${GOMAXPROCS}" GOMEMLIMIT="${GOMEMLIMIT}" go test -run '^$' \
+  -bench '^BenchmarkSecureChannelRoundTrip/65536B$' \
+  -benchmem \
+  -count=10 \
+  ./crypto/e2ee) | tee "${GO_ROUNDTRIP_OUT}"
 
 echo "[bench] running ts benchmarks..."
 (cd "${TS_DIR}" && NODE_OPTIONS="${NODE_OPTIONS}" NO_COLOR=1 FORCE_COLOR=0 npm run bench) | tee "${TS_OUT}"
@@ -46,6 +57,14 @@ echo "[bench] running load generator..."
   --steady="${LOADGEN_STEADY}" \
   --report-interval="${LOADGEN_REPORT_INTERVAL}") > "${LOADGEN_OUT}"
 
+python3 "${ROOT_DIR}/tools/bench/bench_check.py" \
+  --go-roundtrip-output "${GO_ROUNDTRIP_OUT}" \
+  --go-roundtrip-baseline-ns "${GO_ROUNDTRIP_BASELINE_NS}" \
+  --go-roundtrip-max-regression-percent "${GO_ROUNDTRIP_MAX_REGRESSION_PERCENT}" \
+  --ts-output "${TS_OUT}" \
+  --loadgen-output "${LOADGEN_OUT}" \
+  --expected-channels "${LOADGEN_CHANNELS}"
+
 RUN_DATE="$(LC_ALL=C date)"
 OS_VERSION="$(sw_vers -productVersion)"
 CPU_MODEL="$(sysctl -n machdep.cpu.brand_string)"
@@ -55,6 +74,9 @@ NODE_VERSION="$(cd "${TS_DIR}" && node -v)"
 
 python3 "${ROOT_DIR}/tools/bench/bench_report.py" \
   --go-output "${GO_OUT}" \
+  --go-roundtrip-output "${GO_ROUNDTRIP_OUT}" \
+  --go-roundtrip-baseline-ns "${GO_ROUNDTRIP_BASELINE_NS}" \
+  --go-roundtrip-max-regression-percent "${GO_ROUNDTRIP_MAX_REGRESSION_PERCENT}" \
   --ts-output "${TS_OUT}" \
   --loadgen-output "${LOADGEN_OUT}" \
   --out "${OUT_FILE}" \
@@ -68,6 +90,7 @@ python3 "${ROOT_DIR}/tools/bench/bench_report.py" \
   --gomemlimit "${GOMEMLIMIT}" \
   --node-options="${NODE_OPTIONS}" \
   --go-command "${GO_BENCH_CMD}" \
+  --go-roundtrip-command "${GO_ROUNDTRIP_CMD}" \
   --ts-command "${TS_BENCH_CMD}" \
   --loadgen-command "${LOADGEN_CMD}"
 

@@ -288,6 +288,7 @@ func TestAcceptDirectWS_ZeroClockSkewDoesNotUseDefaultAcceptanceWindow(t *testin
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	)
 	if err == nil {
 		t.Fatalf("expected client handshake error")

@@ -21,13 +21,16 @@ func Handler(reg *prometheus.Registry) http.Handler {
 
 // TunnelObserver exports tunnel metrics to Prometheus.
 type TunnelObserver struct {
-	connGauge      prometheus.Gauge
-	channelGauge   prometheus.Gauge
-	attachTotal    *prometheus.CounterVec
-	replaceTotal   *prometheus.CounterVec
-	closeTotal     *prometheus.CounterVec
-	pairLatency    prometheus.Histogram
-	encryptedTotal prometheus.Counter
+	connGauge         prometheus.Gauge
+	channelGauge      prometheus.Gauge
+	attachTotal       *prometheus.CounterVec
+	replaceTotal      *prometheus.CounterVec
+	closeTotal        *prometheus.CounterVec
+	pairLatency       prometheus.Histogram
+	encryptedTotal    prometheus.Counter
+	tenantQueuedBytes *prometheus.GaugeVec
+	totalQueuedBytes  prometheus.Gauge
+	resourceExhausted *prometheus.CounterVec
 }
 
 // NewTunnelObserver registers tunnel metrics on the registry.
@@ -62,6 +65,18 @@ func NewTunnelObserver(reg *prometheus.Registry) *TunnelObserver {
 			Name: "flowersec_tunnel_encrypted_total",
 			Help: "Channels that reached encrypted record state.",
 		}),
+		tenantQueuedBytes: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "flowersec_tunnel_tenant_queued_bytes",
+			Help: "Current pending and write-queued bytes by tenant.",
+		}, []string{"tenant"}),
+		totalQueuedBytes: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "flowersec_tunnel_queued_bytes",
+			Help: "Current pending and write-queued bytes across all tenants.",
+		}),
+		resourceExhausted: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "flowersec_tunnel_resource_exhausted_total",
+			Help: "Tunnel queue resource exhaustion events.",
+		}, []string{"tenant", "limit"}),
 	}
 	reg.MustRegister(
 		o.connGauge,
@@ -71,6 +86,9 @@ func NewTunnelObserver(reg *prometheus.Registry) *TunnelObserver {
 		o.closeTotal,
 		o.pairLatency,
 		o.encryptedTotal,
+		o.tenantQueuedBytes,
+		o.totalQueuedBytes,
+		o.resourceExhausted,
 	)
 	return o
 }
@@ -101,6 +119,15 @@ func (o *TunnelObserver) PairLatency(d time.Duration) {
 
 func (o *TunnelObserver) Encrypted() {
 	o.encryptedTotal.Inc()
+}
+
+func (o *TunnelObserver) QueuedBytes(tenantID string, tenantBytes int64, totalBytes int64) {
+	o.tenantQueuedBytes.WithLabelValues(tenantID).Set(float64(tenantBytes))
+	o.totalQueuedBytes.Set(float64(totalBytes))
+}
+
+func (o *TunnelObserver) ResourceExhausted(tenantID string, limit observability.TunnelResourceLimit) {
+	o.resourceExhausted.WithLabelValues(tenantID, string(limit)).Inc()
 }
 
 // RPCObserver exports RPC metrics to Prometheus.

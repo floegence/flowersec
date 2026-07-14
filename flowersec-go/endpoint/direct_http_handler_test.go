@@ -221,6 +221,7 @@ func TestDirectHandler_AllowsConnectDirect(t *testing.T) {
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	)
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)
@@ -287,6 +288,7 @@ func TestDirectHandler_OnError_HandlerPanic(t *testing.T) {
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	)
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)
@@ -358,6 +360,7 @@ func TestDirectHandlerResolved_AllowsConnectDirect(t *testing.T) {
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	)
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)
@@ -561,6 +564,7 @@ func directClientOptions(origin string) []client.ConnectOption {
 		client.WithConnectTimeout(2 * time.Second),
 		client.WithHandshakeTimeout(2 * time.Second),
 		client.WithMaxRecordBytes(1 << 20),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	}
 }
 
@@ -625,6 +629,7 @@ func TestDirectHandlerResolved_OnError_HandlerPanic(t *testing.T) {
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	)
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)
@@ -696,6 +701,7 @@ func TestDirectHandlerResolved_OnError_ResolveFailed(t *testing.T) {
 		client.WithConnectTimeout(2*time.Second),
 		client.WithHandshakeTimeout(2*time.Second),
 		client.WithMaxRecordBytes(1<<20),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
 	)
 
 	select {

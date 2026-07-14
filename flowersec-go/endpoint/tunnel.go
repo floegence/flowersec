@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -18,9 +17,9 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/internal/endpointid"
 	"github.com/floegence/flowersec/flowersec-go/internal/wsutil"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/gorilla/websocket"
-	hyamux "github.com/hashicorp/yamux"
 )
 
 // ConnectTunnel attaches to a tunnel as role=server and returns a multiplexed endpoint session.
@@ -37,15 +36,12 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if origin == "" {
 		origin = strings.TrimSpace(cfg.header.Get("Origin"))
 	}
-	if err := evaluateTransportSecurity(ctx, prepared.TunnelURL, fserrors.PathTunnel, cfg.transportSecurityPolicy); err != nil {
-		return nil, err
-	}
 	if origin == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
-	keepalive := cfg.keepaliveInterval
-	if !cfg.keepaliveSet {
-		keepalive = defaults.KeepaliveInterval(prepared.IdleTimeoutSeconds)
+	liveness := cfg.liveness
+	if !cfg.livenessSet {
+		liveness.Interval, liveness.Timeout = defaults.Liveness(prepared.IdleTimeoutSeconds)
 	}
 
 	endpointInstanceID := cfg.endpointInstanceID
@@ -59,6 +55,9 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	}
 	if err := endpointid.Validate(endpointInstanceID); err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
+	}
+	if err := evaluateTransportSecurity(ctx, prepared.TunnelURL, fserrors.PathTunnel, cfg.transportSecurityPolicy); err != nil {
+		return nil, err
 	}
 
 	connectTimeout := cfg.connectTimeout
@@ -90,25 +89,24 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	}
 
 	sess, err := serveAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, serverHandshakeOptions{
-		psk:              prepared.PSK,
-		suite:            prepared.Suite,
-		channelID:        prepared.ChannelID,
-		initExpireAtUnix: prepared.InitExpireAtUnixS,
-		clockSkew:        cfg.clockSkew,
-		serverFeatures:   cfg.serverFeatures,
-		maxHandshake:     cfg.maxHandshakePayload,
-		maxRecordBytes:   cfg.maxRecordBytes,
-		maxBufferedBytes: cfg.maxBufferedBytes,
-		handshakeTimeout: handshakeTimeout,
-		cache:            cfg.handshakeCache,
-		yamuxConfig:      cfg.yamuxConfig,
+		psk:                      prepared.PSK,
+		suite:                    prepared.Suite,
+		channelID:                prepared.ChannelID,
+		initExpireAtUnix:         prepared.InitExpireAtUnixS,
+		clockSkew:                cfg.clockSkew,
+		serverFeatures:           cfg.serverFeatures,
+		maxHandshake:             cfg.maxHandshakePayload,
+		maxRecordBytes:           cfg.maxRecordBytes,
+		maxBufferedBytes:         cfg.maxBufferedBytes,
+		outboundRecordChunkBytes: cfg.outboundRecordChunkBytes,
+		handshakeTimeout:         handshakeTimeout,
+		cache:                    cfg.handshakeCache,
+		yamuxLimits:              cfg.yamuxLimits,
+		liveness:                 liveness,
 	})
 	if err != nil {
 		_ = c.Close()
 		return nil, err
-	}
-	if keepalive > 0 {
-		sess.startKeepalive(keepalive)
 	}
 	return sess, nil
 }
@@ -139,18 +137,20 @@ func wrapTunnelGrantValidateError(err error) error {
 }
 
 type serverHandshakeOptions struct {
-	psk              []byte
-	suite            e2ee.Suite
-	channelID        string
-	initExpireAtUnix int64
-	clockSkew        time.Duration
-	serverFeatures   uint32
-	maxHandshake     int
-	maxRecordBytes   int
-	maxBufferedBytes int
-	handshakeTimeout time.Duration
-	cache            *HandshakeCache
-	yamuxConfig      *hyamux.Config
+	psk                      []byte
+	suite                    e2ee.Suite
+	channelID                string
+	initExpireAtUnix         int64
+	clockSkew                time.Duration
+	serverFeatures           uint32
+	maxHandshake             int
+	maxRecordBytes           int
+	maxBufferedBytes         int
+	outboundRecordChunkBytes int
+	handshakeTimeout         time.Duration
+	cache                    *HandshakeCache
+	yamuxLimits              YamuxLimits
+	liveness                 LivenessOptions
 }
 
 func serveAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpointInstanceID string, opts serverHandshakeOptions) (*session, error) {
@@ -163,15 +163,16 @@ func serveAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpo
 	}
 	bt := e2ee.NewWebSocketMessageTransport(c)
 	secure, err := e2ee.ServerHandshake(handshakeCtx, bt, cache, e2ee.ServerHandshakeOptions{
-		PSK:                 opts.psk,
-		Suite:               opts.suite,
-		ChannelID:           opts.channelID,
-		InitExpireAtUnixS:   opts.initExpireAtUnix,
-		ClockSkew:           opts.clockSkew,
-		ServerFeatures:      opts.serverFeatures,
-		MaxHandshakePayload: opts.maxHandshake,
-		MaxRecordBytes:      opts.maxRecordBytes,
-		MaxBufferedBytes:    opts.maxBufferedBytes,
+		PSK:                      opts.psk,
+		Suite:                    opts.suite,
+		ChannelID:                opts.channelID,
+		InitExpireAtUnixS:        opts.initExpireAtUnix,
+		ClockSkew:                opts.clockSkew,
+		ServerFeatures:           opts.serverFeatures,
+		MaxHandshakePayload:      opts.maxHandshake,
+		MaxRecordBytes:           opts.maxRecordBytes,
+		MaxBufferedBytes:         opts.maxBufferedBytes,
+		OutboundRecordChunkBytes: opts.outboundRecordChunkBytes,
 	})
 	if err != nil {
 		// Tunnel attach rejections are communicated via websocket close status + reason tokens.
@@ -184,13 +185,7 @@ func serveAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpo
 		return nil, wrapErr(path, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
 	}
 
-	ycfg := opts.yamuxConfig
-	if ycfg == nil {
-		ycfg = hyamux.DefaultConfig()
-		ycfg.EnableKeepAlive = false
-		ycfg.LogOutput = io.Discard
-	}
-	mux, err := hyamux.Server(secure, ycfg)
+	mux, err := fsyamux.NewServer(secure, opts.yamuxLimits, opts.liveness)
 	if err != nil {
 		_ = secure.Close()
 		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeMuxFailed, err)

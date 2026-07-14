@@ -29,6 +29,8 @@ export type HandshakeClientOptions = Readonly<{
   maxHandshakePayload: number;
   /** Maximum record size for encrypted frames after handshake. */
   maxRecordBytes: number;
+  /** Preferred plaintext bytes per outbound record. */
+  outboundRecordChunkBytes?: number;
   /** Maximum buffered plaintext bytes for the secure channel. */
   maxBufferedBytes?: number;
   /** Optional AbortSignal to cancel the handshake. */
@@ -55,6 +57,8 @@ export type HandshakeServerOptions = Readonly<{
   maxHandshakePayload: number;
   /** Maximum record size for encrypted frames after handshake. */
   maxRecordBytes: number;
+  /** Preferred plaintext bytes per outbound record. */
+  outboundRecordChunkBytes?: number;
   /** Maximum buffered plaintext bytes for the secure channel. */
   maxBufferedBytes?: number;
   /** Optional AbortSignal to cancel the handshake. */
@@ -214,6 +218,7 @@ export async function clientHandshake(transport: BinaryTransport, opts: Handshak
   return new SecureChannel({
     transport,
     maxRecordBytes: opts.maxRecordBytes,
+    ...(opts.outboundRecordChunkBytes !== undefined ? { outboundRecordChunkBytes: opts.outboundRecordChunkBytes } : {}),
     ...(opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: opts.maxBufferedBytes } : {}),
     sendKey: keys.c2sKey,
     recvKey: keys.s2cKey,
@@ -393,6 +398,7 @@ export async function serverHandshake(
   return new SecureChannel({
     transport,
     maxRecordBytes: opts.maxRecordBytes,
+    ...(opts.outboundRecordChunkBytes !== undefined ? { outboundRecordChunkBytes: opts.outboundRecordChunkBytes } : {}),
     ...(opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: opts.maxBufferedBytes } : {}),
     sendKey: keys.s2cKey,
     recvKey: keys.c2sKey,

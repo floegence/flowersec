@@ -74,6 +74,7 @@ export type FlowersecErrorCode =
   | "open_stream_failed"
   | "stream_hello_failed"
   | "rpc_failed"
+  | "resource_exhausted"
   | "not_connected";
 
 export class FlowersecError extends Error {

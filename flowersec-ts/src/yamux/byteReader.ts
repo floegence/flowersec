@@ -42,6 +42,30 @@ export class ByteReader {
     return out;
   }
 
+  // discardExactly consumes bytes without allocating a contiguous output buffer.
+  async discardExactly(n: number): Promise<void> {
+    if (n < 0) throw new Error("invalid length");
+    let remaining = n;
+    while (remaining > 0) {
+      if (this.buffered === 0) {
+        const chunk = await this.readChunk();
+        if (chunk == null) throw new StreamEOFError();
+        if (chunk.length === 0) continue;
+        this.chunks.push(chunk);
+        this.buffered += chunk.length;
+      }
+      const head = this.chunks[this.chunkHead]!;
+      const take = Math.min(remaining, head.length - this.headOff);
+      this.headOff += take;
+      this.buffered -= take;
+      remaining -= take;
+      if (this.headOff === head.length) {
+        this.chunkHead++;
+        this.headOff = 0;
+      }
+    }
+  }
+
   // bufferedBytes returns the number of bytes currently buffered.
   bufferedBytes(): number {
     return this.buffered;

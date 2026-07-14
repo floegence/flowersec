@@ -49,6 +49,41 @@
           },
           {
             "kind": "func",
+            "expr": "client.WithOutboundRecordChunkBytes",
+            "doc_token": "`client.WithOutboundRecordChunkBytes(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.WithYamuxLimits",
+            "doc_token": "`client.WithYamuxLimits(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.WithLiveness",
+            "doc_token": "`client.WithLiveness(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.WithLivenessDisabled",
+            "doc_token": "`client.WithLivenessDisabled()`"
+          },
+          {
+            "kind": "type",
+            "expr": "client.LivenessOptions",
+            "doc_token": "`client.LivenessOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "client.YamuxLimits",
+            "doc_token": "`client.YamuxLimits`"
+          },
+          {
+            "kind": "method",
+            "expr": "client.Client.ProbeLiveness",
+            "doc_token": "`client.Client.ProbeLiveness(...)`"
+          },
+          {
+            "kind": "func",
             "expr": "client.RequireTLS",
             "doc_token": "`client.RequireTLS`"
           },
@@ -138,6 +173,41 @@
             "kind": "func",
             "expr": "endpoint.WithTransportSecurityPolicy",
             "doc_token": "`endpoint.WithTransportSecurityPolicy(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.WithOutboundRecordChunkBytes",
+            "doc_token": "`endpoint.WithOutboundRecordChunkBytes(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.WithYamuxLimits",
+            "doc_token": "`endpoint.WithYamuxLimits(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.WithLiveness",
+            "doc_token": "`endpoint.WithLiveness(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.WithLivenessDisabled",
+            "doc_token": "`endpoint.WithLivenessDisabled()`"
+          },
+          {
+            "kind": "type",
+            "expr": "endpoint.LivenessOptions",
+            "doc_token": "`endpoint.LivenessOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "endpoint.YamuxLimits",
+            "doc_token": "`endpoint.YamuxLimits`"
+          },
+          {
+            "kind": "method",
+            "expr": "endpoint.Session.ProbeLiveness",
+            "doc_token": "`endpoint.Session.ProbeLiveness(...)`"
           }
         ]
       },
@@ -486,6 +556,16 @@
           },
           {
             "kind": "func",
+            "expr": "rpc.NewServerWithOptions",
+            "doc_token": "`rpc.NewServerWithOptions(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "rpc.ServerOptions",
+            "doc_token": "`rpc.ServerOptions`"
+          },
+          {
+            "kind": "func",
             "expr": "rpc.NewClient",
             "doc_token": "`rpc.NewClient(...)`"
           }
@@ -532,6 +612,11 @@
             "kind": "type",
             "expr": "fserrors.Code",
             "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`"
+          },
+          {
+            "kind": "const",
+            "expr": "fserrors.CodeResourceExhausted",
+            "doc_token": "`fserrors.CodeResourceExhausted`"
           }
         ]
       },
@@ -616,7 +701,10 @@
           "`TunnelClientConnectArtifact`",
           "`DirectClientConnectArtifact`",
           "`ScopeMetadataEntry`",
-          "`assertConnectArtifact(...)`"
+          "`assertConnectArtifact(...)`",
+          "`LivenessOptions`",
+          "`WebSocketLimits`",
+          "`YamuxLimits`"
         ],
         "runtime_exports": [
           "connect",
@@ -807,10 +895,15 @@
         "doc_tokens": [
           "`@floegence/flowersec-core/reconnect`",
           "`createReconnectManager()`",
-          "`ReconnectManager.connectIfNeeded(...)`"
+          "`ReconnectManager.connectIfNeeded(...)`",
+          "`ArtifactSource`",
+          "`createArtifactResolver(...)`",
+          "`createControlplaneArtifactSource(...)`"
         ],
         "runtime_exports": [
-          "createReconnectManager"
+          "createReconnectManager",
+          "createArtifactResolver",
+          "createControlplaneArtifactSource"
         ]
       },
       {
@@ -818,7 +911,10 @@
         "package_json_export": "./rpc",
         "doc_tokens": [
           "`@floegence/flowersec-core/rpc`",
-          "`RpcProxy`"
+          "`RpcProxy`",
+          "`RpcServer`",
+          "`RpcServerOptions`",
+          "`RpcServerTransport`"
         ],
         "runtime_exports": [
           "RpcClient",
@@ -832,13 +928,16 @@
         "specifier": "@floegence/flowersec-core/yamux",
         "package_json_export": "./yamux",
         "doc_tokens": [
-          "`@floegence/flowersec-core/yamux`"
+          "`@floegence/flowersec-core/yamux`",
+          "`YamuxLimits`",
+          "`DEFAULT_YAMUX_LIMITS`"
         ],
         "runtime_exports": [
           "YamuxSession",
           "ByteReader",
           "StreamEOFError",
-          "isStreamEOFError"
+          "isStreamEOFError",
+          "DEFAULT_YAMUX_LIMITS"
         ]
       },
       {
@@ -856,10 +955,13 @@
         "specifier": "@floegence/flowersec-core/ws",
         "package_json_export": "./ws",
         "doc_tokens": [
-          "`@floegence/flowersec-core/ws`"
+          "`@floegence/flowersec-core/ws`",
+          "`WebSocketLimits`",
+          "`DEFAULT_WEB_SOCKET_LIMITS`"
         ],
         "runtime_exports": [
-          "WebSocketBinaryTransport"
+          "WebSocketBinaryTransport",
+          "DEFAULT_WEB_SOCKET_LIMITS"
         ]
       },
       {
@@ -939,7 +1041,23 @@
       },
       {
         "kind": "swift.init",
-        "name": "ConnectOptions.init(origin:connectTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:)"
+        "name": "ConnectOptions.init(origin:connectTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:yamuxLimits:liveness:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "DiagnosticCodeDomain.init(rawValue:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "DiagnosticEvent.init(from:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "DiagnosticEvent.init(v:namespace:path:stage:codeDomain:code:result:elapsedMS:attemptSeq:traceID:sessionID:resource:current:limit:)"
+      },
+      {
+        "kind": "swift.init",
+        "name": "DiagnosticResult.init(rawValue:)"
       },
       {
         "kind": "swift.init",
@@ -959,7 +1077,67 @@
       },
       {
         "kind": "swift.property",
+        "name": "ConnectOptions.onDiagnosticEvent"
+      },
+      {
+        "kind": "swift.property",
         "name": "ConnectOptions.transportSecurityPolicy"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.attemptSeq"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.code"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.codeDomain"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.current"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.elapsedMS"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.limit"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.namespace"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.path"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.resource"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.result"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.sessionID"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.stage"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.traceID"
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.v"
       },
       {
         "kind": "swift.property",
@@ -1003,6 +1181,10 @@
       },
       {
         "kind": "swift.struct",
+        "name": "DiagnosticEvent"
+      },
+      {
+        "kind": "swift.struct",
         "name": "TransportSecurityPolicyInput"
       },
       {
@@ -1023,7 +1205,19 @@
       },
       {
         "kind": "swift.enum",
+        "name": "DiagnosticCodeDomain"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "DiagnosticResult"
+      },
+      {
+        "kind": "swift.enum",
         "name": "FlowersecCode"
+      },
+      {
+        "kind": "swift.enum",
+        "name": "LivenessOptions"
       },
       {
         "kind": "swift.enum",
@@ -1056,6 +1250,30 @@
       {
         "kind": "swift.enum.case",
         "name": "FlowersecCode.authTagMismatch"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "DiagnosticCodeDomain.error"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "DiagnosticCodeDomain.event"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "DiagnosticResult.fail"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "DiagnosticResult.ok"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "DiagnosticResult.retry"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "DiagnosticResult.skip"
       },
       {
         "kind": "swift.enum.case",
@@ -1111,6 +1329,10 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "FlowersecCode.resourceExhausted"
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "FlowersecCode.streamHelloFailed"
       },
       {
@@ -1120,6 +1342,18 @@
       {
         "kind": "swift.enum.case",
         "name": "FlowersecCode.websocketFailed"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "LivenessOptions.disabled"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "LivenessOptions.enabled(interval:timeout:)"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "LivenessOptions.pathDefault"
       },
       {
         "kind": "swift.enum.case",
@@ -1144,6 +1378,10 @@
       {
         "kind": "swift.enum.case",
         "name": "FlowersecStage.connect"
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.transport"
       },
       {
         "kind": "swift.enum.case",
@@ -1223,7 +1461,7 @@
       },
       {
         "kind": "swift.init",
-        "name": "ConnectOptions.init(origin:connectTimeout:)"
+        "name": "YamuxLimits.init(maxActiveStreams:maxInboundStreams:maxFrameBytes:preferredOutboundFrameBytes:maxStreamReceiveBytes:maxSessionReceiveBytes:)"
       },
       {
         "kind": "swift.init",
@@ -1351,6 +1589,10 @@
       },
       {
         "kind": "swift.method",
+        "name": "FlowersecClient.probeLiveness(timeout:)"
+      },
+      {
+        "kind": "swift.method",
         "name": "RPCClient.call(_:_:timeout:)"
       },
       {
@@ -1451,7 +1693,19 @@
       },
       {
         "kind": "swift.property",
+        "name": "ConnectOptions.liveness"
+      },
+      {
+        "kind": "swift.property",
         "name": "ConnectOptions.origin"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectOptions.outboundRecordChunkBytes"
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectOptions.yamuxLimits"
       },
       {
         "kind": "swift.property",
@@ -1578,6 +1832,30 @@
         "name": "ScopePayload.object"
       },
       {
+        "kind": "swift.property",
+        "name": "YamuxLimits.maxActiveStreams"
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.maxFrameBytes"
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.maxInboundStreams"
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.maxSessionReceiveBytes"
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.maxStreamReceiveBytes"
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.preferredOutboundFrameBytes"
+      },
+      {
         "kind": "swift.protocol",
         "name": "FlowersecByteStream"
       },
@@ -1596,6 +1874,10 @@
       {
         "kind": "swift.struct",
         "name": "ConnectOptions"
+      },
+      {
+        "kind": "swift.struct",
+        "name": "YamuxLimits"
       },
       {
         "kind": "swift.struct",
@@ -1672,6 +1954,14 @@
       {
         "kind": "swift.type.method",
         "name": "FlowersecError.invalidYamux(_:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.livenessTimeout(_:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.resourceExhausted(path:stage:_:)"
       },
       {
         "kind": "swift.type.method",

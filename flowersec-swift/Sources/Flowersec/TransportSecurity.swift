@@ -62,24 +62,9 @@ enum FlowersecTransportSecurity {
       runtime: .swift
     )
 
-    guard let policy = options.transportSecurityPolicy else {
-      if target.scheme == "ws" {
-        options.onTransportSecurityDiagnostic?(
-          TransportSecurityDiagnostic(
-            code: "plaintext_transport",
-            path: path,
-            scheme: target.scheme,
-            host: target.host,
-            runtime: .swift
-          )
-        )
-      }
-      return
-    }
-
     let allowed: Bool
     do {
-      switch policy {
+      switch options.transportSecurityPolicy {
       case .requireTLS:
         allowed = target.scheme == "wss"
       case .allowPlaintextForLoopback:
@@ -94,6 +79,27 @@ enum FlowersecTransportSecurity {
     }
     if !allowed {
       throw denied(path: path)
+    }
+    if target.scheme == "ws" {
+      options.onDiagnosticEvent?(
+        DiagnosticEvent(
+          path: path,
+          stage: .transport,
+          codeDomain: .event,
+          code: "plaintext_transport",
+          result: .skip,
+          resource: "websocket_transport"
+        )
+      )
+      options.onTransportSecurityDiagnostic?(
+        TransportSecurityDiagnostic(
+          code: "plaintext_transport",
+          path: path,
+          scheme: target.scheme,
+          host: target.host,
+          runtime: .swift
+        )
+      )
     }
   }
 

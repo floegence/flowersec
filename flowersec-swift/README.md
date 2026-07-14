@@ -19,7 +19,7 @@ The package is intentionally product-neutral. It does not contain downstream app
 The repository root exposes the Swift package:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.16")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.20.0")
 ```
 
 Use the `Flowersec` product:
@@ -43,16 +43,18 @@ let info = DirectConnectInfo(
 
 let client = try await Flowersec.connectDirect(
   info,
-  options: DirectConnectOptions(origin: origin, transportSecurityPolicy: .requireTLS)
+  options: DirectConnectOptions(origin: origin)
 )
 
 let response: PingResponse = try await client.rpc.call(4001, PingRequest())
+let rtt = try await client.probeLiveness(timeout: .seconds(10))
 let stream = try await client.openStream(kind: "custom")
 await client.close()
 ```
 
-Use `.allowPlaintextForLoopback` only for literal local development targets. The low-level WebSocket
-transport remains scheme-neutral; high-level callers choose the deployment policy explicitly.
+High-level connects use `.requireTLS` by default. Use `.allowPlaintextForLoopback` only for literal local development targets. The low-level WebSocket transport remains scheme-neutral; high-level callers choose the deployment policy explicitly. Automatic liveness is disabled for direct sessions by default; configure `ConnectOptions.liveness` when a direct deployment needs periodic acknowledged probes.
+
+Use `ConnectOptions.onDiagnosticEvent` for generic transport, Yamux, liveness, and resource-limit events. Events contain only low-cardinality communication metadata and optional `resource`, `current`, and `limit` values; they never include URL queries, credentials, stream kinds, RPC type IDs, or application payloads.
 
 ## Connect Artifacts
 

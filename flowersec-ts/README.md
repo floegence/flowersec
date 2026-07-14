@@ -30,8 +30,9 @@ client.close();
 Node.js:
 
 ```ts
-import { connectNode, createNodeReconnectConfig, RequireTLS } from "@floegence/flowersec-core/node";
+import { connectNode, createNodeReconnectConfig } from "@floegence/flowersec-core/node";
 import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
+import { createControlplaneArtifactSource } from "@floegence/flowersec-core/reconnect";
 
 const artifact = await requestConnectArtifact({
   baseUrl: "https://your-app.example/api/flowersec",
@@ -40,26 +41,25 @@ const artifact = await requestConnectArtifact({
 
 const client = await connectNode(artifact, {
   origin: "https://your-app.example",
-  transportSecurityPolicy: RequireTLS,
 });
 await client.ping();
+const rttMs = await client.probeLiveness();
 client.close();
 
 const reconnectConfig = createNodeReconnectConfig({
-  artifactControlplane: {
+  source: createControlplaneArtifactSource({
     baseUrl: "https://your-app.example/api/flowersec",
     endpointId: "env_demo",
-  },
+  }),
   connect: {
     origin: "https://your-app.example",
-    transportSecurityPolicy: RequireTLS,
   },
 });
 ```
 
 Browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain available from `@floegence/flowersec-core/browser` as stable aliases.
 
-Use `RequireTLS` for remote deployments. `AllowPlaintextForLoopback` permits only literal loopback
+High-level connects use `RequireTLS` by default. `AllowPlaintextForLoopback` permits only literal loopback
 targets without DNS resolution; `AllowPlaintext` is an explicit acceptance of pre-E2EE metadata exposure.
 
 ## Docs
@@ -69,4 +69,4 @@ targets without DNS resolution; `AllowPlaintext` is an explicit acceptance of pr
 - API surface contract: `docs/API_SURFACE.md`
 - Controlplane artifact fetch: `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
 - Error model: `docs/ERROR_MODEL.md`
-- Migration guide: `docs/V0_19_MIGRATION.md`
+- Migration guide: `docs/V0_20_MIGRATION.md`

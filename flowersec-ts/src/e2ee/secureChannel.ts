@@ -28,6 +28,8 @@ export type BinaryTransport = {
 export type SecureChannelOptions = Readonly<{
   /** Maximum encoded record size (header + ciphertext). */
   maxRecordBytes: number;
+  /** Preferred plaintext bytes per outbound record. */
+  outboundRecordChunkBytes?: number;
   /** Maximum queued plaintext bytes before backpressure/errors. */
   maxBufferedBytes?: number;
 }>;
@@ -62,6 +64,7 @@ export class SecureChannel {
   private readonly transport: BinaryTransport;
   // Maximum allowed bytes per record frame.
   private readonly maxRecordBytes: number;
+  private readonly outboundRecordChunkBytes: number;
   // Upper bound for buffered plaintext in memory.
   private readonly maxBufferedBytes: number;
 
@@ -101,6 +104,7 @@ export class SecureChannel {
   constructor(args: {
     transport: BinaryTransport;
     maxRecordBytes: number;
+    outboundRecordChunkBytes?: number;
     maxBufferedBytes?: number;
     sendKey: Uint8Array;
     recvKey: Uint8Array;
@@ -115,6 +119,11 @@ export class SecureChannel {
   }) {
     this.transport = args.transport;
     this.maxRecordBytes = args.maxRecordBytes;
+    const maxPlain = Math.max(1, maxPlaintextBytes(this.maxRecordBytes));
+    this.outboundRecordChunkBytes = args.outboundRecordChunkBytes ?? Math.min(64 * 1024, maxPlain);
+    if (!Number.isSafeInteger(this.outboundRecordChunkBytes) || this.outboundRecordChunkBytes <= 0 || this.outboundRecordChunkBytes > maxPlain) {
+      throw new RangeError("outboundRecordChunkBytes must be a positive integer within the record plaintext limit");
+    }
     this.maxBufferedBytes = Math.max(0, args.maxBufferedBytes ?? 4 * (1 << 20));
     this.sendKey = args.sendKey;
     this.recvKey = args.recvKey;
@@ -132,13 +141,8 @@ export class SecureChannel {
 
   // write splits payloads into record-sized chunks and queues them for send.
   async write(plaintext: Uint8Array): Promise<void> {
-    const maxPlain = Math.max(1, maxPlaintextBytes(this.maxRecordBytes) || plaintext.length);
-    let off = 0;
-    while (off < plaintext.length) {
-      const chunk = plaintext.slice(off, Math.min(plaintext.length, off + maxPlain));
-      await this.enqueueSend("app", chunk);
-      off += chunk.length;
-    }
+    if (plaintext.length === 0) return;
+    await this.enqueueSend("app", plaintext.slice());
   }
 
   // read resolves with the next plaintext chunk or throws on errors/close.
@@ -282,8 +286,15 @@ export class SecureChannel {
       try {
         let frame: Uint8Array;
         if (req.kind === "app") {
-          const seq = this.reserveSendSeq();
-          frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_APP, seq, req.payload ?? new Uint8Array(), this.maxRecordBytes);
+          const payload = req.payload ?? new Uint8Array();
+          for (let offset = 0; offset < payload.length; offset += this.outboundRecordChunkBytes) {
+            const chunk = payload.subarray(offset, Math.min(payload.length, offset + this.outboundRecordChunkBytes));
+            const seq = this.reserveSendSeq();
+            frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_APP, seq, chunk, this.maxRecordBytes);
+            await this.transport.writeBinary(frame);
+          }
+          req.resolve();
+          continue;
         } else if (req.kind === "ping") {
           const seq = this.reserveSendSeq();
           frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_PING, seq, new Uint8Array(), this.maxRecordBytes);

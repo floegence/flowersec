@@ -14,7 +14,7 @@ import (
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 )
 
-func TestConnectDirect_DefaultKeepaliveDisabled(t *testing.T) {
+func TestConnectDirect_DefaultLivenessProbe(t *testing.T) {
 	t.Parallel()
 
 	origin := "http://example.com"
@@ -55,7 +55,7 @@ func TestConnectDirect_DefaultKeepaliveDisabled(t *testing.T) {
 		DefaultSuite:             directv1.Suite_X25519_HKDF_SHA256_AES_256_GCM,
 	}
 
-	c, err := ConnectDirect(context.Background(), info, WithOrigin(origin), WithConnectTimeout(2*time.Second), WithHandshakeTimeout(2*time.Second))
+	c, err := ConnectDirect(context.Background(), info, WithOrigin(origin), WithConnectTimeout(2*time.Second), WithHandshakeTimeout(2*time.Second), WithTransportSecurityPolicy(AllowPlaintextForLoopback))
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)
 	}
@@ -65,12 +65,14 @@ func TestConnectDirect_DefaultKeepaliveDisabled(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected client type: %T", c)
 	}
-	if sess.keepaliveStop != nil {
-		t.Fatalf("expected direct keepalive to be disabled by default")
+	probeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := sess.ProbeLiveness(probeCtx); err != nil {
+		t.Fatalf("ProbeLiveness() failed: %v", err)
 	}
 }
 
-func TestConnectDirect_KeepaliveOptionStartsKeepalive(t *testing.T) {
+func TestConnectDirect_LivenessOptionProbes(t *testing.T) {
 	t.Parallel()
 
 	origin := "http://example.com"
@@ -115,9 +117,10 @@ func TestConnectDirect_KeepaliveOptionStartsKeepalive(t *testing.T) {
 		context.Background(),
 		info,
 		WithOrigin(origin),
-		WithKeepaliveInterval(10*time.Millisecond),
+		WithLiveness(LivenessOptions{Interval: 50 * time.Millisecond, Timeout: time.Second}),
 		WithConnectTimeout(2*time.Second),
 		WithHandshakeTimeout(2*time.Second),
+		WithTransportSecurityPolicy(AllowPlaintextForLoopback),
 	)
 	if err != nil {
 		t.Fatalf("ConnectDirect() failed: %v", err)
@@ -128,7 +131,9 @@ func TestConnectDirect_KeepaliveOptionStartsKeepalive(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected client type: %T", c)
 	}
-	if sess.keepaliveStop == nil {
-		t.Fatalf("expected direct keepalive to be enabled when configured")
+	probeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := sess.ProbeLiveness(probeCtx); err != nil {
+		t.Fatalf("ProbeLiveness() failed: %v", err)
 	}
 }

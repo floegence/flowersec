@@ -84,17 +84,17 @@ func TestTransportSecurityCustomPolicyCannotAllowNonWebSocketScheme(t *testing.T
 	}
 }
 
-func TestTransportSecurityMissingPolicyEmitsPlaintextDiagnostic(t *testing.T) {
+func TestTransportSecurityExplicitPlaintextPolicyEmitsDiagnostic(t *testing.T) {
 	t.Parallel()
 	recorder := &transportDiagnosticObserver{events: make(chan observability.DiagnosticEvent, 2)}
 	observer := observability.NormalizeClientObserver(recorder, observability.ClientObserverContext{Path: fserrors.PathDirect})
-	err := evaluateTransportSecurity(context.Background(), "ws://example.com/ws", fserrors.PathDirect, nil, observer)
+	err := evaluateTransportSecurity(context.Background(), "ws://example.com/ws", fserrors.PathDirect, AllowPlaintext, observer)
 	if err != nil {
 		t.Fatalf("evaluateTransportSecurity() error = %v", err)
 	}
 	select {
 	case event := <-recorder.events:
-		if event.Code != "plaintext_transport" || event.Path != string(fserrors.PathDirect) {
+		if event.Code != "plaintext_transport" || event.Path != string(fserrors.PathDirect) || event.Stage != observability.DiagnosticStageTransport {
 			t.Fatalf("unexpected diagnostic: %+v", event)
 		}
 	case <-time.After(time.Second):
@@ -103,6 +103,20 @@ func TestTransportSecurityMissingPolicyEmitsPlaintextDiagnostic(t *testing.T) {
 	select {
 	case duplicate := <-recorder.events:
 		t.Fatalf("duplicate plaintext diagnostic: %+v", duplicate)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestTransportSecurityMissingPolicyDoesNotEmitPlaintextDiagnostic(t *testing.T) {
+	t.Parallel()
+	recorder := &transportDiagnosticObserver{events: make(chan observability.DiagnosticEvent, 1)}
+	observer := observability.NormalizeClientObserver(recorder, observability.ClientObserverContext{Path: fserrors.PathDirect})
+	if err := evaluateTransportSecurity(context.Background(), "ws://example.com/ws", fserrors.PathDirect, nil, observer); err != nil {
+		t.Fatalf("evaluateTransportSecurity() error = %v", err)
+	}
+	select {
+	case event := <-recorder.events:
+		t.Fatalf("unexpected plaintext diagnostic: %+v", event)
 	case <-time.After(50 * time.Millisecond):
 	}
 }

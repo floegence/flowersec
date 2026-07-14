@@ -19,12 +19,12 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/internal/endpointid"
 	"github.com/floegence/flowersec/flowersec-go/internal/wsutil"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/gorilla/websocket"
-	hyamux "github.com/hashicorp/yamux"
 )
 
 // ConnectTunnel attaches to a tunnel as role=client and returns an RPC-ready session.
@@ -45,15 +45,12 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if origin == "" {
 		origin = strings.TrimSpace(cfg.header.Get("Origin"))
 	}
-	if err := evaluateTransportSecurity(ctx, prepared.TunnelURL, fserrors.PathTunnel, cfg.transportSecurityPolicy, observer); err != nil {
-		return nil, err
-	}
 	if origin == "" {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
 	}
-	keepalive := cfg.keepaliveInterval
-	if !cfg.keepaliveSet {
-		keepalive = defaults.KeepaliveInterval(prepared.IdleTimeoutSeconds)
+	liveness := cfg.liveness
+	if !cfg.livenessSet {
+		liveness.Interval, liveness.Timeout = defaults.Liveness(prepared.IdleTimeoutSeconds)
 	}
 
 	endpointInstanceID := cfg.endpointInstanceID
@@ -66,6 +63,9 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
 	} else if err := endpointid.Validate(endpointInstanceID); err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidEndpointInstanceID, ErrInvalidEndpointInstanceID)
+	}
+	if err := evaluateTransportSecurity(ctx, prepared.TunnelURL, fserrors.PathTunnel, cfg.transportSecurityPolicy, observer); err != nil {
+		return nil, err
 	}
 	connectTimeout := cfg.connectTimeout
 	handshakeTimeout := cfg.handshakeTimeout
@@ -99,22 +99,22 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	}
 
 	out, err := dialAfterAttach(ctx, c, fserrors.PathTunnel, endpointInstanceID, dialE2EEOptions{
-		psk:               prepared.PSK,
-		suite:             prepared.Suite,
-		channelID:         prepared.ChannelID,
-		clientFeatures:    cfg.clientFeatures,
-		maxHandshakeBytes: cfg.maxHandshakePayload,
-		maxRecordBytes:    cfg.maxRecordBytes,
-		maxBufferedBytes:  cfg.maxBufferedBytes,
-		handshakeTimeout:  handshakeTimeout,
-		observer:          observer,
+		psk:                      prepared.PSK,
+		suite:                    prepared.Suite,
+		channelID:                prepared.ChannelID,
+		clientFeatures:           cfg.clientFeatures,
+		maxHandshakeBytes:        cfg.maxHandshakePayload,
+		maxRecordBytes:           cfg.maxRecordBytes,
+		maxBufferedBytes:         cfg.maxBufferedBytes,
+		outboundRecordChunkBytes: cfg.outboundRecordChunkBytes,
+		handshakeTimeout:         handshakeTimeout,
+		observer:                 observer,
+		yamuxLimits:              cfg.yamuxLimits,
+		liveness:                 liveness,
 	})
 	if err != nil {
 		_ = c.Close()
 		return nil, err
-	}
-	if keepalive > 0 {
-		out.startKeepalive(keepalive)
 	}
 	return out, nil
 }
@@ -135,10 +135,6 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	}
 	if origin == "" {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin)
-	}
-	keepalive := time.Duration(0)
-	if cfg.keepaliveSet {
-		keepalive = cfg.keepaliveInterval
 	}
 	if cfg.endpointInstanceIDSet {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrEndpointInstanceIDNotAllowed)
@@ -169,22 +165,22 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	c.SetReadLimit(wsutil.ReadLimit(cfg.maxHandshakePayload, cfg.maxRecordBytes))
 
 	out, err := dialAfterAttach(ctx, c, fserrors.PathDirect, "", dialE2EEOptions{
-		psk:               prepared.PSK,
-		suite:             prepared.Suite,
-		channelID:         prepared.ChannelID,
-		clientFeatures:    cfg.clientFeatures,
-		maxHandshakeBytes: cfg.maxHandshakePayload,
-		maxRecordBytes:    cfg.maxRecordBytes,
-		maxBufferedBytes:  cfg.maxBufferedBytes,
-		handshakeTimeout:  handshakeTimeout,
-		observer:          observer,
+		psk:                      prepared.PSK,
+		suite:                    prepared.Suite,
+		channelID:                prepared.ChannelID,
+		clientFeatures:           cfg.clientFeatures,
+		maxHandshakeBytes:        cfg.maxHandshakePayload,
+		maxRecordBytes:           cfg.maxRecordBytes,
+		maxBufferedBytes:         cfg.maxBufferedBytes,
+		outboundRecordChunkBytes: cfg.outboundRecordChunkBytes,
+		handshakeTimeout:         handshakeTimeout,
+		observer:                 observer,
+		yamuxLimits:              cfg.yamuxLimits,
+		liveness:                 cfg.liveness,
 	})
 	if err != nil {
 		_ = c.Close()
 		return nil, err
-	}
-	if keepalive > 0 {
-		out.startKeepalive(keepalive)
 	}
 	return out, nil
 }
@@ -202,12 +198,15 @@ type dialE2EEOptions struct {
 	channelID      string
 	clientFeatures uint32
 
-	maxHandshakeBytes int
-	maxRecordBytes    int
-	maxBufferedBytes  int
+	maxHandshakeBytes        int
+	maxRecordBytes           int
+	maxBufferedBytes         int
+	outboundRecordChunkBytes int
 
 	handshakeTimeout time.Duration
 	observer         observability.ClientObserver
+	yamuxLimits      YamuxLimits
+	liveness         LivenessOptions
 }
 
 func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpointInstanceID string, opts dialE2EEOptions) (*session, error) {
@@ -217,13 +216,14 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 
 	bt := e2ee.NewWebSocketMessageTransport(c)
 	secure, err := e2ee.ClientHandshake(handshakeCtx, bt, e2ee.ClientHandshakeOptions{
-		PSK:                 opts.psk,
-		Suite:               opts.suite,
-		ChannelID:           opts.channelID,
-		ClientFeatures:      opts.clientFeatures,
-		MaxHandshakePayload: opts.maxHandshakeBytes,
-		MaxRecordBytes:      opts.maxRecordBytes,
-		MaxBufferedBytes:    opts.maxBufferedBytes,
+		PSK:                      opts.psk,
+		Suite:                    opts.suite,
+		ChannelID:                opts.channelID,
+		ClientFeatures:           opts.clientFeatures,
+		MaxHandshakePayload:      opts.maxHandshakeBytes,
+		MaxRecordBytes:           opts.maxRecordBytes,
+		MaxBufferedBytes:         opts.maxBufferedBytes,
+		OutboundRecordChunkBytes: opts.outboundRecordChunkBytes,
 	})
 	if err != nil {
 		// Tunnel attach rejections are communicated via websocket close status + reason tokens.
@@ -254,13 +254,15 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 	}
 	opts.observer.OnHandshake(path, observability.HandshakeResultOK, "", time.Since(handshakeStart))
 
-	ycfg := hyamux.DefaultConfig()
-	ycfg.EnableKeepAlive = false
-	ycfg.LogOutput = io.Discard
-	sess, err := hyamux.Client(secure, ycfg)
+	sess, err := fsyamux.NewClient(secure, opts.yamuxLimits, opts.liveness)
 	if err != nil {
 		_ = secure.Close()
 		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeMuxFailed, err)
+	}
+	if _, err := sess.Probe(handshakeCtx); err != nil {
+		_ = sess.Close()
+		_ = secure.Close()
+		return nil, wrapErr(path, fserrors.StageYamux, classifyContextOrCode(err, fserrors.CodeMuxFailed), err)
 	}
 
 	rpcStream, err := openBootstrapStream(handshakeCtx, path, secure, func() (io.ReadWriteCloser, error) {
@@ -279,7 +281,9 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 		secure:             secure,
 		mux:                sess,
 		rpc:                rpcClient,
+		observer:           opts.observer,
 	}
+	go out.watchLiveness()
 	return out, nil
 }
 

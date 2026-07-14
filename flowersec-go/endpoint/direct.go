@@ -16,9 +16,9 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
 	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/internal/wsutil"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
 	"github.com/gorilla/websocket"
-	hyamux "github.com/hashicorp/yamux"
 )
 
 func hasNonEmptyAllowedOrigins(allowed []string) bool {
@@ -44,12 +44,14 @@ type AcceptDirectOptions struct {
 
 	ServerFeatures uint32
 
-	MaxHandshakePayload int
-	MaxRecordBytes      int
-	MaxBufferedBytes    int
+	MaxHandshakePayload      int
+	MaxRecordBytes           int
+	MaxBufferedBytes         int
+	OutboundRecordChunkBytes int
 
 	HandshakeCache *HandshakeCache
-	YamuxConfig    *hyamux.Config
+	YamuxLimits    YamuxLimits
+	Liveness       LivenessOptions
 }
 
 // AcceptDirectWS performs the server-side E2EE handshake on an upgraded websocket connection
@@ -107,6 +109,18 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max buffered bytes must be >= 0"))
 	}
+	if opts.OutboundRecordChunkBytes < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("outbound record chunk bytes must be >= 0"))
+	}
+	if _, err := fsyamux.ValidateLimits(opts.YamuxLimits); err != nil {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
+	}
+	if opts.Liveness.Interval < 0 || opts.Liveness.Timeout < 0 || (opts.Liveness.Interval == 0) != (opts.Liveness.Timeout == 0) {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("liveness interval and timeout must both be > 0 or both be zero"))
+	}
 	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, handshakeTimeout)
 	defer handshakeCancel()
 
@@ -115,28 +129,23 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 
 	bt := e2ee.NewWebSocketBinaryTransport(c)
 	secure, err := e2ee.ServerHandshake(handshakeCtx, bt, opts.HandshakeCache, e2ee.ServerHandshakeOptions{
-		PSK:                 opts.PSK,
-		Suite:               e2ee.Suite(suite),
-		ChannelID:           channelID,
-		InitExpireAtUnixS:   opts.InitExpireAtUnixS,
-		ClockSkew:           clockSkew,
-		ServerFeatures:      opts.ServerFeatures,
-		MaxHandshakePayload: opts.MaxHandshakePayload,
-		MaxRecordBytes:      opts.MaxRecordBytes,
-		MaxBufferedBytes:    opts.MaxBufferedBytes,
+		PSK:                      opts.PSK,
+		Suite:                    e2ee.Suite(suite),
+		ChannelID:                channelID,
+		InitExpireAtUnixS:        opts.InitExpireAtUnixS,
+		ClockSkew:                clockSkew,
+		ServerFeatures:           opts.ServerFeatures,
+		MaxHandshakePayload:      opts.MaxHandshakePayload,
+		MaxRecordBytes:           opts.MaxRecordBytes,
+		MaxBufferedBytes:         opts.MaxBufferedBytes,
+		OutboundRecordChunkBytes: opts.OutboundRecordChunkBytes,
 	})
 	if err != nil {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
 	}
 
-	ycfg := opts.YamuxConfig
-	if ycfg == nil {
-		ycfg = hyamux.DefaultConfig()
-		ycfg.EnableKeepAlive = false
-		ycfg.LogOutput = io.Discard
-	}
-	mux, err := hyamux.Server(secure, ycfg)
+	mux, err := fsyamux.NewServer(secure, opts.YamuxLimits, opts.Liveness)
 	if err != nil {
 		_ = secure.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageYamux, fserrors.CodeMuxFailed, err)
@@ -180,12 +189,14 @@ type AcceptDirectResolverOptions struct {
 
 	ServerFeatures uint32
 
-	MaxHandshakePayload int
-	MaxRecordBytes      int
-	MaxBufferedBytes    int
+	MaxHandshakePayload      int
+	MaxRecordBytes           int
+	MaxBufferedBytes         int
+	OutboundRecordChunkBytes int
 
 	HandshakeCache *HandshakeCache
-	YamuxConfig    *hyamux.Config
+	YamuxLimits    YamuxLimits
+	Liveness       LivenessOptions
 
 	// Resolve returns the PSK and init_exp for the given client init. It must not panic.
 	Resolve func(ctx context.Context, init DirectHandshakeInit) (DirectHandshakeSecrets, error)
@@ -254,6 +265,18 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 	if opts.MaxBufferedBytes < 0 {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max buffered bytes must be >= 0"))
+	}
+	if opts.OutboundRecordChunkBytes < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("outbound record chunk bytes must be >= 0"))
+	}
+	if _, err := fsyamux.ValidateLimits(opts.YamuxLimits); err != nil {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
+	}
+	if opts.Liveness.Interval < 0 || opts.Liveness.Timeout < 0 || (opts.Liveness.Interval == 0) != (opts.Liveness.Timeout == 0) {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("liveness interval and timeout must both be > 0 or both be zero"))
 	}
 	handshakeCtx, handshakeCancel := contextutil.WithTimeout(ctx, handshakeTimeout)
 	defer handshakeCancel()
@@ -330,23 +353,17 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidPSK, ErrInvalidPSK)
 	}
 
-	ycfg := opts.YamuxConfig
-	if ycfg == nil {
-		ycfg = hyamux.DefaultConfig()
-		ycfg.EnableKeepAlive = false
-		ycfg.LogOutput = io.Discard
-	}
-
 	secure, err := e2ee.ServerHandshake(handshakeCtx, &replayBinaryTransport{first: firstFrame, t: bt}, opts.HandshakeCache, e2ee.ServerHandshakeOptions{
-		PSK:                 secrets.PSK,
-		Suite:               e2ee.Suite(initMsg.Suite),
-		ChannelID:           channelID,
-		InitExpireAtUnixS:   secrets.InitExpireAtUnixS,
-		ClockSkew:           clockSkew,
-		ServerFeatures:      opts.ServerFeatures,
-		MaxHandshakePayload: opts.MaxHandshakePayload,
-		MaxRecordBytes:      opts.MaxRecordBytes,
-		MaxBufferedBytes:    opts.MaxBufferedBytes,
+		PSK:                      secrets.PSK,
+		Suite:                    e2ee.Suite(initMsg.Suite),
+		ChannelID:                channelID,
+		InitExpireAtUnixS:        secrets.InitExpireAtUnixS,
+		ClockSkew:                clockSkew,
+		ServerFeatures:           opts.ServerFeatures,
+		MaxHandshakePayload:      opts.MaxHandshakePayload,
+		MaxRecordBytes:           opts.MaxRecordBytes,
+		MaxBufferedBytes:         opts.MaxBufferedBytes,
+		OutboundRecordChunkBytes: opts.OutboundRecordChunkBytes,
 	})
 	if err != nil {
 		_ = c.Close()
@@ -359,7 +376,7 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 		}
 	}
 
-	mux, err := hyamux.Server(secure, ycfg)
+	mux, err := fsyamux.NewServer(secure, opts.YamuxLimits, opts.Liveness)
 	if err != nil {
 		_ = secure.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageYamux, fserrors.CodeMuxFailed, err)

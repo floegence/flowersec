@@ -144,7 +144,7 @@ func TestConnectTunnel_RejectsEmptyEndpointInstanceID(t *testing.T) {
 		AllowedSuites:            []controlv1.Suite{controlv1.Suite_X25519_HKDF_SHA256_AES_256_GCM},
 		IdleTimeoutSeconds:       60,
 	}
-	_, err := ConnectTunnel(context.Background(), grant, WithOrigin("http://example.com"), WithEndpointInstanceID(""))
+	_, err := ConnectTunnel(context.Background(), grant, WithOrigin("http://example.com"), WithEndpointInstanceID(""), WithTransportSecurityPolicy(AllowPlaintextForLoopback))
 	if err == nil {
 		t.Fatal("expected error")
 	}
