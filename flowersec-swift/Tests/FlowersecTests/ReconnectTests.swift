@@ -44,7 +44,7 @@ final class ReconnectTests: XCTestCase {
     let config = ReconnectConfig(
       source: source,
       options: ConnectOptions(onDiagnosticEvent: { event in
-        Task { await diagnostics.record(event) }
+        diagnostics.record(event)
       }),
       settings: ReconnectSettings(
         enabled: true,
@@ -78,8 +78,7 @@ final class ReconnectTests: XCTestCase {
     let connectorCount = await calls.connectorCount()
     XCTAssertEqual(sourceCount, 3)
     XCTAssertEqual(connectorCount, 1)
-    try await Task.sleep(for: .milliseconds(10))
-    let events = await diagnostics.events()
+    let events = diagnostics.events()
     XCTAssertEqual(
       events.map { "\($0.code):\($0.attemptSeq)" },
       [
@@ -139,12 +138,19 @@ private actor ReconnectTestCounter {
   func connectorCount() -> Int { connectors }
 }
 
-private actor ReconnectDiagnosticRecorder {
+private final class ReconnectDiagnosticRecorder: @unchecked Sendable {
+  private let lock = NSLock()
   private var values: [DiagnosticEvent] = []
 
   func record(_ event: DiagnosticEvent) {
+    lock.lock()
     values.append(event)
+    lock.unlock()
   }
 
-  func events() -> [DiagnosticEvent] { values }
+  func events() -> [DiagnosticEvent] {
+    lock.lock()
+    defer { lock.unlock() }
+    return values
+  }
 }
