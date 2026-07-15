@@ -92,14 +92,12 @@ describe("createNodeWsFactory", () => {
     const wsFactory = createNodeWsFactory();
     const ws = wsFactory(`ws://127.0.0.1:${port}`, origin);
 
-    await new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve());
-      ws.addEventListener("error", (e) => reject(e));
-    });
-
-    const closed = await new Promise<{ code?: number }>((resolve) => {
+    const closedPromise = new Promise<{ code?: number }>((resolve) => {
       ws.addEventListener("close", (e: any) => resolve(e));
     });
+    // Protocol rejection can emit an error before or alongside close.
+    ws.addEventListener("error", () => {});
+    const closed = await closedPromise;
     // "ws" may terminate the connection rather than completing a clean close handshake.
     // Accept both normal "message too big" and abnormal closure codes.
     expect([1006, 1009]).toContain(closed.code);
@@ -125,14 +123,12 @@ describe("createNodeWsFactory", () => {
     const wsFactory = createNodeWsFactory({ maxPayload: 32 });
     const ws = wsFactory(`ws://127.0.0.1:${port}`, origin);
 
-    await new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve());
-      ws.addEventListener("error", (e) => reject(e));
-    });
-
-    const closed = await new Promise<{ code?: number }>((resolve) => {
+    const closedPromise = new Promise<{ code?: number }>((resolve) => {
       ws.addEventListener("close", (e: any) => resolve(e));
     });
+    // Protocol rejection can emit an error before or alongside close.
+    ws.addEventListener("error", () => {});
+    const closed = await closedPromise;
     // "ws" may terminate the connection rather than completing a clean close handshake.
     // Accept both normal "message too big" and abnormal closure codes.
     expect([1006, 1009]).toContain(closed.code);
