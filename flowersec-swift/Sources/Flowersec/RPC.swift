@@ -39,14 +39,16 @@ public actor RPCClient {
   }
 
   private let stream: any FlowersecRPCStream
+  private let path: FlowersecPath
   private var nextRequestID: UInt64 = 1
   private var pending: [UInt64: PendingCall] = [:]
   private var notifyHandlers: [UInt32: [UUID: @Sendable (Data) async -> Void]] = [:]
   private var readTask: Task<Void, Never>?
   private var closed = false
 
-  public init(stream: any FlowersecRPCStream) {
+  public init(stream: any FlowersecRPCStream, path: FlowersecPath = .direct) {
     self.stream = stream
+    self.path = path
   }
 
   public func start() {
@@ -59,7 +61,7 @@ public actor RPCClient {
     _ request: Request,
     timeout: Duration = .seconds(8)
   ) async throws -> Response {
-    guard !closed else { throw FlowersecError.closed }
+    guard !closed else { throw FlowersecError.closed(path: path) }
     if Task.isCancelled {
       throw CancellationError()
     }
@@ -78,7 +80,10 @@ public actor RPCClient {
         let timeoutTask = Task {
           do {
             try await Task.sleep(for: timeout)
-            self.finishRequest(requestID, result: .failure(FlowersecError.timeout))
+            self.finishRequest(
+              requestID,
+              result: .failure(FlowersecError.timeout(path: self.path, stage: .rpc))
+            )
           } catch {}
         }
         if Task.isCancelled {
@@ -100,7 +105,18 @@ public actor RPCClient {
         await self.finishRequest(requestID, result: .failure(CancellationError()))
       }
     }
-    return try JSONDecoder.flowersecRPC.decode(Response.self, from: responsePayload)
+    do {
+      return try JSONDecoder.flowersecRPC.decode(Response.self, from: responsePayload)
+    } catch let error as FlowersecError {
+      throw error.withPath(path)
+    } catch {
+      throw FlowersecError(
+        path: path,
+        stage: .rpc,
+        code: .rpcFailed,
+        message: "The RPC response payload was invalid: \(error.localizedDescription)"
+      )
+    }
   }
 
   public func notify<Payload: Encodable>(_ typeID: UInt32, _ payload: Payload) async throws {
@@ -143,7 +159,7 @@ public actor RPCClient {
     pending.removeAll()
     for call in current.values {
       call.timeoutTask.cancel()
-      call.continuation.resume(throwing: FlowersecError.closed)
+      call.continuation.resume(throwing: FlowersecError.closed(path: path))
     }
   }
 
@@ -152,8 +168,12 @@ public actor RPCClient {
   }
 
   private func writeEnvelope(_ envelope: RPCEnvelope) async throws {
-    guard !closed else { throw FlowersecError.closed }
-    try await FlowersecJSONFrame.write(envelope.encoded(), to: stream)
+    guard !closed else { throw FlowersecError.closed(path: path) }
+    do {
+      try await FlowersecJSONFrame.write(envelope.encoded(), to: stream)
+    } catch let error as FlowersecError {
+      throw error.withPath(path)
+    }
   }
 
   private func readLoop() async {
@@ -164,12 +184,25 @@ public actor RPCClient {
         try await handle(envelope)
       }
     } catch {
+      let failure: Error
+      if error is CancellationError {
+        failure = error
+      } else if let flowersecError = error as? FlowersecError {
+        failure = flowersecError.withPath(path)
+      } else {
+        failure = FlowersecError(
+          path: path,
+          stage: .rpc,
+          code: .rpcFailed,
+          message: "The RPC response was invalid: \(error.localizedDescription)"
+        )
+      }
       closed = true
       let current = pending
       pending.removeAll()
       for call in current.values {
         call.timeoutTask.cancel()
-        call.continuation.resume(throwing: error)
+        call.continuation.resume(throwing: failure)
       }
     }
   }
@@ -187,7 +220,10 @@ public actor RPCClient {
       return
     }
     guard envelope.requestID == 0 else {
-      throw FlowersecError.invalidRPC("The peer sent an RPC request to the client.")
+      throw FlowersecError.invalidRPC(
+        "The peer sent an RPC request to the client.",
+        path: path
+      )
     }
     let handlers: [@Sendable (Data) async -> Void]
     if let values = notifyHandlers[envelope.typeID]?.values {
@@ -213,10 +249,12 @@ public actor RPCClient {
 public final class FlowersecClient: @unchecked Sendable {
   public let rpc: RPCClient
   private let yamux: FlowersecYamuxClient
+  private let path: FlowersecPath
 
-  init(rpc: RPCClient, yamux: FlowersecYamuxClient) {
+  init(rpc: RPCClient, yamux: FlowersecYamuxClient, path: FlowersecPath) {
     self.rpc = rpc
     self.yamux = yamux
+    self.path = path
   }
 
   public func close() async {
@@ -231,13 +269,17 @@ public final class FlowersecClient: @unchecked Sendable {
   public func openStream(kind: String) async throws -> any FlowersecByteStream {
     let trimmedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedKind.isEmpty else {
-      throw FlowersecError.invalidRPC("Stream kind is empty.")
+      throw FlowersecError.invalidRPC("Stream kind is empty.", path: path)
     }
     let stream = try await yamux.openStream()
-    try await FlowersecJSONFrame.write(
-      StreamHello(kind: trimmedKind, version: 1).encoded(),
-      to: stream
-    )
+    do {
+      try await FlowersecJSONFrame.write(
+        StreamHello(kind: trimmedKind, version: 1).encoded(),
+        to: stream
+      )
+    } catch let error as FlowersecError {
+      throw error.withPath(path)
+    }
     return stream
   }
 }
@@ -392,16 +434,20 @@ public enum Flowersec {
       yamux = establishedYamux
       let establishedStream = try await establishedYamux.openStream()
       stream = establishedStream
-      try await FlowersecJSONFrame.write(
-        StreamHello(kind: "rpc", version: 1).encoded(),
-        to: establishedStream
-      )
-      let establishedRPC = RPCClient(stream: establishedStream)
+      do {
+        try await FlowersecJSONFrame.write(
+          StreamHello(kind: "rpc", version: 1).encoded(),
+          to: establishedStream
+        )
+      } catch let error as FlowersecError {
+        throw error.withPath(path)
+      }
+      let establishedRPC = RPCClient(stream: establishedStream, path: path)
       rpc = establishedRPC
       await establishedRPC.start()
       await establishedYamux.start()
       try Task.checkCancellation()
-      return FlowersecClient(rpc: establishedRPC, yamux: establishedYamux)
+      return FlowersecClient(rpc: establishedRPC, yamux: establishedYamux, path: path)
     } catch {
       await rpc?.close()
       await stream?.close()

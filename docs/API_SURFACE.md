@@ -1,6 +1,6 @@
 # Flowersec API Surface
 
-This document defines the stable integration surface for Flowersec v0.21.0.
+This document defines the stable integration surface for Flowersec v0.21.1.
 
 Canonical source of truth for the stable surface: `stability/public_api_manifest.json`
 

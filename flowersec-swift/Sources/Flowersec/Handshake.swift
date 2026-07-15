@@ -10,32 +10,48 @@ enum FlowersecHandshake {
     path: FlowersecPath = .direct,
     onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil
   ) async throws -> FlowersecSecureChannel {
-    try validate(info: info)
-    let material = try ClientHandshakeMaterial(info: info)
-    try await sendInit(material: material, transport: transport)
-    let response = try await receiveResponse(transport: transport)
-    let serverMaterial = try ServerHandshakeMaterial(response: response, suite: info.defaultSuite)
-    let sessionKeys = try deriveSessionKeys(
-      info: info,
-      material: material,
-      server: serverMaterial,
-      serverFeatures: response.serverFeatures
-    )
-    try await sendAck(
-      response: response,
-      info: info,
-      transcript: sessionKeys.transcript,
-      transport: transport
-    )
-    try await verifyFinished(sessionKeys: sessionKeys, transport: transport)
-    return secureChannel(
-      transport: transport,
-      sessionKeys: sessionKeys,
-      outboundRecordChunkBytes: outboundRecordChunkBytes,
-      maxOutboundBufferedBytes: maxOutboundBufferedBytes,
-      path: path,
-      onDiagnosticEvent: onDiagnosticEvent
-    )
+    do {
+      try validate(info: info)
+      let material = try ClientHandshakeMaterial(info: info)
+      try await sendInit(material: material, transport: transport)
+      let response = try await receiveResponse(transport: transport)
+      let serverMaterial = try ServerHandshakeMaterial(
+        response: response,
+        suite: info.defaultSuite
+      )
+      let sessionKeys = try deriveSessionKeys(
+        info: info,
+        material: material,
+        server: serverMaterial,
+        serverFeatures: response.serverFeatures
+      )
+      try await sendAck(
+        response: response,
+        info: info,
+        transcript: sessionKeys.transcript,
+        transport: transport
+      )
+      try await verifyFinished(sessionKeys: sessionKeys, transport: transport)
+      return secureChannel(
+        transport: transport,
+        sessionKeys: sessionKeys,
+        outboundRecordChunkBytes: outboundRecordChunkBytes,
+        maxOutboundBufferedBytes: maxOutboundBufferedBytes,
+        path: path,
+        onDiagnosticEvent: onDiagnosticEvent
+      )
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch let error as FlowersecError {
+      throw error.withPath(path)
+    } catch {
+      throw FlowersecError(
+        path: path,
+        stage: .handshake,
+        code: .handshakeFailed,
+        message: "The Flowersec handshake failed: \(error.localizedDescription)"
+      )
+    }
   }
 
   private static func validate(info: DirectConnectInfo) throws {

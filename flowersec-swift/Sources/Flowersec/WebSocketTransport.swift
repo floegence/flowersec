@@ -93,16 +93,17 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
       case .data(let data):
         return data
       case .string:
-        throw FlowersecError.webSocket("The peer returned a text WebSocket frame.")
+        throw FlowersecError.webSocket("The peer returned a text WebSocket frame.", path: path)
       @unknown default:
         throw FlowersecError.webSocket(
-          "The peer returned an unknown WebSocket frame."
+          "The peer returned an unknown WebSocket frame.",
+          path: path
         )
       }
     } catch let error as FlowersecError {
-      throw error
+      throw error.withPath(path)
     } catch {
-      throw FlowersecError.webSocket(error.localizedDescription)
+      throw FlowersecError.webSocket(error.localizedDescription, path: path)
     }
   }
 
@@ -111,11 +112,11 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
     closed = true
     task.cancel(with: .goingAway, reason: nil)
     session.invalidateAndCancel()
-    failPendingWrites(with: FlowersecError.closed)
+    failPendingWrites(with: FlowersecError.closed(path: path))
   }
 
   private func enqueue(_ message: OutboundMessage) async throws {
-    guard !closed else { throw FlowersecError.closed }
+    guard !closed else { throw FlowersecError.closed(path: path) }
     guard message.byteCount <= Self.maxPendingWriteBytes - pendingWriteBytes else {
       let current = pendingWriteBytes + message.byteCount
       onDiagnosticEvent?(
@@ -156,7 +157,9 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
         try await task.send(write.message.webSocketMessage)
         finishWrite(result: .success(()))
       } catch {
-        finishWrite(result: .failure(FlowersecError.webSocket(error.localizedDescription)))
+        finishWrite(
+          result: .failure(FlowersecError.webSocket(error.localizedDescription, path: path))
+        )
       }
     }
   }

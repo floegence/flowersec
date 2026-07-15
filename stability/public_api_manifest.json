@@ -1531,7 +1531,7 @@
       },
       {
         "kind": "swift.init",
-        "name": "RPCClient.init(stream:)"
+        "name": "RPCClient.init(stream:path:)"
       },
       {
         "kind": "swift.init",
@@ -1975,27 +1975,31 @@
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.invalidConnectInfo(_:)"
+        "name": "FlowersecError.closed(path:)"
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.invalidHandshake(_:)"
+        "name": "FlowersecError.invalidConnectInfo(_:path:)"
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.invalidRPC(_:)"
+        "name": "FlowersecError.invalidHandshake(_:path:)"
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.invalidRecord(_:)"
+        "name": "FlowersecError.invalidRPC(_:path:)"
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.invalidYamux(_:)"
+        "name": "FlowersecError.invalidRecord(_:path:)"
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.livenessTimeout(_:)"
+        "name": "FlowersecError.invalidYamux(_:path:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.livenessTimeout(_:path:)"
       },
       {
         "kind": "swift.type.method",
@@ -2003,7 +2007,11 @@
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.webSocket(_:)"
+        "name": "FlowersecError.timeout(path:stage:message:)"
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.webSocket(_:path:)"
       },
       {
         "kind": "swift.type.method",

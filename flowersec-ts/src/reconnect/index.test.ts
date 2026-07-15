@@ -217,6 +217,103 @@ describe("reconnect manager", () => {
     expect(mgr.state().status).toBe("connected");
   });
 
+  test("connectIfNeeded reuses an unexpected-disconnect retry loop during backoff", async () => {
+    vi.useFakeTimers();
+    const mgr = createReconnectManager();
+    const events: string[] = [];
+    let attempts = 0;
+    let connectedObserver: any = null;
+
+    const cfg = {
+      connectOnce: async ({ observer }: any) => {
+        attempts += 1;
+        connectedObserver = observer;
+        if (attempts === 2) throw new Error("reconnect dial failed");
+        return makeDummyClient(`c${attempts}`, () => {}).client as any;
+      },
+      observer: {
+        onDiagnosticEvent: (event: any) => events.push(`${event.code}:${event.attempt_seq}`),
+      },
+      autoReconnect: {
+        enabled: true,
+        maxAttempts: 3,
+        initialDelayMs: 100,
+        maxDelayMs: 100,
+        factor: 1,
+        jitterRatio: 0,
+      },
+    };
+
+    await mgr.connect(cfg);
+    connectedObserver?.onWsClose?.("peer_or_error", 1006);
+    await vi.waitFor(() => {
+      expect(attempts).toBe(2);
+    });
+
+    const reused = mgr.connectIfNeeded(cfg);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(attempts).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await reused;
+
+    expect(attempts).toBe(3);
+    expect(mgr.state().status).toBe("connected");
+    expect(events).toContain("reconnect_attempt:2");
+    expect(events).toContain("reconnect_retry_attempt:3");
+  });
+
+  test("connectIfNeeded reuses a loop when a connecting subscriber reenters", async () => {
+    const mgr = createReconnectManager();
+    let attempts = 0;
+    let resolveConnect!: (client: any) => void;
+    const connected = new Promise<any>((resolve) => {
+      resolveConnect = resolve;
+    });
+    const cfg = {
+      connectOnce: async () => {
+        attempts += 1;
+        return await connected;
+      },
+      autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0, factor: 1 },
+    };
+    let reentered: Promise<void> | undefined;
+    const unsubscribe = mgr.subscribe((state) => {
+      if (state.status === "connecting" && reentered == null) {
+        reentered = mgr.connectIfNeeded(cfg);
+      }
+    });
+
+    const initial = mgr.connect(cfg);
+    await vi.waitFor(() => expect(attempts).toBe(1));
+    resolveConnect(makeDummyClient("connected", () => {}).client as any);
+
+    await initial;
+    await reentered;
+    unsubscribe();
+    expect(attempts).toBe(1);
+    expect(mgr.state().status).toBe("connected");
+  });
+
+  test("connectIfNeeded reuses a registered loop when connectOnce reenters synchronously", async () => {
+    const mgr = createReconnectManager();
+    let attempts = 0;
+    let reentered: Promise<void> | undefined;
+    const cfg = {
+      connectOnce: async () => {
+        attempts += 1;
+        reentered ??= mgr.connectIfNeeded(cfg);
+        return makeDummyClient("connected", () => {}).client as any;
+      },
+      autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0, factor: 1 },
+    };
+
+    await mgr.connect(cfg);
+    await reentered;
+    expect(attempts).toBe(1);
+    expect(mgr.state().status).toBe("connected");
+  });
+
   test("uses fake timers and deterministic random for jittered retry scheduling", async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(1);
@@ -299,7 +396,10 @@ describe("reconnect manager", () => {
       },
       autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 25, maxDelayMs: 25, factor: 1, jitterRatio: 0 },
     });
-    const rejected = expect(p).rejects.toThrow("dial failed");
+    const result = p.then(
+      () => null,
+      (error: unknown) => error,
+    );
 
     await vi.waitFor(() => {
       expect(attempts).toBe(1);
@@ -309,7 +409,7 @@ describe("reconnect manager", () => {
     expect(attempts).toBe(1);
 
     await vi.advanceTimersByTimeAsync(1);
-    await rejected;
+    await expect(result).resolves.toMatchObject({ message: "dial failed" });
     expect(attempts).toBe(2);
   });
 });

@@ -24,6 +24,7 @@ type ProxyFetchReq = Readonly<{
   path: string;
   headers: readonly Header[];
   external_origin?: string;
+  response_flow_control?: "chunk_credit_v1";
   body?: ArrayBuffer;
 }>;
 
@@ -33,6 +34,7 @@ type ProxyServiceWorkerRegisterMsg = Readonly<{ type: "flowersec-proxy:register-
 type ProxyServiceWorkerRegisterAckMsg = Readonly<{ type: "flowersec-proxy:register-runtime-ack"; ok: boolean }>;
 
 type ProxyAbortMsg = Readonly<{ type: "flowersec-proxy:abort" }>;
+type ProxyResponseCreditMsg = Readonly<{ type: "flowersec-proxy:response_credit" }>;
 
 type ProxyRespMetaMsg = Readonly<{ type: "flowersec-proxy:response_meta"; status: number; headers: Header[] }>;
 type ProxyRespChunkMsg = Readonly<{ type: "flowersec-proxy:response_chunk"; data: ArrayBuffer }>;
@@ -479,11 +481,42 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
     const ac = new AbortController();
     let stream: YamuxStream | null = null;
     let releaseAdmission: AdmissionRelease | null = null;
+    const usesResponseCredits = req.response_flow_control === "chunk_credit_v1";
+    let responseCreditAvailable = false;
+    let responseCreditResolve: (() => void) | null = null;
+
+    const wakeResponseCreditWaiter = () => {
+      const resolve = responseCreditResolve;
+      responseCreditResolve = null;
+      resolve?.();
+    };
+
     port.onmessage = (ev) => {
-      const m = ev.data as ProxyAbortMsg | unknown;
-      if (m && typeof m === "object" && (m as ProxyAbortMsg).type === "flowersec-proxy:abort") {
+      const m = ev.data as ProxyAbortMsg | ProxyResponseCreditMsg | unknown;
+      if (!m || typeof m !== "object") return;
+      if ((m as ProxyAbortMsg).type === "flowersec-proxy:abort") {
+        responseCreditAvailable = false;
         ac.abort("aborted");
+        wakeResponseCreditWaiter();
+        return;
       }
+      if (usesResponseCredits && (m as ProxyResponseCreditMsg).type === "flowersec-proxy:response_credit") {
+        responseCreditAvailable = true;
+        wakeResponseCreditWaiter();
+      }
+    };
+
+    const waitForResponseCredit = async (): Promise<void> => {
+      if (!usesResponseCredits) return;
+      if (ac.signal.aborted) throw new AbortError("aborted");
+      while (!responseCreditAvailable) {
+        if (ac.signal.aborted) throw new AbortError("aborted");
+        await new Promise<void>((resolve) => {
+          responseCreditResolve = resolve;
+        });
+      }
+      if (ac.signal.aborted) throw new AbortError("aborted");
+      responseCreditAvailable = false;
     };
 
     void (async () => {
@@ -539,6 +572,8 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
 
         const chunks = await readChunkFrames(reader, maxChunkBytes, maxBodyBytes);
         for await (const chunk of chunks) {
+          await waitForResponseCredit();
+          if (ac.signal.aborted) throw new AbortError("aborted");
           // Always transfer an ArrayBuffer (SharedArrayBuffer is not transferable).
           const ab = chunk.slice().buffer as ArrayBuffer;
           port.postMessage({ type: "flowersec-proxy:response_chunk", data: ab } satisfies ProxyRespChunkMsg, [ab]);
@@ -567,6 +602,7 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
           // Best-effort.
         }
       } finally {
+        wakeResponseCreditWaiter();
         releaseAdmission?.();
         try {
           port.close();

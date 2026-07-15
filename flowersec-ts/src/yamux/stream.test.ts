@@ -11,8 +11,10 @@ class FakeSession {
   blockWrites = false;
   private releaseWrite: (() => void) | undefined;
   private readonly windowWaiters: Array<() => void> = [];
+  maxWriteQueueBytes = 4 * 1024 * 1024;
 
   outboundFrameBytes(): number { return 64 * 1024; }
+  streamWriteQueueBytes(): number { return this.maxWriteQueueBytes; }
   releaseReceiveBytes(_bytes: number): void {}
 
   async writeRaw(chunk: Uint8Array): Promise<void> {
@@ -157,5 +159,43 @@ describe("YamuxStream", () => {
     stream.onWindowUpdate(144 * 1024, 0);
     await Promise.all([first, second]);
     expect(session.writes.reduce((total, frame) => total + decodeHeader(frame, 0).length, 0)).toBe(400 * 1024);
+  });
+
+  test("rejects writes above the per-stream queue limit and recovers after drain", async () => {
+    const session = new FakeSession();
+    session.maxWriteQueueBytes = 4;
+    session.blockWrites = true;
+    const stream = new YamuxStream(session as any, 1, "established");
+
+    const first = stream.write(new Uint8Array([1, 2, 3]));
+    while (session.writes.length < 1) await tick();
+
+    await expect(stream.write(new Uint8Array([4, 5]))).rejects.toMatchObject({
+      name: "YamuxResourceExhaustedError",
+      resource: "stream_write_queue_bytes",
+      current: 5,
+      limit: 4,
+    });
+
+    session.resumeWrite();
+    await first;
+    await expect(stream.write(new Uint8Array([6, 7, 8, 9]))).resolves.toBeUndefined();
+  });
+
+  test("releases reserved write bytes after the caller detaches the input buffer", async () => {
+    const session = new FakeSession();
+    session.maxWriteQueueBytes = 4;
+    session.blockWrites = true;
+    const stream = new YamuxStream(session as any, 1, "established");
+    const input = new Uint8Array([1, 2, 3]);
+
+    const first = stream.write(input);
+    while (session.writes.length < 1) await tick();
+    structuredClone(input.buffer, { transfer: [input.buffer] });
+    expect(input.byteLength).toBe(0);
+
+    session.resumeWrite();
+    await first;
+    await expect(stream.write(new Uint8Array([4, 5, 6, 7]))).resolves.toBeUndefined();
   });
 });

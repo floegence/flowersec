@@ -18,6 +18,7 @@ export type ProxyWindowFetchRequest = Readonly<{
   path: string;
   headers: readonly Header[];
   external_origin?: string;
+  response_flow_control?: "chunk_credit_v1";
   body?: ArrayBuffer;
 }>;
 

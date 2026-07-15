@@ -21,6 +21,10 @@ final class InMemoryRPCStream: FlowersecRPCStream, @unchecked Sendable {
     try await pushFrame(envelope.encoded())
   }
 
+  func pushRawFrame(_ payload: Data) async {
+    try? await pushFrame(payload)
+  }
+
   func nextWrittenEnvelope() async throws -> RPCEnvelope {
     let frame = await state.nextWrittenFrame()
     let length = Int(frame.prefix(4).readUInt32BE(at: 0))

@@ -586,12 +586,25 @@ async function handleFetch(event) {
     const donePromise = new Promise((resolve, reject) => { doneResolve = resolve; doneReject = reject; });
 
     let controller = null;
+    let responseCreditOutstanding = false;
+
+    function requestResponseCredit() {
+      if (responseCreditOutstanding) return;
+      responseCreditOutstanding = true;
+      try { port.postMessage({ type: "flowersec-proxy:response_credit" }); } catch {}
+    }
+
+    function abortRuntimeResponse() {
+      responseCreditOutstanding = false;
+      try { port.postMessage({ type: "flowersec-proxy:abort" }); } catch {}
+      try { port.close(); } catch {}
+    }
 
     const stream = new ReadableStream({
       start(c) { controller = c; },
+      pull() { requestResponseCredit(); },
       cancel() {
-        try { port.postMessage({ type: "flowersec-proxy:abort" }); } catch {}
-        try { port.close(); } catch {}
+        abortRuntimeResponse();
       }
     });
 
@@ -604,7 +617,7 @@ async function handleFetch(event) {
         metaReject(err);
         doneReject(err);
         controller?.error(err);
-        try { port.close(); } catch {}
+        abortRuntimeResponse();
         return false;
       }
       htmlChunks.push(b);
@@ -630,27 +643,30 @@ async function handleFetch(event) {
               metaReject(err);
               doneReject(err);
               controller?.error(err);
-              try { port.close(); } catch {}
+              abortRuntimeResponse();
               return;
             }
           }
         }
         metaResolve(m);
+        if (shouldInjectHTML) requestResponseCredit();
         if (controller && !shouldInjectHTML) for (const q of queued) controller.enqueue(q);
         if (shouldInjectHTML) for (const q of queued) if (!pushInjectChunk(q)) return;
         queued.length = 0;
         return;
       }
       if (m.type === "flowersec-proxy:response_chunk") {
+        responseCreditOutstanding = false;
         const b = new Uint8Array(m.data);
         if (shouldInjectHTML) {
-          pushInjectChunk(b);
+          if (pushInjectChunk(b)) requestResponseCredit();
           return;
         }
         if (controller) controller.enqueue(b); else queued.push(b);
         return;
       }
       if (m.type === "flowersec-proxy:response_end") {
+        responseCreditOutstanding = false;
         if (shouldInjectHTML) {
           doneResolve(htmlChunks);
           return;
@@ -659,6 +675,7 @@ async function handleFetch(event) {
         return;
       }
       if (m.type === "flowersec-proxy:response_error") {
+        responseCreditOutstanding = false;
         const status = typeof m.status === "number" && Number.isFinite(m.status) ? Math.floor(m.status) : 502;
         lastErrorStatus = status > 0 ? status : 502;
         lastErrorMessage = String(m.message || "proxy error");
@@ -686,6 +703,7 @@ async function handleFetch(event) {
         path,
         headers: headersToPairs(req.headers),
         ...(externalOrigin ? { external_origin: externalOrigin } : {}),
+        response_flow_control: "chunk_credit_v1",
         body
       }
     }, [port2]);

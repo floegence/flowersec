@@ -211,8 +211,9 @@ export function createReconnectManager(): ReconnectManager {
     token += 1;
     const nextToken = token;
 
+    const reconnectPromise = startConnectLoop(nextToken, cfg);
     setState({ status: "connecting", error, client: null });
-    void connectWithRetry(nextToken, cfg).catch(() => {
+    void reconnectPromise.catch(() => {
       // connectWithRetry updates state; keep errors observable via state().
     });
   };
@@ -336,6 +337,22 @@ export function createReconnectManager(): ReconnectManager {
     }
   };
 
+  const startConnectLoop = (t: number, cfg: ConnectConfig): Promise<void> => {
+    let resolveLoop!: () => void;
+    let rejectLoop!: (error: unknown) => void;
+    const loop = new Promise<void>((resolve, reject) => {
+      resolveLoop = resolve;
+      rejectLoop = reject;
+    });
+    let promise: Promise<void>;
+    promise = loop.finally(() => {
+      if (activeConnectPromise === promise) activeConnectPromise = null;
+    });
+    activeConnectPromise = promise;
+    void connectWithRetry(t, cfg).then(resolveLoop, rejectLoop);
+    return promise;
+  };
+
   const connect = async (cfg: ConnectConfig): Promise<void> => {
     cancelRetrySleep();
     abortActiveAttempt();
@@ -353,23 +370,18 @@ export function createReconnectManager(): ReconnectManager {
       }
     }
 
+    const connectPromise = startConnectLoop(t, cfg);
     setState({ status: "connecting", error: null, client: null });
-    const p = connectWithRetry(t, cfg);
-    activeConnectPromise = p;
-    try {
-      await p;
-    } finally {
-      if (activeConnectPromise === p) activeConnectPromise = null;
-    }
+    await connectPromise;
   };
 
   const connectIfNeeded = async (cfg: ConnectConfig): Promise<void> => {
     if (isSameConfig(active, cfg)) {
-      if (s.status === "connected" && s.client) return;
-      if (s.status === "connecting" && activeConnectPromise) {
+      if (activeConnectPromise) {
         await activeConnectPromise;
         return;
       }
+      if (s.status === "connected" && s.client) return;
     }
     await connect(cfg);
   };

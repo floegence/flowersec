@@ -54,7 +54,7 @@ export type ConnectOptionsBase = Readonly<{
   outboundRecordChunkBytes?: number;
   /** WebSocket inbound and outbound queue limits. */
   webSocketLimits?: Partial<WebSocketLimits>;
-  /** Yamux stream, frame, and receive-memory limits. */
+  /** Yamux stream, frame, receive-memory, and per-stream write-queue limits. */
   yamuxLimits?: Partial<YamuxLimits>;
   /** Optional factory for creating the WebSocket instance. */
   wsFactory?: (url: string, origin: string) => WebSocketLike;

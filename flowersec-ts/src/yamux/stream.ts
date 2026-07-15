@@ -9,6 +9,7 @@ import {
   TYPE_DATA,
   TYPE_WINDOW_UPDATE
 } from "./constants.js";
+import { YamuxResourceExhaustedError } from "./errors.js";
 import type { YamuxSession } from "./session.js";
 
 type StreamState =
@@ -46,6 +47,7 @@ export class YamuxStream {
   private error: unknown = null;
   private resetTask: Promise<void> | undefined;
   private writeChain: Promise<void> = Promise.resolve();
+  private writeQueueBytes = 0;
   private finalized = false;
 
   constructor(session: YamuxSession, id: number, state: StreamState) {
@@ -110,10 +112,23 @@ export class YamuxStream {
 
   // write sends DATA frames, respecting the send window.
   async write(data: Uint8Array): Promise<void> {
-    const payload = data.slice();
-    const write = this.writeChain.then(() => this.writeSerial(payload));
-    this.writeChain = write.catch(() => {});
-    await write;
+    this.ensureWritable();
+    const byteCount = data.byteLength;
+    const nextQueueBytes = this.writeQueueBytes + byteCount;
+    const limit = this.session.streamWriteQueueBytes();
+    if (!Number.isSafeInteger(nextQueueBytes) || nextQueueBytes > limit) {
+      throw new YamuxResourceExhaustedError("stream_write_queue_bytes", nextQueueBytes, limit);
+    }
+
+    this.writeQueueBytes = nextQueueBytes;
+    try {
+      const payload = data.slice();
+      const write = this.writeChain.then(() => this.writeSerial(payload));
+      this.writeChain = write.catch(() => {});
+      await write;
+    } finally {
+      this.writeQueueBytes = Math.max(0, this.writeQueueBytes - byteCount);
+    }
   }
 
   private async writeSerial(data: Uint8Array): Promise<void> {

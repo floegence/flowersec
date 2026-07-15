@@ -111,7 +111,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
 }
 
 describe("registerProxyControllerWindow", () => {
-  it("forwards fetch bridge messages to runtime.dispatchFetch", () => {
+  it("forwards fetch bridge messages with the validated event origin", () => {
     const targetWindow = new FakeWindow();
     const expectedSource = {} as Window;
     const runtime = {
@@ -129,7 +129,13 @@ describe("registerProxyControllerWindow", () => {
     });
 
     const channel = createFakeMessageChannel();
-    const req = { id: "req-1", method: "GET", path: "/", headers: [] };
+    const req = {
+      id: "req-1",
+      method: "GET",
+      path: "/",
+      headers: [],
+      external_origin: "https://forged.example",
+    };
     targetWindow.emit({
       origin: "https://app.example.test",
       data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req },
@@ -139,7 +145,15 @@ describe("registerProxyControllerWindow", () => {
 
     expect(runtime.dispatchFetch).toHaveBeenCalledTimes(1);
     const [seenReq, seenPort] = runtime.dispatchFetch.mock.calls[0]!;
-    expect(seenReq).toEqual(req);
+    expect(seenReq).toEqual({
+      id: "req-1",
+      method: "GET",
+      path: "/",
+      headers: [],
+      external_origin: "https://app.example.test",
+    });
+    expect(seenReq).not.toBe(req);
+    expect(req.external_origin).toBe("https://forged.example");
     expect(seenPort).toBe(channel.port1);
 
     handle.dispose();
@@ -150,6 +164,50 @@ describe("registerProxyControllerWindow", () => {
       source: expectedSource as MessageEventSource,
     } as MessageEvent);
     expect(runtime.dispatchFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits external origin for an opaque event origin", () => {
+    const targetWindow = new FakeWindow();
+    const expectedSource = {} as Window;
+    const runtime = {
+      dispatchFetch: vi.fn(),
+      openWebSocketStream: vi.fn(),
+      limits: {},
+      dispose: () => {},
+    };
+
+    registerProxyControllerWindow({
+      runtime: runtime as any,
+      allowedOrigins: ["null"],
+      expectedSource,
+      targetWindow: targetWindow as unknown as Window,
+    });
+
+    const req = {
+      id: "req-opaque",
+      method: "GET",
+      path: "/opaque",
+      headers: [],
+      external_origin: "https://forged.example",
+    };
+    const channel = createFakeMessageChannel();
+    targetWindow.emit({
+      origin: "null",
+      data: { type: PROXY_WINDOW_FETCH_MSG_TYPE, req },
+      ports: [channel.port1],
+      source: expectedSource as MessageEventSource,
+    } as MessageEvent);
+
+    expect(runtime.dispatchFetch).toHaveBeenCalledTimes(1);
+    const [seenReq] = runtime.dispatchFetch.mock.calls[0]!;
+    expect(seenReq).toEqual({
+      id: "req-opaque",
+      method: "GET",
+      path: "/opaque",
+      headers: [],
+    });
+    expect(seenReq).not.toHaveProperty("external_origin");
+    expect(req.external_origin).toBe("https://forged.example");
   });
 
   it("bridges websocket traffic over MessagePort", async () => {

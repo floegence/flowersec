@@ -66,6 +66,78 @@ function makeAckPort(): { port: MessagePort; messages: any[]; closed: boolean } 
   return out;
 }
 
+type GeneratedFetchHarness = Readonly<{
+  dispatchFetch: (url?: string) => Promise<Response>;
+  requests: any[];
+  runtimePorts: MessagePort[];
+}>;
+
+function runGeneratedServiceWorkerFetch(script: string): GeneratedFetchHarness {
+  const listeners = new Map<string, Array<(event: any) => void>>();
+  const requests: any[] = [];
+  const runtimePorts: MessagePort[] = [];
+  const client = {
+    id: "client-1",
+    url: "https://app.example.test/app",
+    postMessage(message: any, transfer?: Transferable[]) {
+      requests.push(message);
+      const port = transfer?.[0] as MessagePort | undefined;
+      if (port != null) runtimePorts.push(port);
+    },
+  };
+  const context = {
+    URL,
+    Response,
+    Headers,
+    ReadableStream,
+    TextEncoder,
+    TextDecoder,
+    MessageChannel,
+    Uint8Array,
+    ArrayBuffer,
+    self: {
+      addEventListener(type: string, cb: (event: any) => void) {
+        listeners.set(type, [...(listeners.get(type) ?? []), cb]);
+      },
+      clients: {
+        get: vi.fn(async (id: string) => id === client.id ? client : null),
+        matchAll: vi.fn(async () => [client]),
+        claim: vi.fn(async () => {}),
+      },
+      location: { origin: "https://app.example.test" },
+      skipWaiting: vi.fn(async () => {}),
+    },
+  };
+  vm.runInNewContext(script, context);
+
+  return {
+    requests,
+    runtimePorts,
+    dispatchFetch: async (url = "https://app.example.test/download") => {
+      let responsePromise: Promise<Response> | undefined;
+      const event = {
+        request: new Request(url),
+        clientId: client.id,
+        resultingClientId: "",
+        respondWith(value: Promise<Response> | Response) {
+          responsePromise = Promise.resolve(value);
+        },
+      };
+      for (const cb of listeners.get("fetch") ?? []) cb(event);
+      if (responsePromise == null) throw new Error("generated service worker did not intercept fetch");
+      return await responsePromise;
+    },
+  };
+}
+
+async function waitForCondition(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("timed out waiting for generated service worker state");
+}
+
 describe("createProxyServiceWorkerScript", () => {
   it("contains the runtime registration and fetch bridge markers", () => {
     const s = createProxyServiceWorkerScript();
@@ -74,8 +146,135 @@ describe("createProxyServiceWorkerScript", () => {
     expect(s).toContain("flowersec-proxy:fetch");
     expect(s).toContain("external_origin");
     expect(s).toContain("flowersec-proxy:response_meta");
+    expect(s).toContain('response_flow_control: "chunk_credit_v1"');
+    expect(s).toContain('type: "flowersec-proxy:response_credit"');
+    expect(s).toContain("pull() { requestResponseCredit(); }");
+    expect(s).toContain("function abortRuntimeResponse()");
     expect(s).toContain("flowersec-proxy:abort");
     expect(s).toContain("event.waitUntil(self.skipWaiting())");
+  });
+
+  it("grants one response chunk at a time as the body consumer advances", async () => {
+    const harness = runGeneratedServiceWorkerFetch(createProxyServiceWorkerScript({
+      windowTarget: "request_client",
+    }));
+    const responsePromise = harness.dispatchFetch();
+    await waitForCondition(() => harness.runtimePorts.length === 1);
+    const runtimePort = harness.runtimePorts[0]!;
+    const runtimeMessages: any[] = [];
+    runtimePort.onmessage = (event) => runtimeMessages.push(event.data);
+    runtimePort.start();
+    await waitForCondition(() => runtimeMessages.some((message) => message.type === "flowersec-proxy:response_credit"));
+    expect(runtimeMessages.filter((message) => message.type === "flowersec-proxy:response_credit")).toHaveLength(1);
+
+    runtimePort.postMessage({
+      type: "flowersec-proxy:response_meta",
+      status: 200,
+      headers: [{ name: "content-type", value: "application/octet-stream" }],
+    });
+    const response = await responsePromise;
+    runtimePort.postMessage({
+      type: "flowersec-proxy:response_chunk",
+      data: new Uint8Array([1, 2, 3]).buffer,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runtimeMessages.filter((message) => message.type === "flowersec-proxy:response_credit")).toHaveLength(1);
+
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    expect(Array.from(first.value ?? [])).toEqual([1, 2, 3]);
+    await waitForCondition(() => runtimeMessages.filter((message) => message.type === "flowersec-proxy:response_credit").length === 2);
+
+    await reader.cancel();
+    await waitForCondition(() => runtimeMessages.some((message) => message.type === "flowersec-proxy:abort"));
+    runtimePort.close();
+  });
+
+  it("replenishes HTML injection credit after each accepted chunk", async () => {
+    const harness = runGeneratedServiceWorkerFetch(createProxyServiceWorkerScript({
+      windowTarget: "request_client",
+      injectHTML: { proxyModuleUrl: "/assets/flowersec-proxy.js" },
+    }));
+    const responsePromise = harness.dispatchFetch("https://app.example.test/index.html");
+    await waitForCondition(() => harness.runtimePorts.length === 1);
+    const runtimePort = harness.runtimePorts[0]!;
+    let credits = 0;
+    runtimePort.onmessage = (event) => {
+      if (event.data?.type !== "flowersec-proxy:response_credit") return;
+      credits += 1;
+      if (credits === 1) {
+        runtimePort.postMessage({
+          type: "flowersec-proxy:response_meta",
+          status: 200,
+          headers: [{ name: "content-type", value: "text/html; charset=utf-8" }],
+        });
+        runtimePort.postMessage({
+          type: "flowersec-proxy:response_chunk",
+          data: new TextEncoder().encode("<html><head></head><body>ok</body></html>").buffer,
+        });
+      } else if (credits === 2) {
+        runtimePort.postMessage({ type: "flowersec-proxy:response_end" });
+      }
+    };
+    runtimePort.start();
+
+    const response = await responsePromise;
+    expect(credits).toBe(2);
+    expect(await response.text()).toContain("installWebSocketPatch");
+    runtimePort.close();
+  });
+
+  it("aborts HTML injection when the configured buffer limit is exceeded", async () => {
+    const harness = runGeneratedServiceWorkerFetch(createProxyServiceWorkerScript({
+      windowTarget: "request_client",
+      maxInjectHTMLBytes: 3,
+      injectHTML: { proxyModuleUrl: "/assets/flowersec-proxy.js" },
+    }));
+    const responsePromise = harness.dispatchFetch("https://app.example.test/index.html");
+    await waitForCondition(() => harness.runtimePorts.length === 1);
+    const runtimePort = harness.runtimePorts[0]!;
+    const runtimeMessages: any[] = [];
+    runtimePort.onmessage = (event) => {
+      runtimeMessages.push(event.data);
+      if (event.data?.type !== "flowersec-proxy:response_credit") return;
+      runtimePort.postMessage({
+        type: "flowersec-proxy:response_meta",
+        status: 200,
+        headers: [{ name: "content-type", value: "text/html" }],
+      });
+      runtimePort.postMessage({
+        type: "flowersec-proxy:response_chunk",
+        data: new Uint8Array([1, 2, 3, 4]).buffer,
+      });
+    };
+    runtimePort.start();
+
+    const response = await responsePromise;
+    expect(response.status).toBe(502);
+    expect(await response.text()).toContain("html response too large to inject");
+    await waitForCondition(() => runtimeMessages.some((message) => message.type === "flowersec-proxy:abort"));
+    expect(runtimeMessages.some((message) => message.type === "flowersec-proxy:abort")).toBe(true);
+    runtimePort.close();
+  });
+
+  it("accepts eager responses from runtimes that ignore the new credit capability", async () => {
+    const harness = runGeneratedServiceWorkerFetch(createProxyServiceWorkerScript({
+      windowTarget: "request_client",
+    }));
+    const responsePromise = harness.dispatchFetch();
+    await waitForCondition(() => harness.runtimePorts.length === 1);
+    const runtimePort = harness.runtimePorts[0]!;
+    runtimePort.postMessage({ type: "flowersec-proxy:response_meta", status: 200, headers: [] });
+    runtimePort.postMessage({
+      type: "flowersec-proxy:response_chunk",
+      data: new TextEncoder().encode("legacy").buffer,
+    });
+    runtimePort.postMessage({ type: "flowersec-proxy:response_end" });
+
+    const response = await responsePromise;
+    expect(await response.text()).toBe("legacy");
+    expect(harness.requests[0]?.req?.response_flow_control).toBe("chunk_credit_v1");
+    runtimePort.close();
   });
 
   it("defaults to same-origin only proxying (safe)", () => {

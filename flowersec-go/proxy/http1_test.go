@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
@@ -110,6 +111,112 @@ func TestHTTP1Handler_GET_EndToEnd(t *testing.T) {
 	}
 	if s.host == "" {
 		t.Fatalf("expected upstream host to be set")
+	}
+}
+
+func TestHTTP1Handler_GET_DoesNotFollowRedirects(t *testing.T) {
+	tests := []struct {
+		name        string
+		crossOrigin bool
+	}{
+		{name: "same origin"},
+		{name: "cross origin", crossOrigin: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var upstreamHits atomic.Int32
+			var redirectTargetHits atomic.Int32
+
+			redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				redirectTargetHits.Add(1)
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer redirectTarget.Close()
+
+			var location string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamHits.Add(1)
+				if r.URL.Path == "/redirected" {
+					redirectTargetHits.Add(1)
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				w.Header().Set("Location", location)
+				w.WriteHeader(http.StatusFound)
+			}))
+			defer upstream.Close()
+
+			location = upstream.URL + "/redirected"
+			if tt.crossOrigin {
+				location = redirectTarget.URL + "/redirected"
+			}
+
+			cfg, err := compileOptions(Options{
+				Upstream:       upstream.URL,
+				UpstreamOrigin: upstream.URL,
+			})
+			if err != nil {
+				t.Fatalf("compileOptions: %v", err)
+			}
+
+			clientConn, serverConn := net.Pipe()
+			defer clientConn.Close()
+			go http1Handler(cfg)(context.Background(), serverConn)
+
+			reqMeta := HTTPRequestMeta{
+				V:         ProtocolVersion,
+				RequestID: "redirect",
+				Method:    http.MethodGet,
+				Path:      "/start",
+			}
+			if err := jsonframe.WriteJSONFrame(clientConn, reqMeta); err != nil {
+				t.Fatalf("write meta: %v", err)
+			}
+			if err := writeChunkTerminator(clientConn); err != nil {
+				t.Fatalf("write terminator: %v", err)
+			}
+
+			b, err := jsonframe.ReadJSONFrame(clientConn, cfg.maxJSONFrameBytes)
+			if err != nil {
+				t.Fatalf("read resp meta: %v", err)
+			}
+			var respMeta HTTPResponseMeta
+			if err := json.Unmarshal(b, &respMeta); err != nil {
+				t.Fatalf("unmarshal resp meta: %v", err)
+			}
+			if !respMeta.OK || respMeta.Status != http.StatusFound {
+				t.Fatalf("unexpected resp meta: %#v", respMeta)
+			}
+			var gotLocation string
+			for _, header := range respMeta.Headers {
+				if header.Name == "location" {
+					gotLocation = header.Value
+					break
+				}
+			}
+			if gotLocation != location {
+				t.Fatalf("unexpected location header: got %q, want %q", gotLocation, location)
+			}
+
+			var readBytes int64
+			for {
+				_, done, err := readChunkFrame(clientConn, cfg.maxChunkBytes, cfg.maxBodyBytes, &readBytes)
+				if err != nil {
+					t.Fatalf("read body chunk: %v", err)
+				}
+				if done {
+					break
+				}
+			}
+
+			if got := upstreamHits.Load(); got != 1 {
+				t.Fatalf("unexpected upstream request count: got %d, want 1", got)
+			}
+			if got := redirectTargetHits.Load(); got != 0 {
+				t.Fatalf("redirect target was requested %d times", got)
+			}
+		})
 	}
 }
 

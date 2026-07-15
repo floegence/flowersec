@@ -1066,20 +1066,32 @@ public struct FlowersecError: LocalizedError, Equatable, Sendable {
 }
 
 extension FlowersecError {
-  public static func invalidConnectInfo(_ message: String) -> FlowersecError {
-    FlowersecError(path: .direct, stage: .validate, code: .invalidInput, message: message)
+  public static func invalidConnectInfo(
+    _ message: String,
+    path: FlowersecPath = .direct
+  ) -> FlowersecError {
+    FlowersecError(path: path, stage: .validate, code: .invalidInput, message: message)
   }
 
-  public static func invalidHandshake(_ message: String) -> FlowersecError {
-    FlowersecError(path: .direct, stage: .handshake, code: .handshakeFailed, message: message)
+  public static func invalidHandshake(
+    _ message: String,
+    path: FlowersecPath = .direct
+  ) -> FlowersecError {
+    FlowersecError(path: path, stage: .handshake, code: .handshakeFailed, message: message)
   }
 
-  public static func invalidRecord(_ message: String) -> FlowersecError {
-    FlowersecError(path: .direct, stage: .secure, code: .invalidInput, message: message)
+  public static func invalidRecord(
+    _ message: String,
+    path: FlowersecPath = .direct
+  ) -> FlowersecError {
+    FlowersecError(path: path, stage: .secure, code: .invalidInput, message: message)
   }
 
-  public static func invalidYamux(_ message: String) -> FlowersecError {
-    FlowersecError(path: .direct, stage: .yamux, code: .openStreamFailed, message: message)
+  public static func invalidYamux(
+    _ message: String,
+    path: FlowersecPath = .direct
+  ) -> FlowersecError {
+    FlowersecError(path: path, stage: .yamux, code: .openStreamFailed, message: message)
   }
 
   public static func resourceExhausted(
@@ -1090,18 +1102,25 @@ extension FlowersecError {
     FlowersecError(path: path, stage: stage, code: .resourceExhausted, message: message)
   }
 
-  public static func livenessTimeout(_ message: String = "The yamux liveness probe timed out.")
-    -> FlowersecError
-  {
-    FlowersecError(path: .direct, stage: .yamux, code: .timeout, message: message)
+  public static func livenessTimeout(
+    _ message: String = "The yamux liveness probe timed out.",
+    path: FlowersecPath = .direct
+  ) -> FlowersecError {
+    FlowersecError(path: path, stage: .yamux, code: .timeout, message: message)
   }
 
-  public static func invalidRPC(_ message: String) -> FlowersecError {
-    FlowersecError(path: .direct, stage: .rpc, code: .rpcFailed, message: message)
+  public static func invalidRPC(
+    _ message: String,
+    path: FlowersecPath = .direct
+  ) -> FlowersecError {
+    FlowersecError(path: path, stage: .rpc, code: .rpcFailed, message: message)
   }
 
-  public static func webSocket(_ message: String) -> FlowersecError {
-    FlowersecError(path: .direct, stage: .connect, code: .websocketFailed, message: message)
+  public static func webSocket(
+    _ message: String,
+    path: FlowersecPath = .direct
+  ) -> FlowersecError {
+    FlowersecError(path: path, stage: .connect, code: .websocketFailed, message: message)
   }
 
   public static let closed = FlowersecError(
@@ -1117,6 +1136,29 @@ extension FlowersecError {
     code: .timeout,
     message: "The Flowersec request timed out."
   )
+
+  public static func closed(path: FlowersecPath = .direct) -> FlowersecError {
+    FlowersecError(
+      path: path,
+      stage: .close,
+      code: .notConnected,
+      message: "The Flowersec session closed."
+    )
+  }
+
+  public static func timeout(
+    path: FlowersecPath = .direct,
+    stage: FlowersecStage = .connect,
+    message: String = "The Flowersec request timed out."
+  ) -> FlowersecError {
+    FlowersecError(path: path, stage: stage, code: .timeout, message: message)
+  }
+
+  func withPath(_ path: FlowersecPath) -> FlowersecError {
+    var error = self
+    error.path = path
+    return error
+  }
 }
 
 enum FlowersecWire {

@@ -58,6 +58,49 @@ class FakeStream {
   }
 }
 
+class GatedResponseStream {
+  readonly writes: Uint8Array[] = [];
+  resetCalls = 0;
+  private readonly immediateReads: Uint8Array[];
+  private readonly gatedReads: Array<Uint8Array | null>;
+  private readGateStarted = false;
+  private releaseReadGate: (() => void) | undefined;
+
+  constructor(immediateReads: Uint8Array[], gatedReads: Uint8Array[]) {
+    this.immediateReads = [...immediateReads];
+    this.gatedReads = [...gatedReads, null];
+  }
+
+  async write(b: Uint8Array): Promise<void> {
+    this.writes.push(b);
+  }
+
+  async read(): Promise<Uint8Array | null> {
+    if (this.immediateReads.length > 0) return this.immediateReads.shift() ?? null;
+    if (!this.readGateStarted) {
+      this.readGateStarted = true;
+      await new Promise<void>((resolve) => {
+        this.releaseReadGate = resolve;
+      });
+    }
+    return this.gatedReads.shift() ?? null;
+  }
+
+  async close(): Promise<void> {}
+
+  reset(_err: Error): void {
+    this.resetCalls++;
+  }
+
+  releaseReads(): void {
+    this.releaseReadGate?.();
+  }
+
+  hasStartedGatedRead(): boolean {
+    return this.readGateStarted;
+  }
+}
+
 function jsonFrame(v: unknown): Uint8Array {
   const json = te.encode(JSON.stringify(v));
   const hdr = u32be(json.length);
@@ -210,7 +253,7 @@ describe("createProxyRuntime (http1)", () => {
     }
   });
 
-  it("writes http_request_meta with CookieJar cookie and streams response body (set-cookie stripped)", async () => {
+  it("keeps legacy service worker responses eager when chunk credits are absent", async () => {
     const respMeta = jsonFrame({
       v: PROXY_PROTOCOL_VERSION,
       request_id: "req1",
@@ -309,6 +352,191 @@ describe("createProxyRuntime (http1)", () => {
       expect(reqMeta.external_origin).toBe("https://env-123.example.test");
       expect(reqMeta.headers).toContainEqual({ name: "cookie", value: "a=1" });
       expect(reqMeta.headers).not.toContainEqual({ name: "cookie", value: "bad=1" });
+    } finally {
+      if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
+    }
+  });
+
+  it("advances credit-enabled responses one chunk at a time", async () => {
+    const stream = new FakeStream([
+      jsonFrame({
+        v: PROXY_PROTOCOL_VERSION,
+        request_id: "credit-1",
+        ok: true,
+        status: 200,
+        headers: [{ name: "content-type", value: "application/octet-stream" }],
+      }),
+      chunkFrame(new Uint8Array([1])),
+      chunkFrame(new Uint8Array([2])),
+      u32be(0),
+    ]);
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async () => stream as any,
+      ping: async () => {},
+      close: () => {},
+    };
+
+    const sw = new FakeServiceWorker();
+    const oldNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: { serviceWorker: sw }, configurable: true });
+    try {
+      const runtime = createProxyRuntime({ client });
+      const messages: any[] = [];
+      let closed = false;
+      const port = {
+        onmessage: null as null | ((ev: any) => void),
+        postMessage: (message: any) => messages.push(message),
+        close: () => { closed = true; },
+      };
+
+      runtime.dispatchFetch({
+        id: "credit-1",
+        method: "GET",
+        path: "/download",
+        headers: [],
+        response_flow_control: "chunk_credit_v1",
+      }, port as any);
+
+      for (let i = 0; i < 100 && messages.every((m) => m.type !== "flowersec-proxy:response_meta"); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(messages.filter((m) => m.type === "flowersec-proxy:response_chunk")).toHaveLength(0);
+      expect(closed).toBe(false);
+
+      port.onmessage?.({ data: { type: "flowersec-proxy:response_credit" } });
+      for (let i = 0; i < 100 && messages.filter((m) => m.type === "flowersec-proxy:response_chunk").length < 1; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(messages.filter((m) => m.type === "flowersec-proxy:response_chunk")).toHaveLength(1);
+      expect(messages.some((m) => m.type === "flowersec-proxy:response_end")).toBe(false);
+
+      port.onmessage?.({ data: { type: "flowersec-proxy:response_credit" } });
+      for (let i = 0; i < 100 && messages.every((m) => m.type !== "flowersec-proxy:response_end"); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      const chunks = messages
+        .filter((m) => m.type === "flowersec-proxy:response_chunk")
+        .map((m) => Array.from(new Uint8Array(m.data)));
+      expect(chunks).toEqual([[1], [2]]);
+      expect(closed).toBe(true);
+    } finally {
+      if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
+    }
+  });
+
+  it("aborts a credit wait without forwarding buffered response data", async () => {
+    const stream = new FakeStream([
+      jsonFrame({
+        v: PROXY_PROTOCOL_VERSION,
+        request_id: "credit-abort",
+        ok: true,
+        status: 200,
+        headers: [],
+      }),
+      chunkFrame(new Uint8Array([1, 2, 3])),
+      u32be(0),
+    ]);
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async () => stream as any,
+      ping: async () => {},
+      close: () => {},
+    };
+
+    const sw = new FakeServiceWorker();
+    const oldNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: { serviceWorker: sw }, configurable: true });
+    try {
+      const runtime = createProxyRuntime({ client });
+      const messages: any[] = [];
+      let closed = false;
+      const port = {
+        onmessage: null as null | ((ev: any) => void),
+        postMessage: (message: any) => messages.push(message),
+        close: () => { closed = true; },
+      };
+
+      runtime.dispatchFetch({
+        id: "credit-abort",
+        method: "GET",
+        path: "/download",
+        headers: [],
+        response_flow_control: "chunk_credit_v1",
+      }, port as any);
+      for (let i = 0; i < 100 && messages.every((m) => m.type !== "flowersec-proxy:response_meta"); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      port.onmessage?.({ data: { type: "flowersec-proxy:abort" } });
+      for (let i = 0; i < 100 && !closed; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(messages.filter((m) => m.type === "flowersec-proxy:response_chunk")).toHaveLength(0);
+      expect(messages.some((m) => m.type === "flowersec-proxy:response_error")).toBe(true);
+      expect(stream.resetCalls).toBeGreaterThanOrEqual(1);
+      expect(closed).toBe(true);
+    } finally {
+      if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
+    }
+  });
+
+  it("does not consume a previously granted credit after abort", async () => {
+    const stream = new GatedResponseStream(
+      [jsonFrame({
+        v: PROXY_PROTOCOL_VERSION,
+        request_id: "credit-abort-race",
+        ok: true,
+        status: 200,
+        headers: [],
+      })],
+      [chunkFrame(new Uint8Array([7, 8, 9])), u32be(0)],
+    );
+    const client: Client = {
+      path: "tunnel",
+      rpc: null as any,
+      openStream: async () => stream as any,
+      ping: async () => {},
+      close: () => {},
+    };
+
+    const sw = new FakeServiceWorker();
+    const oldNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: { serviceWorker: sw }, configurable: true });
+    try {
+      const runtime = createProxyRuntime({ client });
+      const messages: any[] = [];
+      let closed = false;
+      const port = {
+        onmessage: null as null | ((ev: any) => void),
+        postMessage: (message: any) => messages.push(message),
+        close: () => { closed = true; },
+      };
+
+      runtime.dispatchFetch({
+        id: "credit-abort-race",
+        method: "GET",
+        path: "/download",
+        headers: [],
+        response_flow_control: "chunk_credit_v1",
+      }, port as any);
+      for (let i = 0; i < 100 && !stream.hasStartedGatedRead(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      port.onmessage?.({ data: { type: "flowersec-proxy:response_credit" } });
+      port.onmessage?.({ data: { type: "flowersec-proxy:abort" } });
+      stream.releaseReads();
+      for (let i = 0; i < 100 && !closed; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      expect(messages.filter((m) => m.type === "flowersec-proxy:response_chunk")).toHaveLength(0);
+      expect(messages.some((m) => m.type === "flowersec-proxy:response_error")).toBe(true);
+      expect(stream.resetCalls).toBeGreaterThanOrEqual(1);
+      expect(closed).toBe(true);
     } finally {
       if (oldNavigatorDesc) Object.defineProperty(globalThis, "navigator", oldNavigatorDesc);
     }

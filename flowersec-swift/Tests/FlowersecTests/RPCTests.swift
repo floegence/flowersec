@@ -162,7 +162,89 @@ final class FlowersecRPCTests: XCTestCase {
       )
       XCTFail("Expected timeout")
     } catch let error as FlowersecError {
-      XCTAssertEqual(error, .timeout)
+      XCTAssertEqual(error.path, .direct)
+      XCTAssertEqual(error.stage, .rpc)
+      XCTAssertEqual(error.code, .timeout)
+    }
+    await client.close()
+  }
+
+  func testTunnelCallTimeoutUsesTunnelRPCPath() async throws {
+    let stream = InMemoryRPCStream()
+    let client = RPCClient(stream: stream, path: .tunnel)
+    await client.start()
+
+    do {
+      let _: RPCReply = try await client.call(
+        7007,
+        RPCRequest(value: "slow"),
+        timeout: .milliseconds(30)
+      )
+      XCTFail("Expected timeout")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .rpc)
+      XCTAssertEqual(error.code, .timeout)
+    }
+    await client.close()
+  }
+
+  func testMalformedTunnelResponseUsesTunnelRPCPath() async throws {
+    let stream = InMemoryRPCStream()
+    let client = RPCClient(stream: stream, path: .tunnel)
+    await client.start()
+
+    let call = Task {
+      let _: RPCReply = try await client.call(
+        7008,
+        RPCRequest(value: "malformed"),
+        timeout: .seconds(1)
+      )
+    }
+    _ = try await stream.nextWrittenEnvelope()
+    await stream.pushRawFrame(Data("{".utf8))
+
+    do {
+      try await call.value
+      XCTFail("Expected malformed RPC response")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .rpc)
+      XCTAssertEqual(error.code, .rpcFailed)
+    }
+    await client.close()
+  }
+
+  func testInvalidTunnelResponsePayloadUsesTunnelRPCPath() async throws {
+    let stream = InMemoryRPCStream()
+    let client = RPCClient(stream: stream, path: .tunnel)
+    await client.start()
+
+    let call = Task {
+      let _: RPCReply = try await client.call(
+        7009,
+        RPCRequest(value: "invalid-payload"),
+        timeout: .seconds(1)
+      )
+    }
+    let request = try await stream.nextWrittenEnvelope()
+    try await stream.pushEnvelope(
+      RPCEnvelope(
+        typeID: 7009,
+        requestID: 0,
+        responseTo: request.requestID,
+        payload: Data("{\"unexpected\":true}".utf8),
+        error: nil
+      )
+    )
+
+    do {
+      try await call.value
+      XCTFail("Expected invalid RPC response payload")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .rpc)
+      XCTAssertEqual(error.code, .rpcFailed)
     }
     await client.close()
   }

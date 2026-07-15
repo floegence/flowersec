@@ -41,7 +41,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   }
 
   func write(_ data: Data) async throws {
-    guard !closed else { throw FlowersecError.closed }
+    guard !closed else { throw FlowersecError.closed(path: path) }
     let availableBytes = maxOutboundBufferedBytes > pendingWriteBytes
       ? maxOutboundBufferedBytes - pendingWriteBytes : 0
     guard maxOutboundBufferedBytes > 0, data.count <= availableBytes else {
@@ -78,7 +78,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   private func writeRecords(_ data: Data) async throws {
     var offset = 0
     while offset < data.count {
-      guard !closed else { throw FlowersecError.closed }
+      guard !closed else { throw FlowersecError.closed(path: path) }
       let end = min(data.count, offset + outboundRecordChunkBytes)
       let chunk = data.subdata(in: offset..<end)
       try await writeRecord(chunk)
@@ -88,7 +88,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
 
   func readExact(_ length: Int) async throws -> Data {
     guard length >= 0 else {
-      throw FlowersecError.invalidRecord("Negative read length.")
+      throw FlowersecError.invalidRecord("Negative read length.", path: path)
     }
     while readBuffer.count < length {
       try await receiveNextApplicationRecord()
@@ -101,7 +101,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   func close() async {
     guard !closed else { return }
     closed = true
-    failPendingWrites(with: FlowersecError.closed)
+    failPendingWrites(with: FlowersecError.closed(path: path))
     await transport.close()
   }
 
@@ -149,20 +149,24 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   }
 
   private func writeRecord(_ plaintext: Data) async throws {
-    let seq = keys.sendSeq
-    keys.sendSeq += 1
-    let frame = try FlowersecRecordCodec.encrypt(
-      key: keys.sendKey,
-      noncePrefix: keys.sendNoncePrefix,
-      flags: 0,
-      seq: seq,
-      plaintext: plaintext
-    )
-    try await transport.writeBinary(frame)
+    do {
+      let seq = keys.sendSeq
+      keys.sendSeq += 1
+      let frame = try FlowersecRecordCodec.encrypt(
+        key: keys.sendKey,
+        noncePrefix: keys.sendNoncePrefix,
+        flags: 0,
+        seq: seq,
+        plaintext: plaintext
+      )
+      try await transport.writeBinary(frame)
+    } catch let error as FlowersecError {
+      throw error.withPath(path)
+    }
   }
 
   private func receiveNextApplicationRecord() async throws {
-    guard !closed else { throw FlowersecError.closed }
+    guard !closed else { throw FlowersecError.closed(path: path) }
     let record = try await readRecord()
     switch record.flags {
     case 0:
@@ -172,28 +176,36 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
     case 2:
       try applyRekey(record)
     default:
-      throw FlowersecError.invalidRecord("Unsupported record flag.")
+      throw FlowersecError.invalidRecord("Unsupported record flag.", path: path)
     }
   }
 
   private func readRecord() async throws -> FlowersecRecord {
-    let frame = try await transport.readBinary()
-    let record = try FlowersecRecordCodec.decrypt(
-      key: keys.recvKey,
-      noncePrefix: keys.recvNoncePrefix,
-      frame: frame,
-      expectedSeq: keys.recvSeq
-    )
-    keys.recvSeq += 1
-    return record
+    do {
+      let frame = try await transport.readBinary()
+      let record = try FlowersecRecordCodec.decrypt(
+        key: keys.recvKey,
+        noncePrefix: keys.recvNoncePrefix,
+        frame: frame,
+        expectedSeq: keys.recvSeq
+      )
+      keys.recvSeq += 1
+      return record
+    } catch let error as FlowersecError {
+      throw error.withPath(path)
+    }
   }
 
   private func applyRekey(_ record: FlowersecRecord) throws {
-    keys.recvKey = try FlowersecRecordCodec.deriveRekeyKey(
-      rekeyBase: keys.rekeyBase,
-      transcript: keys.transcript,
-      seq: record.seq,
-      direction: keys.recvDirection
-    )
+    do {
+      keys.recvKey = try FlowersecRecordCodec.deriveRekeyKey(
+        rekeyBase: keys.rekeyBase,
+        transcript: keys.transcript,
+        seq: record.seq,
+        direction: keys.recvDirection
+      )
+    } catch let error as FlowersecError {
+      throw error.withPath(path)
+    }
   }
 }

@@ -27,15 +27,20 @@ export type YamuxLimits = Readonly<{
   preferredOutboundFrameBytes: number;
   maxStreamReceiveBytes: number;
   maxSessionReceiveBytes: number;
+  /** Maximum bytes retained by pending write calls on one stream. */
+  maxStreamWriteQueueBytes?: number;
 }>;
 
-export const DEFAULT_YAMUX_LIMITS: YamuxLimits = Object.freeze({
+type ResolvedYamuxLimits = Readonly<Required<YamuxLimits>>;
+
+export const DEFAULT_YAMUX_LIMITS: ResolvedYamuxLimits = Object.freeze({
   maxActiveStreams: 64,
   maxInboundStreams: 32,
   maxFrameBytes: 256 * 1024,
   preferredOutboundFrameBytes: 64 * 1024,
   maxStreamReceiveBytes: 256 * 1024,
   maxSessionReceiveBytes: 16 * (1 << 20),
+  maxStreamWriteQueueBytes: 4 * (1 << 20),
 });
 
 // ByteDuplex is a minimal async read/write/close abstraction.
@@ -75,7 +80,7 @@ export class YamuxSession {
   // Callback for inbound streams created from SYN frames.
   private readonly onIncomingStream: ((s: YamuxStream) => void) | undefined;
   // Maximum allowed DATA frame length.
-  private readonly limits: YamuxLimits;
+  private readonly limits: ResolvedYamuxLimits;
   private readonly onDiagnostic: ((event: YamuxDiagnostic) => void) | undefined;
   private readonly onTerminal: ((error: Error) => void) | undefined;
 
@@ -147,6 +152,10 @@ export class YamuxSession {
 
   outboundFrameBytes(): number {
     return this.limits.preferredOutboundFrameBytes;
+  }
+
+  streamWriteQueueBytes(): number {
+    return this.limits.maxStreamWriteQueueBytes;
   }
 
   releaseReceiveBytes(bytes: number): void {
@@ -478,15 +487,16 @@ async function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined
   });
 }
 
-function normalizeYamuxLimits(input: Partial<YamuxLimits> | undefined): YamuxLimits {
+function normalizeYamuxLimits(input: Partial<YamuxLimits> | undefined): ResolvedYamuxLimits {
   const maxFrameBytes = input?.maxFrameBytes ?? DEFAULT_YAMUX_LIMITS.maxFrameBytes;
-  const limits: YamuxLimits = {
+  const limits: ResolvedYamuxLimits = {
     maxActiveStreams: input?.maxActiveStreams ?? DEFAULT_YAMUX_LIMITS.maxActiveStreams,
     maxInboundStreams: input?.maxInboundStreams ?? DEFAULT_YAMUX_LIMITS.maxInboundStreams,
     maxFrameBytes,
     preferredOutboundFrameBytes: input?.preferredOutboundFrameBytes ?? Math.min(DEFAULT_YAMUX_LIMITS.preferredOutboundFrameBytes, maxFrameBytes),
     maxStreamReceiveBytes: input?.maxStreamReceiveBytes ?? DEFAULT_YAMUX_LIMITS.maxStreamReceiveBytes,
     maxSessionReceiveBytes: input?.maxSessionReceiveBytes ?? DEFAULT_YAMUX_LIMITS.maxSessionReceiveBytes,
+    maxStreamWriteQueueBytes: input?.maxStreamWriteQueueBytes ?? DEFAULT_YAMUX_LIMITS.maxStreamWriteQueueBytes,
   };
   for (const [name, value] of Object.entries(limits)) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive integer`);

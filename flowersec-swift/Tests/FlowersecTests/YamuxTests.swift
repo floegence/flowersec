@@ -179,6 +179,36 @@ final class FlowersecYamuxTests: XCTestCase {
     }
   }
 
+  func testTunnelProbeTimeoutUsesTunnelYamuxPath() async throws {
+    let channel = InMemoryYamuxChannel()
+    let client = FlowersecYamuxClient(channel: channel, path: .tunnel)
+    let probe = Task { try await client.probeLiveness(timeout: .milliseconds(20)) }
+    _ = await channel.nextWrittenFrame()
+
+    do {
+      _ = try await probe.value
+      XCTFail("Expected liveness timeout")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .yamux)
+      XCTAssertEqual(error.code, .timeout)
+    }
+  }
+
+  func testTunnelProbeValidationUsesTunnelPath() async throws {
+    let channel = InMemoryYamuxChannel()
+    let client = FlowersecYamuxClient(channel: channel, path: .tunnel)
+
+    do {
+      _ = try await client.probeLiveness(timeout: .zero)
+      XCTFail("Expected liveness timeout validation to fail")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .validate)
+      XCTAssertEqual(error.code, .invalidInput)
+    }
+  }
+
   func testConcurrentProbesShareOnePing() async throws {
     let channel = InMemoryYamuxChannel()
     let client = FlowersecYamuxClient(channel: channel)

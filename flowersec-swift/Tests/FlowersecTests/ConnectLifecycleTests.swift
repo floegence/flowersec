@@ -77,6 +77,46 @@ final class ConnectLifecycleTests: XCTestCase {
     XCTAssertTrue(isClosed)
   }
 
+  func testHandshakeValidationFailureUsesTunnelPath() async throws {
+    let transport = BlockingHandshakeTransport()
+    var invalidInfo = validDirectInfo()
+    invalidInfo.psk = Data(repeating: 0x01, count: 31)
+
+    do {
+      _ = try await Flowersec.establishConnection(
+        invalidInfo,
+        transport: transport,
+        options: ConnectOptions(liveness: .disabled),
+        path: .tunnel,
+        idleTimeout: .seconds(30)
+      )
+      XCTFail("Expected handshake validation to fail")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .validate)
+      XCTAssertEqual(error.code, .invalidInput)
+    }
+  }
+
+  func testMalformedTunnelHandshakeUsesTunnelHandshakePath() async throws {
+    let transport = MalformedHandshakeTransport()
+
+    do {
+      _ = try await Flowersec.establishConnection(
+        validDirectInfo(),
+        transport: transport,
+        options: ConnectOptions(handshakeTimeout: .seconds(1), liveness: .disabled),
+        path: .tunnel,
+        idleTimeout: .seconds(30)
+      )
+      XCTFail("Expected malformed handshake response")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .handshake)
+      XCTAssertEqual(error.code, .handshakeFailed)
+    }
+  }
+
   func testYamuxSetupFailureClosesEstablishedSecureChannel() async throws {
     let transport = ScriptedHandshakeTransport(failAtSecureWrite: 1)
 
@@ -85,11 +125,12 @@ final class ConnectLifecycleTests: XCTestCase {
         validDirectInfo(),
         transport: transport,
         options: ConnectOptions(handshakeTimeout: .seconds(1), liveness: .disabled),
-        path: .direct,
+        path: .tunnel,
         idleTimeout: nil
       )
       XCTFail("Expected yamux setup to fail")
     } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
       XCTAssertEqual(error.code, .websocketFailed)
     }
     let isClosed = await transport.isClosed
@@ -128,6 +169,23 @@ final class ConnectLifecycleTests: XCTestCase {
       defaultSuite: .x25519HKDFSHA256AES256GCM
     )
   }
+}
+
+private actor MalformedHandshakeTransport: FlowersecBinaryTransport {
+  private var returnedResponse = false
+
+  func writeBinary(_ data: Data) throws {}
+
+  func readBinary() throws -> Data {
+    guard !returnedResponse else { throw FlowersecError.closed }
+    returnedResponse = true
+    return FlowersecHandshakeFrame.encode(
+      type: FlowersecWire.handshakeTypeResp,
+      payload: Data("{".utf8)
+    )
+  }
+
+  func close() {}
 }
 
 private actor BlockingHandshakeTransport: FlowersecBinaryTransport {

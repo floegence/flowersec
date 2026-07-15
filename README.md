@@ -40,7 +40,7 @@ Security note: high-level connections require `wss://` by default. Local `ws://`
 
 Stable integration entrypoints are documented in `docs/API_SURFACE.md`.
 The stability rules, review checklist, and engineering gate model live in `docs/API_STABILITY_POLICY.md`.
-Flowersec v0.21.0 recommends an artifact-first integration path documented in:
+Flowersec v0.21.1 recommends an artifact-first integration path documented in:
 
 - `docs/CONNECT_ARTIFACTS.md`
 - `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
@@ -243,10 +243,10 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 ### Swift SDK
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.21.0")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.21.1")
 ```
 
-Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.21.0`.
+Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.21.1`.
 
 ### Tunnel server
 

@@ -10,6 +10,7 @@ import {
   PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE,
   PROXY_WINDOW_WS_OPEN_MSG_TYPE,
   PROXY_WINDOW_WS_WRITE_ACK_CAPABILITY,
+  type ProxyWindowFetchRequest,
   type ProxyWindowFetchMsg,
   type ProxyWindowStreamChunkMsg,
   type ProxyWindowStreamCloseMsg,
@@ -70,6 +71,27 @@ function hasExpectedCapability(data: unknown, capabilityNonce: string): boolean 
   if (capabilityNonce === "") return true;
   if (data == null || typeof data !== "object") return false;
   return (data as { capabilityNonce?: unknown }).capabilityNonce === capabilityNonce;
+}
+
+function withTrustedExternalOrigin(
+  req: ProxyWindowFetchRequest,
+  rawOrigin: string,
+): ProxyWindowFetchRequest {
+  let externalOrigin: string | undefined;
+  try {
+    const url = new URL(rawOrigin);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      externalOrigin = url.origin;
+    }
+  } catch {
+    // Opaque and invalid origins must not become upstream authority metadata.
+  }
+
+  const sanitized: { -readonly [K in keyof ProxyWindowFetchRequest]: ProxyWindowFetchRequest[K] } = { ...req };
+  delete sanitized.external_origin;
+  return externalOrigin === undefined
+    ? sanitized
+    : { ...sanitized, external_origin: externalOrigin };
 }
 
 function bridgeWebSocket(runtime: ProxyRuntime, msg: ProxyWindowWsOpenMsg, port: MessagePort): void {
@@ -224,7 +246,8 @@ export function registerProxyControllerWindow(opts: RegisterProxyControllerWindo
   }
 
   const onMessage = (ev: MessageEvent) => {
-    if (!allowedOrigins.includes(String(ev.origin ?? "").trim())) return;
+    const eventOrigin = String(ev.origin ?? "").trim();
+    if (!allowedOrigins.includes(eventOrigin)) return;
     if (opts.expectedSource != null && ev.source !== opts.expectedSource) return;
 
     const data = ev.data as ProxyWindowFetchMsg | ProxyWindowWsOpenMsg | unknown;
@@ -236,9 +259,11 @@ export function registerProxyControllerWindow(opts: RegisterProxyControllerWindo
     if (!port) return;
 
     switch (type) {
-      case PROXY_WINDOW_FETCH_MSG_TYPE:
-        opts.runtime.dispatchFetch((data as ProxyWindowFetchMsg).req, port);
+      case PROXY_WINDOW_FETCH_MSG_TYPE: {
+        const msg = data as ProxyWindowFetchMsg;
+        opts.runtime.dispatchFetch(withTrustedExternalOrigin(msg.req, eventOrigin), port);
         return;
+      }
       case PROXY_WINDOW_WS_OPEN_MSG_TYPE:
         bridgeWebSocket(opts.runtime, data as ProxyWindowWsOpenMsg, port);
         return;

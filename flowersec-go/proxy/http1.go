@@ -23,7 +23,12 @@ func http1Handler(cfg *compiledOptions) func(ctx context.Context, stream io.Read
 		ForceAttemptHTTP2:   false,
 		MaxIdleConnsPerHost: 8,
 	}
-	hc := &http.Client{Transport: transport}
+	hc := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
 	return func(ctx context.Context, stream io.ReadWriteCloser) {
 		if ctx == nil {
