@@ -12,6 +12,7 @@ import {
 } from "./constants.js";
 import { YamuxStream } from "./stream.js";
 import { YamuxResourceExhaustedError } from "./errors.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 
 export type YamuxDiagnostic = Readonly<{
   code: "stream_rejected" | "resource_limit_reached";
@@ -34,13 +35,13 @@ export type YamuxLimits = Readonly<{
 type ResolvedYamuxLimits = Readonly<Required<YamuxLimits>>;
 
 export const DEFAULT_YAMUX_LIMITS: ResolvedYamuxLimits = Object.freeze({
-  maxActiveStreams: 64,
-  maxInboundStreams: 32,
-  maxFrameBytes: 256 * 1024,
-  preferredOutboundFrameBytes: 64 * 1024,
-  maxStreamReceiveBytes: 256 * 1024,
-  maxSessionReceiveBytes: 16 * (1 << 20),
-  maxStreamWriteQueueBytes: 4 * (1 << 20),
+  maxActiveStreams: SDK_DEFAULTS.yamux.maxActiveStreams,
+  maxInboundStreams: SDK_DEFAULTS.yamux.maxInboundStreams,
+  maxFrameBytes: SDK_DEFAULTS.yamux.maxFrameBytes,
+  preferredOutboundFrameBytes: SDK_DEFAULTS.yamux.preferredOutboundFrameBytes,
+  maxStreamReceiveBytes: SDK_DEFAULTS.yamux.maxStreamReceiveBytes,
+  maxSessionReceiveBytes: SDK_DEFAULTS.yamux.maxSessionReceiveBytes,
+  maxStreamWriteQueueBytes: SDK_DEFAULTS.e2ee.maxOutboundBufferedBytes,
 });
 
 // ByteDuplex is a minimal async read/write/close abstraction.

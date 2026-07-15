@@ -9,12 +9,12 @@ public struct YamuxLimits: Equatable, Sendable {
   public var maxSessionReceiveBytes: Int
 
   public init(
-    maxActiveStreams: Int = 64,
-    maxInboundStreams: Int = 32,
-    maxFrameBytes: Int = 256 * 1024,
-    preferredOutboundFrameBytes: Int = 64 * 1024,
-    maxStreamReceiveBytes: Int = 256 * 1024,
-    maxSessionReceiveBytes: Int = 16 * 1024 * 1024
+    maxActiveStreams: Int = FlowersecSDKDefaults.Yamux.maxActiveStreams,
+    maxInboundStreams: Int = FlowersecSDKDefaults.Yamux.maxInboundStreams,
+    maxFrameBytes: Int = FlowersecSDKDefaults.Yamux.maxFrameBytes,
+    preferredOutboundFrameBytes: Int = FlowersecSDKDefaults.Yamux.preferredOutboundFrameBytes,
+    maxStreamReceiveBytes: Int = FlowersecSDKDefaults.Yamux.maxStreamReceiveBytes,
+    maxSessionReceiveBytes: Int = FlowersecSDKDefaults.Yamux.maxSessionReceiveBytes
   ) {
     self.maxActiveStreams = maxActiveStreams
     self.maxInboundStreams = maxInboundStreams
@@ -80,11 +80,15 @@ actor FlowersecYamuxClient {
   private let limits: YamuxLimits
   private let automaticLiveness: (interval: Duration, timeout: Duration)?
   private let path: FlowersecPath
+  private let client: Bool
   private let onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)?
   private let clock = ContinuousClock()
-  private var nextStreamID: UInt32 = 1
+  private var nextStreamID: UInt32
   private var nextPingID: UInt32 = 1
   private var streams: [UInt32: FlowersecYamuxStream] = [:]
+  private var inboundStreamIDs: Set<UInt32> = []
+  private var incomingStreams: [FlowersecYamuxStream] = []
+  private var incomingWaiters: [CheckedContinuation<FlowersecYamuxStream, Error>] = []
   private var queuedBytesByStream: [UInt32: Int] = [:]
   private var sessionQueuedBytes = 0
   private var pendingPing: PendingPing?
@@ -92,6 +96,8 @@ actor FlowersecYamuxClient {
   private var nextProbeID: UInt64 = 1
   private var readerTask: Task<Void, Never>?
   private var livenessTask: Task<Void, Never>?
+  private var terminationError: (any Error)?
+  private var terminationWaiters: [CheckedContinuation<(any Error)?, Never>] = []
   private var closed = false
 
   init(
@@ -99,12 +105,15 @@ actor FlowersecYamuxClient {
     limits: YamuxLimits = YamuxLimits(),
     automaticLiveness: (interval: Duration, timeout: Duration)? = nil,
     path: FlowersecPath = .direct,
+    client: Bool = true,
     onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil
   ) {
     self.channel = channel
     self.limits = limits
     self.automaticLiveness = automaticLiveness
     self.path = path
+    self.client = client
+    self.nextStreamID = client ? 1 : 2
     self.onDiagnosticEvent = onDiagnosticEvent
   }
 
@@ -171,6 +180,17 @@ actor FlowersecYamuxClient {
       throw error
     }
     return stream
+  }
+
+  func acceptStream() async throws -> FlowersecYamuxStream {
+    guard !closed else { throw FlowersecError.closed(path: path) }
+    ensureReaderStarted()
+    if !incomingStreams.isEmpty {
+      return incomingStreams.removeFirst()
+    }
+    return try await withCheckedThrowingContinuation { continuation in
+      incomingWaiters.append(continuation)
+    }
   }
 
   func probeLiveness(timeout: Duration) async throws -> Duration {
@@ -248,6 +268,7 @@ actor FlowersecYamuxClient {
     livenessTask?.cancel()
     livenessTask = nil
     failPendingPing(FlowersecError.closed(path: path))
+    failIncomingWaiters(FlowersecError.closed(path: path))
     for stream in streams.values {
       await stream.closeFromSession()
     }
@@ -255,6 +276,14 @@ actor FlowersecYamuxClient {
     queuedBytesByStream.removeAll()
     sessionQueuedBytes = 0
     await channel.close()
+    finishTermination(nil)
+  }
+
+  func terminated() async -> (any Error)? {
+    if closed { return terminationError }
+    return await withCheckedContinuation { continuation in
+      terminationWaiters.append(continuation)
+    }
   }
 
   fileprivate func writeData(streamID: UInt32, data: Data) async throws {
@@ -369,6 +398,7 @@ actor FlowersecYamuxClient {
       livenessTask?.cancel()
       livenessTask = nil
       failPendingPing(failure)
+      failIncomingWaiters(failure)
       for stream in streams.values {
         await stream.fail(failure)
       }
@@ -376,7 +406,15 @@ actor FlowersecYamuxClient {
       queuedBytesByStream.removeAll()
       sessionQueuedBytes = 0
       await channel.close()
+      finishTermination(failure)
     }
+  }
+
+  private func finishTermination(_ error: (any Error)?) {
+    terminationError = error
+    let waiters = terminationWaiters
+    terminationWaiters.removeAll()
+    for waiter in waiters { waiter.resume(returning: error) }
   }
 
   private func handle(_ frame: FlowersecYamuxFrame) async throws {
@@ -395,11 +433,19 @@ actor FlowersecYamuxClient {
   }
 
   private func handleDataFrame(_ frame: FlowersecYamuxFrame) async throws {
-    guard let stream = streams[frame.streamID] else {
-      throw FlowersecError.invalidYamux(
-        "The peer sent DATA for an unknown stream.",
-        path: path
-      )
+    let stream: FlowersecYamuxStream
+    if let existing = streams[frame.streamID] {
+      guard frame.flags & FlowersecYamuxConstants.flagSYN == 0 else {
+        try await rejectStream(frame.streamID, reason: "The peer repeated a stream SYN.")
+        return
+      }
+      stream = existing
+    } else {
+      guard frame.flags & FlowersecYamuxConstants.flagSYN != 0 else {
+        try await rejectUnknownStream(frame.streamID)
+        return
+      }
+      stream = try await acceptInboundStream(frame.streamID)
     }
     guard await applyResetAndAckFlags(frame, stream: stream) else { return }
     if !frame.payload.isEmpty {
@@ -419,13 +465,19 @@ actor FlowersecYamuxClient {
   }
 
   private func handleWindowUpdateFrame(_ frame: FlowersecYamuxFrame) async throws {
-    guard let stream = streams[frame.streamID] else {
-      try await rejectUnknownStream(frame.streamID)
-      return
-    }
-    guard frame.flags & FlowersecYamuxConstants.flagSYN == 0 else {
-      try await rejectStream(frame.streamID, reason: "The client does not accept inbound streams.")
-      return
+    let stream: FlowersecYamuxStream
+    if let existing = streams[frame.streamID] {
+      guard frame.flags & FlowersecYamuxConstants.flagSYN == 0 else {
+        try await rejectStream(frame.streamID, reason: "The peer repeated a stream SYN.")
+        return
+      }
+      stream = existing
+    } else {
+      guard frame.flags & FlowersecYamuxConstants.flagSYN != 0 else {
+        try await rejectUnknownStream(frame.streamID)
+        return
+      }
+      stream = try await acceptInboundStream(frame.streamID)
     }
     guard await applyResetAndAckFlags(frame, stream: stream) else { return }
     if frame.flags & FlowersecYamuxConstants.flagFIN != 0 {
@@ -492,12 +544,6 @@ actor FlowersecYamuxClient {
     guard frame.type == FlowersecYamuxConstants.typeData else {
       return frame
     }
-    guard frame.flags & FlowersecYamuxConstants.flagSYN == 0 else {
-      throw FlowersecError.invalidYamux(
-        "The client does not accept inbound DATA streams.",
-        path: path
-      )
-    }
     guard frame.length <= UInt32(limits.maxFrameBytes) else {
       diagnostic(
         code: "resource_limit_reached",
@@ -511,11 +557,15 @@ actor FlowersecYamuxClient {
         "The peer declared a DATA frame larger than maxFrameBytes."
       )
     }
+    var dataFlags = frame.flags
+    if streams[frame.streamID] == nil, frame.flags & FlowersecYamuxConstants.flagSYN != 0 {
+      _ = try await acceptInboundStream(frame.streamID)
+      dataFlags &= ~FlowersecYamuxConstants.flagSYN
+    }
     guard streams[frame.streamID] != nil, let queued = queuedBytesByStream[frame.streamID] else {
-      throw FlowersecError.invalidYamux(
-        "The peer sent DATA for an unknown stream.",
-        path: path
-      )
+      try await discardExact(Int(frame.length))
+      try await rejectUnknownStream(frame.streamID)
+      return nil
     }
     let length = Int(frame.length)
     guard queued <= limits.maxStreamReceiveBytes - length else {
@@ -551,7 +601,7 @@ actor FlowersecYamuxClient {
       let payload = length > 0 ? try await channel.readExact(length) : Data()
       return FlowersecYamuxFrame(
         type: frame.type,
-        flags: frame.flags,
+        flags: dataFlags,
         streamID: frame.streamID,
         length: frame.length,
         payload: payload
@@ -573,6 +623,60 @@ actor FlowersecYamuxClient {
 
   private func rejectUnknownStream(_ streamID: UInt32) async throws {
     try await writeReset(streamID)
+  }
+
+  private func acceptInboundStream(_ streamID: UInt32) async throws -> FlowersecYamuxStream {
+    guard streamID != 0, isInboundStreamIDValid(streamID) else {
+      try await rejectUnknownStream(streamID)
+      throw FlowersecError.invalidYamux("The peer used an invalid inbound stream identifier.", path: path)
+    }
+    guard streams.count < limits.maxActiveStreams,
+      inboundStreamIDs.count < limits.maxInboundStreams
+    else {
+      diagnostic(
+        code: "resource_limit_reached",
+        resource: "yamux_inbound_streams",
+        current: inboundStreamIDs.count,
+        limit: limits.maxInboundStreams
+      )
+      try await rejectUnknownStream(streamID)
+      throw FlowersecError.resourceExhausted(
+        path: path,
+        stage: .yamux,
+        "The yamux inbound stream limit was reached."
+      )
+    }
+    let stream = FlowersecYamuxStream(id: streamID, session: self, path: path)
+    streams[streamID] = stream
+    inboundStreamIDs.insert(streamID)
+    queuedBytesByStream[streamID] = 0
+    await stream.markEstablished()
+    try await writeFrame(
+      FlowersecYamuxFrame(
+        type: FlowersecYamuxConstants.typeWindowUpdate,
+        flags: FlowersecYamuxConstants.flagACK,
+        streamID: streamID,
+        length: 0,
+        payload: Data()
+      )
+    )
+    if incomingWaiters.isEmpty {
+      incomingStreams.append(stream)
+    } else {
+      incomingWaiters.removeFirst().resume(returning: stream)
+    }
+    return stream
+  }
+
+  private func isInboundStreamIDValid(_ streamID: UInt32) -> Bool {
+    streamID & 1 == (client ? 0 : 1)
+  }
+
+  private func failIncomingWaiters(_ error: Error) {
+    let waiters = incomingWaiters
+    incomingWaiters.removeAll()
+    incomingStreams.removeAll()
+    for waiter in waiters { waiter.resume(throwing: error) }
   }
 
   private func rejectStream(_ streamID: UInt32, reason: String) async throws {
@@ -598,6 +702,7 @@ actor FlowersecYamuxClient {
   @discardableResult
   private func removeStream(_ streamID: UInt32) -> FlowersecYamuxStream? {
     let stream = streams.removeValue(forKey: streamID)
+    inboundStreamIDs.remove(streamID)
     if let queued = queuedBytesByStream.removeValue(forKey: streamID) {
       sessionQueuedBytes -= queued
     }

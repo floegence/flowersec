@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,96 @@ func TestVersionFlag(t *testing.T) {
 	s := out.String()
 	if !strings.Contains(s, "v1.2.3") || !strings.Contains(s, "deadbeef") || !strings.Contains(s, "2026-01-01T00:00:00Z") {
 		t.Fatalf("unexpected version output: %q", s)
+	}
+}
+
+func TestRustGenerationIncludesTypedRPCBothDirections(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", "idl", "flowersec", "demo", "v1", "demo.fidl.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input schema
+	if err := json.Unmarshal(data, &input); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	if err := genRust(out, input); err != nil {
+		t.Fatal(err)
+	}
+	if err := genRustRPC(out, input); err != nil {
+		t.Fatal(err)
+	}
+	rpc, err := os.ReadFile(filepath.Join(out, "flowersec", "demo", "v1_rpc.rs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{
+		"pub fn on_hello",
+		"pub trait DemoHandler",
+		"pub async fn register_demo",
+		"pub async fn ping",
+	} {
+		if !strings.Contains(string(rpc), token) {
+			t.Fatalf("Rust typed RPC output is missing %q:\n%s", token, rpc)
+		}
+	}
+	module, err := os.ReadFile(filepath.Join(out, "flowersec", "demo", "mod.rs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(module), "pub mod v1_rpc;") {
+		t.Fatalf("Rust RPC module is not exported:\n%s", module)
+	}
+}
+
+func TestSwiftGenerationUsesUniqueDomainFilename(t *testing.T) {
+	t.Parallel()
+
+	input := schema{Namespace: "flowersec.demo.v1", Messages: map[string]messageDef{}, Enums: map[string]enumDef{}, Services: map[string]serviceDef{}}
+	out := t.TempDir()
+	if err := genSwift(out, "", input); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "Generated", "demo", "demo_v1.gen.swift")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSwiftGenerationIncludesTypedRPCBothDirections(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", "idl", "flowersec", "demo", "v1", "demo.fidl.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input schema
+	if err := json.Unmarshal(data, &input); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	if err := genSwift(out, "Flowersec", input); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(out, "Generated", "demo", "demo_v1.gen.swift"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{
+		"import Flowersec",
+		"struct WireDemoPingRequest: Codable, Sendable {\n}",
+		"func ping(",
+		"func onHello(",
+		"protocol WireDemoDemoHandler",
+		"func registerWireDemoDemo",
+	} {
+		if !strings.Contains(string(generated), token) {
+			t.Fatalf("Swift typed RPC output is missing %q:\n%s", token, generated)
+		}
+	}
+	if strings.Contains(string(generated), "struct WireDemoPingRequest: Codable, Sendable {\n\n  enum CodingKeys") {
+		t.Fatalf("Swift empty messages must not generate an empty CodingKeys enum:\n%s", generated)
 	}
 }
 

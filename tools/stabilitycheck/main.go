@@ -24,7 +24,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: go run . <verify-manifest|verify-go|verify-docs|verify-go-coverage|report>")
+		return errors.New("usage: go run . <verify-manifest|verify-go|verify-swift|verify-rust|verify-docs|verify-go-coverage|verify-parity|verify-defaults|report>")
 	}
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
@@ -37,23 +37,33 @@ func run(args []string) error {
 
 	switch args[0] {
 	case "verify-manifest":
-		fmt.Printf("manifest OK: %d go targets, %d ts subpaths, %d swift symbols\n", len(m.Go.CompileTargets), len(m.TS.Subpaths), len(m.Swift.Symbols))
+		fmt.Printf("manifest OK: %d go targets, %d ts subpaths, %d swift symbols, %d rust entries\n", len(m.Go.CompileTargets), len(m.TS.Subpaths), len(m.Swift.Symbols), len(m.Rust.CompileEntries))
 		return nil
 	case "verify-go":
 		return verifyGo(repoRoot, m)
 	case "verify-swift":
 		return verifySwift(repoRoot, m)
+	case "verify-rust":
+		return verifyRust(repoRoot, m)
 	case "verify-docs":
 		return verifyDocs(repoRoot, m)
 	case "verify-go-coverage":
 		return verifyGoCoverage(repoRoot, m)
+	case "verify-parity":
+		return verifyParity(repoRoot)
+	case "verify-defaults":
+		return verifyDefaults(repoRoot)
 	case "report":
 		fmt.Printf("manifest=%s\n", manifestPath)
 		fmt.Printf("go_targets=%d\n", len(m.Go.CompileTargets))
 		fmt.Printf("ts_subpaths=%d\n", len(m.TS.Subpaths))
 		fmt.Printf("swift_symbols=%d\n", len(m.Swift.Symbols))
+		fmt.Printf("rust_entries=%d\n", len(m.Rust.CompileEntries))
 		fmt.Printf("go_coverage_packages=%d\n", len(m.Coverage.Go))
 		fmt.Printf("ts_coverage=%d/%d/%d/%d\n", m.Coverage.TS.Lines, m.Coverage.TS.Functions, m.Coverage.TS.Statements, m.Coverage.TS.Branches)
+		if capabilities, err := loadCapabilityManifest(repoRoot); err == nil {
+			fmt.Printf("portable_capabilities=%d\n", len(capabilities.PortableCapabilities))
+		}
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
@@ -78,12 +88,53 @@ func verifyDocs(repoRoot string, m *manifest) error {
 		required = append(required, subpath.DocTokens...)
 	}
 	required = append(required, m.Swift.DocTokens...)
+	required = append(required, m.Rust.DocTokens...)
 	for _, token := range required {
 		if !strings.Contains(doc, token) {
 			return fmt.Errorf("%s missing token %s", m.Docs.APISurface, token)
 		}
 	}
 	fmt.Printf("docs OK: %d tokens verified in %s\n", len(required), m.Docs.APISurface)
+	return nil
+}
+
+func verifyRust(repoRoot string, m *manifest) error {
+	probeDir := filepath.Join(repoRoot, ".build", "stability-rust-probe")
+	if err := os.RemoveAll(probeDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(probeDir, "src"), 0o755); err != nil {
+		return err
+	}
+	cratePath := filepath.ToSlash(filepath.Join(repoRoot, m.Rust.CratePath))
+	cargo := fmt.Sprintf("[package]\nname = \"flowersec-api-probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\n%s = { path = %q }\n", m.Rust.Package, cratePath)
+	if err := os.WriteFile(filepath.Join(probeDir, "Cargo.toml"), []byte(cargo), 0o644); err != nil {
+		return err
+	}
+	var source strings.Builder
+	source.WriteString("fn main() {\n")
+	for _, entry := range m.Rust.CompileEntries {
+		source.WriteString("    ")
+		source.WriteString(entry)
+		if !strings.HasSuffix(strings.TrimSpace(entry), ";") {
+			source.WriteString(";")
+		}
+		source.WriteString("\n")
+	}
+	source.WriteString("}\n")
+	if err := os.WriteFile(filepath.Join(probeDir, "src", "main.rs"), []byte(source.String()), 0o644); err != nil {
+		return err
+	}
+	cmd := exec.Command("cargo", "check", "--quiet")
+	cmd.Dir = probeDir
+	cmd.Env = append(os.Environ(), "CARGO_TERM_COLOR=never")
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("Rust public API compile probe failed: %w\n%s", err, output.String())
+	}
+	fmt.Printf("rust symbols OK: %d compile entries verified\n", len(m.Rust.CompileEntries))
 	return nil
 }
 
@@ -154,7 +205,7 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 	if err != nil {
 		return nil, err
 	}
-	modulePaths, err := swiftBuildModulePaths(binPath)
+	modulePaths, err := swiftBuildModulePaths(repoRoot, binPath)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +288,7 @@ func swiftBuildBinPath(repoRoot string) (string, error) {
 	return path, nil
 }
 
-func swiftBuildModulePaths(binPath string) ([]string, error) {
+func swiftBuildModulePaths(repoRoot, binPath string) ([]string, error) {
 	candidates := []string{
 		filepath.Join(binPath, "Modules"),
 		binPath,
@@ -253,9 +304,32 @@ func swiftBuildModulePaths(binPath string) ([]string, error) {
 			return nil, err
 		}
 	}
+	for _, root := range []string{binPath, filepath.Join(repoRoot, ".build", "checkouts")} {
+		if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || entry.Name() != "module.modulemap" {
+				return nil
+			}
+			dir := filepath.Dir(path)
+			if !slices.Contains(paths, dir) {
+				paths = append(paths, dir)
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("swift build output %s does not contain module search paths", binPath)
 	}
+	slices.Sort(paths)
 	return paths, nil
 }
 

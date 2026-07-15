@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/floegence/flowersec/flowersec-go/internal/bin"
+	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 )
 
 var ErrFrameTooLarge = errors.New("json frame too large")
@@ -14,7 +15,7 @@ var ErrFrameTooLarge = errors.New("json frame too large")
 //
 // Do not call ReadJSONFrame with maxLen<=0 on untrusted inputs, because it disables size
 // checks and may lead to large allocations (memory DoS).
-const DefaultMaxJSONFrameBytes = 1 << 20
+const DefaultMaxJSONFrameBytes = defaults.RPCMaxJSONFrameBytes
 
 // WriteJSONFrame writes a length-prefixed JSON message to the writer.
 func WriteJSONFrame(w io.Writer, v any) error {

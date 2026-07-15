@@ -6,7 +6,7 @@ This document describes the current on-the-wire contracts implemented by this re
 
 - **Stable framing** (what bytes are sent)
 - **Stable ordering** (what happens first)
-- **Cross-language alignment** (Go and TypeScript implement the same contracts)
+- **Cross-language alignment** (Go, TypeScript, Swift, and Rust implement the same portable contracts)
 
 For the user-facing stable APIs, see `docs/API_SURFACE.md`.
 For the recommended custom stream patterns (meta + bytes), see `docs/STREAMS.md`.
@@ -34,6 +34,9 @@ Current implementation:
 
 - Go: `flowersec-go/tunnel/protocol/attach.go` (parsing + constraints)
 - Go tunnel server: `flowersec-go/tunnel/server/server.go` (`handleWS`)
+- TypeScript endpoint/client: `flowersec-ts/src/endpoint` and `flowersec-ts/src/tunnel-client`
+- Swift endpoint/client: `flowersec-swift/Sources/Flowersec/Endpoint.swift` and `RPC.swift`
+- Rust endpoint/client: `flowersec-rust/src/endpoint.rs` and `client.rs`
 
 If the tunnel rejects the attach, it closes the websocket with a close status and a **reason token**.
 Official clients map these reason tokens to stable error codes (see `docs/ERROR_MODEL.md`):
@@ -61,6 +64,8 @@ Current implementation:
 
 - Go framing: `flowersec-go/crypto/e2ee/framing.go`
 - TS framing: `flowersec-ts/src/e2ee/framing.ts`
+- Swift framing: `flowersec-swift/Sources/Flowersec/HandshakeFrames.swift`
+- Rust framing: `flowersec-rust/src/e2ee.rs`
 
 ### 2.2 Handshake message flow
 
@@ -88,6 +93,8 @@ Current implementation:
 
 - Go: `flowersec-go/crypto/e2ee/handshake.go`
 - TS: `flowersec-ts/src/e2ee/handshake.ts`
+- Swift: `flowersec-swift/Sources/Flowersec/Handshake.swift` and `ServerHandshake.swift`
+- Rust: `flowersec-rust/src/e2ee.rs`
 - Message schemas: `idl/flowersec/e2ee/v1/e2ee.fidl.json` (generated into `gen/flowersec/e2ee/v1`)
 
 ## 3. E2EE record framing (`FSEC`)
@@ -121,6 +128,8 @@ Current implementation:
 
 - Go framing + decrypt/encrypt: `flowersec-go/crypto/e2ee/{framing.go,record.go}`
 - TS framing + decrypt/encrypt: `flowersec-ts/src/e2ee/{framing.ts,record.ts}`
+- Swift framing + decrypt/encrypt: `flowersec-swift/Sources/Flowersec/{RecordCodec.swift,SecureChannel.swift}`
+- Rust framing + decrypt/encrypt: `flowersec-rust/src/e2ee.rs`
 
 ### 3.2 Rekey semantics
 
@@ -135,6 +144,8 @@ Current implementation:
 
 - Go: `flowersec-go/crypto/e2ee/record.go` (`DeriveRekeyKey`) and `secureconn.go` (apply on receive)
 - TS: `flowersec-ts/src/e2ee/kdf.ts` + `secureChannel.ts`
+- Swift: `flowersec-swift/Sources/Flowersec/RecordCodec.swift` + `SecureChannel.swift`
+- Rust: `flowersec-rust/src/e2ee.rs`
 
 ## 4. Yamux multiplexing
 
@@ -149,6 +160,10 @@ Current implementation:
 
 - Go: Flowersec's `flowersec-go/mux/yamux` wrapper over `github.com/libp2p/go-yamux/v5`
 - TS: `flowersec-ts/src/yamux/*` (see `flowersec-ts/YAMUX_ALIGNMENT.md` for alignment notes)
+- Swift: `flowersec-swift/Sources/Flowersec/Yamux.swift`
+- Rust: Flowersec-owned implementation in `flowersec-rust/src/yamux.rs`
+
+All four expose acknowledged PING probes and enforce the six shared limits from `stability/sdk_defaults.json`. The Rust implementation is not based on the upstream `yamux` crate because Flowersec requires explicit ACK correlation and complete resource-limit control.
 
 ## 5. Stream hello
 
@@ -158,6 +173,8 @@ Current implementation:
 
 - Go: `flowersec-go/streamhello/*`
 - TS: `flowersec-ts/src/streamhello/*`
+- Swift: `flowersec-swift/Sources/Flowersec/DataCoding.swift` and `Yamux.swift`
+- Rust: `flowersec-rust/src/streamhello.rs`
 
 ## 6. RPC framing (on the `rpc` stream)
 
@@ -170,7 +187,11 @@ Current implementation:
 
 - Go framing: `flowersec-go/framing/jsonframe/jsonframe.go`
 - TS framing: `flowersec-ts/src/framing/jsonframe.ts`
+- Swift framing: `FlowersecJSONFrame` in `flowersec-swift/Sources/Flowersec/RPC.swift`
+- Rust framing: `flowersec-rust/src/framing.rs` and `streamio.rs`
 - Message schemas: `idl/flowersec/rpc/v1/rpc.fidl.json` (generated into `gen/flowersec/rpc/v1`)
+
+Typed RPC clients and server handlers are generated for all four languages by `tools/idlgen`. Server concurrency, request queues, notification queues, cancellation, and timeouts are bounded by the shared defaults contract.
 
 ## 7. Additional stable stream protocols
 

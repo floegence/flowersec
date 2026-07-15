@@ -13,3 +13,7 @@ export {
   requestConnectArtifact,
   requestEntryConnectArtifact,
 } from "./request.js";
+export * from "./token.js";
+export * from "./issuer.js";
+export * from "./channelInit.js";
+export * from "./http.js";

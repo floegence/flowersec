@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-protocol FlowersecBinaryTransport: Sendable {
+public protocol FlowersecBinaryTransport: Sendable {
   func writeBinary(_ data: Data) async throws
   func readBinary() async throws -> Data
   func close() async

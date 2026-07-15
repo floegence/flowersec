@@ -18,6 +18,7 @@ type manifest struct {
 	Go       goManifest       `json:"go"`
 	TS       tsManifest       `json:"ts"`
 	Swift    swiftManifest    `json:"swift"`
+	Rust     rustManifest     `json:"rust"`
 	Coverage coverageManifest `json:"coverage"`
 }
 
@@ -70,6 +71,13 @@ type swiftSymbol struct {
 	Kind     string `json:"kind"`
 	Name     string `json:"name"`
 	DocToken string `json:"doc_token"`
+}
+
+type rustManifest struct {
+	Package        string   `json:"package"`
+	CratePath      string   `json:"crate_path"`
+	DocTokens      []string `json:"doc_tokens"`
+	CompileEntries []string `json:"compile_entries"`
 }
 
 type coverageManifest struct {
@@ -246,6 +254,29 @@ func validateManifest(repoRoot string, m *manifest) error {
 	}
 	if err := requireUnique("swift.symbols", swiftNames); err != nil {
 		return err
+	}
+	if strings.TrimSpace(m.Rust.Package) == "" {
+		return errors.New("rust.package must not be empty")
+	}
+	if strings.TrimSpace(m.Rust.CratePath) == "" {
+		return errors.New("rust.crate_path must not be empty")
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, m.Rust.CratePath, "Cargo.toml")); err != nil {
+		return fmt.Errorf("rust.crate_path: %w", err)
+	}
+	if len(m.Rust.DocTokens) == 0 || len(m.Rust.CompileEntries) == 0 {
+		return errors.New("rust doc_tokens and compile_entries must not be empty")
+	}
+	if err := requireUnique("rust.doc_tokens", m.Rust.DocTokens); err != nil {
+		return err
+	}
+	if err := requireUnique("rust.compile_entries", m.Rust.CompileEntries); err != nil {
+		return err
+	}
+	for _, entry := range m.Rust.CompileEntries {
+		if strings.TrimSpace(entry) == "" {
+			return errors.New("rust compile entry must not be empty")
+		}
 	}
 
 	if len(m.Coverage.Go) == 0 {

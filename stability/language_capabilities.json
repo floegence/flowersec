@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "languages": ["go", "typescript", "swift", "rust"],
+  "portable_capabilities": [
+    {
+      "id": "wire_idl",
+      "description": "Core wire types, strict validation, and typed RPC generation",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["tools/idlgen/main.go", "flowersec-go/gen"] },
+        "typescript": { "status": "complete", "evidence": ["tools/idlgen/main.go", "flowersec-ts/src/gen"] },
+        "swift": { "status": "complete", "evidence": ["tools/idlgen/main.go", "flowersec-swift/Sources/Flowersec/Generated", "flowersec-swift/Tests/FlowersecTests/Generated", "flowersec-swift/Tests/FlowersecTests/EndpointTests.swift"] },
+        "rust": { "status": "complete", "evidence": ["tools/idlgen/main.go", "flowersec-rust/src/gen", "flowersec-rust/tests/rpc_roundtrip.rs"] }
+      }
+    },
+    {
+      "id": "connect",
+      "description": "ConnectArtifact, scopes, correlation, and direct/tunnel/automatic connect",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/client", "flowersec-go/protocolio"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/connect", "flowersec-ts/src/facade.ts"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/Wire.swift", "flowersec-swift/Sources/Flowersec/RPC.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/artifact.rs", "flowersec-rust/src/client.rs", "flowersec-rust/tests/direct_integration.rs"] }
+      }
+    },
+    {
+      "id": "security",
+      "description": "Transport policy, E2EE suites, records, rekey, and secret lifecycle",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/crypto/e2ee", "flowersec-go/transportsecurity"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/e2ee", "flowersec-ts/src/client-connect/transportSecurity.ts"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/Handshake.swift", "flowersec-swift/Sources/Flowersec/SecureChannel.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/e2ee.rs", "flowersec-rust/src/transport_security.rs", "flowersec-rust/tests/e2ee_vectors.rs", "flowersec-rust/tests/handshake_roundtrip.rs"] }
+      }
+    },
+    {
+      "id": "session",
+      "description": "Yamux, bidirectional streams, StreamHello, framing, limits, and acknowledged liveness",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/mux/yamux", "flowersec-go/streamhello", "flowersec-go/framing/jsonframe"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/yamux", "flowersec-ts/src/streamhello", "flowersec-ts/src/framing"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/Yamux.swift", "flowersec-swift/Sources/Flowersec/DataCoding.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/yamux.rs", "flowersec-rust/src/streamhello.rs", "flowersec-rust/tests/yamux_roundtrip.rs", "flowersec-rust/tests/go_interop.rs", "flowersec-rust/tests/typescript_interop.rs", "flowersec-rust/tests/swift_interop.rs"] }
+      }
+    },
+    {
+      "id": "rpc",
+      "description": "Bounded RPC clients, servers, calls, notifications, cancellation, and timeouts",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/rpc"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/rpc"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/RPC.swift", "flowersec-swift/Sources/Flowersec/RPCServer.swift", "flowersec-swift/Tests/FlowersecTests/RPCTests.swift", "flowersec-swift/Tests/FlowersecTests/EndpointTests.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/rpc.rs", "flowersec-rust/tests/rpc_roundtrip.rs", "flowersec-rust/tests/go_interop.rs", "flowersec-rust/tests/typescript_interop.rs", "flowersec-rust/tests/swift_interop.rs"] }
+      }
+    },
+    {
+      "id": "endpoint",
+      "description": "Direct and tunnel server roles, credential resolution, and stream/RPC serving",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/endpoint"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/endpoint/index.ts", "flowersec-ts/src/endpoint/endpoint.integration.test.ts"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/Endpoint.swift", "flowersec-swift/Sources/Flowersec/ServerHandshake.swift", "flowersec-swift/Tests/FlowersecTests/EndpointTests.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/endpoint.rs", "flowersec-rust/tests/direct_integration.rs", "flowersec-rust/tests/endpoint_resolved.rs", "flowersec-rust/tests/go_interop.rs", "flowersec-rust/tests/typescript_interop.rs", "flowersec-rust/tests/swift_interop.rs"] }
+      }
+    },
+    {
+      "id": "controlplane",
+      "description": "Artifact fetch/envelopes, issuer, tokens, and channel initialization",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/controlplane"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/controlplane/token.ts", "flowersec-ts/src/controlplane/issuer.ts", "flowersec-ts/src/controlplane/channelInit.ts", "flowersec-ts/src/controlplane/controlplane_server.test.ts"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/Controlplane.swift", "flowersec-swift/Tests/FlowersecTests/ControlplaneTests.swift", "idl/flowersec/testdata/v1/token_vectors.json"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/controlplane.rs", "idl/flowersec/testdata/v1/token_vectors.json"] }
+      }
+    },
+    {
+      "id": "reconnect",
+      "description": "One-shot and refreshable artifact sources, backoff, jitter, and termination detection",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/reconnect/reconnect.go", "flowersec-go/reconnect/reconnect_test.go"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/reconnect"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/Reconnect.swift", "flowersec-swift/Tests/FlowersecTests/ReconnectTests.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/reconnect.rs", "flowersec-rust/tests/reconnect_integration.rs"] }
+      }
+    },
+    {
+      "id": "proxy",
+      "description": "HTTP and WebSocket proxy clients and servers with the stable security policy",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/proxy/client.go", "flowersec-go/proxy/register.go", "flowersec-go/proxy/client_test.go"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/proxy/runtime.ts", "flowersec-ts/src/proxy/server.ts", "flowersec-ts/src/proxy/server.integration.test.ts"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/ProxyClient.swift", "flowersec-swift/Sources/Flowersec/ProxyServer.swift", "flowersec-swift/Sources/Flowersec/ProxyNIOWebSocket.swift", "flowersec-swift/Tests/FlowersecTests/ProxyTests.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/proxy.rs", "flowersec-rust/tests/proxy_integration.rs", "flowersec-rust/tests/go_interop.rs", "flowersec-rust/tests/typescript_interop.rs", "flowersec-rust/tests/swift_interop.rs"] }
+      }
+    },
+    {
+      "id": "observability",
+      "description": "Stable error tuple, diagnostics, and observer contracts",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/fserrors", "flowersec-go/observability"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/observability", "flowersec-ts/src/utils/errors.ts"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/Wire.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/error.rs", "flowersec-rust/src/observability.rs", "stability/connect_error_code_registry.json", "stability/connect_diagnostics_code_registry.json"] }
+      }
+    }
+  ],
+  "runtime_specific_capabilities": [
+    {
+      "id": "browser_proxy_runtime",
+      "owner": "typescript",
+      "reason": "Service Worker and browser page integration require browser JavaScript APIs."
+    },
+    {
+      "id": "deployable_services_and_cli",
+      "owner": "go",
+      "reason": "Tunnel, proxy gateway, and helper binaries are shared deployables consumed by every SDK."
+    },
+    {
+      "id": "rust_wasm",
+      "owner": "rust",
+      "reason": "The Rust v0.22 support target is native Linux, macOS, and Windows; browser support remains TypeScript-owned."
+    }
+  ],
+  "shared_fixtures": [
+    {
+      "id": "connect_artifact",
+      "path": "testdata/connect_artifact_cases/manifest.json",
+      "consumers": {
+        "go": ["flowersec-go/protocolio/connect_artifact_fixtures_test.go"],
+        "typescript": ["flowersec-ts/src/connect/artifact.fixtures.test.ts"],
+        "swift": ["flowersec-swift/Tests/FlowersecTests/ConnectArtifactTests.swift"],
+        "rust": ["flowersec-rust/tests/artifact_fixtures.rs"]
+      }
+    },
+    {
+      "id": "e2ee",
+      "path": "idl/flowersec/testdata/v1/e2ee_vectors.json",
+      "consumers": {
+        "go": ["flowersec-go/crypto/e2ee/vectors_test.go"],
+        "typescript": ["flowersec-ts/src/e2ee/vectors.test.ts"],
+        "swift": ["flowersec-swift/Tests/FlowersecTests/ProtocolVectorTests.swift"],
+        "rust": ["flowersec-rust/tests/e2ee_vectors.rs"]
+      }
+    },
+    {
+      "id": "token",
+      "path": "idl/flowersec/testdata/v1/token_vectors.json",
+      "consumers": {
+        "go": ["flowersec-go/controlplane/token/vectors_test.go"],
+        "typescript": ["flowersec-ts/src/controlplane/controlplane_server.test.ts"],
+        "swift": ["flowersec-swift/Tests/FlowersecTests/ControlplaneTests.swift"],
+        "rust": ["flowersec-rust/src/controlplane.rs"]
+      }
+    },
+    {
+      "id": "portable_protocol_contracts",
+      "path": "testdata/portable_protocol_vectors.json",
+      "consumers": {
+        "go": ["flowersec-go/e2e/portable_protocol_vectors_test.go"],
+        "typescript": ["flowersec-ts/src/portable_protocol_vectors.test.ts"],
+        "swift": ["flowersec-swift/Tests/FlowersecTests/PortableProtocolVectorTests.swift"],
+        "rust": ["flowersec-rust/tests/portable_protocol_vectors.rs"]
+      }
+    },
+    {
+      "id": "connect_error_registry",
+      "path": "stability/connect_error_code_registry.json",
+      "consumers": {
+        "go": ["flowersec-go/e2e/portable_protocol_vectors_test.go"],
+        "typescript": ["flowersec-ts/src/portable_protocol_vectors.test.ts"],
+        "swift": ["flowersec-swift/Tests/FlowersecTests/PortableProtocolVectorTests.swift"],
+        "rust": ["flowersec-rust/tests/portable_protocol_vectors.rs"]
+      }
+    },
+    {
+      "id": "connect_diagnostics_registry",
+      "path": "stability/connect_diagnostics_code_registry.json",
+      "consumers": {
+        "go": ["flowersec-go/e2e/portable_protocol_vectors_test.go"],
+        "typescript": ["flowersec-ts/src/portable_protocol_vectors.test.ts"],
+        "swift": ["flowersec-swift/Tests/FlowersecTests/PortableProtocolVectorTests.swift"],
+        "rust": ["flowersec-rust/tests/portable_protocol_vectors.rs"]
+      }
+    }
+  ]
+}

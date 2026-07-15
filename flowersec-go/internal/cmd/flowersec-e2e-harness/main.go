@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -24,14 +25,17 @@ import (
 	controlplanehttp "github.com/floegence/flowersec/flowersec-go/controlplane/http"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	demov1 "github.com/floegence/flowersec/flowersec-go/internal/testgen/flowersec/demo/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/yamuxinterop"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/proxy"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
-	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
 	"github.com/gorilla/websocket"
 	hyamux "github.com/hashicorp/yamux"
@@ -39,11 +43,16 @@ import (
 
 func main() {
 	var scenarioJSON string
+	var externalServer bool
 	flag.StringVar(&scenarioJSON, "scenario", "", "scenario JSON payload")
+	flag.BoolVar(&externalServer, "external-server", false, "emit a server grant without starting the Go endpoint")
 	flag.Parse()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	upstream := newInteropUpstream()
+	defer upstream.Close()
+	streamSrv := mustStreamServer(upstream.URL)
 
 	// Local test issuer and tunnel server.
 	aud := "flowersec-tunnel:dev"
@@ -67,6 +76,35 @@ func main() {
 	mux := http.NewServeMux()
 	tun.Register(mux)
 
+	directPSK := make([]byte, 32)
+	if _, err := rand.Read(directPSK); err != nil {
+		log.Fatal(err)
+	}
+	directInfo := directv1.DirectConnectInfo{
+		ChannelId:                "chan_e2e_direct",
+		E2eePskB64u:              base64url.Encode(directPSK),
+		ChannelInitExpireAtUnixS: time.Now().Add(5 * time.Minute).Unix(),
+		DefaultSuite:             directv1.Suite_X25519_HKDF_SHA256_AES_256_GCM,
+	}
+	directHandler, err := endpointserve.NewDirectHandler(endpointserve.DirectHandlerOptions{
+		Server:         streamSrv,
+		AllowedOrigins: []string{"https://app.redeven.com"},
+		Handshake: endpoint.AcceptDirectOptions{
+			ChannelID:                directInfo.ChannelId,
+			PSK:                      directPSK,
+			Suite:                    endpoint.SuiteX25519HKDFAES256GCM,
+			InitExpireAtUnixS:        directInfo.ChannelInitExpireAtUnixS,
+			ClockSkew:                30 * time.Second,
+			MaxHandshakePayload:      8 * 1024,
+			MaxRecordBytes:           1 << 20,
+			OutboundRecordChunkBytes: 64 * 1024,
+		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.HandleFunc("/direct/ws", directHandler)
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		log.Fatal(err)
@@ -80,6 +118,7 @@ func main() {
 	}()
 
 	wsURL := "ws://" + ln.Addr().String() + tunnelCfg.Path
+	directInfo.WsUrl = "ws://" + ln.Addr().String() + "/direct/ws"
 	ci := &channelinit.Service{
 		Issuer: iss,
 		Params: channelinit.Params{
@@ -101,11 +140,11 @@ func main() {
 			return nil, controlplanehttp.NewRequestError(http.StatusForbidden, "forbidden", "entry ticket is not valid for this endpoint", nil)
 		}
 
-		grantClient, grantServer, nextPSK, err := newGrantPair(ci, "chan_e2e_ts_cp")
+		grantClient, grantServer, _, err := newGrantPair(ci, "chan_e2e_ts_cp")
 		if err != nil {
 			return nil, err
 		}
-		go runServerEndpoint(ctx, wsURL, grantServer.ChannelId, grantServer.Token, nextPSK, grantServer.ChannelInitExpireAtUnixS)
+		go runServerEndpoint(ctx, grantServer, streamSrv)
 
 		artifact := &protocolio.ConnectArtifact{
 			V:           1,
@@ -169,7 +208,10 @@ func main() {
 		ready := map[string]any{
 			"ws_url":                wsURL,
 			"grant_client":          grantC,
+			"grant_server":          grantS,
+			"direct_info":           directInfo,
 			"controlplane_base_url": "http://" + ln.Addr().String(),
+			"upstream_url":          upstream.URL,
 			"entry_ticket":          entryTicket,
 		}
 		_ = json.NewEncoder(os.Stdout).Encode(ready)
@@ -188,12 +230,17 @@ func main() {
 	}
 
 	// Start the server-side endpoint that completes the E2EE handshake.
-	go runServerEndpoint(ctx, wsURL, grantS.ChannelId, grantS.Token, psk, grantS.ChannelInitExpireAtUnixS)
+	if !externalServer {
+		go runServerEndpoint(ctx, grantS, streamSrv)
+	}
 
 	ready := map[string]any{
 		"ws_url":                wsURL,
 		"grant_client":          grantC,
+		"grant_server":          grantS,
+		"direct_info":           directInfo,
 		"controlplane_base_url": "http://" + ln.Addr().String(),
+		"upstream_url":          upstream.URL,
 		"entry_ticket":          entryTicket,
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(ready)
@@ -205,74 +252,68 @@ func main() {
 }
 
 // runServerEndpoint attaches as the server role and serves a simple RPC handler.
-func runServerEndpoint(ctx context.Context, wsURL string, channelID string, tokenStr string, psk []byte, initExp int64) {
-	c, _, err := dialTunnel(ctx, wsURL)
-	if err != nil {
-		return
-	}
-	defer c.Close()
-
-	attach := tunnelv1.Attach{
-		V:                  1,
-		ChannelId:          channelID,
-		Role:               tunnelv1.Role_server,
-		Token:              tokenStr,
-		EndpointInstanceId: base64url.Encode(make([]byte, 16)),
-	}
-	b, _ := json.Marshal(attach)
-	_ = c.WriteMessage(websocket.TextMessage, b)
-
-	bt := e2ee.NewWebSocketBinaryTransport(c)
-	cache := e2ee.NewServerHandshakeCache()
-	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.ServerHandshakeOptions{
-		PSK:                 psk,
-		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
-		ChannelID:           channelID,
-		InitExpireAtUnixS:   initExp,
-		ClockSkew:           30 * time.Second,
-		ServerFeatures:      1,
-		MaxHandshakePayload: 8 * 1024,
-		MaxRecordBytes:      1 << 20,
-	})
-	if err != nil {
-		return
-	}
-	defer secure.Close()
-
-	// Wrap the secure channel with yamux and serve RPC on each stream.
-	ycfg := hyamux.DefaultConfig()
-	ycfg.EnableKeepAlive = false
-	ycfg.LogOutput = io.Discard
-	sess, err := hyamux.Server(secure, ycfg)
+func runServerEndpoint(ctx context.Context, grant *controlv1.ChannelInitGrant, streamSrv *endpointserve.Server) {
+	sess, err := endpoint.ConnectTunnel(
+		ctx,
+		grant,
+		endpoint.WithOrigin("https://app.redeven.com"),
+		endpoint.WithTransportSecurityPolicy(endpoint.AllowPlaintextForLoopback),
+		endpoint.WithLivenessDisabled(),
+	)
 	if err != nil {
 		return
 	}
 	defer sess.Close()
+	_ = streamSrv.ServeSession(ctx, sess)
+}
 
-	for {
-		stream, err := sess.AcceptStream()
+func mustStreamServer(upstreamURL string) *endpointserve.Server {
+	streamSrv, err := endpointserve.New(endpointserve.Options{
+		RPC: endpointserve.RPCOptions{
+			Register: func(router *rpc.Router, server *rpc.Server) {
+				demov1.RegisterDemo(router, demoHandler{srv: server})
+			},
+		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	streamSrv.Handle("echo", func(_ context.Context, stream io.ReadWriteCloser) {
+		_, _ = io.Copy(stream, stream)
+	})
+	if err := proxy.Register(streamSrv, proxy.Options{
+		Upstream:       upstreamURL,
+		UpstreamOrigin: upstreamURL,
+	}); err != nil {
+		log.Fatal(err)
+	}
+	return streamSrv
+}
+
+func newInteropUpstream() *httptest.Server {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/http", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(w, "flowersec-go-proxy-ok")
+	})
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
-		go func() {
-			defer stream.Close()
-			h, err := streamhello.ReadStreamHello(stream, 8*1024)
+		defer conn.Close()
+		for {
+			messageType, payload, err := conn.ReadMessage()
 			if err != nil {
 				return
 			}
-			if h.Kind == "echo" {
-				_, _ = io.Copy(stream, stream)
+			if err := conn.WriteMessage(messageType, payload); err != nil {
 				return
 			}
-			if h.Kind != "rpc" {
-				return
-			}
-			router := rpc.NewRouter()
-			srv := rpc.NewServer(stream, router)
-			demov1.RegisterDemo(router, demoHandler{srv: srv})
-			_ = srv.Serve(ctx)
-		}()
-	}
+		}
+	})
+	return httptest.NewServer(mux)
 }
 
 // demoHandler implements the generated Demo service for integration tests.

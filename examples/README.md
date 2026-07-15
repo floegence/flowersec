@@ -1,6 +1,6 @@
 # Flowersec demos
 
-This folder is the demo cookbook for Flowersec.
+This folder is the demo cookbook for the Go, TypeScript, Swift, and Rust SDKs.
 
 v0.19.x makes the artifact-first path the recommended demo path, while keeping the older raw grant/direct demos available as advanced compatibility references.
 
@@ -22,6 +22,8 @@ Recommended quick checks without leaving artifact-first wiring:
 - node / artifact-first connect: pull `controlplane_http_url` from `dev.json` (`jq -r '.controlplane_http_url' dev.json`) and start `FSEC_CONTROLPLANE_BASE_URL=$(jq -r '.controlplane_http_url' dev.json) node ./examples/ts/node-artifact-client.mjs`
 - node / tunnel artifact from stdin: `curl -sS -X POST $(jq -r '.controlplane_http_url' dev.json)/v1/connect/artifact -H 'content-type: application/json' -d '{"endpoint_id":"server-1"}' | jq -c .connect_artifact | FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-tunnel-client.mjs`
 - node / direct artifact from stdin: `curl -sS http://127.0.0.1:5173/__demo/direct/artifact | jq -c .connect_artifact | FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-direct-client.mjs`
+- Rust / artifact-first RPC, stream, liveness, and proxy: `FSEC_CONTROLPLANE_BASE_URL=$(jq -r '.controlplane_http_url' dev.json) cargo run --manifest-path ./examples/rust-client/Cargo.toml`
+- Swift / artifact-first RPC, stream, liveness, and proxy: `FSEC_CONTROLPLANE_BASE_URL=$(jq -r '.controlplane_http_url' dev.json) swift run --package-path ./examples/swift-client`
 
 ## Artifact-aware CLI helpers
 
@@ -49,6 +51,8 @@ These outputs are intended for:
 - browser `connectBrowser(...)`
 - node `connectNode(...)`
 - go `client.Connect(...)`
+- swift `Flowersec.connect(...)`
+- rust `flowersec::connect(...)`
 
 ## Compatibility notes
 

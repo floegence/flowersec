@@ -16,6 +16,7 @@ public enum FlowersecStage: String, Codable, Equatable, Sendable {
   case secure
   case yamux
   case rpc
+  case reconnect
   case close
 }
 
@@ -937,23 +938,23 @@ public struct ConnectOptions: Sendable {
 
   public init(
     origin: String? = nil,
-    connectTimeout: Duration = .seconds(8),
+    connectTimeout: Duration = FlowersecSDKDefaults.Transport.connectTimeout,
     transportSecurityPolicy: TransportSecurityPolicy = .requireTLS,
     onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)? = nil,
     onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil,
-    outboundRecordChunkBytes: Int = 64 * 1024,
+    outboundRecordChunkBytes: Int = FlowersecSDKDefaults.E2EE.outboundRecordChunkBytes,
     yamuxLimits: YamuxLimits = YamuxLimits(),
     liveness: LivenessOptions = .pathDefault
   ) {
     self.init(
       origin: origin,
       connectTimeout: connectTimeout,
-      handshakeTimeout: .seconds(8),
+      handshakeTimeout: FlowersecSDKDefaults.Transport.handshakeTimeout,
       transportSecurityPolicy: transportSecurityPolicy,
       onTransportSecurityDiagnostic: onTransportSecurityDiagnostic,
       onDiagnosticEvent: onDiagnosticEvent,
       outboundRecordChunkBytes: outboundRecordChunkBytes,
-      maxOutboundBufferedBytes: 4 * 1024 * 1024,
+      maxOutboundBufferedBytes: FlowersecSDKDefaults.E2EE.maxOutboundBufferedBytes,
       yamuxLimits: yamuxLimits,
       liveness: liveness
     )
@@ -961,13 +962,13 @@ public struct ConnectOptions: Sendable {
 
   public init(
     origin: String? = nil,
-    connectTimeout: Duration = .seconds(8),
+    connectTimeout: Duration = FlowersecSDKDefaults.Transport.connectTimeout,
     handshakeTimeout: Duration,
     transportSecurityPolicy: TransportSecurityPolicy = .requireTLS,
     onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)? = nil,
     onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil,
-    outboundRecordChunkBytes: Int = 64 * 1024,
-    maxOutboundBufferedBytes: Int = 4 * 1024 * 1024,
+    outboundRecordChunkBytes: Int = FlowersecSDKDefaults.E2EE.outboundRecordChunkBytes,
+    maxOutboundBufferedBytes: Int = FlowersecSDKDefaults.E2EE.maxOutboundBufferedBytes,
     yamuxLimits: YamuxLimits = YamuxLimits(),
     liveness: LivenessOptions = .pathDefault
   ) {
@@ -987,11 +988,11 @@ public struct ConnectOptions: Sendable {
 
   public init(
     origin: String? = nil,
-    connectTimeout: Duration = .seconds(8),
+    connectTimeout: Duration = FlowersecSDKDefaults.Transport.connectTimeout,
     transportSecurityPolicy: TransportSecurityPolicy = .requireTLS,
     onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)? = nil,
     onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil,
-    outboundRecordChunkBytes: Int = 64 * 1024,
+    outboundRecordChunkBytes: Int = FlowersecSDKDefaults.E2EE.outboundRecordChunkBytes,
     maxOutboundBufferedBytes: Int,
     yamuxLimits: YamuxLimits = YamuxLimits(),
     liveness: LivenessOptions = .pathDefault
@@ -999,7 +1000,7 @@ public struct ConnectOptions: Sendable {
     self.init(
       origin: origin,
       connectTimeout: connectTimeout,
-      handshakeTimeout: .seconds(8),
+      handshakeTimeout: FlowersecSDKDefaults.Transport.handshakeTimeout,
       transportSecurityPolicy: transportSecurityPolicy,
       onTransportSecurityDiagnostic: onTransportSecurityDiagnostic,
       onDiagnosticEvent: onDiagnosticEvent,
@@ -1012,13 +1013,13 @@ public struct ConnectOptions: Sendable {
 
   public init(
     origin: String? = nil,
-    connectTimeout: Duration = .seconds(8),
-    handshakeTimeout: Duration = .seconds(8),
+    connectTimeout: Duration = FlowersecSDKDefaults.Transport.connectTimeout,
+    handshakeTimeout: Duration = FlowersecSDKDefaults.Transport.handshakeTimeout,
     transportSecurityPolicy: TransportSecurityPolicy = .requireTLS,
     onTransportSecurityDiagnostic: (@Sendable (TransportSecurityDiagnostic) -> Void)? = nil,
     onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil,
-    outboundRecordChunkBytes: Int = 64 * 1024,
-    maxOutboundBufferedBytes: Int = 4 * 1024 * 1024,
+    outboundRecordChunkBytes: Int = FlowersecSDKDefaults.E2EE.outboundRecordChunkBytes,
+    maxOutboundBufferedBytes: Int = FlowersecSDKDefaults.E2EE.maxOutboundBufferedBytes,
     yamuxLimits: YamuxLimits = YamuxLimits(),
     liveness: LivenessOptions = .pathDefault,
     scopeResolvers: ConnectScopeResolverMap,
@@ -1170,9 +1171,9 @@ enum FlowersecWire {
   static let handshakeTypeAck: UInt8 = 3
   static let suiteX25519HKDFAES256GCM = 1
   static let suiteP256HKDFAES256GCM = 2
-  static let maxHandshakePayloadBytes = 8 * 1024
-  static let maxRecordBytes = 1 << 20
-  static let jsonFrameMaxBytes = 1 << 20
+  static let maxHandshakePayloadBytes = FlowersecSDKDefaults.E2EE.maxHandshakePayloadBytes
+  static let maxRecordBytes = FlowersecSDKDefaults.E2EE.maxRecordBytes
+  static let jsonFrameMaxBytes = FlowersecSDKDefaults.RPC.maxJSONFrameBytes
 }
 
 struct FlowersecSessionKeys: Sendable {

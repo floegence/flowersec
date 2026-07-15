@@ -42,6 +42,8 @@ Internal APIs are implementation details and are not part of the public contract
 Stable source-of-truth artifacts:
 
 - `stability/public_api_manifest.json`
+- `stability/language_capabilities.json`
+- `stability/sdk_defaults.json`
 - `stability/connect_artifact.schema.json`
 - `stability/connect_error_code_registry.json`
 - `stability/connect_diagnostics_code_registry.json`
@@ -59,6 +61,8 @@ The stable manifest drives:
 - TypeScript tarball export checks
 - `docs/API_SURFACE.md` token coverage checks
 - coverage thresholds for key packages/modules
+
+The language capability manifest is stricter than a package inventory: every portable capability must be `complete` for Go, TypeScript, Swift, and Rust, with implementation/test evidence. Shared fixtures must list a consumer in every language. Runtime-specific capabilities must name one owner and explain why duplication would be inappropriate.
 
 ## Compatibility rules
 
@@ -92,6 +96,14 @@ Breaking changes to stable TypeScript APIs require:
 `@floegence/flowersec-core/controlplane` is the canonical stable artifact-fetch entry for new TypeScript code.
 Browser re-exports of `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain stable aliases during the compatibility window, but they do not replace the canonical controlplane import in docs or quickstarts.
 
+### Swift
+
+The stable Swift surface is the `Flowersec` product and its symbol graph recorded in `stability/public_api_manifest.json`. Client, endpoint, RPC server, controlplane, reconnect, and proxy APIs are portable capabilities. Swift-specific framework adapters may evolve without weakening the shared wire and behavior contract.
+
+### Rust
+
+The stable Rust surface is the `flowersec` crate with MSRV 1.85. Public entrypoints are compile-probed, release tags run `cargo-semver-checks` against the previous Rust release, and Flowersec-authored Rust code forbids `unsafe`. Browser WASM and deployable service binaries are not part of the Rust v0.22 target.
+
 ### Scoped metadata and proxy runtime
 
 Stable in v0.20.x:
@@ -123,9 +135,9 @@ Registry sources:
 - `stability/connect_error_code_registry.json`
 - `stability/connect_diagnostics_code_registry.json`
 
-## v0.20.x compatibility posture
+## v0.22 compatibility posture
 
-Flowersec v0.20.x keeps wire compatibility for `ConnectArtifact v1`, encrypted records, and Yamux while intentionally breaking unsafe or ambiguous configuration APIs:
+Flowersec v0.22 keeps wire compatibility for `ConnectArtifact v1`, encrypted records, Yamux, RPC, and proxy streams while requiring portable behavior parity across all four SDKs:
 
 - high-level WebSocket connects default to TLS-only
 - plaintext requires an explicit policy decision
@@ -151,11 +163,13 @@ Any change that touches a stable API should answer all of the following:
 1. Is the changed symbol/export listed in `stability/public_api_manifest.json`?
 2. Are `docs/API_SURFACE.md` and `docs/ERROR_MODEL.md` still accurate?
 3. Do the stable schemas / registries still match the implementation?
-4. Do shared Go/TS parser fixture corpora still pass?
+4. Do shared Go/TypeScript/Swift/Rust fixture corpora still pass?
 5. Do Go compile-time stable symbol checks still pass?
 6. Do TypeScript packed tarball export checks still pass?
 7. Are coverage gates for the affected key packages still green?
 8. Do browser/node/reconnect/controlplane/proxy migration paths still have test coverage?
+9. Does `verify-parity` still prove all four languages consume every registered shared fixture?
+10. Do Direct/Tunnel/RPC/stream/liveness/proxy interop tests cover the affected language boundary?
 
 ## CI gate mapping
 
@@ -165,14 +179,18 @@ PRs are expected to keep the following green:
 - manifest validation
 - docs stability checks
 - Go stable symbol compile checks
-- Go/TS coverage checks
+- Swift symbol graph checks
+- Rust public API compile and semver checks
+- Go/TypeScript/Rust coverage checks
+- Rust line coverage and fuzz-target compilation
 - package/export verification
 
 Nightly and heavier checks may additionally cover:
 
 - stress interop
+- complete language-pair interop matrices
 - reconnect edge cases
-- fuzzing
+- Go and Rust fuzzing
 - compatibility scaffolding
 
 ## Deprecation guidance

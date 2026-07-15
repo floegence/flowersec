@@ -314,6 +314,9 @@ func responseHeadersFromMeta(in []Header, cfg *compiledHeaderPolicy) http.Header
 		if name == "" || !isValidHeaderName(name) {
 			continue
 		}
+		if blockResponseHeader(name, cfg.blockedRespHeaders) {
+			continue
+		}
 		if !allowResponseHeader(name, cfg.extraRespHeaders) {
 			continue
 		}

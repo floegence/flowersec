@@ -8,7 +8,7 @@ import { createDemoSession, connectDemoTunnel } from "../_examples/flowersec/dem
 import type { ConnectArtifact } from "../connect/artifact.js";
 import { requestConnectArtifact, requestEntryConnectArtifact } from "../controlplane/index.js";
 import { AllowPlaintextForLoopback, connect, connectTunnel } from "../facade.js";
-import { connectNode, createNodeReconnectConfig } from "../node/index.js";
+import { connectDirectNode, connectNode, createNodeReconnectConfig } from "../node/index.js";
 import { createControlplaneArtifactSource } from "../reconnect/index.js";
 import { extractProxyRuntimeScopeV1 } from "../proxy/runtimeScope.js";
 
@@ -20,11 +20,38 @@ const WS = require("ws");
 type HarnessReady = Readonly<{
   ws_url: string;
   grant_client: unknown;
+  direct_info: unknown;
   controlplane_base_url: string;
   entry_ticket: string;
 }>;
 
 describe("go<->ts integration", () => {
+  test("ts client talks to go direct endpoint with RPC, stream, and liveness", { timeout: 60000 }, async () => {
+    await withGoHarness(async (ready) => {
+      const client = await connectDirectNode(ready.direct_info as any, {
+        origin: "https://app.redeven.com",
+        transportSecurityPolicy: AllowPlaintextForLoopback,
+        liveness: false,
+      });
+      const session = createDemoSession(client);
+      try {
+        const notified = waitNotify(session.demo, 2000);
+        await expect(session.demo.ping({})).resolves.toEqual({ ok: true });
+        await expect(notified).resolves.toEqual({ hello: "world" });
+
+        const stream = await client.openStream("echo");
+        const payload = new TextEncoder().encode("ts-go-direct-stream");
+        await stream.write(payload);
+        await expect(stream.read()).resolves.toEqual(payload);
+        await stream.close();
+
+        await expect(client.probeLiveness()).resolves.toBeGreaterThanOrEqual(0);
+      } finally {
+        client.close();
+      }
+    });
+  });
+
   test("ts client talks to go server endpoint through tunnel", { timeout: 60000 }, async () => {
     await withGoHarness(async (ready) => {
       const sess = await connectDemoTunnel(ready.grant_client as any, {

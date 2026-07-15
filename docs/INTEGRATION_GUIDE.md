@@ -1,6 +1,6 @@
 # Flowersec Integration Guide
 
-This guide covers the recommended stable integration path for Flowersec v0.20.x.
+This guide covers the recommended stable integration path for Flowersec v0.22.0 across Go, TypeScript, Swift, and Rust.
 
 See also:
 
@@ -15,9 +15,9 @@ See also:
 For new work, prefer:
 
 1. mint or fetch a client-facing `ConnectArtifact`
-2. connect with the high-level browser/node/go client entrypoints
-3. use `@floegence/flowersec-core/controlplane` or Go `controlplane/client` for client-side artifact fetch
-4. use `controlplane/http` for the server-side helper contract when you want a reference layer
+2. connect with the high-level entrypoint for the selected SDK
+3. use the language's controlplane client for bounded artifact fetch
+4. use the language's controlplane envelope/issuer helpers for product-neutral server integration
 5. use preset manifests instead of named proxy profiles
 
 Legacy raw grant / wrapper / direct inputs are still supported as compatibility edges, but they are no longer the preferred controlplane contract.
@@ -34,6 +34,18 @@ TypeScript:
 
 ```bash
 npm install @floegence/flowersec-core
+```
+
+Swift:
+
+```swift
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.22.0")
+```
+
+Rust:
+
+```bash
+cargo add flowersec@0.22.0
 ```
 
 ## Stable entrypoints
@@ -93,6 +105,29 @@ Proxy preset helpers:
 
 - `assertProxyPresetManifest(...)`
 - `resolveProxyPreset(...)`
+
+### Swift
+
+- `Flowersec.connect(...)`
+- `Flowersec.connectTunnel(...)`
+- `Flowersec.connectDirect(...)`
+- `Controlplane.requestConnectArtifact(...)`
+- `Endpoint.acceptDirect(...)`
+- `Endpoint.connectTunnel(...)`
+- `RPCRouter` / `RPCServer`
+- `ReconnectManager`
+- `ProxyClient` / `ProxyServer`
+
+### Rust
+
+- `flowersec::connect(...)`
+- `flowersec::connect_tunnel(...)`
+- `flowersec::connect_direct(...)`
+- `flowersec::controlplane::client`
+- `flowersec::endpoint::{accept_direct, accept_direct_resolved, connect_tunnel}`
+- `flowersec::rpc::{RpcClient, Router, Server}`
+- `flowersec::reconnect::ReconnectManager`
+- `flowersec::proxy::{ProxyClient, ProxyServer}`
 
 ## Browser artifact-first example
 
@@ -177,22 +212,55 @@ That division of responsibility is part of the stable integration contract:
 
 For the detailed artifact-fetch contract, including the bounded 1 MiB response rule and helper error semantics, see `docs/CONTROLPLANE_ARTIFACT_FETCH.md`.
 
+## Swift artifact-first example
+
+```swift
+let artifact = try await Controlplane.requestConnectArtifact(
+  ArtifactRequestOptions(
+    baseURL: URL(string: "https://controlplane.example.com")!,
+    endpointID: "env_demo"
+  )
+)
+
+let client = try await Flowersec.connect(
+  artifact,
+  options: ConnectOptions(origin: "https://app.example.com")
+)
+```
+
+## Rust artifact-first example
+
+```rust
+use flowersec::{ConnectOptions, connect};
+use flowersec::controlplane::client::{
+    ConnectArtifactRequestConfig,
+    request_connect_artifact,
+};
+
+let mut request = ConnectArtifactRequestConfig::new("env_demo");
+request.base_url = "https://controlplane.example.com".to_owned();
+let artifact = request_connect_artifact(request).await?;
+let client = connect(artifact, ConnectOptions::default()).await?;
+```
+
 ## Reconnect guidance
 
-For browser and Node reconnect flows:
+For reconnect flows in every SDK:
 
 - use `createBrowserReconnectConfig(...)` or `createNodeReconnectConfig(...)`
 - supply a discriminated `source`: `{kind: "once", artifact}` or `{kind: "refreshable", acquire}`
 - prefer `createControlplaneArtifactSource(...)` for automatic reconnect
 - let the adapter carry forward `trace_id`, absorb the new `session_id`, and pass through cancellation `signal`
 
-A `once` source can be consumed once and cannot enable automatic reconnect. Flowersec v0.20 does not accept the removed overlapping artifact, grant, or direct-info source fields.
+Swift uses `ArtifactSource` and `ReconnectManager`. Rust uses `reconnect::ArtifactSource` and `ReconnectManager`. Go uses `reconnect.Manager`. All four share the retry defaults in `stability/sdk_defaults.json` and stop retrying terminal validation/authentication failures.
+
+A `once` source can be consumed once and cannot enable automatic reconnect. Flowersec v0.22 does not accept overlapping artifact, grant, or direct-info source fields.
 
 ## Transport security and liveness
 
-High-level Go, TypeScript, and Swift connects require TLS by default. Use the loopback plaintext policy only for literal local development targets. Use unrestricted plaintext only when the caller explicitly accepts pre-E2EE metadata and credential exposure.
+High-level Go, TypeScript, Swift, and Rust connects require TLS by default. Use the loopback plaintext policy only for literal local development targets. Use unrestricted plaintext only when the caller explicitly accepts pre-E2EE metadata and credential exposure.
 
-Use `ProbeLiveness` / `probeLiveness()` for an acknowledged Yamux round trip. `Ping()` remains a local encrypted-record send operation. Automatic probes are disabled for direct connections by default and derived from the idle timeout for tunnel connections.
+Use `ProbeLiveness`, `probeLiveness()`, or `probe_liveness()` for an acknowledged Yamux round trip. `Ping()` remains a local encrypted-record send operation where exposed. Automatic probes are disabled for direct connections by default and derived from the idle timeout for tunnel connections.
 
 Do not push artifact/controlplane semantics down into the framework-agnostic reconnect core.
 
@@ -210,16 +278,21 @@ For browser runtime mode, prefer:
 
 Choose gateway mode only when you intentionally accept a trusted plaintext L7 relay. Runtime mode and gateway mode are different trust models, not interchangeable deployment skins.
 
+For portable endpoint mode, Go uses `proxy.Register(...)`, TypeScript uses `serveProxySession(...)`, Swift uses `ProxyServer`, and Rust uses `proxy::ProxyServer`. These APIs implement the same HTTP/1 and WebSocket stream contract, fixed-upstream/SSRF policy, Origin handling, header/cookie isolation, and shared limits.
+
 Reference first-party files live under `reference/presets/`.
 
 ## Migration notes
 
-v0.20.x intentionally changes unsafe or ambiguous configuration APIs:
+v0.22 preserves the v0.20/v0.21 hardening rules and adds four-language parity gates:
 
 - TLS is the default for all high-level connects
 - WebSocket, Yamux, RPC, and tunnel queues are bounded
 - liveness uses acknowledged Yamux PING frames
 - reconnect accepts only a discriminated `ArtifactSource`
 - old keepalive, WebSocket queue, Yamux third-party config, and reconnect-source fields are removed
+- portable capability cells cannot be partial
+- shared fixtures must be consumed by all four languages
+- release tags for Go/TypeScript, SwiftPM, and Rust must point to one commit
 
 See `docs/V0_20_MIGRATION.md` for the v0.20 transport changes and `docs/V0_21_MIGRATION.md` for the compatibility cleanup.

@@ -1,6 +1,6 @@
 # @floegence/flowersec-core
 
-Flowersec core TypeScript library for building end-to-end encrypted, multiplexed connections over WebSocket in browsers and Node.js.
+Flowersec core TypeScript library for the complete portable Flowersec client/server contract in Node.js, plus the browser and Service Worker runtime owned by TypeScript.
 
 Status: experimental; not audited.
 
@@ -61,6 +61,14 @@ Browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `
 
 High-level connects use `RequireTLS` by default. `AllowPlaintextForLoopback` permits only literal loopback
 targets without DNS resolution; `AllowPlaintext` is an explicit acceptance of pre-E2EE metadata exposure.
+
+## Node endpoint and controlplane
+
+`@floegence/flowersec-core/node` exports the high-level endpoint APIs for accepted direct WebSockets and server-role tunnel grants. `@floegence/flowersec-core/endpoint` provides portable session and RPC serving, while `@floegence/flowersec-core/controlplane` provides bounded artifact envelopes, FST2 tokens, issuer rotation, and channel initialization.
+
+## Proxy
+
+`@floegence/flowersec-core/proxy` contains both portable HTTP/1 and WebSocket proxy protocols and the TypeScript-owned browser runtime. Node endpoint servers use `serveProxySession(...)`; browser applications use the Service Worker or controller bridge helpers without changing the portable stream contract.
 
 ## Docs
 

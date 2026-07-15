@@ -1,6 +1,6 @@
 # Flowersec Error Model
 
-Flowersec keeps machine-readable connection failures stable across Go, TypeScript, and Swift.
+Flowersec keeps machine-readable connection failures stable across Go, TypeScript, Swift, and Rust.
 
 For high-level connection APIs, always treat `{ path, stage, code }` as the primary machine-readable contract.
 
@@ -18,11 +18,13 @@ High-level APIs surface:
 
 - Go: `*fserrors.Error`
 - TypeScript: `FlowersecError`
+- Swift: `FlowersecError`
+- Rust: `flowersec::FlowersecError`
 
 Stable fields:
 
 - `path`: top-level connect path (`auto`, `tunnel`, `direct`)
-- `stage`: connect layer (`validate`, `connect`, `attach`, `handshake`, `secure`, `yamux`, `rpc`, `close`)
+- `stage`: connect layer (`validate`, `connect`, `attach`, `handshake`, `secure`, `yamux`, `rpc`, `reconnect`, `close`)
 - `code`: stable language-agnostic reason token
 
 Human-readable detail belongs in the message and underlying cause.
@@ -122,6 +124,22 @@ Go server helper:
   - `Message`
   - `Cause`
 
+Swift:
+
+- `ControlplaneRequestError`
+  - `status`
+  - `code`
+  - `message`
+  - `responseBody`
+
+Rust:
+
+- `controlplane::client::RequestError`
+  - `status`
+  - `code`
+  - `message`
+  - `response_body`
+
 Important separation:
 
 - connect errors describe the encrypted connection attempt
@@ -175,4 +193,4 @@ For logs and metrics, prefer aggregating by:
 - controlplane HTTP failures: `status + error.code`
 - runtime events: `namespace + stage + code + result`
 
-This keeps dashboards stable across both languages and across internal refactors.
+This keeps dashboards stable across all four languages and across internal refactors.

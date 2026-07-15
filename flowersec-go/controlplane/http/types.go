@@ -4,10 +4,11 @@ import (
 	"context"
 	stdhttp "net/http"
 
+	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
-const DefaultMaxBodyBytes int64 = 32 * 1024
+const DefaultMaxBodyBytes int64 = defaults.ControlplaneMaxRequestBodyBytes
 
 type ArtifactRequest struct {
 	EndpointID  string                    `json:"endpoint_id"`

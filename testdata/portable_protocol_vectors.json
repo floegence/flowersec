@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "transport_policy": [
+    {
+      "url": "wss://relay.example/ws",
+      "policy": "require_tls",
+      "allowed": true
+    },
+    {
+      "url": "ws://127.0.0.1/ws",
+      "policy": "require_tls",
+      "allowed": false
+    },
+    {
+      "url": "ws://127.0.0.1/ws",
+      "policy": "allow_plaintext_for_loopback",
+      "allowed": true
+    },
+    {
+      "url": "ws://[::1]/ws",
+      "policy": "allow_plaintext_for_loopback",
+      "allowed": true
+    },
+    {
+      "url": "ws://relay.example/ws",
+      "policy": "allow_plaintext_for_loopback",
+      "allowed": false
+    }
+  ],
+  "yamux_header": {
+    "bytes_hex": "000200010000000000000011",
+    "version": 0,
+    "type": 2,
+    "flags": 1,
+    "stream_id": 0,
+    "length": 17
+  },
+  "rpc_envelope": {
+    "type_id": 7,
+    "request_id": 42,
+    "response_to": 0,
+    "payload": {
+      "message": "flowersec"
+    }
+  },
+  "controlplane_error_envelope": {
+    "error": {
+      "code": "artifact_not_found",
+      "message": "No artifact is available."
+    }
+  },
+  "proxy_http_request_meta": {
+    "v": 1,
+    "request_id": "request-vector-1",
+    "method": "POST",
+    "path": "/v1/items?limit=2",
+    "headers": [
+      {
+        "name": "content-type",
+        "value": "application/json"
+      }
+    ],
+    "external_origin": "https://app.example.com",
+    "timeout_ms": 1500
+  },
+  "proxy_ws_open_meta": {
+    "v": 1,
+    "conn_id": "connection-vector-1",
+    "path": "/v1/socket",
+    "headers": [
+      {
+        "name": "sec-websocket-protocol",
+        "value": "flowersec.v1"
+      }
+    ]
+  },
+  "diagnostic_event": {
+    "v": 1,
+    "namespace": "connect",
+    "path": "tunnel",
+    "stage": "yamux",
+    "code_domain": "event",
+    "code": "liveness_timeout",
+    "result": "fail",
+    "elapsed_ms": 25,
+    "attempt_seq": 3,
+    "trace_id": "trace-vector-1",
+    "resource": "yamux_liveness",
+    "current": 1,
+    "limit": 1
+  }
+}

@@ -35,6 +35,16 @@ jobs:
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
+      - name: Setup Rust MSRV
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy,rustfmt,llvm-tools-preview
+
+      - name: Install Rust quality tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny,cargo-llvm-cov,cargo-semver-checks
+
       - name: Run checks
         run: make check
 
@@ -86,6 +96,9 @@ jobs:
             echo "Tag version ${VERSION} must match flowersec-ts/package.json version ${TS_VERSION}"
             exit 1
           fi
+
+      - name: Verify all v0.22 language tags point to this commit
+        run: scripts/verify-release-tags.sh "${{ steps.vars.outputs.version }}" "${GITHUB_SHA}"
 
       - name: Build release artifacts
         run: |

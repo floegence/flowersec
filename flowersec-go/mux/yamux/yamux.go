@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	libyamux "github.com/libp2p/go-yamux/v5"
 )
 
@@ -20,12 +21,12 @@ var ErrResourceExhausted = errors.New("yamux resource exhausted")
 var ErrLivenessTimeout = errors.New("yamux liveness timeout")
 
 const (
-	DefaultMaxActiveStreams            = 64
-	DefaultMaxInboundStreams           = 32
-	DefaultMaxFrameBytes               = 256 * 1024
-	DefaultPreferredOutboundFrameBytes = 64 * 1024
-	DefaultMaxStreamReceiveBytes       = 256 * 1024
-	DefaultMaxSessionReceiveBytes      = 16 * 1024 * 1024
+	DefaultMaxActiveStreams            = defaults.YamuxMaxActiveStreams
+	DefaultMaxInboundStreams           = defaults.YamuxMaxInboundStreams
+	DefaultMaxFrameBytes               = defaults.YamuxMaxFrameBytes
+	DefaultPreferredOutboundFrameBytes = defaults.YamuxPreferredOutboundFrameBytes
+	DefaultMaxStreamReceiveBytes       = defaults.YamuxMaxStreamReceiveBytes
+	DefaultMaxSessionReceiveBytes      = defaults.YamuxMaxSessionReceiveBytes
 	disabledRTTMeasureInterval         = time.Duration(1<<63 - 1)
 )
 

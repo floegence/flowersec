@@ -20,6 +20,9 @@ export {
   createNodeReconnectConfig,
   createTunnelNodeReconnectConfig,
 } from "./reconnectConfig.js";
+export * from "../endpoint/index.js";
+export * from "../endpoint/node.js";
+export * from "../proxy/server.js";
 export type {
   ConnectArtifact,
   CorrelationContext,

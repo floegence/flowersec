@@ -4,6 +4,28 @@ import XCTest
 @testable import Flowersec
 
 final class FlowersecRPCTests: XCTestCase {
+  func testServerSendsTypedNotification() async throws {
+    let stream = InMemoryByteStream()
+    let server = try RPCServer(stream: stream, router: RPCRouter())
+    try await server.notify(7010, RPCNotification(value: "world"))
+    let data = try await stream.nextWrittenJSONFrame()
+    let envelope = try RPCEnvelope(data: data)
+    XCTAssertEqual(envelope.typeID, 7010)
+    XCTAssertEqual(envelope.requestID, 0)
+    XCTAssertEqual(envelope.responseTo, 0)
+    XCTAssertEqual(
+      try JSONDecoder().decode(RPCNotification.self, from: envelope.payload),
+      RPCNotification(value: "world")
+    )
+    await server.close()
+    do {
+      try await server.notify(7010, RPCNotification(value: "closed"))
+      XCTFail("Expected a closed server error")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.code, .notConnected)
+    }
+  }
+
   func testCallWritesEnvelopeAndDecodesResponse() async throws {
     let stream = InMemoryRPCStream()
     let client = RPCClient(stream: stream)
@@ -291,4 +313,8 @@ private struct RPCRequest: Codable, Equatable {
 
 private struct RPCReply: Codable, Equatable {
   var ok: Bool
+}
+
+private struct RPCNotification: Codable, Equatable {
+  var value: String
 }

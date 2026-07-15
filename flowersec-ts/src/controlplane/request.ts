@@ -1,4 +1,5 @@
 import { assertConnectArtifact, type ConnectArtifact } from "../connect/artifact.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 
 type FetchLike = typeof fetch;
 
@@ -55,7 +56,7 @@ export class ControlplaneRequestError extends Error {
 export const DEFAULT_CONNECT_ARTIFACT_PATH = "/v1/connect/artifact";
 export const DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH = "/v1/connect/artifact/entry";
 
-const DEFAULT_MAX_CONTROLPLANE_RESPONSE_BYTES = 1 << 20;
+const DEFAULT_MAX_CONTROLPLANE_RESPONSE_BYTES = SDK_DEFAULTS.controlplane.maxResponseBodyBytes;
 
 class ControlplaneResponseTooLargeError extends Error {
   constructor(maxBytes: number) {

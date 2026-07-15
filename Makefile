@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift bench check stability-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check example-install-check pairwise-interop swift-rust-interop fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench check stability-check go-cover-check compat-check nightly-check
 
 GOVULNCHECK_VERSION ?= v1.1.4
 GOVULNCHECK_GOTOOLCHAIN ?= go1.26.5
@@ -19,18 +19,23 @@ gen-check: gen
 	@git diff --exit-code -- \
 		flowersec-go/gen \
 		flowersec-ts/src/gen \
+		flowersec-rust/src/gen \
+		flowersec-swift/Sources/Flowersec/Generated \
+		flowersec-swift/Tests/FlowersecTests/Generated \
 		examples/gen \
 		flowersec-go/internal/testgen \
 		flowersec-ts/src/_examples
 
 gen-core:
-	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.core.txt -go-out ../../flowersec-go/gen -ts-out ../../flowersec-ts/src/gen
+	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.core.txt -go-out ../../flowersec-go/gen -ts-out ../../flowersec-ts/src/gen -rust-out ../../flowersec-rust/src/gen -swift-out ../../flowersec-swift/Sources/Flowersec
 	cd flowersec-go && gofmt -w gen
+	cd flowersec-rust && cargo fmt --all
 
 gen-examples:
 	# Demo IDL is for examples/integration tests only; do not ship it as a public API surface.
 	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.examples.txt -go-out ../../examples/gen -ts-out ../../flowersec-ts/src/_examples
 	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.examples.txt -go-out ../../flowersec-go/internal/testgen -ts-out ../../flowersec-ts/src/_examples
+	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.examples.txt -swift-out ../../flowersec-swift/Tests/FlowersecTests -swift-import Flowersec
 	gofmt -w examples/gen
 	cd flowersec-go && gofmt -w internal/testgen
 
@@ -129,6 +134,66 @@ swift-test:
 
 swift-check: swift-package-check swift-source-guard swift-build swift-test
 
+rust-fmt-check:
+	cd flowersec-rust && cargo fmt --all --check
+	cd flowersec-rust && cargo fmt --manifest-path fuzz/Cargo.toml --check
+
+rust-clippy:
+	cd flowersec-rust && cargo clippy --all-targets --all-features -- -D warnings
+
+rust-test:
+	cd flowersec-rust && cargo test --all-features
+
+rust-doc:
+	cd flowersec-rust && RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
+
+rust-msrv-check:
+	cd flowersec-rust && rustup run 1.85.0 cargo check --all-targets --all-features
+
+rust-package-check:
+	cd flowersec-rust && cargo package --allow-dirty
+	cd flowersec-rust && cargo publish --dry-run --allow-dirty
+
+rust-audit:
+	cd flowersec-rust && cargo audit
+
+rust-deny:
+	cd flowersec-rust && cargo deny check
+
+rust-cover-check:
+	cd flowersec-rust && cargo llvm-cov --all-features --fail-under-lines 80
+
+rust-fuzz-build:
+	cd flowersec-rust && cargo check --manifest-path fuzz/Cargo.toml --bins
+
+rust-fuzz-check:
+	cd flowersec-rust && for target in artifact handshake token yamux proxy; do cargo +nightly fuzz run "$$target" -- -max_total_time=10; done
+
+rust-semver-check:
+	@version=$$(sed -n 's/^version = "\([^"]*\)"/\1/p' flowersec-rust/Cargo.toml | head -1); \
+	current="flowersec-rust/v$$version"; \
+	previous=$$(git tag --list 'flowersec-rust/v*' --sort=-v:refname | grep -Fvx "$$current" | head -1); \
+	if [ -z "$$previous" ]; then \
+		echo "Rust semver check skipped: no previous flowersec-rust tag"; \
+	else \
+		cd flowersec-rust && cargo semver-checks check-release --manifest-path Cargo.toml --baseline-rev "$$previous"; \
+	fi
+
+rust-check: rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-fuzz-build
+
+rust-release-check: rust-check rust-audit rust-deny rust-cover-check rust-semver-check
+
+example-install-check:
+	cargo check --manifest-path examples/rust-client/Cargo.toml
+	swift build --package-path examples/swift-client
+
+pairwise-interop:
+	cd flowersec-ts && npm run build
+	cd flowersec-rust && FLOWERSEC_PAIRWISE_INTEROP=1 cargo test --all-features --test typescript_interop
+
+swift-rust-interop:
+	cd flowersec-rust && FLOWERSEC_SWIFT_INTEROP=1 cargo test --all-features --test swift_interop
+
 fmt:
 	gofmt -w flowersec-go examples/go examples/gen
 
@@ -163,18 +228,25 @@ precommit-ts:
 precommit-swift:
 	$(MAKE) swift-check
 
+precommit-rust:
+	$(MAKE) rust-check
+
 precommit:
 	$(MAKE) gen-check
 	$(MAKE) stability-check
 	$(MAKE) precommit-go
 	$(MAKE) precommit-ts
 	$(MAKE) precommit-swift
+	$(MAKE) precommit-rust
 
 stability-check:
 	cd tools/stabilitycheck && go run . verify-manifest
+	cd tools/stabilitycheck && go run . verify-defaults
+	cd tools/stabilitycheck && go run . verify-parity
 	cd tools/stabilitycheck && go run . verify-docs
 	cd tools/stabilitycheck && go run . verify-go
 	cd tools/stabilitycheck && go run . verify-swift
+	cd tools/stabilitycheck && go run . verify-rust
 	cd tools/stabilitycheck && go run . report
 
 go-cover-check:
@@ -192,6 +264,9 @@ nightly-check:
 	$(MAKE) ts-ci
 	$(MAKE) stability-check
 	$(MAKE) compat-check
+	$(MAKE) rust-release-check
+	$(MAKE) rust-fuzz-check
+	$(MAKE) pairwise-interop
 	cd flowersec-go && go test -run '^$$' -fuzz=FuzzDecodeHandshakeFrame -fuzztime=5s ./crypto/e2ee
 	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAndVerify -fuzztime=5s ./controlplane/token
 	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAttachWithConstraints -fuzztime=5s ./tunnel/protocol
@@ -203,6 +278,8 @@ check:
 	$(MAKE) lint-check
 	$(MAKE) ts-build
 	$(MAKE) swift-check
+	$(MAKE) rust-release-check
+	$(MAKE) example-install-check
 	$(MAKE) test
 	$(MAKE) go-cover-check
 	$(MAKE) ts-cover-check

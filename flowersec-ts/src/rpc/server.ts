@@ -1,6 +1,7 @@
 import type { RpcEnvelope, RpcError } from "../gen/flowersec/rpc/v1.gen.js";
 import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
 import { assertRpcEnvelope } from "./validate.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 
 // RpcHandler processes a request and returns a payload or error.
 export type RpcHandler = (payload: unknown) => Promise<{ payload: unknown; error?: RpcError }>;
@@ -18,17 +19,27 @@ export type RpcServerTransport = Readonly<{
 }>;
 
 const DEFAULT_RPC_SERVER_OPTIONS = Object.freeze({
-  maxConcurrentRequests: 32,
-  maxQueuedRequests: 128,
-  maxQueuedNotifications: 128,
+  maxConcurrentRequests: SDK_DEFAULTS.rpc.maxConcurrentRequests,
+  maxQueuedRequests: SDK_DEFAULTS.rpc.maxQueuedRequests,
+  maxQueuedNotifications: SDK_DEFAULTS.rpc.maxQueuedNotifications,
 });
 
 type Work = Readonly<{ envelope: RpcEnvelope }>;
 
+export class RpcRouter {
+  private readonly handlers = new Map<number, RpcHandler>();
+
+  register(typeId: number, handler: RpcHandler): void {
+    this.handlers.set(typeId >>> 0, handler);
+  }
+
+  handler(typeId: number): RpcHandler | undefined {
+    return this.handlers.get(typeId >>> 0);
+  }
+}
+
 // RpcServer dispatches request envelopes to registered handlers.
 export class RpcServer {
-  // Registered handlers keyed by type ID.
-  private readonly handlers = new Map<number, RpcHandler>();
   // Closed flag to stop the serve loop.
   private closed = false;
   private readonly options: Required<RpcServerOptions>;
@@ -45,6 +56,7 @@ export class RpcServer {
   constructor(
     private readonly transport: RpcServerTransport,
     options: RpcServerOptions = {},
+    private readonly router: RpcRouter = new RpcRouter(),
   ) {
     this.terminalSignal = new Promise((resolve) => { this.signalTerminal = resolve; });
     this.options = {
@@ -56,7 +68,17 @@ export class RpcServer {
 
   // register binds a handler to a type ID.
   register(typeId: number, h: RpcHandler): void {
-    this.handlers.set(typeId >>> 0, h);
+    this.router.register(typeId, h);
+  }
+
+  async notify(typeId: number, payload: unknown): Promise<void> {
+    if (this.closed) throw new Error("rpc server closed");
+    await this.writeEnvelope({
+      type_id: typeId >>> 0,
+      request_id: 0,
+      response_to: 0,
+      payload,
+    });
   }
 
   // serve handles request/response frames until closed or aborted.
@@ -125,7 +147,7 @@ export class RpcServer {
       const work = await this.nextWork(this.requests, this.requestWaiters);
       if (work == null) return;
       const v = work.envelope;
-      const h = this.handlers.get(v.type_id >>> 0);
+      const h = this.router.handler(v.type_id);
       let out: Awaited<ReturnType<RpcHandler>>;
       if (h == null) out = { payload: null, error: { code: 404, message: "handler not found" } };
       else {
@@ -142,7 +164,7 @@ export class RpcServer {
       const work = await this.nextWork(this.notifications, this.notificationWaiters);
       if (work == null) return;
       const v = work.envelope;
-      const h = this.handlers.get(v.type_id >>> 0);
+      const h = this.router.handler(v.type_id);
       if (h == null) continue;
       try { await h(v.payload); } catch { /* Notification failures are isolated. */ }
     }
@@ -169,7 +191,11 @@ export class RpcServer {
       payload: out.payload,
       ...(out.error != null ? { error: out.error } : {}),
     };
-    const write = this.writeChain.then(() => writeJsonFrame(this.transport.write, resp));
+    await this.writeEnvelope(resp);
+  }
+
+  private async writeEnvelope(envelope: RpcEnvelope): Promise<void> {
+    const write = this.writeChain.then(() => writeJsonFrame(this.transport.write, envelope));
     this.writeChain = write.catch(() => {});
     await write;
   }

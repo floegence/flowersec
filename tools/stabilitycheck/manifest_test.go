@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -126,6 +127,31 @@ func TestSwiftMacOSTargetDetectionFallsBackToTriple(t *testing.T) {
 	}
 	if isSwiftMacOSTarget("linux", "x86_64-unknown-linux-gnu") {
 		t.Fatal("linux target must not require a macOS SDK")
+	}
+}
+
+func TestSwiftBuildModulePathsIncludesDependencyModuleMaps(t *testing.T) {
+	repoRoot := t.TempDir()
+	binPath := filepath.Join(repoRoot, ".build", "arm64-apple-macosx", "debug")
+	moduleDir := filepath.Join(binPath, "Modules")
+	shimDir := filepath.Join(repoRoot, ".build", "checkouts", "dependency", "Sources", "Shim", "include")
+	for _, dir := range []string{moduleDir, shimDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(shimDir, "module.modulemap"), []byte("module Shim {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := swiftBuildModulePaths(repoRoot, binPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{binPath, moduleDir, shimDir} {
+		if !slices.Contains(paths, expected) {
+			t.Fatalf("expected module paths to include %s, got %#v", expected, paths)
+		}
 	}
 }
 

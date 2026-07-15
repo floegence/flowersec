@@ -1,6 +1,7 @@
 import { readU32be, u32be } from "../utils/bin.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 
-export const DEFAULT_MAX_JSON_FRAME_BYTES = 1 << 20;
+export const DEFAULT_MAX_JSON_FRAME_BYTES = SDK_DEFAULTS.rpc.maxJsonFrameBytes;
 
 const te = new TextEncoder();
 const td = new TextDecoder();
@@ -41,4 +42,3 @@ export async function readJsonFrame(readExactly: ReadExactlyFn | ReadExactlyLike
   const payload = await read(n);
   return JSON.parse(td.decode(payload));
 }
-

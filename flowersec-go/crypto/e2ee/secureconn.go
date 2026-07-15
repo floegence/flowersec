@@ -9,6 +9,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 )
 
 // SecureChannel wraps a BinaryTransport with E2EE record framing, buffering, and a net.Conn-compatible API.
@@ -52,7 +54,7 @@ type SecureChannel struct {
 // ErrRecvBufferExceeded indicates buffered plaintext exceeded the configured cap.
 var ErrRecvBufferExceeded = errors.New("recv buffer exceeded")
 
-const DefaultOutboundRecordChunkBytes = 64 * 1024
+const DefaultOutboundRecordChunkBytes = defaults.OutboundRecordChunkBytes
 
 const sendWorkerIdleTimeout = 10 * time.Millisecond
 

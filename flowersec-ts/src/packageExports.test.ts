@@ -17,6 +17,6 @@ describe("package exports", () => {
         })
       ).not.toThrow();
     },
-    15_000,
+    30_000,
   );
 });

@@ -1,6 +1,7 @@
 import type { Client } from "../client.js";
 import { getClientTermination } from "../client-connect/termination.js";
 import { emitObserverDiagnostic, withObserverContext, type ClientObserverLike, type DiagnosticEvent, type WsCloseKind, type WsErrorReason } from "../observability/observer.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 
 export type { ArtifactAcquireContext, ArtifactSource } from "./artifactControlplane.js";
 export { createArtifactResolver, createControlplaneArtifactSource } from "./artifactControlplane.js";
@@ -42,20 +43,20 @@ function normalizeAutoReconnect(cfg?: AutoReconnectConfig): AutoReconnectSetting
     return {
       enabled: false,
       maxAttempts: 1,
-      initialDelayMs: 500,
-      maxDelayMs: 10_000,
-      factor: 1.8,
-      jitterRatio: 0.2,
+      initialDelayMs: SDK_DEFAULTS.reconnect.initialDelayMs,
+      maxDelayMs: SDK_DEFAULTS.reconnect.maxDelayMs,
+      factor: SDK_DEFAULTS.reconnect.factor,
+      jitterRatio: SDK_DEFAULTS.reconnect.jitterRatio,
     };
   }
 
   return {
     enabled: true,
-    maxAttempts: Math.max(1, cfg.maxAttempts ?? 5),
-    initialDelayMs: Math.max(0, cfg.initialDelayMs ?? 500),
-    maxDelayMs: Math.max(0, cfg.maxDelayMs ?? 10_000),
-    factor: Math.max(1, cfg.factor ?? 1.8),
-    jitterRatio: Math.max(0, cfg.jitterRatio ?? 0.2),
+    maxAttempts: Math.max(1, cfg.maxAttempts ?? SDK_DEFAULTS.reconnect.maxAttempts),
+    initialDelayMs: Math.max(0, cfg.initialDelayMs ?? SDK_DEFAULTS.reconnect.initialDelayMs),
+    maxDelayMs: Math.max(0, cfg.maxDelayMs ?? SDK_DEFAULTS.reconnect.maxDelayMs),
+    factor: Math.max(1, cfg.factor ?? SDK_DEFAULTS.reconnect.factor),
+    jitterRatio: Math.max(0, cfg.jitterRatio ?? SDK_DEFAULTS.reconnect.jitterRatio),
   };
 }
 

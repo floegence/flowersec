@@ -29,8 +29,21 @@ jobs:
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
+      - name: Setup Rust MSRV
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy,rustfmt,llvm-tools-preview
+
+      - name: Install Rust quality tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny,cargo-llvm-cov,cargo-semver-checks
+
       - name: Run make check (stability + coverage included)
         run: make check
+
+      - name: Run Rust and TypeScript pairwise interop
+        run: make pairwise-interop
 
   swift-check:
     runs-on: macos-latest
@@ -46,8 +59,14 @@ jobs:
             flowersec-go/go.sum
             examples/go.sum
 
+      - name: Setup Rust MSRV
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy,rustfmt,llvm-tools-preview
+
       - name: Run Swift package checks
         run: |
           set -euo pipefail
           make stability-check
           make swift-check
+          make swift-rust-interop

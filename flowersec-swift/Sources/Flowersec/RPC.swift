@@ -266,6 +266,10 @@ public final class FlowersecClient: @unchecked Sendable {
     try await yamux.probeLiveness(timeout: timeout)
   }
 
+  public func terminated() async -> (any Error)? {
+    await yamux.terminated()
+  }
+
   public func openStream(kind: String) async throws -> any FlowersecByteStream {
     let trimmedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedKind.isEmpty else {

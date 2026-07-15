@@ -14,6 +14,7 @@ import (
 
 	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/internal/timeutil"
 )
 
@@ -118,13 +119,13 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts ClientHandshak
 		opts.Suite = SuiteX25519HKDFAES256GCM
 	}
 	if opts.MaxBufferedBytes == 0 {
-		opts.MaxBufferedBytes = 4 * (1 << 20)
+		opts.MaxBufferedBytes = defaults.MaxOutboundBufferedBytes
 	}
 	if opts.MaxHandshakePayload <= 0 {
-		opts.MaxHandshakePayload = 8 * 1024
+		opts.MaxHandshakePayload = defaults.MaxHandshakePayloadBytes
 	}
 	if opts.MaxRecordBytes <= 0 {
-		opts.MaxRecordBytes = 1 << 20
+		opts.MaxRecordBytes = defaults.MaxRecordBytes
 	}
 
 	priv, pub, err := GenerateEphemeralKeypair(opts.Suite)
@@ -281,13 +282,13 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 		opts.Suite = SuiteX25519HKDFAES256GCM
 	}
 	if opts.MaxBufferedBytes == 0 {
-		opts.MaxBufferedBytes = 4 * (1 << 20)
+		opts.MaxBufferedBytes = defaults.MaxOutboundBufferedBytes
 	}
 	if opts.MaxHandshakePayload <= 0 {
-		opts.MaxHandshakePayload = 8 * 1024
+		opts.MaxHandshakePayload = defaults.MaxHandshakePayloadBytes
 	}
 	if opts.MaxRecordBytes <= 0 {
-		opts.MaxRecordBytes = 1 << 20
+		opts.MaxRecordBytes = defaults.MaxRecordBytes
 	}
 	if opts.InitExpireAtUnixS <= 0 {
 		return nil, errors.New("missing init_exp")

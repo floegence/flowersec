@@ -114,6 +114,23 @@ function makeTransport(
 }
 
 describe("RpcServer", () => {
+  test("sends server notifications through the serialized response writer", async () => {
+    const q = new ByteQueue();
+    const writes: Uint8Array[] = [];
+    const server = new RpcServer(makeTransport(q, async (bytes) => {
+      writes.push(bytes);
+    }));
+    await server.notify(2, { hello: "world" });
+    expect(writes.map(decodeEnvelope)).toEqual([{
+      type_id: 2,
+      request_id: 0,
+      response_to: 0,
+      payload: { hello: "world" },
+    }]);
+    server.close();
+    await expect(server.notify(2, {})).rejects.toThrow(/closed/);
+  });
+
   test("executes requests concurrently and writes responses by completion order", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];

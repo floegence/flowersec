@@ -118,7 +118,7 @@ final class TransportSecurityTests: XCTestCase {
     if case .requireTLS = options.transportSecurityPolicy {} else {
       XCTFail("Expected TLS by default")
     }
-    XCTAssertEqual(options.handshakeTimeout, .seconds(8))
+    XCTAssertEqual(options.handshakeTimeout, .seconds(10))
     XCTAssertEqual(options.outboundRecordChunkBytes, 64 * 1024)
     XCTAssertEqual(options.maxOutboundBufferedBytes, 4 * 1024 * 1024)
     XCTAssertEqual(options.yamuxLimits, YamuxLimits())

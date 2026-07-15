@@ -295,6 +295,19 @@ final class FlowersecYamuxTests: XCTestCase {
     await channel.waitUntilClosed()
   }
 
+  func testTerminationWaiterReceivesReaderFailure() async throws {
+    let channel = InMemoryYamuxChannel()
+    let client = FlowersecYamuxClient(channel: channel)
+    await client.start()
+    let termination = Task { await client.terminated() }
+
+    await channel.feed(header(type: 99, flags: 0, streamID: 0, length: 0))
+    let error = await termination.value as? FlowersecError
+    XCTAssertEqual(error?.path, .direct)
+    XCTAssertEqual(error?.stage, .yamux)
+    XCTAssertEqual(error?.code, .openStreamFailed)
+  }
+
   private func header(type: UInt8, flags: UInt16, streamID: UInt32, length: UInt32) -> Data {
     var data = Data([0, type])
     data.appendUInt16BE(flags)

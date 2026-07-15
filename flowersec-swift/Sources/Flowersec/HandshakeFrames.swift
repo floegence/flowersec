@@ -32,7 +32,7 @@ enum FlowersecHandshakeFrame {
   }
 }
 
-struct E2EEInitMessage: Encodable {
+struct E2EEInitMessage: Codable {
   var channelID: String
   var role: UInt8
   var version: UInt8
@@ -52,7 +52,7 @@ struct E2EEInitMessage: Encodable {
   }
 }
 
-struct E2EEResponseMessage: Decodable {
+struct E2EEResponseMessage: Codable {
   var handshakeID: String
   var serverEphPubB64u: String
   var nonceSB64u: String
@@ -66,7 +66,7 @@ struct E2EEResponseMessage: Decodable {
   }
 }
 
-struct E2EEAckMessage: Encodable {
+struct E2EEAckMessage: Codable {
   var handshakeID: String
   var timestampUnixS: UInt64
   var authTagB64u: String

@@ -10,15 +10,16 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/observability"
 )
 
 const maxInvalidJSONFrames = 3
 
 const (
-	defaultMaxConcurrentRequests  = 32
-	defaultMaxQueuedRequests      = 128
-	defaultMaxQueuedNotifications = 128
+	defaultMaxConcurrentRequests  = defaults.RPCMaxConcurrentRequests
+	defaultMaxQueuedRequests      = defaults.RPCMaxQueuedRequests
+	defaultMaxQueuedNotifications = defaults.RPCMaxQueuedNotifications
 )
 
 // ServerOptions bounds server-side handler concurrency and queues.

@@ -75,6 +75,9 @@ jobs:
             flowersec-go/go.sum
             examples/go.sum
 
+      - name: Verify all language tags point to this commit
+        run: scripts/verify-release-tags.sh "${GITHUB_REF_NAME}" "${GITHUB_SHA}"
+
       - name: Generate release notes
         run: |
           set -euo pipefail

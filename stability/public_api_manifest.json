@@ -501,6 +501,43 @@
         ]
       },
       {
+        "package": "github.com/floegence/flowersec/flowersec-go/reconnect",
+        "alias": "reconnect",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/reconnect`",
+        "entries": [
+          {
+            "kind": "func",
+            "expr": "reconnect.NewManager",
+            "doc_token": "`reconnect.NewManager(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "reconnect.OnceSource",
+            "doc_token": "`reconnect.OnceSource(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "reconnect.RefreshableSource",
+            "doc_token": "`reconnect.RefreshableSource(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "reconnect.ControlplaneSource",
+            "doc_token": "`reconnect.ControlplaneSource(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "reconnect.Config",
+            "doc_token": "`reconnect.Config`"
+          },
+          {
+            "kind": "type",
+            "expr": "reconnect.Settings",
+            "doc_token": "`reconnect.Settings`"
+          }
+        ]
+      },
+      {
         "package": "github.com/floegence/flowersec/flowersec-go/proxy",
         "alias": "proxy",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/proxy`",
@@ -509,6 +546,26 @@
             "kind": "func",
             "expr": "proxy.Register",
             "doc_token": "`proxy.Register(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "proxy.NewClient",
+            "doc_token": "`proxy.NewClient(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "proxy.ClientHTTPRequest",
+            "doc_token": "`proxy.ClientHTTPRequest`"
+          },
+          {
+            "kind": "type",
+            "expr": "proxy.ClientHTTPResponse",
+            "doc_token": "`proxy.ClientHTTPResponse`"
+          },
+          {
+            "kind": "type",
+            "expr": "proxy.ClientWebSocket",
+            "doc_token": "`proxy.ClientWebSocket`"
           }
         ]
       },
@@ -1006,1049 +1063,3304 @@
     ],
     "symbols": [
       {
-        "kind": "swift.enum",
-        "name": "TransportRuntime"
-      },
-      {
-        "kind": "swift.enum",
-        "name": "TransportSecurityPolicy"
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "FlowersecCode.credentialCommitFailed"
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "FlowersecCode.transportPolicyDenied"
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "TransportRuntime.swift"
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "TransportSecurityPolicy.allowPlaintext"
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "TransportSecurityPolicy.allowPlaintextForLoopback"
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "TransportSecurityPolicy.custom(_:)"
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "TransportSecurityPolicy.requireTLS"
-      },
-      {
-        "kind": "swift.init",
-        "name": "ConnectOptions.init(origin:connectTimeout:handshakeTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:liveness:)"
-      },
-      {
-        "kind": "swift.init",
-        "name": "ConnectOptions.init(origin:connectTimeout:handshakeTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:liveness:scopeResolvers:relaxedOptionalScopeValidation:)"
-      },
-      {
-        "kind": "swift.init",
-        "name": "ConnectOptions.init(origin:connectTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:liveness:)"
-      },
-      {
-        "kind": "swift.init",
-        "name": "ConnectOptions.init(origin:connectTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:yamuxLimits:liveness:)"
-      },
-      {
-        "kind": "swift.init",
-        "name": "DiagnosticCodeDomain.init(rawValue:)"
-      },
-      {
-        "kind": "swift.init",
-        "name": "DiagnosticEvent.init(from:)"
-      },
-      {
-        "kind": "swift.init",
-        "name": "DiagnosticEvent.init(v:namespace:path:stage:codeDomain:code:result:elapsedMS:attemptSeq:traceID:sessionID:resource:current:limit:)"
-      },
-      {
-        "kind": "swift.init",
-        "name": "DiagnosticResult.init(rawValue:)"
-      },
-      {
-        "kind": "swift.init",
-        "name": "TransportRuntime.init(rawValue:)"
-      },
-      {
-        "kind": "swift.init",
-        "name": "TransportSecurityDiagnostic.init(code:path:scheme:host:runtime:)"
-      },
-      {
-        "kind": "swift.init",
-        "name": "TransportSecurityPolicyInput.init(path:scheme:host:runtime:)"
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectOptions.onTransportSecurityDiagnostic"
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectOptions.onDiagnosticEvent"
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectOptions.transportSecurityPolicy"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.attemptSeq"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.code"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.codeDomain"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.current"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.elapsedMS"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.limit"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.namespace"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.path"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.resource"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.result"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.sessionID"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.stage"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.traceID"
-      },
-      {
-        "kind": "swift.property",
-        "name": "DiagnosticEvent.v"
-      },
-      {
-        "kind": "swift.property",
-        "name": "TransportSecurityDiagnostic.code"
-      },
-      {
-        "kind": "swift.property",
-        "name": "TransportSecurityDiagnostic.host"
-      },
-      {
-        "kind": "swift.property",
-        "name": "TransportSecurityDiagnostic.path"
-      },
-      {
-        "kind": "swift.property",
-        "name": "TransportSecurityDiagnostic.runtime"
-      },
-      {
-        "kind": "swift.property",
-        "name": "TransportSecurityDiagnostic.scheme"
-      },
-      {
-        "kind": "swift.property",
-        "name": "TransportSecurityPolicyInput.host"
-      },
-      {
-        "kind": "swift.property",
-        "name": "TransportSecurityPolicyInput.path"
-      },
-      {
-        "kind": "swift.property",
-        "name": "TransportSecurityPolicyInput.runtime"
-      },
-      {
-        "kind": "swift.property",
-        "name": "TransportSecurityPolicyInput.scheme"
-      },
-      {
-        "kind": "swift.struct",
-        "name": "TransportSecurityDiagnostic"
-      },
-      {
-        "kind": "swift.struct",
-        "name": "DiagnosticEvent"
-      },
-      {
-        "kind": "swift.struct",
-        "name": "TransportSecurityPolicyInput"
+        "kind": "swift.class",
+        "name": "ChannelInitService",
+        "doc_token": ""
       },
       {
         "kind": "swift.class",
-        "name": "FlowersecClient"
+        "name": "EndpointHandshakeCache",
+        "doc_token": ""
       },
       {
         "kind": "swift.class",
-        "name": "RPCClient"
+        "name": "EndpointSession",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "FlowersecClient",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "ProxyServer",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "ProxyWebSocket",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "RPCClient",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "RPCRouter",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "RPCServer",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "ReconnectManager",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "TokenIssuer",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "ConnectArtifact"
+        "name": "ArtifactSourceError",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "Flowersec"
+        "name": "ArtifactSourceKind",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "DiagnosticCodeDomain"
+        "name": "ConnectArtifact",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "DiagnosticResult"
+        "name": "Controlplane",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "FlowersecCode"
+        "name": "DiagnosticCodeDomain",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "LivenessOptions"
+        "name": "DiagnosticResult",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "FlowersecJSONFrame"
+        "name": "Endpoint",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "FlowersecPath"
+        "name": "FST2Token",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "FlowersecStage"
+        "name": "FST2TokenError",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "ScopePayloadValue"
+        "name": "Flowersec",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "Suite"
+        "name": "FlowersecCode",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecJSONFrame",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecPath",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecSDKDefaults",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecSDKDefaults.Controlplane",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecSDKDefaults.E2EE",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecSDKDefaults.Proxy",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecSDKDefaults.RPC",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecSDKDefaults.Reconnect",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecSDKDefaults.Transport",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecSDKDefaults.Yamux",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecStage",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "LivenessOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ProxyError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ProxyProtocol",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ProxyWebSocketOperation",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ReconnectError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ReconnectStatus",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ScopePayloadValue",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "Suite",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "TransportRuntime",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "TransportSecurityPolicy",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectArtifact.direct(_:metadata:)"
+        "name": "ArtifactSourceError.acquisitionFailed(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectArtifact.tunnel(_:metadata:)"
+        "name": "ArtifactSourceError.canceled",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.authTagMismatch"
+        "name": "ArtifactSourceError.onceConsumed",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "DiagnosticCodeDomain.error"
+        "name": "ArtifactSourceKind.once",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "DiagnosticCodeDomain.event"
+        "name": "ArtifactSourceKind.refreshable",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "DiagnosticResult.fail"
+        "name": "ConnectArtifact.direct(_:metadata:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "DiagnosticResult.ok"
+        "name": "ConnectArtifact.tunnel(_:metadata:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "DiagnosticResult.retry"
+        "name": "DiagnosticCodeDomain.error",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "DiagnosticResult.skip"
+        "name": "DiagnosticCodeDomain.event",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.canceled"
+        "name": "DiagnosticResult.fail",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.handshakeFailed"
+        "name": "DiagnosticResult.ok",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.invalidInput"
+        "name": "DiagnosticResult.retry",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.invalidOption"
+        "name": "DiagnosticResult.skip",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.invalidPSK"
+        "name": "FST2TokenError.expAfterInit",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.invalidSuite"
+        "name": "FST2TokenError.expired",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.missingChannelID"
+        "name": "FST2TokenError.initExpired",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.missingConnectInfo"
+        "name": "FST2TokenError.invalidAudience",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.missingInitExp"
+        "name": "FST2TokenError.invalidFormat",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.missingWSURL"
+        "name": "FST2TokenError.invalidIdleTimeout",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.notConnected"
+        "name": "FST2TokenError.invalidIssuer",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.openStreamFailed"
+        "name": "FST2TokenError.invalidJSON",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.rpcFailed"
+        "name": "FST2TokenError.invalidSignature",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.resourceExhausted"
+        "name": "FST2TokenError.issuedInFuture",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.resolveFailed"
+        "name": "FST2TokenError.unknownKey",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.streamHelloFailed"
+        "name": "FlowersecCode.authTagMismatch",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.timeout"
+        "name": "FlowersecCode.canceled",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.websocketFailed"
+        "name": "FlowersecCode.credentialCommitFailed",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "LivenessOptions.disabled"
+        "name": "FlowersecCode.handshakeFailed",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "LivenessOptions.enabled(interval:timeout:)"
+        "name": "FlowersecCode.invalidInput",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "LivenessOptions.pathDefault"
+        "name": "FlowersecCode.invalidOption",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecPath.auto"
+        "name": "FlowersecCode.invalidPSK",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecPath.direct"
+        "name": "FlowersecCode.invalidSuite",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecPath.tunnel"
+        "name": "FlowersecCode.missingChannelID",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecStage.attach"
+        "name": "FlowersecCode.missingConnectInfo",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecStage.close"
+        "name": "FlowersecCode.missingInitExp",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecStage.connect"
+        "name": "FlowersecCode.missingWSURL",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecStage.transport"
+        "name": "FlowersecCode.notConnected",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecStage.handshake"
+        "name": "FlowersecCode.openStreamFailed",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecStage.rpc"
+        "name": "FlowersecCode.resolveFailed",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecStage.scope"
+        "name": "FlowersecCode.resourceExhausted",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecStage.secure"
+        "name": "FlowersecCode.rpcFailed",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecStage.validate"
+        "name": "FlowersecCode.streamHelloFailed",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecStage.yamux"
+        "name": "FlowersecCode.timeout",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ScopePayloadValue.array(_:)"
+        "name": "FlowersecCode.transportPolicyDenied",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ScopePayloadValue.bool(_:)"
+        "name": "FlowersecCode.websocketFailed",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ScopePayloadValue.null"
+        "name": "FlowersecPath.auto",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ScopePayloadValue.number(_:)"
+        "name": "FlowersecPath.direct",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ScopePayloadValue.object(_:)"
+        "name": "FlowersecPath.tunnel",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ScopePayloadValue.string(_:)"
+        "name": "FlowersecStage.attach",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "Suite.p256HKDFSHA256AES256GCM"
+        "name": "FlowersecStage.close",
+        "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "Suite.x25519HKDFSHA256AES256GCM"
+        "name": "FlowersecStage.connect",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.handshake",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.reconnect",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.rpc",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.scope",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.secure",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.transport",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.validate",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecStage.yamux",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "LivenessOptions.disabled",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "LivenessOptions.enabled(interval:timeout:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "LivenessOptions.pathDefault",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyError.bodyTooLarge",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyError.canceled",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyError.frameTooLarge",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyError.invalidConfiguration(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyError.invalidMetadata(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyError.invalidPath",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyError.invalidWebSocketOperation(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyError.remote(code:message:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyError.stream(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyError.upstream(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyWebSocketOperation.binary",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyWebSocketOperation.close",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyWebSocketOperation.ping",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyWebSocketOperation.pong",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ProxyWebSocketOperation.text",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectError.artifact(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectError.canceled",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectError.connection(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectError.exhausted(attempts:last:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectError.invalidConfiguration",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectError.refreshableSourceRequired",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectError.terminated(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectStatus.connected",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectStatus.connecting",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectStatus.disconnected",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ReconnectStatus.error",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.array(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.bool(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.null",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.number(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.object(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ScopePayloadValue.string(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "Suite.p256HKDFSHA256AES256GCM",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "Suite.x25519HKDFSHA256AES256GCM",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportRuntime.swift",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportSecurityPolicy.allowPlaintext",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportSecurityPolicy.allowPlaintextForLoopback",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportSecurityPolicy.custom(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportSecurityPolicy.requireTLS",
+        "doc_token": ""
       },
       {
         "kind": "swift.func.op",
-        "name": "ChannelInitGrant.==(_:_:)"
+        "name": "ChannelInitGrant.==(_:_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.func.op",
-        "name": "DirectConnectInfo.==(_:_:)"
+        "name": "DirectConnectInfo.==(_:_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ChannelInitGrant.init(from:)"
+        "name": "ArtifactAcquireContext.init(traceID:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ChannelInitGrant.init(tunnelURL:channelID:channelInitExpiresAtUnixS:idleTimeoutSeconds:role:token:psk:allowedSuites:defaultSuite:)"
+        "name": "ArtifactRequestOptions.init(baseURL:path:endpointID:payload:traceID:headers:maxResponseBodyBytes:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ConnectArtifact.init(from:)"
+        "name": "ArtifactSourceKind.init(rawValue:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ConnectArtifactMetadata.init(scoped:correlation:)"
+        "name": "ChannelInitGrant.init(from:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "YamuxLimits.init(maxActiveStreams:maxInboundStreams:maxFrameBytes:preferredOutboundFrameBytes:maxStreamReceiveBytes:maxSessionReceiveBytes:)"
+        "name": "ChannelInitGrant.init(tunnelURL:channelID:channelInitExpiresAtUnixS:idleTimeoutSeconds:role:token:psk:allowedSuites:defaultSuite:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "CorrelationContext.init(from:)"
+        "name": "ChannelInitParams.init(tunnelURL:tunnelAudience:issuerID:tokenExpirySeconds:idleTimeoutSeconds:clockSkew:allowedSuites:defaultSuite:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "CorrelationContext.init(traceID:sessionID:tags:)"
+        "name": "ChannelInitService.init(issuer:params:now:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "CorrelationKV.init(from:)"
+        "name": "ConnectArtifact.init(from:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "CorrelationKV.init(key:value:)"
+        "name": "ConnectArtifactMetadata.init(scoped:correlation:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "DirectConnectInfo.init(from:)"
+        "name": "ConnectOptions.init(origin:connectTimeout:handshakeTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:liveness:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "DirectConnectInfo.init(wsURL:channelID:psk:channelInitExpiresAtUnixS:defaultSuite:)"
+        "name": "ConnectOptions.init(origin:connectTimeout:handshakeTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:liveness:scopeResolvers:relaxedOptionalScopeValidation:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "FlowersecCode.init(rawValue:)"
+        "name": "ConnectOptions.init(origin:connectTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:liveness:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "FlowersecError.init(path:stage:code:message:)"
+        "name": "ConnectOptions.init(origin:connectTimeout:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:outboundRecordChunkBytes:yamuxLimits:liveness:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "FlowersecPath.init(rawValue:)"
+        "name": "ControlplaneArtifactRequest.CorrelationInput.init(from:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "FlowersecRPCError.init(code:message:)"
+        "name": "ControlplaneArtifactRequest.CorrelationInput.init(traceID:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "FlowersecStage.init(rawValue:)"
+        "name": "ControlplaneArtifactRequest.init(endpointID:payload:traceID:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "RPCClient.init(stream:path:)"
+        "name": "ControlplaneArtifactRequest.init(from:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "RPCEnvelope.init(data:)"
+        "name": "CorrelationContext.init(from:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "RPCEnvelope.init(typeID:requestID:responseTo:payload:error:)"
+        "name": "CorrelationContext.init(traceID:sessionID:tags:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "RPCErrorPayload.init(code:message:)"
+        "name": "CorrelationKV.init(from:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "RPCSubscription.init(cancelHandler:)"
+        "name": "CorrelationKV.init(key:value:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ScopeMetadataEntry.init(from:)"
+        "name": "DiagnosticCodeDomain.init(rawValue:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ScopeMetadataEntry.init(scope:scopeVersion:critical:payload:)"
+        "name": "DiagnosticEvent.init(from:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ScopePayload.init(_:)"
+        "name": "DiagnosticEvent.init(v:namespace:path:stage:codeDomain:code:result:elapsedMS:attemptSeq:traceID:sessionID:resource:current:limit:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ScopePayload.init(from:)"
+        "name": "DiagnosticResult.init(rawValue:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ScopePayloadValue.init(from:)"
+        "name": "DirectConnectInfo.init(from:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "Suite.init(rawValue:)"
+        "name": "DirectConnectInfo.init(wsURL:channelID:psk:channelInitExpiresAtUnixS:defaultSuite:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "DirectEndpointCredential.init(channelID:suite:psk:initExpiresAtUnixS:commitAuthenticated:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "DirectHandshakeInit.init(channelID:version:suite:clientFeatures:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "EndpointHandshakeCache.init(ttl:maxEntries:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "EndpointOptions.init(origin:connectTimeout:handshakeTimeout:handshakeClockSkew:transportSecurityPolicy:onTransportSecurityDiagnostic:onDiagnosticEvent:serverFeatures:outboundRecordChunkBytes:maxOutboundBufferedBytes:yamuxLimits:handshakeCache:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "EndpointStream.init(kind:stream:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "FST2TokenPayload.init(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "FST2TokenPayload.init(kid:audience:issuer:channelID:role:tokenID:initExpiresAtUnixS:idleTimeoutSeconds:issuedAtUnixS:expiresAtUnixS:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "FST2VerifyOptions.init(nowUnixS:audience:issuer:clockSkew:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecCode.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecError.init(path:stage:code:message:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecPath.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecRPCError.init(code:message:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecStage.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyClient.init(route:options:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyContractOptions.init(maxJSONFrameBytes:maxChunkBytes:maxBodyBytes:maxWebSocketFrameBytes:defaultHTTPRequestTimeout:extraRequestHeaders:extraResponseHeaders:blockedResponseHeaders:extraWebSocketHeaders:forbiddenCookieNames:forbiddenCookieNamePrefixes:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyCookieJar.init()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyHTTPRequest.init(method:path:headers:externalOrigin:timeout:body:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyHTTPRequestMeta.init(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyHTTPRequestMeta.init(version:requestID:method:path:headers:externalOrigin:timeoutMilliseconds:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyHTTPResponse.init(status:headers:body:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyHTTPResponseMeta.init(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyHTTPResponseMeta.init(version:requestID:ok:status:headers:error:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyHeader.init(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyHeader.init(name:value:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyHeaderPolicy.init(options:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyRemoteError.init(code:message:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyRemoteError.init(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyServer.init(options:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyServerOptions.init(upstream:upstreamOrigin:allowedUpstreamHosts:contract:defaultTimeout:maxTimeout:maxConcurrentStreams:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyWebSocketFrame.init(operation:payload:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyWebSocketOpenMeta.init(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyWebSocketOpenMeta.init(version:connectionID:path:headers:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyWebSocketOpenResponse.init(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyWebSocketOpenResponse.init(version:connectionID:ok:selectedProtocol:error:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ProxyWebSocketOperation.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCClient.init(stream:path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCEnvelope.init(data:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCEnvelope.init(typeID:requestID:responseTo:payload:error:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCErrorPayload.init(code:message:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCRouter.init()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCServer.init(stream:router:options:path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCServerOptions.init(maxConcurrentRequests:maxQueuedRequests:maxQueuedNotifications:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCSubscription.init(cancelHandler:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ReconnectConfig.init(source:options:settings:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ReconnectManager.init()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ReconnectSettings.init(enabled:maxAttempts:initialDelay:maxDelay:factor:jitterRatio:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ReconnectState.init(status:error:client:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ReconnectStatus.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ScopeMetadataEntry.init(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ScopeMetadataEntry.init(scope:scopeVersion:critical:payload:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ScopePayload.init(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ScopePayload.init(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ScopePayloadValue.init(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "Suite.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "TokenIssuer.init(kid:privateKey:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "TokenIssuer.init(kid:seed:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "TransportRuntime.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "TransportSecurityDiagnostic.init(code:path:scheme:host:runtime:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "TransportSecurityPolicyInput.init(path:scheme:host:runtime:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "YamuxLimits.init(maxActiveStreams:maxInboundStreams:maxFrameBytes:preferredOutboundFrameBytes:maxStreamReceiveBytes:maxSessionReceiveBytes:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ChannelInitGrant.encode(to:)"
+        "name": "ArtifactSource.acquire(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ConnectArtifact.encode(to:)"
+        "name": "ChannelInitGrant.encode(to:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "CorrelationContext.encode(to:)"
+        "name": "ChannelInitService.issue(channelID:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "DirectConnectInfo.encode(to:)"
+        "name": "ChannelInitService.reissue(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "FlowersecByteStream.close()"
+        "name": "ConnectArtifact.encode(to:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "FlowersecByteStream.readExact(_:)"
+        "name": "CorrelationContext.encode(to:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "FlowersecByteStream.write(_:)"
+        "name": "DirectConnectInfo.encode(to:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "FlowersecClient.close()"
+        "name": "EndpointSession.acceptStream()",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "FlowersecClient.openStream(kind:)"
+        "name": "EndpointSession.close()",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "FlowersecClient.probeLiveness(timeout:)"
+        "name": "EndpointSession.openStream(kind:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "RPCClient.call(_:_:timeout:)"
+        "name": "EndpointSession.probeLiveness(timeout:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "RPCClient.close()"
+        "name": "EndpointSession.serveRPC(router:options:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "RPCClient.notify(_:_:)"
+        "name": "FlowersecBinaryTransport.close()",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "RPCClient.onNotify(_:handler:)"
+        "name": "FlowersecBinaryTransport.readBinary()",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "RPCClient.start()"
+        "name": "FlowersecBinaryTransport.writeBinary(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "RPCEnvelope.encoded()"
+        "name": "FlowersecByteStream.close()",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "RPCSubscription.cancel()"
+        "name": "FlowersecByteStream.readExact(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ScopeMetadataEntry.encode(to:)"
+        "name": "FlowersecByteStream.write(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ScopePayload.encode(to:)"
+        "name": "FlowersecClient.close()",
+        "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ScopePayloadValue.encode(to:)"
+        "name": "FlowersecClient.openStream(kind:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "FlowersecClient.probeLiveness(timeout:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "FlowersecClient.terminated()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyClient.openWebSocket(path:headers:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyClient.request(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyCookieJar.capture(requestPath:headers:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyCookieJar.requestHeader(for:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyHeaderPolicy.filterRequest(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyHeaderPolicy.filterResponse(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyHeaderPolicy.filterWebSocket(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyServer.serve(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyServer.serveStream(kind:stream:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyStreamRoute.openStream(kind:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyWebSocket.abort()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyWebSocket.close(code:reason:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyWebSocket.receive()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ProxyWebSocket.send(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCClient.call(_:_:timeout:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCClient.close()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCClient.notify(_:_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCClient.onNotify(_:handler:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCClient.start()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCEnvelope.encoded()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCRouter.register(_:handler:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCServer.close()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCServer.notify(_:_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCServer.serve()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCSubscription.cancel()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ReconnectManager.connect(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ReconnectManager.connectIfNeeded(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ReconnectManager.disconnect()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ReconnectManager.state()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ReconnectManager.subscribe()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ReconnectSettings.delay(forFailedAttemptIndex:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ScopeMetadataEntry.encode(to:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ScopePayload.encode(to:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ScopePayloadValue.encode(to:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "TokenIssuer.currentKeyID()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "TokenIssuer.exportTunnelKeyset()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "TokenIssuer.publicKeys()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "TokenIssuer.rotate(kid:seed:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "TokenIssuer.sign(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ChannelInitGrant.allowedSuites"
+        "name": "ArtifactAcquireContext.traceID",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ChannelInitGrant.channelID"
+        "name": "ArtifactRequestOptions.baseURL",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ChannelInitGrant.channelInitExpiresAtUnixS"
+        "name": "ArtifactRequestOptions.endpointID",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ChannelInitGrant.defaultSuite"
+        "name": "ArtifactRequestOptions.headers",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ChannelInitGrant.idleTimeoutSeconds"
+        "name": "ArtifactRequestOptions.maxResponseBodyBytes",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ChannelInitGrant.psk"
+        "name": "ArtifactRequestOptions.path",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ChannelInitGrant.role"
+        "name": "ArtifactRequestOptions.payload",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ChannelInitGrant.token"
+        "name": "ArtifactRequestOptions.traceID",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ChannelInitGrant.tunnelURL"
+        "name": "ArtifactSource.kind",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectArtifact.directInfo"
+        "name": "ArtifactSourceError.errorDescription",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectArtifact.metadata"
+        "name": "ChannelInitGrant.allowedSuites",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectArtifact.tunnelGrant"
+        "name": "ChannelInitGrant.channelID",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectArtifactMetadata.correlation"
+        "name": "ChannelInitGrant.channelInitExpiresAtUnixS",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectArtifactMetadata.scoped"
+        "name": "ChannelInitGrant.defaultSuite",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectOptions.connectTimeout"
+        "name": "ChannelInitGrant.idleTimeoutSeconds",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectOptions.handshakeTimeout"
+        "name": "ChannelInitGrant.psk",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectOptions.liveness"
+        "name": "ChannelInitGrant.role",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectOptions.maxOutboundBufferedBytes"
+        "name": "ChannelInitGrant.token",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectOptions.origin"
+        "name": "ChannelInitGrant.tunnelURL",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectOptions.outboundRecordChunkBytes"
+        "name": "ChannelInitParams.allowedSuites",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectOptions.relaxedOptionalScopeValidation"
+        "name": "ChannelInitParams.clockSkew",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectOptions.scopeResolvers"
+        "name": "ChannelInitParams.defaultSuite",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectOptions.yamuxLimits"
+        "name": "ChannelInitParams.idleTimeoutSeconds",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "CorrelationContext.sessionID"
+        "name": "ChannelInitParams.issuerID",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "CorrelationContext.tags"
+        "name": "ChannelInitParams.tokenExpirySeconds",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "CorrelationContext.traceID"
+        "name": "ChannelInitParams.tunnelAudience",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "CorrelationKV.key"
+        "name": "ChannelInitParams.tunnelURL",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "CorrelationKV.value"
+        "name": "ConnectArtifact.directInfo",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "DirectConnectInfo.channelID"
+        "name": "ConnectArtifact.metadata",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "DirectConnectInfo.channelInitExpiresAtUnixS"
+        "name": "ConnectArtifact.tunnelGrant",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "DirectConnectInfo.defaultSuite"
+        "name": "ConnectArtifactMetadata.correlation",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "DirectConnectInfo.psk"
+        "name": "ConnectArtifactMetadata.scoped",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "DirectConnectInfo.wsURL"
+        "name": "ConnectOptions.connectTimeout",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecClient.rpc"
+        "name": "ConnectOptions.handshakeTimeout",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecError.code"
+        "name": "ConnectOptions.liveness",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecError.errorDescription"
+        "name": "ConnectOptions.maxOutboundBufferedBytes",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecError.message"
+        "name": "ConnectOptions.onDiagnosticEvent",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecError.path"
+        "name": "ConnectOptions.onTransportSecurityDiagnostic",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecError.stage"
+        "name": "ConnectOptions.origin",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecRPCError.code"
+        "name": "ConnectOptions.outboundRecordChunkBytes",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecRPCError.errorDescription"
+        "name": "ConnectOptions.relaxedOptionalScopeValidation",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecRPCError.message"
+        "name": "ConnectOptions.scopeResolvers",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "RPCEnvelope.error"
+        "name": "ConnectOptions.transportSecurityPolicy",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "RPCEnvelope.payload"
+        "name": "ConnectOptions.yamuxLimits",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "RPCEnvelope.requestID"
+        "name": "ControlplaneArtifactRequest.CorrelationInput.traceID",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "RPCEnvelope.responseTo"
+        "name": "ControlplaneArtifactRequest.correlation",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "RPCEnvelope.typeID"
+        "name": "ControlplaneArtifactRequest.endpointID",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "RPCErrorPayload.code"
+        "name": "ControlplaneArtifactRequest.payload",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "RPCErrorPayload.message"
+        "name": "ControlplaneRequestError.code",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ScopeMetadataEntry.critical"
+        "name": "ControlplaneRequestError.errorDescription",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ScopeMetadataEntry.payload"
+        "name": "ControlplaneRequestError.message",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ScopeMetadataEntry.scope"
+        "name": "ControlplaneRequestError.responseBody",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ScopeMetadataEntry.scopeVersion"
+        "name": "ControlplaneRequestError.status",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ScopePayload.object"
+        "name": "CorrelationContext.sessionID",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "YamuxLimits.maxActiveStreams"
+        "name": "CorrelationContext.tags",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "YamuxLimits.maxFrameBytes"
+        "name": "CorrelationContext.traceID",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "YamuxLimits.maxInboundStreams"
+        "name": "CorrelationKV.key",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "YamuxLimits.maxSessionReceiveBytes"
+        "name": "CorrelationKV.value",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "YamuxLimits.maxStreamReceiveBytes"
+        "name": "DiagnosticEvent.attemptSeq",
+        "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "YamuxLimits.preferredOutboundFrameBytes"
+        "name": "DiagnosticEvent.code",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.codeDomain",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.current",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.elapsedMS",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.limit",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.namespace",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.path",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.resource",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.result",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.sessionID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.stage",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.traceID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DiagnosticEvent.v",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectConnectInfo.channelID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectConnectInfo.channelInitExpiresAtUnixS",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectConnectInfo.defaultSuite",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectConnectInfo.psk",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectConnectInfo.wsURL",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectEndpointCredential.channelID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectEndpointCredential.commitAuthenticated",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectEndpointCredential.initExpiresAtUnixS",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectEndpointCredential.psk",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectEndpointCredential.suite",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectHandshakeInit.channelID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectHandshakeInit.clientFeatures",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectHandshakeInit.suite",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "DirectHandshakeInit.version",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.connectTimeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.handshakeCache",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.handshakeClockSkew",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.handshakeTimeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.maxOutboundBufferedBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.onDiagnosticEvent",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.onTransportSecurityDiagnostic",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.origin",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.outboundRecordChunkBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.serverFeatures",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.transportSecurityPolicy",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointOptions.yamuxLimits",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointSession.endpointInstanceID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointSession.path",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointStream.kind",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "EndpointStream.stream",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2TokenPayload.audience",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2TokenPayload.channelID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2TokenPayload.expiresAtUnixS",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2TokenPayload.idleTimeoutSeconds",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2TokenPayload.initExpiresAtUnixS",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2TokenPayload.issuedAtUnixS",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2TokenPayload.issuer",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2TokenPayload.kid",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2TokenPayload.role",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2TokenPayload.tokenID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2VerifyOptions.audience",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2VerifyOptions.clockSkew",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2VerifyOptions.issuer",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FST2VerifyOptions.nowUnixS",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecClient.rpc",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecError.code",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecError.errorDescription",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecError.message",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecError.path",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecError.stage",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecRPCError.code",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecRPCError.errorDescription",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecRPCError.message",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.blockedResponseHeaders",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.defaultHTTPRequestTimeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.extraRequestHeaders",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.extraResponseHeaders",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.extraWebSocketHeaders",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.forbiddenCookieNamePrefixes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.forbiddenCookieNames",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.maxBodyBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.maxChunkBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.maxJSONFrameBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyContractOptions.maxWebSocketFrameBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyError.errorDescription",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequest.body",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequest.externalOrigin",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequest.headers",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequest.method",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequest.path",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequest.timeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequestMeta.externalOrigin",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequestMeta.headers",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequestMeta.method",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequestMeta.path",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequestMeta.requestID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequestMeta.timeoutMilliseconds",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPRequestMeta.version",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPResponse.body",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPResponse.headers",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPResponse.status",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPResponseMeta.error",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPResponseMeta.headers",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPResponseMeta.ok",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPResponseMeta.requestID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPResponseMeta.status",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHTTPResponseMeta.version",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHeader.name",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyHeader.value",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyRemoteError.code",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyRemoteError.message",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyServerOptions.allowedUpstreamHosts",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyServerOptions.contract",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyServerOptions.defaultTimeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyServerOptions.maxConcurrentStreams",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyServerOptions.maxTimeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyServerOptions.upstream",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyServerOptions.upstreamOrigin",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocket.selectedProtocol",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketFrame.operation",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketFrame.payload",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketOpenMeta.connectionID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketOpenMeta.headers",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketOpenMeta.path",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketOpenMeta.version",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketOpenResponse.connectionID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketOpenResponse.error",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketOpenResponse.ok",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketOpenResponse.selectedProtocol",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ProxyWebSocketOpenResponse.version",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCEnvelope.error",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCEnvelope.payload",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCEnvelope.requestID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCEnvelope.responseTo",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCEnvelope.typeID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCErrorPayload.code",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCErrorPayload.message",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCServerOptions.maxConcurrentRequests",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCServerOptions.maxQueuedNotifications",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCServerOptions.maxQueuedRequests",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectConfig.options",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectConfig.settings",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectConfig.source",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectError.errorDescription",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectSettings.enabled",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectSettings.factor",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectSettings.initialDelay",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectSettings.jitterRatio",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectSettings.maxAttempts",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectSettings.maxDelay",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectState.client",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectState.error",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ReconnectState.status",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ScopeMetadataEntry.critical",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ScopeMetadataEntry.payload",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ScopeMetadataEntry.scope",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ScopeMetadataEntry.scopeVersion",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ScopePayload.object",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityDiagnostic.code",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityDiagnostic.host",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityDiagnostic.path",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityDiagnostic.runtime",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityDiagnostic.scheme",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityPolicyInput.host",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityPolicyInput.path",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityPolicyInput.runtime",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportSecurityPolicyInput.scheme",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.maxActiveStreams",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.maxFrameBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.maxInboundStreams",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.maxSessionReceiveBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.maxStreamReceiveBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "YamuxLimits.preferredOutboundFrameBytes",
+        "doc_token": ""
       },
       {
         "kind": "swift.protocol",
-        "name": "FlowersecByteStream"
+        "name": "FlowersecBinaryTransport",
+        "doc_token": ""
       },
       {
         "kind": "swift.protocol",
-        "name": "FlowersecRPCStream"
+        "name": "FlowersecByteStream",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.protocol",
+        "name": "FlowersecRPCStream",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.protocol",
+        "name": "ProxyStreamRoute",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "ChannelInitGrant"
+        "name": "ArtifactAcquireContext",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "ConnectArtifactMetadata"
+        "name": "ArtifactRequestOptions",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "ConnectOptions"
+        "name": "ArtifactSource",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "YamuxLimits"
+        "name": "ChannelInitGrant",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "CorrelationContext"
+        "name": "ChannelInitParams",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "CorrelationKV"
+        "name": "ConnectArtifactMetadata",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "DirectConnectInfo"
+        "name": "ConnectOptions",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "FlowersecError"
+        "name": "ControlplaneArtifactRequest",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "FlowersecRPCError"
+        "name": "ControlplaneArtifactRequest.CorrelationInput",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "RPCEnvelope"
+        "name": "ControlplaneRequestError",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "RPCErrorPayload"
+        "name": "CorrelationContext",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "RPCSubscription"
+        "name": "CorrelationKV",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "ScopeMetadataEntry"
+        "name": "DiagnosticEvent",
+        "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "ScopePayload"
+        "name": "DirectConnectInfo",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "DirectEndpointCredential",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "DirectHandshakeInit",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "EndpointOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "EndpointStream",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "FST2TokenPayload",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "FST2VerifyOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "FlowersecError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "FlowersecRPCError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyClient",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyContractOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyCookieJar",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyHTTPRequest",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyHTTPRequestMeta",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyHTTPResponse",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyHTTPResponseMeta",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyHeader",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyHeaderPolicy",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyRemoteError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyServerOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyWebSocketFrame",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyWebSocketOpenMeta",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ProxyWebSocketOpenResponse",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "RPCEnvelope",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "RPCErrorPayload",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "RPCServerOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "RPCSubscription",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ReconnectConfig",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ReconnectSettings",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ReconnectState",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ScopeMetadataEntry",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ScopePayload",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "TransportSecurityDiagnostic",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "TransportSecurityPolicyInput",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "YamuxLimits",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "Flowersec.connect(_:options:)"
+        "name": "ArtifactSource.controlplane(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "Flowersec.connectDirect(_:options:)"
+        "name": "ArtifactSource.entryControlplane(_:entryTicket:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "Flowersec.connectDirect(info:origin:)"
+        "name": "ArtifactSource.once(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "Flowersec.connectTunnel(_:options:)"
+        "name": "ArtifactSource.refreshable(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.closed(path:)"
+        "name": "Controlplane.bearerToken(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.invalidConnectInfo(_:path:)"
+        "name": "Controlplane.decodeArtifactRequest(contentType:body:maxBodyBytes:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.invalidHandshake(_:path:)"
+        "name": "Controlplane.encodeArtifactEnvelope(_:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.invalidRPC(_:path:)"
+        "name": "Controlplane.encodeErrorEnvelope(code:message:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.invalidRecord(_:path:)"
+        "name": "Controlplane.requestConnectArtifact(_:session:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.invalidYamux(_:path:)"
+        "name": "Controlplane.requestEntryConnectArtifact(_:entryTicket:session:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.livenessTimeout(_:path:)"
+        "name": "Endpoint.acceptDirect(transport:credential:secureTransport:options:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.resourceExhausted(path:stage:_:)"
+        "name": "Endpoint.acceptDirectResolved(transport:resolver:secureTransport:options:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.timeout(path:stage:message:)"
+        "name": "Endpoint.connectTunnel(grant:options:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecError.webSocket(_:path:)"
+        "name": "FST2Token.sign(privateKey:payload:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecJSONFrame.read(from:)"
+        "name": "FST2Token.verify(_:keys:options:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.method",
-        "name": "FlowersecJSONFrame.write(_:to:)"
+        "name": "Flowersec.connect(_:options:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "Flowersec.connectDirect(_:options:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "Flowersec.connectDirect(info:origin:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "Flowersec.connectTunnel(_:options:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.closed(path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.invalidConnectInfo(_:path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.invalidHandshake(_:path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.invalidRPC(_:path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.invalidRecord(_:path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.invalidYamux(_:path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.livenessTimeout(_:path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.resourceExhausted(path:stage:_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.timeout(path:stage:message:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecError.webSocket(_:path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecJSONFrame.read(from:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "FlowersecJSONFrame.write(_:to:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "ProxyHTTPRequest.get(_:headers:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "ProxyWebSocketFrame.close(code:reason:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.method",
+        "name": "TokenIssuer.random(kid:)",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "ConnectArtifactMetadata.empty"
+        "name": "ChannelInitService.defaultIdleTimeoutSeconds",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "FlowersecError.closed"
+        "name": "ChannelInitService.defaultTokenExpirySeconds",
+        "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "FlowersecError.timeout"
+        "name": "ChannelInitService.windowSeconds",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "ConnectArtifactMetadata.empty",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "Controlplane.artifactPath",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "Controlplane.entryArtifactPath",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FST2Token.prefix",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecError.closed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecError.timeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Controlplane.maxRequestBodyBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Controlplane.maxResponseBodyBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.E2EE.maxHandshakePayloadBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.E2EE.maxOutboundBufferedBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.E2EE.maxRecordBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.E2EE.outboundRecordChunkBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Proxy.defaultTimeoutMilliseconds",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Proxy.maxBodyBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Proxy.maxChunkBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Proxy.maxJSONFrameBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Proxy.maxTimeoutMilliseconds",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Proxy.maxWSFrameBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.RPC.maxConcurrentRequests",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.RPC.maxJSONFrameBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.RPC.maxQueuedNotifications",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.RPC.maxQueuedRequests",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Reconnect.factor",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Reconnect.initialDelayMilliseconds",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Reconnect.jitterRatio",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Reconnect.maxAttempts",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Reconnect.maxDelayMilliseconds",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Transport.connectTimeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Transport.handshakeClockSkew",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Transport.handshakeTimeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Yamux.maxActiveStreams",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Yamux.maxFrameBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Yamux.maxInboundStreams",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Yamux.maxSessionReceiveBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Yamux.maxStreamReceiveBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Yamux.preferredOutboundFrameBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "ProxyProtocol.http1Kind",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "ProxyProtocol.version",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "ProxyProtocol.webSocketKind",
+        "doc_token": ""
       },
       {
         "kind": "swift.typealias",
-        "name": "ConnectScopeResolver"
+        "name": "ConnectScopeResolver",
+        "doc_token": ""
       },
       {
         "kind": "swift.typealias",
-        "name": "ConnectScopeResolverMap"
+        "name": "ConnectScopeResolverMap",
+        "doc_token": ""
       },
       {
         "kind": "swift.typealias",
-        "name": "DirectConnectOptions"
+        "name": "DirectConnectOptions",
+        "doc_token": ""
       },
       {
         "kind": "swift.typealias",
-        "name": "TunnelConnectOptions"
+        "name": "DirectCredentialResolver",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "RPCHandler",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "TunnelConnectOptions",
+        "doc_token": ""
       }
+    ]
+  },
+  "rust": {
+    "package": "flowersec",
+    "crate_path": "flowersec-rust",
+    "doc_tokens": [
+      "`flowersec`",
+      "`flowersec::connect(...)`",
+      "`flowersec::endpoint`",
+      "`flowersec::rpc`",
+      "`flowersec::controlplane`",
+      "`flowersec::reconnect`",
+      "`flowersec::proxy`"
+    ],
+    "compile_entries": [
+      "let _ = flowersec::connect",
+      "let _ = flowersec::connect_direct",
+      "let _ = flowersec::connect_tunnel",
+      "let _ = std::mem::size_of::<flowersec::Client>()",
+      "let _ = std::mem::size_of::<flowersec::ConnectArtifact>()",
+      "let _ = std::mem::size_of::<flowersec::client::ConnectOptions>()",
+      "let _ = flowersec::Client::accept_stream",
+      "let _ = std::mem::size_of::<flowersec::endpoint::Session>()",
+      "let _ = flowersec::endpoint::Session::accept_stream",
+      "let _ = std::mem::size_of::<flowersec::rpc::RpcClient>()",
+      "let _ = std::mem::size_of::<flowersec::rpc::Server>()",
+      "let _ = flowersec::rpc::Server::notify",
+      "let _ = std::mem::size_of::<flowersec::rpc::Router>()",
+      "let _ = std::mem::size_of::<flowersec::controlplane::token::Payload>()",
+      "let _ = std::mem::size_of::<flowersec::controlplane::issuer::Keyset>()",
+      "let _ = std::mem::size_of::<flowersec::reconnect::ReconnectManager>()",
+      "let _ = std::mem::size_of::<flowersec::proxy::ProxyClient>()",
+      "let _ = std::mem::size_of::<flowersec::proxy::ProxyServer>()",
+      "let _ = std::mem::size_of::<flowersec::observability::DiagnosticEvent>()"
     ]
   },
   "coverage": {

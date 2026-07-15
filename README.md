@@ -15,6 +15,7 @@
 
 ![Go Version](https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go)
 ![Node Version](https://img.shields.io/badge/Node.js-24-339933?logo=node.js)
+![Rust MSRV](https://img.shields.io/badge/Rust-1.85%2B-000000?logo=rust)
 ![Browser Friendly](https://img.shields.io/badge/Browser-Friendly-2563EB)
 ![Transport](https://img.shields.io/badge/Transport-WebSocket-111827)
 ![Security](https://img.shields.io/badge/Security-End--to--End%20Encrypted-5B2CFF)
@@ -23,7 +24,7 @@
 ![Proxy](https://img.shields.io/badge/Proxy-HTTP%20%2F%20WebSocket-0F766E)
 ![Tunnel](https://img.shields.io/badge/Tunnel-Open%20Source%20Self--Hosted-92400E)
 
-Flowersec is a Go, TypeScript, and Swift communication toolkit for teams that want browser-friendly secure connectivity without giving relays access to application plaintext.
+Flowersec is a Go, TypeScript, Swift, and Rust communication toolkit for teams that want browser-friendly secure connectivity without giving relays access to application plaintext.
 
 Use Flowersec when you want to:
 
@@ -40,7 +41,7 @@ Security note: high-level connections require `wss://` by default. Local `ws://`
 
 Stable integration entrypoints are documented in `docs/API_SURFACE.md`.
 The stability rules, review checklist, and engineering gate model live in `docs/API_STABILITY_POLICY.md`.
-Flowersec v0.21.1 recommends an artifact-first integration path documented in:
+Flowersec v0.22.0 uses one portable capability contract for Go, TypeScript, Swift, and Rust. The artifact-first integration path is documented in:
 
 - `docs/CONNECT_ARTIFACTS.md`
 - `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
@@ -59,6 +60,7 @@ Flowersec v0.21.1 recommends an artifact-first integration path documented in:
 | 🏗️ Own your tunnel layer | An open-source, self-hosted Flowersec tunnel server instead of a required third-party tunnel |
 | 🧩 More than one protocol | RPC, events, custom streams, HTTP, and WebSocket over one multiplexed session |
 | 🚀 Deployable building blocks | Tunnel server, proxy gateway, Go server endpoints, and helper CLIs |
+| Four equal native SDKs | Go, TypeScript, Swift, and Rust share the portable wire, security, session, RPC, endpoint, controlplane, reconnect, proxy, and observability contract |
 
 ## Quick links
 
@@ -213,6 +215,8 @@ const reconnectConfig = createNodeReconnectConfig({
 | `flowersec-go/client` | Go services / CLIs | High-level Go client APIs |
 | `flowersec-go/controlplane/http` | Go controlplanes | Thin HTTP request/response helpers for artifact issuance |
 | `flowersec-go/endpoint` + `endpoint/serve` | Go server side | Server endpoints that terminate E2EE and serve streams / RPC |
+| `Flowersec` | Swift clients and endpoints | Native client/server, reconnect, controlplane, RPC, stream, and proxy APIs |
+| `flowersec` | Rust services, agents, and CLIs | Tokio-native client/server, reconnect, controlplane, RPC, stream, and proxy APIs |
 | `flowersec-tunnel` | Deployable service | Open-source self-hosted rendezvous and byte forwarding for tunnel mode |
 | `flowersec-proxy-gateway` | Deployable service | Browser-facing HTTP / WebSocket gateway over Flowersec proxy streams |
 | helper tools | Local dev / controlplane workflows | Key generation, connect artifacts, channel init grants, direct connect info |
@@ -243,10 +247,18 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 ### Swift SDK
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.21.1")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.22.0")
 ```
 
-Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.21.1`.
+Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.22.0`.
+
+### Rust SDK
+
+```bash
+cargo add flowersec@0.22.0
+```
+
+The `flowersec` crate uses Rust 2024 Edition, requires Rust 1.85 or newer, and supports native Linux, macOS, and Windows targets. Browser and Service Worker runtime APIs remain TypeScript-owned.
 
 ### Tunnel server
 

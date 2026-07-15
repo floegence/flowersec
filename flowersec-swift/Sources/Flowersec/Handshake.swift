@@ -5,8 +5,8 @@ enum FlowersecHandshake {
   static func runClientHandshake(
     transport: any FlowersecBinaryTransport,
     info: DirectConnectInfo,
-    outboundRecordChunkBytes: Int = 64 * 1024,
-    maxOutboundBufferedBytes: Int = 4 * 1024 * 1024,
+    outboundRecordChunkBytes: Int = FlowersecSDKDefaults.E2EE.outboundRecordChunkBytes,
+    maxOutboundBufferedBytes: Int = FlowersecSDKDefaults.E2EE.maxOutboundBufferedBytes,
     path: FlowersecPath = .direct,
     onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil
   ) async throws -> FlowersecSecureChannel {
@@ -241,7 +241,7 @@ enum FlowersecHandshake {
     )
   }
 
-  private static func computeAuthTag(psk: Data, transcript: Data, timestamp: UInt64) throws -> Data
+  static func computeAuthTag(psk: Data, transcript: Data, timestamp: UInt64) throws -> Data
   {
     guard transcript.count == 32 else {
       throw FlowersecError.invalidHandshake("Invalid transcript hash.")

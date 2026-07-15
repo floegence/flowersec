@@ -1,6 +1,6 @@
 {
   "name": "@floegence/flowersec-core",
-  "version": "0.21.1",
+  "version": "0.22.0",
   "description": "Flowersec core TypeScript library (browser-friendly E2EE + multiplexing over WebSocket).",
   "license": "MIT",
   "repository": {
@@ -39,6 +39,10 @@
     "./controlplane": {
       "types": "./dist/controlplane/index.d.ts",
       "default": "./dist/controlplane/index.js"
+    },
+    "./endpoint": {
+      "types": "./dist/endpoint/index.d.ts",
+      "default": "./dist/endpoint/index.js"
     },
     "./framing": {
       "types": "./dist/framing/index.d.ts",

@@ -2,6 +2,7 @@ import { clientHandshake } from "../e2ee/handshake.js";
 import { ByteReader } from "../yamux/byteReader.js";
 import { YamuxSession } from "../yamux/session.js";
 import { DEFAULT_YAMUX_LIMITS, type YamuxLimits } from "../yamux/session.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 import { RpcClient } from "../rpc/client.js";
 import { writeStreamHello } from "../streamhello/streamHello.js";
 import { emitObserverDiagnostic, normalizeObserver, nowSeconds, type AttachReason, type ClientObserverLike } from "../observability/observer.js";
@@ -122,11 +123,11 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     throw new FlowersecError({ path: args.path, stage: "validate", code, message: "missing websocket url" });
   }
 
-  const connectTimeoutMs = args.opts.connectTimeoutMs ?? 10_000;
+  const connectTimeoutMs = args.opts.connectTimeoutMs ?? SDK_DEFAULTS.transport.connectTimeoutMs;
   if (!Number.isFinite(connectTimeoutMs) || connectTimeoutMs < 0) {
     invalidOption("connectTimeoutMs must be a non-negative number");
   }
-  const handshakeTimeoutMs = args.opts.handshakeTimeoutMs ?? 10_000;
+  const handshakeTimeoutMs = args.opts.handshakeTimeoutMs ?? SDK_DEFAULTS.transport.handshakeTimeoutMs;
   if (!Number.isFinite(handshakeTimeoutMs) || handshakeTimeoutMs < 0) {
     invalidOption("handshakeTimeoutMs must be a non-negative number");
   }
@@ -152,7 +153,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
   if (!Number.isSafeInteger(maxOutboundBufferedBytes) || maxOutboundBufferedBytes < 0) {
     invalidOption("maxOutboundBufferedBytes must be a non-negative integer");
   }
-  const effectiveMaxRecordBytes = maxRecordBytes > 0 ? maxRecordBytes : (1 << 20);
+  const effectiveMaxRecordBytes = maxRecordBytes > 0 ? maxRecordBytes : SDK_DEFAULTS.e2ee.maxRecordBytes;
   const outboundRecordChunkBytes = args.opts.outboundRecordChunkBytes ?? 64 * 1024;
   if (!Number.isSafeInteger(outboundRecordChunkBytes) || outboundRecordChunkBytes <= 0 || outboundRecordChunkBytes > maxPlaintextBytes(effectiveMaxRecordBytes)) {
     invalidOption("outboundRecordChunkBytes must be a positive integer within maxRecordBytes");
@@ -260,7 +261,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
           suite,
           psk,
           clientFeatures,
-          maxHandshakePayload: maxHandshakePayload > 0 ? maxHandshakePayload : 8 * 1024,
+          maxHandshakePayload: maxHandshakePayload > 0 ? maxHandshakePayload : SDK_DEFAULTS.e2ee.maxHandshakePayloadBytes,
           maxRecordBytes: effectiveMaxRecordBytes,
           outboundRecordChunkBytes,
           ...(maxBufferedBytes > 0 ? { maxBufferedBytes } : {}),

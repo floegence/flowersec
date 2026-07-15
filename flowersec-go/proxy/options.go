@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
 )
 
 // ProtocolVersion is the current flowersec-proxy meta version (see docs/PROXY.md).
@@ -17,17 +18,17 @@ const ProtocolVersion = 1
 
 const (
 	// DefaultMaxChunkBytes caps a single body chunk for KindHTTP1.
-	DefaultMaxChunkBytes = 256 << 10 // 256 KiB
+	DefaultMaxChunkBytes = defaults.ProxyMaxChunkBytes
 	// DefaultMaxBodyBytes caps total body bytes per direction for KindHTTP1.
-	DefaultMaxBodyBytes = 64 << 20 // 64 MiB
+	DefaultMaxBodyBytes = defaults.ProxyMaxBodyBytes
 
 	// DefaultMaxWSFrameBytes caps a single WS frame payload for KindWS.
-	DefaultMaxWSFrameBytes = 1 << 20 // 1 MiB
+	DefaultMaxWSFrameBytes = defaults.ProxyMaxWSFrameBytes
 
 	// DefaultDefaultTimeout is used when HTTPRequestMeta.timeout_ms is missing/0.
-	DefaultDefaultTimeout = 30 * time.Second
+	DefaultDefaultTimeout = defaults.ProxyDefaultTimeout
 	// DefaultMaxTimeout caps HTTPRequestMeta.timeout_ms when provided.
-	DefaultMaxTimeout = 5 * time.Minute
+	DefaultMaxTimeout = defaults.ProxyMaxTimeout
 )
 
 // ContractOptions configures the stable flowersec-proxy stream contract.

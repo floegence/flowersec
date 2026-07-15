@@ -7,6 +7,10 @@
 **/*.test
 **/*.out
 
+# Rust
+/flowersec-rust/target/
+/examples/rust-client/target/
+
 # Node
 node_modules/
 dist/

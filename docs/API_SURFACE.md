@@ -1,6 +1,6 @@
 # Flowersec API Surface
 
-This document defines the stable integration surface for Flowersec v0.21.1.
+This document defines the stable integration surface for Flowersec v0.22.0.
 
 Canonical source of truth for the stable surface: `stability/public_api_manifest.json`
 
@@ -121,6 +121,17 @@ Recommended integration entrypoints:
   - `origin.ForTunnel(...)`
 - `github.com/floegence/flowersec/flowersec-go/proxy`
   - `proxy.Register(...)`
+  - `proxy.NewClient(...)`
+  - `proxy.ClientHTTPRequest`
+  - `proxy.ClientHTTPResponse`
+  - `proxy.ClientWebSocket`
+- `github.com/floegence/flowersec/flowersec-go/reconnect`
+  - `reconnect.NewManager(...)`
+  - `reconnect.OnceSource(...)`
+  - `reconnect.RefreshableSource(...)`
+  - `reconnect.ControlplaneSource(...)`
+  - `reconnect.Config`
+  - `reconnect.Settings`
   - `proxy.Options.BlockedResponseHeaders`
 - `github.com/floegence/flowersec/flowersec-go/proxy/preset`
   - `preset.Manifest`
@@ -237,6 +248,15 @@ Stable entrypoints:
   - `ControlplaneRequestError`
   - `DEFAULT_CONNECT_ARTIFACT_PATH`
   - `DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`
+  - `IssuerKeyset`
+  - `signToken(...)`
+  - `verifyToken(...)`
+  - `ChannelInitService`
+- `@floegence/flowersec-core/endpoint`
+  - `Session`
+  - `acceptDirect(...)`
+  - `acceptDirectResolved(...)`
+  - `connectTunnel(...)`
 
 Stable building blocks:
 
@@ -267,6 +287,9 @@ Stable building blocks:
   - `assertProxyPresetManifest(...)`
   - `resolveProxyPreset(...)`
   - `DEFAULT_PROXY_PRESET_MANIFEST`
+  - `serveProxySession(...)`
+  - `serveProxyStream(...)`
+  - `ProxyServerOptions`
 - `@floegence/flowersec-core/reconnect`
   - `createReconnectManager()`
   - `ReconnectManager.connectIfNeeded(...)`
@@ -353,6 +376,30 @@ Stable RPC and stream building blocks:
 - `RPCErrorPayload`
 - `FlowersecRPCError`
 - `FlowersecJSONFrame`
+- `RPCServerOptions`
+- `RPCRouter`
+- `RPCServer`
+
+Stable endpoint, controlplane, reconnect, and proxy building blocks:
+
+- `Endpoint`
+- `EndpointSession`
+- `EndpointOptions`
+- `DirectEndpointCredential`
+- `DirectCredentialResolver`
+- `Controlplane`
+- `FST2Token`
+- `TokenIssuer`
+- `ChannelInitService`
+- `ArtifactSource`
+- `ReconnectManager`
+- `ReconnectConfig`
+- `ReconnectSettings`
+- `ProxyClient`
+- `ProxyServer`
+- `ProxyContractOptions`
+- `ProxyServerOptions`
+- `ProxyCookieJar`
 
 Stable artifact and wire value types:
 
@@ -371,9 +418,43 @@ Stable artifact and wire value types:
 - `FlowersecStage`
 - `FlowersecCode`
 
+## Rust: stable crate
+
+The native Rust package is `flowersec` and targets Rust 1.85 or newer.
+
+Stable entrypoints and modules:
+
+- `flowersec::connect(...)`
+- `flowersec::connect_direct(...)`
+- `flowersec::connect_tunnel(...)`
+- `flowersec::Client`
+- `flowersec::endpoint`
+- `flowersec::rpc`
+- `flowersec::controlplane`
+- `flowersec::reconnect`
+- `flowersec::proxy`
+- `flowersec::observability`
+- `flowersec::generated`
+- `flowersec::transport::WebSocketTransport`
+- `flowersec::transport::TungsteniteTransport`
+- `flowersec::endpoint::accept_direct(...)`
+- `flowersec::endpoint::accept_direct_resolved(...)`
+- `flowersec::endpoint::connect_tunnel(...)`
+- `flowersec::endpoint::Session`
+- `flowersec::rpc::RpcClient`
+- `flowersec::rpc::Router`
+- `flowersec::rpc::Server`
+- `flowersec::controlplane::client`
+- `flowersec::controlplane::token`
+- `flowersec::controlplane::issuer`
+- `flowersec::controlplane::channelinit`
+- `flowersec::reconnect::ReconnectManager`
+- `flowersec::proxy::ProxyClient`
+- `flowersec::proxy::ProxyServer`
+
 ## Stable vs experimental notes
 
-Stable in v0.21.0:
+Stable in v0.22.0:
 
 - client-facing canonical `ConnectArtifact`
 - strict canonical parse / validate rules
@@ -391,11 +472,15 @@ Stable in v0.21.0:
 - proxy preset manifest contract
 - `proxy.runtime@1` when consumed through stable proxy helper entrypoints
 - Swift artifact scope resolver registration and optional-scope validation listed above
+- generated strict Swift and Rust wire types and typed RPC clients/handlers
+- Go, TypeScript, Swift, and Rust endpoint, controlplane, reconnect, and proxy portable APIs
+- shared defaults and language capability manifests enforced by CI
+- shared ConnectArtifact, E2EE, Token, transport policy, Yamux, RPC, controlplane envelope, proxy, and diagnostic registry fixtures consumed by all four languages
 
-Still experimental in v0.21.0:
+Still experimental in v0.22.0:
 
 - public normalize helper shapes
 - unlisted generic scope normalization and resolver helper APIs
 - scoped manifest toolchain/codegen factory outside the frozen `proxy.runtime@1` contract
 - bilateral scope negotiation semantics
-- direct-transport proxy helper support beyond the documented tunnel-first browser flows
+- framework-specific endpoint adapters beyond the documented transport-neutral APIs

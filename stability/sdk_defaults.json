@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "transport": {
+    "connect_timeout_ms": 10000,
+    "handshake_timeout_ms": 10000,
+    "handshake_clock_skew_ms": 30000
+  },
+  "e2ee": {
+    "max_handshake_payload_bytes": 8192,
+    "max_record_bytes": 1048576,
+    "outbound_record_chunk_bytes": 65536,
+    "max_outbound_buffered_bytes": 4194304
+  },
+  "yamux": {
+    "max_active_streams": 64,
+    "max_inbound_streams": 32,
+    "max_frame_bytes": 262144,
+    "preferred_outbound_frame_bytes": 65536,
+    "max_stream_receive_bytes": 262144,
+    "max_session_receive_bytes": 16777216
+  },
+  "rpc": {
+    "max_json_frame_bytes": 1048576,
+    "max_concurrent_requests": 32,
+    "max_queued_requests": 128,
+    "max_queued_notifications": 128
+  },
+  "controlplane": {
+    "max_request_body_bytes": 32768,
+    "max_response_body_bytes": 1048576
+  },
+  "proxy": {
+    "max_json_frame_bytes": 1048576,
+    "max_chunk_bytes": 262144,
+    "max_body_bytes": 67108864,
+    "max_ws_frame_bytes": 1048576,
+    "default_timeout_ms": 30000,
+    "max_timeout_ms": 300000
+  },
+  "reconnect": {
+    "max_attempts": 5,
+    "initial_delay_ms": 500,
+    "max_delay_ms": 10000,
+    "factor": 1.8,
+    "jitter_ratio": 0.2
+  },
+  "consumers": {
+    "go": "flowersec-go/internal/defaults/defaults_contract_test.go",
+    "typescript": "flowersec-ts/src/defaults_contract.test.ts",
+    "swift": "flowersec-swift/Tests/FlowersecTests/SDKDefaultsContractTests.swift",
+    "rust": "flowersec-rust/tests/defaults_contract.rs"
+  }
+}

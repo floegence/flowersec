@@ -30,5 +30,38 @@ jobs:
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
+      - name: Setup Rust MSRV
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy,rustfmt,llvm-tools-preview
+
+      - name: Setup Rust nightly for fuzzing
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install Rust quality tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny,cargo-fuzz,cargo-llvm-cov,cargo-semver-checks
+
       - name: Run nightly stability checks
         run: make nightly-check
+
+  swift-rust-interop:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: flowersec-go/go.mod
+          cache: true
+          cache-dependency-path: |
+            flowersec-go/go.sum
+            examples/go.sum
+
+      - name: Setup Rust MSRV
+        uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: Run Swift and Rust pairwise interop
+        run: make swift-rust-interop

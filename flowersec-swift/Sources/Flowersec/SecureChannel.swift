@@ -27,8 +27,8 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   init(
     transport: any FlowersecBinaryTransport,
     keys: FlowersecRecordKeyState,
-    outboundRecordChunkBytes: Int = 64 * 1024,
-    maxOutboundBufferedBytes: Int = 4 * 1024 * 1024,
+    outboundRecordChunkBytes: Int = FlowersecSDKDefaults.E2EE.outboundRecordChunkBytes,
+    maxOutboundBufferedBytes: Int = FlowersecSDKDefaults.E2EE.maxOutboundBufferedBytes,
     path: FlowersecPath = .direct,
     onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil
   ) {
