@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "flowersec-rust/v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Rust crate version to recover"
+        required: true
+        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -34,7 +40,13 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#flowersec-rust/v}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+            git fetch --force origin "refs/tags/flowersec-rust/v${VERSION}:refs/tags/flowersec-rust/v${VERSION}"
+            git checkout --detach "refs/tags/flowersec-rust/v${VERSION}"
+          else
+            VERSION="${GITHUB_REF_NAME#flowersec-rust/v}"
+          fi
           CRATE_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' flowersec-rust/Cargo.toml | head -1)"
           if [[ "$VERSION" != "$CRATE_VERSION" ]]; then
             echo "Tag version $VERSION must match crate version $CRATE_VERSION"
@@ -43,7 +55,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Verify all language tags point to this commit
-        run: scripts/verify-release-tags.sh "${{ steps.version.outputs.version }}" "${GITHUB_SHA}"
+        run: scripts/verify-release-tags.sh "${{ steps.version.outputs.version }}" "$(git rev-parse HEAD)"
 
       - name: Run Rust release gate
         run: make rust-release-check
@@ -74,13 +86,15 @@ jobs:
         id: published
         run: |
           set -euo pipefail
-          if curl --fail --silent --show-error \
-            "https://crates.io/api/v1/crates/flowersec/${{ steps.version.outputs.version }}" \
-            >/dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          URL="https://crates.io/api/v1/crates/flowersec/${{ steps.version.outputs.version }}"
+          STATUS="$(curl --silent --show-error --location \
+            --user-agent "flowersec-release/${{ steps.version.outputs.version }} (https://github.com/floegence/flowersec)" \
+            --output /dev/null --write-out '%{http_code}' "$URL")"
+          case "$STATUS" in
+            200) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unexpected crates.io response status: $STATUS" >&2; exit 1 ;;
+          esac
 
       - name: Authenticate to crates.io with OIDC
         if: steps.published.outputs.exists != 'true'

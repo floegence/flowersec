@@ -99,6 +99,7 @@ actor FlowersecYamuxClient {
   private var terminationError: (any Error)?
   private var terminationWaiters: [CheckedContinuation<(any Error)?, Never>] = []
   private var closed = false
+  private var terminationFinished = false
 
   init(
     channel: any FlowersecYamuxChannel,
@@ -280,7 +281,7 @@ actor FlowersecYamuxClient {
   }
 
   func terminated() async -> (any Error)? {
-    if closed { return terminationError }
+    if terminationFinished { return terminationError }
     return await withCheckedContinuation { continuation in
       terminationWaiters.append(continuation)
     }
@@ -412,6 +413,7 @@ actor FlowersecYamuxClient {
 
   private func finishTermination(_ error: (any Error)?) {
     terminationError = error
+    terminationFinished = true
     let waiters = terminationWaiters
     terminationWaiters.removeAll()
     for waiter in waiters { waiter.resume(returning: error) }
