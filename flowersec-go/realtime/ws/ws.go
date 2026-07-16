@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"sync/atomic"
@@ -11,7 +12,14 @@ import (
 )
 
 type Conn struct {
-	c *websocket.Conn // Underlying gorilla/websocket connection.
+	c           *websocket.Conn // Underlying gorilla/websocket connection.
+	writePermit chan struct{}
+}
+
+func newConn(c *websocket.Conn) *Conn {
+	writePermit := make(chan struct{}, 1)
+	writePermit <- struct{}{}
+	return &Conn{c: c, writePermit: writePermit}
 }
 
 // UpgraderOptions exposes a small set of websocket upgrader controls.
@@ -32,7 +40,7 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts UpgraderOptions) (*Con
 	if err != nil {
 		return nil, err
 	}
-	return &Conn{c: c}, nil
+	return newConn(c), nil
 }
 
 // DialOptions provides optional headers for websocket dialing.
@@ -60,7 +68,53 @@ func Dial(ctx context.Context, urlStr string, opts DialOptions) (*Conn, *http.Re
 	if err != nil {
 		return nil, resp, err
 	}
-	return &Conn{c: c}, resp, nil
+	return newConn(c), resp, nil
+}
+
+func watchCancellation(ctx context.Context, interrupt func() error) func() (bool, error) {
+	if ctx.Done() == nil {
+		return func() (bool, error) { return false, nil }
+	}
+
+	// The operation and cancellation callback race for interruption ownership.
+	// Once the operation wins, the callback must not mutate the connection.
+	var active atomic.Bool
+	active.Store(true)
+	var interrupted bool
+	var interruptErr error
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		if active.CompareAndSwap(true, false) {
+			interrupted = true
+			interruptErr = interrupt()
+		}
+		close(done)
+	})
+	return func() (bool, error) {
+		completedFirst := active.CompareAndSwap(true, false)
+		if completedFirst && stop() {
+			return false, nil
+		}
+		<-done
+		return interrupted, interruptErr
+	}
+}
+
+func (c *Conn) acquireWrite(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.writePermit:
+	}
+	if err := ctx.Err(); err != nil {
+		c.releaseWrite()
+		return err
+	}
+	return nil
+}
+
+func (c *Conn) releaseWrite() {
+	c.writePermit <- struct{}{}
 }
 
 // SetReadLimit forwards the read limit to the underlying websocket.
@@ -80,24 +134,14 @@ func (c *Conn) ReadMessage(ctx context.Context) (int, []byte, error) {
 	} else {
 		_ = c.c.SetReadDeadline(time.Time{})
 	}
-	// gorilla/websocket does not natively unblock ReadMessage on context cancellation unless we
-	// set a read deadline. When the context is canceled, force the in-flight read to wake up
-	// promptly and map the resulting I/O timeout back to ctx.Err().
-	if ctx.Done() != nil {
-		var active atomic.Bool
-		active.Store(true)
-		stop := context.AfterFunc(ctx, func() {
-			if !active.Load() {
-				return
-			}
-			_ = c.c.SetReadDeadline(time.Now())
-		})
-		defer func() {
-			active.Store(false)
-			stop()
-		}()
-	}
+	finishCancellation := watchCancellation(ctx, func() error {
+		return c.c.SetReadDeadline(time.Now())
+	})
 	mt, b, err := c.c.ReadMessage()
+	interrupted, interruptErr := finishCancellation()
+	if interrupted {
+		return 0, nil, errors.Join(ctx.Err(), interruptErr)
+	}
 	if err == nil {
 		return mt, b, nil
 	}
@@ -122,37 +166,29 @@ func (c *Conn) WriteMessage(ctx context.Context, messageType int, data []byte) e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := c.acquireWrite(ctx); err != nil {
+		return err
+	}
+	defer c.releaseWrite()
+
 	deadline, hasDeadline := ctx.Deadline()
 	if hasDeadline {
 		_ = c.c.SetWriteDeadline(deadline)
 	} else {
 		_ = c.c.SetWriteDeadline(time.Time{})
 	}
-	// Like ReadMessage, force a blocked WriteMessage to wake up on context cancellation.
-	if ctx.Done() != nil {
-		var active atomic.Bool
-		active.Store(true)
-		stop := context.AfterFunc(ctx, func() {
-			if !active.Load() {
-				return
-			}
-			_ = c.c.SetWriteDeadline(time.Now())
-		})
-		defer func() {
-			active.Store(false)
-			stop()
-		}()
-	}
+	finishCancellation := watchCancellation(ctx, c.c.Close)
 	err := c.c.WriteMessage(messageType, data)
+	interrupted, interruptErr := finishCancellation()
+	if interrupted {
+		return errors.Join(ctx.Err(), interruptErr)
+	}
 	if err == nil {
 		return nil
 	}
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
-		if cerr := ctx.Err(); cerr != nil {
-			return cerr
-		}
 		if hasDeadline && !time.Now().Before(deadline) {
-			return context.DeadlineExceeded
+			return errors.Join(context.DeadlineExceeded, c.c.Close())
 		}
 	}
 	return err
