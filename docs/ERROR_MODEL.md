@@ -1,18 +1,18 @@
 # Flowersec Error Model
 
-Flowersec keeps machine-readable connection failures stable across Go, TypeScript, Swift, and Rust.
+Flowersec keeps machine-readable connection failures consistent across Go, TypeScript, Swift, and Rust.
 
 For high-level connection APIs, always treat `{ path, stage, code }` as the primary machine-readable contract.
 
 See also:
 
-- Stable API list: `docs/API_SURFACE.md`
-- Stability policy: `docs/API_STABILITY_POLICY.md`
-- Canonical manifest: `stability/public_api_manifest.json`
+- API contract: `docs/API_CONTRACT.md`
+- API change policy: `docs/API_CHANGE_POLICY.md`
+- Contract manifest: `stability/api_contract_manifest.json`
 - Error registry: `stability/connect_error_code_registry.json`
 - Diagnostics registry: `stability/connect_diagnostics_code_registry.json`
 
-## Stable connect error contract
+## Connect error contract
 
 High-level APIs surface:
 
@@ -21,19 +21,19 @@ High-level APIs surface:
 - Swift: `FlowersecError`
 - Rust: `flowersec::FlowersecError`
 
-Stable fields:
+Fields:
 
 - `path`: top-level connect path (`auto`, `tunnel`, `direct`)
 - `stage`: connect layer (`validate`, `connect`, `attach`, `handshake`, `secure`, `yamux`, `rpc`, `reconnect`, `close`)
-- `code`: stable language-agnostic reason token
+- `code`: shared language-agnostic reason token
 
 Human-readable detail belongs in the message and underlying cause.
 
-## Stable codes
+## Error codes
 
 The machine-readable source of truth is `stability/connect_error_code_registry.json`.
 
-Common stable codes include:
+Common codes include:
 
 - validation/configuration:
   - `invalid_input`
@@ -91,13 +91,13 @@ Common stable codes include:
   - `not_connected`
   - `resource_exhausted`
 
-`resource_exhausted` means a configured generic transport, secure-channel, multiplexing, RPC, or queue limit was reached. Callers should apply backpressure, reduce concurrency, or reconnect with a fresh session as appropriate. It must not be used to encode an application-specific quota or policy. Transport implementations map their limit failures to the nearest stable high-level stage, such as `connect`, `secure`, `yamux`, `rpc`, or `close`.
+`resource_exhausted` means a configured generic transport, secure-channel, multiplexing, RPC, or queue limit was reached. Callers should apply backpressure, reduce concurrency, or reconnect with a fresh session as appropriate. It must not be used to encode an application-specific quota or policy. Transport implementations map their limit failures to the nearest high-level stage, such as `connect`, `secure`, `yamux`, `rpc`, or `close`.
 
-The browser proxy runtime maps a full HTTP stream-admission queue to HTTP `503`. Its error message retains the stable `resource_exhausted` code; the Service Worker bridge wire is otherwise unchanged.
+The browser proxy runtime maps a full HTTP stream-admission queue to HTTP `503`. Its error message retains the shared `resource_exhausted` code; the Service Worker bridge wire is otherwise unchanged.
 
-## Stable controlplane helper contract
+## Controlplane helper contract
 
-Artifact-fetch helpers use a separate, minimal stable contract:
+Artifact-fetch helpers use a separate, minimal contract:
 
 - success: `{ "connect_artifact": ... }`
 - failure: `{ "error": { "code": string, "message": string } }`
@@ -148,7 +148,7 @@ Important separation:
 
 ## Diagnostics split
 
-Flowersec also defines a stable runtime event contract:
+Flowersec also defines a shared runtime event contract:
 
 - `DiagnosticEvent`
 
@@ -167,7 +167,7 @@ Important separation:
 - `code_domain=error` reuses `stability/connect_error_code_registry.json`
 - `code_domain=event` uses `stability/connect_diagnostics_code_registry.json`
 
-Current stable event codes include:
+Current event codes include:
 
 - `connect_ok`
 - `attach_ok`
@@ -184,13 +184,13 @@ Current stable event codes include:
 - `stream_rejected`
 - `resource_limit_reached`
 
-The four liveness/resource names above use `code_domain=event`. A failed operation that reaches a stable limit uses the error-domain code `resource_exhausted` instead.
+The four liveness/resource names above use `code_domain=event`. A failed operation that reaches a configured limit uses the error-domain code `resource_exhausted` instead.
 
 ## Interoperability diagnostic evidence
 
 The Go-reference matrix records an ordered diagnostic evidence list for each transport/suite variant. Every entry includes `case`, `path`, `stage`, and `code`. `path` must equal the active `direct` or `tunnel` variant, and the ordered case list is fixed by `testdata/interop/v1/profiles.json`.
 
-Resource-boundary evidence uses the registered error-domain tuple `yamux/resource_exhausted` or `rpc/resource_exhausted`. The proxy body action additionally verifies the protocol-specific remote code `request_body_too_large`, but the matrix tuple remains `rpc/resource_exhausted` so all four SDKs use the same stable registry domain.
+Resource-boundary evidence uses the registered error-domain tuple `yamux/resource_exhausted` or `rpc/resource_exhausted`. The proxy body action additionally verifies the protocol-specific remote code `request_body_too_large`, but the matrix tuple remains `rpc/resource_exhausted` so all four SDKs use the same shared registry domain.
 
 ## Observability guidance
 
@@ -200,4 +200,4 @@ For logs and metrics, prefer aggregating by:
 - controlplane HTTP failures: `status + error.code`
 - runtime events: `namespace + stage + code + result`
 
-This keeps dashboards stable across all four languages and across internal refactors.
+This keeps dashboards consistent across all four languages and across internal refactors.

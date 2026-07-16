@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const manifestPath = "stability/public_api_manifest.json"
+const manifestPath = "stability/api_contract_manifest.json"
 
 type manifest struct {
 	Version  int              `json:"version"`
@@ -23,11 +23,11 @@ type manifest struct {
 }
 
 type docsManifest struct {
-	APISurface string   `json:"api_surface"`
-	Policy     string   `json:"policy"`
-	Readme     string   `json:"readme"`
-	ErrorModel string   `json:"error_model"`
-	CLITokens  []string `json:"cli_tokens"`
+	APIContract  string   `json:"api_contract"`
+	ChangePolicy string   `json:"change_policy"`
+	Readme       string   `json:"readme"`
+	ErrorModel   string   `json:"error_model"`
+	CLITokens    []string `json:"cli_tokens"`
 }
 
 type goManifest struct {
@@ -128,7 +128,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 	if m.Version != 1 {
 		return fmt.Errorf("unsupported manifest version %d", m.Version)
 	}
-	for _, p := range []string{m.Docs.APISurface, m.Docs.Policy, m.Docs.Readme, m.Docs.ErrorModel} {
+	for _, p := range []string{m.Docs.APIContract, m.Docs.ChangePolicy, m.Docs.Readme, m.Docs.ErrorModel} {
 		if strings.TrimSpace(p) == "" {
 			return errors.New("docs paths must not be empty")
 		}

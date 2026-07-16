@@ -1,71 +1,43 @@
 # flowersec-go
 
-This module contains the Go implementation of the Flowersec data-plane protocol stack:
+The Go SDK for Flowersec end-to-end encrypted direct and tunneled sessions. It implements the portable client, endpoint, RPC, stream, controlplane, reconnect, proxy, and observability contract, and owns the shared deployable services and CLIs.
 
-- Tunnel attach (pair endpoints and forward bytes)
-- End-to-end encryption (E2EE record layer)
-- Yamux multiplexing
-- RPC routing by `type_id`
+## Install
 
-Status: experimental; not audited.
-
-Prerequisite: Go 1.26.5+.
-
-## Install (Go library)
+Library:
 
 ```bash
 go get github.com/floegence/flowersec/flowersec-go@latest
-# Or pin a version:
-go get github.com/floegence/flowersec/flowersec-go@v0.X.Y
 ```
 
-Versioning note: repository tags for this submodule are prefixed with `flowersec-go/` (for example, `flowersec-go/v0.X.Y`).
-
-## Install (tunnel binary)
+Deployable services:
 
 ```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
-# Or pin a version:
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@v0.X.Y
-```
-
-## Install (proxy gateway binary)
-
-```bash
 go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@latest
-# Or pin a version:
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@v0.X.Y
 ```
 
-## Install (helper tools, optional)
+Go module tags use the `flowersec-go/vX.Y.Z` repository prefix.
 
-These tools are intended for local development and demos (keep private keys secret):
+## Cookbook
 
-```bash
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-channelinit@latest
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-directinit@latest
-```
+Start with the [Go cookbook](https://github.com/floegence/flowersec/tree/main/examples/go). It contains runnable direct and tunnel clients, endpoint and controlplane services, proxy serving, tunnel sharding, and manual protocol-stack references.
 
-No-Go option: download `flowersec-tools_X.Y.Z_<os>_<arch>.tar.gz` (or `.zip`) from the GitHub Release and run the binaries from `bin/`.
+## Entrypoints
 
-## Recommended entrypoints
+- Client: `github.com/floegence/flowersec/flowersec-go/client`
+- Endpoint: `github.com/floegence/flowersec/flowersec-go/endpoint`
+- Endpoint serving: `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
+- RPC: `github.com/floegence/flowersec/flowersec-go/rpc`
+- Reconnect: `github.com/floegence/flowersec/flowersec-go/reconnect`
+- Proxy: `github.com/floegence/flowersec/flowersec-go/proxy`
+- Controlplane: `github.com/floegence/flowersec/flowersec-go/controlplane`
+- Observability: `github.com/floegence/flowersec/flowersec-go/observability`
 
-- Client (role=client): `github.com/floegence/flowersec/flowersec-go/client`
-- Server endpoint (role=server): `github.com/floegence/flowersec/flowersec-go/endpoint`
-- Server stream runtime: `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
-- RPC (router/server/client): `github.com/floegence/flowersec/flowersec-go/rpc`
-- JSON framing helpers (advanced): `github.com/floegence/flowersec/flowersec-go/framing/jsonframe`
-- Input JSON helpers: `github.com/floegence/flowersec/flowersec-go/protocolio`
+High-level WebSocket connections require TLS by default. Use `AllowPlaintextForLoopback` only for literal local development targets.
 
-For a full integration walkthrough, see `docs/INTEGRATION_GUIDE.md` in the repository root.
+## Runtime Boundaries
 
-High-level WebSocket connects accept an explicit transport security policy. Use `client.RequireTLS`
-or `endpoint.RequireTLS` for remote deployments, and `AllowPlaintextForLoopback` only for literal
-local development targets. Deliberate non-loopback plaintext must use `NewNetworkPlaintextPolicy`
-with exact canonical IP literals and `PlaintextRiskAcceptPreE2ECredentialExposure`. The unrestricted
-`AllowPlaintext` policy is deprecated. Omitting a policy preserves v0.19 compatibility with a plaintext diagnostic.
+Go owns the open-source tunnel, proxy gateway, artifact/grant helper CLIs, and shared demo services. Browser and Service Worker runtime APIs remain TypeScript-owned.
 
-For tunnel deployment details (Docker examples, operational notes), see `docs/TUNNEL_DEPLOYMENT.md` in the repository root.
-
-For proxy gateway deployment details (grant sources, Docker examples, operational notes), see `docs/PROXY_GATEWAY_DEPLOYMENT.md` in the repository root.
+Review the shared [API contract](../docs/API_CONTRACT.md), [protocol](../docs/PROTOCOL.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).

@@ -1,67 +1,36 @@
 # Flowersec for Rust
 
-`flowersec` is the native Tokio SDK for Flowersec direct and tunneled end-to-end encrypted sessions. It implements the same portable wire, security, session, RPC, endpoint, controlplane, reconnect, proxy, and observability contract as the Go, TypeScript, and Swift SDKs.
+The Tokio-native Rust SDK for Flowersec end-to-end encrypted direct and tunneled sessions. It implements the portable client, endpoint, RPC, stream, controlplane, reconnect, proxy, and observability contract.
 
-The crate targets Rust 1.85 or newer on Linux, macOS, and Windows. It uses rustls by default, contains no Flowersec-authored `unsafe`, and keeps endpoint APIs independent of Axum, Actix, or another web framework.
+The crate targets Rust 1.85 or newer on Linux, macOS, and Windows, uses rustls by default, and contains no Flowersec-authored `unsafe`.
 
 ## Install
 
 ```bash
-cargo add flowersec@0.23.0
+cargo add flowersec
 ```
 
-The default feature uses native root certificates. Use `default-features = false, features = ["rustls-webpki-roots"]` when an embedded WebPKI root set is preferred.
+The default feature uses native root certificates. Use `default-features = false, features = ["rustls-webpki-roots"]` for an embedded WebPKI root set.
 
-## Artifact-first connect
+## Cookbook
 
-```rust
-use flowersec::{ConnectOptions, connect};
-use flowersec::controlplane::client::{
-    ConnectArtifactRequestConfig,
-    request_connect_artifact,
-};
+Start with the [Rust cookbook](https://github.com/floegence/flowersec/tree/main/examples/rust). Its runnable client covers artifact fetch, tunnel connect, typed RPC, custom streams, liveness, HTTP proxy, and WebSocket proxy. Crate tests provide executable endpoint, reconnect, controlplane, and policy references.
 
-let mut request = ConnectArtifactRequestConfig::new("endpoint-123");
-request.base_url = "https://controlplane.example.com".to_owned();
-let artifact = request_connect_artifact(request).await?;
-let client = connect(artifact, ConnectOptions::default()).await?;
-```
+## Entrypoints
 
-`connect_direct(...)` and `connect_tunnel(...)` accept the corresponding generated wire value directly. High-level connections reject plaintext by default; local `ws://` development requires `TransportSecurityPolicy::allow_plaintext_for_loopback()`. Deliberate non-loopback plaintext requires `TransportSecurityPolicy::network_plaintext(...)` with exact canonical IP literals and `PlaintextRiskAcceptance::AcceptPreE2ECredentialExposure`.
+- Client connect: `connect`, `connect_direct`, and `connect_tunnel`
+- Endpoint sessions: `endpoint::{accept_direct, accept_direct_resolved, connect_tunnel}`
+- RPC: `rpc::{RpcClient, Router, Server}`
+- Streams: `yamux::YamuxStream`
+- Controlplane: `controlplane`
+- Reconnect: `reconnect::ReconnectManager`
+- Proxy: `proxy::{ProxyClient, ProxyServer}`
+- Diagnostics: `observability`
 
-## RPC and streams
+High-level WebSocket connections require TLS by default. Use `TransportSecurityPolicy::allow_plaintext_for_loopback()` only for literal local development targets.
 
-```rust
-#[derive(serde::Serialize)]
-struct PingRequest {}
+## Runtime Boundaries
 
-#[derive(serde::Deserialize)]
-struct PingResponse { ok: bool }
+Rust owns the native Tokio implementation of the portable contract. Browser runtime APIs remain TypeScript-owned, while shared tunnel, gateway, and helper binaries remain Go-owned.
 
-let response: PingResponse = client.rpc().call_typed(1, &PingRequest {}).await?;
-assert!(response.ok);
-
-let stream = client.open_stream("logs").await?;
-stream.write(b"follow").await?;
-let reply = stream.read_exact(2).await?;
-client.rekey().await?;
-stream.reset().await?;
-```
-
-IDL-generated clients and handlers build on `rpc::RpcClient`, `rpc::Router`, and `rpc::Server`. Calls, notifications, timeouts, cancellation, concurrency, and queues use bounded defaults from `stability/sdk_defaults.json`.
-
-## Endpoint server
-
-Use `endpoint::accept_direct(...)` with any `WebSocketTransport`, or use `endpoint::connect_tunnel(...)` with a server-role grant. The returned `endpoint::Session` accepts typed RPC and custom streams without binding the SDK to a web framework. `transport::TungsteniteTransport` is provided for accepted or connected tungstenite streams.
-
-`Client::rekey()` and `endpoint::Session::rekey()` perform explicit secure-channel rekeying. `YamuxStream::reset()` sends a protocol RST. `endpoint::Session::termination_error()` exposes the stable typed reason for abnormal endpoint termination.
-
-## Reconnect and proxy
-
-`reconnect::ReconnectManager` accepts one-shot, refreshable, and controlplane artifact sources. Automatic reconnect requires a refreshable source and stops on terminal validation or authentication failures. Check the `Result` from `disconnect()` so client-close and supervisor-join failures remain observable.
-
-`proxy::ProxyClient` and `proxy::ProxyServer` implement the stable HTTP/1 and WebSocket stream protocols, including fixed upstream targets, loopback-only defaults, Origin policy, header filtering, cookie isolation, and body/frame limits.
-
-## Runtime ownership
-
-The Rust SDK intentionally does not duplicate browser Service Worker APIs or deployable tunnel/proxy gateway binaries. Browser runtime ownership remains with TypeScript; shared deployables and CLIs remain Go-owned.
+Review the shared [API contract](../docs/API_CONTRACT.md), [protocol](../docs/PROTOCOL.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).

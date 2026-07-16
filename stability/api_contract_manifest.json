@@ -1,8 +1,8 @@
 {
   "version": 1,
   "docs": {
-    "api_surface": "docs/API_SURFACE.md",
-    "policy": "docs/API_STABILITY_POLICY.md",
+    "api_contract": "docs/API_CONTRACT.md",
+    "change_policy": "docs/API_CHANGE_POLICY.md",
     "readme": "README.md",
     "error_model": "docs/ERROR_MODEL.md",
     "cli_tokens": [

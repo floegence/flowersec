@@ -1,7 +1,5 @@
 # Flowersec Threat Model and Security Boundaries
 
-Status: experimental; not audited.
-
 This document explains what Flowersec can and cannot protect, based on the current repository implementation.
 It is written for integrators and operators deploying either the tunnel path or the direct path.
 

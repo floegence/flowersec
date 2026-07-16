@@ -71,13 +71,13 @@ func run(args []string) error {
 }
 
 func verifyDocs(repoRoot string, m *manifest) error {
-	b, err := os.ReadFile(filepath.Join(repoRoot, m.Docs.APISurface))
+	b, err := os.ReadFile(filepath.Join(repoRoot, m.Docs.APIContract))
 	if err != nil {
 		return err
 	}
 	doc := string(b)
 	required := append([]string{}, m.Docs.CLITokens...)
-	required = append(required, "`docs/API_STABILITY_POLICY.md`", "`stability/public_api_manifest.json`")
+	required = append(required, "`docs/API_CHANGE_POLICY.md`", "`stability/api_contract_manifest.json`")
 	for _, target := range m.Go.CompileTargets {
 		required = append(required, target.DocPackageToken)
 		for _, entry := range target.Entries {
@@ -91,10 +91,10 @@ func verifyDocs(repoRoot string, m *manifest) error {
 	required = append(required, m.Rust.DocTokens...)
 	for _, token := range required {
 		if !strings.Contains(doc, token) {
-			return fmt.Errorf("%s missing token %s", m.Docs.APISurface, token)
+			return fmt.Errorf("%s missing token %s", m.Docs.APIContract, token)
 		}
 	}
-	fmt.Printf("docs OK: %d tokens verified in %s\n", len(required), m.Docs.APISurface)
+	fmt.Printf("docs OK: %d tokens verified in %s\n", len(required), m.Docs.APIContract)
 	return nil
 }
 
@@ -543,7 +543,7 @@ func verifyGo(repoRoot string, m *manifest) error {
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "api_surface_test.go"), []byte(goTest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "api_contract_test.go"), []byte(goTest), 0o644); err != nil {
 		return err
 	}
 
@@ -576,7 +576,7 @@ func renderGoVerifier(goModulePath string, m *manifest) (string, string) {
 	}
 
 	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.26.5\n\nrequire %s v0.0.0\n\nreplace %s => %s\n", m.Go.ModulePath, m.Go.ModulePath, filepath.ToSlash(goModulePath))
-	goTest := fmt.Sprintf("package flowersecstabilitychecktmp\n\nimport (\n%s)\n\nfunc TestStableSymbolsCompile(t *testing.T) {\n%s}\n", imports.String()+"\t\"testing\"\n", checks.String())
+	goTest := fmt.Sprintf("package flowersecstabilitychecktmp\n\nimport (\n%s)\n\nfunc TestContractSymbolsCompile(t *testing.T) {\n%s}\n", imports.String()+"\t\"testing\"\n", checks.String())
 	return goMod, goTest
 }
 

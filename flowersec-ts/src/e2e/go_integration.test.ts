@@ -242,7 +242,7 @@ describe("go<->ts integration", () => {
     });
   });
 
-  test("stable proxy helpers refuse Go-issued experimental proxy.runtime@2 regardless of critical flag", { timeout: 60000 }, async () => {
+  test("proxy helpers refuse unsupported Go-issued proxy.runtime@2 regardless of critical flag", { timeout: 60000 }, async () => {
     await withGoHarness(async (ready) => {
       const criticalArtifact = await requestConnectArtifact({
         baseUrl: ready.controlplane_base_url,

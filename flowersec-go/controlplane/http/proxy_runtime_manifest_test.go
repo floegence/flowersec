@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestProxyRuntimeManifest_StaysAlignedWithStableHelperContract(t *testing.T) {
+func TestProxyRuntimeManifest_StaysAlignedWithHelperContract(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
@@ -24,7 +24,7 @@ func TestProxyRuntimeManifest_StaysAlignedWithStableHelperContract(t *testing.T)
 	var manifest struct {
 		Scope            string `json:"scope"`
 		ScopeVersion     int    `json:"scope_version"`
-		Stability        string `json:"stability"`
+		Consumer         string `json:"consumer"`
 		ResolverContract string `json:"resolver_contract"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
@@ -37,10 +37,10 @@ func TestProxyRuntimeManifest_StaysAlignedWithStableHelperContract(t *testing.T)
 	if manifest.ScopeVersion != 1 {
 		t.Fatalf("scope_version = %d, want 1", manifest.ScopeVersion)
 	}
-	if manifest.Stability != "stable" {
-		t.Fatalf("stability = %q, want stable", manifest.Stability)
+	if manifest.Consumer != "proxy_helpers" {
+		t.Fatalf("consumer = %q, want proxy_helpers", manifest.Consumer)
 	}
-	if manifest.ResolverContract != "stable_for_proxy_helpers_only" {
-		t.Fatalf("resolver_contract = %q, want stable_for_proxy_helpers_only", manifest.ResolverContract)
+	if manifest.ResolverContract != "exact_scope_and_version" {
+		t.Fatalf("resolver_contract = %q, want exact_scope_and_version", manifest.ResolverContract)
 	}
 }

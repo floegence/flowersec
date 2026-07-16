@@ -84,7 +84,7 @@
     },
     {
       "id": "proxy",
-      "description": "HTTP and WebSocket proxy clients and servers with the stable security policy",
+      "description": "HTTP and WebSocket proxy clients and servers with the shared security policy",
       "implementations": {
         "go": { "status": "complete", "evidence": ["flowersec-go/proxy/client.go", "flowersec-go/proxy/register.go", "flowersec-go/proxy/client_test.go"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/proxy/runtime.ts", "flowersec-ts/src/proxy/server.ts", "flowersec-ts/src/proxy/server.integration.test.ts"] },
@@ -94,7 +94,7 @@
     },
     {
       "id": "observability",
-      "description": "Stable error tuple, diagnostics, and observer contracts",
+      "description": "Shared error tuple, diagnostics, and observer contracts",
       "implementations": {
         "go": { "status": "complete", "evidence": ["flowersec-go/fserrors", "flowersec-go/observability"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/observability", "flowersec-ts/src/utils/errors.ts"] },
@@ -117,7 +117,7 @@
     {
       "id": "rust_wasm",
       "owner": "rust",
-      "reason": "The Rust v0.23 support target is native Linux, macOS, and Windows; browser support remains TypeScript-owned."
+      "reason": "The Rust support target is native Linux, macOS, and Windows; browser support remains TypeScript-owned."
     }
   ],
   "shared_fixtures": [

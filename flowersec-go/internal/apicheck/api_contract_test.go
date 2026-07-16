@@ -27,8 +27,8 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/transportsecurity"
 )
 
-// Compile-time checks for the intended stable Go API surface. If an entrypoint is renamed or
-// removed, this file should fail to compile (and the docs must be updated in the same change).
+// Compile-time checks for the public Go API contract. If an entrypoint is renamed or removed,
+// this file should fail to compile and the contract must be updated in the same change.
 var (
 	// client
 	_ = client.Connect
@@ -142,7 +142,7 @@ var (
 	_ = token.Verify
 )
 
-func TestAPISurfaceDoc_CoversStableGoEntrypoints(t *testing.T) {
+func TestAPIContractDocCoversGoEntrypoints(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
@@ -150,24 +150,24 @@ func TestAPISurfaceDoc_CoversStableGoEntrypoints(t *testing.T) {
 	dir := filepath.Dir(thisFile)
 
 	repoRoot := filepath.Join(dir, "..", "..", "..")
-	docPath := filepath.Join(repoRoot, "docs", "API_SURFACE.md")
+	docPath := filepath.Join(repoRoot, "docs", "API_CONTRACT.md")
 	doc, err := os.ReadFile(docPath)
 	if err != nil {
-		t.Fatalf("read docs/API_SURFACE.md: %v", err)
+		t.Fatalf("read docs/API_CONTRACT.md: %v", err)
 	}
 
-	manifestPath := filepath.Join(repoRoot, "stability", "public_api_manifest.json")
+	manifestPath := filepath.Join(repoRoot, "stability", "api_contract_manifest.json")
 	manifestBytes, err := os.ReadFile(manifestPath)
 	if err != nil {
-		t.Fatalf("read stability/public_api_manifest.json: %v", err)
+		t.Fatalf("read stability/api_contract_manifest.json: %v", err)
 	}
-	var manifest apiSurfaceManifest
+	var manifest apiContractManifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		t.Fatalf("parse stability/public_api_manifest.json: %v", err)
+		t.Fatalf("parse stability/api_contract_manifest.json: %v", err)
 	}
 
 	wantTokens := append([]string{}, manifest.Docs.CLITokens...)
-	wantTokens = append(wantTokens, "`docs/API_STABILITY_POLICY.md`", "`stability/public_api_manifest.json`")
+	wantTokens = append(wantTokens, "`docs/API_CHANGE_POLICY.md`", "`stability/api_contract_manifest.json`")
 	for _, target := range manifest.Go.CompileTargets {
 		wantTokens = append(wantTokens, target.DocPackageToken)
 		for _, entry := range target.Entries {
@@ -178,12 +178,12 @@ func TestAPISurfaceDoc_CoversStableGoEntrypoints(t *testing.T) {
 	docText := string(doc)
 	for _, token := range wantTokens {
 		if !strings.Contains(docText, token) {
-			t.Fatalf("docs/API_SURFACE.md missing manifest token: %q", token)
+			t.Fatalf("docs/API_CONTRACT.md missing manifest token: %q", token)
 		}
 	}
 }
 
-type apiSurfaceManifest struct {
+type apiContractManifest struct {
 	Docs struct {
 		CLITokens []string `json:"cli_tokens"`
 	} `json:"docs"`

@@ -1,6 +1,6 @@
 # manifestgen
 
-Experimental helper for validating scoped metadata manifest files under `stability/scopes/`.
+Repository tool for validating scoped metadata contract files under `stability/scopes/`.
 
 ## Usage
 
@@ -20,9 +20,9 @@ Today the tool verifies the manifest fields that are currently required by the s
 - `version == 1`
 - non-empty `scope`
 - positive `scope_version`
-- non-empty `stability`
 - non-empty `carrier`
 - `payload_kind == "json_object"`
+- non-empty `consumer`
 - non-empty `resolver_contract`
 
-This tool is intentionally small and not part of the stable Flowersec API surface.
+This tool is repository infrastructure; the public scope APIs and payload contracts it verifies are governed by `docs/API_CHANGE_POLICY.md`.

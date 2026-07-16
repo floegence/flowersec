@@ -1,8 +1,8 @@
 # Controlplane Artifact Fetch
 
-Flowersec v0.20.x keeps one stable client-facing contract for fetching a `ConnectArtifact` from a controlplane.
+Flowersec uses one client-facing contract for fetching a `ConnectArtifact` from a controlplane.
 
-## Stable helper surface
+## Helper surface
 
 TypeScript:
 
@@ -12,12 +12,12 @@ TypeScript:
   - `ControlplaneRequestError`
   - `DEFAULT_CONNECT_ARTIFACT_PATH`
   - `DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`
-- `@floegence/flowersec-core/browser` (stable aliases)
+- `@floegence/flowersec-core/browser` (compatibility aliases)
   - `requestConnectArtifact(...)`
   - `requestEntryConnectArtifact(...)`
   - `ControlplaneRequestError`
 
-For new browser and Node code, prefer importing artifact-fetch helpers from `@floegence/flowersec-core/controlplane`. The browser subpath keeps same-name stable aliases so existing callers do not need an immediate migration.
+For browser and Node code, prefer importing artifact-fetch helpers from `@floegence/flowersec-core/controlplane`. The browser subpath keeps same-name compatibility aliases.
 
 Go:
 
@@ -27,7 +27,7 @@ Go:
 - `controlplanehttp.NewArtifactHandler(...)`
 - `controlplanehttp.NewEntryArtifactHandler(...)`
 
-## Stable request semantics
+## Request semantics
 
 Default artifact request:
 
@@ -79,7 +79,7 @@ Error envelope:
 }
 ```
 
-The stable helper contract freezes the envelope semantics above:
+The helper contract defines the envelope semantics above:
 
 - request fields: `endpoint_id`, optional `payload`, optional `correlation.trace_id`
 - success field: `connect_artifact`
@@ -91,7 +91,7 @@ The stable helper contract freezes the envelope semantics above:
 
 This helper surface is intentionally for controlplane bootstrap documents, not for arbitrary bulk payload delivery. If an integration needs large payloads, it should expose a different application-owned endpoint instead of stretching the artifact-fetch contract.
 
-## Stable helper error surfaces
+## Helper error surfaces
 
 TypeScript `ControlplaneRequestError` preserves:
 
@@ -149,7 +149,7 @@ Those default paths are helper defaults, not a globally frozen Flowersec core pr
 Third-party controlplanes may use different URLs and pass them via helper configuration, as long as the request/response envelope semantics stay equivalent.
 
 `path` is an advanced override.
-Quickstart and recommended integrations should treat the default endpoints above as the stable baseline.
+Quickstart and recommended integrations should treat the default endpoints above as the default baseline.
 
 ## Ownership boundary
 
@@ -165,7 +165,7 @@ The artifact-fetch helper contract is intentionally narrow:
 Success path:
 
 1. Caller issues `requestConnectArtifact(...)` or `requestEntryConnectArtifact(...)`.
-2. Helper sends the stable POST request to the configured controlplane path.
+2. Helper sends the POST request to the configured controlplane path.
 3. Helper reads the response through the bounded 1 MiB reader.
 4. Helper parses the JSON envelope and validates `connect_artifact`.
 5. Caller receives the validated artifact.

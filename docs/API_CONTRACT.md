@@ -1,13 +1,13 @@
-# Flowersec API Surface
+# Flowersec API Contract
 
-This document defines the stable integration surface for Flowersec v0.23.0.
+This document records the current public Flowersec integration contract.
 
-Canonical source of truth for the stable surface: `stability/public_api_manifest.json`
+Canonical source of truth: `stability/api_contract_manifest.json`
 
 See also:
 
 - Error model: `docs/ERROR_MODEL.md`
-- API stability policy: `docs/API_STABILITY_POLICY.md`
+- API change policy: `docs/API_CHANGE_POLICY.md`
 
 ## CLI surface
 
@@ -20,9 +20,9 @@ Supported user-facing binaries:
 - `flowersec-directinit`
 - `idlgen`
 
-Internal tooling under `flowersec-go/internal/cmd/*` is not a stable CLI surface.
+Internal tooling under `flowersec-go/internal/cmd/*` is not part of the public CLI contract.
 
-## Go: stable packages
+## Go packages
 
 Recommended integration entrypoints:
 
@@ -168,7 +168,7 @@ Recommended integration entrypoints:
   - `jsonframe.WriteJSONFrame(...)`
   - `jsonframe.ReadJSONFrameDefaultMax(...)`
 - `github.com/floegence/flowersec/flowersec-go/fserrors`
-  - stable machine-readable `{path, stage, code}` types
+  - shared machine-readable `{path, stage, code}` types
   - `fserrors.CodeResourceExhausted`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/issuer`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`
@@ -184,7 +184,7 @@ Recommended integration entrypoints:
 - `github.com/floegence/flowersec/flowersec-go/mux/yamux`
   - `yamux.Session.OpenStreamContext(...)`
 
-Stable generated protocol packages:
+Generated protocol packages:
 
 - `github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1`
 - `github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1`
@@ -198,9 +198,9 @@ Compatibility-only Go surface:
 - `controlplane/client` stays the recommended Go client-side artifact fetch entry; `controlplane/http` is the recommended server-side helper-first reference layer
 - deprecated named profile helpers such as `preset.ResolveBuiltin(...)` and gateway `proxy.profile` remain compatibility-only for `default`; the removed `codeserver` name is represented only by the static migration manifest
 
-## TypeScript: stable exports
+## TypeScript exports
 
-Stable entrypoints:
+Package entrypoints:
 
 - `@floegence/flowersec-core`
   - `connect(...)`
@@ -289,7 +289,7 @@ Stable entrypoints:
   - `acceptDirectResolved(...)`
   - `connectTunnel(...)`
 
-Stable building blocks:
+Public building blocks:
 
 - `@floegence/flowersec-core/framing`
 - `@floegence/flowersec-core/streamio`
@@ -348,21 +348,21 @@ Stable building blocks:
 Compatibility and alias TypeScript notes:
 
 - legacy raw grant / wrapper / direct connect inputs remain accepted by `connect(...)`, `connectBrowser(...)`, and `connectNode(...)`
-- browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain stable aliases of `@floegence/flowersec-core/controlplane`; new code should prefer the canonical `@floegence/flowersec-core/controlplane` import
+- browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain compatibility aliases of `@floegence/flowersec-core/controlplane`; new code should prefer the canonical `@floegence/flowersec-core/controlplane` import
 - `requestChannelGrant(...)` / `requestEntryChannelGrant(...)` remain supported for compatibility and bootstrap fallback flows, but they are no longer the preferred controlplane contract
-- `connectTunnelProxyBrowser(...)` and `connectTunnelProxyControllerBrowser(...)` remain stable deprecated aliases over the artifact-first proxy bootstrap cores
+- `connectTunnelProxyBrowser(...)` and `connectTunnelProxyControllerBrowser(...)` remain deprecated compatibility aliases over the artifact-first proxy bootstrap cores
 - hybrid ambiguous inputs and legacy inputs mixed with artifact-only fields fail fast
-- named proxy profiles are no longer stable core APIs; use preset manifests instead
+- named proxy profiles are compatibility-only; use preset manifests instead
 
-## SwiftPM: stable module
+## SwiftPM module
 
-Stable package:
+Package:
 
 - `Flowersec`
   - SwiftPM product: `Flowersec`
   - module import: `import Flowersec`
 
-Stable connection and session entrypoints:
+Connection and session entrypoints:
 
 - `Flowersec.connect(...)`
 - `Flowersec.connectTunnel(...)`
@@ -399,7 +399,7 @@ Stable connection and session entrypoints:
 Rust exposes the matching `TransportSecurityPolicy::network_plaintext(...)`,
 `NetworkPlaintextPolicyOptions`, and `PlaintextRiskAcceptance` APIs.
 
-Stable RPC and stream building blocks:
+RPC and stream building blocks:
 
 - `RPCClient`
 - `RPCClient.start()`
@@ -419,7 +419,7 @@ Stable RPC and stream building blocks:
 - `RPCRouter`
 - `RPCServer`
 
-Stable endpoint, controlplane, reconnect, and proxy building blocks:
+Endpoint, controlplane, reconnect, and proxy building blocks:
 
 - `Endpoint`
 - `EndpointSession`
@@ -442,7 +442,7 @@ Stable endpoint, controlplane, reconnect, and proxy building blocks:
 - `ProxyServerOptions`
 - `ProxyCookieJar`
 
-Stable artifact and wire value types:
+Artifact and wire value types:
 
 - `ConnectArtifact`
 - `ConnectArtifactMetadata`
@@ -459,11 +459,11 @@ Stable artifact and wire value types:
 - `FlowersecStage`
 - `FlowersecCode`
 
-## Rust: stable crate
+## Rust crate
 
 The native Rust package is `flowersec` and targets Rust 1.85 or newer.
 
-Stable entrypoints and modules:
+Entrypoints and modules:
 
 - `flowersec::connect(...)`
 - `flowersec::connect_direct(...)`
@@ -498,37 +498,15 @@ Stable entrypoints and modules:
 - `flowersec::proxy::ProxyClient`
 - `flowersec::proxy::ProxyServer`
 
-## Stable vs experimental notes
+## Contract enforcement
 
-Stable in v0.23.0:
+All public exports are governed by `docs/API_CHANGE_POLICY.md`; there is no separate public API tier. The contract manifest and local quality gate verify:
 
-- client-facing canonical `ConnectArtifact`
-- strict canonical parse / validate rules
-- artifact-aware browser, node, and Go client connect entrypoints
-- artifact-aware SwiftPM client connect entrypoints
-- `@floegence/flowersec-core/controlplane` helper contract
-- Node/browser artifact-aware reconnect adapters
-- `controlplane/http` helper-first Go reference layer
-- correlation metadata carrier
-- runtime `DiagnosticEvent`
-- fail-closed high-level transport security defaults
-- bounded encrypted-record, WebSocket, Yamux, RPC, and tunnel resources
-- acknowledged Yamux liveness probes
-- discriminated one-time and refreshable artifact sources
-- proxy preset manifest contract
-- `proxy.runtime@1` when consumed through stable proxy helper entrypoints
-- Swift artifact scope resolver registration and optional-scope validation listed above
-- generated strict Swift and Rust wire types and typed RPC clients/handlers
-- Go, TypeScript, Swift, and Rust endpoint, controlplane, reconnect, and proxy portable APIs
-- shared defaults and language capability manifests enforced by CI
-- shared ConnectArtifact, E2EE, Token, transport policy, Yamux, RPC, controlplane envelope, proxy, and diagnostic registry fixtures consumed by all four languages
-- Go-reference star interoperability matrix with Go -> Go baseline and both directed edges for every non-Go SDK
-- public client/endpoint rekey and stream reset controls in all four SDKs
+- Go public-symbol compilation
+- TypeScript packed-package exports and runtime imports
+- Swift public symbol-graph equality
+- Rust public-entrypoint compilation and release SemVer comparison
+- shared defaults, schemas, registries, generated artifacts, and language capability evidence
+- Go-reference interoperability for direct/tunnel sessions, RPC, streams, liveness, rekey, reset, reconnect, and proxy traffic
 
-Still experimental in v0.23.0:
-
-- public normalize helper shapes
-- unlisted generic scope normalization and resolver helper APIs
-- scoped manifest toolchain/codegen factory outside the frozen `proxy.runtime@1` contract
-- bilateral scope negotiation semantics
-- framework-specific endpoint adapters beyond the documented transport-neutral APIs
+Internal, unexported implementation details may evolve without manifest entries as long as these public and behavioral checks remain green.

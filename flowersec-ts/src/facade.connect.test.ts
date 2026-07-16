@@ -168,7 +168,7 @@ describe("connect (auto-detect)", () => {
     );
   });
 
-  test("passes scope_version into experimental resolver", async () => {
+  test("passes scope_version into the configured resolver", async () => {
     mocks.connectDirect.mockResolvedValueOnce({ path: "direct" });
     const resolver = vi.fn();
     const input = {

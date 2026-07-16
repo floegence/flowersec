@@ -1,6 +1,6 @@
 # Correlation And Diagnostics
 
-Flowersec v0.20.x keeps two stable concepts separate:
+Flowersec keeps two shared concepts separate:
 
 - connect artifact correlation metadata
 - runtime diagnostics events
@@ -14,7 +14,7 @@ Purpose:
 - carry shared trace/session hints across controlplane, connect entrypoints, and reconnect adapters
 - stay data-only and parser-validated
 
-Stable fields:
+Fields:
 
 - `v: 1`
 - optional `trace_id`
@@ -30,9 +30,9 @@ Rules:
 
 ## DiagnosticEvent
 
-`DiagnosticEvent` is the stable runtime observability contract.
+`DiagnosticEvent` is the shared runtime observability contract.
 
-Stable fields:
+Fields:
 
 - `v`
 - `namespace`
@@ -66,7 +66,7 @@ Stable fields:
 
 Observer delivery is best-effort and must not affect connect success semantics.
 
-Stable guarantees:
+Delivery guarantees:
 
 - asynchronous delivery
 - per-connection FIFO queueing

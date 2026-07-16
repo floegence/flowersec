@@ -1,14 +1,11 @@
 # Flowersec Protocol Contracts (Current Wire Format)
 
-Status: experimental; not audited.
-
 This document describes the current on-the-wire contracts implemented by this repository, with a focus on:
 
-- **Stable framing** (what bytes are sent)
-- **Stable ordering** (what happens first)
+- **Framing** (what bytes are sent)
+- **Ordering** (what happens first)
 - **Cross-language alignment** (Go, TypeScript, Swift, and Rust implement the same portable contracts)
 
-For the user-facing stable APIs, see `docs/API_SURFACE.md`.
 For the recommended custom stream patterns (meta + bytes), see `docs/STREAMS.md`.
 
 ## 0. Stack overview
@@ -39,7 +36,7 @@ Current implementation:
 - Rust endpoint/client: `flowersec-rust/src/endpoint.rs` and `client.rs`
 
 If the tunnel rejects the attach, it closes the websocket with a close status and a **reason token**.
-Official clients map these reason tokens to stable error codes (see `docs/ERROR_MODEL.md`):
+Official clients map these reason tokens to shared error codes (see `docs/ERROR_MODEL.md`):
 
 - `too_many_connections`
 - `expected_attach`, `invalid_attach`
@@ -147,7 +144,7 @@ Current implementation:
 - Swift: `flowersec-swift/Sources/Flowersec/RecordCodec.swift` + `SecureChannel.swift`
 - Rust: `flowersec-rust/src/e2ee.rs`
 
-The stable high-level controls are Go `Client.Rekey()` / `Session.Rekey()`, TypeScript `client.rekey()` / `Session.rekey()`, Swift `FlowersecClient.rekey()` / `EndpointSession.rekey()`, and Rust `Client::rekey()` / `endpoint::Session::rekey()`. Rekey is serialized with ordinary secure-channel writes and does not expose key material.
+The high-level controls are Go `Client.Rekey()` / `Session.Rekey()`, TypeScript `client.rekey()` / `Session.rekey()`, Swift `FlowersecClient.rekey()` / `EndpointSession.rekey()`, and Rust `Client::rekey()` / `endpoint::Session::rekey()`. Rekey is serialized with ordinary secure-channel writes and does not expose key material.
 
 ## 4. Yamux multiplexing
 
@@ -167,7 +164,7 @@ Current implementation:
 
 All four expose acknowledged PING probes and enforce the six shared limits from `stability/sdk_defaults.json`. The Rust implementation is not based on the upstream `yamux` crate because Flowersec requires explicit ACK correlation and complete resource-limit control.
 
-Stable stream reset sends Yamux RST without an application error payload. Local causes are diagnostic-only. Go exposes `stream.Stream.Reset()`, TypeScript exposes `stream.reset()`, Swift exposes `FlowersecByteStream.reset()`, and Rust exposes `YamuxStream::reset()`.
+Stream reset sends Yamux RST without an application error payload. Local causes are diagnostic-only. Go exposes `stream.Stream.Reset()`, TypeScript exposes `stream.reset()`, Swift exposes `FlowersecByteStream.reset()`, and Rust exposes `YamuxStream::reset()`.
 
 ## 5. Stream hello
 
@@ -197,9 +194,9 @@ Current implementation:
 
 Typed RPC clients and server handlers are generated for all four languages by `tools/idlgen`. Server concurrency, request queues, notification queues, cancellation, and timeouts are bounded by the shared defaults contract.
 
-## 7. Additional stable stream protocols
+## 7. Additional stream protocols
 
-Flowersec also defines stable application protocols layered on top of Yamux custom streams.
+Flowersec also defines application protocols layered on top of Yamux custom streams.
 
 - HTTP/WS proxying over custom streams: `docs/PROXY.md` (`flowersec-proxy/http1`, `flowersec-proxy/ws`)
 

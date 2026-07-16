@@ -1,6 +1,6 @@
 # Controlplane Best Practices
 
-This document describes recommended controlplane behavior for Flowersec v0.19.x.
+This document describes recommended Flowersec controlplane behavior.
 
 ## Core responsibilities
 
@@ -13,7 +13,7 @@ Controlplanes should:
 
 ## Recommended outputs
 
-Preferred v0.19.x output:
+Preferred output:
 
 - `connect_artifact`
 

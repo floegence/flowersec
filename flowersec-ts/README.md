@@ -1,8 +1,6 @@
 # @floegence/flowersec-core
 
-Flowersec core TypeScript library for the complete portable Flowersec client/server contract in Node.js, plus the browser and Service Worker runtime owned by TypeScript.
-
-Status: experimental; not audited.
+The TypeScript SDK for Flowersec end-to-end encrypted direct and tunneled sessions. It implements the portable Node.js client and endpoint contract plus the browser and Service Worker runtime owned by TypeScript.
 
 ## Install
 
@@ -10,73 +8,27 @@ Status: experimental; not audited.
 npm install @floegence/flowersec-core
 ```
 
-## Recommended usage
+The package is ESM-only and exposes environment-specific entrypoints for browser and Node.js applications.
 
-Browser:
+## Cookbook
 
-```ts
-import { connectBrowser } from "@floegence/flowersec-core/browser";
-import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
+Start with the [TypeScript cookbook](https://github.com/floegence/flowersec/tree/main/examples/ts). It contains runnable browser direct/tunnel pages, Node.js clients, the shared demo server, the Service Worker proxy runtime, and manual protocol-stack references.
 
-const artifact = await requestConnectArtifact({
-  endpointId: "env_demo",
-});
+## Entrypoints
 
-const client = await connectBrowser(artifact);
-await client.ping();
-client.close();
-```
+- Browser client: `@floegence/flowersec-core/browser`
+- Node.js client and endpoint transport: `@floegence/flowersec-core/node`
+- Controlplane artifact helpers: `@floegence/flowersec-core/controlplane`
+- Endpoint session serving: `@floegence/flowersec-core/endpoint`
+- RPC: `@floegence/flowersec-core/rpc`
+- Reconnect: `@floegence/flowersec-core/reconnect`
+- HTTP/WebSocket proxy and browser runtime: `@floegence/flowersec-core/proxy`
+- Observability: `@floegence/flowersec-core/observability`
 
-Node.js:
+High-level WebSocket connections require TLS by default. Use `AllowPlaintextForLoopback` only for literal local development targets.
 
-```ts
-import { connectNode, createNodeReconnectConfig } from "@floegence/flowersec-core/node";
-import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
-import { createControlplaneArtifactSource } from "@floegence/flowersec-core/reconnect";
+## Runtime Boundaries
 
-const artifact = await requestConnectArtifact({
-  baseUrl: "https://your-app.example/api/flowersec",
-  endpointId: "env_demo",
-});
+TypeScript owns browser and Service Worker integration. Shared tunnel, proxy gateway, and helper binaries remain Go-owned.
 
-const client = await connectNode(artifact, {
-  origin: "https://your-app.example",
-});
-await client.ping();
-const rttMs = await client.probeLiveness();
-client.close();
-
-const reconnectConfig = createNodeReconnectConfig({
-  source: createControlplaneArtifactSource({
-    baseUrl: "https://your-app.example/api/flowersec",
-    endpointId: "env_demo",
-  }),
-  connect: {
-    origin: "https://your-app.example",
-  },
-});
-```
-
-Browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain available from `@floegence/flowersec-core/browser` as stable aliases.
-
-High-level connects use `RequireTLS` by default. `AllowPlaintextForLoopback` permits only literal loopback
-targets without DNS resolution. Deliberate non-loopback `ws://` connections must use
-`createNetworkPlaintextPolicy(...)` with exact canonical IP literals and
-`PlaintextRiskAcceptance.acceptPreE2ECredentialExposure`. The unrestricted `AllowPlaintext` preset is deprecated.
-
-## Node endpoint and controlplane
-
-`@floegence/flowersec-core/node` exports the high-level endpoint APIs for accepted direct WebSockets and server-role tunnel grants. `@floegence/flowersec-core/endpoint` provides portable session and RPC serving, while `@floegence/flowersec-core/controlplane` provides bounded artifact envelopes, FST2 tokens, issuer rotation, and channel initialization.
-
-## Proxy
-
-`@floegence/flowersec-core/proxy` contains both portable HTTP/1 and WebSocket proxy protocols and the TypeScript-owned browser runtime. Node endpoint servers use `serveProxySession(...)`; browser applications use the Service Worker or controller bridge helpers without changing the portable stream contract.
-
-## Docs
-
-- Frontend quickstart: `docs/FRONTEND_QUICKSTART.md`
-- Integration guide: `docs/INTEGRATION_GUIDE.md`
-- API surface contract: `docs/API_SURFACE.md`
-- Controlplane artifact fetch: `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
-- Error model: `docs/ERROR_MODEL.md`
-- Migration guide: `docs/V0_20_MIGRATION.md`
+Review the shared [API contract](../docs/API_CONTRACT.md), [protocol](../docs/PROTOCOL.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).

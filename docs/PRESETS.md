@@ -1,20 +1,20 @@
 # Proxy Presets
 
-Flowersec v0.21 keeps preset manifests as the stable replacement for named proxy profiles.
+Flowersec uses preset manifests instead of named proxy profiles.
 
-## Stable contract
+## Manifest contract
 
 Machine-readable schema:
 
 - `stability/proxy_preset_manifest.schema.json`
 
-TypeScript stable helpers:
+TypeScript helpers:
 
 - `assertProxyPresetManifest(...)`
 - `resolveProxyPreset(...)`
 - `DEFAULT_PROXY_PRESET_MANIFEST`
 
-Go stable helpers:
+Go helpers:
 
 - `preset.Manifest`
 - `preset.DecodeJSON(...)`
@@ -47,12 +47,12 @@ Rules:
 - numeric limits are positive integers when present
 - omission means “not set” at the preset API layer
 - `limits.timeout_ms`, when present, becomes the default `HTTPRequestMeta.timeout_ms` for bridge/gateway and browser proxy integrations
-- `preset.ResolveBuiltin(...)` only preserves the deprecated `default` compatibility name; `codeserver` is no longer a built-in name in v0.21
-- stable integrations should consume manifest files or decoded `ProxyPresetManifest` objects instead
+- `preset.ResolveBuiltin(...)` only preserves the deprecated `default` compatibility name; `codeserver` is not a built-in name
+- integrations should consume manifest files or decoded `ProxyPresetManifest` objects instead
 
 ## Gateway consumption
 
-Stable gateway consumer path:
+Gateway consumer path:
 
 - `proxy.preset_file`
 - `proxy.timeout_ms` as an explicit positive-integer override for the preset default request timeout
@@ -70,5 +70,5 @@ First-party reference files live under:
 - `reference/presets/default/manifest.json`
 - `reference/presets/codeserver/manifest.json`
 
-These reference files are distribution assets, not the core stable contract itself.
-The `codeserver` file is a static migration example and remains loadable through the generic manifest APIs. It is not exported as a Go or TypeScript built-in preset and is not accepted as a named profile.
+These reference files are distribution assets, not the core contract itself.
+The `codeserver` file is a static compatibility example and remains loadable through the generic manifest APIs. It is not exported as a Go or TypeScript built-in preset and is not accepted as a named profile.

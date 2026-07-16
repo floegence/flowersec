@@ -8,7 +8,7 @@ export type ClientPath = "tunnel" | "direct";
 // Client is a high-level session intended as the default user entrypoint.
 //
 // It intentionally does NOT expose the underlying SecureChannel or YamuxSession
-// so the stable surface is not coupled to lower-level implementation details.
+// so the public contract is not coupled to lower-level implementation details.
 export type Client = Readonly<{
   path: ClientPath;
   endpointInstanceId?: string;

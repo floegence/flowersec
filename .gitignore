@@ -9,7 +9,7 @@
 
 # Rust
 /flowersec-rust/target/
-/examples/rust-client/target/
+/examples/rust/target/
 
 # Node
 node_modules/

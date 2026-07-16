@@ -11,7 +11,7 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'flowersec-package-verify-
 const packDir = path.join(tmpRoot, 'pack');
 const consumerDir = path.join(tmpRoot, 'consumer');
 const manifest = JSON.parse(
-  fs.readFileSync(path.join(repoRoot, 'stability', 'public_api_manifest.json'), 'utf8')
+  fs.readFileSync(path.join(repoRoot, 'stability', 'api_contract_manifest.json'), 'utf8')
 );
 const forbiddenRuntimeExportsBySubpath = new Map([
   ['@floegence/flowersec-core/proxy', ['resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST']],

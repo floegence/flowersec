@@ -1,8 +1,8 @@
 # Scoped Metadata
 
-Flowersec stabilizes the `scoped` carrier on `ConnectArtifact` and freezes one concrete scope payload: `proxy.runtime@1` for the stable proxy helper entrypoints.
+Flowersec defines the `scoped` carrier on `ConnectArtifact` and freezes one concrete scope payload: `proxy.runtime@1` for the proxy helper entrypoints.
 
-## Stable carrier
+## Carrier
 
 Each scoped entry has:
 
@@ -11,7 +11,7 @@ Each scoped entry has:
 - `critical`
 - `payload`
 
-Stable invariants:
+Invariants:
 
 - `scope` is a bounded, lowercase identifier
 - `scope_version` is required at runtime
@@ -32,10 +32,10 @@ Stable invariants:
 - relaxed optional validation must be an explicit opt-in
 - ignored optional scopes emit warning diagnostics (`scope_ignored_missing_resolver` or `scope_ignored_relaxed_validation`)
 
-The stable proxy helper entrypoints do not opt into relaxed downgrade behavior for `proxy.runtime`.
+The proxy helper entrypoints do not opt into relaxed downgrade behavior for `proxy.runtime`.
 If `connectArtifactProxyBrowser(...)` or `connectArtifactProxyControllerBrowser(...)` sees an invalid `proxy.runtime@1` payload, it fails fast regardless of `critical`.
 
-Swift 0.21.0 aligns artifact scope validation with Go and TypeScript. Register asynchronous validators by exact scope name through `ConnectOptions.scopeResolvers`. Resolver execution completes before transport policy evaluation or any network activity.
+Swift artifact scope validation aligns with Go and TypeScript. Register asynchronous validators by exact scope name through `ConnectOptions.scopeResolvers`. Resolver execution completes before transport policy evaluation or any network activity.
 
 All SDKs apply the same behavior:
 
@@ -45,7 +45,7 @@ All SDKs apply the same behavior:
 - registered optional resolver failure with explicit relaxed validation: continue and emit `scope_ignored_relaxed_validation`
 - registered critical resolver failure: always fail, including when relaxed optional validation is enabled
 
-Swift enables the migration-only downgrade with `ConnectOptions.relaxedOptionalScopeValidation`. The option does not affect scopes without a resolver and never exposes resolver errors or payload values in diagnostics.
+Swift enables the explicit optional-scope downgrade with `ConnectOptions.relaxedOptionalScopeValidation`. The option does not affect scopes without a resolver and never exposes resolver errors or payload values in diagnostics.
 
 ## `proxy.runtime@1`
 
@@ -54,21 +54,21 @@ Frozen scope name and version:
 - `scope = "proxy.runtime"`
 - `scope_version = 1`
 
-The stable helper contract uses only the outer `scope_version`.
+The helper contract uses only the outer `scope_version`.
 There is no second payload-internal version field.
 
-Stable modes:
+Modes:
 
 - `mode = "service_worker"`
 - `mode = "controller_bridge"`
 
-Stable shared fields:
+Shared fields:
 
 - `preset`
 - optional `limits`
 - optional `appBasePath`
 
-Stable mode-specific fields:
+Mode-specific fields:
 
 - `service_worker`
   - `serviceWorker.scriptUrl`
@@ -79,36 +79,27 @@ Stable mode-specific fields:
 Important boundary:
 
 - `allowedOrigins` is the frozen controller-bridge security input
-- deployment-specific path details remain caller-owned configuration, not stable scope fields
+- deployment-specific path details remain caller-owned configuration, not scope fields
 - `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin` overrides, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, `maxQueuedHttpBodyBytes`, `maxWsBufferedAmountBytes`, and bridge `capabilityNonce` are explicit runtime/bootstrap options, not `proxy.runtime@1` payload fields
-- do not expand the `proxy.runtime@1` schema for deployment hardening switches; use explicit helper options, or introduce a future `proxy.runtime@2` with a reviewed manifest if the artifact contract needs new stable fields
+- do not expand the `proxy.runtime@1` schema for deployment hardening switches; use explicit helper options, or introduce a future `proxy.runtime@2` with a reviewed manifest if the artifact contract needs new fields
 
-## Stable vs experimental boundary
+## Scope contract
 
-Stable in v0.21.0:
+The public scope contract includes:
 
-- `scoped` field on `ConnectArtifact`
-- parser invariants
-- critical fail-fast meaning
-- `proxy.runtime@1` when consumed through the stable proxy helper entrypoints
-- Swift artifact scope resolver registration and optional-scope validation
+- the `scoped` field on `ConnectArtifact`
+- parser invariants and critical fail-fast behavior
+- `proxy.runtime@1` when consumed through proxy helper entrypoints
+- public scope resolver registration and optional-scope validation
+- exported normalization helpers and generic `connect(...)` scope resolution
 
-Experimental:
-
-- normalize helper return types
-- generic `connect(...)` scope negotiation semantics
-- scope manifest toolchain outside the frozen `proxy.runtime` v1 manifest
+Any public change to these APIs follows `docs/API_CHANGE_POLICY.md`.
 
 ## Source-of-truth files
 
-Stable:
-
 - `stability/scopes/proxy.runtime.manifest.json`
-
-Experimental:
-
 - `stability/scopes/*.manifest.json`
 - `tools/manifestgen/`
 
 These files exist to keep scope evolution disciplined.
-Only the frozen `proxy.runtime@1` manifest is part of the stable proxy-helper contract in v0.21.0.
+The frozen `proxy.runtime@1` manifest defines the proxy-helper payload contract.

@@ -13,10 +13,10 @@ type scopeManifest struct {
 	Version          int      `json:"version"`
 	Scope            string   `json:"scope"`
 	ScopeVersion     int      `json:"scope_version"`
-	Stability        string   `json:"stability"`
 	Carrier          string   `json:"carrier"`
 	PayloadKind      string   `json:"payload_kind"`
 	CriticalDefault  bool     `json:"critical_default"`
+	Consumer         string   `json:"consumer"`
 	ResolverContract string   `json:"resolver_contract"`
 	Notes            []string `json:"notes"`
 }
@@ -79,14 +79,14 @@ func validateFile(path string) error {
 	if manifest.ScopeVersion <= 0 {
 		return fmt.Errorf("%s: invalid scope_version", path)
 	}
-	if strings.TrimSpace(manifest.Stability) == "" {
-		return fmt.Errorf("%s: missing stability", path)
-	}
 	if strings.TrimSpace(manifest.Carrier) == "" {
 		return fmt.Errorf("%s: missing carrier", path)
 	}
 	if manifest.PayloadKind != "json_object" {
 		return fmt.Errorf("%s: unsupported payload_kind", path)
+	}
+	if strings.TrimSpace(manifest.Consumer) == "" {
+		return fmt.Errorf("%s: missing consumer", path)
 	}
 	if strings.TrimSpace(manifest.ResolverContract) == "" {
 		return fmt.Errorf("%s: missing resolver_contract", path)

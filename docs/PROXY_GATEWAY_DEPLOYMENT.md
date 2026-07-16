@@ -6,7 +6,6 @@ See also:
 
 - Proxy protocol details: `docs/PROXY.md`
 - Preset contract: `docs/PRESETS.md`
-- Stable API surface: `docs/API_SURFACE.md`
 
 ## Install
 
@@ -25,7 +24,7 @@ docker pull ghcr.io/floegence/flowersec-proxy-gateway:latest
 
 Configuration is a JSON file passed via `--config` or `FSEC_PROXY_GATEWAY_CONFIG`.
 
-Recommended v0.20.x shape:
+Recommended configuration:
 
 ```json
 {
@@ -54,7 +53,7 @@ Recommended v0.20.x shape:
 
 Important fields:
 
-- `proxy.preset_file`: stable preset manifest path
+- `proxy.preset_file`: preset manifest path
 - `proxy.timeout_ms`: optional gateway-wide default request timeout override
 - `proxy.profile`: deprecated compatibility alias
 
@@ -96,7 +95,7 @@ First-party preset examples:
 - `reference/presets/default/manifest.json`
 - `reference/presets/codeserver/manifest.json`
 
-`codeserver` remains available only as a static migration manifest. Flowersec v0.21 no longer accepts it through gateway `proxy.profile` or any Go/TypeScript built-in preset resolver.
+`codeserver` remains available only as a static compatibility manifest. The gateway does not accept it through `proxy.profile` or any Go/TypeScript built-in preset resolver.
 
 ## Operational checklist
 

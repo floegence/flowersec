@@ -5,7 +5,6 @@ It is intended for advanced integrations that go beyond the built-in RPC stream.
 
 See also:
 
-- Stable API surface: `docs/API_SURFACE.md`
 - Protocol framing (wire format): `docs/PROTOCOL.md`
 
 ## When to use a custom stream
@@ -22,7 +21,7 @@ The recommended base pattern is:
 
 This keeps metadata structured and keeps large payloads efficient (no base64).
 
-## Recommended framing helpers (stable)
+## Recommended framing helpers
 
 TypeScript:
 

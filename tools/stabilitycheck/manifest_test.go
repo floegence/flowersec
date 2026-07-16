@@ -10,7 +10,7 @@ import (
 
 func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 	root := t.TempDir()
-	for _, p := range []string{"docs/API_SURFACE.md", "docs/API_STABILITY_POLICY.md", "README.md", "docs/ERROR_MODEL.md"} {
+	for _, p := range []string{"docs/API_CONTRACT.md", "docs/API_CHANGE_POLICY.md", "README.md", "docs/ERROR_MODEL.md"} {
 		full := filepath.Join(root, p)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
@@ -23,11 +23,11 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 	m := &manifest{
 		Version: 1,
 		Docs: docsManifest{
-			APISurface: "docs/API_SURFACE.md",
-			Policy:     "docs/API_STABILITY_POLICY.md",
-			Readme:     "README.md",
-			ErrorModel: "docs/ERROR_MODEL.md",
-			CLITokens:  []string{"`cli`"},
+			APIContract:  "docs/API_CONTRACT.md",
+			ChangePolicy: "docs/API_CHANGE_POLICY.md",
+			Readme:       "README.md",
+			ErrorModel:   "docs/ERROR_MODEL.md",
+			CLITokens:    []string{"`cli`"},
 		},
 		Go: goManifest{
 			ModulePath: "github.com/floegence/flowersec/flowersec-go",
@@ -155,14 +155,26 @@ func TestSwiftBuildModulePathsIncludesDependencyModuleMaps(t *testing.T) {
 	}
 }
 
-func TestMakefileStabilityCheckRunsSwiftVerifier(t *testing.T) {
+func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
 	target := text[strings.Index(text, "stability-check:"):]
-	if !strings.Contains(target, "verify-swift") {
-		t.Fatalf("stability-check must run verify-swift, got:\n%s", target)
+	for _, command := range []string{
+		"tools/manifestgen",
+		"verify-manifest",
+		"verify-defaults",
+		"verify-parity",
+		"verify-docs",
+		"verify-go",
+		"verify-swift",
+		"verify-rust",
+		"report",
+	} {
+		if !strings.Contains(target, command) {
+			t.Fatalf("stability-check must run %s, got:\n%s", command, target)
+		}
 	}
 }

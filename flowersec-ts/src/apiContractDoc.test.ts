@@ -3,9 +3,9 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-type StabilityManifest = {
+type APIContractManifest = {
   docs: {
-    api_surface: string;
+    api_contract: string;
     cli_tokens: string[];
   };
   go: {
@@ -21,18 +21,18 @@ type StabilityManifest = {
   };
 };
 
-describe("docs/API_SURFACE.md", () => {
-  it("covers manifest-defined stable API tokens", () => {
+describe("docs/API_CONTRACT.md", () => {
+  it("covers manifest-defined public API tokens", () => {
     const repoRoot = path.join(process.cwd(), "..");
     const manifest = JSON.parse(
-      fs.readFileSync(path.join(repoRoot, "stability", "public_api_manifest.json"), "utf8")
-    ) as StabilityManifest;
+      fs.readFileSync(path.join(repoRoot, "stability", "api_contract_manifest.json"), "utf8")
+    ) as APIContractManifest;
 
-    const doc = fs.readFileSync(path.join(repoRoot, manifest.docs.api_surface), "utf8");
+    const doc = fs.readFileSync(path.join(repoRoot, manifest.docs.api_contract), "utf8");
     const tokens = [
       ...manifest.docs.cli_tokens,
-      "`docs/API_STABILITY_POLICY.md`",
-      "`stability/public_api_manifest.json`",
+      "`docs/API_CHANGE_POLICY.md`",
+      "`stability/api_contract_manifest.json`",
       ...manifest.go.compile_targets.flatMap((target) => [
         target.doc_package_token,
         ...target.entries.map((entry) => entry.doc_token),

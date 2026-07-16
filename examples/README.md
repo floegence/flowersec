@@ -1,78 +1,66 @@
-# Flowersec demos
+# Flowersec Cookbooks
 
-This folder is the demo cookbook for the Go, TypeScript, Swift, and Rust SDKs.
+The cookbooks are the source-first guide to Flowersec. Each language page points to runnable programs, exact commands, expected output, and the tests that cover advanced behavior.
 
-v0.19.x makes the artifact-first path the recommended demo path, while keeping the older raw grant/direct demos available as advanced compatibility references.
+| Language | Cookbook | Primary runtime |
+| --- | --- | --- |
+| Go | [examples/go](go/README.md) | Services, endpoints, controlplanes, and CLIs |
+| TypeScript | [examples/ts](ts/README.md) | Browser, Service Worker, and Node.js |
+| Swift | [examples/swift](swift/README.md) | Native Apple platform clients and endpoints |
+| Rust | [examples/rust](rust/README.md) | Tokio-native clients and endpoints |
 
-## Recommended demo flow
+## Start the Shared Demo Stack
 
-If you have Node.js installed, spin up the dev server and capture its ready JSON:
+From a source checkout:
+
+```bash
+make ts-ensure-deps ts-build
+node ./examples/ts/dev-server.mjs | tee dev.json
+```
+
+From a release demo bundle, the TypeScript package and service binaries are already built:
 
 ```bash
 node ./examples/ts/dev-server.mjs | tee dev.json
 ```
 
-Then use the artifact-first URLs in the generated JSON (`browser_tunnel_url`, `browser_direct_url`, `browser_proxy_sandbox_url`) to drive the browser demos.
+The process prints one ready JSON object. Keep it running while using another terminal for a cookbook command.
 
-Recommended quick checks without leaving artifact-first wiring:
+Important fields:
 
-- browser / artifact-first connect: open one of the URLs above or POST to `/__demo/connect/artifact`
-- browser / direct artifact-first connect: open `browser_direct_url` or GET `/__demo/direct/artifact`
-- proxy runtime / artifact-first connect: POST to `/__demo/proxy/artifact` and use the returned artifact bundle in `examples/ts/proxy-sandbox`
-- node / artifact-first connect: pull `controlplane_http_url` from `dev.json` (`jq -r '.controlplane_http_url' dev.json`) and start `FSEC_CONTROLPLANE_BASE_URL=$(jq -r '.controlplane_http_url' dev.json) node ./examples/ts/node-artifact-client.mjs`
-- node / tunnel artifact from stdin: `curl -sS -X POST $(jq -r '.controlplane_http_url' dev.json)/v1/connect/artifact -H 'content-type: application/json' -d '{"endpoint_id":"server-1"}' | jq -c .connect_artifact | FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-tunnel-client.mjs`
-- node / direct artifact from stdin: `curl -sS http://127.0.0.1:5173/__demo/direct/artifact | jq -c .connect_artifact | FSEC_ORIGIN=http://127.0.0.1:5173 node ./examples/ts/node-direct-client.mjs`
-- Rust / artifact-first RPC, stream, liveness, and proxy: `FSEC_CONTROLPLANE_BASE_URL=$(jq -r '.controlplane_http_url' dev.json) cargo run --manifest-path ./examples/rust-client/Cargo.toml`
-- Swift / artifact-first RPC, stream, liveness, and proxy: `FSEC_CONTROLPLANE_BASE_URL=$(jq -r '.controlplane_http_url' dev.json) swift run --package-path ./examples/swift-client`
+- `controlplane_http_url`: artifact endpoint used by Node, Go, Swift, and Rust examples
+- `browser_direct_url`: direct browser session
+- `browser_tunnel_url`: tunneled browser session
+- `browser_proxy_sandbox_url`: browser HTTP/WebSocket proxy runtime
 
-## Artifact-aware CLI helpers
+## Recommended Path
 
-Tunnel:
+New examples use `ConnectArtifact` as the client bootstrap value:
 
-```bash
-flowersec-channelinit \
-  --issuer-private-key-file ./keys/issuer_key.json \
-  --tunnel-url ws://127.0.0.1:8080/ws \
-  --aud flowersec-tunnel:dev \
-  --iss issuer-dev \
-  --format artifact \
-  --server-grant-out ./server-grant.json \
-  > ./client-artifact.json
+```text
+controlplane -> ConnectArtifact -> high-level connect -> RPC / stream / proxy
 ```
 
-Direct:
+Raw grants and manually assembled protocol stacks remain available only as advanced implementation references.
+
+## Shared Environment
+
+The native examples accept these variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `FSEC_CONTROLPLANE_BASE_URL` | Required by Swift/Rust; printed in `dev.json` | Fetches a fresh artifact |
+| `FSEC_ENDPOINT_ID` | `server-1` | Selects the demo endpoint |
+| `FSEC_ORIGIN` | `http://127.0.0.1:5173` | Matches the local tunnel allow-list |
+
+Tunnel tokens are one-time use. Run the artifact request again for every new tunnel connection.
+
+## Verification
+
+Build all cookbook entrypoints with:
 
 ```bash
-flowersec-directinit --format artifact > ./direct-artifact.json
+make example-check
 ```
 
-These outputs are intended for:
-
-- browser `connectBrowser(...)`
-- node `connectNode(...)`
-- go `client.Connect(...)`
-- swift `Flowersec.connect(...)`
-- rust `flowersec::connect(...)`
-
-## Compatibility notes
-
-Still supported in demos:
-
-- raw `grant_client`
-- wrapper JSON
-- raw `DirectConnectInfo`
-
-Preferred in new demos/scripts:
-
-- `ConnectArtifact`
-
-Advanced compatibility demos:
-
-- browser pages that accept raw `grant_client`
-- node tunnel clients that accept raw grant JSON
-
-## Troubleshooting
-
-- `token_replay`: tunnel tokens are one-time use; mint a new artifact/grant
-- browser connect rejected: check Origin allow-lists
-- gateway profile config no longer works as stable surface: switch to `proxy.preset_file`
+The repository-wide `make check` gate includes this target and the cross-language interoperability suite.

@@ -63,9 +63,9 @@ export type ConnectOptionsBase = Readonly<{
   observer?: ClientObserverLike;
   /** Policy evaluated before any WebSocket network activity. */
   transportSecurityPolicy?: TransportSecurityPolicy;
-  /** Experimental scope validators keyed by scope name. */
+  /** Scope validators keyed by scope name. */
   scopeResolvers?: ConnectScopeResolverMap;
-  /** Experimental migration switch for optional scope failures. */
+  /** Explicit compatibility switch for optional scope failures. */
   relaxedOptionalScopeValidation?: boolean;
   /** Acknowledged Yamux liveness checks, or false to disable automatic checks. */
   liveness?: false | LivenessOptions;

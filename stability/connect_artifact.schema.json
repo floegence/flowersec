@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://floegence.github.io/flowersec/stability/connect_artifact.schema.json",
   "title": "Flowersec ConnectArtifact",
-  "description": "Stable client-facing canonical connect artifact for Flowersec v0.19.x.",
+  "description": "Canonical client-facing Flowersec connect artifact.",
   "oneOf": [
     {
       "$ref": "#/$defs/TunnelClientConnectArtifact"

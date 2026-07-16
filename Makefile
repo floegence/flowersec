@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench check stability-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench check stability-check go-cover-check compat-check nightly-check
 
 INTEROP_CELLS ?= go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust
 INTEROP_REPORT_DIR ?= $(or $(TMPDIR),/tmp)
@@ -50,6 +50,7 @@ go-test:
 	cd flowersec-go && go test ./...
 	cd examples && go test ./...
 	cd tools/idlgen && go test ./...
+	cd tools/manifestgen && go test ./...
 	cd tools/releasenotes && go test ./...
 	cd tools/stabilitycheck && go test ./...
 
@@ -57,6 +58,7 @@ go-test-race:
 	cd flowersec-go && go test -race ./...
 	cd examples && go test -race ./...
 	cd tools/idlgen && go test -race ./...
+	cd tools/manifestgen && go test -race ./...
 	cd tools/releasenotes && go test -race ./...
 	cd tools/stabilitycheck && go test -race ./...
 
@@ -64,6 +66,7 @@ go-vet:
 	cd flowersec-go && go vet ./...
 	cd examples && go vet ./...
 	cd tools/idlgen && go vet ./...
+	cd tools/manifestgen && go vet ./...
 	cd tools/releasenotes && go vet ./...
 	cd tools/stabilitycheck && go vet ./...
 
@@ -192,9 +195,13 @@ release-check:
 	$(MAKE) check
 	$(MAKE) interop-stress
 
-example-install-check:
-	cargo check --manifest-path examples/rust-client/Cargo.toml
-	swift build --package-path examples/swift-client
+example-check:
+	cd examples && go test ./...
+	find examples/ts -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
+	cargo check --locked --manifest-path examples/rust/Cargo.toml
+	swift build --package-path examples/swift
+
+example-install-check: example-check
 
 interop-smoke:
 	go run ./flowersec-go/internal/cmd/flowersec-interop -profile smoke -cells "$(INTEROP_CELLS)" -deadline-ms "$(INTEROP_DEADLINE_MS)" -report "$(INTEROP_REPORT_DIR)/flowersec-interop-smoke.json"
@@ -231,6 +238,9 @@ install-hooks:
 release-policy-check:
 	./scripts/check-release-workflow-policy.sh
 
+readme-localization-check:
+	node ./scripts/check-readme-localizations.mjs
+
 precommit-go:
 	$(MAKE) fmt-check
 	$(MAKE) go-vet
@@ -253,6 +263,7 @@ precommit-rust:
 
 precommit:
 	$(MAKE) release-policy-check
+	$(MAKE) readme-localization-check
 	$(MAKE) gen-check
 	$(MAKE) stability-check
 	$(MAKE) precommit-go
@@ -261,6 +272,7 @@ precommit:
 	$(MAKE) precommit-rust
 
 stability-check:
+	cd tools/manifestgen && go run .
 	cd tools/stabilitycheck && go run . verify-manifest
 	cd tools/stabilitycheck && go run . verify-defaults
 	cd tools/stabilitycheck && go run . verify-parity
@@ -288,13 +300,14 @@ nightly-check:
 
 check:
 	$(MAKE) ts-ci
+	$(MAKE) readme-localization-check
 	$(MAKE) gen-check
 	$(MAKE) stability-check
 	$(MAKE) lint-check
 	$(MAKE) ts-build
 	$(MAKE) swift-check
 	$(MAKE) rust-release-check
-	$(MAKE) example-install-check
+	$(MAKE) example-check
 	$(MAKE) test
 	$(MAKE) go-cover-check
 	$(MAKE) ts-cover-check

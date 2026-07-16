@@ -128,7 +128,7 @@ func canonicalNetworkPlaintextHost(rawHost string) (string, error) {
 }
 
 // Evaluate parses and sanitizes a WebSocket target, then applies policy. A nil policy preserves
-// v0.19 compatibility and returns the sanitized input without denying plaintext.
+// legacy compatibility and returns the sanitized input without denying plaintext.
 func Evaluate(ctx context.Context, rawURL string, path fserrors.Path, runtime Runtime, policy Policy) (Input, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil {

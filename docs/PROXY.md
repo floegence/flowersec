@@ -1,22 +1,19 @@
 # flowersec-proxy (HTTP/WS over Flowersec) v1
 
-This document defines the stable, cross-language contract for **flowersec-proxy**:
+This document defines the cross-language contract for **flowersec-proxy**:
 carrying HTTP/1.1 and WebSocket traffic over Flowersec custom Yamux streams.
-
-Status: proxy stream contract stable, helper ergonomics evolving; not audited.
 
 See also:
 
-- Stable API surface: `docs/API_SURFACE.md`
 - Preset contract: `docs/PRESETS.md`
 - Custom stream baseline pattern: `docs/STREAMS.md`
 - Core wire format (WS + E2EE + Yamux): `docs/PROTOCOL.md`
 - Threat model and trust boundaries: `docs/THREAT_MODEL.md`
 - Gateway deployment: `docs/PROXY_GATEWAY_DEPLOYMENT.md`
 
-## v0.19 surface notes
+## Helper surface
 
-This document defines the stable proxy stream contracts and the recommended artifact-first browser helper paths.
+This document defines the proxy stream contracts and the recommended artifact-first browser helper paths.
 
 Recommended helper entrypoints:
 
@@ -29,9 +26,9 @@ Compatibility paths still available:
 - `connectTunnelProxyBrowser(...)`
 - `connectTunnelProxyControllerBrowser(...)`
 
-Related v0.19 configuration guidance:
+Related configuration guidance:
 
-- use preset manifests instead of stable named proxy profiles
+- use preset manifests instead of named proxy profiles
 - new strict preset/artifact APIs do not use `0 == default`
 - existing proxy wire compatibility is unchanged for `timeout_ms`:
   - `omit == 0 == server default`
@@ -50,11 +47,11 @@ Modes:
 
 This document defines the **stream contracts only**. The mode-specific security boundary is described in `docs/THREAT_MODEL.md`.
 
-## 1. Stream kinds (stable)
+## 1. Stream kinds
 
 Each Yamux stream starts with the standard Flowersec StreamHello identifying the stream kind.
 
-Stable kinds:
+Defined kinds:
 
 - `flowersec-proxy/http1`
 - `flowersec-proxy/ws`
@@ -161,7 +158,7 @@ Fields:
 - `status` (required when `ok=true`): upstream HTTP status.
 - `headers` (required when `ok=true`): upstream response headers (filtered; see below).
 - `error` (required when `ok=false`): structured error:
-  - `code` (required): stable reason token (see 3.6).
+  - `code` (required): shared reason token (see 3.6).
   - `message` (required): human-readable message for debugging.
 
 ### 3.3 Body chunk framing (binary)
@@ -273,9 +270,9 @@ Rules:
 - Request cookie selection MUST use RFC 6265-style path matching, so `/admin` matches `/admin` and `/admin/...` but not `/administrator` or `/admin-api`.
 - When multiple cookies match a request, longer paths MUST be serialized before shorter paths.
 
-### 3.6 Error codes (stable reason tokens)
+### 3.6 Error codes
 
-`http_response_meta.error.code` uses the following stable tokens:
+`http_response_meta.error.code` uses the following tokens:
 
 - `invalid_request_meta`
 - `request_body_invalid`
@@ -360,9 +357,9 @@ Rules:
 - In gateway mode, `cookie` MAY come from the inbound browser `Cookie` header of the gateway origin.
 - Hop-by-hop / upgrade headers are not accepted from the client (`upgrade`, `connection`, `sec-websocket-key`, ...).
 
-### 4.4 Error codes (stable reason tokens)
+### 4.4 Error codes
 
-`ws_open_resp.error.code` uses the following stable tokens:
+`ws_open_resp.error.code` uses the following tokens:
 
 - `invalid_ws_open_meta`
 - `upstream_ws_dial_failed`
@@ -427,7 +424,7 @@ Requirements:
   - `maxQueuedHttpRequests` defaults to `128` and may be set to `0` to reject instead of queueing when all HTTP permits are occupied.
   - `maxQueuedHttpBodyBytes` defaults to `64 MiB` and counts only request bodies waiting for admission. Admission, cancellation, failure, and `dispose()` release the reserved bytes.
   - Queued requests are FIFO and abort-aware. A permit is held for the complete HTTP stream lifecycle, including response streaming and cleanup.
-  - A full admission queue fails with HTTP `503` and the stable generic `resource_exhausted` error code. Increase the queue only with a corresponding memory and latency budget; do not raise concurrency above the peer's stream capacity.
+  - A full admission queue fails with HTTP `503` and the generic `resource_exhausted` error code. Increase the queue only with a corresponding memory and latency budget; do not raise concurrency above the peer's stream capacity.
   - `dispose()` rejects queued and future HTTP requests while allowing already-admitted stream cleanup to finish. WebSocket opens do not consume HTTP permits.
 - Patched WebSocket text, binary, and Blob sends share one serial queue. `maxWsBufferedAmountBytes` defaults to `4 MiB`, and `bufferedAmount` reports user bytes whose writes have not completed.
 - `external_origin` is trusted only when it is derived by the generated same-origin SW or supplied through an explicit trusted runtime option.
@@ -454,9 +451,9 @@ Artifact-first helper boundary:
 - `allowedOrigins` is the frozen controller-bridge security input.
 - deployment-specific path details stay caller-provided or boot-payload-specific; they are not frozen as proxy helper API surface.
 - `pathPolicy`, `runtimeRegistrationToken`, trusted `externalOrigin`, `maxConcurrentHttpStreams`, `maxQueuedHttpRequests`, `maxQueuedHttpBodyBytes`, `maxWsBufferedAmountBytes`, and `capabilityNonce` stay explicit options; they are not added to the frozen `proxy.runtime@1` schema.
-- If these controls need to become artifact-carried stable fields, introduce a future `proxy.runtime@2` with a reviewed manifest instead of extending v1 in place.
+- If these controls need to become artifact-carried fields, introduce a future `proxy.runtime@2` with a reviewed manifest instead of extending v1 in place.
 - service-worker registration details may still be caller-provided overrides even when the artifact scope pre-populates them.
-- direct transport is not a stable proxy helper path in v0.20.x; the artifact-first helpers are tunnel-first browser integrations.
+- direct transport is not a proxy helper path; the artifact-first helpers are tunnel-first browser integrations.
 - artifact fetch is a separate controlplane contract; fetching a `connect_artifact` does not imply that a deployment must introduce a plaintext gateway component.
 
 ### 6.2 Gateway mode (L7 reverse proxy)

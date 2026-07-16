@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "source": {
+    "locale": "en-US",
+    "file": "README.md"
+  },
+  "sections": [
+    { "id": "why-flowersec", "level": 2 },
+    { "id": "how-it-works", "level": 2 },
+    { "id": "try-it-locally", "level": 2 },
+    { "id": "sdks-and-cookbooks", "level": 2 },
+    { "id": "portable-contract", "level": 2 },
+    { "id": "security", "level": 2 },
+    { "id": "deploy-and-develop", "level": 2 }
+  ],
+  "required_literals": [
+    "Flowersec",
+    "Go",
+    "TypeScript",
+    "Swift",
+    "Rust",
+    "E2EE",
+    "ConnectArtifact",
+    "examples/README.md",
+    "docs/THREAT_MODEL.md",
+    "docs/PROTOCOL.md",
+    "docs/ERROR_MODEL.md",
+    "make check"
+  ],
+  "locales": [
+    { "locale": "en-US", "native_name": "English", "file": "README.md" },
+    { "locale": "zh-CN", "native_name": "简体中文", "file": "README.zh-CN.md" },
+    { "locale": "zh-TW", "native_name": "繁體中文", "file": "README.zh-TW.md" },
+    { "locale": "ja-JP", "native_name": "日本語", "file": "README.ja-JP.md" },
+    { "locale": "ko-KR", "native_name": "한국어", "file": "README.ko-KR.md" },
+    { "locale": "de-DE", "native_name": "Deutsch", "file": "README.de-DE.md" },
+    { "locale": "fr-FR", "native_name": "Français", "file": "README.fr-FR.md" },
+    { "locale": "es-ES", "native_name": "Español", "file": "README.es-ES.md" },
+    { "locale": "pt-BR", "native_name": "Português do Brasil", "file": "README.pt-BR.md" },
+    { "locale": "ru-RU", "native_name": "Русский", "file": "README.ru-RU.md" }
+  ]
+}
