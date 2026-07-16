@@ -1,10 +1,32 @@
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#else
+#error("FlowersecInteropHarness requires a POSIX platform")
+#endif
 import Flowersec
 import Foundation
 import NIOCore
 @preconcurrency import NIOHTTP1
 import NIOPosix
 @preconcurrency import NIOWebSocket
+
+private func terminateProcess(_ status: Int32) -> Never {
+  #if canImport(Darwin)
+  Darwin.exit(status)
+  #else
+  Glibc.exit(status)
+  #endif
+}
+
+private func closeFileDescriptor(_ descriptor: Int32) -> Int32 {
+  #if canImport(Darwin)
+  Darwin.close(descriptor)
+  #else
+  Glibc.close(descriptor)
+  #endif
+}
 
 private let protocolVersion = 1
 private let saturationGateKind = "interop-rpc-saturation-gate"
@@ -301,7 +323,7 @@ private enum FlowersecInteropHarness {
       } catch let emitError {
         FileHandle.standardError.write(Data("failed to emit Swift fatal: \(emitError)\n".utf8))
       }
-      Darwin.exit(1)
+      terminateProcess(1)
     }
   }
 }
@@ -966,7 +988,7 @@ private func serve(_ command: Command) async throws {
       }
       return first
     case .serviceFinished:
-      _ = Darwin.close(STDIN_FILENO)
+      _ = closeFileDescriptor(STDIN_FILENO)
       await session.close()
     }
     group.cancelAll()
