@@ -35,6 +35,9 @@ jobs:
         with:
           components: clippy,rustfmt,llvm-tools-preview
 
+      - name: Install stable Rust for semver checks
+        run: rustup toolchain install stable --profile minimal
+
       - name: Setup Rust nightly for fuzzing
         uses: dtolnay/rust-toolchain@nightly
 

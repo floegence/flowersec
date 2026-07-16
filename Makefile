@@ -176,7 +176,7 @@ rust-semver-check:
 	if [ -z "$$previous" ]; then \
 		echo "Rust semver check skipped: no previous flowersec-rust tag"; \
 	else \
-		cd flowersec-rust && cargo semver-checks check-release --manifest-path Cargo.toml --baseline-rev "$$previous"; \
+		cd flowersec-rust && cargo +stable semver-checks check-release --manifest-path Cargo.toml --baseline-rev "$$previous"; \
 	fi
 
 rust-check: rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-fuzz-build

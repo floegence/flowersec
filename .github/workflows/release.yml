@@ -40,6 +40,9 @@ jobs:
         with:
           components: clippy,rustfmt,llvm-tools-preview
 
+      - name: Install stable Rust for semver checks
+        run: rustup toolchain install stable --profile minimal
+
       - name: Install Rust quality tools
         uses: taiki-e/install-action@v2
         with:
