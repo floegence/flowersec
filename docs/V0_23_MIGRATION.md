@@ -31,7 +31,7 @@ The old non-Go pairwise and Yamux-only harnesses are removed. The supported exec
 
 This is not a reduction in language importance. Every non-Go SDK must pass both client and server directions. Shared IDL, fixtures, defaults, error registries, and protocol documents remain language-neutral sources of truth.
 
-CI runs the deterministic smoke profile. Before merging or tagging a release, run:
+The deterministic smoke and stress profiles are local gates rather than hosted CI jobs. Before merging or tagging a release, run:
 
 ```bash
 make interop-smoke
@@ -51,8 +51,8 @@ Each case runs in a fresh process. stdout is protocol-only and logs belong on st
 
 The v0.23 release uses three tags on one commit:
 
-- `flowersec-go/v0.23.0` for Go and TypeScript release automation
+- `flowersec-go/v0.23.0` for the unified Go, TypeScript, Rust, image, and GitHub Release automation
 - `0.23.0` for SwiftPM
-- `flowersec-rust/v0.23.0` for crates.io
+- `flowersec-rust/v0.23.0` for the crates.io source version
 
-Upgrade downstream dependencies only after all three tags and release workflows succeed.
+Create and push them together with `scripts/release.sh 0.23.0`. Only the Go tag starts the unified publication workflow; the other two tags do not repeat CI. Upgrade downstream dependencies only after all three tags and the unified publication workflow succeed.

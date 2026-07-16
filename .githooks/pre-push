@@ -1,0 +1,47 @@
+#!/bin/sh
+
+set -eu
+
+release_lines=$(mktemp)
+trap 'rm -f "$release_lines"' EXIT HUP INT TERM
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/tags/flowersec-go/v*|refs/tags/flowersec-rust/v*|refs/tags/[0-9]*.[0-9]*.[0-9]*)
+      printf '%s %s\n' "$remote_ref" "$local_sha" >> "$release_lines"
+      ;;
+  esac
+done
+
+if [ ! -s "$release_lines" ]; then
+  exit 0
+fi
+
+if [ -z "${FLOWERSEC_RELEASE_GATE_COMMIT:-}" ]; then
+  printf '%s\n' '[flowersec] release tags must be pushed with scripts/release.sh after the local release gate passes.' >&2
+  exit 1
+fi
+
+version=${FLOWERSEC_RELEASE_VERSION:-}
+if [ -z "$version" ]; then
+  printf '%s\n' '[flowersec] missing release version from scripts/release.sh.' >&2
+  exit 1
+fi
+
+expected_refs="refs/tags/flowersec-go/v$version
+refs/tags/$version
+refs/tags/flowersec-rust/v$version"
+
+actual_refs=$(cut -d ' ' -f 1 "$release_lines" | sort)
+expected_refs_sorted=$(printf '%s\n' "$expected_refs" | sort)
+if [ "$actual_refs" != "$expected_refs_sorted" ]; then
+  printf '%s\n' '[flowersec] Go, SwiftPM, and Rust release tags must be pushed together.' >&2
+  exit 1
+fi
+
+if awk -v expected="$FLOWERSEC_RELEASE_GATE_COMMIT" '$2 != expected { exit 1 }' "$release_lines"; then
+  exit 0
+fi
+
+printf '%s\n' '[flowersec] every release tag must point to the locally verified commit.' >&2
+exit 1

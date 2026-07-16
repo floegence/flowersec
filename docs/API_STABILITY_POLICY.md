@@ -102,7 +102,7 @@ The stable Swift surface is the `Flowersec` product and its symbol graph recorde
 
 ### Rust
 
-The stable Rust surface is the `flowersec` crate with MSRV 1.85. Public entrypoints are compile-probed, release tags run `cargo-semver-checks` against the previous Rust release, and Flowersec-authored Rust code forbids `unsafe`. Browser WASM and deployable service binaries are not part of the Rust v0.23 target.
+The stable Rust surface is the `flowersec` crate with MSRV 1.85. Public entrypoints are compile-probed, the local `make release-check` gate runs `cargo-semver-checks` against the previous Rust release before tags are created, and Flowersec-authored Rust code forbids `unsafe`. Browser WASM and deployable service binaries are not part of the Rust v0.23 target.
 
 ### Scoped metadata and proxy runtime
 

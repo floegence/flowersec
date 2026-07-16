@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench check stability-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench check stability-check go-cover-check compat-check nightly-check
 
 INTEROP_CELLS ?= go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust
 INTEROP_REPORT_DIR ?= $(or $(TMPDIR),/tmp)
@@ -188,6 +188,10 @@ rust-check: rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-p
 
 rust-release-check: rust-check rust-audit rust-deny rust-cover-check rust-semver-check
 
+release-check:
+	$(MAKE) check
+	$(MAKE) interop-stress
+
 example-install-check:
 	cargo check --manifest-path examples/rust-client/Cargo.toml
 	swift build --package-path examples/swift-client
@@ -224,6 +228,9 @@ lint-check: fmt-check go-vet ts-lint
 install-hooks:
 	./scripts/install-git-hooks.sh
 
+release-policy-check:
+	./scripts/check-release-workflow-policy.sh
+
 precommit-go:
 	$(MAKE) fmt-check
 	$(MAKE) go-vet
@@ -245,6 +252,7 @@ precommit-rust:
 	$(MAKE) rust-check
 
 precommit:
+	$(MAKE) release-policy-check
 	$(MAKE) gen-check
 	$(MAKE) stability-check
 	$(MAKE) precommit-go

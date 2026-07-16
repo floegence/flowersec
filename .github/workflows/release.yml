@@ -14,81 +14,26 @@ permissions:
   id-token: write
 
 jobs:
-  check:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: flowersec-go/go.mod
-          cache: true
-          cache-dependency-path: |
-            flowersec-go/go.sum
-            examples/go.sum
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: flowersec-ts/package-lock.json
-
-      - name: Setup Rust stable for release tooling
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Rust MSRV
-        uses: dtolnay/rust-toolchain@1.85.0
-        with:
-          components: clippy,rustfmt,llvm-tools-preview
-
-      - name: Install stable Rust for semver checks
-        run: rustup toolchain install stable --profile minimal
-
-      - name: Install Rust quality tools
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit,cargo-deny,cargo-llvm-cov,cargo-semver-checks
-
-      - name: Run checks
-        run: make check CHECK_INTEROP=0
-
-      - name: Run Go-reference Linux interop smoke
-        timeout-minutes: 5
-        run: make interop-smoke-linux
-
-  swift-check:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: flowersec-go/go.mod
-          cache: true
-          cache-dependency-path: |
-            flowersec-go/go.sum
-            examples/go.sum
-
-      - name: Setup Rust MSRV
-        uses: dtolnay/rust-toolchain@1.85.0
-
-      - name: Run Swift package checks
+      - name: Resolve release version
+        id: version
         run: |
           set -euo pipefail
-          make stability-check
-          make swift-check
+          VERSION="${GITHUB_REF_NAME#flowersec-go/v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Run Go-reference Swift interop smoke
-        timeout-minutes: 5
-        run: make interop-smoke-swift
+  rust-publish:
+    needs: prepare
+    uses: ./.github/workflows/rust-release.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
 
   release:
-    needs:
-      - check
-      - swift-check
+    needs: prepare
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

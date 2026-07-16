@@ -1,9 +1,12 @@
-name: rust-release
+name: rust-release-recovery
 
 on:
-  push:
-    tags:
-      - "flowersec-rust/v*"
+  workflow_call:
+    inputs:
+      version:
+        description: "Rust crate version to publish"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       version:
@@ -26,87 +29,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: flowersec-go/go.mod
-          cache: true
-          cache-dependency-path: |
-            flowersec-go/go.sum
-            examples/go.sum
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: flowersec-ts/package-lock.json
-
-      - name: Setup Rust stable for release tooling
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Rust MSRV
-        uses: dtolnay/rust-toolchain@1.85.0
-        with:
-          components: clippy,rustfmt,llvm-tools-preview
-
-      - name: Install stable Rust for semver checks
-        run: rustup toolchain install stable --profile minimal
-
-      - name: Install Rust quality tools
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit,cargo-deny,cargo-llvm-cov,cargo-semver-checks
-
-      - name: Validate tag and crate version
+      - name: Checkout release commit
         id: version
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ inputs.version }}"
-            git fetch --force origin "refs/tags/flowersec-rust/v${VERSION}:refs/tags/flowersec-rust/v${VERSION}"
-            git checkout --detach "refs/tags/flowersec-rust/v${VERSION}"
-          else
-            VERSION="${GITHUB_REF_NAME#flowersec-rust/v}"
-          fi
+          VERSION="${{ inputs.version }}"
+          git fetch --force origin "refs/tags/flowersec-rust/v${VERSION}:refs/tags/flowersec-rust/v${VERSION}"
+          git checkout --detach "refs/tags/flowersec-rust/v${VERSION}"
           CRATE_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' flowersec-rust/Cargo.toml | head -1)"
           if [[ "$VERSION" != "$CRATE_VERSION" ]]; then
-            echo "Tag version $VERSION must match crate version $CRATE_VERSION"
+            echo "Tag version $VERSION must match crate version $CRATE_VERSION" >&2
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify all language tags point to this commit
+      - name: Verify release tags
         run: scripts/verify-release-tags.sh "${{ steps.version.outputs.version }}" "$(git rev-parse HEAD)"
-
-      - name: Run Rust release gate
-        run: make rust-release-check
-
-      - name: Run Go-reference Linux interop smoke
-        timeout-minutes: 5
-        run: make interop-smoke-linux
-
-      - name: Verify package and downstream install
-        run: |
-          set -euo pipefail
-          cd flowersec-rust
-          cargo publish --dry-run
-          cargo package
-          mkdir -p "${RUNNER_TEMP}/flowersec-package" "${RUNNER_TEMP}/flowersec-consumer/src"
-          tar -xzf "target/package/flowersec-${{ steps.version.outputs.version }}.crate" \
-            -C "${RUNNER_TEMP}/flowersec-package"
-          cat > "${RUNNER_TEMP}/flowersec-consumer/Cargo.toml" <<EOF
-          [package]
-          name = "flowersec-install-check"
-          version = "0.0.0"
-          edition = "2024"
-
-          [dependencies]
-          flowersec = { path = "${RUNNER_TEMP}/flowersec-package/flowersec-${{ steps.version.outputs.version }}" }
-          EOF
-          echo 'fn main() { let _ = flowersec::connect; }' \
-            > "${RUNNER_TEMP}/flowersec-consumer/src/main.rs"
-          cargo check --manifest-path "${RUNNER_TEMP}/flowersec-consumer/Cargo.toml"
 
       - name: Check whether version is already published
         id: published
@@ -114,7 +52,7 @@ jobs:
           set -euo pipefail
           URL="https://crates.io/api/v1/crates/flowersec/${{ steps.version.outputs.version }}"
           STATUS="$(curl --silent --show-error --location \
-            --user-agent "flowersec-release/${{ steps.version.outputs.version }} (https://github.com/floegence/flowersec)" \
+            --user-agent "flowersec-release-recovery/${{ steps.version.outputs.version }} (https://github.com/floegence/flowersec)" \
             --output /dev/null --write-out '%{http_code}' "$URL")"
           case "$STATUS" in
             200) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
@@ -122,7 +60,11 @@ jobs:
             *) echo "Unexpected crates.io response status: $STATUS" >&2; exit 1 ;;
           esac
 
-      - name: Authenticate to crates.io with OIDC
+      - name: Setup Rust
+        if: steps.published.outputs.exists != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Authenticate to crates.io
         if: steps.published.outputs.exists != 'true'
         id: auth
         uses: rust-lang/crates-io-auth-action@v1
@@ -132,4 +74,4 @@ jobs:
         working-directory: flowersec-rust
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish
+        run: cargo publish --no-verify

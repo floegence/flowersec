@@ -22,6 +22,9 @@
 - Do not combine `merge origin/main` inside the feature branch with `--no-ff` merges back into `main`; that combination is the main reason local multi-worktree graphs become noisy.
 - Resolve conflicts only inside the feature worktree, never on `main`.
 - Do not merge feature branches into each other.
+- Do not create routine `backup/*` branches. If recovery is needed, abort the
+  rebase, inspect the feature worktree, and create an explicit recovery branch
+  only with user approval and a real collaboration purpose.
 - Every new worktree must run `make install-hooks` before development starts.
 
 Recommended template:
@@ -46,8 +49,6 @@ git status
 # working tree must be clean before rebasing
 
 git fetch origin
-STAMP=$(date +%Y%m%d-%H%M%S)
-git branch "backup/$BR-$STAMP"
 git rebase origin/main
 
 # if conflicts happen:
@@ -61,7 +62,6 @@ git rebase origin/main
 After every rebase, do all of the following before you continue:
 
 ```bash
-git range-diff "backup/$BR-$STAMP"...HEAD
 git diff origin/main...HEAD
 make check
 ```
@@ -146,9 +146,10 @@ git config --global merge.conflictstyle zdiff3
   - If they must live inside the repository during development, keep them under paths covered by `.gitignore`, and make sure `git status` is clean before merging.
 - Delete temporary working docs after the feature is merged so they do not accumulate as misleading historical drafts.
 
-## 3. Local quality gate (required, CI-aligned)
+## 3. Local quality gate (required)
 
-- CI is the source of truth. Locally, at minimum, run `make check` from the repository root before merge.
+- Local gates are the source of truth. Run `make check` from the repository root before merge.
+- GitHub Actions deliberately does not repeat the full language, coverage, race, vulnerability, interoperability, or Swift matrix. The push/PR workflow is limited to changed-line and shell-syntax checks so hosted runner time is reserved for actual publication work.
 - Every development worktree must run `make install-hooks` once after it is created.
 - The `pre-commit` hook automatically runs `make precommit` and blocks the commit on failure.
 - `make precommit` covers the fast high-value local gate:
@@ -156,11 +157,14 @@ git config --global merge.conflictstyle zdiff3
   - stability manifest, API docs, and Go API guard: `stability-check`
   - Go: `fmt-check`, `go vet`, `go test`, and `go-cover-check`
   - TypeScript: auto `npm ci --audit=false` when dependencies are missing or incomplete, then `lint`, `build`, `test`, `ts-cover-check`, and `verify:package`
+  - Swift: package description, source guard, build, and tests
+  - Rust: formatting, clippy, tests, docs, MSRV, package, and fuzz-target build checks
 - `pre-commit` does not replace the pre-merge gate: run `make check` explicitly before integration.
 - `make check` covers:
   - Go: fmt, lint, test, race, and vulncheck
   - TypeScript: `npm ci`, lint, test, build, and audit
   - IDL codegen consistency: `gen-check`
+  - Swift and Rust release checks, coverage, package validation, examples, and interoperability smoke
 
 ## 4. Release / tag policy
 
@@ -169,10 +173,15 @@ git config --global merge.conflictstyle zdiff3
   - The root `Package.swift` must describe a buildable Swift package at that tag.
   - Downstream Swift packages should prefer version ranges such as `.package(url: "https://github.com/floegence/flowersec.git", from: "0.19.15")`.
   - Use `.exact(...)`, `.revision(...)`, or local path dependencies only for temporary integration work, not for a completed downstream upgrade.
+- Rust SDK releases use `flowersec-rust/v<version>`.
+- Run releases only through `scripts/release.sh <version>` from a clean, synchronized `main` worktree. The script runs `make release-check` once, creates the Go, SwiftPM, and Rust tags on the verified commit, and pushes `main` plus all three tags atomically.
+- The pre-push hook rejects release-tag pushes that bypass the release script or do not carry all three matching tags for the same verified commit.
+- Only `flowersec-go/v*` triggers the unified publication workflow. The SwiftPM and Rust tags are ecosystem source tags and must not trigger duplicate test or publication workflows. The Rust workflow is a reusable publication job called by the unified workflow and also provides a manual recovery entrypoint.
+- Hosted release jobs may build and publish artifacts, images, npm packages, crates, and release notes. They must not repeat `make check`, coverage, race, fuzz, interoperability, or Swift test gates that already passed locally.
 - When a downstream repository needs a new capability, use an upstream-first flow:
   - implement and validate the change in this repository first
   - merge it into `main`
-  - create and push the release tag
+  - run `scripts/release.sh <version>` to create and atomically push all release tags
   - confirm the release is published successfully
   - only then upgrade the downstream dependency
 - GitHub Release notes must include a human-readable summary of what the release contains. Do not publish a release with only a tag, assets, and an empty default body.
