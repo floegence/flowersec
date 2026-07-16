@@ -3,6 +3,8 @@ import type { FlowersecError } from "../utils/errors.js";
 import {
   AllowPlaintext,
   AllowPlaintextForLoopback,
+  createNetworkPlaintextPolicy,
+  PlaintextRiskAcceptance,
   RequireTLS,
   enforceTransportSecurity,
 } from "./transportSecurity.js";
@@ -62,5 +64,32 @@ describe("transport security policy", () => {
       path: "tunnel",
     }));
     expect(policy).not.toHaveBeenCalled();
+  });
+
+  test("network plaintext policy allows only explicit canonical IP hosts", async () => {
+    const policy = createNetworkPlaintextPolicy({
+      allowedHosts: ["192.168.1.20", "2001:db8::20"],
+      riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure,
+    });
+    await expect(enforceTransportSecurity({ rawUrl: "wss://service.example/ws", path: "direct", policy })).resolves.toBeUndefined();
+    await expect(enforceTransportSecurity({ rawUrl: "ws://192.168.1.20/ws", path: "direct", policy })).resolves.toBeUndefined();
+    await expect(enforceTransportSecurity({ rawUrl: "ws://[2001:db8::20]/ws", path: "direct", policy })).resolves.toBeUndefined();
+    await expect(enforceTransportSecurity({ rawUrl: "ws://192.168.1.21/ws", path: "direct", policy })).rejects.toMatchObject({ code: "transport_policy_denied" });
+    await expect(enforceTransportSecurity({ rawUrl: "ws://127.0.0.1/ws", path: "direct", policy })).rejects.toMatchObject({ code: "transport_policy_denied" });
+  });
+
+  test.each([
+    { allowedHosts: ["192.168.1.20"], riskAcceptance: "" },
+    { allowedHosts: [], riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure },
+    { allowedHosts: ["localhost"], riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure },
+    { allowedHosts: ["127.0.0.1"], riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure },
+    { allowedHosts: ["0.0.0.0"], riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure },
+    { allowedHosts: ["example.com"], riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure },
+    { allowedHosts: ["192.168.001.20"], riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure },
+    { allowedHosts: ["[2001:db8::20]"], riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure },
+    { allowedHosts: ["fe80::1"], riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure },
+    { allowedHosts: ["::ffff:c0a8:114"], riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure },
+  ])("rejects unsafe network plaintext options: $allowedHosts", (options) => {
+    expect(() => createNetworkPlaintextPolicy(options as never)).toThrow();
   });
 });

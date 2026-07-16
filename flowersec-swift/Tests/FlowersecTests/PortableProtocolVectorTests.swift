@@ -14,6 +14,12 @@ final class PortableProtocolVectorTests: XCTestCase {
       case "require_tls": policy = .requireTLS
       case "allow_plaintext_for_loopback": policy = .allowPlaintextForLoopback
       case "allow_plaintext": policy = .allowPlaintext
+      case "network_plaintext":
+        XCTAssertEqual(item.riskAcceptance, PlaintextRiskAcceptance.acceptPreE2ECredentialExposure.rawValue)
+        policy = try .networkPlaintext(options: .init(
+          allowedHosts: item.allowedHosts ?? [],
+          riskAcceptance: .acceptPreE2ECredentialExposure
+        ))
       default:
         XCTFail("Unknown transport policy: \(item.policy)")
         continue
@@ -134,7 +140,17 @@ private struct PortableVectors: Decodable {
 private struct TransportCase: Decodable {
   var url: String
   var policy: String
+  var allowedHosts: [String]?
+  var riskAcceptance: String?
   var allowed: Bool
+
+  enum CodingKeys: String, CodingKey {
+    case url
+    case policy
+    case allowedHosts = "allowed_hosts"
+    case riskAcceptance = "risk_acceptance"
+    case allowed
+  }
 }
 
 private struct YamuxHeaderVector: Decodable {

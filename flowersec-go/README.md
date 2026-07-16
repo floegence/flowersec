@@ -62,7 +62,9 @@ For a full integration walkthrough, see `docs/INTEGRATION_GUIDE.md` in the repos
 
 High-level WebSocket connects accept an explicit transport security policy. Use `client.RequireTLS`
 or `endpoint.RequireTLS` for remote deployments, and `AllowPlaintextForLoopback` only for literal
-local development targets. Omitting a policy preserves v0.19 compatibility with a plaintext diagnostic.
+local development targets. Deliberate non-loopback plaintext must use `NewNetworkPlaintextPolicy`
+with exact canonical IP literals and `PlaintextRiskAcceptPreE2ECredentialExposure`. The unrestricted
+`AllowPlaintext` policy is deprecated. Omitting a policy preserves v0.19 compatibility with a plaintext diagnostic.
 
 For tunnel deployment details (Docker examples, operational notes), see `docs/TUNNEL_DEPLOYMENT.md` in the repository root.
 

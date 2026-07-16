@@ -121,6 +121,53 @@ func TestTransportSecurityMissingPolicyDoesNotEmitPlaintextDiagnostic(t *testing
 	}
 }
 
+func TestNetworkPlaintextPolicy(t *testing.T) {
+	policy, err := NewNetworkPlaintextPolicy(NetworkPlaintextPolicyOptions{
+		AllowedHosts:   []string{"192.168.1.20", "2001:db8::20"},
+		RiskAcceptance: PlaintextRiskAcceptPreE2ECredentialExposure,
+	})
+	if err != nil {
+		t.Fatalf("NewNetworkPlaintextPolicy() error = %v", err)
+	}
+	for _, tc := range []struct {
+		url     string
+		allowed bool
+	}{
+		{url: "wss://service.example/ws", allowed: true},
+		{url: "ws://192.168.1.20/ws", allowed: true},
+		{url: "ws://[2001:db8::20]/ws", allowed: true},
+		{url: "ws://192.168.1.21/ws", allowed: false},
+		{url: "ws://127.0.0.1/ws", allowed: false},
+	} {
+		err := evaluateTransportSecurity(context.Background(), tc.url, fserrors.PathDirect, policy, observability.NoopClientObserver)
+		if tc.allowed && err != nil {
+			t.Fatalf("evaluateTransportSecurity(%q) error = %v", tc.url, err)
+		}
+		if !tc.allowed && err == nil {
+			t.Fatalf("evaluateTransportSecurity(%q) error = nil", tc.url)
+		}
+	}
+}
+
+func TestNetworkPlaintextPolicyRejectsUnsafeOptions(t *testing.T) {
+	for _, tc := range []NetworkPlaintextPolicyOptions{
+		{AllowedHosts: []string{"192.168.1.20"}},
+		{RiskAcceptance: PlaintextRiskAcceptPreE2ECredentialExposure},
+		{AllowedHosts: []string{"localhost"}, RiskAcceptance: PlaintextRiskAcceptPreE2ECredentialExposure},
+		{AllowedHosts: []string{"127.0.0.1"}, RiskAcceptance: PlaintextRiskAcceptPreE2ECredentialExposure},
+		{AllowedHosts: []string{"0.0.0.0"}, RiskAcceptance: PlaintextRiskAcceptPreE2ECredentialExposure},
+		{AllowedHosts: []string{"example.com"}, RiskAcceptance: PlaintextRiskAcceptPreE2ECredentialExposure},
+		{AllowedHosts: []string{"192.168.001.20"}, RiskAcceptance: PlaintextRiskAcceptPreE2ECredentialExposure},
+		{AllowedHosts: []string{"[2001:db8::20]"}, RiskAcceptance: PlaintextRiskAcceptPreE2ECredentialExposure},
+		{AllowedHosts: []string{"fe80::1"}, RiskAcceptance: PlaintextRiskAcceptPreE2ECredentialExposure},
+		{AllowedHosts: []string{"::ffff:192.168.1.20"}, RiskAcceptance: PlaintextRiskAcceptPreE2ECredentialExposure},
+	} {
+		if _, err := NewNetworkPlaintextPolicy(tc); err == nil {
+			t.Fatalf("NewNetworkPlaintextPolicy(%#v) error = nil", tc)
+		}
+	}
+}
+
 type transportDiagnosticObserver struct {
 	events chan observability.DiagnosticEvent
 }

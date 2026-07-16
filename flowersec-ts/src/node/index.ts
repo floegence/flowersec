@@ -2,12 +2,15 @@ export { createNodeWsFactory } from "./wsFactory.js";
 export {
   AllowPlaintext,
   AllowPlaintextForLoopback,
+  createNetworkPlaintextPolicy,
+  PlaintextRiskAcceptance,
   RequireTLS,
 } from "../client-connect/transportSecurity.js";
 export type {
   TransportSecurityPolicy,
   TransportSecurityPolicyInput,
   TransportSecurityPolicyPreset,
+  NetworkPlaintextPolicyOptions,
 } from "../client-connect/transportSecurity.js";
 export { connectDirectNode, connectNode, connectTunnelNode } from "./connect.js";
 export type {

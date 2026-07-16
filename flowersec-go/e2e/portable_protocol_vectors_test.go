@@ -29,9 +29,11 @@ type portableProtocolVectors struct {
 }
 
 type transportCase struct {
-	URL     string `json:"url"`
-	Policy  string `json:"policy"`
-	Allowed bool   `json:"allowed"`
+	URL            string   `json:"url"`
+	Policy         string   `json:"policy"`
+	AllowedHosts   []string `json:"allowed_hosts"`
+	RiskAcceptance string   `json:"risk_acceptance"`
+	Allowed        bool     `json:"allowed"`
 }
 
 type yamuxHeader struct {
@@ -64,12 +66,24 @@ func TestPortableProtocolVectors(t *testing.T) {
 	}
 
 	for _, test := range vectors.TransportPolicy {
-		policy := transportsecurity.RequireTLS
+		var policy transportsecurity.Policy = transportsecurity.RequireTLS
 		switch test.Policy {
 		case "allow_plaintext_for_loopback":
 			policy = transportsecurity.AllowPlaintextForLoopback
 		case "allow_plaintext":
 			policy = transportsecurity.AllowPlaintext
+		case "network_plaintext":
+			if test.RiskAcceptance != string(transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure) {
+				t.Fatalf("invalid network plaintext risk acceptance %q", test.RiskAcceptance)
+			}
+			var err error
+			policy, err = transportsecurity.NewNetworkPlaintextPolicy(transportsecurity.NetworkPlaintextPolicyOptions{
+				AllowedHosts:   test.AllowedHosts,
+				RiskAcceptance: transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure,
+			})
+			if err != nil {
+				t.Fatalf("network plaintext policy: %v", err)
+			}
 		case "require_tls":
 		default:
 			t.Fatalf("unknown transport policy %q", test.Policy)

@@ -65,6 +65,56 @@ final class TransportSecurityTests: XCTestCase {
     await fulfillment(of: [called], timeout: 1)
   }
 
+  func testNetworkPlaintextPolicyAllowsOnlyExplicitCanonicalIPHosts() async throws {
+    let policy = try TransportSecurityPolicy.networkPlaintext(options: .init(
+      allowedHosts: ["192.168.1.20", "2001:db8::20"],
+      riskAcceptance: .acceptPreE2ECredentialExposure
+    ))
+    let allowed = [
+      "wss://service.example/ws",
+      "ws://192.168.1.20/ws",
+      "ws://[2001:db8::20]/ws",
+    ]
+    for raw in allowed {
+      var options = ConnectOptions()
+      options.transportSecurityPolicy = policy
+      try await FlowersecTransportSecurity.enforce(url: try XCTUnwrap(URL(string: raw)), path: .direct, options: options)
+    }
+    for raw in ["ws://192.168.1.21/ws", "ws://127.0.0.1/ws"] {
+      var options = ConnectOptions()
+      options.transportSecurityPolicy = policy
+      do {
+        try await FlowersecTransportSecurity.enforce(url: try XCTUnwrap(URL(string: raw)), path: .direct, options: options)
+        XCTFail("Expected network plaintext policy denial for \(raw)")
+      } catch let error as FlowersecError {
+        XCTAssertEqual(error.code, .transportPolicyDenied)
+      }
+    }
+  }
+
+  func testNetworkPlaintextPolicyRejectsUnsafeOptions() throws {
+    let unsafeHosts = [
+      "localhost",
+      "127.0.0.1",
+      "0.0.0.0",
+      "example.com",
+      "192.168.001.20",
+      "[2001:db8::20]",
+      "fe80::1",
+      "::ffff:c0a8:114",
+    ]
+    XCTAssertThrowsError(try TransportSecurityPolicy.networkPlaintext(options: .init(
+      allowedHosts: [],
+      riskAcceptance: .acceptPreE2ECredentialExposure
+    )))
+    for host in unsafeHosts {
+      XCTAssertThrowsError(try TransportSecurityPolicy.networkPlaintext(options: .init(
+        allowedHosts: [host],
+        riskAcceptance: .acceptPreE2ECredentialExposure
+      )))
+    }
+  }
+
   func testDefaultPolicyRejectsPlaintextWithoutDiagnostic() async throws {
     let emitted = expectation(description: "plaintext diagnostic")
     emitted.isInverted = true

@@ -60,7 +60,9 @@ const reconnectConfig = createNodeReconnectConfig({
 Browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain available from `@floegence/flowersec-core/browser` as stable aliases.
 
 High-level connects use `RequireTLS` by default. `AllowPlaintextForLoopback` permits only literal loopback
-targets without DNS resolution; `AllowPlaintext` is an explicit acceptance of pre-E2EE metadata exposure.
+targets without DNS resolution. Deliberate non-loopback `ws://` connections must use
+`createNetworkPlaintextPolicy(...)` with exact canonical IP literals and
+`PlaintextRiskAcceptance.acceptPreE2ECredentialExposure`. The unrestricted `AllowPlaintext` preset is deprecated.
 
 ## Node endpoint and controlplane
 

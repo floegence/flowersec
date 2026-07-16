@@ -27,7 +27,7 @@ let artifact = request_connect_artifact(request).await?;
 let client = connect(artifact, ConnectOptions::default()).await?;
 ```
 
-`connect_direct(...)` and `connect_tunnel(...)` accept the corresponding generated wire value directly. High-level connections reject plaintext by default; local `ws://` development requires `TransportSecurityPolicy::allow_plaintext_for_loopback()`.
+`connect_direct(...)` and `connect_tunnel(...)` accept the corresponding generated wire value directly. High-level connections reject plaintext by default; local `ws://` development requires `TransportSecurityPolicy::allow_plaintext_for_loopback()`. Deliberate non-loopback plaintext requires `TransportSecurityPolicy::network_plaintext(...)` with exact canonical IP literals and `PlaintextRiskAcceptance::AcceptPreE2ECredentialExposure`.
 
 ## RPC and streams
 

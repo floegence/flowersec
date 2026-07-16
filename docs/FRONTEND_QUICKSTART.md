@@ -142,7 +142,7 @@ Common tunnel gotcha:
 
 - `token_replay` means the one-time tunnel token was reused; fetch a fresh artifact or grant before reconnecting
 
-High-level connects require TLS by default. For local `ws://` development, pass `AllowPlaintextForLoopback` explicitly. Use `client.probeLiveness()` when you need an acknowledged round trip; `client.ping()` only confirms that the encrypted ping record was accepted locally for sending.
+High-level connects require TLS by default. For local `ws://` development, pass `AllowPlaintextForLoopback` explicitly. For a deliberate non-loopback IP deployment, construct `createNetworkPlaintextPolicy(...)` with exact canonical IP hosts and `PlaintextRiskAcceptance.acceptPreE2ECredentialExposure`. Use `client.probeLiveness()` when you need an acknowledged round trip; `client.ping()` only confirms that the encrypted ping record was accepted locally for sending.
 
 ## Next steps
 

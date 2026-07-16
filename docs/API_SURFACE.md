@@ -41,6 +41,10 @@ Recommended integration entrypoints:
   - `client.Client.ProbeLiveness(...)`
   - `client.RequireTLS`
   - `client.AllowPlaintextForLoopback`
+  - `client.NewNetworkPlaintextPolicy(...)`
+  - `client.NetworkPlaintextPolicyOptions`
+  - `client.PlaintextRiskAcceptance`
+  - `client.PlaintextRiskAcceptPreE2ECredentialExposure`
   - `client.AllowPlaintext`
 - `github.com/floegence/flowersec/flowersec-go/endpoint`
   - `endpoint.ConnectTunnel(...)`
@@ -64,11 +68,19 @@ Recommended integration entrypoints:
   - `endpoint.LivenessOptions`
   - `endpoint.YamuxLimits`
   - `endpoint.Session.ProbeLiveness(...)`
+  - `endpoint.NewNetworkPlaintextPolicy(...)`
+  - `endpoint.NetworkPlaintextPolicyOptions`
+  - `endpoint.PlaintextRiskAcceptance`
+  - `endpoint.PlaintextRiskAcceptPreE2ECredentialExposure`
 - `github.com/floegence/flowersec/flowersec-go/transportsecurity`
   - `transportsecurity.Policy`
   - `transportsecurity.Input`
   - `transportsecurity.RequireTLS(...)`
   - `transportsecurity.AllowPlaintextForLoopback(...)`
+  - `transportsecurity.NewNetworkPlaintextPolicy(...)`
+  - `transportsecurity.NetworkPlaintextPolicyOptions`
+  - `transportsecurity.PlaintextRiskAcceptance`
+  - `transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure`
   - `transportsecurity.AllowPlaintext(...)`
 - `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
   - `serve.New(...)`
@@ -196,6 +208,9 @@ Stable entrypoints:
   - `assertConnectArtifact(...)`
   - `RequireTLS`
   - `AllowPlaintextForLoopback`
+  - `createNetworkPlaintextPolicy(...)`
+  - `NetworkPlaintextPolicyOptions`
+  - `PlaintextRiskAcceptance`
   - `AllowPlaintext`
   - `TransportSecurityPolicy`
   - `LivenessOptions`
@@ -219,6 +234,9 @@ Stable entrypoints:
   - `assertConnectArtifact(...)`
   - `RequireTLS`
   - `AllowPlaintextForLoopback`
+  - `createNetworkPlaintextPolicy(...)`
+  - `NetworkPlaintextPolicyOptions`
+  - `PlaintextRiskAcceptance`
   - `AllowPlaintext`
 - `@floegence/flowersec-core/browser`
   - `connectBrowser(...)`
@@ -241,6 +259,9 @@ Stable entrypoints:
   - `createDirectBrowserReconnectConfig(...)`
   - `RequireTLS`
   - `AllowPlaintextForLoopback`
+  - `createNetworkPlaintextPolicy(...)`
+  - `NetworkPlaintextPolicyOptions`
+  - `PlaintextRiskAcceptance`
   - `AllowPlaintext`
 - `@floegence/flowersec-core/controlplane`
   - `requestConnectArtifact(...)`
@@ -353,6 +374,9 @@ Stable connection and session entrypoints:
 - `TunnelConnectOptions`
 - `TransportSecurityPolicy`
 - `TransportSecurityPolicyInput`
+- `TransportSecurityPolicy.networkPlaintext(options:)`
+- `NetworkPlaintextPolicyOptions`
+- `PlaintextRiskAcceptance`
 - `TransportSecurityDiagnostic`
 - `TransportRuntime`
 - `DiagnosticEvent`
@@ -360,6 +384,9 @@ Stable connection and session entrypoints:
 - `DiagnosticResult`
 - `LivenessOptions`
 - `YamuxLimits`
+
+Rust exposes the matching `TransportSecurityPolicy::network_plaintext(...)`,
+`NetworkPlaintextPolicyOptions`, and `PlaintextRiskAcceptance` APIs.
 
 Stable RPC and stream building blocks:
 

@@ -29,9 +29,9 @@ function run(cmd, args, cwd, input) {
 function packTarball() {
   fs.mkdirSync(packDir, { recursive: true });
   try {
-    return run('npm', ['pack', '--silent', '--pack-destination', packDir], pkgRoot).trim();
+    return run('npm', ['pack', '--silent', '--ignore-scripts', '--pack-destination', packDir], pkgRoot).trim();
   } catch {
-    const name = run('npm', ['pack', '--silent'], pkgRoot).trim();
+    const name = run('npm', ['pack', '--silent', '--ignore-scripts'], pkgRoot).trim();
     fs.renameSync(path.join(pkgRoot, name), path.join(packDir, name));
     return name;
   }

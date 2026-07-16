@@ -4,7 +4,9 @@ use flowersec::{
     generated::flowersec::rpc::v1::RpcEnvelope,
     observability::DiagnosticEvent,
     proxy::{HttpRequestMeta, WebSocketOpenMeta},
-    transport_security::TransportSecurityPolicy,
+    transport_security::{
+        NetworkPlaintextPolicyOptions, PlaintextRiskAcceptance, TransportSecurityPolicy,
+    },
 };
 use serde::Deserialize;
 use std::{fs, path::PathBuf};
@@ -26,6 +28,9 @@ struct PortableVectors {
 struct TransportCase {
     url: String,
     policy: String,
+    #[serde(default)]
+    allowed_hosts: Vec<String>,
+    risk_acceptance: Option<String>,
     allowed: bool,
 }
 
@@ -56,12 +61,24 @@ async fn shared_portable_protocol_vectors_match_rust_contracts() {
     assert_eq!(vectors.version, 1);
 
     for test in vectors.transport_policy {
+        #[allow(deprecated)]
         let policy = match test.policy.as_str() {
             "require_tls" => TransportSecurityPolicy::require_tls(),
             "allow_plaintext_for_loopback" => {
                 TransportSecurityPolicy::allow_plaintext_for_loopback()
             }
             "allow_plaintext" => TransportSecurityPolicy::allow_plaintext(),
+            "network_plaintext" => {
+                assert_eq!(
+                    test.risk_acceptance.as_deref(),
+                    Some("accept_pre_e2ee_credential_exposure")
+                );
+                TransportSecurityPolicy::network_plaintext(NetworkPlaintextPolicyOptions {
+                    allowed_hosts: test.allowed_hosts.clone(),
+                    risk_acceptance: PlaintextRiskAcceptance::AcceptPreE2ECredentialExposure,
+                })
+                .expect("network plaintext policy")
+            }
             value => panic!("unknown transport policy {value}"),
         };
         let result = policy

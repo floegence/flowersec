@@ -25,6 +25,27 @@
       "url": "ws://relay.example/ws",
       "policy": "allow_plaintext_for_loopback",
       "allowed": false
+    },
+    {
+      "url": "ws://192.168.50.20/ws",
+      "policy": "network_plaintext",
+      "allowed_hosts": ["192.168.50.20", "2001:db8::20"],
+      "risk_acceptance": "accept_pre_e2ee_credential_exposure",
+      "allowed": true
+    },
+    {
+      "url": "ws://192.168.50.21/ws",
+      "policy": "network_plaintext",
+      "allowed_hosts": ["192.168.50.20", "2001:db8::20"],
+      "risk_acceptance": "accept_pre_e2ee_credential_exposure",
+      "allowed": false
+    },
+    {
+      "url": "ws://[2001:db8::20]/ws",
+      "policy": "network_plaintext",
+      "allowed_hosts": ["192.168.50.20", "2001:db8::20"],
+      "risk_acceptance": "accept_pre_e2ee_credential_exposure",
+      "allowed": true
     }
   ],
   "yamux_header": {

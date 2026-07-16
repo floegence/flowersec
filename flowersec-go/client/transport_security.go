@@ -11,8 +11,11 @@ import (
 type TransportRuntime = transportsecurity.Runtime
 type TransportSecurityPolicyInput = transportsecurity.Input
 type TransportSecurityPolicy = transportsecurity.Policy
+type PlaintextRiskAcceptance = transportsecurity.PlaintextRiskAcceptance
+type NetworkPlaintextPolicyOptions = transportsecurity.NetworkPlaintextPolicyOptions
 
 const TransportRuntimeNative = transportsecurity.RuntimeNative
+const PlaintextRiskAcceptPreE2ECredentialExposure = transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure
 
 var ErrTransportPolicyDenied = transportsecurity.ErrDenied
 
@@ -27,7 +30,14 @@ func AllowPlaintextForLoopback(ctx context.Context, input TransportSecurityPolic
 	return transportsecurity.AllowPlaintextForLoopback(ctx, input)
 }
 
+// NewNetworkPlaintextPolicy allows wss:// and ws:// for an explicit set of
+// canonical non-loopback IP literals after the caller accepts pre-E2EE exposure.
+func NewNetworkPlaintextPolicy(options NetworkPlaintextPolicyOptions) (TransportSecurityPolicy, error) {
+	return transportsecurity.NewNetworkPlaintextPolicy(options)
+}
+
 // AllowPlaintext allows ws:// and wss:// URLs.
+// Deprecated: use RequireTLS, AllowPlaintextForLoopback, or NewNetworkPlaintextPolicy.
 func AllowPlaintext(ctx context.Context, input TransportSecurityPolicyInput) error {
 	return transportsecurity.AllowPlaintext(ctx, input)
 }

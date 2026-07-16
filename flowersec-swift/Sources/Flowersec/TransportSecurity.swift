@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public enum TransportRuntime: String, Codable, Equatable, Sendable {
   case swift
@@ -18,11 +23,139 @@ public struct TransportSecurityPolicyInput: Equatable, Sendable {
   }
 }
 
+public enum PlaintextRiskAcceptance: String, Equatable, Sendable {
+  case acceptPreE2ECredentialExposure = "accept_pre_e2ee_credential_exposure"
+}
+
+public struct NetworkPlaintextPolicyOptions: Equatable, Sendable {
+  public var allowedHosts: [String]
+  public var riskAcceptance: PlaintextRiskAcceptance
+
+  public init(allowedHosts: [String], riskAcceptance: PlaintextRiskAcceptance) {
+    self.allowedHosts = allowedHosts
+    self.riskAcceptance = riskAcceptance
+  }
+}
+
 public enum TransportSecurityPolicy: Sendable {
   case requireTLS
   case allowPlaintextForLoopback
+  @available(*, deprecated, message: "Use requireTLS, allowPlaintextForLoopback, or networkPlaintext(options:).")
   case allowPlaintext
   case custom(@Sendable (TransportSecurityPolicyInput) async throws -> Bool)
+
+  public static func networkPlaintext(options: NetworkPlaintextPolicyOptions) throws -> Self {
+    guard options.riskAcceptance == .acceptPreE2ECredentialExposure else {
+      throw NetworkPlaintextPolicyError.invalidRiskAcceptance
+    }
+    guard !options.allowedHosts.isEmpty else {
+      throw NetworkPlaintextPolicyError.missingAllowedHosts
+    }
+    let hosts = try Set(options.allowedHosts.map(canonicalNetworkPlaintextHost))
+    return .custom { input in
+      input.scheme == "wss" || (input.scheme == "ws" && hosts.contains(input.host))
+    }
+  }
+}
+
+private enum NetworkPlaintextPolicyError: Error {
+  case invalidRiskAcceptance
+  case missingAllowedHosts
+  case invalidAllowedHost(String)
+}
+
+private func stringFromNullTerminatedBuffer(_ buffer: [CChar]) -> String {
+  String(
+    decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+    as: UTF8.self
+  )
+}
+
+private func canonicalNetworkPlaintextHost(_ rawHost: String) throws -> String {
+  let host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !host.isEmpty,
+    host == host.lowercased(),
+    host.rangeOfCharacter(from: CharacterSet(charactersIn: "@/?#%[]")) == nil
+  else {
+    throw NetworkPlaintextPolicyError.invalidAllowedHost(rawHost)
+  }
+
+  if host.contains(":") {
+    var address = in6_addr()
+    guard inet_pton(AF_INET6, host, &address) == 1 else {
+      throw NetworkPlaintextPolicyError.invalidAllowedHost(rawHost)
+    }
+    var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+    let rendered = buffer.withUnsafeMutableBufferPointer { output in
+      withUnsafePointer(to: &address) { pointer in
+        inet_ntop(AF_INET6, UnsafeRawPointer(pointer), output.baseAddress, socklen_t(output.count))
+      }
+    }
+    guard rendered != nil else {
+      throw NetworkPlaintextPolicyError.invalidAllowedHost(rawHost)
+    }
+    let canonical = stringFromNullTerminatedBuffer(buffer)
+    guard canonical == host else {
+      throw NetworkPlaintextPolicyError.invalidAllowedHost(rawHost)
+    }
+    let words = try expandIPv6Words(canonical)
+    let unspecified = words.allSatisfy { $0 == 0 }
+    let loopback = words.dropLast().allSatisfy { $0 == 0 } && words.last == 1
+    let mappedIPv4 = words.prefix(5).allSatisfy { $0 == 0 } && words[5] == 0xffff
+    let multicast = words[0] & 0xff00 == 0xff00
+    let linkLocal = words[0] & 0xffc0 == 0xfe80
+    guard !unspecified, !loopback, !mappedIPv4, !multicast, !linkLocal else {
+      throw NetworkPlaintextPolicyError.invalidAllowedHost(rawHost)
+    }
+    return canonical
+  }
+
+  var address = in_addr()
+  guard inet_pton(AF_INET, host, &address) == 1 else {
+    throw NetworkPlaintextPolicyError.invalidAllowedHost(rawHost)
+  }
+  var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+  let rendered = buffer.withUnsafeMutableBufferPointer { output in
+    withUnsafePointer(to: &address) { pointer in
+      inet_ntop(AF_INET, UnsafeRawPointer(pointer), output.baseAddress, socklen_t(output.count))
+    }
+  }
+  guard rendered != nil else {
+    throw NetworkPlaintextPolicyError.invalidAllowedHost(rawHost)
+  }
+  let canonical = stringFromNullTerminatedBuffer(buffer)
+  guard canonical == host else {
+    throw NetworkPlaintextPolicyError.invalidAllowedHost(rawHost)
+  }
+  let octets = host.split(separator: ".").compactMap { Int($0) }
+  guard octets.count == 4,
+    octets[0] != 127,
+    !(octets[0] == 169 && octets[1] == 254),
+    octets[0] < 224,
+    !octets.allSatisfy({ $0 == 0 })
+  else {
+    throw NetworkPlaintextPolicyError.invalidAllowedHost(rawHost)
+  }
+  return canonical
+}
+
+private func expandIPv6Words(_ host: String) throws -> [UInt16] {
+  let halves = host.components(separatedBy: "::")
+  guard halves.count <= 2 else {
+    throw NetworkPlaintextPolicyError.invalidAllowedHost(host)
+  }
+  let left = halves[0].isEmpty ? [] : halves[0].split(separator: ":").map(String.init)
+  let right = halves.count == 1 || halves[1].isEmpty ? [] : halves[1].split(separator: ":").map(String.init)
+  let missing = 8 - left.count - right.count
+  guard (halves.count == 1 && missing == 0) || (halves.count == 2 && missing > 0) else {
+    throw NetworkPlaintextPolicyError.invalidAllowedHost(host)
+  }
+  let parts = left + Array(repeating: "0", count: missing) + right
+  let words = parts.compactMap { UInt16($0, radix: 16) }
+  guard words.count == 8 else {
+    throw NetworkPlaintextPolicyError.invalidAllowedHost(host)
+  }
+  return words
 }
 
 public struct TransportSecurityDiagnostic: Equatable, Sendable {

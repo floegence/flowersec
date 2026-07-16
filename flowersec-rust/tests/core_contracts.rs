@@ -2,7 +2,10 @@ use flowersec::{
     ErrorCode, FlowersecError, Path, Stage,
     framing::{FramingError, read_chunk, read_json_frame, write_chunk, write_json_frame},
     observability::{DiagnosticCodeDomain, DiagnosticEvent, DiagnosticResult, Observer as _},
-    transport_security::{TransportRuntime, TransportSecurityPolicy},
+    transport_security::{
+        NetworkPlaintextPolicyOptions, PlaintextRiskAcceptance, TransportRuntime,
+        TransportSecurityPolicy,
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -144,14 +147,67 @@ async fn transport_security_policies_enforce_tls_and_loopback_rules() {
             .await
             .is_err()
     );
-    TransportSecurityPolicy::allow_plaintext()
+    #[allow(deprecated)]
+    let allow_plaintext = TransportSecurityPolicy::allow_plaintext();
+    allow_plaintext
         .evaluate(&remote_plaintext, Path::Direct)
         .await
         .expect("explicit plaintext policy is accepted");
+    #[allow(deprecated)]
+    let debug_plaintext = TransportSecurityPolicy::allow_plaintext();
     assert_eq!(
-        format!("{:?}", TransportSecurityPolicy::allow_plaintext()),
+        format!("{debug_plaintext:?}"),
         "TransportSecurityPolicy(..)"
     );
+}
+
+#[tokio::test]
+async fn network_plaintext_policy_allows_only_explicit_canonical_ip_hosts() {
+    let policy = TransportSecurityPolicy::network_plaintext(NetworkPlaintextPolicyOptions {
+        allowed_hosts: vec!["192.168.1.20".to_owned(), "2001:db8::20".to_owned()],
+        risk_acceptance: PlaintextRiskAcceptance::AcceptPreE2ECredentialExposure,
+    })
+    .expect("network plaintext policy");
+    for raw in [
+        "wss://service.example/ws",
+        "ws://192.168.1.20/ws",
+        "ws://[2001:db8::20]/ws",
+    ] {
+        policy
+            .evaluate(&Url::parse(raw).unwrap(), Path::Direct)
+            .await
+            .expect("allowed target");
+    }
+    for raw in ["ws://192.168.1.21/ws", "ws://127.0.0.1/ws"] {
+        assert!(
+            policy
+                .evaluate(&Url::parse(raw).unwrap(), Path::Direct)
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn network_plaintext_policy_rejects_unsafe_options() {
+    for host in [
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "example.com",
+        "192.168.001.20",
+        "[2001:db8::20]",
+        "fe80::1",
+        "::ffff:c0a8:114",
+    ] {
+        assert!(
+            TransportSecurityPolicy::network_plaintext(NetworkPlaintextPolicyOptions {
+                allowed_hosts: vec![host.to_owned()],
+                risk_acceptance: PlaintextRiskAcceptance::AcceptPreE2ECredentialExposure,
+            })
+            .is_err()
+        );
+    }
 }
 
 #[tokio::test]

@@ -94,6 +94,26 @@
           },
           {
             "kind": "func",
+            "expr": "client.NewNetworkPlaintextPolicy",
+            "doc_token": "`client.NewNetworkPlaintextPolicy(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "client.NetworkPlaintextPolicyOptions",
+            "doc_token": "`client.NetworkPlaintextPolicyOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "client.PlaintextRiskAcceptance",
+            "doc_token": "`client.PlaintextRiskAcceptance`"
+          },
+          {
+            "kind": "const",
+            "expr": "client.PlaintextRiskAcceptPreE2ECredentialExposure",
+            "doc_token": "`client.PlaintextRiskAcceptPreE2ECredentialExposure`"
+          },
+          {
+            "kind": "func",
             "expr": "client.AllowPlaintext",
             "doc_token": "`client.AllowPlaintext`"
           }
@@ -208,6 +228,26 @@
             "kind": "method",
             "expr": "endpoint.Session.ProbeLiveness",
             "doc_token": "`endpoint.Session.ProbeLiveness(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.NewNetworkPlaintextPolicy",
+            "doc_token": "`endpoint.NewNetworkPlaintextPolicy(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "endpoint.NetworkPlaintextPolicyOptions",
+            "doc_token": "`endpoint.NetworkPlaintextPolicyOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "endpoint.PlaintextRiskAcceptance",
+            "doc_token": "`endpoint.PlaintextRiskAcceptance`"
+          },
+          {
+            "kind": "const",
+            "expr": "endpoint.PlaintextRiskAcceptPreE2ECredentialExposure",
+            "doc_token": "`endpoint.PlaintextRiskAcceptPreE2ECredentialExposure`"
           }
         ]
       },
@@ -235,6 +275,26 @@
             "kind": "func",
             "expr": "transportsecurity.AllowPlaintextForLoopback",
             "doc_token": "`transportsecurity.AllowPlaintextForLoopback(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "transportsecurity.NewNetworkPlaintextPolicy",
+            "doc_token": "`transportsecurity.NewNetworkPlaintextPolicy(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "transportsecurity.NetworkPlaintextPolicyOptions",
+            "doc_token": "`transportsecurity.NetworkPlaintextPolicyOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "transportsecurity.PlaintextRiskAcceptance",
+            "doc_token": "`transportsecurity.PlaintextRiskAcceptance`"
+          },
+          {
+            "kind": "const",
+            "expr": "transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure",
+            "doc_token": "`transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure`"
           },
           {
             "kind": "func",
@@ -761,7 +821,10 @@
           "`assertConnectArtifact(...)`",
           "`LivenessOptions`",
           "`WebSocketLimits`",
-          "`YamuxLimits`"
+          "`YamuxLimits`",
+          "`createNetworkPlaintextPolicy(...)`",
+          "`NetworkPlaintextPolicyOptions`",
+          "`PlaintextRiskAcceptance`"
         ],
         "runtime_exports": [
           "connect",
@@ -773,6 +836,8 @@
           "assertConnectArtifact",
           "RequireTLS",
           "AllowPlaintextForLoopback",
+          "createNetworkPlaintextPolicy",
+          "PlaintextRiskAcceptance",
           "AllowPlaintext"
         ]
       },
@@ -794,7 +859,10 @@
           "`TunnelClientConnectArtifact`",
           "`DirectClientConnectArtifact`",
           "`ScopeMetadataEntry`",
-          "`assertConnectArtifact(...)`"
+          "`assertConnectArtifact(...)`",
+          "`createNetworkPlaintextPolicy(...)`",
+          "`NetworkPlaintextPolicyOptions`",
+          "`PlaintextRiskAcceptance`"
         ],
         "runtime_exports": [
           "connectNode",
@@ -807,6 +875,8 @@
           "assertConnectArtifact",
           "RequireTLS",
           "AllowPlaintextForLoopback",
+          "createNetworkPlaintextPolicy",
+          "PlaintextRiskAcceptance",
           "AllowPlaintext"
         ]
       },
@@ -832,7 +902,10 @@
           "`ControlplaneRequestError`",
           "`createBrowserReconnectConfig(...)`",
           "`createTunnelBrowserReconnectConfig(...)`",
-          "`createDirectBrowserReconnectConfig(...)`"
+          "`createDirectBrowserReconnectConfig(...)`",
+          "`createNetworkPlaintextPolicy(...)`",
+          "`NetworkPlaintextPolicyOptions`",
+          "`PlaintextRiskAcceptance`"
         ],
         "runtime_exports": [
           "connectBrowser",
@@ -849,6 +922,8 @@
           "createDirectBrowserReconnectConfig",
           "RequireTLS",
           "AllowPlaintextForLoopback",
+          "createNetworkPlaintextPolicy",
+          "PlaintextRiskAcceptance",
           "AllowPlaintext"
         ]
       },
@@ -1059,7 +1134,10 @@
     "module": "Flowersec",
     "doc_tokens": [
       "`Flowersec`",
-      "`import Flowersec`"
+      "`import Flowersec`",
+      "`TransportSecurityPolicy.networkPlaintext(options:)`",
+      "`NetworkPlaintextPolicyOptions`",
+      "`PlaintextRiskAcceptance`"
     ],
     "symbols": [
       {
@@ -1230,6 +1308,11 @@
       {
         "kind": "swift.enum",
         "name": "LivenessOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "PlaintextRiskAcceptance",
         "doc_token": ""
       },
       {
@@ -1585,6 +1668,11 @@
       {
         "kind": "swift.enum.case",
         "name": "LivenessOptions.pathDefault",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "PlaintextRiskAcceptance.acceptPreE2ECredentialExposure",
         "doc_token": ""
       },
       {
@@ -1990,6 +2078,16 @@
       {
         "kind": "swift.init",
         "name": "FlowersecStage.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "NetworkPlaintextPolicyOptions.init(allowedHosts:riskAcceptance:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "PlaintextRiskAcceptance.init(rawValue:)",
         "doc_token": ""
       },
       {
@@ -3214,6 +3312,16 @@
       },
       {
         "kind": "swift.property",
+        "name": "NetworkPlaintextPolicyOptions.allowedHosts",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "NetworkPlaintextPolicyOptions.riskAcceptance",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
         "name": "ProxyError.errorDescription",
         "doc_token": ""
       },
@@ -3789,6 +3897,11 @@
       },
       {
         "kind": "swift.struct",
+        "name": "NetworkPlaintextPolicyOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
         "name": "ProxyClient",
         "doc_token": ""
       },
@@ -4088,6 +4201,11 @@
         "doc_token": ""
       },
       {
+        "kind": "swift.type.method",
+        "name": "TransportSecurityPolicy.networkPlaintext(options:)",
+        "doc_token": ""
+      },
+      {
         "kind": "swift.type.property",
         "name": "ChannelInitService.defaultIdleTimeoutSeconds",
         "doc_token": ""
@@ -4339,7 +4457,10 @@
       "`flowersec::rpc`",
       "`flowersec::controlplane`",
       "`flowersec::reconnect`",
-      "`flowersec::proxy`"
+      "`flowersec::proxy`",
+      "`TransportSecurityPolicy::network_plaintext(...)`",
+      "`NetworkPlaintextPolicyOptions`",
+      "`PlaintextRiskAcceptance`"
     ],
     "compile_entries": [
       "let _ = flowersec::connect",
@@ -4360,7 +4481,10 @@
       "let _ = std::mem::size_of::<flowersec::reconnect::ReconnectManager>()",
       "let _ = std::mem::size_of::<flowersec::proxy::ProxyClient>()",
       "let _ = std::mem::size_of::<flowersec::proxy::ProxyServer>()",
-      "let _ = std::mem::size_of::<flowersec::observability::DiagnosticEvent>()"
+      "let _ = std::mem::size_of::<flowersec::observability::DiagnosticEvent>()",
+      "let _ = std::mem::size_of::<flowersec::transport_security::NetworkPlaintextPolicyOptions>()",
+      "let _ = std::mem::size_of::<flowersec::transport_security::PlaintextRiskAcceptance>()",
+      "let _ = flowersec::transport_security::TransportSecurityPolicy::network_plaintext"
     ]
   },
   "coverage": {

@@ -43,9 +43,12 @@ export { FlowersecError } from "./utils/errors.js";
 export {
   AllowPlaintext,
   AllowPlaintextForLoopback,
+  createNetworkPlaintextPolicy,
+  PlaintextRiskAcceptance,
   RequireTLS,
 } from "./client-connect/transportSecurity.js";
 export type {
+  NetworkPlaintextPolicyOptions,
   TransportSecurityPolicy,
   TransportSecurityPolicyInput,
   TransportSecurityPolicyPreset,

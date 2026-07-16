@@ -7,9 +7,11 @@ import type { HttpRequestMetaV1, WsOpenMetaV1 } from "./proxy/types.js";
 import {
   AllowPlaintext,
   AllowPlaintextForLoopback,
+  createNetworkPlaintextPolicy,
+  PlaintextRiskAcceptance,
   enforceTransportSecurity,
   RequireTLS,
-  type TransportSecurityPolicyPreset,
+  type TransportSecurityPolicy,
 } from "./client-connect/transportSecurity.js";
 import type { ControlplaneErrorEnvelope } from "./controlplane/request.js";
 import { decodeHeader, encodeHeader } from "./yamux/header.js";
@@ -18,7 +20,9 @@ type PortableVectors = Readonly<{
   version: number;
   transport_policy: ReadonlyArray<Readonly<{
     url: string;
-    policy: "require_tls" | "allow_plaintext_for_loopback" | "allow_plaintext";
+    policy: "require_tls" | "allow_plaintext_for_loopback" | "allow_plaintext" | "network_plaintext";
+    allowed_hosts?: readonly string[];
+    risk_acceptance?: string;
     allowed: boolean;
   }>>;
   yamux_header: Readonly<{
@@ -50,7 +54,7 @@ describe("portable protocol vectors", () => {
       const operation = enforceTransportSecurity({
         rawUrl: item.url,
         path: "direct",
-        policy: transportPolicy(item.policy),
+        policy: transportPolicy(item),
       });
       if (item.allowed) {
         await expect(operation).resolves.toBeUndefined();
@@ -107,11 +111,19 @@ describe("portable protocol vectors", () => {
   });
 });
 
-function transportPolicy(value: PortableVectors["transport_policy"][number]["policy"]): TransportSecurityPolicyPreset {
-  switch (value) {
+function transportPolicy(item: PortableVectors["transport_policy"][number]): TransportSecurityPolicy {
+  switch (item.policy) {
     case "require_tls": return RequireTLS;
     case "allow_plaintext_for_loopback": return AllowPlaintextForLoopback;
     case "allow_plaintext": return AllowPlaintext;
+    case "network_plaintext":
+      if (item.risk_acceptance !== PlaintextRiskAcceptance.acceptPreE2ECredentialExposure) {
+        throw new Error("invalid network plaintext risk acceptance");
+      }
+      return createNetworkPlaintextPolicy({
+        allowedHosts: item.allowed_hosts ?? [],
+        riskAcceptance: PlaintextRiskAcceptance.acceptPreE2ECredentialExposure,
+      });
   }
 }
 
