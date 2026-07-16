@@ -22,7 +22,7 @@ The package is intentionally product-neutral. It does not contain downstream app
 The repository root exposes the Swift package:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.22.0")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.23.0")
 ```
 
 Use the `Flowersec` product:
@@ -52,6 +52,8 @@ let client = try await Flowersec.connectDirect(
 let response: PingResponse = try await client.rpc.call(4001, PingRequest())
 let rtt = try await client.probeLiveness(timeout: .seconds(10))
 let stream = try await client.openStream(kind: "custom")
+try await client.rekey()
+try await stream.reset()
 await client.close()
 ```
 
@@ -102,6 +104,8 @@ let client = try await Flowersec.connect(artifact, options: options)
 ## Endpoint and RPC Server
 
 Use `Endpoint.acceptDirect(...)` or `Endpoint.acceptDirectResolved(...)` with an accepted `FlowersecBinaryTransport`, and `Endpoint.connectTunnel(...)` with a server-role grant. `EndpointSession.serveRPC(...)` dispatches generated or manually registered handlers through `RPCRouter` and `RPCServer` with bounded concurrency and queues.
+
+`EndpointSession.rekey()` performs explicit secure-channel rekeying. `FlowersecByteStream.reset()` sends a protocol RST, and `EndpointSession.terminationError()` returns the stable typed reason for abnormal session termination.
 
 ## Controlplane and Reconnect
 

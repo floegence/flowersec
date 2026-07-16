@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"errors"
-	"io"
 	"sync"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
 )
 
@@ -23,8 +23,9 @@ type Client interface {
 	Path() Path
 	EndpointInstanceID() string
 	RPC() *rpc.Client
-	OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error)
+	OpenStream(ctx context.Context, kind string) (fsstream.Stream, error)
 	Ping() error
+	Rekey() error
 	ProbeLiveness(ctx context.Context) (time.Duration, error)
 	Close() error
 }
@@ -147,29 +148,41 @@ func (c *session) Ping() error {
 	return nil
 }
 
-// Close tears down all resources in a best-effort manner.
+// Rekey emits an authenticated E2EE rekey record and advances the send key.
+func (c *session) Rekey() error {
+	if c == nil || c.secure == nil {
+		var path Path
+		if c != nil {
+			path = c.path
+		}
+		return wrapErr(path, fserrors.StageSecure, fserrors.CodeNotConnected, ErrNotConnected)
+	}
+	if err := c.secure.Rekey(); err != nil {
+		return wrapErr(c.path, fserrors.StageSecure, fserrors.CodeRekeyFailed, err)
+	}
+	return nil
+}
+
+// Close tears down all resources and returns every cleanup failure.
 func (c *session) Close() error {
 	if c == nil {
 		return nil
 	}
 	c.closeOnce.Do(func() {
-		var firstErr error
+		var closeErr error
 		if c.rpc != nil {
-			if err := c.rpc.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
+			closeErr = errors.Join(closeErr, c.rpc.Close())
 		}
 		if c.mux != nil {
-			if err := c.mux.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
+			closeErr = errors.Join(closeErr, c.mux.Close())
 		}
 		if c.secure != nil {
-			if err := c.secure.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
+			closeErr = errors.Join(closeErr, c.secure.Close())
 		}
-		c.closeErr = firstErr
+		if closeErr != nil {
+			closeErr = wrapErr(c.path, fserrors.StageClose, fserrors.CodeNotConnected, closeErr)
+		}
+		c.closeErr = closeErr
 	})
 	return c.closeErr
 }
@@ -177,7 +190,7 @@ func (c *session) Close() error {
 // OpenStream opens a new yamux stream and writes the StreamHello(kind) preface.
 //
 // Every yamux stream in this project is expected to start with a StreamHello frame.
-func (c *session) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+func (c *session) OpenStream(ctx context.Context, kind string) (fsstream.Stream, error) {
 	if c == nil || c.mux == nil {
 		var path Path
 		if c != nil {

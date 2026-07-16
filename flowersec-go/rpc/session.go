@@ -173,7 +173,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	stopContextClose := context.AfterFunc(ctx, func() { _ = s.r.Close() })
 	defer stopContextClose()
 	workerCtx, cancelWorkers := context.WithCancel(ctx)
-	requests := make(chan rpcv1.RpcEnvelope, s.options.MaxQueuedRequests)
+	requestCapacity := s.options.MaxConcurrentRequests + s.options.MaxQueuedRequests
+	requests := make(chan rpcv1.RpcEnvelope, requestCapacity)
+	requestAdmission := make(chan struct{}, requestCapacity)
 	notifications := make(chan rpcv1.RpcEnvelope, s.options.MaxQueuedNotifications)
 	var workers sync.WaitGroup
 	defer workers.Wait()
@@ -188,6 +190,7 @@ func (s *Server) Serve(ctx context.Context) error {
 					return
 				case env := <-requests:
 					s.handleRequest(workerCtx, env)
+					<-requestAdmission
 				}
 			}
 		}()
@@ -246,7 +249,8 @@ func (s *Server) Serve(ctx context.Context) error {
 			continue
 		}
 		select {
-		case requests <- env:
+		case requestAdmission <- struct{}{}:
+			requests <- env
 		default:
 			s.obs.ServerRequest(observability.RPCResultResourceExhausted)
 			s.writeResponse(rpcv1.RpcEnvelope{

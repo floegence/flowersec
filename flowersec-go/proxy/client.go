@@ -94,7 +94,13 @@ func (c *Client) Do(ctx context.Context, route StreamOpener, request ClientHTTPR
 	if err != nil {
 		return nil, &ClientError{Code: "stream_open_failed", Message: "failed to open proxy stream", Err: err}
 	}
-	requestID := opaqueID(18)
+	requestID, err := opaqueID(18)
+	if err != nil {
+		if closeErr := stream.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return nil, &ClientError{Code: "random_failed", Message: "failed to generate request identifier", Err: err}
+	}
 	timeoutMS := int64(0)
 	if request.Timeout > 0 {
 		if request.Timeout > time.Duration(^uint64(0)>>1) {
@@ -246,7 +252,13 @@ func (c *Client) OpenWebSocket(ctx context.Context, route StreamOpener, path str
 	if err != nil {
 		return nil, &ClientError{Code: "stream_open_failed", Message: "failed to open proxy stream", Err: err}
 	}
-	connID := opaqueID(18)
+	connID, err := opaqueID(18)
+	if err != nil {
+		if closeErr := stream.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return nil, &ClientError{Code: "random_failed", Message: "failed to generate connection identifier", Err: err}
+	}
 	meta := WSOpenMeta{
 		V:       ProtocolVersion,
 		ConnID:  connID,

@@ -25,7 +25,10 @@ func (b *Bridge) ProxyHTTP(w http.ResponseWriter, r *http.Request, route StreamO
 	}
 	defer stream.Close()
 
-	requestID := opaqueID(18)
+	requestID, err := opaqueID(18)
+	if err != nil {
+		return writeBridgeHTTPError(w, "random_failed", http.StatusInternalServerError, "request identifier generation failed", err)
+	}
 	meta := HTTPRequestMeta{
 		V:         ProtocolVersion,
 		RequestID: requestID,

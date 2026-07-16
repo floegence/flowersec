@@ -20,6 +20,9 @@ var ErrResourceExhausted = errors.New("yamux resource exhausted")
 // ErrLivenessTimeout indicates that an automatic acknowledged probe failed.
 var ErrLivenessTimeout = errors.New("yamux liveness timeout")
 
+// ErrStreamReset identifies a Yamux stream terminated by RST.
+var ErrStreamReset = libyamux.ErrStreamReset
+
 const (
 	DefaultMaxActiveStreams            = defaults.YamuxMaxActiveStreams
 	DefaultMaxInboundStreams           = defaults.YamuxMaxInboundStreams
@@ -80,6 +83,7 @@ type Stream struct {
 func (s *Stream) Read(p []byte) (int, error)         { return s.inner.Read(p) }
 func (s *Stream) Write(p []byte) (int, error)        { return s.inner.Write(p) }
 func (s *Stream) Close() error                       { return s.inner.Close() }
+func (s *Stream) Reset() error                       { return s.inner.Reset() }
 func (s *Stream) SetDeadline(t time.Time) error      { return s.inner.SetDeadline(t) }
 func (s *Stream) SetReadDeadline(t time.Time) error  { return s.inner.SetReadDeadline(t) }
 func (s *Stream) SetWriteDeadline(t time.Time) error { return s.inner.SetWriteDeadline(t) }
@@ -352,7 +356,7 @@ func (c *frameLimitConn) Read(p []byte) (int, error) {
 			if c.header[1] == 0 {
 				c.bodyRemaining = binary.BigEndian.Uint32(c.header[8:12])
 				if c.bodyRemaining > c.maxFrameBytes {
-					return 0, fmt.Errorf("yamux frame length %d exceeds limit %d", c.bodyRemaining, c.maxFrameBytes)
+					return 0, fmt.Errorf("%w: yamux frame length %d exceeds limit %d", ErrResourceExhausted, c.bodyRemaining, c.maxFrameBytes)
 				}
 			}
 		}

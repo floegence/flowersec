@@ -30,7 +30,7 @@ final class GoInteropTests: XCTestCase {
 
   private func connectOptions() -> ConnectOptions {
     ConnectOptions(
-      origin: "https://app.redeven.com",
+      origin: "https://interop.flowersec.test",
       transportSecurityPolicy: .allowPlaintextForLoopback,
       liveness: .disabled
     )

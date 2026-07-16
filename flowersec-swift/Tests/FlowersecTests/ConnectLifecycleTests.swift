@@ -131,7 +131,8 @@ final class ConnectLifecycleTests: XCTestCase {
       XCTFail("Expected yamux setup to fail")
     } catch let error as FlowersecError {
       XCTAssertEqual(error.path, .tunnel)
-      XCTAssertEqual(error.code, .websocketFailed)
+      XCTAssertEqual(error.stage, .yamux)
+      XCTAssertEqual(error.code, .notConnected)
     }
     let isClosed = await transport.isClosed
     let secureWriteCount = await transport.secureWriteCount
@@ -152,7 +153,9 @@ final class ConnectLifecycleTests: XCTestCase {
       )
       XCTFail("Expected RPC stream setup to fail")
     } catch let error as FlowersecError {
-      XCTAssertEqual(error.code, .websocketFailed)
+      XCTAssertEqual(error.path, .direct)
+      XCTAssertEqual(error.stage, .yamux)
+      XCTAssertEqual(error.code, .notConnected)
     }
     let isClosed = await transport.isClosed
     let secureWriteCount = await transport.secureWriteCount

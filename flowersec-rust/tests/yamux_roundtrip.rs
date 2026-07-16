@@ -58,6 +58,40 @@ async fn yamux_streams_and_acknowledged_ping_round_trip() {
     server.close().await.expect("server session close");
 }
 
+#[tokio::test]
+async fn oversized_frame_is_preserved_as_terminal_resource_error() {
+    let (client_connection, server_connection) = duplex_pair();
+    let limits = YamuxLimits {
+        max_frame_bytes: 1024,
+        preferred_outbound_frame_bytes: 1024,
+        ..YamuxLimits::default()
+    };
+    let server =
+        YamuxSession::new(server_connection, Mode::Server, limits).expect("server session");
+
+    let mut header = vec![0_u8, 0_u8];
+    header.extend_from_slice(&0_u16.to_be_bytes());
+    header.extend_from_slice(&1_u32.to_be_bytes());
+    header.extend_from_slice(&2048_u32.to_be_bytes());
+    client_connection
+        .write(&header)
+        .await
+        .expect("write frame header");
+
+    let error = tokio::time::timeout(Duration::from_secs(1), server.accept_stream())
+        .await
+        .expect("accept timeout")
+        .expect_err("oversized frame must terminate the session");
+    assert!(matches!(
+        error,
+        YamuxError::ResourceExhausted {
+            resource: "frame_bytes",
+            current: 2048,
+            limit: 1024,
+        }
+    ));
+}
+
 #[derive(Debug)]
 struct MemoryDuplex {
     incoming: Mutex<mpsc::Receiver<Vec<u8>>>,

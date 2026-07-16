@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 const (
 	capabilityManifestPath = "stability/language_capabilities.json"
 	defaultsManifestPath   = "stability/sdk_defaults.json"
+	interopMatrixPath      = "stability/interop_matrix.json"
 )
 
 var requiredPortableCapabilityIDs = []string{
@@ -131,6 +133,100 @@ type reconnectDefaults struct {
 	JitterRatio    float64 `json:"jitter_ratio"`
 }
 
+type interopMatrix struct {
+	Version            int                        `json:"version"`
+	ReferenceLanguage  string                     `json:"reference_language"`
+	Languages          []string                   `json:"languages"`
+	ProfilePath        string                     `json:"profile_path"`
+	Cases              []string                   `json:"cases"`
+	Cells              []interopCell              `json:"cells"`
+	Harnesses          map[string]interopHarness  `json:"harnesses"`
+	CapabilityCoverage map[string]interopCoverage `json:"capability_coverage"`
+}
+
+type interopCell struct {
+	ID       string `json:"id"`
+	Client   string `json:"client"`
+	Server   string `json:"server"`
+	Evidence string `json:"evidence"`
+}
+
+type interopHarness struct {
+	Roles    []string `json:"roles"`
+	Cases    []string `json:"cases"`
+	Evidence string   `json:"evidence"`
+}
+
+type interopCoverage struct {
+	Fixtures []string `json:"fixtures"`
+	Cases    []string `json:"cases"`
+}
+
+type interopProfiles struct {
+	Version  int                       `json:"version"`
+	Seed     int64                     `json:"seed"`
+	Variants []interopVariant          `json:"variants"`
+	Profiles map[string]interopProfile `json:"profiles"`
+}
+
+type interopVariant struct {
+	Transport string `json:"transport"`
+	Suite     string `json:"suite"`
+}
+
+type interopProfile struct {
+	DeadlineMS       int                            `json:"deadline_ms"`
+	CellDeadlineMS   int                            `json:"cell_deadline_ms"`
+	MaxParallelCells int                            `json:"max_parallel_cells"`
+	Streams          interopStreamWorkload          `json:"streams"`
+	Rekey            interopRekeyWorkload           `json:"rekey"`
+	LivenessProbes   int                            `json:"liveness_probes"`
+	RPC              interopRPCWorkload             `json:"rpc"`
+	Proxy            interopProxyWorkload           `json:"proxy"`
+	ReconnectCycles  int                            `json:"reconnect_cycles"`
+	LimitChecks      int                            `json:"limit_checks"`
+	Diagnostics      []interopDiagnosticExpectation `json:"diagnostics"`
+}
+
+type interopDiagnosticExpectation struct {
+	Case  string `json:"case"`
+	Stage string `json:"stage"`
+	Code  string `json:"code"`
+}
+
+type interopStreamWorkload struct {
+	Concurrent     int `json:"concurrent"`
+	BytesPerStream int `json:"bytes_per_stream"`
+	ChunkBytes     int `json:"chunk_bytes"`
+	SlowReaders    int `json:"slow_readers"`
+	Churn          int `json:"churn"`
+	FIN            int `json:"fin"`
+	Reset          int `json:"reset"`
+}
+
+type interopRekeyWorkload struct {
+	Client     int `json:"client"`
+	Server     int `json:"server"`
+	Concurrent int `json:"concurrent"`
+}
+
+type interopRPCWorkload struct {
+	Calls              int `json:"calls"`
+	Notifications      int `json:"notifications"`
+	Cancellations      int `json:"cancellations"`
+	Timeouts           int `json:"timeouts"`
+	SaturationActive   int `json:"saturation_active"`
+	SaturationQueued   int `json:"saturation_queued"`
+	SaturationRejected int `json:"saturation_rejected"`
+}
+
+type interopProxyWorkload struct {
+	HTTPRequests        int `json:"http_requests"`
+	HTTPBodyBytes       int `json:"http_body_bytes"`
+	WebSocketFrames     int `json:"websocket_frames"`
+	WebSocketFrameBytes int `json:"websocket_frame_bytes"`
+}
+
 func verifyParity(repoRoot string) error {
 	m, err := loadCapabilityManifest(repoRoot)
 	if err != nil {
@@ -167,8 +263,218 @@ func verifyParity(repoRoot string) error {
 		slices.Sort(incomplete)
 		return fmt.Errorf("portable language parity is incomplete:\n  - %s", strings.Join(incomplete, "\n  - "))
 	}
+	if err := verifyInteropMatrix(repoRoot, m); err != nil {
+		return err
+	}
 	fmt.Printf("language parity OK: %d capabilities across %d languages\n", len(m.PortableCapabilities), len(m.Languages))
 	return nil
+}
+
+func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) error {
+	var matrix interopMatrix
+	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
+		return fmt.Errorf("parse %s: %w", interopMatrixPath, err)
+	}
+	if matrix.Version != 1 || matrix.ReferenceLanguage != "go" {
+		return fmt.Errorf("%s must declare version 1 with Go as the reference language", interopMatrixPath)
+	}
+	if !slices.Equal(matrix.Languages, capabilities.Languages) {
+		return fmt.Errorf("%s languages must match %s", interopMatrixPath, capabilityManifestPath)
+	}
+	if err := requireUnique("interop cases", matrix.Cases); err != nil {
+		return err
+	}
+	if len(matrix.Cases) == 0 {
+		return errors.New("interop matrix cases must not be empty")
+	}
+	expectedCells := map[string][2]string{
+		"go_to_go":         {"go", "go"},
+		"typescript_to_go": {"typescript", "go"},
+		"swift_to_go":      {"swift", "go"},
+		"rust_to_go":       {"rust", "go"},
+		"go_to_typescript": {"go", "typescript"},
+		"go_to_swift":      {"go", "swift"},
+		"go_to_rust":       {"go", "rust"},
+	}
+	if len(matrix.Cells) != len(expectedCells) {
+		return fmt.Errorf("interop matrix must contain exactly %d cells", len(expectedCells))
+	}
+	cellIDs := make([]string, 0, len(matrix.Cells))
+	for _, cell := range matrix.Cells {
+		cellIDs = append(cellIDs, cell.ID)
+		expected, ok := expectedCells[cell.ID]
+		if !ok || expected != [2]string{cell.Client, cell.Server} {
+			return fmt.Errorf("interop matrix has unexpected cell %s (%s -> %s)", cell.ID, cell.Client, cell.Server)
+		}
+		if cell.Client != "go" && cell.Server != "go" {
+			return fmt.Errorf("non-Go pairwise interop edge is forbidden: %s", cell.ID)
+		}
+		if err := requireFile(repoRoot, "interop cell "+cell.ID, cell.Evidence); err != nil {
+			return err
+		}
+	}
+	if err := requireUnique("interop cell ids", cellIDs); err != nil {
+		return err
+	}
+	for _, language := range []string{"typescript", "swift", "rust"} {
+		harness, ok := matrix.Harnesses[language]
+		if !ok {
+			return fmt.Errorf("interop matrix is missing the %s harness", language)
+		}
+		if !sameStringSet(harness.Roles, []string{"client", "server"}) {
+			return fmt.Errorf("interop harness %s must support client and server roles", language)
+		}
+		if !sameStringSet(harness.Cases, matrix.Cases) {
+			return fmt.Errorf("interop harness %s cases do not match the matrix", language)
+		}
+		if err := requireFile(repoRoot, "interop harness "+language, harness.Evidence); err != nil {
+			return err
+		}
+	}
+	if len(matrix.Harnesses) != 3 {
+		return errors.New("interop harnesses must contain exactly typescript, swift, and rust")
+	}
+	fixtureIDs := make([]string, 0, len(capabilities.SharedFixtures))
+	for _, fixture := range capabilities.SharedFixtures {
+		fixtureIDs = append(fixtureIDs, fixture.ID)
+	}
+	for _, capabilityID := range requiredPortableCapabilityIDs {
+		coverage, ok := matrix.CapabilityCoverage[capabilityID]
+		if !ok || len(coverage.Fixtures)+len(coverage.Cases) == 0 {
+			return fmt.Errorf("portable capability %s has no interop or fixture coverage", capabilityID)
+		}
+		for _, fixture := range coverage.Fixtures {
+			if !slices.Contains(fixtureIDs, fixture) {
+				return fmt.Errorf("capability %s references unknown fixture %s", capabilityID, fixture)
+			}
+		}
+		for _, caseID := range coverage.Cases {
+			if !slices.Contains(matrix.Cases, caseID) {
+				return fmt.Errorf("capability %s references unknown interop case %s", capabilityID, caseID)
+			}
+		}
+	}
+	if len(matrix.CapabilityCoverage) != len(requiredPortableCapabilityIDs) {
+		return errors.New("interop capability coverage must contain every portable capability exactly once")
+	}
+	var profiles interopProfiles
+	profilePath := filepath.Join(repoRoot, matrix.ProfilePath)
+	if err := decodeStrictJSONFile(profilePath, &profiles); err != nil {
+		return fmt.Errorf("parse %s: %w", matrix.ProfilePath, err)
+	}
+	if err := validateInteropProfiles(profiles); err != nil {
+		return fmt.Errorf("validate %s: %w", matrix.ProfilePath, err)
+	}
+	fmt.Printf("Go-reference interop matrix OK: %d directed cells, %d cases\n", len(matrix.Cells), len(matrix.Cases))
+	return nil
+}
+
+func validateInteropProfiles(profiles interopProfiles) error {
+	if profiles.Version != 1 || profiles.Seed <= 0 {
+		return errors.New("profiles must declare version 1 and a positive seed")
+	}
+	expectedVariants := map[string]struct{}{
+		"direct:x25519": {}, "direct:p256": {}, "tunnel:x25519": {}, "tunnel:p256": {},
+	}
+	if len(profiles.Variants) != len(expectedVariants) {
+		return errors.New("profiles must contain all four Direct/Tunnel and X25519/P-256 variants")
+	}
+	for _, variant := range profiles.Variants {
+		key := variant.Transport + ":" + variant.Suite
+		if _, ok := expectedVariants[key]; !ok {
+			return fmt.Errorf("unexpected interop variant %s", key)
+		}
+		delete(expectedVariants, key)
+	}
+	if len(expectedVariants) != 0 {
+		return errors.New("interop variants contain duplicates or omissions")
+	}
+	if len(profiles.Profiles) != 2 {
+		return errors.New("interop profiles must contain exactly smoke and stress")
+	}
+	for _, name := range []string{"smoke", "stress"} {
+		profile, ok := profiles.Profiles[name]
+		if !ok {
+			return fmt.Errorf("missing %s interop profile", name)
+		}
+		if profile.DeadlineMS <= 0 || profile.CellDeadlineMS <= 0 || profile.MaxParallelCells < 1 || profile.MaxParallelCells > 2 {
+			return fmt.Errorf("%s profile deadlines or parallelism are invalid", name)
+		}
+		if name == "smoke" && profile.DeadlineMS > 120000 {
+			return errors.New("smoke profile exceeds the 120 second execution budget")
+		}
+		if name == "stress" && profile.DeadlineMS != 300000 {
+			return errors.New("stress profile must have an exact five-minute execution budget")
+		}
+		positive := []int{
+			profile.Streams.Concurrent, profile.Streams.BytesPerStream, profile.Streams.ChunkBytes,
+			profile.Streams.SlowReaders, profile.Streams.Churn, profile.Streams.FIN, profile.Streams.Reset,
+			profile.Rekey.Client, profile.Rekey.Server, profile.LivenessProbes, profile.RPC.Calls,
+			profile.RPC.Notifications, profile.RPC.Cancellations, profile.RPC.Timeouts,
+			profile.RPC.SaturationActive, profile.RPC.SaturationQueued, profile.RPC.SaturationRejected,
+			profile.Proxy.HTTPRequests, profile.Proxy.HTTPBodyBytes, profile.Proxy.WebSocketFrames,
+			profile.Proxy.WebSocketFrameBytes, profile.ReconnectCycles, profile.LimitChecks,
+		}
+		for _, value := range positive {
+			if value <= 0 {
+				return fmt.Errorf("%s profile workload values must be positive", name)
+			}
+		}
+		if profile.Rekey.Concurrent < 0 || profile.RPC.SaturationRejected != 1 {
+			return fmt.Errorf("%s profile rekey or RPC saturation settings are invalid", name)
+		}
+		expectedDiagnostics := []interopDiagnosticExpectation{
+			{Case: "rpc_queue", Stage: "rpc", Code: "resource_exhausted"},
+			{Case: "active_streams", Stage: "yamux", Code: "resource_exhausted"},
+			{Case: "inbound_streams", Stage: "yamux", Code: "resource_exhausted"},
+			{Case: "frame", Stage: "yamux", Code: "resource_exhausted"},
+			{Case: "stream_receive", Stage: "yamux", Code: "resource_exhausted"},
+			{Case: "session_receive", Stage: "yamux", Code: "resource_exhausted"},
+			{Case: "proxy_body", Stage: "rpc", Code: "resource_exhausted"},
+		}
+		if profile.LimitChecks > len(expectedDiagnostics) || !slices.Equal(profile.Diagnostics, expectedDiagnostics[:profile.LimitChecks]) {
+			return fmt.Errorf("interop profile %q diagnostics do not match the canonical order", name)
+		}
+	}
+	return nil
+}
+
+func decodeStrictJSONFile(path string, value any) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("JSON document contains more than one value")
+		}
+		return err
+	}
+	return nil
+}
+
+func requireFile(repoRoot, owner, path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("%s evidence path is empty", owner)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, path)); err != nil {
+		return fmt.Errorf("%s evidence %q: %w", owner, path, err)
+	}
+	return nil
+}
+
+func sameStringSet(left, right []string) bool {
+	left = slices.Clone(left)
+	right = slices.Clone(right)
+	slices.Sort(left)
+	slices.Sort(right)
+	return slices.Equal(left, right)
 }
 
 func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {

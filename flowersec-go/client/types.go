@@ -73,6 +73,7 @@ const (
 	CodeReplaceRateLimited        = fserrors.CodeReplaceRateLimited
 	CodeHandshakeFailed           = fserrors.CodeHandshakeFailed
 	CodePingFailed                = fserrors.CodePingFailed
+	CodeRekeyFailed               = fserrors.CodeRekeyFailed
 	CodeMuxFailed                 = fserrors.CodeMuxFailed
 	CodeAcceptStreamFailed        = fserrors.CodeAcceptStreamFailed
 	CodeOpenStreamFailed          = fserrors.CodeOpenStreamFailed

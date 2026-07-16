@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
 )
 
 type streamOpener = fsproxy.StreamOpener
@@ -61,7 +61,7 @@ func newRouteManager(host string, origin string, source grantSource) *routeManag
 	}
 }
 
-func (m *routeManager) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+func (m *routeManager) OpenStream(ctx context.Context, kind string) (fsstream.Stream, error) {
 	cli, err := m.ensureClient(ctx)
 	if err != nil {
 		return nil, err
@@ -70,18 +70,8 @@ func (m *routeManager) OpenStream(ctx context.Context, kind string) (io.ReadWrit
 	if err == nil {
 		return stream, nil
 	}
-
 	m.invalidate(cli)
-	cli, freshErr := m.ensureClient(ctx)
-	if freshErr != nil {
-		return nil, freshErr
-	}
-	stream, err = cli.OpenStream(ctx, kind)
-	if err != nil {
-		m.invalidate(cli)
-		return nil, err
-	}
-	return stream, nil
+	return nil, err
 }
 
 func (m *routeManager) Close() error {

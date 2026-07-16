@@ -15,6 +15,8 @@ export type Client = Readonly<{
   rpc: RpcClient;
   openStream: (kind: string, opts?: Readonly<{ signal?: AbortSignal }>) => Promise<YamuxStream>;
   ping: () => Promise<void>;
+  /** Emits an authenticated rekey record and advances the E2EE send key. */
+  rekey: () => Promise<void>;
   /** Performs an acknowledged Yamux round trip and returns RTT in milliseconds. */
   probeLiveness: () => Promise<number>;
   close: () => void;

@@ -77,19 +77,19 @@ Source: `flowersec-ts/src/yamux/constants.ts`, `flowersec-ts/src/yamux/header.ts
 The TS Yamux implementation is exercised in real interop scenarios:
 
 - **TS client ↔ Go server (minimal Yamux over TCP)**:
-  - Test: `flowersec-ts/src/e2e/yamux_interop.test.ts` (minimal tcp mode)
-  - Go harness: `flowersec-go/internal/cmd/flowersec-yamux-harness/main.go`
+  - Test: `flowersec-go/internal/cmd/flowersec-interop` with the TypeScript JSONL harness
+  - Go reference: production `client`, `endpoint`, and Yamux-backed session APIs
   - Covers: window update race, RST handling, concurrent open/close, session close.
   - Notes: opt-in via `YAMUX_INTEROP=1` (runs Go harnesses).
   - Notes: sizes scale via `YAMUX_INTEROP_SCALE` (e.g. `2` => 20 streams / 1 MiB per stream).
   - Notes: client-initiated RST scenarios run when `YAMUX_INTEROP_CLIENT_RST=1`.
   - Notes: window-update and concurrent-open/close stress runs when `YAMUX_INTEROP_STRESS=1`.
 - **TS client ↔ Go server (full chain: E2EE + tunnel + Yamux)**:
-  - Test: `flowersec-ts/src/e2e/yamux_interop.test.ts` (full chain mode)
+  - Test: the Direct/Tunnel variants in `stability/interop_matrix.json`
   - Go harness: `flowersec-go/internal/cmd/flowersec-e2e-harness/main.go` with `-scenario`
   - Notes: reduced stream counts/payload sizes to keep end-to-end runtime bounded.
 - **Layered close/reset probes (memory + WS + full chain)**:
-  - Test: `flowersec-ts/src/e2e/yamux_interop_layers.test.ts`
+  - Test: the Go-reference smoke and stress profiles in `testdata/interop/v1/profiles.json`
   - Covers: session-close wakeup, FIN/RST delivery across SecureChannel + WebSocketBinaryTransport,
     and a full-chain FIN/RST probe on `rst_mid_write_go`.
   - Notes: gated by `YAMUX_INTEROP=1`; the full-chain probe additionally requires

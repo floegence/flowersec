@@ -9,7 +9,7 @@ import {
   TYPE_DATA,
   TYPE_WINDOW_UPDATE
 } from "./constants.js";
-import { YamuxResourceExhaustedError } from "./errors.js";
+import { YamuxResourceExhaustedError, YamuxStreamResetError } from "./errors.js";
 import type { YamuxSession } from "./session.js";
 
 type StreamState =
@@ -175,7 +175,7 @@ export class YamuxStream {
   }
 
   // reset tears down the stream and notifies the peer.
-  reset(err: Error): Promise<void> {
+  reset(err: Error = new Error("stream reset")): Promise<void> {
     if (this.resetTask != null) return this.resetTask;
     if (!this.fail(err)) return Promise.resolve();
     this.resetTask = this.session.sendRst(this.id);
@@ -225,7 +225,7 @@ export class YamuxStream {
       for (const w of ws) w();
     }
     if ((flags & FLAG_RST) !== 0) {
-      if (this.fail(new Error("rst"))) this.session.onStreamClosed(this.id);
+      if (this.fail(new YamuxStreamResetError())) this.session.onStreamClosed(this.id);
     }
   }
 

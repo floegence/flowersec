@@ -96,6 +96,16 @@ public struct ProxyHTTPResponseMeta: Codable, Equatable, Sendable {
     case headers
     case error
   }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    version = try container.decode(Int.self, forKey: .version)
+    requestID = try container.decode(String.self, forKey: .requestID)
+    ok = try container.decode(Bool.self, forKey: .ok)
+    status = try container.decodeIfPresent(Int.self, forKey: .status)
+    headers = try container.decodeIfPresent([ProxyHeader].self, forKey: .headers) ?? []
+    error = try container.decodeIfPresent(ProxyRemoteError.self, forKey: .error)
+  }
 }
 
 public struct ProxyWebSocketOpenMeta: Codable, Equatable, Sendable {
@@ -323,6 +333,30 @@ public enum ProxyError: LocalizedError, Equatable, Sendable {
     case .canceled: return "The proxy operation was canceled."
     }
   }
+}
+
+enum ProxyUpstreamFailureKind: Sendable {
+  case timeout
+  case dial
+  case rejected
+  case request
+}
+
+struct ProxyUpstreamFailure: LocalizedError, Sendable {
+  let kind: ProxyUpstreamFailureKind
+  let message: String
+
+  init(_ kind: ProxyUpstreamFailureKind, _ error: any Error) {
+    self.kind = kind
+    self.message = error.localizedDescription
+  }
+
+  init(_ kind: ProxyUpstreamFailureKind, message: String) {
+    self.kind = kind
+    self.message = message
+  }
+
+  var errorDescription: String? { message }
 }
 
 public protocol ProxyStreamRoute: Sendable {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
 )
 
 type nopRWC struct{}
@@ -16,6 +17,7 @@ type nopRWC struct{}
 func (nopRWC) Read(p []byte) (int, error)  { return 0, io.EOF }
 func (nopRWC) Write(p []byte) (int, error) { return len(p), nil }
 func (nopRWC) Close() error                { return nil }
+func (nopRWC) Reset() error                { return nil }
 
 type fakeSessionUnhandled struct {
 	path   endpoint.Path
@@ -28,7 +30,7 @@ func (s *fakeSessionUnhandled) EndpointInstanceID() string {
 	return ""
 }
 
-func (s *fakeSessionUnhandled) AcceptStreamHello(_ int) (string, io.ReadWriteCloser, error) {
+func (s *fakeSessionUnhandled) AcceptStreamHello(_ int) (string, fsstream.Stream, error) {
 	s.calls++
 	if s.calls == 1 {
 		if s.cancel != nil {
@@ -43,10 +45,11 @@ func (s *fakeSessionUnhandled) ServeStreams(context.Context, int, func(string, i
 	return errors.New("not implemented")
 }
 
-func (s *fakeSessionUnhandled) OpenStream(context.Context, string) (io.ReadWriteCloser, error) {
+func (s *fakeSessionUnhandled) OpenStream(context.Context, string) (fsstream.Stream, error) {
 	return nil, errors.New("not implemented")
 }
 func (s *fakeSessionUnhandled) Ping() error                                          { return nil }
+func (s *fakeSessionUnhandled) Rekey() error                                         { return nil }
 func (s *fakeSessionUnhandled) ProbeLiveness(context.Context) (time.Duration, error) { return 0, nil }
 func (s *fakeSessionUnhandled) Close() error                                         { return nil }
 

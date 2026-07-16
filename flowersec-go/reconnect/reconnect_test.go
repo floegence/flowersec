@@ -3,7 +3,6 @@ package reconnect
 import (
 	"context"
 	"errors"
-	"io"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
 )
 
 func TestOnceSourceConsumesArtifactOnce(t *testing.T) {
@@ -55,7 +55,29 @@ func TestManagerRetriesRefreshableSourceAndConnects(t *testing.T) {
 	if manager.State().Status != StatusConnected {
 		t.Fatalf("state=%s, want connected", manager.State().Status)
 	}
-	manager.Disconnect()
+	if err := manager.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagerDisconnectReportsClientCloseFailure(t *testing.T) {
+	closeErr := errors.New("close failed")
+	manager := NewManager()
+	if err := manager.Connect(context.Background(), Config{
+		Source: OnceSource(&protocolio.ConnectArtifact{V: 1}),
+		Connector: func(context.Context, *protocolio.ConnectArtifact, ...client.ConnectOption) (client.Client, error) {
+			return fakeClient{closeErr: closeErr}, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Disconnect(); !errors.Is(err, closeErr) {
+		t.Fatalf("Disconnect() error = %v, want %v", err, closeErr)
+	}
+	state := manager.State()
+	if state.Status != StatusError || !errors.Is(state.Error, closeErr) {
+		t.Fatalf("state = %#v, want close failure", state)
+	}
 }
 
 func TestManagerStopsOnTerminalConnectError(t *testing.T) {
@@ -96,14 +118,15 @@ func TestSettingsPreserveExplicitZeroDelayAndJitter(t *testing.T) {
 	}
 }
 
-type fakeClient struct{}
+type fakeClient struct{ closeErr error }
 
 func (fakeClient) Path() client.Path          { return client.PathDirect }
 func (fakeClient) EndpointInstanceID() string { return "" }
 func (fakeClient) RPC() *rpc.Client           { return nil }
-func (fakeClient) OpenStream(context.Context, string) (io.ReadWriteCloser, error) {
+func (fakeClient) OpenStream(context.Context, string) (fsstream.Stream, error) {
 	return nil, errors.New("not implemented")
 }
 func (fakeClient) Ping() error                                          { return nil }
+func (fakeClient) Rekey() error                                         { return nil }
 func (fakeClient) ProbeLiveness(context.Context) (time.Duration, error) { return 0, nil }
-func (fakeClient) Close() error                                         { return nil }
+func (c fakeClient) Close() error                                       { return c.closeErr }

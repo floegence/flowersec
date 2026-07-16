@@ -29,6 +29,9 @@ jobs:
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
+      - name: Setup Rust stable for release tooling
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Setup Rust MSRV
         uses: dtolnay/rust-toolchain@1.85.0
         with:
@@ -43,10 +46,11 @@ jobs:
           tool: cargo-audit,cargo-deny,cargo-llvm-cov,cargo-semver-checks
 
       - name: Run make check (stability + coverage included)
-        run: make check
+        run: make check CHECK_INTEROP=0
 
-      - name: Run Rust and TypeScript pairwise interop
-        run: make pairwise-interop
+      - name: Run Go-reference Linux interop smoke
+        timeout-minutes: 5
+        run: make interop-smoke-linux
 
   swift-check:
     runs-on: macos-latest
@@ -72,4 +76,7 @@ jobs:
           set -euo pipefail
           make stability-check
           make swift-check
-          make swift-rust-interop
+
+      - name: Run Go-reference Swift interop smoke
+        timeout-minutes: 5
+        run: make interop-smoke-swift

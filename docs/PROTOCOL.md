@@ -147,6 +147,8 @@ Current implementation:
 - Swift: `flowersec-swift/Sources/Flowersec/RecordCodec.swift` + `SecureChannel.swift`
 - Rust: `flowersec-rust/src/e2ee.rs`
 
+The stable high-level controls are Go `Client.Rekey()` / `Session.Rekey()`, TypeScript `client.rekey()` / `Session.rekey()`, Swift `FlowersecClient.rekey()` / `EndpointSession.rekey()`, and Rust `Client::rekey()` / `endpoint::Session::rekey()`. Rekey is serialized with ordinary secure-channel writes and does not expose key material.
+
 ## 4. Yamux multiplexing
 
 Once the encrypted byte stream is established, endpoints run Yamux over it to multiplex streams.
@@ -164,6 +166,8 @@ Current implementation:
 - Rust: Flowersec-owned implementation in `flowersec-rust/src/yamux.rs`
 
 All four expose acknowledged PING probes and enforce the six shared limits from `stability/sdk_defaults.json`. The Rust implementation is not based on the upstream `yamux` crate because Flowersec requires explicit ACK correlation and complete resource-limit control.
+
+Stable stream reset sends Yamux RST without an application error payload. Local causes are diagnostic-only. Go exposes `stream.Stream.Reset()`, TypeScript exposes `stream.reset()`, Swift exposes `FlowersecByteStream.reset()`, and Rust exposes `YamuxStream::reset()`.
 
 ## 5. Stream hello
 
@@ -198,3 +202,16 @@ Typed RPC clients and server handlers are generated for all four languages by `t
 Flowersec also defines stable application protocols layered on top of Yamux custom streams.
 
 - HTTP/WS proxying over custom streams: `docs/PROXY.md` (`flowersec-proxy/http1`, `flowersec-proxy/ws`)
+
+## 8. Go-reference interoperability contract
+
+Flowersec validates portable protocol behavior with exactly seven directed cells:
+
+- Go -> Go
+- TypeScript -> Go and Go -> TypeScript
+- Swift -> Go and Go -> Swift
+- Rust -> Go and Go -> Rust
+
+Go -> Go is mandatory and runs first. If it fails, the matrix is invalid and no failure is attributed to another SDK. Non-Go pairwise edges are deliberately absent; the IDL, shared fixtures, defaults, error registries, and wire documents remain the normative language-neutral contract.
+
+Each cell covers Direct and Tunnel with both X25519 and P-256. The versioned JSON Lines harness rejects unknown fields, missing fields, duplicate or out-of-order events, early EOF, non-zero exit, and deadline expiry. `stability/interop_matrix.json` and `testdata/interop/v1/profiles.json` define the exact cells, cases, diagnostics, and fixed workloads.

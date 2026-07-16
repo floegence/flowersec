@@ -70,6 +70,7 @@ const (
 	CodeReplaceRateLimited        = fserrors.CodeReplaceRateLimited
 	CodeHandshakeFailed           = fserrors.CodeHandshakeFailed
 	CodePingFailed                = fserrors.CodePingFailed
+	CodeRekeyFailed               = fserrors.CodeRekeyFailed
 	CodeMuxFailed                 = fserrors.CodeMuxFailed
 	CodeNotConnected              = fserrors.CodeNotConnected
 	CodeMissingHandler            = fserrors.CodeMissingHandler

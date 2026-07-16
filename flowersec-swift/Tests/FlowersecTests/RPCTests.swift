@@ -4,6 +4,18 @@ import XCTest
 @testable import Flowersec
 
 final class FlowersecRPCTests: XCTestCase {
+  func testEnvelopeRoundTripsNullErrorPayload() throws {
+    let envelope = RPCEnvelope(
+      typeID: 7,
+      requestID: 0,
+      responseTo: 161,
+      payload: Data("null".utf8),
+      error: RPCErrorPayload(code: 429, message: "server overloaded")
+    )
+    let decoded = try RPCEnvelope(data: envelope.encoded())
+    XCTAssertEqual(decoded, envelope)
+  }
+
   func testServerSendsTypedNotification() async throws {
     let stream = InMemoryByteStream()
     let server = try RPCServer(stream: stream, router: RPCRouter())
@@ -23,6 +35,34 @@ final class FlowersecRPCTests: XCTestCase {
       XCTFail("Expected a closed server error")
     } catch let error as FlowersecError {
       XCTAssertEqual(error.code, .notConnected)
+    }
+  }
+
+  func testServerPropagatesNotificationHandlerFailure() async throws {
+    let stream = InMemoryByteStream()
+    let router = RPCRouter()
+    await router.register(7011) { (_: RPCNotification) async throws -> RPCNotification in
+      throw IntentionalRPCServerError()
+    }
+    let server = try RPCServer(stream: stream, router: router)
+    let serve = Task { try await server.serve() }
+    try await stream.pushJSONFrame(
+      RPCEnvelope(
+        typeID: 7011,
+        requestID: 0,
+        responseTo: 0,
+        payload: JSONEncoder.flowersecRPCTest.encode(RPCNotification(value: "fail")),
+        error: nil
+      ).encoded()
+    )
+
+    do {
+      try await serve.value
+      XCTFail("Expected notification handler failure")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .direct)
+      XCTAssertEqual(error.stage, .rpc)
+      XCTAssertEqual(error.code, .rpcFailed)
     }
   }
 
@@ -224,7 +264,7 @@ final class FlowersecRPCTests: XCTestCase {
       )
     }
     _ = try await stream.nextWrittenEnvelope()
-    await stream.pushRawFrame(Data("{".utf8))
+    try await stream.pushRawFrame(Data("{".utf8))
 
     do {
       try await call.value
@@ -318,3 +358,5 @@ private struct RPCReply: Codable, Equatable {
 private struct RPCNotification: Codable, Equatable {
   var value: String
 }
+
+private struct IntentionalRPCServerError: Error {}

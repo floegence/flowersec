@@ -100,7 +100,7 @@ fn start_go_harness() -> ChildGuard {
 
 fn connect_options() -> ConnectOptions {
     ConnectOptions {
-        origin: Some("https://app.redeven.com".to_owned()),
+        origin: Some("https://interop.flowersec.test".to_owned()),
         transport_security_policy: TransportSecurityPolicy::allow_plaintext_for_loopback(),
         ..ConnectOptions::default()
     }

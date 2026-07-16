@@ -11,16 +11,17 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
 )
 
 type bridgeTestRoute struct {
 	srv *serve.Server
 }
 
-func (c *bridgeTestRoute) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+func (c *bridgeTestRoute) OpenStream(ctx context.Context, kind string) (fsstream.Stream, error) {
 	a, b := net.Pipe()
 	go c.srv.HandleStream(ctx, kind, b)
-	return a, nil
+	return proxyTestStream{ReadWriteCloser: a}, nil
 }
 
 func TestBridgeProxyHTTPFiltersCookiesAndResponseHeaders(t *testing.T) {
@@ -120,7 +121,7 @@ func TestBridgeProxyHTTPAppliesDefaultRequestTimeout(t *testing.T) {
 	}
 }
 
-func (r *timeoutCaptureRoute) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+func (r *timeoutCaptureRoute) OpenStream(ctx context.Context, kind string) (fsstream.Stream, error) {
 	client, server := net.Pipe()
 	go func() {
 		defer server.Close()
@@ -169,5 +170,5 @@ func (r *timeoutCaptureRoute) OpenStream(ctx context.Context, kind string) (io.R
 			return
 		}
 	}()
-	return client, nil
+	return proxyTestStream{ReadWriteCloser: client}, nil
 }

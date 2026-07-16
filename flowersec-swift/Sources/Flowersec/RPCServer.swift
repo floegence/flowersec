@@ -60,9 +60,12 @@ public actor RPCServer {
   private var requestQueue: [RPCEnvelope] = []
   private var notificationQueue: [RPCEnvelope] = []
   private var activeRequests = 0
-  private var notificationWorkerRunning = false
+  private var requestTasks: [UInt64: Task<Void, Never>] = [:]
+  private var notificationTask: Task<Void, Never>?
+  private var nextTaskID: UInt64 = 1
   private var writeTail: (id: UInt64, task: Task<Void, Error>)?
   private var nextWriteID: UInt64 = 1
+  private var terminalError: FlowersecError?
   private var closed = false
 
   public init(
@@ -108,17 +111,10 @@ public actor RPCServer {
     } catch is CancellationError {
       await close()
       throw CancellationError()
-    } catch let error as FlowersecError {
-      await close()
-      throw error.withPath(path)
     } catch {
+      let failure = terminalError ?? serverError(error)
       await close()
-      throw FlowersecError(
-        path: path,
-        stage: .rpc,
-        code: .rpcFailed,
-        message: "The RPC server failed: \(error.localizedDescription)"
-      )
+      throw failure
     }
   }
 
@@ -127,9 +123,26 @@ public actor RPCServer {
     closed = true
     requestQueue.removeAll()
     notificationQueue.removeAll()
-    writeTail?.task.cancel()
+    let requests = Array(requestTasks.values)
+    requestTasks.removeAll()
+    let notification = notificationTask
+    notificationTask = nil
+    let write = writeTail?.task
     writeTail = nil
+    for task in requests { task.cancel() }
+    notification?.cancel()
+    write?.cancel()
     await stream.close()
+    for task in requests { await task.value }
+    if let notification { await notification.value }
+    if let write {
+      do {
+        try await write.value
+      } catch is CancellationError {
+      } catch {
+        if terminalError == nil { terminalError = serverError(error) }
+      }
+    }
   }
 
   private func enqueueRequest(_ envelope: RPCEnvelope) async throws {
@@ -162,7 +175,9 @@ public actor RPCServer {
 
   private func startRequest(_ envelope: RPCEnvelope) {
     activeRequests += 1
-    Task {
+    let taskID = nextTaskID
+    nextTaskID &+= 1
+    let task = Task {
       let handler = await router.handler(for: envelope.typeID)
       let result: Result<Data, Error>
       if let handler {
@@ -174,13 +189,21 @@ public actor RPCServer {
       } else {
         result = .failure(FlowersecRPCError(code: 404, message: "handler not found"))
       }
-      await finishRequest(envelope, result: result)
+      await finishRequest(taskID: taskID, envelope: envelope, result: result)
     }
+    requestTasks[taskID] = task
   }
 
-  private func finishRequest(_ envelope: RPCEnvelope, result: Result<Data, Error>) async {
+  private func finishRequest(
+    taskID: UInt64,
+    envelope: RPCEnvelope,
+    result: Result<Data, Error>
+  ) async {
     activeRequests = max(0, activeRequests - 1)
-    guard !closed else { return }
+    guard !closed else {
+      requestTasks.removeValue(forKey: taskID)
+      return
+    }
     do {
       switch result {
       case .success(let payload):
@@ -199,28 +222,36 @@ public actor RPCServer {
         )
       }
     } catch {
-      await close()
+      requestTasks.removeValue(forKey: taskID)
+      await fail(error)
       return
     }
     if !requestQueue.isEmpty {
       startRequest(requestQueue.removeFirst())
     }
+    requestTasks.removeValue(forKey: taskID)
   }
 
   private func startNotificationWorkerIfNeeded() {
-    guard !notificationWorkerRunning else { return }
-    notificationWorkerRunning = true
-    Task { await runNotificationWorker() }
+    guard notificationTask == nil else { return }
+    notificationTask = Task { await runNotificationWorker() }
   }
 
   private func runNotificationWorker() async {
-    while !closed, !notificationQueue.isEmpty {
+    while !Task.isCancelled, !closed, !notificationQueue.isEmpty {
       let envelope = notificationQueue.removeFirst()
       if let handler = await router.handler(for: envelope.typeID) {
-        _ = try? await handler(envelope.payload)
+        do {
+          _ = try await handler(envelope.payload)
+        } catch is CancellationError {
+          break
+        } catch {
+          await fail(error)
+          break
+        }
       }
     }
-    notificationWorkerRunning = false
+    notificationTask = nil
   }
 
   private func writeResponse(
@@ -249,5 +280,23 @@ public actor RPCServer {
     writeTail = (writeID, task)
     try await task.value
     if writeTail?.id == writeID { writeTail = nil }
+  }
+
+  private func fail(_ error: Error) async {
+    guard terminalError == nil else { return }
+    terminalError = serverError(error)
+    await stream.close()
+  }
+
+  private func serverError(_ error: Error) -> FlowersecError {
+    if let error = error as? FlowersecError {
+      return error.withPath(path)
+    }
+    return FlowersecError(
+      path: path,
+      stage: .rpc,
+      code: .rpcFailed,
+      message: "The RPC server failed: \(error.localizedDescription)"
+    )
   }
 }

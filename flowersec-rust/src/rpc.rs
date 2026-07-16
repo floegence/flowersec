@@ -348,6 +348,7 @@ where
     match deadline {
         Some(deadline) => {
             tokio::select! {
+                biased;
                 _ = cancellation.cancelled() => Err(RpcError::Canceled),
                 _ = tokio::time::sleep_until(deadline) => Err(RpcError::Timeout),
                 output = future => Ok(output),
@@ -355,6 +356,7 @@ where
         }
         None => {
             tokio::select! {
+                biased;
                 _ = cancellation.cancelled() => Err(RpcError::Canceled),
                 output = future => Ok(output),
             }
@@ -372,7 +374,7 @@ async fn read_responses(transport: Arc<StreamRpcTransport>) {
             Err(error) => {
                 let mut pending = transport.pending.lock().await;
                 for (_, sender) in pending.drain() {
-                    let _ = sender.send(Err(RpcError::Transport(error.to_string())));
+                    drop(sender.send(Err(RpcError::Transport(error.to_string()))));
                 }
                 return;
             }
@@ -388,13 +390,13 @@ async fn read_responses(transport: Arc<StreamRpcTransport>) {
                     .unwrap_or_default();
                 for handler in handlers {
                     let payload = envelope.payload.clone();
-                    tokio::spawn(handler(payload));
+                    handler(payload).await;
                 }
             }
             continue;
         }
         if let Some(sender) = transport.pending.lock().await.remove(&envelope.response_to) {
-            let _ = sender.send(Ok(envelope));
+            drop(sender.send(Ok(envelope)));
         }
     }
 }
@@ -547,32 +549,32 @@ impl Server {
         {
             return Err(RpcError::ResourceExhausted);
         }
-        let (request_tx, request_rx) = mpsc::channel(self.max_queued_requests);
+        let request_capacity = self
+            .max_concurrent_requests
+            .saturating_add(self.max_queued_requests);
+        let (request_tx, request_rx) = mpsc::channel(request_capacity);
         let (notification_tx, notification_rx) =
             mpsc::channel::<RpcEnvelope>(self.max_queued_notifications);
         let request_rx = Arc::new(Mutex::new(request_rx));
         let notification_rx = Arc::new(Mutex::new(notification_rx));
-        let semaphore = Arc::new(Semaphore::new(self.max_concurrent_requests));
+        let admission = Arc::new(Semaphore::new(request_capacity));
 
+        let mut workers = tokio::task::JoinSet::new();
         for _ in 0..self.max_concurrent_requests {
             let server = self.clone();
             let receiver = request_rx.clone();
             let stream = stream.clone();
-            let semaphore = semaphore.clone();
-            tokio::spawn(async move {
+            workers.spawn(async move {
                 loop {
-                    let envelope = receiver.lock().await.recv().await;
-                    let Some(envelope) = envelope else { return };
-                    let permit = match semaphore.clone().acquire_owned().await {
-                        Ok(permit) => permit,
-                        Err(_) => return,
+                    let work = receiver.lock().await.recv().await;
+                    let Some((envelope, _admission)) = work else {
+                        return Ok(());
                     };
                     let response = server.handle(envelope).await;
-                    let _permit = permit;
                     let _write = server.write_serial.lock().await;
-                    if streamio::write_json(&stream, &response).await.is_err() {
-                        return;
-                    }
+                    streamio::write_json(&stream, &response)
+                        .await
+                        .map_err(|error| RpcError::Transport(error.to_string()))?;
                 }
             });
         }
@@ -580,50 +582,115 @@ impl Server {
         for _ in 0..self.max_concurrent_requests {
             let server = self.clone();
             let receiver = notification_rx.clone();
-            tokio::spawn(async move {
+            workers.spawn(async move {
                 loop {
                     let envelope = receiver.lock().await.recv().await;
-                    let Some(envelope) = envelope else { return };
-                    let _ = server
+                    let Some(envelope) = envelope else {
+                        return Ok(());
+                    };
+                    server
                         .router
                         .dispatch(envelope.type_id, envelope.payload)
-                        .await;
+                        .await
+                        .map_err(|error| RpcError::Call {
+                            code: error.code,
+                            message: error.message.unwrap_or_default(),
+                        })?;
                 }
             });
         }
 
-        loop {
-            let envelope: RpcEnvelope =
-                streamio::read_json(&stream, defaults::MAX_JSON_FRAME_BYTES)
-                    .await
-                    .map_err(|error| RpcError::Transport(error.to_string()))?;
-            if envelope.response_to != 0 {
-                continue;
-            }
-            if envelope.request_id == 0 {
-                let _ = notification_tx.try_send(envelope);
-                continue;
-            }
-            match request_tx.try_send(envelope) {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(envelope)) => {
-                    let response = RpcEnvelope {
-                        type_id: envelope.type_id,
-                        request_id: 0,
-                        response_to: envelope.request_id,
-                        payload: Value::Null,
-                        error: Some(WireRpcError {
-                            code: 429,
-                            message: Some("server overloaded".to_owned()),
-                        }),
-                    };
-                    let _write = self.write_serial.lock().await;
-                    streamio::write_json(&stream, &response)
-                        .await
-                        .map_err(|error| RpcError::Transport(error.to_string()))?;
+        let result = async {
+            loop {
+                let envelope: RpcEnvelope = tokio::select! {
+                    outcome = workers.join_next(), if !workers.is_empty() => {
+                        match outcome {
+                            Some(Ok(Ok(()))) => return Err(RpcError::Closed),
+                            Some(Ok(Err(error))) => return Err(error),
+                            Some(Err(error)) => return Err(RpcError::Transport(error.to_string())),
+                            None => return Err(RpcError::Closed),
+                        }
+                    }
+                    envelope = streamio::read_json(&stream, defaults::MAX_JSON_FRAME_BYTES) => {
+                        envelope.map_err(|error| RpcError::Transport(error.to_string()))?
+                    }
+                };
+                if envelope.response_to != 0 {
+                    continue;
                 }
-                Err(mpsc::error::TrySendError::Closed(_)) => return Err(RpcError::Closed),
+                if envelope.request_id == 0 {
+                    notification_tx
+                        .try_send(envelope)
+                        .map_err(|_| RpcError::ResourceExhausted)?;
+                    continue;
+                }
+                let permit = match admission.clone().try_acquire_owned() {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        let response = overloaded_response(envelope);
+                        let _write = self.write_serial.lock().await;
+                        streamio::write_json(&stream, &response)
+                            .await
+                            .map_err(|error| RpcError::Transport(error.to_string()))?;
+                        continue;
+                    }
+                };
+                match request_tx.try_send((envelope, permit)) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        return Err(RpcError::ResourceExhausted);
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => return Err(RpcError::Closed),
+                }
             }
         }
+        .await;
+        workers.abort_all();
+        while let Some(outcome) = workers.join_next().await {
+            if let Err(error) = outcome {
+                if !error.is_cancelled() {
+                    tracing::warn!(%error, "RPC worker failed during shutdown");
+                }
+            }
+        }
+        result
+    }
+}
+
+fn overloaded_response(envelope: RpcEnvelope) -> RpcEnvelope {
+    RpcEnvelope {
+        type_id: envelope.type_id,
+        request_id: 0,
+        response_to: envelope.request_id,
+        payload: Value::Null,
+        error: Some(WireRpcError {
+            code: 429,
+            message: Some("server overloaded".to_owned()),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn expired_deadline_wins_when_response_is_already_ready() {
+        let cancellation = CancellationToken::new();
+        let result = controlled(
+            std::future::ready(7_u8),
+            &cancellation,
+            Some(Instant::now() - Duration::from_millis(1)),
+        )
+        .await;
+        assert!(matches!(result, Err(RpcError::Timeout)));
+    }
+
+    #[tokio::test]
+    async fn cancellation_wins_when_response_is_already_ready() {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let result = controlled(std::future::ready(7_u8), &cancellation, None).await;
+        assert!(matches!(result, Err(RpcError::Canceled)));
     }
 }

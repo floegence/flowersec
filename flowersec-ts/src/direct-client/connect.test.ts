@@ -3,6 +3,7 @@ import { base64urlEncode } from "../utils/base64url.js";
 import { FlowersecError } from "../utils/errors.js";
 import { E2EEHandshakeError } from "../e2ee/errors.js";
 import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
+import { YamuxPingTimeoutError } from "../yamux/errors.js";
 
 const mocks = vi.hoisted(() => {
   const clientHandshakeMock = vi.fn();
@@ -414,7 +415,7 @@ describe("connectDirect", () => {
         write: vi.fn(),
         close: vi.fn()
       });
-      mocks.MockYamuxSession.prototype.probeLiveness = vi.fn().mockRejectedValueOnce(new Error("ping timeout"));
+      mocks.MockYamuxSession.prototype.probeLiveness = vi.fn().mockRejectedValueOnce(new YamuxPingTimeoutError());
       const onDiagnosticEvent = vi.fn();
 
       const p = connectDirect(makeInfo(), {

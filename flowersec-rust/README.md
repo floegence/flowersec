@@ -7,7 +7,7 @@ The crate targets Rust 1.85 or newer on Linux, macOS, and Windows. It uses rustl
 ## Install
 
 ```bash
-cargo add flowersec@0.22.0
+cargo add flowersec@0.23.0
 ```
 
 The default feature uses native root certificates. Use `default-features = false, features = ["rustls-webpki-roots"]` when an embedded WebPKI root set is preferred.
@@ -44,6 +44,8 @@ assert!(response.ok);
 let stream = client.open_stream("logs").await?;
 stream.write(b"follow").await?;
 let reply = stream.read_exact(2).await?;
+client.rekey().await?;
+stream.reset().await?;
 ```
 
 IDL-generated clients and handlers build on `rpc::RpcClient`, `rpc::Router`, and `rpc::Server`. Calls, notifications, timeouts, cancellation, concurrency, and queues use bounded defaults from `stability/sdk_defaults.json`.
@@ -52,9 +54,11 @@ IDL-generated clients and handlers build on `rpc::RpcClient`, `rpc::Router`, and
 
 Use `endpoint::accept_direct(...)` with any `WebSocketTransport`, or use `endpoint::connect_tunnel(...)` with a server-role grant. The returned `endpoint::Session` accepts typed RPC and custom streams without binding the SDK to a web framework. `transport::TungsteniteTransport` is provided for accepted or connected tungstenite streams.
 
+`Client::rekey()` and `endpoint::Session::rekey()` perform explicit secure-channel rekeying. `YamuxStream::reset()` sends a protocol RST. `endpoint::Session::termination_error()` exposes the stable typed reason for abnormal endpoint termination.
+
 ## Reconnect and proxy
 
-`reconnect::ReconnectManager` accepts one-shot, refreshable, and controlplane artifact sources. Automatic reconnect requires a refreshable source and stops on terminal validation or authentication failures.
+`reconnect::ReconnectManager` accepts one-shot, refreshable, and controlplane artifact sources. Automatic reconnect requires a refreshable source and stops on terminal validation or authentication failures. Check the `Result` from `disconnect()` so client-close and supervisor-join failures remain observable.
 
 `proxy::ProxyClient` and `proxy::ProxyServer` implement the stable HTTP/1 and WebSocket stream protocols, including fixed upstream targets, loopback-only defaults, Origin policy, header filtering, cookie isolation, and body/frame limits.
 

@@ -117,7 +117,9 @@ async function readControlplaneText(response: Response, maxBytes: number): Promi
     if (totalBytes > maxBytes) {
       try {
         await reader.cancel();
-      } catch {}
+      } catch {
+        // The size violation is authoritative; cancellation is secondary cleanup.
+      }
       throw new ControlplaneResponseTooLargeError(maxBytes);
     }
     text += decoder.decode(chunk.value, { stream: true });

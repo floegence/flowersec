@@ -104,12 +104,19 @@ enum ProxyNIOWebSocketConnector {
     let channel: any Channel
     do {
       channel = try await bootstrap.connect(host: host, port: port).get()
+    } catch let error as ChannelError {
+      if case .connectTimeout = error {
+        throw ProxyUpstreamFailure(.timeout, error)
+      }
+      throw ProxyUpstreamFailure(.dial, error)
     } catch {
-      throw ProxyError.upstream(error.localizedDescription)
+      throw ProxyUpstreamFailure(.dial, error)
     }
     let scheduledTimeout = timeoutMilliseconds.map { milliseconds in
       group.any().scheduleTask(in: .milliseconds(milliseconds)) {
-        upgrade.promise.fail(ProxyError.upstream("WebSocket upgrade timed out"))
+        upgrade.promise.fail(
+          ProxyUpstreamFailure(.timeout, message: "WebSocket upgrade timed out")
+        )
       }
     }
     do {
@@ -118,8 +125,16 @@ enum ProxyNIOWebSocketConnector {
       return try await socket.promise.futureResult.get()
     } catch {
       scheduledTimeout?.cancel()
-      try? await channel.close().get()
-      throw ProxyError.upstream(error.localizedDescription)
+      let operation = error as? ProxyUpstreamFailure ?? ProxyUpstreamFailure(.dial, error)
+      do {
+        try await channel.close().get()
+      } catch {
+        throw ProxyUpstreamFailure(
+          operation.kind,
+          message: "\(operation.localizedDescription); channel close failed: \(error.localizedDescription)"
+        )
+      }
+      throw operation
     }
   }
 }
@@ -171,7 +186,12 @@ private final class ProxyWebSocketUpgradeRequestHandler: ChannelInboundHandler,
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     let response = unwrapInboundIn(data)
     if case .head(let head) = response {
-      upgrade.promise.fail(ProxyError.upstream("WebSocket upgrade rejected with \(head.status.code)"))
+      upgrade.promise.fail(
+        ProxyUpstreamFailure(
+          .rejected,
+          message: "WebSocket upgrade rejected with \(head.status.code)"
+        )
+      )
     }
     if case .end = response { context.close(promise: nil) }
   }

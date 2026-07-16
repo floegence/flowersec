@@ -12,6 +12,16 @@ public struct FlowersecRPCError: LocalizedError, Equatable, Sendable {
   public var errorDescription: String? { message }
 }
 
+public struct FlowersecStreamResetError: LocalizedError, Equatable, Sendable {
+  public var path: FlowersecPath
+
+  public init(path: FlowersecPath) {
+    self.path = path
+  }
+
+  public var errorDescription: String? { "The peer reset the stream." }
+}
+
 public struct RPCSubscription: Sendable {
   private let cancelHandler: @Sendable () -> Void
 
@@ -30,6 +40,7 @@ public protocol FlowersecByteStream: Sendable {
   func write(_ data: Data) async throws
   func readExact(_ length: Int) async throws -> Data
   func close() async
+  func reset() async throws
 }
 
 public actor RPCClient {
@@ -84,7 +95,11 @@ public actor RPCClient {
               requestID,
               result: .failure(FlowersecError.timeout(path: self.path, stage: .rpc))
             )
-          } catch {}
+          } catch is CancellationError {
+            return
+          } catch {
+            self.finishRequest(requestID, result: .failure(error))
+          }
         }
         if Task.isCancelled {
           timeoutTask.cancel()
@@ -248,11 +263,18 @@ public actor RPCClient {
 
 public final class FlowersecClient: @unchecked Sendable {
   public let rpc: RPCClient
+  private let secure: FlowersecSecureChannel
   private let yamux: FlowersecYamuxClient
   private let path: FlowersecPath
 
-  init(rpc: RPCClient, yamux: FlowersecYamuxClient, path: FlowersecPath) {
+  init(
+    rpc: RPCClient,
+    secure: FlowersecSecureChannel,
+    yamux: FlowersecYamuxClient,
+    path: FlowersecPath
+  ) {
     self.rpc = rpc
+    self.secure = secure
     self.yamux = yamux
     self.path = path
   }
@@ -264,6 +286,19 @@ public final class FlowersecClient: @unchecked Sendable {
 
   public func probeLiveness(timeout: Duration = .seconds(10)) async throws -> Duration {
     try await yamux.probeLiveness(timeout: timeout)
+  }
+
+  public func rekey() async throws {
+    do {
+      try await secure.rekey()
+    } catch {
+      throw FlowersecError(
+        path: path,
+        stage: .secure,
+        code: .rekeyFailed,
+        message: "Secure channel rekey failed: \(error.localizedDescription)"
+      )
+    }
   }
 
   public func terminated() async -> (any Error)? {
@@ -300,12 +335,12 @@ public enum Flowersec {
     options: ConnectOptions = ConnectOptions()
   ) async throws -> FlowersecClient {
     switch artifact {
-    case .direct(let info, metadata: let metadata):
+    case .direct(let info, let metadata):
       return try await connectDirect(
         info,
         options: try await artifactOptions(options, metadata: metadata, path: .direct)
       )
-    case .tunnel(let grant, metadata: let metadata):
+    case .tunnel(let grant, let metadata):
       return try await connectTunnel(
         grant,
         options: try await artifactOptions(options, metadata: metadata, path: .tunnel)
@@ -365,7 +400,8 @@ public enum Flowersec {
       )
     }
     try validate(options: options, path: .tunnel)
-    try await FlowersecTransportSecurity.enforce(url: grant.tunnelURL, path: .tunnel, options: options)
+    try await FlowersecTransportSecurity.enforce(
+      url: grant.tunnelURL, path: .tunnel, options: options)
     let transport = FlowersecWebSocketBinaryTransport(
       url: grant.tunnelURL,
       origin: options.origin,
@@ -451,7 +487,12 @@ public enum Flowersec {
       await establishedRPC.start()
       await establishedYamux.start()
       try Task.checkCancellation()
-      return FlowersecClient(rpc: establishedRPC, yamux: establishedYamux, path: path)
+      return FlowersecClient(
+        rpc: establishedRPC,
+        secure: establishedSecure,
+        yamux: establishedYamux,
+        path: path
+      )
     } catch {
       await rpc?.close()
       await stream?.close()
@@ -716,7 +757,7 @@ public struct RPCEnvelope: Equatable, Sendable {
 
   private static func decodeRawJSONObject(_ data: Data) throws -> Any {
     guard !data.isEmpty else { return [:] }
-    return try JSONSerialization.jsonObject(with: data)
+    return try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
   }
 
   private static func encodeRawJSONObject(_ object: Any) throws -> Data {

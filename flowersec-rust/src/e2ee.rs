@@ -647,6 +647,18 @@ pub struct SecureChannel<T: WebSocketTransport> {
     outbound_record_chunk_bytes: usize,
 }
 
+#[async_trait::async_trait]
+pub(crate) trait SecureChannelControl: Send + Sync + std::fmt::Debug {
+    async fn rekey_channel(&self) -> Result<(), E2eeError>;
+}
+
+#[async_trait::async_trait]
+impl<T: WebSocketTransport> SecureChannelControl for SecureChannel<T> {
+    async fn rekey_channel(&self) -> Result<(), E2eeError> {
+        self.rekey().await
+    }
+}
+
 impl<T: WebSocketTransport> std::fmt::Debug for SecureChannel<T> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

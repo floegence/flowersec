@@ -191,7 +191,7 @@ describe("RpcServer", () => {
     expect(resp.error?.code).toBe(404);
   });
 
-  test("notification handler errors do not stop serve loop", async () => {
+  test("notification handler errors terminate the supervised serve loop", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];
     const server = new RpcServer(makeTransport(q, async (b) => {
@@ -200,22 +200,12 @@ describe("RpcServer", () => {
     server.register(1, async () => {
       throw new Error("boom");
     });
-    server.register(2, async (payload) => ({ payload }));
-
     const notify = await makeFrame({ type_id: 1, request_id: 0, response_to: 0, payload: { n: true } });
-    const req = await makeFrame({ type_id: 2, request_id: 5, response_to: 0, payload: { ok: true } });
     await q.write(notify);
-    await q.write(req);
 
     const serve = server.serve();
-    await waitFor(() => writes.length === 1);
-    q.close(new Error("eof"));
-    await expect(serve).rejects.toThrow(/eof/);
-
-    expect(writes.length).toBe(1);
-    const resp = decodeEnvelope(writes[0]!);
-    expect(resp.response_to).toBe(5);
-    expect(resp.payload).toEqual({ ok: true });
+    await expect(serve).rejects.toThrow(/boom/);
+    expect(writes).toEqual([]);
   });
 
   test("request handler errors do not stop serve loop", async () => {
@@ -319,9 +309,11 @@ describe("RpcServer", () => {
     await q.write(await makeFrame({ type_id: 1, request_id: 0, response_to: 0, payload: 2 }));
     await q.write(await makeFrame({ type_id: 1, request_id: 0, response_to: 0, payload: 3 }));
 
-    await expect(server.serve()).rejects.toThrow(/notification queue exhausted/);
+    const serve = server.serve();
+    await waitFor(() => close.mock.calls.length === 1);
     expect(close).toHaveBeenCalledTimes(1);
     expect(close.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ message: "rpc notification queue exhausted" }));
     release();
+    await expect(serve).rejects.toThrow(/notification queue exhausted/);
   });
 });

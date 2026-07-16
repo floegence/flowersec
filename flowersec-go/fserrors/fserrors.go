@@ -74,6 +74,7 @@ const (
 	CodeReplaceRateLimited        Code = "replace_rate_limited"
 	CodeHandshakeFailed           Code = "handshake_failed"
 	CodePingFailed                Code = "ping_failed"
+	CodeRekeyFailed               Code = "rekey_failed"
 	CodeMuxFailed                 Code = "mux_failed"
 	CodeAcceptStreamFailed        Code = "accept_stream_failed"
 	CodeOpenStreamFailed          Code = "open_stream_failed"

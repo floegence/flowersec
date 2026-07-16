@@ -56,6 +56,7 @@ impl ErrorCode {
     pub const STREAM_HELLO_FAILED: &'static str = "stream_hello_failed";
     pub const RPC_FAILED: &'static str = "rpc_failed";
     pub const PING_FAILED: &'static str = "ping_failed";
+    pub const REKEY_FAILED: &'static str = "rekey_failed";
     pub const NOT_CONNECTED: &'static str = "not_connected";
     pub const RESOURCE_EXHAUSTED: &'static str = "resource_exhausted";
 

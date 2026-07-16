@@ -38,14 +38,34 @@ public final class ProxyServer: @unchecked Sendable {
   }
 
   public func serve(_ session: EndpointSession) async throws {
-    while !Task.isCancelled {
-      let accepted = try await session.acceptStream()
-      await concurrency.acquire()
-      Task { [self] in
-        defer { Task { await concurrency.release() } }
-        do { try await serveStream(kind: accepted.kind, stream: accepted.stream) }
-        catch { await accepted.stream.close() }
+    do {
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        while !Task.isCancelled {
+          await concurrency.acquire()
+          let accepted: EndpointStream
+          do {
+            accepted = try await session.acceptStream()
+          } catch {
+            await concurrency.release()
+            throw error
+          }
+          group.addTask { [self] in
+            do {
+              try await serveStream(kind: accepted.kind, stream: accepted.stream)
+              await concurrency.release()
+            } catch {
+              await accepted.stream.close()
+              await concurrency.release()
+              await session.close()
+              throw error
+            }
+          }
+        }
+        try await group.waitForAll()
       }
+    } catch {
+      await session.close()
+      throw error
     }
   }
 
@@ -70,13 +90,12 @@ public final class ProxyServer: @unchecked Sendable {
       )
       try validateHTTP(meta)
     } catch {
-      try? await writeHTTPError(
+      try await respondHTTPError(
         stream,
         requestID: "unknown",
         code: "invalid_request_meta",
-        message: error.localizedDescription
+        cause: error
       )
-      await stream.close()
       return
     }
 
@@ -84,15 +103,15 @@ public final class ProxyServer: @unchecked Sendable {
     do {
       body = try await ProxyFraming.readBody(from: stream, options: configuration.contract)
     } catch {
-      let code = error as? ProxyError == .bodyTooLarge || error as? ProxyError == .frameTooLarge
+      let code =
+        error as? ProxyError == .bodyTooLarge || error as? ProxyError == .frameTooLarge
         ? "request_body_too_large" : "request_body_invalid"
-      try? await writeHTTPError(
+      try await respondHTTPError(
         stream,
         requestID: meta.requestID,
         code: code,
-        message: error.localizedDescription
+        cause: error
       )
-      await stream.close()
       return
     }
 
@@ -127,13 +146,12 @@ public final class ProxyServer: @unchecked Sendable {
       try await ProxyFraming.writeBody(response.body, to: stream, options: configuration.contract)
       await stream.close()
     } catch {
-      try? await writeHTTPError(
+      try await respondHTTPError(
         stream,
         requestID: meta.requestID,
         code: proxyClassifyHTTPError(error),
-        message: error.localizedDescription
+        cause: error
       )
-      await stream.close()
     }
   }
 
@@ -147,13 +165,12 @@ public final class ProxyServer: @unchecked Sendable {
       )
       try validateWebSocket(meta)
     } catch {
-      try? await writeWebSocketError(
+      try await respondWebSocketError(
         stream,
         connectionID: "unknown",
         code: "invalid_ws_open_meta",
-        message: error.localizedDescription
+        cause: error
       )
-      await stream.close()
       return
     }
 
@@ -179,13 +196,12 @@ public final class ProxyServer: @unchecked Sendable {
         maxBytes: configuration.contract.maxJSONFrameBytes
       )
     } catch {
-      try? await writeWebSocketError(
+      try await respondWebSocketError(
         stream,
         connectionID: meta.connectionID,
         code: proxyClassifyWebSocketError(error),
-        message: error.localizedDescription
+        cause: error
       )
-      await stream.close()
       return
     }
 
@@ -220,6 +236,51 @@ public final class ProxyServer: @unchecked Sendable {
     } catch {
       await upstream.close()
       await stream.close()
+      throw error
+    }
+  }
+
+  private func respondHTTPError(
+    _ stream: any FlowersecByteStream,
+    requestID: String,
+    code: String,
+    cause: Error
+  ) async throws {
+    do {
+      try await writeHTTPError(
+        stream,
+        requestID: requestID,
+        code: code,
+        message: cause.localizedDescription
+      )
+      await stream.close()
+    } catch {
+      await stream.close()
+      throw ProxyServerFailure(
+        "Proxy request failed: \(cause.localizedDescription); error response failed: \(error.localizedDescription)"
+      )
+    }
+  }
+
+  private func respondWebSocketError(
+    _ stream: any FlowersecByteStream,
+    connectionID: String,
+    code: String,
+    cause: Error
+  ) async throws {
+    do {
+      try await writeWebSocketError(
+        stream,
+        connectionID: connectionID,
+        code: code,
+        message: cause.localizedDescription
+      )
+      await stream.close()
+    } catch {
+      await stream.close()
+      throw ProxyServerFailure(
+        "Proxy WebSocket failed: \(cause.localizedDescription); error response failed: \(error.localizedDescription)"
+      )
     }
   }
 
@@ -310,6 +371,16 @@ public final class ProxyServer: @unchecked Sendable {
   }
 }
 
+private struct ProxyServerFailure: LocalizedError, Sendable {
+  let message: String
+
+  init(_ message: String) {
+    self.message = message
+  }
+
+  var errorDescription: String? { message }
+}
+
 struct ProxyHTTPUpstreamRequest: Sendable {
   var method: String
   var url: URL
@@ -325,7 +396,8 @@ struct ProxyHTTPUpstreamResponse: Sendable {
   var body: Data
 }
 
-typealias ProxyHTTPExecutor = @Sendable (ProxyHTTPUpstreamRequest) async throws
+typealias ProxyHTTPExecutor =
+  @Sendable (ProxyHTTPUpstreamRequest) async throws
   -> ProxyHTTPUpstreamResponse
 
 private enum ProxyHTTPRuntime {
@@ -353,13 +425,23 @@ private enum ProxyHTTPRuntime {
       }
     } catch is CancellationError {
       throw ProxyError.canceled
+    } catch let error as HTTPClientError where proxyIsHTTPTimeout(error) {
+      throw ProxyUpstreamFailure(.timeout, error)
+    } catch let error as NIOConnectionError {
+      throw ProxyUpstreamFailure(.dial, error)
     } catch {
-      throw ProxyError.upstream(error.localizedDescription)
+      throw ProxyUpstreamFailure(.request, error)
     }
     let bodyBuffer: ByteBuffer
-    do { bodyBuffer = try await response.body.collect(upTo: input.maxResponseBodyBytes) }
-    catch is NIOTooManyBytesError { throw ProxyError.bodyTooLarge }
-    catch { throw ProxyError.upstream(error.localizedDescription) }
+    do {
+      bodyBuffer = try await response.body.collect(upTo: input.maxResponseBodyBytes)
+    } catch is NIOTooManyBytesError { throw ProxyError.bodyTooLarge } catch let error as HTTPClientError
+      where proxyIsHTTPTimeout(error)
+    {
+      throw ProxyUpstreamFailure(.timeout, error)
+    } catch {
+      throw ProxyUpstreamFailure(.request, error)
+    }
     let headers = response.headers.map { ProxyHeader(name: $0.name, value: $0.value) }
     return ProxyHTTPUpstreamResponse(
       status: Int(response.status.code),
@@ -454,8 +536,7 @@ private actor ProxyConcurrencyGate {
   }
 
   func release() {
-    if waiters.isEmpty { active = max(0, active - 1) }
-    else { waiters.removeFirst().resume() }
+    if waiters.isEmpty { active = max(0, active - 1) } else { waiters.removeFirst().resume() }
   }
 }
 
@@ -464,18 +545,27 @@ private func proxyClassifyHTTPError(_ error: any Error) -> String {
   case .bodyTooLarge, .frameTooLarge: return "response_body_too_large"
   case .invalidMetadata, .invalidPath: return "invalid_request_meta"
   case .canceled: return "canceled"
-  default:
-    let message = error.localizedDescription.lowercased()
-    if message.contains("timeout") || message.contains("timed out") { return "timeout" }
-    if message.contains("connect") { return "upstream_dial_failed" }
-    return "upstream_request_failed"
+  default: break
+  }
+  switch (error as? ProxyUpstreamFailure)?.kind {
+  case .timeout: return "timeout"
+  case .dial: return "upstream_dial_failed"
+  case .rejected, .request, nil: return "upstream_request_failed"
   }
 }
 
 private func proxyClassifyWebSocketError(_ error: any Error) -> String {
   if error is CancellationError || error as? ProxyError == .canceled { return "canceled" }
-  let message = error.localizedDescription.lowercased()
-  if message.contains("timeout") || message.contains("timed out") { return "timeout" }
-  if message.contains("rejected") { return "upstream_ws_rejected" }
-  return "upstream_ws_dial_failed"
+  switch (error as? ProxyUpstreamFailure)?.kind {
+  case .timeout: return "timeout"
+  case .rejected: return "upstream_ws_rejected"
+  case .dial, .request, nil: return "upstream_ws_dial_failed"
+  }
+}
+
+private func proxyIsHTTPTimeout(_ error: HTTPClientError) -> Bool {
+  error == .readTimeout || error == .writeTimeout || error == .connectTimeout
+    || error == .socksHandshakeTimeout || error == .httpProxyHandshakeTimeout
+    || error == .tlsHandshakeTimeout || error == .deadlineExceeded
+    || error == .getConnectionFromPoolTimeout
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
 	"github.com/floegence/flowersec/flowersec-go/streamhello"
 )
 
@@ -23,10 +24,11 @@ const DefaultMaxStreamHelloBytes = 8 * 1024
 type Session interface {
 	Path() Path
 	EndpointInstanceID() string
-	AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteCloser, error)
+	AcceptStreamHello(maxHelloBytes int) (string, fsstream.Stream, error)
 	ServeStreams(ctx context.Context, maxHelloBytes int, handler func(kind string, stream io.ReadWriteCloser), opts ...ServeStreamsOption) error
-	OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error)
+	OpenStream(ctx context.Context, kind string) (fsstream.Stream, error)
 	Ping() error
+	Rekey() error
 	ProbeLiveness(ctx context.Context) (time.Duration, error)
 	Close() error
 }
@@ -111,29 +113,43 @@ func (s *session) Ping() error {
 	return nil
 }
 
+// Rekey emits an authenticated E2EE rekey record and advances the send key.
+func (s *session) Rekey() error {
+	if s == nil || s.secure == nil {
+		var path Path
+		if s != nil {
+			path = s.path
+		}
+		return wrapErr(path, fserrors.StageSecure, fserrors.CodeNotConnected, ErrNotConnected)
+	}
+	if err := s.secure.Rekey(); err != nil {
+		return wrapErr(s.path, fserrors.StageSecure, fserrors.CodeRekeyFailed, err)
+	}
+	return nil
+}
+
 func (s *session) Close() error {
 	if s == nil {
 		return nil
 	}
 	s.closeOnce.Do(func() {
-		var firstErr error
+		var closeErr error
 		if s.mux != nil {
-			if err := s.mux.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
+			closeErr = errors.Join(closeErr, s.mux.Close())
 		}
 		if s.secure != nil {
-			if err := s.secure.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
+			closeErr = errors.Join(closeErr, s.secure.Close())
 		}
-		s.closeErr = firstErr
+		if closeErr != nil {
+			closeErr = wrapErr(s.path, fserrors.StageClose, fserrors.CodeNotConnected, closeErr)
+		}
+		s.closeErr = closeErr
 	})
 	return s.closeErr
 }
 
 // AcceptStreamHello accepts the next inbound stream and reads its StreamHello(kind) prefix.
-func (s *session) AcceptStreamHello(maxHelloBytes int) (string, io.ReadWriteCloser, error) {
+func (s *session) AcceptStreamHello(maxHelloBytes int) (string, fsstream.Stream, error) {
 	if s == nil || s.mux == nil {
 		var path Path
 		if s != nil {
@@ -254,7 +270,7 @@ func wrapCtxErr(path Path, err error) error {
 // OpenStream opens a new yamux stream and writes the StreamHello(kind) preface.
 //
 // Every yamux stream in this project is expected to start with a StreamHello frame.
-func (s *session) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+func (s *session) OpenStream(ctx context.Context, kind string) (fsstream.Stream, error) {
 	if s == nil || s.mux == nil {
 		var path Path
 		if s != nil {

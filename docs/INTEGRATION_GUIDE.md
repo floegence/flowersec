@@ -1,6 +1,6 @@
 # Flowersec Integration Guide
 
-This guide covers the recommended stable integration path for Flowersec v0.22.0 across Go, TypeScript, Swift, and Rust.
+This guide covers the recommended stable integration path for Flowersec v0.23.0 across Go, TypeScript, Swift, and Rust.
 
 See also:
 
@@ -39,13 +39,13 @@ npm install @floegence/flowersec-core
 Swift:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.22.0")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.23.0")
 ```
 
 Rust:
 
 ```bash
-cargo add flowersec@0.22.0
+cargo add flowersec@0.23.0
 ```
 
 ## Stable entrypoints
@@ -57,6 +57,9 @@ Client:
 - `client.Connect(ctx, input, ...opts)`
 - `client.ConnectTunnel(ctx, grant, ...opts)`
 - `client.ConnectDirect(ctx, info, ...opts)`
+- `client.Client.Rekey()`
+- `client.Client.OpenStream(...)` returning `stream.Stream`
+- `stream.Stream.Reset()`
 
 Artifact helpers:
 
@@ -84,6 +87,8 @@ Root:
 - `connectTunnel(...)`
 - `connectDirect(...)`
 - `assertConnectArtifact(...)`
+- connected client method `rekey()`
+- connected stream method `reset()`
 
 Controlplane:
 
@@ -111,6 +116,8 @@ Proxy preset helpers:
 - `Flowersec.connect(...)`
 - `Flowersec.connectTunnel(...)`
 - `Flowersec.connectDirect(...)`
+- `FlowersecClient.rekey()`
+- `FlowersecByteStream.reset()`
 - `Controlplane.requestConnectArtifact(...)`
 - `Endpoint.acceptDirect(...)`
 - `Endpoint.connectTunnel(...)`
@@ -123,6 +130,8 @@ Proxy preset helpers:
 - `flowersec::connect(...)`
 - `flowersec::connect_tunnel(...)`
 - `flowersec::connect_direct(...)`
+- `flowersec::Client::rekey()`
+- `flowersec::yamux::YamuxStream::reset()`
 - `flowersec::controlplane::client`
 - `flowersec::endpoint::{accept_direct, accept_direct_resolved, connect_tunnel}`
 - `flowersec::rpc::{RpcClient, Router, Server}`
@@ -212,6 +221,12 @@ That division of responsibility is part of the stable integration contract:
 
 For the detailed artifact-fetch contract, including the bounded 1 MiB response rule and helper error semantics, see `docs/CONTROLPLANE_ARTIFACT_FETCH.md`.
 
+## Rekey and stream reset
+
+Use explicit rekey only when the application or operational policy requests a key transition. Rekey is serialized with ordinary encrypted writes and preserves the session, RPC, and open streams.
+
+Use stream reset when a single flow must terminate immediately without closing the session. Reset sends only Yamux RST; keep local causes in logs or diagnostics. A successful reset must be followed by continued RPC and stream usability in integration tests.
+
 ## Swift artifact-first example
 
 ```swift
@@ -254,7 +269,9 @@ For reconnect flows in every SDK:
 
 Swift uses `ArtifactSource` and `ReconnectManager`. Rust uses `reconnect::ArtifactSource` and `ReconnectManager`. Go uses `reconnect.Manager`. All four share the retry defaults in `stability/sdk_defaults.json` and stop retrying terminal validation/authentication failures.
 
-A `once` source can be consumed once and cannot enable automatic reconnect. Flowersec v0.22 does not accept overlapping artifact, grant, or direct-info source fields.
+Treat reconnect settings as validated input. Invalid attempt counts, delay values, factors, or jitter ratios fail configuration instead of being adjusted. On Go, always check `Manager.Disconnect()` so transport and supervisor cleanup failures are not lost.
+
+A `once` source can be consumed once and cannot enable automatic reconnect. Flowersec v0.23 does not accept overlapping artifact, grant, or direct-info source fields.
 
 ## Transport security and liveness
 
@@ -284,7 +301,7 @@ Reference first-party files live under `reference/presets/`.
 
 ## Migration notes
 
-v0.22 preserves the v0.20/v0.21 hardening rules and adds four-language parity gates:
+v0.23 preserves the v0.20-v0.22 hardening rules and adds the Go-reference star matrix:
 
 - TLS is the default for all high-level connects
 - WebSocket, Yamux, RPC, and tunnel queues are bounded
@@ -294,5 +311,8 @@ v0.22 preserves the v0.20/v0.21 hardening rules and adds four-language parity ga
 - portable capability cells cannot be partial
 - shared fixtures must be consumed by all four languages
 - release tags for Go/TypeScript, SwiftPM, and Rust must point to one commit
+- Go -> Go must pass before any non-Go result is attributed
+- TypeScript, Swift, and Rust must each pass as both client and server against Go
+- non-Go pairwise edges are intentionally absent; shared IDL, fixtures, defaults, and diagnostics remain normative
 
 See `docs/V0_20_MIGRATION.md` for the v0.20 transport changes and `docs/V0_21_MIGRATION.md` for the compatibility cleanup.

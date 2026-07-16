@@ -1,4 +1,9 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check example-install-check pairwise-interop swift-rust-interop fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench check stability-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench check stability-check go-cover-check compat-check nightly-check
+
+INTEROP_CELLS ?= go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust
+INTEROP_REPORT_DIR ?= $(or $(TMPDIR),/tmp)
+INTEROP_DEADLINE_MS ?= 0
+CHECK_INTEROP ?= 1
 
 GOVULNCHECK_VERSION ?= v1.1.4
 GOVULNCHECK_GOTOOLCHAIN ?= go1.26.5
@@ -187,12 +192,20 @@ example-install-check:
 	cargo check --manifest-path examples/rust-client/Cargo.toml
 	swift build --package-path examples/swift-client
 
-pairwise-interop:
-	cd flowersec-ts && npm run build
-	cd flowersec-rust && FLOWERSEC_PAIRWISE_INTEROP=1 cargo test --all-features --test typescript_interop
+interop-smoke:
+	go run ./flowersec-go/internal/cmd/flowersec-interop -profile smoke -cells "$(INTEROP_CELLS)" -deadline-ms "$(INTEROP_DEADLINE_MS)" -report "$(INTEROP_REPORT_DIR)/flowersec-interop-smoke.json"
 
-swift-rust-interop:
-	cd flowersec-rust && FLOWERSEC_SWIFT_INTEROP=1 cargo test --all-features --test swift_interop
+interop-smoke-linux:
+	$(MAKE) interop-smoke INTEROP_CELLS=go_to_go,typescript_to_go,rust_to_go,go_to_typescript,go_to_rust INTEROP_DEADLINE_MS=120000
+
+interop-smoke-swift:
+	$(MAKE) interop-smoke INTEROP_CELLS=go_to_go,swift_to_go,go_to_swift INTEROP_DEADLINE_MS=90000
+
+interop-stress:
+	@for tool in go node npm cargo rustc swift; do \
+		command -v "$$tool" >/dev/null 2>&1 || { echo "missing required interop toolchain: $$tool"; exit 1; }; \
+	done
+	go run ./flowersec-go/internal/cmd/flowersec-interop -profile stress -cells "$(INTEROP_CELLS)" -report "$(INTEROP_REPORT_DIR)/flowersec-interop-stress.json"
 
 fmt:
 	gofmt -w flowersec-go examples/go examples/gen
@@ -253,20 +266,14 @@ go-cover-check:
 	cd tools/stabilitycheck && go run . verify-go-coverage
 
 compat-check:
-	cd flowersec-ts && \
-		YAMUX_INTEROP=1 \
-		YAMUX_INTEROP_STRESS=1 \
-		YAMUX_INTEROP_CLIENT_RST=1 \
-		YAMUX_INTEROP_DEBUG=0 \
-		npm test
+	$(MAKE) interop-smoke-linux
 
 nightly-check:
 	$(MAKE) ts-ci
 	$(MAKE) stability-check
-	$(MAKE) compat-check
 	$(MAKE) rust-release-check
 	$(MAKE) rust-fuzz-check
-	$(MAKE) pairwise-interop
+	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) interop-smoke-linux; fi
 	cd flowersec-go && go test -run '^$$' -fuzz=FuzzDecodeHandshakeFrame -fuzztime=5s ./crypto/e2ee
 	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAndVerify -fuzztime=5s ./controlplane/token
 	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAttachWithConstraints -fuzztime=5s ./tunnel/protocol
@@ -286,6 +293,7 @@ check:
 	$(MAKE) go-test-race
 	$(MAKE) go-vulncheck
 	$(MAKE) ts-audit
+	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) interop-smoke; fi
 
 bench:
 	bash tools/bench/bench.sh

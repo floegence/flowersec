@@ -10,6 +10,17 @@ export function isStreamEOFError(e: unknown): e is StreamEOFError {
   return e instanceof StreamEOFError;
 }
 
+export class YamuxStreamResetError extends Error {
+  constructor() {
+    super("yamux stream reset");
+    this.name = "YamuxStreamResetError";
+  }
+}
+
+export function isYamuxStreamResetError(error: unknown): error is YamuxStreamResetError {
+  return error instanceof YamuxStreamResetError;
+}
+
 export class YamuxResourceExhaustedError extends Error {
   readonly resource: string;
   readonly current: number;
@@ -26,4 +37,15 @@ export class YamuxResourceExhaustedError extends Error {
 
 export function isYamuxResourceExhaustedError(error: unknown): error is YamuxResourceExhaustedError {
   return error instanceof YamuxResourceExhaustedError;
+}
+
+export class YamuxPingTimeoutError extends Error {
+  constructor() {
+    super("yamux ping timeout");
+    this.name = "YamuxPingTimeoutError";
+  }
+}
+
+export function isYamuxPingTimeoutError(error: unknown): error is YamuxPingTimeoutError {
+  return error instanceof YamuxPingTimeoutError;
 }

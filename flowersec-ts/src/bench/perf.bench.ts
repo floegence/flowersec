@@ -187,12 +187,12 @@ describe("yamux", () => {
     const server = new YamuxSession(pair.server, {
       client: false,
       onIncomingStream: (stream) => {
-        stream.reset(new Error("bench"));
+        void stream.reset(new Error("bench"));
       }
     });
     const client = new YamuxSession(pair.client, { client: true });
     const stream = await client.openStream();
-    stream.reset(new Error("bench"));
+    void stream.reset(new Error("bench"));
     client.close();
     server.close();
     pair.close();

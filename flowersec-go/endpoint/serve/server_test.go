@@ -15,6 +15,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
 )
 
 func newServer(t *testing.T, opts Options) *Server {
@@ -325,24 +326,33 @@ type fakeSession struct {
 
 func (s *fakeSession) Path() endpoint.Path        { return endpoint.PathDirect }
 func (s *fakeSession) EndpointInstanceID() string { return "" }
-func (s *fakeSession) OpenStream(context.Context, string) (io.ReadWriteCloser, error) {
+func (s *fakeSession) OpenStream(context.Context, string) (fsstream.Stream, error) {
 	return nil, errors.New("not implemented")
 }
 func (s *fakeSession) ServeStreams(context.Context, int, func(string, io.ReadWriteCloser), ...endpoint.ServeStreamsOption) error {
 	return errors.New("not implemented")
 }
 func (s *fakeSession) Ping() error                                          { return nil }
+func (s *fakeSession) Rekey() error                                         { return nil }
 func (s *fakeSession) ProbeLiveness(context.Context) (time.Duration, error) { return 0, nil }
 func (s *fakeSession) Close() error                                         { return nil }
 
-func (s *fakeSession) AcceptStreamHello(_ int) (string, io.ReadWriteCloser, error) {
+func (s *fakeSession) AcceptStreamHello(_ int) (string, fsstream.Stream, error) {
 	if len(s.next) == 0 {
 		return "", nil, errors.New("unexpected call")
 	}
 	fn := s.next[0]
 	s.next = s.next[1:]
-	return fn()
+	kind, value, err := fn()
+	if err != nil || value == nil {
+		return kind, nil, err
+	}
+	return kind, resettableServerTestStream{ReadWriteCloser: value}, nil
 }
+
+type resettableServerTestStream struct{ io.ReadWriteCloser }
+
+func (s resettableServerTestStream) Reset() error { return s.Close() }
 
 func TestServerServeSession_ReportsBadStreamHelloAndContinues(t *testing.T) {
 	t.Parallel()

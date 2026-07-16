@@ -13,11 +13,9 @@ function abortReasonToError(signal: AbortSignal): Error {
 
 function bindAbortToStream(stream: YamuxStream, signal: AbortSignal): void {
   const onAbort = () => {
-    try {
-      stream.reset(abortReasonToError(signal));
-    } catch {
-      // Best-effort cancel.
-    }
+    void Promise.resolve(stream.reset(abortReasonToError(signal))).catch(() => {
+      // The read/write operation reports the authoritative abort to its caller.
+    });
   };
   if (signal.aborted) {
     onAbort();

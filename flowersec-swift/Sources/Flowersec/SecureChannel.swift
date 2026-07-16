@@ -7,8 +7,20 @@ protocol FlowersecYamuxChannel: Sendable {
 }
 
 actor FlowersecSecureChannel: FlowersecYamuxChannel {
+  private enum PendingOperation {
+    case application(Data)
+    case rekey
+
+    var byteCount: Int {
+      switch self {
+      case .application(let data): data.count
+      case .rekey: 0
+      }
+    }
+  }
+
   private struct PendingWrite {
-    var data: Data
+    var operation: PendingOperation
     var continuation: CheckedContinuation<Void, Error>
   }
 
@@ -67,7 +79,17 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
     }
     pendingWriteBytes += data.count
     try await withCheckedThrowingContinuation { continuation in
-      pendingWrites.append(PendingWrite(data: data, continuation: continuation))
+      pendingWrites.append(
+        PendingWrite(operation: .application(data), continuation: continuation)
+      )
+      startWriteIfNeeded()
+    }
+  }
+
+  func rekey() async throws {
+    guard !closed else { throw FlowersecError.closed(path: path) }
+    try await withCheckedThrowingContinuation { continuation in
+      pendingWrites.append(PendingWrite(operation: .rekey, continuation: continuation))
       startWriteIfNeeded()
     }
   }
@@ -110,7 +132,10 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
     writeInProgress = true
     Task {
       do {
-        try await writeRecords(write.data)
+        switch write.operation {
+        case .application(let data): try await writeRecords(data)
+        case .rekey: try await writeRekeyRecord()
+        }
         finishWrite(result: .success(()))
       } catch {
         finishWrite(result: .failure(error))
@@ -124,7 +149,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
       return
     }
     let write = pendingWrites.removeFirst()
-    pendingWriteBytes -= write.data.count
+    pendingWriteBytes -= write.operation.byteCount
     writeInProgress = false
     switch result {
     case .success:
@@ -160,6 +185,29 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
         plaintext: plaintext
       )
       try await transport.writeBinary(frame)
+    } catch let error as FlowersecError {
+      throw error.withPath(path)
+    }
+  }
+
+  private func writeRekeyRecord() async throws {
+    do {
+      let seq = keys.sendSeq
+      keys.sendSeq += 1
+      let frame = try FlowersecRecordCodec.encrypt(
+        key: keys.sendKey,
+        noncePrefix: keys.sendNoncePrefix,
+        flags: 2,
+        seq: seq,
+        plaintext: Data()
+      )
+      try await transport.writeBinary(frame)
+      keys.sendKey = try FlowersecRecordCodec.deriveRekeyKey(
+        rekeyBase: keys.rekeyBase,
+        transcript: keys.transcript,
+        seq: seq,
+        direction: keys.sendDirection
+      )
     } catch let error as FlowersecError {
       throw error.withPath(path)
     }

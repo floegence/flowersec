@@ -41,7 +41,7 @@ Security note: high-level connections require `wss://` by default. Local `ws://`
 
 Stable integration entrypoints are documented in `docs/API_SURFACE.md`.
 The stability rules, review checklist, and engineering gate model live in `docs/API_STABILITY_POLICY.md`.
-Flowersec v0.22.0 uses one portable capability contract for Go, TypeScript, Swift, and Rust. The artifact-first integration path is documented in:
+Flowersec v0.23.0 uses one portable capability contract for Go, TypeScript, Swift, and Rust. Interoperability and stress testing use Go as the standard client and standard server, with every other SDK tested in both directions. The artifact-first integration path is documented in:
 
 - `docs/CONNECT_ARTIFACTS.md`
 - `docs/CONTROLPLANE_ARTIFACT_FETCH.md`
@@ -74,6 +74,7 @@ Flowersec v0.22.0 uses one portable capability contract for Go, TypeScript, Swif
 | 🔁 Migrate to v0.21 | [`docs/V0_21_MIGRATION.md`](docs/V0_21_MIGRATION.md) |
 | 📦 Replace named proxy profiles | [`docs/PRESETS.md`](docs/PRESETS.md) |
 | 🧭 Understand API stability | [`docs/API_STABILITY_POLICY.md`](docs/API_STABILITY_POLICY.md) |
+| 🔄 Upgrade to v0.23 | [`docs/V0_23_MIGRATION.md`](docs/V0_23_MIGRATION.md) |
 | 🚇 Deploy the tunnel | [`docs/TUNNEL_DEPLOYMENT.md`](docs/TUNNEL_DEPLOYMENT.md) |
 | 🛡️ Deploy the proxy gateway | [`docs/PROXY_GATEWAY_DEPLOYMENT.md`](docs/PROXY_GATEWAY_DEPLOYMENT.md) |
 | 🔐 Review trust boundaries | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) |
@@ -88,7 +89,7 @@ Flowersec v0.22.0 uses one portable capability contract for Go, TypeScript, Swif
 - **Encrypted payloads through relays**: in tunnel mode, the tunnel pairs endpoints and forwards bytes, but does not learn application plaintext.
 - **Own the relay layer**: Flowersec ships an open-source tunnel you can deploy yourself, so you do not have to depend on a proprietary or third-party tunnel service.
 - **One session, many flows**: run RPC, events, custom streams, HTTP, and WebSocket traffic over the same secure session.
-- **Practical deployables**: ship with a browser-friendly TypeScript SDK, Go server endpoint APIs, a deployable tunnel server, and a deployable proxy gateway.
+- **Equal portable SDKs**: Go, TypeScript, Swift, and Rust each provide client, endpoint, RPC, stream, controlplane, reconnect, proxy, and observability capabilities; Go additionally owns the shared deployable services and CLIs.
 
 ## 🧩 What you can build
 
@@ -192,6 +193,9 @@ const client = await connectNode(artifact, {
 
 await client.ping();
 const rttMs = await client.probeLiveness();
+await client.rekey();
+const stream = await client.openStream("custom");
+await stream.reset();
 client.close();
 
 const reconnectConfig = createNodeReconnectConfig({
@@ -247,18 +251,22 @@ Versioning note: Go module tags are prefixed with `flowersec-go/` (for example, 
 ### Swift SDK
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.22.0")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.23.0")
 ```
 
-Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.22.0`.
+Use the `Flowersec` library product. SwiftPM releases are root semantic-version tags such as `0.23.0`.
 
 ### Rust SDK
 
 ```bash
-cargo add flowersec@0.22.0
+cargo add flowersec@0.23.0
 ```
 
 The `flowersec` crate uses Rust 2024 Edition, requires Rust 1.85 or newer, and supports native Linux, macOS, and Windows targets. Browser and Service Worker runtime APIs remain TypeScript-owned.
+
+## Go-reference quality matrix
+
+Portable interoperability is validated through Go -> Go plus both Go-reference directions for TypeScript, Swift, and Rust. The matrix covers Direct/Tunnel, both ECDH suites, rekey, stream FIN/RST/backpressure, ACK liveness, bounded RPC, HTTP/WebSocket proxy, reconnect, and stable diagnostic tuples. Non-Go pairwise edges are intentionally not executed; shared contracts remain language-neutral and every non-Go SDK must pass as both client and server.
 
 ### Tunnel server
 

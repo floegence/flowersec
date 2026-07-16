@@ -39,25 +39,30 @@ type AutoReconnectSettings = Readonly<{
 }>;
 
 function normalizeAutoReconnect(cfg?: AutoReconnectConfig): AutoReconnectSettings {
-  if (!cfg?.enabled) {
-    return {
-      enabled: false,
-      maxAttempts: 1,
-      initialDelayMs: SDK_DEFAULTS.reconnect.initialDelayMs,
-      maxDelayMs: SDK_DEFAULTS.reconnect.maxDelayMs,
-      factor: SDK_DEFAULTS.reconnect.factor,
-      jitterRatio: SDK_DEFAULTS.reconnect.jitterRatio,
-    };
-  }
-
-  return {
-    enabled: true,
-    maxAttempts: Math.max(1, cfg.maxAttempts ?? SDK_DEFAULTS.reconnect.maxAttempts),
-    initialDelayMs: Math.max(0, cfg.initialDelayMs ?? SDK_DEFAULTS.reconnect.initialDelayMs),
-    maxDelayMs: Math.max(0, cfg.maxDelayMs ?? SDK_DEFAULTS.reconnect.maxDelayMs),
-    factor: Math.max(1, cfg.factor ?? SDK_DEFAULTS.reconnect.factor),
-    jitterRatio: Math.max(0, cfg.jitterRatio ?? SDK_DEFAULTS.reconnect.jitterRatio),
+  const settings = {
+    enabled: cfg?.enabled === true,
+    maxAttempts: cfg?.enabled === true ? (cfg.maxAttempts ?? SDK_DEFAULTS.reconnect.maxAttempts) : 1,
+    initialDelayMs: cfg?.initialDelayMs ?? SDK_DEFAULTS.reconnect.initialDelayMs,
+    maxDelayMs: cfg?.maxDelayMs ?? SDK_DEFAULTS.reconnect.maxDelayMs,
+    factor: cfg?.factor ?? SDK_DEFAULTS.reconnect.factor,
+    jitterRatio: cfg?.jitterRatio ?? SDK_DEFAULTS.reconnect.jitterRatio,
   };
+  if (!Number.isSafeInteger(settings.maxAttempts) || settings.maxAttempts < 1) {
+    throw new TypeError("autoReconnect.maxAttempts must be a positive integer");
+  }
+  if (!Number.isFinite(settings.initialDelayMs) || settings.initialDelayMs < 0) {
+    throw new TypeError("autoReconnect.initialDelayMs must be a non-negative finite number");
+  }
+  if (!Number.isFinite(settings.maxDelayMs) || settings.maxDelayMs < 0) {
+    throw new TypeError("autoReconnect.maxDelayMs must be a non-negative finite number");
+  }
+  if (!Number.isFinite(settings.factor) || settings.factor < 1) {
+    throw new TypeError("autoReconnect.factor must be a finite number greater than or equal to one");
+  }
+  if (!Number.isFinite(settings.jitterRatio) || settings.jitterRatio < 0 || settings.jitterRatio > 1) {
+    throw new TypeError("autoReconnect.jitterRatio must be a finite number between zero and one");
+  }
+  return settings;
 }
 
 function backoffDelayMs(attemptIndex: number, cfg: AutoReconnectSettings): number {
@@ -142,12 +147,18 @@ export function createReconnectManager(): ReconnectManager {
   };
 
   const abortActiveAttempt = () => {
-    try {
-      attemptAbort?.abort("canceled");
-    } catch {
-      // ignore
-    }
+    attemptAbort?.abort("canceled");
     attemptAbort = null;
+  };
+
+  const closeClient = (value: Client | null): Error | null => {
+    if (value == null) return null;
+    try {
+      value.close();
+      return null;
+    } catch (error) {
+      return asError(error);
+    }
   };
 
   const sleep = (ms: number) =>
@@ -168,12 +179,10 @@ export function createReconnectManager(): ReconnectManager {
     token += 1;
     attemptSeq = 0;
 
-    if (s.client) {
-      try {
-        s.client.close();
-      } catch {
-        // ignore
-      }
+    const closeError = closeClient(s.client);
+    if (closeError != null) {
+      setState({ status: "error", error: closeError, client: null });
+      throw closeError;
     }
 
     setState({ status: "disconnected", error: null, client: null });
@@ -186,14 +195,11 @@ export function createReconnectManager(): ReconnectManager {
 
     const ar = normalizeAutoReconnect(cfg.autoReconnect);
     if (!ar.enabled) {
-      if (s.client) {
-        try {
-          s.client.close();
-        } catch {
-          // ignore
-        }
-      }
-      setState({ status: "error", error, client: null });
+      const closeError = closeClient(s.client);
+      const finalError = closeError == null
+        ? error
+        : new AggregateError([error, closeError], "reconnect termination and client close failed");
+      setState({ status: "error", error: finalError, client: null });
       return;
     }
 
@@ -201,12 +207,14 @@ export function createReconnectManager(): ReconnectManager {
     cancelRetrySleep();
     abortActiveAttempt();
 
-    if (s.client) {
-      try {
-        s.client.close();
-      } catch {
-        // ignore
-      }
+    const closeError = closeClient(s.client);
+    if (closeError != null) {
+      setState({
+        status: "error",
+        error: new AggregateError([error, closeError], "reconnect termination and client close failed"),
+        client: null,
+      });
+      return;
     }
 
     token += 1;
@@ -274,29 +282,29 @@ export function createReconnectManager(): ReconnectManager {
       try {
         const client = await connectOnce(t, cfg, attemptSeq);
         if (t !== token) {
-          try {
-            client.close();
-          } catch {
-            // ignore
-          }
+          const closeError = closeClient(client);
+          if (closeError != null) throw new ReconnectCleanupError(closeError);
           return;
         }
         if (active !== cfg) {
-          try {
-            client.close();
-          } catch {
-            // ignore
-          }
+          const closeError = closeClient(client);
+          if (closeError != null) throw new ReconnectCleanupError(closeError);
           return;
         }
 
         setState({ status: "connected", client, error: null });
         const termination = getClientTermination(client);
         if (termination != null) {
-          void termination.then(({ error }) => {
-            if (s.client !== client) return;
-            startReconnect(t, cfg, error);
-          });
+          void termination.then(
+            ({ error }) => {
+              if (s.client !== client) return;
+              startReconnect(t, cfg, error);
+            },
+            (error: unknown) => {
+              if (s.client !== client) return;
+              startReconnect(t, cfg, asError(error));
+            },
+          );
         }
         emitObserverDiagnostic(withObserverContext(cfg.observer, { attemptSeq }), {
           path: "auto",
@@ -307,6 +315,7 @@ export function createReconnectManager(): ReconnectManager {
         });
         return;
       } catch (err) {
+        if (err instanceof ReconnectCleanupError) throw err.cleanupError;
         const e = err instanceof Error ? err : new Error(String(err));
         if (t !== token) return;
         if (active !== cfg) return;
@@ -355,6 +364,7 @@ export function createReconnectManager(): ReconnectManager {
   };
 
   const connect = async (cfg: ConnectConfig): Promise<void> => {
+    normalizeAutoReconnect(cfg.autoReconnect);
     cancelRetrySleep();
     abortActiveAttempt();
 
@@ -363,12 +373,11 @@ export function createReconnectManager(): ReconnectManager {
     active = cfg;
     attemptSeq = 0;
 
-    if (s.client) {
-      try {
-        s.client.close();
-      } catch {
-        // ignore
-      }
+    const closeError = closeClient(s.client);
+    if (closeError != null) {
+      active = null;
+      setState({ status: "error", error: closeError, client: null });
+      throw closeError;
     }
 
     const connectPromise = startConnectLoop(t, cfg);
@@ -409,4 +418,15 @@ export function createReconnectManager(): ReconnectManager {
     connectIfNeeded,
     disconnect,
   };
+}
+
+class ReconnectCleanupError extends Error {
+  constructor(readonly cleanupError: Error) {
+    super("reconnect cleanup failed", { cause: cleanupError });
+    this.name = "ReconnectCleanupError";
+  }
+}
+
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }

@@ -4,6 +4,16 @@ import XCTest
 @testable import Flowersec
 
 final class ProxyTests: XCTestCase {
+  func testHTTPErrorResponseAllowsOmittedHeaders() throws {
+    let data = Data(
+      #"{"v":1,"request_id":"request-1","ok":false,"error":{"code":"request_body_too_large","message":"too large"}}"#.utf8
+    )
+    let response = try JSONDecoder().decode(ProxyHTTPResponseMeta.self, from: data)
+    XCTAssertFalse(response.ok)
+    XCTAssertEqual(response.headers, [])
+    XCTAssertEqual(response.error?.code, "request_body_too_large")
+  }
+
   func testHTTPClientAndServerRoundTripWithSecurityPolicy() async throws {
     let recorder = ProxyHTTPRecorder()
     let contract = ProxyContractOptions(
@@ -90,6 +100,54 @@ final class ProxyTests: XCTestCase {
         return XCTFail("Unexpected proxy error: \(error)")
       }
       XCTAssertEqual(code, "invalid_request_meta")
+    }
+  }
+
+  func testHTTPUsesTypedUpstreamTimeoutClassification() async throws {
+    let server = try ProxyServer(
+      options: ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173"
+      ),
+      httpExecutor: { _ in
+        throw ProxyUpstreamFailure(.timeout, message: "typed timeout")
+      },
+      webSocketFactory: { _, _, _, _ in throw ProxyError.upstream("not used") }
+    )
+    let client = try ProxyClient(route: ProxyTestRoute(server: server))
+
+    do {
+      _ = try await client.request(ProxyHTTPRequest(method: "GET", path: "/"))
+      XCTFail("Expected upstream timeout")
+    } catch let error as ProxyError {
+      guard case .remote(let code, _) = error else {
+        return XCTFail("Unexpected proxy error: \(error)")
+      }
+      XCTAssertEqual(code, "timeout")
+    }
+  }
+
+  func testWebSocketUsesTypedRejectionClassification() async throws {
+    let server = try ProxyServer(
+      options: ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173"
+      ),
+      httpExecutor: { _ in throw ProxyError.upstream("not used") },
+      webSocketFactory: { _, _, _, _ in
+        throw ProxyUpstreamFailure(.rejected, message: "typed rejection")
+      }
+    )
+    let client = try ProxyClient(route: ProxyTestRoute(server: server))
+
+    do {
+      _ = try await client.openWebSocket(path: "/socket")
+      XCTFail("Expected upstream rejection")
+    } catch let error as ProxyError {
+      guard case .remote(let code, _) = error else {
+        return XCTFail("Unexpected proxy error: \(error)")
+      }
+      XCTAssertEqual(code, "upstream_ws_rejected")
     }
   }
 
@@ -256,6 +314,7 @@ private final class ProxyDuplexStream: FlowersecByteStream, @unchecked Sendable 
   func write(_ data: Data) async throws { try await state.write(from: side, data: data) }
   func readExact(_ length: Int) async throws -> Data { try await state.read(side: side, length: length) }
   func close() async { await state.close(side: side) }
+  func reset() async throws { await state.close(side: side) }
 }
 
 private actor ProxyDuplexState {

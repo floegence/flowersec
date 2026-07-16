@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
 	"github.com/gorilla/websocket"
 )
 
@@ -206,8 +207,12 @@ func TestBridgeProxyWSDefaultOriginAllowsNoOriginCompatibility(t *testing.T) {
 
 type openerFunc func(ctx context.Context, kind string) (io.ReadWriteCloser, error)
 
-func (fn openerFunc) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
-	return fn(ctx, kind)
+func (fn openerFunc) OpenStream(ctx context.Context, kind string) (fsstream.Stream, error) {
+	value, err := fn(ctx, kind)
+	if err != nil || value == nil {
+		return nil, err
+	}
+	return proxyTestStream{ReadWriteCloser: value}, nil
 }
 
 type noopBridgeReadWriteCloser struct{}
@@ -215,3 +220,4 @@ type noopBridgeReadWriteCloser struct{}
 func (noopBridgeReadWriteCloser) Read(p []byte) (int, error)  { return 0, io.EOF }
 func (noopBridgeReadWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
 func (noopBridgeReadWriteCloser) Close() error                { return nil }
+func (noopBridgeReadWriteCloser) Reset() error                { return nil }

@@ -264,6 +264,11 @@ pub enum ProxyError {
     Endpoint(#[from] crate::FlowersecError),
     #[error("proxy task failed: {0}")]
     Task(#[from] tokio::task::JoinError),
+    #[error("proxy operation failed: {operation}; stream cleanup failed: {close}")]
+    Cleanup {
+        operation: Box<ProxyError>,
+        close: YamuxError,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -439,43 +444,56 @@ impl ProxyClient {
             return Err(ProxyError::BodyTooLarge);
         }
         let stream = self.client.open_stream(HTTP1_KIND).await?;
-        let request_id = opaque_id();
-        let timeout_ms = request
-            .timeout
-            .or(self.contract.options.default_http_request_timeout)
-            .map(duration_millis_i64)
-            .transpose()?;
-        let meta = HttpRequestMeta {
-            v: PROTOCOL_VERSION,
-            request_id: request_id.clone(),
-            method: request.method.trim().to_owned(),
-            path: request.path,
-            headers: self.contract.headers.filter_request(&request.headers),
-            external_origin: request.external_origin,
-            timeout_ms,
-        };
-        streamio::write_json(&stream, &meta).await?;
-        write_body(&stream, &request.body, &self.contract).await?;
-        let response: HttpResponseMeta =
-            streamio::read_json(&stream, self.contract.options.max_json_frame_bytes).await?;
-        validate_http_response(&response, &request_id)?;
-        if !response.ok {
-            let error = response
-                .error
-                .ok_or(ProxyError::InvalidMeta("missing error"))?;
-            return Err(ProxyError::Remote {
-                code: error.code,
-                message: error.message,
-            });
+        let result = async {
+            let request_id = opaque_id();
+            let timeout_ms = request
+                .timeout
+                .or(self.contract.options.default_http_request_timeout)
+                .map(duration_millis_i64)
+                .transpose()?;
+            let meta = HttpRequestMeta {
+                v: PROTOCOL_VERSION,
+                request_id: request_id.clone(),
+                method: request.method.trim().to_owned(),
+                path: request.path,
+                headers: self.contract.headers.filter_request(&request.headers),
+                external_origin: request.external_origin,
+                timeout_ms,
+            };
+            streamio::write_json(&stream, &meta).await?;
+            write_body(&stream, &request.body, &self.contract).await?;
+            let response: HttpResponseMeta =
+                streamio::read_json(&stream, self.contract.options.max_json_frame_bytes).await?;
+            validate_http_response(&response, &request_id)?;
+            if !response.ok {
+                let error = response
+                    .error
+                    .ok_or(ProxyError::InvalidMeta("missing error"))?;
+                return Err(ProxyError::Remote {
+                    code: error.code,
+                    message: error.message,
+                });
+            }
+            let body = read_body(&stream, &self.contract).await?;
+            Ok(HttpResponse {
+                status: response
+                    .status
+                    .ok_or(ProxyError::InvalidMeta("missing status"))?,
+                headers: self.contract.headers.filter_response(&response.headers),
+                body,
+            })
         }
-        let body = read_body(&stream, &self.contract).await?;
-        Ok(HttpResponse {
-            status: response
-                .status
-                .ok_or(ProxyError::InvalidMeta("missing status"))?,
-            headers: self.contract.headers.filter_response(&response.headers),
-            body,
-        })
+        .await;
+        let close = stream.close().await;
+        match (result, close) {
+            (Ok(response), Ok(())) => Ok(response),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(_), Err(error)) => Err(ProxyError::Yamux(error)),
+            (Err(operation), Err(close)) => Err(ProxyError::Cleanup {
+                operation: Box::new(operation),
+                close,
+            }),
+        }
     }
 
     pub async fn open_websocket(
@@ -600,15 +618,34 @@ impl ProxyServer {
     }
 
     pub async fn serve(&self, session: &Session) -> Result<(), ProxyError> {
+        let mut tasks = tokio::task::JoinSet::new();
         loop {
-            let (kind, stream) = session.accept_stream().await?;
-            let server = self.clone();
-            tokio::spawn(async move {
-                let result = server.serve_stream(&kind, stream.clone()).await;
-                if result.is_err() {
-                    let _ = stream.reset().await;
+            tokio::select! {
+                outcome = tasks.join_next(), if !tasks.is_empty() => {
+                    match outcome {
+                        Some(Ok(result)) => result?,
+                        Some(Err(error)) => return Err(ProxyError::Task(error)),
+                        None => return Err(ProxyError::InvalidConfig("proxy supervisor ended unexpectedly".to_owned())),
+                    }
                 }
-            });
+                accepted = session.accept_stream() => {
+                    let (kind, stream) = accepted?;
+                    let server = self.clone();
+                    tasks.spawn(async move {
+                        let result = server.serve_stream(&kind, stream.clone()).await;
+                        match result {
+                            Ok(()) => Ok(()),
+                            Err(operation) => match stream.reset().await {
+                                Ok(()) => Err(operation),
+                                Err(close) => Err(ProxyError::Cleanup {
+                                    operation: Box::new(operation),
+                                    close,
+                                }),
+                            },
+                        }
+                    });
+                }
+            }
         }
     }
 
@@ -890,7 +927,7 @@ impl ProxyServer {
             result = to_upstream => result?,
             result = from_upstream => result?,
         }
-        let _ = stream.close().await;
+        stream.close().await?;
         Ok(())
     }
 }

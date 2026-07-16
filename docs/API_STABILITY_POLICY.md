@@ -102,7 +102,7 @@ The stable Swift surface is the `Flowersec` product and its symbol graph recorde
 
 ### Rust
 
-The stable Rust surface is the `flowersec` crate with MSRV 1.85. Public entrypoints are compile-probed, release tags run `cargo-semver-checks` against the previous Rust release, and Flowersec-authored Rust code forbids `unsafe`. Browser WASM and deployable service binaries are not part of the Rust v0.22 target.
+The stable Rust surface is the `flowersec` crate with MSRV 1.85. Public entrypoints are compile-probed, release tags run `cargo-semver-checks` against the previous Rust release, and Flowersec-authored Rust code forbids `unsafe`. Browser WASM and deployable service binaries are not part of the Rust v0.23 target.
 
 ### Scoped metadata and proxy runtime
 
@@ -135,15 +135,18 @@ Registry sources:
 - `stability/connect_error_code_registry.json`
 - `stability/connect_diagnostics_code_registry.json`
 
-## v0.22 compatibility posture
+## v0.23 compatibility posture
 
-Flowersec v0.22 keeps wire compatibility for `ConnectArtifact v1`, encrypted records, Yamux, RPC, and proxy streams while requiring portable behavior parity across all four SDKs:
+Flowersec v0.23 keeps wire compatibility for `ConnectArtifact v1`, encrypted records, Yamux, RPC, and proxy streams while requiring portable behavior parity across all four SDKs:
 
 - high-level WebSocket connects default to TLS-only
 - plaintext requires an explicit policy decision
 - record, WebSocket, Yamux, RPC, and tunnel queues have stable bounded defaults
 - liveness uses acknowledged Yamux PING round trips
 - browser and Node reconnect adapters accept only a discriminated `ArtifactSource`
+- client and endpoint rekey operations are stable in all four SDKs
+- stable byte streams expose protocol reset in all four SDKs
+- interoperability uses a Go-reference star: Go -> Go baseline, every non-Go SDK -> Go, and Go -> every non-Go SDK
 
 The following compatibility edges remain intentionally supported:
 
@@ -169,7 +172,7 @@ Any change that touches a stable API should answer all of the following:
 7. Are coverage gates for the affected key packages still green?
 8. Do browser/node/reconnect/controlplane/proxy migration paths still have test coverage?
 9. Does `verify-parity` still prove all four languages consume every registered shared fixture?
-10. Do Direct/Tunnel/RPC/stream/liveness/proxy interop tests cover the affected language boundary?
+10. Do Direct/Tunnel/RPC/stream/liveness/proxy tests cover both Go-reference directions for the affected non-Go SDK?
 
 ## CI gate mapping
 
@@ -187,11 +190,12 @@ PRs are expected to keep the following green:
 
 Nightly and heavier checks may additionally cover:
 
-- stress interop
-- complete language-pair interop matrices
+- the same deterministic Go-reference smoke profile used by CI
 - reconnect edge cases
 - Go and Rust fuzzing
 - compatibility scaffolding
+
+The fixed five-minute `make interop-stress` profile is a required local merge and release gate. It is intentionally not a GitHub Actions soak and never expands into non-Go pairwise edges.
 
 ## Deprecation guidance
 

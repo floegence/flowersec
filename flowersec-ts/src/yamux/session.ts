@@ -11,7 +11,7 @@ import {
   YAMUX_VERSION
 } from "./constants.js";
 import { YamuxStream } from "./stream.js";
-import { YamuxResourceExhaustedError } from "./errors.js";
+import { YamuxPingTimeoutError, YamuxResourceExhaustedError } from "./errors.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 
 export type YamuxDiagnostic = Readonly<{
@@ -187,7 +187,7 @@ export class YamuxSession {
     return await new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pingWaiters.delete(opaque);
-        const error = new Error("yamux ping timeout");
+        const error = new YamuxPingTimeoutError();
         reject(error);
         this.fail(error);
       }, timeoutMs);
@@ -286,7 +286,11 @@ export class YamuxSession {
     this.pingWaiters.clear();
     const streams = Array.from(this.streams.values());
     this.streams.clear();
-    for (const s of streams) s.reset(new Error("session closed"));
+    for (const s of streams) {
+      void Promise.resolve(s.reset(new Error("session closed"))).catch(() => {
+        // Session shutdown has already made the stream terminal.
+      });
+    }
   }
 
   private wakeSendWindowWaiters(): void {

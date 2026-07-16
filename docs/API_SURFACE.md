@@ -1,6 +1,6 @@
 # Flowersec API Surface
 
-This document defines the stable integration surface for Flowersec v0.22.0.
+This document defines the stable integration surface for Flowersec v0.23.0.
 
 Canonical source of truth for the stable surface: `stability/public_api_manifest.json`
 
@@ -39,6 +39,8 @@ Recommended integration entrypoints:
   - `client.LivenessOptions`
   - `client.YamuxLimits`
   - `client.Client.ProbeLiveness(...)`
+  - `client.Client.Rekey()`
+  - `client.Client.OpenStream(...)`
   - `client.RequireTLS`
   - `client.AllowPlaintextForLoopback`
   - `client.NewNetworkPlaintextPolicy(...)`
@@ -72,6 +74,11 @@ Recommended integration entrypoints:
   - `endpoint.NetworkPlaintextPolicyOptions`
   - `endpoint.PlaintextRiskAcceptance`
   - `endpoint.PlaintextRiskAcceptPreE2ECredentialExposure`
+  - `endpoint.Session.Rekey()`
+  - `endpoint.Session.OpenStream(...)`
+- `github.com/floegence/flowersec/flowersec-go/stream`
+  - `stream.Stream`
+  - `stream.Stream.Reset()`
 - `github.com/floegence/flowersec/flowersec-go/transportsecurity`
   - `transportsecurity.Policy`
   - `transportsecurity.Input`
@@ -144,7 +151,7 @@ Recommended integration entrypoints:
   - `reconnect.ControlplaneSource(...)`
   - `reconnect.Config`
   - `reconnect.Settings`
-  - `proxy.Options.BlockedResponseHeaders`
+  - `(*reconnect.Manager).Disconnect()`
 - `github.com/floegence/flowersec/flowersec-go/proxy/preset`
   - `preset.Manifest`
   - `preset.DecodeJSON(...)`
@@ -217,6 +224,8 @@ Stable entrypoints:
   - `WebSocketLimits`
   - `YamuxLimits`
   - connect option `maxOutboundBufferedBytes`
+  - connected client method `rekey()`
+  - connected stream method `reset()`
 - `@floegence/flowersec-core/node`
   - `connectNode(...)`
   - `connectTunnelNode(...)`
@@ -275,6 +284,7 @@ Stable entrypoints:
   - `ChannelInitService`
 - `@floegence/flowersec-core/endpoint`
   - `Session`
+  - `Session.rekey()`
   - `acceptDirect(...)`
   - `acceptDirectResolved(...)`
   - `connectTunnel(...)`
@@ -361,6 +371,7 @@ Stable connection and session entrypoints:
 - `FlowersecClient.rpc`
 - `FlowersecClient.openStream(...)`
 - `FlowersecClient.probeLiveness(...)`
+- `FlowersecClient.rekey()`
 - `FlowersecClient.close()`
 - `ConnectOptions`
   - `ConnectOptions.connectTimeout`
@@ -398,6 +409,7 @@ Stable RPC and stream building blocks:
 - `RPCClient.close()`
 - `FlowersecRPCStream`
 - `FlowersecByteStream`
+- `FlowersecByteStream.reset()`
 - `RPCSubscription`
 - `RPCEnvelope`
 - `RPCErrorPayload`
@@ -411,6 +423,8 @@ Stable endpoint, controlplane, reconnect, and proxy building blocks:
 
 - `Endpoint`
 - `EndpointSession`
+- `EndpointSession.rekey()`
+- `EndpointSession.terminationError()`
 - `EndpointOptions`
 - `DirectEndpointCredential`
 - `DirectCredentialResolver`
@@ -468,6 +482,10 @@ Stable entrypoints and modules:
 - `flowersec::endpoint::accept_direct_resolved(...)`
 - `flowersec::endpoint::connect_tunnel(...)`
 - `flowersec::endpoint::Session`
+- `flowersec::Client::rekey()`
+- `flowersec::endpoint::Session::rekey()`
+- `flowersec::endpoint::Session::termination_error()`
+- `flowersec::yamux::YamuxStream::reset()`
 - `flowersec::rpc::RpcClient`
 - `flowersec::rpc::Router`
 - `flowersec::rpc::Server`
@@ -476,12 +494,13 @@ Stable entrypoints and modules:
 - `flowersec::controlplane::issuer`
 - `flowersec::controlplane::channelinit`
 - `flowersec::reconnect::ReconnectManager`
+- `flowersec::reconnect::ReconnectManager::disconnect(...)`
 - `flowersec::proxy::ProxyClient`
 - `flowersec::proxy::ProxyServer`
 
 ## Stable vs experimental notes
 
-Stable in v0.22.0:
+Stable in v0.23.0:
 
 - client-facing canonical `ConnectArtifact`
 - strict canonical parse / validate rules
@@ -503,8 +522,10 @@ Stable in v0.22.0:
 - Go, TypeScript, Swift, and Rust endpoint, controlplane, reconnect, and proxy portable APIs
 - shared defaults and language capability manifests enforced by CI
 - shared ConnectArtifact, E2EE, Token, transport policy, Yamux, RPC, controlplane envelope, proxy, and diagnostic registry fixtures consumed by all four languages
+- Go-reference star interoperability matrix with Go -> Go baseline and both directed edges for every non-Go SDK
+- public client/endpoint rekey and stream reset controls in all four SDKs
 
-Still experimental in v0.22.0:
+Still experimental in v0.23.0:
 
 - public normalize helper shapes
 - unlisted generic scope normalization and resolver helper APIs

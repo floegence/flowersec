@@ -92,6 +92,7 @@ impl Default for ConnectOptions {
 #[derive(Debug)]
 pub struct Client {
     path: Path,
+    secure: Arc<dyn crate::e2ee::SecureChannelControl>,
     session: YamuxSession,
     rpc: RpcClient,
 }
@@ -107,47 +108,58 @@ impl Client {
 
     pub async fn open_stream(&self, kind: &str) -> Result<YamuxStream, FlowersecError> {
         let stream = self.session.open_stream().await.map_err(|error| {
-            FlowersecError::new(
-                self.path,
-                Stage::Yamux,
-                ErrorCode::OPEN_STREAM_FAILED,
-                "failed to open stream",
-            )
-            .with_source(error)
+            let code = yamux_session_code(&error, ErrorCode::OPEN_STREAM_FAILED);
+            FlowersecError::new(self.path, Stage::Yamux, code, "failed to open stream")
+                .with_source(error)
         })?;
-        streamhello::write(&stream, kind).await.map_err(|error| {
-            FlowersecError::new(
+        if let Err(error) = streamhello::write(&stream, kind).await {
+            let code = match self.session.terminal_error().await {
+                Some(terminal) => yamux_session_code(&terminal, ErrorCode::STREAM_HELLO_FAILED),
+                None => match &error {
+                    crate::streamio::StreamIoError::Yamux(yamux) => {
+                        yamux_session_code(yamux, ErrorCode::STREAM_HELLO_FAILED)
+                    }
+                    _ => ErrorCode::STREAM_HELLO_FAILED,
+                },
+            };
+            return Err(FlowersecError::new(
                 self.path,
                 Stage::Rpc,
-                ErrorCode::STREAM_HELLO_FAILED,
+                code,
                 "failed to write stream hello",
             )
-            .with_source(error)
-        })?;
+            .with_source(error));
+        }
         Ok(stream)
     }
 
     pub async fn accept_stream(&self) -> Result<(String, YamuxStream), FlowersecError> {
         let stream = self.session.accept_stream().await.map_err(|error| {
-            FlowersecError::new(
-                self.path,
-                Stage::Yamux,
-                ErrorCode::ACCEPT_STREAM_FAILED,
-                "failed to accept stream",
-            )
-            .with_source(error)
+            let code = yamux_session_code(&error, ErrorCode::ACCEPT_STREAM_FAILED);
+            FlowersecError::new(self.path, Stage::Yamux, code, "failed to accept stream")
+                .with_source(error)
         })?;
-        let kind = streamhello::read(&stream, crate::defaults::MAX_STREAM_HELLO_BYTES)
-            .await
-            .map_err(|error| {
-                FlowersecError::new(
+        let kind = match streamhello::read(&stream, crate::defaults::MAX_STREAM_HELLO_BYTES).await {
+            Ok(kind) => kind,
+            Err(error) => {
+                let code = match self.session.terminal_error().await {
+                    Some(terminal) => yamux_session_code(&terminal, ErrorCode::STREAM_HELLO_FAILED),
+                    None => match &error {
+                        crate::streamio::StreamIoError::Yamux(yamux) => {
+                            yamux_session_code(yamux, ErrorCode::STREAM_HELLO_FAILED)
+                        }
+                        _ => ErrorCode::STREAM_HELLO_FAILED,
+                    },
+                };
+                return Err(FlowersecError::new(
                     self.path,
                     Stage::Rpc,
-                    ErrorCode::STREAM_HELLO_FAILED,
+                    code,
                     "failed to read stream hello",
                 )
-                .with_source(error)
-            })?;
+                .with_source(error));
+            }
+        };
         Ok((kind, stream))
     }
 
@@ -158,6 +170,18 @@ impl Client {
                 Stage::Yamux,
                 ErrorCode::PING_FAILED,
                 "liveness probe failed",
+            )
+            .with_source(error)
+        })
+    }
+
+    pub async fn rekey(&self) -> Result<(), FlowersecError> {
+        self.secure.rekey_channel().await.map_err(|error| {
+            FlowersecError::new(
+                self.path,
+                Stage::Secure,
+                ErrorCode::REKEY_FAILED,
+                "failed to rekey secure channel",
             )
             .with_source(error)
         })
@@ -177,6 +201,17 @@ impl Client {
 
     pub async fn terminated(&self) {
         self.session.wait_closed().await;
+    }
+}
+
+fn yamux_session_code(error: &crate::yamux::YamuxError, fallback: &'static str) -> &'static str {
+    match error {
+        crate::yamux::YamuxError::ResourceExhausted { .. } => ErrorCode::RESOURCE_EXHAUSTED,
+        crate::yamux::YamuxError::Closed
+        | crate::yamux::YamuxError::StreamClosed
+        | crate::yamux::YamuxError::Reset
+        | crate::yamux::YamuxError::Transport(_) => ErrorCode::NOT_CONNECTED,
+        _ => fallback,
     }
 }
 
@@ -309,8 +344,9 @@ async fn establish_client<T: crate::transport::WebSocketTransport>(
         )
         .with_source(error)
     })?;
-    let session = YamuxSession::new(Arc::new(secure), Mode::Client, options.yamux_limits).map_err(
-        |error| {
+    let secure = Arc::new(secure);
+    let session =
+        YamuxSession::new(secure.clone(), Mode::Client, options.yamux_limits).map_err(|error| {
             FlowersecError::new(
                 path,
                 Stage::Yamux,
@@ -318,8 +354,7 @@ async fn establish_client<T: crate::transport::WebSocketTransport>(
                 "Yamux setup failed",
             )
             .with_source(error)
-        },
-    )?;
+        })?;
     let rpc_stream = session.open_stream().await.map_err(|error| {
         FlowersecError::new(
             path,
@@ -349,6 +384,7 @@ async fn establish_client<T: crate::transport::WebSocketTransport>(
     );
     Ok(Client {
         path,
+        secure,
         session,
         rpc: RpcClient::from_stream(rpc_stream),
     })

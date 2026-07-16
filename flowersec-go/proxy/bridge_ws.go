@@ -29,7 +29,13 @@ func (b *Bridge) ProxyWS(w http.ResponseWriter, r *http.Request, route StreamOpe
 		return writeBridgeHTTPError(w, "stream_open_failed", http.StatusBadGateway, "upstream connect failed", err)
 	}
 
-	connID := opaqueID(18)
+	connID, err := opaqueID(18)
+	if err != nil {
+		if closeErr := stream.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return writeBridgeHTTPError(w, "random_failed", http.StatusInternalServerError, "connection identifier generation failed", err)
+	}
 	open := WSOpenMeta{
 		V:       ProtocolVersion,
 		ConnID:  connID,

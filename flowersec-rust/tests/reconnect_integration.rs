@@ -109,7 +109,7 @@ async fn reconnect_manager_recovers_after_session_termination() {
         assert_eq!(accepted, expected);
     }
 
-    manager.disconnect().await;
+    manager.disconnect().await.expect("disconnect");
     assert_eq!(manager.state().status, ConnectionStatus::Disconnected);
     server_task.await.expect("server task");
 
@@ -180,7 +180,7 @@ async fn reconnect_manager_retries_artifact_acquisition_then_connects() {
         .expect("second artifact acquisition connects");
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
     assert_eq!(manager.state().status, ConnectionStatus::Connected);
-    manager.disconnect().await;
+    manager.disconnect().await.expect("disconnect");
     server_task.await.expect("server task");
 }
 
@@ -263,7 +263,7 @@ async fn reconnect_manager_reports_exhaustion_and_cancellation() {
         let manager = manager.clone();
         tokio::spawn(async move { manager.connect_if_needed(config).await })
     };
-    manager.disconnect().await;
+    manager.disconnect().await.expect("disconnect");
     assert!(matches!(
         connecting.await.expect("connect task"),
         Err(ReconnectError::Artifact(ArtifactSourceError::Canceled))

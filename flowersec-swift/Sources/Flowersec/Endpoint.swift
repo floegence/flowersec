@@ -79,7 +79,8 @@ public struct DirectHandshakeInit: Equatable, Sendable {
   }
 }
 
-public typealias DirectCredentialResolver = @Sendable (DirectHandshakeInit) async throws -> DirectEndpointCredential
+public typealias DirectCredentialResolver =
+  @Sendable (DirectHandshakeInit) async throws -> DirectEndpointCredential
 
 public struct EndpointStream: Sendable {
   public var kind: String
@@ -94,15 +95,18 @@ public struct EndpointStream: Sendable {
 public final class EndpointSession: @unchecked Sendable {
   public let path: FlowersecPath
   public let endpointInstanceID: String?
+  private let secure: FlowersecSecureChannel
   private let yamux: FlowersecYamuxClient
 
   fileprivate init(
     path: FlowersecPath,
     endpointInstanceID: String?,
+    secure: FlowersecSecureChannel,
     yamux: FlowersecYamuxClient
   ) {
     self.path = path
     self.endpointInstanceID = endpointInstanceID
+    self.secure = secure
     self.yamux = yamux
   }
 
@@ -161,11 +165,38 @@ public final class EndpointSession: @unchecked Sendable {
     try await yamux.probeLiveness(timeout: timeout)
   }
 
+  public func rekey() async throws {
+    do {
+      try await secure.rekey()
+    } catch {
+      throw FlowersecError(
+        path: path,
+        stage: .secure,
+        code: .rekeyFailed,
+        message: "Endpoint secure channel rekey failed: \(error.localizedDescription)"
+      )
+    }
+  }
+
   public func close() async {
     await yamux.close()
   }
 
-  fileprivate func acceptTypedStream() async throws -> (kind: String, stream: FlowersecYamuxStream) {
+  public func terminationError() async -> FlowersecError? {
+    guard let error = await yamux.terminated() else { return nil }
+    if let error = error as? FlowersecError {
+      return error.withPath(path)
+    }
+    return FlowersecError(
+      path: path,
+      stage: .yamux,
+      code: .notConnected,
+      message: "The endpoint session terminated: \(error.localizedDescription)"
+    )
+  }
+
+  fileprivate func acceptTypedStream() async throws -> (kind: String, stream: FlowersecYamuxStream)
+  {
     let stream = try await yamux.acceptStream()
     do {
       let data = try await FlowersecJSONFrame.read(from: stream)
@@ -399,6 +430,7 @@ public enum Endpoint {
     return EndpointSession(
       path: path,
       endpointInstanceID: endpointInstanceID,
+      secure: secure,
       yamux: yamux
     )
   }

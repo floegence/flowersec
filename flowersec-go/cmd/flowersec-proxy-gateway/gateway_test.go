@@ -15,6 +15,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	"github.com/floegence/flowersec/flowersec-go/proxy"
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
 	"github.com/gorilla/websocket"
 )
 
@@ -40,10 +41,10 @@ type fakeRoute struct {
 	srv *serve.Server
 }
 
-func (c *fakeRoute) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
+func (c *fakeRoute) OpenStream(ctx context.Context, kind string) (fsstream.Stream, error) {
 	a, b := net.Pipe()
 	go c.srv.HandleStream(ctx, kind, b)
-	return a, nil
+	return resettableTestStream{ReadWriteCloser: a}, nil
 }
 
 func TestGatewayHTTPProxiesToServerEndpoint(t *testing.T) {
@@ -395,8 +396,12 @@ func mustBridge(t *testing.T, opts proxy.BridgeOptions) *proxy.Bridge {
 
 type openerFunc func(ctx context.Context, kind string) (io.ReadWriteCloser, error)
 
-func (fn openerFunc) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
-	return fn(ctx, kind)
+func (fn openerFunc) OpenStream(ctx context.Context, kind string) (fsstream.Stream, error) {
+	value, err := fn(ctx, kind)
+	if err != nil || value == nil {
+		return nil, err
+	}
+	return resettableTestStream{ReadWriteCloser: value}, nil
 }
 
 type noopReadWriteCloser struct{}
@@ -404,3 +409,4 @@ type noopReadWriteCloser struct{}
 func (noopReadWriteCloser) Read(p []byte) (int, error)  { return 0, io.EOF }
 func (noopReadWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
 func (noopReadWriteCloser) Close() error                { return nil }
+func (noopReadWriteCloser) Reset() error                { return nil }

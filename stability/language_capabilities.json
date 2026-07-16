@@ -39,7 +39,7 @@
         "go": { "status": "complete", "evidence": ["flowersec-go/mux/yamux", "flowersec-go/streamhello", "flowersec-go/framing/jsonframe"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/yamux", "flowersec-ts/src/streamhello", "flowersec-ts/src/framing"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/Yamux.swift", "flowersec-swift/Sources/Flowersec/DataCoding.swift"] },
-        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/yamux.rs", "flowersec-rust/src/streamhello.rs", "flowersec-rust/tests/yamux_roundtrip.rs", "flowersec-rust/tests/go_interop.rs", "flowersec-rust/tests/typescript_interop.rs", "flowersec-rust/tests/swift_interop.rs"] }
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/yamux.rs", "flowersec-rust/src/streamhello.rs", "flowersec-rust/tests/yamux_roundtrip.rs", "flowersec-rust/examples/interop_harness.rs", "stability/interop_matrix.json"] }
       }
     },
     {
@@ -49,7 +49,7 @@
         "go": { "status": "complete", "evidence": ["flowersec-go/rpc"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/rpc"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/RPC.swift", "flowersec-swift/Sources/Flowersec/RPCServer.swift", "flowersec-swift/Tests/FlowersecTests/RPCTests.swift", "flowersec-swift/Tests/FlowersecTests/EndpointTests.swift"] },
-        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/rpc.rs", "flowersec-rust/tests/rpc_roundtrip.rs", "flowersec-rust/tests/go_interop.rs", "flowersec-rust/tests/typescript_interop.rs", "flowersec-rust/tests/swift_interop.rs"] }
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/rpc.rs", "flowersec-rust/tests/rpc_roundtrip.rs", "flowersec-rust/examples/interop_harness.rs", "stability/interop_matrix.json"] }
       }
     },
     {
@@ -59,7 +59,7 @@
         "go": { "status": "complete", "evidence": ["flowersec-go/endpoint"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/endpoint/index.ts", "flowersec-ts/src/endpoint/endpoint.integration.test.ts"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/Endpoint.swift", "flowersec-swift/Sources/Flowersec/ServerHandshake.swift", "flowersec-swift/Tests/FlowersecTests/EndpointTests.swift"] },
-        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/endpoint.rs", "flowersec-rust/tests/direct_integration.rs", "flowersec-rust/tests/endpoint_resolved.rs", "flowersec-rust/tests/go_interop.rs", "flowersec-rust/tests/typescript_interop.rs", "flowersec-rust/tests/swift_interop.rs"] }
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/endpoint.rs", "flowersec-rust/tests/direct_integration.rs", "flowersec-rust/tests/endpoint_resolved.rs", "flowersec-rust/examples/interop_harness.rs", "stability/interop_matrix.json"] }
       }
     },
     {
@@ -89,7 +89,7 @@
         "go": { "status": "complete", "evidence": ["flowersec-go/proxy/client.go", "flowersec-go/proxy/register.go", "flowersec-go/proxy/client_test.go"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/proxy/runtime.ts", "flowersec-ts/src/proxy/server.ts", "flowersec-ts/src/proxy/server.integration.test.ts"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/ProxyClient.swift", "flowersec-swift/Sources/Flowersec/ProxyServer.swift", "flowersec-swift/Sources/Flowersec/ProxyNIOWebSocket.swift", "flowersec-swift/Tests/FlowersecTests/ProxyTests.swift"] },
-        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/proxy.rs", "flowersec-rust/tests/proxy_integration.rs", "flowersec-rust/tests/go_interop.rs", "flowersec-rust/tests/typescript_interop.rs", "flowersec-rust/tests/swift_interop.rs"] }
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/proxy.rs", "flowersec-rust/tests/proxy_integration.rs", "flowersec-rust/examples/interop_harness.rs", "stability/interop_matrix.json"] }
       }
     },
     {
@@ -117,7 +117,7 @@
     {
       "id": "rust_wasm",
       "owner": "rust",
-      "reason": "The Rust v0.22 support target is native Linux, macOS, and Windows; browser support remains TypeScript-owned."
+      "reason": "The Rust v0.23 support target is native Linux, macOS, and Windows; browser support remains TypeScript-owned."
     }
   ],
   "shared_fixtures": [

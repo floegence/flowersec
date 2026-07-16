@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
+
 	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	"github.com/gorilla/websocket"
 )
@@ -128,9 +130,17 @@ func TestClientHTTPAndWebSocketAgainstRegisteredServer(t *testing.T) {
 
 type clientTestRouteFunc func(context.Context, string) (io.ReadWriteCloser, error)
 
-func (fn clientTestRouteFunc) OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error) {
-	return fn(ctx, kind)
+func (fn clientTestRouteFunc) OpenStream(ctx context.Context, kind string) (fsstream.Stream, error) {
+	value, err := fn(ctx, kind)
+	if err != nil || value == nil {
+		return nil, err
+	}
+	return proxyTestStream{ReadWriteCloser: value}, nil
 }
+
+type proxyTestStream struct{ io.ReadWriteCloser }
+
+func (s proxyTestStream) Reset() error { return s.Close() }
 
 func TestClientValidationAndStructuredErrors(t *testing.T) {
 	var nilClient *Client

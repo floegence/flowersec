@@ -83,6 +83,16 @@
             "doc_token": "`client.Client.ProbeLiveness(...)`"
           },
           {
+            "kind": "method",
+            "expr": "client.Client.Rekey",
+            "doc_token": "`client.Client.Rekey()`"
+          },
+          {
+            "kind": "method",
+            "expr": "client.Client.OpenStream",
+            "doc_token": "`client.Client.OpenStream(...)`"
+          },
+          {
             "kind": "func",
             "expr": "client.RequireTLS",
             "doc_token": "`client.RequireTLS`"
@@ -248,6 +258,33 @@
             "kind": "const",
             "expr": "endpoint.PlaintextRiskAcceptPreE2ECredentialExposure",
             "doc_token": "`endpoint.PlaintextRiskAcceptPreE2ECredentialExposure`"
+          },
+          {
+            "kind": "method",
+            "expr": "endpoint.Session.Rekey",
+            "doc_token": "`endpoint.Session.Rekey()`"
+          },
+          {
+            "kind": "method",
+            "expr": "endpoint.Session.OpenStream",
+            "doc_token": "`endpoint.Session.OpenStream(...)`"
+          }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/stream",
+        "alias": "stream",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/stream`",
+        "entries": [
+          {
+            "kind": "type",
+            "expr": "stream.Stream",
+            "doc_token": "`stream.Stream`"
+          },
+          {
+            "kind": "method",
+            "expr": "stream.Stream.Reset",
+            "doc_token": "`stream.Stream.Reset()`"
           }
         ]
       },
@@ -1552,6 +1589,11 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "FlowersecCode.rekeyFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "FlowersecCode.resolveFailed",
         "doc_token": ""
       },
@@ -2077,6 +2119,11 @@
       },
       {
         "kind": "swift.init",
+        "name": "FlowersecStreamResetError.init(path:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
         "name": "FlowersecStage.init(rawValue:)",
         "doc_token": ""
       },
@@ -2382,6 +2429,16 @@
       },
       {
         "kind": "swift.method",
+        "name": "EndpointSession.rekey()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "EndpointSession.terminationError()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
         "name": "EndpointSession.serveRPC(router:options:)",
         "doc_token": ""
       },
@@ -2412,6 +2469,11 @@
       },
       {
         "kind": "swift.method",
+        "name": "FlowersecByteStream.reset()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
         "name": "FlowersecByteStream.write(_:)",
         "doc_token": ""
       },
@@ -2428,6 +2490,11 @@
       {
         "kind": "swift.method",
         "name": "FlowersecClient.probeLiveness(timeout:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "FlowersecClient.rekey()",
         "doc_token": ""
       },
       {
@@ -3257,6 +3324,16 @@
       },
       {
         "kind": "swift.property",
+        "name": "FlowersecStreamResetError.errorDescription",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecStreamResetError.path",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
         "name": "ProxyContractOptions.blockedResponseHeaders",
         "doc_token": ""
       },
@@ -3902,6 +3979,11 @@
       },
       {
         "kind": "swift.struct",
+        "name": "FlowersecStreamResetError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
         "name": "ProxyClient",
         "doc_token": ""
       },
@@ -4470,8 +4552,12 @@
       "let _ = std::mem::size_of::<flowersec::ConnectArtifact>()",
       "let _ = std::mem::size_of::<flowersec::client::ConnectOptions>()",
       "let _ = flowersec::Client::accept_stream",
+      "let _ = flowersec::Client::rekey",
       "let _ = std::mem::size_of::<flowersec::endpoint::Session>()",
       "let _ = flowersec::endpoint::Session::accept_stream",
+      "let _ = flowersec::endpoint::Session::rekey",
+      "let _ = flowersec::endpoint::Session::termination_error",
+      "let _ = flowersec::yamux::YamuxStream::reset",
       "let _ = std::mem::size_of::<flowersec::rpc::RpcClient>()",
       "let _ = std::mem::size_of::<flowersec::rpc::Server>()",
       "let _ = flowersec::rpc::Server::notify",
@@ -4479,6 +4565,7 @@
       "let _ = std::mem::size_of::<flowersec::controlplane::token::Payload>()",
       "let _ = std::mem::size_of::<flowersec::controlplane::issuer::Keyset>()",
       "let _ = std::mem::size_of::<flowersec::reconnect::ReconnectManager>()",
+      "let _ = flowersec::reconnect::ReconnectManager::disconnect",
       "let _ = std::mem::size_of::<flowersec::proxy::ProxyClient>()",
       "let _ = std::mem::size_of::<flowersec::proxy::ProxyServer>()",
       "let _ = std::mem::size_of::<flowersec::observability::DiagnosticEvent>()",

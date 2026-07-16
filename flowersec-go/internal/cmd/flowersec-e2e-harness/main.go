@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"io"
 	"log"
@@ -24,27 +25,23 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	controlplanehttp "github.com/floegence/flowersec/flowersec-go/controlplane/http"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
-	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	demov1 "github.com/floegence/flowersec/flowersec-go/internal/testgen/flowersec/demo/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/yamuxinterop"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/proxy"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
 	"github.com/gorilla/websocket"
-	hyamux "github.com/hashicorp/yamux"
 )
 
+const e2eOrigin = "https://interop.flowersec.test"
+
 func main() {
-	var scenarioJSON string
 	var externalServer bool
-	flag.StringVar(&scenarioJSON, "scenario", "", "scenario JSON payload")
 	flag.BoolVar(&externalServer, "external-server", false, "emit a server grant without starting the Go endpoint")
 	flag.Parse()
 
@@ -65,7 +62,7 @@ func main() {
 	tunnelCfg.IssuerKeysFile = keyFile
 	tunnelCfg.TunnelAudience = aud
 	tunnelCfg.TunnelIssuer = issID
-	tunnelCfg.AllowedOrigins = []string{"https://app.redeven.com"}
+	tunnelCfg.AllowedOrigins = []string{e2eOrigin}
 	tunnelCfg.CleanupInterval = 50 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
 	if err != nil {
@@ -88,7 +85,7 @@ func main() {
 	}
 	directHandler, err := endpointserve.NewDirectHandler(endpointserve.DirectHandlerOptions{
 		Server:         streamSrv,
-		AllowedOrigins: []string{"https://app.redeven.com"},
+		AllowedOrigins: []string{e2eOrigin},
 		Handshake: endpoint.AcceptDirectOptions{
 			ChannelID:                directInfo.ChannelId,
 			PSK:                      directPSK,
@@ -128,7 +125,7 @@ func main() {
 			TokenExpSeconds: 60,
 		},
 	}
-	grantC, grantS, psk, err := newGrantPair(ci, "chan_e2e_ts")
+	grantC, grantS, _, err := newGrantPair(ci, "chan_e2e_ts")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -164,7 +161,11 @@ func main() {
 			correlation.SessionID = &sessionID
 			artifact.Correlation = correlation
 		}
-		if scope := buildProxyRuntimeScope(input.Payload); scope != nil {
+		scope, err := buildProxyRuntimeScope(input.Payload)
+		if err != nil {
+			return nil, err
+		}
+		if scope != nil {
 			artifact.Scoped = append(artifact.Scoped, *scope)
 		}
 		return artifact, nil
@@ -179,55 +180,6 @@ func main() {
 			return issueArtifact(input)
 		},
 	}))
-
-	if scenarioJSON != "" {
-		var scenario yamuxinterop.Scenario
-		if err := json.Unmarshal([]byte(scenarioJSON), &scenario); err != nil {
-			log.Fatal(err)
-		}
-		if err := scenario.Normalize(); err != nil {
-			log.Fatal(err)
-		}
-		scenarioCtx, scenarioCancel := context.WithTimeout(ctx, time.Duration(scenario.DeadlineMs)*time.Millisecond)
-		defer scenarioCancel()
-
-		resultCh := make(chan scenarioOutcome, 1)
-		go func() {
-			result, err := runServerEndpointScenario(
-				scenarioCtx,
-				wsURL,
-				grantS.ChannelId,
-				grantS.Token,
-				psk,
-				grantS.ChannelInitExpireAtUnixS,
-				scenario,
-			)
-			resultCh <- scenarioOutcome{Result: result, Err: err}
-		}()
-
-		ready := map[string]any{
-			"ws_url":                wsURL,
-			"grant_client":          grantC,
-			"grant_server":          grantS,
-			"direct_info":           directInfo,
-			"controlplane_base_url": "http://" + ln.Addr().String(),
-			"upstream_url":          upstream.URL,
-			"entry_ticket":          entryTicket,
-		}
-		_ = json.NewEncoder(os.Stdout).Encode(ready)
-
-		outcome := <-resultCh
-		out := map[string]any{
-			"result": outcome.Result,
-		}
-		if outcome.Err != nil {
-			out["error"] = outcome.Err.Error()
-		}
-		_ = json.NewEncoder(os.Stdout).Encode(out)
-
-		cancel()
-		return
-	}
 
 	// Start the server-side endpoint that completes the E2EE handshake.
 	if !externalServer {
@@ -256,7 +208,7 @@ func runServerEndpoint(ctx context.Context, grant *controlv1.ChannelInitGrant, s
 	sess, err := endpoint.ConnectTunnel(
 		ctx,
 		grant,
-		endpoint.WithOrigin("https://app.redeven.com"),
+		endpoint.WithOrigin(e2eOrigin),
 		endpoint.WithTransportSecurityPolicy(endpoint.AllowPlaintextForLoopback),
 		endpoint.WithLivenessDisabled(),
 	)
@@ -328,65 +280,9 @@ func (h demoHandler) Ping(ctx context.Context, req *demov1.PingRequest) (*demov1
 	return &demov1.PingResponse{Ok: true}, nil
 }
 
-type scenarioOutcome struct {
-	Result yamuxinterop.Result
-	Err    error
-}
-
-// runServerEndpointScenario attaches as the server role and runs a yamux interop scenario.
-// Note: this harness only accepts client-initiated streams.
-func runServerEndpointScenario(ctx context.Context, wsURL string, channelID string, tokenStr string, psk []byte, initExp int64, scenario yamuxinterop.Scenario) (yamuxinterop.Result, error) {
-	c, _, err := dialTunnel(ctx, wsURL)
-	if err != nil {
-		return yamuxinterop.Result{}, err
-	}
-	defer c.Close()
-
-	attach := tunnelv1.Attach{
-		V:                  1,
-		ChannelId:          channelID,
-		Role:               tunnelv1.Role_server,
-		Token:              tokenStr,
-		EndpointInstanceId: base64url.Encode(make([]byte, 16)),
-	}
-	b, _ := json.Marshal(attach)
-	_ = c.WriteMessage(websocket.TextMessage, b)
-
-	bt := e2ee.NewWebSocketBinaryTransport(c)
-	cache := e2ee.NewServerHandshakeCache()
-	secure, err := e2ee.ServerHandshake(ctx, bt, cache, e2ee.ServerHandshakeOptions{
-		PSK:                 psk,
-		Suite:               e2ee.SuiteX25519HKDFAES256GCM,
-		ChannelID:           channelID,
-		InitExpireAtUnixS:   initExp,
-		ClockSkew:           30 * time.Second,
-		ServerFeatures:      1,
-		MaxHandshakePayload: 8 * 1024,
-		MaxRecordBytes:      1 << 20,
-	})
-	if err != nil {
-		return yamuxinterop.Result{}, err
-	}
-	defer secure.Close()
-
-	ycfg := hyamux.DefaultConfig()
-	ycfg.EnableKeepAlive = false
-	ycfg.LogOutput = io.Discard
-	if scenario.Scenario == yamuxinterop.ScenarioRstMidWriteGo {
-		ycfg.StreamCloseTimeout = 50 * time.Millisecond
-	}
-	sess, err := hyamux.Server(secure, ycfg)
-	if err != nil {
-		return yamuxinterop.Result{}, err
-	}
-	defer sess.Close()
-
-	return yamuxinterop.RunServer(ctx, sess, scenario)
-}
-
 func dialTunnel(ctx context.Context, wsURL string) (*websocket.Conn, *http.Response, error) {
 	h := http.Header{}
-	h.Set("Origin", "https://app.redeven.com")
+	h.Set("Origin", e2eOrigin)
 	return websocket.DefaultDialer.DialContext(ctx, wsURL, h)
 }
 
@@ -409,16 +305,22 @@ func newGrantPair(ci *channelinit.Service, prefix string) (*controlv1.ChannelIni
 	return grantClient, grantServer, psk, nil
 }
 
-func buildProxyRuntimeScope(payload map[string]any) *protocolio.ScopeMetadataEntry {
+func buildProxyRuntimeScope(payload map[string]any) (*protocolio.ScopeMetadataEntry, error) {
 	if payload == nil {
-		return nil
+		return nil, nil
 	}
 	mode := strings.TrimSpace(anyString(payload["proxy_mode"]))
 	if mode == "" {
-		return nil
+		return nil, nil
 	}
-	scopeVersion := anyInt(payload["scope_version"], 1)
-	critical := anyBool(payload["critical"])
+	scopeVersion, ok := strictInt(payload["scope_version"])
+	if !ok || scopeVersion <= 0 {
+		return nil, errors.New("proxy runtime scope_version must be a positive integer")
+	}
+	critical, ok := payload["critical"].(bool)
+	if !ok {
+		return nil, errors.New("proxy runtime critical must be a boolean")
+	}
 	entry := &protocolio.ScopeMetadataEntry{
 		Scope:        "proxy.runtime",
 		ScopeVersion: scopeVersion,
@@ -432,18 +334,27 @@ func buildProxyRuntimeScope(payload map[string]any) *protocolio.ScopeMetadataEnt
 	}
 	switch mode {
 	case "service_worker":
+		scriptURL := anyString(payload["service_worker_script_url"])
+		scope := anyString(payload["service_worker_scope"])
+		if scriptURL == "" || scope == "" {
+			return nil, errors.New("service_worker requires script URL and scope")
+		}
 		entry.Payload["serviceWorker"] = map[string]any{
-			"scriptUrl": firstNonEmpty(anyString(payload["service_worker_script_url"]), "/proxy-sw.js"),
-			"scope":     firstNonEmpty(anyString(payload["service_worker_scope"]), "/"),
+			"scriptUrl": scriptURL,
+			"scope":     scope,
 		}
 	case "controller_bridge":
+		allowedOrigin := anyString(payload["allowed_origin"])
+		if allowedOrigin == "" {
+			return nil, errors.New("controller_bridge requires allowed_origin")
+		}
 		entry.Payload["controllerBridge"] = map[string]any{
-			"allowedOrigins": []string{firstNonEmpty(anyString(payload["allowed_origin"]), "https://app.redeven.com")},
+			"allowedOrigins": []string{allowedOrigin},
 		}
 	default:
 		entry.Payload["mode"] = mode
 	}
-	return entry
+	return entry, nil
 }
 
 func anyString(value any) string {
@@ -454,39 +365,24 @@ func anyString(value any) string {
 	return strings.TrimSpace(s)
 }
 
-func anyBool(value any) bool {
-	b, ok := value.(bool)
-	return ok && b
-}
-
-func anyInt(value any, fallback int) int {
+func strictInt(value any) (int, bool) {
 	switch v := value.(type) {
 	case int:
-		return v
+		return v, true
 	case int32:
-		return int(v)
+		return int(v), true
 	case int64:
-		return int(v)
+		return int(v), true
 	case float64:
 		if v == float64(int(v)) {
-			return int(v)
+			return int(v), true
 		}
 	case json.Number:
 		if n, err := v.Int64(); err == nil {
-			return int(n)
+			return int(n), true
 		}
 	}
-	return fallback
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			return value
-		}
-	}
-	return ""
+	return 0, false
 }
 
 // mustTestIssuer creates a deterministic issuer keyset and writes it to disk.

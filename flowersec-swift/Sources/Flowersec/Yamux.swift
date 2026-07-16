@@ -184,7 +184,9 @@ actor FlowersecYamuxClient {
   }
 
   func acceptStream() async throws -> FlowersecYamuxStream {
-    guard !closed else { throw FlowersecError.closed(path: path) }
+    if closed {
+      throw terminationError ?? FlowersecError.closed(path: path)
+    }
     ensureReaderStarted()
     if !incomingStreams.isEmpty {
       return incomingStreams.removeFirst()
@@ -232,7 +234,11 @@ actor FlowersecYamuxClient {
           do {
             try await Task.sleep(for: timeout)
             await self?.timeoutPing(pingID)
-          } catch {}
+          } catch is CancellationError {
+            return
+          } catch {
+            await self?.failPing(pingID, error: error)
+          }
         }
         pendingPing = PendingPing(
           id: pingID,
@@ -340,7 +346,10 @@ actor FlowersecYamuxClient {
           payload: Data()
         )
       )
-    } catch {}
+    } catch {
+      await terminate(with: sessionTransportError(error))
+      return
+    }
     if await stream.isFullyDrained {
       _ = removeStream(streamID)
     }
@@ -393,22 +402,27 @@ actor FlowersecYamuxClient {
         try await handle(frame)
       }
     } catch {
-      guard !closed else { return }
-      let failure = (error as? FlowersecError)?.withPath(path) ?? error
-      closed = true
-      livenessTask?.cancel()
-      livenessTask = nil
-      failPendingPing(failure)
-      failIncomingWaiters(failure)
-      for stream in streams.values {
-        await stream.fail(failure)
-      }
-      streams.removeAll()
-      queuedBytesByStream.removeAll()
-      sessionQueuedBytes = 0
-      await channel.close()
-      finishTermination(failure)
+      await terminate(with: sessionTransportError(error))
     }
+  }
+
+  private func terminate(with failure: any Error) async {
+    guard !closed else { return }
+    closed = true
+    readerTask?.cancel()
+    readerTask = nil
+    livenessTask?.cancel()
+    livenessTask = nil
+    failPendingPing(failure)
+    failIncomingWaiters(failure)
+    for stream in streams.values {
+      await stream.fail(failure)
+    }
+    streams.removeAll()
+    queuedBytesByStream.removeAll()
+    sessionQueuedBytes = 0
+    await channel.close()
+    finishTermination(failure)
   }
 
   private func finishTermination(_ error: (any Error)?) {
@@ -447,7 +461,11 @@ actor FlowersecYamuxClient {
         try await rejectUnknownStream(frame.streamID)
         return
       }
-      stream = try await acceptInboundStream(frame.streamID)
+      do {
+        stream = try await acceptInboundStream(frame.streamID)
+      } catch let error as FlowersecError where error.code == .resourceExhausted {
+        return
+      }
     }
     guard await applyResetAndAckFlags(frame, stream: stream) else { return }
     if !frame.payload.isEmpty {
@@ -479,7 +497,11 @@ actor FlowersecYamuxClient {
         try await rejectUnknownStream(frame.streamID)
         return
       }
-      stream = try await acceptInboundStream(frame.streamID)
+      do {
+        stream = try await acceptInboundStream(frame.streamID)
+      } catch let error as FlowersecError where error.code == .resourceExhausted {
+        return
+      }
     }
     guard await applyResetAndAckFlags(frame, stream: stream) else { return }
     if frame.flags & FlowersecYamuxConstants.flagFIN != 0 {
@@ -504,7 +526,7 @@ actor FlowersecYamuxClient {
   ) async -> Bool {
     if frame.flags & FlowersecYamuxConstants.flagRST != 0 {
       _ = removeStream(frame.streamID)
-      await stream.fail(FlowersecError.invalidYamux("The peer reset the stream.", path: path))
+      await stream.fail(FlowersecStreamResetError(path: path))
       return false
     }
     if frame.flags & FlowersecYamuxConstants.flagACK != 0 {
@@ -630,7 +652,8 @@ actor FlowersecYamuxClient {
   private func acceptInboundStream(_ streamID: UInt32) async throws -> FlowersecYamuxStream {
     guard streamID != 0, isInboundStreamIDValid(streamID) else {
       try await rejectUnknownStream(streamID)
-      throw FlowersecError.invalidYamux("The peer used an invalid inbound stream identifier.", path: path)
+      throw FlowersecError.invalidYamux(
+        "The peer used an invalid inbound stream identifier.", path: path)
     }
     guard streams.count < limits.maxActiveStreams,
       inboundStreamIDs.count < limits.maxInboundStreams
@@ -701,6 +724,11 @@ actor FlowersecYamuxClient {
     )
   }
 
+  fileprivate func resetStream(_ streamID: UInt32) async throws {
+    _ = removeStream(streamID)
+    try await writeReset(streamID)
+  }
+
   @discardableResult
   private func removeStream(_ streamID: UInt32) -> FlowersecYamuxStream? {
     let stream = streams.removeValue(forKey: streamID)
@@ -714,7 +742,27 @@ actor FlowersecYamuxClient {
   private func writeFrame(_ frame: FlowersecYamuxFrame) async throws {
     var data = frame.encodedHeader()
     data.append(frame.payload)
-    try await channel.write(data)
+    do {
+      try await channel.write(data)
+    } catch {
+      let terminal = sessionTransportError(error)
+      await terminate(with: terminal)
+      throw terminal
+    }
+  }
+
+  private func sessionTransportError(_ error: any Error) -> FlowersecError {
+    if let flowersec = error as? FlowersecError {
+      if flowersec.code != .websocketFailed {
+        return flowersec.withPath(path)
+      }
+    }
+    return FlowersecError(
+      path: path,
+      stage: .yamux,
+      code: .notConnected,
+      message: "The yamux transport terminated: \(error.localizedDescription)"
+    )
   }
 
   private func diagnostic(
@@ -814,6 +862,17 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
     localFinished = true
     resumeWindowWaiters(error: FlowersecError.closed(path: path))
     await session?.closeStream(streamID: id)
+  }
+
+  func reset() async throws {
+    guard !terminalClosed else { return }
+    terminalClosed = true
+    localFinished = true
+    readBuffer.removeAll()
+    resumeWaiters(error: FlowersecError.closed(path: path))
+    resumeWindowWaiters(error: FlowersecError.closed(path: path))
+    guard let session else { throw FlowersecError.closed(path: path) }
+    try await session.resetStream(id)
   }
 
   fileprivate func receive(_ data: Data) -> Bool {

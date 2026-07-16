@@ -71,7 +71,7 @@ impl YamuxLimits {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum YamuxError {
     #[error("Yamux session is closed")]
     Closed,
@@ -209,7 +209,7 @@ impl YamuxStream {
     pub async fn read(&self) -> Result<Option<Vec<u8>>, YamuxError> {
         loop {
             let notified = self.0.read_notify.notified();
-            let (payload, replenish, terminal) = {
+            let (payload, replenish, terminal, finalize) = {
                 let mut state = self.0.state.lock().await;
                 if state.phase == StreamPhase::Reset {
                     return Err(YamuxError::Reset);
@@ -221,15 +221,22 @@ impl YamuxStream {
                 }
                 let terminal =
                     matches!(state.phase, StreamPhase::Closed | StreamPhase::RemoteClosed);
-                (payload, replenish, terminal)
+                let finalize = state.phase == StreamPhase::Closed && state.receive_queue.is_empty();
+                (payload, replenish, terminal, finalize)
             };
             if let Some(payload) = payload {
                 let session = self.session()?;
                 session.release_receive_bytes(replenish).await;
                 self.replenish_window().await?;
+                if finalize {
+                    session.remove_stream(self.id()).await;
+                }
                 return Ok(Some(payload));
             }
             if terminal {
+                if finalize {
+                    self.session()?.remove_stream(self.id()).await;
+                }
                 return Ok(None);
             }
             notified.await;
@@ -302,6 +309,13 @@ impl YamuxStream {
                 &[],
             )
             .await?;
+        let finalize = {
+            let state = self.0.state.lock().await;
+            state.phase == StreamPhase::Closed && state.receive_queue.is_empty()
+        };
+        if finalize {
+            session.remove_stream(self.id()).await;
+        }
         self.0.read_notify.notify_waiters();
         Ok(())
     }
@@ -396,7 +410,11 @@ impl YamuxStream {
             state.receive_queue.push_back(payload);
         }
         process_flags(&mut state.phase, flags & FLAG_FIN);
+        let finalize = state.phase == StreamPhase::Closed && state.receive_queue.is_empty();
         drop(state);
+        if finalize {
+            self.session()?.remove_stream(self.id()).await;
+        }
         self.0.read_notify.notify_waiters();
         Ok(true)
     }
@@ -408,7 +426,11 @@ impl YamuxStream {
             return Err(YamuxError::InvalidFrame);
         }
         state.send_window += delta;
+        let finalize = state.phase == StreamPhase::Closed && state.receive_queue.is_empty();
         drop(state);
+        if finalize {
+            self.session()?.remove_stream(self.id()).await;
+        }
         self.0.write_notify.notify_waiters();
         self.0.read_notify.notify_waiters();
         Ok(())
@@ -454,6 +476,7 @@ struct SessionState {
     ping_waiters: HashMap<u32, PingWaiter>,
     receive_bytes: usize,
     closed: bool,
+    terminal_error: Option<YamuxError>,
 }
 
 struct SessionInner {
@@ -512,6 +535,7 @@ impl YamuxSession {
                 ping_waiters: HashMap::new(),
                 receive_bytes: 0,
                 closed: false,
+                terminal_error: None,
             }),
             incoming_tx,
             write_serial: Mutex::new(()),
@@ -528,7 +552,7 @@ impl YamuxSession {
         let stream = {
             let mut state = self.inner.state.lock().await;
             if state.closed {
-                return Err(YamuxError::Closed);
+                return Err(state.terminal_error.clone().unwrap_or(YamuxError::Closed));
             }
             if state.streams.len() >= self.inner.limits.max_active_streams {
                 return Err(YamuxError::ResourceExhausted {
@@ -556,12 +580,28 @@ impl YamuxSession {
     }
 
     pub async fn accept_stream(&self) -> Result<YamuxStream, YamuxError> {
-        self.incoming_rx
-            .lock()
-            .await
-            .recv()
-            .await
-            .ok_or(YamuxError::Closed)
+        let mut incoming = self.incoming_rx.lock().await;
+        loop {
+            let closed = self.inner.close_notify.notified();
+            tokio::pin!(closed);
+            closed.as_mut().enable();
+            {
+                let state = self.inner.state.lock().await;
+                if state.closed {
+                    return Err(state.terminal_error.clone().unwrap_or(YamuxError::Closed));
+                }
+            }
+            tokio::select! {
+                stream = incoming.recv() => {
+                    return stream.ok_or(YamuxError::Closed);
+                }
+                () = &mut closed => {}
+            }
+        }
+    }
+
+    pub(crate) async fn terminal_error(&self) -> Option<YamuxError> {
+        self.inner.state.lock().await.terminal_error.clone()
     }
 
     pub async fn probe_liveness(&self, timeout: Duration) -> Result<Duration, YamuxError> {
@@ -571,7 +611,7 @@ impl YamuxSession {
         let (opaque, receiver) = {
             let mut state = self.inner.state.lock().await;
             if state.closed {
-                return Err(YamuxError::Closed);
+                return Err(state.terminal_error.clone().unwrap_or(YamuxError::Closed));
             }
             let mut opaque = state.next_ping_id;
             loop {
@@ -666,12 +706,17 @@ impl SessionInner {
     }
 
     async fn close(&self) -> Result<(), YamuxError> {
+        self.terminate(None).await
+    }
+
+    async fn terminate(&self, terminal_error: Option<YamuxError>) -> Result<(), YamuxError> {
         let streams = {
             let mut state = self.state.lock().await;
             if state.closed {
                 return Ok(());
             }
             state.closed = true;
+            state.terminal_error = terminal_error;
             state.ping_waiters.clear();
             state.streams.values().cloned().collect::<Vec<_>>()
         };
@@ -690,10 +735,15 @@ async fn read_loop(session: Arc<SessionInner>) {
             let header = Header::decode(&reader.read_exact(HEADER_LEN).await?)?;
             match header.frame_type {
                 TYPE_DATA => {
-                    if header.stream_id == 0
-                        || header.length as usize > session.limits.max_frame_bytes
-                    {
+                    if header.stream_id == 0 {
                         return Err(YamuxError::InvalidFrame);
+                    }
+                    if header.length as usize > session.limits.max_frame_bytes {
+                        return Err(YamuxError::ResourceExhausted {
+                            resource: "frame_bytes",
+                            current: header.length as usize,
+                            limit: session.limits.max_frame_bytes,
+                        });
                     }
                     let payload = reader.read_exact(header.length as usize).await?;
                     handle_data(&session, header, payload).await
@@ -705,8 +755,10 @@ async fn read_loop(session: Arc<SessionInner>) {
             }
         }
         .await;
-        if result.is_err() {
-            let _ = session.close().await;
+        if let Err(error) = result {
+            if let Err(close_error) = session.terminate(Some(error)).await {
+                tracing::warn!(%close_error, "Yamux close failed after read-loop error");
+            }
             return;
         }
     }
@@ -782,7 +834,9 @@ async fn handle_ping(session: &Arc<SessionInner>, header: Header) -> Result<(), 
             .ping_waiters
             .remove(&header.length);
         if let Some(waiter) = waiter {
-            let _ = waiter.sender.send(waiter.started_at.elapsed());
+            match waiter.sender.send(waiter.started_at.elapsed()) {
+                Ok(()) | Err(_) => {}
+            }
         }
     }
     Ok(())

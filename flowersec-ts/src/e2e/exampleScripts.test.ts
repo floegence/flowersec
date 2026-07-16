@@ -9,7 +9,7 @@ import {
   startGoHarness,
 } from "./demoTestUtils.js";
 
-const demoOrigin = "https://app.redeven.com";
+const demoOrigin = "https://interop.flowersec.test";
 
 describe("example node demo scripts", () => {
   beforeAll(() => {

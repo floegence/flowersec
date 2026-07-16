@@ -35,6 +35,9 @@ jobs:
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
+      - name: Setup Rust stable for release tooling
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Setup Rust MSRV
         uses: dtolnay/rust-toolchain@1.85.0
         with:
@@ -49,10 +52,43 @@ jobs:
           tool: cargo-audit,cargo-deny,cargo-llvm-cov,cargo-semver-checks
 
       - name: Run checks
-        run: make check
+        run: make check CHECK_INTEROP=0
+
+      - name: Run Go-reference Linux interop smoke
+        timeout-minutes: 5
+        run: make interop-smoke-linux
+
+  swift-check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: flowersec-go/go.mod
+          cache: true
+          cache-dependency-path: |
+            flowersec-go/go.sum
+            examples/go.sum
+
+      - name: Setup Rust MSRV
+        uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: Run Swift package checks
+        run: |
+          set -euo pipefail
+          make stability-check
+          make swift-check
+
+      - name: Run Go-reference Swift interop smoke
+        timeout-minutes: 5
+        run: make interop-smoke-swift
 
   release:
-    needs: check
+    needs:
+      - check
+      - swift-check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -100,7 +136,7 @@ jobs:
             exit 1
           fi
 
-      - name: Verify all v0.22 language tags point to this commit
+      - name: Verify all language tags point to this commit
         run: scripts/verify-release-tags.sh "${{ steps.vars.outputs.version }}" "${GITHUB_SHA}"
 
       - name: Build release artifacts

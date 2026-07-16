@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
 )
 
 type StreamOpener interface {
-	OpenStream(ctx context.Context, kind string) (io.ReadWriteCloser, error)
+	OpenStream(ctx context.Context, kind string) (fsstream.Stream, error)
 }
 
 type Bridge struct {
@@ -58,10 +60,10 @@ func writeBridgeHTTPError(w http.ResponseWriter, code string, status int, messag
 	return newBridgeError(code, status, message, err)
 }
 
-func opaqueID(n int) string {
+func opaqueID(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		return "rand_failed"
+		return "", fmt.Errorf("generate proxy identifier: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

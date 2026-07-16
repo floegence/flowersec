@@ -52,6 +52,7 @@ export class RpcServer {
   private readonly terminalSignal: Promise<unknown>;
   private signalTerminal!: (error: unknown) => void;
   private transportClosed = false;
+  private admittedRequests = 0;
 
   constructor(
     private readonly transport: RpcServerTransport,
@@ -83,17 +84,21 @@ export class RpcServer {
 
   // serve handles request/response frames until closed or aborted.
   async serve(signal?: AbortSignal): Promise<void> {
-    const supervise = (worker: Promise<void>): Promise<void> => worker.catch((err) => {
-      this.fail(err);
-    });
-    const workers = Array.from({ length: this.options.maxConcurrentRequests }, () => supervise(this.requestWorker()));
-    workers.push(supervise(this.notificationWorker()));
+    const workers = Array.from({ length: this.options.maxConcurrentRequests }, () => this.requestWorker());
+    workers.push(this.notificationWorker());
+    const workerFailure = Promise.race(workers.map(async (worker) => {
+      await worker;
+      if (!this.closed) throw new Error("rpc worker ended before server shutdown");
+      return await new Promise<never>(() => undefined);
+    }));
+    let failure: unknown;
     try {
       while (!this.closed) {
         if (signal?.aborted) throw signal.reason ?? new Error("aborted");
         const next = await Promise.race([
           readJsonFrame(this.transport.readExactly, DEFAULT_MAX_JSON_FRAME_BYTES),
           this.terminalSignal.then((error) => { throw error; }),
+          workerFailure,
         ]);
         const v = assertRpcEnvelope(next);
         if (v.response_to !== 0) continue;
@@ -105,21 +110,33 @@ export class RpcServer {
           this.wakeOne(this.notificationWaiters);
           continue;
         }
-        if (this.requests.length >= this.options.maxQueuedRequests) {
+        if (this.admittedRequests >= this.options.maxConcurrentRequests + this.options.maxQueuedRequests) {
           await this.writeResponse(v, { payload: null, error: { code: 429, message: "server overloaded" } });
           continue;
         }
+        this.admittedRequests += 1;
         this.requests.push({ envelope: v });
         this.wakeOne(this.requestWaiters);
       }
     } catch (err) {
+      failure = err;
       this.terminalError = err;
-      this.close(err);
-      throw err;
-    } finally {
-      this.close(this.terminalError ?? new Error("rpc server closed"));
-      void Promise.allSettled(workers);
     }
+    let closeError: unknown;
+    try {
+      this.close(failure ?? this.terminalError ?? new Error("rpc server closed"));
+    } catch (error) {
+      closeError = error;
+    }
+    const settled = await Promise.allSettled(workers);
+    const workerErrors = settled
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason)
+      .filter((error) => error !== failure);
+    const errors = [failure, closeError, ...workerErrors].filter((error) => error !== undefined);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "rpc server and cleanup failed");
+    if (this.terminalError !== undefined) throw this.terminalError;
   }
 
   // close stops the serve loop and closes the underlying RPC stream.
@@ -154,8 +171,12 @@ export class RpcServer {
         try { out = await h(v.payload); }
         catch { out = { payload: null, error: { code: 500, message: "internal error" } }; }
       }
-      if (this.closed) return;
-      await this.writeResponse(v, out);
+      try {
+        if (this.closed) return;
+        await this.writeResponse(v, out);
+      } finally {
+        this.admittedRequests = Math.max(0, this.admittedRequests - 1);
+      }
     }
   }
 
@@ -166,7 +187,7 @@ export class RpcServer {
       const v = work.envelope;
       const h = this.router.handler(v.type_id);
       if (h == null) continue;
-      try { await h(v.payload); } catch { /* Notification failures are isolated. */ }
+      await h(v.payload);
     }
   }
 
@@ -196,8 +217,13 @@ export class RpcServer {
 
   private async writeEnvelope(envelope: RpcEnvelope): Promise<void> {
     const write = this.writeChain.then(() => writeJsonFrame(this.transport.write, envelope));
-    this.writeChain = write.catch(() => {});
-    await write;
+    this.writeChain = write;
+    try {
+      await write;
+    } catch (error) {
+      this.fail(error);
+      throw error;
+    }
   }
 }
 

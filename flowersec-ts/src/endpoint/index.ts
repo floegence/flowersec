@@ -170,6 +170,14 @@ export class Session {
     return this.mux.probeLiveness(timeoutMs);
   }
 
+  async rekey(): Promise<void> {
+    try {
+      await this.secure.rekeyNow();
+    } catch (error) {
+      throw new FlowersecError({ path: this.path, stage: "secure", code: "rekey_failed", message: "endpoint rekey failed", cause: error });
+    }
+  }
+
   close(): void {
     this.fail(new Error("endpoint session closed"));
     this.mux.close();

@@ -8,7 +8,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function makeDummyClient(label: string, onClose: () => void) {
+function makeDummyClient(label: string, onClose: () => void, closeError?: Error) {
   let closed = false;
   return {
     label,
@@ -23,6 +23,7 @@ function makeDummyClient(label: string, onClose: () => void) {
       close: () => {
         closed = true;
         onClose();
+        if (closeError != null) throw closeError;
       },
       // Helpful for tests.
       get closed() {
@@ -150,6 +151,27 @@ describe("reconnect manager", () => {
 
     expect(created).toBe(1);
     expect(mgr.state().status).toBe("disconnected");
+  });
+
+  test("rejects invalid reconnect settings instead of clamping them", async () => {
+    const mgr = createReconnectManager();
+
+    await expect(mgr.connect({
+      connectOnce: async () => makeDummyClient("unused", () => {}).client as any,
+      autoReconnect: { enabled: true, maxAttempts: 0 },
+    })).rejects.toThrow("maxAttempts");
+    expect(mgr.state().status).toBe("disconnected");
+  });
+
+  test("disconnect surfaces client close failures", async () => {
+    const closeError = new Error("close failed");
+    const mgr = createReconnectManager();
+    await mgr.connect({
+      connectOnce: async () => makeDummyClient("connected", () => {}, closeError).client as any,
+    });
+
+    expect(() => mgr.disconnect()).toThrow(closeError);
+    expect(mgr.state()).toMatchObject({ status: "error", error: closeError, client: null });
   });
 
   test("stale client termination does not affect a newer connection", async () => {

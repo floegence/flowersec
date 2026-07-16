@@ -87,6 +87,7 @@ Common stable codes include:
   - `missing_stream_kind`
   - `missing_handler`
   - `ping_failed`
+  - `rekey_failed`
   - `not_connected`
   - `resource_exhausted`
 
@@ -147,7 +148,7 @@ Important separation:
 
 ## Diagnostics split
 
-Flowersec v0.20.x also defines a stable runtime event contract:
+Flowersec also defines a stable runtime event contract:
 
 - `DiagnosticEvent`
 
@@ -184,6 +185,12 @@ Current stable event codes include:
 - `resource_limit_reached`
 
 The four liveness/resource names above use `code_domain=event`. A failed operation that reaches a stable limit uses the error-domain code `resource_exhausted` instead.
+
+## Interoperability diagnostic evidence
+
+The Go-reference matrix records an ordered diagnostic evidence list for each transport/suite variant. Every entry includes `case`, `path`, `stage`, and `code`. `path` must equal the active `direct` or `tunnel` variant, and the ordered case list is fixed by `testdata/interop/v1/profiles.json`.
+
+Resource-boundary evidence uses the registered error-domain tuple `yamux/resource_exhausted` or `rpc/resource_exhausted`. The proxy body action additionally verifies the protocol-specific remote code `request_body_too_large`, but the matrix tuple remains `rpc/resource_exhausted` so all four SDKs use the same stable registry domain.
 
 ## Observability guidance
 

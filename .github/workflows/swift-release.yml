@@ -56,6 +56,10 @@ jobs:
           make stability-check
           make swift-check
 
+      - name: Run Go-reference Swift interop smoke
+        timeout-minutes: 5
+        run: make interop-smoke-swift
+
   release:
     needs:
       - linux-swiftpm

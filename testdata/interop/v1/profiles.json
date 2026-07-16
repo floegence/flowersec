@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "seed": 230001,
+  "variants": [
+    { "transport": "direct", "suite": "x25519" },
+    { "transport": "direct", "suite": "p256" },
+    { "transport": "tunnel", "suite": "x25519" },
+    { "transport": "tunnel", "suite": "p256" }
+  ],
+  "profiles": {
+    "smoke": {
+      "deadline_ms": 120000,
+      "cell_deadline_ms": 15000,
+      "max_parallel_cells": 2,
+      "streams": { "concurrent": 4, "bytes_per_stream": 65536, "chunk_bytes": 4096, "slow_readers": 1, "churn": 8, "fin": 1, "reset": 1 },
+      "rekey": { "client": 1, "server": 1, "concurrent": 0 },
+      "liveness_probes": 4,
+      "rpc": { "calls": 8, "notifications": 2, "cancellations": 1, "timeouts": 1, "saturation_active": 32, "saturation_queued": 128, "saturation_rejected": 1 },
+      "proxy": { "http_requests": 4, "http_body_bytes": 16384, "websocket_frames": 4, "websocket_frame_bytes": 4096 },
+      "reconnect_cycles": 1,
+      "limit_checks": 1,
+      "diagnostics": [
+        { "case": "rpc_queue", "stage": "rpc", "code": "resource_exhausted" }
+      ]
+    },
+    "stress": {
+      "deadline_ms": 300000,
+      "cell_deadline_ms": 70000,
+      "max_parallel_cells": 2,
+      "streams": { "concurrent": 32, "bytes_per_stream": 262144, "chunk_bytes": 16384, "slow_readers": 8, "churn": 256, "fin": 16, "reset": 16 },
+      "rekey": { "client": 8, "server": 8, "concurrent": 1 },
+      "liveness_probes": 64,
+      "rpc": { "calls": 256, "notifications": 64, "cancellations": 16, "timeouts": 16, "saturation_active": 32, "saturation_queued": 128, "saturation_rejected": 1 },
+      "proxy": { "http_requests": 128, "http_body_bytes": 65536, "websocket_frames": 64, "websocket_frame_bytes": 16384 },
+      "reconnect_cycles": 5,
+      "limit_checks": 7,
+      "diagnostics": [
+        { "case": "rpc_queue", "stage": "rpc", "code": "resource_exhausted" },
+        { "case": "active_streams", "stage": "yamux", "code": "resource_exhausted" },
+        { "case": "inbound_streams", "stage": "yamux", "code": "resource_exhausted" },
+        { "case": "frame", "stage": "yamux", "code": "resource_exhausted" },
+        { "case": "stream_receive", "stage": "yamux", "code": "resource_exhausted" },
+        { "case": "session_receive", "stage": "yamux", "code": "resource_exhausted" },
+        { "case": "proxy_body", "stage": "rpc", "code": "resource_exhausted" }
+      ]
+    }
+  }
+}

@@ -69,6 +69,7 @@ export type FlowersecErrorCode =
   | "replace_rate_limited"
   | "handshake_failed"
   | "ping_failed"
+  | "rekey_failed"
   | "mux_failed"
   | "accept_stream_failed"
   | "open_stream_failed"

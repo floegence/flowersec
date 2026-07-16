@@ -108,6 +108,7 @@ pub trait DirectCredentialResolver: Send + Sync + 'static {
 #[derive(Debug)]
 pub struct Session {
     path: Path,
+    secure: Arc<dyn crate::e2ee::SecureChannelControl>,
     yamux: YamuxSession,
 }
 
@@ -118,47 +119,72 @@ impl Session {
 
     pub async fn open_stream(&self, kind: &str) -> Result<YamuxStream, FlowersecError> {
         let stream = self.yamux.open_stream().await.map_err(|error| {
+            let code = endpoint_yamux_session_code(&error, ErrorCode::OPEN_STREAM_FAILED);
             FlowersecError::new(
                 self.path,
                 Stage::Yamux,
-                ErrorCode::OPEN_STREAM_FAILED,
+                code,
                 "failed to open endpoint stream",
             )
             .with_source(error)
         })?;
-        streamhello::write(&stream, kind).await.map_err(|error| {
-            FlowersecError::new(
+        if let Err(error) = streamhello::write(&stream, kind).await {
+            let code = match self.yamux.terminal_error().await {
+                Some(terminal) => {
+                    endpoint_yamux_session_code(&terminal, ErrorCode::STREAM_HELLO_FAILED)
+                }
+                None => match &error {
+                    crate::streamio::StreamIoError::Yamux(yamux) => {
+                        endpoint_yamux_session_code(yamux, ErrorCode::STREAM_HELLO_FAILED)
+                    }
+                    _ => ErrorCode::STREAM_HELLO_FAILED,
+                },
+            };
+            return Err(FlowersecError::new(
                 self.path,
                 Stage::Rpc,
-                ErrorCode::STREAM_HELLO_FAILED,
+                code,
                 "failed to write endpoint stream hello",
             )
-            .with_source(error)
-        })?;
+            .with_source(error));
+        }
         Ok(stream)
     }
 
     pub async fn accept_stream(&self) -> Result<(String, YamuxStream), FlowersecError> {
         let stream = self.yamux.accept_stream().await.map_err(|error| {
+            let code = endpoint_yamux_session_code(&error, ErrorCode::ACCEPT_STREAM_FAILED);
             FlowersecError::new(
                 self.path,
                 Stage::Yamux,
-                ErrorCode::ACCEPT_STREAM_FAILED,
+                code,
                 "failed to accept endpoint stream",
             )
             .with_source(error)
         })?;
-        let kind = streamhello::read(&stream, crate::defaults::MAX_STREAM_HELLO_BYTES)
-            .await
-            .map_err(|error| {
-                FlowersecError::new(
+        let kind = match streamhello::read(&stream, crate::defaults::MAX_STREAM_HELLO_BYTES).await {
+            Ok(kind) => kind,
+            Err(error) => {
+                let code = match self.yamux.terminal_error().await {
+                    Some(terminal) => {
+                        endpoint_yamux_session_code(&terminal, ErrorCode::STREAM_HELLO_FAILED)
+                    }
+                    None => match &error {
+                        crate::streamio::StreamIoError::Yamux(yamux) => {
+                            endpoint_yamux_session_code(yamux, ErrorCode::STREAM_HELLO_FAILED)
+                        }
+                        _ => ErrorCode::STREAM_HELLO_FAILED,
+                    },
+                };
+                return Err(FlowersecError::new(
                     self.path,
                     Stage::Rpc,
-                    ErrorCode::STREAM_HELLO_FAILED,
+                    code,
                     "failed to read endpoint stream hello",
                 )
-                .with_source(error)
-            })?;
+                .with_source(error));
+            }
+        };
         Ok((kind, stream))
     }
 
@@ -204,6 +230,18 @@ impl Session {
         })
     }
 
+    pub async fn rekey(&self) -> Result<(), FlowersecError> {
+        self.secure.rekey_channel().await.map_err(|error| {
+            FlowersecError::new(
+                self.path,
+                Stage::Secure,
+                ErrorCode::REKEY_FAILED,
+                "failed to rekey endpoint secure channel",
+            )
+            .with_source(error)
+        })
+    }
+
     pub async fn close(&self) -> Result<(), FlowersecError> {
         self.yamux.close().await.map_err(|error| {
             FlowersecError::new(
@@ -218,6 +256,32 @@ impl Session {
 
     pub async fn terminated(&self) {
         self.yamux.wait_closed().await;
+    }
+
+    pub async fn termination_error(&self) -> Option<FlowersecError> {
+        self.yamux.terminal_error().await.map(|error| {
+            let code = if matches!(error, crate::yamux::YamuxError::ResourceExhausted { .. }) {
+                ErrorCode::RESOURCE_EXHAUSTED
+            } else {
+                ErrorCode::NOT_CONNECTED
+            };
+            FlowersecError::new(self.path, Stage::Yamux, code, "endpoint session terminated")
+                .with_source(error)
+        })
+    }
+}
+
+fn endpoint_yamux_session_code(
+    error: &crate::yamux::YamuxError,
+    fallback: &'static str,
+) -> &'static str {
+    match error {
+        crate::yamux::YamuxError::ResourceExhausted { .. } => ErrorCode::RESOURCE_EXHAUSTED,
+        crate::yamux::YamuxError::Closed
+        | crate::yamux::YamuxError::StreamClosed
+        | crate::yamux::YamuxError::Reset
+        | crate::yamux::YamuxError::Transport(_) => ErrorCode::NOT_CONNECTED,
+        _ => fallback,
     }
 }
 
@@ -322,7 +386,9 @@ pub async fn accept_direct_resolved<T: WebSocketTransport, R: DirectCredentialRe
     .await?;
     if let Some(commit) = credential.commit_authenticated {
         if let Err(error) = commit().await {
-            let _ = session.close().await;
+            if let Err(close_error) = session.close().await {
+                tracing::warn!(%close_error, "endpoint close failed after credential commit failure");
+            }
             return Err(FlowersecError::new(
                 Path::Direct,
                 Stage::Handshake,
@@ -438,7 +504,8 @@ async fn establish_server<T: WebSocketTransport>(
         )
         .with_source(error)
     })?;
-    let yamux = YamuxSession::new(Arc::new(secure), Mode::Server, limits).map_err(|error| {
+    let secure = Arc::new(secure);
+    let yamux = YamuxSession::new(secure.clone(), Mode::Server, limits).map_err(|error| {
         FlowersecError::new(
             path,
             Stage::Yamux,
@@ -447,7 +514,11 @@ async fn establish_server<T: WebSocketTransport>(
         )
         .with_source(error)
     })?;
-    Ok(Session { path, yamux })
+    Ok(Session {
+        path,
+        secure,
+        yamux,
+    })
 }
 
 #[derive(Debug)]

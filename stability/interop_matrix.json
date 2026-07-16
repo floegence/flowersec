@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "reference_language": "go",
+  "languages": ["go", "typescript", "swift", "rust"],
+  "profile_path": "testdata/interop/v1/profiles.json",
+  "cases": [
+    "connect",
+    "rekey",
+    "streams",
+    "rpc",
+    "liveness",
+    "proxy",
+    "reconnect",
+    "limits",
+    "diagnostics"
+  ],
+  "cells": [
+    { "id": "go_to_go", "client": "go", "server": "go", "evidence": "flowersec-go/internal/cmd/flowersec-interop/main.go" },
+    { "id": "typescript_to_go", "client": "typescript", "server": "go", "evidence": "flowersec-ts/scripts/interop-harness.mjs" },
+    { "id": "swift_to_go", "client": "swift", "server": "go", "evidence": "flowersec-swift/InteropHarness/main.swift" },
+    { "id": "rust_to_go", "client": "rust", "server": "go", "evidence": "flowersec-rust/examples/interop_harness.rs" },
+    { "id": "go_to_typescript", "client": "go", "server": "typescript", "evidence": "flowersec-ts/scripts/interop-harness.mjs" },
+    { "id": "go_to_swift", "client": "go", "server": "swift", "evidence": "flowersec-swift/InteropHarness/main.swift" },
+    { "id": "go_to_rust", "client": "go", "server": "rust", "evidence": "flowersec-rust/examples/interop_harness.rs" }
+  ],
+  "harnesses": {
+    "typescript": { "roles": ["client", "server"], "cases": ["connect", "rekey", "streams", "rpc", "liveness", "proxy", "reconnect", "limits", "diagnostics"], "evidence": "flowersec-ts/scripts/interop-harness.mjs" },
+    "swift": { "roles": ["client", "server"], "cases": ["connect", "rekey", "streams", "rpc", "liveness", "proxy", "reconnect", "limits", "diagnostics"], "evidence": "flowersec-swift/InteropHarness/main.swift" },
+    "rust": { "roles": ["client", "server"], "cases": ["connect", "rekey", "streams", "rpc", "liveness", "proxy", "reconnect", "limits", "diagnostics"], "evidence": "flowersec-rust/examples/interop_harness.rs" }
+  },
+  "capability_coverage": {
+    "wire_idl": { "fixtures": ["portable_protocol_contracts"], "cases": [] },
+    "connect": { "fixtures": ["connect_artifact"], "cases": ["connect"] },
+    "security": { "fixtures": ["e2ee"], "cases": ["rekey"] },
+    "session": { "fixtures": [], "cases": ["streams", "liveness", "limits"] },
+    "rpc": { "fixtures": [], "cases": ["rpc", "limits"] },
+    "endpoint": { "fixtures": [], "cases": ["connect", "streams"] },
+    "controlplane": { "fixtures": ["token", "connect_artifact"], "cases": ["connect", "reconnect"] },
+    "reconnect": { "fixtures": ["connect_artifact"], "cases": ["reconnect"] },
+    "proxy": { "fixtures": ["portable_protocol_contracts"], "cases": ["proxy", "limits"] },
+    "observability": { "fixtures": ["connect_error_registry", "connect_diagnostics_registry"], "cases": ["diagnostics"] }
+  }
+}

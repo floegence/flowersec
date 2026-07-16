@@ -24,7 +24,7 @@ import { prepareChannelId } from "./contract.js";
 import { isTunnelAttachCloseReason } from "./tunnelAttachCloseReason.js";
 import { enforceTransportSecurity, type TransportSecurityPolicy } from "./transportSecurity.js";
 import { maxPlaintextBytes } from "../e2ee/record.js";
-import { isYamuxResourceExhaustedError } from "../yamux/errors.js";
+import { isYamuxPingTimeoutError, isYamuxResourceExhaustedError } from "../yamux/errors.js";
 import { registerClientTermination } from "./termination.js";
 
 export type LivenessOptions = Readonly<{
@@ -219,11 +219,6 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     } catch (err) {
       const reason = classifyConnectError(err);
       observer.onConnect(args.path, "fail", reason, nowSeconds() - connectStart);
-      try {
-        transport.close();
-      } catch {
-        // ignore
-      }
       const code = reason === "timeout" ? "timeout" : reason === "canceled" ? "canceled" : "dial_failed";
       throw new FlowersecError({
         path: args.path,
@@ -243,11 +238,6 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       } catch (err) {
         observer.onAttach("fail", "send_failed");
         attachState = "failed";
-        try {
-          transport.close();
-        } catch {
-          // ignore
-        }
         throw new FlowersecError({ path: args.path, stage: "attach", code: "attach_failed", message: "attach failed", cause: err });
       }
     }
@@ -280,7 +270,6 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     } catch (err) {
       const handshakeElapsedSeconds = nowSeconds() - handshakeStart;
       const handshakeCode = classifyHandshakeError(err);
-      transport.close();
 
       if (args.path === "tunnel" && err instanceof WsCloseError) {
         const reason = err.reason;
@@ -314,13 +303,18 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     });
     let terminationReported = false;
     let closeAll = () => {
-      try { secure.close(); } catch { /* ignore */ }
+      runSyncCleanups([() => secure.close()]);
     };
     const reportTermination = (error: Error) => {
       if (terminationReported) return;
       terminationReported = true;
-      closeAll();
-      resolveTermination({ error });
+      let terminalError = error;
+      try {
+        closeAll();
+      } catch (cleanupError) {
+        terminalError = errorWithCleanup(error, cleanupError, "session termination cleanup failed");
+      }
+      resolveTermination({ error: terminalError });
     };
 
     const mux = new YamuxSession(conn, {
@@ -339,17 +333,21 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       }),
     });
     closeAll = () => {
-      try { mux.close(); } catch { /* ignore */ }
-      try { secure.close(); } catch { /* ignore */ }
+      runSyncCleanups([() => mux.close(), () => secure.close()]);
     };
 
     let rpcStream: Awaited<ReturnType<YamuxSession["openStream"]>>;
     try {
       rpcStream = await mux.openStream(signal === undefined ? {} : { signal });
     } catch (e) {
-      mux.close();
-      secure.close();
-      throw new FlowersecError({ path: args.path, stage: "yamux", code: "open_stream_failed", message: "open rpc stream failed", cause: e });
+      const cleanupError = captureSyncCleanup(() => runSyncCleanups([() => mux.close(), () => secure.close()]));
+      throw new FlowersecError({
+        path: args.path,
+        stage: "yamux",
+        code: "open_stream_failed",
+        message: "open rpc stream failed",
+        cause: causeWithCleanup(e, cleanupError, "RPC stream setup cleanup failed"),
+      });
     }
 
     const reader = new ByteReader(() => rpcStream.read());
@@ -359,19 +357,18 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     try {
       await writeStreamHello(write, "rpc");
     } catch (e) {
-      try {
-        await rpcStream.close();
-      } catch {
-        // ignore
-      }
-      mux.close();
-      secure.close();
+      const cleanupError = await captureAsyncCleanup(async () => {
+        const streamCloseError = await captureAsyncCleanup(() => rpcStream.close());
+        const stackCloseError = captureSyncCleanup(() => runSyncCleanups([() => mux.close(), () => secure.close()]));
+        const combined = errorsFrom([streamCloseError, stackCloseError]);
+        if (combined != null) throw combined;
+      });
       throw new FlowersecError({
         path: args.path,
         stage: "rpc",
         code: "stream_hello_failed",
         message: "rpc stream hello failed",
-        cause: e,
+        cause: causeWithCleanup(e, cleanupError, "RPC bootstrap cleanup failed"),
       });
     }
 
@@ -389,13 +386,12 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       try {
         return await mux.probeLiveness(liveness.timeoutMs);
       } catch (e) {
-        if (String((e as Error)?.message).includes("ping timeout")) {
+        if (isYamuxPingTimeoutError(e)) {
           emitObserverDiagnostic(args.opts.observer, { path: args.path, stage: "yamux", code_domain: "event", code: "liveness_timeout", result: "fail" });
         }
-        try { rpc.close(); } catch { /* ignore */ }
-        try { mux.close(); } catch { /* ignore */ }
-        try { secure.close(); } catch { /* ignore */ }
-        throw new FlowersecError({ path: args.path, stage: "yamux", code: "ping_failed", message: "liveness probe failed", cause: e });
+        const error = new FlowersecError({ path: args.path, stage: "yamux", code: "ping_failed", message: "liveness probe failed", cause: e });
+        reportTermination(error);
+        throw error;
       }
     };
 
@@ -408,21 +404,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     };
     closeAll = () => {
       stopLiveness();
-      try {
-        rpc.close();
-      } catch {
-        // ignore
-      }
-      try {
-        mux.close();
-      } catch {
-        // ignore
-      }
-      try {
-        secure.close();
-      } catch {
-        // ignore
-      }
+      runSyncCleanups([() => rpc.close(), () => mux.close(), () => secure.close()]);
     };
     if (liveness.intervalMs > 0) {
       livenessTimer = setInterval(() => {
@@ -446,6 +428,13 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       mux,
       rpc,
       ping,
+      rekey: async () => {
+        try {
+          await secure.rekeyNow();
+        } catch (error) {
+          throw new FlowersecError({ path: args.path, stage: "secure", code: "rekey_failed", message: "rekey failed", cause: error });
+        }
+      },
       probeLiveness,
       openStream: async (kind: string, opts: Readonly<{ signal?: AbortSignal }> = {}) => {
         if (kind == null || kind === "") throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_stream_kind", message: "missing stream kind" });
@@ -466,6 +455,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         };
         const signal = opts.signal;
         let abortListener: (() => void) | undefined;
+        let abortReset: Promise<unknown | undefined> | undefined;
         let s: Awaited<ReturnType<YamuxSession["openStream"]>>;
         try {
           s = await mux.openStream(signal === undefined ? {} : { signal });
@@ -478,28 +468,25 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         }
         if (signal != null) {
           abortListener = () => {
-            try {
-              s.reset(abortReason(signal));
-            } catch {
-              // ignore
-            }
+            abortReset ??= captureAsyncCleanup(() => Promise.resolve(s.reset(abortReason(signal))));
           };
           signal.addEventListener("abort", abortListener, { once: true });
           if (signal.aborted) abortListener();
         }
         if (signal?.aborted) {
           if (abortListener != null) signal.removeEventListener("abort", abortListener);
-          try {
-            await s.close();
-          } catch {
-            // ignore
-          }
+          const cleanupError = await captureAsyncCleanup(async () => {
+            const resetError = abortReset == null ? undefined : await abortReset;
+            const closeError = await captureAsyncCleanup(() => s.close());
+            const combined = errorsFrom([resetError, closeError]);
+            if (combined != null) throw combined;
+          });
           throw new FlowersecError({
             path: args.path,
             stage: "yamux",
             code: "canceled",
             message: "open stream aborted",
-            cause: signal.reason,
+            cause: causeWithCleanup(signal.reason, cleanupError, "aborted stream cleanup failed"),
           });
         }
         try {
@@ -507,31 +494,28 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
         } catch (err) {
           if (signal?.aborted) {
             if (abortListener != null) signal.removeEventListener("abort", abortListener);
-            try {
-              await s.close();
-            } catch {
-              // ignore
-            }
+            const cleanupError = await captureAsyncCleanup(async () => {
+              const resetError = abortReset == null ? undefined : await abortReset;
+              const closeError = await captureAsyncCleanup(() => s.close());
+              const combined = errorsFrom([resetError, closeError]);
+              if (combined != null) throw combined;
+            });
             throw new FlowersecError({
               path: args.path,
               stage: "yamux",
               code: "canceled",
               message: "open stream aborted",
-              cause: signal.reason,
+              cause: causeWithCleanup(signal.reason, cleanupError, "aborted stream cleanup failed"),
             });
           }
           if (signal != null && abortListener != null) signal.removeEventListener("abort", abortListener);
-          try {
-            await s.close();
-          } catch {
-            // ignore
-          }
+          const cleanupError = await captureAsyncCleanup(() => s.close());
           throw new FlowersecError({
             path: args.path,
             stage: "rpc",
             code: "stream_hello_failed",
             message: "stream hello failed",
-            cause: err,
+            cause: causeWithCleanup(err, cleanupError, "stream hello cleanup failed"),
           });
         }
         if (signal != null && abortListener != null) {
@@ -546,13 +530,67 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
     registerClientTermination(client, termination);
     return client;
   } catch (e) {
-    try {
-      transport.close();
-    } catch {
-      // ignore
-    }
-    throw e;
+    const cleanupError = captureSyncCleanup(() => transport.close());
+    throw cleanupError == null ? e : errorWithCleanup(e, cleanupError, "transport cleanup failed");
   }
+}
+
+function runSyncCleanups(actions: readonly (() => void)[]): void {
+  const failures: Error[] = [];
+  for (const action of actions) {
+    try {
+      action();
+    } catch (error) {
+      failures.push(errorValue(error));
+    }
+  }
+  if (failures.length > 0) throw new AggregateError(failures, "Flowersec cleanup failed");
+}
+
+function captureSyncCleanup(action: () => void): unknown | undefined {
+  try {
+    action();
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+}
+
+async function captureAsyncCleanup(action: () => Promise<void>): Promise<unknown | undefined> {
+  try {
+    await action();
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+}
+
+function causeWithCleanup(primary: unknown, cleanup: unknown | undefined, message: string): unknown {
+  if (cleanup === undefined) return primary;
+  return new AggregateError([errorValue(primary), errorValue(cleanup)], message);
+}
+
+function errorWithCleanup(primary: unknown, cleanup: unknown, message: string): Error {
+  const cause = causeWithCleanup(primary, cleanup, message);
+  if (primary instanceof FlowersecError) {
+    return new FlowersecError({
+      path: primary.path,
+      stage: primary.stage,
+      code: primary.code,
+      message,
+      cause,
+    });
+  }
+  return new AggregateError([errorValue(primary), errorValue(cleanup)], message);
+}
+
+function errorsFrom(values: readonly (unknown | undefined)[]): AggregateError | undefined {
+  const failures = values.filter((value): value is unknown => value !== undefined).map(errorValue);
+  return failures.length === 0 ? undefined : new AggregateError(failures, "Flowersec cleanup failed");
+}
+
+function errorValue(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function validateLimitObject(

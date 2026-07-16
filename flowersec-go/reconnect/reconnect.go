@@ -182,7 +182,7 @@ type Manager struct {
 	state       State
 	generation  uint64
 	cancel      context.CancelFunc
-	done        chan struct{}
+	done        chan error
 	subscribers map[chan State]struct{}
 }
 
@@ -234,20 +234,22 @@ func (m *Manager) Connect(ctx context.Context, config Config) error {
 	if settings.Enabled && config.Source.Kind() != SourceRefreshable {
 		return errors.New("automatic reconnect requires a refreshable artifact source")
 	}
-	m.Disconnect()
+	if err := m.Disconnect(); err != nil {
+		return fmt.Errorf("disconnect existing reconnect session: %w", err)
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	m.mu.Lock()
 	m.generation++
 	generation := m.generation
 	m.cancel = cancel
-	m.done = make(chan struct{})
+	m.done = make(chan error, 1)
 	done := m.done
 	m.mu.Unlock()
 	m.setState(State{Status: StatusConnecting})
 	first := make(chan error, 1)
 	go func() {
-		defer close(done)
-		m.supervise(runCtx, generation, config, settings, first)
+		done <- m.supervise(runCtx, generation, config, settings, first)
+		close(done)
 	}()
 	return <-first
 }
@@ -259,17 +261,24 @@ func (m *Manager) ConnectIfNeeded(ctx context.Context, config Config) error {
 		return nil
 	}
 	if state.Status == StatusConnecting {
+		states, unsubscribe := m.Subscribe()
+		defer unsubscribe()
 		for {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(10 * time.Millisecond):
-				state = m.State()
+			case state, ok := <-states:
+				if !ok {
+					return errors.New("reconnect state stream closed")
+				}
 				if state.Status == StatusConnected {
 					return nil
 				}
 				if state.Status == StatusError || state.Status == StatusDisconnected {
-					return state.Error
+					if state.Error != nil {
+						return state.Error
+					}
+					return errors.New("reconnect stopped before connecting")
 				}
 			}
 		}
@@ -277,8 +286,8 @@ func (m *Manager) ConnectIfNeeded(ctx context.Context, config Config) error {
 	return m.Connect(ctx, config)
 }
 
-// Disconnect stops retries and closes the active client.
-func (m *Manager) Disconnect() {
+// Disconnect stops retries, joins the supervisor, and closes the active client.
+func (m *Manager) Disconnect() error {
 	m.mu.Lock()
 	cancel := m.cancel
 	done := m.done
@@ -290,16 +299,22 @@ func (m *Manager) Disconnect() {
 	if cancel != nil {
 		cancel()
 	}
-	if active != nil {
-		_ = active.Close()
-	}
+	var disconnectErr error
 	if done != nil {
-		<-done
+		disconnectErr = errors.Join(disconnectErr, <-done)
+	}
+	if active != nil {
+		disconnectErr = errors.Join(disconnectErr, active.Close())
+	}
+	if disconnectErr != nil {
+		m.setState(State{Status: StatusError, Error: disconnectErr})
+		return disconnectErr
 	}
 	m.setState(State{Status: StatusDisconnected})
+	return nil
 }
 
-func (m *Manager) supervise(ctx context.Context, generation uint64, config Config, settings Settings, first chan<- error) {
+func (m *Manager) supervise(ctx context.Context, generation uint64, config Config, settings Settings, first chan<- error) error {
 	connector := config.Connector
 	if connector == nil {
 		connector = func(ctx context.Context, artifact *protocolio.ConnectArtifact, options ...client.ConnectOption) (client.Client, error) {
@@ -316,7 +331,7 @@ func (m *Manager) supervise(ctx context.Context, generation uint64, config Confi
 				if !firstSent {
 					first <- err
 				}
-				return
+				return nil
 			}
 			attemptSeq++
 			attemptStart := time.Now()
@@ -344,8 +359,7 @@ func (m *Manager) supervise(ctx context.Context, generation uint64, config Confi
 			}
 			if err == nil {
 				if !m.isCurrent(generation) {
-					_ = connected.Close()
-					return
+					return connected.Close()
 				}
 				m.setState(State{Status: StatusConnected, Client: connected})
 				emit(observer, "reconnect_connected", observability.DiagnosticResultOK)
@@ -355,12 +369,11 @@ func (m *Manager) supervise(ctx context.Context, generation uint64, config Confi
 				}
 				done := clientTermination(connected)
 				if done == nil {
-					return
+					return nil
 				}
 				select {
 				case <-ctx.Done():
-					_ = connected.Close()
-					return
+					return connected.Close()
 				case <-done:
 					lastErr = errors.New("Flowersec session terminated")
 					m.setState(State{Status: StatusConnecting, Error: lastErr})
@@ -378,7 +391,7 @@ func (m *Manager) supervise(ctx context.Context, generation uint64, config Confi
 				if !firstSent {
 					first <- finalErr
 				}
-				return
+				return nil
 			}
 			m.setState(State{Status: StatusConnecting, Error: err})
 			emit(observer, "reconnect_scheduled", observability.DiagnosticResultRetry)
@@ -389,7 +402,7 @@ func (m *Manager) supervise(ctx context.Context, generation uint64, config Confi
 				if !firstSent {
 					first <- ctx.Err()
 				}
-				return
+				return nil
 			case <-timer.C:
 			}
 		}
@@ -397,7 +410,7 @@ func (m *Manager) supervise(ctx context.Context, generation uint64, config Confi
 			if !firstSent {
 				first <- lastErr
 			}
-			return
+			return nil
 		}
 	}
 }

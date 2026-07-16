@@ -17,12 +17,16 @@ final class InMemoryRPCStream: FlowersecRPCStream, @unchecked Sendable {
     await state.close()
   }
 
+  func reset() async throws {
+    await state.close()
+  }
+
   func pushEnvelope(_ envelope: RPCEnvelope) async throws {
     try await pushFrame(envelope.encoded())
   }
 
-  func pushRawFrame(_ payload: Data) async {
-    try? await pushFrame(payload)
+  func pushRawFrame(_ payload: Data) async throws {
+    try await pushFrame(payload)
   }
 
   func nextWrittenEnvelope() async throws -> RPCEnvelope {
@@ -130,6 +134,10 @@ final class InMemoryByteStream: FlowersecByteStream, @unchecked Sendable {
   }
 
   func close() async {
+    await state.close()
+  }
+
+  func reset() async throws {
     await state.close()
   }
 

@@ -114,6 +114,7 @@ public enum FlowersecCode: String, Codable, Equatable, Sendable {
   case credentialCommitFailed = "credential_commit_failed"
   case authTagMismatch = "auth_tag_mismatch"
   case handshakeFailed = "handshake_failed"
+  case rekeyFailed = "rekey_failed"
   case notConnected = "not_connected"
   case openStreamFailed = "open_stream_failed"
   case streamHelloFailed = "stream_hello_failed"

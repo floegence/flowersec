@@ -29,7 +29,7 @@ describe("go<->ts integration", () => {
   test("ts client talks to go direct endpoint with RPC, stream, and liveness", { timeout: 60000 }, async () => {
     await withGoHarness(async (ready) => {
       const client = await connectDirectNode(ready.direct_info as any, {
-        origin: "https://app.redeven.com",
+        origin: "https://interop.flowersec.test",
         transportSecurityPolicy: AllowPlaintextForLoopback,
         liveness: false,
       });
@@ -55,7 +55,7 @@ describe("go<->ts integration", () => {
   test("ts client talks to go server endpoint through tunnel", { timeout: 60000 }, async () => {
     await withGoHarness(async (ready) => {
       const sess = await connectDemoTunnel(ready.grant_client as any, {
-        origin: "https://app.redeven.com",
+        origin: "https://interop.flowersec.test",
         wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } }),
         transportSecurityPolicy: AllowPlaintextForLoopback,
       });
@@ -86,7 +86,7 @@ describe("go<->ts integration", () => {
       default_suite: 1,
     };
 
-    await expect(connectTunnel(badGrant as any, { origin: "https://app.redeven.com", wsFactory })).rejects.toMatchObject({
+    await expect(connectTunnel(badGrant as any, { origin: "https://interop.flowersec.test", wsFactory })).rejects.toMatchObject({
       stage: "validate",
       code: "invalid_suite",
       path: "tunnel",
@@ -102,7 +102,7 @@ describe("go<->ts integration", () => {
       };
 
       const client = await connectNode(artifact, {
-        origin: "https://app.redeven.com",
+        origin: "https://interop.flowersec.test",
         transportSecurityPolicy: AllowPlaintextForLoopback,
       });
       const sess = createDemoSession(client);
@@ -125,7 +125,7 @@ describe("go<->ts integration", () => {
       };
 
       const client = await connect(artifact, {
-        origin: "https://app.redeven.com",
+        origin: "https://interop.flowersec.test",
         wsFactory: (url, origin) => new WS(url, { headers: { Origin: origin } }),
         transportSecurityPolicy: AllowPlaintextForLoopback,
       });
@@ -152,7 +152,7 @@ describe("go<->ts integration", () => {
       expect(artifact.correlation?.trace_id).toBe("trace-go-helper-1");
       expect(artifact.correlation?.session_id).toMatch(/^session-/);
 
-      const client = await connectNode(artifact, { origin: "https://app.redeven.com", transportSecurityPolicy: AllowPlaintextForLoopback });
+      const client = await connectNode(artifact, { origin: "https://interop.flowersec.test", transportSecurityPolicy: AllowPlaintextForLoopback });
       const sess = createDemoSession(client);
       try {
         await expect(sess.demo.ping({})).resolves.toEqual({ ok: true });
@@ -170,7 +170,7 @@ describe("go<->ts integration", () => {
         entryTicket: ready.entry_ticket,
       });
 
-      const client = await connectNode(artifact, { origin: "https://app.redeven.com", transportSecurityPolicy: AllowPlaintextForLoopback });
+      const client = await connectNode(artifact, { origin: "https://interop.flowersec.test", transportSecurityPolicy: AllowPlaintextForLoopback });
       const sess = createDemoSession(client);
       try {
         await expect(sess.demo.ping({})).resolves.toEqual({ ok: true });
@@ -188,7 +188,7 @@ describe("go<->ts integration", () => {
           endpointId: "server-1",
         }),
         connect: {
-          origin: "https://app.redeven.com",
+          origin: "https://interop.flowersec.test",
           transportSecurityPolicy: AllowPlaintextForLoopback,
         },
       });
@@ -218,6 +218,8 @@ describe("go<->ts integration", () => {
         endpointId: "server-1",
         payload: {
           proxy_mode: "service_worker",
+          scope_version: 1,
+          critical: true,
           service_worker_script_url: "/proxy-sw.js",
           service_worker_scope: "/",
         },
@@ -230,11 +232,13 @@ describe("go<->ts integration", () => {
         endpointId: "server-1",
         payload: {
           proxy_mode: "controller_bridge",
-          allowed_origin: "https://app.redeven.com",
+          scope_version: 1,
+          critical: true,
+          allowed_origin: "https://interop.flowersec.test",
         },
       });
       const controllerScope = extractProxyRuntimeScopeV1(controllerArtifact, "controller_bridge");
-      expect(controllerScope.controllerBridge.allowedOrigins).toEqual(["https://app.redeven.com"]);
+      expect(controllerScope.controllerBridge.allowedOrigins).toEqual(["https://interop.flowersec.test"]);
     });
   });
 
@@ -247,6 +251,8 @@ describe("go<->ts integration", () => {
           proxy_mode: "service_worker",
           scope_version: 2,
           critical: true,
+          service_worker_script_url: "/proxy-sw.js",
+          service_worker_scope: "/",
         },
       });
       expect(() => extractProxyRuntimeScopeV1(criticalArtifact, "service_worker")).toThrow(
@@ -260,6 +266,8 @@ describe("go<->ts integration", () => {
           proxy_mode: "service_worker",
           scope_version: 2,
           critical: false,
+          service_worker_script_url: "/proxy-sw.js",
+          service_worker_scope: "/",
         },
       });
       expect(() => extractProxyRuntimeScopeV1(optionalArtifact, "service_worker")).toThrow(

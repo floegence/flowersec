@@ -39,7 +39,12 @@ type ProxyResponseCreditMsg = Readonly<{ type: "flowersec-proxy:response_credit"
 type ProxyRespMetaMsg = Readonly<{ type: "flowersec-proxy:response_meta"; status: number; headers: Header[] }>;
 type ProxyRespChunkMsg = Readonly<{ type: "flowersec-proxy:response_chunk"; data: ArrayBuffer }>;
 type ProxyRespEndMsg = Readonly<{ type: "flowersec-proxy:response_end" }>;
-type ProxyRespErrMsg = Readonly<{ type: "flowersec-proxy:response_error"; status: number; message: string }>;
+type ProxyRespErrMsg = Readonly<{
+  type: "flowersec-proxy:response_error";
+  status: number;
+  code?: string;
+  message: string;
+}>;
 
 class ProxyRuntimePolicyError extends Error {
   readonly status = 403;
@@ -554,12 +559,13 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
         }
         if (!respMeta.ok) {
           const msg = respMeta.error?.message ?? "upstream error";
-          port.postMessage({ type: "flowersec-proxy:response_error", status: 502, message: msg } satisfies ProxyRespErrMsg);
-          try {
-            stream.reset(new Error(msg));
-          } catch {
-            // Best-effort.
-          }
+          port.postMessage({
+            type: "flowersec-proxy:response_error",
+            status: 502,
+            ...(respMeta.error?.code === undefined ? {} : { code: respMeta.error.code }),
+            message: msg,
+          } satisfies ProxyRespErrMsg);
+          await stream.reset(new Error(msg));
           stream = null;
           return;
         }
@@ -594,13 +600,10 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
         port.postMessage({
           type: "flowersec-proxy:response_error",
           status,
+          ...(code === undefined ? {} : { code }),
           message: msg,
         } satisfies ProxyRespErrMsg);
-        try {
-          stream?.reset(new Error(msg));
-        } catch {
-          // Best-effort.
-        }
+        await stream?.reset(new Error(msg));
       } finally {
         wakeResponseCreditWaiter();
         releaseAdmission?.();
@@ -635,11 +638,7 @@ export function createProxyRuntime(opts: ProxyRuntimeOptions): ProxyRuntime {
     const resp = (await readJsonFrame(reader, maxJsonFrameBytes)) as WsOpenRespV1;
     if (resp.v !== PROXY_PROTOCOL_VERSION || resp.ok !== true) {
       const msg = resp.error?.message ?? "upstream ws open failed";
-      try {
-        stream.reset(new Error(msg));
-      } catch {
-        // Best-effort.
-      }
+      await stream.reset(new Error(msg));
       throw new Error(msg);
     }
     return { stream, protocol: resp.protocol ?? "" };

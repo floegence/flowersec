@@ -11,7 +11,9 @@ export default [
       parser: tsparser,
       parserOptions: {
         ecmaVersion: "latest",
-        sourceType: "module"
+        sourceType: "module",
+        projectService: { allowDefaultProject: ["vitest.config.ts"] },
+        tsconfigRootDir: import.meta.dirname
       }
     },
     plugins: {
@@ -19,7 +21,9 @@ export default [
     },
     rules: {
       "@typescript-eslint/consistent-type-imports": ["error", { "prefer": "type-imports" }],
-      "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }]
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+      "no-empty": ["error", { "allowEmptyCatch": false }]
     }
   }
 ];

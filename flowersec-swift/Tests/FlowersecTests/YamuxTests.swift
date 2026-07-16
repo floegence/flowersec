@@ -62,6 +62,14 @@ final class FlowersecYamuxTests: XCTestCase {
 
     let readLengths = await channel.requestedReadLengths()
     XCTAssertEqual(readLengths, [12])
+    do {
+      _ = try await client.acceptStream()
+      XCTFail("Expected the terminal frame limit error")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .direct)
+      XCTAssertEqual(error.stage, .yamux)
+      XCTAssertEqual(error.code, .resourceExhausted)
+    }
   }
 
   func testPreferredOutboundFrameLimitChunksData() async throws {
@@ -308,6 +316,20 @@ final class FlowersecYamuxTests: XCTestCase {
     XCTAssertEqual(error?.code, .openStreamFailed)
   }
 
+  func testPostHandshakeTransportWriteFailureUsesStableYamuxTermination() async {
+    let client = FlowersecYamuxClient(channel: FailingWriteYamuxChannel(), path: .tunnel)
+    do {
+      _ = try await client.openStream()
+      XCTFail("Expected the transport write to fail")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .yamux)
+      XCTAssertEqual(error.code, .notConnected)
+    } catch {
+      XCTFail("Expected FlowersecError, got \(error)")
+    }
+  }
+
   private func header(type: UInt8, flags: UInt16, streamID: UInt32, length: UInt32) -> Data {
     var data = Data([0, type])
     data.appendUInt16BE(flags)
@@ -315,6 +337,21 @@ final class FlowersecYamuxTests: XCTestCase {
     data.appendUInt32BE(length)
     return data
   }
+}
+
+private final class FailingWriteYamuxChannel: FlowersecYamuxChannel, @unchecked Sendable {
+  func write(_ data: Data) async throws {
+    _ = data
+    throw POSIXError(.ENOTCONN)
+  }
+
+  func readExact(_ length: Int) async throws -> Data {
+    _ = length
+    try await Task.sleep(for: .seconds(30))
+    throw CancellationError()
+  }
+
+  func close() async {}
 }
 
 private final class InMemoryYamuxChannel: FlowersecYamuxChannel, @unchecked Sendable {

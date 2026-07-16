@@ -162,21 +162,20 @@ impl ReconnectSettings {
             || self.factor < 1.0
             || !self.jitter_ratio.is_finite()
             || !(0.0..=1.0).contains(&self.jitter_ratio)
+            || (self.enabled && self.max_attempts == 0)
         {
             return Err(ReconnectError::InvalidConfig);
         }
         let mut settings = self.clone();
-        settings.max_attempts = if settings.enabled {
-            settings.max_attempts.max(1)
-        } else {
-            1
-        };
+        if !settings.enabled {
+            settings.max_attempts = 1;
+        }
         Ok(settings)
     }
 
     pub fn delay_for_retry(&self, failed_attempt_index: usize) -> Duration {
-        let exponent = i32::try_from(failed_attempt_index).unwrap_or(i32::MAX);
-        let base_seconds = self.initial_delay.as_secs_f64() * self.factor.powi(exponent);
+        let base_seconds =
+            self.initial_delay.as_secs_f64() * self.factor.powf(failed_attempt_index as f64);
         let capped_seconds = base_seconds.min(self.max_delay.as_secs_f64());
         let jitter = if self.jitter_ratio == 0.0 {
             0.0
@@ -233,6 +232,8 @@ pub enum ReconnectError {
     Terminated,
     #[error("reconnect attempts exhausted after {attempts} attempts: {last}")]
     Exhausted { attempts: usize, last: String },
+    #[error("reconnect cleanup failed: {0}")]
+    Cleanup(String),
 }
 
 impl ReconnectError {
@@ -267,6 +268,7 @@ impl ReconnectError {
                     | "missing_token"
                     | "missing_init_exp"
             ),
+            Self::Cleanup(_) => true,
             _ => false,
         }
     }
@@ -318,7 +320,7 @@ impl ReconnectManager {
     }
 
     pub async fn connect(&self, config: ReconnectConfig) -> Result<(), ReconnectError> {
-        self.disconnect().await;
+        self.disconnect().await?;
         let settings = config.reconnect.normalized()?;
         if settings.enabled && config.source.kind() != ArtifactSourceKind::Refreshable {
             let error = ReconnectError::RefreshableSourceRequired;
@@ -359,7 +361,7 @@ impl ReconnectManager {
         }
     }
 
-    pub async fn disconnect(&self) {
+    pub async fn disconnect(&self) -> Result<(), ReconnectError> {
         let cancellation = self
             .inner
             .cancellation
@@ -367,8 +369,11 @@ impl ReconnectManager {
             .expect("reconnect cancellation lock poisoned")
             .clone();
         cancellation.cancel();
+        let mut failures = Vec::new();
         if let Some(client) = self.state().client {
-            let _ = client.close().await;
+            if let Err(error) = client.close().await {
+                failures.push(format!("client close: {error}"));
+            }
         }
         let task = self
             .inner
@@ -377,9 +382,17 @@ impl ReconnectManager {
             .expect("reconnect task lock poisoned")
             .take();
         if let Some(task) = task {
-            let _ = task.await;
+            if let Err(error) = task.await {
+                failures.push(format!("supervisor join: {error}"));
+            }
+        }
+        if !failures.is_empty() {
+            let error = ReconnectError::Cleanup(failures.join("; "));
+            self.set_state(ConnectionStatus::Error, Some(error.clone()), None);
+            return Err(error);
         }
         self.set_state(ConnectionStatus::Disconnected, None, None);
+        Ok(())
     }
 
     async fn wait_until_settled(&self) -> Result<(), ReconnectError> {
@@ -518,7 +531,9 @@ async fn run_supervisor(
                     send_first(&mut first_result, Ok(()));
                     tokio::select! {
                         _ = cancellation.cancelled() => {
-                            let _ = client.close().await;
+                            if let Err(error) = client.close().await {
+                                tracing::warn!(%error, "reconnect client close failed after cancellation");
+                            }
                             return;
                         }
                         _ = client.terminated() => {
@@ -633,7 +648,7 @@ fn send_first(
     result: Result<(), ReconnectError>,
 ) {
     if let Some(sender) = sender.take() {
-        let _ = sender.send(result);
+        drop(sender.send(result));
     }
 }
 
@@ -764,5 +779,18 @@ mod tests {
         assert_eq!(settings.delay_for_retry(0), Duration::from_millis(500));
         assert_eq!(settings.delay_for_retry(1), Duration::from_secs(1));
         assert_eq!(settings.delay_for_retry(9), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn enabled_reconnect_rejects_zero_attempts() {
+        let settings = ReconnectSettings {
+            enabled: true,
+            max_attempts: 0,
+            ..ReconnectSettings::default()
+        };
+        assert_eq!(
+            settings.normalized().expect_err("zero attempts"),
+            ReconnectError::InvalidConfig
+        );
     }
 }

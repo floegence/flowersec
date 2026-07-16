@@ -116,10 +116,10 @@ function bridgeWebSocket(runtime: ProxyRuntime, msg: ProxyWindowWsOpenMsg, port:
     terminal = true;
     acceptingWrites = false;
     const err = error instanceof Error ? error : new Error(String(error));
-    try {
-      stream?.reset(err);
-    } catch {
-      // Best-effort.
+    if (stream != null) {
+      void Promise.resolve(stream.reset(err)).catch(() => {
+        // The bridge error is already delivered through the terminal response.
+      });
     }
     try {
       ac.abort(err.message);
