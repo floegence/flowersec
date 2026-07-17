@@ -11,10 +11,11 @@ import { createMessagePortBackedStream } from "./portStream.js";
 import {
   PROXY_WINDOW_FETCH_FORWARD_MSG_TYPE,
   PROXY_WINDOW_FETCH_MSG_TYPE,
+  PROXY_WINDOW_STREAM_RESET_MSG_TYPE,
   PROXY_WINDOW_WS_ERROR_MSG_TYPE,
+  PROXY_WINDOW_WS_BIDIRECTIONAL_ACK_CAPABILITY,
   PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE,
   PROXY_WINDOW_WS_OPEN_MSG_TYPE,
-  PROXY_WINDOW_WS_WRITE_ACK_CAPABILITY,
   type ProxyWindowFetchForwardMsg,
   type ProxyWindowFetchMsg,
   type ProxyWindowWsErrorMsg,
@@ -53,6 +54,10 @@ export type ProxyAppServiceWorkerControlOptions = Readonly<{
 
 export type RegisterProxyAppWindowWithServiceWorkerControlOptions = RegisterProxyAppWindowOptions & Readonly<{
   serviceWorker: ProxyAppServiceWorkerControlOptions;
+}>;
+
+type ActiveAppWebSocketBridge = Readonly<{
+  dispose: (error: Error) => void;
 }>;
 
 function resolveTargetWindow(raw: Window | undefined): Window {
@@ -108,6 +113,8 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
   const targetWindow = resolveTargetWindow(opts.targetWindow);
   const controllerWindow = resolveControllerWindow(targetWindow, opts.controllerWindow);
   const capabilityNonce = normalizeCapabilityNonce(opts.capabilityNonce);
+  const activeWebSocketBridges = new Set<ActiveAppWebSocketBridge>();
+  let disposed = false;
 
   const sw = targetWindow.navigator?.serviceWorker;
   const onServiceWorkerMessage = (ev: MessageEvent) => {
@@ -147,16 +154,32 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
       path: string,
       wsOpts: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }> = {},
     ): Promise<Readonly<{ stream: YamuxStream; protocol: string }>> => {
+      if (disposed) throw new Error("proxy app Window bridge is disposed");
       const channel = new MessageChannel();
       const port = channel.port1;
       port.start?.();
 
       return await new Promise<Readonly<{ stream: YamuxStream; protocol: string }>>((resolve, reject) => {
         let settled = false;
+        let terminal = false;
+        let stream: YamuxStream | null = null;
+
+        const cleanup = () => {
+          activeWebSocketBridges.delete(bridge);
+          if (wsOpts.signal != null) wsOpts.signal.removeEventListener("abort", onAbort);
+        };
+
+        const finishTerminal = () => {
+          if (terminal) return false;
+          terminal = true;
+          cleanup();
+          return true;
+        };
 
         const finishReject = (error: unknown) => {
           if (settled) return;
           settled = true;
+          finishTerminal();
           try {
             port.close();
           } catch {
@@ -165,15 +188,74 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
           reject(error instanceof Error ? error : new Error(String(error)));
         };
 
+        const disposeBridge = (error: Error) => {
+          if (!finishTerminal()) return;
+          if (stream != null) {
+            try {
+              void Promise.resolve(stream.reset(error)).catch(() => {
+                // The bridge is already terminal.
+              });
+            } catch {
+              // The bridge is already terminal.
+            }
+            return;
+          }
+          try {
+            port.postMessage({
+              type: PROXY_WINDOW_STREAM_RESET_MSG_TYPE,
+              message: error.message,
+            });
+          } catch {
+            // Best-effort.
+          }
+          if (!settled) {
+            settled = true;
+            reject(error);
+          }
+          try {
+            port.close();
+          } catch {
+            // Best-effort.
+          }
+        };
+
+        const bridge: ActiveAppWebSocketBridge = { dispose: disposeBridge };
+
+        const onAbort = () => {
+          const reason = wsOpts.signal?.reason;
+          disposeBridge(reason instanceof Error ? reason : new Error(String(reason ?? "aborted")));
+        };
+
+        activeWebSocketBridges.add(bridge);
+
         const finishResolve = (ack: ProxyWindowWsOpenAckMsg) => {
-          if (settled) return;
-          settled = true;
+          if (settled || terminal) return;
           const capabilities = Array.isArray(ack.capabilities)
             ? ack.capabilities.filter((value): value is string => typeof value === "string")
             : [];
-          const writeAcknowledgements = capabilities.includes(PROXY_WINDOW_WS_WRITE_ACK_CAPABILITY);
+          if (!capabilities.includes(PROXY_WINDOW_WS_BIDIRECTIONAL_ACK_CAPABILITY)) {
+            try {
+              port.postMessage({
+                type: PROXY_WINDOW_STREAM_RESET_MSG_TYPE,
+                message: "proxy Window bridge capability mismatch",
+              });
+            } catch {
+              // The capability error remains authoritative.
+            }
+            finishReject(new Error("proxy Window bridge does not support bidirectional stream acknowledgements"));
+            return;
+          }
+          if (disposed) {
+            disposeBridge(new Error("proxy app Window bridge is disposed"));
+            return;
+          }
+          settled = true;
+          stream = createMessagePortBackedStream(port, {
+            maxBufferedBytes: opts.maxWsBufferedAmountBytes ?? 4 * (1 << 20),
+            onTerminal: finishTerminal,
+          });
           resolve({
-            stream: createMessagePortBackedStream(port, { writeAcknowledgements }),
+            stream,
             protocol: String(ack.protocol ?? ""),
           });
         };
@@ -193,10 +275,10 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
 
         if (wsOpts.signal != null) {
           if (wsOpts.signal.aborted) {
-            finishReject(wsOpts.signal.reason ?? new Error("aborted"));
+            onAbort();
             return;
           }
-          wsOpts.signal.addEventListener("abort", () => finishReject(wsOpts.signal?.reason ?? new Error("aborted")), { once: true });
+          wsOpts.signal.addEventListener("abort", onAbort, { once: true });
         }
 
         try {
@@ -204,6 +286,7 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
             {
               type: PROXY_WINDOW_WS_OPEN_MSG_TYPE,
               path,
+              capabilities: [PROXY_WINDOW_WS_BIDIRECTIONAL_ACK_CAPABILITY],
               ...(wsOpts.protocols === undefined ? {} : { protocols: wsOpts.protocols }),
               ...(capabilityNonce === "" ? {} : { capabilityNonce }),
             } satisfies ProxyWindowWsOpenMsg,
@@ -220,7 +303,11 @@ export function registerProxyAppWindow(opts: RegisterProxyAppWindowOptions): Pro
   return {
     runtime,
     dispose: () => {
+      if (disposed) return;
+      disposed = true;
       sw?.removeEventListener("message", onServiceWorkerMessage);
+      const error = new Error("proxy app Window bridge is disposed");
+      for (const bridge of [...activeWebSocketBridges]) bridge.dispose(error);
     },
   };
 }

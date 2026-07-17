@@ -73,7 +73,7 @@ export async function enforceTransportSecurity(args: Readonly<{
   const policy = args.policy ?? RequireTLS;
   try {
     if (typeof policy === "function") {
-      allowed = await policy(input);
+      allowed = await policy(input) === true;
     } else {
       allowed = evaluatePreset(policy, target);
     }

@@ -171,7 +171,8 @@ func acceptDirectWSConn(ctx context.Context, c *ws.Conn, opts AcceptDirectOption
 	}, nil
 }
 
-// DirectHandshakeInit contains stable, security-relevant fields from the client handshake init.
+// DirectHandshakeInit contains structurally validated fields from the client handshake init.
+// The peer is not authenticated until the subsequent PSK handshake succeeds.
 type DirectHandshakeInit struct {
 	ChannelID      string
 	Version        uint8
@@ -187,6 +188,8 @@ type DirectHandshakeSecrets struct {
 
 // DirectHandshakeCredential delays one-time credential consumption until the peer proves
 // possession of the PSK. CommitAuthenticated runs after E2EE authentication and before Yamux.
+// It must be idempotent, cancellation-safe, and must bound its backing transaction with its own
+// deadline because an external side effect cannot be rolled back after the SDK deadline wins.
 type DirectHandshakeCredential struct {
 	Secrets             DirectHandshakeSecrets
 	CommitAuthenticated func(context.Context) error
@@ -212,11 +215,13 @@ type AcceptDirectResolverOptions struct {
 	YamuxLimits    YamuxLimits
 	Liveness       LivenessOptions
 
-	// Resolve returns the PSK and init_exp for the given client init. It must not panic.
+	// Resolve returns the PSK and init_exp for the given unauthenticated client init. It must
+	// not consume one-time credentials, must honor ctx, and must not panic.
 	Resolve func(ctx context.Context, init DirectHandshakeInit) (DirectHandshakeSecrets, error)
 
-	// ResolveCredential resolves secrets without consuming them. When set, CommitAuthenticated
-	// is invoked after PSK authentication succeeds and before a Yamux session is created.
+	// ResolveCredential resolves secrets without consuming them and must honor ctx. When set,
+	// CommitAuthenticated is invoked after PSK authentication succeeds and before a Yamux
+	// session is created.
 	ResolveCredential func(ctx context.Context, init DirectHandshakeInit) (DirectHandshakeCredential, error)
 }
 
@@ -343,19 +348,30 @@ func acceptDirectWSResolvedConn(ctx context.Context, c *ws.Conn, opts AcceptDire
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidInput, errors.New("channel_id must not have leading/trailing whitespace"))
 	}
+	if len(channelID) > 256 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidInput, errors.New("channel_id must not exceed 256 bytes"))
+	}
 	if initMsg.Version != e2ee.ProtocolVersion {
 		_ = c.Close()
-		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeInvalidVersion, e2ee.ErrInvalidVersion)
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, e2ee.ErrInvalidVersion)
 	}
 	if initMsg.Role != e2eev1.Role_client {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, errors.New("unexpected role in init"))
 	}
+	suite := Suite(initMsg.Suite)
+	switch suite {
+	case SuiteX25519HKDFAES256GCM, SuiteP256HKDFAES256GCM:
+	default:
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeHandshakeFailed, e2ee.ErrUnsupportedSuite)
+	}
 
 	resolveInput := DirectHandshakeInit{
 		ChannelID:      channelID,
 		Version:        initMsg.Version,
-		Suite:          Suite(initMsg.Suite),
+		Suite:          suite,
 		ClientFeatures: initMsg.ClientFeatures,
 	}
 	credential := DirectHandshakeCredential{}
@@ -366,6 +382,9 @@ func acceptDirectWSResolvedConn(ctx context.Context, c *ws.Conn, opts AcceptDire
 	}
 	if err != nil {
 		_ = c.Close()
+		if code := fserrors.ClassifyHandshakeCode(err); code == fserrors.CodeTimeout || code == fserrors.CodeCanceled {
+			return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, code, err)
+		}
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeResolveFailed, err)
 	}
 	secrets := credential.Secrets
@@ -398,8 +417,15 @@ func acceptDirectWSResolvedConn(ctx context.Context, c *ws.Conn, opts AcceptDire
 	if credential.CommitAuthenticated != nil {
 		if err := safeCommitAuthenticated(handshakeCtx, credential.CommitAuthenticated); err != nil {
 			_ = secure.Close()
+			if code := fserrors.ClassifyHandshakeCode(err); code == fserrors.CodeTimeout || code == fserrors.CodeCanceled {
+				return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, code, err)
+			}
 			return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeCredentialCommitFailed, err)
 		}
+	}
+	if err := handshakeCtx.Err(); err != nil {
+		_ = secure.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.ClassifyHandshakeCode(err), err)
 	}
 
 	mux, err := fsyamux.NewServer(secure, opts.YamuxLimits, opts.Liveness)
@@ -652,7 +678,7 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 	}, nil
 }
 
-func safeResolve(ctx context.Context, resolve func(context.Context, DirectHandshakeInit) (DirectHandshakeSecrets, error), init DirectHandshakeInit) (out DirectHandshakeSecrets, err error) {
+func callResolve(ctx context.Context, resolve func(context.Context, DirectHandshakeInit) (DirectHandshakeSecrets, error), init DirectHandshakeInit) (out DirectHandshakeSecrets, err error) {
 	defer func() {
 		if recover() != nil {
 			out = DirectHandshakeSecrets{}
@@ -662,7 +688,16 @@ func safeResolve(ctx context.Context, resolve func(context.Context, DirectHandsh
 	return resolve(ctx, init)
 }
 
-func safeResolveCredential(ctx context.Context, resolve func(context.Context, DirectHandshakeInit) (DirectHandshakeCredential, error), init DirectHandshakeInit) (out DirectHandshakeCredential, err error) {
+func safeResolve(ctx context.Context, resolve func(context.Context, DirectHandshakeInit) (DirectHandshakeSecrets, error), init DirectHandshakeInit) (DirectHandshakeSecrets, error) {
+	results := make(chan callbackResult[DirectHandshakeSecrets], 1)
+	go func() {
+		secrets, err := callResolve(ctx, resolve, init)
+		results <- callbackResult[DirectHandshakeSecrets]{value: secrets, err: err}
+	}()
+	return awaitCallbackResult(ctx, results)
+}
+
+func callResolveCredential(ctx context.Context, resolve func(context.Context, DirectHandshakeInit) (DirectHandshakeCredential, error), init DirectHandshakeInit) (out DirectHandshakeCredential, err error) {
 	defer func() {
 		if recover() != nil {
 			out = DirectHandshakeCredential{}
@@ -672,11 +707,47 @@ func safeResolveCredential(ctx context.Context, resolve func(context.Context, Di
 	return resolve(ctx, init)
 }
 
-func safeCommitAuthenticated(ctx context.Context, commit func(context.Context) error) (err error) {
+func safeResolveCredential(ctx context.Context, resolve func(context.Context, DirectHandshakeInit) (DirectHandshakeCredential, error), init DirectHandshakeInit) (DirectHandshakeCredential, error) {
+	results := make(chan callbackResult[DirectHandshakeCredential], 1)
+	go func() {
+		credential, err := callResolveCredential(ctx, resolve, init)
+		results <- callbackResult[DirectHandshakeCredential]{value: credential, err: err}
+	}()
+	return awaitCallbackResult(ctx, results)
+}
+
+func callCommitAuthenticated(ctx context.Context, commit func(context.Context) error) (err error) {
 	defer func() {
 		if recover() != nil {
 			err = errors.New("direct credential commit panic")
 		}
 	}()
 	return commit(ctx)
+}
+
+func safeCommitAuthenticated(ctx context.Context, commit func(context.Context) error) error {
+	results := make(chan callbackResult[struct{}], 1)
+	go func() {
+		results <- callbackResult[struct{}]{err: callCommitAuthenticated(ctx, commit)}
+	}()
+	_, err := awaitCallbackResult(ctx, results)
+	return err
+}
+
+type callbackResult[T any] struct {
+	value T
+	err   error
+}
+
+func awaitCallbackResult[T any](ctx context.Context, results <-chan callbackResult[T]) (T, error) {
+	var zero T
+	select {
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	case result := <-results:
+		if err := ctx.Err(); err != nil {
+			return zero, err
+		}
+		return result.value, result.err
+	}
 }

@@ -41,7 +41,7 @@ async fn high_level_direct_client_and_endpoint_interoperate() {
 
     let server_task = tokio::spawn(async move {
         let (tcp, _) = listener.accept().await.expect("accept TCP");
-        let websocket = tokio_tungstenite::accept_async(tcp)
+        let transport = TungsteniteTransport::accept(tcp)
             .await
             .expect("accept WebSocket");
         let mut handshake = ServerHandshakeOptions::new(
@@ -50,12 +50,9 @@ async fn high_level_direct_client_and_endpoint_interoperate() {
             expires,
         );
         handshake.channel_id = Some("rust-direct-integration".to_owned());
-        let session = accept_direct(
-            Arc::new(TungsteniteTransport::new(websocket)),
-            DirectAcceptOptions::new(handshake),
-        )
-        .await
-        .expect("accept Flowersec direct");
+        let session = accept_direct(Arc::new(transport), DirectAcceptOptions::new(handshake))
+            .await
+            .expect("accept Flowersec direct");
         let router = Router::default();
         router
             .register(99, |payload: Value| async move {
@@ -124,7 +121,7 @@ async fn secure_outbound_exhaustion_surfaces_as_high_level_resource_error() {
 
         let server_task = tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.expect("accept TCP");
-            let websocket = tokio_tungstenite::accept_async(tcp)
+            let transport = TungsteniteTransport::accept(tcp)
                 .await
                 .expect("accept WebSocket");
             let mut handshake = ServerHandshakeOptions::new(
@@ -133,12 +130,9 @@ async fn secure_outbound_exhaustion_surfaces_as_high_level_resource_error() {
                 expires,
             );
             handshake.channel_id = Some(server_channel_id);
-            accept_direct(
-                Arc::new(TungsteniteTransport::new(websocket)),
-                DirectAcceptOptions::new(handshake),
-            )
-            .await
-            .expect("accept Flowersec direct")
+            accept_direct(Arc::new(transport), DirectAcceptOptions::new(handshake))
+                .await
+                .expect("accept Flowersec direct")
         });
 
         let options = ConnectOptions {

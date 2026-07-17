@@ -2,6 +2,7 @@ import type { E2EE_Init } from "../gen/flowersec/e2ee/v1.gen.js";
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
 import { Role as ControlRole, assertChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
 import { Role as TunnelRole, type Attach } from "../gen/flowersec/tunnel/v1.gen.js";
+import { withAbortAndTimeout } from "../client-connect/common.js";
 import { assertTunnelGrantContract, assertValidPSK, prepareChannelId } from "../client-connect/contract.js";
 import { enforceTransportSecurity, type TransportSecurityPolicy } from "../client-connect/transportSecurity.js";
 import { SDK_DEFAULTS } from "../defaults.js";
@@ -16,7 +17,7 @@ import { YamuxSession, type YamuxLimits } from "../yamux/session.js";
 import type { YamuxStream } from "../yamux/stream.js";
 import { RpcServer, type RpcRouter, type RpcServerOptions } from "../rpc/server.js";
 import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
-import { AbortError, FlowersecError } from "../utils/errors.js";
+import { AbortError, FlowersecError, TimeoutError, throwIfAborted } from "../utils/errors.js";
 import { WebSocketBinaryTransport, type WebSocketLike, type WebSocketLimits } from "../ws-client/binaryTransport.js";
 
 export type { Suite } from "../e2ee/handshake.js";
@@ -239,9 +240,19 @@ export async function acceptDirect(
   handshake: Readonly<{ channelId: string; suite: Suite }> & DirectHandshakeCredential,
   options: DirectAcceptOptions = {},
 ): Promise<Session> {
+  const handshakeTimeoutMs = options.handshakeTimeoutMs ?? SDK_DEFAULTS.transport.handshakeTimeoutMs;
+  if (!Number.isFinite(handshakeTimeoutMs) || handshakeTimeoutMs < 0) {
+    throw new FlowersecError({
+      path: "direct",
+      stage: "validate",
+      code: "invalid_option",
+      message: "handshakeTimeoutMs must be a non-negative number",
+    });
+  }
   await enforceIncomingDirectTransport(options);
+  const deadline = createHandshakeDeadline(handshakeTimeoutMs);
   const transport = new WebSocketBinaryTransport(websocket, webSocketTransportOptions(options));
-  return await establishSession("direct", transport, handshake, options);
+  return await establishSession("direct", transport, handshake, options, undefined, deadline);
 }
 
 export async function acceptDirectResolved(
@@ -249,39 +260,72 @@ export async function acceptDirectResolved(
   resolver: DirectCredentialResolver,
   options: DirectAcceptOptions = {},
 ): Promise<Session> {
+  const handshakeTimeoutMs = options.handshakeTimeoutMs ?? SDK_DEFAULTS.transport.handshakeTimeoutMs;
+  if (!Number.isFinite(handshakeTimeoutMs) || handshakeTimeoutMs < 0) {
+    throw new FlowersecError({
+      path: "direct",
+      stage: "validate",
+      code: "invalid_option",
+      message: "handshakeTimeoutMs must be a non-negative number",
+    });
+  }
   await enforceIncomingDirectTransport(options);
+  const deadline = createHandshakeDeadline(handshakeTimeoutMs);
   const transport = new WebSocketBinaryTransport(websocket, webSocketTransportOptions(options));
-  const first = await transport.readBinary(readOptions(options));
+  let first: Uint8Array;
+  try {
+    first = await runHandshakeStep(deadline, options.signal, () => transport.readBinary({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      timeoutMs: remainingHandshakeTimeoutMs(deadline),
+    }));
+  } catch (error) {
+    transport.close();
+    throw endpointHandshakeError("direct", error, "failed to read handshake init");
+  }
+
   let init: E2EE_Init;
+  let channelId: string;
   try {
     const decoded = decodeHandshakeFrame(first, options.maxHandshakePayload ?? SDK_DEFAULTS.e2ee.maxHandshakePayloadBytes);
     if (decoded.handshakeType !== HANDSHAKE_TYPE_INIT) throw new Error("expected handshake init");
     init = JSON.parse(new TextDecoder().decode(decoded.payloadJsonUtf8)) as E2EE_Init;
     if (init.version !== PROTOCOL_VERSION || init.role !== 1 || (init.suite !== 1 && init.suite !== 2)) throw new Error("invalid handshake init");
+    channelId = prepareChannelId(init.channel_id, "direct");
+    if (channelId !== init.channel_id) {
+      throw new FlowersecError({
+        path: "direct",
+        stage: "validate",
+        code: "invalid_input",
+        message: "channel_id must not have leading or trailing whitespace",
+      });
+    }
   } catch (error) {
     transport.close();
+    if (error instanceof FlowersecError) throw error;
     throw new FlowersecError({ path: "direct", stage: "handshake", code: "handshake_failed", message: "invalid handshake init", cause: error });
   }
 
   let credential: DirectHandshakeCredential;
   try {
-    credential = await resolver({
-      channelId: prepareChannelId(init.channel_id, "direct"),
+    credential = await runHandshakeStep(deadline, options.signal, () => resolver({
+      channelId,
       version: init.version,
       suite: init.suite,
       clientFeatures: init.client_features >>> 0,
-    });
+    }));
   } catch (error) {
     transport.close();
+    const interrupted = endpointHandshakeInterruption("direct", error);
+    if (interrupted != null) throw interrupted;
     throw new FlowersecError({ path: "direct", stage: "validate", code: "resolve_failed", message: "credential resolution failed", cause: error });
   }
 
   const replay = new PrefetchedTransport(transport, first);
   return await establishSession("direct", replay, {
-    channelId: init.channel_id,
+    channelId,
     suite: init.suite,
     ...credential,
-  }, options);
+  }, options, undefined, deadline);
 }
 
 export async function connectTunnel(
@@ -295,36 +339,65 @@ export async function connectTunnel(
     throw new FlowersecError({ path: "tunnel", stage: "validate", code: "invalid_input", message: "invalid ChannelInitGrant", cause: error });
   }
   assertTunnelGrantContract(grant, ControlRole.Role_server);
+  const channelId = prepareChannelId(grant.channel_id, "tunnel");
   const tunnelUrl = grant.tunnel_url.trim();
   if (tunnelUrl === "") throw new FlowersecError({ path: "tunnel", stage: "validate", code: "missing_tunnel_url", message: "missing tunnel_url" });
   if (grant.token.trim() === "") throw new FlowersecError({ path: "tunnel", stage: "validate", code: "missing_token", message: "missing token" });
   if (grant.channel_init_expire_at_unix_s <= 0) throw new FlowersecError({ path: "tunnel", stage: "validate", code: "missing_init_exp", message: "missing channel init expiry" });
   const origin = options.origin.trim();
   if (origin === "") throw new FlowersecError({ path: "tunnel", stage: "validate", code: "missing_origin", message: "missing origin" });
+  const connectTimeoutMs = options.connectTimeoutMs ?? SDK_DEFAULTS.transport.connectTimeoutMs;
+  if (!Number.isFinite(connectTimeoutMs) || connectTimeoutMs < 0) {
+    throw new FlowersecError({
+      path: "tunnel",
+      stage: "validate",
+      code: "invalid_option",
+      message: "connectTimeoutMs must be a non-negative number",
+    });
+  }
+  const handshakeTimeoutMs = options.handshakeTimeoutMs ?? SDK_DEFAULTS.transport.handshakeTimeoutMs;
+  if (!Number.isFinite(handshakeTimeoutMs) || handshakeTimeoutMs < 0) {
+    throw new FlowersecError({
+      path: "tunnel",
+      stage: "validate",
+      code: "invalid_option",
+      message: "handshakeTimeoutMs must be a non-negative number",
+    });
+  }
+  const psk = assertValidPSK(grant.e2ee_psk_b64u, "tunnel");
   await enforceTransportSecurity({ rawUrl: tunnelUrl, path: "tunnel", ...(options.transportSecurityPolicy === undefined ? {} : { policy: options.transportSecurityPolicy }) });
 
   const endpointInstanceId = normalizeEndpointInstanceId(options.endpointInstanceId);
-  const websocket = options.wsFactory(tunnelUrl, origin);
-  const transport = new WebSocketBinaryTransport(websocket, webSocketTransportOptions(options));
+  let transport: WebSocketBinaryTransport | undefined;
   try {
-    await waitForOpen(websocket, options.connectTimeoutMs ?? SDK_DEFAULTS.transport.connectTimeoutMs, options.signal);
+    throwIfAborted(options.signal, "connect aborted");
+    const websocket = options.wsFactory(tunnelUrl, origin);
+    transport = new WebSocketBinaryTransport(websocket, webSocketTransportOptions(options));
+    await waitForOpen(websocket, connectTimeoutMs, options.signal);
+    throwIfAborted(options.signal, "connect aborted");
     const attach: Attach = {
       v: 1,
-      channel_id: prepareChannelId(grant.channel_id, "tunnel"),
+      channel_id: channelId,
       role: TunnelRole.Role_server,
       token: grant.token.trim(),
       endpoint_instance_id: endpointInstanceId,
     };
     websocket.send(JSON.stringify(attach));
     return await establishSession("tunnel", transport, {
-      channelId: grant.channel_id,
+      channelId,
       suite: grant.default_suite,
-      psk: assertValidPSK(grant.e2ee_psk_b64u, "tunnel"),
+      psk,
       initExpireAtUnixS: grant.channel_init_expire_at_unix_s,
     }, options, endpointInstanceId);
   } catch (error) {
-    transport.close();
+    transport?.close();
     if (error instanceof FlowersecError) throw error;
+    if (error instanceof TimeoutError) {
+      throw new FlowersecError({ path: "tunnel", stage: "connect", code: "timeout", message: "endpoint tunnel connect timed out", cause: error });
+    }
+    if (error instanceof AbortError) {
+      throw new FlowersecError({ path: "tunnel", stage: "connect", code: "canceled", message: "endpoint tunnel connect canceled", cause: error });
+    }
     throw new FlowersecError({ path: "tunnel", stage: "connect", code: "dial_failed", message: "endpoint tunnel connect failed", cause: error });
   }
 }
@@ -335,6 +408,7 @@ async function establishSession(
   handshake: Readonly<{ channelId: string; suite: Suite }> & DirectHandshakeCredential,
   options: EndpointOptions,
   endpointInstanceId?: string,
+  deadline?: HandshakeDeadline,
 ): Promise<Session> {
   let psk: Uint8Array;
   try {
@@ -344,7 +418,7 @@ async function establishSession(
     throw error;
   }
   try {
-    const secure = await serverHandshake(transport, options.handshakeCache ?? new ServerHandshakeCache(), {
+    const startHandshake = () => serverHandshake(transport, options.handshakeCache ?? new ServerHandshakeCache(), {
       channelId: prepareChannelId(handshake.channelId, path),
       suite: handshake.suite,
       psk,
@@ -356,22 +430,44 @@ async function establishSession(
       outboundRecordChunkBytes: options.outboundRecordChunkBytes ?? SDK_DEFAULTS.e2ee.outboundRecordChunkBytes,
       maxBufferedBytes: options.maxBufferedBytes ?? SDK_DEFAULTS.e2ee.maxInboundBufferedBytes,
       maxOutboundBufferedBytes: options.maxOutboundBufferedBytes ?? SDK_DEFAULTS.e2ee.maxOutboundBufferedBytes,
-      timeoutMs: options.handshakeTimeoutMs ?? SDK_DEFAULTS.transport.handshakeTimeoutMs,
+      timeoutMs: deadline == null
+        ? options.handshakeTimeoutMs ?? SDK_DEFAULTS.transport.handshakeTimeoutMs
+        : remainingHandshakeTimeoutMs(deadline),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
+    const secure = deadline == null
+      ? await startHandshake()
+      : await runHandshakeStep(deadline, options.signal, startHandshake);
     try {
-      await handshake.commitAuthenticated?.();
+      if (handshake.commitAuthenticated != null) {
+        if (deadline == null) {
+          await handshake.commitAuthenticated();
+        } else {
+          await runHandshakeStep(deadline, options.signal, handshake.commitAuthenticated);
+        }
+      }
     } catch (error) {
       secure.close();
+      const interrupted = endpointHandshakeInterruption(path, error);
+      if (interrupted != null) throw interrupted;
       throw new FlowersecError({ path, stage: "handshake", code: "credential_commit_failed", message: "credential commit failed", cause: error });
     }
-    return Session.create(path, secure, {
-      ...(options.yamuxLimits === undefined ? {} : { yamuxLimits: options.yamuxLimits }),
-      ...(endpointInstanceId === undefined ? {} : { endpointInstanceId }),
-    });
+    try {
+      throwIfAborted(options.signal, "handshake canceled");
+      if (deadline != null) remainingHandshakeTimeoutMs(deadline);
+      return Session.create(path, secure, {
+        ...(options.yamuxLimits === undefined ? {} : { yamuxLimits: options.yamuxLimits }),
+        ...(endpointInstanceId === undefined ? {} : { endpointInstanceId }),
+      });
+    } catch (error) {
+      secure.close();
+      throw error;
+    }
   } catch (error) {
     transport.close();
     if (error instanceof FlowersecError) throw error;
+    const interrupted = endpointHandshakeInterruption(path, error);
+    if (interrupted != null) throw interrupted;
     throw new FlowersecError({ path, stage: "handshake", code: "handshake_failed", message: "endpoint handshake failed", cause: error });
   } finally {
     psk.fill(0);
@@ -446,22 +542,22 @@ function webSocketTransportOptions(options: EndpointOptions): Readonly<{ webSock
   return options.webSocketLimits === undefined ? {} : { webSocketLimits: options.webSocketLimits };
 }
 
-function readOptions(options: EndpointOptions): Readonly<{ signal?: AbortSignal; timeoutMs?: number }> {
-  return {
-    timeoutMs: options.handshakeTimeoutMs ?? SDK_DEFAULTS.transport.handshakeTimeoutMs,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  };
-}
-
 async function enforceIncomingDirectTransport(options: DirectAcceptOptions): Promise<void> {
   const rawUrl = options.secureTransport === false ? "ws://127.0.0.1/" : "wss://127.0.0.1/";
   await enforceTransportSecurity({ rawUrl, path: "direct", ...(options.transportSecurityPolicy === undefined ? {} : { policy: options.transportSecurityPolicy }) });
 }
 
 function waitForOpen(websocket: WebSocketLike, timeoutMs: number, signal?: AbortSignal): Promise<void> {
-  if (websocket.readyState === 1) return Promise.resolve();
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) return Promise.reject(new RangeError("connectTimeoutMs must be non-negative"));
+  try {
+    throwIfAborted(signal, "connect aborted");
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  if (websocket.readyState === 1) return Promise.resolve();
+  if (websocket.readyState >= 2) return Promise.reject(new Error("websocket closed before open"));
   return new Promise<void>((resolve, reject) => {
+    let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cleanup = () => {
       if (timer != null) clearTimeout(timer);
@@ -471,6 +567,8 @@ function waitForOpen(websocket: WebSocketLike, timeoutMs: number, signal?: Abort
       signal?.removeEventListener("abort", onAbort);
     };
     const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
       cleanup();
       if (error == null) resolve(); else reject(error);
     };
@@ -482,12 +580,63 @@ function waitForOpen(websocket: WebSocketLike, timeoutMs: number, signal?: Abort
     websocket.addEventListener("error", onError);
     websocket.addEventListener("close", onClose);
     signal?.addEventListener("abort", onAbort, { once: true });
-    if (timeoutMs > 0) timer = setTimeout(() => finish(new Error("websocket open timeout")), timeoutMs);
+    if (signal?.aborted) {
+      onAbort();
+    } else if (websocket.readyState === 1) {
+      onOpen();
+    } else if (websocket.readyState >= 2) {
+      onClose();
+    }
+    if (!settled && timeoutMs > 0) timer = setTimeout(() => finish(new TimeoutError("websocket open timeout")), timeoutMs);
   });
 }
 
 function cleanupWaiter(waiter: StreamWaiter): void {
   if (waiter.onAbort != null) waiter.signal?.removeEventListener("abort", waiter.onAbort);
+}
+
+type HandshakeDeadline = Readonly<{ expiresAtMs?: number }>;
+
+function createHandshakeDeadline(timeoutMs: number): HandshakeDeadline {
+  return timeoutMs > 0 ? { expiresAtMs: Date.now() + timeoutMs } : {};
+}
+
+function remainingHandshakeTimeoutMs(deadline: HandshakeDeadline): number {
+  if (deadline.expiresAtMs === undefined) return 0;
+  const remaining = deadline.expiresAtMs - Date.now();
+  if (remaining <= 0) throw new TimeoutError("handshake timeout");
+  return remaining;
+}
+
+async function runHandshakeStep<T>(
+  deadline: HandshakeDeadline,
+  signal: AbortSignal | undefined,
+  operation: () => T | PromiseLike<T>,
+): Promise<T> {
+  throwIfAborted(signal, "handshake canceled");
+  const timeoutMs = remainingHandshakeTimeoutMs(deadline);
+  const result = await withAbortAndTimeout(Promise.resolve().then(operation), {
+    timeoutMs,
+    ...(signal === undefined ? {} : { signal }),
+  });
+  throwIfAborted(signal, "handshake canceled");
+  remainingHandshakeTimeoutMs(deadline);
+  return result;
+}
+
+function endpointHandshakeInterruption(path: EndpointPath, error: unknown): FlowersecError | undefined {
+  if (error instanceof TimeoutError) {
+    return new FlowersecError({ path, stage: "handshake", code: "timeout", message: "endpoint handshake timed out", cause: error });
+  }
+  if (error instanceof AbortError) {
+    return new FlowersecError({ path, stage: "handshake", code: "canceled", message: "endpoint handshake canceled", cause: error });
+  }
+  return undefined;
+}
+
+function endpointHandshakeError(path: EndpointPath, error: unknown, message: string): FlowersecError {
+  return endpointHandshakeInterruption(path, error)
+    ?? new FlowersecError({ path, stage: "handshake", code: "handshake_failed", message, cause: error });
 }
 
 function asError(error: unknown): Error {

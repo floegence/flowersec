@@ -1,8 +1,9 @@
 import Foundation
+
 #if canImport(Darwin)
-import Darwin
+  import Darwin
 #elseif canImport(Glibc)
-import Glibc
+  import Glibc
 #endif
 
 public enum TransportRuntime: String, Codable, Equatable, Sendable {
@@ -40,7 +41,10 @@ public struct NetworkPlaintextPolicyOptions: Equatable, Sendable {
 public enum TransportSecurityPolicy: Sendable {
   case requireTLS
   case allowPlaintextForLoopback
-  @available(*, deprecated, message: "Use requireTLS, allowPlaintextForLoopback, or networkPlaintext(options:).")
+  @available(
+    *, deprecated,
+    message: "Use requireTLS, allowPlaintextForLoopback, or networkPlaintext(options:)."
+  )
   case allowPlaintext
   case custom(@Sendable (TransportSecurityPolicyInput) async throws -> Bool)
 
@@ -145,7 +149,8 @@ private func expandIPv6Words(_ host: String) throws -> [UInt16] {
     throw NetworkPlaintextPolicyError.invalidAllowedHost(host)
   }
   let left = halves[0].isEmpty ? [] : halves[0].split(separator: ":").map(String.init)
-  let right = halves.count == 1 || halves[1].isEmpty ? [] : halves[1].split(separator: ":").map(String.init)
+  let right =
+    halves.count == 1 || halves[1].isEmpty ? [] : halves[1].split(separator: ":").map(String.init)
   let missing = 8 - left.count - right.count
   guard (halves.count == 1 && missing == 0) || (halves.count == 2 && missing > 0) else {
     throw NetworkPlaintextPolicyError.invalidAllowedHost(host)
@@ -205,9 +210,14 @@ enum FlowersecTransportSecurity {
       case .allowPlaintext:
         allowed = true
       case .custom(let evaluate):
+        try Task.checkCancellation()
         allowed = try await evaluate(input)
+        try Task.checkCancellation()
       }
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
+      if Task.isCancelled { throw CancellationError() }
       throw denied(path: path)
     }
     if !allowed {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -234,6 +235,119 @@ func TestAcceptDirectWSResolved_WhitespaceChannelID_ReturnsMissingChannelID(t *t
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timeout waiting for error")
+	}
+}
+
+func TestAcceptDirectWSResolved_InvalidInitSkipsResolver(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name      string
+		mutate    func(*e2eev1.E2EE_Init)
+		wantStage endpoint.Stage
+		wantCode  endpoint.Code
+	}{
+		{
+			name: "surrounding whitespace",
+			mutate: func(init *e2eev1.E2EE_Init) {
+				init.ChannelId = " channel-id "
+			},
+			wantStage: endpoint.StageValidate,
+			wantCode:  endpoint.CodeInvalidInput,
+		},
+		{
+			name: "too long channel ID",
+			mutate: func(init *e2eev1.E2EE_Init) {
+				init.ChannelId = strings.Repeat("x", 257)
+			},
+			wantStage: endpoint.StageValidate,
+			wantCode:  endpoint.CodeInvalidInput,
+		},
+		{
+			name: "invalid version",
+			mutate: func(init *e2eev1.E2EE_Init) {
+				init.Version = e2ee.ProtocolVersion + 1
+			},
+			wantStage: endpoint.StageHandshake,
+			wantCode:  endpoint.CodeHandshakeFailed,
+		},
+		{
+			name: "invalid role",
+			mutate: func(init *e2eev1.E2EE_Init) {
+				init.Role = e2eev1.Role_server
+			},
+			wantStage: endpoint.StageHandshake,
+			wantCode:  endpoint.CodeHandshakeFailed,
+		},
+		{
+			name: "invalid suite",
+			mutate: func(init *e2eev1.E2EE_Init) {
+				init.Suite = e2eev1.Suite(99)
+			},
+			wantStage: endpoint.StageHandshake,
+			wantCode:  endpoint.CodeHandshakeFailed,
+		},
+	} {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			errCh := make(chan error, 1)
+			var resolverCalled atomic.Bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				c, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+				if err != nil {
+					t.Errorf("upgrade websocket: %v", err)
+					return
+				}
+				defer c.Close()
+				handshakeTimeout := 200 * time.Millisecond
+				_, err = endpoint.AcceptDirectWSResolved(context.Background(), c, endpoint.AcceptDirectResolverOptions{
+					HandshakeTimeout: &handshakeTimeout,
+					Resolve: func(context.Context, endpoint.DirectHandshakeInit) (endpoint.DirectHandshakeSecrets, error) {
+						resolverCalled.Store(true)
+						return endpoint.DirectHandshakeSecrets{}, errors.New("resolver must not be called")
+					},
+				})
+				errCh <- err
+			}))
+			t.Cleanup(srv.Close)
+
+			c, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+			if err != nil {
+				t.Fatalf("dial websocket: %v", err)
+			}
+			defer c.Close()
+			init := &e2eev1.E2EE_Init{
+				ChannelId: "channel-id",
+				Role:      e2eev1.Role_client,
+				Version:   e2ee.ProtocolVersion,
+				Suite:     e2eev1.Suite_X25519_HKDF_SHA256_AES_256_GCM,
+			}
+			tt.mutate(init)
+			initJSON, err := json.Marshal(init)
+			if err != nil {
+				t.Fatalf("marshal init: %v", err)
+			}
+			if err := c.WriteMessage(websocket.BinaryMessage, e2ee.EncodeHandshakeFrame(e2ee.HandshakeTypeInit, initJSON)); err != nil {
+				t.Fatalf("write init frame: %v", err)
+			}
+
+			select {
+			case got := <-errCh:
+				var structured *endpoint.Error
+				if !errors.As(got, &structured) {
+					t.Fatalf("expected *endpoint.Error, got %T: %v", got, got)
+				}
+				if structured.Path != endpoint.PathDirect || structured.Stage != tt.wantStage || structured.Code != tt.wantCode {
+					t.Fatalf("unexpected error: %+v", structured)
+				}
+				if resolverCalled.Load() {
+					t.Fatal("resolver was called for an invalid handshake init")
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("timeout waiting for validation error")
+			}
+		})
 	}
 }
 

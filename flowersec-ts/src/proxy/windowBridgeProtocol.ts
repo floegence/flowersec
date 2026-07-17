@@ -4,7 +4,7 @@ export const PROXY_WINDOW_FETCH_FORWARD_MSG_TYPE = "flowersec-proxy:window_fetch
 export const PROXY_WINDOW_FETCH_MSG_TYPE = "flowersec-proxy:fetch";
 export const PROXY_WINDOW_WS_OPEN_MSG_TYPE = "flowersec-proxy:ws_open";
 export const PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE = "flowersec-proxy:ws_open_ack";
-export const PROXY_WINDOW_WS_WRITE_ACK_CAPABILITY = "stream_write_ack_v1";
+export const PROXY_WINDOW_WS_BIDIRECTIONAL_ACK_CAPABILITY = "stream_bidirectional_ack_v2";
 export const PROXY_WINDOW_WS_ERROR_MSG_TYPE = "flowersec-proxy:ws_error";
 export const PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE = "flowersec-proxy:stream_chunk";
 export const PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE = "flowersec-proxy:stream_write_ack";
@@ -37,13 +37,14 @@ export type ProxyWindowWsOpenMsg = Readonly<{
   type: typeof PROXY_WINDOW_WS_OPEN_MSG_TYPE;
   path: string;
   protocols?: readonly string[];
+  capabilities: readonly string[];
   capabilityNonce?: string;
 }>;
 
 export type ProxyWindowWsOpenAckMsg = Readonly<{
   type: typeof PROXY_WINDOW_WS_OPEN_ACK_MSG_TYPE;
   protocol: string;
-  capabilities?: readonly string[];
+  capabilities: readonly string[];
 }>;
 
 export type ProxyWindowWsErrorMsg = Readonly<{
@@ -54,7 +55,7 @@ export type ProxyWindowWsErrorMsg = Readonly<{
 export type ProxyWindowStreamChunkMsg = Readonly<{
   type: typeof PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE;
   data: ArrayBuffer;
-  writeId?: number;
+  writeId: number;
 }>;
 
 export type ProxyWindowStreamWriteAckMsg = Readonly<{

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { PROXY_WINDOW_WS_BIDIRECTIONAL_ACK_CAPABILITY } from "./windowBridgeProtocol.js";
+
 const createServiceWorkerControllerGuardMock = vi.fn();
 
 vi.mock("./controllerGuard.js", () => ({
@@ -10,6 +12,14 @@ afterEach(() => {
   vi.clearAllMocks();
   delete (globalThis as any).window;
 });
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let index = 0; index < 50; index++) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("timed out waiting for MessagePort traffic");
+}
 
 describe("registerProxyAppWindowWithServiceWorkerControl", () => {
   test("registers the service worker, ensures control, then installs the app bridge", async () => {
@@ -109,8 +119,21 @@ describe("registerProxyAppWindow", () => {
     const addEventListener = vi.fn();
     const postMessage = vi.fn((_message: unknown, _origin: string, transfer?: Transferable[]) => {
       const port = transfer?.[0] as MessagePort | undefined;
+      if (port != null) {
+        port.onmessage = (event) => {
+          const data = event.data as { type?: string; writeId?: number };
+          if (data.type === "flowersec-proxy:stream_chunk" && data.writeId != null) {
+            port.postMessage({ type: "flowersec-proxy:stream_write_ack", writeId: data.writeId });
+          }
+        };
+        port.start?.();
+      }
       queueMicrotask(() => {
-        port?.postMessage({ type: "flowersec-proxy:ws_open_ack", protocol: "demo" });
+        port?.postMessage({
+          type: "flowersec-proxy:ws_open_ack",
+          protocol: "demo",
+          capabilities: [PROXY_WINDOW_WS_BIDIRECTIONAL_ACK_CAPABILITY],
+        });
       });
     });
     const targetWindow = {
@@ -140,6 +163,7 @@ describe("registerProxyAppWindow", () => {
         type: "flowersec-proxy:ws_open",
         path: "/ws",
         protocols: ["demo"],
+        capabilities: [PROXY_WINDOW_WS_BIDIRECTIONAL_ACK_CAPABILITY],
         capabilityNonce: "bridge_tok",
       }),
       "https://controller.example.test",
@@ -169,7 +193,7 @@ describe("registerProxyAppWindow", () => {
         controllerPort?.postMessage({
           type: "flowersec-proxy:ws_open_ack",
           protocol: "demo",
-          capabilities: ["stream_write_ack_v1"],
+          capabilities: [PROXY_WINDOW_WS_BIDIRECTIONAL_ACK_CAPABILITY],
         });
       });
     });
@@ -203,6 +227,126 @@ describe("registerProxyAppWindow", () => {
     });
     await writePromise;
     expect(writeSettled).toBe(true);
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capabilities: [PROXY_WINDOW_WS_BIDIRECTIONAL_ACK_CAPABILITY],
+      }),
+      "https://controller.example.test",
+      expect.any(Array),
+    );
     handle.dispose();
+  });
+
+  test("rejects a controller that does not confirm bidirectional acknowledgements", async () => {
+    const addEventListener = vi.fn();
+    const postMessage = vi.fn((_message: unknown, _origin: string, transfer?: Transferable[]) => {
+      const port = transfer?.[0] as MessagePort | undefined;
+      queueMicrotask(() => {
+        port?.postMessage({ type: "flowersec-proxy:ws_open_ack", protocol: "demo", capabilities: [] });
+      });
+    });
+    const targetWindow = {
+      navigator: {
+        serviceWorker: {
+          addEventListener,
+          removeEventListener: vi.fn(),
+        },
+      },
+      parent: { postMessage },
+      top: { postMessage },
+    };
+
+    const { registerProxyAppWindow } = await import("./appWindow.js");
+    const handle = registerProxyAppWindow({
+      controllerOrigin: "https://controller.example.test",
+      controllerWindow: targetWindow.parent as any,
+      targetWindow: targetWindow as any,
+    });
+
+    await expect(handle.runtime.openWebSocketStream("/ws")).rejects.toThrow(
+      /bidirectional stream acknowledgements/,
+    );
+    handle.dispose();
+  });
+
+  test("dispose rejects pending opens and is idempotent", async () => {
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    let controllerPort: MessagePort | null = null;
+    const messages: Array<{ type?: string; message?: string }> = [];
+    const postMessage = vi.fn((_message: unknown, _origin: string, transfer?: Transferable[]) => {
+      controllerPort = transfer?.[0] as MessagePort | undefined ?? null;
+      if (controllerPort == null) return;
+      controllerPort.onmessage = (event) => messages.push(event.data);
+      controllerPort.start?.();
+    });
+    const targetWindow = {
+      navigator: { serviceWorker: { addEventListener, removeEventListener } },
+      parent: { postMessage },
+      top: { postMessage },
+    };
+
+    const { registerProxyAppWindow } = await import("./appWindow.js");
+    const handle = registerProxyAppWindow({
+      controllerOrigin: "https://controller.example.test",
+      controllerWindow: targetWindow.parent as any,
+      targetWindow: targetWindow as any,
+    });
+    const opened = handle.runtime.openWebSocketStream("/ws");
+
+    handle.dispose();
+    handle.dispose();
+
+    await expect(opened).rejects.toThrow("proxy app Window bridge is disposed");
+    await waitFor(() => messages.some((message) => message.type === "flowersec-proxy:stream_reset"));
+    expect(messages).toContainEqual({
+      type: "flowersec-proxy:stream_reset",
+      message: "proxy app Window bridge is disposed",
+    });
+    expect(removeEventListener).toHaveBeenCalledTimes(1);
+    await expect(handle.runtime.openWebSocketStream("/after-dispose")).rejects.toThrow("disposed");
+    controllerPort?.close();
+  });
+
+  test("dispose rejects a write waiting for controller acknowledgement", async () => {
+    const addEventListener = vi.fn();
+    let controllerPort: MessagePort | null = null;
+    const messages: Array<{ type?: string; writeId?: number; message?: string }> = [];
+    const postMessage = vi.fn((_message: unknown, _origin: string, transfer?: Transferable[]) => {
+      controllerPort = transfer?.[0] as MessagePort | undefined ?? null;
+      if (controllerPort == null) return;
+      controllerPort.onmessage = (event) => messages.push(event.data);
+      controllerPort.start?.();
+      queueMicrotask(() => {
+        controllerPort?.postMessage({
+          type: "flowersec-proxy:ws_open_ack",
+          protocol: "demo",
+          capabilities: [PROXY_WINDOW_WS_BIDIRECTIONAL_ACK_CAPABILITY],
+        });
+      });
+    });
+    const targetWindow = {
+      navigator: { serviceWorker: { addEventListener, removeEventListener: vi.fn() } },
+      parent: { postMessage },
+      top: { postMessage },
+    };
+
+    const { registerProxyAppWindow } = await import("./appWindow.js");
+    const handle = registerProxyAppWindow({
+      controllerOrigin: "https://controller.example.test",
+      controllerWindow: targetWindow.parent as any,
+      targetWindow: targetWindow as any,
+    });
+    const opened = await handle.runtime.openWebSocketStream("/ws");
+    const write = opened.stream.write(new Uint8Array([1, 2, 3]));
+    await waitFor(() => messages.some((message) => message.type === "flowersec-proxy:stream_chunk"));
+
+    handle.dispose();
+    handle.dispose();
+
+    await expect(write).rejects.toThrow("proxy app Window bridge is disposed");
+    await waitFor(() => messages.some((message) => message.type === "flowersec-proxy:stream_reset"));
+    expect(messages.filter((message) => message.type === "flowersec-proxy:stream_reset")).toHaveLength(1);
+    controllerPort?.close();
   });
 });

@@ -48,6 +48,39 @@ describe("transport security policy", () => {
     expect(JSON.stringify(policy.mock.calls)).not.toContain("secret");
   });
 
+  test.each([
+    false,
+    "false",
+    1,
+    {},
+    null,
+    undefined,
+  ])("custom policy rejects non-true result %#", async (result) => {
+    const policy = (() => result) as never;
+    await expect(enforceTransportSecurity({
+      rawUrl: "ws://example.com/ws",
+      path: "tunnel",
+      policy,
+    })).rejects.toMatchObject({
+      path: "tunnel",
+      stage: "validate",
+      code: "transport_policy_denied",
+    });
+  });
+
+  test("custom policy errors fail closed and preserve the cause", async () => {
+    const cause = new Error("policy failed");
+    const policy = vi.fn(() => { throw cause; });
+    await expect(enforceTransportSecurity({
+      rawUrl: "ws://example.com/ws",
+      path: "direct",
+      policy,
+    })).rejects.toMatchObject({
+      code: "transport_policy_denied",
+      cause,
+    });
+  });
+
   test("missing policy requires TLS", async () => {
     const run = enforceTransportSecurity({
       rawUrl: "ws://example.com/ws",

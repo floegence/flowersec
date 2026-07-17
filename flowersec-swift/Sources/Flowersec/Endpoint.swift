@@ -48,6 +48,8 @@ public struct DirectEndpointCredential: Sendable {
   public var suite: Suite
   public var psk: Data
   public var initExpiresAtUnixS: Int64
+  /// Commits an authenticated credential before Yamux starts. The backing transaction must be
+  /// idempotent, cancellation-safe, and bounded by its own deadline.
   public var commitAuthenticated: (@Sendable () async throws -> Void)?
 
   public init(
@@ -65,6 +67,8 @@ public struct DirectEndpointCredential: Sendable {
   }
 }
 
+/// Structurally validated fields from an unauthenticated peer INIT. The peer is authenticated only
+/// after the subsequent PSK handshake succeeds.
 public struct DirectHandshakeInit: Equatable, Sendable {
   public var channelID: String
   public var version: UInt8
@@ -79,6 +83,7 @@ public struct DirectHandshakeInit: Equatable, Sendable {
   }
 }
 
+/// Resolves credentials without consuming them. The resolver must cooperate with task cancellation.
 public typealias DirectCredentialResolver =
   @Sendable (DirectHandshakeInit) async throws -> DirectEndpointCredential
 
@@ -220,8 +225,13 @@ public enum Endpoint {
     secureTransport: Bool = true,
     options: EndpointOptions = EndpointOptions()
   ) async throws -> EndpointSession {
-    try validate(options: options, path: .direct)
-    try await enforceAcceptedTransport(secure: secureTransport, options: options)
+    do {
+      try validate(options: options, path: .direct)
+      try await enforceAcceptedTransport(secure: secureTransport, options: options)
+    } catch {
+      startTransportClose(transport)
+      throw error
+    }
     return try await establish(
       transport: transport,
       credential: credential,
@@ -238,9 +248,18 @@ public enum Endpoint {
     secureTransport: Bool = true,
     options: EndpointOptions = EndpointOptions()
   ) async throws -> EndpointSession {
-    try validate(options: options, path: .direct)
-    try await enforceAcceptedTransport(secure: secureTransport, options: options)
-    return try await withHandshakeTimeout(transport: transport, timeout: options.handshakeTimeout) {
+    do {
+      try validate(options: options, path: .direct)
+      try await enforceAcceptedTransport(secure: secureTransport, options: options)
+    } catch {
+      startTransportClose(transport)
+      throw error
+    }
+    return try await withHandshakeTimeout(
+      transport: transport,
+      path: .direct,
+      timeout: options.handshakeTimeout
+    ) { deadline in
       let frame = try await transport.readBinary()
       let payload = try FlowersecHandshakeFrame.decode(
         frame,
@@ -253,8 +272,26 @@ public enum Endpoint {
       else {
         throw FlowersecError.invalidHandshake("Direct handshake init is invalid.")
       }
+      let channelID = message.channelID.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !channelID.isEmpty else {
+        throw FlowersecError(
+          path: .direct,
+          stage: .validate,
+          code: .missingChannelID,
+          message: "Direct handshake init is missing channel_id."
+        )
+      }
+      guard channelID == message.channelID, channelID.utf8.count <= 256 else {
+        throw FlowersecError(
+          path: .direct,
+          stage: .validate,
+          code: .invalidInput,
+          message: "Direct handshake channel_id is not canonical."
+        )
+      }
+      try checkHandshakeBoundary(path: .direct, deadline: deadline)
       let initInfo = DirectHandshakeInit(
-        channelID: message.channelID,
+        channelID: channelID,
         version: message.version,
         suite: suite,
         clientFeatures: message.clientFeatures
@@ -263,6 +300,9 @@ public enum Endpoint {
       do {
         credential = try await resolver(initInfo)
       } catch {
+        if let interruption = handshakeInterruption(path: .direct, error: error) {
+          throw interruption
+        }
         throw FlowersecError(
           path: .direct,
           stage: .validate,
@@ -270,8 +310,10 @@ public enum Endpoint {
           message: "Direct endpoint credential resolution failed: \(error.localizedDescription)"
         )
       }
-      guard credential.channelID == message.channelID, credential.suite == suite else {
-        throw FlowersecError.invalidHandshake("Resolved direct credentials do not match the init.")
+      try checkHandshakeBoundary(path: .direct, deadline: deadline)
+      guard credential.channelID == channelID, credential.suite == suite else {
+        throw FlowersecError.invalidHandshake(
+          "Resolved direct credentials do not match the init.")
       }
       return try await establishWithoutTimeout(
         transport: PrefetchedBinaryTransport(first: frame, inner: transport),
@@ -279,7 +321,8 @@ public enum Endpoint {
         path: .direct,
         endpointInstanceID: nil,
         idleTimeout: nil,
-        options: options
+        options: options,
+        deadline: deadline
       )
     }
   }
@@ -288,30 +331,22 @@ public enum Endpoint {
     grant: ChannelInitGrant,
     options: EndpointOptions = EndpointOptions()
   ) async throws -> EndpointSession {
-    guard grant.role == 2 else {
-      throw FlowersecError(
-        path: .tunnel,
-        stage: .validate,
-        code: .roleMismatch,
-        message: "Tunnel endpoint grants must use the server role."
-      )
-    }
-    guard grant.allowedSuites.contains(grant.defaultSuite),
-      !grant.token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    else {
-      throw FlowersecError(
-        path: .tunnel,
-        stage: .validate,
-        code: .invalidSuite,
-        message: "Tunnel endpoint grant is invalid."
-      )
-    }
+    let validatedGrant = try validateTunnelGrant(grant)
     try validate(options: options, path: .tunnel)
-    try await FlowersecTransportSecurity.enforce(
-      url: grant.tunnelURL,
-      path: .tunnel,
-      options: connectOptions(options)
-    )
+    do {
+      try checkConnectCancellation(path: .tunnel)
+      try await FlowersecTransportSecurity.enforce(
+        url: grant.tunnelURL,
+        path: .tunnel,
+        options: connectOptions(options)
+      )
+      try checkConnectCancellation(path: .tunnel)
+    } catch {
+      if Task.isCancelled || error is CancellationError {
+        throw connectCanceled(path: .tunnel)
+      }
+      throw error
+    }
     let transport = FlowersecWebSocketBinaryTransport(
       url: grant.tunnelURL,
       origin: options.origin,
@@ -319,36 +354,38 @@ public enum Endpoint {
       path: .tunnel,
       onDiagnosticEvent: options.onDiagnosticEvent
     )
-    await transport.resume()
-    let endpointInstanceID = try Data.secureRandom(count: 24).base64URLEncodedString()
     do {
-      try await transport.writeText(
-        TunnelAttach(
-          v: 1,
-          channelID: grant.channelID,
-          role: 2,
-          token: grant.token,
-          endpointInstanceID: endpointInstanceID,
-          caps: nil
-        ).encoded()
-      )
-      return try await establish(
-        transport: transport,
-        credential: DirectEndpointCredential(
-          channelID: grant.channelID,
-          suite: grant.defaultSuite,
-          psk: grant.psk,
-          initExpiresAtUnixS: grant.channelInitExpiresAtUnixS
-        ),
-        path: .tunnel,
-        endpointInstanceID: endpointInstanceID,
-        idleTimeout: .seconds(max(0, grant.idleTimeoutSeconds)),
-        options: options
-      )
+      try checkConnectCancellation(path: .tunnel)
     } catch {
-      await transport.close()
+      startTransportClose(transport)
       throw error
     }
+    try await resumeTunnelTransport(transport)
+    let endpointInstanceID = try Data.secureRandom(count: 24).base64URLEncodedString()
+    try await writeTunnelAttach(
+      transport: transport,
+      text: TunnelAttach(
+        v: 1,
+        channelID: validatedGrant.channelID,
+        role: 2,
+        token: validatedGrant.token,
+        endpointInstanceID: endpointInstanceID,
+        caps: nil
+      ).encoded()
+    )
+    return try await establish(
+      transport: transport,
+      credential: DirectEndpointCredential(
+        channelID: validatedGrant.channelID,
+        suite: grant.defaultSuite,
+        psk: grant.psk,
+        initExpiresAtUnixS: grant.channelInitExpiresAtUnixS
+      ),
+      path: .tunnel,
+      endpointInstanceID: endpointInstanceID,
+      idleTimeout: .seconds(max(0, grant.idleTimeoutSeconds)),
+      options: options
+    )
   }
 
   private static func establish(
@@ -359,14 +396,17 @@ public enum Endpoint {
     idleTimeout: Duration?,
     options: EndpointOptions
   ) async throws -> EndpointSession {
-    try await withHandshakeTimeout(transport: transport, timeout: options.handshakeTimeout) {
+    try await withHandshakeTimeout(
+      transport: transport, path: path, timeout: options.handshakeTimeout
+    ) { deadline in
       try await establishWithoutTimeout(
         transport: transport,
         credential: credential,
         path: path,
         endpointInstanceID: endpointInstanceID,
         idleTimeout: idleTimeout,
-        options: options
+        options: options,
+        deadline: deadline
       )
     }
   }
@@ -377,7 +417,8 @@ public enum Endpoint {
     path: FlowersecPath,
     endpointInstanceID: String?,
     idleTimeout: Duration?,
-    options: EndpointOptions
+    options: EndpointOptions,
+    deadline: ContinuousClock.Instant
   ) async throws -> EndpointSession {
     var psk = Data(credential.psk)
     defer { psk.resetBytes(in: 0..<psk.count) }
@@ -398,15 +439,33 @@ public enum Endpoint {
       )
     )
     do {
-      try await credential.commitAuthenticated?()
+      try checkHandshakeBoundary(path: path, deadline: deadline)
     } catch {
-      await secure.close()
+      startSecureClose(secure)
+      throw error
+    }
+    do {
+      try await credential.commitAuthenticated?()
+    } catch is CancellationError {
+      startSecureClose(secure)
+      throw CancellationError()
+    } catch {
+      startSecureClose(secure)
+      if let interruption = handshakeInterruption(path: path, error: error) {
+        throw interruption
+      }
       throw FlowersecError(
         path: path,
         stage: .handshake,
         code: .credentialCommitFailed,
         message: "Endpoint credential commit failed: \(error.localizedDescription)"
       )
+    }
+    do {
+      try checkHandshakeBoundary(path: path, deadline: deadline)
+    } catch {
+      startSecureClose(secure)
+      throw error
     }
     let liveness: (interval: Duration, timeout: Duration)?
     if path == .tunnel, let idleTimeout, idleTimeout > .zero {
@@ -424,6 +483,12 @@ public enum Endpoint {
       onDiagnosticEvent: options.onDiagnosticEvent
     )
     await yamux.start()
+    do {
+      try checkHandshakeBoundary(path: path, deadline: deadline)
+    } catch {
+      startYamuxClose(yamux)
+      throw error
+    }
     return EndpointSession(
       path: path,
       endpointInstanceID: endpointInstanceID,
@@ -447,6 +512,73 @@ public enum Endpoint {
       )
     }
     try options.yamuxLimits.validate()
+  }
+
+  static func validateTunnelGrant(_ grant: ChannelInitGrant) throws -> (
+    channelID: String,
+    token: String
+  ) {
+    guard grant.role == 2 else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .roleMismatch,
+        message: "Tunnel endpoint grants must use the server role."
+      )
+    }
+    let channelID = grant.channelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !channelID.isEmpty else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .missingChannelID,
+        message: "Tunnel endpoint grant is missing channel_id."
+      )
+    }
+    guard channelID.utf8.count <= 256 else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .invalidInput,
+        message: "Tunnel endpoint channel_id is too long."
+      )
+    }
+    let token = grant.token.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !token.isEmpty else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .missingToken,
+        message: "Tunnel endpoint grant is missing its attach token."
+      )
+    }
+    guard grant.channelInitExpiresAtUnixS > 0 else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .missingInitExp,
+        message: "Tunnel endpoint grant is missing its init expiry."
+      )
+    }
+    guard !grant.allowedSuites.isEmpty,
+      grant.allowedSuites.contains(grant.defaultSuite)
+    else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .invalidSuite,
+        message: "Tunnel endpoint grant has invalid cipher suites."
+      )
+    }
+    guard grant.psk.count == 32 else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .invalidPSK,
+        message: "Tunnel endpoint PSK must be 32 bytes."
+      )
+    }
+    return (channelID, token)
   }
 
   private static func enforceAcceptedTransport(
@@ -477,48 +609,295 @@ public enum Endpoint {
     )
   }
 
-  private static func withHandshakeTimeout<T: Sendable>(
+  static func withHandshakeTimeout<T: Sendable>(
     transport: any FlowersecBinaryTransport,
+    path: FlowersecPath,
     timeout: Duration,
-    operation: @escaping @Sendable () async throws -> T
+    beforeTaskRegistration: (@Sendable () -> Void)? = nil,
+    operation: @escaping @Sendable (ContinuousClock.Instant) async throws -> T
   ) async throws -> T {
-    try await withThrowingTaskGroup(of: EndpointHandshakeRace<T>.self) { group in
-      group.addTask {
-        do { return .completed(try await operation()) } catch { return .failed(error) }
-      }
-      group.addTask {
+    if Task.isCancelled {
+      startTransportClose(transport)
+      throw handshakeCanceled(path: path)
+    }
+    let deadline = ContinuousClock.now + timeout
+    let race = AsyncStream<EndpointHandshakeRace<T>>.makeStream(
+      bufferingPolicy: .bufferingOldest(1)
+    )
+    let registration = EndpointHandshakeTaskRegistration()
+    let event = await withTaskCancellationHandler {
+      let operationStart = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingOldest(1))
+      let operationTask = Task<Void, Never> {
+        var iterator = operationStart.stream.makeAsyncIterator()
+        guard await iterator.next() != nil else { return }
         do {
-          try await Task.sleep(for: timeout)
-          return .timedOut
+          try Task.checkCancellation()
+          let value = try await operation(deadline)
+          let finishedAt = ContinuousClock.now
+          if Task.isCancelled {
+            throw handshakeCanceled(path: path)
+          }
+          if finishedAt >= deadline {
+            throw handshakeTimedOut(path: path)
+          }
+          race.continuation.yield(.completed(value, finishedAt: finishedAt))
         } catch {
-          return .failed(error)
+          race.continuation.yield(.failed(error, finishedAt: ContinuousClock.now))
         }
       }
-      guard let result = try await group.next() else {
-        throw FlowersecError.invalidHandshake("Endpoint handshake ended without a result.")
+      beforeTaskRegistration?()
+      if registration.register(operationTask) {
+        operationStart.continuation.yield(())
       }
-      group.cancelAll()
-      switch result {
-      case .completed(let value): return value
-      case .failed(let error): throw error
-      case .timedOut:
-        await transport.close()
-        throw FlowersecError(
-          path: .direct,
-          stage: .handshake,
-          code: .timeout,
-          message: "Endpoint handshake timed out."
-        )
+      operationStart.continuation.finish()
+
+      let timeoutStart = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingOldest(1))
+      let timeoutTask = Task<Void, Never> {
+        var iterator = timeoutStart.stream.makeAsyncIterator()
+        guard await iterator.next() != nil else { return }
+        do {
+          try Task.checkCancellation()
+          let remaining = deadline - ContinuousClock.now
+          if remaining > .zero {
+            try await Task.sleep(for: remaining)
+          }
+          race.continuation.yield(.timedOut)
+        } catch is CancellationError {
+          return
+        } catch {
+          race.continuation.yield(.failed(error, finishedAt: ContinuousClock.now))
+        }
       }
+      if registration.register(timeoutTask) {
+        timeoutStart.continuation.yield(())
+      }
+      timeoutStart.continuation.finish()
+
+      var iterator = race.stream.makeAsyncIterator()
+      return await iterator.next()
+    } onCancel: {
+      registration.cancelAll()
+      startTransportClose(transport)
+      race.continuation.yield(.canceled)
     }
+    race.continuation.finish()
+    registration.cancelAll()
+
+    return try resolveHandshakeRaceEvent(
+      event,
+      transport: transport,
+      path: path,
+      deadline: deadline
+    )
+  }
+
+  static func resolveHandshakeRaceEvent<T: Sendable>(
+    _ event: EndpointHandshakeRace<T>?,
+    transport: any FlowersecBinaryTransport,
+    path: FlowersecPath,
+    deadline: ContinuousClock.Instant
+  ) throws -> T {
+    guard let event else {
+      startTransportClose(transport)
+      if let interruption = handshakeBoundaryInterruption(path: path, deadline: deadline) {
+        throw interruption
+      }
+      throw FlowersecError.invalidHandshake(
+        "Endpoint handshake ended without a result.",
+        path: path
+      )
+    }
+    if Task.isCancelled {
+      startTransportClose(transport)
+      throw handshakeCanceled(path: path)
+    }
+    switch event {
+    case .completed(let value, let finishedAt):
+      guard finishedAt < deadline else {
+        startTransportClose(transport)
+        throw handshakeTimedOut(path: path)
+      }
+      return value
+    case .failed(let error, let finishedAt):
+      startTransportClose(transport)
+      if finishedAt >= deadline {
+        throw handshakeTimedOut(path: path)
+      }
+      if let interruption = handshakeInterruption(path: path, error: error) {
+        throw interruption
+      }
+      throw error
+    case .timedOut:
+      startTransportClose(transport)
+      throw handshakeTimedOut(path: path)
+    case .canceled:
+      startTransportClose(transport)
+      throw handshakeCanceled(path: path)
+    }
+  }
+
+  private static func checkHandshakeBoundary(
+    path: FlowersecPath,
+    deadline: ContinuousClock.Instant
+  ) throws {
+    if let interruption = handshakeBoundaryInterruption(path: path, deadline: deadline) {
+      throw interruption
+    }
+  }
+
+  static func writeTunnelAttach(
+    transport: any FlowersecTunnelAttachTransport,
+    text: String
+  ) async throws {
+    do {
+      try checkConnectCancellation(path: .tunnel)
+      try await withTaskCancellationHandler {
+        try checkConnectCancellation(path: .tunnel)
+        try await transport.writeText(text)
+        try checkConnectCancellation(path: .tunnel)
+      } onCancel: {
+        startTransportClose(transport)
+      }
+    } catch {
+      startTransportClose(transport)
+      if Task.isCancelled || error is CancellationError {
+        throw connectCanceled(path: .tunnel)
+      }
+      throw error
+    }
+  }
+
+  static func resumeTunnelTransport(
+    _ transport: FlowersecWebSocketBinaryTransport
+  ) async throws {
+    do {
+      try await transport.resume()
+    } catch {
+      startTransportClose(transport)
+      if Task.isCancelled || error is CancellationError {
+        throw connectCanceled(path: .tunnel)
+      }
+      throw error
+    }
+  }
+
+  private static func checkConnectCancellation(path: FlowersecPath) throws {
+    if Task.isCancelled {
+      throw connectCanceled(path: path)
+    }
+  }
+
+  private static func handshakeBoundaryInterruption(
+    path: FlowersecPath,
+    deadline: ContinuousClock.Instant
+  ) -> FlowersecError? {
+    // Caller cancellation wins when it is already observable at the completion boundary.
+    if Task.isCancelled {
+      return handshakeCanceled(path: path)
+    }
+    if ContinuousClock.now >= deadline {
+      return handshakeTimedOut(path: path)
+    }
+    return nil
+  }
+
+  private static func startTransportClose(_ transport: any FlowersecBinaryTransport) {
+    Task { await transport.close() }
+  }
+
+  private static func startSecureClose(_ secure: FlowersecSecureChannel) {
+    Task { await secure.close() }
+  }
+
+  private static func startYamuxClose(_ yamux: FlowersecYamuxClient) {
+    Task { await yamux.close() }
+  }
+
+  private static func handshakeInterruption(
+    path: FlowersecPath,
+    error: any Error
+  ) -> FlowersecError? {
+    if error is CancellationError {
+      return handshakeCanceled(path: path)
+    }
+    guard let flowersecError = error as? FlowersecError else { return nil }
+    switch flowersecError.code {
+    case .timeout:
+      return handshakeTimedOut(path: path)
+    case .canceled:
+      return handshakeCanceled(path: path)
+    default:
+      return nil
+    }
+  }
+
+  private static func handshakeTimedOut(path: FlowersecPath) -> FlowersecError {
+    FlowersecError(
+      path: path,
+      stage: .handshake,
+      code: .timeout,
+      message: "Endpoint handshake timed out."
+    )
+  }
+
+  private static func handshakeCanceled(path: FlowersecPath) -> FlowersecError {
+    FlowersecError(
+      path: path,
+      stage: .handshake,
+      code: .canceled,
+      message: "Endpoint handshake was canceled."
+    )
+  }
+
+  private static func connectCanceled(path: FlowersecPath) -> FlowersecError {
+    FlowersecError(
+      path: path,
+      stage: .connect,
+      code: .canceled,
+      message: "Endpoint connection was canceled."
+    )
   }
 }
 
-private enum EndpointHandshakeRace<T: Sendable>: @unchecked Sendable {
-  case completed(T)
-  case failed(any Error)
+enum EndpointHandshakeRace<T: Sendable>: @unchecked Sendable {
+  case completed(T, finishedAt: ContinuousClock.Instant)
+  case failed(any Error, finishedAt: ContinuousClock.Instant)
   case timedOut
+  case canceled
 }
+
+private final class EndpointHandshakeTaskRegistration: @unchecked Sendable {
+  private let lock = NSLock()
+  private var tasks: [Task<Void, Never>] = []
+  private var canceled = false
+
+  func register(_ task: Task<Void, Never>) -> Bool {
+    lock.lock()
+    guard !canceled else {
+      lock.unlock()
+      task.cancel()
+      return false
+    }
+    tasks.append(task)
+    lock.unlock()
+    return true
+  }
+
+  func cancelAll() {
+    lock.lock()
+    canceled = true
+    let registered = tasks
+    tasks.removeAll()
+    lock.unlock()
+    for task in registered { task.cancel() }
+  }
+}
+
+protocol FlowersecTunnelAttachTransport: FlowersecBinaryTransport {
+  func writeText(_ text: String) async throws
+}
+
+extension FlowersecWebSocketBinaryTransport: FlowersecTunnelAttachTransport {}
 
 private actor PrefetchedBinaryTransport: FlowersecBinaryTransport {
   private var first: Data?

@@ -65,11 +65,28 @@ final class TransportSecurityTests: XCTestCase {
     await fulfillment(of: [called], timeout: 1)
   }
 
+  func testCustomPolicyPropagatesCancellationError() async throws {
+    let url = try XCTUnwrap(URL(string: "wss://example.com/private"))
+    do {
+      try await FlowersecTransportSecurity.enforce(
+        url: url,
+        path: .tunnel,
+        options: ConnectOptions(
+          transportSecurityPolicy: .custom { _ in throw CancellationError() }
+        )
+      )
+      XCTFail("Expected custom policy cancellation")
+    } catch is CancellationError {
+      XCTAssertTrue(true)
+    }
+  }
+
   func testNetworkPlaintextPolicyAllowsOnlyExplicitCanonicalIPHosts() async throws {
-    let policy = try TransportSecurityPolicy.networkPlaintext(options: .init(
-      allowedHosts: ["192.168.1.20", "2001:db8::20"],
-      riskAcceptance: .acceptPreE2ECredentialExposure
-    ))
+    let policy = try TransportSecurityPolicy.networkPlaintext(
+      options: .init(
+        allowedHosts: ["192.168.1.20", "2001:db8::20"],
+        riskAcceptance: .acceptPreE2ECredentialExposure
+      ))
     let allowed = [
       "wss://service.example/ws",
       "ws://192.168.1.20/ws",
@@ -78,13 +95,15 @@ final class TransportSecurityTests: XCTestCase {
     for raw in allowed {
       var options = ConnectOptions()
       options.transportSecurityPolicy = policy
-      try await FlowersecTransportSecurity.enforce(url: try XCTUnwrap(URL(string: raw)), path: .direct, options: options)
+      try await FlowersecTransportSecurity.enforce(
+        url: try XCTUnwrap(URL(string: raw)), path: .direct, options: options)
     }
     for raw in ["ws://192.168.1.21/ws", "ws://127.0.0.1/ws"] {
       var options = ConnectOptions()
       options.transportSecurityPolicy = policy
       do {
-        try await FlowersecTransportSecurity.enforce(url: try XCTUnwrap(URL(string: raw)), path: .direct, options: options)
+        try await FlowersecTransportSecurity.enforce(
+          url: try XCTUnwrap(URL(string: raw)), path: .direct, options: options)
         XCTFail("Expected network plaintext policy denial for \(raw)")
       } catch let error as FlowersecError {
         XCTAssertEqual(error.code, .transportPolicyDenied)
@@ -103,15 +122,19 @@ final class TransportSecurityTests: XCTestCase {
       "fe80::1",
       "::ffff:c0a8:114",
     ]
-    XCTAssertThrowsError(try TransportSecurityPolicy.networkPlaintext(options: .init(
-      allowedHosts: [],
-      riskAcceptance: .acceptPreE2ECredentialExposure
-    )))
+    XCTAssertThrowsError(
+      try TransportSecurityPolicy.networkPlaintext(
+        options: .init(
+          allowedHosts: [],
+          riskAcceptance: .acceptPreE2ECredentialExposure
+        )))
     for host in unsafeHosts {
-      XCTAssertThrowsError(try TransportSecurityPolicy.networkPlaintext(options: .init(
-        allowedHosts: [host],
-        riskAcceptance: .acceptPreE2ECredentialExposure
-      )))
+      XCTAssertThrowsError(
+        try TransportSecurityPolicy.networkPlaintext(
+          options: .init(
+            allowedHosts: [host],
+            riskAcceptance: .acceptPreE2ECredentialExposure
+          )))
     }
   }
 
@@ -165,7 +188,8 @@ final class TransportSecurityTests: XCTestCase {
 
   func testConnectOptionHardeningDefaults() {
     let options = ConnectOptions()
-    if case .requireTLS = options.transportSecurityPolicy {} else {
+    if case .requireTLS = options.transportSecurityPolicy {
+    } else {
       XCTFail("Expected TLS by default")
     }
     XCTAssertEqual(options.handshakeTimeout, .seconds(10))
@@ -199,5 +223,59 @@ final class TransportSecurityTests: XCTestCase {
         XCTAssertEqual(error.code, .invalidOption)
       }
     }
+  }
+
+  func testConnectArtifactsFailBeforeTransportPolicyWhenInvalid() async throws {
+    let policyCalled = expectation(description: "transport policy")
+    policyCalled.isInverted = true
+    let options = ConnectOptions(
+      transportSecurityPolicy: .custom { _ in
+        policyCalled.fulfill()
+        return true
+      })
+
+    var direct = DirectConnectInfo(
+      wsURL: URL(string: "wss://example.invalid/ws")!,
+      channelID: " ",
+      psk: Data(repeating: 0x2a, count: 32),
+      channelInitExpiresAtUnixS: 1,
+      defaultSuite: .x25519HKDFSHA256AES256GCM
+    )
+    for (channelID, code) in [
+      (" ", FlowersecCode.missingChannelID),
+      (String(repeating: "x", count: 257), FlowersecCode.invalidInput),
+    ] {
+      direct.channelID = channelID
+      do {
+        _ = try await Flowersec.connectDirect(direct, options: options)
+        XCTFail("Expected invalid direct channel_id")
+      } catch let error as FlowersecError {
+        XCTAssertEqual(error.path, .direct)
+        XCTAssertEqual(error.stage, .validate)
+        XCTAssertEqual(error.code, code)
+      }
+    }
+
+    let tunnel = ChannelInitGrant(
+      tunnelURL: URL(string: "wss://example.invalid/tunnel")!,
+      channelID: "channel-test",
+      channelInitExpiresAtUnixS: 1,
+      idleTimeoutSeconds: 60,
+      role: 1,
+      token: " ",
+      psk: Data(repeating: 0x2a, count: 32),
+      allowedSuites: [.x25519HKDFSHA256AES256GCM],
+      defaultSuite: .x25519HKDFSHA256AES256GCM
+    )
+    do {
+      _ = try await Flowersec.connectTunnel(tunnel, options: options)
+      XCTFail("Expected invalid tunnel token")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .validate)
+      XCTAssertEqual(error.code, .missingToken)
+    }
+
+    await fulfillment(of: [policyCalled], timeout: 0.05)
   }
 }

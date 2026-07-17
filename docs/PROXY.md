@@ -146,7 +146,7 @@ Error:
   "v": 1,
   "request_id": "uuid-or-rand",
   "ok": false,
-  "error": { "code": "upstream_dial_failed", "message": "dial tcp 127.0.0.1:8080: connect: connection refused" }
+  "error": { "code": "upstream_request_failed", "message": "upstream request failed" }
 }
 ```
 
@@ -427,6 +427,11 @@ Requirements:
   - A full admission queue fails with HTTP `503` and the generic `resource_exhausted` error code. Increase the queue only with a corresponding memory and latency budget; do not raise concurrency above the peer's stream capacity.
   - `dispose()` rejects queued and future HTTP requests while allowing already-admitted stream cleanup to finish. WebSocket opens do not consume HTTP permits.
 - Patched WebSocket text, binary, and Blob sends share one serial queue. `maxWsBufferedAmountBytes` defaults to `4 MiB`, and `bufferedAmount` reports user bytes whose writes have not completed.
+- The Node proxy server applies separate downstream resource budgets:
+  - `ProxyServerOptions.maxBufferedRequestBodyBytes` defaults to `maxBodyBytes` and caps the total logical request-body payload owned by one `serveProxySession(...)`. Reservations are released as soon as the upstream fetch call returns or fails, before a response body drains, and also on cancellation or body-read failure. The current contiguous-body handoff briefly holds both received chunks and their assembled body, so peak process memory for this payload may approach twice the configured logical budget during assembly.
+  - `ProxyServerOptions.maxWsQueuedBytes` defaults to one maximum WebSocket frame plus its 5-byte proxy header and caps upstream-to-Yamux queued bytes per WebSocket connection. Exceeding it closes the upstream with code `1011` and terminates that proxy stream.
+  - Yamux-to-upstream text, binary, ping, and pong frames wait for the Node `ws` callback before the next frame is read. A client close waits for the upstream close event and forwards the final close frame before the Yamux stream ends. Session cancellation terminates the upstream socket and interrupts either wait.
+  - These are direct resource limits, not waiting queues. Increase them only with an explicit memory budget; `maxWsFrameBytes` and `maxBodyBytes` remain the per-frame and per-request limits.
 - `external_origin` is trusted only when it is derived by the generated same-origin SW or supplied through an explicit trusted runtime option.
   - The runtime may set `externalOrigin` to a deployment-owned origin when the app is mounted behind a stable external URL.
   - A runtime-level trusted `externalOrigin` override takes precedence over app-supplied bridge metadata.
@@ -441,8 +446,11 @@ Requirements:
   - `controllerBridge.allowedOrigins` is mandatory and must list the app origins allowed to post bridge messages.
   - Origin-only controller bridge registration is rejected; use `expectedSource` when the controller can identify the app iframe/window.
   - Use `capabilityNonce` when the app source is not available at registration time or the embedding relationship is not uniquely identified by source alone. The app window and controller window must present the same high-entropy nonce; messages without it are ignored.
-  - New app/controller pairs negotiate write acknowledgements during open. When supported, an app-side write completes only after the controller finishes the Yamux write. Older controllers remain compatible without acknowledgements.
-  - The controller serializes writes and independently enforces the WebSocket pending-byte limit, including callers that bypass the patched WebSocket and write directly through the bridge.
+- App and controller bridges MUST both advertise `stream_bidirectional_ack_v2` during open. A missing capability is a protocol-version mismatch and MUST fail before the bridge starts carrying stream data.
+- Each direction permits exactly one unacknowledged chunk. The controller acknowledges an app chunk only after the Yamux write completes; the app acknowledges a controller chunk only when its local stream reader consumes the chunk.
+- App and controller handles own their pending opens, acknowledgements, and active streams. `dispose()` is idempotent and MUST reset or close every owned bridge so iframe replacement, page teardown, and explicit lifecycle cleanup do not leave detached work.
+- There is no fallback to the earlier one-direction acknowledgement behavior because it cannot bound the controller-to-app `MessagePort` queue. Deployments using the controller/app split MUST coordinate the app and controller on the same Flowersec minor version. Mixed versions fail fast instead of silently buffering or hanging.
+- The controller independently enforces the WebSocket pending-byte limit, including callers that bypass the patched WebSocket and write directly through the bridge.
 
 Artifact-first helper boundary:
 

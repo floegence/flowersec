@@ -27,6 +27,12 @@ Start with the [TypeScript cookbook](https://github.com/floegence/flowersec/tree
 
 High-level WebSocket connections require TLS by default. Use `AllowPlaintextForLoopback` only for literal local development targets.
 
+## Node Proxy Server
+
+The Node entrypoint exports `serveProxySession(...)`, `serveProxyStream(...)`, and `ProxyServerOptions`. Request bodies remain bounded per request by `maxBodyBytes`; `maxBufferedRequestBodyBytes` additionally caps the total buffered request-body bytes owned by one proxy session. WebSocket frames remain bounded by `maxWsFrameBytes`; `maxWsQueuedBytes` additionally caps upstream-to-Yamux queued bytes per connection, while the reverse direction waits for each Node `ws` send callback.
+
+The defaults keep one session request-body budget equal to `maxBodyBytes` and one queued WebSocket frame plus its proxy header. Raise either limit only when the deployment has a matching memory budget.
+
 ## Runtime Boundaries
 
 TypeScript owns browser and Service Worker integration. Shared tunnel, proxy gateway, and helper binaries remain Go-owned.

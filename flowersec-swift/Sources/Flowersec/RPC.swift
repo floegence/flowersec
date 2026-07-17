@@ -388,12 +388,14 @@ public enum Flowersec {
     options: ConnectOptions = ConnectOptions()
   ) async throws -> FlowersecClient {
     switch artifact {
-    case .direct(let info, let metadata):
+    case .direct(let rawInfo, let metadata):
+      let info = try preparedDirectConnectInfo(rawInfo)
       return try await connectDirect(
         info,
         options: try await artifactOptions(options, metadata: metadata, path: .direct)
       )
-    case .tunnel(let grant, let metadata):
+    case .tunnel(let rawGrant, let metadata):
+      let grant = try preparedTunnelGrant(rawGrant)
       return try await connectTunnel(
         grant,
         options: try await artifactOptions(options, metadata: metadata, path: .tunnel)
@@ -410,9 +412,10 @@ public enum Flowersec {
   }
 
   public static func connectDirect(
-    _ info: DirectConnectInfo,
+    _ rawInfo: DirectConnectInfo,
     options: DirectConnectOptions = DirectConnectOptions()
   ) async throws -> FlowersecClient {
+    let info = try preparedDirectConnectInfo(rawInfo)
     try validate(options: options, path: .direct)
     try await FlowersecTransportSecurity.enforce(url: info.wsURL, path: .direct, options: options)
     let transport = FlowersecWebSocketBinaryTransport(
@@ -422,7 +425,7 @@ public enum Flowersec {
       path: .direct,
       onDiagnosticEvent: options.onDiagnosticEvent
     )
-    await transport.resume()
+    try await resumeWebSocketTransport(transport)
     return try await establishConnection(
       info,
       transport: transport,
@@ -433,28 +436,15 @@ public enum Flowersec {
   }
 
   public static func connectTunnel(
-    _ grant: ChannelInitGrant,
+    _ rawGrant: ChannelInitGrant,
     options: TunnelConnectOptions = TunnelConnectOptions()
   ) async throws -> FlowersecClient {
-    guard grant.role == 1 else {
-      throw FlowersecError(
-        path: .tunnel,
-        stage: .validate,
-        code: .roleMismatch,
-        message: "Tunnel client grants must use the client role."
-      )
-    }
-    guard grant.allowedSuites.contains(grant.defaultSuite) else {
-      throw FlowersecError(
-        path: .tunnel,
-        stage: .validate,
-        code: .invalidSuite,
-        message: "Default suite must be included in allowed_suites."
-      )
-    }
+    let grant = try preparedTunnelGrant(rawGrant)
     try validate(options: options, path: .tunnel)
+    try Task.checkCancellation()
     try await FlowersecTransportSecurity.enforce(
       url: grant.tunnelURL, path: .tunnel, options: options)
+    try Task.checkCancellation()
     let transport = FlowersecWebSocketBinaryTransport(
       url: grant.tunnelURL,
       origin: options.origin,
@@ -462,20 +452,29 @@ public enum Flowersec {
       path: .tunnel,
       onDiagnosticEvent: options.onDiagnosticEvent
     )
-    await transport.resume()
     do {
-      try await transport.writeText(
-        TunnelAttach(
-          v: 1,
-          channelID: grant.channelID,
-          role: grant.role,
-          token: grant.token,
-          endpointInstanceID: Data.secureRandom(count: 16).base64URLEncodedString(),
-          caps: nil
-        ).encoded()
+      try Task.checkCancellation()
+      try await resumeWebSocketTransport(transport)
+      try Task.checkCancellation()
+      let endpointInstanceID = try Data.secureRandom(count: 16).base64URLEncodedString()
+      let attach = try TunnelAttach(
+        v: 1,
+        channelID: grant.channelID,
+        role: grant.role,
+        token: grant.token,
+        endpointInstanceID: endpointInstanceID,
+        caps: nil
+      ).encoded()
+      try Task.checkCancellation()
+      try await writeTunnelAttach(
+        transport: transport,
+        text: attach
       )
     } catch {
       await transport.close()
+      if Task.isCancelled || error is CancellationError {
+        throw CancellationError()
+      }
       throw error
     }
     return try await establishConnection(
@@ -491,6 +490,39 @@ public enum Flowersec {
       path: .tunnel,
       idleTimeout: .seconds(max(0, grant.idleTimeoutSeconds))
     )
+  }
+
+  static func writeTunnelAttach(
+    transport: any FlowersecTunnelAttachTransport,
+    text: String
+  ) async throws {
+    do {
+      try Task.checkCancellation()
+      try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        try await transport.writeText(text)
+        try Task.checkCancellation()
+      } onCancel: {
+        Task { await transport.close() }
+      }
+    } catch {
+      Task { await transport.close() }
+      if Task.isCancelled || error is CancellationError {
+        throw CancellationError()
+      }
+      throw error
+    }
+  }
+
+  static func resumeWebSocketTransport(
+    _ transport: FlowersecWebSocketBinaryTransport
+  ) async throws {
+    do {
+      try await transport.resume()
+    } catch {
+      await transport.close()
+      throw error
+    }
   }
 
   static func establishConnection(
@@ -596,6 +628,103 @@ public enum Flowersec {
       error.code = .invalidOption
       throw error
     }
+  }
+
+  private static func preparedDirectConnectInfo(
+    _ rawInfo: DirectConnectInfo
+  ) throws -> DirectConnectInfo {
+    var info = rawInfo
+    info.channelID = try normalizedChannelID(info.channelID, path: .direct)
+    guard info.channelInitExpiresAtUnixS > 0 else {
+      throw FlowersecError(
+        path: .direct,
+        stage: .validate,
+        code: .missingInitExp,
+        message: "Direct connect info is missing channel init expiry."
+      )
+    }
+    guard info.psk.count == 32 else {
+      throw FlowersecError(
+        path: .direct,
+        stage: .validate,
+        code: .invalidPSK,
+        message: "Direct connect info must contain a 32-byte E2EE key."
+      )
+    }
+    return info
+  }
+
+  private static func preparedTunnelGrant(
+    _ rawGrant: ChannelInitGrant
+  ) throws -> ChannelInitGrant {
+    var grant = rawGrant
+    guard grant.role == 1 else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .roleMismatch,
+        message: "Tunnel client grants must use the client role."
+      )
+    }
+    grant.channelID = try normalizedChannelID(grant.channelID, path: .tunnel)
+    grant.token = grant.token.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !grant.token.isEmpty else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .missingToken,
+        message: "Tunnel grant is missing token."
+      )
+    }
+    guard grant.channelInitExpiresAtUnixS > 0 else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .missingInitExp,
+        message: "Tunnel grant is missing channel init expiry."
+      )
+    }
+    guard grant.psk.count == 32 else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .invalidPSK,
+        message: "Tunnel grant must contain a 32-byte E2EE key."
+      )
+    }
+    guard !grant.allowedSuites.isEmpty, grant.allowedSuites.contains(grant.defaultSuite) else {
+      throw FlowersecError(
+        path: .tunnel,
+        stage: .validate,
+        code: .invalidSuite,
+        message: "Default suite must be included in non-empty allowed_suites."
+      )
+    }
+    return grant
+  }
+
+  private static func normalizedChannelID(
+    _ rawChannelID: String,
+    path: FlowersecPath
+  ) throws -> String {
+    let channelID = rawChannelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !channelID.isEmpty else {
+      throw FlowersecError(
+        path: path,
+        stage: .validate,
+        code: .missingChannelID,
+        message: "Connect artifact is missing channel_id."
+      )
+    }
+    guard channelID.utf8.count <= 256 else {
+      throw FlowersecError(
+        path: path,
+        stage: .validate,
+        code: .invalidInput,
+        message: "Connect artifact channel_id exceeds 256 UTF-8 bytes."
+      )
+    }
+    return channelID
   }
 
   private static func runHandshake(

@@ -257,6 +257,11 @@ Package entrypoints:
   - `NetworkPlaintextPolicyOptions`
   - `PlaintextRiskAcceptance`
   - `AllowPlaintext`
+  - `serveProxySession(...)`
+  - `serveProxyStream(...)`
+  - `ProxyServerOptions`
+  - `ProxyServerOptions.maxBufferedRequestBodyBytes`
+  - `ProxyServerOptions.maxWsQueuedBytes`
 - `@floegence/flowersec-core/browser`
   - `connectBrowser(...)`
   - `connectTunnelBrowser(...)`
@@ -330,9 +335,6 @@ Public building blocks:
   - `assertProxyPresetManifest(...)`
   - `resolveProxyPreset(...)`
   - `DEFAULT_PROXY_PRESET_MANIFEST`
-  - `serveProxySession(...)`
-  - `serveProxyStream(...)`
-  - `ProxyServerOptions`
 - `@floegence/flowersec-core/reconnect`
   - `createReconnectManager()`
   - `ReconnectManager.connectIfNeeded(...)`
@@ -363,6 +365,7 @@ Compatibility and alias TypeScript notes:
 - browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain compatibility aliases of `@floegence/flowersec-core/controlplane`; new code should prefer the canonical `@floegence/flowersec-core/controlplane` import
 - `requestChannelGrant(...)` / `requestEntryChannelGrant(...)` remain supported for compatibility and bootstrap fallback flows, but they are no longer the preferred controlplane contract
 - `connectTunnelProxyBrowser(...)` and `connectTunnelProxyControllerBrowser(...)` remain deprecated compatibility aliases over the artifact-first proxy bootstrap cores
+- controller/app Window bridges use the `stream_bidirectional_ack_v2` contract and require both sides to run the same Flowersec minor version; mixed versions fail during bridge open and do not fall back to the earlier unbounded one-direction acknowledgement behavior
 - hybrid ambiguous inputs and legacy inputs mixed with artifact-only fields fail fast
 - named proxy profiles are compatibility-only; use preset manifests instead
 
@@ -484,6 +487,8 @@ Entrypoints and modules:
 - `flowersec::connect_direct(...)`
 - `flowersec::connect_tunnel(...)`
 - `flowersec::Client`
+- `flowersec::client::ConnectOptions`
+- `flowersec::client::ConnectOptions.liveness`
 - `flowersec::endpoint`
 - `flowersec::rpc`
 - `flowersec::controlplane`
@@ -493,14 +498,23 @@ Entrypoints and modules:
 - `flowersec::generated`
 - `flowersec::transport::WebSocketTransport`
 - `flowersec::transport::TungsteniteTransport`
+- `flowersec::transport::TungsteniteTransport::new(...)`
+- `flowersec::transport::TungsteniteTransport::accept(...)`
+- `flowersec::transport::TungsteniteTransport::accept_with_timeout(...)`
 - `flowersec::endpoint::accept_direct(...)`
 - `flowersec::endpoint::accept_direct_resolved(...)`
 - `flowersec::endpoint::connect_tunnel(...)`
 - `flowersec::endpoint::Session`
+- `flowersec::endpoint::EndpointOptions`
+- `flowersec::endpoint::EndpointOptions.liveness`
+- `flowersec::endpoint::DirectAcceptOptions`
+- `flowersec::endpoint::DirectAcceptOptions.liveness`
 - `flowersec::Client::rekey()`
 - `flowersec::endpoint::Session::rekey()`
 - `flowersec::endpoint::Session::termination_error()`
 - `flowersec::yamux::YamuxStream::reset()`
+- `flowersec::yamux::LivenessOptions`
+- `flowersec::yamux::YamuxLimits`
 - `flowersec::rpc::RpcClient`
 - `flowersec::rpc::Router`
 - `flowersec::rpc::Server`
@@ -516,6 +530,23 @@ Entrypoints and modules:
 - `flowersec::reconnect::ReconnectManager::disconnect(...)`
 - `flowersec::proxy::ProxyClient`
 - `flowersec::proxy::ProxyServer`
+
+Rust liveness configuration uses `flowersec::yamux::LivenessOptions` without an
+additional root-module alias. `PathDefault` disables automatic probes for direct
+sessions and derives tunnel probes from the grant idle timeout; `Disabled` and
+`Enabled { interval, timeout }` provide explicit control. Adding the public
+`liveness` fields is an intentional pre-1.0 source change: consumers using
+exhaustive struct literals must set the field or use `..Default::default()`, and
+the introducing release must call this out in its release notes.
+
+Rust raw-stream endpoint accepts apply the encrypted-record message and frame
+limits before returning a transport. `TungsteniteTransport::accept(...)` also
+bounds the HTTP WebSocket upgrade with the default handshake timeout, while
+`accept_with_timeout(...)` accepts an explicit duration. Injecting an existing
+`WebSocketStream` through `new(...)` returns `io::Result` and fails unless that
+stream already uses equivalent or stricter message and frame limits. The
+fallible `new(...)` signature is an intentional pre-1.0 source change that
+removes the previous unbounded compatibility path.
 
 ## Shared issuer and runtime contracts
 
@@ -533,6 +564,16 @@ The canonical resource defaults are recorded in `stability/sdk_defaults.json`:
 - `max_inbound_buffered_bytes` bounds retained decrypted plaintext where a secure-channel implementation maintains an inbound buffer.
 - `max_outbound_buffered_bytes` bounds the total bytes of accepted logical application writes that have not completed. It is not a per-record or per-frame limit.
 - `max_stream_write_queue_bytes` is the independent Yamux per-stream write queue budget. It must not reuse the secure-channel outbound budget merely because the numeric defaults currently match.
+
+Portable client artifact handling trims `channel_id`, rejects empty values and values longer than 256 UTF-8 bytes, and then uses that one normalized value for attach and handshake. Resolved direct endpoints receive a structurally validated but unauthenticated identifier from the peer's INIT frame, so they reject non-canonical leading or trailing whitespace before invoking the credential resolver. The resolver must treat every INIT field as untrusted until the peer completes PSK authentication. These checks run before transport-policy callbacks, scope resolvers, attach-token transmission, or other network activity where the applicable input is already available.
+
+Resolved direct INIT validation uses the same stable tuples in all four SDKs before the resolver runs: an empty `channel_id` is `direct/validate/missing_channel_id`; leading or trailing whitespace and identifiers longer than 256 UTF-8 bytes are `direct/validate/invalid_input`; unsupported protocol versions, roles, or cipher suites are `direct/handshake/handshake_failed`. These structural checks protect the resolver boundary but do not authenticate the peer. When one INIT contains multiple invalid fields, which validation error is reported first is not a portable contract.
+
+Credential resolvers must be non-consuming. `commitAuthenticated` runs only after PSK authentication and before Yamux, and the backing credential-store transaction must be idempotent, cancellation-safe, and bounded by its own deadline. The SDK handshake deadline bounds connection establishment and the caller-visible result, but it cannot roll back an external side effect that a callback already started. A callback may therefore finish after the SDK has returned timeout or cancellation; that late completion must never authorize or create the failed Flowersec connection. At worst, a correctly isolated credential transaction may consume a credential whose connection has already failed. Swift custom `FlowersecBinaryTransport` implementations must make `close()` idempotent and cancellation-cooperative because timeout and cancellation initiate cleanup without waiting indefinitely for custom transport code.
+
+Tunnel attach cancellation has an explicit submission boundary. SDKs must reject observable cancellation before transport policy, connection start, and attach submission, and must close the transport immediately when cancellation is observed during a pending attach. Once an attach frame has been handed to the system WebSocket send operation, cancellation cannot retract it or prove that the peer did not receive the one-time token. The call still returns cancellation and closes the transport, but callers must not assume that the artifact remains reusable after that boundary.
+
+Portable configuration must use a positive handshake timeout. Existing language-specific zero-value behavior remains unchanged in this release to avoid an unrelated API break: Go and TypeScript treat zero as disabling the timeout, Swift rejects zero as `invalid_option`, and Rust treats zero as an immediately elapsed timeout. Cross-language configuration generators must not emit zero; disabling deadlines is not a portable behavior.
 
 RPC request and response IDs use the portable JSON integer range `0...9007199254740991`. Generated request IDs use `1...9007199254740991`; `0` remains the unset value. An exhausted generator fails before writing and never wraps.
 

@@ -163,6 +163,188 @@ final class ConnectLifecycleTests: XCTestCase {
     XCTAssertEqual(secureWriteCount, 2)
   }
 
+  func testPreCanceledTunnelClientStopsBeforeTransportPolicy() async throws {
+    let policyCalled = LifecycleFlag()
+    let grant = validTunnelGrant()
+    let task = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return try await Flowersec.connectTunnel(
+        grant,
+        options: ConnectOptions(
+          transportSecurityPolicy: .custom { _ in
+            await policyCalled.set()
+            return true
+          },
+          liveness: .disabled
+        )
+      )
+    }
+
+    do {
+      _ = try await task.value
+      XCTFail("Expected pre-canceled tunnel client")
+    } catch is CancellationError {
+      XCTAssertTrue(true)
+    }
+    let wasPolicyCalled = await policyCalled.value
+    XCTAssertFalse(wasPolicyCalled)
+  }
+
+  func testCanceledTunnelClientPolicyPropagatesCancellation() async throws {
+    let policyStarted = LifecycleFlag()
+    let releasePolicy = LifecycleGate()
+    let grant = validTunnelGrant()
+    let task = Task {
+      try await Flowersec.connectTunnel(
+        grant,
+        options: ConnectOptions(
+          transportSecurityPolicy: .custom { _ in
+            await policyStarted.set()
+            await releasePolicy.wait()
+            try Task.checkCancellation()
+            return true
+          },
+          liveness: .disabled
+        )
+      )
+    }
+    await policyStarted.waitUntilSet()
+
+    task.cancel()
+    await releasePolicy.release()
+
+    do {
+      _ = try await task.value
+      XCTFail("Expected canceled client transport policy")
+    } catch is CancellationError {
+      XCTAssertTrue(true)
+    }
+  }
+
+  func testCanceledClientResumeActorHopDoesNotStartSocket() async throws {
+    let resumeStarted = LifecycleFlag()
+    let releaseResume = LifecycleGate()
+    let socketStarted = LifecycleSynchronousFlag()
+    let transport = FlowersecWebSocketBinaryTransport(
+      url: URL(string: "wss://example.invalid/tunnel")!,
+      origin: nil,
+      connectTimeout: .seconds(1),
+      path: .tunnel,
+      beforeResume: {
+        await resumeStarted.set()
+        await releaseResume.wait()
+      },
+      resumeOverride: { socketStarted.set() }
+    )
+    let task = Task { try await Flowersec.resumeWebSocketTransport(transport) }
+    await resumeStarted.waitUntilSet()
+
+    task.cancel()
+    await releaseResume.release()
+
+    do {
+      try await task.value
+      XCTFail("Expected canceled client resume")
+    } catch is CancellationError {
+      XCTAssertTrue(true)
+    }
+    XCTAssertFalse(socketStarted.value)
+  }
+
+  func testPreCanceledTunnelClientAttachDoesNotReachSubmissionBoundary() async throws {
+    let transport = ClientAttachTransport(submitBeforeSuspension: false)
+    let task = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      try await Flowersec.writeTunnelAttach(transport: transport, text: "one-time-token")
+    }
+
+    do {
+      try await task.value
+      XCTFail("Expected pre-canceled tunnel attach")
+    } catch is CancellationError {
+      XCTAssertTrue(true)
+    }
+    let writeCallCount = await transport.writeCallCount
+    let submittedTexts = await transport.submittedTexts
+    XCTAssertEqual(writeCallCount, 0)
+    XCTAssertEqual(submittedTexts, [])
+    await transport.waitUntilClosed()
+  }
+
+  func testCanceledPendingTunnelClientAttachClosesBeforeSubmissionBoundary() async throws {
+    let transport = ClientAttachTransport(submitBeforeSuspension: false)
+    let task = Task {
+      try await Flowersec.writeTunnelAttach(transport: transport, text: "one-time-token")
+    }
+    await transport.waitUntilWriteStarted()
+
+    task.cancel()
+
+    do {
+      try await task.value
+      XCTFail("Expected canceled tunnel attach")
+    } catch is CancellationError {
+      XCTAssertTrue(true)
+    }
+    let writeCallCount = await transport.writeCallCount
+    let submittedTexts = await transport.submittedTexts
+    XCTAssertEqual(writeCallCount, 1)
+    XCTAssertEqual(submittedTexts, [])
+    await transport.waitUntilClosed()
+  }
+
+  func testCanceledSubmittedTunnelClientAttachCannotRetractToken() async throws {
+    let transport = ClientAttachTransport(submitBeforeSuspension: true)
+    let task = Task {
+      try await Flowersec.writeTunnelAttach(transport: transport, text: "one-time-token")
+    }
+    await transport.waitUntilWriteStarted()
+
+    task.cancel()
+
+    do {
+      try await task.value
+      XCTFail("Expected canceled tunnel attach")
+    } catch is CancellationError {
+      XCTAssertTrue(true)
+    }
+    let submittedTexts = await transport.submittedTexts
+    XCTAssertEqual(submittedTexts, ["one-time-token"])
+    await transport.waitUntilClosed()
+  }
+
+  func testCanceledProductionTransportQueueDoesNotReachSystemSend() async throws {
+    let sendStarted = LifecycleFlag()
+    let releaseSend = LifecycleGate()
+    let systemSendCalled = LifecycleSynchronousFlag()
+    let transport = FlowersecWebSocketBinaryTransport(
+      url: URL(string: "wss://example.invalid/tunnel")!,
+      origin: nil,
+      connectTimeout: .seconds(1),
+      path: .tunnel,
+      beforeSystemSend: {
+        await sendStarted.set()
+        await releaseSend.wait()
+      },
+      systemSendOverride: { systemSendCalled.set() }
+    )
+    let task = Task {
+      try await Flowersec.writeTunnelAttach(transport: transport, text: "one-time-token")
+    }
+    await sendStarted.waitUntilSet()
+
+    task.cancel()
+    await releaseSend.release()
+
+    do {
+      try await task.value
+      XCTFail("Expected canceled queued system send")
+    } catch is CancellationError {
+      XCTAssertTrue(true)
+    }
+    XCTAssertFalse(systemSendCalled.value)
+  }
+
   private func validDirectInfo() -> DirectConnectInfo {
     DirectConnectInfo(
       wsURL: URL(string: "wss://example.invalid/ws")!,
@@ -172,6 +354,141 @@ final class ConnectLifecycleTests: XCTestCase {
       defaultSuite: .x25519HKDFSHA256AES256GCM
     )
   }
+
+  private func validTunnelGrant() -> ChannelInitGrant {
+    ChannelInitGrant(
+      tunnelURL: URL(string: "wss://example.invalid/tunnel")!,
+      channelID: "channel-lifecycle-test",
+      channelInitExpiresAtUnixS: Int64(Date().timeIntervalSince1970) + 60,
+      idleTimeoutSeconds: 60,
+      role: 1,
+      token: "one-time-token",
+      psk: Data(repeating: 0x2a, count: 32),
+      allowedSuites: [.x25519HKDFSHA256AES256GCM],
+      defaultSuite: .x25519HKDFSHA256AES256GCM
+    )
+  }
+}
+
+private actor LifecycleFlag {
+  private var stored = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+  var value: Bool { stored }
+
+  func set() {
+    stored = true
+    let current = waiters
+    waiters.removeAll()
+    for waiter in current { waiter.resume() }
+  }
+
+  func waitUntilSet() async {
+    guard !stored else { return }
+    await withCheckedContinuation { continuation in
+      waiters.append(continuation)
+    }
+  }
+}
+
+private actor LifecycleGate {
+  private var released = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    guard !released else { return }
+    await withCheckedContinuation { continuation in
+      waiters.append(continuation)
+    }
+  }
+
+  func release() {
+    guard !released else { return }
+    released = true
+    let current = waiters
+    waiters.removeAll()
+    for waiter in current { waiter.resume() }
+  }
+}
+
+private final class LifecycleSynchronousFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored = false
+
+  var value: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return stored
+  }
+
+  func set() {
+    lock.lock()
+    stored = true
+    lock.unlock()
+  }
+}
+
+private actor ClientAttachTransport: FlowersecTunnelAttachTransport {
+  private let submitBeforeSuspension: Bool
+  private var closed = false
+  private var writes = 0
+  private var submitted: [String] = []
+  private var pendingWrite: CheckedContinuation<Void, Never>?
+  private var writeStartWaiters: [CheckedContinuation<Void, Never>] = []
+  private var closeWaiters: [CheckedContinuation<Void, Never>] = []
+
+  init(submitBeforeSuspension: Bool) {
+    self.submitBeforeSuspension = submitBeforeSuspension
+  }
+
+  func writeBinary(_ data: Data) async throws {}
+
+  func readBinary() async throws -> Data {
+    throw FlowersecError.closed(path: .tunnel)
+  }
+
+  func writeText(_ text: String) async throws {
+    writes += 1
+    if submitBeforeSuspension { submitted.append(text) }
+    let waiters = writeStartWaiters
+    writeStartWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+    await withCheckedContinuation { continuation in
+      pendingWrite = continuation
+    }
+    guard !closed else { throw FlowersecError.closed(path: .tunnel) }
+    if !submitBeforeSuspension { submitted.append(text) }
+  }
+
+  func close() async {
+    guard !closed else { return }
+    closed = true
+    let write = pendingWrite
+    pendingWrite = nil
+    write?.resume()
+    let starts = writeStartWaiters
+    writeStartWaiters.removeAll()
+    for waiter in starts { waiter.resume() }
+    let closes = closeWaiters
+    closeWaiters.removeAll()
+    for waiter in closes { waiter.resume() }
+  }
+
+  func waitUntilWriteStarted() async {
+    guard writes == 0 else { return }
+    await withCheckedContinuation { continuation in
+      writeStartWaiters.append(continuation)
+    }
+  }
+
+  func waitUntilClosed() async {
+    guard !closed else { return }
+    await withCheckedContinuation { continuation in
+      closeWaiters.append(continuation)
+    }
+  }
+
+  var writeCallCount: Int { writes }
+  var submittedTexts: [String] { submitted }
 }
 
 private actor MalformedHandshakeTransport: FlowersecBinaryTransport {
@@ -301,7 +618,8 @@ private actor ScriptedHandshakeTransport: FlowersecBinaryTransport {
 
     let serverPrivateKey = Curve25519.KeyAgreement.PrivateKey()
     let serverPublicKey = serverPrivateKey.publicKey.rawRepresentation
-    let clientPublicKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: clientPublicKeyData)
+    let clientPublicKey = try Curve25519.KeyAgreement.PublicKey(
+      rawRepresentation: clientPublicKeyData)
     let sharedSecret = try serverPrivateKey.sharedSecretFromKeyAgreement(with: clientPublicKey)
     let serverNonce = Data(repeating: 0x7b, count: 32)
     let transcript = try FlowersecHandshake.transcriptHash(

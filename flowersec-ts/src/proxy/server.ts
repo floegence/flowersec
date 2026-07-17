@@ -24,7 +24,9 @@ export type ProxyServerOptions = Readonly<{
   maxJsonFrameBytes?: number;
   maxChunkBytes?: number;
   maxBodyBytes?: number;
+  maxBufferedRequestBodyBytes?: number;
   maxWsFrameBytes?: number;
+  maxWsQueuedBytes?: number;
   defaultTimeoutMs?: number;
   maxTimeoutMs?: number;
   maxConcurrentStreams?: number;
@@ -45,7 +47,9 @@ type CompiledOptions = Readonly<{
   maxJsonFrameBytes: number;
   maxChunkBytes: number;
   maxBodyBytes: number;
+  maxBufferedRequestBodyBytes: number;
   maxWsFrameBytes: number;
+  maxWsQueuedBytes: number;
   defaultTimeoutMs: number;
   maxTimeoutMs: number;
   maxConcurrentStreams: number;
@@ -60,6 +64,7 @@ type CompiledOptions = Readonly<{
 
 export async function serveProxySession(session: Session, options: ProxyServerOptions, signal?: AbortSignal): Promise<void> {
   const compiled = compileOptions(options);
+  const requestBodyBudget = createRequestBodyBudget(compiled.maxBufferedRequestBodyBytes);
   const active = new Set<Promise<void>>();
   try {
     while (!signal?.aborted) {
@@ -83,7 +88,7 @@ export async function serveProxySession(session: Session, options: ProxyServerOp
         await accepted.stream.reset(new Error("proxy stream concurrency exhausted"));
         continue;
       }
-      const task = serveProxyStreamCompiled(accepted.kind, accepted.stream, compiled, signal)
+      const task = serveProxyStreamCompiled(accepted.kind, accepted.stream, compiled, requestBodyBudget, signal)
         .catch(() => {})
         .finally(() => active.delete(task));
       active.add(task);
@@ -118,86 +123,120 @@ export function serveProxyStream(
   options: ProxyServerOptions,
   signal?: AbortSignal,
 ): Promise<void> {
-  return serveProxyStreamCompiled(kind, stream, compileOptions(options), signal);
+  const compiled = compileOptions(options);
+  return serveProxyStreamCompiled(
+    kind,
+    stream,
+    compiled,
+    createRequestBodyBudget(compiled.maxBufferedRequestBodyBytes),
+    signal,
+  );
 }
 
 async function serveProxyStreamCompiled(
   kind: typeof PROXY_KIND_HTTP1 | typeof PROXY_KIND_WS,
   stream: YamuxStream,
   options: CompiledOptions,
+  requestBodyBudget: RequestBodyBudget,
   signal?: AbortSignal,
 ): Promise<void> {
   try {
-    if (kind === PROXY_KIND_HTTP1) await serveHTTP(stream, options, signal);
+    if (kind === PROXY_KIND_HTTP1) await serveHTTP(stream, options, requestBodyBudget, signal);
     else await serveWebSocket(stream, options, signal);
   } finally {
     try { await stream.close(); } catch { /* The peer may already have reset the stream. */ }
   }
 }
 
-async function serveHTTP(stream: YamuxStream, options: CompiledOptions, signal?: AbortSignal): Promise<void> {
+async function serveHTTP(
+  stream: YamuxStream,
+  options: CompiledOptions,
+  requestBodyBudget: RequestBodyBudget,
+  signal?: AbortSignal,
+): Promise<void> {
   const reader = createByteReader(stream, signal === undefined ? {} : { signal });
   let requestId = "unknown";
   try {
     const meta = assertHTTPRequestMeta(await readJsonFrame(reader, options.maxJsonFrameBytes));
     requestId = meta.request_id;
     const path = parsePath(meta.path);
-    const body = await readBody(reader, options.maxChunkBytes, options.maxBodyBytes);
-    const headers = requestHeaders(meta.headers, options);
-    applyExternalOrigin(headers, meta.external_origin);
-    const target = new URL(options.upstream);
-    target.pathname = path.pathname;
-    target.search = path.search;
-    target.hash = "";
-
-    const timeoutMs = resolveTimeout(meta.timeout_ms, options);
-    const controller = new AbortController();
-    const onAbort = () => controller.abort(signal?.reason);
-    signal?.addEventListener("abort", onAbort, { once: true });
-    const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(new Error("upstream request timeout")), timeoutMs) : undefined;
+    const bufferedBody = await readBody(
+      reader,
+      options.maxChunkBytes,
+      options.maxBodyBytes,
+      requestBodyBudget,
+    );
     try {
-      const method = meta.method.trim().toUpperCase();
-      const response = await options.fetch(target, {
-        method,
-        headers,
-        redirect: "manual",
-        signal: controller.signal,
-        ...((method === "GET" || method === "HEAD") ? {} : { body: body.slice().buffer as ArrayBuffer }),
-      });
-      const responseHeaders = collectResponseHeaders(response.headers, options);
-      const responseMeta: HttpResponseMetaV1 = {
-        v: PROXY_PROTOCOL_VERSION,
-        request_id: requestId,
-        ok: true,
-        status: response.status,
-        headers: responseHeaders,
-      };
-      await writeJsonFrame(stream, responseMeta);
-      if (response.body == null) {
-        await stream.write(u32be(0));
-        return;
-      }
-      const bodyReader = response.body.getReader();
-      let total = 0;
-      while (true) {
-        const next = await bodyReader.read();
-        if (next.done) break;
-        const bytes = next.value;
-        total += bytes.length;
-        if (total > options.maxBodyBytes) throw new ProxyServerError("response_body_too_large", "response body too large");
-        for (let offset = 0; offset < bytes.length; offset += options.maxChunkBytes) {
-          const chunk = bytes.subarray(offset, Math.min(bytes.length, offset + options.maxChunkBytes));
-          await stream.write(u32be(chunk.length));
-          await stream.write(chunk);
+      if (signal?.aborted) throw new ProxyServerError("canceled", "proxy request canceled");
+      const headers = requestHeaders(meta.headers, options);
+      applyExternalOrigin(headers, meta.external_origin);
+      const target = new URL(options.upstream);
+      target.pathname = path.pathname;
+      target.search = path.search;
+      target.hash = "";
+
+      const timeoutMs = resolveTimeout(meta.timeout_ms, options);
+      const controller = new AbortController();
+      const onAbort = () => controller.abort(new ProxyServerError("canceled", "proxy request canceled"));
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+      const timer = timeoutMs > 0
+        ? setTimeout(() => controller.abort(new ProxyServerError("timeout", "upstream request timeout")), timeoutMs)
+        : undefined;
+      try {
+        const method = meta.method.trim().toUpperCase();
+        let response: Response;
+        try {
+          if (controller.signal.aborted) throw controller.signal.reason;
+          response = await options.fetch(target, {
+            method,
+            headers,
+            redirect: "manual",
+            signal: controller.signal,
+            ...((method === "GET" || method === "HEAD")
+              ? {}
+              : { body: bufferedBody.bytes.buffer as ArrayBuffer }),
+          });
+        } finally {
+          bufferedBody.release();
         }
+        const responseHeaders = collectResponseHeaders(response.headers, options);
+        const responseMeta: HttpResponseMetaV1 = {
+          v: PROXY_PROTOCOL_VERSION,
+          request_id: requestId,
+          ok: true,
+          status: response.status,
+          headers: responseHeaders,
+        };
+        await writeJsonFrame(stream, responseMeta);
+        if (response.body == null) {
+          await stream.write(u32be(0));
+          return;
+        }
+        const bodyReader = response.body.getReader();
+        let total = 0;
+        while (true) {
+          const next = await bodyReader.read();
+          if (next.done) break;
+          const bytes = next.value;
+          total += bytes.length;
+          if (total > options.maxBodyBytes) throw new ProxyServerError("response_body_too_large", "response body too large");
+          for (let offset = 0; offset < bytes.length; offset += options.maxChunkBytes) {
+            const chunk = bytes.subarray(offset, Math.min(bytes.length, offset + options.maxChunkBytes));
+            await stream.write(u32be(chunk.length));
+            await stream.write(chunk);
+          }
+        }
+        await stream.write(u32be(0));
+      } finally {
+        if (timer != null) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
       }
-      await stream.write(u32be(0));
     } finally {
-      if (timer != null) clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
+      bufferedBody.release();
     }
   } catch (error) {
-    await writeHTTPError(stream, requestId, classifyHTTPError(error), error);
+    await writeHTTPError(stream, requestId, classifyHTTPError(error));
   }
 }
 
@@ -205,6 +244,8 @@ async function serveWebSocket(stream: YamuxStream, options: CompiledOptions, sig
   const reader = createByteReader(stream, signal === undefined ? {} : { signal });
   let connId = "unknown";
   let raw: any;
+  let upstreamOpened = false;
+  let removePostOpenAbortListener: (() => void) | undefined;
   try {
     const meta = assertWSOpenMeta(await readJsonFrame(reader, options.maxJsonFrameBytes));
     connId = meta.conn_id;
@@ -230,50 +271,130 @@ async function serveWebSocket(stream: YamuxStream, options: CompiledOptions, sig
       headers,
       maxPayload: options.maxWsFrameBytes,
       perMessageDeflate: false,
-      handshakeTimeout: Math.min(options.defaultTimeoutMs, options.maxTimeoutMs),
+      handshakeTimeout: resolveTimeout(undefined, options),
     });
+    let writeChain: Promise<void> = Promise.resolve();
+    let queuedWriteBytes = 0;
+    let terminalSettled = false;
+    let terminalError: Error | undefined;
+    let terminalResolve!: (error?: Error) => void;
+    const terminal = new Promise<Error | undefined>((resolve) => { terminalResolve = resolve; });
+    const settleTerminal = (error?: Error) => {
+      if (terminalSettled) return;
+      terminalSettled = true;
+      terminalError = error;
+      terminalResolve(error);
+    };
+    const queueFrame = (op: number, payload: Uint8Array, allowCloseFrame = false): Promise<void> => {
+      if (terminalSettled) return Promise.reject(new Error("proxy WebSocket is closed"));
+      const frameBytes = payload.byteLength + 5;
+      const nextQueuedWriteBytes = queuedWriteBytes + frameBytes;
+      if (!Number.isSafeInteger(nextQueuedWriteBytes)
+        || (!allowCloseFrame && nextQueuedWriteBytes > options.maxWsQueuedBytes)) {
+        const error = new ProxyServerError("resource_exhausted", "proxy WebSocket write queue exhausted");
+        settleTerminal(error);
+        try { raw.close(1011, "proxy buffer limit exceeded"); } catch { /* Best effort. */ }
+        return Promise.reject(error);
+      }
+      queuedWriteBytes = nextQueuedWriteBytes;
+      const write = writeChain
+        .then(() => {
+          if (terminalSettled) throw terminalError ?? new Error("proxy WebSocket is closed");
+          return writeWSFrame(stream, op, payload, options.maxWsFrameBytes);
+        })
+        .finally(() => {
+          queuedWriteBytes = Math.max(0, queuedWriteBytes - frameBytes);
+        });
+      writeChain = write;
+      void write.catch((error) => settleTerminal(asError(error)));
+      return write;
+    };
+    const queueEventFrame = (op: number, payload: Uint8Array) => {
+      void queueFrame(op, payload).catch(() => {});
+    };
+    raw.on("close", (code: number, reason: unknown) => {
+      if (terminalSettled) return;
+      if (!upstreamOpened) {
+        settleTerminal(new Error("upstream WebSocket closed before open"));
+        return;
+      }
+      const reasonBytes = toBytes(reason);
+      const payload = new Uint8Array(2 + reasonBytes.length);
+      payload[0] = (code >>> 8) & 0xff;
+      payload[1] = code & 0xff;
+      payload.set(reasonBytes, 2);
+      void queueFrame(8, payload, true).then(
+        () => settleTerminal(),
+        (error) => settleTerminal(asError(error)),
+      );
+    });
+    raw.on("error", (error: Error) => settleTerminal(error));
+
     await waitForUpstreamOpen(raw, signal);
+    upstreamOpened = true;
     const response: WsOpenRespV1 = {
       v: PROXY_PROTOCOL_VERSION,
       conn_id: connId,
       ok: true,
       protocol: String(raw.protocol ?? ""),
     };
-    await writeJsonFrame(stream, response);
+    const openResponseWrite = writeJsonFrame(stream, response);
+    writeChain = openResponseWrite;
+    void openResponseWrite.catch((error) => settleTerminal(asError(error)));
 
-    let writeChain = Promise.resolve();
-    let terminalResolve!: (error?: Error) => void;
-    const terminal = new Promise<Error | undefined>((resolve) => { terminalResolve = resolve; });
-    const writeFrame = (op: number, payload: Uint8Array) => {
-      const write = writeChain.then(() => writeWSFrame(stream, op, payload, options.maxWsFrameBytes));
-      writeChain = write.catch(() => {});
-      void write.catch((error) => terminalResolve(asError(error)));
+    raw.on("message", (data: unknown, isBinary: boolean) => queueEventFrame(isBinary ? 2 : 1, toBytes(data)));
+    raw.on("ping", (data: unknown) => queueEventFrame(9, toBytes(data)));
+    raw.on("pong", (data: unknown) => queueEventFrame(10, toBytes(data)));
+    const onPostOpenAbort = () => {
+      const error = asError(signal?.reason ?? new Error("proxy WebSocket aborted"));
+      settleTerminal(error);
+      try {
+        if (typeof raw.terminate === "function") raw.terminate();
+        else raw.close();
+      } catch {
+        // The terminal error is already authoritative.
+      }
     };
-    raw.on("message", (data: unknown, isBinary: boolean) => writeFrame(isBinary ? 2 : 1, toBytes(data)));
-    raw.on("ping", (data: unknown) => writeFrame(9, toBytes(data)));
-    raw.on("pong", (data: unknown) => writeFrame(10, toBytes(data)));
-    raw.on("close", (code: number, reason: unknown) => {
-      const reasonBytes = toBytes(reason);
-      const payload = new Uint8Array(2 + reasonBytes.length);
-      payload[0] = (code >>> 8) & 0xff;
-      payload[1] = code & 0xff;
-      payload.set(reasonBytes, 2);
-      writeFrame(8, payload);
-      terminalResolve();
-    });
-    raw.on("error", (error: Error) => terminalResolve(error));
+    if (signal != null) {
+      signal.addEventListener("abort", onPostOpenAbort, { once: true });
+      removePostOpenAbortListener = () => signal.removeEventListener("abort", onPostOpenAbort);
+      if (signal.aborted) onPostOpenAbort();
+    }
+
+    const openResponseResult = await Promise.race([
+      openResponseWrite.then(() => undefined),
+      terminal,
+    ]);
+    if (openResponseResult != null) throw openResponseResult;
+    try {
+      if (!terminalSettled && typeof raw.resume === "function") raw.resume();
+    } catch (error) {
+      settleTerminal(asError(error));
+      throw error;
+    }
 
     const inbound = (async () => {
       while (true) {
         const frame = await readWSFrame(reader, options.maxWsFrameBytes);
         switch (frame.op) {
-          case 1: raw.send(frame.payload, { binary: false }); break;
-          case 2: raw.send(frame.payload, { binary: true }); break;
-          case 8:
+          case 1:
+            await sendUpstreamFrame(raw, 1, frame.payload);
+            break;
+          case 2:
+            await sendUpstreamFrame(raw, 2, frame.payload);
+            break;
+          case 8: {
             raw.close(frame.payload.length >= 2 ? (frame.payload[0]! << 8) | frame.payload[1]! : 1000, new TextDecoder().decode(frame.payload.subarray(2)));
+            const closeError = await terminal;
+            if (closeError != null) throw closeError;
             return;
-          case 9: raw.ping(frame.payload); break;
-          case 10: raw.pong(frame.payload); break;
+          }
+          case 9:
+            await sendUpstreamFrame(raw, 9, frame.payload);
+            break;
+          case 10:
+            await sendUpstreamFrame(raw, 10, frame.payload);
+            break;
           default: throw new Error("invalid websocket frame operation");
         }
       }
@@ -282,8 +403,9 @@ async function serveWebSocket(stream: YamuxStream, options: CompiledOptions, sig
     if (result != null) throw result;
     await writeChain;
   } catch (error) {
-    if (raw == null || raw.readyState !== 1) await writeWSOpenError(stream, connId, classifyWSError(error), error);
+    if (!upstreamOpened) await writeWSOpenError(stream, connId, classifyWSError(error));
   } finally {
+    removePostOpenAbortListener?.();
     try { raw?.close(); } catch { /* Best effort. */ }
   }
 }
@@ -299,7 +421,17 @@ function compileOptions(input: ProxyServerOptions): CompiledOptions {
   const maxJsonFrameBytes = positive(input.maxJsonFrameBytes, DEFAULT_MAX_JSON_FRAME_BYTES, "maxJsonFrameBytes");
   const maxChunkBytes = positive(input.maxChunkBytes, DEFAULT_MAX_CHUNK_BYTES, "maxChunkBytes");
   const maxBodyBytes = positive(input.maxBodyBytes, DEFAULT_MAX_BODY_BYTES, "maxBodyBytes");
+  const maxBufferedRequestBodyBytes = positive(
+    input.maxBufferedRequestBodyBytes,
+    maxBodyBytes,
+    "maxBufferedRequestBodyBytes",
+  );
   const maxWsFrameBytes = positive(input.maxWsFrameBytes, DEFAULT_MAX_WS_FRAME_BYTES, "maxWsFrameBytes");
+  const defaultMaxWsQueuedBytes = maxWsFrameBytes <= Number.MAX_SAFE_INTEGER - 5
+    ? maxWsFrameBytes + 5
+    : maxWsFrameBytes;
+  const maxWsQueuedBytes = positive(input.maxWsQueuedBytes, defaultMaxWsQueuedBytes, "maxWsQueuedBytes");
+  if (maxWsQueuedBytes < 5) throw new Error("maxWsQueuedBytes must be at least 5");
   const defaultTimeoutMs = nonNegative(input.defaultTimeoutMs, 30_000, "defaultTimeoutMs");
   const maxTimeoutMs = nonNegative(input.maxTimeoutMs, 300_000, "maxTimeoutMs");
   if (maxTimeoutMs > 0 && defaultTimeoutMs > maxTimeoutMs) throw new Error("defaultTimeoutMs exceeds maxTimeoutMs");
@@ -309,7 +441,9 @@ function compileOptions(input: ProxyServerOptions): CompiledOptions {
     maxJsonFrameBytes,
     maxChunkBytes,
     maxBodyBytes,
+    maxBufferedRequestBodyBytes,
     maxWsFrameBytes,
+    maxWsQueuedBytes,
     defaultTimeoutMs,
     maxTimeoutMs,
     maxConcurrentStreams: positive(input.maxConcurrentStreams, 64, "maxConcurrentStreams"),
@@ -395,25 +529,82 @@ function applyExternalOrigin(headers: Headers, input: string | undefined): void 
   headers.set("host", new URL(external).host);
 }
 
-async function readBody(reader: ReturnType<typeof createByteReader>, maxChunkBytes: number, maxBodyBytes: number): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const length = readU32be(await reader.readExactly(4), 0);
-    if (length === 0) break;
-    if (length > maxChunkBytes) throw new ProxyServerError("request_body_too_large", "request chunk too large");
-    total += length;
-    if (total > maxBodyBytes) throw new ProxyServerError("request_body_too_large", "request body too large");
-    chunks.push(await reader.readExactly(length));
-  }
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.length; }
-  return body;
+type RequestBodyBudget = Readonly<{
+  reserve: (bytes: number) => void;
+  release: (bytes: number) => void;
+}>;
+
+type BufferedRequestBody = Readonly<{
+  bytes: Uint8Array;
+  release: () => void;
+}>;
+
+function createRequestBodyBudget(maxBytes: number): RequestBodyBudget {
+  let usedBytes = 0;
+  return {
+    reserve: (bytes) => {
+      const next = usedBytes + bytes;
+      if (!Number.isSafeInteger(next) || next > maxBytes) {
+        throw new ProxyServerError("resource_exhausted", "proxy request body buffer exhausted");
+      }
+      usedBytes = next;
+    },
+    release: (bytes) => {
+      usedBytes = Math.max(0, usedBytes - bytes);
+    },
+  };
 }
 
-async function writeHTTPError(stream: YamuxStream, requestId: string, code: string, error: unknown): Promise<void> {
-  const meta: HttpResponseMetaV1 = { v: PROXY_PROTOCOL_VERSION, request_id: requestId.trim() || "unknown", ok: false, error: { code, message: asError(error).message } };
+async function readBody(
+  reader: ReturnType<typeof createByteReader>,
+  maxChunkBytes: number,
+  maxBodyBytes: number,
+  budget: RequestBodyBudget,
+): Promise<BufferedRequestBody> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let handedOff = false;
+  try {
+    while (true) {
+      const length = readU32be(await reader.readExactly(4), 0);
+      if (length === 0) break;
+      if (length > maxChunkBytes) throw new ProxyServerError("request_body_too_large", "request chunk too large");
+      const next = total + length;
+      if (!Number.isSafeInteger(next) || next > maxBodyBytes) {
+        throw new ProxyServerError("request_body_too_large", "request body too large");
+      }
+      budget.reserve(length);
+      total = next;
+      chunks.push(await reader.readExactly(length));
+    }
+    const body = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.length;
+    }
+    let released = false;
+    handedOff = true;
+    return {
+      bytes: body,
+      release: () => {
+        if (released) return;
+        released = true;
+        budget.release(total);
+      },
+    };
+  } finally {
+    if (!handedOff) budget.release(total);
+  }
+}
+
+async function writeHTTPError(stream: YamuxStream, requestId: string, code: string): Promise<void> {
+  const meta: HttpResponseMetaV1 = {
+    v: PROXY_PROTOCOL_VERSION,
+    request_id: requestId.trim() || "unknown",
+    ok: false,
+    error: { code, message: publicHTTPErrorMessage(code) },
+  };
   try { await writeJsonFrame(stream, meta); await stream.write(u32be(0)); } catch { /* The peer may be gone. */ }
 }
 
@@ -433,20 +624,72 @@ async function writeWSFrame(stream: YamuxStream, op: number, payload: Uint8Array
   if (payload.length > 0) await stream.write(payload);
 }
 
-async function writeWSOpenError(stream: YamuxStream, connId: string, code: string, error: unknown): Promise<void> {
-  const response: WsOpenRespV1 = { v: PROXY_PROTOCOL_VERSION, conn_id: connId.trim() || "unknown", ok: false, error: { code, message: asError(error).message } };
+async function writeWSOpenError(stream: YamuxStream, connId: string, code: string): Promise<void> {
+  const response: WsOpenRespV1 = {
+    v: PROXY_PROTOCOL_VERSION,
+    conn_id: connId.trim() || "unknown",
+    ok: false,
+    error: { code, message: publicWSErrorMessage(code) },
+  };
   try { await writeJsonFrame(stream, response); } catch { /* The peer may be gone. */ }
 }
 
 function waitForUpstreamOpen(websocket: any, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const cleanup = () => { websocket.off("open", onOpen); websocket.off("error", onError); signal?.removeEventListener("abort", onAbort); };
-    const onOpen = () => { cleanup(); resolve(); };
+    const cleanup = () => {
+      websocket.off("open", onOpen);
+      websocket.off("error", onError);
+      websocket.off("close", onClose);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onOpen = () => {
+      try {
+        if (typeof websocket.pause === "function") websocket.pause();
+      } catch (error) {
+        cleanup();
+        reject(asError(error));
+        return;
+      }
+      cleanup();
+      resolve();
+    };
     const onError = (error: Error) => { cleanup(); reject(error); };
+    const onClose = () => { cleanup(); reject(new Error("upstream WebSocket closed before open")); };
     const onAbort = () => { cleanup(); reject(signal?.reason ?? new Error("aborted")); };
     websocket.once("open", onOpen);
     websocket.once("error", onError);
+    websocket.once("close", onClose);
     signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
+
+function sendUpstreamFrame(websocket: any, op: number, payload: Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = (error?: Error | null) => {
+      if (error == null) resolve();
+      else reject(asError(error));
+    };
+    try {
+      switch (op) {
+        case 1:
+          websocket.send(payload, { binary: false }, finish);
+          return;
+        case 2:
+          websocket.send(payload, { binary: true }, finish);
+          return;
+        case 9:
+          websocket.ping(payload, undefined, finish);
+          return;
+        case 10:
+          websocket.pong(payload, undefined, finish);
+          return;
+        default:
+          reject(new Error("invalid upstream WebSocket operation"));
+      }
+    } catch (error) {
+      reject(asError(error));
+    }
   });
 }
 
@@ -492,6 +735,35 @@ function classifyHTTPError(error: unknown): string {
 function classifyWSError(error: unknown): string {
   if (error instanceof ProxyServerError) return error.code;
   return "upstream_ws_dial_failed";
+}
+
+function publicHTTPErrorMessage(code: string): string {
+  switch (code) {
+    case "invalid_request_meta":
+      return "invalid proxy request";
+    case "request_body_too_large":
+    case "response_body_too_large":
+      return "proxy body limit exceeded";
+    case "resource_exhausted":
+      return "proxy resource limit exceeded";
+    case "timeout":
+      return "upstream request timed out";
+    case "canceled":
+      return "proxy request canceled";
+    default:
+      return "upstream request failed";
+  }
+}
+
+function publicWSErrorMessage(code: string): string {
+  switch (code) {
+    case "invalid_ws_open_meta":
+      return "invalid proxy WebSocket request";
+    case "resource_exhausted":
+      return "proxy WebSocket resource limit exceeded";
+    default:
+      return "upstream WebSocket connection failed";
+  }
 }
 
 function toBytes(input: unknown): Uint8Array {

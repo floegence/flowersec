@@ -1061,19 +1061,35 @@ fn validate_init(
     init: &wire::E2EE_Init,
     options: &ServerHandshakeOptions,
 ) -> Result<(), E2eeError> {
-    if init.version != PROTOCOL_VERSION || init.role != wire::Role::Client {
-        return Err(E2eeError::InvalidVersion);
-    }
+    let suite = validate_client_handshake_init(init)?;
     if init.channel_id.is_empty()
         || options
             .channel_id
             .as_ref()
             .is_some_and(|expected| expected != &init.channel_id)
-        || suite_from_wire(init.suite) != options.suite
+        || suite != options.suite
     {
         return Err(E2eeError::Authentication);
     }
     Ok(())
+}
+
+pub(crate) fn validate_client_handshake_init(init: &wire::E2EE_Init) -> Result<Suite, E2eeError> {
+    if init.version != PROTOCOL_VERSION || init.role != wire::Role::Client {
+        return Err(E2eeError::InvalidVersion);
+    }
+    let suite = suite_from_wire(init.suite);
+    let public_key = decode_base64(&init.client_eph_pub_b64u)?;
+    match suite {
+        Suite::X25519HkdfSha256Aes256Gcm => {
+            let _: [u8; 32] = public_key.try_into().map_err(|_| E2eeError::InvalidKey)?;
+        }
+        Suite::P256HkdfSha256Aes256Gcm => {
+            P256PublicKey::from_sec1_bytes(&public_key).map_err(|_| E2eeError::InvalidKey)?;
+        }
+    }
+    let _: [u8; 32] = decode_array(&init.nonce_c_b64u)?;
+    Ok(suite)
 }
 
 fn validate_timestamp(timestamp: u64, options: &ServerHandshakeOptions) -> Result<(), E2eeError> {

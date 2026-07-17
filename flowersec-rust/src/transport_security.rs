@@ -2,6 +2,30 @@ use crate::{ErrorCode, FlowersecError, Path, Stage};
 use std::{collections::BTreeSet, future::Future, net::IpAddr, pin::Pin, sync::Arc};
 use url::Url;
 
+pub(crate) fn validate_websocket_url(value: &str, path: Path) -> Result<Url, FlowersecError> {
+    let invalid = || {
+        FlowersecError::new(
+            path,
+            Stage::Validate,
+            match path {
+                Path::Tunnel => ErrorCode::MISSING_TUNNEL_URL,
+                Path::Auto | Path::Direct => ErrorCode::MISSING_WS_URL,
+            },
+            "invalid WebSocket URL",
+        )
+    };
+    let url = Url::parse(value.trim()).map_err(|error| invalid().with_source(error))?;
+    if !matches!(url.scheme(), "ws" | "wss")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid());
+    }
+    Ok(url)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransportRuntime {
     Rust,

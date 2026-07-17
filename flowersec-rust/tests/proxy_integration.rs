@@ -92,7 +92,7 @@ async fn rust_proxy_http_and_websocket_round_trip_over_direct_session() {
         + 60;
     let endpoint_task = tokio::spawn(async move {
         let (tcp, _) = flowersec_listener.accept().await.expect("Flowersec accept");
-        let websocket = tokio_tungstenite::accept_async(tcp)
+        let transport = TungsteniteTransport::accept(tcp)
             .await
             .expect("Flowersec WebSocket");
         let mut handshake = ServerHandshakeOptions::new(
@@ -101,12 +101,9 @@ async fn rust_proxy_http_and_websocket_round_trip_over_direct_session() {
             expires,
         );
         handshake.channel_id = Some("rust-proxy-integration".to_owned());
-        let session = accept_direct(
-            Arc::new(TungsteniteTransport::new(websocket)),
-            DirectAcceptOptions::new(handshake),
-        )
-        .await
-        .expect("accept direct");
+        let session = accept_direct(Arc::new(transport), DirectAcceptOptions::new(handshake))
+            .await
+            .expect("accept direct");
 
         let (rpc_kind, rpc_stream) = session.accept_stream().await.expect("accept RPC");
         assert_eq!(rpc_kind, streamhello::RPC_KIND);

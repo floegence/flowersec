@@ -18,44 +18,123 @@ function cloneChunk(chunk: Uint8Array): ArrayBuffer {
   return out.buffer;
 }
 
-type ReadQueueItem = Uint8Array | null;
+function validWriteId(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) > 0;
+}
+
+type QueuedRead = Readonly<{
+  chunk: Uint8Array;
+  writeId: number;
+}>;
+
+type ReadResult = QueuedRead | null | Error;
+
+type PendingAcknowledgement = Readonly<{
+  writeId: number;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}>;
 
 export function createMessagePortBackedStream(
   port: MessagePort,
-  opts: Readonly<{ writeAcknowledgements?: boolean }> = {},
+  opts: Readonly<{ maxBufferedBytes?: number; onTerminal?: () => void }> = {},
 ): YamuxStream {
   let closed = false;
+  let acceptingWrites = true;
   let error: Error | null = null;
-  const queue: ReadQueueItem[] = [];
-  const waiters: Array<(value: ReadQueueItem | Error) => void> = [];
-  const pendingWrites = new Map<number, Readonly<{ resolve: () => void; reject: (error: Error) => void }>>();
+  const queue: QueuedRead[] = [];
+  const waiters: Array<(value: ReadResult) => void> = [];
+  let pendingInboundWriteId: number | null = null;
+  let pendingOutboundAcknowledgement: PendingAcknowledgement | null = null;
   let nextWriteId = 1;
+  let writeTail: Promise<void> = Promise.resolve();
+  let queuedWriteBytes = 0;
+  const maxBufferedBytes = opts.maxBufferedBytes ?? 4 * (1 << 20);
+  let terminalNotified = false;
 
-  const resolveWaiter = (value: ReadQueueItem | Error) => {
-    const waiter = waiters.shift();
-    if (waiter) {
-      waiter(value);
-      return true;
+  const notifyTerminal = () => {
+    if (terminalNotified) return;
+    terminalNotified = true;
+    opts.onTerminal?.();
+  };
+
+  const closePort = () => {
+    try {
+      port.close();
+    } catch {
+      // Best-effort.
     }
-    return false;
   };
 
-  const pushValue = (value: ReadQueueItem) => {
-    if (resolveWaiter(value)) return;
-    queue.push(value);
+  const drainWaiters = (value: ReadResult) => {
+    for (const waiter of waiters.splice(0)) waiter(value);
   };
 
-  const fail = (err: Error) => {
+  const terminateWithError = (err: Error, notifyPeer: boolean) => {
     if (error != null) return;
     error = err;
-    while (resolveWaiter(err)) {
-      // Drain waiters.
+    closed = true;
+    acceptingWrites = false;
+    queue.length = 0;
+    pendingInboundWriteId = null;
+    drainWaiters(err);
+    pendingOutboundAcknowledgement?.reject(err);
+    pendingOutboundAcknowledgement = null;
+    if (notifyPeer) {
+      try {
+        port.postMessage({
+          type: PROXY_WINDOW_STREAM_RESET_MSG_TYPE,
+          message: err.message,
+        } satisfies ProxyWindowStreamResetMsg);
+      } catch {
+        // The local error remains authoritative.
+      }
     }
-    for (const pending of pendingWrites.values()) pending.reject(err);
-    pendingWrites.clear();
+    closePort();
+    notifyTerminal();
+  };
+
+  const failProtocol = (message: string) => {
+    terminateWithError(new Error(`proxy Window stream protocol error: ${message}`), true);
+  };
+
+  const finishClosed = () => {
+    if (closed) return;
+    if (pendingInboundWriteId != null) {
+      failProtocol("stream ended before the pending chunk was acknowledged");
+      return;
+    }
+    closed = true;
+    acceptingWrites = false;
+    const closeError = new Error("stream is closed");
+    pendingOutboundAcknowledgement?.reject(closeError);
+    pendingOutboundAcknowledgement = null;
+    drainWaiters(null);
+    closePort();
+    notifyTerminal();
+  };
+
+  const acknowledgeRead = (item: QueuedRead) => {
+    if (closed) return;
+    if (pendingInboundWriteId !== item.writeId) {
+      failProtocol("read acknowledgement does not match the pending chunk");
+      throw error;
+    }
+    pendingInboundWriteId = null;
+    try {
+      port.postMessage({
+        type: PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE,
+        writeId: item.writeId,
+      } satisfies ProxyWindowStreamWriteAckMsg);
+    } catch (cause) {
+      const err = cause instanceof Error ? cause : new Error(String(cause));
+      terminateWithError(err, false);
+      throw err;
+    }
   };
 
   port.onmessage = (ev) => {
+    if (closed) return;
     const data = ev.data as
       | ProxyWindowStreamChunkMsg
       | ProxyWindowStreamCloseMsg
@@ -66,36 +145,43 @@ export function createMessagePortBackedStream(
     const type = typeof (data as { type?: unknown }).type === "string" ? (data as { type: string }).type : "";
     switch (type) {
       case PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE: {
-        const raw = (data as ProxyWindowStreamChunkMsg).data;
-        if (!(raw instanceof ArrayBuffer)) return;
-        pushValue(new Uint8Array(raw));
+        const msg = data as ProxyWindowStreamChunkMsg;
+        if (!(msg.data instanceof ArrayBuffer) || !validWriteId(msg.writeId)) {
+          failProtocol("invalid stream chunk");
+          return;
+        }
+        if (pendingInboundWriteId != null || queue.length > 0) {
+          failProtocol("received more than one unacknowledged chunk");
+          return;
+        }
+        pendingInboundWriteId = msg.writeId;
+        const item = { chunk: new Uint8Array(msg.data), writeId: msg.writeId };
+        const waiter = waiters.shift();
+        if (waiter == null) {
+          queue.push(item);
+        } else {
+          waiter(item);
+        }
         return;
       }
       case PROXY_WINDOW_STREAM_END_MSG_TYPE:
       case PROXY_WINDOW_STREAM_CLOSE_MSG_TYPE:
-        closed = true;
-        for (const pending of pendingWrites.values()) pending.reject(new Error("stream is closed"));
-        pendingWrites.clear();
-        pushValue(null);
+        finishClosed();
         return;
       case PROXY_WINDOW_STREAM_WRITE_ACK_MSG_TYPE: {
         const writeId = (data as ProxyWindowStreamWriteAckMsg).writeId;
-        if (!Number.isSafeInteger(writeId) || writeId <= 0) return;
-        const pending = pendingWrites.get(writeId);
-        if (pending == null) return;
-        pendingWrites.delete(writeId);
+        const pending = pendingOutboundAcknowledgement;
+        if (!validWriteId(writeId) || pending == null || pending.writeId !== writeId) {
+          failProtocol("unexpected stream write acknowledgement");
+          return;
+        }
+        pendingOutboundAcknowledgement = null;
         pending.resolve();
         return;
       }
       case PROXY_WINDOW_STREAM_RESET_MSG_TYPE: {
-        closed = true;
         const message = String((data as ProxyWindowStreamResetMsg).message ?? "stream reset");
-        fail(new Error(message));
-        try {
-          port.close();
-        } catch {
-          // Best-effort.
-        }
+        terminateWithError(new Error(message), false);
         return;
       }
       default:
@@ -107,64 +193,88 @@ export function createMessagePortBackedStream(
   return {
     async read(): Promise<Uint8Array | null> {
       if (error != null) throw error;
-      const next = queue.shift();
-      if (next !== undefined) return next;
+      const queued = queue.shift();
+      if (queued != null) {
+        acknowledgeRead(queued);
+        return queued.chunk;
+      }
       if (closed) return null;
 
-      const value = await new Promise<ReadQueueItem | Error>((resolve) => {
+      const value = await new Promise<ReadResult>((resolve) => {
         waiters.push(resolve);
       });
       if (value instanceof Error) throw value;
-      return value;
+      if (value == null) return null;
+      acknowledgeRead(value);
+      return value.chunk;
     },
 
     async write(chunk: Uint8Array): Promise<void> {
       if (error != null) throw error;
-      if (closed) throw new Error("stream is closed");
-      const ab = cloneChunk(chunk);
-      if (opts.writeAcknowledgements !== true) {
-        port.postMessage({ type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE, data: ab } satisfies ProxyWindowStreamChunkMsg, [ab]);
-        return;
+      if (!acceptingWrites || closed) throw new Error("stream is closed");
+      const nextQueuedWriteBytes = queuedWriteBytes + chunk.byteLength;
+      if (!Number.isSafeInteger(nextQueuedWriteBytes) || nextQueuedWriteBytes > maxBufferedBytes) {
+        throw new Error("proxy WebSocket outbound buffer exceeded");
       }
-
-      const writeId = nextWriteId++;
-      await new Promise<void>((resolve, reject) => {
-        pendingWrites.set(writeId, { resolve, reject });
-        try {
-          port.postMessage({ type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE, data: ab, writeId } satisfies ProxyWindowStreamChunkMsg, [ab]);
-        } catch (error) {
-          pendingWrites.delete(writeId);
-          reject(error instanceof Error ? error : new Error(String(error)));
+      queuedWriteBytes = nextQueuedWriteBytes;
+      const ab = cloneChunk(chunk);
+      const operation = writeTail.then(async () => {
+        if (error != null) throw error;
+        if (closed) throw new Error("stream is closed");
+        if (!Number.isSafeInteger(nextWriteId)) {
+          failProtocol("stream write identifier space exhausted");
+          throw error;
         }
+        if (pendingOutboundAcknowledgement != null) {
+          failProtocol("multiple outbound chunks are awaiting acknowledgement");
+          throw error;
+        }
+        const writeId = nextWriteId++;
+        await new Promise<void>((resolve, reject) => {
+          pendingOutboundAcknowledgement = { writeId, resolve, reject };
+          try {
+            port.postMessage({
+              type: PROXY_WINDOW_STREAM_CHUNK_MSG_TYPE,
+              data: ab,
+              writeId,
+            } satisfies ProxyWindowStreamChunkMsg, [ab]);
+          } catch (cause) {
+            pendingOutboundAcknowledgement = null;
+            const postError = cause instanceof Error ? cause : new Error(String(cause));
+            terminateWithError(postError, false);
+            reject(postError);
+          }
+        });
       });
+      writeTail = operation.catch(() => {});
+      try {
+        await operation;
+      } finally {
+        queuedWriteBytes = Math.max(0, queuedWriteBytes - chunk.byteLength);
+      }
     },
 
     async close(): Promise<void> {
       if (closed) return;
+      acceptingWrites = false;
+      await writeTail;
+      if (error != null) throw error;
+      if (closed) return;
       closed = true;
-      const closeError = new Error("stream is closed");
-      for (const pending of pendingWrites.values()) pending.reject(closeError);
-      pendingWrites.clear();
+      queue.length = 0;
+      pendingInboundWriteId = null;
+      drainWaiters(null);
       try {
         port.postMessage({ type: PROXY_WINDOW_STREAM_CLOSE_MSG_TYPE } satisfies ProxyWindowStreamCloseMsg);
       } finally {
-        pushValue(null);
+        closePort();
+        notifyTerminal();
       }
     },
 
     reset(err: Error): void {
-      const message = err instanceof Error ? err.message : String(err);
-      closed = true;
-      fail(err instanceof Error ? err : new Error(message));
-      try {
-        port.postMessage({ type: PROXY_WINDOW_STREAM_RESET_MSG_TYPE, message } satisfies ProxyWindowStreamResetMsg);
-      } finally {
-        try {
-          port.close();
-        } catch {
-          // Best-effort.
-        }
-      }
+      const resetError = err instanceof Error ? err : new Error(String(err));
+      terminateWithError(resetError, true);
     },
   } as YamuxStream;
 }

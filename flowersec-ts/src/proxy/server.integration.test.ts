@@ -84,7 +84,9 @@ describe("Node proxy server", () => {
   test("proxies WebSocket frames over a direct Flowersec endpoint", async () => {
     const upstreamHTTP = createServer();
     const upstreamWS = new WebSocketServer({ server: upstreamHTTP, perMessageDeflate: false });
+    const greeting = new TextEncoder().encode("server greeting");
     upstreamWS.on("connection", (websocket) => {
+      websocket.send(greeting, { binary: true });
       websocket.on("message", (data, isBinary) => websocket.send(data, { binary: isBinary }));
     });
     const upstreamPort = await listen(upstreamHTTP);
@@ -129,6 +131,11 @@ describe("Node proxy server", () => {
     await writeJsonFrame(stream, { v: 1, conn_id: "ws-1", path: "/echo", headers: [] });
     expect(await readJsonFrame(reader, 1024 * 1024)).toMatchObject({ v: 1, conn_id: "ws-1", ok: true });
 
+    const greetingHeader = await reader.readExactly(5);
+    expect(greetingHeader[0]).toBe(2);
+    const greetingLength = readU32be(greetingHeader, 1);
+    expect(await reader.readExactly(greetingLength)).toEqual(greeting);
+
     const payload = new TextEncoder().encode("hello websocket");
     const frame = new Uint8Array(5 + payload.length);
     frame[0] = 2;
@@ -139,6 +146,24 @@ describe("Node proxy server", () => {
     expect(responseHeader[0]).toBe(2);
     const responseLength = readU32be(responseHeader, 1);
     expect(new TextDecoder().decode(await reader.readExactly(responseLength))).toBe("hello websocket");
+
+    const closeReason = new TextEncoder().encode("done");
+    const closePayload = new Uint8Array(2 + closeReason.length);
+    closePayload[0] = 0x03;
+    closePayload[1] = 0xe8;
+    closePayload.set(closeReason, 2);
+    const closeFrame = new Uint8Array(5 + closePayload.length);
+    closeFrame[0] = 8;
+    closeFrame.set(u32be(closePayload.length), 1);
+    closeFrame.set(closePayload, 5);
+    await stream.write(closeFrame);
+
+    const closeResponseHeader = await reader.readExactly(5);
+    expect(closeResponseHeader[0]).toBe(8);
+    const closeResponseLength = readU32be(closeResponseHeader, 1);
+    const closeResponse = await reader.readExactly(closeResponseLength);
+    expect((closeResponse[0]! << 8) | closeResponse[1]!).toBe(1000);
+    expect(new TextDecoder().decode(closeResponse.subarray(2))).toBe("done");
     client.close();
   });
 });

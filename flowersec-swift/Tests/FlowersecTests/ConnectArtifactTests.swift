@@ -174,6 +174,36 @@ final class ConnectArtifactTests: XCTestCase {
     await fulfillment(of: [resolved, policyCalled], timeout: 1)
   }
 
+  func testConnectValidatesArtifactBeforeScopeResolution() async throws {
+    let resolverCalled = expectation(description: "scope resolver")
+    resolverCalled.isInverted = true
+    let entry = try ScopeMetadataEntry(
+      scope: "proxy.runtime",
+      scopeVersion: 2,
+      critical: true,
+      payload: ScopePayload(["mode": .string("strict")])
+    )
+    var info = validDirectInfo()
+    info.channelID = " "
+    let artifact = ConnectArtifact.direct(
+      info,
+      metadata: try ConnectArtifactMetadata(scoped: [entry])
+    )
+    let options = ConnectOptions(scopeResolvers: [
+      "proxy.runtime": { _ in resolverCalled.fulfill() }
+    ])
+
+    do {
+      _ = try await Flowersec.connect(artifact, options: options)
+      XCTFail("Expected invalid artifact transport contract")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .direct)
+      XCTAssertEqual(error.stage, .validate)
+      XCTAssertEqual(error.code, .missingChannelID)
+    }
+    await fulfillment(of: [resolverCalled], timeout: 0.05)
+  }
+
   func testOptionalScopeResolverFailureFailsFastByDefault() async throws {
     let policyCalled = expectation(description: "transport policy")
     policyCalled.isInverted = true

@@ -4,6 +4,11 @@ import Foundation
   import FoundationNetworking
 #endif
 
+/// A binary transport used by Flowersec handshakes and secure channels.
+///
+/// `close()` may be invoked by an SDK-owned cleanup task after a timed-out or canceled call has
+/// already returned. Custom implementations must make close idempotent, promptly release pending
+/// I/O, and cooperate with task cancellation.
 public protocol FlowersecBinaryTransport: Sendable {
   func writeBinary(_ data: Data) async throws
   func readBinary() async throws -> Data
@@ -31,7 +36,9 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
   }
 
   private struct PendingWrite {
+    var id: UInt64
     var message: OutboundMessage
+    var cancellation: WebSocketPendingWriteCancellation
     var continuation: CheckedContinuation<Void, Error>
   }
 
@@ -40,9 +47,14 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
   private let onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)?
   private let session: URLSession
   private let task: URLSessionWebSocketTask
+  private let beforeResume: (@Sendable () async -> Void)?
+  private let resumeOverride: (@Sendable () -> Void)?
+  private let beforeSystemSend: (@Sendable () async -> Void)?
+  private let systemSendOverride: (@Sendable () async throws -> Void)?
   private var pendingWrites: [PendingWrite] = []
   private var pendingWriteBytes = 0
   private var writeInProgress = false
+  private var nextWriteID: UInt64 = 1
   private var closed = false
 
   init(
@@ -50,7 +62,11 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
     origin: String?,
     connectTimeout: Duration,
     path: FlowersecPath = .direct,
-    onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil
+    onDiagnosticEvent: (@Sendable (DiagnosticEvent) -> Void)? = nil,
+    beforeResume: (@Sendable () async -> Void)? = nil,
+    resumeOverride: (@Sendable () -> Void)? = nil,
+    beforeSystemSend: (@Sendable () async -> Void)? = nil,
+    systemSendOverride: (@Sendable () async throws -> Void)? = nil
   ) {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.urlCache = nil
@@ -63,6 +79,10 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
     self.session = URLSession(configuration: configuration)
     self.path = path
     self.onDiagnosticEvent = onDiagnosticEvent
+    self.beforeResume = beforeResume
+    self.resumeOverride = resumeOverride
+    self.beforeSystemSend = beforeSystemSend
+    self.systemSendOverride = systemSendOverride
 
     var request = URLRequest(url: url)
     request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -75,8 +95,14 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
     self.task = session.webSocketTask(with: request)
   }
 
-  func resume() {
-    task.resume()
+  func resume() async throws {
+    if let beforeResume { await beforeResume() }
+    try Task.checkCancellation()
+    if let resumeOverride {
+      resumeOverride()
+    } else {
+      task.resume()
+    }
   }
 
   func writeBinary(_ data: Data) async throws {
@@ -117,6 +143,7 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
   }
 
   private func enqueue(_ message: OutboundMessage) async throws {
+    try Task.checkCancellation()
     guard !closed else { throw FlowersecError.closed(path: path) }
     guard message.byteCount <= Self.maxPendingWriteBytes - pendingWriteBytes else {
       let current = pendingWriteBytes + message.byteCount
@@ -143,10 +170,28 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
       failPendingWrites(with: error)
       throw error
     }
-    pendingWriteBytes += message.byteCount
-    try await withCheckedThrowingContinuation { continuation in
-      pendingWrites.append(PendingWrite(message: message, continuation: continuation))
-      startWriteIfNeeded()
+    let id = nextWriteID
+    nextWriteID &+= 1
+    let cancellation = WebSocketPendingWriteCancellation()
+    try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      try await withCheckedThrowingContinuation { continuation in
+        pendingWriteBytes += message.byteCount
+        pendingWrites.append(
+          PendingWrite(
+            id: id,
+            message: message,
+            cancellation: cancellation,
+            continuation: continuation
+          )
+        )
+        startWriteIfNeeded()
+      }
+      try Task.checkCancellation()
+    } onCancel: {
+      if cancellation.cancel() {
+        Task { await self.cancelPendingWrite(id: id) }
+      }
     }
   }
 
@@ -154,20 +199,41 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
     guard !closed, !writeInProgress, let write = pendingWrites.first else { return }
     writeInProgress = true
     Task {
+      if let beforeSystemSend { await beforeSystemSend() }
+      guard write.cancellation.claimSubmission() else {
+        cancelPendingWrite(id: write.id)
+        return
+      }
       do {
-        try await task.send(write.message.webSocketMessage)
-        finishWrite(result: .success(()))
+        if let systemSendOverride {
+          try await systemSendOverride()
+        } else {
+          try await task.send(write.message.webSocketMessage)
+        }
+        finishWrite(id: write.id, result: .success(()))
       } catch {
         finishWrite(
+          id: write.id,
           result: .failure(FlowersecError.webSocket(error.localizedDescription, path: path))
         )
       }
     }
   }
 
-  private func finishWrite(result: Result<Void, Error>) {
-    guard !pendingWrites.isEmpty else {
+  private func cancelPendingWrite(id: UInt64) {
+    guard let index = pendingWrites.firstIndex(where: { $0.id == id }) else { return }
+    let wasActive = index == 0 && writeInProgress
+    let write = pendingWrites.remove(at: index)
+    pendingWriteBytes -= write.message.byteCount
+    if wasActive { writeInProgress = false }
+    write.continuation.resume(throwing: CancellationError())
+    if wasActive { startWriteIfNeeded() }
+  }
+
+  private func finishWrite(id: UInt64, result: Result<Void, Error>) {
+    guard let first = pendingWrites.first, first.id == id else {
       writeInProgress = false
+      startWriteIfNeeded()
       return
     }
     let write = pendingWrites.removeFirst()
@@ -192,8 +258,36 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
     pendingWriteBytes = 0
     writeInProgress = false
     for write in writes {
+      _ = write.cancellation.cancel()
       write.continuation.resume(throwing: error)
     }
+  }
+}
+
+private final class WebSocketPendingWriteCancellation: @unchecked Sendable {
+  private enum State: Equatable {
+    case pending
+    case canceled
+    case submitted
+  }
+
+  private let lock = NSLock()
+  private var state = State.pending
+
+  func cancel() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard state == .pending else { return false }
+    state = .canceled
+    return true
+  }
+
+  func claimSubmission() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard state == .pending else { return false }
+    state = .submitted
+    return true
   }
 }
 

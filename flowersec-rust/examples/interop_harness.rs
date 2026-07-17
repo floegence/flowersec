@@ -1124,7 +1124,7 @@ async fn serve(
             },
         }))?;
         let (tcp, _) = listener.accept().await?;
-        let websocket = tokio_tungstenite::accept_async(tcp).await?;
+        let transport = TungsteniteTransport::accept(tcp).await?;
         let mut handshake = ServerHandshakeOptions::new(
             decode_psk(&credential.e2ee_psk_b64u)?,
             parse_suite(credential.suite)?,
@@ -1133,11 +1133,7 @@ async fn serve(
         handshake.channel_id = Some(credential.channel_id.clone());
         let mut accept_options = DirectAcceptOptions::new(handshake);
         accept_options.yamux_limits = server_yamux_limits(command);
-        let session = accept_direct(
-            Arc::new(TungsteniteTransport::new(websocket)),
-            accept_options,
-        )
-        .await?;
+        let session = accept_direct(Arc::new(transport), accept_options).await?;
         (Arc::new(session), Some(listener))
     } else {
         let grant: ChannelInitGrant = command.tunnel_grant.as_ref().unwrap().try_into()?;

@@ -33,7 +33,7 @@ async fn reconnect_manager_recovers_after_session_termination() {
     let server_task = tokio::spawn(async move {
         for connection in 0..2 {
             let (tcp, _) = listener.accept().await.expect("accept TCP");
-            let websocket = tokio_tungstenite::accept_async(tcp)
+            let transport = TungsteniteTransport::accept(tcp)
                 .await
                 .expect("accept WebSocket");
             let mut handshake = ServerHandshakeOptions::new(
@@ -42,12 +42,9 @@ async fn reconnect_manager_recovers_after_session_termination() {
                 expires,
             );
             handshake.channel_id = Some("rust-reconnect".to_owned());
-            let session = accept_direct(
-                Arc::new(TungsteniteTransport::new(websocket)),
-                DirectAcceptOptions::new(handshake),
-            )
-            .await
-            .expect("accept direct session");
+            let session = accept_direct(Arc::new(transport), DirectAcceptOptions::new(handshake))
+                .await
+                .expect("accept direct session");
             let (kind, _rpc_stream) = session.accept_stream().await.expect("accept RPC stream");
             assert_eq!(kind, streamhello::RPC_KIND);
             accepted_tx
@@ -151,7 +148,7 @@ async fn reconnect_manager_retries_artifact_acquisition_then_connects() {
     let expires = unix_now() + 60;
     let server_task = tokio::spawn(async move {
         let (tcp, _) = listener.accept().await.expect("accept TCP");
-        let websocket = tokio_tungstenite::accept_async(tcp)
+        let transport = TungsteniteTransport::accept(tcp)
             .await
             .expect("accept WebSocket");
         let mut handshake = ServerHandshakeOptions::new(
@@ -160,12 +157,9 @@ async fn reconnect_manager_retries_artifact_acquisition_then_connects() {
             expires,
         );
         handshake.channel_id = Some("rust-reconnect".to_owned());
-        let session = accept_direct(
-            Arc::new(TungsteniteTransport::new(websocket)),
-            DirectAcceptOptions::new(handshake),
-        )
-        .await
-        .expect("accept direct session");
+        let session = accept_direct(Arc::new(transport), DirectAcceptOptions::new(handshake))
+            .await
+            .expect("accept direct session");
         session.terminated().await;
     });
 

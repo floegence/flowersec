@@ -29,6 +29,20 @@ Start with the [Rust cookbook](https://github.com/floegence/flowersec/tree/main/
 
 High-level WebSocket connections require TLS by default. Use `TransportSecurityPolicy::allow_plaintext_for_loopback()` only for literal local development targets.
 
+Endpoint servers should accept raw async streams with `TungsteniteTransport::accept(...)`; it applies Flowersec's encrypted-record message and frame limits and bounds the HTTP WebSocket upgrade with the default handshake timeout. Use `accept_with_timeout(...)` to select a different upgrade deadline. `TungsteniteTransport::new(...)` returns `io::Result` and rejects a supplied `WebSocketStream` unless it already enforces equivalent or stricter message and frame limits.
+
+## Liveness
+
+Client and endpoint options expose `yamux::LivenessOptions`:
+
+- `PathDefault` disables automatic probes for direct sessions and derives tunnel probes from the grant idle timeout.
+- `Disabled` disables automatic probes for either path.
+- `Enabled { interval, timeout }` uses explicit positive durations.
+
+The path-default tunnel interval is half the idle timeout with a 500 ms minimum; the probe timeout is the smaller of 10 seconds and that interval. Existing manual `probe_liveness(...)` methods remain available independently of automatic probes. A manual probe timeout is terminal: it closes the session because transport liveness can no longer be established safely.
+
+The release introducing these public option fields is a pre-1.0 source change. Consumers that construct `ConnectOptions`, `EndpointOptions`, or `DirectAcceptOptions` with exhaustive struct literals must set `liveness` or use `..Default::default()`. The same release changes `TungsteniteTransport::new(...)` to return `io::Result` so an unbounded injected stream cannot silently bypass the encrypted-record transport limit.
+
 ## Runtime Boundaries
 
 Rust owns the native Tokio implementation of the portable contract. Browser runtime APIs remain TypeScript-owned, while shared tunnel, gateway, and helper binaries remain Go-owned.

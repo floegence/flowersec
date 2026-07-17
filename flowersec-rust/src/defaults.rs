@@ -4,6 +4,7 @@ use std::time::Duration;
 
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const TRANSPORT_CLOSE_GRACE_PERIOD: Duration = Duration::from_millis(250);
 pub const HANDSHAKE_CLOCK_SKEW: Duration = Duration::from_secs(30);
 pub const MAX_HANDSHAKE_PAYLOAD_BYTES: usize = 8 * 1024;
 pub const MAX_RECORD_BYTES: usize = 1024 * 1024;
