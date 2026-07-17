@@ -14,13 +14,12 @@ describe("createNodeWsFactory", () => {
   test("sets Origin header", async () => {
     const origin = "http://example.com";
     const server = createServer();
+    const wss = new WebSocketServerCtor({ server });
     server.listen(0);
     await once(server, "listening");
     const addr = server.address();
     const port = typeof addr === "object" && addr != null ? addr.port : 0;
     if (!port) throw new Error("http server did not start");
-
-    const wss = new WebSocketServerCtor({ server });
 
     const gotOrigin = new Promise<string | undefined>((resolve) => {
       wss.once("connection", (_ws: any, req: any) => {
@@ -46,13 +45,12 @@ describe("createNodeWsFactory", () => {
   test("disables perMessageDeflate by default", async () => {
     const origin = "http://example.com";
     const server = createServer();
+    const wss = new WebSocketServerCtor({ server });
     server.listen(0);
     await once(server, "listening");
     const addr = server.address();
     const port = typeof addr === "object" && addr != null ? addr.port : 0;
     if (!port) throw new Error("http server did not start");
-
-    const wss = new WebSocketServerCtor({ server });
 
     const gotExt = new Promise<string | undefined>((resolve) => {
       wss.once("connection", (_ws: any, req: any) => {
@@ -78,13 +76,13 @@ describe("createNodeWsFactory", () => {
   test("enforces maxPayload by default (defense-in-depth)", async () => {
     const origin = "http://example.com";
     const server = createServer();
+    const wss = new WebSocketServerCtor({ server });
     server.listen(0);
     await once(server, "listening");
     const addr = server.address();
     const port = typeof addr === "object" && addr != null ? addr.port : 0;
     if (!port) throw new Error("http server did not start");
 
-    const wss = new WebSocketServerCtor({ server });
     wss.once("connection", (sock: any) => {
       sock.send(Buffer.alloc(2 * 1024 * 1024));
     });
@@ -109,13 +107,13 @@ describe("createNodeWsFactory", () => {
   test("enforces maxPayload", async () => {
     const origin = "http://example.com";
     const server = createServer();
+    const wss = new WebSocketServerCtor({ server });
     server.listen(0);
     await once(server, "listening");
     const addr = server.address();
     const port = typeof addr === "object" && addr != null ? addr.port : 0;
     if (!port) throw new Error("http server did not start");
 
-    const wss = new WebSocketServerCtor({ server });
     wss.once("connection", (sock: any) => {
       sock.send(Buffer.alloc(64));
     });

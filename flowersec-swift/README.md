@@ -7,7 +7,7 @@ The native Swift SDK for Flowersec end-to-end encrypted direct and tunneled sess
 The repository root exposes the Swift package:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.23.0")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.24.0")
 ```
 
 Use the `Flowersec` library product.
