@@ -1,7 +1,8 @@
 import Crypto
 import Foundation
+
 #if canImport(FoundationNetworking)
-import FoundationNetworking
+  import FoundationNetworking
 #endif
 
 public struct ControlplaneArtifactRequest: Codable, Equatable, Sendable {
@@ -100,9 +101,10 @@ public enum Controlplane {
     body: Data,
     maxBodyBytes: Int = FlowersecSDKDefaults.Controlplane.maxRequestBodyBytes
   ) throws -> ControlplaneArtifactRequest {
-    guard contentType.split(separator: ";", maxSplits: 1).first?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .lowercased() == "application/json"
+    guard
+      contentType.split(separator: ";", maxSplits: 1).first?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased() == "application/json"
     else {
       throw ControlplaneRequestError(
         status: 415,
@@ -187,13 +189,16 @@ public enum Controlplane {
     }
     let defaultPath = entryTicket == nil ? artifactPath : entryArtifactPath
     let path = options.path?.trimmingCharacters(in: .whitespacesAndNewlines)
-    let url = try artifactURL(baseURL: options.baseURL, path: path?.isEmpty == false ? path! : defaultPath)
+    let url = try artifactURL(
+      baseURL: options.baseURL, path: path?.isEmpty == false ? path! : defaultPath)
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("application/json", forHTTPHeaderField: "Accept")
     for (name, value) in options.headers { request.setValue(value, forHTTPHeaderField: name) }
-    if let entryTicket { request.setValue("Bearer \(entryTicket)", forHTTPHeaderField: "Authorization") }
+    if let entryTicket {
+      request.setValue("Bearer \(entryTicket)", forHTTPHeaderField: "Authorization")
+    }
     request.httpBody = try JSONEncoder.flowersecWire.encode(
       ControlplaneArtifactRequest(
         endpointID: endpointID,
@@ -201,13 +206,11 @@ public enum Controlplane {
         traceID: options.traceID?.trimmingCharacters(in: .whitespacesAndNewlines)
       )
     )
-    let (data, response) = try await session.data(for: request)
-    guard let http = response as? HTTPURLResponse else {
-      throw ControlplaneRequestError(status: 0, code: "transport_error", message: "Controlplane response was not HTTP.", responseBody: data)
-    }
-    guard data.count <= options.maxResponseBodyBytes else {
-      throw ControlplaneRequestError(status: http.statusCode, code: "response_too_large", message: "Controlplane response is too large.", responseBody: Data())
-    }
+    let (data, http) = try await readBoundedResponse(
+      request,
+      session: session,
+      maxBytes: options.maxResponseBodyBytes
+    )
     guard (200..<300).contains(http.statusCode) else {
       let decoded = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
       let error = decoded?["error"] as? [String: Any]
@@ -221,20 +224,70 @@ public enum Controlplane {
     guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
       let artifactObject = root["connect_artifact"]
     else {
-      throw ControlplaneRequestError(status: http.statusCode, code: "invalid_response", message: "Controlplane response is missing connect_artifact.", responseBody: data)
+      throw ControlplaneRequestError(
+        status: http.statusCode, code: "invalid_response",
+        message: "Controlplane response is missing connect_artifact.", responseBody: data)
     }
     let artifactData = try JSONSerialization.data(withJSONObject: artifactObject)
     return try JSONDecoder().decode(ConnectArtifact.self, from: artifactData)
   }
 
+  private static func readBoundedResponse(
+    _ request: URLRequest,
+    session: URLSession,
+    maxBytes: Int
+  ) async throws -> (Data, HTTPURLResponse) {
+    let (bytes, response) = try await session.bytes(for: request)
+    guard let http = response as? HTTPURLResponse else {
+      bytes.task.cancel()
+      throw ControlplaneRequestError(
+        status: 0,
+        code: "transport_error",
+        message: "Controlplane response was not HTTP.",
+        responseBody: Data()
+      )
+    }
+    if response.expectedContentLength > Int64(maxBytes) {
+      bytes.task.cancel()
+      throw responseTooLarge(status: http.statusCode)
+    }
+
+    var data = Data()
+    if response.expectedContentLength > 0 {
+      data.reserveCapacity(min(maxBytes, Int(response.expectedContentLength)))
+    }
+    for try await byte in bytes {
+      guard data.count < maxBytes else {
+        bytes.task.cancel()
+        throw responseTooLarge(status: http.statusCode)
+      }
+      data.append(byte)
+    }
+    return (data, http)
+  }
+
+  private static func responseTooLarge(status: Int) -> ControlplaneRequestError {
+    ControlplaneRequestError(
+      status: status,
+      code: "response_too_large",
+      message: "Controlplane response is too large.",
+      responseBody: Data()
+    )
+  }
+
   private static func artifactURL(baseURL: URL, path: String) throws -> URL {
     guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
-      throw ControlplaneRequestError(status: 0, code: "invalid_input", message: "Controlplane base URL is invalid.", responseBody: Data())
+      throw ControlplaneRequestError(
+        status: 0, code: "invalid_input", message: "Controlplane base URL is invalid.",
+        responseBody: Data())
     }
-    let basePath = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+    let basePath =
+      components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
     components.path = basePath + (path.hasPrefix("/") ? path : "/\(path)")
     guard let url = components.url else {
-      throw ControlplaneRequestError(status: 0, code: "invalid_input", message: "Controlplane URL is invalid.", responseBody: Data())
+      throw ControlplaneRequestError(
+        status: 0, code: "invalid_input", message: "Controlplane URL is invalid.",
+        responseBody: Data())
     }
     return url
   }
@@ -348,8 +401,9 @@ public enum FST2Token {
       let signature = Data(base64URLEncoded: String(parts[2]))
     else { throw FST2TokenError.invalidFormat }
     let payload: FST2TokenPayload
-    do { payload = try JSONDecoder().decode(FST2TokenPayload.self, from: payloadData) }
-    catch { throw FST2TokenError.invalidJSON }
+    do { payload = try JSONDecoder().decode(FST2TokenPayload.self, from: payloadData) } catch {
+      throw FST2TokenError.invalidJSON
+    }
     let normalized = try validate(payload, signing: false)
     guard let publicKeyData = keys[normalized.kid] else { throw FST2TokenError.unknownKey }
     let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData)
@@ -359,10 +413,14 @@ public enum FST2Token {
     }
     if let audience = options.audience,
       !controlplaneConstantTimeEqual(Data(normalized.audience.utf8), Data(audience.utf8))
-    { throw FST2TokenError.invalidAudience }
+    {
+      throw FST2TokenError.invalidAudience
+    }
     if let issuer = options.issuer,
       !controlplaneConstantTimeEqual(Data(normalized.issuer.utf8), Data(issuer.utf8))
-    { throw FST2TokenError.invalidIssuer }
+    {
+      throw FST2TokenError.invalidIssuer
+    }
     let skew = controlplaneDurationSecondsCeil(options.clockSkew)
     let now = options.nowUnixS ?? Int64(Date().timeIntervalSince1970)
     if normalized.issuedAtUnixS > now + skew { throw FST2TokenError.issuedInFuture }
@@ -387,11 +445,19 @@ public enum FST2Token {
     else { throw FST2TokenError.invalidFormat }
     guard !signing || !payload.audience.isEmpty else { throw FST2TokenError.invalidFormat }
     guard payload.idleTimeoutSeconds > 0 else { throw FST2TokenError.invalidIdleTimeout }
-    guard !signing || (payload.initExpiresAtUnixS > 0 && payload.issuedAtUnixS > 0 && payload.expiresAtUnixS > 0) else {
+    guard
+      !signing
+        || (payload.initExpiresAtUnixS > 0 && payload.issuedAtUnixS > 0
+          && payload.expiresAtUnixS > 0)
+    else {
       throw FST2TokenError.invalidFormat
     }
-    guard payload.expiresAtUnixS <= payload.initExpiresAtUnixS else { throw FST2TokenError.expAfterInit }
-    guard payload.issuedAtUnixS <= payload.expiresAtUnixS else { throw FST2TokenError.invalidFormat }
+    guard payload.expiresAtUnixS <= payload.initExpiresAtUnixS else {
+      throw FST2TokenError.expAfterInit
+    }
+    guard payload.issuedAtUnixS <= payload.expiresAtUnixS else {
+      throw FST2TokenError.invalidFormat
+    }
     return payload
   }
 
@@ -435,14 +501,22 @@ public enum FST2TokenError: Error, Equatable, Sendable {
 }
 
 public actor TokenIssuer {
-  private var kid: String
-  private var privateKey: Curve25519.Signing.PrivateKey
+  private struct SigningMaterial {
+    var kid: String
+    var privateKey: Curve25519.Signing.PrivateKey
+
+    var publicKey: Data { privateKey.publicKey.rawRepresentation }
+  }
+
+  private var active: SigningMaterial
+  private var verificationKeys: [String: Data]
 
   public init(kid: String, privateKey: Curve25519.Signing.PrivateKey) throws {
     let kid = kid.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !kid.isEmpty else { throw FST2TokenError.invalidFormat }
-    self.kid = kid
-    self.privateKey = privateKey
+    let material = SigningMaterial(kid: kid, privateKey: privateKey)
+    self.active = material
+    self.verificationKeys = [kid: material.publicKey]
   }
 
   public init(kid: String, seed: Data) throws {
@@ -456,35 +530,63 @@ public actor TokenIssuer {
     try TokenIssuer(kid: kid, privateKey: Curve25519.Signing.PrivateKey())
   }
 
-  public func currentKeyID() -> String { kid }
+  public func currentKeyID() -> String { active.kid }
 
   public func publicKeys() -> [String: Data] {
-    [kid: privateKey.publicKey.rawRepresentation]
+    verificationKeys
   }
 
   public func sign(_ payload: FST2TokenPayload) throws -> String {
     var payload = payload
-    payload.kid = kid
-    return try FST2Token.sign(privateKey: privateKey, payload: payload)
+    payload.kid = active.kid
+    return try FST2Token.sign(privateKey: active.privateKey, payload: payload)
+  }
+
+  public func addVerificationKey(kid: String, publicKey: Data) throws {
+    let kid = try normalizedKeyID(kid)
+    let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: publicKey)
+      .rawRepresentation
+    if let existing = verificationKeys[kid] {
+      guard existing == publicKey else { throw FST2TokenError.invalidFormat }
+      return
+    }
+    verificationKeys[kid] = publicKey
   }
 
   public func rotate(kid: String, seed: Data) throws {
-    let kid = kid.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !kid.isEmpty else { throw FST2TokenError.invalidFormat }
-    self.kid = kid
-    self.privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+    let kid = try normalizedKeyID(kid)
+    let privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+    let material = SigningMaterial(kid: kid, privateKey: privateKey)
+    guard verificationKeys[kid] == material.publicKey else {
+      throw FST2TokenError.invalidFormat
+    }
+    active = material
+  }
+
+  public func retireVerificationKey(kid: String) throws {
+    let kid = try normalizedKeyID(kid)
+    guard kid != active.kid, verificationKeys.removeValue(forKey: kid) != nil else {
+      throw FST2TokenError.invalidFormat
+    }
   }
 
   public func exportTunnelKeyset() throws -> Data {
-    try JSONSerialization.data(
-      withJSONObject: [
-        "keys": [[
-          "kid": kid,
-          "pubkey_b64u": privateKey.publicKey.rawRepresentation.base64URLEncodedString(),
-        ]]
-      ],
+    let keys = verificationKeys.keys.sorted().map { kid in
+      [
+        "kid": kid,
+        "pubkey_b64u": verificationKeys[kid]!.base64URLEncodedString(),
+      ]
+    }
+    return try JSONSerialization.data(
+      withJSONObject: ["keys": keys],
       options: [.prettyPrinted, .sortedKeys]
     )
+  }
+
+  private func normalizedKeyID(_ kid: String) throws -> String {
+    let kid = kid.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !kid.isEmpty else { throw FST2TokenError.invalidFormat }
+    return kid
   }
 }
 
@@ -538,7 +640,9 @@ public actor ChannelInitService {
     self.now = now
   }
 
-  public func issue(channelID: String) async throws -> (client: ChannelInitGrant, server: ChannelInitGrant) {
+  public func issue(channelID: String) async throws -> (
+    client: ChannelInitGrant, server: ChannelInitGrant
+  ) {
     let normalized = try normalizedParams()
     let channelID = try normalizedChannelID(channelID)
     var psk = try Data.secureRandom(count: 32)
@@ -578,7 +682,9 @@ public actor ChannelInitService {
   public func reissue(_ grant: ChannelInitGrant) async throws -> ChannelInitGrant {
     let normalized = try normalizedParams()
     let issuedAt = now()
-    guard issuedAt <= grant.channelInitExpiresAtUnixS + controlplaneDurationSecondsCeil(normalized.clockSkew),
+    guard
+      issuedAt <= grant.channelInitExpiresAtUnixS
+        + controlplaneDurationSecondsCeil(normalized.clockSkew),
       grant.idleTimeoutSeconds > 0,
       grant.role == 1 || grant.role == 2
     else { throw FST2TokenError.initExpired }
@@ -654,7 +760,8 @@ private func controlplaneConstantTimeEqual(_ left: Data, _ right: Data) -> Bool 
   var difference = left.count ^ right.count
   let count = max(left.count, right.count)
   for index in 0..<count {
-    difference |= Int(index < left.count ? left[index] : 0) ^ Int(index < right.count ? right[index] : 0)
+    difference |=
+      Int(index < left.count ? left[index] : 0) ^ Int(index < right.count ? right[index] : 0)
   }
   return difference == 0
 }

@@ -98,28 +98,58 @@ public struct DiagnosticEvent: Codable, Equatable, Sendable {
   }
 }
 
-public enum FlowersecCode: String, Codable, Equatable, Sendable {
-  case timeout
-  case canceled
+public enum FlowersecCode: String, Codable, CaseIterable, Equatable, Sendable {
   case invalidInput = "invalid_input"
-  case missingConnectInfo = "missing_connect_info"
-  case missingWSURL = "missing_ws_url"
-  case missingChannelID = "missing_channel_id"
-  case missingInitExp = "missing_init_exp"
-  case invalidSuite = "invalid_suite"
-  case invalidPSK = "invalid_psk"
   case invalidOption = "invalid_option"
+  case missingGrant = "missing_grant"
+  case missingConnectInfo = "missing_connect_info"
+  case missingConn = "missing_conn"
+  case roleMismatch = "role_mismatch"
+  case missingTunnelURL = "missing_tunnel_url"
+  case missingWSURL = "missing_ws_url"
+  case missingOrigin = "missing_origin"
+  case missingChannelID = "missing_channel_id"
+  case missingToken = "missing_token"
+  case missingInitExp = "missing_init_exp"
+  case invalidPSK = "invalid_psk"
+  case invalidSuite = "invalid_suite"
+  case invalidVersion = "invalid_version"
+  case invalidEndpointInstanceID = "invalid_endpoint_instance_id"
   case resolveFailed = "resolve_failed"
   case transportPolicyDenied = "transport_policy_denied"
   case credentialCommitFailed = "credential_commit_failed"
-  case authTagMismatch = "auth_tag_mismatch"
+  case randomFailed = "random_failed"
+  case dialFailed = "dial_failed"
+  case attachFailed = "attach_failed"
+  case upgradeFailed = "upgrade_failed"
+  case tooManyConnections = "too_many_connections"
+  case expectedAttach = "expected_attach"
+  case invalidAttach = "invalid_attach"
+  case invalidToken = "invalid_token"
+  case channelMismatch = "channel_mismatch"
+  case initExpMismatch = "init_exp_mismatch"
+  case idleTimeoutMismatch = "idle_timeout_mismatch"
+  case tokenReplay = "token_replay"
+  case tenantMismatch = "tenant_mismatch"
+  case policyDenied = "policy_denied"
+  case policyError = "policy_error"
+  case replaceRateLimited = "replace_rate_limited"
+  case timeout
+  case canceled
   case handshakeFailed = "handshake_failed"
-  case rekeyFailed = "rekey_failed"
-  case notConnected = "not_connected"
+  case timestampAfterInitExp = "timestamp_after_init_exp"
+  case timestampOutOfSkew = "timestamp_out_of_skew"
+  case authTagMismatch = "auth_tag_mismatch"
   case openStreamFailed = "open_stream_failed"
+  case acceptStreamFailed = "accept_stream_failed"
+  case muxFailed = "mux_failed"
   case streamHelloFailed = "stream_hello_failed"
   case rpcFailed = "rpc_failed"
-  case websocketFailed = "websocket_failed"
+  case missingStreamKind = "missing_stream_kind"
+  case missingHandler = "missing_handler"
+  case pingFailed = "ping_failed"
+  case rekeyFailed = "rekey_failed"
+  case notConnected = "not_connected"
   case resourceExhausted = "resource_exhausted"
 }
 
@@ -198,7 +228,8 @@ public struct DirectConnectInfo: Codable, Equatable, Sendable {
       channelID: try container.decode(String.self, forKey: .channelID),
       psk: psk,
       encodedPSK: rawPSK,
-      channelInitExpiresAtUnixS: try container.decode(Int64.self, forKey: .channelInitExpiresAtUnixS),
+      channelInitExpiresAtUnixS: try container.decode(
+        Int64.self, forKey: .channelInitExpiresAtUnixS),
       defaultSuite: try container.decode(Suite.self, forKey: .defaultSuite)
     )
   }
@@ -313,7 +344,8 @@ public struct ChannelInitGrant: Codable, Equatable, Sendable {
     self.init(
       tunnelURL: tunnelURL,
       channelID: try container.decode(String.self, forKey: .channelID),
-      channelInitExpiresAtUnixS: try container.decode(Int64.self, forKey: .channelInitExpiresAtUnixS),
+      channelInitExpiresAtUnixS: try container.decode(
+        Int64.self, forKey: .channelInitExpiresAtUnixS),
       idleTimeoutSeconds: try container.decode(Int32.self, forKey: .idleTimeoutSeconds),
       role: try container.decode(UInt8.self, forKey: .role),
       token: try container.decode(String.self, forKey: .token),
@@ -704,7 +736,8 @@ public struct CorrelationContext: Codable, Equatable, Sendable {
     }
     try Self.validate(tags: tags)
     self.init(
-      uncheckedTraceID: Self.sanitizedID(try container.decodeIfPresent(String.self, forKey: .traceID)),
+      uncheckedTraceID: Self.sanitizedID(
+        try container.decodeIfPresent(String.self, forKey: .traceID)),
       sessionID: Self.sanitizedID(try container.decodeIfPresent(String.self, forKey: .sessionID)),
       tags: tags
     )
@@ -746,8 +779,8 @@ public enum ConnectArtifact: Codable, Equatable, Sendable {
 
   public var metadata: ConnectArtifactMetadata {
     switch self {
-    case .direct(_, metadata: let metadata),
-      .tunnel(_, metadata: let metadata):
+    case .direct(_, let metadata),
+      .tunnel(_, let metadata):
       return metadata
     }
   }
@@ -835,11 +868,11 @@ public enum ConnectArtifact: Codable, Equatable, Sendable {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(1, forKey: .v)
     switch self {
-    case .direct(let info, metadata: let metadata):
+    case .direct(let info, let metadata):
       try container.encode("direct", forKey: .transport)
       try container.encode(info, forKey: .directInfo)
       try encode(metadata, to: &container)
-    case .tunnel(let grant, metadata: let metadata):
+    case .tunnel(let grant, let metadata):
       try container.encode("tunnel", forKey: .transport)
       try container.encode(grant, forKey: .tunnelGrant)
       try encode(metadata, to: &container)
@@ -1093,7 +1126,7 @@ extension FlowersecError {
     _ message: String,
     path: FlowersecPath = .direct
   ) -> FlowersecError {
-    FlowersecError(path: path, stage: .yamux, code: .openStreamFailed, message: message)
+    FlowersecError(path: path, stage: .yamux, code: .muxFailed, message: message)
   }
 
   public static func resourceExhausted(
@@ -1118,11 +1151,20 @@ extension FlowersecError {
     FlowersecError(path: path, stage: .rpc, code: .rpcFailed, message: message)
   }
 
+  static func missingStreamKind(path: FlowersecPath) -> FlowersecError {
+    FlowersecError(
+      path: path,
+      stage: .rpc,
+      code: .missingStreamKind,
+      message: "Stream kind is empty."
+    )
+  }
+
   public static func webSocket(
     _ message: String,
     path: FlowersecPath = .direct
   ) -> FlowersecError {
-    FlowersecError(path: path, stage: .connect, code: .websocketFailed, message: message)
+    FlowersecError(path: path, stage: .connect, code: .dialFailed, message: message)
   }
 
   public static let closed = FlowersecError(

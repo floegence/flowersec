@@ -26,6 +26,41 @@ function makeTransport() {
 }
 
 describe("SecureChannel send queue", () => {
+  test("releases fully drained send requests and waiters", async () => {
+    const key = new Uint8Array(32).fill(1);
+    const noncePrefix = new Uint8Array(4).fill(2);
+    const { transport } = makeTransport();
+    const sc = new SecureChannel({
+      transport,
+      maxRecordBytes: 1 << 20,
+      sendKey: key,
+      recvKey: key,
+      sendNoncePrefix: noncePrefix,
+      recvNoncePrefix: noncePrefix,
+      rekeyBase: new Uint8Array(32).fill(3),
+      transcriptHash: new Uint8Array(32).fill(4),
+      sendDir: 1,
+      recvDir: 2,
+    });
+
+    const state = sc as unknown as {
+      sendQueue: unknown[];
+      sendQueueHead: number;
+      sendWaiters: unknown[];
+      sendWaitersHead: number;
+    };
+    const consumedWaiter = state.sendWaiters[0];
+
+    await sc.write(new Uint8Array([1, 2, 3]));
+
+    expect(state.sendQueue).toHaveLength(0);
+    expect(state.sendQueueHead).toBe(0);
+    expect(state.sendWaiters).toHaveLength(1);
+    expect(state.sendWaitersHead).toBe(0);
+    expect(state.sendWaiters[0]).not.toBe(consumedWaiter);
+    sc.close();
+  });
+
   test("bounds queued and in-flight outbound plaintext bytes", async () => {
     const key = new Uint8Array(32).fill(1);
     const noncePrefix = new Uint8Array(4).fill(2);

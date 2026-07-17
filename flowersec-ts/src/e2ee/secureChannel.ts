@@ -1,6 +1,7 @@
 import { RECORD_FLAG_APP, RECORD_FLAG_PING, RECORD_FLAG_REKEY } from "./constants.js";
 import { decryptRecord, encryptRecord, maxPlaintextBytes } from "./record.js";
 import { deriveRekeyKey } from "./kdf.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 
 // BinaryTransport is the minimal interface for binary message exchange.
 export type ReadBinaryOptions = Readonly<{
@@ -69,8 +70,7 @@ export class SecureChannel {
   // Maximum allowed bytes per record frame.
   private readonly maxRecordBytes: number;
   private readonly outboundRecordChunkBytes: number;
-  // Upper bound for buffered plaintext in memory.
-  private readonly maxBufferedBytes: number;
+  private readonly maxInboundBufferedBytes: number;
   private readonly maxOutboundBufferedBytes: number;
 
   // Active encryption keys and nonce prefixes for the current epoch.
@@ -100,7 +100,7 @@ export class SecureChannel {
   private sendErr: unknown = null;
 
   // Receive queue and waiters for plaintext delivery.
-  private readonly recvQueue: Uint8Array[] = [];
+  private recvQueue: Uint8Array[] = [];
   private recvQueueHead = 0;
   private recvQueueBytes = 0;
   private recvWaiters: Array<() => void> = [];
@@ -127,16 +127,16 @@ export class SecureChannel {
     this.transport = args.transport;
     this.maxRecordBytes = args.maxRecordBytes;
     const maxPlain = Math.max(1, maxPlaintextBytes(this.maxRecordBytes));
-    this.outboundRecordChunkBytes = args.outboundRecordChunkBytes ?? Math.min(64 * 1024, maxPlain);
+    this.outboundRecordChunkBytes = args.outboundRecordChunkBytes ?? Math.min(SDK_DEFAULTS.e2ee.outboundRecordChunkBytes, maxPlain);
     if (!Number.isSafeInteger(this.outboundRecordChunkBytes) || this.outboundRecordChunkBytes <= 0 || this.outboundRecordChunkBytes > maxPlain) {
       throw new RangeError("outboundRecordChunkBytes must be a positive integer within the record plaintext limit");
     }
-    this.maxBufferedBytes = Math.max(0, args.maxBufferedBytes ?? 4 * (1 << 20));
-    const maxOutboundBufferedBytes = args.maxOutboundBufferedBytes ?? 4 * (1 << 20);
+    this.maxInboundBufferedBytes = Math.max(0, args.maxBufferedBytes ?? SDK_DEFAULTS.e2ee.maxInboundBufferedBytes);
+    const maxOutboundBufferedBytes = args.maxOutboundBufferedBytes ?? SDK_DEFAULTS.e2ee.maxOutboundBufferedBytes;
     if (!Number.isSafeInteger(maxOutboundBufferedBytes) || maxOutboundBufferedBytes < 0) {
       throw new RangeError("maxOutboundBufferedBytes must be a non-negative safe integer");
     }
-    this.maxOutboundBufferedBytes = maxOutboundBufferedBytes === 0 ? 4 * (1 << 20) : maxOutboundBufferedBytes;
+    this.maxOutboundBufferedBytes = maxOutboundBufferedBytes === 0 ? SDK_DEFAULTS.e2ee.maxOutboundBufferedBytes : maxOutboundBufferedBytes;
     this.sendKey = args.sendKey;
     this.recvKey = args.recvKey;
     this.sendNoncePrefix = args.sendNoncePrefix;
@@ -163,7 +163,10 @@ export class SecureChannel {
       if (this.recvQueueHead < this.recvQueue.length) {
         const b = this.recvQueue[this.recvQueueHead]!;
         this.recvQueueHead++;
-        if (this.recvQueueHead > 1024 && this.recvQueueHead * 2 > this.recvQueue.length) {
+        if (this.recvQueueHead === this.recvQueue.length) {
+          this.recvQueue = [];
+          this.recvQueueHead = 0;
+        } else if (this.recvQueueHead > 1024 && this.recvQueueHead * 2 > this.recvQueue.length) {
           this.recvQueue.splice(0, this.recvQueueHead);
           this.recvQueueHead = 0;
         }
@@ -243,7 +246,10 @@ export class SecureChannel {
     if (this.sendQueueHead >= this.sendQueue.length) return null;
     const req = this.sendQueue[this.sendQueueHead]!;
     this.sendQueueHead++;
-    if (this.sendQueueHead > 1024 && this.sendQueueHead * 2 > this.sendQueue.length) {
+    if (this.sendQueueHead === this.sendQueue.length) {
+      this.sendQueue = [];
+      this.sendQueueHead = 0;
+    } else if (this.sendQueueHead > 1024 && this.sendQueueHead * 2 > this.sendQueue.length) {
       this.sendQueue.splice(0, this.sendQueueHead);
       this.sendQueueHead = 0;
     }
@@ -254,7 +260,10 @@ export class SecureChannel {
     if (this.sendWaitersHead >= this.sendWaiters.length) return undefined;
     const w = this.sendWaiters[this.sendWaitersHead];
     this.sendWaitersHead++;
-    if (this.sendWaitersHead > 1024 && this.sendWaitersHead * 2 > this.sendWaiters.length) {
+    if (this.sendWaitersHead === this.sendWaiters.length) {
+      this.sendWaiters = [];
+      this.sendWaitersHead = 0;
+    } else if (this.sendWaitersHead > 1024 && this.sendWaitersHead * 2 > this.sendWaiters.length) {
       this.sendWaiters.splice(0, this.sendWaitersHead);
       this.sendWaitersHead = 0;
     }
@@ -361,7 +370,7 @@ export class SecureChannel {
         }
         this.recvSeq = seq + 1n;
         if (flags === RECORD_FLAG_APP) {
-          if (this.maxBufferedBytes > 0 && this.recvQueueBytes + plaintext.length > this.maxBufferedBytes) {
+          if (this.maxInboundBufferedBytes > 0 && this.recvQueueBytes + plaintext.length > this.maxInboundBufferedBytes) {
             throw new Error("recv buffer exceeded");
           }
           this.recvQueue.push(plaintext);

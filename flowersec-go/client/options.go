@@ -30,6 +30,7 @@ type connectOptions struct {
 	maxHandshakePayload      int
 	maxRecordBytes           int
 	maxBufferedBytes         int
+	maxOutboundBufferedBytes int
 	outboundRecordChunkBytes int
 	yamuxLimits              YamuxLimits
 
@@ -64,7 +65,7 @@ const e2eeDefaultOutboundRecordChunkBytes = 64 * 1024
 // LivenessOptions configures ACK-based session liveness probes.
 type LivenessOptions = fsyamux.LivenessOptions
 
-// YamuxLimits bounds high-level multiplexing concurrency, frames, and receive memory.
+// YamuxLimits bounds high-level multiplexing concurrency, frames, and buffered memory.
 type YamuxLimits = fsyamux.YamuxLimits
 
 func applyConnectOptions(opts []ConnectOption) (connectOptions, error) {
@@ -162,13 +163,24 @@ func WithMaxRecordBytes(n int) ConnectOption {
 	}
 }
 
-// WithMaxBufferedBytes sets the maximum buffered plaintext bytes in the secure channel.
+// WithMaxBufferedBytes sets the maximum inbound buffered plaintext bytes in the secure channel.
 func WithMaxBufferedBytes(n int) ConnectOption {
 	return func(cfg *connectOptions) error {
 		if n <= 0 {
 			return fmt.Errorf("max buffered bytes must be > 0")
 		}
 		cfg.maxBufferedBytes = n
+		return nil
+	}
+}
+
+// WithMaxOutboundBufferedBytes sets the maximum admitted unfinished application write bytes.
+func WithMaxOutboundBufferedBytes(n int) ConnectOption {
+	return func(cfg *connectOptions) error {
+		if n <= 0 {
+			return fmt.Errorf("max outbound buffered bytes must be > 0")
+		}
+		cfg.maxOutboundBufferedBytes = n
 		return nil
 	}
 }

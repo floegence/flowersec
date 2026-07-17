@@ -47,6 +47,7 @@ type AcceptDirectOptions struct {
 	MaxHandshakePayload      int
 	MaxRecordBytes           int
 	MaxBufferedBytes         int
+	MaxOutboundBufferedBytes int
 	OutboundRecordChunkBytes int
 
 	HandshakeCache *HandshakeCache
@@ -57,6 +58,13 @@ type AcceptDirectOptions struct {
 // AcceptDirectWS performs the server-side E2EE handshake on an upgraded websocket connection
 // and returns a multiplexed endpoint session.
 func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOptions) (Session, error) {
+	if c == nil {
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConn, ErrMissingConn)
+	}
+	return acceptDirectWSConn(ctx, ws.Wrap(c), opts)
+}
+
+func acceptDirectWSConn(ctx context.Context, c *ws.Conn, opts AcceptDirectOptions) (Session, error) {
 	if c == nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConn, ErrMissingConn)
 	}
@@ -109,6 +117,10 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max buffered bytes must be >= 0"))
 	}
+	if opts.MaxOutboundBufferedBytes < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max outbound buffered bytes must be >= 0"))
+	}
 	if opts.OutboundRecordChunkBytes < 0 {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("outbound record chunk bytes must be >= 0"))
@@ -127,7 +139,7 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 	// Guard against a single oversized websocket message causing an OOM before E2EE framing checks run.
 	c.SetReadLimit(wsutil.ReadLimit(opts.MaxHandshakePayload, opts.MaxRecordBytes))
 
-	bt := e2ee.NewWebSocketBinaryTransport(c)
+	bt := e2ee.NewWebSocketMessageTransport(c)
 	secure, err := e2ee.ServerHandshake(handshakeCtx, bt, opts.HandshakeCache, e2ee.ServerHandshakeOptions{
 		PSK:                      opts.PSK,
 		Suite:                    e2ee.Suite(suite),
@@ -138,6 +150,7 @@ func AcceptDirectWS(ctx context.Context, c *websocket.Conn, opts AcceptDirectOpt
 		MaxHandshakePayload:      opts.MaxHandshakePayload,
 		MaxRecordBytes:           opts.MaxRecordBytes,
 		MaxBufferedBytes:         opts.MaxBufferedBytes,
+		MaxOutboundBufferedBytes: opts.MaxOutboundBufferedBytes,
 		OutboundRecordChunkBytes: opts.OutboundRecordChunkBytes,
 	})
 	if err != nil {
@@ -192,6 +205,7 @@ type AcceptDirectResolverOptions struct {
 	MaxHandshakePayload      int
 	MaxRecordBytes           int
 	MaxBufferedBytes         int
+	MaxOutboundBufferedBytes int
 	OutboundRecordChunkBytes int
 
 	HandshakeCache *HandshakeCache
@@ -232,6 +246,13 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 	if c == nil {
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConn, ErrMissingConn)
 	}
+	return acceptDirectWSResolvedConn(ctx, ws.Wrap(c), opts)
+}
+
+func acceptDirectWSResolvedConn(ctx context.Context, c *ws.Conn, opts AcceptDirectResolverOptions) (Session, error) {
+	if c == nil {
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingConn, ErrMissingConn)
+	}
 	if opts.Resolve == nil && opts.ResolveCredential == nil {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, ErrMissingResolver)
@@ -266,6 +287,10 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max buffered bytes must be >= 0"))
 	}
+	if opts.MaxOutboundBufferedBytes < 0 {
+		_ = c.Close()
+		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("max outbound buffered bytes must be >= 0"))
+	}
 	if opts.OutboundRecordChunkBytes < 0 {
 		_ = c.Close()
 		return nil, wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeInvalidOption, fmt.Errorf("outbound record chunk bytes must be >= 0"))
@@ -289,7 +314,7 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 	// Guard against a single oversized websocket message causing an OOM before E2EE framing checks run.
 	c.SetReadLimit(wsutil.ReadLimit(opts.MaxHandshakePayload, opts.MaxRecordBytes))
 
-	bt := e2ee.NewWebSocketBinaryTransport(c)
+	bt := e2ee.NewWebSocketMessageTransport(c)
 	firstFrame, err := bt.ReadBinary(handshakeCtx)
 	if err != nil {
 		_ = c.Close()
@@ -363,6 +388,7 @@ func AcceptDirectWSResolved(ctx context.Context, c *websocket.Conn, opts AcceptD
 		MaxHandshakePayload:      opts.MaxHandshakePayload,
 		MaxRecordBytes:           opts.MaxRecordBytes,
 		MaxBufferedBytes:         opts.MaxBufferedBytes,
+		MaxOutboundBufferedBytes: opts.MaxOutboundBufferedBytes,
 		OutboundRecordChunkBytes: opts.OutboundRecordChunkBytes,
 	})
 	if err != nil {
@@ -461,7 +487,7 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 			return
 		}
 		defer c.Close()
-		sess, err := AcceptDirectWS(r.Context(), c.Underlying(), handshake)
+		sess, err := acceptDirectWSConn(r.Context(), c, handshake)
 		if err != nil {
 			onErr(err)
 			return
@@ -579,7 +605,7 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 			return
 		}
 		defer c.Close()
-		sess, err := AcceptDirectWSResolved(r.Context(), c.Underlying(), handshake)
+		sess, err := acceptDirectWSResolvedConn(r.Context(), c, handshake)
 		if err != nil {
 			onErr(err)
 			return

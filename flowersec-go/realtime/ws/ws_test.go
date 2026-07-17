@@ -38,6 +38,23 @@ func TestDialContextCanceled(t *testing.T) {
 	}
 }
 
+func TestWrapPreservesContextAwareOperations(t *testing.T) {
+	srv := newWSServer(t)
+	defer srv.Close()
+	raw, _, err := websocket.DefaultDialer.Dial("ws"+srv.URL[4:], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := Wrap(raw)
+	if conn == nil {
+		t.Fatal("Wrap returned nil")
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if err := conn.WriteMessage(context.Background(), websocket.BinaryMessage, []byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReadMessageHonorsContextDeadline(t *testing.T) {
 	srv := newWSServer(t)
 	defer srv.Close()

@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createReconnectManager } from "./index.js";
 import { registerClientTermination, type ClientTermination } from "../client-connect/termination.js";
+import { AbortError, FlowersecError, type FlowersecErrorCode } from "../utils/errors.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -268,11 +270,12 @@ describe("reconnect manager", () => {
 
     await mgr.connect(cfg);
     connectedObserver?.onWsClose?.("peer_or_error", 1006);
-    await vi.waitFor(() => {
-      expect(attempts).toBe(2);
-    });
-
     const reused = mgr.connectIfNeeded(cfg);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(attempts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(attempts).toBe(2);
     await vi.advanceTimersByTimeAsync(99);
     expect(attempts).toBe(2);
 
@@ -281,8 +284,91 @@ describe("reconnect manager", () => {
 
     expect(attempts).toBe(3);
     expect(mgr.state().status).toBe("connected");
+    expect(events).toContain("reconnect_scheduled:1");
     expect(events).toContain("reconnect_attempt:2");
     expect(events).toContain("reconnect_retry_attempt:3");
+  });
+
+  test("disconnect cancels the initial delay after session termination", async () => {
+    vi.useFakeTimers();
+    const mgr = createReconnectManager();
+    const termination = deferredTermination();
+    let attempts = 0;
+    const cfg = {
+      connectOnce: async () => {
+        attempts += 1;
+        const client = makeDummyClient(`c${attempts}`, () => {}).client as any;
+        registerClientTermination(client, termination.promise);
+        return client;
+      },
+      autoReconnect: {
+        enabled: true,
+        maxAttempts: 3,
+        initialDelayMs: 100,
+        maxDelayMs: 100,
+        factor: 1,
+        jitterRatio: 0,
+      },
+    };
+
+    await mgr.connect(cfg);
+    termination.resolve({ error: new Error("session ended") });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mgr.state().status).toBe("connecting");
+
+    const waiting = mgr.connectIfNeeded(cfg);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(attempts).toBe(1);
+    mgr.disconnect();
+    await waiting;
+    await vi.runAllTimersAsync();
+
+    expect(attempts).toBe(1);
+    expect(mgr.state().status).toBe("disconnected");
+  });
+
+  test("does not retry terminal connection errors", async () => {
+    const registry = JSON.parse(readFileSync(new URL("../../../stability/connect_error_code_registry.json", import.meta.url), "utf8")) as {
+      reconnect_terminal_codes: string[];
+    };
+    const terminalErrors = registry.reconnect_terminal_codes.map((code) =>
+      new FlowersecError({ path: "direct", stage: "validate", code: code as FlowersecErrorCode })
+    );
+    for (const error of [
+      ...terminalErrors,
+      new FlowersecError({ path: "direct", stage: "connect", code: "canceled" }),
+      new AbortError("connect canceled"),
+    ]) {
+      const mgr = createReconnectManager();
+      let attempts = 0;
+      await expect(mgr.connect({
+        connectOnce: async () => {
+          attempts += 1;
+          throw error;
+        },
+        autoReconnect: { enabled: true, maxAttempts: 3, initialDelayMs: 0, maxDelayMs: 0, factor: 1, jitterRatio: 0 },
+      })).rejects.toBe(error);
+      expect(attempts).toBe(1);
+      expect(mgr.state()).toMatchObject({ status: "error", error });
+    }
+  });
+
+  test("retries retryable Flowersec connection errors", async () => {
+    const mgr = createReconnectManager();
+    let attempts = 0;
+
+    await mgr.connect({
+      connectOnce: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new FlowersecError({ path: "direct", stage: "connect", code: "dial_failed" });
+        return makeDummyClient("connected", () => {}).client as any;
+      },
+      autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0, factor: 1, jitterRatio: 0 },
+    });
+
+    expect(attempts).toBe(2);
+    expect(mgr.state().status).toBe("connected");
   });
 
   test("connectIfNeeded reuses a loop when a connecting subscriber reenters", async () => {
@@ -433,5 +519,39 @@ describe("reconnect manager", () => {
     await vi.advanceTimersByTimeAsync(1);
     await expect(result).resolves.toMatchObject({ message: "dial failed" });
     expect(attempts).toBe(2);
+  });
+
+  test("terminal code classification exactly matches the shared registry", async () => {
+    const registry = JSON.parse(readFileSync(new URL("../../../stability/connect_error_code_registry.json", import.meta.url), "utf8")) as {
+      reconnect_terminal_codes: string[];
+      codes: Array<{ code: FlowersecErrorCode }>;
+    };
+    const terminalCodes = new Set<FlowersecErrorCode>([
+      ...registry.reconnect_terminal_codes as FlowersecErrorCode[],
+      "canceled",
+    ]);
+
+    for (const { code } of registry.codes) {
+      const mgr = createReconnectManager();
+      const failure = new FlowersecError({ path: "direct", stage: "validate", code });
+      let attempts = 0;
+      const config = {
+        connectOnce: async () => {
+          attempts += 1;
+          if (attempts === 1) throw failure;
+          return makeDummyClient(`classification-${code}`, () => {}).client as any;
+        },
+        autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0, factor: 1, jitterRatio: 0 },
+      };
+
+      if (terminalCodes.has(code)) {
+        await expect(mgr.connect(config)).rejects.toBe(failure);
+        expect(attempts, code).toBe(1);
+      } else {
+        await mgr.connect(config);
+        expect(attempts, code).toBe(2);
+        mgr.disconnect();
+      }
+    }
   });
 });

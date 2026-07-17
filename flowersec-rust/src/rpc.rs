@@ -19,6 +19,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{defaults, streamio, yamux::YamuxStream};
 
+const MAX_PORTABLE_RPC_ID: u64 = (1_u64 << 53) - 1;
+
 #[derive(Debug, thiserror::Error)]
 pub enum RpcError {
     #[error("RPC transport failed: {0}")]
@@ -27,6 +29,8 @@ pub enum RpcError {
     Call { code: u32, message: String },
     #[error("RPC payload is invalid: {0}")]
     InvalidPayload(#[from] serde_json::Error),
+    #[error("RPC envelope is invalid: {0}")]
+    InvalidEnvelope(String),
     #[error("RPC stream closed")]
     Closed,
     #[error("RPC call timed out")]
@@ -248,10 +252,15 @@ impl StreamRpcTransport {
     }
 
     async fn write(&self, envelope: &RpcEnvelope) -> Result<(), RpcError> {
+        validate_envelope_ids(envelope)?;
         let _serial = self.write_serial.lock().await;
         streamio::write_json(&self.stream, envelope)
             .await
             .map_err(|error| RpcError::Transport(error.to_string()))
+    }
+
+    fn next_request_id(&self) -> Result<u64, RpcError> {
+        next_portable_request_id(&self.next_request_id)
     }
 }
 
@@ -281,10 +290,7 @@ impl RpcTransport for StreamRpcTransport {
         )
         .await?
         .map_err(|_| RpcError::Closed)?;
-        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        if request_id == 0 || request_id == u64::MAX {
-            return Err(RpcError::Closed);
-        }
+        let request_id = self.next_request_id()?;
         envelope.request_id = request_id;
         envelope.response_to = 0;
         let (sender, receiver) = oneshot::channel();
@@ -370,7 +376,16 @@ async fn read_responses(transport: Arc<StreamRpcTransport>) {
             streamio::read_json::<RpcEnvelope>(&transport.stream, defaults::MAX_JSON_FRAME_BYTES)
                 .await;
         let envelope = match result {
-            Ok(envelope) => envelope,
+            Ok(envelope) => match validate_envelope_ids(&envelope) {
+                Ok(()) => envelope,
+                Err(error) => {
+                    let mut pending = transport.pending.lock().await;
+                    for (_, sender) in pending.drain() {
+                        drop(sender.send(Err(RpcError::InvalidEnvelope(error.to_string()))));
+                    }
+                    return;
+                }
+            },
             Err(error) => {
                 let mut pending = transport.pending.lock().await;
                 for (_, sender) in pending.drain() {
@@ -615,6 +630,7 @@ impl Server {
                         envelope.map_err(|error| RpcError::Transport(error.to_string()))?
                     }
                 };
+                validate_envelope_ids(&envelope)?;
                 if envelope.response_to != 0 {
                     continue;
                 }
@@ -657,6 +673,38 @@ impl Server {
     }
 }
 
+fn validate_envelope_ids(envelope: &RpcEnvelope) -> Result<(), RpcError> {
+    if envelope.request_id > MAX_PORTABLE_RPC_ID {
+        return Err(RpcError::InvalidEnvelope(
+            "request_id exceeds the portable JSON integer range".to_owned(),
+        ));
+    }
+    if envelope.response_to > MAX_PORTABLE_RPC_ID {
+        return Err(RpcError::InvalidEnvelope(
+            "response_to exceeds the portable JSON integer range".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn next_portable_request_id(counter: &AtomicU64) -> Result<u64, RpcError> {
+    let mut current = counter.load(Ordering::Relaxed);
+    loop {
+        if current == 0 || current > MAX_PORTABLE_RPC_ID {
+            return Err(RpcError::ResourceExhausted);
+        }
+        match counter.compare_exchange_weak(
+            current,
+            current + 1,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return Ok(current),
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 fn overloaded_response(envelope: RpcEnvelope) -> RpcEnvelope {
     RpcEnvelope {
         type_id: envelope.type_id,
@@ -673,6 +721,8 @@ fn overloaded_response(envelope: RpcEnvelope) -> RpcEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+    use std::{fs, path::PathBuf};
 
     #[tokio::test]
     async fn expired_deadline_wins_when_response_is_already_ready() {
@@ -692,5 +742,102 @@ mod tests {
         cancellation.cancel();
         let result = controlled(std::future::ready(7_u8), &cancellation, None).await;
         assert!(matches!(result, Err(RpcError::Canceled)));
+    }
+
+    #[test]
+    fn portable_rpc_id_rejects_values_above_javascript_safe_integer() {
+        let valid = RpcEnvelope {
+            type_id: 1,
+            request_id: MAX_PORTABLE_RPC_ID,
+            response_to: 0,
+            payload: Value::Null,
+            error: None,
+        };
+        assert!(validate_envelope_ids(&valid).is_ok());
+
+        let invalid = RpcEnvelope {
+            request_id: MAX_PORTABLE_RPC_ID + 1,
+            ..valid
+        };
+        assert!(matches!(
+            validate_envelope_ids(&invalid),
+            Err(RpcError::InvalidEnvelope(_))
+        ));
+    }
+
+    #[test]
+    fn portable_request_id_uses_the_maximum_once_then_fails() {
+        let counter = AtomicU64::new(MAX_PORTABLE_RPC_ID);
+        assert_eq!(
+            next_portable_request_id(&counter).expect("maximum id"),
+            MAX_PORTABLE_RPC_ID
+        );
+        assert!(matches!(
+            next_portable_request_id(&counter),
+            Err(RpcError::ResourceExhausted)
+        ));
+    }
+
+    #[test]
+    fn portable_rpc_ids_match_shared_runtime_vectors() {
+        #[derive(Deserialize)]
+        struct Vectors {
+            rpc_json_integers: Vec<IntegerCase>,
+            request_id_generation: RequestIDGeneration,
+        }
+
+        #[derive(Deserialize)]
+        struct IntegerCase {
+            id: String,
+            value: Value,
+            valid: bool,
+        }
+
+        #[derive(Deserialize)]
+        struct RequestIDGeneration {
+            first: u64,
+            last: u64,
+            after_last: String,
+        }
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("testdata")
+            .join("runtime_contract_vectors.json");
+        let vectors: Vectors =
+            serde_json::from_slice(&fs::read(path).expect("read vectors")).expect("parse vectors");
+        assert_eq!(vectors.request_id_generation.first, 1);
+        assert_eq!(vectors.request_id_generation.last, MAX_PORTABLE_RPC_ID);
+        assert_eq!(
+            vectors.request_id_generation.after_last,
+            "fail_before_write"
+        );
+        let first = AtomicU64::new(vectors.request_id_generation.first);
+        assert_eq!(
+            next_portable_request_id(&first).expect("first id"),
+            vectors.request_id_generation.first
+        );
+        let last = AtomicU64::new(vectors.request_id_generation.last);
+        assert_eq!(
+            next_portable_request_id(&last).expect("last id"),
+            vectors.request_id_generation.last
+        );
+        assert!(matches!(
+            next_portable_request_id(&last),
+            Err(RpcError::ResourceExhausted)
+        ));
+        for case in vectors.rpc_json_integers {
+            let envelope = serde_json::json!({
+                "type_id": 1,
+                "request_id": case.value,
+                "response_to": 0,
+                "payload": null
+            });
+            let valid = serde_json::from_value::<RpcEnvelope>(envelope)
+                .map_err(RpcError::InvalidPayload)
+                .and_then(|envelope| validate_envelope_ids(&envelope))
+                .is_ok();
+            assert_eq!(valid, case.valid, "case {}", case.id);
+        }
     }
 }

@@ -31,7 +31,7 @@ export type HandshakeClientOptions = Readonly<{
   maxRecordBytes: number;
   /** Preferred plaintext bytes per outbound record. */
   outboundRecordChunkBytes?: number;
-  /** Maximum buffered plaintext bytes for the secure channel. */
+  /** Maximum queued inbound plaintext bytes for the secure channel. */
   maxBufferedBytes?: number;
   /** Maximum queued outbound plaintext bytes for the secure channel. */
   maxOutboundBufferedBytes?: number;
@@ -61,7 +61,7 @@ export type HandshakeServerOptions = Readonly<{
   maxRecordBytes: number;
   /** Preferred plaintext bytes per outbound record. */
   outboundRecordChunkBytes?: number;
-  /** Maximum buffered plaintext bytes for the secure channel. */
+  /** Maximum queued inbound plaintext bytes for the secure channel. */
   maxBufferedBytes?: number;
   /** Maximum queued outbound plaintext bytes for the secure channel. */
   maxOutboundBufferedBytes?: number;

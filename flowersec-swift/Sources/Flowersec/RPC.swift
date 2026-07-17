@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 
 public struct FlowersecRPCError: LocalizedError, Equatable, Sendable {
@@ -44,9 +45,16 @@ public protocol FlowersecByteStream: Sendable {
 }
 
 public actor RPCClient {
+  static let maximumPortableRequestID: UInt64 = 9_007_199_254_740_991
+
   private struct PendingCall {
     var continuation: CheckedContinuation<Data, Error>
     var timeoutTask: Task<Void, Never>
+  }
+
+  private struct NotificationWork {
+    var payload: Data
+    var handlers: [@Sendable (Data) async -> Void]
   }
 
   private let stream: any FlowersecRPCStream
@@ -54,6 +62,8 @@ public actor RPCClient {
   private var nextRequestID: UInt64 = 1
   private var pending: [UInt64: PendingCall] = [:]
   private var notifyHandlers: [UInt32: [UUID: @Sendable (Data) async -> Void]] = [:]
+  private var notificationQueue: [NotificationWork] = []
+  private var notificationTask: Task<Void, Never>?
   private var readTask: Task<Void, Never>?
   private var closed = false
 
@@ -62,8 +72,18 @@ public actor RPCClient {
     self.path = path
   }
 
+  init(
+    stream: any FlowersecRPCStream,
+    path: FlowersecPath = .direct,
+    nextRequestID: UInt64
+  ) {
+    self.stream = stream
+    self.path = path
+    self.nextRequestID = nextRequestID
+  }
+
   public func start() {
-    guard readTask == nil else { return }
+    guard !closed, readTask == nil else { return }
     readTask = Task { await self.readLoop() }
   }
 
@@ -75,6 +95,9 @@ public actor RPCClient {
     guard !closed else { throw FlowersecError.closed(path: path) }
     if Task.isCancelled {
       throw CancellationError()
+    }
+    guard nextRequestID <= Self.maximumPortableRequestID else {
+      throw FlowersecError.invalidRPC("The RPC request ID range is exhausted.", path: path)
     }
     let requestID = nextRequestID
     nextRequestID += 1
@@ -161,25 +184,21 @@ public actor RPCClient {
     id: UUID,
     handler: @escaping @Sendable (Data) async -> Void
   ) {
+    guard !closed else { return }
     var handlers = notifyHandlers[typeID, default: [:]]
     handlers[id] = handler
     notifyHandlers[typeID] = handlers
   }
 
   public func close() async {
-    closed = true
-    readTask?.cancel()
-    readTask = nil
-    let current = pending
-    pending.removeAll()
-    for call in current.values {
-      call.timeoutTask.cancel()
-      call.continuation.resume(throwing: FlowersecError.closed(path: path))
-    }
+    terminate(with: FlowersecError.closed(path: path))
   }
 
   private func removeNotifyHandler(typeID: UInt32, id: UUID) {
     notifyHandlers[typeID]?.removeValue(forKey: id)
+    if notifyHandlers[typeID]?.isEmpty == true {
+      notifyHandlers.removeValue(forKey: typeID)
+    }
   }
 
   private func writeEnvelope(_ envelope: RPCEnvelope) async throws {
@@ -212,13 +231,7 @@ public actor RPCClient {
           message: "The RPC response was invalid: \(error.localizedDescription)"
         )
       }
-      closed = true
-      let current = pending
-      pending.removeAll()
-      for call in current.values {
-        call.timeoutTask.cancel()
-        call.continuation.resume(throwing: failure)
-      }
+      terminate(with: failure)
     }
   }
 
@@ -246,9 +259,47 @@ public actor RPCClient {
     } else {
       handlers = []
     }
-    for handler in handlers {
-      let payload = envelope.payload
-      Task { await handler(payload) }
+    guard !handlers.isEmpty else { return }
+    guard notificationQueue.count < FlowersecSDKDefaults.RPC.maxQueuedNotifications else {
+      throw FlowersecError.resourceExhausted(
+        path: path,
+        stage: .rpc,
+        "The RPC notification queue is full."
+      )
+    }
+    notificationQueue.append(NotificationWork(payload: envelope.payload, handlers: handlers))
+    startNotificationWorkerIfNeeded()
+  }
+
+  private func startNotificationWorkerIfNeeded() {
+    guard notificationTask == nil else { return }
+    notificationTask = Task { await self.runNotificationWorker() }
+  }
+
+  private func runNotificationWorker() async {
+    while !Task.isCancelled, !closed, !notificationQueue.isEmpty {
+      let work = notificationQueue.removeFirst()
+      for handler in work.handlers {
+        guard !Task.isCancelled, !closed else { break }
+        await handler(work.payload)
+      }
+    }
+    notificationTask = nil
+  }
+
+  private func terminate(with failure: Error) {
+    guard !closed else { return }
+    closed = true
+    readTask?.cancel()
+    readTask = nil
+    notificationQueue.removeAll()
+    notificationTask?.cancel()
+    notifyHandlers.removeAll()
+    let current = pending
+    pending.removeAll()
+    for call in current.values {
+      call.timeoutTask.cancel()
+      call.continuation.resume(throwing: failure)
     }
   }
 
@@ -291,6 +342,8 @@ public final class FlowersecClient: @unchecked Sendable {
   public func rekey() async throws {
     do {
       try await secure.rekey()
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       throw FlowersecError(
         path: path,
@@ -308,7 +361,7 @@ public final class FlowersecClient: @unchecked Sendable {
   public func openStream(kind: String) async throws -> any FlowersecByteStream {
     let trimmedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedKind.isEmpty else {
-      throw FlowersecError.invalidRPC("Stream kind is empty.", path: path)
+      throw FlowersecError.missingStreamKind(path: path)
     }
     let stream = try await yamux.openStream()
     do {
@@ -387,7 +440,7 @@ public enum Flowersec {
       throw FlowersecError(
         path: .tunnel,
         stage: .validate,
-        code: .invalidInput,
+        code: .roleMismatch,
         message: "Tunnel client grants must use the client role."
       )
     }
@@ -700,6 +753,8 @@ public enum Flowersec {
 }
 
 public struct RPCEnvelope: Equatable, Sendable {
+  static let maximumPortableID: UInt64 = 9_007_199_254_740_991
+
   public var typeID: UInt32
   public var requestID: UInt64
   public var responseTo: UInt64
@@ -720,14 +775,14 @@ public struct RPCEnvelope: Equatable, Sendable {
     guard
       let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
       let typeNumber = root["type_id"] as? NSNumber,
-      let requestNumber = root["request_id"] as? NSNumber,
-      let responseNumber = root["response_to"] as? NSNumber
+      let requestID = Self.portableID(root["request_id"]),
+      let responseTo = Self.portableID(root["response_to"])
     else {
       throw FlowersecError.invalidRPC("RPC envelope is invalid.")
     }
     typeID = typeNumber.uint32Value
-    requestID = requestNumber.uint64Value
-    responseTo = responseNumber.uint64Value
+    self.requestID = requestID
+    self.responseTo = responseTo
     if let errorObject = root["error"] as? [String: Any],
       let code = errorObject["code"] as? NSNumber
     {
@@ -740,6 +795,9 @@ public struct RPCEnvelope: Equatable, Sendable {
   }
 
   public func encoded() throws -> Data {
+    guard requestID <= Self.maximumPortableID, responseTo <= Self.maximumPortableID else {
+      throw FlowersecError.invalidRPC("RPC envelope IDs exceed the portable JSON range.")
+    }
     var root: [String: Any] = [
       "type_id": NSNumber(value: typeID),
       "request_id": NSNumber(value: requestID),
@@ -768,6 +826,18 @@ public struct RPCEnvelope: Equatable, Sendable {
       throw FlowersecError.invalidRPC("RPC payload JSON is invalid.")
     }
     return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+  }
+
+  private static func portableID(_ value: Any?) -> UInt64? {
+    guard let number = value as? NSNumber,
+      CFGetTypeID(number) != CFBooleanGetTypeID()
+    else { return nil }
+    let double = number.doubleValue
+    guard double.isFinite, double >= 0, double <= Double(maximumPortableID),
+      double.rounded(.towardZero) == double
+    else { return nil }
+    let integer = number.uint64Value
+    return Double(integer) == double ? integer : nil
   }
 }
 

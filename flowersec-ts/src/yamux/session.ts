@@ -41,7 +41,7 @@ export const DEFAULT_YAMUX_LIMITS: ResolvedYamuxLimits = Object.freeze({
   preferredOutboundFrameBytes: SDK_DEFAULTS.yamux.preferredOutboundFrameBytes,
   maxStreamReceiveBytes: SDK_DEFAULTS.yamux.maxStreamReceiveBytes,
   maxSessionReceiveBytes: SDK_DEFAULTS.yamux.maxSessionReceiveBytes,
-  maxStreamWriteQueueBytes: SDK_DEFAULTS.e2ee.maxOutboundBufferedBytes,
+  maxStreamWriteQueueBytes: SDK_DEFAULTS.yamux.maxStreamWriteQueueBytes,
 });
 
 // ByteDuplex is a minimal async read/write/close abstraction.

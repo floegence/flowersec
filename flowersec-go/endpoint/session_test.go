@@ -456,3 +456,9 @@ func TestSessionServeStreams_ContextCanceled_ReturnsStructuredError(t *testing.T
 		t.Fatalf("unexpected error: %+v", fe)
 	}
 }
+
+func TestClassifyContextOrCodeMapsLivenessTimeout(t *testing.T) {
+	if got := classifyContextOrCode(fsyamux.ErrLivenessTimeout, CodePingFailed); got != CodeTimeout {
+		t.Fatalf("liveness timeout code = %q", got)
+	}
+}

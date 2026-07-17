@@ -28,17 +28,19 @@ const (
 	DefaultMaxInboundStreams           = defaults.YamuxMaxInboundStreams
 	DefaultMaxFrameBytes               = defaults.YamuxMaxFrameBytes
 	DefaultPreferredOutboundFrameBytes = defaults.YamuxPreferredOutboundFrameBytes
+	DefaultMaxStreamWriteQueueBytes    = defaults.YamuxMaxStreamWriteQueueBytes
 	DefaultMaxStreamReceiveBytes       = defaults.YamuxMaxStreamReceiveBytes
 	DefaultMaxSessionReceiveBytes      = defaults.YamuxMaxSessionReceiveBytes
 	disabledRTTMeasureInterval         = time.Duration(1<<63 - 1)
 )
 
-// YamuxLimits bounds multiplexing concurrency, frame sizes, and receive memory.
+// YamuxLimits bounds multiplexing concurrency, frame sizes, and buffered memory.
 type YamuxLimits struct {
 	MaxActiveStreams            uint32
 	MaxInboundStreams           uint32
 	MaxFrameBytes               int
 	PreferredOutboundFrameBytes int
+	MaxStreamWriteQueueBytes    int
 	MaxStreamReceiveBytes       int
 	MaxSessionReceiveBytes      int
 }
@@ -56,6 +58,7 @@ func DefaultLimits() YamuxLimits {
 		MaxInboundStreams:           DefaultMaxInboundStreams,
 		MaxFrameBytes:               DefaultMaxFrameBytes,
 		PreferredOutboundFrameBytes: DefaultPreferredOutboundFrameBytes,
+		MaxStreamWriteQueueBytes:    DefaultMaxStreamWriteQueueBytes,
 		MaxStreamReceiveBytes:       DefaultMaxStreamReceiveBytes,
 		MaxSessionReceiveBytes:      DefaultMaxSessionReceiveBytes,
 	}
@@ -68,20 +71,43 @@ func ValidateLimits(limits YamuxLimits) (YamuxLimits, error) {
 
 // Session is Flowersec's multiplexed session. Its implementation is intentionally private.
 type Session struct {
-	inner            *libyamux.Session
-	livenessFailures chan error
-	livenessMu       sync.Mutex
-	livenessTimer    *time.Timer
-	livenessDone     bool
+	inner                    *libyamux.Session
+	maxStreamWriteQueueBytes int
+	writeTracker             *sessionWriteTracker
+	probeMu                  sync.Mutex
+	probe                    *probeCall
+	livenessFailures         chan error
+	livenessMu               sync.Mutex
+	livenessTimer            *time.Timer
+	livenessDone             bool
 }
 
 // Stream is a multiplexed byte stream.
 type Stream struct {
-	inner *libyamux.Stream
+	inner       *libyamux.Stream
+	writeMu     sync.Mutex
+	writeBudget *streamWriteBudget
 }
 
-func (s *Stream) Read(p []byte) (int, error)         { return s.inner.Read(p) }
-func (s *Stream) Write(p []byte) (int, error)        { return s.inner.Write(p) }
+type probeCall struct {
+	done chan struct{}
+	rtt  time.Duration
+	err  error
+}
+
+func (s *Stream) Read(p []byte) (int, error) { return s.inner.Read(p) }
+func (s *Stream) Write(p []byte) (int, error) {
+	if !s.writeBudget.reserve(len(p)) {
+		return 0, fmt.Errorf("%w: stream write queue limit exceeded", ErrResourceExhausted)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.inner.Write(p)
+	if unsent := len(p) - n; unsent > 0 {
+		s.writeBudget.release(unsent)
+	}
+	return n, err
+}
 func (s *Stream) Close() error                       { return s.inner.Close() }
 func (s *Stream) Reset() error                       { return s.inner.Reset() }
 func (s *Stream) SetDeadline(t time.Time) error      { return s.inner.SetDeadline(t) }
@@ -105,7 +131,7 @@ func (s *Session) OpenStreamContext(ctx context.Context) (*Stream, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Stream{inner: stream}, nil
+	return s.wrapStream(stream), nil
 }
 
 // AcceptStream waits for an inbound stream.
@@ -117,7 +143,84 @@ func (s *Session) AcceptStream() (*Stream, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Stream{inner: stream}, nil
+	return s.wrapStream(stream), nil
+}
+
+func (s *Session) wrapStream(stream *libyamux.Stream) *Stream {
+	budget := &streamWriteBudget{
+		max:      s.maxStreamWriteQueueBytes,
+		streamID: stream.StreamID(),
+		tracker:  s.writeTracker,
+	}
+	return &Stream{inner: stream, writeBudget: budget}
+}
+
+type streamWriteBudget struct {
+	mu       sync.Mutex
+	pending  int
+	max      int
+	streamID uint32
+	tracker  *sessionWriteTracker
+}
+
+func (b *streamWriteBudget) reserve(size int) bool {
+	if size == 0 {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if size > b.max-b.pending {
+		return false
+	}
+	if b.pending == 0 {
+		b.tracker.register(b.streamID, b)
+	}
+	b.pending += size
+	return true
+}
+
+func (b *streamWriteBudget) release(size int) {
+	if size == 0 {
+		return
+	}
+	b.mu.Lock()
+	b.pending -= size
+	if b.pending == 0 {
+		b.tracker.unregister(b.streamID, b)
+	}
+	b.mu.Unlock()
+}
+
+type sessionWriteTracker struct {
+	mu      sync.RWMutex
+	streams map[uint32]*streamWriteBudget
+}
+
+func newSessionWriteTracker() *sessionWriteTracker {
+	return &sessionWriteTracker{streams: make(map[uint32]*streamWriteBudget)}
+}
+
+func (t *sessionWriteTracker) register(streamID uint32, budget *streamWriteBudget) {
+	t.mu.Lock()
+	t.streams[streamID] = budget
+	t.mu.Unlock()
+}
+
+func (t *sessionWriteTracker) unregister(streamID uint32, budget *streamWriteBudget) {
+	t.mu.Lock()
+	if t.streams[streamID] == budget {
+		delete(t.streams, streamID)
+	}
+	t.mu.Unlock()
+}
+
+func (t *sessionWriteTracker) release(streamID uint32, size int) {
+	t.mu.RLock()
+	budget := t.streams[streamID]
+	t.mu.RUnlock()
+	if budget != nil {
+		budget.release(size)
+	}
 }
 
 // Probe sends a yamux ping and waits for its ACK or context cancellation.
@@ -131,24 +234,36 @@ func (s *Session) Probe(ctx context.Context) (time.Duration, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	type result struct {
-		rtt time.Duration
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		rtt, err := s.inner.Ping()
-		done <- result{rtt: rtt, err: err}
-	}()
+	probe := s.sharedProbe()
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
-	case result := <-done:
-		if errors.Is(result.err, libyamux.ErrTimeout) {
-			return 0, fmt.Errorf("%w: %v", ErrLivenessTimeout, result.err)
+	case <-probe.done:
+		if errors.Is(probe.err, libyamux.ErrTimeout) {
+			return 0, fmt.Errorf("%w: %v", ErrLivenessTimeout, probe.err)
 		}
-		return result.rtt, result.err
+		return probe.rtt, probe.err
 	}
+}
+
+func (s *Session) sharedProbe() *probeCall {
+	s.probeMu.Lock()
+	defer s.probeMu.Unlock()
+	if s.probe != nil {
+		return s.probe
+	}
+	probe := &probeCall{done: make(chan struct{})}
+	s.probe = probe
+	go func() {
+		probe.rtt, probe.err = s.inner.Ping()
+		s.probeMu.Lock()
+		close(probe.done)
+		if s.probe == probe {
+			s.probe = nil
+		}
+		s.probeMu.Unlock()
+	}()
+	return probe
 }
 
 // LivenessFailures reports the first automatic probe failure. The channel closes with the session.
@@ -220,8 +335,13 @@ func newSession(conn net.Conn, limits YamuxLimits, liveness LivenessOptions, cli
 	}
 
 	manager := newSessionMemoryManager(limits)
+	writeTracker := newSessionWriteTracker()
 	factory := manager.newStream
-	conn = &frameLimitConn{Conn: conn, maxFrameBytes: uint32(limits.MaxFrameBytes)}
+	conn = &frameLimitConn{
+		Conn:          conn,
+		maxFrameBytes: uint32(limits.MaxFrameBytes),
+		writeTracker:  writeTracker,
+	}
 	var inner *libyamux.Session
 	if client {
 		inner, err = libyamux.Client(conn, cfg, factory)
@@ -231,7 +351,11 @@ func newSession(conn net.Conn, limits YamuxLimits, liveness LivenessOptions, cli
 	if err != nil {
 		return nil, err
 	}
-	session := &Session{inner: inner}
+	session := &Session{
+		inner:                    inner,
+		maxStreamWriteQueueBytes: limits.MaxStreamWriteQueueBytes,
+		writeTracker:             writeTracker,
+	}
 	if liveness.Interval > 0 {
 		session.livenessFailures = make(chan error, 1)
 		session.scheduleLiveness(liveness)
@@ -300,6 +424,9 @@ func normalizeLimits(limits YamuxLimits) (YamuxLimits, error) {
 	if limits.PreferredOutboundFrameBytes == 0 {
 		limits.PreferredOutboundFrameBytes = defaults.PreferredOutboundFrameBytes
 	}
+	if limits.MaxStreamWriteQueueBytes == 0 {
+		limits.MaxStreamWriteQueueBytes = defaults.MaxStreamWriteQueueBytes
+	}
 	if limits.MaxStreamReceiveBytes == 0 {
 		limits.MaxStreamReceiveBytes = defaults.MaxStreamReceiveBytes
 	}
@@ -332,11 +459,61 @@ func normalizeLimits(limits YamuxLimits) (YamuxLimits, error) {
 
 type frameLimitConn struct {
 	net.Conn
-	mu            sync.Mutex
-	maxFrameBytes uint32
-	header        [12]byte
-	headerOffset  int
-	bodyRemaining uint32
+	mu                 sync.Mutex
+	writeMu            sync.Mutex
+	maxFrameBytes      uint32
+	writeTracker       *sessionWriteTracker
+	header             [12]byte
+	headerOffset       int
+	bodyRemaining      uint32
+	writeHeader        [12]byte
+	writeHeaderOffset  int
+	writeBodyRemaining uint32
+	writeStreamID      uint32
+}
+
+func (c *frameLimitConn) Write(p []byte) (int, error) {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	n, err := c.Conn.Write(p)
+	c.trackWrittenData(p[:n])
+	return n, err
+}
+
+func (c *frameLimitConn) trackWrittenData(p []byte) {
+	for len(p) > 0 {
+		if c.writeHeaderOffset < len(c.writeHeader) {
+			copied := copy(c.writeHeader[c.writeHeaderOffset:], p)
+			c.writeHeaderOffset += copied
+			p = p[copied:]
+			if c.writeHeaderOffset < len(c.writeHeader) {
+				return
+			}
+			if c.writeHeader[1] != 0 {
+				c.writeHeaderOffset = 0
+				continue
+			}
+			c.writeStreamID = binary.BigEndian.Uint32(c.writeHeader[4:8])
+			c.writeBodyRemaining = binary.BigEndian.Uint32(c.writeHeader[8:12])
+			if c.writeBodyRemaining == 0 {
+				c.writeHeaderOffset = 0
+				continue
+			}
+		}
+
+		written := len(p)
+		if uint32(written) > c.writeBodyRemaining {
+			written = int(c.writeBodyRemaining)
+		}
+		if c.writeTracker != nil {
+			c.writeTracker.release(c.writeStreamID, written)
+		}
+		c.writeBodyRemaining -= uint32(written)
+		p = p[written:]
+		if c.writeBodyRemaining == 0 {
+			c.writeHeaderOffset = 0
+		}
+	}
 }
 
 func (c *frameLimitConn) Read(p []byte) (int, error) {

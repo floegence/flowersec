@@ -1,6 +1,7 @@
 import Foundation
+
 #if canImport(FoundationNetworking)
-import FoundationNetworking
+  import FoundationNetworking
 #endif
 
 public protocol FlowersecBinaryTransport: Sendable {
@@ -133,7 +134,7 @@ actor FlowersecWebSocketBinaryTransport: FlowersecBinaryTransport {
       )
       let error = FlowersecError.resourceExhausted(
         path: path,
-        stage: .transport,
+        stage: .connect,
         "The WebSocket pending write limit was reached."
       )
       closed = true

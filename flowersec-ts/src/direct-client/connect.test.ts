@@ -4,6 +4,7 @@ import { FlowersecError } from "../utils/errors.js";
 import { E2EEHandshakeError } from "../e2ee/errors.js";
 import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
 import { YamuxPingTimeoutError } from "../yamux/errors.js";
+import { getClientTermination } from "../client-connect/termination.js";
 
 const mocks = vi.hoisted(() => {
   const clientHandshakeMock = vi.fn();
@@ -427,9 +428,15 @@ describe("connectDirect", () => {
 
       setTimeout(() => ws.emit("open", {}), 0);
       await vi.advanceTimersByTimeAsync(0);
-      await p;
+      const client = await p;
+      const termination = getClientTermination(client);
+      expect(termination).toBeDefined();
 
       await vi.advanceTimersByTimeAsync(10);
+
+      await expect(termination!).resolves.toMatchObject({
+        error: { path: "direct", stage: "yamux", code: "timeout" },
+      });
 
       expect(mocks.MockYamuxSession.prototype.probeLiveness).toHaveBeenCalledTimes(1);
       expect(rpcClose).toHaveBeenCalledTimes(1);
@@ -443,6 +450,36 @@ describe("connectDirect", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("probeLiveness preserves ping_failed for non-timeout failures", async () => {
+    const ws = new FakeWebSocket();
+    clientHandshakeMock.mockResolvedValueOnce({
+      read: vi.fn(),
+      write: vi.fn(),
+      close: vi.fn(),
+      sendPing: vi.fn()
+    });
+    openStream.mockResolvedValueOnce({
+      read: vi.fn().mockResolvedValue(new Uint8Array()),
+      write: vi.fn(),
+      close: vi.fn()
+    });
+    mocks.MockYamuxSession.prototype.probeLiveness = vi.fn().mockRejectedValueOnce(new Error("ping failed"));
+
+    const p = connectDirect(makeInfo(), {
+      origin: "https://app.redeven.com",
+      wsFactory: () => ws as any
+    });
+
+    setTimeout(() => ws.emit("open", {}), 0);
+    const client = await p;
+
+    await expect(client.probeLiveness()).rejects.toMatchObject({
+      path: "direct",
+      stage: "yamux",
+      code: "ping_failed"
+    });
   });
 
   test("openStream wraps yamux openStream errors", async () => {
@@ -491,7 +528,7 @@ describe("connectDirect", () => {
 
     setTimeout(() => ws.emit("open", {}), 0);
     const conn = await p;
-    await expect(conn.openStream("")).rejects.toMatchObject({ stage: "validate", code: "missing_stream_kind", path: "direct" });
+    await expect(conn.openStream("   ")).rejects.toMatchObject({ stage: "rpc", code: "missing_stream_kind", path: "direct" });
     conn.close();
   });
 

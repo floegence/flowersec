@@ -203,6 +203,34 @@ final class FlowersecYamuxTests: XCTestCase {
     }
   }
 
+  func testPublicClientProbeTransportFailureUsesPingFailed() async {
+    let yamux = FlowersecYamuxClient(channel: FailingWriteYamuxChannel(), path: .tunnel)
+    let client = FlowersecClient(
+      rpc: RPCClient(stream: PendingRPCStream()),
+      secure: FlowersecSecureChannel(
+        transport: NoopBinaryTransport(),
+        keys: testRecordKeyState(),
+        path: .tunnel
+      ),
+      yamux: yamux,
+      path: .tunnel
+    )
+
+    do {
+      _ = try await client.probeLiveness(timeout: .seconds(1))
+      XCTFail("Expected the probe transport write to fail")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .yamux)
+      XCTAssertEqual(error.code, .pingFailed)
+    } catch {
+      XCTFail("Expected FlowersecError, got \(error)")
+    }
+
+    let termination = await client.terminated() as? FlowersecError
+    XCTAssertEqual(termination?.code, .notConnected)
+  }
+
   func testTunnelProbeValidationUsesTunnelPath() async throws {
     let channel = InMemoryYamuxChannel()
     let client = FlowersecYamuxClient(channel: channel, path: .tunnel)
@@ -260,6 +288,83 @@ final class FlowersecYamuxTests: XCTestCase {
     await client.close()
   }
 
+  func testStreamWriteQueueRejectsAggregateOverflow() async throws {
+    let channel = InMemoryYamuxChannel()
+    let limits = YamuxLimits(maxStreamWriteQueueBytes: 300 * 1024)
+    let client = FlowersecYamuxClient(channel: channel, limits: limits)
+    let stream = try await client.openStream()
+    _ = await channel.nextWrittenFrame()
+
+    let first = Task { try await stream.write(Data(repeating: 0x61, count: 300 * 1024)) }
+    await channel.waitForWrites(4)
+    do {
+      try await stream.write(Data(repeating: 0x62, count: 1))
+      XCTFail("Expected the stream write queue limit")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.stage, .yamux)
+      XCTAssertEqual(error.code, .resourceExhausted)
+    }
+
+    await channel.feed(header(type: 1, flags: 0, streamID: 1, length: 44 * 1024))
+    try await first.value
+    await client.close()
+  }
+
+  func testCanceledQueuedWriteReleasesStreamBudget() async throws {
+    let channel = InMemoryYamuxChannel()
+    let limits = YamuxLimits(maxStreamWriteQueueBytes: 400 * 1024)
+    let client = FlowersecYamuxClient(channel: channel, limits: limits)
+    let stream = try await client.openStream()
+    _ = await channel.nextWrittenFrame()
+
+    let first = Task { try await stream.write(Data(repeating: 0x61, count: 300 * 1024)) }
+    await channel.waitForWrites(4)
+    let canceled = Task { try await stream.write(Data(repeating: 0x62, count: 100 * 1024)) }
+    try await Task.sleep(for: .milliseconds(5))
+    canceled.cancel()
+    do {
+      try await canceled.value
+      XCTFail("Expected queued write cancellation")
+    } catch is CancellationError {
+      // Expected.
+    }
+
+    let replacement = Task {
+      try await stream.write(Data(repeating: 0x63, count: 100 * 1024))
+    }
+    await channel.feed(header(type: 1, flags: 0, streamID: 1, length: 144 * 1024))
+    try await first.value
+    try await replacement.value
+    await client.close()
+  }
+
+  func testCanceledWindowBlockedWriteReleasesTurnAndBudget() async throws {
+    let channel = InMemoryYamuxChannel()
+    let limits = YamuxLimits(maxStreamWriteQueueBytes: 300 * 1024)
+    let client = FlowersecYamuxClient(channel: channel, limits: limits)
+    let stream = try await client.openStream()
+    _ = await channel.nextWrittenFrame()
+
+    let canceled = Task { try await stream.write(Data(repeating: 0x61, count: 300 * 1024)) }
+    await channel.waitForWrites(4)
+    canceled.cancel()
+    do {
+      try await canceled.value
+      XCTFail("Expected window-blocked write cancellation")
+    } catch is CancellationError {
+      // Expected.
+    }
+
+    let replacement = Task {
+      try await stream.write(Data(repeating: 0x62, count: 100 * 1024))
+    }
+    await channel.feed(header(type: 1, flags: 0, streamID: 1, length: 144 * 1024))
+    try await replacement.value
+    let payloadBytes = await channel.payloadBytesWritten()
+    XCTAssertEqual(payloadBytes, 356 * 1024)
+    await client.close()
+  }
+
   func testDataWithFinDeliversPayloadBeforeEndOfStream() async throws {
     let channel = InMemoryYamuxChannel()
     let limits = YamuxLimits(maxActiveStreams: 1, maxInboundStreams: 1)
@@ -287,6 +392,12 @@ final class FlowersecYamuxTests: XCTestCase {
     XCTAssertThrowsError(
       try YamuxLimits(maxFrameBytes: 4096, preferredOutboundFrameBytes: 8192).validate()
     )
+    XCTAssertNoThrow(
+      try YamuxLimits(
+        preferredOutboundFrameBytes: 64 * 1024,
+        maxStreamWriteQueueBytes: 32 * 1024
+      ).validate()
+    )
     XCTAssertThrowsError(
       try YamuxLimits(maxFrameBytes: 1024, maxStreamReceiveBytes: 1024).validate()
     )
@@ -313,7 +424,7 @@ final class FlowersecYamuxTests: XCTestCase {
     let error = await termination.value as? FlowersecError
     XCTAssertEqual(error?.path, .direct)
     XCTAssertEqual(error?.stage, .yamux)
-    XCTAssertEqual(error?.code, .openStreamFailed)
+    XCTAssertEqual(error?.code, .muxFailed)
   }
 
   func testPostHandshakeTransportWriteFailureUsesStableYamuxTermination() async {
@@ -352,6 +463,38 @@ private final class FailingWriteYamuxChannel: FlowersecYamuxChannel, @unchecked 
   }
 
   func close() async {}
+}
+
+private final class PendingRPCStream: FlowersecRPCStream, @unchecked Sendable {
+  func write(_ data: Data) async throws { _ = data }
+  func readExact(_ length: Int) async throws -> Data {
+    _ = length
+    try await Task.sleep(for: .seconds(30))
+    return Data()
+  }
+  func close() async {}
+  func reset() async throws {}
+}
+
+private actor NoopBinaryTransport: FlowersecBinaryTransport {
+  func writeBinary(_ data: Data) async throws { _ = data }
+  func readBinary() async throws -> Data { Data() }
+  func close() async {}
+}
+
+private func testRecordKeyState() -> FlowersecRecordKeyState {
+  FlowersecRecordKeyState(
+    sendKey: Data(repeating: 1, count: 32),
+    recvKey: Data(repeating: 2, count: 32),
+    sendNoncePrefix: Data(repeating: 3, count: 4),
+    recvNoncePrefix: Data(repeating: 4, count: 4),
+    rekeyBase: Data(repeating: 5, count: 32),
+    transcript: Data(repeating: 6, count: 32),
+    sendDirection: 1,
+    recvDirection: 2,
+    sendSeq: 1,
+    recvSeq: 1
+  )
 }
 
 private final class InMemoryYamuxChannel: FlowersecYamuxChannel, @unchecked Sendable {

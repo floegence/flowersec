@@ -121,6 +121,8 @@
     "build": "tsc -p tsconfig.build.json",
     "bench": "vitest bench --run",
     "test": "npm run build && vitest run",
+    "test:browser": "npm run build && playwright test",
+    "ensure:browser": "node ./scripts/ensure-playwright-chromium.mjs",
     "test:coverage": "npm run build && vitest run --coverage",
     "lint": "eslint .",
     "verify:package": "node ./scripts/verify-package-exports.mjs",
@@ -136,6 +138,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/ws": "^8.5.12",
+    "@playwright/test": "1.58.2",
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
     "@vitest/coverage-v8": "4.1.0",

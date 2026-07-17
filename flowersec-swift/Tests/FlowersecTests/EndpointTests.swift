@@ -4,7 +4,10 @@ import XCTest
 
 final class EndpointTests: XCTestCase {
   private struct Ping: Codable, Sendable { var value: String }
-  private struct Pong: Codable, Sendable, Equatable { var value: String; var ok: Bool }
+  private struct Pong: Codable, Sendable, Equatable {
+    var value: String
+    var ok: Bool
+  }
 
   func testResolvedDirectEndpointServesRPC() async throws {
     let pair = BinaryTransportPair()
@@ -111,6 +114,7 @@ final class EndpointTests: XCTestCase {
     serveTask.cancel()
     _ = try? await serveTask.value
   }
+
 }
 
 private actor GeneratedDemoHandler: WireDemoDemoHandler {

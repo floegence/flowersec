@@ -11,6 +11,7 @@ import { HANDSHAKE_TYPE_INIT, PROTOCOL_VERSION } from "../e2ee/constants.js";
 import type { BinaryTransport } from "../e2ee/secureChannel.js";
 import { readStreamHello, writeStreamHello } from "../streamhello/streamHello.js";
 import { ByteReader } from "../yamux/byteReader.js";
+import { isYamuxPingTimeoutError } from "../yamux/errors.js";
 import { YamuxSession, type YamuxLimits } from "../yamux/session.js";
 import type { YamuxStream } from "../yamux/stream.js";
 import { RpcServer, type RpcRouter, type RpcServerOptions } from "../rpc/server.js";
@@ -122,9 +123,10 @@ export class Session {
   }
 
   async openStream(kind: string, options: Readonly<{ signal?: AbortSignal }> = {}): Promise<YamuxStream> {
+    const streamKind = normalizeStreamKind(kind, this.path);
     const stream = await this.mux.openStream(options);
     try {
-      await writeStreamHello((bytes) => stream.write(bytes), normalizeStreamKind(kind, this.path));
+      await writeStreamHello((bytes) => stream.write(bytes), streamKind);
       return stream;
     } catch (error) {
       await stream.reset(asError(error));
@@ -166,8 +168,18 @@ export class Session {
     }
   }
 
-  probeLiveness(timeoutMs = SDK_DEFAULTS.transport.handshakeTimeoutMs): Promise<number> {
-    return this.mux.probeLiveness(timeoutMs);
+  async probeLiveness(timeoutMs = SDK_DEFAULTS.transport.handshakeTimeoutMs): Promise<number> {
+    try {
+      return await this.mux.probeLiveness(timeoutMs);
+    } catch (error) {
+      throw new FlowersecError({
+        path: this.path,
+        stage: "yamux",
+        code: isYamuxPingTimeoutError(error) ? "timeout" : "ping_failed",
+        message: "endpoint liveness probe failed",
+        cause: error,
+      });
+    }
   }
 
   async rekey(): Promise<void> {
@@ -342,7 +354,7 @@ async function establishSession(
       maxHandshakePayload: options.maxHandshakePayload ?? SDK_DEFAULTS.e2ee.maxHandshakePayloadBytes,
       maxRecordBytes: options.maxRecordBytes ?? SDK_DEFAULTS.e2ee.maxRecordBytes,
       outboundRecordChunkBytes: options.outboundRecordChunkBytes ?? SDK_DEFAULTS.e2ee.outboundRecordChunkBytes,
-      maxBufferedBytes: options.maxBufferedBytes ?? SDK_DEFAULTS.e2ee.maxOutboundBufferedBytes,
+      maxBufferedBytes: options.maxBufferedBytes ?? SDK_DEFAULTS.e2ee.maxInboundBufferedBytes,
       maxOutboundBufferedBytes: options.maxOutboundBufferedBytes ?? SDK_DEFAULTS.e2ee.maxOutboundBufferedBytes,
       timeoutMs: options.handshakeTimeoutMs ?? SDK_DEFAULTS.transport.handshakeTimeoutMs,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -420,7 +432,7 @@ function randomEndpointInstanceId(): string {
 
 function normalizeStreamKind(kind: string, path: EndpointPath): string {
   const value = kind.trim();
-  if (value === "") throw new FlowersecError({ path, stage: "validate", code: "missing_stream_kind", message: "missing stream kind" });
+  if (value === "") throw new FlowersecError({ path, stage: "rpc", code: "missing_stream_kind", message: "missing stream kind" });
   return value;
 }
 

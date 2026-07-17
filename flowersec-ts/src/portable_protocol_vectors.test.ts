@@ -41,7 +41,7 @@ type PortableVectors = Readonly<{
 }>;
 
 type CodeRegistry = Readonly<{
-  codes: ReadonlyArray<Readonly<{ code: string }>>;
+  codes: ReadonlyArray<Readonly<{ code: string; stages: readonly string[] }>>;
 }>;
 
 const vectors = readJSON<PortableVectors>("../../testdata/portable_protocol_vectors.json");
@@ -107,6 +107,17 @@ describe("portable protocol vectors", () => {
     });
 
     expect(registryCodes("../../stability/connect_error_code_registry.json")).toContain("resource_exhausted");
+    expectRegistryPairs("../../stability/connect_error_code_registry.json", [
+      ["validate", "invalid_input"],
+      ["connect", "timeout"],
+      ["handshake", "timeout"],
+      ["handshake", "resource_exhausted"],
+      ["rpc", "missing_stream_kind"],
+      ["yamux", "canceled"],
+      ["secure", "resource_exhausted"],
+      ["yamux", "resource_exhausted"],
+      ["rpc", "resource_exhausted"],
+    ]);
     expect(registryCodes("../../stability/connect_diagnostics_code_registry.json")).toContain(vectors.diagnostic_event.code);
   });
 });
@@ -140,6 +151,16 @@ function decodeHex(value: string): Uint8Array {
 
 function registryCodes(path: string): string[] {
   return readJSON<CodeRegistry>(path).codes.map((entry) => entry.code);
+}
+
+function expectRegistryPairs(path: string, pairs: readonly (readonly [string, string])[]): void {
+  const registry = readJSON<CodeRegistry>(path);
+  for (const [stage, code] of pairs) {
+    expect(
+      registry.codes.some((entry) => entry.code === code && entry.stages.includes(stage)),
+      `${stage}/${code}`,
+    ).toBe(true);
+  }
 }
 
 function readJSON<T>(path: string): T {

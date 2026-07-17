@@ -16,6 +16,7 @@ describe("SDK defaults contract", () => {
       maxHandshakePayloadBytes: manifest.e2ee!.max_handshake_payload_bytes,
       maxRecordBytes: manifest.e2ee!.max_record_bytes,
       outboundRecordChunkBytes: manifest.e2ee!.outbound_record_chunk_bytes,
+      maxInboundBufferedBytes: manifest.e2ee!.max_inbound_buffered_bytes,
       maxOutboundBufferedBytes: manifest.e2ee!.max_outbound_buffered_bytes,
     });
     expect(SDK_DEFAULTS.yamux).toEqual({
@@ -23,6 +24,7 @@ describe("SDK defaults contract", () => {
       maxInboundStreams: manifest.yamux!.max_inbound_streams,
       maxFrameBytes: manifest.yamux!.max_frame_bytes,
       preferredOutboundFrameBytes: manifest.yamux!.preferred_outbound_frame_bytes,
+      maxStreamWriteQueueBytes: manifest.yamux!.max_stream_write_queue_bytes,
       maxStreamReceiveBytes: manifest.yamux!.max_stream_receive_bytes,
       maxSessionReceiveBytes: manifest.yamux!.max_session_receive_bytes,
     });

@@ -19,6 +19,7 @@ public enum FlowersecSDKDefaults {
     public static let maxInboundStreams = 32
     public static let maxFrameBytes = 256 * 1024
     public static let preferredOutboundFrameBytes = 64 * 1024
+    public static let maxStreamWriteQueueBytes = 4 * 1024 * 1024
     public static let maxStreamReceiveBytes = 256 * 1024
     public static let maxSessionReceiveBytes = 16 * 1024 * 1024
   }

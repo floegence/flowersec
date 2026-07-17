@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -191,6 +192,14 @@ func (c *session) Close() error {
 //
 // Every yamux stream in this project is expected to start with a StreamHello frame.
 func (c *session) OpenStream(ctx context.Context, kind string) (fsstream.Stream, error) {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		var path Path
+		if c != nil {
+			path = c.path
+		}
+		return nil, wrapErr(path, fserrors.StageRPC, fserrors.CodeMissingStreamKind, ErrMissingStreamKind)
+	}
 	if c == nil || c.mux == nil {
 		var path Path
 		if c != nil {
@@ -198,10 +207,6 @@ func (c *session) OpenStream(ctx context.Context, kind string) (fsstream.Stream,
 		}
 		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeNotConnected, ErrNotConnected)
 	}
-	if kind == "" {
-		return nil, wrapErr(c.path, fserrors.StageValidate, fserrors.CodeMissingStreamKind, ErrMissingStreamKind)
-	}
-
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -211,7 +216,7 @@ func (c *session) OpenStream(ctx context.Context, kind string) (fsstream.Stream,
 
 	s, err := c.mux.OpenStreamContext(ctx)
 	if err != nil {
-		if errors.Is(err, fsyamux.ErrResourceExhausted) {
+		if isResourceExhausted(err) {
 			return nil, wrapErr(c.path, fserrors.StageYamux, fserrors.CodeResourceExhausted, err)
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -247,6 +252,9 @@ func (c *session) OpenStream(ctx context.Context, kind string) (fsstream.Stream,
 		if err := ctx.Err(); err != nil {
 			return nil, wrapErr(c.path, fserrors.StageYamux, classifyContextCode(err), err)
 		}
+		if isResourceExhausted(writeErr) {
+			return nil, wrapErr(c.path, fserrors.StageRPC, fserrors.CodeResourceExhausted, writeErr)
+		}
 		return nil, wrapErr(c.path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, writeErr)
 	}
 	if err := ctx.Err(); err != nil {
@@ -254,6 +262,11 @@ func (c *session) OpenStream(ctx context.Context, kind string) (fsstream.Stream,
 		return nil, wrapErr(c.path, fserrors.StageYamux, classifyContextCode(err), err)
 	}
 	return s, nil
+}
+
+func isResourceExhausted(err error) bool {
+	return errors.Is(err, fsyamux.ErrResourceExhausted) ||
+		errors.Is(err, e2ee.ErrOutboundBufferExceeded)
 }
 
 func classifyContextCode(err error) fserrors.Code {
@@ -267,7 +280,7 @@ func classifyContextCode(err error) fserrors.Code {
 }
 
 func classifyContextOrCode(err error, fallback fserrors.Code) fserrors.Code {
-	if errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, fsyamux.ErrLivenessTimeout) {
 		return fserrors.CodeTimeout
 	}
 	if errors.Is(err, context.Canceled) {

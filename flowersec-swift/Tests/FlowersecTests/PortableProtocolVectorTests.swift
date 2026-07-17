@@ -15,11 +15,13 @@ final class PortableProtocolVectorTests: XCTestCase {
       case "allow_plaintext_for_loopback": policy = .allowPlaintextForLoopback
       case "allow_plaintext": policy = .allowPlaintext
       case "network_plaintext":
-        XCTAssertEqual(item.riskAcceptance, PlaintextRiskAcceptance.acceptPreE2ECredentialExposure.rawValue)
-        policy = try .networkPlaintext(options: .init(
-          allowedHosts: item.allowedHosts ?? [],
-          riskAcceptance: .acceptPreE2ECredentialExposure
-        ))
+        XCTAssertEqual(
+          item.riskAcceptance, PlaintextRiskAcceptance.acceptPreE2ECredentialExposure.rawValue)
+        policy = try .networkPlaintext(
+          options: .init(
+            allowedHosts: item.allowedHosts ?? [],
+            riskAcceptance: .acceptPreE2ECredentialExposure
+          ))
       default:
         XCTFail("Unknown transport policy: \(item.policy)")
         continue
@@ -73,7 +75,39 @@ final class PortableProtocolVectorTests: XCTestCase {
     XCTAssertEqual(vectors.diagnosticEvent.code, "liveness_timeout")
 
     let errors: CodeRegistry = try readJSON("stability/connect_error_code_registry.json")
-    XCTAssertTrue(errors.codes.contains { $0.code == "resource_exhausted" })
+    XCTAssertEqual(
+      Set(FlowersecCode.allCases.map(\.rawValue)),
+      Set(errors.codes.map(\.code))
+    )
+    XCTAssertEqual(
+      Set(reconnectTerminalCodes.map(\.rawValue)),
+      Set(errors.reconnectTerminalCodes ?? [])
+    )
+    XCTAssertEqual(FlowersecError.webSocket("dial").stage, .connect)
+    XCTAssertEqual(FlowersecError.webSocket("dial").code, .dialFailed)
+    XCTAssertEqual(FlowersecError.invalidYamux("frame").stage, .yamux)
+    XCTAssertEqual(FlowersecError.invalidYamux("frame").code, .muxFailed)
+    XCTAssertEqual(FlowersecError.missingStreamKind(path: .tunnel).stage, .rpc)
+    XCTAssertEqual(FlowersecError.missingStreamKind(path: .tunnel).code, .missingStreamKind)
+    for (stage, code) in [
+      (FlowersecStage.attach, FlowersecCode.invalidAttach),
+      (.secure, .invalidInput),
+      (.yamux, .timeout),
+      (.rpc, .timeout),
+      (.yamux, .notConnected),
+      (.close, .notConnected),
+      (.handshake, .resourceExhausted),
+      (.secure, .resourceExhausted),
+      (.yamux, .resourceExhausted),
+      (.rpc, .resourceExhausted),
+    ] {
+      XCTAssertTrue(
+        errors.codes.contains {
+          $0.code == code.rawValue && $0.stages?.contains(stage.rawValue) == true
+        },
+        "Missing registry pair \(stage.rawValue)/\(code.rawValue)"
+      )
+    }
     let diagnostics: CodeRegistry = try readJSON(
       "stability/connect_diagnostics_code_registry.json"
     )
@@ -195,9 +229,16 @@ private struct ControlplaneErrorEnvelopeVector: Codable {
 }
 
 private struct CodeRegistry: Decodable {
+  var reconnectTerminalCodes: [String]?
   var codes: [Code]
+
+  enum CodingKeys: String, CodingKey {
+    case reconnectTerminalCodes = "reconnect_terminal_codes"
+    case codes
+  }
 
   struct Code: Decodable {
     var code: String
+    var stages: [String]?
   }
 }

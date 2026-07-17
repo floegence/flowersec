@@ -47,6 +47,7 @@ var (
 	ErrExpAfterInit       = errors.New("token exp > init_exp")
 	ErrInvalidIdleTimeout = errors.New("token invalid idle timeout")
 	ErrInvalidClockSkew   = errors.New("token invalid clock_skew")
+	ErrInvalidPrivateKey  = errors.New("token invalid private key")
 )
 
 // KeyLookup provides public keys by key ID.
@@ -64,7 +65,11 @@ type VerifyOptions struct {
 
 // Sign builds a signed token string using the provided Ed25519 key.
 func Sign(priv ed25519.PrivateKey, payload Payload) (string, error) {
-	if strings.TrimSpace(payload.Kid) == "" {
+	if len(priv) != ed25519.PrivateKeySize {
+		return "", ErrInvalidPrivateKey
+	}
+	payload.Kid = strings.TrimSpace(payload.Kid)
+	if payload.Kid == "" {
 		return "", fmt.Errorf("missing kid: %w", ErrInvalidFormat)
 	}
 	if strings.TrimSpace(payload.Aud) == "" {
@@ -138,7 +143,8 @@ func Verify(tokenStr string, keys KeyLookup, opts VerifyOptions) (Payload, error
 
 // VerifyParsed validates a previously-parsed token payload and signature.
 func VerifyParsed(p Payload, signed []byte, sig []byte, keys KeyLookup, opts VerifyOptions) (Payload, error) {
-	if strings.TrimSpace(p.Kid) == "" {
+	p.Kid = strings.TrimSpace(p.Kid)
+	if p.Kid == "" {
 		return Payload{}, fmt.Errorf("missing kid: %w", ErrInvalidFormat)
 	}
 	p.ChannelID = channelid.Normalize(p.ChannelID)
@@ -154,9 +160,15 @@ func VerifyParsed(p Payload, signed []byte, sig []byte, keys KeyLookup, opts Ver
 	if p.IdleTimeoutSeconds <= 0 {
 		return Payload{}, ErrInvalidIdleTimeout
 	}
+	if keys == nil {
+		return Payload{}, ErrUnknownKID
+	}
 	pub, ok := keys.Lookup(p.Kid)
 	if !ok {
 		return Payload{}, ErrUnknownKID
+	}
+	if len(pub) != ed25519.PublicKeySize {
+		return Payload{}, ErrInvalidSig
 	}
 	if !ed25519.Verify(pub, signed, sig) {
 		return Payload{}, ErrInvalidSig

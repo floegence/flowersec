@@ -83,7 +83,11 @@ async fn reconnect_manager_recovers_after_session_termination() {
             trace_id: Some("trace-reconnect".to_owned()),
             ..ConnectOptions::default()
         },
-        reconnect: retry_settings(3),
+        reconnect: ReconnectSettings {
+            initial_delay: Duration::from_millis(150),
+            max_delay: Duration::from_millis(150),
+            ..retry_settings(3)
+        },
     };
     let manager = ReconnectManager::new();
     let states = manager.subscribe();
@@ -91,6 +95,19 @@ async fn reconnect_manager_recovers_after_session_termination() {
         .connect(config.clone())
         .await
         .expect("initial connect");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), accepted_rx.recv())
+            .await
+            .expect("initial server acceptance")
+            .expect("initial acceptance channel"),
+        0
+    );
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        acquisitions.load(Ordering::SeqCst),
+        1,
+        "session termination must wait for the first reconnect delay"
+    );
     wait_for_reconnected(&manager, &acquisitions).await;
     assert_eq!(manager.state().status, ConnectionStatus::Connected);
 
@@ -101,13 +118,11 @@ async fn reconnect_manager_recovers_after_session_termination() {
         .expect("connected manager is idempotent");
     assert_eq!(acquisitions.load(Ordering::SeqCst), before);
     assert!(states.has_changed().expect("state receiver remains active"));
-    for expected in 0..2 {
-        let accepted = tokio::time::timeout(Duration::from_secs(3), accepted_rx.recv())
-            .await
-            .expect("server accepts reconnected RPC stream")
-            .expect("server acceptance channel remains open");
-        assert_eq!(accepted, expected);
-    }
+    let accepted = tokio::time::timeout(Duration::from_secs(3), accepted_rx.recv())
+        .await
+        .expect("server accepts reconnected RPC stream")
+        .expect("server acceptance channel remains open");
+    assert_eq!(accepted, 1);
 
     manager.disconnect().await.expect("disconnect");
     assert_eq!(manager.state().status, ConnectionStatus::Disconnected);

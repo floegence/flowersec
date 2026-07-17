@@ -16,6 +16,7 @@ const manifest = JSON.parse(
 const forbiddenRuntimeExportsBySubpath = new Map([
   ['@floegence/flowersec-core/proxy', ['resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST']],
 ]);
+const nonStablePackageExports = new Set(['./internal']);
 
 function run(cmd, args, cwd, input) {
   return execFileSync(cmd, args, {
@@ -48,6 +49,8 @@ function installTarball(tarballPath) {
 
 function verifyPackageJSONExports() {
   const pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'));
+  const stableExports = Object.keys(pkg.exports).filter((subpath) => !subpath.includes('*') && !nonStablePackageExports.has(subpath));
+  const manifestExports = manifest.ts.subpaths.map((subpath) => subpath.package_json_export);
   for (const subpath of manifest.ts.subpaths) {
     assert.equal(
       Object.prototype.hasOwnProperty.call(pkg.exports, subpath.package_json_export),
@@ -55,6 +58,7 @@ function verifyPackageJSONExports() {
       `package.json exports missing ${subpath.package_json_export}`
     );
   }
+  assert.deepEqual([...manifestExports].sort(), [...stableExports].sort(), 'stable package.json exports and manifest subpaths must match');
 }
 
 function verifyInstalledPackage() {
@@ -91,6 +95,36 @@ ${checks}
   run(process.execPath, ['--input-type=module', '-'], consumerDir, script);
 }
 
+function verifyEndpointTypes() {
+  fs.writeFileSync(
+    path.join(consumerDir, 'index.ts'),
+    `import { Session, acceptDirect, acceptDirectResolved, connectTunnel } from '@floegence/flowersec-core/endpoint';
+import type { DirectAcceptOptions, DirectCredentialResolver, EndpointOptions, EndpointStream, TunnelEndpointOptions } from '@floegence/flowersec-core/endpoint';
+
+void Session;
+void acceptDirect;
+void acceptDirectResolved;
+void connectTunnel;
+const types: [DirectAcceptOptions?, DirectCredentialResolver?, EndpointOptions?, EndpointStream?, TunnelEndpointOptions?] = [];
+void types;
+`
+  );
+  fs.writeFileSync(
+    path.join(consumerDir, 'tsconfig.json'),
+    JSON.stringify({
+      compilerOptions: {
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        noEmit: true,
+        strict: true,
+        target: 'ES2022',
+      },
+      include: ['index.ts'],
+    }, null, 2)
+  );
+  run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.json'], consumerDir);
+}
+
 try {
   verifyPackageJSONExports();
   const tarballName = packTarball();
@@ -98,6 +132,7 @@ try {
   assert.equal(fs.existsSync(tarballPath), true, 'packed tarball must exist');
   installTarball(tarballPath);
   verifyInstalledPackage();
+  verifyEndpointTypes();
 } finally {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 }

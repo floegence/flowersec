@@ -107,7 +107,11 @@
     {
       "id": "browser_proxy_runtime",
       "owner": "typescript",
-      "reason": "Service Worker and browser page integration require browser JavaScript APIs."
+      "reason": "Service Worker and browser page integration require browser JavaScript APIs.",
+      "evidence": [
+        "flowersec-ts/browser-e2e/proxy-smoke.spec.ts",
+        "flowersec-ts/playwright.config.ts"
+      ]
     },
     {
       "id": "deployable_services_and_cli",
@@ -149,6 +153,35 @@
         "typescript": ["flowersec-ts/src/controlplane/controlplane_server.test.ts"],
         "swift": ["flowersec-swift/Tests/FlowersecTests/ControlplaneTests.swift"],
         "rust": ["flowersec-rust/src/controlplane.rs"]
+      }
+    },
+    {
+      "id": "issuer_rotation",
+      "path": "testdata/issuer_rotation_vectors.json",
+      "consumers": {
+        "go": ["flowersec-go/controlplane/issuer/rotation_vectors_test.go"],
+        "typescript": ["flowersec-ts/src/controlplane/issuer.test.ts"],
+        "swift": ["flowersec-swift/Tests/FlowersecTests/ControlplaneTests.swift"],
+        "rust": ["flowersec-rust/tests/issuer_rotation.rs"]
+      }
+    },
+    {
+      "id": "runtime_contracts",
+      "path": "testdata/runtime_contract_vectors.json",
+      "consumers": {
+        "go": [
+          "flowersec-go/crypto/e2ee/secureconn_extra_test.go",
+          "flowersec-go/rpc/session_id_test.go"
+        ],
+        "typescript": ["flowersec-ts/src/runtime_contract_vectors.test.ts"],
+        "swift": [
+          "flowersec-swift/Tests/FlowersecTests/RPCTests.swift",
+          "flowersec-swift/Tests/FlowersecTests/SecureChannelTests.swift"
+        ],
+        "rust": [
+          "flowersec-rust/src/e2ee.rs",
+          "flowersec-rust/src/rpc.rs"
+        ]
       }
     },
     {

@@ -236,6 +236,22 @@ pub enum ReconnectError {
     Cleanup(String),
 }
 
+const TERMINAL_CONNECT_CODES: &[&str] = &[
+    "invalid_input",
+    "invalid_option",
+    "role_mismatch",
+    "transport_policy_denied",
+    "invalid_psk",
+    "invalid_suite",
+    "missing_grant",
+    "missing_connect_info",
+    "missing_tunnel_url",
+    "missing_ws_url",
+    "missing_channel_id",
+    "missing_token",
+    "missing_init_exp",
+];
+
 impl ReconnectError {
     fn from_connect(error: &FlowersecError) -> Self {
         Self::Connect {
@@ -252,22 +268,7 @@ impl ReconnectError {
             Self::Artifact(ArtifactSourceError::OnceConsumed | ArtifactSourceError::Canceled) => {
                 true
             }
-            Self::Connect { code, .. } => matches!(
-                code.as_str(),
-                "invalid_input"
-                    | "invalid_option"
-                    | "role_mismatch"
-                    | "transport_policy_denied"
-                    | "invalid_psk"
-                    | "invalid_suite"
-                    | "missing_grant"
-                    | "missing_connect_info"
-                    | "missing_tunnel_url"
-                    | "missing_ws_url"
-                    | "missing_channel_id"
-                    | "missing_token"
-                    | "missing_init_exp"
-            ),
+            Self::Connect { code, .. } => TERMINAL_CONNECT_CODES.contains(&code.as_str()),
             Self::Cleanup(_) => true,
             _ => false,
         }
@@ -538,12 +539,33 @@ async fn run_supervisor(
                         }
                         _ = client.terminated() => {
                             last_error = ReconnectError::Terminated;
-                            inner.state.send_replace(ReconnectState {
-                                status: ConnectionStatus::Connecting,
-                                error: Some(last_error.clone()),
-                                client: None,
-                            });
                         }
+                    }
+                    if let Err(error) = client.close().await {
+                        tracing::warn!(%error, "reconnect client close failed after termination");
+                    }
+                    if !settings.enabled {
+                        inner.state.send_replace(ReconnectState {
+                            status: ConnectionStatus::Error,
+                            error: Some(last_error),
+                            client: None,
+                        });
+                        return;
+                    }
+                    if schedule_retry(
+                        &inner,
+                        &config,
+                        &settings,
+                        &cancellation,
+                        &last_error,
+                        0,
+                        attempt_seq,
+                        trace_id.clone(),
+                        Instant::now(),
+                    )
+                    .await
+                    {
+                        return;
                     }
                     break;
                 }
@@ -623,6 +645,32 @@ async fn finish_or_schedule(
         send_first(first_result, Err(final_error));
         return true;
     }
+    schedule_retry(
+        inner,
+        config,
+        settings,
+        cancellation,
+        error,
+        attempt - 1,
+        attempt_seq,
+        trace_id,
+        started,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn schedule_retry(
+    inner: &ManagerInner,
+    config: &ReconnectConfig,
+    settings: &ReconnectSettings,
+    cancellation: &CancellationToken,
+    error: &ReconnectError,
+    failed_attempt_index: usize,
+    attempt_seq: u64,
+    trace_id: Option<String>,
+    started: Instant,
+) -> bool {
     inner.state.send_replace(ReconnectState {
         status: ConnectionStatus::Connecting,
         error: Some(error.clone()),
@@ -636,7 +684,7 @@ async fn finish_or_schedule(
         trace_id,
         started,
     );
-    let delay = settings.delay_for_retry(attempt - 1);
+    let delay = settings.delay_for_retry(failed_attempt_index);
     tokio::select! {
         _ = cancellation.cancelled() => true,
         _ = tokio::time::sleep(delay) => false,
@@ -684,7 +732,9 @@ fn emit(
 mod tests {
     use super::*;
     use crate::generated::flowersec::direct::v1::{DirectConnectInfo, Suite};
+    use serde::Deserialize;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{fs, path::PathBuf};
 
     fn artifact() -> ConnectArtifact {
         ConnectArtifact::Direct {
@@ -764,6 +814,30 @@ mod tests {
             }
             .is_terminal()
         );
+    }
+
+    #[test]
+    fn terminal_error_codes_match_the_shared_registry() {
+        #[derive(Deserialize)]
+        struct Registry {
+            reconnect_terminal_codes: Vec<String>,
+        }
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("stability")
+            .join("connect_error_code_registry.json");
+        let registry: Registry = serde_json::from_slice(&fs::read(path).expect("read registry"))
+            .expect("parse registry");
+        let mut expected = TERMINAL_CONNECT_CODES.to_vec();
+        expected.sort_unstable();
+        let mut actual = registry
+            .reconnect_terminal_codes
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
     }
 
     #[test]

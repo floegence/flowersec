@@ -16,6 +16,7 @@ struct SDKDefaultsContractTests {
     #expect(milliseconds(FlowersecSDKDefaults.Transport.handshakeTimeout) == number(document, "transport", "handshake_timeout_ms"))
     #expect(FlowersecSDKDefaults.E2EE.maxRecordBytes == number(document, "e2ee", "max_record_bytes"))
     #expect(FlowersecSDKDefaults.Yamux.maxActiveStreams == number(document, "yamux", "max_active_streams"))
+    #expect(FlowersecSDKDefaults.Yamux.maxStreamWriteQueueBytes == number(document, "yamux", "max_stream_write_queue_bytes"))
     #expect(FlowersecSDKDefaults.RPC.maxConcurrentRequests == number(document, "rpc", "max_concurrent_requests"))
     #expect(FlowersecSDKDefaults.Controlplane.maxResponseBodyBytes == number(document, "controlplane", "max_response_body_bytes"))
     #expect(FlowersecSDKDefaults.Proxy.maxBodyBytes == number(document, "proxy", "max_body_bytes"))

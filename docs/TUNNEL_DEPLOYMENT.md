@@ -165,8 +165,18 @@ The tunnel exposes Prometheus metrics on a dedicated metrics server (disabled by
 
 To rotate issuer keys without downtime:
 
-1. Update the issuer keyset JSON file on disk (keep overlapping keys during rotation).
-2. On Unix-like systems, send `SIGHUP` to the tunnel process to reload the verifier backing config (`--issuer-keys-file` or `--tenants-file`).
+1. Generate the next private key and derive its public verification key. Keep the new private key restricted to the controlplane issuer.
+2. Add the new public key to the current tunnel keyset while retaining the active public key. This is the prepublication step.
+3. Deploy the complete overlap keyset to every tunnel instance. On Unix-like systems, send `SIGHUP` to reload the verifier backing config (`--issuer-keys-file` or `--tenants-file`).
+4. Confirm every tunnel instance has loaded the new key before activating it. A partial rollout can reject newly signed attach tokens.
+5. Activate the prepublished key in the issuer. The issuer must reject activation if the key ID was not prepublished or if the private key does not match the published public key.
+6. Wait until the last token signed by the previous key can no longer be accepted. The minimum wait is the latest previous-key token expiry plus configured clock skew and a deployment propagation margin.
+7. Retire the previous verification key in the issuer, then export the reduced keyset from that updated issuer state.
+8. Deploy the exported reduced keyset everywhere and reload the tunnel instances.
+
+The issuer private-key file contains only the active signing key. It is deliberately not a persistence format for overlap verification keys. The deployed tunnel keyset is the authoritative overlap artifact; after an issuer restart, prepublish any still-required verification keys into the issuer before attempting activation or retirement operations.
+
+Do not activate a key before all verifiers have it, and do not retire the previous public key while any valid token may still reference it.
 
 ## Policy authorizer
 

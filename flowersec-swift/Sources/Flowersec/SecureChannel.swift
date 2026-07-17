@@ -20,14 +20,45 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   }
 
   private struct PendingWrite {
+    var id: UInt64
     var operation: PendingOperation
+    var cancellation: PendingWriteCancellation
     var continuation: CheckedContinuation<Void, Error>
+  }
+
+  private final class PendingWriteCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var canceled = false
+    private var completed = false
+
+    func cancel() {
+      lock.lock()
+      if !completed {
+        canceled = true
+      }
+      lock.unlock()
+    }
+
+    func completeWrite() -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      completed = true
+      return canceled
+    }
+
+    var isCanceled: Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      return canceled
+    }
   }
 
   private let transport: any FlowersecBinaryTransport
   private var keys: FlowersecRecordKeyState
   private var readBuffer = Data()
   private var pendingWrites: [PendingWrite] = []
+  private var nextPendingWriteID: UInt64 = 1
+  private var activeWriteID: UInt64?
   private var pendingWriteBytes = 0
   private var writeInProgress = false
   private var closed = false
@@ -53,8 +84,10 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   }
 
   func write(_ data: Data) async throws {
+    try Task.checkCancellation()
     guard !closed else { throw FlowersecError.closed(path: path) }
-    let availableBytes = maxOutboundBufferedBytes > pendingWriteBytes
+    let availableBytes =
+      maxOutboundBufferedBytes > pendingWriteBytes
       ? maxOutboundBufferedBytes - pendingWriteBytes : 0
     guard maxOutboundBufferedBytes > 0, data.count <= availableBytes else {
       let (currentBytes, overflow) = pendingWriteBytes.addingReportingOverflow(data.count)
@@ -78,20 +111,13 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
       )
     }
     pendingWriteBytes += data.count
-    try await withCheckedThrowingContinuation { continuation in
-      pendingWrites.append(
-        PendingWrite(operation: .application(data), continuation: continuation)
-      )
-      startWriteIfNeeded()
-    }
+    try await enqueue(.application(data))
   }
 
   func rekey() async throws {
+    try Task.checkCancellation()
     guard !closed else { throw FlowersecError.closed(path: path) }
-    try await withCheckedThrowingContinuation { continuation in
-      pendingWrites.append(PendingWrite(operation: .rekey, continuation: continuation))
-      startWriteIfNeeded()
-    }
+    try await enqueue(.rekey)
   }
 
   var queuedWriteCount: Int { pendingWrites.count }
@@ -128,32 +154,46 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   }
 
   private func startWriteIfNeeded() {
-    guard !closed, !writeInProgress, let write = pendingWrites.first else { return }
+    guard !closed, !writeInProgress else { return }
+    while let write = pendingWrites.first, write.cancellation.isCanceled {
+      pendingWrites.removeFirst()
+      pendingWriteBytes -= write.operation.byteCount
+      write.continuation.resume(throwing: CancellationError())
+    }
+    guard let write = pendingWrites.first else { return }
     writeInProgress = true
+    activeWriteID = write.id
     Task {
       do {
         switch write.operation {
         case .application(let data): try await writeRecords(data)
         case .rekey: try await writeRekeyRecord()
         }
-        finishWrite(result: .success(()))
+        finishWrite(writeID: write.id, result: .success(()))
       } catch {
-        finishWrite(result: .failure(error))
+        finishWrite(writeID: write.id, result: .failure(error))
       }
     }
   }
 
-  private func finishWrite(result: Result<Void, Error>) {
-    guard !pendingWrites.isEmpty else {
+  private func finishWrite(writeID: UInt64, result: Result<Void, Error>) {
+    guard pendingWrites.first?.id == writeID else {
       writeInProgress = false
+      activeWriteID = nil
       return
     }
     let write = pendingWrites.removeFirst()
     pendingWriteBytes -= write.operation.byteCount
     writeInProgress = false
+    activeWriteID = nil
+    let callerCanceled = write.cancellation.completeWrite()
     switch result {
     case .success:
-      write.continuation.resume()
+      if callerCanceled {
+        write.continuation.resume(throwing: CancellationError())
+      } else {
+        write.continuation.resume()
+      }
       startWriteIfNeeded()
     case .failure(let error):
       closed = true
@@ -168,9 +208,48 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
     pendingWrites.removeAll()
     pendingWriteBytes = 0
     writeInProgress = false
+    activeWriteID = nil
     for write in writes {
       write.continuation.resume(throwing: error)
     }
+  }
+
+  private func enqueue(_ operation: PendingOperation) async throws {
+    let writeID = nextPendingWriteID
+    nextPendingWriteID += 1
+    let cancellation = PendingWriteCancellation()
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation {
+        (continuation: CheckedContinuation<Void, Error>) in
+        if Task.isCancelled {
+          cancellation.cancel()
+          pendingWriteBytes -= operation.byteCount
+          continuation.resume(throwing: CancellationError())
+          return
+        }
+        pendingWrites.append(
+          PendingWrite(
+            id: writeID,
+            operation: operation,
+            cancellation: cancellation,
+            continuation: continuation
+          )
+        )
+        startWriteIfNeeded()
+      }
+    } onCancel: {
+      cancellation.cancel()
+      Task { await self.cancelPendingWrite(writeID) }
+    }
+  }
+
+  private func cancelPendingWrite(_ writeID: UInt64) {
+    guard activeWriteID != writeID,
+      let index = pendingWrites.firstIndex(where: { $0.id == writeID })
+    else { return }
+    let write = pendingWrites.remove(at: index)
+    pendingWriteBytes -= write.operation.byteCount
+    write.continuation.resume(throwing: CancellationError())
   }
 
   private func writeRecord(_ plaintext: Data) async throws {

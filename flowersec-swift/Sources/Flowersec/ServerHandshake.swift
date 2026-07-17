@@ -110,7 +110,8 @@ extension FlowersecHandshake {
         initMessage.channelID == options.channelID,
         initMessage.suite == options.suite.rawValue
       else {
-        throw FlowersecError.invalidHandshake("The endpoint handshake init is invalid.", path: options.path)
+        throw FlowersecError.invalidHandshake(
+          "The endpoint handshake init is invalid.", path: options.path)
       }
 
       let clientMaterial = try EndpointClientHandshakeMaterial(
@@ -174,7 +175,7 @@ extension FlowersecHandshake {
         throw FlowersecError(
           path: options.path,
           stage: .handshake,
-          code: .handshakeFailed,
+          code: .timestampOutOfSkew,
           message: "Endpoint handshake timestamp is outside the allowed clock skew."
         )
       }
@@ -182,7 +183,7 @@ extension FlowersecHandshake {
         throw FlowersecError(
           path: options.path,
           stage: .handshake,
-          code: .handshakeFailed,
+          code: .timestampAfterInitExp,
           message: "Endpoint handshake timestamp is after the init expiry."
         )
       }
@@ -294,7 +295,7 @@ private struct EndpointClientHandshakeMaterial {
   }
 }
 
-fileprivate enum EndpointAgreementPrivateKey: Sendable {
+private enum EndpointAgreementPrivateKey: Sendable {
   case x25519(Curve25519.KeyAgreement.PrivateKey)
   case p256(P256.KeyAgreement.PrivateKey)
 
@@ -326,7 +327,7 @@ fileprivate enum EndpointAgreementPrivateKey: Sendable {
   }
 }
 
-fileprivate enum EndpointAgreementPublicKey: Sendable {
+private enum EndpointAgreementPublicKey: Sendable {
   case x25519(Curve25519.KeyAgreement.PublicKey)
   case p256(P256.KeyAgreement.PublicKey)
 }
@@ -341,7 +342,8 @@ private func constantTimeEqual(_ left: Data, _ right: Data) -> Bool {
   var difference = left.count ^ right.count
   let count = max(left.count, right.count)
   for index in 0..<count {
-    difference |= Int(index < left.count ? left[index] : 0) ^ Int(index < right.count ? right[index] : 0)
+    difference |=
+      Int(index < left.count ? left[index] : 0) ^ Int(index < right.count ? right[index] : 0)
   }
   return difference == 0
 }

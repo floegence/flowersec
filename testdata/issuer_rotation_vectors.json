@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "keys": [
+    {
+      "kid": "k1",
+      "seed_b64u": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      "public_key_b64u": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+    },
+    {
+      "kid": "k2",
+      "seed_b64u": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+      "public_key_b64u": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+    }
+  ],
+  "stages": [
+    { "name": "initial", "active_kid": "k1", "verification_kids": ["k1"] },
+    { "name": "prepublished", "active_kid": "k1", "verification_kids": ["k1", "k2"] },
+    { "name": "rotated", "active_kid": "k2", "verification_kids": ["k1", "k2"] },
+    { "name": "retired", "active_kid": "k2", "verification_kids": ["k2"] }
+  ]
+}

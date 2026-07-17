@@ -22,6 +22,14 @@ func newConn(c *websocket.Conn) *Conn {
 	return &Conn{c: c, writePermit: writePermit}
 }
 
+// Wrap adapts an existing gorilla/websocket connection to the context-aware connection API.
+func Wrap(c *websocket.Conn) *Conn {
+	if c == nil {
+		return nil
+	}
+	return newConn(c)
+}
+
 // UpgraderOptions exposes a small set of websocket upgrader controls.
 type UpgraderOptions struct {
 	ReadBufferSize  int                        // Read buffer size for upgrader.
@@ -40,7 +48,7 @@ func Upgrade(w http.ResponseWriter, r *http.Request, opts UpgraderOptions) (*Con
 	if err != nil {
 		return nil, err
 	}
-	return newConn(c), nil
+	return Wrap(c), nil
 }
 
 // DialOptions provides optional headers for websocket dialing.
@@ -68,7 +76,7 @@ func Dial(ctx context.Context, urlStr string, opts DialOptions) (*Conn, *http.Re
 	if err != nil {
 		return nil, resp, err
 	}
-	return newConn(c), resp, nil
+	return Wrap(c), resp, nil
 }
 
 func watchCancellation(ctx context.Context, interrupt func() error) func() (bool, error) {

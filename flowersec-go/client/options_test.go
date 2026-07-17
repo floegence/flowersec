@@ -51,6 +51,7 @@ func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 	observer := observability.NoopClientObserver
 	cfg, err := applyConnectOptions([]ConnectOption{
 		WithMaxBufferedBytes(4096),
+		WithMaxOutboundBufferedBytes(8192),
 		WithClientFeatures(7),
 		WithObserver(observer),
 	})
@@ -59,6 +60,9 @@ func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 	}
 	if cfg.maxBufferedBytes != 4096 {
 		t.Fatalf("maxBufferedBytes = %d", cfg.maxBufferedBytes)
+	}
+	if cfg.maxOutboundBufferedBytes != 8192 {
+		t.Fatalf("maxOutboundBufferedBytes = %d", cfg.maxOutboundBufferedBytes)
 	}
 	if cfg.clientFeatures != 7 {
 		t.Fatalf("clientFeatures = %d", cfg.clientFeatures)
@@ -70,6 +74,12 @@ func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 
 func TestWithMaxBufferedBytes_RejectsNonPositive(t *testing.T) {
 	if _, err := applyConnectOptions([]ConnectOption{WithMaxBufferedBytes(0)}); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestWithMaxOutboundBufferedBytesRejectsNonPositive(t *testing.T) {
+	if _, err := applyConnectOptions([]ConnectOption{WithMaxOutboundBufferedBytes(0)}); err == nil {
 		t.Fatal("expected error")
 	}
 }

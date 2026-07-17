@@ -1,5 +1,11 @@
 import Foundation
 
+let reconnectTerminalCodes: Set<FlowersecCode> = [
+  .invalidInput, .invalidOption, .roleMismatch, .transportPolicyDenied, .invalidPSK,
+  .invalidSuite, .missingGrant, .missingConnectInfo, .missingTunnelURL, .missingWSURL,
+  .missingChannelID, .missingToken, .missingInitExp,
+]
+
 public enum ArtifactSourceKind: String, Equatable, Sendable {
   case once
   case refreshable
@@ -208,11 +214,7 @@ public enum ReconnectError: LocalizedError, Equatable, Sendable {
       .artifact(.onceConsumed), .artifact(.canceled):
       return true
     case .connection(let error):
-      return [
-        .invalidInput, .invalidOption, .transportPolicyDenied, .invalidPSK,
-        .invalidSuite, .missingConnectInfo, .missingWSURL, .missingChannelID,
-        .missingInitExp,
-      ].contains(error.code)
+      return reconnectTerminalCodes.contains(error.code)
     case .artifact(.acquisitionFailed), .terminated, .exhausted:
       return false
     }
@@ -383,7 +385,7 @@ public actor ReconnectManager {
         attemptSequence += 1
         let started = ContinuousClock.now
         emit(
-          code: attempt == 1 ? "reconnect_attempt" : "reconnect_retry_attempt",
+          code: attemptSequence == 1 ? "reconnect_attempt" : "reconnect_retry_attempt",
           result: .retry,
           options: config.options,
           attemptSequence: attemptSequence,
@@ -407,7 +409,9 @@ public actor ReconnectManager {
             traceID: traceID,
             started: started,
             firstResult: &firstResult
-          ) { return }
+          ) {
+            return
+          }
           continue
         }
 
@@ -449,7 +453,20 @@ public actor ReconnectManager {
             setState(.error, error: lastError, client: nil)
             return
           }
-          setState(.connecting, error: lastError, client: nil)
+          let scheduledAt = ContinuousClock.now
+          if await scheduleRetry(
+            error: lastError,
+            failedAttemptIndex: 0,
+            settings: settings,
+            config: config,
+            generation: runGeneration,
+            attemptSequence: attemptSequence,
+            traceID: traceID,
+            started: scheduledAt,
+            firstResult: &firstResult
+          ) {
+            return
+          }
           break
         } catch {
           lastError = reconnectError(error, artifact: false)
@@ -463,7 +480,9 @@ public actor ReconnectManager {
             traceID: traceID,
             started: started,
             firstResult: &firstResult
-          ) { return }
+          ) {
+            return
+          }
         }
       }
     }
@@ -483,7 +502,8 @@ public actor ReconnectManager {
   ) async -> Bool {
     let exhausted = error.isTerminal || !settings.enabled || attempt >= settings.maxAttempts
     if exhausted {
-      let finalError = error.isTerminal
+      let finalError =
+        error.isTerminal
         ? error
         : ReconnectError.exhausted(attempts: attempt, last: error.localizedDescription)
       setState(.error, error: finalError, client: nil)
@@ -498,6 +518,30 @@ public actor ReconnectManager {
       resumeFirst(&firstResult, with: .failure(finalError))
       return true
     }
+    return await scheduleRetry(
+      error: error,
+      failedAttemptIndex: attempt - 1,
+      settings: settings,
+      config: config,
+      generation: runGeneration,
+      attemptSequence: attemptSequence,
+      traceID: traceID,
+      started: started,
+      firstResult: &firstResult
+    )
+  }
+
+  private func scheduleRetry(
+    error: ReconnectError,
+    failedAttemptIndex: Int,
+    settings: ReconnectSettings,
+    config: ReconnectConfig,
+    generation runGeneration: UInt64,
+    attemptSequence: Int,
+    traceID: String?,
+    started: ContinuousClock.Instant,
+    firstResult: inout CheckedContinuation<Void, any Error>?
+  ) async -> Bool {
     setState(.connecting, error: error, client: nil)
     emit(
       code: "reconnect_scheduled",
@@ -508,7 +552,7 @@ public actor ReconnectManager {
       started: started
     )
     do {
-      try await Task.sleep(for: settings.delay(forFailedAttemptIndex: attempt - 1))
+      try await Task.sleep(for: settings.delay(forFailedAttemptIndex: failedAttemptIndex))
     } catch {
       resumeFirst(&firstResult, with: .failure(ReconnectError.canceled))
       return true

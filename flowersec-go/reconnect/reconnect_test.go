@@ -2,13 +2,20 @@ package reconnect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/client"
+	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
 	"github.com/floegence/flowersec/flowersec-go/fserrors"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
@@ -101,6 +108,28 @@ func TestManagerStopsOnTerminalConnectError(t *testing.T) {
 	}
 }
 
+func TestTerminalConnectCodesMatchRegistry(t *testing.T) {
+	var registry struct {
+		TerminalCodes []string `json:"reconnect_terminal_codes"`
+	}
+	data, err := os.ReadFile(filepath.Join("..", "..", "stability", "connect_error_code_registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &registry); err != nil {
+		t.Fatal(err)
+	}
+	actual := make([]string, 0, len(terminalConnectCodes))
+	for code := range terminalConnectCodes {
+		actual = append(actual, string(code))
+	}
+	slices.Sort(actual)
+	slices.Sort(registry.TerminalCodes)
+	if !slices.Equal(actual, registry.TerminalCodes) {
+		t.Fatalf("terminal codes = %v, registry = %v", actual, registry.TerminalCodes)
+	}
+}
+
 func TestSettingsPreserveExplicitZeroDelayAndJitter(t *testing.T) {
 	settings, err := (Settings{
 		Enabled:      true,
@@ -118,6 +147,89 @@ func TestSettingsPreserveExplicitZeroDelayAndJitter(t *testing.T) {
 	}
 }
 
+func TestManagerWaitsBeforeReconnectAfterTermination(t *testing.T) {
+	var acquisitions atomic.Int32
+	firstClient, terminate := newTerminatingFakeClient(t)
+	manager := NewManager()
+	err := manager.Connect(context.Background(), Config{
+		Source: RefreshableSource(func(context.Context, AcquireContext) (*protocolio.ConnectArtifact, error) {
+			acquisitions.Add(1)
+			return &protocolio.ConnectArtifact{V: 1}, nil
+		}),
+		Reconnect: Settings{
+			Enabled: true, MaxAttempts: 3, InitialDelay: 120 * time.Millisecond,
+			MaxDelay: 120 * time.Millisecond, Factor: 1,
+		},
+		Connector: func(context.Context, *protocolio.ConnectArtifact, ...client.ConnectOption) (client.Client, error) {
+			if acquisitions.Load() == 1 {
+				return firstClient, nil
+			}
+			return fakeClient{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminate()
+	waitForState(t, manager, StatusConnecting)
+	time.Sleep(40 * time.Millisecond)
+	if got := acquisitions.Load(); got != 1 {
+		t.Fatalf("artifact acquired before backoff elapsed: %d", got)
+	}
+	deadline := time.Now().Add(time.Second)
+	for acquisitions.Load() != 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := acquisitions.Load(); got != 2 {
+		t.Fatalf("acquisitions = %d, want 2", got)
+	}
+	if err := manager.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagerDisconnectCancelsTerminationBackoff(t *testing.T) {
+	var acquisitions atomic.Int32
+	firstClient, terminate := newTerminatingFakeClient(t)
+	manager := NewManager()
+	if err := manager.Connect(context.Background(), Config{
+		Source: RefreshableSource(func(context.Context, AcquireContext) (*protocolio.ConnectArtifact, error) {
+			acquisitions.Add(1)
+			return &protocolio.ConnectArtifact{V: 1}, nil
+		}),
+		Reconnect: Settings{
+			Enabled: true, MaxAttempts: 3, InitialDelay: time.Second,
+			MaxDelay: time.Second, Factor: 1,
+		},
+		Connector: func(context.Context, *protocolio.ConnectArtifact, ...client.ConnectOption) (client.Client, error) {
+			return firstClient, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	terminate()
+	waitForState(t, manager, StatusConnecting)
+	if err := manager.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := acquisitions.Load(); got != 1 {
+		t.Fatalf("artifact acquired after disconnect: %d", got)
+	}
+}
+
+func waitForState(t *testing.T, manager *Manager, want Status) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if manager.State().Status == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("state = %s, want %s", manager.State().Status, want)
+}
+
 type fakeClient struct{ closeErr error }
 
 func (fakeClient) Path() client.Path          { return client.PathDirect }
@@ -130,3 +242,26 @@ func (fakeClient) Ping() error                                          { return
 func (fakeClient) Rekey() error                                         { return nil }
 func (fakeClient) ProbeLiveness(context.Context) (time.Duration, error) { return 0, nil }
 func (c fakeClient) Close() error                                       { return c.closeErr }
+
+type terminatingFakeClient struct {
+	fakeClient
+	mux  *fsyamux.Session
+	peer net.Conn
+}
+
+func newTerminatingFakeClient(t *testing.T) (*terminatingFakeClient, func()) {
+	t.Helper()
+	local, peer := net.Pipe()
+	mux, err := fsyamux.NewClient(local, fsyamux.YamuxLimits{}, fsyamux.LivenessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &terminatingFakeClient{mux: mux, peer: peer}
+	return client, func() { _ = peer.Close() }
+}
+
+func (*terminatingFakeClient) Secure() *e2ee.SecureChannel { return nil }
+func (c *terminatingFakeClient) Mux() *fsyamux.Session     { return c.mux }
+func (c *terminatingFakeClient) Close() error {
+	return errors.Join(c.mux.Close(), c.peer.Close())
+}

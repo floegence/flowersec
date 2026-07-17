@@ -2,6 +2,7 @@ import { bench, describe } from "vitest";
 import { clientHandshake, serverHandshake, ServerHandshakeCache } from "../e2ee/handshake.js";
 import { encryptRecord, decryptRecord } from "../e2ee/record.js";
 import { RECORD_FLAG_APP } from "../e2ee/constants.js";
+import { ByteReader } from "../yamux/byteReader.js";
 import { YamuxSession, type ByteDuplex } from "../yamux/session.js";
 
 type BinaryTransport = {
@@ -182,6 +183,12 @@ describe("e2ee record", () => {
 });
 
 describe("yamux", () => {
+  bench("discard_fragmented_chunks", async () => {
+    let remaining = 4_096;
+    const reader = new ByteReader(async () => remaining-- > 0 ? new Uint8Array([1]) : null);
+    await reader.discardExactly(4_096);
+  });
+
   bench("open_stream", async () => {
     const pair = createDuplexPair();
     const server = new YamuxSession(pair.server, {

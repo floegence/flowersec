@@ -1,12 +1,19 @@
 use async_trait::async_trait;
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Weak},
+    sync::{
+        Arc, Mutex as SyncMutex, Weak,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::sync::{Mutex, Notify, mpsc, oneshot};
 
-use crate::{defaults, e2ee::SecureChannel, transport::WebSocketTransport};
+use crate::{
+    defaults,
+    e2ee::{E2eeError, SecureChannel},
+    transport::WebSocketTransport,
+};
 
 pub const VERSION: u8 = 0;
 pub const HEADER_LEN: usize = 12;
@@ -46,7 +53,7 @@ impl Default for YamuxLimits {
             preferred_outbound_frame_bytes: defaults::YAMUX_PREFERRED_OUTBOUND_FRAME_BYTES,
             max_stream_receive_bytes: defaults::YAMUX_MAX_STREAM_RECEIVE_BYTES,
             max_session_receive_bytes: defaults::YAMUX_MAX_SESSION_RECEIVE_BYTES,
-            max_stream_write_queue_bytes: defaults::MAX_OUTBOUND_BUFFERED_BYTES,
+            max_stream_write_queue_bytes: defaults::YAMUX_MAX_STREAM_WRITE_QUEUE_BYTES,
         }
     }
 }
@@ -105,21 +112,28 @@ pub trait ByteDuplex: Send + Sync + 'static {
 #[async_trait]
 impl<T: WebSocketTransport> ByteDuplex for SecureChannel<T> {
     async fn read(&self) -> Result<Vec<u8>, YamuxError> {
-        SecureChannel::read(self)
-            .await
-            .map_err(|error| YamuxError::Transport(error.to_string()))
+        SecureChannel::read(self).await.map_err(map_secure_error)
     }
 
     async fn write(&self, bytes: &[u8]) -> Result<(), YamuxError> {
         SecureChannel::write(self, bytes)
             .await
-            .map_err(|error| YamuxError::Transport(error.to_string()))
+            .map_err(map_secure_error)
     }
 
     async fn close(&self) -> Result<(), YamuxError> {
-        SecureChannel::close(self)
-            .await
-            .map_err(|error| YamuxError::Transport(error.to_string()))
+        SecureChannel::close(self).await.map_err(map_secure_error)
+    }
+}
+
+fn map_secure_error(error: E2eeError) -> YamuxError {
+    match error {
+        E2eeError::OutboundBufferExceeded { current, limit } => YamuxError::ResourceExhausted {
+            resource: "secure_channel_pending_write_bytes",
+            current,
+            limit,
+        },
+        error => YamuxError::Transport(error.to_string()),
     }
 }
 
@@ -171,10 +185,8 @@ enum StreamPhase {
 struct StreamState {
     phase: StreamPhase,
     receive_window: usize,
-    send_window: usize,
     receive_queue: VecDeque<Vec<u8>>,
     receive_bytes: usize,
-    write_queue_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -184,9 +196,45 @@ struct StreamInner {
     state: Mutex<StreamState>,
     read_notify: Notify,
     write_notify: Notify,
+    send_window: SyncMutex<usize>,
+    write_queue_bytes: AtomicUsize,
     write_serial: Mutex<()>,
     exact_read_serial: Mutex<()>,
     exact_read_buffer: Mutex<VecDeque<u8>>,
+}
+
+struct WriteQueueReservation<'a> {
+    queued: &'a AtomicUsize,
+    bytes: usize,
+}
+
+impl Drop for WriteQueueReservation<'_> {
+    fn drop(&mut self) {
+        if self.bytes > 0 {
+            self.queued.fetch_sub(self.bytes, Ordering::Relaxed);
+        }
+    }
+}
+
+struct SendWindowReservation<'a> {
+    window: &'a SyncMutex<usize>,
+    bytes: usize,
+    committed: bool,
+}
+
+impl SendWindowReservation<'_> {
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for SendWindowReservation<'_> {
+    fn drop(&mut self) {
+        if !self.committed && self.bytes > 0 {
+            let mut window = lock_send_window(self.window);
+            *window = window.saturating_add(self.bytes).min(DEFAULT_STREAM_WINDOW);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -209,6 +257,8 @@ impl YamuxStream {
     pub async fn read(&self) -> Result<Option<Vec<u8>>, YamuxError> {
         loop {
             let notified = self.0.read_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             let (payload, replenish, terminal, finalize) = {
                 let mut state = self.0.state.lock().await;
                 if state.phase == StreamPhase::Reset {
@@ -245,27 +295,17 @@ impl YamuxStream {
 
     pub async fn write(&self, payload: &[u8]) -> Result<(), YamuxError> {
         let session = self.session()?;
-        let next_queued = {
-            let mut state = self.0.state.lock().await;
+        let _reservation = {
+            let state = self.0.state.lock().await;
             ensure_writable(state.phase)?;
-            let next = state.write_queue_bytes.saturating_add(payload.len());
-            if next > session.limits.max_stream_write_queue_bytes {
-                return Err(YamuxError::ResourceExhausted {
-                    resource: "stream_write_queue_bytes",
-                    current: next,
-                    limit: session.limits.max_stream_write_queue_bytes,
-                });
-            }
-            state.write_queue_bytes = next;
-            next
+            reserve_write_queue_bytes(
+                &self.0.write_queue_bytes,
+                session.limits.max_stream_write_queue_bytes,
+                payload.len(),
+            )?
         };
         let _serial = self.0.write_serial.lock().await;
-        let result = self.write_serial(payload, &session).await;
-        let mut state = self.0.state.lock().await;
-        state.write_queue_bytes = state
-            .write_queue_bytes
-            .saturating_sub(next_queued.min(payload.len()));
-        result
+        self.write_serial(payload, &session).await
     }
 
     pub async fn read_exact(&self, length: usize) -> Result<Vec<u8>, YamuxError> {
@@ -334,23 +374,34 @@ impl YamuxStream {
         let mut offset = 0;
         while offset < payload.len() {
             let notified = self.0.write_notify.notified();
-            let (allowed, flags) = {
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let (reservation, flags) = {
                 let mut state = self.0.state.lock().await;
                 ensure_writable(state.phase)?;
-                if state.send_window == 0 {
-                    (0, 0)
+                let mut send_window = lock_send_window(&self.0.send_window);
+                if *send_window == 0 {
+                    (None, 0)
                 } else {
                     let allowed = (payload.len() - offset)
                         .min(session.limits.preferred_outbound_frame_bytes)
-                        .min(state.send_window);
-                    state.send_window -= allowed;
-                    (allowed, send_flags(&mut state.phase))
+                        .min(*send_window);
+                    *send_window -= allowed;
+                    (
+                        Some(SendWindowReservation {
+                            window: &self.0.send_window,
+                            bytes: allowed,
+                            committed: false,
+                        }),
+                        send_flags(&mut state.phase),
+                    )
                 }
             };
-            if allowed == 0 {
+            let Some(reservation) = reservation else {
                 notified.await;
                 continue;
-            }
+            };
+            let allowed = reservation.bytes;
             session
                 .write_frame(
                     Header {
@@ -362,6 +413,7 @@ impl YamuxStream {
                     &payload[offset..offset + allowed],
                 )
                 .await?;
+            reservation.commit();
             offset += allowed;
         }
         Ok(())
@@ -420,18 +472,22 @@ impl YamuxStream {
     }
 
     async fn on_window_update(&self, flags: u16, delta: usize) -> Result<(), YamuxError> {
-        let mut state = self.0.state.lock().await;
-        process_flags(&mut state.phase, flags);
-        if delta > DEFAULT_STREAM_WINDOW.saturating_sub(state.send_window) {
-            return Err(YamuxError::InvalidFrame);
-        }
-        state.send_window += delta;
-        let finalize = state.phase == StreamPhase::Closed && state.receive_queue.is_empty();
-        drop(state);
+        let finalize = {
+            let mut state = self.0.state.lock().await;
+            process_flags(&mut state.phase, flags);
+            {
+                let mut send_window = lock_send_window(&self.0.send_window);
+                if delta > DEFAULT_STREAM_WINDOW.saturating_sub(*send_window) {
+                    return Err(YamuxError::InvalidFrame);
+                }
+                *send_window += delta;
+            }
+            state.phase == StreamPhase::Closed && state.receive_queue.is_empty()
+        };
         if finalize {
             self.session()?.remove_stream(self.id()).await;
         }
-        self.0.write_notify.notify_waiters();
+        self.0.write_notify.notify_one();
         self.0.read_notify.notify_waiters();
         Ok(())
     }
@@ -657,10 +713,13 @@ impl YamuxSession {
     }
 
     pub async fn wait_closed(&self) {
+        let notified = self.inner.close_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if self.inner.state.lock().await.closed {
             return;
         }
-        self.inner.close_notify.notified().await;
+        notified.await;
     }
 }
 
@@ -895,17 +954,49 @@ fn new_stream(session: &Arc<SessionInner>, id: u32, phase: StreamPhase) -> Yamux
         state: Mutex::new(StreamState {
             phase,
             receive_window: DEFAULT_STREAM_WINDOW,
-            send_window: DEFAULT_STREAM_WINDOW,
             receive_queue: VecDeque::new(),
             receive_bytes: 0,
-            write_queue_bytes: 0,
         }),
         read_notify: Notify::new(),
         write_notify: Notify::new(),
+        send_window: SyncMutex::new(DEFAULT_STREAM_WINDOW),
+        write_queue_bytes: AtomicUsize::new(0),
         write_serial: Mutex::new(()),
         exact_read_serial: Mutex::new(()),
         exact_read_buffer: Mutex::new(VecDeque::new()),
     }))
+}
+
+fn lock_send_window(window: &SyncMutex<usize>) -> std::sync::MutexGuard<'_, usize> {
+    window
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn reserve_write_queue_bytes(
+    queued: &AtomicUsize,
+    limit: usize,
+    bytes: usize,
+) -> Result<WriteQueueReservation<'_>, YamuxError> {
+    if bytes == 0 {
+        return Ok(WriteQueueReservation { queued, bytes: 0 });
+    }
+    let mut current = queued.load(Ordering::Relaxed);
+    loop {
+        let attempted = current.checked_add(bytes).unwrap_or(usize::MAX);
+        if attempted > limit {
+            return Err(YamuxError::ResourceExhausted {
+                resource: "stream_write_queue_bytes",
+                current: attempted,
+                limit,
+            });
+        }
+        match queued.compare_exchange_weak(current, attempted, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => return Ok(WriteQueueReservation { queued, bytes }),
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 fn send_flags(phase: &mut StreamPhase) -> u16 {
@@ -979,5 +1070,285 @@ impl ByteReader {
             self.buffered.extend(chunk);
         }
         Ok(self.buffered.drain(..length).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::pending;
+
+    #[derive(Debug)]
+    struct PendingDuplex;
+
+    #[async_trait]
+    impl ByteDuplex for PendingDuplex {
+        async fn read(&self) -> Result<Vec<u8>, YamuxError> {
+            pending().await
+        }
+
+        async fn write(&self, _bytes: &[u8]) -> Result<(), YamuxError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), YamuxError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct BlockingWriteDuplex {
+        writes: AtomicUsize,
+        write_started: Notify,
+    }
+
+    #[async_trait]
+    impl ByteDuplex for BlockingWriteDuplex {
+        async fn read(&self) -> Result<Vec<u8>, YamuxError> {
+            pending().await
+        }
+
+        async fn write(&self, _bytes: &[u8]) -> Result<(), YamuxError> {
+            if self.writes.fetch_add(1, Ordering::Relaxed) == 0 {
+                return Ok(());
+            }
+            self.write_started.notify_one();
+            pending().await
+        }
+
+        async fn close(&self) -> Result<(), YamuxError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn canceled_write_waiting_for_serial_lock_releases_queue_budget() {
+        let (_session, stream) = test_stream().await;
+        let serial = stream.0.write_serial.lock().await;
+        let task_stream = stream.clone();
+        let task = tokio::spawn(async move { task_stream.write(&[0x41; 64]).await });
+
+        wait_for_queued_bytes(&stream, 64).await;
+        task.abort();
+        assert!(
+            task.await
+                .expect_err("write must be canceled")
+                .is_cancelled()
+        );
+        assert_eq!(stream.0.write_queue_bytes.load(Ordering::Relaxed), 0);
+        drop(serial);
+    }
+
+    #[tokio::test]
+    async fn canceled_write_waiting_for_window_releases_queue_budget() {
+        let (_session, stream) = test_stream().await;
+        {
+            let mut state = stream.0.state.lock().await;
+            state.phase = StreamPhase::Established;
+        }
+        *lock_send_window(&stream.0.send_window) = 0;
+        let task_stream = stream.clone();
+        let task = tokio::spawn(async move { task_stream.write(&[0x42; 64]).await });
+
+        wait_for_queued_bytes(&stream, 64).await;
+        task.abort();
+        assert!(
+            task.await
+                .expect_err("write must be canceled")
+                .is_cancelled()
+        );
+        assert_eq!(stream.0.write_queue_bytes.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn canceled_write_waiting_for_session_writer_restores_send_window() {
+        let (session, stream) = test_stream().await;
+        let session_writer = session.inner.write_serial.lock().await;
+        let task_stream = stream.clone();
+        let task = tokio::spawn(async move { task_stream.write(&[0x43; 64]).await });
+
+        wait_for_send_window(&stream, DEFAULT_STREAM_WINDOW - 64).await;
+        task.abort();
+        assert!(
+            task.await
+                .expect_err("write must be canceled")
+                .is_cancelled()
+        );
+        assert_eq!(
+            *lock_send_window(&stream.0.send_window),
+            DEFAULT_STREAM_WINDOW
+        );
+        assert_eq!(stream.0.write_queue_bytes.load(Ordering::Relaxed), 0);
+        drop(session_writer);
+    }
+
+    #[tokio::test]
+    async fn canceled_transport_write_restores_send_window() {
+        let connection = Arc::new(BlockingWriteDuplex {
+            writes: AtomicUsize::new(0),
+            write_started: Notify::new(),
+        });
+        let (_session, stream) = test_stream_with(connection.clone()).await;
+        let task_stream = stream.clone();
+        let task = tokio::spawn(async move { task_stream.write(&[0x44; 64]).await });
+
+        tokio::time::timeout(Duration::from_secs(1), connection.write_started.notified())
+            .await
+            .expect("transport write did not start");
+        assert_eq!(
+            *lock_send_window(&stream.0.send_window),
+            DEFAULT_STREAM_WINDOW - 64
+        );
+        task.abort();
+        assert!(
+            task.await
+                .expect_err("write must be canceled")
+                .is_cancelled()
+        );
+        assert_eq!(
+            *lock_send_window(&stream.0.send_window),
+            DEFAULT_STREAM_WINDOW
+        );
+        assert_eq!(stream.0.write_queue_bytes.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn window_update_notification_is_retained_before_waiter_poll() {
+        let (_session, stream) = test_stream().await;
+        *lock_send_window(&stream.0.send_window) = 0;
+        let notified = stream.0.write_notify.notified();
+
+        stream
+            .on_window_update(0, 1)
+            .await
+            .expect("apply window update");
+
+        tokio::time::timeout(Duration::from_secs(1), notified)
+            .await
+            .expect("window update notification was lost");
+        assert_eq!(*lock_send_window(&stream.0.send_window), 1);
+    }
+
+    #[tokio::test]
+    async fn canceled_write_after_window_update_does_not_overcredit_window() {
+        let connection = Arc::new(BlockingWriteDuplex {
+            writes: AtomicUsize::new(0),
+            write_started: Notify::new(),
+        });
+        let (_session, stream) = test_stream_with(connection.clone()).await;
+        let task_stream = stream.clone();
+        let task = tokio::spawn(async move { task_stream.write(&[0x45; 64]).await });
+
+        tokio::time::timeout(Duration::from_secs(1), connection.write_started.notified())
+            .await
+            .expect("transport write did not start");
+        assert_eq!(
+            *lock_send_window(&stream.0.send_window),
+            DEFAULT_STREAM_WINDOW - 64
+        );
+        stream
+            .on_window_update(0, 64)
+            .await
+            .expect("apply concurrent window update");
+        assert_eq!(
+            *lock_send_window(&stream.0.send_window),
+            DEFAULT_STREAM_WINDOW
+        );
+
+        task.abort();
+        assert!(
+            task.await
+                .expect_err("write must be canceled")
+                .is_cancelled()
+        );
+        assert_eq!(
+            *lock_send_window(&stream.0.send_window),
+            DEFAULT_STREAM_WINDOW
+        );
+        assert_eq!(stream.0.write_queue_bytes.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn concurrent_wait_closed_callers_observe_termination() {
+        let (session, _stream) = test_stream().await;
+        let mut waiters = Vec::new();
+        for _ in 0..64 {
+            let waiter = session.clone();
+            waiters.push(tokio::spawn(async move { waiter.wait_closed().await }));
+        }
+        tokio::task::yield_now().await;
+        session.close().await.expect("close session");
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            for waiter in waiters {
+                waiter.await.expect("join close waiter");
+            }
+        })
+        .await
+        .expect("close notification was lost");
+    }
+
+    #[tokio::test]
+    async fn reset_wakes_stream_read_and_window_waiters() {
+        let (_session, stream) = test_stream().await;
+        {
+            let mut state = stream.0.state.lock().await;
+            state.phase = StreamPhase::Established;
+        }
+        *lock_send_window(&stream.0.send_window) = 0;
+
+        let reader_stream = stream.clone();
+        let reader = tokio::spawn(async move { reader_stream.read().await });
+        let writer_stream = stream.clone();
+        let writer = tokio::spawn(async move { writer_stream.write(&[0x46; 64]).await });
+        wait_for_queued_bytes(&stream, 64).await;
+        tokio::task::yield_now().await;
+
+        stream.mark_reset().await;
+        let (read_result, write_result) = tokio::time::timeout(Duration::from_secs(1), async {
+            (
+                reader.await.expect("join reader"),
+                writer.await.expect("join writer"),
+            )
+        })
+        .await
+        .expect("stream reset notification was lost");
+        assert!(matches!(read_result, Err(YamuxError::Reset)));
+        assert!(matches!(write_result, Err(YamuxError::Reset)));
+        assert_eq!(stream.0.write_queue_bytes.load(Ordering::Relaxed), 0);
+    }
+
+    async fn test_stream() -> (YamuxSession, YamuxStream) {
+        test_stream_with(Arc::new(PendingDuplex)).await
+    }
+
+    async fn test_stream_with(connection: Arc<dyn ByteDuplex>) -> (YamuxSession, YamuxStream) {
+        let limits = YamuxLimits {
+            max_stream_write_queue_bytes: 64,
+            ..YamuxLimits::default()
+        };
+        let session = YamuxSession::new(connection, Mode::Client, limits).expect("create session");
+        let stream = session.open_stream().await.expect("open stream");
+        (session, stream)
+    }
+
+    async fn wait_for_queued_bytes(stream: &YamuxStream, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while stream.0.write_queue_bytes.load(Ordering::Relaxed) != expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("write did not reserve queue budget");
+    }
+
+    async fn wait_for_send_window(stream: &YamuxStream, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while *lock_send_window(&stream.0.send_window) != expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("write did not reserve send window");
     }
 }

@@ -132,6 +132,36 @@ describe("SecureChannel", () => {
     close();
   });
 
+  test("releases fully drained receive plaintext", async () => {
+    const key = new Uint8Array(32).fill(1);
+    const noncePrefix = new Uint8Array(4).fill(2);
+    const { transport, push, close } = makeQueueTransport();
+    const sc = new SecureChannel({
+      transport,
+      maxRecordBytes: 1 << 20,
+      maxBufferedBytes: 0,
+      sendKey: key,
+      recvKey: key,
+      sendNoncePrefix: noncePrefix,
+      recvNoncePrefix: noncePrefix,
+      rekeyBase: new Uint8Array(32).fill(3),
+      transcriptHash: new Uint8Array(32).fill(4),
+      sendDir: 1,
+      recvDir: 2
+    });
+
+    const plaintext = new Uint8Array([4, 5, 6]);
+    const read = sc.read();
+    push(encryptRecord(key, noncePrefix, RECORD_FLAG_APP, 1n, plaintext, 1 << 20));
+    await expect(read).resolves.toEqual(plaintext);
+
+    const state = sc as unknown as { recvQueue: unknown[]; recvQueueHead: number };
+    expect(state.recvQueue).toHaveLength(0);
+    expect(state.recvQueueHead).toBe(0);
+    sc.close();
+    close();
+  });
+
   test("unknown record flag rejects reads", async () => {
     const key = new Uint8Array(32).fill(1);
     const noncePrefix = new Uint8Array(4).fill(2);

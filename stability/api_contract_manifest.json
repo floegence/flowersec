@@ -54,6 +54,16 @@
           },
           {
             "kind": "func",
+            "expr": "client.WithMaxBufferedBytes",
+            "doc_token": "`client.WithMaxBufferedBytes(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "client.WithMaxOutboundBufferedBytes",
+            "doc_token": "`client.WithMaxOutboundBufferedBytes(...)`"
+          },
+          {
+            "kind": "func",
             "expr": "client.WithYamuxLimits",
             "doc_token": "`client.WithYamuxLimits(...)`"
           },
@@ -208,6 +218,16 @@
             "kind": "func",
             "expr": "endpoint.WithOutboundRecordChunkBytes",
             "doc_token": "`endpoint.WithOutboundRecordChunkBytes(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.WithMaxBufferedBytes",
+            "doc_token": "`endpoint.WithMaxBufferedBytes(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "endpoint.WithMaxOutboundBufferedBytes",
+            "doc_token": "`endpoint.WithMaxOutboundBufferedBytes(...)`"
           },
           {
             "kind": "func",
@@ -780,9 +800,34 @@
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/issuer`",
         "entries": [
           {
+            "kind": "type",
+            "expr": "issuer.Keyset",
+            "doc_token": "`issuer.Keyset`"
+          },
+          {
+            "kind": "func",
+            "expr": "issuer.New",
+            "doc_token": "`issuer.New(...)`"
+          },
+          {
             "kind": "func",
             "expr": "issuer.NewRandom",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/issuer`"
+            "doc_token": "`issuer.NewRandom(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*issuer.Keyset).AddVerificationKey",
+            "doc_token": "`issuer.Keyset.AddVerificationKey(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*issuer.Keyset).Rotate",
+            "doc_token": "`issuer.Keyset.Rotate(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*issuer.Keyset).RetireVerificationKey",
+            "doc_token": "`issuer.Keyset.RetireVerificationKey(...)`"
           }
         ]
       },
@@ -973,14 +1018,40 @@
           "`requestEntryConnectArtifact(...)`",
           "`ControlplaneRequestError`",
           "`DEFAULT_CONNECT_ARTIFACT_PATH`",
-          "`DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`"
+          "`DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`",
+          "`IssuerKeyset`",
+          "`signToken(...)`",
+          "`verifyToken(...)`",
+          "`ChannelInitService`"
         ],
         "runtime_exports": [
           "requestConnectArtifact",
           "requestEntryConnectArtifact",
           "ControlplaneRequestError",
           "DEFAULT_CONNECT_ARTIFACT_PATH",
-          "DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH"
+          "DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH",
+          "IssuerKeyset",
+          "signToken",
+          "verifyToken",
+          "ChannelInitService"
+        ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/endpoint",
+        "package_json_export": "./endpoint",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/endpoint`",
+          "`Session`",
+          "`Session.rekey()`",
+          "`acceptDirect(...)`",
+          "`acceptDirectResolved(...)`",
+          "`connectTunnel(...)`"
+        ],
+        "runtime_exports": [
+          "Session",
+          "acceptDirect",
+          "acceptDirectResolved",
+          "connectTunnel"
         ]
       },
       {
@@ -1524,6 +1595,21 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "FlowersecCode.acceptStreamFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.attachFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.channelMismatch",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "FlowersecCode.canceled",
         "doc_token": ""
       },
@@ -1534,7 +1620,37 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "FlowersecCode.dialFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.expectedAttach",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "FlowersecCode.handshakeFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.idleTimeoutMismatch",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.initExpMismatch",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.invalidAttach",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.invalidEndpointInstanceID",
         "doc_token": ""
       },
       {
@@ -1559,6 +1675,16 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "FlowersecCode.invalidToken",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.invalidVersion",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "FlowersecCode.missingChannelID",
         "doc_token": ""
       },
@@ -1569,7 +1695,42 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingConn",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingGrant",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingHandler",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "FlowersecCode.missingInitExp",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingOrigin",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingStreamKind",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingToken",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.missingTunnelURL",
         "doc_token": ""
       },
       {
@@ -1589,7 +1750,42 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "FlowersecCode.muxFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.pingFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.policyDenied",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.policyError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.randomFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "FlowersecCode.rekeyFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.replaceRateLimited",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.roleMismatch",
         "doc_token": ""
       },
       {
@@ -1614,6 +1810,31 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "FlowersecCode.tenantMismatch",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.timestampAfterInitExp",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.timestampOutOfSkew",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.tokenReplay",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecCode.tooManyConnections",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "FlowersecCode.timeout",
         "doc_token": ""
       },
@@ -1624,7 +1845,7 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecCode.websocketFailed",
+        "name": "FlowersecCode.upgradeFailed",
         "doc_token": ""
       },
       {
@@ -2369,7 +2590,7 @@
       },
       {
         "kind": "swift.init",
-        "name": "YamuxLimits.init(maxActiveStreams:maxInboundStreams:maxFrameBytes:preferredOutboundFrameBytes:maxStreamReceiveBytes:maxSessionReceiveBytes:)",
+        "name": "YamuxLimits.init(maxActiveStreams:maxInboundStreams:maxFrameBytes:preferredOutboundFrameBytes:maxStreamWriteQueueBytes:maxStreamReceiveBytes:maxSessionReceiveBytes:)",
         "doc_token": ""
       },
       {
@@ -2674,6 +2895,11 @@
       },
       {
         "kind": "swift.method",
+        "name": "TokenIssuer.addVerificationKey(kid:publicKey:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
         "name": "TokenIssuer.currentKeyID()",
         "doc_token": ""
       },
@@ -2685,6 +2911,11 @@
       {
         "kind": "swift.method",
         "name": "TokenIssuer.publicKeys()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "TokenIssuer.retireVerificationKey(kid:)",
         "doc_token": ""
       },
       {
@@ -3839,6 +4070,11 @@
       },
       {
         "kind": "swift.property",
+        "name": "YamuxLimits.maxStreamWriteQueueBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
         "name": "YamuxLimits.preferredOutboundFrameBytes",
         "doc_token": ""
       },
@@ -4479,6 +4715,11 @@
       },
       {
         "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Yamux.maxStreamWriteQueueBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
         "name": "FlowersecSDKDefaults.Yamux.preferredOutboundFrameBytes",
         "doc_token": ""
       },
@@ -4538,11 +4779,15 @@
       "`flowersec::endpoint`",
       "`flowersec::rpc`",
       "`flowersec::controlplane`",
+      "`flowersec::controlplane::issuer::Keyset`",
       "`flowersec::reconnect`",
       "`flowersec::proxy`",
       "`TransportSecurityPolicy::network_plaintext(...)`",
       "`NetworkPlaintextPolicyOptions`",
-      "`PlaintextRiskAcceptance`"
+      "`PlaintextRiskAcceptance`",
+      "`Keyset::add_verification_key(...)`",
+      "`Keyset::rotate(...)`",
+      "`Keyset::retire_verification_key(...)`"
     ],
     "compile_entries": [
       "let _ = flowersec::connect",
@@ -4564,6 +4809,9 @@
       "let _ = std::mem::size_of::<flowersec::rpc::Router>()",
       "let _ = std::mem::size_of::<flowersec::controlplane::token::Payload>()",
       "let _ = std::mem::size_of::<flowersec::controlplane::issuer::Keyset>()",
+      "let _ = |keyset: &flowersec::controlplane::issuer::Keyset| keyset.add_verification_key(String::new(), todo!())",
+      "let _ = |keyset: &flowersec::controlplane::issuer::Keyset| keyset.rotate(String::new(), todo!())",
+      "let _ = flowersec::controlplane::issuer::Keyset::retire_verification_key",
       "let _ = std::mem::size_of::<flowersec::reconnect::ReconnectManager>()",
       "let _ = flowersec::reconnect::ReconnectManager::disconnect",
       "let _ = std::mem::size_of::<flowersec::proxy::ProxyClient>()",
@@ -4581,6 +4829,10 @@
         "min_statements_pct": 72
       },
       {
+        "package": "github.com/floegence/flowersec/flowersec-go/crypto/e2ee",
+        "min_statements_pct": 72
+      },
+      {
         "package": "github.com/floegence/flowersec/flowersec-go/controlplane/channelinit",
         "min_statements_pct": 86
       },
@@ -4593,12 +4845,24 @@
         "min_statements_pct": 80
       },
       {
+        "package": "github.com/floegence/flowersec/flowersec-go/mux/yamux",
+        "min_statements_pct": 70
+      },
+      {
         "package": "github.com/floegence/flowersec/flowersec-go/observability/prom",
         "min_statements_pct": 90
       },
       {
         "package": "github.com/floegence/flowersec/flowersec-go/proxy",
         "min_statements_pct": 67
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/realtime/ws",
+        "min_statements_pct": 72
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/reconnect",
+        "min_statements_pct": 60
       },
       {
         "package": "github.com/floegence/flowersec/flowersec-go/rpc",

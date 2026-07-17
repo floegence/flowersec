@@ -17,7 +17,10 @@ use crate::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
@@ -95,6 +98,8 @@ pub enum E2eeError {
     InvalidLength,
     #[error("record exceeds configured limit")]
     RecordTooLarge,
+    #[error("outbound secure-channel buffer is exhausted ({current}/{limit})")]
+    OutboundBufferExceeded { current: usize, limit: usize },
     #[error("record sequence does not match")]
     InvalidRecordSequence,
     #[error("record flag is invalid")]
@@ -644,7 +649,21 @@ pub struct SecureChannel<T: WebSocketTransport> {
     receive: Mutex<ReceiveState>,
     max_record_bytes: usize,
     max_outbound_buffered_bytes: usize,
+    pending_outbound_bytes: AtomicUsize,
     outbound_record_chunk_bytes: usize,
+}
+
+struct OutboundReservation<'a> {
+    pending: &'a AtomicUsize,
+    bytes: usize,
+}
+
+impl Drop for OutboundReservation<'_> {
+    fn drop(&mut self) {
+        if self.bytes > 0 {
+            self.pending.fetch_sub(self.bytes, Ordering::Relaxed);
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -677,10 +696,16 @@ impl<T: WebSocketTransport> std::fmt::Debug for SecureChannel<T> {
 }
 
 impl<T: WebSocketTransport> SecureChannel<T> {
+    fn reserve_outbound(&self, bytes: usize) -> Result<OutboundReservation<'_>, E2eeError> {
+        reserve_outbound_bytes(
+            &self.pending_outbound_bytes,
+            self.max_outbound_buffered_bytes,
+            bytes,
+        )
+    }
+
     pub async fn write(&self, payload: &[u8]) -> Result<(), E2eeError> {
-        if payload.len() > self.max_outbound_buffered_bytes {
-            return Err(E2eeError::RecordTooLarge);
-        }
+        let _reservation = self.reserve_outbound(payload.len())?;
         let max_plaintext = max_plaintext_bytes(self.max_record_bytes);
         let chunk_bytes = self.outbound_record_chunk_bytes.min(max_plaintext);
         if chunk_bytes == 0 {
@@ -770,6 +795,41 @@ impl<T: WebSocketTransport> SecureChannel<T> {
             self.max_record_bytes,
         )?;
         send_binary(&*self.transport, frame).await
+    }
+}
+
+fn reserve_outbound_bytes(
+    pending: &AtomicUsize,
+    limit: usize,
+    bytes: usize,
+) -> Result<OutboundReservation<'_>, E2eeError> {
+    if bytes == 0 {
+        return Ok(OutboundReservation { pending, bytes: 0 });
+    }
+    let mut current = pending.load(Ordering::Relaxed);
+    loop {
+        let attempted = current.checked_add(bytes).unwrap_or(usize::MAX);
+        let available = limit
+            .checked_sub(current)
+            .ok_or(E2eeError::OutboundBufferExceeded {
+                current: attempted,
+                limit,
+            })?;
+        if bytes > available {
+            return Err(E2eeError::OutboundBufferExceeded {
+                current: attempted,
+                limit,
+            });
+        }
+        match pending.compare_exchange_weak(
+            current,
+            attempted,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return Ok(OutboundReservation { pending, bytes }),
+            Err(observed) => current = observed,
+        }
     }
 }
 
@@ -992,6 +1052,7 @@ fn secure_channel<T: WebSocketTransport>(
         receive: Mutex::new(receive),
         max_record_bytes,
         max_outbound_buffered_bytes,
+        pending_outbound_bytes: AtomicUsize::new(0),
         outbound_record_chunk_bytes,
     }
 }
@@ -1142,5 +1203,50 @@ fn suite_from_wire(suite: wire::Suite) -> Suite {
     match suite {
         wire::Suite::X25519HkdfSha256Aes256Gcm => Suite::X25519HkdfSha256Aes256Gcm,
         wire::Suite::P256HkdfSha256Aes256Gcm => Suite::P256HkdfSha256Aes256Gcm,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+    use std::{fs, path::PathBuf};
+
+    #[derive(Deserialize)]
+    struct RuntimeVectors {
+        outbound_buffer_admission: Vec<AdmissionCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct AdmissionCase {
+        id: String,
+        limit: usize,
+        unfinished: Vec<usize>,
+        next: usize,
+        result: String,
+    }
+
+    #[test]
+    fn outbound_admission_matches_shared_runtime_vectors() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("testdata")
+            .join("runtime_contract_vectors.json");
+        let vectors: RuntimeVectors =
+            serde_json::from_slice(&fs::read(path).expect("read vectors")).expect("parse vectors");
+
+        for case in vectors.outbound_buffer_admission {
+            let pending = AtomicUsize::new(0);
+            let reservations = case
+                .unfinished
+                .iter()
+                .map(|bytes| reserve_outbound_bytes(&pending, case.limit, *bytes).expect("reserve"))
+                .collect::<Vec<_>>();
+            let next = reserve_outbound_bytes(&pending, case.limit, case.next);
+            assert_eq!(next.is_ok(), case.result == "accepted", "case {}", case.id);
+            drop(next);
+            drop(reservations);
+            assert_eq!(pending.load(Ordering::Relaxed), 0, "case {}", case.id);
+        }
     }
 }

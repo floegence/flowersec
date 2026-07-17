@@ -2,9 +2,12 @@ package e2ee
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -218,6 +221,153 @@ func TestSecureChannelConcurrentWritesRemainContiguousAcrossRecords(t *testing.T
 		if got := string(plain); got != test.want {
 			t.Fatalf("frame %d payload = %q, want %q", i, got, test.want)
 		}
+	}
+}
+
+func TestSecureChannelOutboundAdmissionCountsWaitingLogicalWrites(t *testing.T) {
+	tr := newGatedRecordingTransport()
+	var key [32]byte
+	var nonce [4]byte
+	keys := RecordKeyState{
+		SendKey: key, RecvKey: key, SendNoncePre: nonce, RecvNoncePre: nonce,
+		SendDir: DirC2S, RecvDir: DirS2C, SendSeq: 1, RecvSeq: 1,
+	}
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
+	defer conn.Close()
+	if err := conn.SetMaxOutboundBufferedBytes(8); err != nil {
+		t.Fatal(err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := conn.Write([]byte("12345"))
+		firstDone <- err
+	}()
+	select {
+	case <-tr.writes:
+	case <-time.After(time.Second):
+		t.Fatal("first write did not reach transport")
+	}
+
+	if _, err := conn.Write([]byte("6789")); !errors.Is(err, ErrOutboundBufferExceeded) {
+		t.Fatalf("aggregate overflow error = %v", err)
+	}
+	tr.releases <- struct{}{}
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+
+	exactDone := make(chan error, 1)
+	go func() {
+		_, err := conn.Write([]byte("12345678"))
+		exactDone <- err
+	}()
+	select {
+	case <-tr.writes:
+	case <-time.After(time.Second):
+		t.Fatal("exact-limit write did not reach transport")
+	}
+	tr.releases <- struct{}{}
+	if err := <-exactDone; err != nil {
+		t.Fatal(err)
+	}
+	if n, err := conn.Write(nil); err != nil || n != 0 {
+		t.Fatalf("zero-length Write() = %d, %v", n, err)
+	}
+	conn.sendMu.Lock()
+	pending := conn.pendingOutboundBytes
+	conn.sendMu.Unlock()
+	if pending != 0 {
+		t.Fatalf("pendingOutboundBytes = %d", pending)
+	}
+}
+
+func TestSecureChannelOutboundAdmissionReleasesAfterFailure(t *testing.T) {
+	tr := newGatedRecordingTransport()
+	var key [32]byte
+	var nonce [4]byte
+	conn := NewSecureChannel(tr, RecordKeyState{
+		SendKey: key, RecvKey: key, SendNoncePre: nonce, RecvNoncePre: nonce,
+		SendDir: DirC2S, RecvDir: DirS2C, SendSeq: 1, RecvSeq: 1,
+	}, 1<<20, 0)
+	if err := conn.SetMaxOutboundBufferedBytes(8); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := conn.Write([]byte("12345678"))
+		done <- err
+	}()
+	select {
+	case <-tr.writes:
+	case <-time.After(time.Second):
+		t.Fatal("write did not reach transport")
+	}
+	_ = tr.Close()
+	if err := <-done; err == nil {
+		t.Fatal("expected write failure")
+	}
+	conn.sendMu.Lock()
+	pending := conn.pendingOutboundBytes
+	conn.sendMu.Unlock()
+	if pending != 0 {
+		t.Fatalf("pendingOutboundBytes = %d", pending)
+	}
+}
+
+func TestSecureChannelOutboundAdmissionSharedVectors(t *testing.T) {
+	var vectors struct {
+		Version int `json:"version"`
+		Cases   []struct {
+			ID         string `json:"id"`
+			Limit      int    `json:"limit"`
+			Unfinished []int  `json:"unfinished"`
+			Next       int    `json:"next"`
+			Result     string `json:"result"`
+		} `json:"outbound_buffer_admission"`
+	}
+	readRuntimeContractVectors(t, &vectors)
+	if vectors.Version != 1 {
+		t.Fatalf("version = %d", vectors.Version)
+	}
+	for _, test := range vectors.Cases {
+		t.Run(test.ID, func(t *testing.T) {
+			pending := 0
+			for _, n := range test.Unfinished {
+				pending += n
+			}
+			channel := &SecureChannel{
+				maxOutboundBufferedBytes: test.Limit,
+				pendingOutboundBytes:     pending,
+			}
+			err := channel.reserveOutboundBytes(test.Next)
+			if test.Result == "accepted" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				channel.releaseOutboundBytes(test.Next)
+				return
+			}
+			if !errors.Is(err, ErrOutboundBufferExceeded) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func readRuntimeContractVectors(t *testing.T, value any) {
+	t.Helper()
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test path")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
+	data, err := os.ReadFile(filepath.Join(root, "testdata/runtime_contract_vectors.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, value); err != nil {
+		t.Fatal(err)
 	}
 }
 

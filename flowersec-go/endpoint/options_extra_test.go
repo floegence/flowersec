@@ -20,6 +20,7 @@ func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 		WithMaxHandshakePayload(8 * 1024),
 		WithMaxRecordBytes(1 << 20),
 		WithMaxBufferedBytes(1 << 16),
+		WithMaxOutboundBufferedBytes(1 << 17),
 		WithServerFeatures(7),
 		WithClockSkew(2 * time.Second),
 		WithEndpointInstanceID("endpoint-instance-1"),
@@ -53,6 +54,9 @@ func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 	}
 	if cfg.maxBufferedBytes != 1<<16 {
 		t.Fatalf("maxBufferedBytes = %d", cfg.maxBufferedBytes)
+	}
+	if cfg.maxOutboundBufferedBytes != 1<<17 {
+		t.Fatalf("maxOutboundBufferedBytes = %d", cfg.maxOutboundBufferedBytes)
 	}
 	if cfg.serverFeatures != 7 {
 		t.Fatalf("serverFeatures = %d", cfg.serverFeatures)
@@ -90,6 +94,7 @@ func TestConnectOptions_RejectInvalidStableValues(t *testing.T) {
 		{name: "zero max handshake payload", opt: WithMaxHandshakePayload(0)},
 		{name: "zero max record bytes", opt: WithMaxRecordBytes(0)},
 		{name: "zero max buffered bytes", opt: WithMaxBufferedBytes(0)},
+		{name: "zero max outbound buffered bytes", opt: WithMaxOutboundBufferedBytes(0)},
 		{name: "negative clock skew", opt: WithClockSkew(-time.Second)},
 		{name: "zero liveness interval", opt: WithLiveness(LivenessOptions{Timeout: time.Second})},
 		{name: "zero outbound chunk", opt: WithOutboundRecordChunkBytes(0)},

@@ -2,8 +2,23 @@
   "version": 1,
   "namespace": "connect",
   "domain": "error",
+  "reconnect_terminal_codes": [
+    "invalid_input",
+    "invalid_option",
+    "role_mismatch",
+    "transport_policy_denied",
+    "invalid_psk",
+    "invalid_suite",
+    "missing_grant",
+    "missing_connect_info",
+    "missing_tunnel_url",
+    "missing_ws_url",
+    "missing_channel_id",
+    "missing_token",
+    "missing_init_exp"
+  ],
   "codes": [
-    { "code": "invalid_input", "stages": ["validate"] },
+    { "code": "invalid_input", "stages": ["validate", "secure"] },
     { "code": "invalid_option", "stages": ["validate"] },
     { "code": "missing_grant", "stages": ["validate"] },
     { "code": "missing_connect_info", "stages": ["validate"] },
@@ -38,8 +53,8 @@
     { "code": "policy_denied", "stages": ["attach"] },
     { "code": "policy_error", "stages": ["attach"] },
     { "code": "replace_rate_limited", "stages": ["attach"] },
-    { "code": "timeout", "stages": ["connect", "attach", "handshake"] },
-    { "code": "canceled", "stages": ["connect", "attach", "handshake"] },
+    { "code": "timeout", "stages": ["connect", "attach", "handshake", "yamux", "rpc"] },
+    { "code": "canceled", "stages": ["connect", "attach", "handshake", "yamux"] },
     { "code": "handshake_failed", "stages": ["handshake"] },
     { "code": "timestamp_after_init_exp", "stages": ["handshake"] },
     { "code": "timestamp_out_of_skew", "stages": ["handshake"] },
@@ -53,7 +68,7 @@
     { "code": "missing_handler", "stages": ["rpc"] },
     { "code": "ping_failed", "stages": ["secure", "yamux", "close"] },
     { "code": "rekey_failed", "stages": ["secure"] },
-    { "code": "not_connected", "stages": ["close", "rpc"] },
-    { "code": "resource_exhausted", "stages": ["connect", "secure", "yamux", "rpc", "close"] }
+    { "code": "not_connected", "stages": ["secure", "yamux", "rpc", "close"] },
+    { "code": "resource_exhausted", "stages": ["connect", "handshake", "secure", "yamux", "rpc", "close"] }
   ]
 }

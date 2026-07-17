@@ -47,7 +47,8 @@ type yamuxHeader struct {
 
 type codeRegistry struct {
 	Codes []struct {
-		Code string `json:"code"`
+		Code   string   `json:"code"`
+		Stages []string `json:"stages"`
 	} `json:"codes"`
 }
 
@@ -158,7 +159,44 @@ func TestPortableProtocolVectors(t *testing.T) {
 		t.Fatalf("unexpected diagnostic event: %+v", diagnostic)
 	}
 	assertRegistryContains(t, filepath.Join(root, "stability", "connect_error_code_registry.json"), "resource_exhausted")
+	assertRegistryPairs(t, filepath.Join(root, "stability", "connect_error_code_registry.json"), [][2]string{
+		{"missing_stream_kind", "rpc"},
+		{"timeout", "yamux"},
+		{"timeout", "rpc"},
+		{"canceled", "yamux"},
+		{"not_connected", "secure"},
+		{"not_connected", "yamux"},
+		{"resource_exhausted", "secure"},
+		{"resource_exhausted", "yamux"},
+		{"resource_exhausted", "rpc"},
+	})
 	assertRegistryContains(t, filepath.Join(root, "stability", "connect_diagnostics_code_registry.json"), diagnostic.Code)
+}
+
+func assertRegistryPairs(t *testing.T, path string, pairs [][2]string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registry codeRegistry
+	if err := json.Unmarshal(data, &registry); err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range pairs {
+		found := false
+		for _, entry := range registry.Codes {
+			if entry.Code != pair[0] {
+				continue
+			}
+			for _, stage := range entry.Stages {
+				found = found || stage == pair[1]
+			}
+		}
+		if !found {
+			t.Fatalf("registry %s does not contain %s/%s", path, pair[1], pair[0])
+		}
+	}
 }
 
 func assertRegistryContains(t *testing.T, path string, code string) {

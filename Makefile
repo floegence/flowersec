@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench check stability-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench check stability-check go-cover-check compat-check nightly-check
 
 INTEROP_CELLS ?= go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust
 INTEROP_REPORT_DIR ?= $(or $(TMPDIR),/tmp)
@@ -81,6 +81,12 @@ ts-test:
 		YAMUX_INTEROP_DEBUG=$(YAMUX_INTEROP_DEBUG) \
 		npm test
 
+ts-browser-ensure:
+	cd flowersec-ts && npm run ensure:browser
+
+ts-browser-e2e:
+	cd flowersec-ts && npm run test:browser
+
 ts-cover-check:
 	cd flowersec-ts && npm run test:coverage
 
@@ -138,9 +144,13 @@ swift-build:
 	swift build
 
 swift-test:
-	swift test
+	swift test --enable-code-coverage
 
-swift-check: swift-package-check swift-source-guard swift-build swift-test
+swift-cover-check:
+	@coverage_path=$$(swift test --show-codecov-path); \
+		node scripts/check-swift-coverage.mjs "$$coverage_path" 75 75
+
+swift-check: swift-package-check swift-source-guard swift-build swift-test swift-cover-check
 
 rust-fmt-check:
 	cd flowersec-rust && cargo fmt --all --check
@@ -305,6 +315,8 @@ check:
 	$(MAKE) stability-check
 	$(MAKE) lint-check
 	$(MAKE) ts-build
+	$(MAKE) ts-browser-ensure
+	$(MAKE) ts-browser-e2e
 	$(MAKE) swift-check
 	$(MAKE) rust-release-check
 	$(MAKE) example-check

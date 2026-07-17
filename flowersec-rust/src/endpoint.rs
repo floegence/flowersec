@@ -118,6 +118,15 @@ impl Session {
     }
 
     pub async fn open_stream(&self, kind: &str) -> Result<YamuxStream, FlowersecError> {
+        let kind = kind.trim();
+        if kind.is_empty() {
+            return Err(FlowersecError::new(
+                self.path,
+                Stage::Rpc,
+                ErrorCode::MISSING_STREAM_KIND,
+                "stream kind is empty",
+            ));
+        }
         let stream = self.yamux.open_stream().await.map_err(|error| {
             let code = endpoint_yamux_session_code(&error, ErrorCode::OPEN_STREAM_FAILED);
             FlowersecError::new(
@@ -220,10 +229,11 @@ impl Session {
 
     pub async fn probe_liveness(&self, timeout: Duration) -> Result<Duration, FlowersecError> {
         self.yamux.probe_liveness(timeout).await.map_err(|error| {
+            let code = endpoint_yamux_probe_code(&error);
             FlowersecError::new(
                 self.path,
                 Stage::Yamux,
-                ErrorCode::PING_FAILED,
+                code,
                 "endpoint liveness probe failed",
             )
             .with_source(error)
@@ -271,12 +281,21 @@ impl Session {
     }
 }
 
+fn endpoint_yamux_probe_code(error: &crate::yamux::YamuxError) -> &'static str {
+    match error {
+        crate::yamux::YamuxError::PingTimeout => ErrorCode::TIMEOUT,
+        crate::yamux::YamuxError::ResourceExhausted { .. } => ErrorCode::RESOURCE_EXHAUSTED,
+        _ => ErrorCode::PING_FAILED,
+    }
+}
+
 fn endpoint_yamux_session_code(
     error: &crate::yamux::YamuxError,
     fallback: &'static str,
 ) -> &'static str {
     match error {
         crate::yamux::YamuxError::ResourceExhausted { .. } => ErrorCode::RESOURCE_EXHAUSTED,
+        crate::yamux::YamuxError::PingTimeout => ErrorCode::TIMEOUT,
         crate::yamux::YamuxError::Closed
         | crate::yamux::YamuxError::StreamClosed
         | crate::yamux::YamuxError::Reset
@@ -613,6 +632,100 @@ mod tests {
         sync::atomic::{AtomicBool, Ordering},
     };
 
+    #[derive(Debug)]
+    struct PendingDuplex;
+
+    #[async_trait]
+    impl crate::yamux::ByteDuplex for PendingDuplex {
+        async fn read(&self) -> Result<Vec<u8>, crate::yamux::YamuxError> {
+            std::future::pending().await
+        }
+
+        async fn write(&self, _bytes: &[u8]) -> Result<(), crate::yamux::YamuxError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), crate::yamux::YamuxError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailingWriteDuplex;
+
+    #[async_trait]
+    impl crate::yamux::ByteDuplex for FailingWriteDuplex {
+        async fn read(&self) -> Result<Vec<u8>, crate::yamux::YamuxError> {
+            std::future::pending().await
+        }
+
+        async fn write(&self, _bytes: &[u8]) -> Result<(), crate::yamux::YamuxError> {
+            Err(crate::yamux::YamuxError::Transport(
+                "test transport failure".to_owned(),
+            ))
+        }
+
+        async fn close(&self) -> Result<(), crate::yamux::YamuxError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct NoopSecureControl;
+
+    #[async_trait]
+    impl crate::e2ee::SecureChannelControl for NoopSecureControl {
+        async fn rekey_channel(&self) -> Result<(), crate::e2ee::E2eeError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn endpoint_liveness_timeout_uses_typed_timeout_code() {
+        let session = Session {
+            path: Path::Tunnel,
+            secure: Arc::new(NoopSecureControl),
+            yamux: YamuxSession::new(
+                Arc::new(PendingDuplex),
+                Mode::Server,
+                YamuxLimits::default(),
+            )
+            .expect("create Yamux session"),
+        };
+
+        let error = session
+            .probe_liveness(Duration::ZERO)
+            .await
+            .expect_err("zero liveness timeout must fail");
+        assert_eq!(error.path, Path::Tunnel);
+        assert_eq!(error.stage, Stage::Yamux);
+        assert_eq!(error.code.as_str(), ErrorCode::TIMEOUT);
+        assert!(error.source.is_some());
+    }
+
+    #[tokio::test]
+    async fn endpoint_liveness_transport_failure_uses_ping_failed_code() {
+        let session = Session {
+            path: Path::Direct,
+            secure: Arc::new(NoopSecureControl),
+            yamux: YamuxSession::new(
+                Arc::new(FailingWriteDuplex),
+                Mode::Server,
+                YamuxLimits::default(),
+            )
+            .expect("create failing Yamux session"),
+        };
+
+        let error = session
+            .probe_liveness(Duration::from_secs(1))
+            .await
+            .expect_err("transport failure must fail the liveness probe");
+        assert_eq!(error.path, Path::Direct);
+        assert_eq!(error.stage, Stage::Yamux);
+        assert_eq!(error.code.as_str(), ErrorCode::PING_FAILED);
+        assert!(error.source.is_some());
+    }
+
     #[derive(Debug, Default)]
     struct FakeTransport {
         incoming: Mutex<VecDeque<WebSocketMessage>>,
@@ -863,6 +976,10 @@ mod tests {
         );
         assert_eq!(failed.code.as_str(), ErrorCode::DIAL_FAILED);
         assert!(failed.source.is_some());
+        assert_eq!(
+            endpoint_yamux_probe_code(&crate::yamux::YamuxError::InvalidFrame),
+            ErrorCode::PING_FAILED
+        );
         assert!(format!("{:?}", EndpointOptions::default()).contains("handshake_cache"));
     }
 }

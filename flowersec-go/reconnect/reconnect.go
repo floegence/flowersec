@@ -376,7 +376,16 @@ func (m *Manager) supervise(ctx context.Context, generation uint64, config Confi
 					return connected.Close()
 				case <-done:
 					lastErr = errors.New("Flowersec session terminated")
-					m.setState(State{Status: StatusConnecting, Error: lastErr})
+				}
+				_ = connected.Close()
+				if !settings.Enabled {
+					m.setState(State{Status: StatusError, Error: lastErr})
+					return nil
+				}
+				m.setState(State{Status: StatusConnecting, Error: lastErr})
+				emit(observer, "reconnect_scheduled", observability.DiagnosticResultRetry)
+				if !waitRetry(ctx, settings.retryDelay(0)) {
+					return nil
 				}
 				break
 			}
@@ -395,15 +404,11 @@ func (m *Manager) supervise(ctx context.Context, generation uint64, config Confi
 			}
 			m.setState(State{Status: StatusConnecting, Error: err})
 			emit(observer, "reconnect_scheduled", observability.DiagnosticResultRetry)
-			timer := time.NewTimer(settings.retryDelay(attempt - 1))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
+			if !waitRetry(ctx, settings.retryDelay(attempt-1)) {
 				if !firstSent {
 					first <- ctx.Err()
 				}
 				return nil
-			case <-timer.C:
 			}
 		}
 		if !settings.Enabled {
@@ -412,6 +417,17 @@ func (m *Manager) supervise(ctx context.Context, generation uint64, config Confi
 			}
 			return nil
 		}
+	}
+}
+
+func waitRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -457,24 +473,24 @@ func isTerminal(err error) bool {
 	if !errors.As(err, &flowersecErr) {
 		return false
 	}
-	switch flowersecErr.Code {
-	case fserrors.CodeInvalidInput,
-		fserrors.CodeInvalidOption,
-		fserrors.CodeRoleMismatch,
-		fserrors.CodeTransportPolicyDenied,
-		fserrors.CodeInvalidPSK,
-		fserrors.CodeInvalidSuite,
-		fserrors.CodeMissingGrant,
-		fserrors.CodeMissingConnectInfo,
-		fserrors.CodeMissingTunnelURL,
-		fserrors.CodeMissingWSURL,
-		fserrors.CodeMissingChannelID,
-		fserrors.CodeMissingToken,
-		fserrors.CodeMissingInitExp:
-		return true
-	default:
-		return false
-	}
+	_, ok := terminalConnectCodes[flowersecErr.Code]
+	return ok
+}
+
+var terminalConnectCodes = map[fserrors.Code]struct{}{
+	fserrors.CodeInvalidInput:          {},
+	fserrors.CodeInvalidOption:         {},
+	fserrors.CodeRoleMismatch:          {},
+	fserrors.CodeTransportPolicyDenied: {},
+	fserrors.CodeInvalidPSK:            {},
+	fserrors.CodeInvalidSuite:          {},
+	fserrors.CodeMissingGrant:          {},
+	fserrors.CodeMissingConnectInfo:    {},
+	fserrors.CodeMissingTunnelURL:      {},
+	fserrors.CodeMissingWSURL:          {},
+	fserrors.CodeMissingChannelID:      {},
+	fserrors.CodeMissingToken:          {},
+	fserrors.CodeMissingInitExp:        {},
 }
 
 func emit(observer observability.ClientObserver, code string, result observability.DiagnosticResult) {

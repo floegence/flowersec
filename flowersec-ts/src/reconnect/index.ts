@@ -2,6 +2,7 @@ import type { Client } from "../client.js";
 import { getClientTermination } from "../client-connect/termination.js";
 import { emitObserverDiagnostic, withObserverContext, type ClientObserverLike, type DiagnosticEvent, type WsCloseKind, type WsErrorReason } from "../observability/observer.js";
 import { SDK_DEFAULTS } from "../defaults.js";
+import { AbortError, FlowersecError, type FlowersecErrorCode } from "../utils/errors.js";
 
 export type { ArtifactAcquireContext, ArtifactSource } from "./artifactControlplane.js";
 export { createArtifactResolver, createControlplaneArtifactSource } from "./artifactControlplane.js";
@@ -69,6 +70,27 @@ function backoffDelayMs(attemptIndex: number, cfg: AutoReconnectSettings): numbe
   const base = Math.min(cfg.maxDelayMs, cfg.initialDelayMs * Math.pow(cfg.factor, attemptIndex));
   const jitter = cfg.jitterRatio <= 0 ? 0 : base * cfg.jitterRatio * (Math.random() * 2 - 1);
   return Math.max(0, Math.round(base + jitter));
+}
+
+const TERMINAL_RECONNECT_CODES: ReadonlySet<FlowersecErrorCode> = new Set([
+  "invalid_input",
+  "invalid_option",
+  "role_mismatch",
+  "transport_policy_denied",
+  "invalid_psk",
+  "invalid_suite",
+  "missing_grant",
+  "missing_connect_info",
+  "missing_tunnel_url",
+  "missing_ws_url",
+  "missing_channel_id",
+  "missing_token",
+  "missing_init_exp",
+]);
+
+function isTerminalConnectError(error: Error): boolean {
+  if (error instanceof AbortError || error.name === "AbortError") return true;
+  return error instanceof FlowersecError && (error.code === "canceled" || TERMINAL_RECONNECT_CODES.has(error.code));
 }
 
 export type ReconnectState = Readonly<{
@@ -171,6 +193,38 @@ export function createReconnectManager(): ReconnectManager {
       }, ms);
     });
 
+  const finishWithError = (cfg: ConnectConfig, error: Error, currentAttemptSeq: number) => {
+    setState({ status: "error", error, client: null });
+    emitObserverDiagnostic(withObserverContext(cfg.observer, { attemptSeq: currentAttemptSeq }), {
+      path: "auto",
+      stage: "reconnect",
+      code_domain: "event",
+      code: "reconnect_exhausted",
+      result: "fail",
+    });
+  };
+
+  const scheduleRetry = async (
+    t: number,
+    cfg: ConnectConfig,
+    error: Error,
+    settings: AutoReconnectSettings,
+    failedAttemptIndex: number,
+    currentAttemptSeq: number,
+  ): Promise<boolean> => {
+    if (t !== token || active !== cfg) return false;
+    setState({ status: "connecting", error, client: null });
+    emitObserverDiagnostic(withObserverContext(cfg.observer, { attemptSeq: currentAttemptSeq }), {
+      path: "auto",
+      stage: "reconnect",
+      code_domain: "event",
+      code: "reconnect_scheduled",
+      result: "retry",
+    });
+    await sleep(backoffDelayMs(failedAttemptIndex, settings));
+    return t === token && active === cfg;
+  };
+
   const disconnectInternal = () => {
     cancelRetrySleep();
     abortActiveAttempt();
@@ -220,8 +274,7 @@ export function createReconnectManager(): ReconnectManager {
     token += 1;
     const nextToken = token;
 
-    const reconnectPromise = startConnectLoop(nextToken, cfg);
-    setState({ status: "connecting", error, client: null });
+    const reconnectPromise = startConnectLoop(nextToken, cfg, error);
     void reconnectPromise.catch(() => {
       // connectWithRetry updates state; keep errors observable via state().
     });
@@ -262,9 +315,17 @@ export function createReconnectManager(): ReconnectManager {
     return await cfg.connectOnce({ signal: attemptAbort.signal, observer: createObserver(t, cfg, currentAttemptSeq) ?? {} });
   };
 
-  const connectWithRetry = async (t: number, cfg: ConnectConfig): Promise<void> => {
+  const connectWithRetry = async (t: number, cfg: ConnectConfig, initialFailure: Error | null): Promise<void> => {
     const ar = normalizeAutoReconnect(cfg.autoReconnect);
     let attempts = 0;
+
+    if (initialFailure != null) {
+      if (isTerminalConnectError(initialFailure)) {
+        finishWithError(cfg, initialFailure, attemptSeq);
+        throw initialFailure;
+      }
+      if (!await scheduleRetry(t, cfg, initialFailure, ar, 0, attemptSeq)) return;
+    }
 
     for (;;) {
       if (t !== token) return;
@@ -320,34 +381,18 @@ export function createReconnectManager(): ReconnectManager {
         if (t !== token) return;
         if (active !== cfg) return;
 
-        const canRetry = ar.enabled && attempts < ar.maxAttempts;
+        const canRetry = ar.enabled && attempts < ar.maxAttempts && !isTerminalConnectError(e);
         if (!canRetry) {
-          setState({ status: "error", error: e, client: null });
-          emitObserverDiagnostic(withObserverContext(cfg.observer, { attemptSeq }), {
-            path: "auto",
-            stage: "reconnect",
-            code_domain: "event",
-            code: "reconnect_exhausted",
-            result: "fail",
-          });
+          finishWithError(cfg, e, attemptSeq);
           throw e;
         }
 
-        setState({ status: "connecting", error: e, client: null });
-        const delay = backoffDelayMs(attempts - 1, ar);
-        emitObserverDiagnostic(withObserverContext(cfg.observer, { attemptSeq }), {
-          path: "auto",
-          stage: "reconnect",
-          code_domain: "event",
-          code: "reconnect_scheduled",
-          result: "retry",
-        });
-        await sleep(delay);
+        if (!await scheduleRetry(t, cfg, e, ar, attempts - 1, attemptSeq)) return;
       }
     }
   };
 
-  const startConnectLoop = (t: number, cfg: ConnectConfig): Promise<void> => {
+  const startConnectLoop = (t: number, cfg: ConnectConfig, initialFailure: Error | null): Promise<void> => {
     let resolveLoop!: () => void;
     let rejectLoop!: (error: unknown) => void;
     const loop = new Promise<void>((resolve, reject) => {
@@ -359,7 +404,7 @@ export function createReconnectManager(): ReconnectManager {
       if (activeConnectPromise === promise) activeConnectPromise = null;
     });
     activeConnectPromise = promise;
-    void connectWithRetry(t, cfg).then(resolveLoop, rejectLoop);
+    void connectWithRetry(t, cfg, initialFailure).then(resolveLoop, rejectLoop);
     return promise;
   };
 
@@ -380,7 +425,7 @@ export function createReconnectManager(): ReconnectManager {
       throw closeError;
     }
 
-    const connectPromise = startConnectLoop(t, cfg);
+    const connectPromise = startConnectLoop(t, cfg, null);
     setState({ status: "connecting", error: null, client: null });
     await connectPromise;
   };

@@ -1,10 +1,12 @@
 import Crypto
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 import XCTest
+
 @testable import Flowersec
+
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
 
 final class ControlplaneTests: XCTestCase {
   func testArtifactFetchDecodesHTTPEnvelope() async throws {
@@ -26,7 +28,7 @@ final class ControlplaneTests: XCTestCase {
       let body = try artifactRequestBody(request)
       let decoded = try JSONDecoder().decode(ControlplaneArtifactRequest.self, from: body)
       XCTAssertEqual(decoded.endpointID, "endpoint-artifact")
-      return (200, response)
+      return ArtifactHTTPResponse(status: 200, chunks: [response])
     }
     defer { ArtifactURLProtocol.setHandler(nil) }
     let configuration = URLSessionConfiguration.ephemeral
@@ -36,11 +38,134 @@ final class ControlplaneTests: XCTestCase {
     let fetched = try await Controlplane.requestConnectArtifact(
       ArtifactRequestOptions(
         baseURL: URL(string: "https://controlplane.example.test")!,
-        endpointID: "endpoint-artifact"
+        endpointID: "endpoint-artifact",
+        maxResponseBodyBytes: response.count
       ),
       session: session
     )
     XCTAssertEqual(fetched, artifact)
+  }
+
+  func testArtifactFetchCancelsResponseDeclaredOverLimit() async throws {
+    ArtifactURLProtocol.reset()
+    ArtifactURLProtocol.setHandler { _ in
+      ArtifactHTTPResponse(
+        status: 200,
+        headers: ["Content-Length": "64"],
+        chunks: [Data(repeating: 1, count: 64)]
+      )
+    }
+    defer { ArtifactURLProtocol.reset() }
+
+    do {
+      _ = try await Controlplane.requestConnectArtifact(
+        ArtifactRequestOptions(
+          baseURL: URL(string: "https://controlplane.example.test")!,
+          endpointID: "endpoint-artifact",
+          maxResponseBodyBytes: 16
+        ),
+        session: artifactURLSession()
+      )
+      XCTFail("Expected an oversized response error")
+    } catch let error as ControlplaneRequestError {
+      XCTAssertEqual(error.code, "response_too_large")
+      XCTAssertEqual(error.status, 200)
+      XCTAssertTrue(error.responseBody.isEmpty)
+    }
+    try await waitForArtifactProtocolStop()
+  }
+
+  func testArtifactFetchCancelsChunkedResponseOverLimit() async throws {
+    ArtifactURLProtocol.reset()
+    ArtifactURLProtocol.setHandler { _ in
+      ArtifactHTTPResponse(
+        status: 503,
+        chunks: [
+          Data(repeating: 1, count: 6),
+          Data(repeating: 2, count: 6),
+          Data(repeating: 3, count: 6),
+        ],
+        controlledChunks: true
+      )
+    }
+    defer { ArtifactURLProtocol.reset() }
+
+    let request = Task {
+      try await Controlplane.requestConnectArtifact(
+        ArtifactRequestOptions(
+          baseURL: URL(string: "https://controlplane.example.test")!,
+          endpointID: "endpoint-artifact",
+          maxResponseBodyBytes: 10
+        ),
+        session: artifactURLSession()
+      )
+    }
+    ArtifactURLProtocol.allowNextChunk()
+    try await waitForArtifactProtocolChunks(1)
+    ArtifactURLProtocol.allowNextChunk()
+    do {
+      _ = try await request.value
+      XCTFail("Expected an oversized response error")
+    } catch let error as ControlplaneRequestError {
+      XCTAssertEqual(error.code, "response_too_large")
+      XCTAssertEqual(error.status, 503)
+    }
+    try await waitForArtifactProtocolStop()
+    XCTAssertEqual(ArtifactURLProtocol.deliveredChunkCount, 2)
+  }
+
+  func testArtifactFetchRejectsBodyLargerThanReportedContentLength() async throws {
+    ArtifactURLProtocol.reset()
+    ArtifactURLProtocol.setHandler { _ in
+      ArtifactHTTPResponse(
+        status: 200,
+        headers: ["Content-Length": "1"],
+        chunks: [Data(repeating: 1, count: 6), Data(repeating: 2, count: 6)]
+      )
+    }
+    defer { ArtifactURLProtocol.reset() }
+
+    do {
+      _ = try await Controlplane.requestConnectArtifact(
+        ArtifactRequestOptions(
+          baseURL: URL(string: "https://controlplane.example.test")!,
+          endpointID: "endpoint-artifact",
+          maxResponseBodyBytes: 10
+        ),
+        session: artifactURLSession()
+      )
+      XCTFail("Expected an oversized response error")
+    } catch let error as ControlplaneRequestError {
+      XCTAssertEqual(error.code, "response_too_large")
+      XCTAssertEqual(error.status, 200)
+    }
+    try await waitForArtifactProtocolStop()
+  }
+
+  func testArtifactFetchPreservesBoundedStructuredError() async throws {
+    let body = try Controlplane.encodeErrorEnvelope(code: "denied", message: "not allowed")
+    ArtifactURLProtocol.reset()
+    ArtifactURLProtocol.setHandler { _ in
+      ArtifactHTTPResponse(status: 403, chunks: [body])
+    }
+    defer { ArtifactURLProtocol.reset() }
+
+    do {
+      _ = try await Controlplane.requestConnectArtifact(
+        ArtifactRequestOptions(
+          baseURL: URL(string: "https://controlplane.example.test")!,
+          endpointID: "endpoint-artifact",
+          maxResponseBodyBytes: body.count
+        ),
+        session: artifactURLSession()
+      )
+      XCTFail("Expected a structured request error")
+    } catch let error as ControlplaneRequestError {
+      XCTAssertEqual(error.status, 403)
+      XCTAssertEqual(error.code, "denied")
+      XCTAssertEqual(error.message, "not allowed")
+      XCTAssertEqual(error.responseBody, body)
+    }
   }
 
   func testFST2TokenMatchesSharedGoldenVector() async throws {
@@ -49,7 +174,8 @@ final class ControlplaneTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
-    let data = try Data(contentsOf: root.appending(path: "idl/flowersec/testdata/v1/token_vectors.json"))
+    let data = try Data(
+      contentsOf: root.appending(path: "idl/flowersec/testdata/v1/token_vectors.json"))
     let document = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     let cases = try XCTUnwrap(document["cases"] as? [[String: Any]])
     let vector = try XCTUnwrap(cases.first)
@@ -158,10 +284,123 @@ final class ControlplaneTests: XCTestCase {
     XCTAssertEqual(refreshed.psk, grants.client.psk)
   }
 
+  func testTokenIssuerUsesStrictPrepublishedRotation() async throws {
+    let seed1 = Data(repeating: 7, count: 32)
+    let seed2 = Data(repeating: 8, count: 32)
+    let publicKey2 = try Curve25519.Signing.PrivateKey(rawRepresentation: seed2)
+      .publicKey.rawRepresentation
+    let issuer = try TokenIssuer(kid: "z-key", seed: seed1)
+    let payload = tokenPayload(kid: "ignored")
+    let oldToken = try await issuer.sign(payload)
+
+    do {
+      try await issuer.rotate(kid: "a-key", seed: seed2)
+      XCTFail("Expected rotation to require prepublication")
+    } catch let error as FST2TokenError {
+      XCTAssertEqual(error, .invalidFormat)
+    }
+    let currentAfterUnpublishedRotation = await issuer.currentKeyID()
+    XCTAssertEqual(currentAfterUnpublishedRotation, "z-key")
+
+    try await issuer.addVerificationKey(kid: " a-key ", publicKey: publicKey2)
+    try await issuer.addVerificationKey(kid: "a-key", publicKey: publicKey2)
+    do {
+      let conflictingKey = try Curve25519.Signing.PrivateKey(
+        rawRepresentation: Data(repeating: 9, count: 32)
+      ).publicKey.rawRepresentation
+      try await issuer.addVerificationKey(kid: "a-key", publicKey: conflictingKey)
+      XCTFail("Expected a conflicting verification key rejection")
+    } catch let error as FST2TokenError {
+      XCTAssertEqual(error, .invalidFormat)
+    }
+    try await issuer.rotate(kid: "a-key", seed: seed2)
+    let newToken = try await issuer.sign(payload)
+    let overlappingKeys = await issuer.publicKeys()
+    let verifyOptions = FST2VerifyOptions(nowUnixS: 1_700_000_000)
+    XCTAssertEqual(Set(overlappingKeys.keys), ["a-key", "z-key"])
+    XCTAssertEqual(
+      try FST2Token.verify(oldToken, keys: overlappingKeys, options: verifyOptions).kid,
+      "z-key"
+    )
+    XCTAssertEqual(
+      try FST2Token.verify(newToken, keys: overlappingKeys, options: verifyOptions).kid,
+      "a-key"
+    )
+
+    let exported = try await issuer.exportTunnelKeyset()
+    let root = try XCTUnwrap(JSONSerialization.jsonObject(with: exported) as? [String: Any])
+    let keys = try XCTUnwrap(root["keys"] as? [[String: String]])
+    XCTAssertEqual(keys.compactMap { $0["kid"] }, ["a-key", "z-key"])
+
+    try await issuer.retireVerificationKey(kid: "z-key")
+    let retiredKeys = await issuer.publicKeys()
+    XCTAssertEqual(Set(retiredKeys.keys), ["a-key"])
+    do {
+      try await issuer.retireVerificationKey(kid: "a-key")
+      XCTFail("Expected active key retirement to fail")
+    } catch let error as FST2TokenError {
+      XCTAssertEqual(error, .invalidFormat)
+    }
+  }
+
+  func testTokenIssuerMatchesSharedRotationVector() async throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let data = try Data(
+      contentsOf: root.appendingPathComponent("testdata/issuer_rotation_vectors.json")
+    )
+    let vector = try JSONDecoder().decode(IssuerRotationVector.self, from: data)
+    XCTAssertEqual(vector.version, 1)
+    let first = try XCTUnwrap(vector.keys.first)
+    let second = try XCTUnwrap(vector.keys.dropFirst().first)
+    let firstSeed = try XCTUnwrap(Data(base64URLEncoded: first.seedB64U))
+    let secondSeed = try XCTUnwrap(Data(base64URLEncoded: second.seedB64U))
+    let secondPublicKey = try XCTUnwrap(Data(base64URLEncoded: second.publicKeyB64U))
+    let issuer = try TokenIssuer(kid: first.kid, seed: firstSeed)
+
+    try await assertIssuer(issuer, matches: vector.stages[0])
+    try await issuer.addVerificationKey(kid: second.kid, publicKey: secondPublicKey)
+    try await assertIssuer(issuer, matches: vector.stages[1])
+    try await issuer.rotate(kid: second.kid, seed: secondSeed)
+    try await assertIssuer(issuer, matches: vector.stages[2])
+    try await issuer.retireVerificationKey(kid: first.kid)
+    try await assertIssuer(issuer, matches: vector.stages[3])
+  }
+
+  func testTokenIssuerRotationFailurePreservesStateAndSnapshots() async throws {
+    let seed1 = Data(repeating: 3, count: 32)
+    let seed2 = Data(repeating: 4, count: 32)
+    let issuer = try TokenIssuer(kid: "key-1", seed: seed1)
+    let publicKey2 = try Curve25519.Signing.PrivateKey(rawRepresentation: seed2)
+      .publicKey.rawRepresentation
+    try await issuer.addVerificationKey(kid: "key-2", publicKey: publicKey2)
+
+    do {
+      try await issuer.rotate(kid: "key-2", seed: Data(repeating: 0, count: 31))
+      XCTFail("Expected invalid seed rejection")
+    } catch {
+      let currentKeyID = await issuer.currentKeyID()
+      XCTAssertEqual(currentKeyID, "key-1")
+    }
+    do {
+      try await issuer.rotate(kid: "key-2", seed: Data(repeating: 9, count: 32))
+      XCTFail("Expected prepublished key mismatch rejection")
+    } catch let error as FST2TokenError {
+      XCTAssertEqual(error, .invalidFormat)
+    }
+    let currentAfterMismatchedRotation = await issuer.currentKeyID()
+    XCTAssertEqual(currentAfterMismatchedRotation, "key-1")
+
+    var snapshot = await issuer.publicKeys()
+    snapshot["key-1"] = Data(repeating: 0, count: 32)
+    let currentKeys = await issuer.publicKeys()
+    XCTAssertNotEqual(currentKeys["key-1"], snapshot["key-1"])
+  }
+
   func testControlplaneHTTPCodec() throws {
     let request = try Controlplane.decodeArtifactRequest(
       contentType: "application/json; charset=utf-8",
-      body: Data("{\"endpoint_id\":\" endpoint-1 \",\"correlation\":{\"trace_id\":\" trace-1 \"}}".utf8)
+      body: Data(
+        "{\"endpoint_id\":\" endpoint-1 \",\"correlation\":{\"trace_id\":\" trace-1 \"}}".utf8)
     )
     XCTAssertEqual(request.endpointID, "endpoint-1")
     XCTAssertEqual(request.correlation?.traceID, "trace-1")
@@ -172,6 +411,81 @@ final class ControlplaneTests: XCTestCase {
       ["error": ["code": "denied", "message": "not allowed"]] as NSDictionary
     )
   }
+}
+
+private func tokenPayload(kid: String) -> FST2TokenPayload {
+  FST2TokenPayload(
+    kid: kid,
+    audience: "flowersec-tunnel:test",
+    issuer: "issuer-test",
+    channelID: "channel-token",
+    role: 1,
+    tokenID: UUID().uuidString,
+    initExpiresAtUnixS: 1_700_000_100,
+    idleTimeoutSeconds: 60,
+    issuedAtUnixS: 1_700_000_000,
+    expiresAtUnixS: 1_700_000_060
+  )
+}
+
+private func assertIssuer(
+  _ issuer: TokenIssuer,
+  matches stage: IssuerRotationVector.Stage
+) async throws {
+  let activeKeyID = await issuer.currentKeyID()
+  let keyIDs = Set(await issuer.publicKeys().keys)
+  XCTAssertEqual(activeKeyID, stage.activeKID, stage.name)
+  XCTAssertEqual(keyIDs, Set(stage.verificationKIDs), stage.name)
+}
+
+private struct IssuerRotationVector: Decodable {
+  struct Key: Decodable {
+    var kid: String
+    var seedB64U: String
+    var publicKeyB64U: String
+
+    private enum CodingKeys: String, CodingKey {
+      case kid
+      case seedB64U = "seed_b64u"
+      case publicKeyB64U = "public_key_b64u"
+    }
+  }
+
+  struct Stage: Decodable {
+    var name: String
+    var activeKID: String
+    var verificationKIDs: [String]
+
+    private enum CodingKeys: String, CodingKey {
+      case name
+      case activeKID = "active_kid"
+      case verificationKIDs = "verification_kids"
+    }
+  }
+
+  var version: Int
+  var keys: [Key]
+  var stages: [Stage]
+}
+
+private func artifactURLSession() -> URLSession {
+  let configuration = URLSessionConfiguration.ephemeral
+  configuration.protocolClasses = [ArtifactURLProtocol.self]
+  return URLSession(configuration: configuration)
+}
+
+private func waitForArtifactProtocolStop() async throws {
+  for _ in 0..<100 where ArtifactURLProtocol.stopCount == 0 {
+    try await Task.sleep(for: .milliseconds(5))
+  }
+  XCTAssertGreaterThan(ArtifactURLProtocol.stopCount, 0)
+}
+
+private func waitForArtifactProtocolChunks(_ count: Int) async throws {
+  for _ in 0..<100 where ArtifactURLProtocol.deliveredChunkCount < count {
+    try await Task.sleep(for: .milliseconds(5))
+  }
+  XCTAssertEqual(ArtifactURLProtocol.deliveredChunkCount, count)
 }
 
 private func artifactRequestBody(_ request: URLRequest) throws -> Data {
@@ -193,10 +507,21 @@ private func artifactRequestBody(_ request: URLRequest) throws -> Data {
 private final class ArtifactURLProtocol: URLProtocol, @unchecked Sendable {
   private static let handlerStore = ArtifactURLProtocolHandlerStore()
 
+  static var stopCount: Int { handlerStore.stopCount }
+  static var deliveredChunkCount: Int { handlerStore.deliveredChunkCount }
+
+  static func allowNextChunk() {
+    handlerStore.allowNextChunk()
+  }
+
   static func setHandler(
-    _ handler: (@Sendable (URLRequest) throws -> (Int, Data))?
+    _ handler: (@Sendable (URLRequest) throws -> ArtifactHTTPResponse)?
   ) {
     handlerStore.set(handler)
+  }
+
+  static func reset() {
+    handlerStore.reset()
   }
 
   override class func canInit(with request: URLRequest) -> Bool { true }
@@ -205,43 +530,131 @@ private final class ArtifactURLProtocol: URLProtocol, @unchecked Sendable {
   override func startLoading() {
     do {
       let handler = try XCTUnwrap(Self.handlerStore.get())
-      let (status, body) = try handler(request)
+      let specification = try handler(request)
+      var headers = specification.headers
+      headers["Content-Type"] = headers["Content-Type"] ?? "application/json"
       let response = HTTPURLResponse(
         url: try XCTUnwrap(request.url),
-        statusCode: status,
+        statusCode: specification.status,
         httpVersion: "HTTP/1.1",
-        headerFields: ["Content-Type": "application/json"]
+        headerFields: headers
       )!
       client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-      client?.urlProtocol(self, didLoad: body)
-      client?.urlProtocolDidFinishLoading(self)
+      if specification.controlledChunks {
+        DispatchQueue.global().async { [self] in
+          deliverControlledChunks(specification.chunks)
+        }
+      } else {
+        for chunk in specification.chunks {
+          client?.urlProtocol(self, didLoad: chunk)
+          Self.handlerStore.recordDeliveredChunk()
+        }
+        client?.urlProtocolDidFinishLoading(self)
+      }
     } catch {
       client?.urlProtocol(self, didFailWithError: error)
     }
   }
 
-  override func stopLoading() {}
+  private func deliverControlledChunks(_ chunks: [Data]) {
+    for chunk in chunks {
+      guard Self.handlerStore.waitForChunkPermission() else { return }
+      client?.urlProtocol(self, didLoad: chunk)
+      Self.handlerStore.recordDeliveredChunk()
+    }
+    client?.urlProtocolDidFinishLoading(self)
+  }
+
+  override func stopLoading() {
+    Self.handlerStore.recordStop()
+  }
+}
+
+private struct ArtifactHTTPResponse: Sendable {
+  var status: Int
+  var headers: [String: String] = [:]
+  var chunks: [Data]
+  var controlledChunks = false
 }
 
 private final class ArtifactURLProtocolHandlerStore: @unchecked Sendable {
-  private let lock = NSLock()
-  private var handler: (@Sendable (URLRequest) throws -> (Int, Data))?
+  private let condition = NSCondition()
+  private var handler: (@Sendable (URLRequest) throws -> ArtifactHTTPResponse)?
+  private var stops = 0
+  private var deliveredChunks = 0
+  private var chunkPermits = 0
+  private var stopped = false
 
-  func set(_ handler: (@Sendable (URLRequest) throws -> (Int, Data))?) {
-    lock.lock()
-    self.handler = handler
-    lock.unlock()
+  var stopCount: Int {
+    condition.lock()
+    defer { condition.unlock() }
+    return stops
   }
 
-  func get() -> (@Sendable (URLRequest) throws -> (Int, Data))? {
-    lock.lock()
-    defer { lock.unlock() }
+  var deliveredChunkCount: Int {
+    condition.lock()
+    defer { condition.unlock() }
+    return deliveredChunks
+  }
+
+  func set(_ handler: (@Sendable (URLRequest) throws -> ArtifactHTTPResponse)?) {
+    condition.lock()
+    self.handler = handler
+    condition.unlock()
+  }
+
+  func get() -> (@Sendable (URLRequest) throws -> ArtifactHTTPResponse)? {
+    condition.lock()
+    defer { condition.unlock() }
     return handler
+  }
+
+  func recordStop() {
+    condition.lock()
+    stops += 1
+    stopped = true
+    condition.broadcast()
+    condition.unlock()
+  }
+
+  func allowNextChunk() {
+    condition.lock()
+    chunkPermits += 1
+    condition.signal()
+    condition.unlock()
+  }
+
+  func waitForChunkPermission() -> Bool {
+    condition.lock()
+    defer { condition.unlock() }
+    while chunkPermits == 0, !stopped {
+      condition.wait()
+    }
+    guard !stopped else { return false }
+    chunkPermits -= 1
+    return true
+  }
+
+  func recordDeliveredChunk() {
+    condition.lock()
+    deliveredChunks += 1
+    condition.unlock()
+  }
+
+  func reset() {
+    condition.lock()
+    handler = nil
+    stops = 0
+    deliveredChunks = 0
+    chunkPermits = 0
+    stopped = false
+    condition.broadcast()
+    condition.unlock()
   }
 }
 
-private extension Data {
-  init(hex: String) throws {
+extension Data {
+  fileprivate init(hex: String) throws {
     guard hex.count.isMultiple(of: 2) else { throw FST2TokenError.invalidFormat }
     var output = Data()
     output.reserveCapacity(hex.count / 2)

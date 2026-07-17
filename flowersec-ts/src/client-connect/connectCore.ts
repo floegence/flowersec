@@ -47,7 +47,7 @@ export type ConnectOptionsBase = Readonly<{
   maxHandshakePayload?: number;
   /** Maximum encrypted record size on the wire (0 uses default). */
   maxRecordBytes?: number;
-  /** Maximum buffered plaintext bytes in the secure channel (0 uses default). */
+  /** Maximum queued inbound plaintext bytes in the secure channel (0 uses default). */
   maxBufferedBytes?: number;
   /** Maximum queued outbound plaintext bytes in the secure channel (default 4 MiB; 0 uses default). */
   maxOutboundBufferedBytes?: number;
@@ -386,10 +386,11 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       try {
         return await mux.probeLiveness(liveness.timeoutMs);
       } catch (e) {
-        if (isYamuxPingTimeoutError(e)) {
+        const timedOut = isYamuxPingTimeoutError(e);
+        if (timedOut) {
           emitObserverDiagnostic(args.opts.observer, { path: args.path, stage: "yamux", code_domain: "event", code: "liveness_timeout", result: "fail" });
         }
-        const error = new FlowersecError({ path: args.path, stage: "yamux", code: "ping_failed", message: "liveness probe failed", cause: e });
+        const error = new FlowersecError({ path: args.path, stage: "yamux", code: timedOut ? "timeout" : "ping_failed", message: "liveness probe failed", cause: e });
         reportTermination(error);
         throw error;
       }
@@ -437,7 +438,8 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
       },
       probeLiveness,
       openStream: async (kind: string, opts: Readonly<{ signal?: AbortSignal }> = {}) => {
-        if (kind == null || kind === "") throw new FlowersecError({ path: args.path, stage: "validate", code: "missing_stream_kind", message: "missing stream kind" });
+        const streamKind = kind?.trim() ?? "";
+        if (streamKind === "") throw new FlowersecError({ path: args.path, stage: "rpc", code: "missing_stream_kind", message: "missing stream kind" });
         if (opts.signal?.aborted) {
           throw new FlowersecError({
             path: args.path,
@@ -490,7 +492,7 @@ export async function connectCore(args: ConnectCoreArgs): Promise<ClientInternal
           });
         }
         try {
-          await writeStreamHello((b) => s.write(b), kind);
+          await writeStreamHello((b) => s.write(b), streamKind);
         } catch (err) {
           if (signal?.aborted) {
             if (abortListener != null) signal.removeEventListener("abort", abortListener);

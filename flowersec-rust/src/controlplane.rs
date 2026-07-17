@@ -628,19 +628,25 @@ pub mod issuer {
     use serde::Serialize;
     use std::{collections::HashMap, sync::RwLock};
 
-    struct KeyMaterial {
+    struct ActiveSigningKey {
         kid: String,
         signing_key: SigningKey,
     }
 
-    impl std::fmt::Debug for KeyMaterial {
+    impl std::fmt::Debug for ActiveSigningKey {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             formatter
-                .debug_struct("KeyMaterial")
+                .debug_struct("ActiveSigningKey")
                 .field("kid", &self.kid)
                 .field("signing_key", &"[REDACTED]")
                 .finish()
         }
+    }
+
+    #[derive(Debug)]
+    struct KeyMaterial {
+        active: ActiveSigningKey,
+        verification_keys: HashMap<String, VerifyingKey>,
     }
 
     #[derive(Debug)]
@@ -652,6 +658,12 @@ pub mod issuer {
     pub enum IssuerError {
         #[error("key id is required")]
         MissingKid,
+        #[error("verification key is missing")]
+        MissingVerificationKey,
+        #[error("verification key conflicts with the existing key id")]
+        VerificationKeyConflict,
+        #[error("the active verification key cannot be retired")]
+        ActiveVerificationKey,
         #[error("issuer keyset lock is poisoned")]
         Poisoned,
         #[error("token signing failed: {0}")]
@@ -677,8 +689,15 @@ pub mod issuer {
             if kid.is_empty() {
                 return Err(IssuerError::MissingKid);
             }
+            let verifying_key = signing_key.verifying_key();
             Ok(Self {
-                material: RwLock::new(KeyMaterial { kid, signing_key }),
+                material: RwLock::new(KeyMaterial {
+                    active: ActiveSigningKey {
+                        kid: kid.clone(),
+                        signing_key,
+                    },
+                    verification_keys: HashMap::from([(kid, verifying_key)]),
+                }),
             })
         }
 
@@ -691,22 +710,40 @@ pub mod issuer {
                 .material
                 .read()
                 .map_err(|_| IssuerError::Poisoned)?
+                .active
                 .kid
                 .clone())
         }
 
         pub fn public_keys(&self) -> Result<HashMap<String, VerifyingKey>, IssuerError> {
             let material = self.material.read().map_err(|_| IssuerError::Poisoned)?;
-            Ok(HashMap::from([(
-                material.kid.clone(),
-                material.signing_key.verifying_key(),
-            )]))
+            Ok(material.verification_keys.clone())
         }
 
         pub fn sign_token(&self, mut payload: Payload) -> Result<String, IssuerError> {
             let material = self.material.read().map_err(|_| IssuerError::Poisoned)?;
-            payload.kid.clone_from(&material.kid);
-            Ok(token::sign(&material.signing_key, payload)?)
+            payload.kid.clone_from(&material.active.kid);
+            Ok(token::sign(&material.active.signing_key, payload)?)
+        }
+
+        pub fn add_verification_key(
+            &self,
+            kid: impl Into<String>,
+            verifying_key: VerifyingKey,
+        ) -> Result<(), IssuerError> {
+            let kid = kid.into().trim().to_owned();
+            if kid.is_empty() {
+                return Err(IssuerError::MissingKid);
+            }
+            let mut material = self.material.write().map_err(|_| IssuerError::Poisoned)?;
+            match material.verification_keys.get(&kid) {
+                Some(existing) if existing == &verifying_key => Ok(()),
+                Some(_) => Err(IssuerError::VerificationKeyConflict),
+                None => {
+                    material.verification_keys.insert(kid, verifying_key);
+                    Ok(())
+                }
+            }
         }
 
         pub fn rotate(
@@ -718,8 +755,29 @@ pub mod issuer {
             if kid.is_empty() {
                 return Err(IssuerError::MissingKid);
             }
+            let verifying_key = signing_key.verifying_key();
             let mut material = self.material.write().map_err(|_| IssuerError::Poisoned)?;
-            *material = KeyMaterial { kid, signing_key };
+            match material.verification_keys.get(&kid) {
+                Some(existing) if existing == &verifying_key => {}
+                Some(_) => return Err(IssuerError::VerificationKeyConflict),
+                None => return Err(IssuerError::MissingVerificationKey),
+            }
+            material.active = ActiveSigningKey { kid, signing_key };
+            Ok(())
+        }
+
+        pub fn retire_verification_key(&self, kid: &str) -> Result<(), IssuerError> {
+            let kid = kid.trim();
+            if kid.is_empty() {
+                return Err(IssuerError::MissingKid);
+            }
+            let mut material = self.material.write().map_err(|_| IssuerError::Poisoned)?;
+            if material.active.kid == kid {
+                return Err(IssuerError::ActiveVerificationKey);
+            }
+            if material.verification_keys.remove(kid).is_none() {
+                return Err(IssuerError::MissingVerificationKey);
+            }
             Ok(())
         }
 
@@ -1166,6 +1224,9 @@ mod tests {
         assert_eq!(payload.channel_id, "channel-test");
         assert_eq!(payload.role, Role::Client as u8);
         let replacement = SigningKey::from_bytes(&[7_u8; 32]);
+        issuer
+            .add_verification_key("k2", replacement.verifying_key())
+            .expect("prepublish replacement");
         issuer.rotate("k2", replacement).expect("rotate");
         let refreshed = service.reissue_token(&client_grant).expect("reissue");
         assert_ne!(refreshed.token, client_grant.token);
@@ -1176,7 +1237,8 @@ mod tests {
         let exported: serde_json::Value =
             serde_json::from_slice(&issuer.export_tunnel_keyset().expect("export"))
                 .expect("keyset json");
-        assert_eq!(exported["keys"][0]["kid"], "k2");
+        assert_eq!(exported["keys"][0]["kid"], "k1");
+        assert_eq!(exported["keys"][1]["kid"], "k2");
     }
 
     #[tokio::test]

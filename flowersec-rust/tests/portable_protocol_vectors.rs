@@ -53,6 +53,8 @@ struct CodeRegistry {
 #[derive(Debug, Deserialize)]
 struct RegistryCode {
     code: String,
+    #[serde(default)]
+    stages: Vec<String>,
 }
 
 #[tokio::test]
@@ -127,6 +129,16 @@ async fn shared_portable_protocol_vectors_match_rust_contracts() {
         "stability/connect_error_code_registry.json",
         "resource_exhausted",
     );
+    assert_registry_pair(
+        "stability/connect_error_code_registry.json",
+        "rpc",
+        "resource_exhausted",
+    );
+    assert_registry_pair(
+        "stability/connect_error_code_registry.json",
+        "rpc",
+        "missing_stream_kind",
+    );
     assert_registry_contains(
         "stability/connect_diagnostics_code_registry.json",
         &vectors.diagnostic_event.code,
@@ -144,6 +156,17 @@ fn decode_hex(value: &str) -> Vec<u8> {
 fn assert_registry_contains(path: &str, code: &str) {
     let registry: CodeRegistry = read_json(path);
     assert!(registry.codes.iter().any(|entry| entry.code == code));
+}
+
+fn assert_registry_pair(path: &str, stage: &str, code: &str) {
+    let registry: CodeRegistry = read_json(path);
+    assert!(
+        registry
+            .codes
+            .iter()
+            .any(|entry| entry.code == code && entry.stages.iter().any(|item| item == stage)),
+        "missing registry pair {stage}/{code}"
+    );
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &str) -> T {

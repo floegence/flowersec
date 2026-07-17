@@ -20,25 +20,7 @@ export class ByteReader {
       this.buffered += chunk.length;
     }
     const out = new Uint8Array(n);
-    let outOff = 0;
-    while (outOff < n) {
-      const head = this.chunks[this.chunkHead]!;
-      const avail = head.length - this.headOff;
-      const need = n - outOff;
-      const take = Math.min(avail, need);
-      out.set(head.subarray(this.headOff, this.headOff + take), outOff);
-      outOff += take;
-      this.headOff += take;
-      this.buffered -= take;
-      if (this.headOff === head.length) {
-        this.chunkHead++;
-        this.headOff = 0;
-        if (this.chunkHead > 1024 && this.chunkHead * 2 > this.chunks.length) {
-          this.chunks.splice(0, this.chunkHead);
-          this.chunkHead = 0;
-        }
-      }
-    }
+    this.consumeAvailable(n, out);
     return out;
   }
 
@@ -54,20 +36,43 @@ export class ByteReader {
         this.chunks.push(chunk);
         this.buffered += chunk.length;
       }
-      const head = this.chunks[this.chunkHead]!;
-      const take = Math.min(remaining, head.length - this.headOff);
-      this.headOff += take;
-      this.buffered -= take;
-      remaining -= take;
-      if (this.headOff === head.length) {
-        this.chunkHead++;
-        this.headOff = 0;
-      }
+      remaining -= this.consumeAvailable(remaining);
     }
   }
 
   // bufferedBytes returns the number of bytes currently buffered.
   bufferedBytes(): number {
     return this.buffered;
+  }
+
+  private consumeAvailable(maxBytes: number, output?: Uint8Array): number {
+    let consumed = 0;
+    while (consumed < maxBytes && this.buffered > 0) {
+      const head = this.chunks[this.chunkHead]!;
+      const take = Math.min(maxBytes - consumed, head.length - this.headOff);
+      if (output != null) output.set(head.subarray(this.headOff, this.headOff + take), consumed);
+      this.headOff += take;
+      this.buffered -= take;
+      consumed += take;
+      if (this.headOff === head.length) {
+        this.chunkHead++;
+        this.headOff = 0;
+      }
+    }
+    this.compactConsumedChunks();
+    return consumed;
+  }
+
+  private compactConsumedChunks(): void {
+    if (this.buffered === 0) {
+      this.chunks.length = 0;
+      this.chunkHead = 0;
+      this.headOff = 0;
+      return;
+    }
+    if (this.chunkHead > 1024 && this.chunkHead * 2 > this.chunks.length) {
+      this.chunks.splice(0, this.chunkHead);
+      this.chunkHead = 0;
+    }
   }
 }

@@ -12,7 +12,9 @@ export default [
       parserOptions: {
         ecmaVersion: "latest",
         sourceType: "module",
-        projectService: { allowDefaultProject: ["vitest.config.ts"] },
+        projectService: {
+          allowDefaultProject: ["vitest.config.ts", "playwright.config.ts", "browser-e2e/*.ts"]
+        },
         tsconfigRootDir: import.meta.dirname
       }
     },

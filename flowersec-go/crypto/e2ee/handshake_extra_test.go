@@ -189,6 +189,56 @@ func TestClientHandshakeValidations(t *testing.T) {
 	}
 }
 
+func TestHandshakeRejectsNegativeBufferLimitsBeforeTransportIO(t *testing.T) {
+	tests := []struct {
+		name   string
+		client ClientHandshakeOptions
+		server ServerHandshakeOptions
+	}{
+		{
+			name: "client inbound",
+			client: ClientHandshakeOptions{
+				PSK: make([]byte, 32), ChannelID: "ch", MaxBufferedBytes: -1,
+			},
+		},
+		{
+			name: "client outbound",
+			client: ClientHandshakeOptions{
+				PSK: make([]byte, 32), ChannelID: "ch", MaxOutboundBufferedBytes: -1,
+			},
+		},
+		{
+			name: "server inbound",
+			server: ServerHandshakeOptions{
+				PSK: make([]byte, 32), ChannelID: "ch", InitExpireAtUnixS: time.Now().Add(time.Minute).Unix(), MaxBufferedBytes: -1,
+			},
+		},
+		{
+			name: "server outbound",
+			server: ServerHandshakeOptions{
+				PSK: make([]byte, 32), ChannelID: "ch", InitExpireAtUnixS: time.Now().Add(time.Minute).Unix(), MaxOutboundBufferedBytes: -1,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &stubTransport{}
+			var err error
+			if test.client.PSK != nil {
+				_, err = ClientHandshake(context.Background(), transport, test.client)
+			} else {
+				_, err = ServerHandshake(context.Background(), transport, nil, test.server)
+			}
+			if err == nil {
+				t.Fatal("expected invalid buffer limit")
+			}
+			if transport.readCalled || transport.writeCalled {
+				t.Fatalf("unexpected transport usage: read=%v write=%v", transport.readCalled, transport.writeCalled)
+			}
+		})
+	}
+}
+
 func TestClientHandshakeRequiresServerFinishedPing(t *testing.T) {
 	psk := make([]byte, 32)
 	for i := range psk {

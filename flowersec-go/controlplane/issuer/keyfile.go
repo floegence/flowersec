@@ -1,9 +1,11 @@
 package issuer
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
@@ -25,9 +27,10 @@ func (k *Keyset) ExportPrivateKeyFile() ([]byte, error) {
 		return nil, errors.New("missing keyset")
 	}
 	k.mu.RLock()
-	kid := k.kid
-	priv := k.priv
+	kid := k.activeKID
+	priv := clonePrivateKey(k.activePrivate)
 	k.mu.RUnlock()
+	defer clear(priv)
 	if kid == "" {
 		return nil, errors.New("missing kid")
 	}
@@ -46,11 +49,20 @@ func LoadPrivateKeyFile(path string) (*Keyset, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer clear(b)
 	var f PrivateKeyFile
-	if err := json.Unmarshal(b, &f); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(b))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&f); err != nil {
 		return nil, err
 	}
-	if f.KID == "" || f.PrivKeyB64 == "" {
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("private key file contains multiple JSON values")
+		}
+		return nil, err
+	}
+	if _, err := normalizeKID(f.KID); err != nil || f.PrivKeyB64 == "" {
 		return nil, errors.New("invalid private key file")
 	}
 	priv, err := base64url.Decode(f.PrivKeyB64)
@@ -60,5 +72,6 @@ func LoadPrivateKeyFile(path string) (*Keyset, error) {
 	if len(priv) != ed25519.PrivateKeySize {
 		return nil, errors.New("invalid ed25519 private key")
 	}
+	defer clear(priv)
 	return New(f.KID, ed25519.PrivateKey(priv))
 }

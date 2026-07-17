@@ -98,7 +98,7 @@ public final class EndpointSession: @unchecked Sendable {
   private let secure: FlowersecSecureChannel
   private let yamux: FlowersecYamuxClient
 
-  fileprivate init(
+  init(
     path: FlowersecPath,
     endpointInstanceID: String?,
     secure: FlowersecSecureChannel,
@@ -113,12 +113,7 @@ public final class EndpointSession: @unchecked Sendable {
   public func openStream(kind: String) async throws -> any FlowersecByteStream {
     let value = kind.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !value.isEmpty else {
-      throw FlowersecError(
-        path: path,
-        stage: .validate,
-        code: .invalidInput,
-        message: "Stream kind is empty."
-      )
+      throw FlowersecError.missingStreamKind(path: path)
     }
     let stream = try await yamux.openStream()
     do {
@@ -168,6 +163,8 @@ public final class EndpointSession: @unchecked Sendable {
   public func rekey() async throws {
     do {
       try await secure.rekey()
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       throw FlowersecError(
         path: path,
@@ -295,7 +292,7 @@ public enum Endpoint {
       throw FlowersecError(
         path: .tunnel,
         stage: .validate,
-        code: .invalidInput,
+        code: .roleMismatch,
         message: "Tunnel endpoint grants must use the server role."
       )
     }

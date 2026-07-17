@@ -97,8 +97,13 @@ func TestSessionGetters(t *testing.T) {
 func TestClientOpenStreamValidation(t *testing.T) {
 	c := &session{}
 	ctx := context.Background()
-	if _, err := c.OpenStream(ctx, ""); err == nil {
-		t.Fatal("OpenStream(\"\") should fail")
+	if _, err := c.OpenStream(ctx, " \t "); err == nil {
+		t.Fatal("OpenStream with a blank kind should fail")
+	} else {
+		var flowersecErr *Error
+		if !errors.As(err, &flowersecErr) || flowersecErr.Stage != StageRPC || flowersecErr.Code != CodeMissingStreamKind {
+			t.Fatalf("empty stream kind error = %v", err)
+		}
 	}
 	if _, err := c.OpenStream(ctx, "echo"); err == nil {
 		t.Fatal("OpenStream(\"echo\") should fail when not connected")
@@ -188,6 +193,79 @@ func TestClientOpenStream_ContextDeadlineCancelsBlockedOpen(t *testing.T) {
 	}
 }
 
+func TestClientOpenStreamPreservesSecureOutboundExhaustion(t *testing.T) {
+	transport := newPendingBinaryTransport()
+	secure := e2ee.NewSecureChannel(transport, e2ee.RecordKeyState{}, 1<<20, 0)
+	if err := secure.SetMaxOutboundBufferedBytes(8); err != nil {
+		t.Fatal(err)
+	}
+	mux, err := fsyamux.NewClient(secure, fsyamux.YamuxLimits{}, fsyamux.LivenessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mux.Close()
+	defer secure.Close()
+
+	client := &session{path: PathDirect, mux: mux, secure: secure}
+	_, firstErr := client.OpenStream(context.Background(), "rpc")
+	if firstErr != nil {
+		assertResourceExhausted(t, firstErr)
+		return
+	}
+	select {
+	case <-mux.CloseChan():
+	case <-time.After(time.Second):
+		t.Fatal("secure outbound exhaustion did not close the Yamux session")
+	}
+	_, err = client.OpenStream(context.Background(), "rpc")
+	assertResourceExhausted(t, err)
+}
+
+func assertResourceExhausted(t *testing.T, err error) {
+	t.Helper()
+	var flowersecErr *Error
+	if !errors.As(err, &flowersecErr) {
+		t.Fatalf("expected *client.Error, got %T: %v", err, err)
+	}
+	if flowersecErr.Stage != StageYamux && flowersecErr.Stage != StageRPC {
+		t.Fatalf("resource error stage = %q", flowersecErr.Stage)
+	}
+	if flowersecErr.Code != CodeResourceExhausted {
+		t.Fatalf("resource error code = %q", flowersecErr.Code)
+	}
+	if !errors.Is(err, e2ee.ErrOutboundBufferExceeded) {
+		t.Fatalf("resource error lost secure-channel cause: %v", err)
+	}
+}
+
+type pendingBinaryTransport struct {
+	closed chan struct{}
+}
+
+func newPendingBinaryTransport() *pendingBinaryTransport {
+	return &pendingBinaryTransport{closed: make(chan struct{})}
+}
+
+func (t *pendingBinaryTransport) ReadBinary(ctx context.Context) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-t.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (*pendingBinaryTransport) WriteBinary(context.Context, []byte) error { return nil }
+
+func (t *pendingBinaryTransport) Close() error {
+	select {
+	case <-t.closed:
+	default:
+		close(t.closed)
+	}
+	return nil
+}
+
 func TestSessionPingNilAndNotConnected(t *testing.T) {
 	var nilClient *session
 	if err := nilClient.Ping(); err == nil {
@@ -208,5 +286,11 @@ func TestClassifyConnectObserverReason(t *testing.T) {
 	}
 	if got := classifyConnectObserverReason(errors.New("boom")); got != observability.ConnectReasonWebsocketError {
 		t.Fatalf("default reason = %q", got)
+	}
+}
+
+func TestClassifyContextOrCodeMapsLivenessTimeout(t *testing.T) {
+	if got := classifyContextOrCode(fsyamux.ErrLivenessTimeout, CodePingFailed); got != CodeTimeout {
+		t.Fatalf("liveness timeout code = %q", got)
 	}
 }

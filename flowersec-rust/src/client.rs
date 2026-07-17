@@ -107,6 +107,15 @@ impl Client {
     }
 
     pub async fn open_stream(&self, kind: &str) -> Result<YamuxStream, FlowersecError> {
+        let kind = kind.trim();
+        if kind.is_empty() {
+            return Err(FlowersecError::new(
+                self.path,
+                Stage::Rpc,
+                ErrorCode::MISSING_STREAM_KIND,
+                "stream kind is empty",
+            ));
+        }
         let stream = self.session.open_stream().await.map_err(|error| {
             let code = yamux_session_code(&error, ErrorCode::OPEN_STREAM_FAILED);
             FlowersecError::new(self.path, Stage::Yamux, code, "failed to open stream")
@@ -165,13 +174,9 @@ impl Client {
 
     pub async fn probe_liveness(&self, timeout: Duration) -> Result<Duration, FlowersecError> {
         self.session.probe_liveness(timeout).await.map_err(|error| {
-            FlowersecError::new(
-                self.path,
-                Stage::Yamux,
-                ErrorCode::PING_FAILED,
-                "liveness probe failed",
-            )
-            .with_source(error)
+            let code = yamux_probe_code(&error);
+            FlowersecError::new(self.path, Stage::Yamux, code, "liveness probe failed")
+                .with_source(error)
         })
     }
 
@@ -204,9 +209,18 @@ impl Client {
     }
 }
 
+fn yamux_probe_code(error: &crate::yamux::YamuxError) -> &'static str {
+    match error {
+        crate::yamux::YamuxError::PingTimeout => ErrorCode::TIMEOUT,
+        crate::yamux::YamuxError::ResourceExhausted { .. } => ErrorCode::RESOURCE_EXHAUSTED,
+        _ => ErrorCode::PING_FAILED,
+    }
+}
+
 fn yamux_session_code(error: &crate::yamux::YamuxError, fallback: &'static str) -> &'static str {
     match error {
         crate::yamux::YamuxError::ResourceExhausted { .. } => ErrorCode::RESOURCE_EXHAUSTED,
+        crate::yamux::YamuxError::PingTimeout => ErrorCode::TIMEOUT,
         crate::yamux::YamuxError::Closed
         | crate::yamux::YamuxError::StreamClosed
         | crate::yamux::YamuxError::Reset
@@ -356,24 +370,20 @@ async fn establish_client<T: crate::transport::WebSocketTransport>(
             .with_source(error)
         })?;
     let rpc_stream = session.open_stream().await.map_err(|error| {
-        FlowersecError::new(
-            path,
-            Stage::Rpc,
-            ErrorCode::RPC_FAILED,
-            "failed to open RPC stream",
-        )
-        .with_source(error)
+        let code = yamux_session_code(&error, ErrorCode::RPC_FAILED);
+        FlowersecError::new(path, Stage::Rpc, code, "failed to open RPC stream").with_source(error)
     })?;
     streamhello::write(&rpc_stream, streamhello::RPC_KIND)
         .await
         .map_err(|error| {
-            FlowersecError::new(
-                path,
-                Stage::Rpc,
-                ErrorCode::STREAM_HELLO_FAILED,
-                "failed to initialize RPC stream",
-            )
-            .with_source(error)
+            let code = match &error {
+                crate::streamio::StreamIoError::Yamux(yamux) => {
+                    yamux_session_code(yamux, ErrorCode::STREAM_HELLO_FAILED)
+                }
+                _ => ErrorCode::STREAM_HELLO_FAILED,
+            };
+            FlowersecError::new(path, Stage::Rpc, code, "failed to initialize RPC stream")
+                .with_source(error)
         })?;
     emit(
         &options,
@@ -542,6 +552,118 @@ mod tests {
         Fut: Future<Output = Result<(), FlowersecError>> + Send + 'static,
     {
         Arc::new(move |scope| Box::pin(resolve(scope)))
+    }
+
+    #[derive(Debug)]
+    struct PendingDuplex;
+
+    #[async_trait::async_trait]
+    impl crate::yamux::ByteDuplex for PendingDuplex {
+        async fn read(&self) -> Result<Vec<u8>, crate::yamux::YamuxError> {
+            std::future::pending().await
+        }
+
+        async fn write(&self, _bytes: &[u8]) -> Result<(), crate::yamux::YamuxError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), crate::yamux::YamuxError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailingWriteDuplex;
+
+    #[async_trait::async_trait]
+    impl crate::yamux::ByteDuplex for FailingWriteDuplex {
+        async fn read(&self) -> Result<Vec<u8>, crate::yamux::YamuxError> {
+            std::future::pending().await
+        }
+
+        async fn write(&self, _bytes: &[u8]) -> Result<(), crate::yamux::YamuxError> {
+            Err(crate::yamux::YamuxError::Transport(
+                "test transport failure".to_owned(),
+            ))
+        }
+
+        async fn close(&self) -> Result<(), crate::yamux::YamuxError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct NoopSecureControl;
+
+    #[async_trait::async_trait]
+    impl crate::e2ee::SecureChannelControl for NoopSecureControl {
+        async fn rekey_channel(&self) -> Result<(), crate::e2ee::E2eeError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn client_liveness_timeout_uses_typed_timeout_code() {
+        let session = YamuxSession::new(
+            Arc::new(PendingDuplex),
+            Mode::Client,
+            YamuxLimits::default(),
+        )
+        .expect("create Yamux session");
+        let rpc =
+            RpcClient::from_stream(session.open_stream().await.expect("open test RPC stream"));
+        let client = Client {
+            path: Path::Direct,
+            secure: Arc::new(NoopSecureControl),
+            session,
+            rpc,
+        };
+
+        let error = client
+            .probe_liveness(Duration::ZERO)
+            .await
+            .expect_err("zero liveness timeout must fail");
+        assert_eq!(error.path, Path::Direct);
+        assert_eq!(error.stage, Stage::Yamux);
+        assert_eq!(error.code.as_str(), ErrorCode::TIMEOUT);
+        assert!(error.source.is_some());
+    }
+
+    #[tokio::test]
+    async fn client_liveness_transport_failure_uses_ping_failed_code() {
+        let session = YamuxSession::new(
+            Arc::new(FailingWriteDuplex),
+            Mode::Client,
+            YamuxLimits::default(),
+        )
+        .expect("create failing Yamux session");
+        let rpc_session = YamuxSession::new(
+            Arc::new(PendingDuplex),
+            Mode::Client,
+            YamuxLimits::default(),
+        )
+        .expect("create RPC Yamux session");
+        let rpc = RpcClient::from_stream(
+            rpc_session
+                .open_stream()
+                .await
+                .expect("open test RPC stream"),
+        );
+        let client = Client {
+            path: Path::Tunnel,
+            secure: Arc::new(NoopSecureControl),
+            session,
+            rpc,
+        };
+
+        let error = client
+            .probe_liveness(Duration::from_secs(1))
+            .await
+            .expect_err("transport failure must fail the liveness probe");
+        assert_eq!(error.path, Path::Tunnel);
+        assert_eq!(error.stage, Stage::Yamux);
+        assert_eq!(error.code.as_str(), ErrorCode::PING_FAILED);
+        assert!(error.source.is_some());
     }
 
     #[tokio::test]
@@ -724,6 +846,10 @@ mod tests {
         );
         assert_eq!(failed.code.as_str(), ErrorCode::DIAL_FAILED);
         assert!(failed.source.is_some());
+        assert_eq!(
+            yamux_probe_code(&crate::yamux::YamuxError::InvalidFrame),
+            ErrorCode::PING_FAILED
+        );
 
         let options = ConnectOptions::default();
         let debug = format!("{options:?}");

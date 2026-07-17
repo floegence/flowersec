@@ -106,6 +106,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 		maxHandshakeBytes:        cfg.maxHandshakePayload,
 		maxRecordBytes:           cfg.maxRecordBytes,
 		maxBufferedBytes:         cfg.maxBufferedBytes,
+		maxOutboundBufferedBytes: cfg.maxOutboundBufferedBytes,
 		outboundRecordChunkBytes: cfg.outboundRecordChunkBytes,
 		handshakeTimeout:         handshakeTimeout,
 		observer:                 observer,
@@ -172,6 +173,7 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 		maxHandshakeBytes:        cfg.maxHandshakePayload,
 		maxRecordBytes:           cfg.maxRecordBytes,
 		maxBufferedBytes:         cfg.maxBufferedBytes,
+		maxOutboundBufferedBytes: cfg.maxOutboundBufferedBytes,
 		outboundRecordChunkBytes: cfg.outboundRecordChunkBytes,
 		handshakeTimeout:         handshakeTimeout,
 		observer:                 observer,
@@ -201,6 +203,7 @@ type dialE2EEOptions struct {
 	maxHandshakeBytes        int
 	maxRecordBytes           int
 	maxBufferedBytes         int
+	maxOutboundBufferedBytes int
 	outboundRecordChunkBytes int
 
 	handshakeTimeout time.Duration
@@ -223,6 +226,7 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 		MaxHandshakePayload:      opts.maxHandshakeBytes,
 		MaxRecordBytes:           opts.maxRecordBytes,
 		MaxBufferedBytes:         opts.maxBufferedBytes,
+		MaxOutboundBufferedBytes: opts.maxOutboundBufferedBytes,
 		OutboundRecordChunkBytes: opts.outboundRecordChunkBytes,
 	})
 	if err != nil {
@@ -305,6 +309,9 @@ func openBootstrapStream(ctx context.Context, path fserrors.Path, secure interfa
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, wrapErr(path, fserrors.StageYamux, classifyContextCode(cerr), cerr)
 		}
+		if isResourceExhausted(err) {
+			return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeResourceExhausted, err)
+		}
 		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeOpenStreamFailed, err)
 	}
 
@@ -321,6 +328,9 @@ func openBootstrapStream(ctx context.Context, path fserrors.Path, secure interfa
 		_ = stream.Close()
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, wrapErr(path, fserrors.StageYamux, classifyContextCode(cerr), cerr)
+		}
+		if isResourceExhausted(err) {
+			return nil, wrapErr(path, fserrors.StageRPC, fserrors.CodeResourceExhausted, err)
 		}
 		return nil, wrapErr(path, fserrors.StageRPC, fserrors.CodeStreamHelloFailed, err)
 	}

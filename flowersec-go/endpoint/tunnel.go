@@ -98,6 +98,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 		maxHandshake:             cfg.maxHandshakePayload,
 		maxRecordBytes:           cfg.maxRecordBytes,
 		maxBufferedBytes:         cfg.maxBufferedBytes,
+		maxOutboundBufferedBytes: cfg.maxOutboundBufferedBytes,
 		outboundRecordChunkBytes: cfg.outboundRecordChunkBytes,
 		handshakeTimeout:         handshakeTimeout,
 		cache:                    cfg.handshakeCache,
@@ -146,6 +147,7 @@ type serverHandshakeOptions struct {
 	maxHandshake             int
 	maxRecordBytes           int
 	maxBufferedBytes         int
+	maxOutboundBufferedBytes int
 	outboundRecordChunkBytes int
 	handshakeTimeout         time.Duration
 	cache                    *HandshakeCache
@@ -172,6 +174,7 @@ func serveAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpo
 		MaxHandshakePayload:      opts.maxHandshake,
 		MaxRecordBytes:           opts.maxRecordBytes,
 		MaxBufferedBytes:         opts.maxBufferedBytes,
+		MaxOutboundBufferedBytes: opts.maxOutboundBufferedBytes,
 		OutboundRecordChunkBytes: opts.outboundRecordChunkBytes,
 	})
 	if err != nil {

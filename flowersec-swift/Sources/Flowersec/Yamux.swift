@@ -5,6 +5,7 @@ public struct YamuxLimits: Equatable, Sendable {
   public var maxInboundStreams: Int
   public var maxFrameBytes: Int
   public var preferredOutboundFrameBytes: Int
+  public var maxStreamWriteQueueBytes: Int
   public var maxStreamReceiveBytes: Int
   public var maxSessionReceiveBytes: Int
 
@@ -13,6 +14,7 @@ public struct YamuxLimits: Equatable, Sendable {
     maxInboundStreams: Int = FlowersecSDKDefaults.Yamux.maxInboundStreams,
     maxFrameBytes: Int = FlowersecSDKDefaults.Yamux.maxFrameBytes,
     preferredOutboundFrameBytes: Int = FlowersecSDKDefaults.Yamux.preferredOutboundFrameBytes,
+    maxStreamWriteQueueBytes: Int = FlowersecSDKDefaults.Yamux.maxStreamWriteQueueBytes,
     maxStreamReceiveBytes: Int = FlowersecSDKDefaults.Yamux.maxStreamReceiveBytes,
     maxSessionReceiveBytes: Int = FlowersecSDKDefaults.Yamux.maxSessionReceiveBytes
   ) {
@@ -20,6 +22,7 @@ public struct YamuxLimits: Equatable, Sendable {
     self.maxInboundStreams = maxInboundStreams
     self.maxFrameBytes = maxFrameBytes
     self.preferredOutboundFrameBytes = preferredOutboundFrameBytes
+    self.maxStreamWriteQueueBytes = maxStreamWriteQueueBytes
     self.maxStreamReceiveBytes = maxStreamReceiveBytes
     self.maxSessionReceiveBytes = maxSessionReceiveBytes
   }
@@ -163,7 +166,12 @@ actor FlowersecYamuxClient {
     }
     let streamID = nextStreamID
     nextStreamID += 2
-    let stream = FlowersecYamuxStream(id: streamID, session: self, path: path)
+    let stream = FlowersecYamuxStream(
+      id: streamID,
+      session: self,
+      path: path,
+      maxWriteQueueBytes: limits.maxStreamWriteQueueBytes
+    )
     streams[streamID] = stream
     queuedBytesByStream[streamID] = 0
     do {
@@ -217,7 +225,20 @@ actor FlowersecYamuxClient {
       return result
     } catch {
       clearPendingProbe(probeID)
-      throw error
+      if error is CancellationError {
+        throw error
+      }
+      if let flowersec = error as? FlowersecError,
+        flowersec.code == .timeout || flowersec.code == .resourceExhausted
+      {
+        throw flowersec.withPath(path)
+      }
+      throw FlowersecError(
+        path: path,
+        stage: .yamux,
+        code: .pingFailed,
+        message: "The yamux liveness probe failed: \(error.localizedDescription)"
+      )
     }
   }
 
@@ -671,7 +692,12 @@ actor FlowersecYamuxClient {
         "The yamux inbound stream limit was reached."
       )
     }
-    let stream = FlowersecYamuxStream(id: streamID, session: self, path: path)
+    let stream = FlowersecYamuxStream(
+      id: streamID,
+      session: self,
+      path: path,
+      maxWriteQueueBytes: limits.maxStreamWriteQueueBytes
+    )
     streams[streamID] = stream
     inboundStreamIDs.insert(streamID)
     queuedBytesByStream[streamID] = 0
@@ -753,7 +779,7 @@ actor FlowersecYamuxClient {
 
   private func sessionTransportError(_ error: any Error) -> FlowersecError {
     if let flowersec = error as? FlowersecError {
-      if flowersec.code != .websocketFailed {
+      if flowersec.code != .dialFailed || flowersec.stage != .connect {
         return flowersec.withPath(path)
       }
     }
@@ -787,13 +813,27 @@ actor FlowersecYamuxClient {
 }
 
 actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
+  private struct WindowWaiter {
+    var id: UInt64
+    var continuation: CheckedContinuation<Void, Error>
+  }
+
+  private struct WriteTurnWaiter {
+    var id: UInt64
+    var continuation: CheckedContinuation<Void, Error>
+  }
+
   let id: UInt32
   private weak var session: FlowersecYamuxClient?
   private let path: FlowersecPath
+  private let maxWriteQueueBytes: Int
   private var readBuffer = Data()
   private var waiters: [CheckedContinuation<Void, Error>] = []
-  private var windowWaiters: [CheckedContinuation<Void, Error>] = []
-  private var writeTurnWaiters: [CheckedContinuation<Void, Never>] = []
+  private var windowWaiters: [WindowWaiter] = []
+  private var nextWindowWaiterID: UInt64 = 1
+  private var writeTurnWaiters: [WriteTurnWaiter] = []
+  private var nextWriteTurnWaiterID: UInt64 = 1
+  private var pendingWriteBytes = 0
   private var writeInProgress = false
   private var sendWindow = FlowersecYamuxConstants.initialStreamWindow
   private var established = false
@@ -802,23 +842,34 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
   private var terminalClosed = false
   private var failure: Error?
 
-  init(id: UInt32, session: FlowersecYamuxClient, path: FlowersecPath) {
+  init(
+    id: UInt32,
+    session: FlowersecYamuxClient,
+    path: FlowersecPath,
+    maxWriteQueueBytes: Int
+  ) {
     self.id = id
     self.session = session
     self.path = path
+    self.maxWriteQueueBytes = maxWriteQueueBytes
   }
 
   func write(_ data: Data) async throws {
-    await acquireWriteTurn()
+    try reserveWriteBytes(data.count)
+    defer { releaseWriteBytes(data.count) }
+    try await acquireWriteTurn()
     defer { releaseWriteTurn() }
+    try Task.checkCancellation()
     guard !localFinished, !terminalClosed else { throw FlowersecError.closed(path: path) }
     if let failure { throw failure }
     guard let session else { throw FlowersecError.closed(path: path) }
     var offset = 0
     while offset < data.count {
+      try Task.checkCancellation()
       while sendWindow == 0 {
         try await waitForWindow()
       }
+      try Task.checkCancellation()
       let available = min(data.count - offset, Int(sendWindow))
       let chunk = data.subdata(in: offset..<(offset + available))
       sendWindow -= UInt32(available)
@@ -861,6 +912,7 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
     guard !localFinished, !terminalClosed else { return }
     localFinished = true
     resumeWindowWaiters(error: FlowersecError.closed(path: path))
+    resumeWriteTurnWaiters(error: FlowersecError.closed(path: path))
     await session?.closeStream(streamID: id)
   }
 
@@ -871,6 +923,7 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
     readBuffer.removeAll()
     resumeWaiters(error: FlowersecError.closed(path: path))
     resumeWindowWaiters(error: FlowersecError.closed(path: path))
+    resumeWriteTurnWaiters(error: FlowersecError.closed(path: path))
     guard let session else { throw FlowersecError.closed(path: path) }
     try await session.resetStream(id)
   }
@@ -909,6 +962,7 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
     readBuffer.removeAll()
     resumeWaiters(error: error)
     resumeWindowWaiters(error: error)
+    resumeWriteTurnWaiters(error: error)
   }
 
   fileprivate func closeFromSession() {
@@ -916,6 +970,7 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
     readBuffer.removeAll()
     resumeWaiters(error: FlowersecError.closed(path: path))
     resumeWindowWaiters(error: FlowersecError.closed(path: path))
+    resumeWriteTurnWaiters(error: FlowersecError.closed(path: path))
   }
 
   fileprivate var isFullyDrained: Bool {
@@ -929,11 +984,28 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
   }
 
   private func waitForWindow() async throws {
+    try Task.checkCancellation()
     if let failure { throw failure }
     guard !localFinished, !terminalClosed else { throw FlowersecError.closed(path: path) }
-    try await withCheckedThrowingContinuation { continuation in
-      windowWaiters.append(continuation)
+    let waiterID = nextWindowWaiterID
+    nextWindowWaiterID += 1
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation {
+        (continuation: CheckedContinuation<Void, Error>) in
+        if Task.isCancelled {
+          continuation.resume(throwing: CancellationError())
+        } else {
+          windowWaiters.append(WindowWaiter(id: waiterID, continuation: continuation))
+        }
+      }
+    } onCancel: {
+      Task { await self.cancelWindowWaiter(waiterID) }
     }
+  }
+
+  private func cancelWindowWaiter(_ waiterID: UInt64) {
+    guard let index = windowWaiters.firstIndex(where: { $0.id == waiterID }) else { return }
+    windowWaiters.remove(at: index).continuation.resume(throwing: CancellationError())
   }
 
   private func resumeWaiters(error: Error) {
@@ -950,14 +1022,48 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
     for waiter in current { waiter.resume() }
   }
 
-  private func acquireWriteTurn() async {
+  private func reserveWriteBytes(_ count: Int) throws {
+    guard count <= maxWriteQueueBytes - pendingWriteBytes else {
+      throw FlowersecError.resourceExhausted(
+        path: path,
+        stage: .yamux,
+        "The yamux stream write queue limit was reached."
+      )
+    }
+    pendingWriteBytes += count
+  }
+
+  private func releaseWriteBytes(_ count: Int) {
+    pendingWriteBytes -= count
+  }
+
+  private func acquireWriteTurn() async throws {
+    try Task.checkCancellation()
     if !writeInProgress {
       writeInProgress = true
       return
     }
-    await withCheckedContinuation { continuation in
-      writeTurnWaiters.append(continuation)
+    let waiterID = nextWriteTurnWaiterID
+    nextWriteTurnWaiterID += 1
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation {
+        (continuation: CheckedContinuation<Void, Error>) in
+        if Task.isCancelled {
+          continuation.resume(throwing: CancellationError())
+        } else {
+          writeTurnWaiters.append(
+            WriteTurnWaiter(id: waiterID, continuation: continuation)
+          )
+        }
+      }
+    } onCancel: {
+      Task { await self.cancelWriteTurnWaiter(waiterID) }
     }
+  }
+
+  private func cancelWriteTurnWaiter(_ waiterID: UInt64) {
+    guard let index = writeTurnWaiters.firstIndex(where: { $0.id == waiterID }) else { return }
+    writeTurnWaiters.remove(at: index).continuation.resume(throwing: CancellationError())
   }
 
   private func releaseWriteTurn() {
@@ -965,7 +1071,15 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
       writeInProgress = false
       return
     }
-    writeTurnWaiters.removeFirst().resume()
+    writeTurnWaiters.removeFirst().continuation.resume()
+  }
+
+  private func resumeWriteTurnWaiters(error: Error) {
+    let current = writeTurnWaiters
+    writeTurnWaiters.removeAll()
+    for waiter in current {
+      waiter.continuation.resume(throwing: error)
+    }
   }
 
   private func resumeWindowWaiters(error: Error? = nil) {
@@ -973,9 +1087,9 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
     windowWaiters.removeAll()
     for waiter in current {
       if let error {
-        waiter.resume(throwing: error)
+        waiter.continuation.resume(throwing: error)
       } else {
-        waiter.resume()
+        waiter.continuation.resume()
       }
     }
   }

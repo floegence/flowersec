@@ -92,7 +92,7 @@ struct TunnelAttach: Encodable {
       throw FlowersecError(
         path: .tunnel,
         stage: .attach,
-        code: .invalidInput,
+        code: .invalidAttach,
         message: "Tunnel attach JSON could not be encoded."
       )
     }

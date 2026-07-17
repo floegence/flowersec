@@ -33,6 +33,8 @@ Human-readable detail belongs in the message and underlying cause.
 
 The machine-readable source of truth is `stability/connect_error_code_registry.json`.
 
+Each registry entry lists the stages where that code is valid. SDK mapping tests require every stable stage/code pair they expose to be a member of that set instead of collapsing a precise failure into a generic WebSocket, handshake, or RPC label. A language does not need to emit server-only or platform-specific pairs that do not apply to it. Swift's `FlowersecCode` cases are required to equal the full registry code set; the other SDKs consume the same registry through contract tests.
+
 Common codes include:
 
 - validation/configuration:
@@ -93,7 +95,29 @@ Common codes include:
 
 `resource_exhausted` means a configured generic transport, secure-channel, multiplexing, RPC, or queue limit was reached. Callers should apply backpressure, reduce concurrency, or reconnect with a fresh session as appropriate. It must not be used to encode an application-specific quota or policy. Transport implementations map their limit failures to the nearest high-level stage, such as `connect`, `secure`, `yamux`, `rpc`, or `close`.
 
+Yamux liveness probes use `yamux/timeout` when the configured ping deadline expires. Other ping or transport failures remain `ping_failed`, while caller cancellation remains `canceled`. A timed-out automatic probe also emits the low-cardinality `liveness_timeout` diagnostic event before the session terminates.
+
 The browser proxy runtime maps a full HTTP stream-admission queue to HTTP `503`. Its error message retains the shared `resource_exhausted` code; the Service Worker bridge wire is otherwise unchanged.
+
+## Reconnect terminal classification
+
+The exact non-retryable connection code set is the `reconnect_terminal_codes` array in `stability/connect_error_code_registry.json`. It currently contains:
+
+- `invalid_input`
+- `invalid_option`
+- `role_mismatch`
+- `transport_policy_denied`
+- `invalid_psk`
+- `invalid_suite`
+- `missing_grant`
+- `missing_connect_info`
+- `missing_tunnel_url`
+- `missing_ws_url`
+- `missing_channel_id`
+- `missing_token`
+- `missing_init_exp`
+
+Explicit cancellation is also terminal. Other connection failures remain retryable when automatic reconnect is enabled. After an established session terminates unexpectedly, reconnect waits the configured first backoff interval, including jitter, before acquiring a fresh artifact and dialing again. Disconnecting during that wait cancels it immediately.
 
 ## Controlplane helper contract
 

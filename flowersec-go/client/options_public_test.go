@@ -19,6 +19,7 @@ var _ client.ConnectOption = client.WithLivenessDisabled()
 var _ client.ConnectOption = client.WithLiveness(client.LivenessOptions{})
 var _ client.ConnectOption = client.WithYamuxLimits(client.YamuxLimits{})
 var _ client.ConnectOption = client.WithOutboundRecordChunkBytes(64 * 1024)
+var _ client.ConnectOption = client.WithMaxOutboundBufferedBytes(4 * 1024 * 1024)
 
 func TestWithEndpointInstanceID_RejectsDirect(t *testing.T) {
 	_, err := client.ConnectDirect(

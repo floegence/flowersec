@@ -28,7 +28,8 @@ type ClientHandshakeOptions struct {
 
 	MaxHandshakePayload      int // Maximum handshake JSON payload size.
 	MaxRecordBytes           int // Maximum encrypted record size on the wire.
-	MaxBufferedBytes         int // Maximum buffered plaintext bytes in SecureChannel.
+	MaxBufferedBytes         int // Maximum inbound buffered plaintext bytes in SecureChannel.
+	MaxOutboundBufferedBytes int // Maximum admitted unfinished application write bytes.
 	OutboundRecordChunkBytes int // Preferred maximum plaintext bytes per outbound record.
 }
 
@@ -45,7 +46,8 @@ type ServerHandshakeOptions struct {
 
 	MaxHandshakePayload      int // Maximum handshake JSON payload size.
 	MaxRecordBytes           int // Maximum encrypted record size on the wire.
-	MaxBufferedBytes         int // Maximum buffered plaintext bytes in SecureChannel.
+	MaxBufferedBytes         int // Maximum inbound buffered plaintext bytes in SecureChannel.
+	MaxOutboundBufferedBytes int // Maximum admitted unfinished application write bytes.
 	OutboundRecordChunkBytes int // Preferred maximum plaintext bytes per outbound record.
 }
 
@@ -115,11 +117,20 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts ClientHandshak
 	if opts.ChannelID == "" {
 		return nil, errors.New("missing channel_id")
 	}
+	if opts.MaxBufferedBytes < 0 {
+		return nil, errors.New("max buffered bytes must be >= 0")
+	}
+	if opts.MaxOutboundBufferedBytes < 0 {
+		return nil, errors.New("max outbound buffered bytes must be >= 0")
+	}
 	if opts.Suite == 0 {
 		opts.Suite = SuiteX25519HKDFAES256GCM
 	}
 	if opts.MaxBufferedBytes == 0 {
-		opts.MaxBufferedBytes = defaults.MaxOutboundBufferedBytes
+		opts.MaxBufferedBytes = defaults.MaxInboundBufferedBytes
+	}
+	if opts.MaxOutboundBufferedBytes == 0 {
+		opts.MaxOutboundBufferedBytes = defaults.MaxOutboundBufferedBytes
 	}
 	if opts.MaxHandshakePayload <= 0 {
 		opts.MaxHandshakePayload = defaults.MaxHandshakePayloadBytes
@@ -263,6 +274,10 @@ func ClientHandshake(ctx context.Context, t BinaryTransport, opts ClientHandshak
 		SendSeq:      1,
 		RecvSeq:      2,
 	}, opts.MaxRecordBytes, opts.MaxBufferedBytes)
+	if err := secure.SetMaxOutboundBufferedBytes(opts.MaxOutboundBufferedBytes); err != nil {
+		_ = secure.Close()
+		return nil, err
+	}
 	if err := secure.SetOutboundRecordChunkBytes(opts.OutboundRecordChunkBytes); err != nil {
 		_ = secure.Close()
 		return nil, err
@@ -275,6 +290,12 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 	if len(opts.PSK) != 32 {
 		return nil, ErrInvalidPSK
 	}
+	if opts.MaxBufferedBytes < 0 {
+		return nil, errors.New("max buffered bytes must be >= 0")
+	}
+	if opts.MaxOutboundBufferedBytes < 0 {
+		return nil, errors.New("max outbound buffered bytes must be >= 0")
+	}
 	if cache == nil {
 		cache = NewServerHandshakeCache()
 	}
@@ -282,7 +303,10 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 		opts.Suite = SuiteX25519HKDFAES256GCM
 	}
 	if opts.MaxBufferedBytes == 0 {
-		opts.MaxBufferedBytes = defaults.MaxOutboundBufferedBytes
+		opts.MaxBufferedBytes = defaults.MaxInboundBufferedBytes
+	}
+	if opts.MaxOutboundBufferedBytes == 0 {
+		opts.MaxOutboundBufferedBytes = defaults.MaxOutboundBufferedBytes
 	}
 	if opts.MaxHandshakePayload <= 0 {
 		opts.MaxHandshakePayload = defaults.MaxHandshakePayloadBytes
@@ -522,6 +546,10 @@ func ServerHandshake(ctx context.Context, t BinaryTransport, cache *ServerHandsh
 		SendSeq:      2,
 		RecvSeq:      1,
 	}, opts.MaxRecordBytes, opts.MaxBufferedBytes)
+	if err := secure.SetMaxOutboundBufferedBytes(opts.MaxOutboundBufferedBytes); err != nil {
+		_ = secure.Close()
+		return nil, err
+	}
 	if err := secure.SetOutboundRecordChunkBytes(opts.OutboundRecordChunkBytes); err != nil {
 		_ = secure.Close()
 		return nil, err

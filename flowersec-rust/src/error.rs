@@ -53,6 +53,7 @@ impl ErrorCode {
     pub const HANDSHAKE_FAILED: &'static str = "handshake_failed";
     pub const OPEN_STREAM_FAILED: &'static str = "open_stream_failed";
     pub const ACCEPT_STREAM_FAILED: &'static str = "accept_stream_failed";
+    pub const MISSING_STREAM_KIND: &'static str = "missing_stream_kind";
     pub const STREAM_HELLO_FAILED: &'static str = "stream_hello_failed";
     pub const RPC_FAILED: &'static str = "rpc_failed";
     pub const PING_FAILED: &'static str = "ping_failed";

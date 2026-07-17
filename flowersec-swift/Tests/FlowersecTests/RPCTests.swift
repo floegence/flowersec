@@ -345,6 +345,256 @@ final class FlowersecRPCTests: XCTestCase {
     await client.close()
   }
 
+  func testNotificationsAreFIFOAndSnapshotHandlersWithoutBlockingResponses() async throws {
+    let stream = InMemoryRPCStream()
+    let client = RPCClient(stream: stream)
+    let recorder = RPCNotificationRecorder()
+    let gate = RPCNotificationGate()
+    await client.start()
+
+    let subscription = client.onNotify(7100) { data in
+      let notification = try? JSONDecoder().decode(RPCNotification.self, from: data)
+      guard let value = notification?.value else { return }
+      await recorder.append(value)
+      if value == "first" { await gate.wait() }
+    }
+    await Task.yield()
+
+    try await stream.pushEnvelope(notificationEnvelope(typeID: 7100, value: "first"))
+    try await waitForRPCCondition { await gate.isStarted() }
+    try await stream.pushEnvelope(notificationEnvelope(typeID: 7100, value: "second"))
+
+    async let response: RPCReply = client.call(
+      7101,
+      RPCRequest(value: "while-notification-blocked"),
+      timeout: .seconds(1)
+    )
+    let request = try await stream.nextWrittenEnvelope()
+    try await stream.pushEnvelope(
+      RPCEnvelope(
+        typeID: request.typeID,
+        requestID: 0,
+        responseTo: request.requestID,
+        payload: JSONEncoder.flowersecRPCTest.encode(RPCReply(ok: true)),
+        error: nil
+      )
+    )
+    let decodedResponse = try await response
+    XCTAssertEqual(decodedResponse, RPCReply(ok: true))
+
+    subscription.cancel()
+    await Task.yield()
+    await gate.release()
+    try await waitForRPCCondition { await recorder.count() >= 2 }
+    let recordedValues = await recorder.values()
+    XCTAssertEqual(recordedValues, ["first", "second"])
+    await client.close()
+  }
+
+  func testNotificationQueueOverflowTerminatesPendingCalls() async throws {
+    let stream = InMemoryRPCStream()
+    let client = RPCClient(stream: stream, path: .tunnel)
+    let gate = RPCNotificationGate()
+    await client.start()
+    _ = client.onNotify(7200) { _ in await gate.wait() }
+    await Task.yield()
+
+    try await stream.pushEnvelope(notificationEnvelope(typeID: 7200, value: "active"))
+    try await waitForRPCCondition { await gate.isStarted() }
+
+    let pending = Task {
+      let _: RPCReply = try await client.call(
+        7201,
+        RPCRequest(value: "pending"),
+        timeout: .seconds(5)
+      )
+    }
+    _ = try await stream.nextWrittenEnvelope()
+    for index in 0...FlowersecSDKDefaults.RPC.maxQueuedNotifications {
+      try await stream.pushEnvelope(
+        notificationEnvelope(typeID: 7200, value: "queued-\(index)")
+      )
+    }
+
+    do {
+      try await pending.value
+      XCTFail("Expected notification queue exhaustion")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.path, .tunnel)
+      XCTAssertEqual(error.stage, .rpc)
+      XCTAssertEqual(error.code, .resourceExhausted)
+    }
+    await gate.release()
+    await client.close()
+  }
+
+  func testCloseCancelsActiveNotificationAndDropsQueuedWork() async throws {
+    let stream = InMemoryRPCStream()
+    let client = RPCClient(stream: stream)
+    let recorder = RPCNotificationRecorder()
+    await client.start()
+    _ = client.onNotify(7300) { data in
+      let notification = try? JSONDecoder().decode(RPCNotification.self, from: data)
+      guard let value = notification?.value else { return }
+      await recorder.append(value)
+      do {
+        try await Task.sleep(for: .seconds(5))
+      } catch is CancellationError {
+        await recorder.recordCancellation()
+      } catch {}
+    }
+    await Task.yield()
+
+    try await stream.pushEnvelope(notificationEnvelope(typeID: 7300, value: "active"))
+    try await waitForRPCCondition { await recorder.count() >= 1 }
+    try await stream.pushEnvelope(notificationEnvelope(typeID: 7300, value: "queued"))
+    await client.close()
+    try await waitForRPCCondition { await recorder.wasCanceled() }
+    let recordedValues = await recorder.values()
+    XCTAssertEqual(recordedValues, ["active"])
+  }
+
+  func testEnvelopeRejectsNonPortableJSONIDs() throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let fixtureData = try Data(
+      contentsOf: root.appendingPathComponent("testdata/runtime_contract_vectors.json")
+    )
+    let fixture = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: fixtureData) as? [String: Any]
+    )
+    let maximum = try XCTUnwrap(fixture["max_portable_json_integer"] as? NSNumber).uint64Value
+    XCTAssertEqual(maximum, RPCEnvelope.maximumPortableID)
+    XCTAssertEqual(maximum, RPCClient.maximumPortableRequestID)
+
+    let values = try XCTUnwrap(fixture["rpc_json_integers"] as? [[String: Any]])
+    for item in values {
+      let identifier = try XCTUnwrap(item["id"] as? String)
+      let value = try XCTUnwrap(item["value"])
+      let valid = try XCTUnwrap(item["valid"] as? Bool)
+      let data = try JSONSerialization.data(
+        withJSONObject: [
+          "payload": [:],
+          "request_id": value,
+          "response_to": 0,
+          "type_id": 1,
+        ],
+        options: [.sortedKeys]
+      )
+      if valid {
+        XCTAssertNoThrow(try RPCEnvelope(data: data), identifier)
+      } else {
+        XCTAssertThrowsError(try RPCEnvelope(data: data), identifier)
+      }
+    }
+
+    XCTAssertThrowsError(
+      try RPCEnvelope(
+        typeID: 1,
+        requestID: maximum + 1,
+        responseTo: 0,
+        payload: Data("{}".utf8),
+        error: nil
+      ).encoded()
+    )
+  }
+
+  func testClientRequestIDStopsAtPortableMaximum() async throws {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let fixtureData = try Data(
+      contentsOf: root.appendingPathComponent("testdata/runtime_contract_vectors.json")
+    )
+    let fixture = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: fixtureData) as? [String: Any]
+    )
+    let generation = try XCTUnwrap(fixture["request_id_generation"] as? [String: Any])
+    let first = try XCTUnwrap(generation["first"] as? NSNumber).uint64Value
+    let last = try XCTUnwrap(generation["last"] as? NSNumber).uint64Value
+    XCTAssertEqual(first, 1)
+    XCTAssertEqual(last, RPCClient.maximumPortableRequestID)
+    XCTAssertEqual(generation["after_last"] as? String, "fail_before_write")
+
+    let firstStream = InMemoryRPCStream()
+    let firstClient = RPCClient(stream: firstStream)
+    await firstClient.start()
+    async let firstResponse: RPCReply = firstClient.call(
+      7400,
+      RPCRequest(value: "first"),
+      timeout: .seconds(1)
+    )
+    let firstRequest = try await firstStream.nextWrittenEnvelope()
+    XCTAssertEqual(firstRequest.requestID, first)
+    try await firstStream.pushEnvelope(
+      RPCEnvelope(
+        typeID: 7400,
+        requestID: 0,
+        responseTo: firstRequest.requestID,
+        payload: JSONEncoder.flowersecRPCTest.encode(RPCReply(ok: true)),
+        error: nil
+      )
+    )
+    _ = try await firstResponse
+    await firstClient.close()
+
+    let stream = InMemoryRPCStream()
+    let client = RPCClient(
+      stream: stream,
+      nextRequestID: last
+    )
+    await client.start()
+
+    async let response: RPCReply = client.call(
+      7400,
+      RPCRequest(value: "last"),
+      timeout: .seconds(1)
+    )
+    let request = try await stream.nextWrittenEnvelope()
+    XCTAssertEqual(request.requestID, last)
+    try await stream.pushEnvelope(
+      RPCEnvelope(
+        typeID: 7400,
+        requestID: 0,
+        responseTo: request.requestID,
+        payload: JSONEncoder.flowersecRPCTest.encode(RPCReply(ok: true)),
+        error: nil
+      )
+    )
+    let decodedResponse = try await response
+    XCTAssertEqual(decodedResponse, RPCReply(ok: true))
+
+    do {
+      let _: RPCReply = try await client.call(
+        7400,
+        RPCRequest(value: "overflow"),
+        timeout: .seconds(1)
+      )
+      XCTFail("Expected request ID exhaustion")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.stage, .rpc)
+      XCTAssertEqual(error.code, .rpcFailed)
+    }
+    await client.close()
+  }
+
+}
+
+private func notificationEnvelope(typeID: UInt32, value: String) throws -> RPCEnvelope {
+  RPCEnvelope(
+    typeID: typeID,
+    requestID: 0,
+    responseTo: 0,
+    payload: try JSONEncoder.flowersecRPCTest.encode(RPCNotification(value: value)),
+    error: nil
+  )
+}
+
+private func waitForRPCCondition(
+  _ condition: @escaping @Sendable () async -> Bool
+) async throws {
+  for _ in 0..<200 {
+    if await condition() { return }
+    try await Task.sleep(for: .milliseconds(5))
+  }
+  throw RPCWaitTimeout()
 }
 
 private struct RPCRequest: Codable, Equatable {
@@ -360,3 +610,42 @@ private struct RPCNotification: Codable, Equatable {
 }
 
 private struct IntentionalRPCServerError: Error {}
+private struct RPCWaitTimeout: Error {}
+
+private actor RPCNotificationGate {
+  private var started = false
+  private var released = false
+  private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    started = true
+    if released { return }
+    await withCheckedContinuation { releaseWaiters.append($0) }
+  }
+
+  func isStarted() -> Bool { started }
+
+  func release() {
+    released = true
+    let waiters = releaseWaiters
+    releaseWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+  }
+}
+
+private actor RPCNotificationRecorder {
+  private var recorded: [String] = []
+  private var canceled = false
+
+  func append(_ value: String) {
+    recorded.append(value)
+  }
+
+  func values() -> [String] { recorded }
+  func count() -> Int { recorded.count }
+  func wasCanceled() -> Bool { canceled }
+
+  func recordCancellation() {
+    canceled = true
+  }
+}

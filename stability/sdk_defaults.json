@@ -9,6 +9,7 @@
     "max_handshake_payload_bytes": 8192,
     "max_record_bytes": 1048576,
     "outbound_record_chunk_bytes": 65536,
+    "max_inbound_buffered_bytes": 4194304,
     "max_outbound_buffered_bytes": 4194304
   },
   "yamux": {
@@ -16,6 +17,7 @@
     "max_inbound_streams": 32,
     "max_frame_bytes": 262144,
     "preferred_outbound_frame_bytes": 65536,
+    "max_stream_write_queue_bytes": 4194304,
     "max_stream_receive_bytes": 262144,
     "max_session_receive_bytes": 16777216
   },

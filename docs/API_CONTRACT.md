@@ -33,6 +33,8 @@ Recommended integration entrypoints:
   - `client.WithObserver(...)`
   - `client.WithTransportSecurityPolicy(...)`
   - `client.WithOutboundRecordChunkBytes(...)`
+  - `client.WithMaxBufferedBytes(...)`
+  - `client.WithMaxOutboundBufferedBytes(...)`
   - `client.WithYamuxLimits(...)`
   - `client.WithLiveness(...)`
   - `client.WithLivenessDisabled()`
@@ -64,6 +66,8 @@ Recommended integration entrypoints:
   - `endpoint.DirectHandshakeCredential`
   - `endpoint.WithTransportSecurityPolicy(...)`
   - `endpoint.WithOutboundRecordChunkBytes(...)`
+  - `endpoint.WithMaxBufferedBytes(...)`
+  - `endpoint.WithMaxOutboundBufferedBytes(...)`
   - `endpoint.WithYamuxLimits(...)`
   - `endpoint.WithLiveness(...)`
   - `endpoint.WithLivenessDisabled()`
@@ -171,6 +175,12 @@ Recommended integration entrypoints:
   - shared machine-readable `{path, stage, code}` types
   - `fserrors.CodeResourceExhausted`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/issuer`
+  - `issuer.Keyset`
+  - `issuer.New(...)`
+  - `issuer.NewRandom(...)`
+  - `issuer.Keyset.AddVerificationKey(...)`
+  - `issuer.Keyset.Rotate(...)`
+  - `issuer.Keyset.RetireVerificationKey(...)`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/token`
 - `github.com/floegence/flowersec/flowersec-go/tunnel/server`
@@ -282,6 +292,8 @@ Package entrypoints:
   - `signToken(...)`
   - `verifyToken(...)`
   - `ChannelInitService`
+
+`IssuerKeyset` has one active signing key and a set of published verification keys. A new key must be added with `addVerificationKey(...)` before `rotate(...)` can activate its matching signing seed. `retireVerificationKey(...)` rejects the active key and unknown key IDs. `dispose()` is idempotent and terminal: signing, rotation, key publication, retirement, key inspection, and export all fail after disposal.
 - `@floegence/flowersec-core/endpoint`
   - `Session`
   - `Session.rekey()`
@@ -431,6 +443,9 @@ Endpoint, controlplane, reconnect, and proxy building blocks:
 - `Controlplane`
 - `FST2Token`
 - `TokenIssuer`
+  - `TokenIssuer.addVerificationKey(kid:publicKey:)`
+  - `TokenIssuer.rotate(kid:seed:)`
+  - `TokenIssuer.retireVerificationKey(kid:)`
 - `ChannelInitService`
 - `ArtifactSource`
 - `ReconnectManager`
@@ -492,11 +507,36 @@ Entrypoints and modules:
 - `flowersec::controlplane::client`
 - `flowersec::controlplane::token`
 - `flowersec::controlplane::issuer`
+- `flowersec::controlplane::issuer::Keyset`
+- `Keyset::add_verification_key(...)`
+- `Keyset::rotate(...)`
+- `Keyset::retire_verification_key(...)`
 - `flowersec::controlplane::channelinit`
 - `flowersec::reconnect::ReconnectManager`
 - `flowersec::reconnect::ReconnectManager::disconnect(...)`
 - `flowersec::proxy::ProxyClient`
 - `flowersec::proxy::ProxyServer`
+
+## Shared issuer and runtime contracts
+
+Issuer rotation uses one path in all four SDKs:
+
+1. Publish the next verification key.
+2. Deploy or reload the complete overlap keyset on every verifier.
+3. Activate the matching private key in the issuer.
+4. Retire the previous verification key only after the overlap window has elapsed.
+
+Rotation never inserts a missing verification key implicitly. Reusing a key ID with different key material fails without changing issuer state. Public key snapshots are isolated from caller mutation, and serialized tunnel keysets are ordered by key ID.
+
+The canonical resource defaults are recorded in `stability/sdk_defaults.json`:
+
+- `max_inbound_buffered_bytes` bounds retained decrypted plaintext where a secure-channel implementation maintains an inbound buffer.
+- `max_outbound_buffered_bytes` bounds the total bytes of accepted logical application writes that have not completed. It is not a per-record or per-frame limit.
+- `max_stream_write_queue_bytes` is the independent Yamux per-stream write queue budget. It must not reuse the secure-channel outbound budget merely because the numeric defaults currently match.
+
+RPC request and response IDs use the portable JSON integer range `0...9007199254740991`. Generated request IDs use `1...9007199254740991`; `0` remains the unset value. An exhausted generator fails before writing and never wraps.
+
+The cross-language executable evidence is `testdata/issuer_rotation_vectors.json` and `testdata/runtime_contract_vectors.json`.
 
 ## Contract enforcement
 

@@ -1,10 +1,13 @@
 package rpc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"strconv"
 	"sync"
 	"time"
 
@@ -15,6 +18,8 @@ import (
 )
 
 const maxInvalidJSONFrames = 3
+
+const maxPortableRequestID uint64 = 1<<53 - 1
 
 const (
 	defaultMaxConcurrentRequests  = defaults.RPCMaxConcurrentRequests
@@ -223,8 +228,8 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 			return err
 		}
-		var env rpcv1.RpcEnvelope
-		if err := json.Unmarshal(b, &env); err != nil {
+		env, err := decodeEnvelope(b)
+		if err != nil {
 			invalidJSONFrames++
 			if invalidJSONFrames >= maxInvalidJSONFrames {
 				s.obs.ServerFrameError(observability.RPCFrameRead)
@@ -433,6 +438,9 @@ func (c *Client) reserve() (uint64, chan rpcv1.RpcEnvelope, error) {
 		return 0, nil, io.ErrClosedPipe
 	}
 	id := c.nextID
+	if id == 0 || id > maxPortableRequestID {
+		return 0, nil, errors.New("request id overflow")
+	}
 	c.nextID++
 	ch := make(chan rpcv1.RpcEnvelope, 1)
 	c.pending[id] = ch
@@ -456,8 +464,8 @@ func (c *Client) readLoop() {
 			c.closeAll(err)
 			return
 		}
-		var env rpcv1.RpcEnvelope
-		if err := json.Unmarshal(b, &env); err != nil {
+		env, err := decodeEnvelope(b)
+		if err != nil {
 			invalidJSONFrames++
 			if invalidJSONFrames >= maxInvalidJSONFrames {
 				c.obs.ClientFrameError(observability.RPCFrameRead)
@@ -499,6 +507,48 @@ func (c *Client) readLoop() {
 			}
 		}
 	}
+}
+
+func decodeEnvelope(data []byte) (rpcv1.RpcEnvelope, error) {
+	var ids struct {
+		RequestID  json.RawMessage `json:"request_id"`
+		ResponseTo json.RawMessage `json:"response_to"`
+	}
+	if err := json.Unmarshal(data, &ids); err != nil {
+		return rpcv1.RpcEnvelope{}, err
+	}
+	requestID, err := parsePortableRequestID("request_id", ids.RequestID)
+	if err != nil {
+		return rpcv1.RpcEnvelope{}, err
+	}
+	responseTo, err := parsePortableRequestID("response_to", ids.ResponseTo)
+	if err != nil {
+		return rpcv1.RpcEnvelope{}, err
+	}
+	var envelope rpcv1.RpcEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return rpcv1.RpcEnvelope{}, err
+	}
+	envelope.RequestId = requestID
+	envelope.ResponseTo = responseTo
+	return envelope, nil
+}
+
+func parsePortableRequestID(name string, raw json.RawMessage) (uint64, error) {
+	value := bytes.TrimSpace(raw)
+	if len(value) == 0 {
+		return 0, fmt.Errorf("rpc envelope missing %s", name)
+	}
+	for _, b := range value {
+		if b < '0' || b > '9' {
+			return 0, fmt.Errorf("rpc envelope invalid %s", name)
+		}
+	}
+	parsed, err := strconv.ParseUint(string(value), 10, 64)
+	if err != nil || parsed > maxPortableRequestID {
+		return 0, fmt.Errorf("rpc envelope invalid %s", name)
+	}
+	return parsed, nil
 }
 
 func (c *Client) closeAll(err error) {

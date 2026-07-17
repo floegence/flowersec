@@ -33,6 +33,8 @@ var requiredPortableCapabilityIDs = []string{
 var requiredSharedFixtureIDs = []string{
 	"connect_artifact",
 	"e2ee",
+	"issuer_rotation",
+	"runtime_contracts",
 	"token",
 	"portable_protocol_contracts",
 	"connect_error_registry",
@@ -59,9 +61,10 @@ type capabilityImplementation struct {
 }
 
 type runtimeSpecificCapability struct {
-	ID     string `json:"id"`
-	Owner  string `json:"owner"`
-	Reason string `json:"reason"`
+	ID       string   `json:"id"`
+	Owner    string   `json:"owner"`
+	Reason   string   `json:"reason"`
+	Evidence []string `json:"evidence,omitempty"`
 }
 
 type sharedFixture struct {
@@ -92,6 +95,7 @@ type e2eeDefaults struct {
 	MaxHandshakePayloadBytes int `json:"max_handshake_payload_bytes"`
 	MaxRecordBytes           int `json:"max_record_bytes"`
 	OutboundRecordChunkBytes int `json:"outbound_record_chunk_bytes"`
+	MaxInboundBufferedBytes  int `json:"max_inbound_buffered_bytes"`
 	MaxOutboundBufferedBytes int `json:"max_outbound_buffered_bytes"`
 }
 
@@ -100,6 +104,7 @@ type yamuxDefaults struct {
 	MaxInboundStreams           int `json:"max_inbound_streams"`
 	MaxFrameBytes               int `json:"max_frame_bytes"`
 	PreferredOutboundFrameBytes int `json:"preferred_outbound_frame_bytes"`
+	MaxStreamWriteQueueBytes    int `json:"max_stream_write_queue_bytes"`
 	MaxStreamReceiveBytes       int `json:"max_stream_receive_bytes"`
 	MaxSessionReceiveBytes      int `json:"max_session_receive_bytes"`
 }
@@ -244,6 +249,13 @@ func verifyParity(repoRoot string) error {
 				if _, err := os.Stat(filepath.Join(repoRoot, evidence)); err != nil {
 					return fmt.Errorf("capability %s language %s evidence %q: %w", capability.ID, language, evidence, err)
 				}
+			}
+		}
+	}
+	for _, capability := range m.RuntimeSpecificCapabilities {
+		for _, evidence := range capability.Evidence {
+			if err := requireFile(repoRoot, "runtime-specific capability "+capability.ID, evidence); err != nil {
+				return err
 			}
 		}
 	}
@@ -596,11 +608,13 @@ func verifyDefaults(repoRoot string) error {
 		"e2ee.max_handshake_payload_bytes":     m.E2EE.MaxHandshakePayloadBytes,
 		"e2ee.max_record_bytes":                m.E2EE.MaxRecordBytes,
 		"e2ee.outbound_record_chunk_bytes":     m.E2EE.OutboundRecordChunkBytes,
+		"e2ee.max_inbound_buffered_bytes":      m.E2EE.MaxInboundBufferedBytes,
 		"e2ee.max_outbound_buffered_bytes":     m.E2EE.MaxOutboundBufferedBytes,
 		"yamux.max_active_streams":             m.Yamux.MaxActiveStreams,
 		"yamux.max_inbound_streams":            m.Yamux.MaxInboundStreams,
 		"yamux.max_frame_bytes":                m.Yamux.MaxFrameBytes,
 		"yamux.preferred_outbound_frame_bytes": m.Yamux.PreferredOutboundFrameBytes,
+		"yamux.max_stream_write_queue_bytes":   m.Yamux.MaxStreamWriteQueueBytes,
 		"yamux.max_stream_receive_bytes":       m.Yamux.MaxStreamReceiveBytes,
 		"yamux.max_session_receive_bytes":      m.Yamux.MaxSessionReceiveBytes,
 		"rpc.max_json_frame_bytes":             m.RPC.MaxJSONFrameBytes,

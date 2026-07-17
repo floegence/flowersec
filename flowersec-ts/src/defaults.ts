@@ -8,6 +8,7 @@ export const SDK_DEFAULTS = Object.freeze({
     maxHandshakePayloadBytes: 8 * 1024,
     maxRecordBytes: 1024 * 1024,
     outboundRecordChunkBytes: 64 * 1024,
+    maxInboundBufferedBytes: 4 * 1024 * 1024,
     maxOutboundBufferedBytes: 4 * 1024 * 1024,
   }),
   yamux: Object.freeze({
@@ -15,6 +16,7 @@ export const SDK_DEFAULTS = Object.freeze({
     maxInboundStreams: 32,
     maxFrameBytes: 256 * 1024,
     preferredOutboundFrameBytes: 64 * 1024,
+    maxStreamWriteQueueBytes: 4 * 1024 * 1024,
     maxStreamReceiveBytes: 256 * 1024,
     maxSessionReceiveBytes: 16 * 1024 * 1024,
   }),

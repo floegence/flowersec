@@ -45,6 +45,47 @@ func TestSignRequiresKidAudAndTokenID(t *testing.T) {
 	}
 }
 
+func TestSignAndVerifyTrimKID(t *testing.T) {
+	priv := newKeypair()
+	pub := priv.Public().(ed25519.PublicKey)
+	payload := Payload{
+		Kid: " kid ", Aud: "aud", ChannelID: "ch", Role: 1, TokenID: "tid",
+		InitExp: 100, IdleTimeoutSeconds: 60, Iat: 10, Exp: 50,
+	}
+	tokenString, err := Sign(priv, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Verify(tokenString, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Kid != "kid" {
+		t.Fatalf("verified kid = %q, want %q", parsed.Kid, "kid")
+	}
+
+	spacedKIDToken := signUnchecked(t, priv, payload)
+	parsed, err = Verify(spacedKIDToken, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Kid != "kid" {
+		t.Fatalf("spaced KID verified as %q, want %q", parsed.Kid, "kid")
+	}
+}
+
+func TestSignRejectsInvalidPrivateKeyWithoutPanic(t *testing.T) {
+	valid := Payload{
+		Kid: "kid", Aud: "aud", ChannelID: "ch", Role: 1, TokenID: "tid",
+		InitExp: 100, IdleTimeoutSeconds: 60, Iat: 10, Exp: 50,
+	}
+	for _, size := range []int{0, ed25519.SeedSize, ed25519.PrivateKeySize - 1} {
+		if _, err := Sign(make([]byte, size), valid); !errors.Is(err, ErrInvalidPrivateKey) {
+			t.Fatalf("Sign key size %d error = %v", size, err)
+		}
+	}
+}
+
 func TestParseRejectsInvalidInputs(t *testing.T) {
 	if _, _, _, err := Parse("bad"); !errors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected invalid format, got %v", err)
@@ -115,6 +156,27 @@ func TestVerifyRejectsAudienceIssuerAndTime(t *testing.T) {
 	badExpToken := signUnchecked(t, priv, badExp)
 	if _, err := Verify(badExpToken, StaticKeyset{"kid": pub}, VerifyOptions{Now: time.Unix(20, 0)}); !errors.Is(err, ErrExpAfterInit) {
 		t.Fatalf("expected exp after init, got %v", err)
+	}
+}
+
+func TestVerifyRejectsNilMissingAndInvalidPublicKeysWithoutPanic(t *testing.T) {
+	privateKey := newKeypair()
+	tokenString, err := Sign(privateKey, Payload{
+		Kid: "kid", Aud: "aud", ChannelID: "ch", Role: 1, TokenID: "tid",
+		InitExp: 100, IdleTimeoutSeconds: 60, Iat: 10, Exp: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := VerifyOptions{Now: time.Unix(20, 0)}
+	if _, err := Verify(tokenString, nil, opts); !errors.Is(err, ErrUnknownKID) {
+		t.Fatalf("nil lookup error = %v", err)
+	}
+	if _, err := Verify(tokenString, StaticKeyset{}, opts); !errors.Is(err, ErrUnknownKID) {
+		t.Fatalf("missing key error = %v", err)
+	}
+	if _, err := Verify(tokenString, StaticKeyset{"kid": make([]byte, ed25519.PublicKeySize-1)}, opts); !errors.Is(err, ErrInvalidSig) {
+		t.Fatalf("invalid public key error = %v", err)
 	}
 }
 

@@ -24,7 +24,7 @@ import (
 type SecureChannel struct {
 	t                BinaryTransport // Underlying transport for encrypted frames.
 	maxRecordBytes   int             // Max encoded record size in bytes.
-	maxBufferedBytes int             // Max buffered plaintext bytes before failing.
+	maxBufferedBytes int             // Max inbound buffered plaintext bytes before failing.
 	outboundChunk    int             // Preferred maximum plaintext bytes per outbound record.
 
 	mu      sync.Mutex   // Guards read buffer and read state.
@@ -45,6 +45,9 @@ type SecureChannel struct {
 	sendErr     error     // Sticky send error from writeLoop.
 	sendOnce    sync.Once // Ensures send shutdown happens once.
 
+	maxOutboundBufferedBytes int // Max admitted unfinished logical application write bytes.
+	pendingOutboundBytes     int // Admitted unfinished logical application write bytes.
+
 	writeNotify   chan struct{} // Closed+replaced to wake Write waiters (deadline changes, close).
 	writeDeadline time.Time     // Write deadline for net.Conn Write; zero means no deadline.
 
@@ -53,6 +56,9 @@ type SecureChannel struct {
 
 // ErrRecvBufferExceeded indicates buffered plaintext exceeded the configured cap.
 var ErrRecvBufferExceeded = errors.New("recv buffer exceeded")
+
+// ErrOutboundBufferExceeded indicates unfinished logical writes exceeded the configured cap.
+var ErrOutboundBufferExceeded = errors.New("outbound buffer exceeded")
 
 const DefaultOutboundRecordChunkBytes = defaults.OutboundRecordChunkBytes
 
@@ -68,17 +74,36 @@ type sendReq struct {
 // NewSecureChannel wraps a BinaryTransport with record encryption and buffering.
 func NewSecureChannel(t BinaryTransport, keys RecordKeyState, maxRecordBytes int, maxBufferedBytes int) *SecureChannel {
 	c := &SecureChannel{
-		t:                t,
-		maxRecordBytes:   maxRecordBytes,
-		maxBufferedBytes: maxBufferedBytes,
-		outboundChunk:    DefaultOutboundRecordChunkBytes,
-		readNotify:       make(chan struct{}),
-		writeNotify:      make(chan struct{}),
-		sendWake:         make(chan struct{}, 1),
-		keys:             keys,
+		t:                        t,
+		maxRecordBytes:           maxRecordBytes,
+		maxBufferedBytes:         maxBufferedBytes,
+		outboundChunk:            DefaultOutboundRecordChunkBytes,
+		maxOutboundBufferedBytes: defaults.MaxOutboundBufferedBytes,
+		readNotify:               make(chan struct{}),
+		writeNotify:              make(chan struct{}),
+		sendWake:                 make(chan struct{}, 1),
+		keys:                     keys,
 	}
 	go c.readLoop()
 	return c
+}
+
+// SetMaxOutboundBufferedBytes sets the maximum admitted unfinished application write bytes.
+// A zero value restores the canonical 4 MiB default.
+func (c *SecureChannel) SetMaxOutboundBufferedBytes(n int) error {
+	if n < 0 {
+		return errors.New("max outbound buffered bytes must be >= 0")
+	}
+	if n == 0 {
+		n = defaults.MaxOutboundBufferedBytes
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.pendingOutboundBytes > n {
+		return errors.New("max outbound buffered bytes is below current usage")
+	}
+	c.maxOutboundBufferedBytes = n
+	return nil
 }
 
 // SetOutboundRecordChunkBytes sets the preferred outbound plaintext record size.
@@ -295,6 +320,11 @@ func (c *SecureChannel) Read(p []byte) (int, error) {
 
 // Write splits payloads into record-sized chunks and enqueues them for sending.
 func (c *SecureChannel) Write(p []byte) (int, error) {
+	if err := c.reserveOutboundBytes(len(p)); err != nil {
+		return 0, err
+	}
+	defer c.releaseOutboundBytes(len(p))
+
 	c.writeCallMu.Lock()
 	defer c.writeCallMu.Unlock()
 
@@ -353,6 +383,23 @@ func (c *SecureChannel) Write(p []byte) (int, error) {
 		p = p[len(chunk):]
 	}
 	return total, nil
+}
+
+func (c *SecureChannel) reserveOutboundBytes(n int) error {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	limit := c.maxOutboundBufferedBytes
+	if limit <= 0 || n > limit || c.pendingOutboundBytes > limit-n {
+		return ErrOutboundBufferExceeded
+	}
+	c.pendingOutboundBytes += n
+	return nil
+}
+
+func (c *SecureChannel) releaseOutboundBytes(n int) {
+	c.sendMu.Lock()
+	c.pendingOutboundBytes -= n
+	c.sendMu.Unlock()
 }
 
 func (c *SecureChannel) Close() error {
