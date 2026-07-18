@@ -100,6 +100,7 @@ pub struct Client {
     path: Path,
     secure: Arc<dyn crate::e2ee::SecureChannelControl>,
     session: YamuxSession,
+    acceptor: streamhello::Acceptor,
     rpc: RpcClient,
 }
 
@@ -149,14 +150,16 @@ impl Client {
     }
 
     pub async fn accept_stream(&self) -> Result<(String, YamuxStream), FlowersecError> {
-        let stream = self.session.accept_stream().await.map_err(|error| {
-            let code = yamux_session_code(&error, ErrorCode::ACCEPT_STREAM_FAILED);
-            FlowersecError::new(self.path, Stage::Yamux, code, "failed to accept stream")
-                .with_source(error)
-        })?;
-        let kind = match streamhello::read(&stream, crate::defaults::MAX_STREAM_HELLO_BYTES).await {
-            Ok(kind) => kind,
-            Err(error) => {
+        match self.acceptor.accept().await {
+            Ok(accepted) => Ok(accepted),
+            Err(streamhello::AcceptError::Yamux(error)) => {
+                let code = yamux_session_code(&error, ErrorCode::ACCEPT_STREAM_FAILED);
+                Err(
+                    FlowersecError::new(self.path, Stage::Yamux, code, "failed to accept stream")
+                        .with_source(error),
+                )
+            }
+            Err(streamhello::AcceptError::Hello(error)) => {
                 let code = match self.session.terminal_error().await {
                     Some(terminal) => yamux_session_code(&terminal, ErrorCode::STREAM_HELLO_FAILED),
                     None => match &error {
@@ -166,16 +169,12 @@ impl Client {
                         _ => ErrorCode::STREAM_HELLO_FAILED,
                     },
                 };
-                return Err(FlowersecError::new(
-                    self.path,
-                    Stage::Rpc,
-                    code,
-                    "failed to read stream hello",
+                Err(
+                    FlowersecError::new(self.path, Stage::Rpc, code, "failed to read stream hello")
+                        .with_source(error),
                 )
-                .with_source(error));
             }
-        };
-        Ok((kind, stream))
+        }
     }
 
     pub async fn probe_liveness(&self, timeout: Duration) -> Result<Duration, FlowersecError> {
@@ -300,7 +299,7 @@ pub async fn connect_tunnel(
     let psk = decode_psk(&grant.e2ee_psk_b64u, Path::Tunnel)?;
     options
         .transport_security_policy
-        .evaluate(&url, Path::Tunnel)
+        .evaluate_raw(&grant.tunnel_url, &url, Path::Tunnel)
         .await?;
     if url.scheme() == "ws" {
         emit(
@@ -360,7 +359,7 @@ pub async fn connect_direct(
     let psk = decode_psk(&info.e2ee_psk_b64u, Path::Direct)?;
     options
         .transport_security_policy
-        .evaluate(&url, Path::Direct)
+        .evaluate_raw(&info.ws_url, &url, Path::Direct)
         .await?;
     if url.scheme() == "ws" {
         emit(
@@ -441,6 +440,7 @@ async fn establish_client<T: crate::transport::WebSocketTransport>(
     Ok(Client {
         path,
         secure,
+        acceptor: streamhello::Acceptor::new(session.clone()),
         session,
         rpc: RpcClient::from_stream(rpc_stream),
     })
@@ -954,6 +954,7 @@ mod tests {
         let client = Client {
             path: Path::Direct,
             secure: Arc::new(NoopSecureControl),
+            acceptor: streamhello::Acceptor::new(session.clone()),
             session,
             rpc,
         };
@@ -991,6 +992,7 @@ mod tests {
         let client = Client {
             path: Path::Tunnel,
             secure: Arc::new(NoopSecureControl),
+            acceptor: streamhello::Acceptor::new(session.clone()),
             session,
             rpc,
         };
@@ -1016,6 +1018,7 @@ mod tests {
         let client = Client {
             path: Path::Direct,
             secure: Arc::new(NoopSecureControl),
+            acceptor: streamhello::Acceptor::new(session.clone()),
             session,
             rpc,
         };
@@ -1306,6 +1309,25 @@ mod tests {
             .await
             .expect_err("remote plaintext denied");
         assert_eq!(denied.code.as_str(), ErrorCode::TRANSPORT_POLICY_DENIED);
+        for raw_url in [
+            "ws://127.1/direct",
+            "ws://127.0.00.1/direct",
+            "ws://2130706433/direct",
+        ] {
+            let denied = connect_direct(
+                direct_info(raw_url),
+                ConnectOptions {
+                    transport_security_policy:
+                        TransportSecurityPolicy::allow_plaintext_for_loopback(),
+                    ..ConnectOptions::default()
+                },
+            )
+            .await
+            .expect_err("noncanonical loopback URL must fail before dialing");
+            assert_eq!(denied.path, Path::Direct);
+            assert_eq!(denied.stage, Stage::Validate);
+            assert_eq!(denied.code.as_str(), ErrorCode::TRANSPORT_POLICY_DENIED);
+        }
 
         assert_eq!(
             decode_psk("%%%", Path::Direct)

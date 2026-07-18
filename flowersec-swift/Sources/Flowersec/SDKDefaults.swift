@@ -11,6 +11,7 @@ public enum FlowersecSDKDefaults {
     public static let maxHandshakePayloadBytes = 8 * 1024
     public static let maxRecordBytes = 1024 * 1024
     public static let outboundRecordChunkBytes = 64 * 1024
+    public static let maxInboundBufferedBytes = 4 * 1024 * 1024
     public static let maxOutboundBufferedBytes = 4 * 1024 * 1024
   }
 

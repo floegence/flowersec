@@ -24,6 +24,7 @@ import { Supervisor } from "./interop-supervisor.mjs";
 const VERSION = 1;
 const CASES = ["connect", "rekey", "streams", "rpc", "liveness", "proxy", "reconnect", "limits", "diagnostics"];
 const SATURATION_GATE_KIND = "interop-rpc-saturation-gate";
+const MIXED_ECHO_KIND = "interop-mixed-echo";
 const LIMIT_CASES = ["active_streams", "inbound_streams", "frame", "stream_receive", "session_receive", "proxy_body"];
 const DIAGNOSTIC_CONTRACTS = new Map([
   ["rpc_queue", ["rpc", "resource_exhausted"]],
@@ -121,15 +122,22 @@ function validateClientArtifact(value, transport, required = []) {
 function validateWorkload(value) {
   assertObject(value, "workload");
   assertExactKeys(value, ["streams", "rekey", "liveness_probes", "rpc", "proxy", "reconnect_cycles", "limit_checks"]);
-  assertExactKeys(value.streams, ["concurrent", "bytes_per_stream", "chunk_bytes", "slow_readers", "churn", "fin", "reset"]);
+  assertExactKeys(value.streams, [
+    "concurrent", "bytes_per_stream", "chunk_bytes", "slow_readers", "churn", "fin", "reset",
+    "mixed_concurrent", "mixed_bytes_per_stream",
+  ]);
   assertExactKeys(value.rekey, ["client", "server", "concurrent"]);
   assertExactKeys(value.rpc, [
     "calls", "notifications", "cancellations", "timeouts",
     "saturation_active", "saturation_queued", "saturation_rejected",
   ]);
-  assertExactKeys(value.proxy, ["http_requests", "http_body_bytes", "websocket_frames", "websocket_frame_bytes"]);
+  assertExactKeys(value.proxy, [
+    "http_requests", "http_body_bytes", "streaming_http_body_bytes", "websocket_frames", "websocket_frame_bytes",
+  ]);
   const positive = [
-    ...Object.values(value.streams), value.rekey.client, value.rekey.server, value.liveness_probes,
+    value.streams.concurrent, value.streams.bytes_per_stream, value.streams.chunk_bytes,
+    value.streams.slow_readers, value.streams.churn, value.streams.fin, value.streams.reset,
+    value.rekey.client, value.rekey.server, value.liveness_probes,
     value.rpc.calls, value.rpc.notifications, value.rpc.cancellations, value.rpc.timeouts,
     value.rpc.saturation_active, value.rpc.saturation_queued, value.rpc.saturation_rejected,
     value.proxy.http_requests, value.proxy.http_body_bytes, value.proxy.websocket_frames,
@@ -137,6 +145,11 @@ function validateWorkload(value) {
   ];
   if (positive.some((item) => !Number.isSafeInteger(item) || item <= 0)) throw new Error("workload values must be positive integers");
   if (!Number.isSafeInteger(value.rekey.concurrent) || value.rekey.concurrent < 0 || value.rpc.saturation_rejected !== 1) throw new Error("invalid rekey/RPC workload");
+  const optional = [value.streams.mixed_concurrent, value.streams.mixed_bytes_per_stream, value.proxy.streaming_http_body_bytes];
+  if (optional.some((item) => !Number.isSafeInteger(item) || item < 0)
+      || (value.streams.mixed_concurrent === 0) !== (value.streams.mixed_bytes_per_stream === 0)) {
+    throw new Error("invalid mixed stream/streaming proxy workload");
+  }
 }
 
 async function connectClient(command) {
@@ -176,6 +189,7 @@ async function exerciseClient(command) {
       metrics.rekeys += 2;
     }
     await exerciseStreams(client, workload.streams, metrics);
+    await exerciseMixedStreamsAndRPC(client, workload.streams, metrics);
     for (let index = 0; index < workload.liveness_probes; index += 1) {
       await client.probeLiveness();
       metrics.liveness_probes += 1;
@@ -452,6 +466,36 @@ async function exerciseStreams(client, workload, metrics) {
   }
 }
 
+async function exerciseMixedStreamsAndRPC(client, workload, metrics) {
+  if (workload.mixed_concurrent === 0) return;
+  const results = await Promise.all(Array.from({ length: workload.mixed_concurrent }, async (_, index) => {
+    if (index % 2 === 1) {
+      await rpcEcho(client, index, false);
+      return { rpc: true, written: 0, read: 0 };
+    }
+    const stream = await client.openStream(MIXED_ECHO_KIND);
+    const payload = new Uint8Array(workload.mixed_bytes_per_stream).fill(index % 251);
+    const echoedPromise = readExactly(stream, payload.length);
+    try {
+      for (let offset = 0; offset < payload.length; offset += workload.chunk_bytes) {
+        await stream.write(payload.subarray(offset, Math.min(payload.length, offset + workload.chunk_bytes)));
+      }
+      const echoed = await echoedPromise;
+      if (!equalBytes(payload, echoed)) throw new Error("mixed echo payload mismatch");
+      await stream.close();
+      return { rpc: false, written: payload.length, read: echoed.length };
+    } catch (error) {
+      await stream.reset(asError(error));
+      await Promise.allSettled([echoedPromise]);
+      throw error;
+    }
+  }));
+  metrics.streams += results.filter((result) => !result.rpc).length;
+  metrics.bytes_written += results.reduce((total, result) => total + result.written, 0);
+  metrics.bytes_read += results.reduce((total, result) => total + result.read, 0);
+  metrics.rpc_calls += results.filter((result) => result.rpc).length;
+}
+
 async function exerciseRPCSaturation(client, workload) {
   const total = workload.saturation_active + workload.saturation_queued + workload.saturation_rejected;
   const gate = await client.openStream(SATURATION_GATE_KIND);
@@ -495,6 +539,14 @@ async function exerciseProxy(client, workload, metrics) {
     for (let index = 0; index < workload.http_requests; index += 1) {
       const response = await proxyHTTP(runtime, body, index);
       if (response.status !== 200 || !equalBytes(response.body, body)) throw new Error("proxy HTTP response mismatch");
+      metrics.http_requests += 1;
+    }
+    if (workload.streaming_http_body_bytes > 0) {
+      const streamingBody = new Uint8Array(workload.streaming_http_body_bytes).fill(0x73);
+      const response = await proxyHTTP(runtime, streamingBody, "streaming");
+      if (response.status !== 200 || !equalBytes(response.body, streamingBody)) {
+        throw new Error("streaming proxy HTTP response mismatch");
+      }
       metrics.http_requests += 1;
     }
     const opened = await runtime.openWebSocketStream("/ws");
@@ -612,7 +664,8 @@ async function serve(command) {
 }
 
 function serverYamuxLimits(command) {
-  const required = command.workload.streams.concurrent + 1;
+  const mixedTransfers = Math.ceil(command.workload.streams.mixed_concurrent / 2);
+  const required = Math.max(command.workload.streams.concurrent, mixedTransfers) + 1;
   const limits = { maxActiveStreams: Math.max(64, required), maxInboundStreams: Math.max(32, required) };
   if (command.limit_case === "inbound_streams") limits.maxInboundStreams = 1;
   if (command.limit_case === "frame") {
@@ -692,7 +745,7 @@ async function serveSession(session, command, signal, metrics, supervisor) {
         }
         throw error;
       }
-      if (next.kind === "echo") {
+      if (next.kind === "echo" || next.kind === MIXED_ECHO_KIND) {
         await echo(next.stream, signal, metrics);
       } else if (next.kind === "churn") {
         await next.stream.close();

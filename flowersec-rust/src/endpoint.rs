@@ -117,6 +117,7 @@ pub struct Session {
     path: Path,
     secure: Arc<dyn crate::e2ee::SecureChannelControl>,
     yamux: YamuxSession,
+    acceptor: streamhello::Acceptor,
 }
 
 impl Session {
@@ -168,19 +169,19 @@ impl Session {
     }
 
     pub async fn accept_stream(&self) -> Result<(String, YamuxStream), FlowersecError> {
-        let stream = self.yamux.accept_stream().await.map_err(|error| {
-            let code = endpoint_yamux_session_code(&error, ErrorCode::ACCEPT_STREAM_FAILED);
-            FlowersecError::new(
-                self.path,
-                Stage::Yamux,
-                code,
-                "failed to accept endpoint stream",
-            )
-            .with_source(error)
-        })?;
-        let kind = match streamhello::read(&stream, crate::defaults::MAX_STREAM_HELLO_BYTES).await {
-            Ok(kind) => kind,
-            Err(error) => {
+        match self.acceptor.accept().await {
+            Ok(accepted) => Ok(accepted),
+            Err(streamhello::AcceptError::Yamux(error)) => {
+                let code = endpoint_yamux_session_code(&error, ErrorCode::ACCEPT_STREAM_FAILED);
+                Err(FlowersecError::new(
+                    self.path,
+                    Stage::Yamux,
+                    code,
+                    "failed to accept endpoint stream",
+                )
+                .with_source(error))
+            }
+            Err(streamhello::AcceptError::Hello(error)) => {
                 let code = match self.yamux.terminal_error().await {
                     Some(terminal) => {
                         endpoint_yamux_session_code(&terminal, ErrorCode::STREAM_HELLO_FAILED)
@@ -192,16 +193,15 @@ impl Session {
                         _ => ErrorCode::STREAM_HELLO_FAILED,
                     },
                 };
-                return Err(FlowersecError::new(
+                Err(FlowersecError::new(
                     self.path,
                     Stage::Rpc,
                     code,
                     "failed to read endpoint stream hello",
                 )
-                .with_source(error));
+                .with_source(error))
             }
-        };
-        Ok((kind, stream))
+        }
     }
 
     pub async fn serve_rpc(&self, router: Router) -> Result<(), FlowersecError> {
@@ -516,6 +516,10 @@ pub async fn connect_tunnel(
     )?;
     let url = validate_websocket_url(&grant.tunnel_url, Path::Tunnel)?;
     let psk = decode_psk(&grant.e2ee_psk_b64u)?;
+    options
+        .transport_security_policy
+        .evaluate_raw(&grant.tunnel_url, &url, Path::Tunnel)
+        .await?;
     let mut endpoint_instance_id = [0_u8; 24];
     OsRng.fill_bytes(&mut endpoint_instance_id);
     let attach = Attach {
@@ -535,10 +539,6 @@ pub async fn connect_tunnel(
         )
         .with_source(error)
     })?;
-    options
-        .transport_security_policy
-        .evaluate(&url, Path::Tunnel)
-        .await?;
     let transport = connect_native(&url, options.origin.as_deref(), options.connect_timeout)
         .await
         .map_err(|error| endpoint_error(Path::Tunnel, Stage::Connect, error))?;
@@ -655,6 +655,7 @@ async fn establish_server_core<T: WebSocketTransport>(
     Ok(Session {
         path,
         secure,
+        acceptor: streamhello::Acceptor::new(yamux.clone()),
         yamux,
     })
 }
@@ -850,6 +851,7 @@ mod tests {
         io,
         sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     };
+    use tokio::sync::mpsc;
 
     #[derive(Debug)]
     struct PendingDuplex;
@@ -867,6 +869,50 @@ mod tests {
         async fn close(&self) -> Result<(), crate::yamux::YamuxError> {
             Ok(())
         }
+    }
+
+    #[derive(Debug)]
+    struct MemoryDuplex {
+        incoming: Mutex<mpsc::Receiver<Vec<u8>>>,
+        outgoing: mpsc::Sender<Vec<u8>>,
+    }
+
+    #[async_trait]
+    impl crate::yamux::ByteDuplex for MemoryDuplex {
+        async fn read(&self) -> Result<Vec<u8>, crate::yamux::YamuxError> {
+            self.incoming
+                .lock()
+                .await
+                .recv()
+                .await
+                .ok_or(crate::yamux::YamuxError::Closed)
+        }
+
+        async fn write(&self, bytes: &[u8]) -> Result<(), crate::yamux::YamuxError> {
+            self.outgoing
+                .send(bytes.to_vec())
+                .await
+                .map_err(|_| crate::yamux::YamuxError::Closed)
+        }
+
+        async fn close(&self) -> Result<(), crate::yamux::YamuxError> {
+            Ok(())
+        }
+    }
+
+    fn memory_duplex_pair() -> (Arc<MemoryDuplex>, Arc<MemoryDuplex>) {
+        let (client_tx, server_rx) = mpsc::channel(64);
+        let (server_tx, client_rx) = mpsc::channel(64);
+        (
+            Arc::new(MemoryDuplex {
+                incoming: Mutex::new(client_rx),
+                outgoing: client_tx,
+            }),
+            Arc::new(MemoryDuplex {
+                incoming: Mutex::new(server_rx),
+                outgoing: server_tx,
+            }),
+        )
     }
 
     #[derive(Debug)]
@@ -922,15 +968,17 @@ mod tests {
 
     #[tokio::test]
     async fn endpoint_liveness_timeout_uses_typed_timeout_code() {
+        let yamux = YamuxSession::new(
+            Arc::new(PendingDuplex),
+            Mode::Server,
+            YamuxLimits::default(),
+        )
+        .expect("create Yamux session");
         let session = Session {
             path: Path::Tunnel,
             secure: Arc::new(NoopSecureControl),
-            yamux: YamuxSession::new(
-                Arc::new(PendingDuplex),
-                Mode::Server,
-                YamuxLimits::default(),
-            )
-            .expect("create Yamux session"),
+            acceptor: streamhello::Acceptor::new(yamux.clone()),
+            yamux,
         };
 
         let error = session
@@ -945,15 +993,17 @@ mod tests {
 
     #[tokio::test]
     async fn endpoint_liveness_transport_failure_uses_ping_failed_code() {
+        let yamux = YamuxSession::new(
+            Arc::new(FailingWriteDuplex),
+            Mode::Server,
+            YamuxLimits::default(),
+        )
+        .expect("create failing Yamux session");
         let session = Session {
             path: Path::Direct,
             secure: Arc::new(NoopSecureControl),
-            yamux: YamuxSession::new(
-                Arc::new(FailingWriteDuplex),
-                Mode::Server,
-                YamuxLimits::default(),
-            )
-            .expect("create failing Yamux session"),
+            acceptor: streamhello::Acceptor::new(yamux.clone()),
+            yamux,
         };
 
         let error = session
@@ -967,17 +1017,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn canceled_accept_resumes_the_same_stream_hello() {
+        let (client_transport, server_transport) = memory_duplex_pair();
+        let client_yamux =
+            YamuxSession::new(client_transport, Mode::Client, YamuxLimits::default())
+                .expect("create client Yamux session");
+        let server_yamux =
+            YamuxSession::new(server_transport, Mode::Server, YamuxLimits::default())
+                .expect("create server Yamux session");
+        let session = Session {
+            path: Path::Direct,
+            secure: Arc::new(NoopSecureControl),
+            acceptor: streamhello::Acceptor::new(server_yamux.clone()),
+            yamux: server_yamux,
+        };
+        let stream = client_yamux.open_stream().await.expect("open raw stream");
+        let hello = br#"{"kind":"echo","v":1}"#;
+        let mut frame = Vec::with_capacity(4 + hello.len());
+        frame.extend_from_slice(&(hello.len() as u32).to_be_bytes());
+        frame.extend_from_slice(hello);
+        stream.write(&frame[..4]).await.expect("write hello length");
+        client_yamux
+            .probe_liveness(Duration::from_secs(1))
+            .await
+            .expect("wait for hello length delivery");
+
+        let mut first_accept = Box::pin(session.accept_stream());
+        assert!(
+            futures_util::poll!(&mut first_accept).is_pending(),
+            "partial stream hello must keep accept pending"
+        );
+        drop(first_accept);
+
+        stream.write(&frame[4..]).await.expect("write hello body");
+        stream.write(b"application").await.expect("write body");
+        let (kind, accepted) =
+            tokio::time::timeout(Duration::from_secs(1), session.accept_stream())
+                .await
+                .expect("canceled accept discarded the pending stream")
+                .expect("resume pending stream hello");
+        assert_eq!(kind, "echo");
+        assert_eq!(
+            accepted.read().await.expect("read body"),
+            Some(b"application".to_vec())
+        );
+    }
+
+    #[tokio::test]
     async fn dropping_endpoint_session_closes_and_releases_the_transport() {
         let closed = Arc::new(AtomicBool::new(false));
         let transport = Arc::new(DropTrackingDuplex {
             closed: closed.clone(),
         });
         let weak = Arc::downgrade(&transport);
+        let yamux = YamuxSession::new(transport.clone(), Mode::Server, YamuxLimits::default())
+            .expect("create Yamux session");
         let session = Session {
             path: Path::Direct,
             secure: Arc::new(NoopSecureControl),
-            yamux: YamuxSession::new(transport.clone(), Mode::Server, YamuxLimits::default())
-                .expect("create Yamux session"),
+            acceptor: streamhello::Acceptor::new(yamux.clone()),
+            yamux,
         };
 
         drop(transport);

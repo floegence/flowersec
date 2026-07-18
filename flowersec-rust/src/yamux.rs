@@ -246,8 +246,8 @@ struct StreamInner {
     send_window: SyncMutex<usize>,
     write_queue_bytes: AtomicUsize,
     write_serial: Mutex<()>,
-    exact_read_serial: Mutex<()>,
-    exact_read_buffer: Mutex<VecDeque<u8>>,
+    read_serial: Mutex<()>,
+    read_buffer: Mutex<VecDeque<u8>>,
     discarded: AtomicBool,
 }
 
@@ -383,6 +383,16 @@ impl YamuxStream {
     }
 
     pub async fn read(&self) -> Result<Option<Vec<u8>>, YamuxError> {
+        let _serial = self.0.read_serial.lock().await;
+        let mut buffered = self.0.read_buffer.lock().await;
+        if !buffered.is_empty() {
+            return Ok(Some(buffered.drain(..).collect()));
+        }
+        drop(buffered);
+        self.read_unbuffered().await
+    }
+
+    async fn read_unbuffered(&self) -> Result<Option<Vec<u8>>, YamuxError> {
         loop {
             let notified = self.0.read_notify.notified();
             tokio::pin!(notified);
@@ -461,17 +471,16 @@ impl YamuxStream {
     }
 
     pub async fn read_exact(&self, length: usize) -> Result<Vec<u8>, YamuxError> {
-        let _serial = self.0.exact_read_serial.lock().await;
-        loop {
-            {
-                let mut buffered = self.0.exact_read_buffer.lock().await;
-                if buffered.len() >= length {
-                    return Ok(buffered.drain(..length).collect());
-                }
-            }
-            let chunk = self.read().await?.ok_or(YamuxError::StreamClosed)?;
-            self.0.exact_read_buffer.lock().await.extend(chunk);
+        let _serial = self.0.read_serial.lock().await;
+        let mut buffered = self.0.read_buffer.lock().await;
+        while buffered.len() < length {
+            let chunk = self
+                .read_unbuffered()
+                .await?
+                .ok_or(YamuxError::StreamClosed)?;
+            buffered.extend(chunk);
         }
+        Ok(buffered.drain(..length).collect())
     }
 
     pub async fn close(&self) -> Result<(), YamuxError> {
@@ -1139,19 +1148,23 @@ impl SessionInner {
     }
 
     async fn terminate(&self, terminal_error: Option<YamuxError>) -> Result<(), YamuxError> {
-        self.mark_terminated(terminal_error).await;
+        if !self.mark_terminated(terminal_error).await {
+            return Ok(());
+        }
         self.connection.close().await
     }
 
     async fn terminate_bounded(&self, terminal_error: Option<YamuxError>) {
-        self.mark_terminated(terminal_error).await;
-        close_connection_bounded(self.connection.clone()).await;
+        if self.mark_terminated(terminal_error).await {
+            close_connection_bounded(self.connection.clone()).await;
+        }
     }
 
     async fn terminate_with_background_close(&self, terminal_error: Option<YamuxError>) {
-        self.mark_terminated(terminal_error).await;
-        let connection = self.connection.clone();
-        self.runtime.spawn(close_connection_bounded(connection));
+        if self.mark_terminated(terminal_error).await {
+            let connection = self.connection.clone();
+            self.runtime.spawn(close_connection_bounded(connection));
+        }
     }
 
     async fn terminate_frame_write(self: &Arc<Self>, terminal_error: YamuxError) {
@@ -1213,18 +1226,19 @@ impl SessionInner {
         });
     }
 
-    async fn mark_terminated(&self, terminal_error: Option<YamuxError>) {
+    async fn mark_terminated(&self, terminal_error: Option<YamuxError>) -> bool {
         let streams = {
             let mut state = self.state.lock().await;
             begin_termination(&mut state, terminal_error)
         };
         let Some(streams) = streams else {
-            return;
+            return false;
         };
         self.close_notify.notify_waiters();
         for stream in streams {
             stream.mark_reset().await;
         }
+        true
     }
 }
 
@@ -1448,8 +1462,8 @@ fn new_stream(session: &Arc<SessionInner>, id: u32, phase: StreamPhase) -> Yamux
         send_window: SyncMutex::new(DEFAULT_STREAM_WINDOW),
         write_queue_bytes: AtomicUsize::new(0),
         write_serial: Mutex::new(()),
-        exact_read_serial: Mutex::new(()),
-        exact_read_buffer: Mutex::new(VecDeque::new()),
+        read_serial: Mutex::new(()),
+        read_buffer: Mutex::new(VecDeque::new()),
         discarded: AtomicBool::new(false),
     }))
 }
@@ -1802,6 +1816,30 @@ mod tests {
     }
 
     #[derive(Debug)]
+    struct FailOnSecondCloseDuplex {
+        closes: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl ByteDuplex for FailOnSecondCloseDuplex {
+        async fn read(&self) -> Result<Vec<u8>, YamuxError> {
+            Err(YamuxError::Closed)
+        }
+
+        async fn write(&self, _bytes: &[u8]) -> Result<(), YamuxError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), YamuxError> {
+            if self.closes.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(())
+            } else {
+                Err(YamuxError::Transport("transport closed twice".to_owned()))
+            }
+        }
+    }
+
+    #[derive(Debug)]
     struct HangingCloseDuplex {
         close_calls: Arc<AtomicUsize>,
     }
@@ -1901,6 +1939,22 @@ mod tests {
         assert!(matches!(error, YamuxError::Transport(_)));
         assert!(session.inner.state.lock().await.ping_waiters.is_empty());
         session.close().await.expect("close session");
+    }
+
+    #[tokio::test]
+    async fn close_is_idempotent_after_remote_termination() {
+        let connection = Arc::new(FailOnSecondCloseDuplex {
+            closes: AtomicUsize::new(0),
+        });
+        let session = YamuxSession::new(connection.clone(), Mode::Client, YamuxLimits::default())
+            .expect("create session");
+        session.wait_closed().await;
+
+        session
+            .close()
+            .await
+            .expect("closing a terminated session must be idempotent");
+        assert_eq!(connection.closes.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -2242,6 +2296,34 @@ mod tests {
             Err(YamuxError::Transport(_))
         ));
         server_session.close_bounded().await;
+    }
+
+    #[tokio::test]
+    async fn read_returns_bytes_buffered_by_read_exact() {
+        let (session, stream) = test_stream().await;
+        let payload = b"hello-and-application-data".to_vec();
+        let reservation = session
+            .inner
+            .reserve_receive_bytes(payload.len())
+            .expect("reserve session receive bytes");
+        assert!(
+            stream
+                .on_data(FLAG_ACK, payload.clone())
+                .await
+                .expect("queue coalesced frame")
+        );
+        reservation.commit();
+
+        assert_eq!(
+            stream.read_exact(5).await.expect("read framed prefix"),
+            b"hello"
+        );
+        let tail = tokio::time::timeout(Duration::from_millis(100), stream.read())
+            .await
+            .expect("read ignored bytes buffered by read_exact")
+            .expect("read buffered tail")
+            .expect("buffered tail must not be EOF");
+        assert_eq!(tail, payload[5..]);
     }
 
     #[tokio::test]

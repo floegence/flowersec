@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -22,28 +24,29 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/client"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
 	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/endpoint"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
-	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
-	"github.com/floegence/flowersec/flowersec-go/streamhello"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
-	"github.com/gorilla/websocket"
 )
 
 const (
-	modeAttachOnly    = "attach-only"
-	modeHandshakeOnly = "handshake-only"
-	modeFull          = "full"
+	loadgenOrigin          = "https://app.redeven.com"
+	streamBenchmarkKind    = "loadgen.stream"
+	defaultStreamBytes     = 16 << 20
+	defaultFairStreamBytes = 2 << 20
+	defaultFairStreams     = 8
+	streamBenchmarkSamples = 3
+	streamResourceInterval = 10 * time.Millisecond
 )
 
 type loadConfig struct {
-	mode             string
 	targetChannels   int
 	ratePerSec       int
 	rampStep         int
@@ -56,6 +59,9 @@ type loadConfig struct {
 	maxHandshakeSize int
 	maxRecordBytes   int
 	maxBufferedBytes int
+	streamBytes      int
+	fairStreamBytes  int
+	fairStreams      int
 
 	maxConns        int
 	maxChannels     int
@@ -79,13 +85,12 @@ func (c loadConfig) livenessOptions() fsyamux.LivenessOptions {
 }
 
 type connMetrics struct {
-	wsOpen     time.Duration
-	attachSend time.Duration
-	pairReady  time.Duration
-	handshake  time.Duration
-	rpcCall    time.Duration
-	completeAt time.Time
-	errStage   string
+	connectTotal time.Duration
+	wsOpen       time.Duration
+	handshake    time.Duration
+	rpcCall      time.Duration
+	completeAt   time.Time
+	errStage     string
 }
 
 type statsCollector struct {
@@ -97,11 +102,10 @@ type statsCollector struct {
 	failures  map[string]int
 	perSecond map[int64]int
 
-	wsOpen     []int64
-	attachSend []int64
-	pairReady  []int64
-	handshake  []int64
-	rpcCall    []int64
+	connectTotal []int64
+	wsOpen       []int64
+	handshake    []int64
+	rpcCall      []int64
 }
 
 type latencyStats struct {
@@ -138,41 +142,19 @@ type serverHandle struct {
 }
 
 type serverResourceOwner struct {
-	mu     sync.Mutex
-	closed bool
-	cancel context.CancelFunc
-	ws     *websocket.Conn
-	secure *e2ee.SecureChannel
-	mux    *fsyamux.Session
+	mu      sync.Mutex
+	closed  bool
+	cancel  context.CancelFunc
+	session endpoint.Session
 }
 
-func (o *serverResourceOwner) setWebSocket(c *websocket.Conn) bool {
+func (o *serverResourceOwner) setSession(session endpoint.Session) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.closed {
 		return false
 	}
-	o.ws = c
-	return true
-}
-
-func (o *serverResourceOwner) setSecure(secure *e2ee.SecureChannel) bool {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.closed {
-		return false
-	}
-	o.secure = secure
-	return true
-}
-
-func (o *serverResourceOwner) setMux(mux *fsyamux.Session) bool {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.closed {
-		return false
-	}
-	o.mux = mux
+	o.session = session
 	return true
 }
 
@@ -184,59 +166,65 @@ func (o *serverResourceOwner) close() {
 	}
 	o.closed = true
 	cancel := o.cancel
-	mux := o.mux
-	secure := o.secure
-	wsConn := o.ws
+	session := o.session
 	o.mu.Unlock()
 
 	cancel()
-	if mux != nil {
-		_ = mux.Close()
-	}
-	if secure != nil {
-		_ = secure.Close()
-	}
-	if wsConn != nil {
-		_ = wsConn.Close()
+	if session != nil {
+		_ = session.Close()
 	}
 }
 
-type timingTransport struct {
-	inner     e2ee.BinaryTransport
-	firstRead atomic.Value
-	firstOnce sync.Once
+type connectionObserver struct {
+	mu        sync.Mutex
+	wsOpen    time.Duration
+	handshake time.Duration
 }
 
-func (t *timingTransport) ReadBinary(ctx context.Context) ([]byte, error) {
-	b, err := t.inner.ReadBinary(ctx)
-	if err == nil {
-		t.firstOnce.Do(func() {
-			t.firstRead.Store(time.Now())
-		})
+func (o *connectionObserver) OnConnect(_ client.Path, result observability.ConnectResult, _ observability.ConnectReason, elapsed time.Duration) {
+	if result == observability.ConnectResultOK {
+		o.mu.Lock()
+		o.wsOpen = elapsed
+		o.mu.Unlock()
 	}
-	return b, err
 }
 
-func (t *timingTransport) WriteBinary(ctx context.Context, b []byte) error {
-	return t.inner.WriteBinary(ctx, b)
-}
+func (o *connectionObserver) OnAttach(observability.AttachResult, observability.AttachReason) {}
 
-func (t *timingTransport) Close() error {
-	return t.inner.Close()
-}
-
-func (t *timingTransport) FirstReadAt() (time.Time, bool) {
-	v := t.firstRead.Load()
-	if v == nil {
-		return time.Time{}, false
+func (o *connectionObserver) OnHandshake(_ client.Path, result observability.HandshakeResult, _ client.Code, elapsed time.Duration) {
+	if result == observability.HandshakeResultOK {
+		o.mu.Lock()
+		o.handshake = elapsed
+		o.mu.Unlock()
 	}
-	ts, ok := v.(time.Time)
-	return ts, ok && !ts.IsZero()
+}
+
+func (o *connectionObserver) OnDiagnosticEvent(observability.DiagnosticEvent) {}
+
+func (o *connectionObserver) snapshot() (time.Duration, time.Duration) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.wsOpen, o.handshake
+}
+
+type streamingMetrics struct {
+	Bytes                        int       `json:"bytes"`
+	BackgroundConnections        int       `json:"background_connections"`
+	ThroughputMiBPerSec          float64   `json:"throughput_mib_per_sec"`
+	ThroughputSamplesMiBPerSec   []float64 `json:"throughput_samples_mib_per_sec"`
+	TTFBMilliseconds             float64   `json:"ttfb_ms"`
+	TTFBSamplesMilliseconds      []float64 `json:"ttfb_samples_ms"`
+	TransferMilliseconds         float64   `json:"transfer_ms"`
+	ConcurrentStreams            int       `json:"concurrent_streams"`
+	FairStreamBytes              int       `json:"fair_stream_bytes"`
+	FairnessCompletionMS         []float64 `json:"fairness_completion_ms"`
+	FairnessMedianMilliseconds   float64   `json:"fairness_median_ms"`
+	FairnessSlowestMilliseconds  float64   `json:"fairness_slowest_ms"`
+	FairnessSlowestToMedianRatio float64   `json:"fairness_slowest_to_median_ratio"`
 }
 
 func main() {
 	cfg := loadConfig{
-		mode:             modeFull,
 		targetChannels:   1000,
 		ratePerSec:       200,
 		rampStep:         0,
@@ -249,6 +237,9 @@ func main() {
 		maxHandshakeSize: 8 * 1024,
 		maxRecordBytes:   1 << 20,
 		maxBufferedBytes: 4 * (1 << 20),
+		streamBytes:      defaultStreamBytes,
+		fairStreamBytes:  defaultFairStreamBytes,
+		fairStreams:      defaultFairStreams,
 		maxConns:         0,
 		maxChannels:      0,
 		maxPendingBytes:  256 * 1024,
@@ -256,7 +247,6 @@ func main() {
 		cleanupInterval:  50 * time.Millisecond,
 	}
 
-	flag.StringVar(&cfg.mode, "mode", cfg.mode, "load mode: attach-only | handshake-only | full")
 	flag.IntVar(&cfg.targetChannels, "channels", cfg.targetChannels, "target channel count")
 	flag.IntVar(&cfg.ratePerSec, "rate", cfg.ratePerSec, "connection attempts per second (0 = max)")
 	flag.IntVar(&cfg.rampStep, "ramp-step", cfg.rampStep, "channels added per ramp step (0 = no ramp)")
@@ -265,10 +255,13 @@ func main() {
 	flag.IntVar(&cfg.workers, "workers", cfg.workers, "worker goroutines for connection setup")
 	flag.DurationVar(&cfg.connTimeout, "conn-timeout", cfg.connTimeout, "per-connection timeout")
 	flag.DurationVar(&cfg.reportInterval, "report-interval", cfg.reportInterval, "status report interval")
-	flag.DurationVar(&cfg.rpcTimeout, "rpc-timeout", cfg.rpcTimeout, "RPC call timeout in full mode")
+	flag.DurationVar(&cfg.rpcTimeout, "rpc-timeout", cfg.rpcTimeout, "RPC call timeout")
 	flag.IntVar(&cfg.maxHandshakeSize, "max-handshake-bytes", cfg.maxHandshakeSize, "max handshake payload bytes")
 	flag.IntVar(&cfg.maxRecordBytes, "max-record-bytes", cfg.maxRecordBytes, "max encrypted record bytes")
 	flag.IntVar(&cfg.maxBufferedBytes, "max-buffered-bytes", cfg.maxBufferedBytes, "max buffered plaintext bytes")
+	flag.IntVar(&cfg.streamBytes, "stream-benchmark-bytes", cfg.streamBytes, "single-stream transfer size")
+	flag.IntVar(&cfg.fairStreamBytes, "fair-stream-bytes", cfg.fairStreamBytes, "bytes transferred by each fairness stream")
+	flag.IntVar(&cfg.fairStreams, "fair-streams", cfg.fairStreams, "equal-size concurrent streams used for fairness")
 	flag.IntVar(&cfg.maxConns, "max-conns", cfg.maxConns, "tunnel max websocket connections (0 = default)")
 	flag.IntVar(&cfg.maxChannels, "max-channels", cfg.maxChannels, "tunnel max active channels (0 = default)")
 	flag.IntVar(&cfg.maxPendingBytes, "max-pending-bytes", cfg.maxPendingBytes, "max pending bytes before peer connects")
@@ -362,7 +355,7 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				m := runConnection(ctx, ci, wsURL, cfg, idx, live)
+				m := runConnection(ctx, ci, cfg, idx, live)
 				metricsCh <- m
 			}
 		}()
@@ -373,7 +366,15 @@ func main() {
 	close(metricsCh)
 	<-doneStats
 
-	if cfg.steadyDuration > 0 && (cfg.mode == modeHandshakeOnly || cfg.mode == modeFull) {
+	backgroundConnections := int(atomic.LoadInt64(&live.active))
+	streaming, err := runStreamingBenchmark(ctx, ci, cfg, sampler.sample)
+	if err != nil {
+		log.Fatalf("stream benchmark failed: %v", err)
+	}
+	streaming.BackgroundConnections = backgroundConnections
+	sampler.sample()
+
+	if cfg.steadyDuration > 0 {
 		logger.Printf("steady hold for %s", cfg.steadyDuration)
 		select {
 		case <-ctx.Done():
@@ -389,7 +390,7 @@ func main() {
 	cancel()
 	<-sampler.done
 
-	output := buildOutput(cfg, total, stats, live, sampler)
+	output := buildOutput(cfg, total, stats, live, sampler, streaming)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(output); err != nil {
@@ -398,16 +399,20 @@ func main() {
 }
 
 func validateConfig(cfg loadConfig) error {
-	switch cfg.mode {
-	case modeAttachOnly, modeHandshakeOnly, modeFull:
-	default:
-		return errors.New("invalid mode: " + cfg.mode)
-	}
 	if cfg.targetChannels <= 0 {
 		return errors.New("channels must be > 0")
 	}
 	if cfg.workers <= 0 {
 		return errors.New("workers must be > 0")
+	}
+	if cfg.streamBytes <= 0 {
+		return errors.New("stream-benchmark-bytes must be > 0")
+	}
+	if cfg.fairStreamBytes <= 0 {
+		return errors.New("fair-stream-bytes must be > 0")
+	}
+	if cfg.fairStreams <= 0 {
+		return errors.New("fair-streams must be > 0")
 	}
 	return nil
 }
@@ -463,149 +468,48 @@ func scheduleJobs(ctx context.Context, cfg loadConfig, jobs chan<- int) int {
 	return idx
 }
 
-func runConnection(ctx context.Context, svc *channelinit.Service, wsURL string, cfg loadConfig, idx int, live *liveRegistry) connMetrics {
-	out := connMetrics{}
-	out.completeAt = time.Now()
-
-	channelID := "chan_load_" + itoa(idx)
-	grantC, grantS, err := svc.NewChannelInit(channelID)
+func runConnection(ctx context.Context, svc *channelinit.Service, cfg loadConfig, idx int, live *liveRegistry) connMetrics {
+	out := connMetrics{completeAt: time.Now()}
+	grantC, grantS, err := svc.NewChannelInit("chan_load_" + itoa(idx))
 	if err != nil {
 		out.errStage = "channel_init"
 		return out
 	}
-	psk, err := base64url.Decode(grantC.E2eePskB64u)
-	if err != nil {
-		out.errStage = "psk_decode"
-		return out
-	}
 
-	serverHandle := startServerEndpoint(ctx, wsURL, grantS, psk, cfg)
-
-	connCtx, cancel := context.WithTimeout(ctx, cfg.connTimeout)
-	defer cancel()
-
-	var wsConn *websocket.Conn
-	var secure *e2ee.SecureChannel
-	var sess *fsyamux.Session
+	serverHandle := startServerEndpoint(ctx, grantS, cfg)
 	keepOpen := false
+	var cli client.Client
 	defer func() {
 		if keepOpen {
 			return
 		}
-		if sess != nil {
-			_ = sess.Close()
-		}
-		if secure != nil {
-			_ = secure.Close()
-		}
-		if wsConn != nil {
-			_ = wsConn.Close()
+		if cli != nil {
+			_ = cli.Close()
 		}
 		serverHandle.close()
 	}()
 
-	wsStart := time.Now()
-	c, _, err := dialTunnel(connCtx, wsURL)
+	connCtx, cancel := context.WithTimeout(ctx, cfg.connTimeout)
+	defer cancel()
+	observer := &connectionObserver{}
+	connectStart := time.Now()
+	cli, err = client.Connect(connCtx, grantC, clientConnectOptions(cfg, observer)...)
+	out.connectTotal = time.Since(connectStart)
+	out.wsOpen, out.handshake = observer.snapshot()
 	if err != nil {
-		out.wsOpen = time.Since(wsStart)
-		out.errStage = "ws_open"
+		out.errStage = connectErrorStage(err)
 		return out
 	}
-	wsConn = c
-	out.wsOpen = time.Since(wsStart)
-
-	attach := tunnelv1.Attach{
-		V:                  1,
-		ChannelId:          grantC.ChannelId,
-		Role:               tunnelv1.Role_client,
-		Token:              grantC.Token,
-		EndpointInstanceId: randomEndpointID(),
-	}
-	attachStart := time.Now()
-	b, _ := json.Marshal(attach)
-	if err := c.WriteMessage(websocket.TextMessage, b); err != nil {
-		out.attachSend = time.Since(attachStart)
-		out.errStage = "attach_send"
-		return out
-	}
-	attachEnd := time.Now()
-	out.attachSend = attachEnd.Sub(attachStart)
-
-	if cfg.mode == modeAttachOnly {
-		serverErr := <-serverHandle.ready
-		if serverErr != nil {
-			out.errStage = "server_attach"
-			return out
-		}
-		out.completeAt = time.Now()
+	if err := <-serverHandle.ready; err != nil {
+		out.errStage = "server_connect"
 		return out
 	}
 
-	transport := &timingTransport{inner: e2ee.NewWebSocketBinaryTransport(c)}
-	hsStart := time.Now()
-	secureConn, err := e2ee.ClientHandshake(connCtx, transport, e2ee.ClientHandshakeOptions{
-		PSK:                 psk,
-		Suite:               e2ee.Suite(grantC.DefaultSuite),
-		ChannelID:           grantC.ChannelId,
-		ClientFeatures:      0,
-		MaxHandshakePayload: cfg.maxHandshakeSize,
-		MaxRecordBytes:      cfg.maxRecordBytes,
-		MaxBufferedBytes:    cfg.maxBufferedBytes,
-	})
-	if err != nil {
-		out.handshake = time.Since(hsStart)
-		out.errStage = "handshake"
-		return out
-	}
-	secure = secureConn
-	out.handshake = time.Since(hsStart)
-
-	if ts, ok := transport.FirstReadAt(); ok && ts.After(attachEnd) {
-		out.pairReady = ts.Sub(attachEnd)
-	}
-
-	serverErr := <-serverHandle.ready
-	if serverErr != nil {
-		out.errStage = "server_ready"
-		return out
-	}
-
-	if cfg.mode == modeHandshakeOnly {
-		out.completeAt = time.Now()
-		live.add(func() {
-			live.dec()
-			_ = secure.Close()
-			_ = wsConn.Close()
-			serverHandle.close()
-		})
-		live.inc()
-		keepOpen = true
-		return out
-	}
-
-	sess, err = fsyamux.NewClient(secure, fsyamux.YamuxLimits{}, cfg.livenessOptions())
-	if err != nil {
-		out.errStage = "yamux_client"
-		return out
-	}
-
-	stream, err := sess.OpenStream()
-	if err != nil {
-		out.errStage = "yamux_open"
-		return out
-	}
-	if err := streamhello.WriteStreamHello(stream, "rpc"); err != nil {
-		_ = stream.Close()
-		out.errStage = "rpc_hello"
-		return out
-	}
-	client := rpc.NewClient(stream)
 	callCtx, callCancel := context.WithTimeout(ctx, cfg.rpcTimeout)
 	rpcStart := time.Now()
-	_, _, err = client.Call(callCtx, 1, json.RawMessage(`{"ping":true}`))
+	_, _, err = cli.RPC().Call(callCtx, 1, json.RawMessage(`{"ping":true}`))
 	out.rpcCall = time.Since(rpcStart)
 	callCancel()
-	_ = client.Close()
 	if err != nil {
 		out.errStage = "rpc_call"
 		return out
@@ -614,9 +518,7 @@ func runConnection(ctx context.Context, svc *channelinit.Service, wsURL string, 
 	out.completeAt = time.Now()
 	live.add(func() {
 		live.dec()
-		_ = sess.Close()
-		_ = secure.Close()
-		_ = wsConn.Close()
+		_ = cli.Close()
 		serverHandle.close()
 	})
 	live.inc()
@@ -624,106 +526,362 @@ func runConnection(ctx context.Context, svc *channelinit.Service, wsURL string, 
 	return out
 }
 
-func startServerEndpoint(ctx context.Context, wsURL string, grant *controlv1.ChannelInitGrant, psk []byte, cfg loadConfig) serverHandle {
+func clientConnectOptions(cfg loadConfig, observer observability.ClientObserver) []client.ConnectOption {
+	options := []client.ConnectOption{
+		client.WithOrigin(loadgenOrigin),
+		client.WithConnectTimeout(cfg.connTimeout),
+		client.WithHandshakeTimeout(cfg.connTimeout),
+		client.WithMaxHandshakePayload(cfg.maxHandshakeSize),
+		client.WithMaxRecordBytes(cfg.maxRecordBytes),
+		client.WithMaxBufferedBytes(cfg.maxBufferedBytes),
+		client.WithTransportSecurityPolicy(client.AllowPlaintextForLoopback),
+		client.WithObserver(observer),
+	}
+	if liveness := cfg.livenessOptions(); liveness.Interval > 0 && liveness.Timeout > 0 {
+		options = append(options, client.WithLiveness(liveness))
+	} else {
+		options = append(options, client.WithLivenessDisabled())
+	}
+	return options
+}
+
+func endpointConnectOptions(cfg loadConfig) []endpoint.ConnectOption {
+	options := []endpoint.ConnectOption{
+		endpoint.WithOrigin(loadgenOrigin),
+		endpoint.WithConnectTimeout(cfg.connTimeout),
+		endpoint.WithHandshakeTimeout(cfg.connTimeout),
+		endpoint.WithMaxHandshakePayload(cfg.maxHandshakeSize),
+		endpoint.WithMaxRecordBytes(cfg.maxRecordBytes),
+		endpoint.WithMaxBufferedBytes(cfg.maxBufferedBytes),
+		endpoint.WithTransportSecurityPolicy(endpoint.AllowPlaintextForLoopback),
+	}
+	if liveness := cfg.livenessOptions(); liveness.Interval > 0 && liveness.Timeout > 0 {
+		options = append(options, endpoint.WithLiveness(liveness))
+	} else {
+		options = append(options, endpoint.WithLivenessDisabled())
+	}
+	return options
+}
+
+func connectErrorStage(err error) string {
+	var flowersecErr *client.Error
+	if errors.As(err, &flowersecErr) && flowersecErr.Stage != "" {
+		return string(flowersecErr.Stage)
+	}
+	return "connect"
+}
+
+func startServerEndpoint(ctx context.Context, grant *controlv1.ChannelInitGrant, cfg loadConfig) serverHandle {
 	ready := make(chan error, 1)
 	serverCtx, cancel := context.WithCancel(ctx)
 	owner := &serverResourceOwner{cancel: cancel}
 
 	go func() {
-		c, _, err := dialTunnel(serverCtx, wsURL)
+		session, err := endpoint.ConnectTunnel(serverCtx, grant, endpointConnectOptions(cfg)...)
 		if err != nil {
 			ready <- err
 			return
 		}
-		if !owner.setWebSocket(c) {
-			_ = c.Close()
+		if !owner.setSession(session) {
+			_ = session.Close()
 			ready <- context.Canceled
 			return
 		}
-
-		attach := tunnelv1.Attach{
-			V:                  1,
-			ChannelId:          grant.ChannelId,
-			Role:               tunnelv1.Role_server,
-			Token:              grant.Token,
-			EndpointInstanceId: randomEndpointID(),
-		}
-		b, _ := json.Marshal(attach)
-		if err := c.WriteMessage(websocket.TextMessage, b); err != nil {
-			ready <- err
-			return
-		}
-
-		if cfg.mode == modeAttachOnly {
-			ready <- nil
-			return
-		}
-
-		bt := e2ee.NewWebSocketBinaryTransport(c)
-		cache := e2ee.NewServerHandshakeCache()
-		secure, err := e2ee.ServerHandshake(serverCtx, bt, cache, e2ee.ServerHandshakeOptions{
-			PSK:                 psk,
-			Suite:               e2ee.Suite(grant.DefaultSuite),
-			ChannelID:           grant.ChannelId,
-			InitExpireAtUnixS:   grant.ChannelInitExpireAtUnixS,
-			ClockSkew:           30 * time.Second,
-			ServerFeatures:      1,
-			MaxHandshakePayload: cfg.maxHandshakeSize,
-			MaxRecordBytes:      cfg.maxRecordBytes,
-			MaxBufferedBytes:    cfg.maxBufferedBytes,
-		})
-		if err != nil {
-			ready <- err
-			return
-		}
-		if !owner.setSecure(secure) {
-			_ = secure.Close()
-			ready <- context.Canceled
-			return
-		}
-
-		if cfg.mode == modeHandshakeOnly {
-			ready <- nil
-			return
-		}
-
-		sess, err := fsyamux.NewServer(secure, fsyamux.YamuxLimits{}, cfg.livenessOptions())
-		if err != nil {
-			ready <- err
-			return
-		}
-		if !owner.setMux(sess) {
-			_ = sess.Close()
-			ready <- context.Canceled
-			return
-		}
-
 		ready <- nil
-
-		stream, err := sess.AcceptStream()
-		if err != nil {
-			return
-		}
-		defer stream.Close()
-		h, err := streamhello.ReadStreamHello(stream, 8*1024)
-		if err != nil || h.Kind != "rpc" {
-			return
-		}
-		router := rpc.NewRouter()
-		srv := rpc.NewServer(stream, router)
-		router.Register(1, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
-			_ = ctx
-			_ = payload
-			_ = srv.Notify(2, json.RawMessage(`{"hello":"world"}`))
-			return json.RawMessage(`{"ok":true}`), nil
+		_ = session.ServeStreams(serverCtx, endpoint.DefaultMaxStreamHelloBytes, func(kind string, stream io.ReadWriteCloser) {
+			handleServerStream(serverCtx, kind, stream, max(cfg.streamBytes, cfg.fairStreamBytes))
 		})
-		_ = srv.Serve(serverCtx)
 	}()
 
-	return serverHandle{
-		ready: ready,
-		close: owner.close,
+	return serverHandle{ready: ready, close: owner.close}
+}
+
+func handleServerStream(ctx context.Context, kind string, stream io.ReadWriteCloser, maxStreamBytes int) {
+	switch kind {
+	case "rpc":
+		serveRPC(ctx, stream)
+	case streamBenchmarkKind:
+		_ = serveStreamingResponse(stream, maxStreamBytes)
 	}
+}
+
+func serveRPC(ctx context.Context, stream io.ReadWriteCloser) {
+	router := rpc.NewRouter()
+	srv := rpc.NewServer(stream, router)
+	router.Register(1, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
+		_ = ctx
+		_ = payload
+		_ = srv.Notify(2, json.RawMessage(`{"hello":"world"}`))
+		return json.RawMessage(`{"ok":true}`), nil
+	})
+	_ = srv.Serve(ctx)
+}
+
+func serveStreamingResponse(stream io.ReadWriter, maxStreamBytes int) error {
+	var requested uint64
+	if err := binary.Read(stream, binary.BigEndian, &requested); err != nil {
+		return err
+	}
+	if requested == 0 || requested > uint64(maxStreamBytes) {
+		return fmt.Errorf("invalid stream benchmark size %d", requested)
+	}
+	chunk := make([]byte, 64*1024)
+	remaining := int64(requested)
+	for remaining > 0 {
+		n := min(int64(len(chunk)), remaining)
+		if _, err := stream.Write(chunk[:n]); err != nil {
+			return err
+		}
+		remaining -= n
+	}
+	return nil
+}
+
+func runStreamingBenchmark(ctx context.Context, svc *channelinit.Service, cfg loadConfig, sampleResources func()) (streamingMetrics, error) {
+	grantC, grantS, err := svc.NewChannelInit("chan_stream_benchmark")
+	if err != nil {
+		return streamingMetrics{}, err
+	}
+	serverHandle := startServerEndpoint(ctx, grantS, cfg)
+	defer serverHandle.close()
+
+	connectCtx, cancel := context.WithTimeout(ctx, cfg.connTimeout)
+	defer cancel()
+	cli, err := client.Connect(connectCtx, grantC, clientConnectOptions(cfg, observability.NoopClientObserver)...)
+	if err != nil {
+		return streamingMetrics{}, err
+	}
+	defer cli.Close()
+	if err := <-serverHandle.ready; err != nil {
+		return streamingMetrics{}, err
+	}
+
+	callCtx, callCancel := context.WithTimeout(ctx, cfg.rpcTimeout)
+	_, rpcErr, err := cli.RPC().Call(callCtx, 1, json.RawMessage(`{"benchmark":true}`))
+	callCancel()
+	if err != nil {
+		return streamingMetrics{}, err
+	}
+	if rpcErr != nil {
+		return streamingMetrics{}, fmt.Errorf("stream benchmark RPC bootstrap failed: %v", rpcErr.Message)
+	}
+
+	benchmarkTimeout := 30 * time.Second
+	if cfg.rpcTimeout > benchmarkTimeout {
+		benchmarkTimeout = cfg.rpcTimeout
+	}
+	benchmarkCtx, benchmarkCancel := context.WithTimeout(ctx, benchmarkTimeout)
+	defer benchmarkCancel()
+	if err := runStreamingMemoryProbe(
+		benchmarkCtx,
+		cli,
+		cfg.fairStreamBytes,
+		cfg.fairStreams,
+		sampleResources,
+	); err != nil {
+		return streamingMetrics{}, err
+	}
+
+	transferDurations := make([]time.Duration, streamBenchmarkSamples)
+	ttfbDurations := make([]time.Duration, streamBenchmarkSamples)
+	for i := 0; i < streamBenchmarkSamples; i++ {
+		transferDuration, ttfb, err := measureStreamingResponse(benchmarkCtx, cli, cfg.streamBytes)
+		if err != nil {
+			return streamingMetrics{}, err
+		}
+		transferDurations[i] = transferDuration
+		ttfbDurations[i] = ttfb
+	}
+
+	fairDurations, err := measureConcurrentStreamingResponses(
+		benchmarkCtx,
+		cli,
+		cfg.fairStreamBytes,
+		cfg.fairStreams,
+	)
+	if err != nil {
+		return streamingMetrics{}, err
+	}
+
+	sortedTransfers := append([]time.Duration(nil), transferDurations...)
+	sort.Slice(sortedTransfers, func(i, j int) bool { return sortedTransfers[i] < sortedTransfers[j] })
+	sortedTTFB := append([]time.Duration(nil), ttfbDurations...)
+	sort.Slice(sortedTTFB, func(i, j int) bool { return sortedTTFB[i] < sortedTTFB[j] })
+	metrics := newStreamingMetrics(cfg.streamBytes, medianDuration(sortedTransfers), medianDuration(sortedTTFB), fairDurations)
+	metrics.ThroughputSamplesMiBPerSec = make([]float64, len(transferDurations))
+	metrics.TTFBSamplesMilliseconds = make([]float64, len(ttfbDurations))
+	for i := range transferDurations {
+		metrics.ThroughputSamplesMiBPerSec[i] = (float64(cfg.streamBytes) / (1024 * 1024)) / transferDurations[i].Seconds()
+		metrics.TTFBSamplesMilliseconds[i] = float64(ttfbDurations[i]) / float64(time.Millisecond)
+	}
+	metrics.FairStreamBytes = cfg.fairStreamBytes
+	return metrics, nil
+}
+
+func runStreamingMemoryProbe(
+	ctx context.Context,
+	cli client.Client,
+	streamBytes int,
+	streams int,
+	sampleResources func(),
+) error {
+	stopSampling := startStreamingResourceProbe(streamResourceInterval, sampleResources)
+	defer stopSampling()
+	_, err := measureConcurrentStreamingResponses(ctx, cli, streamBytes, streams)
+	return err
+}
+
+func startStreamingResourceProbe(interval time.Duration, sampleResources func()) func() {
+	if sampleResources == nil {
+		return func() {}
+	}
+	sampleResources()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				sampleResources()
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+		sampleResources()
+	}
+}
+
+func measureConcurrentStreamingResponses(
+	ctx context.Context,
+	cli client.Client,
+	streamBytes int,
+	streams int,
+) ([]time.Duration, error) {
+	durations := make([]time.Duration, streams)
+	errCh := make(chan error, streams)
+	var wg sync.WaitGroup
+	var ready sync.WaitGroup
+	ready.Add(streams)
+	start := make(chan struct{})
+	var epoch time.Time
+	for i := range durations {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			ready.Done()
+			select {
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			case <-start:
+			}
+			_, _, err := measureStreamingResponse(ctx, cli, streamBytes)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			durations[index] = time.Since(epoch)
+		}(i)
+	}
+	ready.Wait()
+	epoch = time.Now()
+	close(start)
+	wg.Wait()
+	close(errCh)
+	if err := <-errCh; err != nil {
+		return nil, err
+	}
+	return durations, nil
+}
+
+func measureStreamingResponse(ctx context.Context, cli client.Client, size int) (time.Duration, time.Duration, error) {
+	started := time.Now()
+	stream, err := cli.OpenStream(ctx, streamBenchmarkKind)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer stream.Close()
+	stopReset := make(chan struct{})
+	defer close(stopReset)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = stream.Reset()
+		case <-stopReset:
+		}
+	}()
+	if err := binary.Write(stream, binary.BigEndian, uint64(size)); err != nil {
+		return 0, 0, err
+	}
+	var first [1]byte
+	if _, err := io.ReadFull(stream, first[:]); err != nil {
+		return 0, 0, err
+	}
+	ttfb := time.Since(started)
+	if _, err := io.CopyN(io.Discard, stream, int64(size-1)); err != nil {
+		return 0, 0, err
+	}
+	return time.Since(started), ttfb, nil
+}
+
+func newStreamingMetrics(bytes int, transferDuration, ttfb time.Duration, fairness []time.Duration) streamingMetrics {
+	completion := append([]time.Duration(nil), fairness...)
+	sort.Slice(completion, func(i, j int) bool { return completion[i] < completion[j] })
+	completionMS := make([]float64, len(completion))
+	for i, duration := range completion {
+		completionMS[i] = float64(duration) / float64(time.Millisecond)
+	}
+
+	medianNanoseconds := 0.0
+	if len(completion) > 0 {
+		middle := len(completion) / 2
+		if len(completion)%2 != 0 {
+			medianNanoseconds = float64(completion[middle])
+		} else {
+			medianNanoseconds = (float64(completion[middle-1]) + float64(completion[middle])) / 2
+		}
+	}
+	slowest := time.Duration(0)
+	if len(completion) > 0 {
+		slowest = completion[len(completion)-1]
+	}
+	ratio := 0.0
+	if medianNanoseconds > 0 {
+		ratio = float64(slowest) / medianNanoseconds
+	}
+	throughput := 0.0
+	if transferDuration > 0 {
+		throughput = (float64(bytes) / (1024 * 1024)) / transferDuration.Seconds()
+	}
+	return streamingMetrics{
+		Bytes:                        bytes,
+		ThroughputMiBPerSec:          throughput,
+		TTFBMilliseconds:             float64(ttfb) / float64(time.Millisecond),
+		TransferMilliseconds:         float64(transferDuration) / float64(time.Millisecond),
+		ConcurrentStreams:            len(completion),
+		FairnessCompletionMS:         completionMS,
+		FairnessMedianMilliseconds:   medianNanoseconds / float64(time.Millisecond),
+		FairnessSlowestMilliseconds:  float64(slowest) / float64(time.Millisecond),
+		FairnessSlowestToMedianRatio: ratio,
+	}
+}
+
+func medianDuration(sorted []time.Duration) time.Duration {
+	if len(sorted) == 0 {
+		return 0
+	}
+	mid := len(sorted) / 2
+	if len(sorted)%2 != 0 {
+		return sorted[mid]
+	}
+	return sorted[mid-1] + (sorted[mid]-sorted[mid-1])/2
 }
 
 func (s *statsCollector) add(m connMetrics) {
@@ -732,14 +890,11 @@ func (s *statsCollector) add(m connMetrics) {
 	s.attempts++
 	if m.errStage == "" {
 		s.success++
+		if m.connectTotal > 0 {
+			s.connectTotal = append(s.connectTotal, m.connectTotal.Nanoseconds())
+		}
 		if m.wsOpen > 0 {
 			s.wsOpen = append(s.wsOpen, m.wsOpen.Nanoseconds())
-		}
-		if m.attachSend > 0 {
-			s.attachSend = append(s.attachSend, m.attachSend.Nanoseconds())
-		}
-		if m.pairReady > 0 {
-			s.pairReady = append(s.pairReady, m.pairReady.Nanoseconds())
 		}
 		if m.handshake > 0 {
 			s.handshake = append(s.handshake, m.handshake.Nanoseconds())
@@ -762,11 +917,10 @@ type statsSnapshot struct {
 	failures  map[string]int
 	perSecond map[int64]int
 
-	wsOpen     []int64
-	attachSend []int64
-	pairReady  []int64
-	handshake  []int64
-	rpcCall    []int64
+	connectTotal []int64
+	wsOpen       []int64
+	handshake    []int64
+	rpcCall      []int64
 }
 
 func (s *statsCollector) snapshotCounts() statsSnapshot {
@@ -779,7 +933,7 @@ func (s *statsCollector) snapshotCounts() statsSnapshot {
 	}
 }
 
-func buildOutput(cfg loadConfig, total int, stats *statsCollector, live *liveRegistry, sampler *resourceStats) map[string]any {
+func buildOutput(cfg loadConfig, total int, stats *statsCollector, live *liveRegistry, sampler *resourceStats, streaming streamingMetrics) map[string]any {
 	snap := stats.export()
 	duration := time.Since(stats.startedAt)
 	successRate := 0.0
@@ -793,7 +947,6 @@ func buildOutput(cfg loadConfig, total int, stats *statsCollector, live *liveReg
 		}
 	}
 	config := map[string]any{
-		"mode":                 cfg.mode,
 		"channels":             cfg.targetChannels,
 		"rate_per_sec":         cfg.ratePerSec,
 		"ramp_step":            cfg.rampStep,
@@ -806,6 +959,9 @@ func buildOutput(cfg loadConfig, total int, stats *statsCollector, live *liveReg
 		"max_handshake_bytes":  cfg.maxHandshakeSize,
 		"max_record_bytes":     cfg.maxRecordBytes,
 		"max_buffered_bytes":   cfg.maxBufferedBytes,
+		"stream_bytes":         cfg.streamBytes,
+		"fair_stream_bytes":    cfg.fairStreamBytes,
+		"fair_streams":         cfg.fairStreams,
 		"max_conns":            cfg.maxConns,
 		"max_channels":         cfg.maxChannels,
 		"max_pending_bytes":    cfg.maxPendingBytes,
@@ -813,7 +969,8 @@ func buildOutput(cfg loadConfig, total int, stats *statsCollector, live *liveReg
 		"cleanup_interval_ms":  cfg.cleanupInterval.Milliseconds(),
 		"liveness_interval_ms": cfg.livenessOptions().Interval.Milliseconds(),
 		"liveness_timeout_ms":  cfg.livenessOptions().Timeout.Milliseconds(),
-		"rpc_stream_residency": "closed_after_verified_call",
+		"connection_api":       "client.Connect",
+		"rpc_stream_residency": "connection_lifetime",
 	}
 	out := map[string]any{
 		"config": config,
@@ -829,13 +986,13 @@ func buildOutput(cfg loadConfig, total int, stats *statsCollector, live *liveReg
 		},
 		"failures": snap.failures,
 		"latency": map[string]latencyStats{
-			"ws_open":     computeLatency(snap.wsOpen),
-			"attach_send": computeLatency(snap.attachSend),
-			"pair_ready":  computeLatency(snap.pairReady),
-			"handshake":   computeLatency(snap.handshake),
-			"rpc_call":    computeLatency(snap.rpcCall),
+			"connect_total": computeLatency(snap.connectTotal),
+			"ws_open":       computeLatency(snap.wsOpen),
+			"handshake":     computeLatency(snap.handshake),
+			"rpc_call":      computeLatency(snap.rpcCall),
 		},
 		"resources": sampler,
+		"streaming": streaming,
 		"env": map[string]any{
 			"go_version": runtime.Version(),
 			"gomaxprocs": runtime.GOMAXPROCS(0),
@@ -855,11 +1012,10 @@ func (s *statsCollector) export() statsSnapshot {
 		failures:  make(map[string]int, len(s.failures)),
 		perSecond: make(map[int64]int, len(s.perSecond)),
 
-		wsOpen:     append([]int64(nil), s.wsOpen...),
-		attachSend: append([]int64(nil), s.attachSend...),
-		pairReady:  append([]int64(nil), s.pairReady...),
-		handshake:  append([]int64(nil), s.handshake...),
-		rpcCall:    append([]int64(nil), s.rpcCall...),
+		connectTotal: append([]int64(nil), s.connectTotal...),
+		wsOpen:       append([]int64(nil), s.wsOpen...),
+		handshake:    append([]int64(nil), s.handshake...),
+		rpcCall:      append([]int64(nil), s.rpcCall...),
 	}
 	for k, v := range s.failures {
 		cp.failures[k] = v
@@ -946,6 +1102,7 @@ func (l *liveRegistry) dec() {
 
 func startResourceSampler(ctx context.Context, interval time.Duration, baselineGoroutines int) *resourceStats {
 	stats := &resourceStats{BaselineGoroutines: baselineGoroutines, done: make(chan struct{})}
+	stats.sample()
 	if interval <= 0 {
 		close(stats.done)
 		return stats
@@ -959,20 +1116,24 @@ func startResourceSampler(ctx context.Context, interval time.Duration, baselineG
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				var ms runtime.MemStats
-				runtime.ReadMemStats(&ms)
-				stats.mu.Lock()
-				stats.MaxHeapAlloc = maxU64(stats.MaxHeapAlloc, ms.HeapAlloc)
-				stats.MaxHeapInuse = maxU64(stats.MaxHeapInuse, ms.HeapInuse)
-				stats.MaxSysBytes = maxU64(stats.MaxSysBytes, ms.Sys)
-				if g := runtime.NumGoroutine(); g > stats.MaxGoroutines {
-					stats.MaxGoroutines = g
-				}
-				stats.mu.Unlock()
+				stats.sample()
 			}
 		}
 	}()
 	return stats
+}
+
+func (s *resourceStats) sample() {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	s.mu.Lock()
+	s.MaxHeapAlloc = maxU64(s.MaxHeapAlloc, ms.HeapAlloc)
+	s.MaxHeapInuse = maxU64(s.MaxHeapInuse, ms.HeapInuse)
+	s.MaxSysBytes = maxU64(s.MaxSysBytes, ms.Sys)
+	if g := runtime.NumGoroutine(); g > s.MaxGoroutines {
+		s.MaxGoroutines = g
+	}
+	s.mu.Unlock()
 }
 
 func waitForGoroutineBaseline(baseline int, timeout time.Duration) int {
@@ -1072,20 +1233,7 @@ func mustTestIssuer() (*issuer.Keyset, string) {
 	if err := os.WriteFile(p, b, 0o644); err != nil {
 		panic(err)
 	}
-	_, _ = rand.Read(make([]byte, 1))
 	return ks, p
-}
-
-func randomEndpointID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return base64url.Encode(b)
-}
-
-func dialTunnel(ctx context.Context, wsURL string) (*websocket.Conn, *http.Response, error) {
-	h := http.Header{}
-	h.Set("Origin", "https://app.redeven.com")
-	return websocket.DefaultDialer.DialContext(ctx, wsURL, h)
 }
 
 func itoa(v int) string {

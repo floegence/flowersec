@@ -119,6 +119,11 @@ def main():
     parser.add_argument("--go-roundtrip-command", required=True)
     parser.add_argument("--ts-command", required=True)
     parser.add_argument("--loadgen-command", required=True)
+    parser.add_argument("--stream-throughput-baseline-mib-per-sec", type=float, required=True)
+    parser.add_argument("--stream-ttfb-baseline-ms", type=float, required=True)
+    parser.add_argument("--stream-max-regression-percent", type=float, required=True)
+    parser.add_argument("--max-heap-bytes", type=int, required=True)
+    parser.add_argument("--max-fairness-ratio", type=float, required=True)
     args = parser.parse_args()
 
     run_date = args.run_date or dt.datetime.now().strftime("%c")
@@ -172,9 +177,10 @@ def main():
     config = loadgen.get("config", {})
     latency = loadgen.get("latency", {})
     resources = loadgen.get("resources", {})
+    streaming = loadgen.get("streaming", {})
 
     latency_rows = []
-    for stage in ["ws_open", "attach_send", "pair_ready", "handshake", "rpc_call"]:
+    for stage in ["connect_total", "ws_open", "handshake", "rpc_call"]:
         item = latency.get(stage, {})
         latency_rows.append(
             "| {stage} | {p50} | {p95} | {p99} | {mean} | {min} | {max} |".format(
@@ -191,7 +197,6 @@ def main():
 
     config_rows = []
     config_order = [
-        "mode",
         "channels",
         "rate_per_sec",
         "ramp_step",
@@ -204,10 +209,14 @@ def main():
         "max_handshake_bytes",
         "max_record_bytes",
         "max_buffered_bytes",
+        "stream_bytes",
+        "fair_stream_bytes",
+        "fair_streams",
         "max_pending_bytes",
         "idle_timeout_ms",
         "liveness_interval_ms",
         "liveness_timeout_ms",
+        "connection_api",
         "rpc_stream_residency",
         "cleanup_interval_ms",
         "max_conns",
@@ -241,6 +250,42 @@ def main():
         ]
     )
 
+    throughput = float(streaming.get("throughput_mib_per_sec", 0))
+    ttfb_ms = float(streaming.get("ttfb_ms", 0))
+    throughput_regression = (
+        (args.stream_throughput_baseline_mib_per_sec - throughput)
+        / args.stream_throughput_baseline_mib_per_sec
+        * 100
+    )
+    ttfb_regression = (
+        ttfb_ms / args.stream_ttfb_baseline_ms - 1
+    ) * 100
+    fairness_completions = streaming.get("fairness_completion_ms", [])
+    throughput_samples = streaming.get("throughput_samples_mib_per_sec", [])
+    ttfb_samples = streaming.get("ttfb_samples_ms", [])
+    streaming_table = "\n".join(
+        [
+            f"| transfer bytes | {fmt_int(streaming.get('bytes', 0))} |",
+            f"| background connections | {fmt_int(streaming.get('background_connections', 0))} |",
+            f"| transfer samples | {len(throughput_samples)} |",
+            f"| throughput samples (MiB/s) | {', '.join(fmt_float(v, 3) for v in throughput_samples)} |",
+            f"| transfer time (ms) | {fmt_float(streaming.get('transfer_ms', 0), 3)} |",
+            f"| throughput (MiB/s) | {fmt_float(throughput, 3)} |",
+            f"| throughput baseline (MiB/s) | {fmt_float(args.stream_throughput_baseline_mib_per_sec, 3)} |",
+            f"| throughput regression | {fmt_float(throughput_regression, 2)}% |",
+            f"| TTFB samples (ms) | {', '.join(fmt_float(v, 3) for v in ttfb_samples)} |",
+            f"| TTFB (ms) | {fmt_float(ttfb_ms, 3)} |",
+            f"| TTFB baseline (ms) | {fmt_float(args.stream_ttfb_baseline_ms, 3)} |",
+            f"| TTFB regression | {fmt_float(ttfb_regression, 2)}% |",
+            f"| concurrent equal streams | {streaming.get('concurrent_streams', 0)} |",
+            f"| bytes per fairness stream | {fmt_int(streaming.get('fair_stream_bytes', 0))} |",
+            f"| fairness completion times (ms) | {', '.join(fmt_float(v, 3) for v in fairness_completions)} |",
+            f"| fairness median (ms) | {fmt_float(streaming.get('fairness_median_ms', 0), 3)} |",
+            f"| fairness slowest (ms) | {fmt_float(streaming.get('fairness_slowest_ms', 0), 3)} |",
+            f"| fairness slowest/median | {fmt_float(streaming.get('fairness_slowest_to_median_ratio', 0), 3)} |",
+        ]
+    )
+
     content = f"""# Benchmark Results
 
 Run date: {run_date}
@@ -261,7 +306,7 @@ Run date: {run_date}
 # TS micro benches
 {args.ts_command}
 
-# Load generator (full mode, loopback)
+# Load generator (high-level connection, loopback)
 {args.loadgen_command}
 ```
 
@@ -307,7 +352,9 @@ The baseline was measured from `origin/main` under the environment and Go constr
 | --- | ---: | ---: | ---: | ---: |
 {yamux_table}
 
-## Load Generator (full mode)
+## Load Generator
+
+The load generator uses `client.Connect`; its RPC bootstrap stream remains open for the connection lifetime.
 
 ### Summary
 
@@ -326,6 +373,17 @@ The baseline was measured from `origin/main` under the environment and Go constr
 | Stage | p50 | p95 | p99 | mean | min | max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 {latency_table}
+
+### Streaming Transfer and Fairness
+
+The manual machine-sensitive gate allows at most {args.stream_max_regression_percent:.2f}% throughput/TTFB regression, a peak heap of {fmt_int(args.max_heap_bytes)} bytes, and a slowest/median fairness ratio of {args.max_fairness_ratio:.2f}.
+Each loadgen run reports the median of three 16 MiB transfers on one high-level connection and preserves all raw samples below.
+Before timed transfers, an unmeasured 8 x 2 MiB concurrent probe samples heap usage and warms the streaming path.
+The eight equal-size fairness streams are released from one barrier and measured from a shared start time.
+
+| Metric | Value |
+| --- | ---: |
+{streaming_table}
 
 ### Resources (peak)
 

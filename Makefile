@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench check stability-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress interop-stress-full fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench bench-test check stability-check go-cover-check compat-check nightly-check
 
 INTEROP_CELLS ?= go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust
 INTEROP_REPORT_DIR ?= $(or $(TMPDIR),/tmp)
@@ -148,7 +148,7 @@ swift-test:
 
 swift-cover-check:
 	@coverage_path=$$(swift test --show-codecov-path); \
-		node scripts/check-swift-coverage.mjs "$$coverage_path" 75 75
+		node scripts/check-swift-coverage.mjs "$$coverage_path" 79 80
 
 swift-check: swift-package-check swift-source-guard swift-build swift-test swift-cover-check
 
@@ -179,7 +179,7 @@ rust-deny:
 	cd flowersec-rust && cargo deny check
 
 rust-cover-check:
-	cd flowersec-rust && cargo llvm-cov --all-features --fail-under-lines 80
+	cd flowersec-rust && cargo llvm-cov --all-features --fail-under-lines 85
 
 rust-fuzz-build:
 	cd flowersec-rust && cargo check --manifest-path fuzz/Cargo.toml --bins
@@ -203,7 +203,7 @@ rust-release-check: rust-check rust-audit rust-deny rust-cover-check rust-semver
 
 release-check:
 	$(MAKE) check
-	$(MAKE) interop-stress
+	$(MAKE) interop-stress-full
 
 example-check:
 	cd examples && go test ./...
@@ -227,6 +227,9 @@ interop-stress:
 		command -v "$$tool" >/dev/null 2>&1 || { echo "missing required interop toolchain: $$tool"; exit 1; }; \
 	done
 	go run ./flowersec-go/internal/cmd/flowersec-interop -profile stress -cells "$(INTEROP_CELLS)" -report "$(INTEROP_REPORT_DIR)/flowersec-interop-stress.json"
+
+interop-stress-full:
+	$(MAKE) interop-stress INTEROP_CELLS="go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust"
 
 fmt:
 	gofmt -w flowersec-go examples/go examples/gen
@@ -313,6 +316,7 @@ check:
 	$(MAKE) readme-localization-check
 	$(MAKE) gen-check
 	$(MAKE) stability-check
+	$(MAKE) bench-test
 	$(MAKE) lint-check
 	$(MAKE) ts-build
 	$(MAKE) ts-browser-ensure
@@ -330,3 +334,6 @@ check:
 
 bench:
 	bash tools/bench/bench.sh
+
+bench-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tools/bench/bench_check_test.py

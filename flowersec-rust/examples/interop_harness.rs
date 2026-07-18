@@ -49,6 +49,7 @@ use tokio_util::sync::CancellationToken;
 
 const VERSION: u32 = 1;
 const SATURATION_GATE_KIND: &str = "interop-rpc-saturation-gate";
+const MIXED_ECHO_KIND: &str = "interop-mixed-echo";
 const CASES: [&str; 9] = [
     "connect",
     "rekey",
@@ -162,6 +163,8 @@ struct StreamWorkload {
     churn: usize,
     fin: usize,
     reset: usize,
+    mixed_concurrent: usize,
+    mixed_bytes_per_stream: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,6 +192,7 @@ struct RpcWorkload {
 struct ProxyWorkload {
     http_requests: usize,
     http_body_bytes: usize,
+    streaming_http_body_bytes: usize,
     websocket_frames: usize,
     websocket_frame_bytes: usize,
 }
@@ -469,6 +473,9 @@ impl Workload {
             return Err(
                 "workload values must be positive and saturation_rejected must be one".into(),
             );
+        }
+        if (self.streams.mixed_concurrent == 0) != (self.streams.mixed_bytes_per_stream == 0) {
+            return Err("invalid mixed stream workload".into());
         }
         Ok(())
     }
@@ -858,6 +865,9 @@ async fn exercise_connected_client(
     exercise_streams(&client, &command.workload.streams, &mut metrics)
         .await
         .map_err(|error| format!("stream workload failed: {error}"))?;
+    exercise_mixed_streams_and_rpc(&client, &command.workload.streams, &mut metrics)
+        .await
+        .map_err(|error| format!("mixed RPC/stream workload failed: {error}"))?;
     for _ in 0..command.workload.liveness_probes {
         client.probe_liveness(Duration::from_secs(2)).await?;
         metrics.liveness_probes += 1;
@@ -985,6 +995,60 @@ async fn exercise_streams(
     Ok(())
 }
 
+enum MixedOutcome {
+    Stream { written: usize, read: usize },
+    Rpc,
+}
+
+async fn exercise_mixed_streams_and_rpc(
+    client: &Arc<Client>,
+    workload: &StreamWorkload,
+    metrics: &mut Metrics,
+) -> HarnessResult {
+    let mut tasks = JoinSet::new();
+    for index in 0..workload.mixed_concurrent {
+        let client = client.clone();
+        let bytes_per_stream = workload.mixed_bytes_per_stream;
+        let chunk_bytes = workload.chunk_bytes;
+        tasks.spawn(async move {
+            if index % 2 == 1 {
+                rpc_echo(&client, index, false).await?;
+                return Ok::<_, Box<dyn std::error::Error + Send + Sync>>(MixedOutcome::Rpc);
+            }
+            let stream = client.open_stream(MIXED_ECHO_KIND).await?;
+            let payload = vec![(index % 251) as u8; bytes_per_stream];
+            let write = async {
+                for chunk in payload.chunks(chunk_bytes) {
+                    stream.write(chunk).await?;
+                }
+                Ok::<_, YamuxError>(())
+            };
+            let (write_result, read_result) = tokio::join!(write, stream.read_exact(payload.len()));
+            write_result?;
+            let echoed = read_result?;
+            if echoed != payload {
+                return Err("mixed echo payload mismatch".into());
+            }
+            stream.close().await?;
+            Ok(MixedOutcome::Stream {
+                written: payload.len(),
+                read: echoed.len(),
+            })
+        });
+    }
+    while let Some(outcome) = tasks.join_next().await {
+        match join_task(outcome)?? {
+            MixedOutcome::Stream { written, read } => {
+                metrics.streams += 1;
+                metrics.bytes_written += written;
+                metrics.bytes_read += read;
+            }
+            MixedOutcome::Rpc => metrics.rpc_calls += 1,
+        }
+    }
+    Ok(())
+}
+
 async fn exercise_rpc_saturation(
     client: &Arc<Client>,
     workload: &RpcWorkload,
@@ -1080,6 +1144,23 @@ async fn exercise_proxy(
             .await?;
         if response.status != 200 || response.body != body {
             return Err("proxy HTTP response mismatch".into());
+        }
+        metrics.http_requests += 1;
+    }
+    if workload.streaming_http_body_bytes > 0 {
+        let streaming_body = vec![b's'; workload.streaming_http_body_bytes];
+        let response = proxy
+            .request(HttpRequest {
+                method: "POST".to_owned(),
+                path: "/http".to_owned(),
+                headers: Vec::new(),
+                external_origin: None,
+                timeout: None,
+                body: streaming_body.clone(),
+            })
+            .await?;
+        if response.status != 200 || response.body != streaming_body {
+            return Err("streaming proxy HTTP response mismatch".into());
         }
         metrics.http_requests += 1;
     }
@@ -1376,7 +1457,7 @@ async fn serve_session(
                     Err(error) => return Err(error.into()),
                 };
                 match kind.as_str() {
-                    "echo" => {
+                    "echo" | MIXED_ECHO_KIND => {
                         let metrics = metrics.clone();
                         tasks.spawn(async move { ServerTaskOutcome {
                             kind: ServerTaskKind::Stream,
@@ -1546,7 +1627,13 @@ fn parse_suite(value: u16) -> HarnessResult<Suite> {
 }
 
 fn server_yamux_limits(command: &Command) -> flowersec::yamux::YamuxLimits {
-    let required = command.workload.streams.concurrent.saturating_add(1);
+    let mixed_transfers = command.workload.streams.mixed_concurrent.saturating_add(1) / 2;
+    let required = command
+        .workload
+        .streams
+        .concurrent
+        .max(mixed_transfers)
+        .saturating_add(1);
     let mut limits = flowersec::yamux::YamuxLimits {
         max_active_streams: 64.max(required),
         max_inbound_streams: 32.max(required),

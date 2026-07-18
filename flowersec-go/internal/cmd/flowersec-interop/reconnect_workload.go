@@ -98,6 +98,8 @@ func (e *environment) startGoPeerWithService(
 				endpoint.WithOrigin(interopOrigin),
 				endpoint.WithTransportSecurityPolicy(endpoint.AllowPlaintextForLoopback),
 				endpoint.WithLivenessDisabled(),
+				// Fleet peers are prestarted before the primary workload and can wait past the default timeout.
+				endpoint.WithHandshakeTimeout(30*time.Second),
 				endpoint.WithYamuxLimits(yamuxLimits),
 			)
 			if connectErr != nil {

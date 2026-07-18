@@ -4586,6 +4586,11 @@
       },
       {
         "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.E2EE.maxInboundBufferedBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
         "name": "FlowersecSDKDefaults.E2EE.maxOutboundBufferedBytes",
         "doc_token": ""
       },
@@ -4871,6 +4876,14 @@
         "min_statements_pct": 86
       },
       {
+        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/http",
+        "min_statements_pct": 74
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/issuer",
+        "min_statements_pct": 78
+      },
+      {
         "package": "github.com/floegence/flowersec/flowersec-go/endpoint",
         "min_statements_pct": 68
       },
@@ -4891,6 +4904,10 @@
         "min_statements_pct": 67
       },
       {
+        "package": "github.com/floegence/flowersec/flowersec-go/protocolio",
+        "min_statements_pct": 69
+      },
+      {
         "package": "github.com/floegence/flowersec/flowersec-go/realtime/ws",
         "min_statements_pct": 72
       },
@@ -4901,13 +4918,17 @@
       {
         "package": "github.com/floegence/flowersec/flowersec-go/rpc",
         "min_statements_pct": 91.5
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/tunnel/server",
+        "min_statements_pct": 69
       }
     ],
     "ts": {
-      "lines": 76,
-      "functions": 77,
-      "statements": 72,
-      "branches": 63
+      "lines": 82,
+      "functions": 82,
+      "statements": 77,
+      "branches": 68
     }
   }
 }

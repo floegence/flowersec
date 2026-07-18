@@ -247,7 +247,7 @@ func mergeLimitMetrics(metrics *interopprotocol.Metrics, limits interopprotocol.
 }
 
 func serverYamuxLimits(workload interopprotocol.Workload) endpoint.YamuxLimits {
-	required := uint32(workload.Streams.Concurrent + 1)
+	required := uint32(max(workload.Streams.Concurrent, workload.Streams.MixedTransferCount()) + 1)
 	return endpoint.YamuxLimits{
 		MaxActiveStreams:  max(defaults.YamuxMaxActiveStreams, required),
 		MaxInboundStreams: max(defaults.YamuxMaxInboundStreams, required),

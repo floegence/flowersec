@@ -101,13 +101,23 @@ type Workload struct {
 }
 
 type StreamWorkload struct {
-	Concurrent     int `json:"concurrent"`
-	BytesPerStream int `json:"bytes_per_stream"`
-	ChunkBytes     int `json:"chunk_bytes"`
-	SlowReaders    int `json:"slow_readers"`
-	Churn          int `json:"churn"`
-	FIN            int `json:"fin"`
-	Reset          int `json:"reset"`
+	Concurrent          int `json:"concurrent"`
+	BytesPerStream      int `json:"bytes_per_stream"`
+	ChunkBytes          int `json:"chunk_bytes"`
+	SlowReaders         int `json:"slow_readers"`
+	Churn               int `json:"churn"`
+	FIN                 int `json:"fin"`
+	Reset               int `json:"reset"`
+	MixedConcurrent     int `json:"mixed_concurrent"`
+	MixedBytesPerStream int `json:"mixed_bytes_per_stream"`
+}
+
+func (value StreamWorkload) MixedTransferCount() int {
+	return (value.MixedConcurrent + 1) / 2
+}
+
+func (value StreamWorkload) MixedRPCCallCount() int {
+	return value.MixedConcurrent / 2
 }
 
 type RekeyWorkload struct {
@@ -127,10 +137,11 @@ type RPCWorkload struct {
 }
 
 type ProxyWorkload struct {
-	HTTPRequests        int `json:"http_requests"`
-	HTTPBodyBytes       int `json:"http_body_bytes"`
-	WebSocketFrames     int `json:"websocket_frames"`
-	WebSocketFrameBytes int `json:"websocket_frame_bytes"`
+	HTTPRequests           int `json:"http_requests"`
+	HTTPBodyBytes          int `json:"http_body_bytes"`
+	StreamingHTTPBodyBytes int `json:"streaming_http_body_bytes"`
+	WebSocketFrames        int `json:"websocket_frames"`
+	WebSocketFrameBytes    int `json:"websocket_frame_bytes"`
 }
 
 type Ready struct {
@@ -330,6 +341,11 @@ func (value Workload) Validate() error {
 	}
 	if value.Rekey.Concurrent < 0 || value.RPC.SaturationRejected != 1 {
 		return errors.New("rekey and RPC saturation settings are invalid")
+	}
+	if value.Streams.MixedConcurrent < 0 || value.Streams.MixedBytesPerStream < 0 ||
+		value.Proxy.StreamingHTTPBodyBytes < 0 ||
+		(value.Streams.MixedConcurrent == 0) != (value.Streams.MixedBytesPerStream == 0) {
+		return errors.New("mixed stream and streaming proxy settings are invalid")
 	}
 	return nil
 }

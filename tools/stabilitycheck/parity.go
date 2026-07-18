@@ -200,13 +200,15 @@ type interopDiagnosticExpectation struct {
 }
 
 type interopStreamWorkload struct {
-	Concurrent     int `json:"concurrent"`
-	BytesPerStream int `json:"bytes_per_stream"`
-	ChunkBytes     int `json:"chunk_bytes"`
-	SlowReaders    int `json:"slow_readers"`
-	Churn          int `json:"churn"`
-	FIN            int `json:"fin"`
-	Reset          int `json:"reset"`
+	Concurrent          int `json:"concurrent"`
+	BytesPerStream      int `json:"bytes_per_stream"`
+	ChunkBytes          int `json:"chunk_bytes"`
+	SlowReaders         int `json:"slow_readers"`
+	Churn               int `json:"churn"`
+	FIN                 int `json:"fin"`
+	Reset               int `json:"reset"`
+	MixedConcurrent     int `json:"mixed_concurrent"`
+	MixedBytesPerStream int `json:"mixed_bytes_per_stream"`
 }
 
 type interopRekeyWorkload struct {
@@ -226,10 +228,11 @@ type interopRPCWorkload struct {
 }
 
 type interopProxyWorkload struct {
-	HTTPRequests        int `json:"http_requests"`
-	HTTPBodyBytes       int `json:"http_body_bytes"`
-	WebSocketFrames     int `json:"websocket_frames"`
-	WebSocketFrameBytes int `json:"websocket_frame_bytes"`
+	HTTPRequests           int `json:"http_requests"`
+	HTTPBodyBytes          int `json:"http_body_bytes"`
+	StreamingHTTPBodyBytes int `json:"streaming_http_body_bytes"`
+	WebSocketFrames        int `json:"websocket_frames"`
+	WebSocketFrameBytes    int `json:"websocket_frame_bytes"`
 }
 
 func verifyParity(repoRoot string) error {
@@ -434,6 +437,22 @@ func validateInteropProfiles(profiles interopProfiles) error {
 		}
 		if profile.Rekey.Concurrent < 0 || profile.RPC.SaturationRejected != 1 {
 			return fmt.Errorf("%s profile rekey or RPC saturation settings are invalid", name)
+		}
+		if profile.Streams.MixedConcurrent <= 0 || profile.Streams.MixedBytesPerStream <= 0 {
+			return fmt.Errorf("%s mixed workload must be enabled", name)
+		}
+		if name == "smoke" {
+			if profile.Streams.MixedConcurrent != 2 || profile.Streams.MixedBytesPerStream <= profile.Streams.BytesPerStream {
+				return errors.New("smoke mixed workload must cover one larger stream and one RPC")
+			}
+			if profile.Proxy.StreamingHTTPBodyBytes != 0 {
+				return errors.New("smoke profile must keep the machine-sensitive streaming proxy workload disabled")
+			}
+		}
+		if name == "stress" && (profile.Streams.MixedConcurrent != 8 ||
+			profile.Streams.MixedBytesPerStream < 1024*1024 ||
+			profile.Proxy.StreamingHTTPBodyBytes != 16*1024*1024) {
+			return errors.New("stress mixed and streaming proxy workloads do not match the quality gate")
 		}
 		expectedDiagnostics := []interopDiagnosticExpectation{
 			{Case: "rpc_queue", Stage: "rpc", Code: "resource_exhausted"},

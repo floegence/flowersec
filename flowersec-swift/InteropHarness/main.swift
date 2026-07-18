@@ -30,6 +30,7 @@ private func closeFileDescriptor(_ descriptor: Int32) -> Int32 {
 
 private let protocolVersion = 1
 private let saturationGateKind = "interop-rpc-saturation-gate"
+private let mixedEchoKind = "interop-mixed-echo"
 private let cases = [
   "connect", "rekey", "streams", "rpc", "liveness", "proxy", "reconnect", "limits",
   "diagnostics",
@@ -153,12 +154,16 @@ private struct StreamWorkload: Decodable, Sendable {
   var churn: Int
   var fin: Int
   var reset: Int
+  var mixedConcurrent: Int
+  var mixedBytesPerStream: Int
 
   enum CodingKeys: String, CodingKey {
     case concurrent, churn, fin, reset
     case bytesPerStream = "bytes_per_stream"
     case chunkBytes = "chunk_bytes"
     case slowReaders = "slow_readers"
+    case mixedConcurrent = "mixed_concurrent"
+    case mixedBytesPerStream = "mixed_bytes_per_stream"
   }
 }
 
@@ -188,12 +193,14 @@ private struct RPCWorkload: Decodable, Sendable {
 private struct ProxyWorkload: Decodable, Sendable {
   var httpRequests: Int
   var httpBodyBytes: Int
+  var streamingHTTPBodyBytes: Int
   var websocketFrames: Int
   var websocketFrameBytes: Int
 
   enum CodingKeys: String, CodingKey {
     case httpRequests = "http_requests"
     case httpBodyBytes = "http_body_bytes"
+    case streamingHTTPBodyBytes = "streaming_http_body_bytes"
     case websocketFrames = "websocket_frames"
     case websocketFrameBytes = "websocket_frame_bytes"
   }
@@ -667,6 +674,15 @@ private func exerciseConnectedClient(
   metrics.bytesWritten += streamMetrics.written
   metrics.bytesRead += streamMetrics.read
 
+  let mixedMetrics = try await exerciseMixedStreamsAndRPC(
+    client,
+    workload: command.workload.streams
+  )
+  metrics.streams += mixedMetrics.streams
+  metrics.bytesWritten += mixedMetrics.written
+  metrics.bytesRead += mixedMetrics.read
+  metrics.rpcCalls += mixedMetrics.rpcCalls
+
   for _ in 0..<command.workload.livenessProbes {
     _ = try await client.probeLiveness(timeout: .seconds(2))
     metrics.livenessProbes += 1
@@ -720,6 +736,13 @@ private struct StreamMetrics: Sendable {
   var resets: Int
   var written: Int
   var read: Int
+}
+
+private struct MixedOperationMetrics: Sendable {
+  var streams: Int
+  var written: Int
+  var read: Int
+  var rpcCalls: Int
 }
 
 private func exerciseStreams(
@@ -783,6 +806,46 @@ private func exerciseStreams(
     metrics.resets += 1
   }
   return metrics
+}
+
+private func exerciseMixedStreamsAndRPC(
+  _ client: FlowersecClient,
+  workload: StreamWorkload
+) async throws -> MixedOperationMetrics {
+  guard workload.mixedConcurrent > 0 else {
+    return MixedOperationMetrics(streams: 0, written: 0, read: 0, rpcCalls: 0)
+  }
+  var results: [(Bool, Int, Int)] = []
+  try await withThrowingTaskGroup(of: (Bool, Int, Int).self) { group in
+    for index in 0..<workload.mixedConcurrent {
+      group.addTask {
+        if index % 2 == 1 {
+          try await rpcEcho(client, value: index, notify: false)
+          return (true, 0, 0)
+        }
+        let stream = try await client.openStream(kind: mixedEchoKind)
+        let payload = Data(repeating: UInt8(index % 251), count: workload.mixedBytesPerStream)
+        async let echoedValue = stream.readExact(payload.count)
+        var offset = 0
+        while offset < payload.count {
+          let end = min(payload.count, offset + workload.chunkBytes)
+          try await stream.write(payload.subdata(in: offset..<end))
+          offset = end
+        }
+        let echoed = try await echoedValue
+        guard echoed == payload else { throw HarnessError("mixed echo payload mismatch") }
+        await stream.close()
+        return (false, payload.count, echoed.count)
+      }
+    }
+    for try await result in group { results.append(result) }
+  }
+  return MixedOperationMetrics(
+    streams: results.filter { !$0.0 }.count,
+    written: results.reduce(0) { $0 + $1.1 },
+    read: results.reduce(0) { $0 + $1.2 },
+    rpcCalls: results.filter { $0.0 }.count
+  )
 }
 
 private func exerciseRPCSaturation(
@@ -850,6 +913,19 @@ private func exerciseProxy(
     )
     guard response.status == 200, response.body == body else {
       throw HarnessError("proxy HTTP response mismatch")
+    }
+    metrics.httpRequests += 1
+  }
+  if workload.streamingHTTPBodyBytes > 0 {
+    let streamingBody = Data(
+      repeating: Character("s").asciiValue!,
+      count: workload.streamingHTTPBodyBytes
+    )
+    let response = try await proxy.request(
+      ProxyHTTPRequest(method: "POST", path: "/http", body: streamingBody)
+    )
+    guard response.status == 200, response.body == streamingBody else {
+      throw HarnessError("streaming proxy HTTP response mismatch")
     }
     metrics.httpRequests += 1
   }
@@ -1136,10 +1212,14 @@ private func serveSession(
           throw error
         }
         switch next.kind {
-        case "echo":
+        case "echo", mixedEchoKind:
           stage = "echo"
           do {
-            let payload = try await next.stream.readExact(command.workload.streams.bytesPerStream)
+            let length =
+              next.kind == mixedEchoKind
+              ? command.workload.streams.mixedBytesPerStream
+              : command.workload.streams.bytesPerStream
+            let payload = try await next.stream.readExact(length)
             try await next.stream.write(payload)
             await metrics.addBytes(payload.count)
             await next.stream.close()
@@ -1216,7 +1296,8 @@ private func rpcEcho(_ client: FlowersecClient, value: Int, notify: Bool) async 
 }
 
 private func serverYamuxLimits(_ command: Command) -> YamuxLimits {
-  let required = command.workload.streams.concurrent + 1
+  let mixedTransfers = (command.workload.streams.mixedConcurrent + 1) / 2
+  let required = max(command.workload.streams.concurrent, mixedTransfers) + 1
   var limits = YamuxLimits(
     maxActiveStreams: max(64, required),
     maxInboundStreams: max(32, required)
@@ -1407,6 +1488,7 @@ private func readCommand() throws -> Command {
     try objectValue(workload, "streams"),
     required: [
       "concurrent", "bytes_per_stream", "chunk_bytes", "slow_readers", "churn", "fin", "reset",
+      "mixed_concurrent", "mixed_bytes_per_stream",
     ],
     name: "streams"
   )
@@ -1426,7 +1508,8 @@ private func readCommand() throws -> Command {
   try requireKeys(
     try objectValue(workload, "proxy"),
     required: [
-      "http_requests", "http_body_bytes", "websocket_frames", "websocket_frame_bytes",
+      "http_requests", "http_body_bytes", "streaming_http_body_bytes", "websocket_frames",
+      "websocket_frame_bytes",
     ],
     name: "proxy"
   )
@@ -1567,6 +1650,15 @@ private func validate(_ command: Command) throws {
   guard positive.allSatisfy({ $0 > 0 }), command.workload.rpc.saturationRejected == 1 else {
     throw HarnessError("workload values must be positive and saturation_rejected must be one")
   }
+  let optional = [
+    command.workload.streams.mixedConcurrent,
+    command.workload.streams.mixedBytesPerStream,
+    command.workload.proxy.streamingHTTPBodyBytes,
+  ]
+  guard optional.allSatisfy({ $0 >= 0 }),
+    (command.workload.streams.mixedConcurrent == 0)
+      == (command.workload.streams.mixedBytesPerStream == 0)
+  else { throw HarnessError("invalid mixed stream/streaming proxy workload") }
 }
 
 private func strictObject(_ data: Data, name: String) throws -> [String: Any] {

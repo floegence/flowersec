@@ -533,7 +533,7 @@ func remainingMilliseconds(ctx context.Context) int {
 }
 
 func validateClientMetrics(metrics interopprotocol.Metrics, workload interopprotocol.Workload) error {
-	minimumStreams := workload.Streams.Concurrent + workload.Streams.Churn + workload.Streams.FIN + workload.Streams.Reset
+	minimumStreams := workload.Streams.Concurrent + workload.Streams.MixedTransferCount() + workload.Streams.Churn + workload.Streams.FIN + workload.Streams.Reset
 	minimumRekeys := workload.Rekey.Client + workload.Rekey.Server + 2*workload.Rekey.Concurrent
 	expectedSessions := workload.ReconnectCycles + 2 + max(0, workload.LimitChecks-1)
 	if metrics.Sessions != expectedSessions || metrics.Streams < minimumStreams || metrics.Resets < workload.Streams.Reset {
@@ -548,7 +548,7 @@ func validateClientMetrics(metrics interopprotocol.Metrics, workload interopprot
 	if metrics.Reconnects != workload.ReconnectCycles {
 		return fmt.Errorf("client reconnect metrics are incomplete: %+v", metrics)
 	}
-	if metrics.RPCCalls < workload.RPC.Calls || metrics.RPCNotifications < workload.RPC.Notifications ||
+	if metrics.RPCCalls < workload.RPC.Calls+workload.Streams.MixedRPCCallCount() || metrics.RPCNotifications < workload.RPC.Notifications ||
 		metrics.RPCCancellations < workload.RPC.Cancellations || metrics.RPCTimeouts < workload.RPC.Timeouts ||
 		metrics.RPCQueueRejections != workload.RPC.SaturationRejected {
 		return fmt.Errorf("client RPC metrics are incomplete: %+v", metrics)
@@ -557,7 +557,11 @@ func validateClientMetrics(metrics interopprotocol.Metrics, workload interopprot
 		metrics.ResourceRejections+metrics.BackpressureChecks != workload.LimitChecks {
 		return fmt.Errorf("client resource-limit metrics are incomplete: %+v", metrics)
 	}
-	if metrics.HTTPRequests < workload.Proxy.HTTPRequests || metrics.WebSocketFrames < workload.Proxy.WebSocketFrames {
+	expectedHTTPRequests := workload.Proxy.HTTPRequests
+	if workload.Proxy.StreamingHTTPBodyBytes > 0 {
+		expectedHTTPRequests++
+	}
+	if metrics.HTTPRequests < expectedHTTPRequests || metrics.WebSocketFrames < workload.Proxy.WebSocketFrames {
 		return fmt.Errorf("client proxy metrics are incomplete: %+v", metrics)
 	}
 	return nil

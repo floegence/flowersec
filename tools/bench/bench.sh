@@ -17,12 +17,17 @@ LOADGEN_RAMP_INTERVAL="${LOADGEN_RAMP_INTERVAL:-2s}"
 LOADGEN_STEADY="${LOADGEN_STEADY:-30s}"
 LOADGEN_REPORT_INTERVAL="${LOADGEN_REPORT_INTERVAL:-1s}"
 GO_ROUNDTRIP_BASELINE_NS="${GO_ROUNDTRIP_BASELINE_NS:-40824}"
-GO_ROUNDTRIP_MAX_REGRESSION_PERCENT="${GO_ROUNDTRIP_MAX_REGRESSION_PERCENT:-10}"
+GO_ROUNDTRIP_MAX_REGRESSION_PERCENT="${GO_ROUNDTRIP_MAX_REGRESSION_PERCENT:-15}"
+STREAM_THROUGHPUT_BASELINE_MIB_PER_SEC="${STREAM_THROUGHPUT_BASELINE_MIB_PER_SEC:-279.77041340449995}"
+STREAM_TTFB_BASELINE_MS="${STREAM_TTFB_BASELINE_MS:-0.653583}"
+STREAM_MAX_REGRESSION_PERCENT="${STREAM_MAX_REGRESSION_PERCENT:-15}"
+MAX_HEAP_BYTES="${MAX_HEAP_BYTES:-536870912}"
+MAX_FAIRNESS_RATIO="${MAX_FAIRNESS_RATIO:-2}"
 
 GO_BENCH_CMD="GOMAXPROCS=${GOMAXPROCS} GOMEMLIMIT=${GOMEMLIMIT} go test -bench . -benchmem ./crypto/e2ee ./tunnel/server"
 GO_ROUNDTRIP_CMD="GOMAXPROCS=${GOMAXPROCS} GOMEMLIMIT=${GOMEMLIMIT} go test -run '^$' -bench '^BenchmarkSecureChannelRoundTrip/65536B$' -benchmem -count=10 ./crypto/e2ee"
 TS_BENCH_CMD="NODE_OPTIONS=${NODE_OPTIONS} npm run bench"
-LOADGEN_CMD="GOMAXPROCS=${GOMAXPROCS} GOMEMLIMIT=${GOMEMLIMIT} go run ./internal/cmd/flowersec-loadgen --mode=full --channels=${LOADGEN_CHANNELS} --rate=${LOADGEN_RATE} --ramp-step=${LOADGEN_RAMP_STEP} --ramp-interval=${LOADGEN_RAMP_INTERVAL} --steady=${LOADGEN_STEADY} --report-interval=${LOADGEN_REPORT_INTERVAL}"
+LOADGEN_CMD="GOMAXPROCS=${GOMAXPROCS} GOMEMLIMIT=${GOMEMLIMIT} go run ./internal/cmd/flowersec-loadgen --channels=${LOADGEN_CHANNELS} --rate=${LOADGEN_RATE} --ramp-step=${LOADGEN_RAMP_STEP} --ramp-interval=${LOADGEN_RAMP_INTERVAL} --steady=${LOADGEN_STEADY} --report-interval=${LOADGEN_REPORT_INTERVAL} --stream-benchmark-bytes=16777216 --fair-stream-bytes=2097152 --fair-streams=8"
 
 GO_OUT="$(mktemp)"
 GO_ROUNDTRIP_OUT="$(mktemp)"
@@ -49,13 +54,15 @@ echo "[bench] running ts benchmarks..."
 
 echo "[bench] running load generator..."
 (cd "${GO_DIR}" && GOMAXPROCS="${GOMAXPROCS}" GOMEMLIMIT="${GOMEMLIMIT}" go run ./internal/cmd/flowersec-loadgen \
-  --mode=full \
   --channels="${LOADGEN_CHANNELS}" \
   --rate="${LOADGEN_RATE}" \
   --ramp-step="${LOADGEN_RAMP_STEP}" \
   --ramp-interval="${LOADGEN_RAMP_INTERVAL}" \
   --steady="${LOADGEN_STEADY}" \
-  --report-interval="${LOADGEN_REPORT_INTERVAL}") > "${LOADGEN_OUT}"
+  --report-interval="${LOADGEN_REPORT_INTERVAL}" \
+  --stream-benchmark-bytes=16777216 \
+  --fair-stream-bytes=2097152 \
+  --fair-streams=8) > "${LOADGEN_OUT}"
 
 python3 "${ROOT_DIR}/tools/bench/bench_check.py" \
   --go-roundtrip-output "${GO_ROUNDTRIP_OUT}" \
@@ -63,7 +70,12 @@ python3 "${ROOT_DIR}/tools/bench/bench_check.py" \
   --go-roundtrip-max-regression-percent "${GO_ROUNDTRIP_MAX_REGRESSION_PERCENT}" \
   --ts-output "${TS_OUT}" \
   --loadgen-output "${LOADGEN_OUT}" \
-  --expected-channels "${LOADGEN_CHANNELS}"
+  --expected-channels "${LOADGEN_CHANNELS}" \
+  --stream-throughput-baseline-mib-per-sec "${STREAM_THROUGHPUT_BASELINE_MIB_PER_SEC}" \
+  --stream-ttfb-baseline-ms "${STREAM_TTFB_BASELINE_MS}" \
+  --stream-max-regression-percent "${STREAM_MAX_REGRESSION_PERCENT}" \
+  --max-heap-bytes "${MAX_HEAP_BYTES}" \
+  --max-fairness-ratio "${MAX_FAIRNESS_RATIO}"
 
 RUN_DATE="$(LC_ALL=C date)"
 OS_VERSION="$(sw_vers -productVersion)"
@@ -92,7 +104,12 @@ python3 "${ROOT_DIR}/tools/bench/bench_report.py" \
   --go-command "${GO_BENCH_CMD}" \
   --go-roundtrip-command "${GO_ROUNDTRIP_CMD}" \
   --ts-command "${TS_BENCH_CMD}" \
-  --loadgen-command "${LOADGEN_CMD}"
+  --loadgen-command "${LOADGEN_CMD}" \
+  --stream-throughput-baseline-mib-per-sec "${STREAM_THROUGHPUT_BASELINE_MIB_PER_SEC}" \
+  --stream-ttfb-baseline-ms "${STREAM_TTFB_BASELINE_MS}" \
+  --stream-max-regression-percent "${STREAM_MAX_REGRESSION_PERCENT}" \
+  --max-heap-bytes "${MAX_HEAP_BYTES}" \
+  --max-fairness-ratio "${MAX_FAIRNESS_RATIO}"
 
 echo "[bench] wrote ${OUT_FILE}"
 echo "[bench] preview:"

@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,6 +13,71 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/internal/interopprotocol"
 )
+
+func TestSmokeProfileExercisesEveryDeterministicLimit(t *testing.T) {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := loadProfiles(filepath.Join(repoRoot, "testdata/interop/v1/profiles.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	smoke := document.Profiles["smoke"]
+	if smoke.LimitChecks != len(interopprotocol.DiagnosticExpectations) {
+		t.Fatalf("smoke limit checks got %d, want %d", smoke.LimitChecks, len(interopprotocol.DiagnosticExpectations))
+	}
+	if err := interopprotocol.ValidateDiagnosticExpectations(smoke.Diagnostics, smoke.LimitChecks); err != nil {
+		t.Fatalf("smoke diagnostics do not cover every deterministic limit: %v", err)
+	}
+}
+
+func TestInteropProfilesDeclareStreamingAndMixedConcurrency(t *testing.T) {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot, "testdata/interop/v1/profiles.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Profiles map[string]struct {
+			Streams struct {
+				BytesPerStream      int `json:"bytes_per_stream"`
+				MixedConcurrent     int `json:"mixed_concurrent"`
+				MixedBytesPerStream int `json:"mixed_bytes_per_stream"`
+			} `json:"streams"`
+			Proxy struct {
+				StreamingHTTPBodyBytes int `json:"streaming_http_body_bytes"`
+			} `json:"proxy"`
+		} `json:"profiles"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	smoke := document.Profiles["smoke"]
+	if smoke.Streams.MixedConcurrent != 2 {
+		t.Fatalf("smoke mixed concurrency got %d, want 2", smoke.Streams.MixedConcurrent)
+	}
+	if smoke.Streams.MixedBytesPerStream <= smoke.Streams.BytesPerStream {
+		t.Fatalf(
+			"smoke mixed stream body got %d, want greater than regular %d",
+			smoke.Streams.MixedBytesPerStream,
+			smoke.Streams.BytesPerStream,
+		)
+	}
+	stress := document.Profiles["stress"]
+	if stress.Proxy.StreamingHTTPBodyBytes != 16*1024*1024 {
+		t.Fatalf("stress streaming proxy body got %d, want 16 MiB", stress.Proxy.StreamingHTTPBodyBytes)
+	}
+	if stress.Streams.MixedConcurrent != 8 {
+		t.Fatalf("stress mixed concurrency got %d, want 8", stress.Streams.MixedConcurrent)
+	}
+	if stress.Streams.MixedBytesPerStream < 1024*1024 {
+		t.Fatalf("stress mixed stream body got %d, want at least 1 MiB", stress.Streams.MixedBytesPerStream)
+	}
+}
 
 func TestBaselineFailureStopsRemainingVariants(t *testing.T) {
 	variants := []variant{

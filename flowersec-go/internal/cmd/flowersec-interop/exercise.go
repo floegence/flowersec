@@ -31,6 +31,7 @@ const (
 	rpcTypeDisconnect   uint32 = 6
 	rpcTypeSaturation   uint32 = 7
 	saturationGateKind         = "interop-rpc-saturation-gate"
+	mixedEchoKind              = "interop-mixed-echo"
 )
 
 type saturationGate struct {
@@ -162,6 +163,10 @@ func serveReferenceSession(
 		_, copyErr := io.Copy(stream, stream)
 		report(copyErr)
 	})
+	streamServer.Handle(mixedEchoKind, func(_ context.Context, stream io.ReadWriteCloser) {
+		_, copyErr := io.Copy(stream, stream)
+		report(copyErr)
+	})
 	streamServer.Handle("churn", func(context.Context, io.ReadWriteCloser) {})
 	streamServer.Handle(saturationGateKind, func(_ context.Context, stream io.ReadWriteCloser) {
 		var signal [1]byte
@@ -243,6 +248,9 @@ func exerciseGoClient(
 	}
 
 	if err := exerciseGoStreams(ctx, connected, workload.Streams, &metrics); err != nil {
+		return metrics, err
+	}
+	if err := exerciseGoMixedStreamsAndRPC(ctx, connected, workload.Streams, &metrics); err != nil {
 		return metrics, err
 	}
 	for index := 0; index < workload.LivenessProbes; index++ {
@@ -410,6 +418,96 @@ func exerciseGoStreams(ctx context.Context, connected client.Client, workload in
 	return nil
 }
 
+func exerciseGoMixedStreamsAndRPC(
+	ctx context.Context,
+	connected client.Client,
+	workload interopprotocol.StreamWorkload,
+	metrics *interopprotocol.Metrics,
+) error {
+	if workload.MixedConcurrent == 0 {
+		return nil
+	}
+	type outcome struct {
+		stream  bool
+		rpc     bool
+		written int
+		read    int
+		err     error
+	}
+	start := make(chan struct{})
+	outcomes := make(chan outcome, workload.MixedConcurrent)
+	for index := 0; index < workload.MixedConcurrent; index++ {
+		if index%2 == 0 {
+			go func(streamIndex int) {
+				<-start
+				stream, err := connected.OpenStream(ctx, mixedEchoKind)
+				if err != nil {
+					outcomes <- outcome{err: err}
+					return
+				}
+				payload := bytes.Repeat([]byte{byte(streamIndex % 251)}, workload.MixedBytesPerStream)
+				type readOutcome struct {
+					payload []byte
+					err     error
+				}
+				readDone := make(chan readOutcome, 1)
+				go func() {
+					echoed := make([]byte, len(payload))
+					_, err := io.ReadFull(stream, echoed)
+					readDone <- readOutcome{payload: echoed, err: err}
+				}()
+				var writeErr error
+				for offset := 0; offset < len(payload); offset += workload.ChunkBytes {
+					end := min(len(payload), offset+workload.ChunkBytes)
+					if _, err := stream.Write(payload[offset:end]); err != nil {
+						writeErr = err
+						break
+					}
+				}
+				if writeErr != nil {
+					writeErr = errors.Join(writeErr, stream.Reset())
+				}
+				readResult := <-readDone
+				if err := errors.Join(writeErr, readResult.err); err != nil {
+					outcomes <- outcome{err: err}
+					return
+				}
+				if !bytes.Equal(payload, readResult.payload) {
+					outcomes <- outcome{err: errors.Join(errors.New("mixed echo payload mismatch"), stream.Reset())}
+					return
+				}
+				outcomes <- outcome{stream: true, written: len(payload), read: len(readResult.payload), err: stream.Close()}
+			}(index)
+		} else {
+			go func(rpcIndex int) {
+				<-start
+				outcomes <- outcome{rpc: true, err: rpcEcho(ctx, connected, rpcIndex, false)}
+			}(index)
+		}
+	}
+	close(start)
+	var combined error
+	for range workload.MixedConcurrent {
+		result := <-outcomes
+		if result.err != nil {
+			joinedError(&combined, result.err)
+			continue
+		}
+		if result.stream {
+			metrics.Streams++
+			metrics.BytesWritten += int64(result.written)
+			metrics.BytesRead += int64(result.read)
+		}
+		if result.rpc {
+			metrics.RPCCalls++
+		}
+	}
+	if combined != nil {
+		return fmt.Errorf("mixed RPC/stream workload: %w", combined)
+	}
+	return nil
+}
+
 func exerciseGoRPCSaturation(ctx context.Context, connected client.Client, workload interopprotocol.RPCWorkload) (int, error) {
 	total := workload.SaturationActive + workload.SaturationQueued + workload.SaturationRejected
 	gate, err := connected.OpenStream(ctx, saturationGateKind)
@@ -513,6 +611,24 @@ func exerciseGoProxy(ctx context.Context, connected client.Client, upstreamURL s
 		}
 		if response.StatusCode != http.StatusOK || !bytes.Equal(responseBody, body) {
 			return fmt.Errorf("proxy HTTP response %d does not match Go upstream %s", index, upstreamURL)
+		}
+		metrics.HTTPRequests++
+	}
+	if workload.StreamingHTTPBodyBytes > 0 {
+		streamingBody := bytes.Repeat([]byte("s"), workload.StreamingHTTPBodyBytes)
+		response, err := proxyClient.Do(ctx, connected, proxy.ClientHTTPRequest{
+			Method: http.MethodPost, Path: "/http", Body: bytes.NewReader(streamingBody),
+		})
+		if err != nil {
+			return fmt.Errorf("streaming proxy HTTP request: %w", err)
+		}
+		responseBody, readErr := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if readErr != nil || closeErr != nil {
+			return errors.Join(readErr, closeErr)
+		}
+		if response.StatusCode != http.StatusOK || !bytes.Equal(responseBody, streamingBody) {
+			return fmt.Errorf("streaming proxy HTTP response does not match Go upstream %s", upstreamURL)
 		}
 		metrics.HTTPRequests++
 	}
