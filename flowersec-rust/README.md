@@ -31,6 +31,10 @@ High-level WebSocket connections require TLS by default. Use `TransportSecurityP
 
 Endpoint servers should accept raw async streams with `TungsteniteTransport::accept(...)`; it applies Flowersec's encrypted-record message and frame limits and bounds the HTTP WebSocket upgrade with the default handshake timeout. Use `accept_with_timeout(...)` to select a different upgrade deadline. `TungsteniteTransport::new(...)` returns `io::Result` and rejects a supplied `WebSocketStream` unless it already enforces equivalent or stricter message and frame limits.
 
+## Proxy Server
+
+`ProxyServer` streams HTTP request and response chunks directly between the Flowersec stream and reqwest. `ServerOptions.max_concurrent_streams` independently caps active HTTP and WebSocket proxy streams; use `flowersec::defaults::PROXY_MAX_CONCURRENT_STREAMS` for the shared default of 64. Excess streams are reset immediately.
+
 ## Liveness
 
 Client and endpoint options expose `yamux::LivenessOptions`:

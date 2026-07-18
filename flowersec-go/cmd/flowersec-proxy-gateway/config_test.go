@@ -190,7 +190,7 @@ func TestLoadConfigRejectsLegacyOriginField(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsUnknownProxyProfile(t *testing.T) {
+func TestLoadConfigRejectsRemovedProxyProfileField(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gateway.json")
 	if err := os.WriteFile(path, []byte(`{
@@ -211,48 +211,8 @@ func TestLoadConfigRejectsUnknownProxyProfile(t *testing.T) {
 	}
 
 	_, err := loadConfig(path)
-	if err == nil || !strings.Contains(err.Error(), "unknown proxy profile") {
-		t.Fatalf("expected unknown proxy profile error, got %v", err)
-	}
-}
-
-func TestLoadConfigRejectsPresetFileAlongsideDeprecatedProfile(t *testing.T) {
-	dir := t.TempDir()
-	presetPath := filepath.Join(dir, "default-preset.json")
-	if err := os.WriteFile(presetPath, []byte(`{
-  "v": 1,
-  "preset_id": "default",
-  "limits": {
-    "max_json_frame_bytes": 1048576,
-    "max_chunk_bytes": 262144,
-    "max_body_bytes": 67108864,
-    "max_ws_frame_bytes": 1048576
-  }
-}`), 0o600); err != nil {
-		t.Fatalf("write preset: %v", err)
-	}
-	path := filepath.Join(dir, "gateway.json")
-	if err := os.WriteFile(path, []byte(`{
-  "browser": {
-    "allowed_origins": ["https://gateway.example.com"]
-  },
-  "tunnel": {
-    "origin": "https://gateway.example.com"
-  },
-  "proxy": {
-    "preset_file": "`+presetPath+`",
-    "profile": "default"
-  },
-  "routes": [
-    {"host": "example.com", "grant": {"file": "./grant.json"}}
-  ]
-}`), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	_, err := loadConfig(path)
-	if err == nil || !strings.Contains(err.Error(), "proxy.preset_file and deprecated proxy.profile") {
-		t.Fatalf("expected preset/profile conflict error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), `unknown field "profile"`) {
+		t.Fatalf("expected removed profile field to be rejected, got %v", err)
 	}
 }
 

@@ -41,24 +41,9 @@ public final class ProxyServer: @unchecked Sendable {
     do {
       try await withThrowingTaskGroup(of: Void.self) { group in
         while !Task.isCancelled {
-          await concurrency.acquire()
-          let accepted: EndpointStream
-          do {
-            accepted = try await session.acceptStream()
-          } catch {
-            await concurrency.release()
-            throw error
-          }
+          let accepted = try await session.acceptStream()
           group.addTask { [self] in
-            do {
-              try await serveStream(kind: accepted.kind, stream: accepted.stream)
-              await concurrency.release()
-            } catch {
-              await accepted.stream.close()
-              await concurrency.release()
-              await session.close()
-              throw error
-            }
+            await serveAcceptedStream(accepted)
           }
         }
         try await group.waitForAll()
@@ -67,6 +52,23 @@ public final class ProxyServer: @unchecked Sendable {
       await session.close()
       throw error
     }
+  }
+
+  func serveAcceptedStream(_ accepted: EndpointStream) async {
+    guard await concurrency.tryAcquire() else {
+      try? await accepted.stream.reset()
+      return
+    }
+    await withTaskCancellationHandler {
+      do {
+        try await serveStream(kind: accepted.kind, stream: accepted.stream)
+      } catch {
+        try? await accepted.stream.reset()
+      }
+    } onCancel: {
+      Task { try? await accepted.stream.reset() }
+    }
+    await concurrency.release()
   }
 
   public func serveStream(kind: String, stream: any FlowersecByteStream) async throws {
@@ -99,38 +101,34 @@ public final class ProxyServer: @unchecked Sendable {
       return
     }
 
-    let body: Data
-    do {
-      body = try await ProxyFraming.readBody(from: stream, options: configuration.contract)
-    } catch {
-      let code =
-        error as? ProxyError == .bodyTooLarge || error as? ProxyError == .frameTooLarge
-        ? "request_body_too_large" : "request_body_invalid"
-      try await respondHTTPError(
-        stream,
-        requestID: meta.requestID,
-        code: code,
-        cause: error
-      )
-      return
-    }
-
+    let bodyReader = ProxyFramedHTTPBodyReader(
+      stream: stream,
+      maxChunkBytes: configuration.contract.maxChunkBytes,
+      maxBodyBytes: configuration.contract.maxBodyBytes
+    )
+    let body = ProxyHTTPBodyStream(nextChunk: { try await bodyReader.next() })
+    var responseStarted = false
     do {
       let url = try configuration.upstreamURL(path: meta.path, webSocket: false)
       var headers = configuration.headers.filterRequest(meta.headers)
       try applyExternalOrigin(meta.externalOrigin, to: &headers)
       let timeout = try configuration.resolveTimeout(meta.timeoutMilliseconds)
+      let method = meta.method.uppercased()
+      if method == "GET" || method == "HEAD" {
+        for try await _ in body {}
+      }
       let response = try await httpExecutor(
         ProxyHTTPUpstreamRequest(
-          method: meta.method,
+          method: method,
           url: url,
           headers: headers,
-          body: (meta.method == "GET" || meta.method == "HEAD") ? Data() : body,
-          timeout: timeout,
-          maxResponseBodyBytes: configuration.contract.maxBodyBytes
+          body: method == "GET" || method == "HEAD" ? .empty : body,
+          timeout: timeout
         )
       )
-      guard response.body.count <= configuration.contract.maxBodyBytes else {
+      if let contentLength = response.contentLength,
+        contentLength > configuration.contract.maxBodyBytes
+      {
         throw ProxyError.bodyTooLarge
       }
       try await ProxyFraming.writeJSON(
@@ -143,9 +141,31 @@ public final class ProxyServer: @unchecked Sendable {
         to: stream,
         maxBytes: configuration.contract.maxJSONFrameBytes
       )
-      try await ProxyFraming.writeBody(response.body, to: stream, options: configuration.contract)
+      responseStarted = true
+      let responseWriter = ProxyHTTPResponseBodyWriter(
+        stream: stream,
+        maxChunkBytes: configuration.contract.maxChunkBytes,
+        maxBodyBytes: configuration.contract.maxBodyBytes
+      )
+      try await response.body { chunk in
+        try await responseWriter.write(chunk)
+      }
+      try await ProxyFraming.writeBodyTerminator(to: stream)
       await stream.close()
     } catch {
+      if responseStarted {
+        try? await stream.reset()
+        return
+      }
+      if let bodyError = await bodyReader.failure() {
+        try await respondHTTPError(
+          stream,
+          requestID: meta.requestID,
+          code: proxyClassifyRequestBodyError(bodyError),
+          cause: bodyError
+        )
+        return
+      }
       try await respondHTTPError(
         stream,
         requestID: meta.requestID,
@@ -385,15 +405,37 @@ struct ProxyHTTPUpstreamRequest: Sendable {
   var method: String
   var url: URL
   var headers: [ProxyHeader]
-  var body: Data
+  var body: ProxyHTTPBodyStream
   var timeout: Duration?
-  var maxResponseBodyBytes: Int
 }
 
 struct ProxyHTTPUpstreamResponse: Sendable {
   var status: Int
   var headers: [ProxyHeader]
-  var body: Data
+  var contentLength: Int?
+  var body: @Sendable (@escaping @Sendable (Data) async throws -> Void) async throws -> Void
+}
+
+struct ProxyHTTPBodyStream: AsyncSequence, Sendable {
+  typealias Element = Data
+
+  struct AsyncIterator: AsyncIteratorProtocol {
+    let nextChunk: @Sendable () async throws -> Data?
+
+    mutating func next() async throws -> Data? { try await nextChunk() }
+  }
+
+  static let empty = ProxyHTTPBodyStream(nextChunk: { nil })
+
+  let nextChunk: @Sendable () async throws -> Data?
+
+  func makeAsyncIterator() -> AsyncIterator { AsyncIterator(nextChunk: nextChunk) }
+
+  func collect() async throws -> Data {
+    var result = Data()
+    for try await chunk in self { result.append(chunk) }
+    return result
+  }
 }
 
 typealias ProxyHTTPExecutor =
@@ -412,7 +454,12 @@ private enum ProxyHTTPRuntime {
     var request = HTTPClientRequest(url: input.url.absoluteString)
     request.method = HTTPMethod(rawValue: input.method)
     for header in input.headers { request.headers.add(name: header.name, value: header.value) }
-    if !input.body.isEmpty { request.body = .bytes(input.body) }
+    if input.method != "GET" && input.method != "HEAD" {
+      request.body = .stream(
+        input.body.map { ByteBuffer(bytes: $0) },
+        length: .unknown
+      )
+    }
     let response: HTTPClientResponse
     do {
       if let timeout = input.timeout {
@@ -432,21 +479,24 @@ private enum ProxyHTTPRuntime {
     } catch {
       throw ProxyUpstreamFailure(.request, error)
     }
-    let bodyBuffer: ByteBuffer
-    do {
-      bodyBuffer = try await response.body.collect(upTo: input.maxResponseBodyBytes)
-    } catch is NIOTooManyBytesError { throw ProxyError.bodyTooLarge } catch let error as HTTPClientError
-      where proxyIsHTTPTimeout(error)
-    {
-      throw ProxyUpstreamFailure(.timeout, error)
-    } catch {
-      throw ProxyUpstreamFailure(.request, error)
-    }
     let headers = response.headers.map { ProxyHeader(name: $0.name, value: $0.value) }
     return ProxyHTTPUpstreamResponse(
       status: Int(response.status.code),
       headers: headers,
-      body: Data(bodyBuffer.readableBytesView)
+      contentLength: proxyHTTPContentLength(response.headers),
+      body: { write in
+        do {
+          for try await buffer in response.body {
+            try await write(Data(buffer.readableBytesView))
+          }
+        } catch is CancellationError {
+          throw ProxyError.canceled
+        } catch let error as HTTPClientError where proxyIsHTTPTimeout(error) {
+          throw ProxyUpstreamFailure(.timeout, error)
+        } catch {
+          throw ProxyUpstreamFailure(.request, error)
+        }
+      }
     )
   }
 }
@@ -523,21 +573,99 @@ private struct ProxyCompiledServerOptions: Sendable {
 private actor ProxyConcurrencyGate {
   private let limit: Int
   private var active = 0
-  private var waiters: [CheckedContinuation<Void, Never>] = []
 
   init(limit: Int) { self.limit = limit }
 
-  func acquire() async {
-    if active < limit {
-      active += 1
-      return
-    }
-    await withCheckedContinuation { waiters.append($0) }
+  func tryAcquire() -> Bool {
+    guard active < limit else { return false }
+    active += 1
+    return true
   }
 
   func release() {
-    if waiters.isEmpty { active = max(0, active - 1) } else { waiters.removeFirst().resume() }
+    precondition(active > 0, "proxy concurrency permit released without acquisition")
+    active -= 1
   }
+}
+
+private actor ProxyFramedHTTPBodyReader {
+  private let stream: any FlowersecByteStream
+  private let maxChunkBytes: Int
+  private let maxBodyBytes: Int
+  private var total = 0
+  private var finished = false
+  private var terminalError: (any Error)?
+
+  init(stream: any FlowersecByteStream, maxChunkBytes: Int, maxBodyBytes: Int) {
+    self.stream = stream
+    self.maxChunkBytes = maxChunkBytes
+    self.maxBodyBytes = maxBodyBytes
+  }
+
+  func next() async throws -> Data? {
+    if let terminalError { throw terminalError }
+    if finished { return nil }
+    do {
+      if Task.isCancelled { throw ProxyError.canceled }
+      let header = try await stream.readExact(4)
+      guard header.count == 4 else { throw ProxyError.stream("truncated body chunk header") }
+      let length = Int(header.readUInt32BE(at: 0))
+      if length == 0 {
+        finished = true
+        return nil
+      }
+      guard length <= maxChunkBytes else { throw ProxyError.frameTooLarge }
+      guard total <= maxBodyBytes - length else { throw ProxyError.bodyTooLarge }
+      let chunk = try await stream.readExact(length)
+      guard chunk.count == length else { throw ProxyError.stream("truncated body chunk") }
+      total += length
+      return chunk
+    } catch {
+      terminalError = error
+      throw error
+    }
+  }
+
+  func failure() -> (any Error)? { terminalError }
+}
+
+private actor ProxyHTTPResponseBodyWriter {
+  private let stream: any FlowersecByteStream
+  private let maxChunkBytes: Int
+  private let maxBodyBytes: Int
+  private var total = 0
+
+  init(stream: any FlowersecByteStream, maxChunkBytes: Int, maxBodyBytes: Int) {
+    self.stream = stream
+    self.maxChunkBytes = maxChunkBytes
+    self.maxBodyBytes = maxBodyBytes
+  }
+
+  func write(_ chunk: Data) async throws {
+    guard chunk.count <= maxBodyBytes, total <= maxBodyBytes - chunk.count else {
+      throw ProxyError.bodyTooLarge
+    }
+    total += chunk.count
+    try await ProxyFraming.writeBodyChunk(
+      chunk,
+      to: stream,
+      maxChunkBytes: maxChunkBytes
+    )
+  }
+}
+
+private func proxyHTTPContentLength(_ headers: HTTPHeaders) -> Int? {
+  let values = headers["content-length"]
+  guard values.count == 1, let length = Int(values[0]), length >= 0 else { return nil }
+  return length
+}
+
+private func proxyClassifyRequestBodyError(_ error: any Error) -> String {
+  if error as? ProxyError == .bodyTooLarge || error as? ProxyError == .frameTooLarge {
+    return "request_body_too_large"
+  }
+  if error as? ProxyError == .canceled || error is CancellationError { return "canceled" }
+  return "request_body_invalid"
 }
 
 private func proxyClassifyHTTPError(_ error: any Error) -> String {

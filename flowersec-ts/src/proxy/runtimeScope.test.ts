@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_PROXY_PRESET_MANIFEST } from "./preset.js";
-import { assertProxyRuntimeScopeV1, extractProxyRuntimeScopeV1 } from "./runtimeScope.js";
+import {
+  assertProxyRuntimeScopeV1,
+  extractProxyRuntimeScopeV1,
+  resolvePresetInputFromScope,
+} from "./runtimeScope.js";
 
 function makeServiceWorkerScope() {
   return {
@@ -12,6 +16,7 @@ function makeServiceWorkerScope() {
     },
     preset: {
       presetId: "default",
+      snapshot: DEFAULT_PROXY_PRESET_MANIFEST,
     },
     limits: {
       maxBodyBytes: 4096,
@@ -125,5 +130,15 @@ describe("proxy runtime scope", () => {
 
   it("keeps the current preset snapshot schema comfortably below the runtime size cap", () => {
     expect(new TextEncoder().encode(JSON.stringify(DEFAULT_PROXY_PRESET_MANIFEST)).length).toBeLessThan(4 * 1024);
+  });
+
+  it("requires a manifest snapshot when no explicit preset override is provided", () => {
+    const scope = assertProxyRuntimeScopeV1({
+      ...makeServiceWorkerScope(),
+      preset: { presetId: "default" },
+    });
+    expect(() => resolvePresetInputFromScope(scope, undefined)).toThrow(
+      "proxy.runtime preset snapshot is required",
+    );
   });
 });

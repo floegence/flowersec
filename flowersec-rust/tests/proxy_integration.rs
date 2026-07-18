@@ -116,6 +116,7 @@ async fn rust_proxy_http_and_websocket_round_trip_over_direct_session() {
             contract: ContractOptions::default(),
             default_timeout: None,
             max_timeout: None,
+            max_concurrent_streams: flowersec::defaults::PROXY_MAX_CONCURRENT_STREAMS,
         })
         .expect("HTTP proxy server");
         let (http_kind, http_stream) = session.accept_stream().await.expect("accept HTTP proxy");
@@ -131,6 +132,7 @@ async fn rust_proxy_http_and_websocket_round_trip_over_direct_session() {
             contract: ContractOptions::default(),
             default_timeout: None,
             max_timeout: None,
+            max_concurrent_streams: flowersec::defaults::PROXY_MAX_CONCURRENT_STREAMS,
         })
         .expect("WS proxy server");
         let (ws_kind, ws_stream) = session.accept_stream().await.expect("accept WS proxy");

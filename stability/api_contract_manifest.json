@@ -666,6 +666,16 @@
           },
           {
             "kind": "type",
+            "expr": "proxy.Options",
+            "doc_token": "`proxy.Options`"
+          },
+          {
+            "kind": "const",
+            "expr": "proxy.DefaultMaxConcurrentStreams",
+            "doc_token": "`proxy.DefaultMaxConcurrentStreams`"
+          },
+          {
+            "kind": "type",
             "expr": "proxy.ClientHTTPRequest",
             "doc_token": "`proxy.ClientHTTPRequest`"
           },
@@ -942,7 +952,7 @@
           "`serveProxySession(...)`",
           "`serveProxyStream(...)`",
           "`ProxyServerOptions`",
-          "`ProxyServerOptions.maxBufferedRequestBodyBytes`",
+          "`ProxyServerOptions.maxConcurrentStreams`",
           "`ProxyServerOptions.maxWsQueuedBytes`"
         ],
         "runtime_exports": [
@@ -979,9 +989,6 @@
           "`assertConnectArtifact(...)`",
           "`requestChannelGrant(...)`",
           "`requestEntryChannelGrant(...)`",
-          "`requestConnectArtifact(...)`",
-          "`requestEntryConnectArtifact(...)`",
-          "`ControlplaneRequestError`",
           "`createBrowserReconnectConfig(...)`",
           "`createTunnelBrowserReconnectConfig(...)`",
           "`createDirectBrowserReconnectConfig(...)`",
@@ -996,9 +1003,6 @@
           "assertConnectArtifact",
           "requestChannelGrant",
           "requestEntryChannelGrant",
-          "requestConnectArtifact",
-          "requestEntryConnectArtifact",
-          "ControlplaneRequestError",
           "createBrowserReconnectConfig",
           "createTunnelBrowserReconnectConfig",
           "createDirectBrowserReconnectConfig",
@@ -1098,8 +1102,6 @@
           "`registerServiceWorkerAndEnsureControl(...)`",
           "`connectArtifactProxyBrowser(...)`",
           "`connectArtifactProxyControllerBrowser(...)`",
-          "`connectTunnelProxyBrowser(...)`",
-          "`connectTunnelProxyControllerBrowser(...)`",
           "`createServiceWorkerControllerGuard(...)`",
           "`registerProxyControllerWindow(...)`",
           "`registerProxyAppWindow(...)`",
@@ -1118,8 +1120,6 @@
           "registerServiceWorkerAndEnsureControl",
           "connectArtifactProxyBrowser",
           "connectArtifactProxyControllerBrowser",
-          "connectTunnelProxyBrowser",
-          "connectTunnelProxyControllerBrowser",
           "createServiceWorkerControllerGuard",
           "registerProxyControllerWindow",
           "registerProxyAppWindow",
@@ -1243,6 +1243,7 @@
     "doc_tokens": [
       "`Flowersec`",
       "`import Flowersec`",
+      "`FlowersecSDKDefaults.Proxy.maxConcurrentStreams`",
       "`TransportSecurityPolicy.networkPlaintext(options:)`",
       "`NetworkPlaintextPolicyOptions`",
       "`PlaintextRiskAcceptance`"
@@ -4615,6 +4616,11 @@
       },
       {
         "kind": "swift.type.property",
+        "name": "FlowersecSDKDefaults.Proxy.maxConcurrentStreams",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
         "name": "FlowersecSDKDefaults.Proxy.maxJSONFrameBytes",
         "doc_token": ""
       },
@@ -4790,6 +4796,8 @@
       "`flowersec::controlplane::issuer::Keyset`",
       "`flowersec::reconnect`",
       "`flowersec::proxy`",
+      "`flowersec::proxy::ServerOptions`",
+      "`flowersec::proxy::ServerOptions.max_concurrent_streams`",
       "`flowersec::yamux::LivenessOptions`",
       "`flowersec::yamux::YamuxLimits`",
       "`flowersec::transport::TungsteniteTransport::new(...)`",
@@ -4840,6 +4848,8 @@
       "let _ = flowersec::reconnect::ReconnectManager::disconnect",
       "let _ = std::mem::size_of::<flowersec::proxy::ProxyClient>()",
       "let _ = std::mem::size_of::<flowersec::proxy::ProxyServer>()",
+      "let _ = std::mem::size_of::<flowersec::proxy::ServerOptions>()",
+      "let _ = |options: &flowersec::proxy::ServerOptions| options.max_concurrent_streams",
       "let _ = std::mem::size_of::<flowersec::observability::DiagnosticEvent>()",
       "let _ = std::mem::size_of::<flowersec::transport_security::NetworkPlaintextPolicyOptions>()",
       "let _ = std::mem::size_of::<flowersec::transport_security::PlaintextRiskAcceptance>()",

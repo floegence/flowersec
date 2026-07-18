@@ -9,6 +9,7 @@ import type { YamuxStream } from "../yamux/stream.js";
 import {
   DEFAULT_MAX_BODY_BYTES,
   DEFAULT_MAX_CHUNK_BYTES,
+  DEFAULT_MAX_CONCURRENT_STREAMS,
   DEFAULT_MAX_WS_FRAME_BYTES,
   PROXY_KIND_HTTP1,
   PROXY_KIND_WS,
@@ -24,7 +25,6 @@ export type ProxyServerOptions = Readonly<{
   maxJsonFrameBytes?: number;
   maxChunkBytes?: number;
   maxBodyBytes?: number;
-  maxBufferedRequestBodyBytes?: number;
   maxWsFrameBytes?: number;
   maxWsQueuedBytes?: number;
   defaultTimeoutMs?: number;
@@ -47,7 +47,6 @@ type CompiledOptions = Readonly<{
   maxJsonFrameBytes: number;
   maxChunkBytes: number;
   maxBodyBytes: number;
-  maxBufferedRequestBodyBytes: number;
   maxWsFrameBytes: number;
   maxWsQueuedBytes: number;
   defaultTimeoutMs: number;
@@ -64,37 +63,33 @@ type CompiledOptions = Readonly<{
 
 export async function serveProxySession(session: Session, options: ProxyServerOptions, signal?: AbortSignal): Promise<void> {
   const compiled = compileOptions(options);
-  const requestBodyBudget = createRequestBodyBudget(compiled.maxBufferedRequestBodyBytes);
-  const active = new Set<Promise<void>>();
+  const activeProxy = new Set<Promise<void>>();
+  const activeRPC = new Set<Promise<void>>();
   try {
     while (!signal?.aborted) {
       const accepted = await session.acceptStream(signal === undefined ? {} : { signal });
       if (accepted.kind === "rpc") {
-        if (active.size >= compiled.maxConcurrentStreams) {
-          await accepted.stream.reset(new Error("proxy stream concurrency exhausted"));
-          continue;
-        }
         const task = serveRPCStream(accepted.stream, options.rpcRouter ?? new RpcRouter(), options.rpcServerOptions, signal)
           .catch(() => {})
-          .finally(() => active.delete(task));
-        active.add(task);
+          .finally(() => activeRPC.delete(task));
+        activeRPC.add(task);
         continue;
       }
       if (accepted.kind !== PROXY_KIND_HTTP1 && accepted.kind !== PROXY_KIND_WS) {
         await accepted.stream.reset(new Error(`unsupported proxy stream kind ${accepted.kind}`));
         continue;
       }
-      if (active.size >= compiled.maxConcurrentStreams) {
+      if (activeProxy.size >= compiled.maxConcurrentStreams) {
         await accepted.stream.reset(new Error("proxy stream concurrency exhausted"));
         continue;
       }
-      const task = serveProxyStreamCompiled(accepted.kind, accepted.stream, compiled, requestBodyBudget, signal)
+      const task = serveProxyStreamCompiled(accepted.kind, accepted.stream, compiled, signal)
         .catch(() => {})
-        .finally(() => active.delete(task));
-      active.add(task);
+        .finally(() => activeProxy.delete(task));
+      activeProxy.add(task);
     }
   } finally {
-    await Promise.allSettled(active);
+    await Promise.allSettled([...activeProxy, ...activeRPC]);
   }
 }
 
@@ -128,7 +123,6 @@ export function serveProxyStream(
     kind,
     stream,
     compiled,
-    createRequestBodyBudget(compiled.maxBufferedRequestBodyBytes),
     signal,
   );
 }
@@ -137,11 +131,10 @@ async function serveProxyStreamCompiled(
   kind: typeof PROXY_KIND_HTTP1 | typeof PROXY_KIND_WS,
   stream: YamuxStream,
   options: CompiledOptions,
-  requestBodyBudget: RequestBodyBudget,
   signal?: AbortSignal,
 ): Promise<void> {
   try {
-    if (kind === PROXY_KIND_HTTP1) await serveHTTP(stream, options, requestBodyBudget, signal);
+    if (kind === PROXY_KIND_HTTP1) await serveHTTP(stream, options, signal);
     else await serveWebSocket(stream, options, signal);
   } finally {
     try { await stream.close(); } catch { /* The peer may already have reset the stream. */ }
@@ -151,92 +144,130 @@ async function serveProxyStreamCompiled(
 async function serveHTTP(
   stream: YamuxStream,
   options: CompiledOptions,
-  requestBodyBudget: RequestBodyBudget,
   signal?: AbortSignal,
 ): Promise<void> {
-  const reader = createByteReader(stream, signal === undefined ? {} : { signal });
+  const reader = createByteReader(stream);
   let requestId = "unknown";
+  let responseStarted = false;
+  let streamReset = false;
+  let requestBody: StreamingRequestBody | undefined;
+  let responseBodyReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let controller: AbortController | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let removeAbortListener: (() => void) | undefined;
+  const resetStream = async (error: Error): Promise<void> => {
+    if (streamReset) return;
+    streamReset = true;
+    try { await stream.reset(error); } catch { /* The peer may already have reset the stream. */ }
+  };
   try {
     const meta = assertHTTPRequestMeta(await readJsonFrame(reader, options.maxJsonFrameBytes));
     requestId = meta.request_id;
     const path = parsePath(meta.path);
-    const bufferedBody = await readBody(
-      reader,
-      options.maxChunkBytes,
-      options.maxBodyBytes,
-      requestBodyBudget,
-    );
-    try {
-      if (signal?.aborted) throw new ProxyServerError("canceled", "proxy request canceled");
-      const headers = requestHeaders(meta.headers, options);
-      applyExternalOrigin(headers, meta.external_origin);
-      const target = new URL(options.upstream);
-      target.pathname = path.pathname;
-      target.search = path.search;
-      target.hash = "";
-
-      const timeoutMs = resolveTimeout(meta.timeout_ms, options);
-      const controller = new AbortController();
-      const onAbort = () => controller.abort(new ProxyServerError("canceled", "proxy request canceled"));
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-      const timer = timeoutMs > 0
-        ? setTimeout(() => controller.abort(new ProxyServerError("timeout", "upstream request timeout")), timeoutMs)
-        : undefined;
-      try {
-        const method = meta.method.trim().toUpperCase();
-        let response: Response;
-        try {
-          if (controller.signal.aborted) throw controller.signal.reason;
-          response = await options.fetch(target, {
-            method,
-            headers,
-            redirect: "manual",
-            signal: controller.signal,
-            ...((method === "GET" || method === "HEAD")
-              ? {}
-              : { body: bufferedBody.bytes.buffer as ArrayBuffer }),
-          });
-        } finally {
-          bufferedBody.release();
-        }
-        const responseHeaders = collectResponseHeaders(response.headers, options);
-        const responseMeta: HttpResponseMetaV1 = {
-          v: PROXY_PROTOCOL_VERSION,
-          request_id: requestId,
-          ok: true,
-          status: response.status,
-          headers: responseHeaders,
-        };
-        await writeJsonFrame(stream, responseMeta);
-        if (response.body == null) {
-          await stream.write(u32be(0));
-          return;
-        }
-        const bodyReader = response.body.getReader();
-        let total = 0;
-        while (true) {
-          const next = await bodyReader.read();
-          if (next.done) break;
-          const bytes = next.value;
-          total += bytes.length;
-          if (total > options.maxBodyBytes) throw new ProxyServerError("response_body_too_large", "response body too large");
-          for (let offset = 0; offset < bytes.length; offset += options.maxChunkBytes) {
-            const chunk = bytes.subarray(offset, Math.min(bytes.length, offset + options.maxChunkBytes));
-            await stream.write(u32be(chunk.length));
-            await stream.write(chunk);
-          }
-        }
-        await stream.write(u32be(0));
-      } finally {
-        if (timer != null) clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-      }
-    } finally {
-      bufferedBody.release();
+    const knownRequestLength = contentLength(meta.headers, "request");
+    if (knownRequestLength != null && knownRequestLength > options.maxBodyBytes) {
+      throw new ProxyServerError("request_body_too_large", "request body too large");
     }
+
+    if (signal?.aborted) throw new ProxyServerError("canceled", "proxy request canceled");
+    const headers = requestHeaders(meta.headers, options);
+    applyExternalOrigin(headers, meta.external_origin);
+    const target = new URL(options.upstream);
+    target.pathname = path.pathname;
+    target.search = path.search;
+    target.hash = "";
+
+    controller = new AbortController();
+    const abortUpstream = (error: Error) => {
+      if (!controller!.signal.aborted) controller!.abort(error);
+      requestBody?.abort(error);
+      if (responseStarted) void resetStream(error);
+    };
+    const onAbort = () => abortUpstream(new ProxyServerError("canceled", "proxy request canceled"));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    removeAbortListener = () => signal?.removeEventListener("abort", onAbort);
+    if (signal?.aborted) onAbort();
+    const timeoutMs = resolveTimeout(meta.timeout_ms, options);
+    timer = timeoutMs > 0
+      ? setTimeout(() => abortUpstream(new ProxyServerError("timeout", "upstream request timeout")), timeoutMs)
+      : undefined;
+
+    requestBody = createStreamingRequestBody(reader, options.maxChunkBytes, options.maxBodyBytes, abortUpstream);
+    const method = meta.method.trim().toUpperCase();
+    const requestInit: RequestInit & { duplex?: "half" } = {
+      method,
+      headers,
+      redirect: "manual",
+      signal: controller.signal,
+    };
+    if (method === "GET" || method === "HEAD") {
+      requestBody.drain();
+    } else {
+      requestInit.body = requestBody.stream;
+      requestInit.duplex = "half";
+    }
+
+    if (controller.signal.aborted) throw controller.signal.reason;
+    const response = await options.fetch(target, requestInit);
+    if (requestBody.error != null) throw requestBody.error;
+    requestBody.drain();
+
+    const knownResponseLength = contentLength(response.headers, "response");
+    if (knownResponseLength != null && knownResponseLength > options.maxBodyBytes) {
+      await response.body?.cancel();
+      throw new ProxyServerError("response_body_too_large", "response body too large");
+    }
+
+    const responseHeaders = collectResponseHeaders(response.headers, options);
+    const responseMeta: HttpResponseMetaV1 = {
+      v: PROXY_PROTOCOL_VERSION,
+      request_id: requestId,
+      ok: true,
+      status: response.status,
+      headers: responseHeaders,
+    };
+    await writeJsonFrame(stream, responseMeta);
+    responseStarted = true;
+    if (response.body == null) {
+      await stream.write(u32be(0));
+      const requestError = await requestBody.completion;
+      if (requestError != null) throw requestError;
+      return;
+    }
+
+    responseBodyReader = response.body.getReader();
+    let total = 0;
+    while (true) {
+      const next = await Promise.race([
+        responseBodyReader.read(),
+        requestBody.failure.then((error) => { throw error; }),
+      ]);
+      if (next.done) break;
+      const bytes = next.value;
+      const nextTotal = total + bytes.length;
+      if (!Number.isSafeInteger(nextTotal) || nextTotal > options.maxBodyBytes) {
+        throw new ProxyServerError("response_body_too_large", "response body too large");
+      }
+      total = nextTotal;
+      for (let offset = 0; offset < bytes.length; offset += options.maxChunkBytes) {
+        const chunk = bytes.subarray(offset, Math.min(bytes.length, offset + options.maxChunkBytes));
+        await stream.write(u32be(chunk.length));
+        await stream.write(chunk);
+      }
+    }
+    await stream.write(u32be(0));
+    const requestError = await requestBody.completion;
+    if (requestError != null) throw requestError;
   } catch (error) {
-    await writeHTTPError(stream, requestId, classifyHTTPError(error));
+    const effective = requestBody?.error ?? controller?.signal.reason ?? asError(error);
+    if (controller != null && !controller.signal.aborted) controller.abort(effective);
+    if (responseStarted) await resetStream(effective);
+    else await writeHTTPError(stream, requestId, classifyHTTPError(effective));
+  } finally {
+    if (timer != null) clearTimeout(timer);
+    removeAbortListener?.();
+    requestBody?.stop();
+    try { await responseBodyReader?.cancel(); } catch { /* The upstream body may already be closed. */ }
   }
 }
 
@@ -421,11 +452,6 @@ function compileOptions(input: ProxyServerOptions): CompiledOptions {
   const maxJsonFrameBytes = positive(input.maxJsonFrameBytes, DEFAULT_MAX_JSON_FRAME_BYTES, "maxJsonFrameBytes");
   const maxChunkBytes = positive(input.maxChunkBytes, DEFAULT_MAX_CHUNK_BYTES, "maxChunkBytes");
   const maxBodyBytes = positive(input.maxBodyBytes, DEFAULT_MAX_BODY_BYTES, "maxBodyBytes");
-  const maxBufferedRequestBodyBytes = positive(
-    input.maxBufferedRequestBodyBytes,
-    maxBodyBytes,
-    "maxBufferedRequestBodyBytes",
-  );
   const maxWsFrameBytes = positive(input.maxWsFrameBytes, DEFAULT_MAX_WS_FRAME_BYTES, "maxWsFrameBytes");
   const defaultMaxWsQueuedBytes = maxWsFrameBytes <= Number.MAX_SAFE_INTEGER - 5
     ? maxWsFrameBytes + 5
@@ -441,12 +467,11 @@ function compileOptions(input: ProxyServerOptions): CompiledOptions {
     maxJsonFrameBytes,
     maxChunkBytes,
     maxBodyBytes,
-    maxBufferedRequestBodyBytes,
     maxWsFrameBytes,
     maxWsQueuedBytes,
     defaultTimeoutMs,
     maxTimeoutMs,
-    maxConcurrentStreams: positive(input.maxConcurrentStreams, 64, "maxConcurrentStreams"),
+    maxConcurrentStreams: positive(input.maxConcurrentStreams, DEFAULT_MAX_CONCURRENT_STREAMS, "maxConcurrentStreams"),
     extraRequestHeaders: input.extraRequestHeaders ?? [],
     extraResponseHeaders: input.extraResponseHeaders ?? [],
     blockedResponseHeaders: normalizeNames(input.blockedResponseHeaders),
@@ -529,73 +554,137 @@ function applyExternalOrigin(headers: Headers, input: string | undefined): void 
   headers.set("host", new URL(external).host);
 }
 
-type RequestBodyBudget = Readonly<{
-  reserve: (bytes: number) => void;
-  release: (bytes: number) => void;
+type StreamingRequestBody = Readonly<{
+  stream: ReadableStream<Uint8Array>;
+  failure: Promise<Error>;
+  completion: Promise<Error | undefined>;
+  readonly error: Error | undefined;
+  drain: () => void;
+  abort: (error: Error) => void;
+  stop: () => void;
 }>;
 
-type BufferedRequestBody = Readonly<{
-  bytes: Uint8Array;
-  release: () => void;
-}>;
+function createStreamingRequestBody(
+  reader: ReturnType<typeof createByteReader>,
+  maxChunkBytes: number,
+  maxBodyBytes: number,
+  onFailure: (error: Error) => void,
+): StreamingRequestBody {
+  let total = 0;
+  let finished = false;
+  let draining = false;
+  let readChain: Promise<void> = Promise.resolve();
+  let error: Error | undefined;
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let resolveFailure!: (error: Error) => void;
+  const failure = new Promise<Error>((resolve) => { resolveFailure = resolve; });
+  let resolveCompletion!: (error: Error | undefined) => void;
+  const completion = new Promise<Error | undefined>((resolve) => { resolveCompletion = resolve; });
 
-function createRequestBodyBudget(maxBytes: number): RequestBodyBudget {
-  let usedBytes = 0;
-  return {
-    reserve: (bytes) => {
-      const next = usedBytes + bytes;
-      if (!Number.isSafeInteger(next) || next > maxBytes) {
-        throw new ProxyServerError("resource_exhausted", "proxy request body buffer exhausted");
+  const fail = (cause: unknown): Error => {
+    if (error != null) return error;
+    const raw = asError(cause);
+    error = raw instanceof ProxyServerError
+      ? raw
+      : new ProxyServerError("request_body_invalid", raw.message);
+    finished = true;
+    try { streamController?.error(error); } catch { /* The body consumer may already be gone. */ }
+    resolveFailure(error);
+    resolveCompletion(error);
+    onFailure(error);
+    return error;
+  };
+
+  const readChunkUnserialized = async (): Promise<Uint8Array | null> => {
+    try {
+      const length = readU32be(await reader.readExactly(4), 0);
+      if (length === 0) {
+        finished = true;
+        resolveCompletion(undefined);
+        return null;
       }
-      usedBytes = next;
+      if (length > maxChunkBytes) {
+        throw new ProxyServerError("request_body_too_large", "request chunk too large");
+      }
+      const nextTotal = total + length;
+      if (!Number.isSafeInteger(nextTotal) || nextTotal > maxBodyBytes) {
+        throw new ProxyServerError("request_body_too_large", "request body too large");
+      }
+      const chunk = await reader.readExactly(length);
+      total = nextTotal;
+      return chunk;
+    } catch (cause) {
+      throw fail(cause);
+    }
+  };
+
+  const readChunk = (): Promise<Uint8Array | null> => {
+    const next = readChain.then(readChunkUnserialized);
+    readChain = next.then(() => {}, () => {});
+    return next;
+  };
+
+  const drain = () => {
+    if (draining || finished) return;
+    draining = true;
+    try { streamController?.close(); } catch { /* A pending pull will observe draining below. */ }
+    void (async () => {
+      while (!finished) await readChunk();
+    })().catch(() => {});
+  };
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { streamController = controller; },
+    async pull(controller) {
+      if (finished) {
+        if (error == null) controller.close();
+        return;
+      }
+      const chunk = await readChunk();
+      if (draining) return;
+      if (chunk == null) controller.close();
+      else controller.enqueue(chunk);
     },
-    release: (bytes) => {
-      usedBytes = Math.max(0, usedBytes - bytes);
+    cancel() { drain(); },
+  }, { highWaterMark: 0 });
+
+  return {
+    stream,
+    failure,
+    completion,
+    get error() { return error; },
+    drain,
+    abort: (cause) => { if (!finished) fail(cause); },
+    stop: () => {
+      if (finished) return;
+      finished = true;
+      try { streamController?.close(); } catch { /* The fetch implementation may own the stream. */ }
+      resolveCompletion(undefined);
     },
   };
 }
 
-async function readBody(
-  reader: ReturnType<typeof createByteReader>,
-  maxChunkBytes: number,
-  maxBodyBytes: number,
-  budget: RequestBodyBudget,
-): Promise<BufferedRequestBody> {
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  let handedOff = false;
-  try {
-    while (true) {
-      const length = readU32be(await reader.readExactly(4), 0);
-      if (length === 0) break;
-      if (length > maxChunkBytes) throw new ProxyServerError("request_body_too_large", "request chunk too large");
-      const next = total + length;
-      if (!Number.isSafeInteger(next) || next > maxBodyBytes) {
-        throw new ProxyServerError("request_body_too_large", "request body too large");
-      }
-      budget.reserve(length);
-      total = next;
-      chunks.push(await reader.readExactly(length));
-    }
-    const body = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      body.set(chunk, offset);
-      offset += chunk.length;
-    }
-    let released = false;
-    handedOff = true;
-    return {
-      bytes: body,
-      release: () => {
-        if (released) return;
-        released = true;
-        budget.release(total);
-      },
-    };
-  } finally {
-    if (!handedOff) budget.release(total);
+function contentLength(headers: readonly Header[] | Headers, side: "request" | "response"): number | undefined {
+  const rawValues = headers instanceof Headers
+    ? (headers.get("content-length") == null ? [] : [headers.get("content-length")!])
+    : headers
+      .filter((header) => normalizeHeaderName(header.name) === "content-length")
+      .map((header) => header.value.trim());
+  if (rawValues.length === 0) return undefined;
+  if (rawValues.length !== 1 || !/^(0|[1-9][0-9]*)$/.test(rawValues[0]!)) {
+    throw new ProxyServerError(
+      side === "request" ? "invalid_request_meta" : "upstream_request_failed",
+      `invalid ${side} content-length`,
+    );
   }
+  const value = Number(rawValues[0]);
+  if (!Number.isSafeInteger(value)) {
+    throw new ProxyServerError(
+      side === "request" ? "invalid_request_meta" : "upstream_request_failed",
+      `invalid ${side} content-length`,
+    );
+  }
+  return value;
 }
 
 async function writeHTTPError(stream: YamuxStream, requestId: string, code: string): Promise<void> {

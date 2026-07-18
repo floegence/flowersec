@@ -56,6 +56,7 @@ func TestDefaultsMatchStabilityContract(t *testing.T) {
 	assertInt(t, defaults.ControlplaneMaxRequestBodyBytes, manifest.Controlplane["max_request_body_bytes"])
 	assertInt(t, defaults.ControlplaneMaxResponseBodyBytes, manifest.Controlplane["max_response_body_bytes"])
 	assertInt(t, defaults.ProxyMaxJSONFrameBytes, manifest.Proxy["max_json_frame_bytes"])
+	assertInt(t, defaults.ProxyMaxConcurrentStreams, manifest.Proxy["max_concurrent_streams"])
 	assertInt(t, defaults.ProxyMaxChunkBytes, manifest.Proxy["max_chunk_bytes"])
 	assertInt(t, defaults.ProxyMaxBodyBytes, manifest.Proxy["max_body_bytes"])
 	assertInt(t, defaults.ProxyMaxWSFrameBytes, manifest.Proxy["max_ws_frame_bytes"])

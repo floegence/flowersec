@@ -21,10 +21,6 @@ Go helpers:
 - `preset.LoadFile(...)`
 - `preset.ApplyBridgeOptions(...)`
 
-Compatibility-only Go helper:
-
-- `preset.ResolveBuiltin(...)`
-
 ## Shape
 
 ```json
@@ -47,7 +43,6 @@ Rules:
 - numeric limits are positive integers when present
 - omission means “not set” at the preset API layer
 - `limits.timeout_ms`, when present, becomes the default `HTTPRequestMeta.timeout_ms` for bridge/gateway and browser proxy integrations
-- `preset.ResolveBuiltin(...)` only preserves the deprecated `default` compatibility name; `codeserver` is not a built-in name
 - integrations should consume manifest files or decoded `ProxyPresetManifest` objects instead
 
 ## Gateway consumption
@@ -57,11 +52,8 @@ Gateway consumer path:
 - `proxy.preset_file`
 - `proxy.timeout_ms` as an explicit positive-integer override for the preset default request timeout
 
-Deprecated compatibility path:
-
-- `proxy.profile`
-
-Do not set both at once.
+If `proxy.preset_file` is omitted, the gateway uses the proxy bridge defaults.
+Unknown fields, including the removed `proxy.profile` field, are rejected.
 
 ## Reference presets
 
@@ -71,4 +63,4 @@ First-party reference files live under:
 - `reference/presets/codeserver/manifest.json`
 
 These reference files are distribution assets, not the core contract itself.
-The `codeserver` file is a static compatibility example and remains loadable through the generic manifest APIs. It is not exported as a Go or TypeScript built-in preset and is not accepted as a named profile.
+Both remain loadable through the generic manifest APIs; neither is exposed as a named profile.

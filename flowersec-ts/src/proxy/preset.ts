@@ -106,16 +106,6 @@ export function assertProxyPresetManifest(value: unknown): ProxyPresetManifest {
   });
 }
 
-export function resolveNamedProxyPreset(name: string): ProxyPresetManifest {
-  switch (String(name ?? "").trim()) {
-    case "":
-    case "default":
-      return DEFAULT_PROXY_PRESET_MANIFEST;
-    default:
-      throw new Error(`unknown proxy preset: ${name}`);
-  }
-}
-
 function toResolved(manifest: ProxyPresetManifest): ResolvedProxyPreset {
   return Object.freeze({
     v: 1,

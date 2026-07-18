@@ -1,14 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const connectBrowserMock = vi.fn();
-const connectTunnelBrowserMock = vi.fn();
 const registerProxyIntegrationMock = vi.fn();
 const createProxyRuntimeMock = vi.fn();
 const registerProxyControllerWindowMock = vi.fn();
 
 vi.mock("../browser/connect.js", () => ({
   connectBrowser: connectBrowserMock,
-  connectTunnelBrowser: connectTunnelBrowserMock,
 }));
 
 vi.mock("./integration.js", () => ({
@@ -27,7 +25,86 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function makeArtifact(scopeVersion = 1) {
+describe("artifact proxy bootstrap", () => {
+  it("connects a service-worker runtime from artifact scope and disposes both layers", async () => {
+    const client = { close: vi.fn() };
+    const runtime = { runtime: true };
+    const integrationDispose = vi.fn().mockResolvedValue(undefined);
+    connectBrowserMock.mockResolvedValue(client);
+    registerProxyIntegrationMock.mockResolvedValue({ runtime, dispose: integrationDispose });
+
+    const { connectArtifactProxyBrowser } = await import("./bootstrap.js");
+    const artifact = makeArtifact(serviceWorkerScope());
+    const handle = await connectArtifactProxyBrowser(artifact as any, {
+      runtimeGlobalKey: "__flowersecProxyRuntime",
+    });
+
+    expect(handle.client).toBe(client);
+    expect(handle.runtime).toBe(runtime);
+    expect(connectBrowserMock).toHaveBeenCalledWith(artifact, {});
+    expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
+      client,
+      runtimeGlobalKey: "__flowersecProxyRuntime",
+      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
+      preset: expect.objectContaining({ preset_id: "default" }),
+      runtime: { maxBodyBytes: 2048 },
+    });
+
+    await handle.dispose();
+    expect(integrationDispose).toHaveBeenCalledTimes(1);
+    expect(client.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the connected client when service-worker registration fails", async () => {
+    const client = { close: vi.fn() };
+    connectBrowserMock.mockResolvedValue(client);
+    registerProxyIntegrationMock.mockRejectedValue(new Error("register failed"));
+
+    const { connectArtifactProxyBrowser } = await import("./bootstrap.js");
+    await expect(connectArtifactProxyBrowser(makeArtifact(serviceWorkerScope()) as any)).rejects.toThrow("register failed");
+    expect(client.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects missing and unsupported runtime scopes before connecting", async () => {
+    const { connectArtifactProxyBrowser } = await import("./bootstrap.js");
+    await expect(connectArtifactProxyBrowser(makeArtifact() as any)).rejects.toThrow("missing proxy.runtime@1 scope");
+    await expect(connectArtifactProxyBrowser(makeArtifact({ ...serviceWorkerScope(), scope_version: 2 }) as any))
+      .rejects.toThrow("unsupported proxy.runtime scope_version: 2");
+    expect(connectBrowserMock).not.toHaveBeenCalled();
+  });
+
+  it("connects a controller bridge from artifact scope and disposes the controller and client", async () => {
+    const client = { close: vi.fn() };
+    const runtime = { runtime: true };
+    const controllerDispose = vi.fn();
+    connectBrowserMock.mockResolvedValue(client);
+    createProxyRuntimeMock.mockReturnValue(runtime);
+    registerProxyControllerWindowMock.mockReturnValue({ dispose: controllerDispose });
+
+    const { connectArtifactProxyControllerBrowser } = await import("./bootstrap.js");
+    const handle = await connectArtifactProxyControllerBrowser(makeArtifact(controllerScope()) as any, {
+      capabilityNonce: "bridge_tok",
+      runtime: { maxWsBufferedAmountBytes: 8192 },
+    });
+
+    expect(createProxyRuntimeMock).toHaveBeenCalledWith({
+      client,
+      maxWsFrameBytes: 4096,
+      maxWsBufferedAmountBytes: 8192,
+    });
+    expect(registerProxyControllerWindowMock).toHaveBeenCalledWith({
+      runtime,
+      allowedOrigins: ["https://app.example.test"],
+      capabilityNonce: "bridge_tok",
+    });
+
+    handle.dispose();
+    expect(controllerDispose).toHaveBeenCalledTimes(1);
+    expect(client.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+function makeArtifact(scope?: Record<string, unknown>) {
   return {
     v: 1,
     transport: "tunnel",
@@ -42,421 +119,48 @@ function makeArtifact(scopeVersion = 1) {
       allowed_suites: [1],
       default_suite: 1,
     },
-    scoped: [
-      {
-        scope: "proxy.runtime",
-        scope_version: scopeVersion,
-        critical: false,
-        payload: {
-          mode: "service_worker",
-          serviceWorker: {
-            scriptUrl: "/proxy-sw.js",
-            scope: "/",
-          },
-          preset: {
-            presetId: "default",
-          },
-          limits: {
-            maxBodyBytes: 2048,
-          },
-        },
-      },
-    ],
+    scoped: scope == null ? [] : [scope],
   };
 }
 
-describe("connectTunnelProxyBrowser", () => {
-  it("returns client + runtime and disposes both layers", async () => {
-    const client = { close: vi.fn() };
-    const runtime = { dispose: vi.fn() };
-    const integrationDispose = vi.fn().mockResolvedValue(undefined);
-
-    connectTunnelBrowserMock.mockResolvedValue(client);
-    registerProxyIntegrationMock.mockResolvedValue({ runtime, dispose: integrationDispose });
-
-    const { connectTunnelProxyBrowser } = await import("./bootstrap.js");
-    const out = await connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
-      runtimeGlobalKey: "__flowersecProxyRuntime",
-      serviceWorker: { scriptUrl: "/proxy-sw.js" },
-    });
-
-    expect(out.client).toBe(client);
-    expect(out.runtime).toBe(runtime);
-    expect(connectTunnelBrowserMock).toHaveBeenCalledTimes(1);
-    expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
-      client,
-      runtimeGlobalKey: "__flowersecProxyRuntime",
-      serviceWorker: { scriptUrl: "/proxy-sw.js" },
-    });
-
-    await out.dispose();
-    expect(integrationDispose).toHaveBeenCalledTimes(1);
-    expect(client.close).toHaveBeenCalledTimes(1);
-  });
-
-  it("closes the client when proxy registration fails", async () => {
-    const client = { close: vi.fn() };
-    const err = new Error("register failed");
-
-    connectTunnelBrowserMock.mockResolvedValue(client);
-    registerProxyIntegrationMock.mockRejectedValue(err);
-
-    const { connectTunnelProxyBrowser } = await import("./bootstrap.js");
-    await expect(
-      connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
-        serviceWorker: { scriptUrl: "/proxy-sw.js" },
-      })
-    ).rejects.toThrow("register failed");
-
-    expect(client.close).toHaveBeenCalledTimes(1);
-  });
-
-  it("preserves shared integration-core errors for artifact bootstrap helpers too", async () => {
-    const client = { close: vi.fn() };
-    const err = new Error("register failed");
-
-    connectBrowserMock.mockResolvedValue(client);
-    registerProxyIntegrationMock.mockRejectedValue(err);
-
-    const { connectArtifactProxyBrowser } = await import("./bootstrap.js");
-    await expect(connectArtifactProxyBrowser(makeArtifact() as any)).rejects.toThrow("register failed");
-
-    expect(client.close).toHaveBeenCalledTimes(1);
-  });
-
-  it("connects proxy browser from an artifact runtime scope", async () => {
-    const client = { close: vi.fn() };
-    const runtime = { dispose: vi.fn() };
-    const integrationDispose = vi.fn().mockResolvedValue(undefined);
-
-    connectBrowserMock.mockResolvedValue(client);
-    registerProxyIntegrationMock.mockResolvedValue({ runtime, dispose: integrationDispose });
-
-    const { connectArtifactProxyBrowser } = await import("./bootstrap.js");
-    const out = await connectArtifactProxyBrowser(makeArtifact() as any, {
-      runtimeGlobalKey: "__flowersecProxyRuntime",
-    });
-
-    expect(out.client).toBe(client);
-    expect(connectBrowserMock).toHaveBeenCalledWith(makeArtifact(), {});
-    expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
-      client,
-      runtimeGlobalKey: "__flowersecProxyRuntime",
+function serviceWorkerScope(): Record<string, unknown> {
+  return {
+    scope: "proxy.runtime",
+    scope_version: 1,
+    critical: false,
+    payload: {
+      mode: "service_worker",
       serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
-      preset: expect.objectContaining({ preset_id: "default" }),
-      runtime: { maxBodyBytes: 2048 },
-    });
-  });
-
-  it("keeps grant helper and artifact helper on the same integration-core option shape", async () => {
-    const tunnelClient = { close: vi.fn() };
-    const artifactClient = { close: vi.fn() };
-    const integrationDispose = vi.fn().mockResolvedValue(undefined);
-
-    connectTunnelBrowserMock.mockResolvedValueOnce(tunnelClient);
-    connectBrowserMock.mockResolvedValueOnce(artifactClient);
-    registerProxyIntegrationMock.mockResolvedValue({ runtime: { runtime: true }, dispose: integrationDispose });
-
-    const { connectTunnelProxyBrowser, connectArtifactProxyBrowser } = await import("./bootstrap.js");
-    const tunnelHandle = await connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
-      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
-      runtimeGlobalKey: "__flowersecProxyRuntime",
-      runtime: { maxBodyBytes: 2048 },
-    });
-    const artifactHandle = await connectArtifactProxyBrowser(makeArtifact() as any, {
-      runtimeGlobalKey: "__flowersecProxyRuntime",
-    });
-
-    const [grantCall, artifactCall] = registerProxyIntegrationMock.mock.calls;
-    expect(grantCall?.[0]).toEqual({
-      client: tunnelClient,
-      runtimeGlobalKey: "__flowersecProxyRuntime",
-      runtime: { maxBodyBytes: 2048 },
-      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
-    });
-    expect(artifactCall?.[0]).toEqual({
-      client: artifactClient,
-      runtimeGlobalKey: "__flowersecProxyRuntime",
-      runtime: { maxBodyBytes: 2048 },
-      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
-      preset: expect.objectContaining({ preset_id: "default" }),
-    });
-
-    await tunnelHandle.dispose();
-    await artifactHandle.dispose();
-  });
-
-  it("fails fast when artifact proxy runtime scope is missing or unsupported", async () => {
-    const { connectArtifactProxyBrowser } = await import("./bootstrap.js");
-
-    await expect(
-      connectArtifactProxyBrowser({
-        ...makeArtifact(),
-        scoped: [],
-      } as any)
-    ).rejects.toThrow("missing proxy.runtime@1 scope");
-
-    await expect(connectArtifactProxyBrowser(makeArtifact(2) as any)).rejects.toThrow("unsupported proxy.runtime scope_version: 2");
-    expect(connectBrowserMock).not.toHaveBeenCalled();
-  });
-
-  it("connects a controller runtime and disposes both controller + client", async () => {
-    const client = { close: vi.fn() };
-    const runtime = { runtime: true };
-    const controllerDispose = vi.fn();
-
-    connectTunnelBrowserMock.mockResolvedValue(client);
-    createProxyRuntimeMock.mockReturnValue(runtime);
-    registerProxyControllerWindowMock.mockReturnValue({ dispose: controllerDispose });
-
-    const { connectTunnelProxyControllerBrowser } = await import("./bootstrap.js");
-    const out = await connectTunnelProxyControllerBrowser({ tunnel_url: "ws://example.invalid" } as any, {
-      allowedOrigins: ["https://app.example.test"],
-      runtime: { maxWsFrameBytes: 1024 },
-      capabilityNonce: "bridge_tok",
-    });
-
-    expect(out.client).toBe(client);
-    expect(out.runtime).toBe(runtime);
-    expect(createProxyRuntimeMock).toHaveBeenCalledWith({
-      client,
-      maxWsFrameBytes: 1024,
-    });
-    expect(registerProxyControllerWindowMock).toHaveBeenCalledWith({
-      runtime,
-      allowedOrigins: ["https://app.example.test"],
-      capabilityNonce: "bridge_tok",
-    });
-
-    out.dispose();
-    expect(controllerDispose).toHaveBeenCalledTimes(1);
-    expect(client.close).toHaveBeenCalledTimes(1);
-  });
-
-  it("passes optional controller bridge capability through grant and artifact helpers", async () => {
-    const tunnelClient = { close: vi.fn() };
-    const artifactClient = { close: vi.fn() };
-    const runtime1 = { runtime: 1 };
-    const runtime2 = { runtime: 2 };
-    const controllerDispose = vi.fn();
-
-    connectTunnelBrowserMock.mockResolvedValueOnce(tunnelClient);
-    connectBrowserMock.mockResolvedValueOnce(artifactClient);
-    createProxyRuntimeMock.mockReturnValueOnce(runtime1).mockReturnValueOnce(runtime2);
-    registerProxyControllerWindowMock.mockReturnValue({ dispose: controllerDispose });
-
-    const { connectTunnelProxyControllerBrowser, connectArtifactProxyControllerBrowser } = await import("./bootstrap.js");
-    await connectTunnelProxyControllerBrowser({ tunnel_url: "ws://example.invalid" } as any, {
-      allowedOrigins: ["https://app.example.test"],
-      capabilityNonce: "bridge_tok",
-    });
-
-    await connectArtifactProxyControllerBrowser({
-      ...makeArtifact(),
-      scoped: [
-        {
-          scope: "proxy.runtime",
-          scope_version: 1,
-          critical: false,
-          payload: {
-            mode: "controller_bridge",
-            controllerBridge: {
-              allowedOrigins: ["https://app.example.test"],
-            },
-            preset: {
-              presetId: "default",
-            },
-          },
+      preset: {
+        presetId: "default",
+        snapshot: {
+          v: 1,
+          preset_id: "default",
+          limits: {},
         },
-      ],
-    } as any, {
-      capabilityNonce: "bridge_tok",
-    });
-
-    expect(registerProxyControllerWindowMock).toHaveBeenNthCalledWith(1, {
-      runtime: runtime1,
-      allowedOrigins: ["https://app.example.test"],
-      capabilityNonce: "bridge_tok",
-    });
-    expect(registerProxyControllerWindowMock).toHaveBeenNthCalledWith(2, {
-      runtime: runtime2,
-      allowedOrigins: ["https://app.example.test"],
-      capabilityNonce: "bridge_tok",
-    });
-  });
-
-
-  it("prefers preset over deprecated profile on the stable bootstrap path", async () => {
-    const client = { close: vi.fn() };
-    const runtime = { dispose: vi.fn() };
-    const integrationDispose = vi.fn().mockResolvedValue(undefined);
-
-    connectTunnelBrowserMock.mockResolvedValue(client);
-    registerProxyIntegrationMock.mockResolvedValue({ runtime, dispose: integrationDispose });
-
-    const { connectTunnelProxyBrowser } = await import("./bootstrap.js");
-    const out = await connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
-      preset: { presetId: "default" },
-      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
-      runtimeGlobalKey: "__flowersecProxyRuntime",
-    });
-
-    expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
-      client,
-      preset: { presetId: "default" },
-      runtimeGlobalKey: "__flowersecProxyRuntime",
-      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
-    });
-    expect(registerProxyIntegrationMock.mock.calls[0]?.[0]).not.toHaveProperty("profile");
-
-    await out.dispose();
-    expect(integrationDispose).toHaveBeenCalledTimes(1);
-    expect(client.close).toHaveBeenCalledTimes(1);
-  });
-
-  it("preserves deprecated runtime profile compatibility without exposing it on the stable type surface", async () => {
-    const client = { close: vi.fn() };
-    const runtime = { dispose: vi.fn() };
-    const integrationDispose = vi.fn().mockResolvedValue(undefined);
-
-    connectTunnelBrowserMock.mockResolvedValue(client);
-    registerProxyIntegrationMock.mockResolvedValue({ runtime, dispose: integrationDispose });
-
-    const { connectTunnelProxyBrowser } = await import("./bootstrap.js");
-    const out = await connectTunnelProxyBrowser({ tunnel_url: "ws://example.invalid" } as any, {
-      profile: "default",
-      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
-    });
-
-    expect(registerProxyIntegrationMock).toHaveBeenCalledWith({
-      client,
-      profile: "default",
-      serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/" },
-    });
-
-    await out.dispose();
-  });
-
-  it("connects a controller runtime from artifact scope and uses allowed origins from the scope", async () => {
-    const client = { close: vi.fn() };
-    const runtime = { runtime: true };
-    const controllerDispose = vi.fn();
-
-    connectBrowserMock.mockResolvedValue(client);
-    createProxyRuntimeMock.mockReturnValue(runtime);
-    registerProxyControllerWindowMock.mockReturnValue({ dispose: controllerDispose });
-
-    const { connectArtifactProxyControllerBrowser } = await import("./bootstrap.js");
-    const out = await connectArtifactProxyControllerBrowser({
-      ...makeArtifact(),
-      scoped: [
-        {
-          scope: "proxy.runtime",
-          scope_version: 1,
-          critical: false,
-          payload: {
-            mode: "controller_bridge",
-            controllerBridge: {
-              allowedOrigins: ["https://app.example.test"],
-            },
-            preset: {
-              presetId: "default",
-            },
-            limits: {
-              maxWsFrameBytes: 4096,
-            },
-          },
-        },
-      ],
-    } as any, {
-      capabilityNonce: "bridge_tok",
-      runtime: {
-        maxWsBufferedAmountBytes: 8192,
-        maxConcurrentHttpStreams: 20,
-        maxQueuedHttpRequests: 0,
-        maxQueuedHttpBodyBytes: 1024,
       },
-    });
+      limits: { maxBodyBytes: 2048 },
+    },
+  };
+}
 
-    expect(out.client).toBe(client);
-    expect(createProxyRuntimeMock).toHaveBeenCalledWith({
-      client,
-      maxWsFrameBytes: 4096,
-      maxWsBufferedAmountBytes: 8192,
-      maxConcurrentHttpStreams: 20,
-      maxQueuedHttpRequests: 0,
-      maxQueuedHttpBodyBytes: 1024,
-    });
-    expect(registerProxyControllerWindowMock).toHaveBeenCalledWith({
-      runtime,
-      allowedOrigins: ["https://app.example.test"],
-      capabilityNonce: "bridge_tok",
-    });
-  });
-
-  it("keeps grant controller helper and artifact controller helper on the same controller-core semantics", async () => {
-    const tunnelClient = { close: vi.fn() };
-    const artifactClient = { close: vi.fn() };
-    const runtime1 = { runtime: 1 };
-    const runtime2 = { runtime: 2 };
-    const controllerDispose = vi.fn();
-
-    connectTunnelBrowserMock.mockResolvedValueOnce(tunnelClient);
-    connectBrowserMock.mockResolvedValueOnce(artifactClient);
-    createProxyRuntimeMock.mockReturnValueOnce(runtime1).mockReturnValueOnce(runtime2);
-    registerProxyControllerWindowMock.mockReturnValue({ dispose: controllerDispose });
-
-    const { connectTunnelProxyControllerBrowser, connectArtifactProxyControllerBrowser } = await import("./bootstrap.js");
-    const tunnelHandle = await connectTunnelProxyControllerBrowser({ tunnel_url: "ws://example.invalid" } as any, {
-      allowedOrigins: ["https://app.example.test"],
-      runtime: { maxWsFrameBytes: 4096 },
-      capabilityNonce: "bridge_tok",
-    });
-    const artifactHandle = await connectArtifactProxyControllerBrowser({
-      ...makeArtifact(),
-      scoped: [
-        {
-          scope: "proxy.runtime",
-          scope_version: 1,
-          critical: false,
-          payload: {
-            mode: "controller_bridge",
-            controllerBridge: {
-              allowedOrigins: ["https://app.example.test"],
-            },
-            preset: {
-              presetId: "default",
-            },
-            limits: {
-              maxWsFrameBytes: 4096,
-            },
-          },
+function controllerScope(): Record<string, unknown> {
+  return {
+    scope: "proxy.runtime",
+    scope_version: 1,
+    critical: false,
+    payload: {
+      mode: "controller_bridge",
+      controllerBridge: { allowedOrigins: ["https://app.example.test"] },
+      preset: {
+        presetId: "default",
+        snapshot: {
+          v: 1,
+          preset_id: "default",
+          limits: {},
         },
-      ],
-    } as any, {
-      capabilityNonce: "bridge_tok",
-    });
-
-    expect(createProxyRuntimeMock).toHaveBeenNthCalledWith(1, {
-      client: tunnelClient,
-      maxWsFrameBytes: 4096,
-    });
-    expect(createProxyRuntimeMock).toHaveBeenNthCalledWith(2, {
-      client: artifactClient,
-      maxWsFrameBytes: 4096,
-    });
-    expect(registerProxyControllerWindowMock).toHaveBeenNthCalledWith(1, {
-      runtime: runtime1,
-      allowedOrigins: ["https://app.example.test"],
-      capabilityNonce: "bridge_tok",
-    });
-    expect(registerProxyControllerWindowMock).toHaveBeenNthCalledWith(2, {
-      runtime: runtime2,
-      allowedOrigins: ["https://app.example.test"],
-      capabilityNonce: "bridge_tok",
-    });
-
-    tunnelHandle.dispose();
-    artifactHandle.dispose();
-  });
-});
+      },
+      limits: { maxWsFrameBytes: 4096 },
+    },
+  };
+}

@@ -1,8 +1,7 @@
 import type { Client } from "../client.js";
 import type { ConnectArtifact } from "../connect/artifact.js";
-import type { ConnectBrowserOptions, TunnelConnectBrowserOptions } from "../browser/connect.js";
-import { connectBrowser, connectTunnelBrowser } from "../browser/connect.js";
-import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
+import type { ConnectBrowserOptions } from "../browser/connect.js";
+import { connectBrowser } from "../browser/connect.js";
 
 import {
   registerProxyIntegration,
@@ -12,7 +11,6 @@ import {
 } from "./integration.js";
 import { registerProxyControllerWindow, type RegisterProxyControllerWindowOptions } from "./controllerWindow.js";
 import type { ProxyPresetInput } from "./preset.js";
-import type { ProxyProfile, ProxyProfileName } from "./profiles.js";
 import {
   extractProxyRuntimeScopeV1,
   resolvePresetInputFromScope,
@@ -22,28 +20,7 @@ import {
 } from "./runtimeScope.js";
 import { createProxyRuntime, type ProxyRuntime } from "./runtime.js";
 
-export type ConnectTunnelProxyBrowserOptions = Readonly<{
-  connect?: TunnelConnectBrowserOptions;
-  preset?: ProxyPresetInput;
-  runtimeGlobalKey?: string;
-  runtime?: RegisterProxyIntegrationOptions["runtime"];
-  serviceWorker: ProxyIntegrationServiceWorkerOptions;
-  plugins?: readonly ProxyIntegrationPlugin[];
-}>;
-
-type ConnectTunnelProxyBrowserCompatOptions = ConnectTunnelProxyBrowserOptions &
-  Readonly<{
-    /** @deprecated Runtime-only compatibility alias. Not part of the stable TS surface. */
-    profile?: ProxyProfileName | Partial<ProxyProfile>;
-  }>;
-
-type _AssertFalse<T extends false> = T;
-
-// Type-level regression guard: deprecated profile must stay out of the stable TS surface.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-type _ConnectTunnelProxyBrowserOptionsExcludeProfile = _AssertFalse<"profile" extends keyof ConnectTunnelProxyBrowserOptions ? true : false>;
-
-export type ConnectTunnelProxyBrowserHandle = Readonly<{
+export type ConnectArtifactProxyBrowserHandle = Readonly<{
   client: Client;
   runtime: ProxyRuntime;
   dispose: () => Promise<void>;
@@ -58,16 +35,7 @@ export type ConnectArtifactProxyBrowserOptions = Readonly<{
   plugins?: readonly ProxyIntegrationPlugin[];
 }>;
 
-export type ConnectTunnelProxyControllerBrowserOptions = Readonly<{
-  connect?: TunnelConnectBrowserOptions;
-  runtime?: RegisterProxyIntegrationOptions["runtime"];
-  allowedOrigins: RegisterProxyControllerWindowOptions["allowedOrigins"];
-  targetWindow?: RegisterProxyControllerWindowOptions["targetWindow"];
-  expectedSource?: RegisterProxyControllerWindowOptions["expectedSource"];
-  capabilityNonce?: RegisterProxyControllerWindowOptions["capabilityNonce"];
-}>;
-
-export type ConnectTunnelProxyControllerBrowserHandle = Readonly<{
+export type ConnectArtifactProxyControllerBrowserHandle = Readonly<{
   client: Client;
   runtime: ProxyRuntime;
   dispose: () => void;
@@ -107,14 +75,12 @@ function scopeRuntimeToIntegrationOptions(
 
 async function connectProxyBrowserClient(
   client: Client,
-  opts: ConnectTunnelProxyBrowserOptions
-): Promise<ConnectTunnelProxyBrowserHandle> {
-  const compat = opts as ConnectTunnelProxyBrowserCompatOptions;
-  const integrationInput: RegisterProxyIntegrationOptions & Pick<ConnectTunnelProxyBrowserCompatOptions, "profile"> = {
+  opts: Omit<RegisterProxyIntegrationOptions, "client">
+): Promise<ConnectArtifactProxyBrowserHandle> {
+  const integrationInput: RegisterProxyIntegrationOptions = {
     client,
     serviceWorker: opts.serviceWorker,
     ...(opts.preset === undefined ? {} : { preset: opts.preset }),
-    ...(compat.profile === undefined ? {} : { profile: compat.profile }),
     ...(opts.runtimeGlobalKey === undefined ? {} : { runtimeGlobalKey: opts.runtimeGlobalKey }),
     ...(opts.runtime === undefined ? {} : { runtime: opts.runtime }),
     ...(opts.plugins === undefined ? {} : { plugins: opts.plugins }),
@@ -162,7 +128,7 @@ function connectProxyControllerClient(
     expectedSource?: RegisterProxyControllerWindowOptions["expectedSource"];
     capabilityNonce?: RegisterProxyControllerWindowOptions["capabilityNonce"];
   }>
-): ConnectTunnelProxyControllerBrowserHandle {
+): ConnectArtifactProxyControllerBrowserHandle {
   let runtime: ProxyRuntime | null = null;
   let controller: ReturnType<typeof registerProxyControllerWindow> | null = null;
 
@@ -197,36 +163,20 @@ function connectProxyControllerClient(
   };
 }
 
-export async function connectTunnelProxyBrowser(
-  grant: ChannelInitGrant,
-  opts: ConnectTunnelProxyBrowserOptions
-): Promise<ConnectTunnelProxyBrowserHandle> {
-  const client = await connectTunnelBrowser(grant, opts.connect ?? {});
-  return await connectProxyBrowserClient(client, opts);
-}
-
 export async function connectArtifactProxyBrowser(
   artifact: ConnectArtifact,
   opts: ConnectArtifactProxyBrowserOptions = {}
-): Promise<ConnectTunnelProxyBrowserHandle> {
+): Promise<ConnectArtifactProxyBrowserHandle> {
   const scope = extractProxyRuntimeScopeV1(artifact, "service_worker") as Extract<ProxyRuntimeScopeV1, { mode: "service_worker" }>;
   const client = await connectBrowser(artifact, opts.connect ?? {});
   const nextOpts = scopeRuntimeToIntegrationOptions(scope, opts);
   return await connectProxyBrowserClient(client, nextOpts);
 }
 
-export async function connectTunnelProxyControllerBrowser(
-  grant: ChannelInitGrant,
-  opts: ConnectTunnelProxyControllerBrowserOptions
-): Promise<ConnectTunnelProxyControllerBrowserHandle> {
-  const client = await connectTunnelBrowser(grant, opts.connect ?? {});
-  return connectProxyControllerClient(client, opts);
-}
-
 export async function connectArtifactProxyControllerBrowser(
   artifact: ConnectArtifact,
   opts: ConnectArtifactProxyControllerBrowserOptions = {}
-): Promise<ConnectTunnelProxyControllerBrowserHandle> {
+): Promise<ConnectArtifactProxyControllerBrowserHandle> {
   const scope = extractProxyRuntimeScopeV1(artifact, "controller_bridge") as Extract<ProxyRuntimeScopeV1, { mode: "controller_bridge" }>;
   const client = await connectBrowser(artifact, opts.connect ?? {});
   const runtime = resolveRuntimeLimitsFromScope(scope, opts.runtime);

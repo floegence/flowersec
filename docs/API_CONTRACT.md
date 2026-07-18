@@ -144,6 +144,8 @@ Recommended integration entrypoints:
 - `github.com/floegence/flowersec/flowersec-go/proxy`
   - `proxy.Register(...)`
   - `proxy.NewClient(...)`
+  - `proxy.Options`
+  - `proxy.DefaultMaxConcurrentStreams`
   - `proxy.ClientHTTPRequest`
   - `proxy.ClientHTTPResponse`
   - `proxy.ClientWebSocket`
@@ -205,7 +207,7 @@ Compatibility-only Go surface:
 
 - legacy raw grant / wrapper / direct JSON inputs continue to work through `client.Connect(...)`
 - `controlplane/client` stays the recommended Go client-side artifact fetch entry; `controlplane/http` is the recommended server-side helper-first reference layer
-- deprecated named profile helpers such as `preset.ResolveBuiltin(...)` and gateway `proxy.profile` remain compatibility-only for `default`; the removed `codeserver` name is represented only by the static migration manifest
+- preset manifests are accepted only through manifest files or decoded manifest objects; named profile helpers and gateway `proxy.profile` have been removed
 
 ## TypeScript exports
 
@@ -257,7 +259,7 @@ Package entrypoints:
   - `serveProxySession(...)`
   - `serveProxyStream(...)`
   - `ProxyServerOptions`
-  - `ProxyServerOptions.maxBufferedRequestBodyBytes`
+  - `ProxyServerOptions.maxConcurrentStreams`
   - `ProxyServerOptions.maxWsQueuedBytes`
 - `@floegence/flowersec-core/browser`
   - `connectBrowser(...)`
@@ -272,9 +274,6 @@ Package entrypoints:
   - `assertConnectArtifact(...)`
   - `requestChannelGrant(...)`
   - `requestEntryChannelGrant(...)`
-  - `requestConnectArtifact(...)`
-  - `requestEntryConnectArtifact(...)`
-  - `ControlplaneRequestError`
   - `createBrowserReconnectConfig(...)`
   - `createTunnelBrowserReconnectConfig(...)`
   - `createDirectBrowserReconnectConfig(...)`
@@ -321,8 +320,6 @@ Public building blocks:
   - `registerServiceWorkerAndEnsureControl(...)`
   - `connectArtifactProxyBrowser(...)`
   - `connectArtifactProxyControllerBrowser(...)`
-  - `connectTunnelProxyBrowser(...)`
-  - `connectTunnelProxyControllerBrowser(...)`
   - `createServiceWorkerControllerGuard(...)`
   - `registerProxyControllerWindow(...)`
   - `registerProxyAppWindow(...)`
@@ -359,12 +356,12 @@ Public building blocks:
 Compatibility and alias TypeScript notes:
 
 - legacy raw grant / wrapper / direct connect inputs remain accepted by `connect(...)`, `connectBrowser(...)`, and `connectNode(...)`
-- browser `requestConnectArtifact(...)`, `requestEntryConnectArtifact(...)`, and `ControlplaneRequestError` remain compatibility aliases of `@floegence/flowersec-core/controlplane`; new code should prefer the canonical `@floegence/flowersec-core/controlplane` import
 - `requestChannelGrant(...)` / `requestEntryChannelGrant(...)` remain supported for compatibility and bootstrap fallback flows, but they are no longer the preferred controlplane contract
-- `connectTunnelProxyBrowser(...)` and `connectTunnelProxyControllerBrowser(...)` remain deprecated compatibility aliases over the artifact-first proxy bootstrap cores
+- artifact helpers and `ControlplaneRequestError` are exported only by `@floegence/flowersec-core/controlplane`
+- proxy browser bootstrap is artifact-first through `connectArtifactProxyBrowser(...)` and `connectArtifactProxyControllerBrowser(...)`
 - controller/app Window bridges use the `stream_bidirectional_ack_v2` contract and require both sides to run the same Flowersec minor version; mixed versions fail during bridge open and do not fall back to the earlier unbounded one-direction acknowledgement behavior
 - hybrid ambiguous inputs and legacy inputs mixed with artifact-only fields fail fast
-- named proxy profiles are compatibility-only; use preset manifests instead
+- named proxy profiles have been removed; use preset manifests instead
 
 ## SwiftPM module
 
@@ -467,6 +464,8 @@ Endpoint, controlplane, reconnect, and proxy building blocks:
 - `ProxyServer`
 - `ProxyContractOptions`
 - `ProxyServerOptions`
+- `ProxyServerOptions.maxConcurrentStreams`
+- `FlowersecSDKDefaults.Proxy.maxConcurrentStreams`
 - `ProxyCookieJar`
 
 Artifact and wire value types:
@@ -503,6 +502,8 @@ Entrypoints and modules:
 - `flowersec::controlplane`
 - `flowersec::reconnect`
 - `flowersec::proxy`
+- `flowersec::proxy::ServerOptions`
+- `flowersec::proxy::ServerOptions.max_concurrent_streams`
 - `flowersec::observability`
 - `flowersec::generated`
 - `flowersec::transport::WebSocketTransport`

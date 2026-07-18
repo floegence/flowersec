@@ -29,9 +29,9 @@ High-level WebSocket connections require TLS by default. Use `AllowPlaintextForL
 
 ## Node Proxy Server
 
-The Node entrypoint exports `serveProxySession(...)`, `serveProxyStream(...)`, and `ProxyServerOptions`. Request bodies remain bounded per request by `maxBodyBytes`; `maxBufferedRequestBodyBytes` additionally caps the total buffered request-body bytes owned by one proxy session. WebSocket frames remain bounded by `maxWsFrameBytes`; `maxWsQueuedBytes` additionally caps upstream-to-Yamux queued bytes per connection, while the reverse direction waits for each Node `ws` send callback.
+The Node entrypoint exports `serveProxySession(...)`, `serveProxyStream(...)`, and `ProxyServerOptions`. HTTP request and response bodies stream between Flowersec chunk frames and the upstream fetch while remaining bounded per request by `maxBodyBytes`. Proxy sessions admit at most `maxConcurrentStreams` HTTP/WebSocket streams, with a shared default of 64; RPC serving has its own concurrency controls. WebSocket frames remain bounded by `maxWsFrameBytes`; `maxWsQueuedBytes` additionally caps upstream-to-Yamux queued bytes per connection, while the reverse direction waits for each Node `ws` send callback.
 
-The defaults keep one session request-body budget equal to `maxBodyBytes` and one queued WebSocket frame plus its proxy header. Raise either limit only when the deployment has a matching memory budget.
+The defaults keep one queued WebSocket frame plus its proxy header. Raise body, concurrency, or queue limits only when the deployment has matching upstream and memory capacity.
 
 ## Runtime Boundaries
 

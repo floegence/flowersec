@@ -21,18 +21,10 @@ export type {
   TunnelClientConnectArtifact,
 } from "../connect/artifact.js";
 export { assertConnectArtifact } from "../connect/artifact.js";
-export type {
-  ConnectArtifactRequestConfig,
-  ControlplaneConfig,
-  EntryConnectArtifactRequestConfig,
-  EntryControlplaneConfig,
-} from "./controlplane.js";
+export type { ControlplaneConfig, EntryControlplaneConfig } from "./controlplane.js";
 export {
-  ControlplaneRequestError,
   requestChannelGrant,
-  requestConnectArtifact,
   requestEntryChannelGrant,
-  requestEntryConnectArtifact,
 } from "./controlplane.js";
 export type {
   BrowserReconnectConfig,

@@ -2,7 +2,6 @@ import type { ConnectArtifact, ScopePayload } from "../connect/artifact.js";
 
 import {
   assertProxyPresetManifest,
-  resolveNamedProxyPreset,
   type ProxyPresetInput,
   type ProxyPresetLimits,
 } from "./preset.js";
@@ -267,11 +266,7 @@ export function resolvePresetInputFromScope(
 ): ProxyPresetInput | undefined {
   if (presetOverride !== undefined) return presetOverride;
   if (scope.preset.snapshot) return scope.preset.snapshot;
-  try {
-    return resolveNamedProxyPreset(scope.preset.presetId);
-  } catch {
-    return undefined;
-  }
+  throw new Error("proxy.runtime preset snapshot is required");
 }
 
 export function resolveRuntimePresetLimits(scope: ProxyRuntimeScopeV1): ProxyPresetLimits | undefined {

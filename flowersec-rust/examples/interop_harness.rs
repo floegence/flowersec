@@ -1318,6 +1318,7 @@ async fn serve_session(
         contract: proxy_contract,
         default_timeout: None,
         max_timeout: None,
+        max_concurrent_streams: flowersec::defaults::PROXY_MAX_CONCURRENT_STREAMS,
     })?;
     let mut tasks: JoinSet<ServerTaskOutcome> = JoinSet::new();
     tasks.spawn({

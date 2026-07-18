@@ -19,6 +19,8 @@ const ProtocolVersion = 1
 const (
 	// DefaultMaxChunkBytes caps a single body chunk for KindHTTP1.
 	DefaultMaxChunkBytes = defaults.ProxyMaxChunkBytes
+	// DefaultMaxConcurrentStreams caps active HTTP and WebSocket proxy streams.
+	DefaultMaxConcurrentStreams = defaults.ProxyMaxConcurrentStreams
 	// DefaultMaxBodyBytes caps total body bytes per direction for KindHTTP1.
 	DefaultMaxBodyBytes = defaults.ProxyMaxBodyBytes
 
@@ -103,6 +105,11 @@ type Options struct {
 	// If empty, only "127.0.0.1" is allowed.
 	AllowedUpstreamHosts []string
 
+	// MaxConcurrentStreams caps active HTTP and WebSocket proxy streams together.
+	// If == 0, DefaultMaxConcurrentStreams is used.
+	// If < 0, Register returns an error.
+	MaxConcurrentStreams int
+
 	ContractOptions
 
 	// DefaultTimeout is used when HTTPRequestMeta.timeout_ms is missing/0.
@@ -141,8 +148,9 @@ type compiledOptions struct {
 	upstreamHost   string // host:port
 	upstreamOrigin string
 
-	defaultTimeout time.Duration
-	maxTimeout     time.Duration
+	defaultTimeout       time.Duration
+	maxTimeout           time.Duration
+	maxConcurrentStreams int
 }
 
 func compileContractOptions(opts ContractOptions) (*compiledContractOptions, error) {
@@ -243,6 +251,13 @@ func compileOptions(opts Options) (*compiledOptions, error) {
 	contract, err := compileContractOptions(opts.ContractOptions)
 	if err != nil {
 		return nil, err
+	}
+	maxConcurrentStreams := opts.MaxConcurrentStreams
+	if maxConcurrentStreams < 0 {
+		return nil, errors.New("invalid MaxConcurrentStreams (must be >= 0)")
+	}
+	if maxConcurrentStreams == 0 {
+		maxConcurrentStreams = DefaultMaxConcurrentStreams
 	}
 
 	upstreamStr := strings.TrimSpace(opts.Upstream)
@@ -348,5 +363,6 @@ func compileOptions(opts Options) (*compiledOptions, error) {
 		upstreamOrigin:          upstreamOrigin,
 		defaultTimeout:          defaultTimeout,
 		maxTimeout:              maxTimeout,
+		maxConcurrentStreams:    maxConcurrentStreams,
 	}, nil
 }

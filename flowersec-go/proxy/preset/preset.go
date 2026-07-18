@@ -7,9 +7,7 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
 )
 
@@ -29,37 +27,6 @@ type Manifest struct {
 }
 
 var presetIDRe = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
-
-func builtinDefaultManifest() *Manifest {
-	maxJSON := jsonframe.DefaultMaxJSONFrameBytes
-	maxChunk := fsproxy.DefaultMaxChunkBytes
-	maxBody := int64(fsproxy.DefaultMaxBodyBytes)
-	maxWS := fsproxy.DefaultMaxWSFrameBytes
-	return &Manifest{
-		V:        1,
-		PresetID: "default",
-		Limits: Limits{
-			MaxJSONFrameBytes: &maxJSON,
-			MaxChunkBytes:     &maxChunk,
-			MaxBodyBytes:      &maxBody,
-			MaxWSFrameBytes:   &maxWS,
-		},
-	}
-}
-
-// ResolveBuiltin returns first-party reference manifests for deprecated named profiles.
-//
-// Deprecated: compatibility-only helper. Stable integrations should load a
-// manifest file or consume a decoded Manifest object instead of depending on a
-// named profile identifier.
-func ResolveBuiltin(name string) (*Manifest, error) {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "", "default":
-		return builtinDefaultManifest(), nil
-	default:
-		return nil, fmt.Errorf("unknown proxy profile: %q", name)
-	}
-}
 
 func DecodeJSON(r io.Reader) (*Manifest, error) {
 	var manifest Manifest

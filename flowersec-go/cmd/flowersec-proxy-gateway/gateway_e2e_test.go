@@ -67,7 +67,7 @@ func TestGatewayHTTPOverRealTunnelAndFreshGrantReconnect(t *testing.T) {
 	cancelServer1, doneServer1 := startServerTunnelSession(ctx, t, origin, streamSrv, grantS1)
 
 	cfgPath := filepath.Join(t.TempDir(), "gateway.json")
-	writeGatewayConfigFile(t, cfgPath, []string{origin}, false, origin, routeHost, grantFile, "default")
+	writeGatewayConfigFile(t, cfgPath, []string{origin}, false, origin, routeHost, grantFile)
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
@@ -177,7 +177,7 @@ func TestGatewayWSOverRealTunnel(t *testing.T) {
 	}()
 
 	cfgPath := filepath.Join(t.TempDir(), "gateway.json")
-	writeGatewayConfigFile(t, cfgPath, []string{origin}, false, origin, routeHost, grantFile, "default")
+	writeGatewayConfigFile(t, cfgPath, []string{origin}, false, origin, routeHost, grantFile)
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
@@ -264,7 +264,7 @@ func TestGatewayWSRejectsForeignOriginE2E(t *testing.T) {
 	}()
 
 	cfgPath := filepath.Join(t.TempDir(), "gateway.json")
-	writeGatewayConfigFile(t, cfgPath, []string{origin}, false, origin, routeHost, grantFile, "default")
+	writeGatewayConfigFile(t, cfgPath, []string{origin}, false, origin, routeHost, grantFile)
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
@@ -367,7 +367,7 @@ func writeGrantWrapperFile(t *testing.T, path string, grant *controlv1.ChannelIn
 	}
 }
 
-func writeGatewayConfigFile(t *testing.T, path string, browserAllowedOrigins []string, browserAllowNoOrigin bool, tunnelOrigin string, host string, grantFile string, profile string) {
+func writeGatewayConfigFile(t *testing.T, path string, browserAllowedOrigins []string, browserAllowNoOrigin bool, tunnelOrigin string, host string, grantFile string) {
 	t.Helper()
 	originsJSON, err := json.Marshal(browserAllowedOrigins)
 	if err != nil {
@@ -379,19 +379,16 @@ func writeGatewayConfigFile(t *testing.T, path string, browserAllowedOrigins []s
     "allowed_origins": %s,
     "allow_no_origin": %t
   },
-  "tunnel": {
-    "origin": %q
-  },
-  "proxy": {
-    "profile": %q
-  },
+	  "tunnel": {
+	    "origin": %q
+	  },
   "routes": [
     {
       "host": %q,
       "grant": { "file": %q }
     }
   ]
-}`, string(originsJSON), browserAllowNoOrigin, tunnelOrigin, profile, host, grantFile)
+	}`, string(originsJSON), browserAllowNoOrigin, tunnelOrigin, host, grantFile)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write gateway config: %v", err)
 	}

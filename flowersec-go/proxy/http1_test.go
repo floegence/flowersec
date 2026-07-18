@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
 )
@@ -359,6 +361,173 @@ func TestHTTP1Handler_POST_EndToEnd(t *testing.T) {
 	if got := <-bodyCh; got != "ab" {
 		t.Fatalf("unexpected upstream body: %q", got)
 	}
+}
+
+func TestHTTP1Handler_StreamsRequestAndResponseBeforeTermination(t *testing.T) {
+	requestFirstChunk := make(chan struct{})
+	allowRequestEnd := make(chan struct{})
+	responseFirstChunk := make(chan struct{})
+	allowResponseEnd := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		first := make([]byte, 5)
+		if _, err := io.ReadFull(r.Body, first); err != nil {
+			t.Errorf("read first request chunk: %v", err)
+			return
+		}
+		if string(first) != "first" {
+			t.Errorf("unexpected first request chunk: %q", string(first))
+			return
+		}
+		close(requestFirstChunk)
+		<-allowRequestEnd
+		if rest, err := io.ReadAll(r.Body); err != nil || string(rest) != "last" {
+			t.Errorf("unexpected remaining request body: body=%q err=%v", string(rest), err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("head"))
+		w.(http.Flusher).Flush()
+		close(responseFirstChunk)
+		<-allowResponseEnd
+		_, _ = w.Write([]byte("tail"))
+	}))
+	defer up.Close()
+
+	cfg, err := compileOptions(Options{
+		Upstream:       up.URL,
+		UpstreamOrigin: up.URL,
+	})
+	if err != nil {
+		t.Fatalf("compileOptions: %v", err)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	go http1Handler(cfg)(context.Background(), serverConn)
+
+	if err := jsonframe.WriteJSONFrame(clientConn, HTTPRequestMeta{
+		V: ProtocolVersion, RequestID: "streaming", Method: http.MethodPost, Path: "/",
+	}); err != nil {
+		t.Fatalf("write request metadata: %v", err)
+	}
+	if err := writeChunkFrame(clientConn, []byte("first"), cfg.maxChunkBytes, cfg.maxBodyBytes, nil); err != nil {
+		t.Fatalf("write first request chunk: %v", err)
+	}
+	select {
+	case <-requestFirstChunk:
+	case <-time.After(time.Second):
+		t.Fatal("upstream did not receive the first request chunk before the terminator")
+	}
+	close(allowRequestEnd)
+	if err := writeChunkFrame(clientConn, []byte("last"), cfg.maxChunkBytes, cfg.maxBodyBytes, nil); err != nil {
+		t.Fatalf("write final request chunk: %v", err)
+	}
+	if err := writeChunkTerminator(clientConn); err != nil {
+		t.Fatalf("write request terminator: %v", err)
+	}
+
+	if _, err := jsonframe.ReadJSONFrame(clientConn, cfg.maxJSONFrameBytes); err != nil {
+		t.Fatalf("read response metadata: %v", err)
+	}
+	select {
+	case <-responseFirstChunk:
+	case <-time.After(time.Second):
+		t.Fatal("upstream did not flush the first response chunk")
+	}
+	var readBytes int64
+	chunk, done, err := readChunkFrame(clientConn, cfg.maxChunkBytes, cfg.maxBodyBytes, &readBytes)
+	if err != nil {
+		t.Fatalf("read first response chunk: %v", err)
+	}
+	if done || string(chunk) != "head" {
+		t.Fatalf("unexpected first response chunk: done=%v body=%q", done, string(chunk))
+	}
+	close(allowResponseEnd)
+	chunk, done, err = readChunkFrame(clientConn, cfg.maxChunkBytes, cfg.maxBodyBytes, &readBytes)
+	if err != nil {
+		t.Fatalf("read final response chunk: %v", err)
+	}
+	if done || string(chunk) != "tail" {
+		t.Fatalf("unexpected final response chunk: done=%v body=%q", done, string(chunk))
+	}
+	if _, done, err := readChunkFrame(clientConn, cfg.maxChunkBytes, cfg.maxBodyBytes, &readBytes); err != nil || !done {
+		t.Fatalf("read response terminator: done=%v err=%v", done, err)
+	}
+}
+
+func TestHTTP1Handler_ResetsUnknownLengthResponseOverflowAfterMetadata(t *testing.T) {
+	allowOverflow := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ab"))
+		w.(http.Flusher).Flush()
+		<-allowOverflow
+		_, _ = w.Write([]byte("cd"))
+	}))
+	defer up.Close()
+
+	cfg, err := compileOptions(Options{
+		Upstream:       up.URL,
+		UpstreamOrigin: up.URL,
+		ContractOptions: ContractOptions{
+			MaxChunkBytes: 2,
+			MaxBodyBytes:  3,
+		},
+	})
+	if err != nil {
+		t.Fatalf("compileOptions: %v", err)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	stream := &resetRecordingStream{ReadWriteCloser: serverConn}
+	doneCh := make(chan struct{})
+	go func() {
+		http1Handler(cfg)(context.Background(), stream)
+		close(doneCh)
+	}()
+	defer clientConn.Close()
+
+	if err := jsonframe.WriteJSONFrame(clientConn, HTTPRequestMeta{
+		V: ProtocolVersion, RequestID: "overflow", Method: http.MethodGet, Path: "/",
+	}); err != nil {
+		t.Fatalf("write request metadata: %v", err)
+	}
+	if err := writeChunkTerminator(clientConn); err != nil {
+		t.Fatalf("write request terminator: %v", err)
+	}
+	if _, err := jsonframe.ReadJSONFrame(clientConn, cfg.maxJSONFrameBytes); err != nil {
+		t.Fatalf("read response metadata: %v", err)
+	}
+	var readBytes int64
+	chunk, done, err := readChunkFrame(clientConn, cfg.maxChunkBytes, cfg.maxBodyBytes, &readBytes)
+	if err != nil {
+		t.Fatalf("read first response chunk: %v", err)
+	}
+	if done || string(chunk) != "ab" {
+		t.Fatalf("unexpected first response chunk: done=%v body=%q", done, string(chunk))
+	}
+	close(allowOverflow)
+	select {
+	case <-doneCh:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not terminate after response overflow")
+	}
+	if !stream.reset.Load() {
+		t.Fatal("response overflow after metadata did not reset the stream")
+	}
+}
+
+type resetRecordingStream struct {
+	io.ReadWriteCloser
+	reset     atomic.Bool
+	resetOnce sync.Once
+}
+
+func (s *resetRecordingStream) Reset() error {
+	s.reset.Store(true)
+	var err error
+	s.resetOnce.Do(func() { err = s.Close() })
+	return err
 }
 
 func TestHTTP1Handler_InvalidMetaFrameTooLarge_ReturnsErrorMeta(t *testing.T) {

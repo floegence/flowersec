@@ -7,20 +7,6 @@ import (
 	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
 )
 
-func TestResolveBuiltin(t *testing.T) {
-	manifest, err := ResolveBuiltin("default")
-	if err != nil {
-		t.Fatalf("ResolveBuiltin(default): %v", err)
-	}
-	if manifest.PresetID != "default" {
-		t.Fatalf("unexpected preset id: %q", manifest.PresetID)
-	}
-
-	if _, err := ResolveBuiltin("codeserver"); err == nil {
-		t.Fatal("expected removed codeserver builtin to be rejected")
-	}
-}
-
 func TestDecodeJSONRejectsOwnerDocAndZeroTimeout(t *testing.T) {
 	_, err := DecodeJSON(strings.NewReader(`{
 	  "v": 1,

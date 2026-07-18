@@ -43,6 +43,7 @@ describe("SDK defaults contract", () => {
       maxChunkBytes: manifest.proxy!.max_chunk_bytes,
       maxBodyBytes: manifest.proxy!.max_body_bytes,
       maxWsFrameBytes: manifest.proxy!.max_ws_frame_bytes,
+      maxConcurrentStreams: manifest.proxy!.max_concurrent_streams,
       defaultTimeoutMs: manifest.proxy!.default_timeout_ms,
       maxTimeoutMs: manifest.proxy!.max_timeout_ms,
     });

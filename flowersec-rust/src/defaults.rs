@@ -31,6 +31,7 @@ pub const CONTROLPLANE_MAX_RESPONSE_BODY_BYTES: usize = 1024 * 1024;
 pub const PROXY_MAX_CHUNK_BYTES: usize = 256 * 1024;
 pub const PROXY_MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 pub const PROXY_MAX_WS_FRAME_BYTES: usize = 1024 * 1024;
+pub const PROXY_MAX_CONCURRENT_STREAMS: usize = 64;
 pub const PROXY_DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const PROXY_MAX_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 

@@ -295,7 +295,7 @@ public struct ProxyServerOptions: Equatable, Sendable {
       FlowersecSDKDefaults.Proxy.defaultTimeoutMilliseconds
     ),
     maxTimeout: Duration? = .milliseconds(FlowersecSDKDefaults.Proxy.maxTimeoutMilliseconds),
-    maxConcurrentStreams: Int = 64
+    maxConcurrentStreams: Int = FlowersecSDKDefaults.Proxy.maxConcurrentStreams
   ) {
     self.upstream = upstream
     self.upstreamOrigin = upstreamOrigin
@@ -541,15 +541,27 @@ enum ProxyFraming {
     options: ProxyContractOptions
   ) async throws {
     guard body.count <= options.maxBodyBytes else { throw ProxyError.bodyTooLarge }
+    try await writeBodyChunk(body, to: stream, maxChunkBytes: options.maxChunkBytes)
+    try await writeBodyTerminator(to: stream)
+  }
+
+  static func writeBodyChunk(
+    _ chunk: Data,
+    to stream: any FlowersecByteStream,
+    maxChunkBytes: Int
+  ) async throws {
     var offset = 0
-    while offset < body.count {
-      let count = min(options.maxChunkBytes, body.count - offset)
+    while offset < chunk.count {
+      let count = min(maxChunkBytes, chunk.count - offset)
       var frame = Data()
       frame.appendUInt32BE(UInt32(count))
-      frame.append(body.subdata(in: offset..<(offset + count)))
+      frame.append(chunk.subdata(in: offset..<(offset + count)))
       try await stream.write(frame)
       offset += count
     }
+  }
+
+  static func writeBodyTerminator(to stream: any FlowersecByteStream) async throws {
     try await stream.write(Data(repeating: 0, count: 4))
   }
 

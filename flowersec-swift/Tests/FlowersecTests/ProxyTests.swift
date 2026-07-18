@@ -4,6 +4,16 @@ import XCTest
 @testable import Flowersec
 
 final class ProxyTests: XCTestCase {
+  func testProxyServerDefaultsTo64ConcurrentStreams() {
+    XCTAssertEqual(
+      ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173"
+      ).maxConcurrentStreams,
+      64
+    )
+  }
+
   func testHTTPErrorResponseAllowsOmittedHeaders() throws {
     let data = Data(
       #"{"v":1,"request_id":"request-1","ok":false,"error":{"code":"request_body_too_large","message":"too large"}}"#.utf8
@@ -27,7 +37,8 @@ final class ProxyTests: XCTestCase {
         contract: contract
       ),
       httpExecutor: { request in
-        await recorder.record(request)
+        let body = try await request.body.collect()
+        await recorder.record(request, body: body)
         return ProxyHTTPUpstreamResponse(
           status: 201,
           headers: [
@@ -35,7 +46,8 @@ final class ProxyTests: XCTestCase {
             ProxyHeader(name: "set-cookie", value: "session=upstream; Path=/"),
             ProxyHeader(name: "x-not-allowed", value: "secret"),
           ],
-          body: Data("created".utf8)
+          contentLength: 7,
+          body: { write in try await write(Data("created".utf8)) }
         )
       },
       webSocketFactory: { _, _, _, _ in throw ProxyError.upstream("not used") }
@@ -61,10 +73,11 @@ final class ProxyTests: XCTestCase {
     XCTAssertEqual(response.status, 201)
     XCTAssertEqual(response.body, Data("created".utf8))
     XCTAssertEqual(response.headers, [ProxyHeader(name: "content-type", value: "text/plain")])
-    let recordedRequest = await recorder.request()
-    let upstream = try XCTUnwrap(recordedRequest)
+    let recorded = await recorder.request()
+    let recordedRequest = try XCTUnwrap(recorded)
+    let upstream = recordedRequest.request
     XCTAssertEqual(upstream.url.absoluteString, "http://127.0.0.1:8080/api/items?draft=1")
-    XCTAssertEqual(upstream.body, Data("{\"name\":\"item\"}".utf8))
+    XCTAssertEqual(recordedRequest.body, Data("{\"name\":\"item\"}".utf8))
     XCTAssertEqual(upstream.timeout, .milliseconds(250))
     XCTAssertNil(upstream.headers.first { $0.name == "authorization" })
     XCTAssertEqual(
@@ -73,6 +86,356 @@ final class ProxyTests: XCTestCase {
     )
     XCTAssertEqual(upstream.headers.first { $0.name == "host" }?.value, "workspace.example.test")
     XCTAssertEqual(upstream.headers.first { $0.name == "x-forwarded-proto" }?.value, "https")
+  }
+
+  func testHTTPStreamsRequestChunkBeforeTerminatorAndAllowsEarlyResponse() async throws {
+    let firstChunkSeen = expectation(description: "upstream received the first request chunk")
+    let server = try ProxyServer(
+      options: ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173"
+      ),
+      httpExecutor: { request in
+        var body = request.body.makeAsyncIterator()
+        let first = try await body.next()
+        XCTAssertEqual(first, Data("first".utf8))
+        firstChunkSeen.fulfill()
+        return ProxyHTTPUpstreamResponse(
+          status: 202,
+          headers: [],
+          contentLength: 2,
+          body: { write in try await write(Data("ok".utf8)) }
+        )
+      },
+      webSocketFactory: { _, _, _, _ in throw ProxyError.upstream("not used") }
+    )
+    let pair = ProxyDuplexStream.makePair()
+    let serverTask = Task {
+      try await server.serveStream(kind: ProxyProtocol.http1Kind, stream: pair.server)
+    }
+
+    try await ProxyFraming.writeJSON(
+      ProxyHTTPRequestMeta(requestID: "streaming-request", method: "POST", path: "/", headers: []),
+      to: pair.client,
+      maxBytes: FlowersecSDKDefaults.Proxy.maxJSONFrameBytes
+    )
+    try await pair.client.write(proxyBodyFrame(Data("first".utf8)))
+
+    await fulfillment(of: [firstChunkSeen], timeout: 1)
+    let response = try await ProxyFraming.readJSON(
+      ProxyHTTPResponseMeta.self,
+      from: pair.client,
+      maxBytes: FlowersecSDKDefaults.Proxy.maxJSONFrameBytes
+    )
+    XCTAssertTrue(response.ok)
+    XCTAssertEqual(response.status, 202)
+    let responseChunk = try await proxyReadBodyChunk(from: pair.client)
+    XCTAssertEqual(responseChunk, Data("ok".utf8))
+    let responseEnd = try await proxyReadBodyChunk(from: pair.client)
+    XCTAssertNil(responseEnd)
+    _ = try await serverTask.value
+  }
+
+  func testHTTPStreamsResponseMetadataAndFirstChunkBeforeUpstreamCompletes() async throws {
+    let bodyGate = ProxyTestGate()
+    let server = try ProxyServer(
+      options: ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173"
+      ),
+      httpExecutor: { _ in
+        ProxyHTTPUpstreamResponse(
+          status: 200,
+          headers: [ProxyHeader(name: "content-type", value: "text/plain")],
+          contentLength: nil,
+          body: { write in
+            try await write(Data("first".utf8))
+            await bodyGate.wait()
+            try await write(Data("second".utf8))
+          }
+        )
+      },
+      webSocketFactory: { _, _, _, _ in throw ProxyError.upstream("not used") }
+    )
+    let pair = ProxyDuplexStream.makePair()
+    let serverTask = Task {
+      try await server.serveStream(kind: ProxyProtocol.http1Kind, stream: pair.server)
+    }
+    try await proxyWriteRequest(metaID: "streaming-response", body: Data(), to: pair.client)
+
+    let response = try await ProxyFraming.readJSON(
+      ProxyHTTPResponseMeta.self,
+      from: pair.client,
+      maxBytes: FlowersecSDKDefaults.Proxy.maxJSONFrameBytes
+    )
+    XCTAssertTrue(response.ok)
+    let firstChunk = try await proxyReadBodyChunk(from: pair.client)
+    XCTAssertEqual(firstChunk, Data("first".utf8))
+
+    await bodyGate.open()
+    let secondChunk = try await proxyReadBodyChunk(from: pair.client)
+    XCTAssertEqual(secondChunk, Data("second".utf8))
+    let responseEnd = try await proxyReadBodyChunk(from: pair.client)
+    XCTAssertNil(responseEnd)
+    _ = try await serverTask.value
+  }
+
+  func testHTTPKnownOversizedResponseReturnsStructuredErrorBeforeMetadata() async throws {
+    let server = try ProxyServer(
+      options: ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173",
+        contract: ProxyContractOptions(maxBodyBytes: 4)
+      ),
+      httpExecutor: { _ in
+        ProxyHTTPUpstreamResponse(
+          status: 200,
+          headers: [],
+          contentLength: 5,
+          body: { _ in XCTFail("oversized known body must not be consumed") }
+        )
+      },
+      webSocketFactory: { _, _, _, _ in throw ProxyError.upstream("not used") }
+    )
+    let pair = ProxyDuplexStream.makePair()
+    let serverTask = Task {
+      try await server.serveStream(kind: ProxyProtocol.http1Kind, stream: pair.server)
+    }
+    try await proxyWriteRequest(metaID: "known-overflow", body: Data(), to: pair.client)
+
+    let response = try await ProxyFraming.readJSON(
+      ProxyHTTPResponseMeta.self,
+      from: pair.client,
+      maxBytes: FlowersecSDKDefaults.Proxy.maxJSONFrameBytes
+    )
+    XCTAssertFalse(response.ok)
+    XCTAssertEqual(response.error?.code, "response_body_too_large")
+    let responseEnd = try await proxyReadBodyChunk(from: pair.client)
+    XCTAssertNil(responseEnd)
+    _ = try await serverTask.value
+  }
+
+  func testHTTPUnknownOversizedRequestReturnsStructuredErrorBeforeResponse() async throws {
+    let server = try ProxyServer(
+      options: ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173",
+        contract: ProxyContractOptions(maxChunkBytes: 4, maxBodyBytes: 5)
+      ),
+      httpExecutor: { request in
+        _ = try await request.body.collect()
+        return ProxyHTTPUpstreamResponse(
+          status: 200,
+          headers: [],
+          contentLength: 0,
+          body: { _ in }
+        )
+      },
+      webSocketFactory: { _, _, _, _ in throw ProxyError.upstream("not used") }
+    )
+    let pair = ProxyDuplexStream.makePair()
+    let serverTask = Task {
+      try await server.serveStream(kind: ProxyProtocol.http1Kind, stream: pair.server)
+    }
+    try await ProxyFraming.writeJSON(
+      ProxyHTTPRequestMeta(requestID: "request-overflow", method: "POST", path: "/", headers: []),
+      to: pair.client,
+      maxBytes: FlowersecSDKDefaults.Proxy.maxJSONFrameBytes
+    )
+    try await pair.client.write(proxyBodyFrame(Data("four".utf8)))
+    try await pair.client.write(proxyBodyFrame(Data("xx".utf8)))
+
+    let response = try await ProxyFraming.readJSON(
+      ProxyHTTPResponseMeta.self,
+      from: pair.client,
+      maxBytes: FlowersecSDKDefaults.Proxy.maxJSONFrameBytes
+    )
+    XCTAssertFalse(response.ok)
+    XCTAssertEqual(response.error?.code, "request_body_too_large")
+    let responseEnd = try await proxyReadBodyChunk(from: pair.client)
+    XCTAssertNil(responseEnd)
+    _ = try await serverTask.value
+  }
+
+  func testHTTPUnknownOversizedResponseResetsAfterMetadataWithoutSecondError() async throws {
+    let server = try ProxyServer(
+      options: ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173",
+        contract: ProxyContractOptions(maxChunkBytes: 4, maxBodyBytes: 5)
+      ),
+      httpExecutor: { _ in
+        ProxyHTTPUpstreamResponse(
+          status: 200,
+          headers: [],
+          contentLength: nil,
+          body: { write in
+            try await write(Data("four".utf8))
+            try await write(Data("more".utf8))
+          }
+        )
+      },
+      webSocketFactory: { _, _, _, _ in throw ProxyError.upstream("not used") }
+    )
+    let pair = ProxyDuplexStream.makePair()
+    let serverTask = Task {
+      try await server.serveStream(kind: ProxyProtocol.http1Kind, stream: pair.server)
+    }
+    try await proxyWriteRequest(metaID: "unknown-overflow", body: Data(), to: pair.client)
+
+    let response = try await ProxyFraming.readJSON(
+      ProxyHTTPResponseMeta.self,
+      from: pair.client,
+      maxBytes: FlowersecSDKDefaults.Proxy.maxJSONFrameBytes
+    )
+    XCTAssertTrue(response.ok)
+    let firstChunk = try await proxyReadBodyChunk(from: pair.client)
+    XCTAssertEqual(firstChunk, Data("four".utf8))
+    do {
+      _ = try await pair.client.readExact(4)
+      XCTFail("overflow must reset instead of writing a second response frame")
+    } catch {
+      let wasReset = await pair.client.wasPeerReset()
+      XCTAssertTrue(wasReset)
+    }
+    _ = try? await serverTask.value
+  }
+
+  func testHTTPFramingFailureAfterMetadataResetsStream() async throws {
+    let server = try ProxyServer(
+      options: ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173",
+        contract: ProxyContractOptions(maxChunkBytes: 4, maxBodyBytes: 8)
+      ),
+      httpExecutor: { request in
+        var requestBody = request.body.makeAsyncIterator()
+        let firstRequestChunk = try await requestBody.next()
+        XCTAssertEqual(firstRequestChunk, Data("good".utf8))
+        let remainingBody = request.body
+        return ProxyHTTPUpstreamResponse(
+          status: 200,
+          headers: [],
+          contentLength: nil,
+          body: { write in
+            try await write(Data("ok".utf8))
+            var iterator = remainingBody.makeAsyncIterator()
+            _ = try await iterator.next()
+          }
+        )
+      },
+      webSocketFactory: { _, _, _, _ in throw ProxyError.upstream("not used") }
+    )
+    let pair = ProxyDuplexStream.makePair()
+    let serverTask = Task {
+      try await server.serveStream(kind: ProxyProtocol.http1Kind, stream: pair.server)
+    }
+    try await ProxyFraming.writeJSON(
+      ProxyHTTPRequestMeta(requestID: "late-framing-error", method: "POST", path: "/", headers: []),
+      to: pair.client,
+      maxBytes: FlowersecSDKDefaults.Proxy.maxJSONFrameBytes
+    )
+    try await pair.client.write(proxyBodyFrame(Data("good".utf8)))
+    try await pair.client.write(proxyBodyFrame(Data("large".utf8)))
+
+    let response = try await ProxyFraming.readJSON(
+      ProxyHTTPResponseMeta.self,
+      from: pair.client,
+      maxBytes: FlowersecSDKDefaults.Proxy.maxJSONFrameBytes
+    )
+    XCTAssertTrue(response.ok)
+    let firstChunk = try await proxyReadBodyChunk(from: pair.client)
+    XCTAssertEqual(firstChunk, Data("ok".utf8))
+    do {
+      _ = try await pair.client.readExact(4)
+      XCTFail("late request framing failure must reset the stream")
+    } catch {
+      let wasReset = await pair.client.wasPeerReset()
+      XCTAssertTrue(wasReset)
+    }
+    _ = try? await serverTask.value
+  }
+
+  func testConcurrentStreamLimitResetsImmediatelyAndReleasesPermit() async throws {
+    let server = try ProxyServer(
+      options: ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173",
+        maxConcurrentStreams: 1
+      ),
+      httpExecutor: { _ in throw ProxyError.upstream("not used") },
+      webSocketFactory: { _, _, _, _ in throw ProxyError.upstream("not used") }
+    )
+    let first = ProxyBlockingStream()
+    let firstTask = Task {
+      await server.serveAcceptedStream(
+        EndpointStream(kind: ProxyProtocol.http1Kind, stream: first)
+      )
+    }
+    await first.waitUntilRead()
+
+    let second = ProxyBlockingStream()
+    await server.serveAcceptedStream(
+      EndpointStream(kind: ProxyProtocol.http1Kind, stream: second)
+    )
+    let secondWasReset = await second.wasReset()
+    XCTAssertTrue(secondWasReset)
+
+    await first.unblock()
+    _ = await firstTask.value
+    let third = ProxyBlockingStream()
+    let thirdTask = Task {
+      await server.serveAcceptedStream(
+        EndpointStream(kind: ProxyProtocol.http1Kind, stream: third)
+      )
+    }
+    await third.waitUntilRead()
+    let thirdWasReset = await third.wasReset()
+    XCTAssertFalse(thirdWasReset)
+    await third.unblock()
+    _ = await thirdTask.value
+  }
+
+  func testCancelingAcceptedStreamResetsAndReleasesPermit() async throws {
+    let server = try ProxyServer(
+      options: ProxyServerOptions(
+        upstream: URL(string: "http://127.0.0.1:8080")!,
+        upstreamOrigin: "http://127.0.0.1:5173",
+        maxConcurrentStreams: 1
+      ),
+      httpExecutor: { _ in throw ProxyError.upstream("not used") },
+      webSocketFactory: { _, _, _, _ in throw ProxyError.upstream("not used") }
+    )
+    let canceled = ProxyBlockingStream()
+    let canceledTask = Task {
+      await server.serveAcceptedStream(
+        EndpointStream(kind: ProxyProtocol.http1Kind, stream: canceled)
+      )
+    }
+    await canceled.waitUntilRead()
+    canceledTask.cancel()
+
+    var canceledWasReset = false
+    for _ in 0..<50 {
+      canceledWasReset = await canceled.wasReset()
+      if canceledWasReset { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    if !canceledWasReset { await canceled.unblock() }
+    XCTAssertTrue(canceledWasReset)
+    _ = await canceledTask.value
+
+    let next = ProxyBlockingStream()
+    let nextTask = Task {
+      await server.serveAcceptedStream(
+        EndpointStream(kind: ProxyProtocol.http1Kind, stream: next)
+      )
+    }
+    await next.waitUntilRead()
+    let nextWasReset = await next.wasReset()
+    XCTAssertFalse(nextWasReset)
+    await next.unblock()
+    _ = await nextTask.value
   }
 
   func testHTTPRejectsConflictingExternalOrigin() async throws {
@@ -314,12 +677,14 @@ private final class ProxyDuplexStream: FlowersecByteStream, @unchecked Sendable 
   func write(_ data: Data) async throws { try await state.write(from: side, data: data) }
   func readExact(_ length: Int) async throws -> Data { try await state.read(side: side, length: length) }
   func close() async { await state.close(side: side) }
-  func reset() async throws { await state.close(side: side) }
+  func reset() async throws { await state.reset(side: side) }
+  func wasPeerReset() async -> Bool { await state.wasReset(side: 1 - side) }
 }
 
 private actor ProxyDuplexState {
   private var buffers = [Data(), Data()]
   private var closed = [false, false]
+  private var reset = [false, false]
   private var waiters = [[CheckedContinuation<Void, Never>](), []]
 
   func write(from side: Int, data: Data) throws {
@@ -346,6 +711,13 @@ private actor ProxyDuplexState {
     resume(1)
   }
 
+  func reset(side: Int) {
+    reset[side] = true
+    close(side: side)
+  }
+
+  func wasReset(side: Int) -> Bool { reset[side] }
+
   private func resume(_ side: Int) {
     let current = waiters[side]
     waiters[side].removeAll()
@@ -353,10 +725,103 @@ private actor ProxyDuplexState {
   }
 }
 
+private actor ProxyTestGate {
+  private var openState = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    if openState { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func open() {
+    openState = true
+    let current = waiters
+    waiters.removeAll()
+    current.forEach { $0.resume() }
+  }
+}
+
+private actor ProxyBlockingStream: FlowersecByteStream {
+  private var readStarted = false
+  private var readWaiters: [CheckedContinuation<Void, Never>] = []
+  private var unblockWaiters: [CheckedContinuation<Void, Never>] = []
+  private var unblocked = false
+  private var resetState = false
+
+  func write(_ data: Data) async throws {}
+
+  func readExact(_ length: Int) async throws -> Data {
+    readStarted = true
+    let current = readWaiters
+    readWaiters.removeAll()
+    current.forEach { $0.resume() }
+    if !unblocked {
+      await withCheckedContinuation { unblockWaiters.append($0) }
+    }
+    throw ProxyError.stream("blocking test stream released")
+  }
+
+  func close() async { unblock() }
+
+  func reset() async throws {
+    resetState = true
+    unblock()
+  }
+
+  func waitUntilRead() async {
+    if readStarted { return }
+    await withCheckedContinuation { readWaiters.append($0) }
+  }
+
+  func unblock() {
+    unblocked = true
+    let current = unblockWaiters
+    unblockWaiters.removeAll()
+    current.forEach { $0.resume() }
+  }
+
+  func wasReset() -> Bool { resetState }
+}
+
+private func proxyBodyFrame(_ body: Data) -> Data {
+  var frame = Data()
+  frame.appendUInt32BE(UInt32(body.count))
+  frame.append(body)
+  return frame
+}
+
+private func proxyWriteRequest(
+  metaID: String,
+  body: Data,
+  to stream: any FlowersecByteStream
+) async throws {
+  try await ProxyFraming.writeJSON(
+    ProxyHTTPRequestMeta(requestID: metaID, method: "POST", path: "/", headers: []),
+    to: stream,
+    maxBytes: FlowersecSDKDefaults.Proxy.maxJSONFrameBytes
+  )
+  try await ProxyFraming.writeBody(body, to: stream, options: ProxyContractOptions())
+}
+
+private func proxyReadBodyChunk(from stream: any FlowersecByteStream) async throws -> Data? {
+  let header = try await stream.readExact(4)
+  let length = Int(header.readUInt32BE(at: 0))
+  if length == 0 { return nil }
+  return try await stream.readExact(length)
+}
+
 private actor ProxyHTTPRecorder {
-  private var value: ProxyHTTPUpstreamRequest?
-  func record(_ request: ProxyHTTPUpstreamRequest) { value = request }
-  func request() -> ProxyHTTPUpstreamRequest? { value }
+  struct Value: Sendable {
+    var request: ProxyHTTPUpstreamRequest
+    var body: Data
+  }
+
+  private var value: Value?
+  func record(_ request: ProxyHTTPUpstreamRequest, body: Data) {
+    value = Value(request: request, body: body)
+  }
+  func request() -> Value? { value }
 }
 
 private actor ProxyWebSocketHeaderRecorder {

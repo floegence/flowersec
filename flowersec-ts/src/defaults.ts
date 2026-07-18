@@ -35,6 +35,7 @@ export const SDK_DEFAULTS = Object.freeze({
     maxChunkBytes: 256 * 1024,
     maxBodyBytes: 64 * 1024 * 1024,
     maxWsFrameBytes: 1024 * 1024,
+    maxConcurrentStreams: 64,
     defaultTimeoutMs: 30_000,
     maxTimeoutMs: 300_000,
   }),

@@ -96,6 +96,10 @@ fn rust_defaults_match_stability_contract() {
         defaults::MAX_JSON_FRAME_BYTES as u64
     );
     assert_eq!(
+        number(&document, "proxy", "max_concurrent_streams"),
+        defaults::PROXY_MAX_CONCURRENT_STREAMS as u64
+    );
+    assert_eq!(
         number(&document, "proxy", "max_chunk_bytes"),
         defaults::PROXY_MAX_CHUNK_BYTES as u64
     );

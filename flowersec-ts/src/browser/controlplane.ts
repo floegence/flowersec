@@ -7,11 +7,6 @@ import type {
 import {
   requestControlplaneJSON,
 } from "../controlplane/request.js";
-export {
-  ControlplaneRequestError,
-  requestConnectArtifact,
-  requestEntryConnectArtifact,
-} from "../controlplane/request.js";
 
 type FetchLike = typeof fetch;
 

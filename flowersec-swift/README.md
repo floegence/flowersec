@@ -29,6 +29,10 @@ Start with the [Swift cookbook](https://github.com/floegence/flowersec/tree/main
 
 High-level WebSocket connections require TLS by default. Use `.allowPlaintextForLoopback` only for literal local development targets.
 
+## Proxy Server
+
+`ProxyServer` streams HTTP request and response chunks directly between the Flowersec stream and AsyncHTTPClient. `ProxyServerOptions.maxConcurrentStreams` defaults to 64 and independently caps active HTTP and WebSocket proxy streams; excess streams are reset immediately.
+
 ## Runtime Boundaries
 
 Swift owns the native Apple-platform implementation of the portable contract. Browser Service Worker runtime APIs remain TypeScript-owned, while shared tunnel, gateway, and helper binaries remain Go-owned.

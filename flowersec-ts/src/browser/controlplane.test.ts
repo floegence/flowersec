@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
-  ControlplaneRequestError,
   requestChannelGrant,
   requestEntryChannelGrant,
 } from "./controlplane.js";
+import { ControlplaneRequestError } from "../controlplane/index.js";
 
 function makeGrant(channelID: string) {
   return {
@@ -135,12 +135,10 @@ describe("browser controlplane helpers", () => {
     } satisfies Partial<ControlplaneRequestError>);
   });
 
-  test("re-exports the stable artifact helper aliases from the shared controlplane module", async () => {
+  test("does not duplicate artifact helpers or errors from the controlplane subpath", async () => {
     const browser = await import("./controlplane.js");
-    const controlplane = await import("../controlplane/index.js");
-
-    expect(browser.requestConnectArtifact).toBe(controlplane.requestConnectArtifact);
-    expect(browser.requestEntryConnectArtifact).toBe(controlplane.requestEntryConnectArtifact);
-    expect(browser.ControlplaneRequestError).toBe(controlplane.ControlplaneRequestError);
+    expect(browser).not.toHaveProperty("requestConnectArtifact");
+    expect(browser).not.toHaveProperty("requestEntryConnectArtifact");
+    expect(browser).not.toHaveProperty("ControlplaneRequestError");
   });
 });

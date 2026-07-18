@@ -3,16 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PROXY_PRESET_MANIFEST,
   assertProxyPresetManifest,
-  resolveNamedProxyPreset,
   resolveProxyPreset,
 } from "./preset.js";
 
 describe("proxy presets", () => {
-  it("resolves named presets", () => {
-    expect(resolveNamedProxyPreset("default")).toEqual(DEFAULT_PROXY_PRESET_MANIFEST);
-    expect(() => resolveNamedProxyPreset("codeserver")).toThrow(/unknown proxy preset/);
-  });
-
   it("builds resolved concrete limits", () => {
     const preset = resolveProxyPreset({ max_ws_frame_bytes: 4 * 1024 * 1024 });
     expect(preset.preset_id).toBe("custom");

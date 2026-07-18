@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tokio::sync::{Mutex, Semaphore};
 use tokio_tungstenite::tungstenite::{
     Message,
     client::IntoClientRequest as _,
@@ -234,6 +235,7 @@ pub struct ServerOptions {
     pub contract: ContractOptions,
     pub default_timeout: Option<Duration>,
     pub max_timeout: Option<Duration>,
+    pub max_concurrent_streams: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -269,6 +271,14 @@ pub enum ProxyError {
         operation: Box<ProxyError>,
         close: YamuxError,
     },
+}
+
+#[derive(Clone, Debug, thiserror::Error)]
+enum RequestBodyError {
+    #[error("proxy request body exceeds configured limit")]
+    TooLarge,
+    #[error("proxy request body framing failed: {0}")]
+    Invalid(String),
 }
 
 #[derive(Clone, Debug)]
@@ -590,10 +600,16 @@ struct CompiledServer {
 pub struct ProxyServer {
     config: Arc<CompiledServer>,
     http: reqwest::Client,
+    concurrent: Arc<Semaphore>,
 }
 
 impl ProxyServer {
     pub fn new(options: ServerOptions) -> Result<Self, ProxyError> {
+        if options.max_concurrent_streams == 0 {
+            return Err(ProxyError::InvalidConfig(
+                "max_concurrent_streams must be positive".to_owned(),
+            ));
+        }
         let contract = Arc::new(CompiledContract::new(options.contract)?);
         let upstream = validate_upstream(&options.upstream, &options.allowed_upstream_hosts)?;
         let upstream_origin = validate_origin(&options.upstream_origin)?.to_string();
@@ -614,6 +630,7 @@ impl ProxyServer {
                     .or(Some(crate::defaults::PROXY_MAX_TIMEOUT)),
             }),
             http,
+            concurrent: Arc::new(Semaphore::new(options.max_concurrent_streams)),
         })
     }
 
@@ -623,25 +640,27 @@ impl ProxyServer {
             tokio::select! {
                 outcome = tasks.join_next(), if !tasks.is_empty() => {
                     match outcome {
-                        Some(Ok(result)) => result?,
+                        Some(Ok(())) => {}
                         Some(Err(error)) => return Err(ProxyError::Task(error)),
                         None => return Err(ProxyError::InvalidConfig("proxy supervisor ended unexpectedly".to_owned())),
                     }
                 }
                 accepted = session.accept_stream() => {
                     let (kind, stream) = accepted?;
+                    let permit = match self.concurrent.clone().try_acquire_owned() {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            tasks.spawn(async move {
+                                let _ = stream.reset().await;
+                            });
+                            continue;
+                        }
+                    };
                     let server = self.clone();
                     tasks.spawn(async move {
-                        let result = server.serve_stream(&kind, stream.clone()).await;
-                        match result {
-                            Ok(()) => Ok(()),
-                            Err(operation) => match stream.reset().await {
-                                Ok(()) => Err(operation),
-                                Err(close) => Err(ProxyError::Cleanup {
-                                    operation: Box::new(operation),
-                                    close,
-                                }),
-                            },
+                        let _permit = permit;
+                        if server.serve_stream_inner(&kind, stream.clone()).await.is_err() {
+                            let _ = stream.reset().await;
                         }
                     });
                 }
@@ -650,6 +669,14 @@ impl ProxyServer {
     }
 
     pub async fn serve_stream(&self, kind: &str, stream: YamuxStream) -> Result<(), ProxyError> {
+        let Ok(_permit) = self.concurrent.clone().try_acquire_owned() else {
+            stream.reset().await?;
+            return Ok(());
+        };
+        self.serve_stream_inner(kind, stream).await
+    }
+
+    async fn serve_stream_inner(&self, kind: &str, stream: YamuxStream) -> Result<(), ProxyError> {
         match kind {
             HTTP1_KIND => self.serve_http(stream).await,
             WEBSOCKET_KIND => self.serve_websocket(stream).await,
@@ -689,19 +716,6 @@ impl ProxyServer {
             .await?;
             return Ok(());
         }
-        let body = match read_body(&stream, &self.config.contract).await {
-            Ok(body) => body,
-            Err(error) => {
-                let code = if matches!(error, ProxyError::BodyTooLarge | ProxyError::FrameTooLarge)
-                {
-                    "request_body_too_large"
-                } else {
-                    "request_body_invalid"
-                };
-                write_http_error(&stream, &meta.request_id, code, &error.to_string()).await?;
-                return Ok(());
-            }
-        };
         let method = match Method::from_bytes(meta.method.as_bytes()) {
             Ok(method) => method,
             Err(error) => {
@@ -745,9 +759,19 @@ impl ProxyServer {
                 return Ok(());
             }
         };
+        let request_body_failure = Arc::new(Mutex::new(None));
         let mut request = self.http.request(method, url).headers(headers);
-        if !matches!(meta.method.as_str(), "GET" | "HEAD") {
-            request = request.body(body);
+        if matches!(meta.method.as_str(), "GET" | "HEAD") {
+            if let Err(error) = drain_body(&stream, &self.config.contract).await {
+                write_request_body_error(&stream, &meta.request_id, &error).await?;
+                return Ok(());
+            }
+        } else {
+            request = request.body(reqwest::Body::wrap_stream(request_body_stream(
+                stream.clone(),
+                self.config.contract.clone(),
+                request_body_failure.clone(),
+            )));
         }
         if let Some(timeout) = timeout {
             request = request.timeout(timeout);
@@ -755,6 +779,10 @@ impl ProxyServer {
         let response = match request.send().await {
             Ok(response) => response,
             Err(error) => {
+                if let Some(error) = request_body_failure.lock().await.take() {
+                    write_request_body_error(&stream, &meta.request_id, &error).await?;
+                    return Ok(());
+                }
                 let code = classify_http_error(&error);
                 write_http_error(&stream, &meta.request_id, code, &error.to_string()).await?;
                 return Ok(());
@@ -779,21 +807,6 @@ impl ProxyServer {
             .contract
             .headers
             .filter_response(&from_header_map(response.headers()));
-        let body =
-            match read_response_body(response, self.config.contract.options.max_body_bytes).await {
-                Ok(body) => body,
-                Err(ProxyError::BodyTooLarge) => {
-                    write_http_error(
-                        &stream,
-                        &meta.request_id,
-                        "response_body_too_large",
-                        "upstream response exceeds max_body_bytes",
-                    )
-                    .await?;
-                    return Ok(());
-                }
-                Err(error) => return Err(error),
-            };
         streamio::write_json(
             &stream,
             &HttpResponseMeta {
@@ -806,7 +819,27 @@ impl ProxyServer {
             },
         )
         .await?;
-        write_body(&stream, &body, &self.config.contract).await?;
+        let mut body_bytes = 0_usize;
+        let mut response_body = response.bytes_stream();
+        while let Some(chunk) = response_body.next().await {
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(_) => {
+                    stream.reset().await?;
+                    return Ok(());
+                }
+            };
+            if body_bytes.saturating_add(chunk.len()) > self.config.contract.options.max_body_bytes
+            {
+                stream.reset().await?;
+                return Ok(());
+            }
+            body_bytes += chunk.len();
+            for frame in chunk.chunks(self.config.contract.options.max_chunk_bytes) {
+                streamio::write_chunk(&stream, frame).await?;
+            }
+        }
+        streamio::write_chunk(&stream, &[]).await?;
         stream.close().await?;
         Ok(())
     }
@@ -1069,6 +1102,77 @@ async fn read_body(
         }
         body.extend_from_slice(&chunk);
     }
+}
+
+fn request_body_stream(
+    stream: YamuxStream,
+    contract: Arc<CompiledContract>,
+    failure: Arc<Mutex<Option<RequestBodyError>>>,
+) -> impl futures_util::Stream<Item = Result<bytes::Bytes, RequestBodyError>> {
+    futures_util::stream::try_unfold(
+        (stream, contract, failure, 0_usize),
+        |(stream, contract, failure, body_bytes)| async move {
+            let chunk = match read_body_chunk(&stream, &contract, body_bytes).await {
+                Ok(chunk) => chunk,
+                Err(error) => {
+                    *failure.lock().await = Some(error.clone());
+                    return Err(error);
+                }
+            };
+            let Some((chunk, body_bytes)) = chunk else {
+                return Ok(None);
+            };
+            Ok(Some((
+                bytes::Bytes::from(chunk),
+                (stream, contract, failure, body_bytes),
+            )))
+        },
+    )
+}
+
+async fn drain_body(
+    stream: &YamuxStream,
+    contract: &CompiledContract,
+) -> Result<(), RequestBodyError> {
+    let mut body_bytes = 0;
+    while let Some((_, next_body_bytes)) = read_body_chunk(stream, contract, body_bytes).await? {
+        body_bytes = next_body_bytes;
+    }
+    Ok(())
+}
+
+async fn read_body_chunk(
+    stream: &YamuxStream,
+    contract: &CompiledContract,
+    body_bytes: usize,
+) -> Result<Option<(Vec<u8>, usize)>, RequestBodyError> {
+    let chunk = streamio::read_chunk(stream, contract.options.max_chunk_bytes)
+        .await
+        .map_err(|error| match error {
+            StreamIoError::TooLarge => RequestBodyError::TooLarge,
+            other => RequestBodyError::Invalid(other.to_string()),
+        })?;
+    if chunk.is_empty() {
+        return Ok(None);
+    }
+    let body_bytes = body_bytes.saturating_add(chunk.len());
+    if body_bytes > contract.options.max_body_bytes {
+        return Err(RequestBodyError::TooLarge);
+    }
+    Ok(Some((chunk, body_bytes)))
+}
+
+async fn write_request_body_error(
+    stream: &YamuxStream,
+    request_id: &str,
+    error: &RequestBodyError,
+) -> Result<(), ProxyError> {
+    let code = if matches!(error, RequestBodyError::TooLarge) {
+        "request_body_too_large"
+    } else {
+        "request_body_invalid"
+    };
+    write_http_error(stream, request_id, code, &error.to_string()).await
 }
 
 async fn write_ws_frame(
@@ -1345,22 +1449,6 @@ fn apply_external_origin(
         );
     }
     Ok(())
-}
-
-async fn read_response_body(
-    response: reqwest::Response,
-    max_body_bytes: usize,
-) -> Result<Vec<u8>, ProxyError> {
-    let mut body = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        if body.len().saturating_add(chunk.len()) > max_body_bytes {
-            return Err(ProxyError::BodyTooLarge);
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
 }
 
 fn classify_http_error(error: &reqwest::Error) -> &'static str {

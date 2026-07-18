@@ -1,6 +1,5 @@
 import type { Client } from "../client.js";
 
-import { profileToPresetManifest, type ProxyProfile, type ProxyProfileName } from "./profiles.js";
 import { resolveProxyPreset, type ProxyPresetInput, type ResolvedProxyPreset } from "./preset.js";
 import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
 import { createProxyRuntime, ensureServiceWorkerRuntimeRegistered, type ProxyRuntime, type ProxyRuntimePathPolicy } from "./runtime.js";
@@ -53,18 +52,6 @@ export type RegisterProxyIntegrationOptions = Readonly<{
   serviceWorker: ProxyIntegrationServiceWorkerOptions;
   plugins?: readonly ProxyIntegrationPlugin[];
 }>;
-
-type RegisterProxyIntegrationCompatOptions = RegisterProxyIntegrationOptions &
-  Readonly<{
-    /** @deprecated Runtime-only compatibility alias. Not part of the stable TS surface. */
-    profile?: ProxyProfileName | Partial<ProxyProfile>;
-  }>;
-
-type _AssertFalse<T extends false> = T;
-
-// Type-level regression guard: deprecated profile must stay out of the stable TS surface.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-type _RegisterProxyIntegrationOptionsExcludeProfile = _AssertFalse<"profile" extends keyof RegisterProxyIntegrationOptions ? true : false>;
 
 export type ProxyIntegrationContext = Readonly<{
   runtime: ProxyRuntime;
@@ -270,12 +257,8 @@ function shouldIgnoreMismatch(plugins: readonly ProxyIntegrationPlugin[], ctx: C
   return false;
 }
 
-function resolveIntegrationPreset(opts: RegisterProxyIntegrationCompatOptions): ResolvedProxyPreset {
-  if (opts.preset !== undefined && opts.profile !== undefined) {
-    throw new Error("preset and deprecated profile cannot be used together");
-  }
+function resolveIntegrationPreset(opts: RegisterProxyIntegrationOptions): ResolvedProxyPreset {
   if (opts.preset !== undefined) return resolveProxyPreset(opts.preset);
-  if (opts.profile !== undefined) return resolveProxyPreset(profileToPresetManifest(opts.profile));
   return resolveProxyPreset();
 }
 
@@ -370,7 +353,7 @@ export function createProxyIntegrationServiceWorkerScript(
 
 export async function registerProxyIntegration(input: RegisterProxyIntegrationOptions): Promise<ProxyIntegrationHandle> {
   const plugins = input.plugins ?? [];
-  const opts = applyPluginMutations(input, plugins) as RegisterProxyIntegrationCompatOptions;
+  const opts = applyPluginMutations(input, plugins);
   const preset = resolveIntegrationPreset(opts);
   const runtimeOpts = buildRuntimeOptions(preset, opts.runtime);
   const runtime = createProxyRuntime({ ...runtimeOpts, client: opts.client });

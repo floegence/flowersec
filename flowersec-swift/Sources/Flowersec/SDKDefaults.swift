@@ -43,6 +43,7 @@ public enum FlowersecSDKDefaults {
     public static let maxWSFrameBytes = 1024 * 1024
     public static let defaultTimeoutMilliseconds = 30_000
     public static let maxTimeoutMilliseconds = 300_000
+    public static let maxConcurrentStreams = 64
   }
 
   public enum Reconnect {

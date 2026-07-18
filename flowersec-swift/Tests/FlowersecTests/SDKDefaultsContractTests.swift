@@ -20,6 +20,9 @@ struct SDKDefaultsContractTests {
     #expect(FlowersecSDKDefaults.RPC.maxConcurrentRequests == number(document, "rpc", "max_concurrent_requests"))
     #expect(FlowersecSDKDefaults.Controlplane.maxResponseBodyBytes == number(document, "controlplane", "max_response_body_bytes"))
     #expect(FlowersecSDKDefaults.Proxy.maxBodyBytes == number(document, "proxy", "max_body_bytes"))
+    #expect(
+      FlowersecSDKDefaults.Proxy.maxConcurrentStreams
+        == number(document, "proxy", "max_concurrent_streams"))
     #expect(FlowersecSDKDefaults.Reconnect.maxAttempts == number(document, "reconnect", "max_attempts"))
   }
 

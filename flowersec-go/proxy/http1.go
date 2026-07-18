@@ -188,6 +188,7 @@ func http1Handler(cfg *compiledOptions) func(ctx context.Context, stream io.Read
 			if n > 0 {
 				if err := writeChunkFrame(stream, buf[:n], cfg.maxChunkBytes, cfg.maxBodyBytes, &sent); err != nil {
 					cancel()
+					resetProxyStream(stream)
 					return
 				}
 			}
@@ -197,9 +198,16 @@ func http1Handler(cfg *compiledOptions) func(ctx context.Context, stream io.Read
 					return
 				}
 				cancel()
+				resetProxyStream(stream)
 				return
 			}
 		}
+	}
+}
+
+func resetProxyStream(stream io.ReadWriteCloser) {
+	if resetter, ok := stream.(interface{ Reset() error }); ok {
+		_ = resetter.Reset()
 	}
 }
 

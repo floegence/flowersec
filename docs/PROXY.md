@@ -21,11 +21,6 @@ Recommended helper entrypoints:
 - controller-origin/runtime-isolation: `connectArtifactProxyControllerBrowser(...)`
 - app-origin bridge: `registerProxyAppWindow(...)`
 
-Compatibility paths still available:
-
-- `connectTunnelProxyBrowser(...)`
-- `connectTunnelProxyControllerBrowser(...)`
-
 Related configuration guidance:
 
 - use preset manifests instead of named proxy profiles
@@ -92,6 +87,19 @@ Server endpoint → client endpoint:
 
 3) `http_response_meta` (JSON frame, length-prefixed)
 4) Response body chunks (binary framing; `len=0` terminator)
+
+Server implementations stream request chunks to the fixed upstream as they
+arrive and write response metadata and chunks back without waiting for either
+body to complete. The public proxy client API may still collect the response
+body for caller convenience; that does not permit a server implementation to
+buffer the upstream transfer.
+
+If a known response `Content-Length` exceeds `max_body_bytes`, the server sends
+a structured `response_body_too_large` error before response metadata starts.
+If an unknown-length response exceeds the limit after metadata starts, or a
+late request framing error invalidates an in-flight response, the server
+cancels the upstream operation and resets the Flowersec stream. It must not
+insert a second metadata/error frame into the chunk sequence.
 
 ### 3.2 JSON meta schema
 
@@ -427,11 +435,12 @@ Requirements:
   - A full admission queue fails with HTTP `503` and the generic `resource_exhausted` error code. Increase the queue only with a corresponding memory and latency budget; do not raise concurrency above the peer's stream capacity.
   - `dispose()` rejects queued and future HTTP requests while allowing already-admitted stream cleanup to finish. WebSocket opens do not consume HTTP permits.
 - Patched WebSocket text, binary, and Blob sends share one serial queue. `maxWsBufferedAmountBytes` defaults to `4 MiB`, and `bufferedAmount` reports user bytes whose writes have not completed.
-- The Node proxy server applies separate downstream resource budgets:
-  - `ProxyServerOptions.maxBufferedRequestBodyBytes` defaults to `maxBodyBytes` and caps the total logical request-body payload owned by one `serveProxySession(...)`. Reservations are released as soon as the upstream fetch call returns or fails, before a response body drains, and also on cancellation or body-read failure. The current contiguous-body handoff briefly holds both received chunks and their assembled body, so peak process memory for this payload may approach twice the configured logical budget during assembly.
+- Native and Node proxy servers apply separate downstream resource budgets:
+  - `proxy.max_concurrent_streams` defaults to `64`. Go, TypeScript, Swift, and Rust enforce this as a non-blocking proxy-stream admission limit independent from RPC concurrency. A new HTTP or WebSocket stream above the limit is reset immediately, and completion, cancellation, failure, or reset releases its permit.
+  - HTTP request and response bodies are passed through incrementally under `maxBodyBytes` and `maxChunkBytes`; servers do not reserve or assemble a second contiguous copy of the complete request or response body.
   - `ProxyServerOptions.maxWsQueuedBytes` defaults to one maximum WebSocket frame plus its 5-byte proxy header and caps upstream-to-Yamux queued bytes per WebSocket connection. Exceeding it closes the upstream with code `1011` and terminates that proxy stream.
   - Yamux-to-upstream text, binary, ping, and pong frames wait for the Node `ws` callback before the next frame is read. A client close waits for the upstream close event and forwards the final close frame before the Yamux stream ends. Session cancellation terminates the upstream socket and interrupts either wait.
-  - These are direct resource limits, not waiting queues. Increase them only with an explicit memory budget; `maxWsFrameBytes` and `maxBodyBytes` remain the per-frame and per-request limits.
+  - These are direct resource limits, not waiting queues. Increase them only with an explicit connection and memory budget; `maxWsFrameBytes` and `maxBodyBytes` remain the per-frame and per-request limits.
 - `external_origin` is trusted only when it is derived by the generated same-origin SW or supplied through an explicit trusted runtime option.
   - The runtime may set `externalOrigin` to a deployment-owned origin when the app is mounted behind a stable external URL.
   - A runtime-level trusted `externalOrigin` override takes precedence over app-supplied bridge metadata.

@@ -55,13 +55,13 @@ Important fields:
 
 - `proxy.preset_file`: preset manifest path
 - `proxy.timeout_ms`: optional gateway-wide default request timeout override
-- `proxy.profile`: deprecated compatibility alias
 
 Rules:
 
-- do not set `proxy.preset_file` and `proxy.profile` together
+- omitting `proxy.preset_file` uses the proxy bridge defaults
 - `proxy.timeout_ms`, when set, must be a positive integer and overrides the preset `limits.timeout_ms`
 - unknown config fields are rejected
+- the removed `proxy.profile` field is rejected
 - the old top-level `origin` field remains invalid
 
 ## Grant source model
@@ -95,7 +95,7 @@ First-party preset examples:
 - `reference/presets/default/manifest.json`
 - `reference/presets/codeserver/manifest.json`
 
-`codeserver` remains available only as a static compatibility manifest. The gateway does not accept it through `proxy.profile` or any Go/TypeScript built-in preset resolver.
+Both files are static manifests consumed through `proxy.preset_file` or the generic manifest APIs. The gateway does not accept named profiles.
 
 ## Operational checklist
 
