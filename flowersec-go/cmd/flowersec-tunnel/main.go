@@ -205,6 +205,22 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_CHANNELS: %v\n", err)
 		return 2
 	}
+	maxTokenLifetime, err := cmdutil.EnvDuration("FSEC_TUNNEL_MAX_TOKEN_LIFETIME", cfg.MaxTokenLifetime)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_TOKEN_LIFETIME: %v\n", err)
+		return 2
+	}
+	maxInitHorizon, err := cmdutil.EnvDuration("FSEC_TUNNEL_MAX_INIT_HORIZON", cfg.MaxInitHorizon)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_INIT_HORIZON: %v\n", err)
+		return 2
+	}
+	maxReplayEntriesFromEnv := strings.TrimSpace(os.Getenv("FSEC_TUNNEL_MAX_REPLAY_ENTRIES")) != ""
+	maxReplayEntries, err := cmdutil.EnvInt("FSEC_TUNNEL_MAX_REPLAY_ENTRIES", 0)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_REPLAY_ENTRIES: %v\n", err)
+		return 2
+	}
 	maxTenantQueuedBytes, err := cmdutil.EnvInt64("FSEC_TUNNEL_MAX_TENANT_QUEUED_BYTES", cfg.MaxTenantQueuedBytes)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid FSEC_TUNNEL_MAX_TENANT_QUEUED_BYTES: %v\n", err)
@@ -259,6 +275,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.BoolVar(&allowNoOrigin, "allow-no-origin", allowNoOrigin, "allow requests without Origin header (non-browser clients; discouraged) (env: FSEC_TUNNEL_ALLOW_NO_ORIGIN)")
 	fs.IntVar(&maxConns, "max-conns", maxConns, "max concurrent websocket connections (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_CONNS)")
 	fs.IntVar(&maxChannels, "max-channels", maxChannels, "max concurrent channels (>= 0; 0 uses default) (env: FSEC_TUNNEL_MAX_CHANNELS)")
+	fs.DurationVar(&maxTokenLifetime, "max-token-lifetime", maxTokenLifetime, "maximum accepted exp-iat token lifetime (> 0) (env: FSEC_TUNNEL_MAX_TOKEN_LIFETIME)")
+	fs.DurationVar(&maxInitHorizon, "max-init-horizon", maxInitHorizon, "maximum accepted init_exp horizon beyond current time and clock skew (> 0) (env: FSEC_TUNNEL_MAX_INIT_HORIZON)")
+	fs.IntVar(&maxReplayEntries, "max-replay-entries", maxReplayEntries, "maximum in-memory replay entries (> 0 when set; default: 4 * max-conns, 48000 with default max-conns) (env: FSEC_TUNNEL_MAX_REPLAY_ENTRIES)")
 	fs.StringVar(&tlsCertFile, "tls-cert-file", tlsCertFile, "enable TLS with the given certificate file (default: disabled) (env: FSEC_TUNNEL_TLS_CERT_FILE)")
 	fs.StringVar(&tlsKeyFile, "tls-key-file", tlsKeyFile, "enable TLS with the given private key file (default: disabled) (env: FSEC_TUNNEL_TLS_KEY_FILE)")
 	fs.StringVar(&metricsListen, "metrics-listen", metricsListen, "listen address for metrics server (empty disables) (env: FSEC_TUNNEL_METRICS_LISTEN)")
@@ -321,6 +340,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 		return 2
 	}
+	maxReplayEntriesExplicit := maxReplayEntriesFromEnv
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "max-replay-entries" {
+			maxReplayEntriesExplicit = true
+		}
+	})
 	if showVersion {
 		_, _ = fmt.Fprintln(stdout, fsversion.String(version, commit, date))
 		return 0
@@ -364,6 +389,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	if maxChannels < 0 {
 		return usageErr("--max-channels must be >= 0")
+	}
+	if maxTokenLifetime <= 0 {
+		return usageErr("--max-token-lifetime must be > 0")
+	}
+	if maxInitHorizon <= 0 {
+		return usageErr("--max-init-horizon must be > 0")
+	}
+	if maxReplayEntriesExplicit && maxReplayEntries <= 0 {
+		return usageErr("--max-replay-entries must be > 0")
 	}
 	if maxTenantQueuedBytes < 0 {
 		return usageErr("--max-tenant-queued-bytes must be >= 0")
@@ -412,6 +446,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if maxChannels > 0 {
 		cfg.MaxChannels = maxChannels
 	}
+	cfg.MaxTokenLifetime = maxTokenLifetime
+	cfg.MaxInitHorizon = maxInitHorizon
+	cfg.MaxReplayEntries = maxReplayEntries
 	cfg.MaxTenantQueuedBytes = maxTenantQueuedBytes
 	cfg.MaxTotalQueuedBytes = maxTotalQueuedBytes
 	cfg.WriteTimeout = writeTimeout

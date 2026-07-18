@@ -188,6 +188,9 @@ Recommended integration entrypoints:
   - `server.Config`
     - `MaxTenantQueuedBytes`
     - `MaxTotalQueuedBytes`
+    - `MaxTokenLifetime`
+    - `MaxInitHorizon`
+    - `MaxReplayEntries`
   - `server.ReplayCache`
   - `server.TokenUseCache`
   - `server.NewTokenUseCache(...)`
@@ -208,6 +211,10 @@ Compatibility-only Go surface:
 - legacy raw grant / wrapper / direct JSON inputs continue to work through `client.Connect(...)`
 - `controlplane/client` stays the recommended Go client-side artifact fetch entry; `controlplane/http` is the recommended server-side helper-first reference layer
 - preset manifests are accepted only through manifest files or decoded manifest objects; named profile helpers and gateway `proxy.profile` have been removed
+
+Tunnel token verification is bounded even after a signature and `(audience, issuer)` scope match. `server.Config.MaxTokenLifetime` limits `exp - iat`, `MaxInitHorizon` limits how far `init_exp` may extend beyond current time plus clock skew, and `MaxReplayEntries` bounds the built-in replay cache. `server.NewTokenUseCache(maxEntries)` requires a positive capacity; when full, it removes expired entries and otherwise rejects new replay keys without evicting valid entries.
+
+Multi-tenant tunnel isolation is keyed only by `(audience, issuer)`. Tenant IDs are optional operator metadata, must be unique when non-empty, and never merge queue accounting or channel state. Runtime observe decisions require `audience`, `issuer`, and `channel_id`; duplicate decisions, missing scope, or tenant ID mismatch invalidates the complete response batch. Replay keys are recorded atomically after an external attach authorizer allows the request and before endpoint insertion, so denied authorization does not consume the token and concurrent reuse admits at most one endpoint.
 
 ## TypeScript exports
 

@@ -25,6 +25,8 @@ func TestE2E_TunnelHTTPAuthorizerAttachAndObserve(t *testing.T) {
 		return server.ObserveChannelsResponse{
 			Decisions: []server.ChannelObservationDecision{{
 				ChannelID: req.Channels[0].ChannelID,
+				Audience:  req.Channels[0].Audience,
+				Issuer:    req.Channels[0].Issuer,
 				Allowed:   false,
 			}},
 		}

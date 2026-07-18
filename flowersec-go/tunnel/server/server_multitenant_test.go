@@ -13,6 +13,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
 	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/observability"
 	"github.com/gorilla/websocket"
 )
 
@@ -31,6 +32,47 @@ func newMultiTenantAttachVerifier(t *testing.T) (AttachVerifier, ed25519.Private
 		t.Fatalf("NewMultiTenantVerifier() failed: %v", err)
 	}
 	return verifier, privA, privB
+}
+
+func TestTenantQueueQuotaUsesVerifierScope(t *testing.T) {
+	first := queueTenantKey(VerifiedToken{
+		TenantID: "shared-tenant",
+		Audience: "aud-a",
+		Issuer:   "iss-a",
+	})
+	second := queueTenantKey(VerifiedToken{
+		TenantID: "shared-tenant",
+		Audience: "aud-b",
+		Issuer:   "iss-b",
+	})
+
+	if first == second {
+		t.Fatalf("queue keys must remain isolated by verifier scope: %q", first)
+	}
+	if first != tenantScopeKey("aud-a", "iss-a") {
+		t.Fatalf("queue key want verifier scope, got %q", first)
+	}
+
+	s := &Server{
+		cfg: Config{
+			MaxTenantQueuedBytes: 4,
+			MaxTotalQueuedBytes:  8,
+		},
+		resourceObs:       observability.NoopTunnelResourceObserver,
+		tenantQueuedBytes: make(map[string]int64),
+	}
+	if !s.tryReserveQueuedBytes(first, 4) {
+		t.Fatal("first tenant scope should be able to fill its queue quota")
+	}
+	if !s.tryReserveQueuedBytes(second, 4) {
+		t.Fatal("second tenant scope must have an independent queue quota")
+	}
+	if got := s.tenantQueuedBytes[first]; got != 4 {
+		t.Fatalf("first tenant scope queued bytes want=4 got=%d", got)
+	}
+	if got := s.tenantQueuedBytes[second]; got != 4 {
+		t.Fatalf("second tenant scope queued bytes want=4 got=%d", got)
+	}
 }
 
 func TestAttachWithMultiTenantVerifierAcceptsMatchingScope(t *testing.T) {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"math"
 	"sync"
 	"time"
@@ -49,12 +50,20 @@ type ReplayCache interface {
 //   - Short token expiry: Keep token exp short (e.g., 60s) to minimize the
 //     replay window after restart.
 type TokenUseCache struct {
-	mu   sync.Mutex       // Guards the used map.
-	used map[string]int64 // key: scoped replay key, value: usedUntilUnix
+	mu         sync.Mutex       // Guards the used map.
+	used       map[string]int64 // key: scoped replay key, value: usedUntilUnix
+	maxEntries int
 }
 
-func NewTokenUseCache() *TokenUseCache {
-	return &TokenUseCache{used: make(map[string]int64)}
+// NewTokenUseCache creates a replay cache with a fixed maximum entry count.
+func NewTokenUseCache(maxEntries int) (*TokenUseCache, error) {
+	if maxEntries <= 0 {
+		return nil, errors.New("token replay cache max entries must be positive")
+	}
+	return &TokenUseCache{
+		used:       make(map[string]int64),
+		maxEntries: maxEntries,
+	}, nil
 }
 
 // TryUse marks replayKey as used until usedUntilUnix (Unix seconds).
@@ -68,8 +77,15 @@ func (c *TokenUseCache) TryUse(replayKey string, usedUntilUnix int64, now time.T
 	if replayKey == "" {
 		return false
 	}
-	if prev, ok := c.used[replayKey]; ok && prev >= now.Unix() {
+	nowUnix := now.Unix()
+	if prev, ok := c.used[replayKey]; ok && prev >= nowUnix {
 		return false
+	}
+	if len(c.used) >= c.maxEntries {
+		c.cleanupExpiredLocked(nowUnix)
+		if len(c.used) >= c.maxEntries {
+			return false
+		}
 	}
 	c.used[replayKey] = usedUntilUnix
 	return true
@@ -78,7 +94,10 @@ func (c *TokenUseCache) TryUse(replayKey string, usedUntilUnix int64, now time.T
 func (c *TokenUseCache) Cleanup(now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	nowUnix := now.Unix()
+	c.cleanupExpiredLocked(now.Unix())
+}
+
+func (c *TokenUseCache) cleanupExpiredLocked(nowUnix int64) {
 	for k, exp := range c.used {
 		if exp < nowUnix {
 			delete(c.used, k)

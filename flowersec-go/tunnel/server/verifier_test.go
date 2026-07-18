@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,5 +127,36 @@ func TestMultiTenantVerifier_VerifyRejectsUnknownTenant(t *testing.T) {
 	_, err = verifier.Verify(tokenStr, now, 0)
 	if !errors.Is(err, ErrUnknownTenant) {
 		t.Fatalf("expected ErrUnknownTenant, got %v", err)
+	}
+}
+
+func TestMultiTenantVerifier_RejectsDuplicateNonEmptyTenantID(t *testing.T) {
+	_, keysFileA := newVerifierKeypair(t, 1)
+	_, keysFileB := newVerifierKeypair(t, 33)
+	tenantsPath := writeTenantFile(t, tenantFile{
+		Tenants: []tenantFileEntry{
+			{ID: "shared-tenant", Audience: "aud-a", Issuer: "iss-a", IssuerKeysFile: keysFileA},
+			{ID: "shared-tenant", Audience: "aud-b", Issuer: "iss-b", IssuerKeysFile: keysFileB},
+		},
+	})
+
+	_, err := NewMultiTenantVerifier(tenantsPath)
+	if err == nil || !strings.Contains(err.Error(), "duplicate tenant id") {
+		t.Fatalf("expected duplicate tenant id error, got %v", err)
+	}
+}
+
+func TestMultiTenantVerifier_AllowsMultipleEmptyTenantIDs(t *testing.T) {
+	_, keysFileA := newVerifierKeypair(t, 1)
+	_, keysFileB := newVerifierKeypair(t, 33)
+	tenantsPath := writeTenantFile(t, tenantFile{
+		Tenants: []tenantFileEntry{
+			{Audience: "aud-a", Issuer: "iss-a", IssuerKeysFile: keysFileA},
+			{Audience: "aud-b", Issuer: "iss-b", IssuerKeysFile: keysFileB},
+		},
+	})
+
+	if _, err := NewMultiTenantVerifier(tenantsPath); err != nil {
+		t.Fatalf("NewMultiTenantVerifier() failed: %v", err)
 	}
 }

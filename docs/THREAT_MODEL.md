@@ -64,6 +64,9 @@ Untrusted tunnel:
 Multi-instance tunnels:
 
 - **Channel state is in-memory**: pairing state and replay protection live in the tunnel process memory by default.
+- **Signed tokens remain locally bounded**: the tunnel limits `exp - iat` and the future `init_exp` horizon even when the token signature is valid. This prevents a compromised or misconfigured issuer from imposing unbounded acceptance windows.
+- **Replay state is bounded and fail-closed**: the default cache removes expired entries at capacity, then rejects new attaches instead of evicting still-valid replay keys.
+- **Tenant scope is cryptographic, not cosmetic**: queue accounting, active channels, and observe decisions are isolated by exact `(audience, issuer)` scope. Optional tenant IDs do not define authorization boundaries.
 - **A load balancer is not enough**: if the two endpoints of the same channel land on different tunnel instances, they cannot pair.
 - See `docs/TUNNEL_DEPLOYMENT.md` for the recommended scaling strategy (controlplane sharding).
 

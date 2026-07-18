@@ -27,15 +27,15 @@ func exerciseReplayCacheContract(t *testing.T, c ReplayCache) {
 }
 
 func TestTokenUseCache(t *testing.T) {
-	exerciseReplayCacheContract(t, NewTokenUseCache())
+	exerciseReplayCacheContract(t, newTestTokenUseCache(t, 4))
 }
 
 func TestReplayCacheContractForInMemoryImplementation(t *testing.T) {
-	exerciseReplayCacheContract(t, NewTokenUseCache())
+	exerciseReplayCacheContract(t, newTestTokenUseCache(t, 4))
 }
 
 func TestTokenUseCacheHonorsSkewWindow(t *testing.T) {
-	c := NewTokenUseCache()
+	c := newTestTokenUseCache(t, 1)
 	now := time.Unix(100, 0)
 
 	// Simulate a token with exp already in the past, but within a 30s clock skew window.
@@ -81,7 +81,7 @@ func (testReplayVerifier) Verify(string, time.Time, time.Duration) (VerifiedToke
 func (testReplayVerifier) Reload() error { return nil }
 
 func TestServerUsesConfiguredReplayCache(t *testing.T) {
-	cache := &testReplayCache{delegate: NewTokenUseCache()}
+	cache := &testReplayCache{delegate: newTestTokenUseCache(t, 4)}
 	cfg := DefaultConfig()
 	cfg.AllowedOrigins = []string{"https://ok"}
 	cfg.Verifier = testReplayVerifier{}
@@ -105,7 +105,7 @@ func TestServerUsesConfiguredReplayCache(t *testing.T) {
 }
 
 func TestTokenUseCacheScopesReplayKeysByTenant(t *testing.T) {
-	c := NewTokenUseCache()
+	c := newTestTokenUseCache(t, 2)
 	now := time.Unix(100, 0)
 
 	scopeA := scopedTokenUseKey(tenantScopeKey("aud-a", "iss-a"), "tok")

@@ -48,8 +48,8 @@ type ObserveChannelsRequest struct {
 type ChannelObservationDecision struct {
 	ChannelID            string `json:"channel_id"`
 	TenantID             string `json:"tenant_id,omitempty"`
-	Audience             string `json:"audience,omitempty"`
-	Issuer               string `json:"issuer,omitempty"`
+	Audience             string `json:"audience"`
+	Issuer               string `json:"issuer"`
 	Allowed              bool   `json:"allowed"`
 	LeaseExpiresAtUnixMs int64  `json:"lease_expires_at_unix_ms,omitempty"`
 }

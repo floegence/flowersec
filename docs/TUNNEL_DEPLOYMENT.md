@@ -31,7 +31,7 @@ The tunnel requires an attach verifier and an Origin allow-list.
 
 ### Verifier mode A: single tenant
 
-The legacy single-tenant mode requires these inputs:
+The single-tenant mode requires these inputs:
 
 - `issuer_keys_file`: JSON keyset containing issuer public keys (see format below)
 - `aud`: expected token audience (must match the controlplane-issued token payload)
@@ -59,8 +59,9 @@ Tenant file format:
 
 Notes:
 
-- `id` is optional and is used only for logs/ops visibility.
+- `id` is optional and is used only for logs/ops visibility. Non-empty IDs must be unique within the file.
 - Matching is exact on `(aud, iss)`.
+- Queue accounting, channel lookup, and policy decisions use `(aud, iss)` as the tenant boundary; `id` is never used as an authorization or quota namespace.
 - A single tunnel process and a single websocket URL can therefore serve many environments/tenants safely, as long as each tenant has a distinct auth scope.
 - `--tenants-file` is mutually exclusive with `--issuer-keys-file`, `--aud`, and `--iss`.
 
@@ -133,7 +134,11 @@ All settings are available as flags. For container deployments, the tunnel also 
 | `--stats-listen` | `FSEC_TUNNEL_STATS_LISTEN` | empty disables `/stats/v1/bandwidth` server |
 | `--max-conns` | `FSEC_TUNNEL_MAX_CONNS` | `>= 0`; `0` uses default |
 | `--max-channels` | `FSEC_TUNNEL_MAX_CHANNELS` | `>= 0`; `0` uses default |
-| `--max-total-pending-bytes` | `FSEC_TUNNEL_MAX_TOTAL_PENDING_BYTES` | `>= 0`; `0` disables the global limit |
+| `--max-token-lifetime` | `FSEC_TUNNEL_MAX_TOKEN_LIFETIME` | `> 0`; maximum accepted `exp - iat`; default `2m` |
+| `--max-init-horizon` | `FSEC_TUNNEL_MAX_INIT_HORIZON` | `> 0`; maximum accepted `init_exp` horizon beyond current time and clock skew; default `2m` |
+| `--max-replay-entries` | `FSEC_TUNNEL_MAX_REPLAY_ENTRIES` | `> 0` when set; built-in replay cache capacity; default `4 * max-conns` (`48000` with the default connection limit) |
+| `--max-tenant-queued-bytes` | `FSEC_TUNNEL_MAX_TENANT_QUEUED_BYTES` | `>= 0`; `0` disables the per-scope limit |
+| `--max-total-queued-bytes` | `FSEC_TUNNEL_MAX_TOTAL_QUEUED_BYTES` | `>= 0`; `0` disables the global limit |
 | `--write-timeout` | `FSEC_TUNNEL_WRITE_TIMEOUT` | `>= 0`; `0` disables per-frame write timeout |
 | `--max-write-queue-bytes` | `FSEC_TUNNEL_MAX_WRITE_QUEUE_BYTES` | `>= 0`; `0` uses default |
 | `--attach-authorizer-url` | `FSEC_TUNNEL_ATTACH_AUTHORIZER_URL` | optional attach policy endpoint |
@@ -144,6 +149,16 @@ All settings are available as flags. For container deployments, the tunnel also 
 | `--policy-batch-size` | `FSEC_TUNNEL_POLICY_BATCH_SIZE` | default `256` |
 
 See `flowersec-tunnel --help` for the full help text.
+
+## Token acceptance and replay bounds
+
+The tunnel applies local bounds after signature and scope verification:
+
+- `exp - iat` must not exceed `--max-token-lifetime`.
+- `init_exp` must not exceed the current time plus configured clock skew and `--max-init-horizon`.
+- The built-in replay cache is bounded by `--max-replay-entries`. At capacity it removes expired entries, then rejects the attach if the cache is still full. It never evicts a replay key that remains valid.
+
+These checks prevent a valid signing key from creating unexpectedly long verifier or replay-cache obligations. Keep issuer token lifetimes and channel-init expiries comfortably below the tunnel limits so normal clock and deployment variance do not cause boundary failures.
 
 ## Health checks
 
@@ -184,7 +199,9 @@ The policy hooks are intentionally protocol-generic:
 
 - attach request: channel identity, `(aud, iss)`, role, endpoint instance, token metadata
 - observe request: channel batch with cumulative `bytes_to_client` and `bytes_to_server`
-- decision: `allowed` plus `lease_expires_at_unix_ms`
+- decision: required `audience`, `issuer`, and `channel_id`, plus `allowed` and `lease_expires_at_unix_ms`; an optional `tenant_id` must match the configured tenant when present
+
+Observe responses are applied as one validated batch. A missing scope field, duplicate decision for the same `(audience, issuer, channel_id)`, or mismatched tenant ID invalidates the entire response; no partial decision set is applied. Channel lookup is exact on `(audience, issuer, channel_id)` and never falls back to a channel-only scan.
 
 Recommended operating model:
 
@@ -199,7 +216,7 @@ This makes it possible to block generic relay abuse without moving product-speci
 The tunnel is **stateful per channel**:
 
 - Pairing state (client/server websocket conns) lives in process memory.
-- Token replay protection (non-empty `token_id`, single-use) is enforced via an in-memory cache by default.
+- Token replay protection (non-empty `token_id`, single-use) is enforced via a bounded in-memory cache by default.
 
 This means that the two endpoints of the same `channel_id` must attach to the **same tunnel instance**.
 
@@ -273,7 +290,7 @@ If you insist on putting tunnels behind a load balancer, you must provide **sess
 and you should also share token replay state (for example via Redis) to preserve `token_id` single-use semantics across instances.
 
 The Go tunnel server exposes `server.Config.ReplayCache` for this purpose.
-The default `TokenUseCache` is in-memory and process-local; it is appropriate for a single tunnel instance or for sharded deployments where a given `channel_id` always maps to one public tunnel URL.
+The default `TokenUseCache` is bounded, in-memory, and process-local; it is appropriate for a single tunnel instance or for sharded deployments where a given `channel_id` always maps to one public tunnel URL. `server.NewTokenUseCache(maxEntries)` requires a positive capacity.
 
 For multi-instance deployments behind one public URL:
 
@@ -281,6 +298,8 @@ For multi-instance deployments behind one public URL:
 - store replay keys until at least the verifier acceptance window (`exp` plus configured clock skew)
 - fail closed when the shared store is unavailable or the atomic replay decision cannot be recorded
 - keep load-balancer affinity by `channel_id`; shared replay state does not replace pairing affinity
+
+The tunnel records a replay key only after an external attach authorizer allows the request and immediately before endpoint insertion. Authorizer denial or failure does not consume the token, while concurrent attempts with the same token still admit at most one endpoint.
 
 This repository does not currently ship a built-in shared `ReplayCache` implementation.
 
@@ -338,4 +357,5 @@ docker run --rm \
 - For any non-local deployment, prefer `wss://` (or terminate TLS at a reverse proxy).
 - Keep issuer keys and tunnel tokens secret; never log PSKs.
 - Avoid `--allow-no-origin` unless you fully control all clients and understand the risk.
+- Keep `--max-token-lifetime`, `--max-init-horizon`, and `--max-replay-entries` bounded. Increasing them expands resource retention and replay-state pressure.
 - If you enable a policy backend, make its failure mode explicit. The tunnel already treats missing lease refresh as a close condition.

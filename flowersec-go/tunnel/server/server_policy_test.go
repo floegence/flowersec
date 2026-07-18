@@ -277,6 +277,8 @@ func TestObserveLoopClosesDeniedChannel(t *testing.T) {
 		observeDecision: ObserveChannelsResponse{
 			Decisions: []ChannelObservationDecision{{
 				ChannelID: "ch_policy",
+				Audience:  "aud",
+				Issuer:    "iss",
 				Allowed:   false,
 			}},
 		},
@@ -349,6 +351,116 @@ func TestObserveLoopClosesDeniedChannel(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("expected observe loop to close the channel")
+}
+
+func observationTestServer(states ...*channelState) *Server {
+	channels := make(map[string]*channelState, len(states))
+	for _, st := range states {
+		st.key = scopedChannelKey(tenantScopeKey(st.audience, st.issuer), st.id)
+		if st.conns == nil {
+			st.conns = make(map[tunnelv1.Role]*endpointConn)
+		}
+		channels[st.key] = st
+	}
+	return &Server{
+		obs:               observability.NoopTunnelObserver,
+		resourceObs:       observability.NoopTunnelResourceObserver,
+		channels:          channels,
+		tenantQueuedBytes: make(map[string]int64),
+	}
+}
+
+func TestApplyObservationDecisionsTargetsExactTenantScope(t *testing.T) {
+	channelA := &channelState{id: "ch_shared", tenantID: "tenant-a", audience: "aud-a", issuer: "iss-a"}
+	channelB := &channelState{id: "ch_shared", tenantID: "tenant-b", audience: "aud-b", issuer: "iss-b"}
+	s := observationTestServer(channelA, channelB)
+
+	s.applyObservationDecisions([]ChannelObservationDecision{{
+		ChannelID: "ch_shared",
+		TenantID:  "tenant-a",
+		Audience:  "aud-a",
+		Issuer:    "iss-a",
+		Allowed:   false,
+	}})
+
+	if _, ok := s.channels[channelA.key]; ok {
+		t.Fatal("expected exact tenant scope channel to close")
+	}
+	if _, ok := s.channels[channelB.key]; !ok {
+		t.Fatal("decision must not fan out to the same channel id in another tenant scope")
+	}
+}
+
+func TestApplyObservationDecisionsRejectsInvalidBatchAtomically(t *testing.T) {
+	tests := []struct {
+		name      string
+		decisions []ChannelObservationDecision
+	}{
+		{
+			name: "missing audience",
+			decisions: []ChannelObservationDecision{
+				{ChannelID: "ch-a", Audience: "aud-a", Issuer: "iss-a", Allowed: false},
+				{ChannelID: "ch-b", Issuer: "iss-b", Allowed: false},
+			},
+		},
+		{
+			name: "missing issuer",
+			decisions: []ChannelObservationDecision{
+				{ChannelID: "ch-a", Audience: "aud-a", Issuer: "iss-a", Allowed: false},
+				{ChannelID: "ch-b", Audience: "aud-b", Allowed: false},
+			},
+		},
+		{
+			name: "missing channel id",
+			decisions: []ChannelObservationDecision{
+				{ChannelID: "ch-a", Audience: "aud-a", Issuer: "iss-a", Allowed: false},
+				{Audience: "aud-b", Issuer: "iss-b", Allowed: false},
+			},
+		},
+		{
+			name: "duplicate exact decision",
+			decisions: []ChannelObservationDecision{
+				{ChannelID: "ch-a", Audience: "aud-a", Issuer: "iss-a", Allowed: false},
+				{ChannelID: "ch-a", Audience: "aud-a", Issuer: "iss-a", Allowed: true},
+			},
+		},
+		{
+			name: "tenant id mismatch",
+			decisions: []ChannelObservationDecision{
+				{ChannelID: "ch-a", Audience: "aud-a", Issuer: "iss-a", Allowed: false},
+				{ChannelID: "ch-b", TenantID: "tenant-other", Audience: "aud-b", Issuer: "iss-b", Allowed: false},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			channelA := &channelState{id: "ch-a", tenantID: "tenant-a", audience: "aud-a", issuer: "iss-a"}
+			channelB := &channelState{id: "ch-b", tenantID: "tenant-b", audience: "aud-b", issuer: "iss-b"}
+			s := observationTestServer(channelA, channelB)
+
+			s.applyObservationDecisions(tt.decisions)
+
+			if got := len(s.channels); got != 2 {
+				t.Fatalf("invalid batch must not be partially applied: channels=%d", got)
+			}
+		})
+	}
+}
+
+func TestApplyObservationDecisionsUpdatesLeaseOnlyAfterBatchValidation(t *testing.T) {
+	channelA := &channelState{id: "ch-a", tenantID: "tenant-a", audience: "aud-a", issuer: "iss-a", leaseUntil: 10}
+	channelB := &channelState{id: "ch-b", tenantID: "tenant-b", audience: "aud-b", issuer: "iss-b", leaseUntil: 20}
+	s := observationTestServer(channelA, channelB)
+
+	s.applyObservationDecisions([]ChannelObservationDecision{
+		{ChannelID: "ch-a", TenantID: "tenant-a", Audience: "aud-a", Issuer: "iss-a", Allowed: true, LeaseExpiresAtUnixMs: 100},
+		{ChannelID: "ch-b", TenantID: "tenant-other", Audience: "aud-b", Issuer: "iss-b", Allowed: true, LeaseExpiresAtUnixMs: 200},
+	})
+
+	if channelA.leaseUntil != 10 || channelB.leaseUntil != 20 {
+		t.Fatalf("invalid batch changed leases: channelA=%d channelB=%d", channelA.leaseUntil, channelB.leaseUntil)
+	}
 }
 
 func TestObserveLoopContextCanceledOnServerClose(t *testing.T) {

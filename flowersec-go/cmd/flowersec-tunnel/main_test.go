@@ -115,6 +115,28 @@ func TestRun_HelpMarksRequiredFlags(t *testing.T) {
 	}
 }
 
+func TestRun_HelpIncludesTokenBounds(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run([]string{"--help"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%q)", code, stderr.String())
+	}
+	help := stderr.String()
+	for _, want := range []string{
+		"-max-token-lifetime duration",
+		"FSEC_TUNNEL_MAX_TOKEN_LIFETIME",
+		"-max-init-horizon duration",
+		"FSEC_TUNNEL_MAX_INIT_HORIZON",
+		"-max-replay-entries int",
+		"FSEC_TUNNEL_MAX_REPLAY_ENTRIES",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("expected help to contain %q, help=%q", want, help)
+		}
+	}
+}
+
 func TestResolveAdvertiseHost_DefaultsToBindAddr(t *testing.T) {
 	main, hostOnly, wasSet, err := resolveAdvertiseHost("0.0.0.0:8080", "")
 	if err != nil {
@@ -360,6 +382,130 @@ func TestRun_NegativeMaxTotalQueuedBytes_IsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--max-total-queued-bytes must be >= 0") {
 		t.Fatalf("expected error message in stderr, got %q", stderr.String())
+	}
+}
+
+func TestRun_NonPositiveTokenBounds_AreUsageErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "token lifetime",
+			args: []string{"--max-token-lifetime", "0s"},
+			want: "--max-token-lifetime must be > 0",
+		},
+		{
+			name: "init horizon",
+			args: []string{"--max-init-horizon", "-1s"},
+			want: "--max-init-horizon must be > 0",
+		},
+		{
+			name: "replay entries",
+			args: []string{"--max-replay-entries", "0"},
+			want: "--max-replay-entries must be > 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			args := []string{
+				"--issuer-keys-file", "issuer_keys.json",
+				"--aud", "aud",
+				"--iss", "iss",
+				"--allow-origin", "https://ok",
+			}
+			args = append(args, tt.args...)
+			code := run(args, &stdout, &stderr)
+			if code != 2 {
+				t.Fatalf("expected exit 2, got %d (stderr=%q)", code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Fatalf("expected %q in stderr, got %q", tt.want, stderr.String())
+			}
+		})
+	}
+}
+
+func TestRun_InvalidTokenBoundEnv_IsUsageError(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "token lifetime", key: "FSEC_TUNNEL_MAX_TOKEN_LIFETIME", value: "tomorrow"},
+		{name: "init horizon", key: "FSEC_TUNNEL_MAX_INIT_HORIZON", value: "tomorrow"},
+		{name: "replay entries", key: "FSEC_TUNNEL_MAX_REPLAY_ENTRIES", value: "many"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.key, tt.value)
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			code := run([]string{"--help"}, &stdout, &stderr)
+			if code != 2 {
+				t.Fatalf("expected exit 2, got %d (stderr=%q)", code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "invalid "+tt.key) {
+				t.Fatalf("expected env parse error in stderr, got %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestRun_NonPositiveTokenBoundEnv_IsUsageError(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+		want  string
+	}{
+		{
+			name:  "token lifetime",
+			key:   "FSEC_TUNNEL_MAX_TOKEN_LIFETIME",
+			value: "0s",
+			want:  "--max-token-lifetime must be > 0",
+		},
+		{
+			name:  "init horizon",
+			key:   "FSEC_TUNNEL_MAX_INIT_HORIZON",
+			value: "0s",
+			want:  "--max-init-horizon must be > 0",
+		},
+		{
+			name:  "replay entries",
+			key:   "FSEC_TUNNEL_MAX_REPLAY_ENTRIES",
+			value: "0",
+			want:  "--max-replay-entries must be > 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.key, tt.value)
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			code := run(
+				[]string{
+					"--issuer-keys-file", "issuer_keys.json",
+					"--aud", "aud",
+					"--iss", "iss",
+					"--allow-origin", "https://ok",
+				},
+				&stdout,
+				&stderr,
+			)
+			if code != 2 {
+				t.Fatalf("expected exit 2, got %d (stderr=%q)", code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Fatalf("expected %q in stderr, got %q", tt.want, stderr.String())
+			}
+		})
 	}
 }
 

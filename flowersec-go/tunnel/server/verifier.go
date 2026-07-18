@@ -173,7 +173,9 @@ func loadTenantVerifierEntries(path string) (map[string]tenantVerifierEntry, err
 	}
 
 	out := make(map[string]tenantVerifierEntry, len(raw.Tenants))
+	tenantIDs := make(map[string]struct{}, len(raw.Tenants))
 	for _, item := range raw.Tenants {
+		tenantID := strings.TrimSpace(item.ID)
 		audience := strings.TrimSpace(item.Audience)
 		issuer := strings.TrimSpace(item.Issuer)
 		keysFile := strings.TrimSpace(item.IssuerKeysFile)
@@ -184,12 +186,18 @@ func loadTenantVerifierEntries(path string) (map[string]tenantVerifierEntry, err
 		if _, exists := out[scopeKey]; exists {
 			return nil, fmt.Errorf("duplicate tenant scope: aud=%q iss=%q", audience, issuer)
 		}
+		if tenantID != "" {
+			if _, exists := tenantIDs[tenantID]; exists {
+				return nil, fmt.Errorf("duplicate tenant id: %q", tenantID)
+			}
+			tenantIDs[tenantID] = struct{}{}
+		}
 		keys, err := LoadIssuerKeysetFile(keysFile)
 		if err != nil {
 			return nil, fmt.Errorf("load tenant keyset: %w", err)
 		}
 		out[scopeKey] = tenantVerifierEntry{
-			id:       strings.TrimSpace(item.ID),
+			id:       tenantID,
 			audience: audience,
 			issuer:   issuer,
 			keys:     keys,

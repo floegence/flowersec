@@ -676,7 +676,7 @@ func TestCleanupLoopClosesExpiredChannels(t *testing.T) {
 	s := &Server{
 		cfg:      Config{CleanupInterval: 5 * time.Millisecond},
 		obs:      obs,
-		used:     NewTokenUseCache(),
+		used:     newTestTokenUseCache(t, 4),
 		channels: make(map[string]*channelState),
 		stopCh:   make(chan struct{}),
 	}
@@ -729,7 +729,7 @@ func TestCleanupLoopDoesNotCloseInitExpiredWithinSkew(t *testing.T) {
 	s := &Server{
 		cfg:      Config{CleanupInterval: 5 * time.Millisecond, ClockSkew: 30 * time.Second},
 		obs:      obs,
-		used:     NewTokenUseCache(),
+		used:     newTestTokenUseCache(t, 4),
 		channels: make(map[string]*channelState),
 		stopCh:   make(chan struct{}),
 	}

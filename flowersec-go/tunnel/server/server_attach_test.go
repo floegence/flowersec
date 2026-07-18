@@ -367,7 +367,7 @@ func TestAttachWithInitExpMismatchIsInitExpMismatch(t *testing.T) {
 	raw2 := raw1
 	raw2.Role = uint8(tunnelv1.Role_server)
 	raw2.TokenID = "t2"
-	raw2.InitExp = now.Add(3 * time.Minute).Unix()
+	raw2.InitExp = now.Add(2*time.Minute + 20*time.Second).Unix()
 	attach2 := tunnelv1.Attach{
 		V:                  1,
 		ChannelId:          raw2.ChannelID,
