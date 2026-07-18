@@ -5,7 +5,6 @@ import { assertRpcEnvelope } from "./gen/flowersec/rpc/v1.gen.js";
 import type { DiagnosticEvent } from "./observability/observer.js";
 import type { HttpRequestMetaV1, WsOpenMetaV1 } from "./proxy/types.js";
 import {
-  AllowPlaintext,
   AllowPlaintextForLoopback,
   createNetworkPlaintextPolicy,
   PlaintextRiskAcceptance,
@@ -20,7 +19,7 @@ type PortableVectors = Readonly<{
   version: number;
   transport_policy: ReadonlyArray<Readonly<{
     url: string;
-    policy: "require_tls" | "allow_plaintext_for_loopback" | "allow_plaintext" | "network_plaintext";
+    policy: "require_tls" | "allow_plaintext_for_loopback" | "network_plaintext";
     allowed_hosts?: readonly string[];
     risk_acceptance?: string;
     allowed: boolean;
@@ -126,7 +125,6 @@ function transportPolicy(item: PortableVectors["transport_policy"][number]): Tra
   switch (item.policy) {
     case "require_tls": return RequireTLS;
     case "allow_plaintext_for_loopback": return AllowPlaintextForLoopback;
-    case "allow_plaintext": return AllowPlaintext;
     case "network_plaintext":
       if (item.risk_acceptance !== PlaintextRiskAcceptance.acceptPreE2ECredentialExposure) {
         throw new Error("invalid network plaintext risk acceptance");

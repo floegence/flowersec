@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -497,6 +496,8 @@ func TestDirectHandlerResolved_ConcurrentCommitAllowsOneSession(t *testing.T) {
 	psk := make([]byte, 32)
 	initExp := time.Now().Add(120 * time.Second).Unix()
 	var consumed atomic.Bool
+	accepted := make(chan struct{}, 2)
+	commitRejected := make(chan struct{}, 1)
 	handler, err := endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
 		AllowedOrigins: []string{origin},
 		Handshake: endpoint.AcceptDirectResolverOptions{
@@ -513,7 +514,16 @@ func TestDirectHandlerResolved_ConcurrentCommitAllowsOneSession(t *testing.T) {
 				}, nil
 			},
 		},
-		OnStream: func(context.Context, string, io.ReadWriteCloser) {},
+		OnStream: func(context.Context, string, io.ReadWriteCloser) { accepted <- struct{}{} },
+		OnError: func(err error) {
+			var structured *endpoint.Error
+			if errors.As(err, &structured) && structured.Code == endpoint.CodeCredentialCommitFailed {
+				select {
+				case commitRejected <- struct{}{}:
+				default:
+				}
+			}
+		},
 	})
 	if err != nil {
 		t.Fatalf("NewDirectHandlerResolved() failed: %v", err)
@@ -522,29 +532,38 @@ func TestDirectHandlerResolved_ConcurrentCommitAllowsOneSession(t *testing.T) {
 	t.Cleanup(srv.Close)
 	info := directInfo("ws"+strings.TrimPrefix(srv.URL, "http"), "ch_concurrent", psk, initExp)
 
-	results := make(chan error, 2)
-	var wg sync.WaitGroup
+	connections := make(chan client.Client, 2)
 	for range 2 {
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
-			connected, err := client.ConnectDirect(context.Background(), info, directClientOptions(origin)...)
-			if connected != nil {
-				_ = connected.Close()
-			}
-			results <- err
+			connected, _ := client.ConnectDirect(context.Background(), info, directClientOptions(origin)...)
+			connections <- connected
 		}()
 	}
-	wg.Wait()
-	close(results)
-	successes := 0
-	for err := range results {
-		if err == nil {
-			successes++
+	connectedClients := make([]client.Client, 0, 2)
+	for range 2 {
+		if connected := <-connections; connected != nil {
+			connectedClients = append(connectedClients, connected)
 		}
 	}
-	if successes != 1 {
-		t.Fatalf("successful sessions = %d, want 1", successes)
+	defer func() {
+		for _, connected := range connectedClients {
+			_ = connected.Close()
+		}
+	}()
+	select {
+	case <-commitRejected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for rejected credential commit")
+	}
+	select {
+	case <-accepted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for accepted server stream")
+	}
+	select {
+	case <-accepted:
+		t.Fatal("second server stream was accepted")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

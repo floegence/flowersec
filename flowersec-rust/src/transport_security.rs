@@ -68,7 +68,7 @@ impl TransportSecurityPolicy {
             if input.scheme == "wss" {
                 Ok(())
             } else {
-                Err(policy_denied("TLS is required"))
+                Err(policy_denied(input.path, "TLS is required"))
             }
         })
     }
@@ -79,6 +79,7 @@ impl TransportSecurityPolicy {
                 Ok(())
             } else {
                 Err(policy_denied(
+                    input.path,
                     "plaintext is only allowed for loopback hosts",
                 ))
             }
@@ -111,15 +112,13 @@ impl TransportSecurityPolicy {
                 {
                     Ok(())
                 } else {
-                    Err(policy_denied("plaintext host is not explicitly allowed"))
+                    Err(policy_denied(
+                        input.path,
+                        "plaintext host is not explicitly allowed",
+                    ))
                 }
             }
         }))
-    }
-
-    #[deprecated(note = "use require_tls, allow_plaintext_for_loopback, or network_plaintext")]
-    pub fn allow_plaintext() -> Self {
-        Self::new(|_| async { Ok(()) })
     }
 
     pub fn new<F, Fut>(policy: F) -> Self
@@ -204,10 +203,10 @@ impl Default for TransportSecurityPolicy {
     }
 }
 
-fn policy_denied(message: &str) -> FlowersecError {
+fn policy_denied(path: Path, message: &str) -> FlowersecError {
     FlowersecError::new(
-        Path::Auto,
-        Stage::Transport,
+        path,
+        Stage::Validate,
         ErrorCode::TRANSPORT_POLICY_DENIED,
         message,
     )

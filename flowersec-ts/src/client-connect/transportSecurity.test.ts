@@ -1,7 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import type { FlowersecError } from "../utils/errors.js";
 import {
-  AllowPlaintext,
   AllowPlaintextForLoopback,
   createNetworkPlaintextPolicy,
   PlaintextRiskAcceptance,
@@ -21,8 +20,6 @@ describe("transport security policy", () => {
     [AllowPlaintextForLoopback, "ws://127.0.00.1/ws", false],
     [AllowPlaintextForLoopback, "ws://2130706433/ws", false],
     [AllowPlaintextForLoopback, "ws://loopback.example/ws", false],
-    [AllowPlaintext, "ws://example.com/ws", true],
-    [AllowPlaintext, "http://example.com/ws", false],
   ] as const)("evaluates %s for %s", async (policy, rawUrl, allowed) => {
     const run = enforceTransportSecurity({ rawUrl, path: "direct", policy });
     if (allowed) {

@@ -302,6 +302,15 @@ pub async fn connect_tunnel(
         .transport_security_policy
         .evaluate(&url, Path::Tunnel)
         .await?;
+    if url.scheme() == "ws" {
+        emit(
+            &options,
+            Path::Tunnel,
+            Stage::Transport,
+            "plaintext_transport",
+            DiagnosticResult::Skip,
+        );
+    }
     let transport = dial(&url, Path::Tunnel, &options).await?;
     let mut endpoint_instance_id = [0_u8; 24];
     OsRng.fill_bytes(&mut endpoint_instance_id);
@@ -353,6 +362,15 @@ pub async fn connect_direct(
         .transport_security_policy
         .evaluate(&url, Path::Direct)
         .await?;
+    if url.scheme() == "ws" {
+        emit(
+            &options,
+            Path::Direct,
+            Stage::Transport,
+            "plaintext_transport",
+            DiagnosticResult::Skip,
+        );
+    }
     let transport = dial(&url, Path::Direct, &options).await?;
     establish_client(
         transport,

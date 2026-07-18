@@ -67,6 +67,7 @@ async fn rust_client_interoperates_with_go_direct_tunnel_rpc_stream_liveness_and
     let mut request = ConnectArtifactRequestConfig::new("go-interop-endpoint");
     request.base_url = ready.controlplane_base_url;
     request.trace_id = Some("trace-rust-go-interop".to_owned());
+    request.allow_loopback_http = true;
     let artifact = request_connect_artifact(request)
         .await
         .expect("Rust fetches a Go-issued ConnectArtifact");

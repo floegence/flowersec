@@ -131,11 +131,6 @@
             "kind": "const",
             "expr": "client.PlaintextRiskAcceptPreE2ECredentialExposure",
             "doc_token": "`client.PlaintextRiskAcceptPreE2ECredentialExposure`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.AllowPlaintext",
-            "doc_token": "`client.AllowPlaintext`"
           }
         ]
       },
@@ -352,11 +347,6 @@
             "kind": "const",
             "expr": "transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure",
             "doc_token": "`transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure`"
-          },
-          {
-            "kind": "func",
-            "expr": "transportsecurity.AllowPlaintext",
-            "doc_token": "`transportsecurity.AllowPlaintext(...)`"
           }
         ]
       },
@@ -478,6 +468,11 @@
             "kind": "func",
             "expr": "cpclient.RequestEntryConnectArtifact",
             "doc_token": "`client.RequestEntryConnectArtifact(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "cpclient.ConnectArtifactRequestConfig",
+            "doc_token": "`client.ConnectArtifactRequestConfig.AllowLoopbackHTTP`"
           },
           {
             "kind": "type",
@@ -919,8 +914,7 @@
           "RequireTLS",
           "AllowPlaintextForLoopback",
           "createNetworkPlaintextPolicy",
-          "PlaintextRiskAcceptance",
-          "AllowPlaintext"
+          "PlaintextRiskAcceptance"
         ]
       },
       {
@@ -964,7 +958,6 @@
           "AllowPlaintextForLoopback",
           "createNetworkPlaintextPolicy",
           "PlaintextRiskAcceptance",
-          "AllowPlaintext",
           "serveProxySession",
           "serveProxyStream"
         ]
@@ -1012,8 +1005,7 @@
           "RequireTLS",
           "AllowPlaintextForLoopback",
           "createNetworkPlaintextPolicy",
-          "PlaintextRiskAcceptance",
-          "AllowPlaintext"
+          "PlaintextRiskAcceptance"
         ]
       },
       {
@@ -1024,6 +1016,7 @@
           "`requestConnectArtifact(...)`",
           "`requestEntryConnectArtifact(...)`",
           "`ControlplaneRequestError`",
+          "`ConnectArtifactRequestConfig.allowLoopbackHTTP`",
           "`DEFAULT_CONNECT_ARTIFACT_PATH`",
           "`DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`",
           "`IssuerKeyset`",
@@ -2122,11 +2115,6 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "TransportSecurityPolicy.allowPlaintext",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
         "name": "TransportSecurityPolicy.allowPlaintextForLoopback",
         "doc_token": ""
       },
@@ -2157,7 +2145,7 @@
       },
       {
         "kind": "swift.init",
-        "name": "ArtifactRequestOptions.init(baseURL:path:endpointID:payload:traceID:headers:maxResponseBodyBytes:)",
+        "name": "ArtifactRequestOptions.init(baseURL:path:endpointID:payload:traceID:headers:maxResponseBodyBytes:allowLoopbackHTTP:)",
         "doc_token": ""
       },
       {
@@ -2938,6 +2926,11 @@
       {
         "kind": "swift.property",
         "name": "ArtifactAcquireContext.traceID",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ArtifactRequestOptions.allowLoopbackHTTP",
         "doc_token": ""
       },
       {
@@ -4792,6 +4785,8 @@
       "`flowersec::endpoint::DirectAcceptOptions.liveness`",
       "`flowersec::rpc`",
       "`flowersec::controlplane`",
+      "`flowersec::controlplane::client::ArtifactHttpClient`",
+      "`flowersec::controlplane::client::ConnectArtifactRequestConfig.allow_loopback_http`",
       "`flowersec::controlplane::issuer::Keyset`",
       "`flowersec::reconnect`",
       "`flowersec::proxy`",
@@ -4835,6 +4830,8 @@
       "let _ = flowersec::rpc::Server::notify",
       "let _ = std::mem::size_of::<flowersec::rpc::Router>()",
       "let _ = std::mem::size_of::<flowersec::controlplane::token::Payload>()",
+      "let _ = std::mem::size_of::<flowersec::controlplane::client::ArtifactHttpClient>()",
+      "let _ = |config: &flowersec::controlplane::client::ConnectArtifactRequestConfig| config.allow_loopback_http",
       "let _ = std::mem::size_of::<flowersec::controlplane::issuer::Keyset>()",
       "let _ = |keyset: &flowersec::controlplane::issuer::Keyset| keyset.add_verification_key(String::new(), todo!())",
       "let _ = |keyset: &flowersec::controlplane::issuer::Keyset| keyset.rotate(String::new(), todo!())",

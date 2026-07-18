@@ -13,7 +13,6 @@ final class PortableProtocolVectorTests: XCTestCase {
       switch item.policy {
       case "require_tls": policy = .requireTLS
       case "allow_plaintext_for_loopback": policy = .allowPlaintextForLoopback
-      case "allow_plaintext": policy = .allowPlaintext
       case "network_plaintext":
         XCTAssertEqual(
           item.riskAcceptance, PlaintextRiskAcceptance.acceptPreE2ECredentialExposure.rawValue)

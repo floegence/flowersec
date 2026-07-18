@@ -263,12 +263,6 @@ func dialAfterAttach(ctx context.Context, c *ws.Conn, path fserrors.Path, endpoi
 		_ = secure.Close()
 		return nil, wrapErr(path, fserrors.StageYamux, fserrors.CodeMuxFailed, err)
 	}
-	if _, err := sess.Probe(handshakeCtx); err != nil {
-		_ = sess.Close()
-		_ = secure.Close()
-		return nil, wrapErr(path, fserrors.StageYamux, classifyContextOrCode(err, fserrors.CodeMuxFailed), err)
-	}
-
 	rpcStream, err := openBootstrapStream(handshakeCtx, path, secure, func() (io.ReadWriteCloser, error) {
 		return sess.OpenStreamContext(handshakeCtx)
 	})

@@ -10,6 +10,7 @@ export type ControlplaneBaseConfig = Readonly<{
   credentials?: RequestCredentials;
   fetch?: FetchLike;
   signal?: AbortSignal;
+  allowLoopbackHTTP?: boolean;
 }>;
 
 export type ArtifactRequestCorrelation = Readonly<{
@@ -75,6 +76,73 @@ export function buildControlplaneURL(baseUrl: string | undefined, path: string):
   const base = String(baseUrl ?? "").trim();
   if (base === "") return path;
   return `${base.replace(/\/+$/, "")}${path}`;
+}
+
+function transportPolicyDenied(): ControlplaneRequestError {
+  return new ControlplaneRequestError({
+    status: 0,
+    code: "transport_policy_denied",
+    message: "controlplane transport security policy denied URL",
+  });
+}
+
+function validateArtifactURL(rawUrl: string, allowLoopbackHTTP: boolean | undefined): void {
+  let target: URL;
+  try {
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(rawUrl)) {
+      target = new URL(rawUrl);
+    } else {
+      const base = globalThis.location?.href;
+      if (!base) throw new Error("relative URL requires a browser location");
+      target = new URL(rawUrl, base);
+    }
+  } catch {
+    throw transportPolicyDenied();
+  }
+  if (target.username !== "" || target.password !== "" || target.hash !== "") {
+    throw transportPolicyDenied();
+  }
+  if (target.protocol === "https:") return;
+  if (
+    target.protocol === "http:"
+    && allowLoopbackHTTP === true
+    && isLiteralLoopbackHost(sourceHostname(rawUrl, target))
+  ) return;
+  throw transportPolicyDenied();
+}
+
+function sourceHostname(rawUrl: string, target: URL): string {
+  const authority = /^(?:[A-Za-z][A-Za-z0-9+.-]*:)?\/\/([^/?#]*)/.exec(rawUrl)?.[1];
+  if (authority === undefined) return target.hostname;
+
+  const hostPort = authority.slice(authority.lastIndexOf("@") + 1);
+  if (hostPort.startsWith("[")) {
+    const end = hostPort.indexOf("]");
+    if (end < 0 || (hostPort.length > end + 1 && !/^:\d+$/.test(hostPort.slice(end + 1)))) {
+      return hostPort;
+    }
+    return hostPort.slice(1, end);
+  }
+
+  const colon = hostPort.lastIndexOf(":");
+  if (colon < 0) return hostPort;
+  if (hostPort.indexOf(":") !== colon || !/^\d+$/.test(hostPort.slice(colon + 1))) return hostPort;
+  return hostPort.slice(0, colon);
+}
+
+function isLiteralLoopbackHost(rawHost: string): boolean {
+  const host = rawHost.startsWith("[") && rawHost.endsWith("]")
+    ? rawHost.slice(1, -1).toLowerCase()
+    : rawHost.toLowerCase();
+  if (host === "localhost" || host === "::1") return true;
+  const parts = host.split(".");
+  if (parts.length !== 4) return false;
+  const octets = parts.map((part) => {
+    if (!/^(0|[1-9]\d{0,2})$/.test(part)) return -1;
+    const value = Number(part);
+    return value <= 255 ? value : -1;
+  });
+  return octets.every((value) => value >= 0) && octets[0] === 127;
 }
 
 function parseMaybeJSON(bodyText: string): unknown {
@@ -156,6 +224,7 @@ export async function requestControlplaneJSON(
   const response = await runFetch(url, {
     ...init,
     cache: "no-store",
+    redirect: "error",
   });
   let rawBody = "";
   try {
@@ -213,8 +282,10 @@ function createJSONHeaders(input: HeadersInit | undefined): Headers {
 }
 
 export async function requestConnectArtifact(config: RequestConnectArtifactInput): Promise<ConnectArtifact> {
+  const url = buildControlplaneURL(config.baseUrl, config.path ?? DEFAULT_CONNECT_ARTIFACT_PATH);
+  validateArtifactURL(url, config.allowLoopbackHTTP);
   const data = (await requestControlplaneJSON(
-    buildControlplaneURL(config.baseUrl, config.path ?? DEFAULT_CONNECT_ARTIFACT_PATH),
+    url,
     {
       ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
       method: "POST",
@@ -235,8 +306,10 @@ export async function requestEntryConnectArtifact(config: RequestEntryConnectArt
   if (entryTicket === "") throw new Error("entryTicket is required");
   const headers = createJSONHeaders(config.headers);
   headers.set("Authorization", `Bearer ${entryTicket}`);
+  const url = buildControlplaneURL(config.baseUrl, config.path ?? DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH);
+  validateArtifactURL(url, config.allowLoopbackHTTP);
   const data = (await requestControlplaneJSON(
-    buildControlplaneURL(config.baseUrl, config.path ?? DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH),
+    url,
     {
       ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
       method: "POST",

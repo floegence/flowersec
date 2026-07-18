@@ -71,8 +71,6 @@ func TestPortableProtocolVectors(t *testing.T) {
 		switch test.Policy {
 		case "allow_plaintext_for_loopback":
 			policy = transportsecurity.AllowPlaintextForLoopback
-		case "allow_plaintext":
-			policy = transportsecurity.AllowPlaintext
 		case "network_plaintext":
 			if test.RiskAcceptance != string(transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure) {
 				t.Fatalf("invalid network plaintext risk acceptance %q", test.RiskAcceptance)

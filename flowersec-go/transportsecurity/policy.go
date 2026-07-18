@@ -83,14 +83,6 @@ func NewNetworkPlaintextPolicy(options NetworkPlaintextPolicyOptions) (Policy, e
 	}, nil
 }
 
-// Deprecated: use RequireTLS, AllowPlaintextForLoopback, or NewNetworkPlaintextPolicy.
-func AllowPlaintext(_ context.Context, input Input) error {
-	if input.Scheme != "ws" && input.Scheme != "wss" {
-		return ErrDenied
-	}
-	return nil
-}
-
 func canonicalNetworkPlaintextHosts(rawHosts []string) ([]string, error) {
 	if len(rawHosts) == 0 {
 		return nil, fmt.Errorf("network plaintext policy requires at least one allowed host")
@@ -127,8 +119,8 @@ func canonicalNetworkPlaintextHost(rawHost string) (string, error) {
 	return host, nil
 }
 
-// Evaluate parses and sanitizes a WebSocket target, then applies policy. A nil policy preserves
-// legacy compatibility and returns the sanitized input without denying plaintext.
+// Evaluate parses and sanitizes a WebSocket target, then applies policy.
+// A nil policy is equivalent to RequireTLS.
 func Evaluate(ctx context.Context, rawURL string, path fserrors.Path, runtime Runtime, policy Policy) (Input, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil {
@@ -144,7 +136,7 @@ func Evaluate(ctx context.Context, rawURL string, path fserrors.Path, runtime Ru
 		return Input{}, ErrDenied
 	}
 	if policy == nil {
-		return input, nil
+		policy = RequireTLS
 	}
 	if err := safeEvaluate(ctx, policy, input); err != nil {
 		return Input{}, err

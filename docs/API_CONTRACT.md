@@ -49,7 +49,6 @@ Recommended integration entrypoints:
   - `client.NetworkPlaintextPolicyOptions`
   - `client.PlaintextRiskAcceptance`
   - `client.PlaintextRiskAcceptPreE2ECredentialExposure`
-  - `client.AllowPlaintext`
 - `github.com/floegence/flowersec/flowersec-go/endpoint`
   - `endpoint.ConnectTunnel(...)`
   - `endpoint.NewDirectHandler(...)`
@@ -92,7 +91,6 @@ Recommended integration entrypoints:
   - `transportsecurity.NetworkPlaintextPolicyOptions`
   - `transportsecurity.PlaintextRiskAcceptance`
   - `transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure`
-  - `transportsecurity.AllowPlaintext(...)`
 - `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
   - `serve.New(...)`
   - `srv.Handle(...)`
@@ -116,6 +114,7 @@ Recommended integration entrypoints:
 - `github.com/floegence/flowersec/flowersec-go/controlplane/client`
   - `client.RequestConnectArtifact(...)`
   - `client.RequestEntryConnectArtifact(...)`
+  - `client.ConnectArtifactRequestConfig.AllowLoopbackHTTP`
   - `client.RequestError`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/http`
   - `controlplanehttp.DefaultMaxBodyBytes`
@@ -228,7 +227,6 @@ Package entrypoints:
   - `createNetworkPlaintextPolicy(...)`
   - `NetworkPlaintextPolicyOptions`
   - `PlaintextRiskAcceptance`
-  - `AllowPlaintext`
   - `TransportSecurityPolicy`
   - `LivenessOptions`
   - `WebSocketLimits`
@@ -256,7 +254,6 @@ Package entrypoints:
   - `createNetworkPlaintextPolicy(...)`
   - `NetworkPlaintextPolicyOptions`
   - `PlaintextRiskAcceptance`
-  - `AllowPlaintext`
   - `serveProxySession(...)`
   - `serveProxyStream(...)`
   - `ProxyServerOptions`
@@ -286,11 +283,11 @@ Package entrypoints:
   - `createNetworkPlaintextPolicy(...)`
   - `NetworkPlaintextPolicyOptions`
   - `PlaintextRiskAcceptance`
-  - `AllowPlaintext`
 - `@floegence/flowersec-core/controlplane`
   - `requestConnectArtifact(...)`
   - `requestEntryConnectArtifact(...)`
   - `ControlplaneRequestError`
+  - `ConnectArtifactRequestConfig.allowLoopbackHTTP`
   - `DEFAULT_CONNECT_ARTIFACT_PATH`
   - `DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`
   - `IssuerKeyset`
@@ -413,6 +410,18 @@ Connection and session entrypoints:
 
 Rust exposes the matching `TransportSecurityPolicy::network_plaintext(...)`,
 `NetworkPlaintextPolicyOptions`, and `PlaintextRiskAcceptance` APIs.
+
+Artifact acquisition requires an absolute HTTPS URL by default. Go
+`client.ConnectArtifactRequestConfig.AllowLoopbackHTTP`, TypeScript
+`ConnectArtifactRequestConfig.allowLoopbackHTTP`, Swift
+`ArtifactRequestOptions.allowLoopbackHTTP`, and Rust
+`ConnectArtifactRequestConfig.allow_loopback_http` opt in to HTTP only for literal
+`localhost`, canonical `127.0.0.0/8`, or `::1` targets. Artifact clients reject
+userinfo, unsupported schemes, non-canonical loopback addresses, and redirects.
+Rust custom HTTP configuration is accepted only through
+`flowersec::controlplane::client::ArtifactHttpClient`, which always disables
+redirects. Its explicit option is
+`flowersec::controlplane::client::ConnectArtifactRequestConfig.allow_loopback_http`.
 
 RPC and stream building blocks:
 

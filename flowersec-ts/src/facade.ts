@@ -41,7 +41,6 @@ export type { YamuxLimits } from "./yamux/session.js";
 export type { FlowersecErrorCode, FlowersecPath, FlowersecStage } from "./utils/errors.js";
 export { FlowersecError } from "./utils/errors.js";
 export {
-  AllowPlaintext,
   AllowPlaintextForLoopback,
   createNetworkPlaintextPolicy,
   PlaintextRiskAcceptance,

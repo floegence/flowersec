@@ -46,6 +46,152 @@ final class ControlplaneTests: XCTestCase {
     XCTAssertEqual(fetched, artifact)
   }
 
+  func testArtifactRequestRejectsPlaintextUnlessLoopbackIsExplicitlyAllowed() async throws {
+    let remote = ArtifactRequestOptions(
+      baseURL: URL(string: "http://192.0.2.10")!,
+      endpointID: "env-remote",
+      allowLoopbackHTTP: true
+    )
+    do {
+      _ = try await Controlplane.requestConnectArtifact(remote, session: artifactURLSession())
+      XCTFail("Expected transport policy denial")
+    } catch let error as ControlplaneRequestError {
+      XCTAssertEqual(error.status, 0)
+      XCTAssertEqual(error.code, "transport_policy_denied")
+    }
+
+    let loopback = ArtifactRequestOptions(
+      baseURL: URL(string: "http://127.0.0.1")!,
+      endpointID: "env-loopback"
+    )
+    do {
+      _ = try await Controlplane.requestConnectArtifact(loopback, session: artifactURLSession())
+      XCTFail("Expected explicit loopback opt-in requirement")
+    } catch let error as ControlplaneRequestError {
+      XCTAssertEqual(error.code, "transport_policy_denied")
+    }
+  }
+
+  func testArtifactRequestAllowsExplicitLoopbackHTTP() async throws {
+    let response = try Controlplane.encodeErrorEnvelope(code: "reachable", message: "request reached")
+    ArtifactURLProtocol.setHandler { request in
+      XCTAssertEqual(request.url?.scheme, "http")
+      XCTAssertEqual(request.url?.host, "127.0.0.1")
+      return ArtifactHTTPResponse(status: 403, chunks: [response])
+    }
+    defer { ArtifactURLProtocol.setHandler(nil) }
+
+    do {
+      _ = try await Controlplane.requestConnectArtifact(
+        ArtifactRequestOptions(
+          baseURL: URL(string: "http://127.0.0.1")!,
+          endpointID: "env-loopback",
+          allowLoopbackHTTP: true
+        ),
+        session: artifactURLSession()
+      )
+      XCTFail("Expected the test server response")
+    } catch let error as ControlplaneRequestError {
+      XCTAssertEqual(error.status, 403)
+      XCTAssertEqual(error.code, "reachable")
+    }
+  }
+
+  func testArtifactRequestAllowsAllLiteralLoopbackForms() async throws {
+    let response = try Controlplane.encodeErrorEnvelope(code: "reachable", message: "request reached")
+    ArtifactURLProtocol.setHandler { _ in
+      ArtifactHTTPResponse(status: 403, chunks: [response])
+    }
+    defer { ArtifactURLProtocol.setHandler(nil) }
+
+    for baseURL in ["http://localhost", "http://127.42.0.9", "http://[::1]"] {
+      do {
+        _ = try await Controlplane.requestConnectArtifact(
+          ArtifactRequestOptions(
+            baseURL: URL(string: baseURL)!,
+            endpointID: "env-literal-loopback",
+            allowLoopbackHTTP: true
+          ),
+          session: artifactURLSession()
+        )
+        XCTFail("Expected the test server response for \(baseURL)")
+      } catch let error as ControlplaneRequestError {
+        XCTAssertEqual(error.status, 403, baseURL)
+        XCTAssertEqual(error.code, "reachable", baseURL)
+      }
+    }
+  }
+
+  func testArtifactRequestRejectsCredentialsUnknownSchemesAndMalformedURLs() async throws {
+    let invalidBaseURLs = [
+      ("userinfo", URL(string: "https://user:secret@controlplane.example.test")!),
+      ("unknown scheme", URL(string: "ftp://controlplane.example.test")!),
+      ("relative URL", URL(string: "not-an-absolute-controlplane-url")!),
+    ]
+
+    for (name, baseURL) in invalidBaseURLs {
+      do {
+        _ = try await Controlplane.requestConnectArtifact(
+          ArtifactRequestOptions(baseURL: baseURL, endpointID: "env-invalid"),
+          session: artifactURLSession()
+        )
+        XCTFail("Expected transport policy denial for \(name)")
+      } catch let error as ControlplaneRequestError {
+        XCTAssertEqual(error.status, 0, name)
+        XCTAssertEqual(error.code, "transport_policy_denied", name)
+      }
+    }
+
+    for baseURL in ["http://127.1", "http://127.0.00.1", "http://2130706433"] {
+      do {
+        _ = try await Controlplane.requestConnectArtifact(
+          ArtifactRequestOptions(
+            baseURL: URL(string: baseURL)!,
+            endpointID: "env-noncanonical-loopback",
+            allowLoopbackHTTP: true
+          ),
+          session: artifactURLSession()
+        )
+        XCTFail("Expected transport policy denial for \(baseURL)")
+      } catch let error as ControlplaneRequestError {
+        XCTAssertEqual(error.status, 0, baseURL)
+        XCTAssertEqual(error.code, "transport_policy_denied", baseURL)
+      }
+    }
+  }
+
+  func testArtifactRequestRejectsRedirectWithoutForwardingBearerToken() async throws {
+    let response = try Controlplane.encodeErrorEnvelope(
+      code: "redirected",
+      message: "redirects are not followed"
+    )
+    ArtifactURLProtocol.setHandler { request in
+      XCTAssertEqual(request.url?.host, "controlplane.example.test")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret-ticket")
+      return ArtifactHTTPResponse(
+        status: 302,
+        headers: ["Location": "https://redirect-target.example.test/artifact"],
+        chunks: [response]
+      )
+    }
+    defer { ArtifactURLProtocol.setHandler(nil) }
+
+    do {
+      _ = try await Controlplane.requestEntryConnectArtifact(
+        ArtifactRequestOptions(
+          baseURL: URL(string: "https://controlplane.example.test")!,
+          endpointID: "env-redirect"
+        ),
+        entryTicket: "secret-ticket",
+        session: artifactURLSession()
+      )
+      XCTFail("Expected redirect rejection")
+    } catch let error as ControlplaneRequestError {
+      XCTAssertEqual(error.status, 302)
+      XCTAssertEqual(error.code, "redirected")
+    }
+  }
+
   func testArtifactFetchCancelsResponseDeclaredOverLimit() async throws {
     ArtifactURLProtocol.reset()
     ArtifactURLProtocol.setHandler { _ in

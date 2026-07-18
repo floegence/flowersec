@@ -36,12 +36,6 @@ func NewNetworkPlaintextPolicy(options NetworkPlaintextPolicyOptions) (Transport
 	return transportsecurity.NewNetworkPlaintextPolicy(options)
 }
 
-// AllowPlaintext allows ws:// and wss:// URLs.
-// Deprecated: use RequireTLS, AllowPlaintextForLoopback, or NewNetworkPlaintextPolicy.
-func AllowPlaintext(ctx context.Context, input TransportSecurityPolicyInput) error {
-	return transportsecurity.AllowPlaintext(ctx, input)
-}
-
 func evaluateTransportSecurity(
 	ctx context.Context,
 	rawURL string,

@@ -4,8 +4,6 @@ import { emitObserverDiagnostic, type ClientObserverLike } from "../observabilit
 
 export const RequireTLS = "require_tls" as const;
 export const AllowPlaintextForLoopback = "allow_plaintext_for_loopback" as const;
-/** @deprecated Use RequireTLS, AllowPlaintextForLoopback, or createNetworkPlaintextPolicy. */
-export const AllowPlaintext = "allow_plaintext" as const;
 
 export const PlaintextRiskAcceptance = {
   acceptPreE2ECredentialExposure: "accept_pre_e2ee_credential_exposure",
@@ -27,8 +25,7 @@ export type TransportSecurityPolicyInput = Readonly<{
 
 export type TransportSecurityPolicyPreset =
   | typeof RequireTLS
-  | typeof AllowPlaintextForLoopback
-  | typeof AllowPlaintext;
+  | typeof AllowPlaintextForLoopback;
 
 export type TransportSecurityPolicy =
   | TransportSecurityPolicyPreset
@@ -108,8 +105,6 @@ function evaluatePreset(policy: TransportSecurityPolicyPreset, target: ParsedWeb
       return target.scheme === "wss";
     case AllowPlaintextForLoopback:
       return target.scheme === "wss" || isLiteralLoopbackHost(target.host);
-    case AllowPlaintext:
-      return true;
   }
 }
 

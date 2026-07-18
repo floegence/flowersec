@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { ControlplaneRequestError } from "./index.js";
 import {
@@ -36,6 +36,10 @@ function makeArtifact(channelID: string) {
 
 const MAX_CONTROLPLANE_RESPONSE_BYTES = 1 << 20;
 
+beforeEach(() => {
+  vi.stubGlobal("location", { href: "https://app.example.test/" });
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -63,6 +67,7 @@ describe("controlplane artifact helpers", () => {
       expect.objectContaining({
         method: "POST",
         credentials: "omit",
+        redirect: "error",
         body: JSON.stringify({
           endpoint_id: "env_art_1",
           payload: { floe_app: "demo.app" },
@@ -70,6 +75,86 @@ describe("controlplane artifact helpers", () => {
         }),
       })
     );
+  });
+
+  test("requires HTTPS unless loopback HTTP is explicitly allowed", async () => {
+    const fetchMock = vi.fn();
+
+    await expect(requestConnectArtifact({
+      baseUrl: "http://127.0.0.1:8080",
+      endpointId: "env_loopback_default",
+      fetch: fetchMock as typeof fetch,
+    })).rejects.toMatchObject({ status: 0, code: "transport_policy_denied" });
+
+    fetchMock.mockImplementation(async () => (
+      new Response(JSON.stringify({ connect_artifact: makeArtifact("chan_loopback") }))
+    ));
+    await expect(requestConnectArtifact({
+      baseUrl: "http://127.0.0.1:8080",
+      endpointId: "env_loopback_allowed",
+      allowLoopbackHTTP: true,
+      fetch: fetchMock as typeof fetch,
+    })).resolves.toMatchObject({ transport: "tunnel" });
+
+    await expect(requestConnectArtifact({
+      baseUrl: "http://192.0.2.10",
+      endpointId: "env_remote_plaintext",
+      allowLoopbackHTTP: true,
+      fetch: fetchMock as typeof fetch,
+    })).rejects.toMatchObject({ status: 0, code: "transport_policy_denied" });
+
+    for (const baseUrl of ["http://localhost:8080", "http://127.42.0.9", "http://[::1]:8080"]) {
+      await expect(requestConnectArtifact({
+        baseUrl,
+        endpointId: "env_literal_loopback",
+        allowLoopbackHTTP: true,
+        fetch: fetchMock as typeof fetch,
+      })).resolves.toMatchObject({ transport: "tunnel" });
+    }
+  });
+
+  test("resolves browser-relative URLs and rejects them without a browser location", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ connect_artifact: makeArtifact("chan_relative") }))
+    );
+    await expect(requestConnectArtifact({
+      endpointId: "env_browser_relative",
+      fetch: fetchMock as typeof fetch,
+    })).resolves.toMatchObject({ transport: "tunnel" });
+
+    vi.stubGlobal("location", undefined);
+    await expect(requestConnectArtifact({
+      endpointId: "env_node_relative",
+      fetch: fetchMock as typeof fetch,
+    })).rejects.toMatchObject({ status: 0, code: "transport_policy_denied" });
+  });
+
+  test("rejects credentials, unknown schemes, and malformed artifact URLs before fetch", async () => {
+    const fetchMock = vi.fn();
+    const invalidBaseUrls = [
+      "https://user:secret@cp.example.com",
+      "ftp://cp.example.com",
+      "https://[::1",
+    ];
+
+    for (const baseUrl of invalidBaseUrls) {
+      await expect(requestConnectArtifact({
+        baseUrl,
+        endpointId: "env_invalid_url",
+        fetch: fetchMock as typeof fetch,
+      })).rejects.toMatchObject({ status: 0, code: "transport_policy_denied" });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    for (const baseUrl of ["http://127.1", "http://127.0.00.1", "http://2130706433"]) {
+      await expect(requestConnectArtifact({
+        baseUrl,
+        endpointId: "env_noncanonical_loopback",
+        allowLoopbackHTTP: true,
+        fetch: fetchMock as typeof fetch,
+      })).rejects.toMatchObject({ status: 0, code: "transport_policy_denied" });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test("requestEntryConnectArtifact sends bearer token", async () => {
@@ -91,6 +176,7 @@ describe("controlplane artifact helpers", () => {
     expect(url).toBe("/v1/connect/artifact/entry");
     const headers = init?.headers as Headers;
     expect(headers.get("Authorization")).toBe("Bearer ticket_2");
+    expect(init?.redirect).toBe("error");
     expect(JSON.parse(String(init?.body ?? "{}"))).toEqual({ endpoint_id: "env_art_2" });
   });
 

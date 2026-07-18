@@ -127,12 +127,15 @@ async fn transport_security_policies_enforce_tls_and_loopback_rules() {
         .evaluate(&secure, Path::Direct)
         .await
         .expect("TLS is accepted");
-    let denied = TransportSecurityPolicy::require_tls()
-        .evaluate(&remote_plaintext, Path::Tunnel)
-        .await
-        .expect_err("plaintext is denied by default");
-    assert_eq!(denied.code.as_str(), ErrorCode::TRANSPORT_POLICY_DENIED);
-    assert_eq!(denied.stage, Stage::Transport);
+    for path in [Path::Direct, Path::Tunnel] {
+        let denied = TransportSecurityPolicy::require_tls()
+            .evaluate(&remote_plaintext, path)
+            .await
+            .expect_err("plaintext is denied by default");
+        assert_eq!(denied.path, path);
+        assert_eq!(denied.stage, Stage::Validate);
+        assert_eq!(denied.code.as_str(), ErrorCode::TRANSPORT_POLICY_DENIED);
+    }
 
     let loopback = TransportSecurityPolicy::allow_plaintext_for_loopback();
     for url in [&secure, &localhost, &ipv4_loopback, &ipv6_loopback] {
@@ -147,18 +150,7 @@ async fn transport_security_policies_enforce_tls_and_loopback_rules() {
             .await
             .is_err()
     );
-    #[allow(deprecated)]
-    let allow_plaintext = TransportSecurityPolicy::allow_plaintext();
-    allow_plaintext
-        .evaluate(&remote_plaintext, Path::Direct)
-        .await
-        .expect("explicit plaintext policy is accepted");
-    #[allow(deprecated)]
-    let debug_plaintext = TransportSecurityPolicy::allow_plaintext();
-    assert_eq!(
-        format!("{debug_plaintext:?}"),
-        "TransportSecurityPolicy(..)"
-    );
+    assert_eq!(format!("{loopback:?}"), "TransportSecurityPolicy(..)");
 }
 
 #[tokio::test]

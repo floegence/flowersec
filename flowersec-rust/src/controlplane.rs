@@ -182,8 +182,21 @@ pub mod client {
     };
     use crate::{ConnectArtifact, artifact::ArtifactError, defaults};
     use futures_util::StreamExt as _;
-    use reqwest::{Client, StatusCode, header::HeaderMap};
+    use reqwest::{Client, ClientBuilder, StatusCode, header::HeaderMap, redirect::Policy};
     use serde_json::{Map, Value};
+
+    #[derive(Clone, Debug)]
+    pub struct ArtifactHttpClient(Client);
+
+    impl ArtifactHttpClient {
+        pub fn new(builder: ClientBuilder) -> Result<Self, reqwest::Error> {
+            builder.redirect(Policy::none()).build().map(Self)
+        }
+
+        fn default_client() -> Result<Self, reqwest::Error> {
+            Self::new(Client::builder())
+        }
+    }
 
     #[derive(Clone, Debug)]
     pub struct ConnectArtifactRequestConfig {
@@ -193,8 +206,9 @@ pub mod client {
         pub payload: Option<Map<String, Value>>,
         pub trace_id: Option<String>,
         pub headers: HeaderMap,
-        pub client: Option<Client>,
+        pub client: Option<ArtifactHttpClient>,
         pub max_response_body_bytes: usize,
+        pub allow_loopback_http: bool,
     }
 
     impl ConnectArtifactRequestConfig {
@@ -208,6 +222,7 @@ pub mod client {
                 headers: HeaderMap::new(),
                 client: None,
                 max_response_body_bytes: defaults::CONTROLPLANE_MAX_RESPONSE_BODY_BYTES,
+                allow_loopback_http: false,
             }
         }
     }
@@ -300,8 +315,12 @@ pub mod client {
             .filter(|value| !value.is_empty())
             .unwrap_or(default_path);
         let url = build_url(&config.base_url, path);
-        let client = config.client.unwrap_or_default();
-        let mut builder = client.post(url).headers(config.headers).json(&body);
+        validate_artifact_url(&url, config.allow_loopback_http)?;
+        let client = match config.client {
+            Some(client) => client,
+            None => ArtifactHttpClient::default_client()?,
+        };
+        let mut builder = client.0.post(url).headers(config.headers).json(&body);
         if let Some(entry_ticket) = entry_ticket {
             builder = builder.bearer_auth(entry_ticket);
         }
@@ -378,6 +397,46 @@ pub mod client {
         } else {
             format!("{base_url}{path}")
         }
+    }
+
+    fn validate_artifact_url(raw_url: &str, allow_loopback_http: bool) -> Result<(), ClientError> {
+        let denied = || {
+            ClientError::Request(RequestError {
+                status: 0,
+                code: "transport_policy_denied".to_owned(),
+                message: "controlplane transport security policy denied URL".to_owned(),
+                response_body: Vec::new(),
+            })
+        };
+        let raw_url = raw_url.trim();
+        let url = reqwest::Url::parse(raw_url).map_err(|_| denied())?;
+        if url.as_str() != raw_url
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(denied());
+        }
+        match url.scheme() {
+            "https" => Ok(()),
+            "http" if allow_loopback_http && is_literal_loopback_host(url.host_str().unwrap()) => {
+                Ok(())
+            }
+            _ => Err(denied()),
+        }
+    }
+
+    fn is_literal_loopback_host(host: &str) -> bool {
+        let host = host
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(host);
+        if host == "localhost" {
+            return true;
+        }
+        host.parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.to_string() == host && address.is_loopback())
     }
 }
 
@@ -1185,6 +1244,51 @@ mod tests {
         assert_eq!(error.status, 415);
     }
 
+    #[tokio::test]
+    async fn artifact_client_enforces_transport_policy() {
+        let cases = [
+            ("loopback requires opt in", "http://127.0.0.1:1", false),
+            ("remote plaintext stays denied", "http://192.0.2.10", true),
+            (
+                "userinfo is denied",
+                "https://user:secret@example.com",
+                false,
+            ),
+            ("unknown scheme is denied", "ftp://example.com", false),
+            ("malformed URL is denied", "https://[::1", false),
+            ("short loopback IPv4 is denied", "http://127.1", true),
+            (
+                "leading zero loopback IPv4 is denied",
+                "http://127.0.00.1",
+                true,
+            ),
+            ("integer loopback IPv4 is denied", "http://2130706433", true),
+        ];
+        for (name, base_url, allow_loopback_http) in cases {
+            let mut config = client::ConnectArtifactRequestConfig::new("endpoint-secure");
+            config.base_url = base_url.to_owned();
+            config.allow_loopback_http = allow_loopback_http;
+            let error = client::request_connect_artifact(config)
+                .await
+                .expect_err(name);
+            let client::ClientError::Request(error) = error else {
+                panic!("{name}: unexpected error")
+            };
+            assert_eq!(error.status, 0, "{name}");
+            assert_eq!(error.code, "transport_policy_denied", "{name}");
+        }
+
+        let mut config = client::ConnectArtifactRequestConfig::new("endpoint-https");
+        config.base_url = "https://127.0.0.1:0".to_owned();
+        let error = client::request_connect_artifact(config)
+            .await
+            .expect_err("closed HTTPS endpoint");
+        assert!(
+            matches!(error, client::ClientError::Transport(_)),
+            "HTTPS must pass policy validation and reach the transport: {error:?}"
+        );
+    }
+
     #[test]
     fn issuer_rotation_and_channel_init_preserve_grant_contract() {
         let issuer = Arc::new(issuer::Keyset::new_random("k1").expect("issuer"));
@@ -1242,7 +1346,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn artifact_client_preserves_structured_http_error() {
+    async fn artifact_client_allows_explicit_loopback_http_and_preserves_structured_error() {
         use tokio::{
             io::{AsyncReadExt as _, AsyncWriteExt as _},
             net::TcpListener,
@@ -1267,6 +1371,7 @@ mod tests {
         });
         let mut config = client::ConnectArtifactRequestConfig::new("endpoint-1");
         config.base_url = format!("http://{address}");
+        config.allow_loopback_http = true;
         let error = client::request_connect_artifact(config)
             .await
             .expect_err("request error");
@@ -1277,6 +1382,80 @@ mod tests {
         assert_eq!(error.code, "denied");
         assert_eq!(error.message, "request denied");
         server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn artifact_client_allows_all_literal_loopback_forms() {
+        for base_url in [
+            "http://localhost:0",
+            "http://127.42.0.9:0",
+            "http://[::1]:0",
+        ] {
+            let mut config = client::ConnectArtifactRequestConfig::new("endpoint-loopback");
+            config.base_url = base_url.to_owned();
+            config.allow_loopback_http = true;
+            let error = client::request_connect_artifact(config)
+                .await
+                .expect_err("closed loopback endpoint");
+            assert!(
+                matches!(error, client::ClientError::Transport(_)),
+                "{base_url} must pass policy validation: {error:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn artifact_client_rejects_redirect_without_forwarding_bearer_token() {
+        use tokio::{
+            io::{AsyncReadExt as _, AsyncWriteExt as _},
+            net::TcpListener,
+        };
+
+        let target = TcpListener::bind("127.0.0.1:0").await.expect("target bind");
+        let target_address = target.local_addr().expect("target address");
+        let source = TcpListener::bind("127.0.0.1:0").await.expect("source bind");
+        let source_address = source.local_addr().expect("source address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = source.accept().await.expect("source accept");
+            let mut request = vec![0_u8; 4096];
+            let count = socket.read(&mut request).await.expect("source read");
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer secret-ticket"),
+                "source request must carry the entry ticket: {request}"
+            );
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://{target_address}/artifact\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("redirect response");
+        });
+
+        let mut request = client::ConnectArtifactRequestConfig::new("endpoint-redirect");
+        request.base_url = format!("http://{source_address}");
+        request.allow_loopback_http = true;
+        let error =
+            client::request_entry_connect_artifact(client::EntryConnectArtifactRequestConfig {
+                request,
+                entry_ticket: "secret-ticket".to_owned(),
+            })
+            .await
+            .expect_err("redirect rejection");
+        let client::ClientError::Request(error) = error else {
+            panic!("unexpected redirect error")
+        };
+        assert_eq!(error.status, 302);
+        server.await.expect("source server");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), target.accept())
+                .await
+                .is_err(),
+            "redirect target must not receive a connection"
+        );
     }
 
     #[test]

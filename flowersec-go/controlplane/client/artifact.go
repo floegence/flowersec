@@ -4,22 +4,26 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strings"
 
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
 )
 
 type ConnectArtifactRequestConfig struct {
-	BaseURL    string
-	Path       string
-	EndpointID string
-	Payload    map[string]any
-	TraceID    string
-	Headers    http.Header
-	HTTPClient *http.Client
+	BaseURL           string
+	Path              string
+	EndpointID        string
+	Payload           map[string]any
+	TraceID           string
+	Headers           http.Header
+	HTTPClient        *http.Client
+	AllowLoopbackHTTP bool
 }
 
 type EntryConnectArtifactRequestConfig struct {
@@ -76,7 +80,11 @@ func requestConnectArtifact(ctx context.Context, cfg ConnectArtifactRequestConfi
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildURL(cfg.BaseURL, defaultPath(cfg.Path, entryTicket != "")), bytes.NewReader(body))
+	target := buildURL(cfg.BaseURL, defaultPath(cfg.Path, entryTicket != ""))
+	if err := validateArtifactURL(target, cfg.AllowLoopbackHTTP); err != nil {
+		return nil, transportPolicyError()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +95,7 @@ func requestConnectArtifact(ctx context.Context, cfg ConnectArtifactRequestConfi
 	if entryTicket != "" {
 		req.Header.Set("Authorization", "Bearer "+entryTicket)
 	}
-	resp, err := httpClient(cfg.HTTPClient).Do(req)
+	resp, err := artifactHTTPClient(cfg.HTTPClient).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -168,11 +176,47 @@ func buildURL(baseURL, path string) string {
 	return strings.TrimRight(baseURL, "/") + path
 }
 
-func httpClient(client *http.Client) *http.Client {
-	if client != nil {
-		return client
+func validateArtifactURL(rawURL string, allowLoopbackHTTP bool) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed == nil || !parsed.IsAbs() || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return errors.New("invalid controlplane URL")
 	}
-	return http.DefaultClient
+	switch strings.ToLower(parsed.Scheme) {
+	case "https":
+		return nil
+	case "http":
+		if allowLoopbackHTTP && isLiteralLoopbackHost(parsed.Hostname()) {
+			return nil
+		}
+	}
+	return errors.New("controlplane URL requires HTTPS")
+}
+
+func isLiteralLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "localhost" {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.Zone() == "" && !addr.Is4In6() && addr.String() == host && addr.IsLoopback()
+}
+
+func transportPolicyError() *RequestError {
+	return &RequestError{
+		Code:    "transport_policy_denied",
+		Message: "controlplane transport security policy denied URL",
+	}
+}
+
+func artifactHTTPClient(client *http.Client) *http.Client {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	clone := *client
+	clone.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &clone
 }
 
 func clonePayload(payload map[string]any) map[string]any {

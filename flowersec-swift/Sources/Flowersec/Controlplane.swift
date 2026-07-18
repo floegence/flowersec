@@ -48,6 +48,7 @@ public struct ArtifactRequestOptions: Sendable {
   public var traceID: String?
   public var headers: [String: String]
   public var maxResponseBodyBytes: Int
+  public var allowLoopbackHTTP: Bool
 
   public init(
     baseURL: URL,
@@ -56,7 +57,8 @@ public struct ArtifactRequestOptions: Sendable {
     payload: ScopePayload? = nil,
     traceID: String? = nil,
     headers: [String: String] = [:],
-    maxResponseBodyBytes: Int = FlowersecSDKDefaults.Controlplane.maxResponseBodyBytes
+    maxResponseBodyBytes: Int = FlowersecSDKDefaults.Controlplane.maxResponseBodyBytes,
+    allowLoopbackHTTP: Bool = false
   ) {
     self.baseURL = baseURL
     self.path = path
@@ -65,6 +67,7 @@ public struct ArtifactRequestOptions: Sendable {
     self.traceID = traceID
     self.headers = headers
     self.maxResponseBodyBytes = maxResponseBodyBytes
+    self.allowLoopbackHTTP = allowLoopbackHTTP
   }
 }
 
@@ -191,6 +194,7 @@ public enum Controlplane {
     let path = options.path?.trimmingCharacters(in: .whitespacesAndNewlines)
     let url = try artifactURL(
       baseURL: options.baseURL, path: path?.isEmpty == false ? path! : defaultPath)
+    try validateArtifactURL(url, allowLoopbackHTTP: options.allowLoopbackHTTP)
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -237,7 +241,10 @@ public enum Controlplane {
     session: URLSession,
     maxBytes: Int
   ) async throws -> (Data, HTTPURLResponse) {
-    let (bytes, response) = try await session.bytes(for: request)
+    let (bytes, response) = try await session.bytes(
+      for: request,
+      delegate: ControlplaneNoRedirectDelegate.shared
+    )
     guard let http = response as? HTTPURLResponse else {
       bytes.task.cancel()
       throw ControlplaneRequestError(
@@ -290,6 +297,55 @@ public enum Controlplane {
         responseBody: Data())
     }
     return url
+  }
+
+  private static func validateArtifactURL(_ url: URL, allowLoopbackHTTP: Bool) throws {
+    guard url.user == nil, url.password == nil, url.fragment == nil,
+      let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased()
+    else { throw transportPolicyDenied() }
+    if scheme == "https" { return }
+    if scheme == "http", allowLoopbackHTTP, isControlplaneLoopbackHost(host) { return }
+    throw transportPolicyDenied()
+  }
+
+  private static func transportPolicyDenied() -> ControlplaneRequestError {
+    ControlplaneRequestError(
+      status: 0,
+      code: "transport_policy_denied",
+      message: "Controlplane transport security policy denied URL.",
+      responseBody: Data()
+    )
+  }
+
+  private static func isControlplaneLoopbackHost(_ host: String) -> Bool {
+    if host == "localhost" || host == "::1" { return true }
+    let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count == 4 else { return false }
+    let octets = parts.compactMap { part -> Int? in
+      let value = String(part)
+      guard value == "0" || (!value.hasPrefix("0") && value.allSatisfy(\.isNumber)) else {
+        return nil
+      }
+      guard let parsed = Int(value), parsed <= 255 else { return nil }
+      return parsed
+    }
+    return octets.count == 4 && octets[0] == 127
+  }
+}
+
+private final class ControlplaneNoRedirectDelegate: NSObject, URLSessionTaskDelegate,
+  @unchecked Sendable
+{
+  static let shared = ControlplaneNoRedirectDelegate()
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse,
+    newRequest request: URLRequest,
+    completionHandler: @escaping (URLRequest?) -> Void
+  ) {
+    completionHandler(nil)
   }
 }
 

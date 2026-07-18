@@ -30,11 +30,6 @@ func NewNetworkPlaintextPolicy(options NetworkPlaintextPolicyOptions) (Transport
 	return transportsecurity.NewNetworkPlaintextPolicy(options)
 }
 
-// Deprecated: use RequireTLS, AllowPlaintextForLoopback, or NewNetworkPlaintextPolicy.
-func AllowPlaintext(ctx context.Context, input TransportSecurityPolicyInput) error {
-	return transportsecurity.AllowPlaintext(ctx, input)
-}
-
 func evaluateTransportSecurity(ctx context.Context, rawURL string, path fserrors.Path, policy TransportSecurityPolicy) error {
 	if _, err := transportsecurity.Evaluate(ctx, rawURL, path, transportsecurity.RuntimeNative, policy); err != nil {
 		return wrapErr(path, fserrors.StageValidate, fserrors.CodeTransportPolicyDenied, err)

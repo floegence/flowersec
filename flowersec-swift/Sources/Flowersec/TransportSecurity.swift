@@ -41,11 +41,6 @@ public struct NetworkPlaintextPolicyOptions: Equatable, Sendable {
 public enum TransportSecurityPolicy: Sendable {
   case requireTLS
   case allowPlaintextForLoopback
-  @available(
-    *, deprecated,
-    message: "Use requireTLS, allowPlaintextForLoopback, or networkPlaintext(options:)."
-  )
-  case allowPlaintext
   case custom(@Sendable (TransportSecurityPolicyInput) async throws -> Bool)
 
   public static func networkPlaintext(options: NetworkPlaintextPolicyOptions) throws -> Self {
@@ -207,8 +202,6 @@ enum FlowersecTransportSecurity {
         allowed = target.scheme == "wss"
       case .allowPlaintextForLoopback:
         allowed = target.scheme == "wss" || isLiteralLoopbackHost(target.host)
-      case .allowPlaintext:
-        allowed = true
       case .custom(let evaluate):
         try Task.checkCancellation()
         allowed = try await evaluate(input)

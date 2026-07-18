@@ -1,6 +1,5 @@
 export { createNodeWsFactory } from "./wsFactory.js";
 export {
-  AllowPlaintext,
   AllowPlaintextForLoopback,
   createNetworkPlaintextPolicy,
   PlaintextRiskAcceptance,

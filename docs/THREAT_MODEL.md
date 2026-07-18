@@ -51,9 +51,10 @@ Attach layer (tunnel path):
 - **Attach is plaintext by design**: the first tunnel message is JSON attach metadata (plus a bearer token) sent over the websocket before E2EE. Anyone who can observe `ws://` traffic can see the attach JSON and token.
 - **Tokens are bearer credentials**: do not log tokens, do not store them in client-visible locations, and do not reuse them after any failure.
 - **Use `wss://` in production**: for any non-local deployment, always use TLS (`wss://`) or terminate TLS at a trusted reverse proxy.
-- **Transport policy is fail-closed by default**: high-level clients use `RequireTLS` when the caller omits a policy. `AllowPlaintextForLoopback` and the host-scoped network plaintext policy are explicit opt-ins; `plaintext_transport` is emitted only when an opt-in policy actually permits `ws://`. The network policy requires canonical non-loopback IP literals plus a typed acceptance of pre-E2EE credential exposure. The legacy `AllowPlaintext` policy remains only for compatibility and is deprecated.
+- **Transport policy is fail-closed by default**: high-level clients use `RequireTLS` when the caller omits a policy. `AllowPlaintextForLoopback` and the host-scoped network plaintext policy are the only explicit plaintext opt-ins; `plaintext_transport` is emitted only when an opt-in policy actually permits `ws://`. The network policy requires canonical non-loopback IP literals plus a typed acceptance of pre-E2EE credential exposure.
 - **Loopback means a literal target**: `AllowPlaintextForLoopback` recognizes only `localhost`, canonical `127.0.0.0/8` IPv4 literals, and `::1`. It does not resolve DNS names.
 - **Network plaintext is bound to exact IP literals**: the network plaintext policy rejects DNS names, wildcards, loopback, link-local, multicast, unspecified, mapped, zoned, and non-canonical IP forms. It never resolves DNS and does not permit a failed host match to fall back to unrestricted plaintext.
+- **Artifact acquisition is HTTPS-only by default**: each SDK permits HTTP only through an explicit artifact option and only for literal loopback targets. Userinfo, non-canonical loopback forms, unsupported schemes, and redirects are rejected so bearer credentials cannot be forwarded to another origin.
 
 Untrusted tunnel:
 

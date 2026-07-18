@@ -10,7 +10,6 @@ final class TransportSecurityTests: XCTestCase {
       (.allowPlaintextForLoopback, "ws://localhost/ws"),
       (.allowPlaintextForLoopback, "ws://127.42.0.9/ws"),
       (.allowPlaintextForLoopback, "ws://[::1]/ws"),
-      (.allowPlaintext, "ws://example.com/ws"),
     ]
     for (policy, rawURL) in allowed {
       let url = try XCTUnwrap(URL(string: rawURL))
@@ -153,10 +152,9 @@ final class TransportSecurityTests: XCTestCase {
     await fulfillment(of: [emitted], timeout: 0.05)
   }
 
-  func testExplicitPlaintextPolicyEmitsDiagnostic() async throws {
+  func testLoopbackPlaintextPolicyEmitsDiagnostic() async throws {
     for (policy, rawURL) in [
-      (TransportSecurityPolicy.allowPlaintext, "ws://example.com/ws"),
-      (.allowPlaintextForLoopback, "ws://localhost/ws"),
+      (TransportSecurityPolicy.allowPlaintextForLoopback, "ws://localhost/ws")
     ] {
       let emitted = expectation(description: "plaintext diagnostic")
       let genericEmitted = expectation(description: "generic plaintext diagnostic")

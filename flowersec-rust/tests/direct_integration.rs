@@ -5,6 +5,7 @@ use flowersec::{
     e2ee::{Secret32, ServerHandshakeOptions, Suite},
     endpoint::{DirectAcceptOptions, accept_direct},
     generated::flowersec::direct::v1::{DirectConnectInfo, Suite as DirectSuite},
+    observability::{DiagnosticCodeDomain, DiagnosticEvent, DiagnosticResult},
     rpc::Router,
     transport::TungsteniteTransport,
     transport_security::TransportSecurityPolicy,
@@ -13,7 +14,7 @@ use flowersec::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::net::TcpListener;
@@ -62,8 +63,13 @@ async fn high_level_direct_client_and_endpoint_interoperate() {
         session.serve_rpc(router).await.expect("serve RPC");
     });
 
+    let events = Arc::new(Mutex::new(Vec::<DiagnosticEvent>::new()));
     let options = ConnectOptions {
         transport_security_policy: TransportSecurityPolicy::allow_plaintext_for_loopback(),
+        observer: Some(Arc::new({
+            let events = events.clone();
+            move |event: &DiagnosticEvent| events.lock().unwrap().push(event.clone())
+        })),
         ..ConnectOptions::default()
     };
     let client = connect_direct(
@@ -78,6 +84,20 @@ async fn high_level_direct_client_and_endpoint_interoperate() {
     )
     .await
     .expect("connect direct");
+
+    let plaintext_events = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| event.code == "plaintext_transport")
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(plaintext_events.len(), 1);
+    let plaintext = &plaintext_events[0];
+    assert_eq!(plaintext.path, flowersec::Path::Direct);
+    assert_eq!(plaintext.stage, Stage::Transport);
+    assert_eq!(plaintext.code_domain, DiagnosticCodeDomain::Event);
+    assert_eq!(plaintext.result, DiagnosticResult::Skip);
 
     let response: PingResponse = client
         .rpc()

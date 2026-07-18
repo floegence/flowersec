@@ -145,6 +145,7 @@ describe("go<->ts integration", () => {
       const artifact = await requestConnectArtifact({
         baseUrl: ready.controlplane_base_url,
         endpointId: "server-1",
+        allowLoopbackHTTP: true,
         correlation: { traceId: "trace-go-helper-1" },
       });
 
@@ -168,6 +169,7 @@ describe("go<->ts integration", () => {
         baseUrl: ready.controlplane_base_url,
         endpointId: "server-1",
         entryTicket: ready.entry_ticket,
+        allowLoopbackHTTP: true,
       });
 
       const client = await connectNode(artifact, { origin: "https://interop.flowersec.test", transportSecurityPolicy: AllowPlaintextForLoopback });
@@ -186,6 +188,7 @@ describe("go<->ts integration", () => {
         source: createControlplaneArtifactSource({
           baseUrl: ready.controlplane_base_url,
           endpointId: "server-1",
+          allowLoopbackHTTP: true,
         }),
         connect: {
           origin: "https://interop.flowersec.test",
@@ -216,6 +219,7 @@ describe("go<->ts integration", () => {
       const serviceWorkerArtifact = await requestConnectArtifact({
         baseUrl: ready.controlplane_base_url,
         endpointId: "server-1",
+        allowLoopbackHTTP: true,
         payload: {
           proxy_mode: "service_worker",
           scope_version: 1,
@@ -230,6 +234,7 @@ describe("go<->ts integration", () => {
       const controllerArtifact = await requestConnectArtifact({
         baseUrl: ready.controlplane_base_url,
         endpointId: "server-1",
+        allowLoopbackHTTP: true,
         payload: {
           proxy_mode: "controller_bridge",
           scope_version: 1,
@@ -247,6 +252,7 @@ describe("go<->ts integration", () => {
       const criticalArtifact = await requestConnectArtifact({
         baseUrl: ready.controlplane_base_url,
         endpointId: "server-1",
+        allowLoopbackHTTP: true,
         payload: {
           proxy_mode: "service_worker",
           scope_version: 2,
@@ -262,6 +268,7 @@ describe("go<->ts integration", () => {
       const optionalArtifact = await requestConnectArtifact({
         baseUrl: ready.controlplane_base_url,
         endpointId: "server-1",
+        allowLoopbackHTTP: true,
         payload: {
           proxy_mode: "service_worker",
           scope_version: 2,

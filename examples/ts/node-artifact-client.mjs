@@ -10,6 +10,7 @@ const origin = process.env.FSEC_ORIGIN || "http://127.0.0.1:5173";
 const artifact = await requestConnectArtifact({
   baseUrl,
   endpointId,
+  allowLoopbackHTTP: true,
 });
 
 const client = await connectNode(artifact, { origin, transportSecurityPolicy: AllowPlaintextForLoopback });

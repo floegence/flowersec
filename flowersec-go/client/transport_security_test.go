@@ -28,10 +28,6 @@ func TestTransportSecurityPresets(t *testing.T) {
 		{name: "short ipv4", policy: AllowPlaintextForLoopback, rawURL: "ws://127.1/ws"},
 		{name: "leading zero ipv4", policy: AllowPlaintextForLoopback, rawURL: "ws://127.0.00.1/ws"},
 		{name: "integer ipv4", policy: AllowPlaintextForLoopback, rawURL: "ws://2130706433/ws"},
-		{name: "arbitrary plaintext", policy: AllowPlaintext, rawURL: "ws://example.com/ws", allowed: true},
-		{name: "arbitrary tls", policy: AllowPlaintext, rawURL: "wss://example.com/ws", allowed: true},
-		{name: "non websocket scheme", policy: AllowPlaintext, rawURL: "http://example.com/ws"},
-		{name: "userinfo", policy: AllowPlaintext, rawURL: "ws://user@example.com/ws"},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -84,11 +80,11 @@ func TestTransportSecurityCustomPolicyCannotAllowNonWebSocketScheme(t *testing.T
 	}
 }
 
-func TestTransportSecurityExplicitPlaintextPolicyEmitsDiagnostic(t *testing.T) {
+func TestTransportSecurityLoopbackPlaintextPolicyEmitsDiagnostic(t *testing.T) {
 	t.Parallel()
 	recorder := &transportDiagnosticObserver{events: make(chan observability.DiagnosticEvent, 2)}
 	observer := observability.NormalizeClientObserver(recorder, observability.ClientObserverContext{Path: fserrors.PathDirect})
-	err := evaluateTransportSecurity(context.Background(), "ws://example.com/ws", fserrors.PathDirect, AllowPlaintext, observer)
+	err := evaluateTransportSecurity(context.Background(), "ws://localhost/ws", fserrors.PathDirect, AllowPlaintextForLoopback, observer)
 	if err != nil {
 		t.Fatalf("evaluateTransportSecurity() error = %v", err)
 	}
@@ -111,8 +107,8 @@ func TestTransportSecurityMissingPolicyDoesNotEmitPlaintextDiagnostic(t *testing
 	t.Parallel()
 	recorder := &transportDiagnosticObserver{events: make(chan observability.DiagnosticEvent, 1)}
 	observer := observability.NormalizeClientObserver(recorder, observability.ClientObserverContext{Path: fserrors.PathDirect})
-	if err := evaluateTransportSecurity(context.Background(), "ws://example.com/ws", fserrors.PathDirect, nil, observer); err != nil {
-		t.Fatalf("evaluateTransportSecurity() error = %v", err)
+	if err := evaluateTransportSecurity(context.Background(), "ws://example.com/ws", fserrors.PathDirect, nil, observer); err == nil {
+		t.Fatal("evaluateTransportSecurity() error = nil, want TLS policy denial")
 	}
 	select {
 	case event := <-recorder.events:

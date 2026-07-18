@@ -63,13 +63,11 @@ async fn shared_portable_protocol_vectors_match_rust_contracts() {
     assert_eq!(vectors.version, 1);
 
     for test in vectors.transport_policy {
-        #[allow(deprecated)]
         let policy = match test.policy.as_str() {
             "require_tls" => TransportSecurityPolicy::require_tls(),
             "allow_plaintext_for_loopback" => {
                 TransportSecurityPolicy::allow_plaintext_for_loopback()
             }
-            "allow_plaintext" => TransportSecurityPolicy::allow_plaintext(),
             "network_plaintext" => {
                 assert_eq!(
                     test.risk_acceptance.as_deref(),

@@ -20,7 +20,8 @@ final class GoInteropTests: XCTestCase {
       ArtifactRequestOptions(
         baseURL: ready.controlplaneBaseURL,
         endpointID: "swift-go-interop",
-        traceID: "trace-swift-go-interop"
+        traceID: "trace-swift-go-interop",
+        allowLoopbackHTTP: true
       )
     )
     XCTAssertEqual(artifact.metadata.correlation?.traceID, "trace-swift-go-interop")
