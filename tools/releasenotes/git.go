@@ -19,6 +19,13 @@ func loadReleaseNotes(repoPath, currentTag, currentRef string) (*releaseNotes, e
 	if err != nil {
 		return nil, err
 	}
+	var curatedMarkdown string
+	if kind == releaseKindGo {
+		curatedMarkdown, err = readCuratedReleaseNotes(repoPath, currentRef, versionFromTag(currentTag, kind))
+		if err != nil {
+			return nil, err
+		}
+	}
 	currentCommit, err := resolveCommitRef(repoPath, currentRef)
 	if err != nil {
 		return nil, err
@@ -31,7 +38,32 @@ func loadReleaseNotes(repoPath, currentTag, currentRef string) (*releaseNotes, e
 	if err != nil {
 		return nil, err
 	}
-	return buildReleaseNotes(currentTag, previousTag, kind, commits), nil
+	notes := buildReleaseNotes(currentTag, previousTag, kind, commits)
+	notes.CuratedMarkdown = curatedMarkdown
+	return notes, nil
+}
+
+func readCuratedReleaseNotes(repoPath, currentRef, version string) (string, error) {
+	path := "docs/releases/" + version + ".md"
+	out, err := gitOutput(repoPath, "show", currentRef+":"+path)
+	if err != nil {
+		return "", fmt.Errorf("read curated release document %s from %s: %w", path, currentRef, err)
+	}
+
+	markdown := strings.ReplaceAll(string(out), "\r\n", "\n")
+	trimmed := strings.TrimSpace(markdown)
+	if trimmed == "" {
+		return "", fmt.Errorf("curated release document %s must not be empty", path)
+	}
+	wantHeading := "# Flowersec " + version
+	lines := strings.Split(trimmed, "\n")
+	if lines[0] != wantHeading {
+		return "", fmt.Errorf("curated release document %s must start with %q", path, wantHeading)
+	}
+	if strings.TrimSpace(strings.Join(lines[1:], "\n")) == "" {
+		return "", fmt.Errorf("curated release document %s must include content after %q", path, wantHeading)
+	}
+	return trimmed, nil
 }
 
 func resolveCommitRef(repoPath, ref string) (string, error) {
@@ -51,12 +83,6 @@ func findPreviousTag(repoPath, currentRef, currentTag string, kind releaseKind) 
 	if err != nil {
 		return "", err
 	}
-	if len(lines) == 0 {
-		if kind == releaseKindSwift {
-			return latestMergedTag(repoPath, currentRef, "flowersec-go/v*")
-		}
-		return "", nil
-	}
 	for i, tag := range lines {
 		if tag != currentTag {
 			continue
@@ -69,10 +95,21 @@ func findPreviousTag(repoPath, currentRef, currentTag string, kind releaseKind) 
 		}
 		return lines[i-1], nil
 	}
-	if kind == releaseKindSwift {
+
+	existing, err := gitLines(repoPath, "tag", "--list", currentTag)
+	if err != nil {
+		return "", err
+	}
+	if len(existing) != 0 {
+		return "", fmt.Errorf("current tag %q not found among tags merged into %s", currentTag, currentRef)
+	}
+	if len(lines) != 0 {
 		return lines[len(lines)-1], nil
 	}
-	return "", fmt.Errorf("current tag %q not found among tags merged into %s", currentTag, currentRef)
+	if kind == releaseKindSwift {
+		return latestMergedTag(repoPath, currentRef, "flowersec-go/v*")
+	}
+	return "", nil
 }
 
 func latestMergedTag(repoPath, currentRef, pattern string) (string, error) {

@@ -22,11 +22,12 @@ type section struct {
 }
 
 type releaseNotes struct {
-	CurrentTag  string
-	PreviousTag string
-	Version     string
-	Kind        releaseKind
-	Sections    []section
+	CurrentTag      string
+	PreviousTag     string
+	Version         string
+	Kind            releaseKind
+	CuratedMarkdown string
+	Sections        []section
 }
 
 type releaseKind string
@@ -96,7 +97,12 @@ func versionFromTag(tag string, kind releaseKind) string {
 
 func renderMarkdown(notes *releaseNotes) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Flowersec %s\n\n", notes.Version)
+	if notes.CuratedMarkdown != "" {
+		b.WriteString(strings.TrimSpace(notes.CuratedMarkdown))
+		b.WriteString("\n\n## Changelog\n\n")
+	} else {
+		fmt.Fprintf(&b, "# Flowersec %s\n\n", notes.Version)
+	}
 	if notes.PreviousTag != "" {
 		fmt.Fprintf(&b, "Changes since `%s`.\n\n", notes.PreviousTag)
 	} else {

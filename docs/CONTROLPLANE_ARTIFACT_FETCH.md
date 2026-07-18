@@ -12,12 +12,8 @@ TypeScript:
   - `ControlplaneRequestError`
   - `DEFAULT_CONNECT_ARTIFACT_PATH`
   - `DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`
-- `@floegence/flowersec-core/browser` (compatibility aliases)
-  - `requestConnectArtifact(...)`
-  - `requestEntryConnectArtifact(...)`
-  - `ControlplaneRequestError`
 
-For browser and Node code, prefer importing artifact-fetch helpers from `@floegence/flowersec-core/controlplane`. The browser subpath keeps same-name compatibility aliases.
+Browser and Node code import artifact-fetch helpers from `@floegence/flowersec-core/controlplane`.
 
 Go:
 

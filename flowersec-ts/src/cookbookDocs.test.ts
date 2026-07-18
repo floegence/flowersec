@@ -75,6 +75,9 @@ describe("cookbook documentation contracts", () => {
   it("keeps the controlplane envelope and helper error contract explicit", () => {
     const doc = readRepoFile("docs", "CONTROLPLANE_ARTIFACT_FETCH.md");
 
+    expect(doc).toContain("@floegence/flowersec-core/controlplane");
+    expect(doc).not.toContain("@floegence/flowersec-core/browser` (compatibility aliases)");
+    expect(doc).not.toContain("The browser subpath keeps same-name compatibility aliases.");
     expect(doc).toContain('"connect_artifact"');
     expect(doc).toContain("ControlplaneRequestError");
     expect(doc).toContain("client.RequestError");

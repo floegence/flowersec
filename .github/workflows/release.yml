@@ -71,15 +71,11 @@ jobs:
           set -euo pipefail
           npx -y npm@11.5.1 --version
 
-      - name: Validate tag matches flowersec-ts package version
-        run: |
-          set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
-          TS_VERSION="$(node --input-type=module -e "import fs from 'node:fs'; console.log(JSON.parse(fs.readFileSync('flowersec-ts/package.json', 'utf8')).version);")"
-          if [ "${VERSION}" != "${TS_VERSION}" ]; then
-            echo "Tag version ${VERSION} must match flowersec-ts/package.json version ${TS_VERSION}"
-            exit 1
-          fi
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate release version facts
+        run: node scripts/check-release-version-consistency.mjs "${{ steps.vars.outputs.version }}"
 
       - name: Verify all language tags point to this commit
         run: scripts/verify-release-tags.sh "${{ steps.vars.outputs.version }}" "${GITHUB_SHA}"

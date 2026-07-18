@@ -36,12 +36,13 @@ jobs:
           VERSION="${{ inputs.version }}"
           git fetch --force origin "refs/tags/flowersec-rust/v${VERSION}:refs/tags/flowersec-rust/v${VERSION}"
           git checkout --detach "refs/tags/flowersec-rust/v${VERSION}"
-          CRATE_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' flowersec-rust/Cargo.toml | head -1)"
-          if [[ "$VERSION" != "$CRATE_VERSION" ]]; then
-            echo "Tag version $VERSION must match crate version $CRATE_VERSION" >&2
-            exit 1
-          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate release version facts
+        run: node scripts/check-release-version-consistency.mjs "${{ steps.version.outputs.version }}"
 
       - name: Verify release tags
         run: scripts/verify-release-tags.sh "${{ steps.version.outputs.version }}" "$(git rev-parse HEAD)"
@@ -59,10 +60,6 @@ jobs:
             404) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
             *) echo "Unexpected crates.io response status: $STATUS" >&2; exit 1 ;;
           esac
-
-      - name: Setup Rust
-        if: steps.published.outputs.exists != 'true'
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Authenticate to crates.io
         if: steps.published.outputs.exists != 'true'

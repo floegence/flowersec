@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress interop-stress-full fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench bench-test check stability-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress interop-stress-full fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench bench-test check stability-check go-cover-check compat-check nightly-check
 
 INTEROP_CELLS ?= go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust
 INTEROP_REPORT_DIR ?= $(or $(TMPDIR),/tmp)
@@ -250,6 +250,14 @@ install-hooks:
 
 release-policy-check:
 	./scripts/check-release-workflow-policy.sh
+	$(MAKE) release-version-check
+	$(MAKE) release-test
+
+release-version-check:
+	node scripts/check-release-version-consistency.mjs
+
+release-test:
+	node --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs
 
 readme-localization-check:
 	node ./scripts/check-readme-localizations.mjs
@@ -312,6 +320,7 @@ nightly-check:
 	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAttachWithConstraints -fuzztime=5s ./tunnel/protocol
 
 check:
+	$(MAKE) release-policy-check
 	$(MAKE) ts-ci
 	$(MAKE) readme-localization-check
 	$(MAKE) gen-check

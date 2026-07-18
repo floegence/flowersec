@@ -52,6 +52,156 @@ func TestBuildSwiftReleaseNotesUsesRootTagAndSwiftPMAssets(t *testing.T) {
 	}
 }
 
+func TestGoReleaseNotesRequireCuratedDocument(t *testing.T) {
+	repo := newReleaseNotesRepo(t)
+	commitFile(t, repo, "feature.txt", "feature\n", "feat: add secure transport contracts")
+	runGit(t, repo, "tag", "flowersec-go/v0.26.0")
+
+	_, err := loadReleaseNotes(repo, "flowersec-go/v0.26.0", "flowersec-go/v0.26.0")
+	if err == nil {
+		t.Fatal("expected a missing curated release document to fail")
+	}
+	if !strings.Contains(err.Error(), "docs/releases/0.26.0.md") {
+		t.Fatalf("expected the missing release document path in the error, got %q", err)
+	}
+}
+
+func TestGoReleaseNotesRejectInvalidCuratedDocument(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "empty", body: "\n", want: "must not be empty"},
+		{name: "heading only", body: "# Flowersec 0.26.0\n", want: "must include content after"},
+		{name: "wrong heading", body: "# Flowersec 0.25.0\n\nDetails.\n", want: "must start with"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newReleaseNotesRepo(t)
+			commitFile(t, repo, "docs/releases/0.26.0.md", tt.body, "docs: add curated release notes")
+			runGit(t, repo, "tag", "flowersec-go/v0.26.0")
+
+			_, err := loadReleaseNotes(repo, "flowersec-go/v0.26.0", "flowersec-go/v0.26.0")
+			if err == nil {
+				t.Fatal("expected invalid curated release document to fail")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %q", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestGoReleaseNotesReadCuratedDocumentFromCurrentRef(t *testing.T) {
+	repo := newReleaseNotesRepo(t)
+	commitFile(t, repo, "baseline.txt", "baseline\n", "feat: publish baseline")
+	runGit(t, repo, "tag", "flowersec-go/v0.25.0")
+
+	curated := "# Flowersec 0.26.0\n\nCurated release contract from the tagged commit.\n"
+	commitFile(t, repo, "docs/releases/0.26.0.md", curated, "feat: add automatic changelog entry")
+	runGit(t, repo, "tag", "flowersec-go/v0.26.0")
+	writeFile(t, filepath.Join(repo, "docs/releases/0.26.0.md"), "# Flowersec 0.26.0\n\nDirty worktree content.\n")
+
+	notes, err := loadReleaseNotes(repo, "flowersec-go/v0.26.0", "flowersec-go/v0.26.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	md := renderMarkdown(notes)
+	curatedAt := strings.Index(md, "Curated release contract from the tagged commit.")
+	changelogAt := strings.Index(md, "## Changelog")
+	automaticAt := strings.Index(md, "Add automatic changelog entry")
+	if curatedAt < 0 {
+		t.Fatalf("expected curated content from the release ref, got:\n%s", md)
+	}
+	if strings.Contains(md, "Dirty worktree content") {
+		t.Fatalf("release notes must not read the current worktree, got:\n%s", md)
+	}
+	if changelogAt < 0 || automaticAt < 0 || curatedAt > changelogAt || changelogAt > automaticAt {
+		t.Fatalf("curated content must be separated from and precede the automatic changelog, got:\n%s", md)
+	}
+}
+
+func TestGoReleaseNotesRenderBeforeCurrentTagExists(t *testing.T) {
+	repo := newReleaseNotesRepo(t)
+	commitFile(t, repo, "baseline.txt", "baseline\n", "feat: publish baseline")
+	runGit(t, repo, "tag", "flowersec-go/v0.25.0")
+	commitFile(
+		t,
+		repo,
+		"docs/releases/0.26.0.md",
+		"# Flowersec 0.26.0\n\nRelease preflight content.\n",
+		"feat: prepare secure transport release",
+	)
+
+	notes, err := loadReleaseNotes(repo, "flowersec-go/v0.26.0", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notes.PreviousTag != "flowersec-go/v0.25.0" {
+		t.Fatalf("previous tag = %q, want flowersec-go/v0.25.0", notes.PreviousTag)
+	}
+	if !strings.Contains(renderMarkdown(notes), "Release preflight content.") {
+		t.Fatal("preflight release notes must include curated content from HEAD")
+	}
+}
+
+func TestFindPreviousTagRejectsCurrentTagOutsideReleaseCommit(t *testing.T) {
+	repo := newReleaseNotesRepo(t)
+	commitFile(t, repo, "main.txt", "main\n", "feat: publish baseline")
+	runGit(t, repo, "tag", "flowersec-go/v0.25.0")
+	runGit(t, repo, "switch", "-c", "other")
+	commitFile(t, repo, "other.txt", "other\n", "feat: unrelated release commit")
+	runGit(t, repo, "tag", "flowersec-go/v0.26.0")
+	runGit(t, repo, "switch", "-")
+
+	_, err := findPreviousTag(repo, "HEAD", "flowersec-go/v0.26.0", releaseKindGo)
+	if err == nil || !strings.Contains(err.Error(), "not found among tags merged") {
+		t.Fatalf("expected an unmerged current tag error, got %v", err)
+	}
+}
+
+func TestVersion026ReleaseDocumentationCoversPublishedContract(t *testing.T) {
+	releaseBody, err := os.ReadFile(filepath.Join("..", "..", "docs", "releases", "0.26.0.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertVersion026DocumentationFacts(t, "release notes", string(releaseBody))
+}
+
+func TestVersion026MigrationDocumentationCoversUpgradeContract(t *testing.T) {
+	migrationBody, err := os.ReadFile(filepath.Join("..", "..", "docs", "MIGRATION_0.26.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertVersion026DocumentationFacts(t, "migration guide", string(migrationBody))
+}
+
+func assertVersion026DocumentationFacts(t *testing.T, document, body string) {
+	t.Helper()
+	for _, required := range []string{
+		"AllowPlaintext",
+		"proxy/profile",
+		"connectTunnelProxyBrowser",
+		"connectTunnelProxyControllerBrowser",
+		"HTTPS",
+		"loopback",
+		"ArtifactHttpClient",
+		"MaxTokenLifetime",
+		"MaxInitHorizon",
+		"MaxReplayEntries",
+		"(audience, issuer)",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("0.26 %s must contain %q", document, required)
+		}
+	}
+	if strings.Contains(body, "ArtifactHTTPClient") {
+		t.Fatalf("0.26 %s must use the exact Rust type name ArtifactHttpClient", document)
+	}
+}
+
 func TestFindPreviousTagAndCollectCommits(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
@@ -213,6 +363,22 @@ func TestReleaseKindForTag(t *testing.T) {
 	if _, err := releaseKindForTag("v0.19.11"); err == nil {
 		t.Fatal("expected prefixed Swift tag error")
 	}
+}
+
+func newReleaseNotesRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.name", "Codex")
+	runGit(t, repo, "config", "user.email", "codex@example.com")
+	return repo
+}
+
+func commitFile(t *testing.T, repo, name, body, subject string) {
+	t.Helper()
+	writeFile(t, filepath.Join(repo, name), body)
+	runGit(t, repo, "add", name)
+	runGit(t, repo, "commit", "-m", subject)
 }
 
 func runGit(t *testing.T, repo string, args ...string) {

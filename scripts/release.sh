@@ -30,12 +30,15 @@ if [[ "$head" != "$origin_main" ]]; then
   exit 1
 fi
 
-ts_version=$(node --input-type=module -e "import fs from 'node:fs'; console.log(JSON.parse(fs.readFileSync('flowersec-ts/package.json', 'utf8')).version)")
-rust_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' flowersec-rust/Cargo.toml | head -1)
-if [[ "$version" != "$ts_version" || "$version" != "$rust_version" ]]; then
-  echo "release version must match flowersec-ts/package.json and flowersec-rust/Cargo.toml" >&2
-  exit 1
-fi
+node scripts/check-release-version-consistency.mjs "$version"
+(
+  cd tools/releasenotes
+  go run . \
+    --repo ../.. \
+    --current-tag "flowersec-go/v$version" \
+    --current-ref "$head" \
+    --output /dev/null
+)
 
 tags=(
   "flowersec-go/v$version"
@@ -54,6 +57,15 @@ for tag in "${tags[@]}"; do
 done
 
 make release-check
+
+if [[ -n "$(git status --short)" ]]; then
+  echo "release-check modified the worktree" >&2
+  exit 1
+fi
+if [[ "$(git rev-parse HEAD)" != "$head" ]]; then
+  echo "release-check changed HEAD" >&2
+  exit 1
+fi
 
 created_tags=()
 cleanup_tags() {
