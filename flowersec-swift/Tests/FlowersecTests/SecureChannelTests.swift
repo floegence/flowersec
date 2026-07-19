@@ -98,6 +98,101 @@ final class FlowersecSecureChannelTests: XCTestCase {
     XCTAssertEqual(finalCloseCount, 1)
   }
 
+  func testReadBufferPreservesFragmentedRecordsAndClearsAfterFullConsumption() async throws {
+    let key = Data(repeating: 0x31, count: 32)
+    let noncePrefix = Data([1, 2, 3, 4])
+    let frames = try [Data("abc".utf8), Data("defgh".utf8)].enumerated().map { index, data in
+      try FlowersecRecordCodec.encrypt(
+        key: key,
+        noncePrefix: noncePrefix,
+        flags: 0,
+        seq: UInt64(index + 1),
+        plaintext: data
+      )
+    }
+    let channel = FlowersecSecureChannel(
+      transport: ScriptedReadBinaryTransport(frames: frames),
+      keys: keyState(key: key, noncePrefix: noncePrefix)
+    )
+
+    let first = try await channel.readExact(5)
+    let second = try await channel.readExact(3)
+    XCTAssertEqual(first, Data("abcde".utf8))
+    XCTAssertEqual(second, Data("fgh".utf8))
+    await assertReadBuffer(channel, storageCount: 0, offset: 0)
+    await channel.close()
+  }
+
+  func testReadBufferCompactsOnlyAfterConsumedPrefixReachesThresholdAndHalfStorage() async throws {
+    let key = Data(repeating: 0x31, count: 32)
+    let noncePrefix = Data([1, 2, 3, 4])
+    let payload = Data((0..<(160 * 1024)).map { UInt8($0 % 251) })
+    let frame = try FlowersecRecordCodec.encrypt(
+      key: key,
+      noncePrefix: noncePrefix,
+      flags: 0,
+      seq: 1,
+      plaintext: payload
+    )
+    let channel = FlowersecSecureChannel(
+      transport: ScriptedReadBinaryTransport(frames: [frame]),
+      keys: keyState(key: key, noncePrefix: noncePrefix)
+    )
+
+    let first = try await channel.readExact(32 * 1024)
+    XCTAssertEqual(first, payload.subdata(in: 0..<(32 * 1024)))
+    await assertReadBuffer(channel, storageCount: 160 * 1024, offset: 32 * 1024)
+
+    let second = try await channel.readExact(32 * 1024)
+    XCTAssertEqual(second, payload.subdata(in: (32 * 1024)..<(64 * 1024)))
+    await assertReadBuffer(channel, storageCount: 160 * 1024, offset: 64 * 1024)
+
+    let third = try await channel.readExact(16 * 1024)
+    XCTAssertEqual(third, payload.subdata(in: (64 * 1024)..<(80 * 1024)))
+    await assertReadBuffer(channel, storageCount: 80 * 1024, offset: 0)
+
+    let fourth = try await channel.readExact(80 * 1024)
+    XCTAssertEqual(fourth, payload.subdata(in: (80 * 1024)..<(160 * 1024)))
+    await assertReadBuffer(channel, storageCount: 0, offset: 0)
+    await channel.close()
+  }
+
+  func testReadBufferIsClearedOnCloseAndReadFailure() async throws {
+    let key = Data(repeating: 0x31, count: 32)
+    let noncePrefix = Data([1, 2, 3, 4])
+    let payload = Data(repeating: 0x61, count: 48 * 1024)
+    let frame = try FlowersecRecordCodec.encrypt(
+      key: key,
+      noncePrefix: noncePrefix,
+      flags: 0,
+      seq: 1,
+      plaintext: payload
+    )
+
+    let closedChannel = FlowersecSecureChannel(
+      transport: ScriptedReadBinaryTransport(frames: [frame]),
+      keys: keyState(key: key, noncePrefix: noncePrefix)
+    )
+    _ = try await closedChannel.readExact(16 * 1024)
+    await assertReadBuffer(closedChannel, storageCount: 48 * 1024, offset: 16 * 1024)
+    await closedChannel.close()
+    await assertReadBuffer(closedChannel, storageCount: 0, offset: 0)
+
+    let failedChannel = FlowersecSecureChannel(
+      transport: ScriptedReadBinaryTransport(frames: [frame]),
+      keys: keyState(key: key, noncePrefix: noncePrefix)
+    )
+    _ = try await failedChannel.readExact(16 * 1024)
+    await assertReadBuffer(failedChannel, storageCount: 48 * 1024, offset: 16 * 1024)
+    do {
+      _ = try await failedChannel.readExact(48 * 1024)
+      XCTFail("Expected the scripted transport to fail after its final frame")
+    } catch {
+      // Expected.
+    }
+    await assertReadBuffer(failedChannel, storageCount: 0, offset: 0)
+  }
+
   func testOutboundRecordsUsePreferredChunkSize() async throws {
     let transport = RecordingBinaryTransport()
     let key = Data(repeating: 0x31, count: 32)
@@ -542,6 +637,19 @@ final class FlowersecSecureChannelTests: XCTestCase {
     )
   }
 
+  private func assertReadBuffer(
+    _ channel: FlowersecSecureChannel,
+    storageCount: Int,
+    offset: Int,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) async {
+    let actualStorageCount = await channel.bufferedReadStorageCount
+    let actualOffset = await channel.bufferedReadOffset
+    XCTAssertEqual(actualStorageCount, storageCount, file: file, line: line)
+    XCTAssertEqual(actualOffset, offset, file: file, line: line)
+  }
+
   private func assertPublicRekeyCancellation(
     rekey: @escaping @Sendable () async throws -> Void,
     transport: PausingBinaryTransport,
@@ -627,6 +735,23 @@ private actor RecordingBinaryTransport: FlowersecBinaryTransport {
   func close() { closed += 1 }
   func frames() -> [Data] { written }
   func closeCount() -> Int { closed }
+}
+
+private actor ScriptedReadBinaryTransport: FlowersecBinaryTransport {
+  private var frames: [Data]
+
+  init(frames: [Data]) {
+    self.frames = frames
+  }
+
+  func writeBinary(_ data: Data) async throws { _ = data }
+
+  func readBinary() async throws -> Data {
+    guard !frames.isEmpty else { throw POSIXError(.ECONNRESET) }
+    return frames.removeFirst()
+  }
+
+  func close() async {}
 }
 
 private actor RekeyTestRPCStream: FlowersecRPCStream {

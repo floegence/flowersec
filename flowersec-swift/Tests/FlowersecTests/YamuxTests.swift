@@ -387,6 +387,76 @@ final class FlowersecYamuxTests: XCTestCase {
     await client.close()
   }
 
+  func testStreamReadBufferPreservesFragmentedFramesAndClearsAfterFullConsumption() async throws {
+    let channel = InMemoryYamuxChannel()
+    let client = FlowersecYamuxClient(channel: channel)
+    let stream = try await client.openStream()
+    _ = await channel.nextWrittenFrame()
+
+    var incoming = header(type: 0, flags: 0, streamID: 1, length: 3)
+    incoming.append(Data("abc".utf8))
+    incoming.append(header(type: 0, flags: 0, streamID: 1, length: 5))
+    incoming.append(Data("defgh".utf8))
+    await channel.feed(incoming)
+
+    let first = try await stream.readExact(5)
+    let second = try await stream.readExact(3)
+    XCTAssertEqual(first, Data("abcde".utf8))
+    XCTAssertEqual(second, Data("fgh".utf8))
+    await assertReadBuffer(stream, storageCount: 0, offset: 0)
+    await client.close()
+  }
+
+  func testStreamReadBufferCompactsOnlyAfterConsumedPrefixReachesThresholdAndHalfStorage() async throws {
+    let channel = InMemoryYamuxChannel()
+    let client = FlowersecYamuxClient(channel: channel)
+    let stream = try await client.openStream()
+    _ = await channel.nextWrittenFrame()
+    let payload = Data((0..<(160 * 1024)).map { UInt8($0 % 251) })
+    var incoming = header(type: 0, flags: 0, streamID: 1, length: UInt32(payload.count))
+    incoming.append(payload)
+    await channel.feed(incoming)
+
+    let first = try await stream.readExact(32 * 1024)
+    XCTAssertEqual(first, payload.subdata(in: 0..<(32 * 1024)))
+    await assertReadBuffer(stream, storageCount: 160 * 1024, offset: 32 * 1024)
+
+    let second = try await stream.readExact(32 * 1024)
+    XCTAssertEqual(second, payload.subdata(in: (32 * 1024)..<(64 * 1024)))
+    await assertReadBuffer(stream, storageCount: 160 * 1024, offset: 64 * 1024)
+
+    let third = try await stream.readExact(16 * 1024)
+    XCTAssertEqual(third, payload.subdata(in: (64 * 1024)..<(80 * 1024)))
+    await assertReadBuffer(stream, storageCount: 80 * 1024, offset: 0)
+
+    let fourth = try await stream.readExact(80 * 1024)
+    XCTAssertEqual(fourth, payload.subdata(in: (80 * 1024)..<(160 * 1024)))
+    await assertReadBuffer(stream, storageCount: 0, offset: 0)
+    await client.close()
+  }
+
+  func testStreamReadBufferOffsetResetsOnResetFailureAndSessionClose() async throws {
+    do {
+      let (_, client, stream) = try await partiallyConsumedStream()
+      try await stream.reset()
+      await assertReadBuffer(stream, storageCount: 0, offset: 0)
+      await client.close()
+    }
+
+    do {
+      let (channel, _, stream) = try await partiallyConsumedStream()
+      await channel.feed(header(type: 99, flags: 0, streamID: 0, length: 0))
+      await channel.waitUntilClosed()
+      await assertReadBuffer(stream, storageCount: 0, offset: 0)
+    }
+
+    do {
+      let (_, client, stream) = try await partiallyConsumedStream()
+      await client.close()
+      await assertReadBuffer(stream, storageCount: 0, offset: 0)
+    }
+  }
+
   func testLimitValidation() throws {
     XCTAssertThrowsError(try YamuxLimits(maxActiveStreams: 1, maxInboundStreams: 2).validate())
     XCTAssertThrowsError(
@@ -447,6 +517,34 @@ final class FlowersecYamuxTests: XCTestCase {
     data.appendUInt32BE(streamID)
     data.appendUInt32BE(length)
     return data
+  }
+
+  private func partiallyConsumedStream() async throws -> (
+    InMemoryYamuxChannel, FlowersecYamuxClient, FlowersecYamuxStream
+  ) {
+    let channel = InMemoryYamuxChannel()
+    let client = FlowersecYamuxClient(channel: channel)
+    let stream = try await client.openStream()
+    _ = await channel.nextWrittenFrame()
+    let payload = Data(repeating: 0x61, count: 48 * 1024)
+    var incoming = header(type: 0, flags: 0, streamID: 1, length: UInt32(payload.count))
+    incoming.append(payload)
+    await channel.feed(incoming)
+    _ = try await stream.readExact(16 * 1024)
+    return (channel, client, stream)
+  }
+
+  private func assertReadBuffer(
+    _ stream: FlowersecYamuxStream,
+    storageCount: Int,
+    offset: Int,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) async {
+    let actualStorageCount = await stream.bufferedReadStorageCount
+    let actualOffset = await stream.bufferedReadOffset
+    XCTAssertEqual(actualStorageCount, storageCount, file: file, line: line)
+    XCTAssertEqual(actualOffset, offset, file: file, line: line)
   }
 }
 

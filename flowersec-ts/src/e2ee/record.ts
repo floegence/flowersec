@@ -2,7 +2,7 @@ import { gcm } from "@noble/ciphers/aes";
 import { concatBytes, readU32be, readU64be, u32be, u64be } from "../utils/bin.js";
 import { PROTOCOL_VERSION, RECORD_MAGIC, RECORD_FLAG_APP, RECORD_FLAG_PING, RECORD_FLAG_REKEY } from "./constants.js";
 
-const te = new TextEncoder();
+const recordMagicBytes = new TextEncoder().encode(RECORD_MAGIC);
 
 // RecordFlag identifies the semantic meaning of a record frame.
 export type RecordFlag = typeof RECORD_FLAG_APP | typeof RECORD_FLAG_PING | typeof RECORD_FLAG_REKEY;
@@ -38,7 +38,7 @@ export function encryptRecord(
   const cipherLen = plaintext.length + 16;
   if (cipherLen > 0xffffffff) throw new RecordError("record too large");
   const header = new Uint8Array(4 + 1 + 1 + 8 + 4);
-  header.set(te.encode(RECORD_MAGIC), 0);
+  header.set(recordMagicBytes, 0);
   header[4] = PROTOCOL_VERSION;
   header[5] = flags & 0xff;
   header.set(u64be(seq), 6);
@@ -64,7 +64,14 @@ export function decryptRecord(
   const headerLen = 4 + 1 + 1 + 8 + 4;
   if (maxRecordBytes > 0 && frame.length > maxRecordBytes) throw new RecordError("record too large");
   if (frame.length < headerLen) throw new RecordError("record too short");
-  if (new TextDecoder().decode(frame.slice(0, 4)) !== RECORD_MAGIC) throw new RecordError("bad record magic");
+  if (
+    frame[0] !== recordMagicBytes[0] ||
+    frame[1] !== recordMagicBytes[1] ||
+    frame[2] !== recordMagicBytes[2] ||
+    frame[3] !== recordMagicBytes[3]
+  ) {
+    throw new RecordError("bad record magic");
+  }
   if (frame[4] !== PROTOCOL_VERSION) throw new RecordError("bad record version");
   const flags = frame[5]!;
   if (flags !== RECORD_FLAG_APP && flags !== RECORD_FLAG_PING && flags !== RECORD_FLAG_REKEY) {
@@ -76,7 +83,7 @@ export function decryptRecord(
   if (headerLen + n !== frame.length) throw new RecordError("length mismatch");
   const nonce = concatBytes([noncePrefix, u64be(seq)]);
   try {
-    const plaintext = gcm(key, nonce, frame.slice(0, headerLen)).decrypt(frame.slice(headerLen));
+    const plaintext = gcm(key, nonce, frame.subarray(0, headerLen)).decrypt(frame.subarray(headerLen));
     return { flags, seq, plaintext };
   } catch (e) {
     throw new RecordError(`decrypt failed: ${String(e)} len=${frame.length}`);

@@ -828,6 +828,7 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
   private let path: FlowersecPath
   private let maxWriteQueueBytes: Int
   private var readBuffer = Data()
+  private var readOffset = 0
   private var waiters: [CheckedContinuation<Void, Error>] = []
   private var windowWaiters: [WindowWaiter] = []
   private var nextWindowWaiterID: UInt64 = 1
@@ -891,10 +892,13 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
     out.reserveCapacity(length)
     while out.count < length {
       if let failure { throw failure }
-      if !readBuffer.isEmpty {
-        let count = min(length - out.count, readBuffer.count)
-        out.append(readBuffer.prefix(count))
-        readBuffer.removeFirst(count)
+      let available = readBuffer.count - readOffset
+      if available > 0 {
+        let count = min(length - out.count, available)
+        let end = readOffset + count
+        out.append(readBuffer[readOffset..<end])
+        readOffset = end
+        compactReadBufferAfterConsumption()
         await session?.releaseReceiveBytes(streamID: id, bytes: count)
         try await session?.sendWindowUpdate(streamID: id, bytes: UInt32(count))
         if readBuffer.isEmpty, localFinished, remoteFinished {
@@ -920,7 +924,7 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
     guard !terminalClosed else { return }
     terminalClosed = true
     localFinished = true
-    readBuffer.removeAll()
+    clearReadBuffer()
     resumeWaiters(error: FlowersecError.closed(path: path))
     resumeWindowWaiters(error: FlowersecError.closed(path: path))
     resumeWriteTurnWaiters(error: FlowersecError.closed(path: path))
@@ -959,7 +963,7 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
   fileprivate func fail(_ error: Error) {
     failure = error
     terminalClosed = true
-    readBuffer.removeAll()
+    clearReadBuffer()
     resumeWaiters(error: error)
     resumeWindowWaiters(error: error)
     resumeWriteTurnWaiters(error: error)
@@ -967,7 +971,7 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
 
   fileprivate func closeFromSession() {
     terminalClosed = true
-    readBuffer.removeAll()
+    clearReadBuffer()
     resumeWaiters(error: FlowersecError.closed(path: path))
     resumeWindowWaiters(error: FlowersecError.closed(path: path))
     resumeWriteTurnWaiters(error: FlowersecError.closed(path: path))
@@ -975,6 +979,24 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
 
   fileprivate var isFullyDrained: Bool {
     localFinished && remoteFinished && readBuffer.isEmpty
+  }
+
+  var bufferedReadStorageCount: Int { readBuffer.count }
+  var bufferedReadOffset: Int { readOffset }
+
+  private func compactReadBufferAfterConsumption() {
+    let available = readBuffer.count - readOffset
+    if available == 0 {
+      clearReadBuffer()
+    } else if readOffset >= 64 * 1024, available <= readOffset {
+      readBuffer.removeSubrange(0..<readOffset)
+      readOffset = 0
+    }
+  }
+
+  private func clearReadBuffer() {
+    readBuffer.removeAll()
+    readOffset = 0
   }
 
   private func waitForData() async throws {

@@ -42,10 +42,6 @@ describe("record", () => {
   test("decryptRecord validates header fields", () => {
     const { key, noncePrefix, frame } = makeFrame();
 
-    const badMagic = frame.slice();
-    badMagic[0] = 0x00;
-    expect(() => decryptRecord(key, noncePrefix, badMagic, 1n, 1 << 20)).toThrow(/bad record magic/);
-
     const badVersion = frame.slice();
     badVersion[4] = 9;
     expect(() => decryptRecord(key, noncePrefix, badVersion, 1n, 1 << 20)).toThrow(/bad record version/);
@@ -56,6 +52,30 @@ describe("record", () => {
 
     expect(() => decryptRecord(key, noncePrefix, frame, 2n, 1 << 20)).toThrow(/bad seq/);
     expect(() => decryptRecord(key, noncePrefix, frame, 0n, 1 << 20)).toThrow(/bad seq/);
+  });
+
+  test("decryptRecord rejects changes to every record magic byte", () => {
+    const { key, noncePrefix, frame } = makeFrame();
+
+    for (let offset = 0; offset < 4; offset++) {
+      const badMagic = frame.slice();
+      badMagic[offset] ^= 0xff;
+      expect(() => decryptRecord(key, noncePrefix, badMagic, 1n, 1 << 20)).toThrow(/bad record magic/);
+    }
+  });
+
+  test("decryptRecord accepts a frame view with a non-zero byte offset", () => {
+    const { key, noncePrefix, frame } = makeFrame();
+    const prefixBytes = 3;
+    const storage = new Uint8Array(prefixBytes + frame.length + 5);
+    storage.set(frame, prefixBytes);
+    const frameView = storage.subarray(prefixBytes, prefixBytes + frame.length);
+
+    const record = decryptRecord(key, noncePrefix, frameView, 1n, 1 << 20);
+
+    expect(record.flags).toBe(RECORD_FLAG_APP);
+    expect(record.seq).toBe(1n);
+    expect(Array.from(record.plaintext)).toEqual([1, 2, 3]);
   });
 
   test("decryptRecord validates length mismatch", () => {

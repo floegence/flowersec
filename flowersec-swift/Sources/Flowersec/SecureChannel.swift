@@ -56,6 +56,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   private let transport: any FlowersecBinaryTransport
   private var keys: FlowersecRecordKeyState
   private var readBuffer = Data()
+  private var readOffset = 0
   private var pendingWrites: [PendingWrite] = []
   private var nextPendingWriteID: UInt64 = 1
   private var activeWriteID: UInt64?
@@ -123,6 +124,8 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   var queuedWriteCount: Int { pendingWrites.count }
   var queuedWriteBytes: Int { pendingWriteBytes }
   var keyMaterialIsCleared: Bool { keys.keyMaterialIsCleared }
+  var bufferedReadStorageCount: Int { readBuffer.count }
+  var bufferedReadOffset: Int { readOffset }
 
   private func writeRecords(_ data: Data) async throws {
     var offset = 0
@@ -139,23 +142,27 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
     guard length >= 0 else {
       throw FlowersecError.invalidRecord("Negative read length.", path: path)
     }
+    guard length > 0 else { return Data() }
     do {
-      while readBuffer.count < length {
+      while readBuffer.count - readOffset < length {
         try await receiveNextApplicationRecord()
       }
     } catch {
       await terminateAfterReadFailure(error)
       throw error
     }
-    let out = readBuffer.prefix(length)
-    readBuffer.removeFirst(length)
-    return Data(out)
+    let end = readOffset + length
+    let out = readBuffer.subdata(in: readOffset..<end)
+    readOffset = end
+    compactReadBufferAfterConsumption()
+    return out
   }
 
   func close() async {
     guard !closed else { return }
     closed = true
     keys.clearKeyMaterial()
+    clearReadBuffer()
     failPendingWrites(with: FlowersecError.closed(path: path))
     await transport.close()
   }
@@ -205,6 +212,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
     case .failure(let error):
       closed = true
       keys.clearKeyMaterial()
+      clearReadBuffer()
       write.continuation.resume(throwing: error)
       failPendingWrites(with: error)
       Task { await transport.close() }
@@ -226,6 +234,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
     guard !closed else { return }
     closed = true
     keys.clearKeyMaterial()
+    clearReadBuffer()
     failPendingWrites(with: error)
     await transport.close()
   }
@@ -322,6 +331,21 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
     default:
       throw FlowersecError.invalidRecord("Unsupported record flag.", path: path)
     }
+  }
+
+  private func compactReadBufferAfterConsumption() {
+    let available = readBuffer.count - readOffset
+    if available == 0 {
+      clearReadBuffer()
+    } else if readOffset >= 64 * 1024, available <= readOffset {
+      readBuffer.removeSubrange(0..<readOffset)
+      readOffset = 0
+    }
+  }
+
+  private func clearReadBuffer() {
+    readBuffer.removeAll()
+    readOffset = 0
   }
 
   private func readRecord() async throws -> FlowersecRecord {
