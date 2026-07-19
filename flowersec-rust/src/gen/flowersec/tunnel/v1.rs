@@ -17,7 +17,7 @@ pub enum Role {
 }
 
 /// Tunnel attach request payload.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Attach {
     /// Attach envelope version.
     pub v: u32,
@@ -32,4 +32,18 @@ pub struct Attach {
     /// Optional capability map.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caps: Option<BTreeMap<String, String>>,
+}
+
+impl std::fmt::Debug for Attach {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Attach")
+            .field("v", &self.v)
+            .field("channel_id", &self.channel_id)
+            .field("role", &self.role)
+            .field("token", &format_args!("[REDACTED]"))
+            .field("endpoint_instance_id", &self.endpoint_instance_id)
+            .field("caps", &self.caps)
+            .finish()
+    }
 }

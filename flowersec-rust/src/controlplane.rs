@@ -37,7 +37,7 @@ pub mod http {
         pub attributes: BTreeMap<String, String>,
     }
 
-    #[derive(Clone, Debug, PartialEq)]
+    #[derive(Clone, PartialEq)]
     pub struct ArtifactIssueInput {
         pub endpoint_id: String,
         pub payload: Option<Map<String, Value>>,
@@ -45,6 +45,20 @@ pub mod http {
         pub entry_ticket: String,
         pub is_entry: bool,
         pub metadata: ArtifactRequestMetadata,
+    }
+
+    impl fmt::Debug for ArtifactIssueInput {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter
+                .debug_struct("ArtifactIssueInput")
+                .field("endpoint_id", &self.endpoint_id)
+                .field("payload", &self.payload)
+                .field("trace_id", &self.trace_id)
+                .field("entry_ticket", &format_args!("[REDACTED]"))
+                .field("is_entry", &self.is_entry)
+                .field("metadata", &self.metadata)
+                .finish()
+        }
     }
 
     #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -227,10 +241,20 @@ pub mod client {
         }
     }
 
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     pub struct EntryConnectArtifactRequestConfig {
         pub request: ConnectArtifactRequestConfig,
         pub entry_ticket: String,
+    }
+
+    impl std::fmt::Debug for EntryConnectArtifactRequestConfig {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("EntryConnectArtifactRequestConfig")
+                .field("request", &self.request)
+                .field("entry_ticket", &format_args!("[REDACTED]"))
+                .finish()
+        }
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -468,11 +492,22 @@ pub mod token {
         pub exp: i64,
     }
 
-    #[derive(Clone, Debug, Eq, PartialEq)]
+    #[derive(Clone, Eq, PartialEq)]
     pub struct ParsedToken {
         pub payload: Payload,
         pub signed: Vec<u8>,
         pub signature: Vec<u8>,
+    }
+
+    impl std::fmt::Debug for ParsedToken {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("ParsedToken")
+                .field("payload", &self.payload)
+                .field("signed", &format_args!("[REDACTED]"))
+                .field("signature", &format_args!("[REDACTED]"))
+                .finish()
+        }
     }
 
     #[derive(Clone, Debug, Default, Eq, PartialEq)]

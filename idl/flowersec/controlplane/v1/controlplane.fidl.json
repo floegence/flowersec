@@ -32,8 +32,8 @@
         { "name": "channel_init_expire_at_unix_s", "type": "i64", "comment": "Unix timestamp when the grant expires." },
         { "name": "idle_timeout_seconds", "type": "i32", "comment": "Server idle timeout hint in seconds." },
         { "name": "role", "type": "Role", "comment": "Role for this grant (client or server)." },
-        { "name": "token", "type": "string", "comment": "Signed tunnel attach token." },
-        { "name": "e2ee_psk_b64u", "type": "string", "comment": "Base64url-encoded 32-byte PSK." },
+        { "name": "token", "type": "string", "sensitive": true, "comment": "Signed tunnel attach token." },
+        { "name": "e2ee_psk_b64u", "type": "string", "sensitive": true, "comment": "Base64url-encoded 32-byte PSK." },
         { "name": "allowed_suites", "type": "[]Suite", "comment": "Allowed E2EE cipher suites." },
         { "name": "default_suite", "type": "Suite", "comment": "Default E2EE cipher suite." }
       ]

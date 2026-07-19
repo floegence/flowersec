@@ -31,7 +31,7 @@ pub struct ScopeMetadataEntry {
     pub payload: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum ConnectArtifact {
     Tunnel {
         grant: controlplane::ChannelInitGrant,
@@ -43,6 +43,33 @@ pub enum ConnectArtifact {
         scoped: Vec<ScopeMetadataEntry>,
         correlation: Option<CorrelationContext>,
     },
+}
+
+impl std::fmt::Debug for ConnectArtifact {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Tunnel {
+                grant,
+                scoped,
+                correlation,
+            } => formatter
+                .debug_struct("Tunnel")
+                .field("grant", grant)
+                .field("scoped", scoped)
+                .field("correlation", correlation)
+                .finish(),
+            Self::Direct {
+                info,
+                scoped,
+                correlation,
+            } => formatter
+                .debug_struct("Direct")
+                .field("info", info)
+                .field("scoped", scoped)
+                .field("correlation", correlation)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

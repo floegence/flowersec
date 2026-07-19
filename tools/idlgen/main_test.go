@@ -77,6 +77,143 @@ func TestRustGenerationIncludesTypedRPCBothDirections(t *testing.T) {
 	}
 }
 
+func TestRustGenerationRedactsSensitiveMessageFields(t *testing.T) {
+	t.Parallel()
+
+	var input schema
+	if err := json.Unmarshal([]byte(`{
+		"namespace": "flowersec.secret.v1",
+		"messages": {
+			"PlainMessage": {
+				"fields": [{"name": "value", "type": "string", "sensitive": false}]
+			},
+			"SecretMessage": {
+				"fields": [
+					{"name": "visible", "type": "string"},
+					{"name": "secret", "type": "string", "sensitive": true}
+				]
+			}
+		}
+	}`), &input); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	if err := genRust(out, input); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(out, "flowersec", "secret", "v1.rs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(generated)
+	for _, token := range []string{
+		"#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]\npub struct PlainMessage",
+		"#[derive(Clone, PartialEq, Serialize, Deserialize)]\npub struct SecretMessage",
+		"impl std::fmt::Debug for SecretMessage",
+		`.field("visible", &self.visible)`,
+		`.field("secret", &format_args!("[REDACTED]"))`,
+	} {
+		if !strings.Contains(source, token) {
+			t.Fatalf("Rust sensitive Debug output is missing %q:\n%s", token, source)
+		}
+	}
+}
+
+func TestSensitiveMetadataValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		schema string
+	}{
+		{
+			name:   "top level",
+			schema: `{"namespace":"flowersec.test.v1","sensitive":true,"messages":{}}`,
+		},
+		{
+			name:   "enum",
+			schema: `{"namespace":"flowersec.test.v1","enums":{"Kind":{"sensitive":true,"values":{}}},"messages":{}}`,
+		},
+		{
+			name:   "message",
+			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"sensitive":true,"fields":[]}}}`,
+		},
+		{
+			name:   "service",
+			schema: `{"namespace":"flowersec.test.v1","messages":{"Req":{"fields":[]},"Resp":{"fields":[]}},"services":{"API":{"sensitive":true,"methods":{"Call":{"kind":"request","type_id":1,"request":"Req","response":"Resp"}}}}}`,
+		},
+		{
+			name:   "method",
+			schema: `{"namespace":"flowersec.test.v1","messages":{"Req":{"fields":[]},"Resp":{"fields":[]}},"services":{"API":{"methods":{"Call":{"sensitive":true,"kind":"request","type_id":1,"request":"Req","response":"Resp"}}}}}`,
+		},
+		{
+			name:   "string field value",
+			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":"yes"}]}}}`,
+		},
+		{
+			name:   "null field value",
+			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":null}]}}}`,
+		},
+		{
+			name:   "number field value",
+			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":1}]}}}`,
+		},
+		{
+			name:   "object field value",
+			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":{}}]}}}`,
+		},
+		{
+			name:   "array field value",
+			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":[]}]}}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := t.TempDir()
+			if err := os.WriteFile(filepath.Join(in, "test.fidl.json"), []byte(tt.schema), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			code := run([]string{"-in", in, "-rust-out", t.TempDir()}, &stdout, &stderr)
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1 (stderr=%q)", code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "sensitive") {
+				t.Fatalf("stderr does not identify sensitive metadata: %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestSensitiveMetadataAllowsBooleanMessageFields(t *testing.T) {
+	t.Parallel()
+
+	in := t.TempDir()
+	contents := `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"visible","type":"string","sensitive":false},{"name":"secret","type":"string","sensitive":true}]}}}`
+	if err := os.WriteFile(filepath.Join(in, "test.fidl.json"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := run([]string{"-in", in, "-rust-out", t.TempDir()}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+}
+
+func TestSensitiveMetadataDoesNotRejectUnrelatedExtensions(t *testing.T) {
+	t.Parallel()
+
+	contents := []byte(`{
+		"namespace":"flowersec.test.v1",
+		"extension":{"owner":"test"},
+		"messages":{"Thing":{"extension":true,"fields":[{"name":"value","type":"string","extension":1}]}}
+	}`)
+	if _, err := decodeSchema(contents); err != nil {
+		t.Fatalf("decode schema with unrelated extensions: %v", err)
+	}
+}
+
 func TestSwiftGenerationUsesUniqueDomainFilename(t *testing.T) {
 	t.Parallel()
 

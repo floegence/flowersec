@@ -26,7 +26,7 @@ pub enum Suite {
 }
 
 /// Grant issued by controlplane to attach and start E2EE.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelInitGrant {
     /// WebSocket URL of the tunnel server.
     pub tunnel_url: String,
@@ -46,4 +46,24 @@ pub struct ChannelInitGrant {
     pub allowed_suites: Vec<Suite>,
     /// Default E2EE cipher suite.
     pub default_suite: Suite,
+}
+
+impl std::fmt::Debug for ChannelInitGrant {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ChannelInitGrant")
+            .field("tunnel_url", &self.tunnel_url)
+            .field("channel_id", &self.channel_id)
+            .field(
+                "channel_init_expire_at_unix_s",
+                &self.channel_init_expire_at_unix_s,
+            )
+            .field("idle_timeout_seconds", &self.idle_timeout_seconds)
+            .field("role", &self.role)
+            .field("token", &format_args!("[REDACTED]"))
+            .field("e2ee_psk_b64u", &format_args!("[REDACTED]"))
+            .field("allowed_suites", &self.allowed_suites)
+            .field("default_suite", &self.default_suite)
+            .finish()
+    }
 }

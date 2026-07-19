@@ -71,9 +71,8 @@ The generator recognizes the following top-level keys:
 - `messages` (optional): object
 - `services` (optional): object
 
-Unknown keys are ignored by the current generator (Go's JSON decoder ignores unknown fields),
-but you should avoid relying on that behavior. For compatibility and clarity, use only the
-keys listed above.
+Unknown keys are ignored for forward-compatible metadata. The reserved `sensitive` key is the
+exception: it is rejected outside message fields or when its value is not a boolean.
 
 ### Full shape (reference)
 
@@ -100,6 +99,7 @@ keys listed above.
           "name": "field_name",
           "type": "string|bool|u8|u16|u32|u64|i32|i64|json|map<string,string>|[]T|EnumOrMessage",
           "optional": true,
+          "sensitive": true,
           "comment": "Optional field doc."
         }
       ]
@@ -127,6 +127,9 @@ Notes:
 - `enums` and `messages` can be empty or omitted.
 - `services` can be empty or omitted. When present, `idlgen` generates typed RPC stubs (Go and TS).
 - `comment` and `value_comments` are optional and only affect generated doc comments.
+- `sensitive` is an optional boolean allowed only on message fields. It does not change the
+  wire schema or public field type. Rust messages containing a sensitive field use a generated
+  `Debug` implementation that prints `[REDACTED]` for that field.
 - Enum `type` is only used for Go output; `u8` -> `uint8`, `u16` -> `uint16`, otherwise `uint32`.
 
 ## Naming and style guidelines

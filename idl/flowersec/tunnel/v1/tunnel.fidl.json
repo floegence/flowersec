@@ -21,7 +21,7 @@
         { "name": "v", "type": "u32", "comment": "Attach envelope version." },
         { "name": "channel_id", "type": "string", "comment": "Channel identifier." },
         { "name": "role", "type": "Role", "comment": "Endpoint role." },
-        { "name": "token", "type": "string", "comment": "Signed attach token." },
+        { "name": "token", "type": "string", "sensitive": true, "comment": "Signed attach token." },
         { "name": "endpoint_instance_id", "type": "string", "comment": "Base64url-encoded endpoint instance ID." },
         { "name": "caps", "type": "map<string,string>", "optional": true, "comment": "Optional capability map." }
       ]

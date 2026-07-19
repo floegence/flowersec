@@ -41,10 +41,11 @@ type messageDef struct {
 }
 
 type fieldDef struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Comment  string `json:"comment"`
-	Optional bool   `json:"optional"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Comment   string `json:"comment"`
+	Optional  bool   `json:"optional"`
+	Sensitive bool   `json:"sensitive"`
 }
 
 type serviceDef struct {
@@ -154,8 +155,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		var s schema
-		if err := json.Unmarshal(b, &s); err != nil {
+		s, err := decodeSchema(b)
+		if err != nil {
 			fmt.Fprintf(stderr, "decode %s: %v\n", p, err)
 			return 1
 		}
@@ -213,6 +214,48 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+func decodeSchema(data []byte) (schema, error) {
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return schema{}, err
+	}
+	if err := validateSensitiveMetadata(raw, nil); err != nil {
+		return schema{}, err
+	}
+	var decoded schema
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return schema{}, err
+	}
+	return decoded, nil
+}
+
+func validateSensitiveMetadata(value any, path []string) error {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if key == "sensitive" {
+				if len(path) != 4 || path[0] != "messages" || path[2] != "fields" || path[3] != "[]" {
+					return errors.New("sensitive is only allowed on message fields")
+				}
+				if _, ok := child.(bool); !ok {
+					return errors.New("sensitive must be a boolean")
+				}
+				continue
+			}
+			if err := validateSensitiveMetadata(child, append(path, key)); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if err := validateSensitiveMetadata(child, append(path, "[]")); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func listFIDLFilesFromManifest(root string, manifestPath string) ([]string, error) {
@@ -584,7 +627,18 @@ func genRust(outRoot string, s schema) error {
 	for _, name := range sortedKeys(s.Messages) {
 		md := s.Messages[name]
 		writeRustComment(&buf, md.Comment, "")
-		buf.WriteString("#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]\n")
+		hasSensitiveFields := false
+		for _, field := range md.Fields {
+			if field.Sensitive {
+				hasSensitiveFields = true
+				break
+			}
+		}
+		if hasSensitiveFields {
+			buf.WriteString("#[derive(Clone, PartialEq, Serialize, Deserialize)]\n")
+		} else {
+			buf.WriteString("#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]\n")
+		}
 		fmt.Fprintf(&buf, "pub struct %s {\n", name)
 		for _, field := range md.Fields {
 			writeRustComment(&buf, field.Comment, "    ")
@@ -599,6 +653,21 @@ func genRust(outRoot string, s schema) error {
 			fmt.Fprintf(&buf, "    pub %s: %s,\n", field.Name, fieldType)
 		}
 		buf.WriteString("}\n\n")
+		if hasSensitiveFields {
+			fmt.Fprintf(&buf, "impl std::fmt::Debug for %s {\n", name)
+			buf.WriteString("    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n")
+			fmt.Fprintf(&buf, "        formatter.debug_struct(\"%s\")\n", name)
+			for _, field := range md.Fields {
+				if field.Sensitive {
+					fmt.Fprintf(&buf, "            .field(\"%s\", &format_args!(\"[REDACTED]\"))\n", field.Name)
+				} else {
+					fmt.Fprintf(&buf, "            .field(\"%s\", &self.%s)\n", field.Name, field.Name)
+				}
+			}
+			buf.WriteString("            .finish()\n")
+			buf.WriteString("    }\n")
+			buf.WriteString("}\n\n")
+		}
 	}
 
 	return os.WriteFile(filepath.Join(outDir, version+".rs"), buf.Bytes(), 0o644)

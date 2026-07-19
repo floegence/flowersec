@@ -16,7 +16,7 @@ pub enum Suite {
 }
 
 /// Connection info for direct (no tunnel) WebSocket + E2EE sessions.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct DirectConnectInfo {
     /// WebSocket URL of the direct server.
     pub ws_url: String,
@@ -28,4 +28,20 @@ pub struct DirectConnectInfo {
     pub channel_init_expire_at_unix_s: i64,
     /// Default E2EE suite identifier.
     pub default_suite: Suite,
+}
+
+impl std::fmt::Debug for DirectConnectInfo {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DirectConnectInfo")
+            .field("ws_url", &self.ws_url)
+            .field("channel_id", &self.channel_id)
+            .field("e2ee_psk_b64u", &format_args!("[REDACTED]"))
+            .field(
+                "channel_init_expire_at_unix_s",
+                &self.channel_init_expire_at_unix_s,
+            )
+            .field("default_suite", &self.default_suite)
+            .finish()
+    }
 }
