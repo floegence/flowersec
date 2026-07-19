@@ -867,6 +867,24 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct PendingHandshakeTransport;
+
+    #[async_trait::async_trait]
+    impl WebSocketTransport for PendingHandshakeTransport {
+        async fn receive(&self) -> std::io::Result<Option<WebSocketMessage>> {
+            std::future::pending().await
+        }
+
+        async fn send(&self, _message: WebSocketMessage) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        async fn close(&self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[derive(Debug, Default)]
     struct TrackingDuplex {
         closed: Arc<AtomicBool>,
@@ -967,6 +985,31 @@ mod tests {
         assert_eq!(error.stage, Stage::Yamux);
         assert_eq!(error.code.as_str(), ErrorCode::TIMEOUT);
         assert!(error.source.is_some());
+    }
+
+    #[tokio::test]
+    async fn zero_handshake_timeout_is_immediately_elapsed() {
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            establish_client(
+                Arc::new(PendingHandshakeTransport),
+                Path::Direct,
+                "zero-timeout".to_owned(),
+                Secret32::new([0x44; 32]),
+                Suite::X25519HkdfSha256Aes256Gcm,
+                ConnectOptions {
+                    handshake_timeout: Duration::ZERO,
+                    ..ConnectOptions::default()
+                },
+                None,
+            ),
+        )
+        .await
+        .expect("zero handshake timeout must not wait for transport input");
+        let error = result.expect_err("zero handshake timeout must fail");
+        assert_eq!(error.path, Path::Direct);
+        assert_eq!(error.stage, Stage::Handshake);
+        assert_eq!(error.code.as_str(), ErrorCode::TIMEOUT);
     }
 
     #[tokio::test]

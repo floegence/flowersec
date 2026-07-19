@@ -6,7 +6,18 @@ export default defineConfig({
   workers: 1,
   timeout: 30_000,
   use: {
-    browserName: "chromium",
     headless: true,
   },
+  projects: [
+    {
+      name: "chromium",
+      use: { browserName: "chromium" },
+    },
+    {
+      name: "webkit-smoke",
+      testMatch: ["proxy-smoke.spec.ts", "window-bridge.spec.ts"],
+      grep: /@webkit-smoke/,
+      use: { browserName: "webkit" },
+    },
+  ],
 });

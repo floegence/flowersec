@@ -101,4 +101,6 @@ The local source of truth is `make check`. It includes:
 - coverage, race, vulnerability, audit, deny, packaging, and fuzz-target checks
 - example builds and Go-reference interoperability
 
+Deterministic resource ceilings are enforced by automated unit tests and the loadgen checker. Machine-sensitive throughput benchmarks are run and reviewed manually; they are performance evidence, not a release gate.
+
 The fixed `make interop-stress` profile remains a release gate for higher-volume cross-language behavior verification.

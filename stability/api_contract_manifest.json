@@ -4884,12 +4884,20 @@
         "min_statements_pct": 78
       },
       {
+        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/token",
+        "min_statements_pct": 86
+      },
+      {
         "package": "github.com/floegence/flowersec/flowersec-go/endpoint",
         "min_statements_pct": 68
       },
       {
         "package": "github.com/floegence/flowersec/flowersec-go/endpoint/serve",
         "min_statements_pct": 80
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/fserrors",
+        "min_statements_pct": 67
       },
       {
         "package": "github.com/floegence/flowersec/flowersec-go/mux/yamux",
@@ -4918,6 +4926,10 @@
       {
         "package": "github.com/floegence/flowersec/flowersec-go/rpc",
         "min_statements_pct": 91.5
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/transportsecurity",
+        "min_statements_pct": 19
       },
       {
         "package": "github.com/floegence/flowersec/flowersec-go/tunnel/server",

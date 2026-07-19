@@ -1,10 +1,13 @@
 package client
 
 import (
+	"context"
 	"net/http"
 	"reflect"
 	"testing"
+	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
 	"github.com/floegence/flowersec/flowersec-go/observability"
 )
 
@@ -69,6 +72,39 @@ func TestConnectOptions_AdditionalStableOptions(t *testing.T) {
 	}
 	if cfg.observer != observer {
 		t.Fatal("observer mismatch")
+	}
+}
+
+func TestHandshakeTimeoutZeroDisablesDeadline(t *testing.T) {
+	cfg, err := applyConnectOptions([]ConnectOption{WithHandshakeTimeout(0)})
+	if err != nil {
+		t.Fatalf("applyConnectOptions() failed: %v", err)
+	}
+	if cfg.handshakeTimeout != 0 {
+		t.Fatalf("handshakeTimeout = %v, want disabled", cfg.handshakeTimeout)
+	}
+
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	handshakeCtx, cancelHandshake := contextutil.WithTimeout(parent, cfg.handshakeTimeout)
+	defer cancelHandshake()
+	if _, ok := handshakeCtx.Deadline(); ok {
+		t.Fatal("zero handshake timeout must not install a deadline")
+	}
+	select {
+	case <-handshakeCtx.Done():
+		t.Fatalf("zero handshake timeout completed early: %v", handshakeCtx.Err())
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	cancelParent()
+	select {
+	case <-handshakeCtx.Done():
+		if err := handshakeCtx.Err(); err != context.Canceled {
+			t.Fatalf("handshake context error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handshake context did not inherit parent cancellation")
 	}
 }
 

@@ -19,7 +19,7 @@ Run date: Sun Jul 19 16:57:31 CST 2026
 # Go micro benches
 GOMAXPROCS=2 GOMEMLIMIT=1024MiB go test -bench . -benchmem ./crypto/e2ee ./tunnel/server
 
-# Go 64 KiB round-trip throughput gate
+# Go 64 KiB round-trip throughput measurement (manual)
 GOMAXPROCS=2 GOMEMLIMIT=1024MiB go test -run '^$' -bench '^BenchmarkSecureChannelRoundTrip/65536B$' -benchmem -count=10 ./crypto/e2ee
 
 # TS micro benches
@@ -53,9 +53,9 @@ GOMAXPROCS=2 GOMEMLIMIT=1024MiB go run ./internal/cmd/flowersec-loadgen --channe
 | BenchmarkSecureChannelRoundTrip/8192B-2 | 8992 | 39984 | 21 |
 | BenchmarkSecureChannelRoundTrip/65536B-2 | 45747 | 290105 | 21 |
 
-### 64 KiB Round-Trip Throughput Gate
+### Manual 64 KiB Round-Trip Throughput Evidence
 
-The baseline was measured from `origin/main` under the environment and Go constraints above.
+The baseline was measured from `origin/main` under the environment and Go constraints above. This machine-sensitive comparison is reviewed manually and is not a release gate.
 
 | Samples | Baseline ns/op | Median ns/op | Regression | Allowed regression |
 | ---: | ---: | ---: | ---: | ---: |
@@ -156,7 +156,7 @@ The load generator uses `client.Connect`; its RPC bootstrap stream remains open 
 
 ### Streaming Transfer and Fairness
 
-The manual machine-sensitive gate allows at most 15.00% throughput/TTFB regression, a peak heap of 536,870,912 bytes, and a slowest/median fairness ratio of 2.00.
+The manual machine-sensitive comparison allows at most 15.00% throughput/TTFB regression, a peak heap of 536,870,912 bytes, and a slowest/median fairness ratio of 2.00.
 Each loadgen run reports the median of three 16 MiB transfers on one high-level connection and preserves all raw samples below.
 Before timed transfers, an unmeasured 8 x 2 MiB concurrent probe samples heap usage and warms the streaming path.
 The eight equal-size fairness streams are released from one barrier and measured from a shared start time.

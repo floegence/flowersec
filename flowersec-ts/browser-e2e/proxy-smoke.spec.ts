@@ -61,7 +61,7 @@ test.afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error == null ? resolve() : reject(error)));
 });
 
-test("generated Service Worker proxies HTTP and browser WebSocket patch traffic", async ({ page }) => {
+test("generated Service Worker proxies HTTP and browser WebSocket patch traffic", { tag: "@webkit-smoke" }, async ({ page }) => {
   await page.goto(origin, { waitUntil: "networkidle" });
   await page.evaluate(async () => {
     await navigator.serviceWorker.register("/sw.js", { scope: "/" });

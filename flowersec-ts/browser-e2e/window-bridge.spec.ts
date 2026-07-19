@@ -73,7 +73,7 @@ test.beforeEach(async ({ page }) => {
   await expect.poll(() => page.evaluate(() => (window as any).windowBridgeReady === true)).toBe(true);
 });
 
-test("real iframe bridge applies backpressure and controller dispose clears the pending acknowledgement", async ({ page }) => {
+test("real iframe bridge applies backpressure and controller dispose clears the pending acknowledgement", { tag: "@webkit-smoke" }, async ({ page }) => {
   const result = await page.evaluate(async () => await (window as any).runSlowConsumerAndControllerDispose());
 
   expect(result).toEqual({

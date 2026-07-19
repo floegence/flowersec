@@ -12,7 +12,7 @@ const te = new TextEncoder();
 const td = new TextDecoder();
 
 type BinaryTransport = {
-  readBinary(): Promise<Uint8Array>;
+  readBinary(opts?: Readonly<{ signal?: AbortSignal; timeoutMs?: number }>): Promise<Uint8Array>;
   writeBinary(frame: Uint8Array): Promise<void>;
   close(): void;
 };
@@ -20,13 +20,15 @@ type BinaryTransport = {
 class ScriptedTransport implements BinaryTransport {
   private readonly reads: Uint8Array[];
   readonly writes: Uint8Array[] = [];
+  readonly readOptions: Array<Readonly<{ signal?: AbortSignal; timeoutMs?: number }> | undefined> = [];
   onWrite?: (frame: Uint8Array) => void;
 
   constructor(reads: Uint8Array[]) {
     this.reads = [...reads];
   }
 
-  async readBinary(): Promise<Uint8Array> {
+  async readBinary(opts?: Readonly<{ signal?: AbortSignal; timeoutMs?: number }>): Promise<Uint8Array> {
+    this.readOptions.push(opts);
     const next = this.reads.shift();
     if (next == null) throw new Error("unexpected read");
     return next;
@@ -110,6 +112,24 @@ describe("clientHandshake", () => {
       maxRecordBytes: 1 << 20,
       timeoutMs: -1
     })).rejects.toThrow(/timeoutMs must be >= 0/);
+  });
+
+  test("treats timeoutMs zero as no handshake deadline", async () => {
+    const transport = new ScriptedTransport([
+      encodeHandshakeFrame(HANDSHAKE_TYPE_INIT, te.encode("{}")),
+    ]);
+
+    await expect(clientHandshake(transport, {
+      channelId: "ch_1",
+      suite: 1,
+      psk: crypto.getRandomValues(new Uint8Array(32)),
+      clientFeatures: 0,
+      maxHandshakePayload: 8 * 1024,
+      maxRecordBytes: 1 << 20,
+      timeoutMs: 0,
+    })).rejects.toThrow(/unexpected handshake type/);
+
+    expect(transport.readOptions).toEqual([{}]);
   });
 
   test("rejects missing handshake_id", async () => {

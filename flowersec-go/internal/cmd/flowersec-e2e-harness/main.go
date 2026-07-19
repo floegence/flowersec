@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -29,6 +31,7 @@ import (
 	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
+	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
 	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
 	demov1 "github.com/floegence/flowersec/flowersec-go/internal/testgen/flowersec/demo/v1"
 	"github.com/floegence/flowersec/flowersec-go/protocolio"
@@ -42,8 +45,20 @@ const e2eOrigin = "https://interop.flowersec.test"
 
 func main() {
 	var externalServer bool
+	var allowOrigin string
+	var suiteName string
 	flag.BoolVar(&externalServer, "external-server", false, "emit a server grant without starting the Go endpoint")
+	flag.StringVar(&allowOrigin, "allow-origin", "", "append one exact browser origin to the tunnel allowlist")
+	flag.StringVar(&suiteName, "suite", "x25519", "tunnel E2EE suite: x25519 or p256")
 	flag.Parse()
+	allowedOrigins, err := harnessAllowedOrigins(allowOrigin)
+	if err != nil {
+		log.Fatal(err)
+	}
+	suite, err := parseSuite(suiteName)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -62,7 +77,7 @@ func main() {
 	tunnelCfg.IssuerKeysFile = keyFile
 	tunnelCfg.TunnelAudience = aud
 	tunnelCfg.TunnelIssuer = issID
-	tunnelCfg.AllowedOrigins = []string{e2eOrigin}
+	tunnelCfg.AllowedOrigins = allowedOrigins
 	tunnelCfg.CleanupInterval = 50 * time.Millisecond
 	tun, err := server.New(tunnelCfg)
 	if err != nil {
@@ -123,6 +138,8 @@ func main() {
 			TunnelAudience:  aud,
 			IssuerID:        issID,
 			TokenExpSeconds: 60,
+			AllowedSuites:   []e2eev1.Suite{suite},
+			DefaultSuite:    suite,
 		},
 	}
 	grantC, grantS, _, err := newGrantPair(ci, "chan_e2e_ts")
@@ -201,6 +218,30 @@ func main() {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	cancel()
+}
+
+func parseSuite(value string) (e2eev1.Suite, error) {
+	switch value {
+	case "x25519":
+		return e2eev1.Suite_X25519_HKDF_SHA256_AES_256_GCM, nil
+	case "p256":
+		return e2eev1.Suite_P256_HKDF_SHA256_AES_256_GCM, nil
+	default:
+		return 0, fmt.Errorf("unsupported tunnel E2EE suite %q", value)
+	}
+}
+
+func harnessAllowedOrigins(extra string) ([]string, error) {
+	if extra == "" || extra == e2eOrigin {
+		return []string{e2eOrigin}, nil
+	}
+	origin, err := url.Parse(extra)
+	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Host == "" ||
+		strings.Contains(origin.Host, "*") || origin.User != nil || origin.Path != "" ||
+		origin.RawQuery != "" || origin.Fragment != "" {
+		return nil, fmt.Errorf("allow-origin must be an exact HTTP or HTTPS origin")
+	}
+	return []string{e2eOrigin, extra}, nil
 }
 
 // runServerEndpoint attaches as the server role and serves a simple RPC handler.

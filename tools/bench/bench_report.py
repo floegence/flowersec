@@ -301,7 +301,7 @@ Run date: {run_date}
 # Go micro benches
 {args.go_command}
 
-# Go 64 KiB round-trip throughput gate
+# Go 64 KiB round-trip throughput measurement (manual)
 {args.go_roundtrip_command}
 
 # TS micro benches
@@ -319,9 +319,9 @@ Run date: {run_date}
 | --- | ---: | ---: | ---: |
 {go_table}
 
-### 64 KiB Round-Trip Throughput Gate
+### Manual 64 KiB Round-Trip Throughput Evidence
 
-The baseline was measured from `origin/main` under the environment and Go constraints above.
+The baseline was measured from `origin/main` under the environment and Go constraints above. This machine-sensitive comparison is reviewed manually and is not a release gate.
 
 | Samples | Baseline ns/op | Median ns/op | Regression | Allowed regression |
 | ---: | ---: | ---: | ---: | ---: |
@@ -377,7 +377,7 @@ The load generator uses `client.Connect`; its RPC bootstrap stream remains open 
 
 ### Streaming Transfer and Fairness
 
-The manual machine-sensitive gate allows at most {args.stream_max_regression_percent:.2f}% throughput/TTFB regression, a peak heap of {fmt_int(args.max_heap_bytes)} bytes, and a slowest/median fairness ratio of {args.max_fairness_ratio:.2f}.
+The manual machine-sensitive comparison allows at most {args.stream_max_regression_percent:.2f}% throughput/TTFB regression, a peak heap of {fmt_int(args.max_heap_bytes)} bytes, and a slowest/median fairness ratio of {args.max_fairness_ratio:.2f}.
 Each loadgen run reports the median of three 16 MiB transfers on one high-level connection and preserves all raw samples below.
 Before timed transfers, an unmeasured 8 x 2 MiB concurrent probe samples heap usage and warms the streaming path.
 The eight equal-size fairness streams are released from one barrier and measured from a shared start time.

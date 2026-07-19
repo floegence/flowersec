@@ -18,7 +18,10 @@ func TestCoverageQualityGates(t *testing.T) {
 	wantGo := map[string]float64{
 		"github.com/floegence/flowersec/flowersec-go/controlplane/http":   74,
 		"github.com/floegence/flowersec/flowersec-go/controlplane/issuer": 78,
+		"github.com/floegence/flowersec/flowersec-go/controlplane/token":  86,
+		"github.com/floegence/flowersec/flowersec-go/fserrors":            67,
 		"github.com/floegence/flowersec/flowersec-go/protocolio":          69,
+		"github.com/floegence/flowersec/flowersec-go/transportsecurity":   19,
 		"github.com/floegence/flowersec/flowersec-go/tunnel/server":       69,
 	}
 	gotGo := make(map[string]float64, len(m.Coverage.Go))
