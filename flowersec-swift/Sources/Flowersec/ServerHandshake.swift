@@ -318,7 +318,10 @@ private enum EndpointAgreementPrivateKey: Sendable {
   func sharedSecret(with publicKey: EndpointAgreementPublicKey) throws -> SharedSecret {
     switch (self, publicKey) {
     case (.x25519(let key), .x25519(let peer)):
-      return try key.sharedSecretFromKeyAgreement(with: peer)
+      return try FlowersecHandshake.x25519SharedSecret(
+        privateKey: key,
+        peerPublicKey: peer
+      )
     case (.p256(let key), .p256(let peer)):
       return try key.sharedSecretFromKeyAgreement(with: peer)
     default:

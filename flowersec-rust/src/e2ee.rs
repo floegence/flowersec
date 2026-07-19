@@ -221,6 +221,9 @@ pub fn derive_shared_secret(
                 .try_into()
                 .map_err(|_| E2eeError::InvalidKey)?;
             let shared = X25519Secret::from(private).diffie_hellman(&X25519PublicKey::from(public));
+            if !shared.was_contributory() {
+                return Err(E2eeError::InvalidKey);
+            }
             Ok(Secret32::new(*shared.as_bytes()))
         }
         Suite::P256HkdfSha256Aes256Gcm => {
@@ -244,6 +247,9 @@ impl EphemeralPrivateKey {
                     .try_into()
                     .map_err(|_| E2eeError::InvalidKey)?;
                 let shared = private.diffie_hellman(&X25519PublicKey::from(public));
+                if !shared.was_contributory() {
+                    return Err(E2eeError::InvalidKey);
+                }
                 Ok(Secret32::new(*shared.as_bytes()))
             }
             Self::P256(private) => {
@@ -1264,5 +1270,18 @@ mod tests {
             drop(reservations);
             assert_eq!(pending.load(Ordering::Relaxed), 0, "case {}", case.id);
         }
+    }
+
+    #[test]
+    fn ephemeral_x25519_rejects_a_nonzero_low_order_public_key() {
+        let peer_public_key = URL_SAFE_NO_PAD
+            .decode("4Ot6fDtBuK4WVuP68Z_EatoJjeucMrH9hmIFFl9JuAA")
+            .expect("decode low-order public key");
+        let (private_key, _) = generate_ephemeral_keypair(Suite::X25519HkdfSha256Aes256Gcm)
+            .expect("generate X25519 key");
+        assert!(matches!(
+            private_key.derive_shared_secret(&peer_public_key),
+            Err(E2eeError::InvalidKey)
+        ));
     }
 }

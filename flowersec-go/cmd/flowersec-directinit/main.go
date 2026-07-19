@@ -144,6 +144,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	var psk []byte
+	defer func() { clear(psk) }()
 	if pskB64u == "" {
 		psk = make([]byte, 32)
 		if _, err := io.ReadFull(randReader, psk); err != nil {
@@ -155,6 +156,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		var err error
 		psk, err = base64url.Decode(pskB64u)
 		if err != nil || len(psk) != 32 {
+			clear(psk)
 			if err == nil {
 				err = errors.New("psk must decode to 32 bytes")
 			}

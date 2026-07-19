@@ -34,6 +34,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if err != nil {
 		return nil, wrapTunnelGrantValidateError(err)
 	}
+	defer clear(prepared.PSK)
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidOption, err)
@@ -144,6 +145,7 @@ func ConnectDirect(ctx context.Context, info *directv1.DirectConnectInfo, opts .
 	if err != nil {
 		return nil, wrapDirectConnectValidateError(err)
 	}
+	defer clear(prepared.PSK)
 	if err := evaluateTransportSecurity(ctx, prepared.WSURL, fserrors.PathDirect, cfg.transportSecurityPolicy, observer); err != nil {
 		return nil, err
 	}

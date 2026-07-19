@@ -4,6 +4,100 @@ import XCTest
 @testable import Flowersec
 
 final class FlowersecSecureChannelTests: XCTestCase {
+  func testRecordKeyStateClearsLongLivedSecrets() {
+    var keys = FlowersecRecordKeyState(
+      sendKey: Data(repeating: 1, count: 32),
+      recvKey: Data(repeating: 2, count: 32),
+      sendNoncePrefix: Data(repeating: 3, count: 4),
+      recvNoncePrefix: Data(repeating: 4, count: 4),
+      rekeyBase: Data(repeating: 5, count: 32),
+      transcript: Data(repeating: 6, count: 32),
+      sendDirection: 1,
+      recvDirection: 2,
+      sendSeq: 1,
+      recvSeq: 1
+    )
+
+    keys.clearKeyMaterial()
+
+    XCTAssertTrue(keys.keyMaterialIsCleared)
+    XCTAssertEqual(keys.sendNoncePrefix, Data(repeating: 3, count: 4))
+    XCTAssertEqual(keys.recvNoncePrefix, Data(repeating: 4, count: 4))
+    XCTAssertEqual(keys.transcript, Data(repeating: 6, count: 32))
+  }
+
+  func testCloseIsIdempotentAndClearsKeyMaterial() async {
+    let transport = RecordingBinaryTransport()
+    let channel = FlowersecSecureChannel(
+      transport: transport,
+      keys: keyState(
+        key: Data(repeating: 0x31, count: 32),
+        noncePrefix: Data([1, 2, 3, 4])
+      )
+    )
+
+    await channel.close()
+    await channel.close()
+
+    let closeCount = await transport.closeCount()
+    let keyMaterialIsCleared = await channel.keyMaterialIsCleared
+    XCTAssertEqual(closeCount, 1)
+    XCTAssertTrue(keyMaterialIsCleared)
+  }
+
+  func testCloseDuringPausedRekeyDoesNotRestoreClearedKeyMaterial() async {
+    let transport = PausingBinaryTransport()
+    let channel = FlowersecSecureChannel(
+      transport: transport,
+      keys: keyState(
+        key: Data(repeating: 0x31, count: 32),
+        noncePrefix: Data([1, 2, 3, 4])
+      )
+    )
+    let rekey = Task { try await channel.rekey() }
+    await transport.waitUntilFirstWriteIsPaused()
+
+    await channel.close()
+
+    do {
+      try await rekey.value
+      XCTFail("Expected the paused rekey to fail after close")
+    } catch let error as FlowersecError {
+      XCTAssertEqual(error.stage, .close)
+      XCTAssertEqual(error.code, .notConnected)
+    } catch {
+      XCTFail("Unexpected paused rekey error: \(error)")
+    }
+    let keyMaterialIsCleared = await channel.keyMaterialIsCleared
+    XCTAssertTrue(keyMaterialIsCleared)
+  }
+
+  func testReadFailureClosesTransportAndClearsKeyMaterial() async {
+    let transport = RecordingBinaryTransport()
+    let channel = FlowersecSecureChannel(
+      transport: transport,
+      keys: keyState(
+        key: Data(repeating: 0x31, count: 32),
+        noncePrefix: Data([1, 2, 3, 4])
+      )
+    )
+
+    do {
+      _ = try await channel.readExact(1)
+      XCTFail("Expected the transport read failure")
+    } catch {
+      // The transport failure is the behavior under test.
+    }
+
+    let firstCloseCount = await transport.closeCount()
+    let keyMaterialIsCleared = await channel.keyMaterialIsCleared
+    XCTAssertEqual(firstCloseCount, 1)
+    XCTAssertTrue(keyMaterialIsCleared)
+    await channel.close()
+    let finalCloseCount = await transport.closeCount()
+    XCTAssertEqual(finalCloseCount, 1)
+  }
+
   func testOutboundRecordsUsePreferredChunkSize() async throws {
     let transport = RecordingBinaryTransport()
     let key = Data(repeating: 0x31, count: 32)
@@ -526,11 +620,13 @@ private final class DiagnosticRecorder: @unchecked Sendable {
 
 private actor RecordingBinaryTransport: FlowersecBinaryTransport {
   private var written: [Data] = []
+  private var closed = 0
 
   func writeBinary(_ data: Data) { written.append(data) }
   func readBinary() async throws -> Data { throw FlowersecError.closed }
-  func close() {}
+  func close() { closed += 1 }
   func frames() -> [Data] { written }
+  func closeCount() -> Int { closed }
 }
 
 private actor RekeyTestRPCStream: FlowersecRPCStream {

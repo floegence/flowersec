@@ -1239,4 +1239,16 @@ struct FlowersecRecordKeyState: Sendable {
   var recvDirection: UInt8
   var sendSeq: UInt64
   var recvSeq: UInt64
+
+  mutating func clearKeyMaterial() {
+    sendKey.resetBytes(in: sendKey.startIndex..<sendKey.endIndex)
+    recvKey.resetBytes(in: recvKey.startIndex..<recvKey.endIndex)
+    rekeyBase.resetBytes(in: rekeyBase.startIndex..<rekeyBase.endIndex)
+  }
+
+  var keyMaterialIsCleared: Bool {
+    sendKey.allSatisfy { $0 == 0 }
+      && recvKey.allSatisfy { $0 == 0 }
+      && rekeyBase.allSatisfy { $0 == 0 }
+  }
 }

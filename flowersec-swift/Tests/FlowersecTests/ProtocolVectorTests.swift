@@ -113,6 +113,27 @@ final class ProtocolVectorTests: XCTestCase {
     XCTAssertEqual(keys.rekeyBase.base64URLEncodedString(), unwrapped.expected.rekeyBaseB64u)
   }
 
+  func testX25519RejectsSharedLowOrderPublicKeyVectors() throws {
+    for vector in try e2eeVectors().handshakeX25519Negative {
+      XCTAssertTrue(vector.expected.reject, vector.caseID)
+      let privateKey = try Curve25519.KeyAgreement.PrivateKey(
+        rawRepresentation: try XCTUnwrap(Data(base64URLEncoded: vector.inputs.privateKeyB64u))
+      )
+      let peerPublicKey = try Curve25519.KeyAgreement.PublicKey(
+        rawRepresentation: try XCTUnwrap(
+          Data(base64URLEncoded: vector.inputs.peerPublicKeyB64u)
+        )
+      )
+      XCTAssertThrowsError(
+        try FlowersecHandshake.x25519SharedSecret(
+          privateKey: privateKey,
+          peerPublicKey: peerPublicKey
+        ),
+        vector.caseID
+      )
+    }
+  }
+
   private func e2eeVectors() throws -> E2EEVectors {
     let url = packageRoot()
       .appendingPathComponent("idl/flowersec/testdata/v1/e2ee_vectors.json")
@@ -124,13 +145,41 @@ final class ProtocolVectorTests: XCTestCase {
 private struct E2EEVectors: Decodable {
   var transcriptHashes: [TranscriptHashVector]
   var recordFrames: [RecordFrameVector]
+  var handshakeX25519Negative: [HandshakeX25519NegativeVector]
   var handshakeP256: [HandshakeP256Vector]
 
   private enum CodingKeys: String, CodingKey {
     case transcriptHashes = "transcript_hash"
     case recordFrames = "record_frame"
+    case handshakeX25519Negative = "handshake_x25519_negative"
     case handshakeP256 = "handshake_p256"
   }
+}
+
+private struct HandshakeX25519NegativeVector: Decodable {
+  var caseID: String
+  var inputs: HandshakeX25519NegativeInputs
+  var expected: HandshakeX25519NegativeExpected
+
+  private enum CodingKeys: String, CodingKey {
+    case caseID = "case_id"
+    case inputs
+    case expected
+  }
+}
+
+private struct HandshakeX25519NegativeInputs: Decodable {
+  var privateKeyB64u: String
+  var peerPublicKeyB64u: String
+
+  private enum CodingKeys: String, CodingKey {
+    case privateKeyB64u = "private_key_b64u"
+    case peerPublicKeyB64u = "peer_public_key_b64u"
+  }
+}
+
+private struct HandshakeX25519NegativeExpected: Decodable {
+  var reject: Bool
 }
 
 private struct TranscriptHashVector: Decodable {

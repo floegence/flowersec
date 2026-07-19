@@ -1,6 +1,6 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use flowersec::e2ee::{
-    Direction, RecordFlag, Suite, TranscriptInputs, decrypt_record, derive_rekey_key,
+    Direction, E2eeError, RecordFlag, Suite, TranscriptInputs, decrypt_record, derive_rekey_key,
     derive_session_keys, derive_shared_secret, encrypt_record, transcript_hash,
 };
 use serde::Deserialize;
@@ -10,7 +10,26 @@ use std::{fs, path::PathBuf};
 struct Vectors {
     transcript_hash: Vec<TranscriptVector>,
     record_frame: Vec<RecordVector>,
+    handshake_x25519_negative: Vec<X25519NegativeVector>,
     handshake_p256: Vec<P256Vector>,
+}
+
+#[derive(Debug, Deserialize)]
+struct X25519NegativeVector {
+    case_id: String,
+    inputs: X25519NegativeInput,
+    expected: X25519NegativeExpected,
+}
+
+#[derive(Debug, Deserialize)]
+struct X25519NegativeInput {
+    private_key_b64u: String,
+    peer_public_key_b64u: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct X25519NegativeExpected {
+    reject: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,6 +157,20 @@ fn shared_e2ee_vectors() {
         let decrypted = decrypt_record(&key, nonce, &frame, input.seq, input.max_record_bytes)
             .expect("decrypt vector");
         assert_eq!(decrypted.plaintext, input.plaintext_utf8.as_bytes());
+    }
+
+    for vector in vectors.handshake_x25519_negative {
+        assert!(vector.expected.reject, "case {}", vector.case_id);
+        let result = derive_shared_secret(
+            Suite::X25519HkdfSha256Aes256Gcm,
+            &decode(&vector.inputs.private_key_b64u),
+            &decode(&vector.inputs.peer_public_key_b64u),
+        );
+        assert!(
+            matches!(result, Err(E2eeError::InvalidKey)),
+            "case {} accepted a low-order X25519 public key",
+            vector.case_id
+        );
     }
 
     for vector in vectors.handshake_p256 {

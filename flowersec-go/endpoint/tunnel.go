@@ -28,6 +28,7 @@ func ConnectTunnel(ctx context.Context, grant *controlv1.ChannelInitGrant, opts 
 	if err != nil {
 		return nil, wrapTunnelGrantValidateError(err)
 	}
+	defer clear(prepared.PSK)
 	cfg, err := applyConnectOptions(opts)
 	if err != nil {
 		return nil, wrapErr(fserrors.PathTunnel, fserrors.StageValidate, fserrors.CodeInvalidOption, err)

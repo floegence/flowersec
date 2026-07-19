@@ -43,7 +43,8 @@ type SecureChannel struct {
 	sendRunning bool      // True while the on-demand writer is draining sendQueue.
 	sendClosed  bool      // Indicates no more sends are allowed.
 	sendErr     error     // Sticky send error from writeLoop.
-	sendOnce    sync.Once // Ensures send shutdown happens once.
+	closeOnce   sync.Once // Ensures shutdown, key cleanup, and transport close happen once.
+	closeErr    error     // Result of the first transport close, shared by later Close calls.
 
 	maxOutboundBufferedBytes int // Max admitted unfinished logical application write bytes.
 	pendingOutboundBytes     int // Admitted unfinished logical application write bytes.
@@ -51,7 +52,9 @@ type SecureChannel struct {
 	writeNotify   chan struct{} // Closed+replaced to wake Write waiters (deadline changes, close).
 	writeDeadline time.Time     // Write deadline for net.Conn Write; zero means no deadline.
 
-	keys RecordKeyState // Current key material and sequence state.
+	keyMu       sync.Mutex     // Guards receive-side key state and key cleanup.
+	keys        RecordKeyState // Current key material and sequence state.
+	keysCleared bool           // Prevents record processing after close clears key material.
 }
 
 // ErrRecvBufferExceeded indicates buffered plaintext exceeded the configured cap.
@@ -210,16 +213,33 @@ func (c *SecureChannel) readLoop() {
 			c.failRead(err)
 			return
 		}
+		c.keyMu.Lock()
+		if c.keysCleared {
+			c.keyMu.Unlock()
+			return
+		}
 		flags, seq, plain, err := DecryptRecord(c.keys.RecvKey, c.keys.RecvNoncePre, frame, c.keys.RecvSeq, c.maxRecordBytes)
 		if err != nil {
+			c.keyMu.Unlock()
 			c.failRead(err)
 			return
 		}
 		if seq == MaxRecordSeq {
+			c.keyMu.Unlock()
 			c.failRead(ErrRecordSeqExhausted)
 			return
 		}
 		c.keys.RecvSeq = seq + 1
+		if flags == RecordFlagRekey {
+			newKey, err := DeriveRekeyKey(c.keys.RekeyBase, c.keys.Transcript, seq, c.keys.RecvDir)
+			if err != nil {
+				c.keyMu.Unlock()
+				c.failRead(err)
+				return
+			}
+			c.keys.RecvKey = newKey
+		}
+		c.keyMu.Unlock()
 		switch flags {
 		case RecordFlagApp:
 			c.mu.Lock()
@@ -234,13 +254,7 @@ func (c *SecureChannel) readLoop() {
 		case RecordFlagPing:
 			// Ignore.
 		case RecordFlagRekey:
-			// Rekey updates only the receive key, bound to the record seq and direction.
-			newKey, err := DeriveRekeyKey(c.keys.RekeyBase, c.keys.Transcript, seq, c.keys.RecvDir)
-			if err != nil {
-				c.failRead(err)
-				return
-			}
-			c.keys.RecvKey = newKey
+			// The receive key was advanced while keyMu was held above.
 		default:
 			c.failRead(ErrRecordBadFlag)
 			return
@@ -403,21 +417,24 @@ func (c *SecureChannel) releaseOutboundBytes(n int) {
 }
 
 func (c *SecureChannel) Close() error {
-	c.mu.Lock()
-	if c.closed {
+	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		c.closed = true
+		c.signalReadLocked()
 		c.mu.Unlock()
-		return nil
-	}
-	c.closed = true
-	c.signalReadLocked()
-	c.mu.Unlock()
-	c.sendOnce.Do(func() {
+
 		c.sendMu.Lock()
 		c.sendClosed = true
 		c.signalWriteLocked()
+		c.keyMu.Lock()
+		c.keys = RecordKeyState{}
+		c.keysCleared = true
+		c.keyMu.Unlock()
 		c.sendMu.Unlock()
+
+		c.closeErr = c.t.Close()
 	})
-	return c.t.Close()
+	return c.closeErr
 }
 
 func (c *SecureChannel) LocalAddr() net.Addr  { return dummyAddr("flowersec-local") }

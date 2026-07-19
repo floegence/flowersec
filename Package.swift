@@ -13,9 +13,9 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.0"),
-    .package(url: "https://github.com/swift-server/async-http-client.git", exact: "1.30.3"),
-    .package(url: "https://github.com/apple/swift-nio.git", exact: "2.82.0"),
-    .package(url: "https://github.com/apple/swift-nio-ssl.git", exact: "2.30.0"),
+    .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.30.3"),
+    .package(url: "https://github.com/apple/swift-nio.git", from: "2.82.0"),
+    .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.30.0"),
   ],
   targets: [
     .target(

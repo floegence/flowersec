@@ -590,6 +590,8 @@ type neverReadTransport struct {
 	readStarted chan struct{}
 	closed      chan struct{}
 	once        sync.Once
+	closeMu     sync.Mutex
+	closeCalls  int
 }
 
 func newNeverReadTransport() *neverReadTransport {
@@ -610,12 +612,121 @@ func (t *neverReadTransport) WriteBinary(_ context.Context, _ []byte) error {
 }
 
 func (t *neverReadTransport) Close() error {
+	t.closeMu.Lock()
+	t.closeCalls++
+	t.closeMu.Unlock()
 	select {
 	case <-t.closed:
 	default:
 		close(t.closed)
 	}
 	return nil
+}
+
+func (t *neverReadTransport) closeCount() int {
+	t.closeMu.Lock()
+	defer t.closeMu.Unlock()
+	return t.closeCalls
+}
+
+func TestSecureChannelCloseClearsKeysAndClosesTransportOnce(t *testing.T) {
+	tr := newNeverReadTransport()
+	keys := RecordKeyState{
+		SendKey:      [32]byte{1},
+		RecvKey:      [32]byte{2},
+		SendNoncePre: [4]byte{3},
+		RecvNoncePre: [4]byte{4},
+		RekeyBase:    [32]byte{5},
+		Transcript:   [32]byte{6},
+		SendDir:      DirC2S,
+		RecvDir:      DirS2C,
+		SendSeq:      1,
+		RecvSeq:      1,
+	}
+	conn := NewSecureChannel(tr, keys, 1<<20, 0)
+	select {
+	case <-tr.readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for read loop")
+	}
+
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	conn.sendMu.Lock()
+	conn.keyMu.Lock()
+	got := conn.keys
+	conn.keyMu.Unlock()
+	conn.sendMu.Unlock()
+	if got != (RecordKeyState{}) {
+		t.Fatalf("key state was retained after close: %+v", got)
+	}
+	if got := tr.closeCount(); got != 1 {
+		t.Fatalf("transport close count = %d, want 1", got)
+	}
+}
+
+func TestSecureChannelConcurrentCloseWaitsForKeyCleanup(t *testing.T) {
+	tr := newNeverReadTransport()
+	conn := NewSecureChannel(tr, RecordKeyState{SendKey: [32]byte{1}}, 1<<20, 0)
+	select {
+	case <-tr.readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for read loop")
+	}
+
+	conn.sendMu.Lock()
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- conn.Close() }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		conn.mu.Lock()
+		closed := conn.closed
+		conn.mu.Unlock()
+		if closed {
+			break
+		}
+		if time.Now().After(deadline) {
+			conn.sendMu.Unlock()
+			t.Fatal("first Close did not enter shutdown")
+		}
+		runtime.Gosched()
+	}
+
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- conn.Close() }()
+	select {
+	case err := <-secondDone:
+		conn.sendMu.Unlock()
+		t.Fatalf("concurrent Close returned before cleanup completed: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	conn.sendMu.Unlock()
+	for index, done := range []<-chan error{firstDone, secondDone} {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("Close %d failed: %v", index+1, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("Close %d did not finish", index+1)
+		}
+	}
+	conn.sendMu.Lock()
+	conn.keyMu.Lock()
+	got := conn.keys
+	conn.keyMu.Unlock()
+	conn.sendMu.Unlock()
+	if got != (RecordKeyState{}) {
+		t.Fatalf("key state was retained after concurrent close: %+v", got)
+	}
+	if got := tr.closeCount(); got != 1 {
+		t.Fatalf("transport close count = %d, want 1", got)
+	}
 }
 
 type blockingMessageTransport struct {

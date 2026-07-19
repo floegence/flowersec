@@ -73,6 +73,7 @@ Multi-instance tunnels:
 Key and secret handling:
 
 - **Never log secrets**: do not log `e2ee_psk_b64u`, issuer private keys, or full bearer tokens.
+- **Memory cleanup is best-effort defense in depth**: Flowersec clears selected decoded PSK and active record-key buffers when their handshake or secure-channel lifetime ends. This shortens how long those values remain reachable; it does not guarantee secure erasure because runtimes, garbage collectors, copy-on-write storage, cryptographic libraries, compiler optimizations, and the operating system may retain other copies.
 - **Origin policy matters**: browsers enforce Origin rules and the tunnel/server should validate Origins. Avoid allowing `null`/no-Origin unless you fully control your clients. Wildcards like `*.example.com` match subdomains only; list the apex (`example.com`) explicitly if you need it.
 - **Resolve before consume**: one-time direct credentials should be resolved without consumption, authenticated through the PSK handshake, and atomically committed before Yamux. Flowersec's `ResolveCredential` contract enforces this ordering but the credential store remains an integrator responsibility.
 

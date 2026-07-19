@@ -62,6 +62,42 @@ function makeQueueTransport(): {
 }
 
 describe("SecureChannel", () => {
+  test("close clears internal key material and closes the transport once", () => {
+    let closeCount = 0;
+    const sendKey = new Uint8Array(32).fill(1);
+    const recvKey = new Uint8Array(32).fill(2);
+    const rekeyBase = new Uint8Array(32).fill(3);
+    const sc = new SecureChannel({
+      transport: {
+        async readBinary() { return await new Promise<Uint8Array>(() => {}); },
+        async writeBinary() {},
+        close() { closeCount++; }
+      },
+      maxRecordBytes: 1 << 20,
+      sendKey,
+      recvKey,
+      sendNoncePrefix: new Uint8Array(4),
+      recvNoncePrefix: new Uint8Array(4),
+      rekeyBase,
+      transcriptHash: new Uint8Array(32),
+      sendDir: 1,
+      recvDir: 2
+    });
+
+    sc.close();
+    sc.close();
+
+    const state = sc as unknown as {
+      sendKey: Uint8Array;
+      recvKey: Uint8Array;
+      rekeyBase: Uint8Array;
+    };
+    expect(state.sendKey).toEqual(new Uint8Array(32));
+    expect(state.recvKey).toEqual(new Uint8Array(32));
+    expect(state.rekeyBase).toEqual(new Uint8Array(32));
+    expect(closeCount).toBe(1);
+  });
+
   test("sendPing and rekeyNow emit expected flags", async () => {
     const key = new Uint8Array(32).fill(7);
     const noncePrefix = new Uint8Array(4).fill(9);
@@ -192,6 +228,15 @@ describe("SecureChannel", () => {
 
     await expect(readPromise).rejects.toThrow(/bad record flag|unknown record flag/);
 
+    const state = sc as unknown as {
+      sendKey: Uint8Array;
+      recvKey: Uint8Array;
+      rekeyBase: Uint8Array;
+    };
+    expect(state.sendKey).toEqual(new Uint8Array(32));
+    expect(state.recvKey).toEqual(new Uint8Array(32));
+    expect(state.rekeyBase).toEqual(new Uint8Array(32));
+
     sc.close();
     close();
   });
@@ -227,6 +272,14 @@ describe("SecureChannel", () => {
     });
 
     await expect(sc.write(new Uint8Array([1, 2]))).rejects.toThrow(/write failed/);
+    const state = sc as unknown as {
+      sendKey: Uint8Array;
+      recvKey: Uint8Array;
+      rekeyBase: Uint8Array;
+    };
+    expect(state.sendKey).toEqual(new Uint8Array(32));
+    expect(state.recvKey).toEqual(new Uint8Array(32));
+    expect(state.rekeyBase).toEqual(new Uint8Array(32));
   });
 
   test("close rejects pending reads", async () => {
@@ -301,6 +354,49 @@ describe("SecureChannel", () => {
     sc.close();
     close();
     await expect(sc.write(new Uint8Array([1]))).rejects.toThrow(/closed/);
+  });
+
+  test("close prevents a paused multi-record write from using cleared keys", async () => {
+    let releaseFirstWrite!: () => void;
+    const firstWriteReleased = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let firstWriteStarted!: () => void;
+    const firstWriteObserved = new Promise<void>((resolve) => {
+      firstWriteStarted = resolve;
+    });
+    const writes: Uint8Array[] = [];
+    const sc = new SecureChannel({
+      transport: {
+        async readBinary() { return await new Promise<Uint8Array>(() => {}); },
+        async writeBinary(frame) {
+          writes.push(frame);
+          if (writes.length === 1) {
+            firstWriteStarted();
+            await firstWriteReleased;
+          }
+        },
+        close() {}
+      },
+      maxRecordBytes: 1 << 20,
+      outboundRecordChunkBytes: 2,
+      sendKey: new Uint8Array(32).fill(1),
+      recvKey: new Uint8Array(32).fill(2),
+      sendNoncePrefix: new Uint8Array(4),
+      recvNoncePrefix: new Uint8Array(4),
+      rekeyBase: new Uint8Array(32).fill(3),
+      transcriptHash: new Uint8Array(32),
+      sendDir: 1,
+      recvDir: 2
+    });
+
+    const write = sc.write(new Uint8Array([1, 2, 3, 4]));
+    await firstWriteObserved;
+    sc.close();
+    releaseFirstWrite();
+
+    await expect(write).rejects.toThrow(/closed/);
+    expect(writes).toHaveLength(1);
   });
 
   test("sendLoop preserves order under failures", async () => {

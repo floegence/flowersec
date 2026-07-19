@@ -137,11 +137,11 @@ export class SecureChannel {
       throw new RangeError("maxOutboundBufferedBytes must be a non-negative safe integer");
     }
     this.maxOutboundBufferedBytes = maxOutboundBufferedBytes === 0 ? SDK_DEFAULTS.e2ee.maxOutboundBufferedBytes : maxOutboundBufferedBytes;
-    this.sendKey = args.sendKey;
-    this.recvKey = args.recvKey;
+    this.sendKey = args.sendKey.slice();
+    this.recvKey = args.recvKey.slice();
     this.sendNoncePrefix = args.sendNoncePrefix;
     this.recvNoncePrefix = args.recvNoncePrefix;
-    this.rekeyBase = args.rekeyBase;
+    this.rekeyBase = args.rekeyBase.slice();
     this.transcriptHash = args.transcriptHash;
     this.sendDir = args.sendDir;
     this.recvDir = args.recvDir;
@@ -186,10 +186,14 @@ export class SecureChannel {
     this.sendClosed = true;
     this.rejectQueuedSenders(this.sendErr ?? new Error("closed"));
     this.wakeSendWaiters();
-    this.transport.close();
     const ws = this.recvWaiters;
     this.recvWaiters = [];
     for (const w of ws) w();
+    try {
+      this.transport.close();
+    } finally {
+      this.clearKeyMaterial();
+    }
   }
 
   // sendPing emits a keepalive record.
@@ -325,6 +329,7 @@ export class SecureChannel {
         if (req.kind === "app") {
           const payload = req.payload ?? new Uint8Array();
           for (let offset = 0; offset < payload.length; offset += this.outboundRecordChunkBytes) {
+            if (this.closed || this.sendClosed) throw new Error("closed");
             const chunk = payload.subarray(offset, Math.min(payload.length, offset + this.outboundRecordChunkBytes));
             const seq = this.reserveSendSeq();
             frame = encryptRecord(this.sendKey, this.sendNoncePrefix, RECORD_FLAG_APP, seq, chunk, this.maxRecordBytes);
@@ -358,6 +363,7 @@ export class SecureChannel {
     try {
       while (!this.closed) {
         const frame = await this.transport.readBinary();
+        if (this.closed) return;
         const { flags, seq, plaintext } = decryptRecord(
           this.recvKey,
           this.recvNoncePrefix,
@@ -394,5 +400,11 @@ export class SecureChannel {
       for (const w of ws) w();
       this.close();
     }
+  }
+
+  private clearKeyMaterial(): void {
+    this.sendKey.fill(0);
+    this.recvKey.fill(0);
+    this.rekeyBase.fill(0);
   }
 }

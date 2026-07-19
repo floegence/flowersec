@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { p256 } from "@noble/curves/p256";
+import { x25519 } from "@noble/curves/ed25519";
 import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
 import { deriveSessionKeys } from "./kdf.js";
 import { encryptRecord } from "./record.js";
@@ -36,6 +37,14 @@ type Vectors = {
       max_record_bytes: number;
     };
     expected: { frame_b64u: string };
+  }>;
+  handshake_x25519_negative: Array<{
+    case_id: string;
+    inputs: {
+      private_key_b64u: string;
+      peer_public_key_b64u: string;
+    };
+    expected: { reject: boolean };
   }>;
   handshake_p256: Array<{
     case_id: string;
@@ -110,6 +119,19 @@ describe("e2ee test vectors", () => {
         tc.inputs.max_record_bytes
       );
       expect(base64urlEncode(frame)).toBe(tc.expected.frame_b64u);
+    }
+  });
+
+  test("handshake_x25519_negative", async () => {
+    const v = await loadVectors();
+    for (const tc of v.handshake_x25519_negative) {
+      expect(tc.expected.reject, tc.case_id).toBe(true);
+      const privateKey = base64urlDecode(tc.inputs.private_key_b64u);
+      const peerPublicKey = base64urlDecode(tc.inputs.peer_public_key_b64u);
+      expect(
+        () => x25519.getSharedSecret(privateKey, peerPublicKey),
+        tc.case_id
+      ).toThrow();
     }
   });
 

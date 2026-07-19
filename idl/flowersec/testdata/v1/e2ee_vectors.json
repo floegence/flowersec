@@ -35,6 +35,18 @@
       }
     }
   ],
+  "handshake_x25519_negative": [
+    {
+      "case_id": "x25519_nonzero_low_order_public_key",
+      "inputs": {
+        "private_key_b64u": "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo",
+        "peer_public_key_b64u": "4Ot6fDtBuK4WVuP68Z_EatoJjeucMrH9hmIFFl9JuAA"
+      },
+      "expected": {
+        "reject": true
+      }
+    }
+  ],
   "handshake_p256": [
     {
       "case_id": "handshake_p256_basic",

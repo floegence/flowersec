@@ -44,6 +44,17 @@ type e2eeVectorsFile struct {
 		} `json:"expected"`
 	} `json:"record_frame"`
 
+	HandshakeX25519Negative []struct {
+		CaseID string `json:"case_id"`
+		Inputs struct {
+			PrivateKeyB64u    string `json:"private_key_b64u"`
+			PeerPublicKeyB64u string `json:"peer_public_key_b64u"`
+		} `json:"inputs"`
+		Expected struct {
+			Reject bool `json:"reject"`
+		} `json:"expected"`
+	} `json:"handshake_x25519_negative"`
+
 	HandshakeP256 []struct {
 		CaseID string `json:"case_id"`
 		Inputs struct {
@@ -150,6 +161,32 @@ func TestVectors_E2EE(t *testing.T) {
 			got := base64url.Encode(frame)
 			if got != tc.Expected.FrameB64u {
 				t.Fatalf("record frame mismatch: got=%s want=%s", got, tc.Expected.FrameB64u)
+			}
+		})
+	}
+
+	for _, tc := range vf.HandshakeX25519Negative {
+		t.Run(tc.CaseID, func(t *testing.T) {
+			if !tc.Expected.Reject {
+				t.Fatal("negative X25519 vector must require rejection")
+			}
+			curve, err := curveForSuite(SuiteX25519HKDFAES256GCM)
+			if err != nil {
+				t.Fatal(err)
+			}
+			privateKey, err := curve.NewPrivateKey(mustDecodeVector(t, tc.Inputs.PrivateKeyB64u))
+			if err != nil {
+				t.Fatal(err)
+			}
+			peerPublicKey, err := ParsePublicKey(
+				SuiteX25519HKDFAES256GCM,
+				mustDecodeVector(t, tc.Inputs.PeerPublicKeyB64u),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := privateKey.ECDH(peerPublicKey); err == nil {
+				t.Fatal("low-order X25519 public key was accepted")
 			}
 		})
 	}
@@ -264,4 +301,13 @@ func TestVectors_E2EE(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mustDecodeVector(t *testing.T, value string) []byte {
+	t.Helper()
+	decoded, err := base64url.Decode(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decoded
 }

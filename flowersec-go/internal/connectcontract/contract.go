@@ -66,10 +66,6 @@ func PrepareTunnelGrant(grant *controlv1.ChannelInitGrant, expectedRole controlv
 	if grant.ChannelInitExpireAtUnixS <= 0 {
 		return PreparedTunnelGrant{}, ErrMissingInitExp
 	}
-	psk, err := decodePSK(grant.E2eePskB64u)
-	if err != nil {
-		return PreparedTunnelGrant{}, err
-	}
 	allowed, err := normalizeAllowedSuites(grant.AllowedSuites)
 	if err != nil {
 		return PreparedTunnelGrant{}, err
@@ -80,6 +76,10 @@ func PrepareTunnelGrant(grant *controlv1.ChannelInitGrant, expectedRole controlv
 	}
 	if _, ok := allowed[grant.DefaultSuite]; !ok {
 		return PreparedTunnelGrant{}, ErrInvalidSuite
+	}
+	psk, err := decodePSK(grant.E2eePskB64u)
+	if err != nil {
+		return PreparedTunnelGrant{}, err
 	}
 	return PreparedTunnelGrant{
 		TunnelURL:          tunnelURL,
@@ -107,11 +107,11 @@ func PrepareDirectConnectInfo(info *directv1.DirectConnectInfo) (PreparedDirectC
 	if info.ChannelInitExpireAtUnixS <= 0 {
 		return PreparedDirectConnectInfo{}, ErrMissingInitExp
 	}
-	psk, err := decodePSK(info.E2eePskB64u)
+	suite, err := normalizeDirectSuite(info.DefaultSuite)
 	if err != nil {
 		return PreparedDirectConnectInfo{}, err
 	}
-	suite, err := normalizeDirectSuite(info.DefaultSuite)
+	psk, err := decodePSK(info.E2eePskB64u)
 	if err != nil {
 		return PreparedDirectConnectInfo{}, err
 	}
@@ -138,6 +138,7 @@ func normalizeChannelID(raw string) (string, error) {
 func decodePSK(raw string) ([]byte, error) {
 	psk, err := base64url.Decode(strings.TrimSpace(raw))
 	if err != nil || len(psk) != 32 {
+		clear(psk)
 		return nil, ErrInvalidPSK
 	}
 	return psk, nil

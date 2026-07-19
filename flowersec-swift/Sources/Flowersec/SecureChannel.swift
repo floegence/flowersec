@@ -122,6 +122,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
 
   var queuedWriteCount: Int { pendingWrites.count }
   var queuedWriteBytes: Int { pendingWriteBytes }
+  var keyMaterialIsCleared: Bool { keys.keyMaterialIsCleared }
 
   private func writeRecords(_ data: Data) async throws {
     var offset = 0
@@ -138,8 +139,13 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
     guard length >= 0 else {
       throw FlowersecError.invalidRecord("Negative read length.", path: path)
     }
-    while readBuffer.count < length {
-      try await receiveNextApplicationRecord()
+    do {
+      while readBuffer.count < length {
+        try await receiveNextApplicationRecord()
+      }
+    } catch {
+      await terminateAfterReadFailure(error)
+      throw error
     }
     let out = readBuffer.prefix(length)
     readBuffer.removeFirst(length)
@@ -149,6 +155,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   func close() async {
     guard !closed else { return }
     closed = true
+    keys.clearKeyMaterial()
     failPendingWrites(with: FlowersecError.closed(path: path))
     await transport.close()
   }
@@ -197,6 +204,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
       startWriteIfNeeded()
     case .failure(let error):
       closed = true
+      keys.clearKeyMaterial()
       write.continuation.resume(throwing: error)
       failPendingWrites(with: error)
       Task { await transport.close() }
@@ -212,6 +220,14 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
     for write in writes {
       write.continuation.resume(throwing: error)
     }
+  }
+
+  private func terminateAfterReadFailure(_ error: Error) async {
+    guard !closed else { return }
+    closed = true
+    keys.clearKeyMaterial()
+    failPendingWrites(with: error)
+    await transport.close()
   }
 
   private func enqueue(_ operation: PendingOperation) async throws {
@@ -281,6 +297,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
         plaintext: Data()
       )
       try await transport.writeBinary(frame)
+      guard !closed else { throw FlowersecError.closed(path: path) }
       keys.sendKey = try FlowersecRecordCodec.deriveRekeyKey(
         rekeyBase: keys.rekeyBase,
         transcript: keys.transcript,
@@ -310,6 +327,7 @@ actor FlowersecSecureChannel: FlowersecYamuxChannel {
   private func readRecord() async throws -> FlowersecRecord {
     do {
       let frame = try await transport.readBinary()
+      guard !closed else { throw FlowersecError.closed(path: path) }
       let record = try FlowersecRecordCodec.decrypt(
         key: keys.recvKey,
         noncePrefix: keys.recvNoncePrefix,

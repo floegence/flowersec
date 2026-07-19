@@ -251,6 +251,20 @@ enum FlowersecHandshake {
     let code = HMAC<SHA256>.authenticationCode(for: message, using: SymmetricKey(data: psk))
     return Data(code)
   }
+
+  static func x25519SharedSecret(
+    privateKey: Curve25519.KeyAgreement.PrivateKey,
+    peerPublicKey: Curve25519.KeyAgreement.PublicKey
+  ) throws -> SharedSecret {
+    let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: peerPublicKey)
+    let isZero = sharedSecret.withUnsafeBytes { bytes in
+      bytes.reduce(UInt8(0)) { $0 | $1 } == 0
+    }
+    guard !isZero else {
+      throw FlowersecError.invalidHandshake("The peer returned a low-order X25519 key.")
+    }
+    return sharedSecret
+  }
 }
 
 private struct ClientHandshakeMaterial {
@@ -326,7 +340,10 @@ private enum ClientAgreementPrivateKey {
   func sharedSecret(with publicKey: ServerAgreementPublicKey) throws -> SharedSecret {
     switch (self, publicKey) {
     case (.x25519(let privateKey), .x25519(let publicKey)):
-      return try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+      return try FlowersecHandshake.x25519SharedSecret(
+        privateKey: privateKey,
+        peerPublicKey: publicKey
+      )
     case (.p256(let privateKey), .p256(let publicKey)):
       return try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
     default:
