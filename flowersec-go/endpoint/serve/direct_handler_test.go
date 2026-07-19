@@ -26,6 +26,46 @@ func TestNewDirectHandler_MissingServer(t *testing.T) {
 	}
 }
 
+func TestDirectHandlersForwardMaxPendingHandshakes(t *testing.T) {
+	srv, err := serve.New(serve.Options{})
+	if err != nil {
+		t.Fatalf("serve.New() failed: %v", err)
+	}
+	tests := []struct {
+		name string
+		new  func() error
+	}{
+		{
+			name: "fixed",
+			new: func() error {
+				_, err := serve.NewDirectHandler(serve.DirectHandlerOptions{
+					Server:               srv,
+					MaxPendingHandshakes: -1,
+				})
+				return err
+			},
+		},
+		{
+			name: "resolved",
+			new: func() error {
+				_, err := serve.NewDirectHandlerResolved(serve.DirectHandlerResolvedOptions{
+					Server:               srv,
+					MaxPendingHandshakes: -1,
+				})
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.new()
+			if err == nil || !strings.Contains(err.Error(), "MaxPendingHandshakes") {
+				t.Fatalf("error = %v, want MaxPendingHandshakes validation", err)
+			}
+		})
+	}
+}
+
 func TestNewDirectHandler_AllowsConnectDirect(t *testing.T) {
 	origin := "http://example.com"
 	channelID := "ch_test"

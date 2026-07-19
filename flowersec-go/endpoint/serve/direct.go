@@ -21,6 +21,9 @@ type DirectHandlerOptions struct {
 	AllowNoOrigin  bool
 
 	Handshake endpoint.AcceptDirectOptions
+	// MaxPendingHandshakes bounds concurrent WebSocket upgrades and E2EE handshakes.
+	// A value of 0 uses the safe default of 256.
+	MaxPendingHandshakes int
 
 	// OnError is called on upgrade/handshake/serve failures. It must not panic.
 	// If nil, Server's OnError callback (if configured) is used.
@@ -38,10 +41,11 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 		onErr = opts.Server.reportError
 	}
 	return endpoint.NewDirectHandler(endpoint.DirectHandlerOptions{
-		AllowedOrigins:      opts.AllowedOrigins,
-		AllowNoOrigin:       opts.AllowNoOrigin,
-		Handshake:           opts.Handshake,
-		MaxStreamHelloBytes: opts.Server.maxHelloBytes,
+		AllowedOrigins:       opts.AllowedOrigins,
+		AllowNoOrigin:        opts.AllowNoOrigin,
+		Handshake:            opts.Handshake,
+		MaxPendingHandshakes: opts.MaxPendingHandshakes,
+		MaxStreamHelloBytes:  opts.Server.maxHelloBytes,
 		OnStream: func(ctx context.Context, kind string, stream io.ReadWriteCloser) {
 			opts.Server.HandleStream(ctx, kind, stream)
 		},
@@ -57,6 +61,9 @@ type DirectHandlerResolvedOptions struct {
 	AllowNoOrigin  bool
 
 	Handshake endpoint.AcceptDirectResolverOptions
+	// MaxPendingHandshakes bounds concurrent WebSocket upgrades and E2EE handshakes.
+	// A value of 0 uses the safe default of 256.
+	MaxPendingHandshakes int
 
 	OnError func(err error)
 }
@@ -72,10 +79,11 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 		onErr = opts.Server.reportError
 	}
 	return endpoint.NewDirectHandlerResolved(endpoint.DirectHandlerResolvedOptions{
-		AllowedOrigins:      opts.AllowedOrigins,
-		AllowNoOrigin:       opts.AllowNoOrigin,
-		Handshake:           opts.Handshake,
-		MaxStreamHelloBytes: opts.Server.maxHelloBytes,
+		AllowedOrigins:       opts.AllowedOrigins,
+		AllowNoOrigin:        opts.AllowNoOrigin,
+		Handshake:            opts.Handshake,
+		MaxPendingHandshakes: opts.MaxPendingHandshakes,
+		MaxStreamHelloBytes:  opts.Server.maxHelloBytes,
 		OnStream: func(ctx context.Context, kind string, stream io.ReadWriteCloser) {
 			opts.Server.HandleStream(ctx, kind, stream)
 		},

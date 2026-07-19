@@ -449,6 +449,10 @@ type DirectHandlerOptions struct {
 
 	Handshake AcceptDirectOptions
 
+	// MaxPendingHandshakes bounds concurrent WebSocket upgrades and E2EE handshakes.
+	// A value of 0 uses the safe default of 256.
+	MaxPendingHandshakes int
+
 	MaxStreamHelloBytes int
 
 	// OnStream is required and is invoked in its own goroutine for each accepted stream.
@@ -465,6 +469,10 @@ type DirectHandlerOptions struct {
 func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 	if opts.OnStream == nil {
 		return nil, errors.New("missing OnStream (set DirectHandlerOptions.OnStream)")
+	}
+	admission, admissionErr := newDirectHandshakeAdmission(opts.MaxPendingHandshakes)
+	if admissionErr != nil {
+		return nil, admissionErr
 	}
 	checkOrigin := opts.Upgrader.CheckOrigin
 	hasCustomOriginCheck := checkOrigin != nil
@@ -502,9 +510,23 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 			}()
 			opts.OnError(err)
 		}
+		if !admission.tryAcquire() {
+			http.Error(w, "direct handshake capacity exhausted", http.StatusServiceUnavailable)
+			onErr(wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeResourceExhausted, errors.New("direct handshake capacity exhausted")))
+			return
+		}
+		admitted := true
+		releaseAdmission := func() {
+			if admitted {
+				admission.release()
+				admitted = false
+			}
+		}
+		defer releaseAdmission()
 
 		c, err := ws.Upgrade(w, r, upgrader)
 		if err != nil {
+			releaseAdmission()
 			if !hasCustomOriginCheck && websocket.IsWebSocketUpgrade(r) && r.Header.Get("Origin") == "" && !opts.AllowNoOrigin {
 				onErr(wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin))
 				return
@@ -514,6 +536,7 @@ func NewDirectHandler(opts DirectHandlerOptions) (http.HandlerFunc, error) {
 		}
 		defer c.Close()
 		sess, err := acceptDirectWSConn(r.Context(), c, handshake)
+		releaseAdmission()
 		if err != nil {
 			onErr(err)
 			return
@@ -568,6 +591,10 @@ type DirectHandlerResolvedOptions struct {
 
 	Handshake AcceptDirectResolverOptions
 
+	// MaxPendingHandshakes bounds concurrent WebSocket upgrades and E2EE handshakes.
+	// A value of 0 uses the safe default of 256.
+	MaxPendingHandshakes int
+
 	MaxStreamHelloBytes int
 
 	// OnStream is required and is invoked in its own goroutine for each accepted stream.
@@ -583,6 +610,10 @@ type DirectHandlerResolvedOptions struct {
 func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFunc, error) {
 	if opts.OnStream == nil {
 		return nil, errors.New("missing OnStream (set DirectHandlerResolvedOptions.OnStream)")
+	}
+	admission, admissionErr := newDirectHandshakeAdmission(opts.MaxPendingHandshakes)
+	if admissionErr != nil {
+		return nil, admissionErr
 	}
 	checkOrigin := opts.Upgrader.CheckOrigin
 	hasCustomOriginCheck := checkOrigin != nil
@@ -620,9 +651,23 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 			}()
 			opts.OnError(err)
 		}
+		if !admission.tryAcquire() {
+			http.Error(w, "direct handshake capacity exhausted", http.StatusServiceUnavailable)
+			onErr(wrapErr(fserrors.PathDirect, fserrors.StageHandshake, fserrors.CodeResourceExhausted, errors.New("direct handshake capacity exhausted")))
+			return
+		}
+		admitted := true
+		releaseAdmission := func() {
+			if admitted {
+				admission.release()
+				admitted = false
+			}
+		}
+		defer releaseAdmission()
 
 		c, err := ws.Upgrade(w, r, upgrader)
 		if err != nil {
+			releaseAdmission()
 			if !hasCustomOriginCheck && websocket.IsWebSocketUpgrade(r) && r.Header.Get("Origin") == "" && !opts.AllowNoOrigin {
 				onErr(wrapErr(fserrors.PathDirect, fserrors.StageValidate, fserrors.CodeMissingOrigin, ErrMissingOrigin))
 				return
@@ -632,6 +677,7 @@ func NewDirectHandlerResolved(opts DirectHandlerResolvedOptions) (http.HandlerFu
 		}
 		defer c.Close()
 		sess, err := acceptDirectWSResolvedConn(r.Context(), c, handshake)
+		releaseAdmission()
 		if err != nil {
 			onErr(err)
 			return
