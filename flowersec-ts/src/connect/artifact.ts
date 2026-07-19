@@ -8,7 +8,6 @@ const encoder = new TextEncoder();
 
 const TUNNEL_ARTIFACT_KEYS = new Set(["v", "transport", "tunnel_grant", "scoped", "correlation"]);
 const DIRECT_ARTIFACT_KEYS = new Set(["v", "transport", "direct_info", "scoped", "correlation"]);
-const ARTIFACT_ONLY_KEYS = new Set(["v", "transport", "tunnel_grant", "direct_info", "scoped", "correlation"]);
 
 export type ConnectArtifactTransport = "tunnel" | "direct";
 
@@ -205,10 +204,6 @@ function assertArtifactObject(value: unknown): Record<string, unknown> {
 function assertArtifactTransport(value: unknown): ConnectArtifactTransport {
   if (value !== "tunnel" && value !== "direct") throw new Error("bad ConnectArtifact.transport");
   return value;
-}
-
-export function hasArtifactOnlyFields(value: Record<string, unknown>): boolean {
-  return Object.keys(value).some((key) => ARTIFACT_ONLY_KEYS.has(key));
 }
 
 export function assertConnectArtifact(value: unknown): ConnectArtifact {

@@ -10,7 +10,7 @@ import { base64urlDecode } from "../utils/base64url.js";
 import { AbortError, FlowersecError, throwIfAborted } from "../utils/errors.js";
 import { DEFAULT_WEB_SOCKET_LIMITS, WebSocketBinaryTransport, WsCloseError, type WebSocketLike, type WebSocketLimits } from "../ws-client/binaryTransport.js";
 import type { ClientInternal } from "../client.js";
-import type { ConnectScopeResolverMap } from "../connect/internalNormalize.js";
+import type { ConnectScopeResolverMap } from "../connect/resolveArtifact.js";
 import {
   OriginMismatchError,
   WsFactoryRequiredError,

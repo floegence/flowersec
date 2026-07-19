@@ -62,14 +62,14 @@ describe("cookbook documentation contracts", () => {
     expect(doc).toContain("@floegence/flowersec-core/proxy");
   });
 
-  it("keeps the connect artifact contract and compatibility rejections explicit", () => {
+  it("keeps the artifact-only automatic connect contract explicit", () => {
     const doc = readRepoFile("docs", "CONNECT_ARTIFACTS.md");
 
     expect(doc).toContain("assertConnectArtifact(...)");
     expect(doc).toContain("protocolio.DecodeConnectArtifactJSON(...)");
     expect(doc).toContain("requestConnectArtifact");
-    expect(doc).toContain("grant_server");
-    expect(doc).toContain("token` / `role`");
+    expect(doc).toContain("Raw transport inputs are accepted only by explicit entrypoints");
+    expect(doc).toContain("do not accept raw grants");
   });
 
   it("keeps the controlplane envelope and helper error contract explicit", () => {

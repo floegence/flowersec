@@ -12,7 +12,7 @@ import { createByteReader, readNBytes } from "../../../flowersec-ts/dist/streami
 //
 // Notes:
 // - The direct demo server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
-// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, or the ready JSON from examples/go/direct_demo.
+// - stdin must contain a canonical direct ConnectArtifact.
 // - This example allocates a single buffer of size content_len. Keep it small for demos.
 
 async function readStdinUtf8() {
@@ -30,8 +30,7 @@ function toHexHead(b, max = 16) {
 
 async function main() {
   const input = await readStdinUtf8();
-  const info = JSON.parse(input);
-  const bootstrap = info?.connect_artifact ?? info;
+  const artifact = JSON.parse(input);
 
   const origin = process.env.FSEC_ORIGIN ?? "";
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
@@ -39,7 +38,7 @@ async function main() {
   const wantBytes = Math.max(0, Math.floor(Number(process.env.FSEC_META_BYTES ?? "65536")));
   const fillByte = Math.max(0, Math.min(255, Math.floor(Number(process.env.FSEC_META_FILL_BYTE ?? "97"))));
 
-  const client = await connectNode(bootstrap, { origin, transportSecurityPolicy: AllowPlaintextForLoopback });
+  const client = await connectNode(artifact, { origin, transportSecurityPolicy: AllowPlaintextForLoopback });
   try {
     const stream = await client.openStream("meta_bytes");
     const reader = createByteReader(stream);

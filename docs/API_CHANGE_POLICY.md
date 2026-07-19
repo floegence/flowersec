@@ -76,7 +76,7 @@ The following behavior is verified across all four SDKs:
 - controlplane envelopes, reconnect sources, proxy streams, and diagnostics
 - Go-reference interoperability in both directions for every non-Go SDK
 
-Compatibility inputs such as raw grants, wrapper objects, and raw direct info remain supported only while their tests remain present. Removing an input or public API requires an explicit product decision and corresponding release communication.
+Automatic connection entrypoints are artifact-only. Raw grants and direct connection info belong only to the explicit tunnel and direct entrypoints; wrapper objects and serialized JSON are not automatic-connect inputs. Removed compatibility symbols and package subpaths stay on the existing stability and package-checker denylist so a manifest update cannot silently restore them. Removing any other public input or API requires an explicit product decision and corresponding release communication.
 
 ## Review checklist
 

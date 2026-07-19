@@ -1,6 +1,7 @@
 package apicheck
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -29,9 +30,10 @@ import (
 
 // Compile-time checks for the public Go API contract. If an entrypoint is renamed or removed,
 // this file should fail to compile and the contract must be updated in the same change.
+var _ func(context.Context, *protocolio.ConnectArtifact, ...client.ConnectOption) (client.Client, error) = client.Connect
+
 var (
 	// client
-	_ = client.Connect
 	_ = client.ConnectTunnel
 	_ = client.ConnectDirect
 	_ = client.WithTransportSecurityPolicy

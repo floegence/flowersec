@@ -10,7 +10,7 @@ import { RpcClient } from "../../flowersec-ts/dist/rpc/index.js";
 import { RpcProxy } from "../../flowersec-ts/dist/rpc-proxy/rpcProxy.js";
 import { writeStreamHello } from "../../flowersec-ts/dist/streamhello/index.js";
 import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
-import { createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
+import { assertConnectArtifact, createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
 import { Role as TunnelRole } from "../../flowersec-ts/dist/gen/flowersec/tunnel/v1.gen.js";
 
 // node-tunnel-client-advanced is the "advanced" Node.js tunnel client example.
@@ -23,24 +23,12 @@ import { Role as TunnelRole } from "../../flowersec-ts/dist/gen/flowersec/tunnel
 //
 // Notes:
 // - The tunnel server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
-// - Tunnel attach tokens are one-time use; mint a new artifact/grant for each connection attempt.
-// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, {"grant_client":...},
-//   or just the grant_client object itself.
+// - Tunnel attach tokens are one-time use; mint a new artifact for each connection attempt.
+// - stdin must contain a canonical tunnel ConnectArtifact.
 async function readStdinUtf8() {
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
   return Buffer.concat(chunks).toString("utf8");
-}
-
-function pickGrantClient(obj) {
-  if (obj && typeof obj === "object" && obj.connect_artifact && typeof obj.connect_artifact === "object") {
-    return pickGrantClient(obj.connect_artifact);
-  }
-  if (obj && typeof obj === "object" && obj.transport === "tunnel" && obj.tunnel_grant != null) {
-    return obj.tunnel_grant;
-  }
-  if (obj && typeof obj === "object" && obj.grant_client != null) return obj.grant_client;
-  return obj;
 }
 
 function waitOpen(ws, timeoutMs) {
@@ -96,8 +84,11 @@ function waitNotify(proxy, typeId, timeoutMs) {
 
 async function main() {
   const input = await readStdinUtf8();
-  const readyOrGrant = JSON.parse(input);
-  const grant = pickGrantClient(readyOrGrant);
+  const artifact = assertConnectArtifact(JSON.parse(input));
+  if (artifact.transport !== "tunnel") {
+    throw new Error("expected a tunnel ConnectArtifact");
+  }
+  const grant = artifact.tunnel_grant;
 
   // Explicit Origin header value used by the tunnel allow-list.
   const origin = process.env.FSEC_ORIGIN ?? "";

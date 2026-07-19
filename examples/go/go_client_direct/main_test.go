@@ -71,7 +71,7 @@ func TestRun_VersionFlag(t *testing.T) {
 	}
 }
 
-func TestDecodeDirectInfoInput_AcceptsConnectArtifactEnvelope(t *testing.T) {
+func TestDecodeDirectArtifactInputAcceptsDirectArtifact(t *testing.T) {
 	artifact := protocolio.ConnectArtifact{
 		V:         1,
 		Transport: protocolio.ConnectArtifactTransportDirect,
@@ -87,16 +87,9 @@ func TestDecodeDirectInfoInput_AcceptsConnectArtifactEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal artifact: %v", err)
 	}
-	envelope, err := json.Marshal(map[string]json.RawMessage{
-		"connect_artifact": rawArtifact,
-	})
+	info, err := decodeDirectArtifactInput(bytes.NewReader(rawArtifact))
 	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
-	}
-
-	info, err := decodeDirectInfoInput(bytes.NewReader(envelope))
-	if err != nil {
-		t.Fatalf("decodeDirectInfoInput() failed: %v", err)
+		t.Fatalf("decodeDirectArtifactInput() failed: %v", err)
 	}
 	if info.ChannelId != "chan-direct" {
 		t.Fatalf("unexpected channel id: %q", info.ChannelId)

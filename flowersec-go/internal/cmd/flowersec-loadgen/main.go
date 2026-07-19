@@ -32,6 +32,7 @@ import (
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
 	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/observability"
+	"github.com/floegence/flowersec/flowersec-go/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/rpc"
 	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
 )
@@ -494,8 +495,13 @@ func runConnection(ctx context.Context, svc *channelinit.Service, cfg loadConfig
 	connCtx, cancel := context.WithTimeout(ctx, cfg.connTimeout)
 	defer cancel()
 	observer := &connectionObserver{}
+	artifact := &protocolio.ConnectArtifact{
+		V:           1,
+		Transport:   protocolio.ConnectArtifactTransportTunnel,
+		TunnelGrant: grantC,
+	}
 	connectStart := time.Now()
-	cli, err = client.Connect(connCtx, grantC, clientConnectOptions(cfg, observer)...)
+	cli, err = client.Connect(connCtx, artifact, clientConnectOptions(cfg, observer)...)
 	out.connectTotal = time.Since(connectStart)
 	out.wsOpen, out.handshake = observer.snapshot()
 	if err != nil {
@@ -649,7 +655,12 @@ func runStreamingBenchmark(ctx context.Context, svc *channelinit.Service, cfg lo
 
 	connectCtx, cancel := context.WithTimeout(ctx, cfg.connTimeout)
 	defer cancel()
-	cli, err := client.Connect(connectCtx, grantC, clientConnectOptions(cfg, observability.NoopClientObserver)...)
+	artifact := &protocolio.ConnectArtifact{
+		V:           1,
+		Transport:   protocolio.ConnectArtifactTransportTunnel,
+		TunnelGrant: grantC,
+	}
+	cli, err := client.Connect(connectCtx, artifact, clientConnectOptions(cfg, observability.NoopClientObserver)...)
 	if err != nil {
 		return streamingMetrics{}, err
 	}

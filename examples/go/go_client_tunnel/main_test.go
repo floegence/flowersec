@@ -71,7 +71,7 @@ func TestRun_VersionFlag(t *testing.T) {
 	}
 }
 
-func TestDecodeTunnelGrantInput_AcceptsConnectArtifactEnvelope(t *testing.T) {
+func TestDecodeTunnelArtifactInputAcceptsTunnelArtifact(t *testing.T) {
 	artifact := protocolio.ConnectArtifact{
 		V:         1,
 		Transport: protocolio.ConnectArtifactTransportTunnel,
@@ -91,16 +91,9 @@ func TestDecodeTunnelGrantInput_AcceptsConnectArtifactEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal artifact: %v", err)
 	}
-	envelope, err := json.Marshal(map[string]json.RawMessage{
-		"connect_artifact": rawArtifact,
-	})
+	grant, err := decodeTunnelArtifactInput(bytes.NewReader(rawArtifact))
 	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
-	}
-
-	grant, err := decodeTunnelGrantInput(bytes.NewReader(envelope))
-	if err != nil {
-		t.Fatalf("decodeTunnelGrantInput() failed: %v", err)
+		t.Fatalf("decodeTunnelArtifactInput() failed: %v", err)
 	}
 	if grant.ChannelId != "chan-demo" {
 		t.Fatalf("unexpected channel id: %q", grant.ChannelId)

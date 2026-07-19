@@ -2,17 +2,11 @@
 
 Flowersec uses one canonical client-facing connect artifact: `ConnectArtifact`.
 
-It is the recommended integration shape for new controlplanes, browser helpers, Node helpers, reconnect adapters, and CLI/demo minting flows.
+It is the required input for Go `client.Connect(...)` and the TypeScript `connect(...)`, `connectBrowser(...)`, and `connectNode(...)` entrypoints. It is also the integration shape for controlplanes, reconnect adapters, and CLI or demo minting flows.
 
 ## Why it exists
 
-`ConnectArtifact` gives Flowersec one canonical client-side connect envelope while still preserving older compatibility edges:
-
-- raw `ChannelInitGrant`
-- wrapper `{grant_client: ...}`
-- raw `DirectConnectInfo`
-
-The artifact keeps those legacy inputs available, but gives new integrations one place for:
+`ConnectArtifact` gives Flowersec one canonical client-side connect envelope and one place for:
 
 - transport selection
 - scoped metadata
@@ -130,7 +124,7 @@ import { connect } from "@floegence/flowersec-core";
 import { requestConnectArtifact } from "@floegence/flowersec-core/controlplane";
 
 const artifact = await requestConnectArtifact({ endpointId: "demo" });
-const client = await connect(artifact, {});
+const client = await connect(artifact, { origin: "https://app.example" });
 ```
 
 Go:
@@ -143,11 +137,11 @@ if err != nil {
 client, err := client.Connect(ctx, artifact, client.WithOrigin(origin))
 ```
 
-## Compatibility inputs
+## Explicit transport entrypoints
 
-Flowersec still accepts legacy raw inputs, but rejects:
+Raw transport inputs are accepted only by explicit entrypoints:
 
-- hybrid ambiguous objects
-- legacy objects mixed with artifact-only fields
-- client-facing `grant_server` / server-role inputs
-- `token` / `role` heuristics as auto-detect shortcuts
+- pass a `ChannelInitGrant` to `client.ConnectTunnel(...)`, `connectTunnel(...)`, `connectTunnelBrowser(...)`, or `connectTunnelNode(...)`
+- pass a `DirectConnectInfo` to `client.ConnectDirect(...)`, `connectDirect(...)`, `connectDirectBrowser(...)`, or `connectDirectNode(...)`
+
+Automatic `Connect` or `connect` entrypoints do not accept raw grants, wrapper objects, direct connection info, readers, byte slices, or serialized JSON. Decode and validate a `ConnectArtifact` before calling them.

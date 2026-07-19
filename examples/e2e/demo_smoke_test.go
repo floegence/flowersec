@@ -112,7 +112,7 @@ func TestGoTunnelDemoClientsAcceptArtifactBootstrap(t *testing.T) {
 	simpleOut := runGoCommand(
 		t,
 		examplesRoot,
-		requestTunnelArtifactEnvelope(t, controlplane.ControlplaneHTTPURL, serverEndpoint.EndpointID),
+		requestTunnelArtifact(t, controlplane.ControlplaneHTTPURL, serverEndpoint.EndpointID),
 		nil,
 		"run",
 		"./go/go_client_tunnel_simple",
@@ -124,7 +124,7 @@ func TestGoTunnelDemoClientsAcceptArtifactBootstrap(t *testing.T) {
 	advancedOut := runGoCommand(
 		t,
 		examplesRoot,
-		requestTunnelArtifactEnvelope(t, controlplane.ControlplaneHTTPURL, serverEndpoint.EndpointID),
+		requestTunnelArtifact(t, controlplane.ControlplaneHTTPURL, serverEndpoint.EndpointID),
 		nil,
 		"run",
 		"./go/go_client_tunnel",
@@ -149,12 +149,12 @@ func TestGoDirectDemoClientsAcceptArtifactBootstrap(t *testing.T) {
 	)
 	defer directProc.stop()
 
-	directEnvelope := makeDirectArtifactEnvelope(t, directReady)
+	directArtifact := makeDirectArtifact(t, directReady)
 
 	simpleOut := runGoCommand(
 		t,
 		examplesRoot,
-		directEnvelope,
+		directArtifact,
 		nil,
 		"run",
 		"./go/go_client_direct_simple",
@@ -166,7 +166,7 @@ func TestGoDirectDemoClientsAcceptArtifactBootstrap(t *testing.T) {
 	advancedOut := runGoCommand(
 		t,
 		examplesRoot,
-		directEnvelope,
+		directArtifact,
 		nil,
 		"run",
 		"./go/go_client_direct",
@@ -315,7 +315,7 @@ func runGoCommand(t *testing.T, cwd string, stdin string, env []string, args ...
 	return stdout.String()
 }
 
-func requestTunnelArtifactEnvelope(t *testing.T, baseURL string, endpointID string) string {
+func requestTunnelArtifact(t *testing.T, baseURL string, endpointID string) string {
 	t.Helper()
 
 	body := strings.NewReader(fmt.Sprintf(`{"endpoint_id":%q}`, endpointID))
@@ -339,28 +339,35 @@ func requestTunnelArtifactEnvelope(t *testing.T, baseURL string, endpointID stri
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unexpected connect artifact status=%d body=%s", resp.StatusCode, string(raw))
 	}
-	return string(raw)
+	var envelope struct {
+		ConnectArtifact json.RawMessage `json:"connect_artifact"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatalf("decode connect artifact response: %v", err)
+	}
+	if len(envelope.ConnectArtifact) == 0 {
+		t.Fatal("connect artifact response is missing connect_artifact")
+	}
+	return string(envelope.ConnectArtifact)
 }
 
-func makeDirectArtifactEnvelope(t *testing.T, ready directDemoReady) string {
+func makeDirectArtifact(t *testing.T, ready directDemoReady) string {
 	t.Helper()
 
-	envelope := map[string]any{
-		"connect_artifact": map[string]any{
-			"v":         1,
-			"transport": "direct",
-			"direct_info": map[string]any{
-				"ws_url":                        ready.WSURL,
-				"channel_id":                    ready.ChannelID,
-				"e2ee_psk_b64u":                 ready.E2EEPskB64u,
-				"channel_init_expire_at_unix_s": ready.ChannelInitExpireAt,
-				"default_suite":                 ready.DefaultSuite,
-			},
+	artifact := map[string]any{
+		"v":         1,
+		"transport": "direct",
+		"direct_info": map[string]any{
+			"ws_url":                        ready.WSURL,
+			"channel_id":                    ready.ChannelID,
+			"e2ee_psk_b64u":                 ready.E2EEPskB64u,
+			"channel_init_expire_at_unix_s": ready.ChannelInitExpireAt,
+			"default_suite":                 ready.DefaultSuite,
 		},
 	}
-	raw, err := json.Marshal(envelope)
+	raw, err := json.Marshal(artifact)
 	if err != nil {
-		t.Fatalf("marshal direct artifact envelope: %v", err)
+		t.Fatalf("marshal direct artifact: %v", err)
 	}
 	return string(raw)
 }

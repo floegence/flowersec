@@ -103,10 +103,6 @@
     "./gen/flowersec/tunnel/*": {
       "types": "./dist/gen/flowersec/tunnel/*.d.ts",
       "default": "./dist/gen/flowersec/tunnel/*.js"
-    },
-    "./internal": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
     }
   },
   "engines": {

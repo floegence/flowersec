@@ -15,7 +15,7 @@ import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
 // Notes:
 // - The direct demo server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
 // - In Node, connectNode() automatically sets wsFactory so the Origin header is sent correctly.
-// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, or the ready JSON from examples/go/direct_demo.
+// - stdin must contain a canonical direct ConnectArtifact.
 
 async function readStdinUtf8() {
   const chunks = [];
@@ -41,17 +41,15 @@ function waitHello(demo, timeoutMs) {
 
 async function main() {
   const input = await readStdinUtf8();
-  const info = JSON.parse(input);
-  const bootstrap = info?.connect_artifact ?? info;
+  const artifact = JSON.parse(input);
 
   // Explicit Origin header value used by the server allow-list.
   const origin = process.env.FSEC_ORIGIN ?? "";
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
-  // connectNode() auto-detects direct artifacts/info and returns an RPC-ready session.
-  // It also supports extra yamux streams via openStream(kind).
+  // connectNode() resolves the artifact and returns an RPC-ready session.
   const sess = createDemoSession(
-    await connectNode(bootstrap, { origin, transportSecurityPolicy: AllowPlaintextForLoopback }),
+    await connectNode(artifact, { origin, transportSecurityPolicy: AllowPlaintextForLoopback }),
   );
 
   try {

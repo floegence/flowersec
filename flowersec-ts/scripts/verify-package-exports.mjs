@@ -16,7 +16,11 @@ const manifest = JSON.parse(
 const forbiddenRuntimeExportsBySubpath = new Map([
   ['@floegence/flowersec-core/proxy', ['resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST']],
 ]);
-const nonStablePackageExports = new Set(['./internal']);
+const removedLegacyRuntimeExports = new Set(['requestChannelGrant', 'requestEntryChannelGrant']);
+
+function isRemovedLegacyPackageExport(subpath) {
+  return subpath === './internal' || subpath.startsWith('./internal/');
+}
 
 function run(cmd, args, cwd, input) {
   return execFileSync(cmd, args, {
@@ -49,7 +53,10 @@ function installTarball(tarballPath) {
 
 function verifyPackageJSONExports() {
   const pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'));
-  const stableExports = Object.keys(pkg.exports).filter((subpath) => !subpath.includes('*') && !nonStablePackageExports.has(subpath));
+  for (const subpath of Object.keys(pkg.exports)) {
+    assert.equal(isRemovedLegacyPackageExport(subpath), false, `package.json exports removed legacy subpath ${subpath}`);
+  }
+  const stableExports = Object.keys(pkg.exports).filter((subpath) => !subpath.includes('*'));
   const manifestExports = manifest.ts.subpaths.map((subpath) => subpath.package_json_export);
   for (const subpath of manifest.ts.subpaths) {
     assert.equal(
@@ -80,6 +87,11 @@ function verifyInstalledPackage() {
         `    assert.equal(Object.prototype.hasOwnProperty.call(${moduleVar}, ${JSON.stringify(exportName)}), false, ${JSON.stringify(subpath.specifier + ' leaked forbidden export ' + exportName)});`
       );
     }
+    for (const exportName of removedLegacyRuntimeExports) {
+      lines.push(
+        `    assert.equal(Object.prototype.hasOwnProperty.call(${moduleVar}, ${JSON.stringify(exportName)}), false, ${JSON.stringify(subpath.specifier + ' leaked removed legacy export ' + exportName)});`
+      );
+    }
     return lines.join('\n');
   }).join('\n\n');
 
@@ -90,6 +102,10 @@ ${checks}
     const reconnect = await import('@floegence/flowersec-core/reconnect');
     const mgr = reconnect.createReconnectManager();
     assert.equal(typeof mgr.connectIfNeeded, 'function');
+
+    const browser = await import('@floegence/flowersec-core/browser');
+    assert.equal(typeof browser.requestConnectArtifact, 'function');
+    assert.equal(typeof browser.requestEntryConnectArtifact, 'function');
   `;
 
   run(process.execPath, ['--input-type=module', '-'], consumerDir, script);
@@ -119,8 +135,83 @@ void types;
         strict: true,
         target: 'ES2022',
       },
-      include: ['index.ts'],
+      include: ['*.ts'],
     }, null, 2)
+  );
+  run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.json'], consumerDir);
+}
+
+function verifyArtifactOnlyConnectTypes() {
+  fs.writeFileSync(
+    path.join(consumerDir, 'artifact-only.ts'),
+    `import { connect } from '@floegence/flowersec-core';
+import { connectBrowser, requestConnectArtifact, requestEntryConnectArtifact } from '@floegence/flowersec-core/browser';
+import { connectNode } from '@floegence/flowersec-core/node';
+import type { ConnectArtifact } from '@floegence/flowersec-core';
+import type { RequestConnectArtifactInput, RequestEntryConnectArtifactInput } from '@floegence/flowersec-core/browser';
+// @ts-expect-error removed browser grant-request compatibility type.
+import type { ControlplaneConfig as RemovedControlplaneConfig } from '@floegence/flowersec-core/browser';
+// @ts-expect-error removed browser grant-request compatibility type.
+import type { EntryControlplaneConfig as RemovedEntryControlplaneConfig } from '@floegence/flowersec-core/browser';
+// @ts-expect-error removed browser artifact-request alias; use RequestConnectArtifactInput.
+import type { ConnectArtifactRequestConfig as RemovedConnectArtifactRequestConfig } from '@floegence/flowersec-core/browser';
+// @ts-expect-error removed browser artifact-request alias; use RequestEntryConnectArtifactInput.
+import type { EntryConnectArtifactRequestConfig as RemovedEntryConnectArtifactRequestConfig } from '@floegence/flowersec-core/browser';
+
+declare const artifact: ConnectArtifact;
+void connect(artifact, { origin: 'https://app.example' });
+void connectBrowser(artifact);
+void connectNode(artifact, { origin: 'https://app.example' });
+declare const artifactRequest: RequestConnectArtifactInput;
+declare const entryArtifactRequest: RequestEntryConnectArtifactInput;
+declare const removedTypes: [
+  RemovedControlplaneConfig?,
+  RemovedEntryControlplaneConfig?,
+  RemovedConnectArtifactRequestConfig?,
+  RemovedEntryConnectArtifactRequestConfig?,
+];
+void removedTypes;
+void requestConnectArtifact(artifactRequest);
+void requestEntryConnectArtifact(entryArtifactRequest);
+
+const directInfo = {
+  ws_url: 'wss://direct.example/ws',
+  channel_id: 'channel',
+  e2ee_psk_b64u: 'cHNr',
+  channel_init_expire_at_unix_s: 1,
+  default_suite: 1,
+};
+const tunnelGrant = {
+  tunnel_url: 'wss://tunnel.example/ws',
+  channel_id: 'channel',
+  token: 'token',
+  role: 1,
+  e2ee_psk_b64u: 'cHNr',
+  channel_init_expire_at_unix_s: 1,
+  idle_timeout_seconds: 30,
+  default_suite: 1,
+  allowed_suites: [1],
+};
+
+// @ts-expect-error connect only accepts ConnectArtifact.
+void connect(directInfo, { origin: 'https://app.example' });
+// @ts-expect-error connect does not parse serialized inputs.
+void connect(JSON.stringify(directInfo), { origin: 'https://app.example' });
+// @ts-expect-error connect does not accept raw tunnel grants.
+void connect(tunnelGrant, { origin: 'https://app.example' });
+// @ts-expect-error connect does not accept grant wrappers.
+void connect({ grant_client: tunnelGrant }, { origin: 'https://app.example' });
+// @ts-expect-error connect does not accept controlplane response envelopes.
+void connect({ connect_artifact: artifact }, { origin: 'https://app.example' });
+// @ts-expect-error connectBrowser only accepts ConnectArtifact.
+void connectBrowser(directInfo);
+// @ts-expect-error connectBrowser does not accept raw tunnel grants.
+void connectBrowser(tunnelGrant);
+// @ts-expect-error connectNode only accepts ConnectArtifact.
+void connectNode(directInfo, { origin: 'https://app.example' });
+// @ts-expect-error connectNode does not accept raw tunnel grants.
+void connectNode(tunnelGrant, { origin: 'https://app.example' });
+`
   );
   run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.json'], consumerDir);
 }
@@ -133,6 +224,7 @@ try {
   installTarball(tarballPath);
   verifyInstalledPackage();
   verifyEndpointTypes();
+  verifyArtifactOnlyConnectTypes();
 } finally {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 }

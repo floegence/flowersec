@@ -3,8 +3,7 @@ import type { DirectConnectOptions } from "./direct-client/connect.js";
 import { connectDirect as connectDirectInternal } from "./direct-client/connect.js";
 import type { TunnelConnectOptions } from "./tunnel-client/connect.js";
 import { connectTunnel as connectTunnelInternal } from "./tunnel-client/connect.js";
-import { normalizeConnectInput } from "./connect/internalNormalize.js";
-import { withObserverContext } from "./observability/observer.js";
+import { resolveConnectArtifact } from "./connect/resolveArtifact.js";
 import {
   type ConnectArtifact,
   type CorrelationContext,
@@ -78,24 +77,10 @@ export async function connectDirect(info: unknown, opts: DirectConnectOptions): 
   return await connectDirectInternal(info, opts);
 }
 
-// connect auto-detects direct vs tunnel inputs and calls connectDirect/connectTunnel.
-//
-// It is a convenience wrapper intended for cases where the caller only has an input JSON object
-// (or a JSON string) and does not want to branch on ws_url vs tunnel_url manually.
-export async function connect(input: DirectConnectInfo, opts: DirectConnectOptions): Promise<Client>;
-export async function connect(input: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client>;
-export async function connect(input: ConnectArtifact, opts: ConnectOptions): Promise<Client>;
-export async function connect(input: unknown, opts: ConnectOptions): Promise<Client>;
-export async function connect(input: unknown, opts: ConnectOptions): Promise<Client> {
-  const normalized = await normalizeConnectInput(input, opts);
-  const nextObserver =
-    normalized.observer ??
-    (normalized.correlation == null
-      ? opts.observer
-      : withObserverContext(opts.observer, {
-          ...(normalized.correlation.trace_id === undefined ? {} : { traceId: normalized.correlation.trace_id }),
-          ...(normalized.correlation.session_id === undefined ? {} : { sessionId: normalized.correlation.session_id }),
-        }));
+// connect resolves an artifact to its explicit direct or tunnel transport.
+export async function connect(input: ConnectArtifact, opts: ConnectOptions): Promise<Client> {
+  const normalized = await resolveConnectArtifact(input, opts);
+  const nextObserver = normalized.observer ?? opts.observer;
   const nextOpts = (nextObserver === opts.observer ? opts : { ...opts, observer: nextObserver }) as ConnectOptions;
   if (normalized.kind === "direct") {
     return await connectDirectInternal(normalized.input, nextOpts as DirectConnectOptions);

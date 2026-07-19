@@ -56,7 +56,18 @@ test("browser SDK connects to the Go direct endpoint", async ({ page }) => {
         import("/dist/_examples/flowersec/demo/v1.facade.gen.js"),
       ]);
 
-      const client = await connectBrowser(ready, {
+      const artifact = {
+        v: 1,
+        transport: "direct",
+        direct_info: {
+          ws_url: ready.ws_url,
+          channel_id: ready.channel_id,
+          e2ee_psk_b64u: ready.e2ee_psk_b64u,
+          default_suite: ready.default_suite,
+          channel_init_expire_at_unix_s: ready.channel_init_expire_at_unix_s,
+        },
+      } as const;
+      const client = await connectBrowser(artifact, {
         transportSecurityPolicy: AllowPlaintextForLoopback,
         liveness: false,
       });

@@ -12,6 +12,16 @@ import (
 
 const manifestPath = "stability/api_contract_manifest.json"
 
+var removedLegacyTSRuntimeExports = map[string]struct{}{
+	"requestChannelGrant":      {},
+	"requestEntryChannelGrant": {},
+}
+
+var removedLegacyTSDocTokens = map[string]struct{}{
+	"`requestChannelGrant(...)`":      {},
+	"`requestEntryChannelGrant(...)`": {},
+}
+
 type manifest struct {
 	Version  int              `json:"version"`
 	Docs     docsManifest     `json:"docs"`
@@ -202,6 +212,9 @@ func validateManifest(repoRoot string, m *manifest) error {
 		if strings.TrimSpace(subpath.PackageJSONExport) == "" {
 			return fmt.Errorf("ts subpath %q package_json_export must not be empty", subpath.Specifier)
 		}
+		if isRemovedLegacyTSPackageExport(subpath.PackageJSONExport) {
+			return fmt.Errorf("ts subpath %q uses removed legacy TypeScript package export %q", subpath.Specifier, subpath.PackageJSONExport)
+		}
 		if len(subpath.DocTokens) == 0 {
 			return fmt.Errorf("ts subpath %q doc_tokens must not be empty", subpath.Specifier)
 		}
@@ -213,8 +226,18 @@ func validateManifest(repoRoot string, m *manifest) error {
 		if err := requireUnique("ts.doc_tokens("+subpath.Specifier+")", subpath.DocTokens); err != nil {
 			return err
 		}
+		for _, token := range subpath.DocTokens {
+			if _, removed := removedLegacyTSDocTokens[token]; removed {
+				return fmt.Errorf("ts subpath %q includes removed legacy TypeScript documentation token %q", subpath.Specifier, token)
+			}
+		}
 		if err := requireUnique("ts.runtime_exports("+subpath.Specifier+")", subpath.RuntimeExports); err != nil {
 			return err
+		}
+		for _, symbol := range subpath.RuntimeExports {
+			if _, removed := removedLegacyTSRuntimeExports[symbol]; removed {
+				return fmt.Errorf("ts subpath %q includes removed legacy TypeScript runtime export %q", subpath.Specifier, symbol)
+			}
 		}
 	}
 	if err := requireUnique("ts.subpaths.specifier", specifiers); err != nil {
@@ -302,6 +325,10 @@ func validateManifest(repoRoot string, m *manifest) error {
 	}
 
 	return nil
+}
+
+func isRemovedLegacyTSPackageExport(subpath string) bool {
+	return subpath == "./internal" || strings.HasPrefix(subpath, "./internal/")
 }
 
 func requireUnique(label string, values []string) error {

@@ -22,77 +22,34 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
-describe("connect (auto-detect)", () => {
+describe("connect", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  test("routes ws_url inputs to connectDirect", async () => {
-    mocks.connectDirect.mockResolvedValueOnce({ path: "direct" });
-    const input = { ws_url: "ws://example.invalid/ws" };
-    const out = await connect(input, { origin: "https://app.example" });
-    expect(out).toEqual({ path: "direct" });
-    expect(mocks.connectDirect).toHaveBeenCalledWith(input, { origin: "https://app.example" });
-    expect(mocks.connectTunnel).not.toHaveBeenCalled();
-  });
-
-  test("routes tunnel_url inputs to connectTunnel", async () => {
-    mocks.connectTunnel.mockResolvedValueOnce({ path: "tunnel" });
-    const input = { tunnel_url: "ws://example.invalid/ws" };
-    const out = await connect(input, { origin: "https://app.example" });
-    expect(out).toEqual({ path: "tunnel" });
-    expect(mocks.connectTunnel).toHaveBeenCalledWith(input, { origin: "https://app.example" });
-    expect(mocks.connectDirect).not.toHaveBeenCalled();
-  });
-
-  test("routes grant_client wrapper inputs to connectTunnel", async () => {
-    mocks.connectTunnel.mockResolvedValueOnce({ path: "tunnel" });
-    const input = { grant_client: { tunnel_url: "ws://example.invalid/ws" } };
-    const out = await connect(input, { origin: "https://app.example" });
-    expect(out).toEqual({ path: "tunnel" });
-    expect(mocks.connectTunnel).toHaveBeenCalledWith(input, { origin: "https://app.example" });
-    expect(mocks.connectDirect).not.toHaveBeenCalled();
-  });
-
-  test("rejects grant_server wrapper inputs at the client-facing edge", async () => {
-    const input = { grant_server: { tunnel_url: "ws://example.invalid/ws" } };
-    const p = connect(input, { origin: "https://app.example" });
-    await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "role_mismatch", path: "tunnel" });
-    expect(mocks.connectDirect).not.toHaveBeenCalled();
-    expect(mocks.connectTunnel).not.toHaveBeenCalled();
-  });
-
-  test("rejects hybrid legacy inputs instead of preferring one side", async () => {
-    const input = { ws_url: "ws://example.invalid/ws", tunnel_url: "ws://tunnel.invalid/ws" };
-    const p = connect(input, { origin: "https://app.example" });
-    await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "auto" });
-    expect(mocks.connectDirect).not.toHaveBeenCalled();
-    expect(mocks.connectTunnel).not.toHaveBeenCalled();
-  });
-
-  test("parses JSON strings and routes to connectDirect", async () => {
-    mocks.connectDirect.mockResolvedValueOnce({ path: "direct" });
-    const out = await connect('{ "ws_url": "ws://example.invalid/ws" }', { origin: "https://app.example" });
-    expect(out).toEqual({ path: "direct" });
-    expect(mocks.connectDirect).toHaveBeenCalledWith({ ws_url: "ws://example.invalid/ws" }, { origin: "https://app.example" });
-    expect(mocks.connectTunnel).not.toHaveBeenCalled();
-  });
-
-  test("rejects invalid JSON strings and preserves parse cause", async () => {
-    const p = connect('{ "ws_url": ', { origin: "https://app.example" });
-    await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await p.catch((e) => {
-      expect(e).toMatchObject({ stage: "validate", code: "invalid_input", path: "auto" });
-      expect((e as FlowersecError).cause).toBeInstanceOf(SyntaxError);
-    });
-  });
-
-  test("rejects bare token-like inputs", async () => {
-    const input = { token: "tok" };
-    const p = connect(input, { origin: "https://app.example" });
-    await expect(p).rejects.toBeInstanceOf(FlowersecError);
+  test.each([
+    ["raw direct info", { ws_url: "ws://example.invalid/ws" }],
+    ["serialized JSON", JSON.stringify({ ws_url: "ws://example.invalid/ws" })],
+    ["raw tunnel grant", { tunnel_url: "ws://example.invalid/ws", role: 1 }],
+    ["grant wrapper", { grant_client: { tunnel_url: "ws://example.invalid/ws", role: 1 } }],
+    [
+      "control-plane envelope",
+      {
+        connect_artifact: {
+          v: 1,
+          transport: "direct",
+          direct_info: {
+            ws_url: "ws://example.invalid/ws",
+            channel_id: "chan_1",
+            e2ee_psk_b64u: "Zm9vYmFyYmF6cXV4eHl6MDEyMzQ1Njc4OWFiY2RlZg",
+            channel_init_expire_at_unix_s: 123,
+            default_suite: 1,
+          },
+        },
+      },
+    ],
+  ])("rejects %s instead of treating it as an artifact", async (_name, input) => {
+    const p = connect(input as never, { origin: "https://app.example" });
     await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "auto" });
     expect(mocks.connectDirect).not.toHaveBeenCalled();
     expect(mocks.connectTunnel).not.toHaveBeenCalled();
@@ -115,6 +72,31 @@ describe("connect (auto-detect)", () => {
     expect(out).toEqual({ path: "direct" });
     expect(mocks.connectDirect).toHaveBeenCalledWith(input.direct_info, { origin: "https://app.example" });
     expect(mocks.connectTunnel).not.toHaveBeenCalled();
+  });
+
+  test("routes canonical tunnel artifacts to connectTunnel", async () => {
+    mocks.connectTunnel.mockResolvedValueOnce({ path: "tunnel" });
+    const input = {
+      v: 1,
+      transport: "tunnel",
+      tunnel_grant: {
+        tunnel_url: "ws://example.invalid/ws",
+        channel_id: "chan_1",
+        token: "tok",
+        role: 1,
+        e2ee_psk_b64u: "Zm9vYmFyYmF6cXV4eHl6MDEyMzQ1Njc4OWFiY2RlZg",
+        channel_init_expire_at_unix_s: 123,
+        idle_timeout_seconds: 30,
+        default_suite: 1,
+        allowed_suites: [1],
+      },
+    } as const;
+
+    const out = await connect(input, { origin: "https://app.example" });
+
+    expect(out).toEqual({ path: "tunnel" });
+    expect(mocks.connectTunnel).toHaveBeenCalledWith(input.tunnel_grant, { origin: "https://app.example" });
+    expect(mocks.connectDirect).not.toHaveBeenCalled();
   });
 
   test("rejects critical scoped artifact when no resolver is registered", async () => {
@@ -150,6 +132,7 @@ describe("connect (auto-detect)", () => {
         default_suite: 1,
       },
       scoped: [{ scope: "proxy.runtime", scope_version: 2, critical: false, payload: { mode: "hint" } }],
+      correlation: { v: 1, trace_id: "trace-artifact-1", session_id: "session-artifact-1", tags: [] },
     };
     const out = await connect(input, { origin: "https://app.example", observer: { onDiagnosticEvent } });
     await flushMicrotasks();
@@ -164,6 +147,8 @@ describe("connect (auto-detect)", () => {
         code_domain: "event",
         code: "scope_ignored_missing_resolver",
         result: "skip",
+        trace_id: "trace-artifact-1",
+        session_id: "session-artifact-1",
       })
     );
   });
@@ -260,28 +245,4 @@ describe("connect (auto-detect)", () => {
     );
   });
 
-  test("rejects raw legacy objects mixed with artifact-only fields", async () => {
-    const input = { ws_url: "ws://example.invalid/ws", correlation: { v: 1, tags: [] } };
-    const p = connect(input, { origin: "https://app.example" });
-    await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "auto" });
-    expect(mocks.connectDirect).not.toHaveBeenCalled();
-    expect(mocks.connectTunnel).not.toHaveBeenCalled();
-  });
-
-  test("rejects unknown objects with invalid_input", async () => {
-    const p = connect({ hello: "world" }, { origin: "https://app.example" });
-    await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "auto" });
-    expect(mocks.connectDirect).not.toHaveBeenCalled();
-    expect(mocks.connectTunnel).not.toHaveBeenCalled();
-  });
-
-  test("rejects non-JSON strings with invalid_input", async () => {
-    const p = connect("not json", { origin: "https://app.example" });
-    await expect(p).rejects.toBeInstanceOf(FlowersecError);
-    await expect(p).rejects.toMatchObject({ stage: "validate", code: "invalid_input", path: "auto" });
-    expect(mocks.connectDirect).not.toHaveBeenCalled();
-    expect(mocks.connectTunnel).not.toHaveBeenCalled();
-  });
 });

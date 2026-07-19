@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,7 +30,7 @@ import (
 //
 // Notes:
 // - You must provide an explicit Origin header value (the direct demo server enforces an allow-list).
-// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, or the output of examples/go/direct_demo.
+// - Input JSON must be a direct ConnectArtifact.
 var (
 	version = "dev"
 	commit  = "unknown"
@@ -50,7 +49,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("flowersec-go-client-direct-advanced", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.BoolVar(&showVersion, "version", false, "print version and exit")
-	fs.StringVar(&infoPath, "info", infoPath, "path to direct bootstrap JSON (ConnectArtifact or direct_demo ready JSON; default: stdin)")
+	fs.StringVar(&infoPath, "info", infoPath, "path to direct ConnectArtifact JSON (default: stdin)")
 	fs.StringVar(&origin, "origin", origin, "explicit Origin header value (required) (env: FSEC_ORIGIN)")
 	fs.Usage = func() {
 		out := fs.Output()
@@ -62,9 +61,6 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "  flowersec-direct-demo --allow-origin http://127.0.0.1:5173 | tee direct.json")
 		fmt.Fprintln(out, "  jq -c '{v:1, transport:\"direct\", direct_info:{ws_url, channel_id, e2ee_psk_b64u, channel_init_expire_at_unix_s, default_suite}}' < direct.json \\")
 		fmt.Fprintln(out, "    | FSEC_ORIGIN=http://127.0.0.1:5173 flowersec-go-client-direct-advanced")
-		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "  # Legacy direct_demo ready JSON remains supported too.")
-		fmt.Fprintln(out, "  FSEC_ORIGIN=http://127.0.0.1:5173 flowersec-go-client-direct-advanced < direct.json")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Output:")
 		fmt.Fprintln(out, "  stdout: demo RPC response/notify + echo stream output (human-readable)")
@@ -113,9 +109,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		defer f.Close()
 		infoReader = f
 	}
-	info, err := decodeDirectInfoInput(infoReader)
+	info, err := decodeDirectArtifactInput(infoReader)
 	if err != nil {
-		fmt.Fprintln(stderr, fmt.Errorf("decode direct bootstrap JSON: %w", err))
+		fmt.Fprintln(stderr, fmt.Errorf("decode direct ConnectArtifact: %w", err))
 		return 1
 	}
 	psk, err := exampleutil.Decode(info.E2eePskB64u)
@@ -241,45 +237,13 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
-func decodeDirectInfoInput(r io.Reader) (*directv1.DirectConnectInfo, error) {
-	b, err := readBootstrapBytes(r)
+func decodeDirectArtifactInput(r io.Reader) (*directv1.DirectConnectInfo, error) {
+	artifact, err := protocolio.DecodeConnectArtifactJSON(r)
 	if err != nil {
 		return nil, err
-	}
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(b, &top); err == nil {
-		if raw, ok := top["connect_artifact"]; ok {
-			return decodeDirectArtifact(raw)
-		}
-	}
-	if artifact, err := protocolio.DecodeConnectArtifactJSON(bytes.NewReader(b)); err == nil {
-		if artifact.Transport != protocolio.ConnectArtifactTransportDirect || artifact.DirectInfo == nil {
-			return nil, errors.New("expected direct connect_artifact")
-		}
-		return artifact.DirectInfo, nil
-	}
-	return protocolio.DecodeDirectConnectInfoJSON(bytes.NewReader(b))
-}
-
-func decodeDirectArtifact(raw []byte) (*directv1.DirectConnectInfo, error) {
-	artifact, err := protocolio.DecodeConnectArtifactJSON(bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("decode connect_artifact: %w", err)
 	}
 	if artifact.Transport != protocolio.ConnectArtifactTransportDirect || artifact.DirectInfo == nil {
-		return nil, errors.New("expected direct connect_artifact")
+		return nil, errors.New("expected direct ConnectArtifact")
 	}
 	return artifact.DirectInfo, nil
-}
-
-func readBootstrapBytes(r io.Reader) ([]byte, error) {
-	lr := &io.LimitedReader{R: r, N: int64(protocolio.DefaultMaxJSONBytes) + 1}
-	b, err := io.ReadAll(lr)
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > protocolio.DefaultMaxJSONBytes {
-		return nil, protocolio.ErrInputTooLarge
-	}
-	return b, nil
 }

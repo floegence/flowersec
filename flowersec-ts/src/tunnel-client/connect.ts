@@ -25,16 +25,8 @@ function hasOwn(o: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(o, key);
 }
 
-function unwrapGrant(v: unknown): unknown {
-  if (!isRecord(v)) return v;
-  if (hasOwn(v, "grant_client")) return v["grant_client"];
-  if (hasOwn(v, "grant_server")) return v["grant_server"];
-  return v;
-}
-
 // connectTunnel attaches to a tunnel and returns an RPC-ready session.
-export async function connectTunnel(grant: unknown, opts: TunnelConnectOptions): Promise<ClientInternal> {
-  const input = unwrapGrant(grant);
+export async function connectTunnel(input: unknown, opts: TunnelConnectOptions): Promise<ClientInternal> {
   if (input == null) {
     throw new FlowersecError({ stage: "validate", code: "missing_grant", path: "tunnel", message: "missing grant" });
   }

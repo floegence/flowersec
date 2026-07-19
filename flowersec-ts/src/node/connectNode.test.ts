@@ -25,7 +25,17 @@ describe("connectNode", () => {
 
   test("injects default wsFactory", async () => {
     mocks.connect.mockResolvedValueOnce({ ok: true });
-    const input = { ws_url: "ws://example.invalid/ws" };
+    const input: ConnectArtifact = {
+      v: 1,
+      transport: "direct",
+      direct_info: {
+        ws_url: "ws://example.invalid/ws",
+        channel_id: "chan_1",
+        e2ee_psk_b64u: "Zm9vYmFyYmF6cXV4eHl6MDEyMzQ1Njc4OWFiY2RlZg",
+        channel_init_expire_at_unix_s: 123,
+        default_suite: 1,
+      },
+    };
     const out = await connectNode(input, { origin: "https://app.example" });
     expect(out).toEqual({ ok: true });
     expect(mocks.createNodeWsFactory).toHaveBeenCalledTimes(1);
@@ -36,7 +46,21 @@ describe("connectNode", () => {
   test("preserves caller-provided wsFactory", async () => {
     const callerWsFactory = vi.fn();
     mocks.connect.mockResolvedValueOnce({ ok: true });
-    const input = { tunnel_url: "ws://example.invalid/ws" };
+    const input: ConnectArtifact = {
+      v: 1,
+      transport: "tunnel",
+      tunnel_grant: {
+        tunnel_url: "ws://example.invalid/ws",
+        channel_id: "chan_1",
+        token: "tok",
+        role: 1,
+        e2ee_psk_b64u: "Zm9vYmFyYmF6cXV4eHl6MDEyMzQ1Njc4OWFiY2RlZg",
+        channel_init_expire_at_unix_s: 123,
+        idle_timeout_seconds: 30,
+        default_suite: 1,
+        allowed_suites: [1],
+      },
+    };
     const out = await connectNode(input, { origin: "https://app.example", wsFactory: callerWsFactory as any });
     expect(out).toEqual({ ok: true });
     expect(mocks.createNodeWsFactory).not.toHaveBeenCalled();

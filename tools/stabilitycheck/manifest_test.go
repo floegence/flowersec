@@ -60,6 +60,112 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 	}
 }
 
+func TestValidateManifestRejectsRemovedLegacyPackageExport(t *testing.T) {
+	for _, packageExport := range []string{"./internal", "./internal/*"} {
+		t.Run(packageExport, func(t *testing.T) {
+			m, root := validTestManifest(t)
+			m.TS.Subpaths = append(m.TS.Subpaths, tsSubpath{
+				Specifier:         "@floegence/flowersec-core/internal",
+				PackageJSONExport: packageExport,
+				DocTokens:         []string{"`@floegence/flowersec-core/internal`"},
+				RuntimeExports:    []string{"connect"},
+			})
+
+			err := validateManifest(root, m)
+			if err == nil || !strings.Contains(err.Error(), "removed legacy TypeScript package export") {
+				t.Fatalf("expected removed package export error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateManifestRejectsRemovedLegacyRuntimeExport(t *testing.T) {
+	for _, symbol := range []string{"requestChannelGrant", "requestEntryChannelGrant"} {
+		t.Run(symbol, func(t *testing.T) {
+			m, root := validTestManifest(t)
+			m.TS.Subpaths[0].RuntimeExports = append(m.TS.Subpaths[0].RuntimeExports, symbol)
+
+			err := validateManifest(root, m)
+			if err == nil || !strings.Contains(err.Error(), "removed legacy TypeScript runtime export") {
+				t.Fatalf("expected removed runtime export error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateManifestRejectsRemovedLegacyDocumentationToken(t *testing.T) {
+	for _, token := range []string{"`requestChannelGrant(...)`", "`requestEntryChannelGrant(...)`"} {
+		t.Run(token, func(t *testing.T) {
+			m, root := validTestManifest(t)
+			m.TS.Subpaths[0].DocTokens = append(m.TS.Subpaths[0].DocTokens, token)
+
+			err := validateManifest(root, m)
+			if err == nil || !strings.Contains(err.Error(), "removed legacy TypeScript documentation token") {
+				t.Fatalf("expected removed documentation token error, got %v", err)
+			}
+		})
+	}
+}
+
+func validTestManifest(t *testing.T) (*manifest, string) {
+	t.Helper()
+	root := t.TempDir()
+	for _, p := range []string{"docs/API_CONTRACT.md", "docs/API_CHANGE_POLICY.md", "README.md", "docs/ERROR_MODEL.md", "flowersec-rust/Cargo.toml"} {
+		full := filepath.Join(root, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("ok"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return &manifest{
+		Version: 1,
+		Docs: docsManifest{
+			APIContract:  "docs/API_CONTRACT.md",
+			ChangePolicy: "docs/API_CHANGE_POLICY.md",
+			Readme:       "README.md",
+			ErrorModel:   "docs/ERROR_MODEL.md",
+			CLITokens:    []string{"`cli`"},
+		},
+		Go: goManifest{
+			ModulePath: "github.com/floegence/flowersec/flowersec-go",
+			CompileTargets: []goCompileTarget{{
+				Package:         "github.com/floegence/flowersec/flowersec-go/client",
+				Alias:           "client",
+				DocPackageToken: "`client`",
+				Entries: []goCompileExpr{{
+					Kind: "func", Expr: "client.Connect", DocToken: "`client.Connect(...)`",
+				}},
+			}},
+		},
+		TS: tsManifest{Subpaths: []tsSubpath{{
+			Specifier:         "@floegence/flowersec-core",
+			PackageJSONExport: ".",
+			DocTokens:         []string{"`@floegence/flowersec-core`"},
+			RuntimeExports:    []string{"connect"},
+		}}},
+		Swift: swiftManifest{
+			PackageName: "Flowersec",
+			Product:     "Flowersec",
+			Module:      "Flowersec",
+			DocTokens:   []string{"`Flowersec`"},
+			Symbols:     []swiftSymbol{{Kind: "swift.struct", Name: "FlowersecClient"}},
+		},
+		Rust: rustManifest{
+			Package:        "flowersec",
+			CratePath:      "flowersec-rust",
+			DocTokens:      []string{"`flowersec`"},
+			CompileEntries: []string{"let _ = flowersec::connect"},
+		},
+		Coverage: coverageManifest{
+			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/client", MinStatementsPct: 1}},
+			TS: tsCoverageTarget{Lines: 1, Functions: 1, Statements: 1, Branches: 1},
+		},
+	}, root
+}
+
 func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 	m := &manifest{
 		Go: goManifest{

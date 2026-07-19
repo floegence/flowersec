@@ -92,7 +92,7 @@ func TestE2E_RPCOverTunnelE2EEYamux(t *testing.T) {
 	}
 }
 
-func TestE2E_ClientConnect_AutoArtifactPath(t *testing.T) {
+func TestE2E_ClientConnect_ArtifactPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -128,7 +128,7 @@ func TestE2E_ClientConnect_AutoArtifactPath(t *testing.T) {
 		serverCh <- endpointConnectResult{session: session, err: err}
 	}()
 
-	artifact := protocolio.ConnectArtifact{
+	artifact := &protocolio.ConnectArtifact{
 		V:           1,
 		Transport:   protocolio.ConnectArtifactTransportTunnel,
 		TunnelGrant: grantC,

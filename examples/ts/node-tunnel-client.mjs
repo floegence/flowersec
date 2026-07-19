@@ -16,9 +16,8 @@ import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
 // Notes:
 // - The tunnel server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
 // - In Node, connectNode() automatically sets wsFactory so the Origin header is sent correctly.
-// - Tunnel attach tokens are one-time use; mint a new artifact/grant for each connection attempt.
-// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, {"grant_client":...},
-//   or just the grant_client object itself.
+// - Tunnel attach tokens are one-time use; mint a new artifact for each connection attempt.
+// - stdin must contain a canonical tunnel ConnectArtifact.
 async function readStdinUtf8() {
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
@@ -43,17 +42,15 @@ function waitHello(demo, timeoutMs) {
 
 async function main() {
   const input = await readStdinUtf8();
-  const readyOrGrant = JSON.parse(input);
-  const bootstrap = readyOrGrant?.connect_artifact ?? readyOrGrant;
+  const artifact = JSON.parse(input);
 
   // Explicit Origin header value used by the tunnel allow-list.
   const origin = process.env.FSEC_ORIGIN ?? "";
   if (!origin) throw new Error("missing FSEC_ORIGIN (explicit Origin header value)");
 
-  // connectNode() auto-detects tunnel artifacts/grants and returns an RPC-ready session.
-  // It also supports extra yamux streams via openStream(kind).
+  // connectNode() resolves the artifact and returns an RPC-ready session.
   const sess = createDemoSession(
-    await connectNode(bootstrap, { origin, transportSecurityPolicy: AllowPlaintextForLoopback }),
+    await connectNode(artifact, { origin, transportSecurityPolicy: AllowPlaintextForLoopback }),
   );
 
   try {

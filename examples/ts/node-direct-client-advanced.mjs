@@ -9,7 +9,7 @@ import { RpcClient } from "../../flowersec-ts/dist/rpc/index.js";
 import { RpcProxy } from "../../flowersec-ts/dist/rpc-proxy/rpcProxy.js";
 import { writeStreamHello } from "../../flowersec-ts/dist/streamhello/index.js";
 import { createByteReader } from "../../flowersec-ts/dist/streamio/index.js";
-import { createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
+import { assertConnectArtifact, createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
 
 // node-direct-client-advanced is the "advanced" Node.js direct (no tunnel) client example.
 //
@@ -21,7 +21,7 @@ import { createNodeWsFactory } from "../../flowersec-ts/dist/node/index.js";
 //
 // Notes:
 // - The direct demo server enforces Origin allow-list; set FSEC_ORIGIN to an allowed Origin (e.g. http://127.0.0.1:5173).
-// - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, or the output of examples/go/direct_demo.
+// - stdin must contain a canonical direct ConnectArtifact.
 async function readStdinUtf8() {
   const chunks = [];
   for await (const c of process.stdin) chunks.push(c);
@@ -79,19 +79,13 @@ function waitNotify(proxy, typeId, timeoutMs) {
   });
 }
 
-function pickDirectInfo(obj) {
-  if (obj && typeof obj === "object" && obj.connect_artifact && typeof obj.connect_artifact === "object") {
-    return pickDirectInfo(obj.connect_artifact);
-  }
-  if (obj && typeof obj === "object" && obj.transport === "direct" && obj.direct_info != null) {
-    return obj.direct_info;
-  }
-  return obj;
-}
-
 async function main() {
   const input = await readStdinUtf8();
-  const info = pickDirectInfo(JSON.parse(input));
+  const artifact = assertConnectArtifact(JSON.parse(input));
+  if (artifact.transport !== "direct") {
+    throw new Error("expected a direct ConnectArtifact");
+  }
+  const info = artifact.direct_info;
 
   // Explicit Origin header value used by the server allow-list.
   const origin = process.env.FSEC_ORIGIN ?? "";

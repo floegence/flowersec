@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,9 +31,8 @@ import (
 //
 // Notes:
 //   - You must provide an explicit Origin header value (the tunnel enforces an allow-list).
-//   - Tunnel attach tokens are one-time use; mint a new artifact/grant for every new connection attempt.
-//   - Input JSON can be a ConnectArtifact, {"connect_artifact":...}, {"grant_client":...},
-//     or just the grant_client object itself.
+//   - Tunnel attach tokens are one-time use; mint a new artifact for every new connection attempt.
+//   - Input JSON must be a tunnel ConnectArtifact.
 var (
 	version = "dev"
 	commit  = "unknown"
@@ -53,7 +51,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("flowersec-go-client-tunnel-advanced", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.BoolVar(&showVersion, "version", false, "print version and exit")
-	fs.StringVar(&grantPath, "grant", grantPath, "path to tunnel bootstrap JSON (ConnectArtifact or client grant; default: stdin)")
+	fs.StringVar(&grantPath, "grant", grantPath, "path to tunnel ConnectArtifact JSON (default: stdin)")
 	fs.StringVar(&origin, "origin", origin, "explicit Origin header value (required) (env: FSEC_ORIGIN)")
 	fs.Usage = func() {
 		out := fs.Output()
@@ -67,9 +65,6 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(out, "    -d '{\"endpoint_id\":\"server-1\"}' \\")
 		fmt.Fprintln(out, "    | jq -c .connect_artifact \\")
 		fmt.Fprintln(out, "    | FSEC_ORIGIN=http://127.0.0.1:5173 flowersec-go-client-tunnel-advanced")
-		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "  # Legacy wrapper/raw client grant input remains supported too.")
-		fmt.Fprintln(out, "  jq -r .grant_client < controlplane.json | FSEC_ORIGIN=http://127.0.0.1:5173 flowersec-go-client-tunnel-advanced")
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Output:")
 		fmt.Fprintln(out, "  stdout: demo RPC response/notify + echo stream output (human-readable)")
@@ -118,9 +113,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		defer f.Close()
 		grantReader = f
 	}
-	grant, err := decodeTunnelGrantInput(grantReader)
+	grant, err := decodeTunnelArtifactInput(grantReader)
 	if err != nil {
-		fmt.Fprintln(stderr, fmt.Errorf("decode tunnel bootstrap JSON: %w", err))
+		fmt.Fprintln(stderr, fmt.Errorf("decode tunnel ConnectArtifact: %w", err))
 		return 1
 	}
 	psk, err := exampleutil.Decode(grant.E2eePskB64u)
@@ -267,45 +262,13 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
-func decodeTunnelGrantInput(r io.Reader) (*controlv1.ChannelInitGrant, error) {
-	b, err := readBootstrapBytes(r)
+func decodeTunnelArtifactInput(r io.Reader) (*controlv1.ChannelInitGrant, error) {
+	artifact, err := protocolio.DecodeConnectArtifactJSON(r)
 	if err != nil {
 		return nil, err
-	}
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(b, &top); err == nil {
-		if raw, ok := top["connect_artifact"]; ok {
-			return decodeTunnelArtifact(raw)
-		}
-	}
-	if artifact, err := protocolio.DecodeConnectArtifactJSON(bytes.NewReader(b)); err == nil {
-		if artifact.Transport != protocolio.ConnectArtifactTransportTunnel || artifact.TunnelGrant == nil {
-			return nil, errors.New("expected tunnel connect_artifact")
-		}
-		return artifact.TunnelGrant, nil
-	}
-	return protocolio.DecodeGrantClientJSON(bytes.NewReader(b))
-}
-
-func decodeTunnelArtifact(raw []byte) (*controlv1.ChannelInitGrant, error) {
-	artifact, err := protocolio.DecodeConnectArtifactJSON(bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("decode connect_artifact: %w", err)
 	}
 	if artifact.Transport != protocolio.ConnectArtifactTransportTunnel || artifact.TunnelGrant == nil {
-		return nil, errors.New("expected tunnel connect_artifact")
+		return nil, errors.New("expected tunnel ConnectArtifact")
 	}
 	return artifact.TunnelGrant, nil
-}
-
-func readBootstrapBytes(r io.Reader) ([]byte, error) {
-	lr := &io.LimitedReader{R: r, N: int64(protocolio.DefaultMaxJSONBytes) + 1}
-	b, err := io.ReadAll(lr)
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > protocolio.DefaultMaxJSONBytes {
-		return nil, protocolio.ErrInputTooLarge
-	}
-	return b, nil
 }

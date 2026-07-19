@@ -13,8 +13,8 @@
   </head>
   <body>
     <h1>Flowersec Tunnel Demo (Browser)</h1>
-    <p>This page uses the high-level auto-connect helper. For the manual stack, open <a href="./advanced.html">advanced.html</a>.</p>
-    <p>Paste a <code>connect_artifact</code> envelope, or legacy tunnel grant JSON if you are checking backward compatibility.</p>
+    <p>This page uses the high-level artifact connect helper. For the manual stack, open <a href="./advanced.html">advanced.html</a>.</p>
+    <p>Paste a canonical <code>ConnectArtifact</code> JSON object, or fetch one from the demo server.</p>
     <textarea id="in" spellcheck="false"></textarea>
     <div style="margin: 12px 0">
       <button id="fetch" disabled>Fetch Artifact</button>
@@ -88,8 +88,9 @@
           });
           const text = await resp.text();
           if (!resp.ok) throw new Error(`fetch failed (${resp.status}): ${text}`);
-          const obj = JSON.parse(text);
-          $in.value = JSON.stringify(obj, null, 2);
+          const envelope = JSON.parse(text);
+          if (envelope?.connect_artifact == null) throw new Error("missing connect_artifact");
+          $in.value = JSON.stringify(envelope.connect_artifact, null, 2);
           setStatus("artifact loaded");
         } catch (e) {
           setStatus("fetch failed");
@@ -101,10 +102,9 @@
         $out.textContent = "";
         setStatus("connecting...");
         try {
-          const obj = JSON.parse($in.value);
-          const bootstrap = obj?.connect_artifact ?? obj;
-          // High-level helper: it auto-detects the connect input and performs tunnel attach + E2EE + yamux + RPC.
-          sess = createDemoSession(await connectBrowser(bootstrap));
+          const artifact = JSON.parse($in.value);
+          // High-level helper: it resolves the artifact and performs tunnel attach + E2EE + yamux + RPC.
+          sess = createDemoSession(await connectBrowser(artifact));
           $close.disabled = false;
           setStatus("connected");
 

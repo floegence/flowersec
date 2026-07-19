@@ -12,10 +12,7 @@ import type { DirectConnectInfo } from "../gen/flowersec/direct/v1.gen.js";
 import { createNodeWsFactory } from "./wsFactory.js";
 import { defaultWsMaxPayload } from "./wsDefaults.js";
 
-export async function connectNode(input: DirectConnectInfo, opts: DirectConnectOptions): Promise<Client>;
-export async function connectNode(input: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client>;
-export async function connectNode(input: ConnectArtifact, opts: ConnectOptions): Promise<Client>;
-export async function connectNode(input: unknown, opts: ConnectOptions): Promise<Client> {
+export async function connectNode(input: ConnectArtifact, opts: ConnectOptions): Promise<Client> {
   const wsFactory =
     opts.wsFactory ??
     createNodeWsFactory({

@@ -8,6 +8,7 @@ See also:
 
 - Error model: `docs/ERROR_MODEL.md`
 - API change policy: `docs/API_CHANGE_POLICY.md`
+- Flowersec 0.27 migration: `docs/MIGRATION_0.27.md`
 
 ## CLI surface
 
@@ -206,9 +207,11 @@ Generated protocol packages:
 - `github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1`
 - `github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1`
 
-Compatibility-only Go surface:
+Go connection contract:
 
-- legacy raw grant / wrapper / direct JSON inputs continue to work through `client.Connect(...)`
+- `client.Connect(...)` accepts only `*protocolio.ConnectArtifact`
+- callers that already have a raw tunnel grant or direct connection info use the explicit `client.ConnectTunnel(...)` or `client.ConnectDirect(...)` entrypoint
+- `client.Connect(...)` does not decode JSON, inspect wrappers, or infer a transport from raw fields
 - `controlplane/client` stays the recommended Go client-side artifact fetch entry; `controlplane/http` is the recommended server-side helper-first reference layer
 - preset manifests are accepted only through manifest files or decoded manifest objects; named profile helpers and gateway `proxy.profile` have been removed
 
@@ -279,8 +282,10 @@ Package entrypoints:
   - `DirectClientConnectArtifact`
   - `ScopeMetadataEntry`
   - `assertConnectArtifact(...)`
-  - `requestChannelGrant(...)`
-  - `requestEntryChannelGrant(...)`
+  - `RequestConnectArtifactInput`
+  - `RequestEntryConnectArtifactInput`
+  - `requestConnectArtifact(...)`
+  - `requestEntryConnectArtifact(...)`
   - `createBrowserReconnectConfig(...)`
   - `createTunnelBrowserReconnectConfig(...)`
   - `createDirectBrowserReconnectConfig(...)`
@@ -360,14 +365,15 @@ Public building blocks:
   - `withObserverContext(...)`
 - `@floegence/flowersec-core/streamhello`
 
-Compatibility and alias TypeScript notes:
+TypeScript connection contract notes:
 
-- legacy raw grant / wrapper / direct connect inputs remain accepted by `connect(...)`, `connectBrowser(...)`, and `connectNode(...)`
-- `requestChannelGrant(...)` / `requestEntryChannelGrant(...)` remain supported for compatibility and bootstrap fallback flows, but they are no longer the preferred controlplane contract
-- artifact helpers and `ControlplaneRequestError` are exported only by `@floegence/flowersec-core/controlplane`
+- `connect(...)`, `connectBrowser(...)`, and `connectNode(...)` accept only `ConnectArtifact`
+- callers that already have a raw tunnel grant or direct connection info use the explicit tunnel or direct entrypoint for their runtime
+- automatic connection entrypoints do not parse serialized JSON, inspect wrappers, or infer a transport from raw fields
+- browser control-plane code requests artifacts through `requestConnectArtifact(...)` or `requestEntryConnectArtifact(...)`; the browser entrypoint re-exports those functions and their input types directly from the control-plane implementation
+- `@floegence/flowersec-core/controlplane` remains the canonical control-plane subpath and the sole owner of `ControlplaneRequestError`, token helpers, and server-side control-plane primitives
 - proxy browser bootstrap is artifact-first through `connectArtifactProxyBrowser(...)` and `connectArtifactProxyControllerBrowser(...)`
 - controller/app Window bridges use the `stream_bidirectional_ack_v2` contract and require both sides to run the same Flowersec minor version; mixed versions fail during bridge open and do not fall back to the earlier unbounded one-direction acknowledgement behavior
-- hybrid ambiguous inputs and legacy inputs mixed with artifact-only fields fail fast
 - named proxy profiles have been removed; use preset manifests instead
 
 ## SwiftPM module

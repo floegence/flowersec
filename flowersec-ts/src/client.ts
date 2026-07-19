@@ -22,9 +22,8 @@ export type Client = Readonly<{
   close: () => void;
 }>;
 
-// ClientInternal exposes the underlying stack for advanced integrations.
-//
-// It is exported only from @floegence/flowersec-core/internal and may change without notice.
+// ClientInternal exposes the underlying stack to SDK transport implementations.
+// Stable package entrypoints export Client instead.
 export type ClientInternal = Client &
   Readonly<{
     secure: SecureChannel;

@@ -4,6 +4,7 @@ import type { TunnelConnectOptions } from "../tunnel-client/connect.js";
 import { connectDirect } from "../direct-client/connect.js";
 import { connectTunnel } from "../tunnel-client/connect.js";
 import { connect, type ConnectOptions } from "../facade.js";
+import type { ConnectArtifact } from "../connect/artifact.js";
 import { FlowersecError } from "../utils/errors.js";
 
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
@@ -21,8 +22,7 @@ function getBrowserOrigin(): string {
   return typeof o === "string" ? o : "";
 }
 
-export async function connectBrowser(input: unknown, opts?: ConnectBrowserOptions): Promise<Client>;
-export async function connectBrowser(input: unknown, opts: ConnectBrowserOptions = {}): Promise<Client> {
+export async function connectBrowser(input: ConnectArtifact, opts: ConnectBrowserOptions = {}): Promise<Client> {
   const origin = getBrowserOrigin();
   if (origin === "") {
     throw new FlowersecError({ stage: "validate", code: "missing_origin", path: "auto", message: "missing browser origin" });

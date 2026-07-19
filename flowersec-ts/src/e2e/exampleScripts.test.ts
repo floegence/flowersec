@@ -19,7 +19,7 @@ describe("example node demo scripts", () => {
   test("artifact-first tunnel demos run against the Go harness", { timeout: 180000 }, async () => {
     const harness = await startGoHarness();
     try {
-      const simpleTunnelEnvelope = JSON.stringify(makeTunnelArtifactEnvelope(harness.ready.grant_client));
+      const simpleTunnelArtifact = makeTunnelArtifactEnvelope(harness.ready.grant_client).connect_artifact;
 
       const artifactClientOut = runNodeDemoScript("node-artifact-client.mjs", {
         env: {
@@ -30,7 +30,7 @@ describe("example node demo scripts", () => {
       expect(artifactClientOut).toBe("ok\n");
 
       const simpleOut = runNodeDemoScript("node-tunnel-client.mjs", {
-        input: simpleTunnelEnvelope,
+        input: JSON.stringify(simpleTunnelArtifact),
         env: { FSEC_ORIGIN: demoOrigin },
       });
       expectDemoRPCOutput(simpleOut);
@@ -41,10 +41,10 @@ describe("example node demo scripts", () => {
         body: JSON.stringify({ endpoint_id: "server-1" }),
       });
       expect(advancedArtifactResp.ok).toBe(true);
-      const advancedTunnelEnvelope = JSON.stringify(await advancedArtifactResp.json());
+      const advancedTunnelEnvelope = (await advancedArtifactResp.json()) as { connect_artifact: unknown };
 
       const advancedOut = runNodeDemoScript("node-tunnel-client-advanced.mjs", {
-        input: advancedTunnelEnvelope,
+        input: JSON.stringify(advancedTunnelEnvelope.connect_artifact),
         env: { FSEC_ORIGIN: demoOrigin },
       });
       expectDemoRPCOutput(advancedOut);
@@ -53,25 +53,25 @@ describe("example node demo scripts", () => {
     }
   });
 
-  test("direct demos accept artifact envelopes and stream metadata payloads", { timeout: 180000 }, async () => {
+  test("direct demos accept canonical artifacts and stream metadata payloads", { timeout: 180000 }, async () => {
     const directDemo = await startDirectDemo(demoOrigin);
     try {
-      const directEnvelope = JSON.stringify(makeDirectArtifactEnvelope(directDemo.ready));
+      const directEnvelope = makeDirectArtifactEnvelope(directDemo.ready);
 
       const simpleOut = runNodeDemoScript("node-direct-client.mjs", {
-        input: directEnvelope,
+        input: JSON.stringify(directEnvelope.connect_artifact),
         env: { FSEC_ORIGIN: demoOrigin },
       });
       expectDemoRPCOutput(simpleOut);
 
       const advancedOut = runNodeDemoScript("node-direct-client-advanced.mjs", {
-        input: directEnvelope,
+        input: JSON.stringify(directEnvelope.connect_artifact),
         env: { FSEC_ORIGIN: demoOrigin },
       });
       expectDemoRPCOutput(advancedOut);
 
       const metaBytesOut = runNodeDemoScript("stream-meta-bytes/node-direct-client.mjs", {
-        input: directEnvelope,
+        input: JSON.stringify(directEnvelope.connect_artifact),
         env: {
           FSEC_ORIGIN: demoOrigin,
           FSEC_META_BYTES: "4096",
