@@ -126,6 +126,7 @@ type resourceStats struct {
 	MaxSysBytes          uint64 `json:"max_sys_bytes"`
 	MaxGoroutines        int    `json:"max_goroutines"`
 	BaselineGoroutines   int    `json:"baseline_goroutines"`
+	SteadyGoroutines     int    `json:"steady_state_goroutines"`
 	AfterCloseGoroutines int    `json:"after_close_goroutines"`
 }
 
@@ -381,6 +382,7 @@ func main() {
 		case <-time.After(cfg.steadyDuration):
 		}
 	}
+	sampler.captureSteadyState()
 
 	live.closeAll()
 	afterCloseGoroutines := waitForGoroutineBaseline(sampler.BaselineGoroutines, 5*time.Second)
@@ -1132,6 +1134,17 @@ func (s *resourceStats) sample() {
 	s.MaxSysBytes = maxU64(s.MaxSysBytes, ms.Sys)
 	if g := runtime.NumGoroutine(); g > s.MaxGoroutines {
 		s.MaxGoroutines = g
+	}
+	s.mu.Unlock()
+}
+
+func (s *resourceStats) captureSteadyState() {
+	s.sample()
+	steady := runtime.NumGoroutine()
+	s.mu.Lock()
+	s.SteadyGoroutines = steady
+	if steady > s.MaxGoroutines {
+		s.MaxGoroutines = steady
 	}
 	s.mu.Unlock()
 }

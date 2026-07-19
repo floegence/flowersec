@@ -212,6 +212,157 @@ class BenchmarkInputTests(unittest.TestCase):
 
 
 class LoadgenContractTests(unittest.TestCase):
+    def test_accepts_peak_resources_within_limits(self):
+        bench_check.validate_peak_resources(
+            {
+                "max_goroutines": 20_000,
+                "max_sys_bytes": 384 * 1024 * 1024,
+                "baseline_goroutines": 6,
+                "steady_state_goroutines": 17_006,
+                "after_close_goroutines": 7,
+            },
+            expected_channels=1_000,
+            max_goroutines=20_000,
+            max_sys_bytes=384 * 1024 * 1024,
+            max_steady_goroutines_per_channel=17,
+        )
+
+    def test_rejects_peak_resources_over_limits(self):
+        with self.assertRaisesRegex(ValueError, "goroutines"):
+            bench_check.validate_peak_resources(
+                {
+                    "max_goroutines": 20_001,
+                    "max_sys_bytes": 384 * 1024 * 1024,
+                    "baseline_goroutines": 6,
+                    "steady_state_goroutines": 17_006,
+                    "after_close_goroutines": 7,
+                },
+                expected_channels=1_000,
+                max_goroutines=20_000,
+                max_sys_bytes=384 * 1024 * 1024,
+                max_steady_goroutines_per_channel=17,
+            )
+        with self.assertRaisesRegex(ValueError, "system memory"):
+            bench_check.validate_peak_resources(
+                {
+                    "max_goroutines": 20_000,
+                    "max_sys_bytes": 384 * 1024 * 1024 + 1,
+                    "baseline_goroutines": 6,
+                    "steady_state_goroutines": 17_006,
+                    "after_close_goroutines": 7,
+                },
+                expected_channels=1_000,
+                max_goroutines=20_000,
+                max_sys_bytes=384 * 1024 * 1024,
+                max_steady_goroutines_per_channel=17,
+            )
+        with self.assertRaisesRegex(ValueError, "steady goroutines per channel"):
+            bench_check.validate_peak_resources(
+                {
+                    "max_goroutines": 20_000,
+                    "max_sys_bytes": 384 * 1024 * 1024,
+                    "baseline_goroutines": 6,
+                    "steady_state_goroutines": 17_007,
+                    "after_close_goroutines": 7,
+                },
+                expected_channels=1_000,
+                max_goroutines=20_000,
+                max_sys_bytes=384 * 1024 * 1024,
+                max_steady_goroutines_per_channel=17,
+            )
+
+    def test_rejects_missing_or_invalid_peak_resources(self):
+        invalid_values = (None, 0, -1, True, float("nan"), float("inf"))
+        for key in (
+            "max_goroutines",
+            "max_sys_bytes",
+            "baseline_goroutines",
+            "steady_state_goroutines",
+            "after_close_goroutines",
+        ):
+            for value in invalid_values:
+                with self.subTest(key=key, value=value):
+                    resources = {
+                        "max_goroutines": 20_000,
+                        "max_sys_bytes": 384 * 1024 * 1024,
+                        "baseline_goroutines": 6,
+                        "steady_state_goroutines": 17_006,
+                        "after_close_goroutines": 7,
+                    }
+                    if value is None:
+                        del resources[key]
+                    else:
+                        resources[key] = value
+                    with self.assertRaisesRegex(ValueError, "resource"):
+                        bench_check.validate_peak_resources(
+                            resources,
+                            expected_channels=1_000,
+                            max_goroutines=20_000,
+                            max_sys_bytes=384 * 1024 * 1024,
+                            max_steady_goroutines_per_channel=17,
+                        )
+
+    def test_rejects_invalid_peak_resource_gate_values(self):
+        resources = {
+            "max_goroutines": 20_000,
+            "max_sys_bytes": 384 * 1024 * 1024,
+            "baseline_goroutines": 6,
+            "steady_state_goroutines": 16_006,
+            "after_close_goroutines": 7,
+        }
+        for expected_channels in (0, -1, True, 1.5):
+            with self.subTest(expected_channels=expected_channels):
+                with self.assertRaisesRegex(ValueError, "resource channels"):
+                    bench_check.validate_peak_resources(
+                        resources,
+                        expected_channels=expected_channels,
+                        max_goroutines=20_000,
+                        max_sys_bytes=384 * 1024 * 1024,
+                        max_steady_goroutines_per_channel=17,
+                    )
+        for limit in (0, -1, True, float("nan"), float("inf")):
+            with self.subTest(max_steady_goroutines_per_channel=limit):
+                with self.assertRaisesRegex(ValueError, "steady goroutines"):
+                    bench_check.validate_peak_resources(
+                        resources,
+                        expected_channels=1_000,
+                        max_goroutines=20_000,
+                        max_sys_bytes=384 * 1024 * 1024,
+                        max_steady_goroutines_per_channel=limit,
+                    )
+
+    def test_rejects_inconsistent_goroutine_resources(self):
+        valid = {
+            "max_goroutines": 20_000,
+            "max_sys_bytes": 384 * 1024 * 1024,
+            "baseline_goroutines": 6,
+            "steady_state_goroutines": 16_006,
+            "after_close_goroutines": 7,
+        }
+        for key in ("baseline_goroutines", "steady_state_goroutines"):
+            with self.subTest(key=key):
+                resources = dict(valid)
+                resources["max_goroutines"] = resources[key] - 1
+                with self.assertRaisesRegex(ValueError, "peak goroutines"):
+                    bench_check.validate_peak_resources(
+                        resources,
+                        expected_channels=1_000,
+                        max_goroutines=20_000,
+                        max_sys_bytes=384 * 1024 * 1024,
+                        max_steady_goroutines_per_channel=17,
+                    )
+
+        resources = dict(valid)
+        resources["after_close_goroutines"] = 23
+        with self.assertRaisesRegex(ValueError, "after close"):
+            bench_check.validate_peak_resources(
+                resources,
+                expected_channels=1_000,
+                max_goroutines=20_000,
+                max_sys_bytes=384 * 1024 * 1024,
+                max_steady_goroutines_per_channel=17,
+            )
+
     def test_removed_loadgen_modes_do_not_return(self):
         root = Path(__file__).resolve().parents[2]
         maintained_sources = [
@@ -247,6 +398,7 @@ class LoadgenContractTests(unittest.TestCase):
             "--stream-benchmark-bytes=16777216",
             "--fair-stream-bytes=2097152",
             "--fair-streams=8",
+            "| steady_state_goroutines |",
         )
         for fact in required_facts:
             self.assertIn(fact, report)

@@ -234,6 +234,7 @@ def main():
             f"| max_sys_bytes | {fmt_int(resources.get('max_sys_bytes', 0))} |",
             f"| max_goroutines | {fmt_int(resources.get('max_goroutines', 0))} |",
             f"| baseline_goroutines | {fmt_int(resources.get('baseline_goroutines', 0))} |",
+            f"| steady_state_goroutines | {fmt_int(resources.get('steady_state_goroutines', 0))} |",
             f"| after_close_goroutines | {fmt_int(resources.get('after_close_goroutines', 0))} |",
         ]
     )

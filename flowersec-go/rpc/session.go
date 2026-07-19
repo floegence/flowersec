@@ -178,31 +178,22 @@ func (s *Server) Serve(ctx context.Context) error {
 	stopContextClose := context.AfterFunc(ctx, func() { _ = s.r.Close() })
 	defer stopContextClose()
 	workerCtx, cancelWorkers := context.WithCancel(ctx)
-	requestCapacity := s.options.MaxConcurrentRequests + s.options.MaxQueuedRequests
-	requests := make(chan rpcv1.RpcEnvelope, requestCapacity)
-	requestAdmission := make(chan struct{}, requestCapacity)
-	notifications := make(chan rpcv1.RpcEnvelope, s.options.MaxQueuedNotifications)
-	var workers sync.WaitGroup
-	defer workers.Wait()
-	defer cancelWorkers()
-	for range s.options.MaxConcurrentRequests {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			for {
-				select {
-				case <-workerCtx.Done():
-					return
-				case env := <-requests:
-					s.handleRequest(workerCtx, env)
-					<-requestAdmission
-				}
-			}
-		}()
-	}
-	workers.Add(1)
+	requestScheduler := newRequestScheduler(
+		workerCtx,
+		s.options.MaxConcurrentRequests,
+		s.options.MaxQueuedRequests,
+		s.handleRequest,
+	)
+	notifications := make(chan *rpcv1.RpcEnvelope, s.options.MaxQueuedNotifications)
+	var notificationWorker sync.WaitGroup
+	defer func() {
+		cancelWorkers()
+		requestScheduler.Close()
+		notificationWorker.Wait()
+	}()
+	notificationWorker.Add(1)
 	go func() {
-		defer workers.Done()
+		defer notificationWorker.Done()
 		for {
 			select {
 			case <-workerCtx.Done():
@@ -244,8 +235,9 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		if env.RequestId == 0 {
 			// Notification: response_to=0 and request_id=0.
+			notification := env
 			select {
-			case notifications <- env:
+			case notifications <- &notification:
 			default:
 				s.obs.ServerRequest(observability.RPCResultResourceExhausted)
 				_ = s.r.Close()
@@ -253,10 +245,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 			continue
 		}
-		select {
-		case requestAdmission <- struct{}{}:
-			requests <- env
-		default:
+		if !requestScheduler.Submit(env) {
 			s.obs.ServerRequest(observability.RPCResultResourceExhausted)
 			s.writeResponse(rpcv1.RpcEnvelope{
 				TypeId:     env.TypeId,

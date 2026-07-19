@@ -23,6 +23,12 @@ def positive_finite_number(value: object, label: str) -> float:
     return float(value)
 
 
+def positive_integer(value: object, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{label} must be a positive integer")
+    return value
+
+
 def regression_percent(value: object, label: str) -> float:
     if (
         isinstance(value, bool)
@@ -41,6 +47,75 @@ def validate_peak_heap(peak_heap_bytes: int, max_heap_bytes: int) -> None:
     if peak_heap_bytes > max_heap_bytes:
         raise ValueError(
             f"peak heap={peak_heap_bytes} bytes, want <= {max_heap_bytes} bytes"
+        )
+
+
+def validate_peak_resources(
+    resources: dict,
+    *,
+    expected_channels: int,
+    max_goroutines: int,
+    max_sys_bytes: int,
+    max_steady_goroutines_per_channel: float,
+) -> None:
+    peak_goroutines = positive_integer(
+        resources.get("max_goroutines"), "peak resource goroutines"
+    )
+    peak_sys_bytes = positive_finite_number(
+        resources.get("max_sys_bytes"), "peak resource system memory"
+    )
+    baseline_goroutines = positive_integer(
+        resources.get("baseline_goroutines"), "peak resource baseline goroutines"
+    )
+    steady_goroutines = positive_integer(
+        resources.get("steady_state_goroutines"),
+        "peak resource steady state goroutines",
+    )
+    after_close_goroutines = positive_integer(
+        resources.get("after_close_goroutines"),
+        "peak resource goroutines after close",
+    )
+    expected_channels = positive_integer(
+        expected_channels, "expected resource channels"
+    )
+    max_goroutines = positive_integer(
+        max_goroutines, "maximum peak resource goroutines"
+    )
+    max_sys_bytes = positive_finite_number(
+        max_sys_bytes, "maximum peak resource system memory"
+    )
+    max_steady_goroutines_per_channel = positive_finite_number(
+        max_steady_goroutines_per_channel,
+        "maximum steady goroutines per channel",
+    )
+    if peak_goroutines > max_goroutines:
+        raise ValueError(
+            f"peak goroutines={peak_goroutines}, want <= {max_goroutines}"
+        )
+    if peak_sys_bytes > max_sys_bytes:
+        raise ValueError(
+            "peak system memory="
+            f"{peak_sys_bytes} bytes, want <= {max_sys_bytes} bytes"
+        )
+    if peak_goroutines < baseline_goroutines or peak_goroutines < steady_goroutines:
+        raise ValueError(
+            "peak goroutines must be >= baseline and steady state goroutines"
+        )
+    if steady_goroutines < baseline_goroutines:
+        raise ValueError(
+            "peak resource steady state goroutines must be >= baseline goroutines"
+        )
+    if after_close_goroutines > baseline_goroutines + 16:
+        raise ValueError(
+            "goroutines after close="
+            f"{after_close_goroutines}, baseline={baseline_goroutines}"
+        )
+    steady_per_channel = (steady_goroutines - baseline_goroutines) / expected_channels
+    if steady_per_channel > max_steady_goroutines_per_channel:
+        raise ValueError(
+            "steady goroutines per channel="
+            f"{steady_per_channel:.3f}, want <= "
+            f"{max_steady_goroutines_per_channel:.3f}"
         )
 
 
@@ -245,6 +320,9 @@ def main() -> None:
     parser.add_argument("--stream-ttfb-baseline-ms", type=float, required=True)
     parser.add_argument("--stream-max-regression-percent", type=float, required=True)
     parser.add_argument("--max-heap-bytes", type=int, default=512 * 1024 * 1024)
+    parser.add_argument("--max-goroutines", type=int, default=20_000)
+    parser.add_argument("--max-sys-bytes", type=int, default=384 * 1024 * 1024)
+    parser.add_argument("--max-steady-goroutines-per-channel", type=float, default=17)
     parser.add_argument("--max-fairness-ratio", type=float, default=2.0)
     args = parser.parse_args()
 
@@ -265,10 +343,6 @@ def main() -> None:
 
     if summary.get("success") != args.expected_channels or summary.get("failure") != 0:
         fail(f"loadgen success/failure={summary.get('success')}/{summary.get('failure')}")
-    baseline = resources.get("baseline_goroutines", 0)
-    after_close = resources.get("after_close_goroutines", 0)
-    if after_close > baseline + 16:
-        fail(f"goroutines after close={after_close}, baseline={baseline}")
     config = loadgen.get("config", {})
     if args.expected_channels >= 1000:
         if config.get("liveness_interval_ms", 0) <= 0 or config.get("liveness_timeout_ms", 0) <= 0:
@@ -281,6 +355,13 @@ def main() -> None:
     streaming = loadgen.get("streaming", {})
     try:
         validate_peak_heap(resources.get("max_heap_alloc_bytes", 0), args.max_heap_bytes)
+        validate_peak_resources(
+            resources,
+            expected_channels=args.expected_channels,
+            max_goroutines=args.max_goroutines,
+            max_sys_bytes=args.max_sys_bytes,
+            max_steady_goroutines_per_channel=args.max_steady_goroutines_per_channel,
+        )
         validate_background_connections(streaming, args.expected_channels)
         validate_streaming_metrics(
             streaming,
