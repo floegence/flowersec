@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "trust_store_sha256": "01388723d7456ffea619d7d88c2c29899dd85406ba29b2f510fc67836f10b0c1",
+  "key_id": "flowersec-release-linux-bootstrap-disabled",
+  "public_key_sha256": "dd139ea93469fa47970511090339889a0bbaf46e75df6393f34f411e35cc9c4b",
+  "runner": {
+    "id": "flowersec-linux-release-v1",
+    "os": "linux",
+    "architecture": "amd64",
+    "kernel_release": "6.12.1",
+    "namespace": "isolated",
+    "traffic_control": "tc-netem-v1",
+    "packet_counters": "ebpf-v1",
+    "effective_config_sha256": "8282ea102c0784e728de0467ab942f1d8c11c6ee161a5880bcc80a9faf7c5e12",
+    "effective_config_path": "runner_effective_config.json",
+    "executable_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "source_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "argv_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+  }
+}

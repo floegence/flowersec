@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "unicode_version": "15.1.0",
+  "positive": [
+    {
+      "id": "ascii-nested",
+      "kind": "rpc.echo",
+      "metadata_json": "{\"a\":[1,true,null],\"z\":\"ok\"}"
+    },
+    {
+      "id": "unicode-15-1-extension-i",
+      "kind": "rpc.𮯰",
+      "metadata_json": "{\"𮯰\":\"value-𮯰\"}"
+    },
+    {
+      "id": "utf16-code-unit-key-order",
+      "kind": "rpc",
+      "metadata_json": "{\"𐀀\":\"astral\",\"\":\"bmp\"}"
+    },
+    {
+      "id": "minimal-string-escaping",
+      "kind": "rpc",
+      "metadata_json": "{\"path\":\"</script>/\",\"quote\":\"\\\"\\\\\",\"separator\":\"  \"}"
+    },
+    {
+      "id": "internal-unicode-whitespace",
+      "kind": "rpc echo",
+      "metadata_json": "{\"space\":\" \"}"
+    },
+    {
+      "id": "assigned-symbols",
+      "kind": "rpc.😀",
+      "metadata_json": "{\"emoji\":\"😀\",\"private\":\"\"}"
+    },
+    {
+      "id": "ijson-safe-integers",
+      "kind": "rpc",
+      "metadata_json": "{\"max\":9007199254740991,\"min\":-9007199254740991}"
+    }
+  ],
+  "negative": [
+    {
+      "id": "kind-invalid-utf8",
+      "kind_utf8_hex": "ff",
+      "metadata_json": "{}"
+    },
+    {
+      "id": "kind-leading-unicode-whitespace",
+      "kind": " rpc",
+      "metadata_json": "{}"
+    },
+    {
+      "id": "kind-trailing-unicode-whitespace",
+      "kind": "rpc　",
+      "metadata_json": "{}"
+    },
+    {
+      "id": "kind-c0-control",
+      "kind": "rpc\nname",
+      "metadata_json": "{}"
+    },
+    {
+      "id": "kind-c1-control",
+      "kind": "rpcname",
+      "metadata_json": "{}"
+    },
+    {
+      "id": "kind-decomposed-nfc",
+      "kind": "rpc-é",
+      "metadata_json": "{}"
+    },
+    {
+      "id": "kind-post-unicode-15-1",
+      "kind": "rpc-Ᲊ",
+      "metadata_json": "{}"
+    },
+    {
+      "id": "metadata-invalid-utf8",
+      "kind": "rpc",
+      "metadata_hex": "7b2261223a22ff227d"
+    },
+    {
+      "id": "metadata-empty-key",
+      "kind": "rpc",
+      "metadata_json": "{\"\":1}"
+    },
+    {
+      "id": "metadata-c0-control",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":\"\\u0001\"}"
+    },
+    {
+      "id": "metadata-c1-control-key",
+      "kind": "rpc",
+      "metadata_json": "{\"\\u0085\":1}"
+    },
+    {
+      "id": "metadata-decomposed-key",
+      "kind": "rpc",
+      "metadata_json": "{\"é\":1}"
+    },
+    {
+      "id": "metadata-decomposed-string",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":\"é\"}"
+    },
+    {
+      "id": "metadata-post-unicode-15-1-raw",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":\"Ᲊ\"}"
+    },
+    {
+      "id": "metadata-post-unicode-15-1-escaped",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":\"\\u1c89\"}"
+    },
+    {
+      "id": "metadata-lone-high-surrogate",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":\"\\ud800\"}"
+    },
+    {
+      "id": "metadata-noncanonical-key-order",
+      "kind": "rpc",
+      "metadata_json": "{\"z\":1,\"a\":2}"
+    },
+    {
+      "id": "metadata-noncanonical-utf16-order",
+      "kind": "rpc",
+      "metadata_json": "{\"\":\"bmp\",\"𐀀\":\"astral\"}"
+    },
+    {
+      "id": "metadata-nonminimal-unicode-escape",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":\"\\u00e9\"}"
+    },
+    {
+      "id": "metadata-nonminimal-slash-escape",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":\"\\/\"}"
+    },
+    {
+      "id": "metadata-extra-whitespace",
+      "kind": "rpc",
+      "metadata_json": "{ \"a\":1}"
+    },
+    {
+      "id": "metadata-duplicate-key",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":1,\"a\":2}"
+    },
+    {
+      "id": "metadata-float",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":1.5}"
+    },
+    {
+      "id": "metadata-exponent",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":1e2}"
+    },
+    {
+      "id": "metadata-unsafe-integer",
+      "kind": "rpc",
+      "metadata_json": "{\"a\":9007199254740992}"
+    },
+    {
+      "id": "metadata-nonobject",
+      "kind": "rpc",
+      "metadata_json": "[]"
+    }
+  ]
+}

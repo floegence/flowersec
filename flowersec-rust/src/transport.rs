@@ -140,7 +140,24 @@ where
     }
 
     async fn close(&self) -> std::io::Result<()> {
-        self.writer.lock().await.close().await.map_err(io_error)
+        match self.writer.lock().await.close().await {
+            Ok(())
+            | Err(tokio_tungstenite::tungstenite::Error::ConnectionClosed)
+            | Err(tokio_tungstenite::tungstenite::Error::AlreadyClosed) => Ok(()),
+            Err(tokio_tungstenite::tungstenite::Error::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::NotConnected
+                        | std::io::ErrorKind::UnexpectedEof
+                ) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(io_error(error)),
+        }
     }
 }
 
@@ -258,6 +275,59 @@ mod tests {
             .expect_err("incomplete WebSocket upgrade must time out");
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         drop(client.await.expect("client task").expect("connect client"));
+    }
+
+    #[tokio::test]
+    async fn close_is_idempotent_after_observing_peer_close() {
+        let (client_io, server_io) = tokio::io::duplex(4096);
+        let mut client =
+            WebSocketStream::from_raw_socket(client_io, Role::Client, Some(websocket_config()))
+                .await;
+        let server =
+            WebSocketStream::from_raw_socket(server_io, Role::Server, Some(websocket_config()))
+                .await;
+        let transport = TungsteniteTransport::new(server).expect("create server transport");
+
+        client
+            .send(Message::Close(None))
+            .await
+            .expect("send peer close");
+        assert_eq!(transport.receive().await.expect("receive peer close"), None);
+        assert_eq!(
+            transport
+                .receive()
+                .await
+                .expect("finish peer close handshake"),
+            None
+        );
+
+        transport
+            .close()
+            .await
+            .expect("closing an observed peer close must be idempotent");
+        transport
+            .close()
+            .await
+            .expect("repeated close after peer close must be idempotent");
+    }
+
+    #[tokio::test]
+    async fn close_succeeds_after_abrupt_peer_transport_drop() {
+        let (client_io, server_io) = tokio::io::duplex(4096);
+        let client =
+            WebSocketStream::from_raw_socket(client_io, Role::Client, Some(websocket_config()))
+                .await;
+        let server =
+            WebSocketStream::from_raw_socket(server_io, Role::Server, Some(websocket_config()))
+                .await;
+        let transport = TungsteniteTransport::new(server).expect("create server transport");
+
+        drop(client);
+
+        transport
+            .close()
+            .await
+            .expect("closing after an abrupt peer drop must be idempotent");
     }
 
     #[tokio::test]

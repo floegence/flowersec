@@ -287,9 +287,7 @@ export class YamuxSession {
     const streams = Array.from(this.streams.values());
     this.streams.clear();
     for (const s of streams) {
-      void Promise.resolve(s.reset(new Error("session closed"))).catch(() => {
-        // Session shutdown has already made the stream terminal.
-      });
+      s.abort(new Error("session closed"));
     }
   }
 

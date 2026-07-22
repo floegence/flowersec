@@ -83,12 +83,23 @@ const (
 	CodeResourceExhausted         Code = "resource_exhausted"
 )
 
+// CandidateDiagnostic records one transport candidate failure without losing
+// the stable connect error taxonomy exposed to callers.
+type CandidateDiagnostic struct {
+	CandidateID string
+	Carrier     string
+	Stage       Stage
+	Code        Code
+	Err         error
+}
+
 // Error is a structured, programmatically identifiable error for user-facing operations.
 type Error struct {
-	Path  Path
-	Stage Stage
-	Code  Code
-	Err   error
+	Path        Path
+	Stage       Stage
+	Code        Code
+	Err         error
+	Diagnostics []CandidateDiagnostic
 }
 
 func (e *Error) Error() string {

@@ -11,7 +11,7 @@
     "smoke": {
       "deadline_ms": 120000,
       "cell_deadline_ms": 15000,
-      "max_parallel_cells": 2,
+      "max_parallel_cells": 1,
       "streams": { "concurrent": 4, "bytes_per_stream": 65536, "chunk_bytes": 4096, "slow_readers": 1, "churn": 8, "fin": 1, "reset": 1, "mixed_concurrent": 2, "mixed_bytes_per_stream": 524288 },
       "rekey": { "client": 1, "server": 1, "concurrent": 0 },
       "liveness_probes": 4,
@@ -32,7 +32,7 @@
     "stress": {
       "deadline_ms": 300000,
       "cell_deadline_ms": 70000,
-      "max_parallel_cells": 2,
+      "max_parallel_cells": 1,
       "streams": { "concurrent": 32, "bytes_per_stream": 262144, "chunk_bytes": 16384, "slow_readers": 8, "churn": 256, "fin": 16, "reset": 16, "mixed_concurrent": 8, "mixed_bytes_per_stream": 2097152 },
       "rekey": { "client": 8, "server": 8, "concurrent": 1 },
       "liveness_probes": 64,

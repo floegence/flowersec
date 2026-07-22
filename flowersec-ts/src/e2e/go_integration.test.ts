@@ -1,7 +1,4 @@
 import { createRequire } from "node:module";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
-import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { createDemoSession, connectDemoTunnel } from "../_examples/flowersec/demo/v1.facade.gen.js";
@@ -12,7 +9,7 @@ import { connectDirectNode, connectNode, createNodeReconnectConfig } from "../no
 import { createControlplaneArtifactSource } from "../reconnect/index.js";
 import { extractProxyRuntimeScopeV1 } from "../proxy/runtimeScope.js";
 
-import { createLineReader, readJsonLine } from "./interopUtils.js";
+import { startGoHarness } from "./demoTestUtils.js";
 
 const require = createRequire(import.meta.url);
 const WS = require("ws");
@@ -302,19 +299,12 @@ describe("go<->ts integration", () => {
 });
 
 async function withGoHarness(task: (ready: HarnessReady) => Promise<void>): Promise<void> {
-  const goCwd = path.join(process.cwd(), "..", "flowersec-go");
-  const proc = spawn("go", ["run", "./internal/cmd/flowersec-e2e-harness"], {
-    cwd: goCwd,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const reader = createLineReader(proc.stdout);
-  const ready = await readJsonLine<HarnessReady>(reader, 20000);
+  const harness = await startGoHarness();
 
   try {
-    await task(ready);
+    await task(harness.ready);
   } finally {
-    proc.kill("SIGTERM");
-    await once(proc, "exit");
+    await harness.stop();
   }
 }
 

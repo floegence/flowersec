@@ -109,6 +109,7 @@ func (s *Stream) Write(p []byte) (int, error) {
 	return n, err
 }
 func (s *Stream) Close() error                       { return s.inner.Close() }
+func (s *Stream) CloseWrite() error                  { return s.inner.CloseWrite() }
 func (s *Stream) Reset() error                       { return s.inner.Reset() }
 func (s *Stream) SetDeadline(t time.Time) error      { return s.inner.SetDeadline(t) }
 func (s *Stream) SetReadDeadline(t time.Time) error  { return s.inner.SetReadDeadline(t) }

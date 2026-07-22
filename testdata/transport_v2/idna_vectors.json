@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "unicode_version": "15.1.0",
+  "processing": "UTS #46 non-transitional, STD3, Bidi, ContextJ, DNS length",
+  "positive": [
+    {
+      "id": "ascii-case",
+      "input": "EXAMPLE.com",
+      "ascii": "example.com"
+    },
+    {
+      "id": "u-label",
+      "input": "münich.example",
+      "ascii": "xn--mnich-kva.example"
+    },
+    {
+      "id": "a-label",
+      "input": "xn--mnich-kva.example",
+      "ascii": "xn--mnich-kva.example"
+    },
+    {
+      "id": "deviation-nontransitional",
+      "input": "faß.de",
+      "ascii": "xn--fa-hia.de"
+    },
+    {
+      "id": "width-mapping",
+      "input": "ＦＯＯ.example",
+      "ascii": "foo.example"
+    },
+    {
+      "id": "unicode-15-1-extension-i",
+      "input": "𮯰.example",
+      "ascii": "xn--8g0n.example"
+    },
+    {
+      "id": "unicode-15-1-extension-i-alabel",
+      "input": "xn--8g0n.example",
+      "ascii": "xn--8g0n.example"
+    },
+    {
+      "id": "bidi",
+      "input": "مثال.إختبار",
+      "ascii": "xn--mgbh0fb.xn--kgbechtv"
+    },
+    {
+      "id": "contextj-valid",
+      "input": "نامه‌ای.example",
+      "ascii": "xn--mgba3gch31f060k.example"
+    }
+  ],
+  "negative": [
+    {
+      "id": "contextj",
+      "input": "a‌b.example"
+    },
+    {
+      "id": "unicode-15-1-disallowed-ids",
+      "input": "⿼.example"
+    },
+    {
+      "id": "invalid-alabel",
+      "input": "xn--.example"
+    },
+    {
+      "id": "terminal-dot",
+      "input": "example.com."
+    },
+    {
+      "id": "leading-hyphen",
+      "input": "-bad.example"
+    },
+    {
+      "id": "std3-underscore",
+      "input": "bad_.example"
+    },
+    {
+      "id": "empty-label",
+      "input": "bad..example"
+    },
+    {
+      "id": "bidi-mixed-direction",
+      "input": "aא.example"
+    },
+    {
+      "id": "label-too-long",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    {
+      "id": "domain-too-long",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "id": "post-unicode-15-1-u-label",
+      "input": "Ᲊ.example"
+    },
+    {
+      "id": "post-unicode-15-1-a-label",
+      "input": "xn--c4f.example"
+    }
+  ]
+}

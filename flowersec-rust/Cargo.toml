@@ -1,6 +1,6 @@
 [package]
 name = "flowersec"
-version = "0.27.0"
+version = "0.28.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Native Rust SDK for Flowersec secure direct and tunneled sessions"
@@ -29,9 +29,14 @@ hkdf = "0.12"
 hmac = "0.12"
 http = "1"
 http-body-util = "0.1"
+idna = { version = "=1.1.0", default-features = false, features = ["std", "compiled_data"] }
+idna_adapter = { version = "=1.1.0", features = ["compiled_data"] }
+idna_mapping = "=1.0.0"
 p256 = { version = "0.13", features = ["ecdh"] }
+quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rand = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+ring = { version = "=0.17.14", default-features = false, features = ["alloc"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -43,6 +48,7 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["c
 tokio-util = { version = "0.7", features = ["rt"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
+unicode-normalization = "=0.1.25"
 url = { version = "2", features = ["serde"] }
 x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
 zeroize = { version = "1", features = ["derive"] }

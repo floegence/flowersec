@@ -1,4 +1,6 @@
-# Flowersec Protocol Contracts (Current Wire Format)
+# Flowersec Protocol Contracts (Current Wire Formats)
+
+> The detailed legacy sections below describe the implemented v1 wire. Transport v2 is a separate implemented profile whose architecture, carrier registry, public contract, shared vectors, and migration boundary are maintained in `docs/TRANSPORT_V2_ARCHITECTURE.md`, `stability/transport_v2_contract.json`, `docs/API_CONTRACT.md`, `testdata/transport_v2/`, and `docs/MIGRATION_TRANSPORT_V2.md`.
 
 This document describes the current on-the-wire contracts implemented by this repository, with a focus on:
 

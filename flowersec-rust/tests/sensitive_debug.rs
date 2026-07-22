@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ed25519_dalek::SigningKey;
 use flowersec::{
     ConnectArtifact,
@@ -9,6 +11,9 @@ use flowersec::{
         direct::v1::{DirectConnectInfo, Suite as DirectSuite},
         tunnel::v1::{Attach, Role as TunnelRole},
     },
+    protocol_v2::CipherSuiteV2,
+    session_v2::{SessionConfigV2, SessionDeadlinesV2},
+    transport_v2::{PathKind, SessionRole},
 };
 
 const TOKEN_SENTINEL: &str = "token-sentinel-must-not-appear";
@@ -153,6 +158,41 @@ fn parsed_token_debug_redacts_signed_material() {
     assert!(!parsed_debug.contains(&signed_bytes_debug));
     assert!(!parsed_debug.contains(&signature_bytes_debug));
     assert!(!parsed_debug.contains(&token));
+}
+
+#[test]
+fn session_config_v2_debug_redacts_session_secrets() {
+    let psk = [0xa5; 32];
+    let local_binding = [0xb6; 32];
+    let peer_binding = [0xc7; 32];
+    let config = SessionConfigV2 {
+        role: SessionRole::Client,
+        path: PathKind::Tunnel,
+        channel_id: "visible-v2-channel".to_owned(),
+        session_contract_hash: [0x11; 32],
+        suite: CipherSuiteV2::ChaCha20Poly1305,
+        psk,
+        max_inbound_streams: 8,
+        idle_timeout: Duration::from_secs(60),
+        local_admission_binding: local_binding,
+        peer_admission_binding: Some(peer_binding),
+        local_endpoint_instance_id: Some("visible-local".to_owned()),
+        expected_peer_endpoint_instance_id: Some("visible-peer".to_owned()),
+        rpc_handler: None,
+        deadlines: SessionDeadlinesV2::default(),
+    };
+
+    let debug = format!("{config:?}");
+
+    assert!(debug.contains("visible-v2-channel"));
+    assert!(debug.contains("Client"));
+    assert!(debug.contains("Tunnel"));
+    assert!(debug.contains("ChaCha20Poly1305"));
+    assert!(debug.contains("max_inbound_streams: 8"));
+    assert_eq!(debug.matches("[REDACTED]").count(), 3);
+    assert!(!debug.contains(&format!("{psk:?}")));
+    assert!(!debug.contains(&format!("{local_binding:?}")));
+    assert!(!debug.contains(&format!("{peer_binding:?}")));
 }
 
 fn assert_redacted(debug: &str, sentinels: &[&str]) {

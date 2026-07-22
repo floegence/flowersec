@@ -276,8 +276,24 @@ async function exerciseLimitAction(client, name) {
         await client.openStream("hold");
       } catch (error) {
         if (error instanceof FlowersecError && error.code === "resource_exhausted") {
-          await held.reset(new Error("active stream check complete"));
-          await rpcControl(client, 5);
+          let controlError;
+          try {
+            await rpcControl(client, 5);
+          } catch (error) {
+            controlError = error;
+          }
+          try {
+            await held.reset(new Error("active stream check complete"));
+          } catch (resetError) {
+            if (controlError !== undefined) {
+              throw new AggregateError(
+                [asError(controlError), asError(resetError)],
+                "active stream control and reset cleanup failed",
+              );
+            }
+            throw resetError;
+          }
+          if (controlError !== undefined) throw controlError;
           return false;
         }
         throw error;

@@ -593,8 +593,19 @@ async fn exercise_limit_action(client: &Arc<Client>, name: &str) -> HarnessResul
             if error.code.as_str() != flowersec::ErrorCode::RESOURCE_EXHAUSTED {
                 return Err(format!("active stream limit returned {error}").into());
             }
-            held.reset().await?;
-            rpc_control(client, 5).await?;
+            let control_result = rpc_control(client, 5).await;
+            let reset_result = held.reset().await;
+            match (control_result, reset_result) {
+                (Ok(()), Ok(())) => {}
+                (Err(error), Ok(())) => return Err(error),
+                (Ok(()), Err(error)) => return Err(error.into()),
+                (Err(control_error), Err(reset_error)) => {
+                    return Err(format!(
+                        "active stream control failed: {control_error}; reset cleanup failed: {reset_error}"
+                    )
+                    .into());
+                }
+            }
             Ok(false)
         }
         "inbound_streams" | "frame" => {
@@ -1433,6 +1444,10 @@ async fn serve_session(
                     None => return Err("server task set ended unexpectedly".into()),
                 };
                 if let Err(error) = task.result {
+                    if peer_complete.is_cancelled() || force_disconnect.is_cancelled() {
+                        cancellation.cancelled().await;
+                        break;
+                    }
                     if expected_destructive_session_termination(&limit_case, &session).await {
                         cancellation.cancelled().await;
                         break;

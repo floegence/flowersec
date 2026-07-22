@@ -240,6 +240,10 @@ func verifyParity(repoRoot string) error {
 	if err != nil {
 		return err
 	}
+	transport, err := loadTransportV2Contract(repoRoot)
+	if err != nil {
+		return err
+	}
 	var incomplete []string
 	for _, capability := range m.PortableCapabilities {
 		for _, language := range m.Languages {
@@ -281,7 +285,7 @@ func verifyParity(repoRoot string) error {
 	if err := verifyInteropMatrix(repoRoot, m); err != nil {
 		return err
 	}
-	fmt.Printf("language parity OK: %d capabilities across %d languages\n", len(m.PortableCapabilities), len(m.Languages))
+	fmt.Printf("language parity OK: %d capabilities across %d languages; transport v%d has %d runtime registries\n", len(m.PortableCapabilities), len(m.Languages), transport.Version, len(transport.Runtimes))
 	return nil
 }
 

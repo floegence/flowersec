@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "kind": "transport_runner_effective_config",
+  "context": "flowersec-linux-release-v1",
+  "records": [
+    {"key":"architecture","value":"amd64"},
+    {"key":"capacity_contract","value":"{\"sessions\":1000,\"ramp_duration_ns\":30000000000,\"hold_duration_ns\":60000000000,\"cleanup_duration_ns\":30000000000,\"watchdog_duration_ns\":120000000000,\"max_rss_bytes\":1073741824,\"max_cpu_nanoseconds\":120000000000,\"max_open_fds\":8192,\"max_goroutines\":8192,\"max_tasks\":8192}"},
+    {"key":"ebpf_counter_schema","value":"phase-profile-artifact-v1"},
+    {"key":"ebpf_program","value":"ebpf-v1"},
+    {"key":"firewall","value":"allow-test-tcp-udp-return-icmp-ptb-only-v1"},
+    {"key":"kernel_release","value":"6.12.1"},
+    {"key":"namespace","value":"isolated"},
+    {"key":"namespace_backend","value":"ip-netns-v1"},
+    {"key":"network_profile_clean-v1","value":"{\"evidence_layer\":\"kernel_packet\",\"one_way_delay_milliseconds\":0,\"jitter_milliseconds\":[0],\"loss\":{\"mode\":\"none\"},\"reorder_percent\":0,\"duplicate_percent\":0,\"shape\":null,\"link_mtu\":1500,\"firewall\":\"allow-test-tcp-udp-return-icmp-ptb-only-v1\"}"},
+    {"key":"network_profile_edge-v1","value":"{\"evidence_layer\":\"kernel_packet\",\"one_way_delay_milliseconds\":150,\"jitter_milliseconds\":[0,30,-20,45,-35,10,-5,25],\"loss\":{\"mode\":\"burst\",\"block_size\":100,\"burst_first\":41,\"burst_last\":45},\"reorder_percent\":0,\"duplicate_percent\":0,\"shape\":{\"rate_bits_per_second\":1000000,\"token_burst_bytes\":16384,\"queue_bytes\":65536},\"link_mtu\":1280,\"firewall\":\"allow-test-tcp-udp-return-icmp-ptb-only-v1\"}"},
+    {"key":"network_profile_mobile-v1","value":"{\"evidence_layer\":\"kernel_packet\",\"one_way_delay_milliseconds\":60,\"jitter_milliseconds\":[0,8,-4,12,-8,4,-2,6],\"loss\":{\"mode\":\"periodic\",\"every_nth\":50},\"reorder_percent\":0,\"duplicate_percent\":0,\"shape\":{\"rate_bits_per_second\":5000000,\"token_burst_bytes\":32768,\"queue_bytes\":262144},\"link_mtu\":1280,\"firewall\":\"allow-test-tcp-udp-return-icmp-ptb-only-v1\"}"},
+    {"key":"os","value":"linux"},
+    {"key":"outage_contract","value":"{\"connection_id\":\"8394c8f03e515708\",\"start_ns\":1000000000,\"duration_ns\":2000000000}"},
+    {"key":"quic_pmtud_contract","value":"{\"connection_id\":\"8394c8f03e515708\",\"ordered_events\":[\"transport:packet_too_large\",\"transport:metrics_updated\",\"application:rpc_completed\"]}"},
+    {"key":"rebind_contract","value":"{\"connection_id\":\"8394c8f03e515708\",\"at_ns\":2000000000,\"mode\":\"same-ip-port\"}"},
+    {"key":"runner_id","value":"flowersec-linux-release-v1"},
+    {"key":"seeded_random_loss_contract","value":"{\"sampler\":\"splitmix64-seed-ordinal-v1\",\"seed\":20260720,\"draws\":10000,\"loss_basis_points\":100,\"datagram_bytes\":1200}"},
+    {"key":"traffic_control","value":"tc-netem-v1"}
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "profile": "flowersec/2",
+  "source": "independent_node_crypto_v24.14.1",
+  "vectors": [
+    {
+      "id": "epoch0-c2s-stream1-data-abc",
+      "direction": 1,
+      "epoch": 0,
+      "logical_stream_id": 1,
+      "sequence": 0,
+      "session_prk_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "h3_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "epoch_secret_hex": "a52cb54b28e786cbb4a24e0f5b7f905302de0ba28e1972614df91551859fcbd7",
+      "control_root_hex": "7e2b0d872a14fd45cbcaaaa4e5fcd54614dd9469a74234d78d231d3892b304fb",
+      "stream_root_hex": "759b2af150f4d2973aa1c6498c08a7b1a901b485878732b964f73b1dd11951db",
+      "setup_root_hex": "5375c7c0cdcf613ee6a5f7d447b15cbd26f1d119936e81564a2924083dd688fc",
+      "rekey_root_hex": "8f7b3eac77e7bbd1e9de7cafac1454a2c7ced9177ca6aa3d8d441b9302ad1f73",
+      "stream_secret_hex": "74346dbabdbe4a26eaa3b8f131d868450bab313b3ef8f5e68429f0c9a52b431d",
+      "record_key_hex": "c5280301fb2a51041ba95ee6c9806628e37e3b2668515252bc81a68e8e8ad675",
+      "nonce_prefix_hex": "2ffc7497",
+      "fss2_hex": "465353320201000000000000000000010000000000000000c27da2a7d534bed76081ad15953cb1e88b9571437144cd95da397a3f07429e18",
+      "fsr2_header_hex": "46535232021800000000000000000000000000000000001b",
+      "inner_hex": "0400000000000003616263",
+      "aad_hex": "666c6f7765727365632d76322d7265636f726400202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f00000000000000010146535232021800000000000000000000000000000000001b",
+      "chacha20_poly1305_ciphertext_hex": "dde71c528b5d57dff82ade61755221e0ef56e80efc750e1023c20f",
+      "aes_256_gcm_ciphertext_hex": "3f2c55ae2b28e78821e2c88e03d1ccf56f068de41e5d27ec9b2ea8"
+    }
+  ]
+}

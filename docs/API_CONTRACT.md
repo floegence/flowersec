@@ -175,6 +175,8 @@ Recommended integration entrypoints:
   - `jsonframe.ReadJSONFrameDefaultMax(...)`
 - `github.com/floegence/flowersec/flowersec-go/fserrors`
   - shared machine-readable `{path, stage, code}` types
+  - `fserrors.Error` and `fserrors.CandidateDiagnostic`
+  - `fserrors.Error.Diagnostics`
   - `fserrors.CodeResourceExhausted`
 - `github.com/floegence/flowersec/flowersec-go/controlplane/issuer`
   - `issuer.Keyset`
@@ -198,6 +200,128 @@ Recommended integration entrypoints:
   - `server.HTTPAuthorizerConfig.MaxResponseBytes`
 - `github.com/floegence/flowersec/flowersec-go/mux/yamux`
   - `yamux.Session.OpenStreamContext(...)`
+
+Transport v2 is a separate breaking contract built around `CarrierSession`:
+
+- `admissionv2` and `artifactv2` own bounded FSB2/FSA2 admission, canonical
+  artifacts, candidate binding, the session contract hash, and one-shot
+  credential semantics.
+- `github.com/floegence/flowersec/flowersec-go/endpointsetv2` exposes the
+  business-neutral custom tunnel registry contract: `endpointsetv2.EndpointSet`,
+  `endpointsetv2.ListenerTuple`, `endpointsetv2.CertificateReadiness`,
+  `endpointsetv2.AudienceReadiness`, and `endpointsetv2.Freshness`.
+  `endpointsetv2.Validate(...)`, `endpointsetv2.CompatibleListeners(...)`,
+  `endpointsetv2.MarshalJSON(...)`, and
+  `endpointsetv2.DecodeJSON(...)` reject stale, unready, unknown, duplicate,
+  unsorted, non-canonical, and cross-path registrations. The frozen constants
+  include `endpointsetv2.Profile`, `endpointsetv2.TunnelWireProfile`, and
+  `endpointsetv2.MaxFreshnessAgeSeconds`; validation failures wrap
+  `endpointsetv2.ErrInvalidEndpointSet`; an empty requester intersection
+  returns `endpointsetv2.ErrNoCompatibleListener`. Raw QUIC and WebTransport listen
+  tuples use UDP bind endpoints, while WebSocket listen tuples use TCP. A listen
+  tuple's `SessionRole` is the accepted dialing peer's Flowersec session role,
+  not the listener's transport acceptor role; listeners accepting both tunnel
+  roles publish one canonical tuple for each role.
+- `carrier`, `carrier/websocket`, `carrier/rawquic`, and
+  `carrier/webtransport` expose one carrier-neutral session and stream shape.
+  WebSocket uses hop-local Yamux. Raw QUIC and WebTransport map every Flowersec
+  logical stream to one native bidirectional stream and never construct Yamux.
+  `CarrierSession.Path()` is the immutable negotiated routing profile: exact
+  WebSocket subprotocol, raw QUIC ALPN, or WebTransport CONNECT path determines
+  `direct` versus `tunnel`; callers cannot relabel a live carrier session.
+  The Go v2 WebSocket surface accepts Flowersec-owned `ResourcePolicy` and
+  `LivenessPolicy` values; no v2 signature exposes a concrete Yamux type.
+- `connectv2` races compatible WebSocket, raw QUIC, and WebTransport candidates
+  without registry-order preference, closes all losers before durable spend,
+  commits FSB2 only on the winner, and returns `session.SessionV2` after the
+  authenticated READY boundary. It enforces `init_expire_at_unix_s` before
+  starting the race, before durable spend, and again after spend; expiry before
+  spend writes neither durable spend nor FSB2, while expiry observed after a
+  successful spend keeps the artifact spent but still writes no FSB2.
+- Every high-level v2 connection result uses the shared error contract: Go
+  returns `*fserrors.Error`; TypeScript returns `FlowersecError`. Their primary
+  public fields are `path`, `stage`, and `code`, and every pair belongs to
+  `stability/connect_error_code_registry.json`. The Go error's
+  `Diagnostics` and TypeScript's `FlowersecCandidateDiagnostic` preserve
+  bounded per-candidate `{candidateId, carrier, stage, code}` observations for
+  logs and debugging. Go diagnostics retain the underlying error; TypeScript
+  diagnostics expose a bounded message while the top-level `FlowersecError`
+  retains its cause. Applications must branch on the stable fields, not error
+  text, carrier ordering, or a concrete transport exception. `reconnect` is an
+  allowed cross-language error-registry stage for reconnect lifecycle failures;
+  it does not require a connector to relabel its validate, connect, attach,
+  handshake, or close failure as `reconnect`.
+- `connectv2.Factory.NewAttempt(...)` and `connectv2.CarrierDial` receive the
+  artifact `SessionContract`. Implementations must bind
+  `max_inbound_streams` to exactly `N + 2` physical bidirectional streams: one
+  lifetime control stream, one persistent reserved RPC stream, and `N` logical
+  data streams. This is Yamux `MaxInboundStreams` for WebSocket and native QUIC
+  `MaxIncomingStreams` for raw QUIC. WebTransport exposes the same `N + 2`
+  carrier capacity but its HTTP/3 server config reserves the CONNECT stream and
+  therefore sets the underlying QUIC `MaxIncomingStreams` to `N + 3`. Carrier
+  sessions report `N + 2` through `MaxIncomingStreams()` in Go,
+  `inboundBidirectionalStreamCapacity` in TypeScript and Swift, and
+  `inbound_bidirectional_stream_capacity()` in Rust. SessionV2 rejects a
+  mismatch before opening the lifetime control stream or writing FSC2/FSH2.
+- `protocolv2` owns exact FSC2, FSH2, FSS2, FSR2, OPEN metadata, key schedule,
+  rekey, counter, ledger, and control-record primitives.
+- `session.SessionV2` owns carrier-independent RPC, logical stream open and
+  accept, FIN/reset, liveness, GOAWAY, and rekey behavior. Go exposes
+  `Termination()` and `WaitClosed(ctx)` so downstream reconnect code can
+  observe the authoritative terminal cause without polling transport state.
+  `CapabilityDescriptor`, `EncodeCapabilityDescriptor(...)`,
+  `DecodeCapabilityDescriptor(...)`, and `CapabilityDescriptorDigest(...)`
+  implement the shared flat capability codec and vectors.
+- The TypeScript root, browser, and Node entries expose `ArtifactV2`,
+  `decodeArtifactV2JSON(...)`, `encodeArtifactV2JSON(...)`,
+  `validateArtifactV2(...)`, `ArtifactLeaseV2`, `ArtifactSourceV2`,
+  `createArtifactLeaseV2(...)`, `createArtifactV2Resolver(...)`, and
+  `createSessionReconnectManagerV2(...)`. `ArtifactAcquireContextV2` contains
+  `ArtifactVersionPolicyV2`, `RuntimeCapabilityDescriptorV2`, and the verified
+  canonical digest produced by `runtimeCapabilityDigestV2(...)`;
+  `createArtifactAcquireContextV2(...)` constructs it. TypeScript sessions expose
+  `termination` and `waitClosed()`; automatic reconnect accepts only a
+  refreshable artifact source and reacquires a new lease for every attempt.
+  Durable spend remains a downstream callback and no product acquisition
+  policy is embedded in Flowersec.
+- TypeScript exports the Flowersec-owned `CarrierSessionV2`, `CarrierStreamV2`,
+  `NativeCarrierSessionV2`, `NativeCarrierStreamV2`,
+  `WebSocketBinaryTransportV2`, and `WebSocketResourcePolicyV2` contracts from
+  the applicable root and runtime entries. Its v2 signatures never expose
+  `YamuxSession`, `YamuxStream`, or `YamuxLimits`.
+- TypeScript `SessionConfigV2.idleTimeoutMs` starts an authenticated-activity
+  watchdog only after READY. `SessionConfigV2.closeTimeoutMs` bounds graceful
+  GOAWAY, SESSION_CLOSE, and carrier shutdown even when the carrier close
+  promise stalls.
+- `tunnelv2` pairs authenticated endpoint legs and bridges opaque per-stream
+  ciphertext across WebSocket, raw QUIC, WebTransport, and mixed topologies.
+
+Transport v2 does not define a primary carrier or an implicit fallback policy.
+Explicit caller policy may require WebSocket or the QUIC family, but adaptive
+selection treats all issued and runtime-supported candidates equally.
+
+The Swift package exposes the carrier-neutral `TransportV2Session`, configured
+by `TransportV2SessionConfig` and driven through an injected
+`TransportV2CarrierSession`. `IDNAHostV2.lookupASCII(_:)` provides the frozen
+portable IDNA profile. These are portable protocol surfaces, not production
+carrier registrations: `RuntimeCapabilitiesV2.apple` currently advertises no
+carrier tuples. `RuntimeCapabilityDescriptorV2.canonicalJSON()`,
+`RuntimeCapabilityDescriptorV2.decodeCanonicalJSON(_:)`, and
+`RuntimeCapabilityDescriptorV2.digest()` implement the shared codec.
+Every Swift carrier implementation must report
+`inboundBidirectionalStreamCapacity`; establishment requires exactly
+`TransportV2SessionConfig.maxInboundStreams + 2` before opening or accepting
+the lifetime control stream.
+
+The signed `TransportV2SessionConfig.idleTimeoutSeconds` value starts an
+authenticated-activity watchdog after READY; zero disables that watchdog.
+`TransportV2Session.acceptStream()` responds to caller cancellation without
+canceling or consuming another accept waiter. `TransportV2Session.close()`
+enters the closing state before flushing GOAWAY and SESSION_CLOSE, rejects new
+open and accept operations immediately, and bounds the control flush before
+the authoritative carrier shutdown.
+`TransportV2Session.waitClosed()` returns the stable terminal cause and is safe
+to await repeatedly.
 
 Generated protocol packages:
 
@@ -243,6 +367,18 @@ Package entrypoints:
   - `LivenessOptions`
   - `WebSocketLimits`
   - `YamuxLimits`
+  - Transport v2 session exports: `SessionV2`, `establishSessionV2(...)`,
+    `SessionConfigV2`, deadline types, `CarrierSessionV2`, `CarrierStreamV2`,
+    `NativeCarrierSessionV2`, `NativeCarrierStreamV2`,
+    `WebSocketBinaryTransportV2`, `WebSocketResourcePolicyV2`, and admission
+    adapters
+  - Transport v2 artifact exports: `ArtifactV2`, candidate/path/session types,
+    `ArtifactV2Error`, `decodeArtifactV2JSON(...)`,
+    `encodeArtifactV2JSON(...)`, and `validateArtifactV2(...)`
+  - Transport v2 acquisition exports: `ArtifactLeaseV2`, `ArtifactSourceV2`,
+    `ArtifactAcquireContextV2`, `ArtifactVersionPolicyV2`,
+    `createArtifactAcquireContextV2(...)`, `createArtifactLeaseV2(...)`, and
+    `createArtifactV2Resolver(...)`
   - connect option `maxOutboundBufferedBytes`
   - connected client method `rekey()`
   - connected stream method `reset()`
@@ -271,6 +407,13 @@ Package entrypoints:
   - `ProxyServerOptions`
   - `ProxyServerOptions.maxConcurrentStreams`
   - `ProxyServerOptions.maxWsQueuedBytes`
+  - the same Transport v2 artifact, acquisition, session, deadline, and
+    carrier-neutral stream exports as the root entry, excluding the native
+    admission adapter
+  - `NODE_RUNTIME_CAPABILITY_V2`
+  - Node currently advertises no production Transport v2 carrier. Its existing
+    package WebSocket utilities do not constitute a committed v2 admission and
+    carrier adapter.
 - `@floegence/flowersec-core/browser`
   - `connectBrowser(...)`
   - `connectTunnelBrowser(...)`
@@ -294,6 +437,14 @@ Package entrypoints:
   - `createNetworkPlaintextPolicy(...)`
   - `NetworkPlaintextPolicyOptions`
   - `PlaintextRiskAcceptance`
+  - the same Transport v2 artifact, acquisition, session, deadline, and
+    carrier-neutral stream exports as the root entry
+  - `BROWSER_RUNTIME_CAPABILITY_V2`
+  - `detectBrowserRuntimeCapabilityV2(...)` and `BrowserRuntimeFeaturesV2` for
+    removing WebSocket or WebTransport tuples when the actual browser API is
+    unavailable
+  - `BrowserSessionConnectorV2`, `connectBrowserSessionV2(...)`, and browser
+    candidate/lease types; carrier construction stages remain package-internal
 - `@floegence/flowersec-core/controlplane`
   - `requestConnectArtifact(...)`
   - `requestEntryConnectArtifact(...)`
@@ -553,6 +704,36 @@ Entrypoints and modules:
 - `flowersec::reconnect::ReconnectManager::disconnect(...)`
 - `flowersec::proxy::ProxyClient`
 - `flowersec::proxy::ProxyServer`
+
+Transport v2 modules and entrypoints:
+
+- `flowersec::transport_v2`
+- `flowersec::protocol_v2`
+- `flowersec::raw_quic_v2`
+- `flowersec::session_v2`
+- `flowersec::idna_v2`
+- `SessionV2::wait_closed()`
+- `native_rust_capability_descriptor_v2()`
+- `encode_runtime_capability_descriptor_v2(...)`
+- `decode_runtime_capability_descriptor_v2(...)`
+- `runtime_capability_digest_v2(...)`
+- `runtime_capability_digest_hex_v2(...)`
+
+The native Rust runtime currently advertises no production Transport v2
+carrier tuple. The raw QUIC adapter remains public and tested: it uses Quinn
+native bidirectional streams and maps directional close, FIN, `RESET_STREAM`,
+and `STOP_SENDING` directly without inserting Yamux. It is explicitly reported
+as `rust_transport_v2_connector_not_committed` until Rust has the complete
+ArtifactV2 acquisition, equal-candidate race, durable-spend, and server
+admission path. The existing Rust WebSocket-over-Yamux implementation remains
+a v1 adapter and is not advertised as Transport v2 support.
+
+`flowersec::session_v2::EncryptedSessionV2` implements the transport-neutral
+`flowersec::transport_v2::SessionV2` contract. `SessionV2::wait_closed()` waits
+for terminal session shutdown and preserves the first terminal cause. Runtime
+capabilities use the shared flat canonical JSON codec: callers obtain the local
+descriptor with `native_rust_capability_descriptor_v2()`, encode or decode it
+with the codec functions above, and bind it with the SHA-256 digest helpers.
 
 Rust liveness configuration uses `flowersec::yamux::LivenessOptions` without an
 additional root-module alias. `PathDefault` disables automatic probes for direct

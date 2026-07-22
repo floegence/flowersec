@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "valid": [
+    {
+      "name": "ready-tunnel-endpoint-set",
+      "now_unix_s": 2000000000,
+      "canonical_json": "{\"v\":2,\"profile\":\"flowersec-tunnel-endpoint-set/2\",\"rendezvous_group_id\":\"group-1\",\"endpoint_instance_id\":\"tunnel-1\",\"listeners\":[{\"carrier\":\"raw_quic\",\"network_mode\":\"listen\",\"path\":\"tunnel\",\"session_role\":\"client\",\"url\":\"\",\"advertised_url\":\"quic://tunnel.example\",\"bind_endpoint\":\"udp://0.0.0.0:443\",\"wire_profile\":\"flowersec-tunnel/2\"},{\"carrier\":\"raw_quic\",\"network_mode\":\"listen\",\"path\":\"tunnel\",\"session_role\":\"server\",\"url\":\"\",\"advertised_url\":\"quic://tunnel.example\",\"bind_endpoint\":\"udp://0.0.0.0:443\",\"wire_profile\":\"flowersec-tunnel/2\"},{\"carrier\":\"websocket\",\"network_mode\":\"dial\",\"path\":\"tunnel\",\"session_role\":\"client\",\"url\":\"wss://tunnel.example/flowersec/v2/tunnel\",\"advertised_url\":\"\",\"bind_endpoint\":\"\",\"wire_profile\":\"flowersec-tunnel/2\"},{\"carrier\":\"webtransport\",\"network_mode\":\"dial\",\"path\":\"tunnel\",\"session_role\":\"server\",\"url\":\"https://tunnel.example/flowersec/webtransport/v2/tunnel\",\"advertised_url\":\"\",\"bind_endpoint\":\"\",\"wire_profile\":\"flowersec-tunnel/2\"}],\"certificate\":{\"ready\":true,\"not_after_unix_s\":2000007200,\"verified_server_names\":[\"tunnel.example\"]},\"audience\":{\"ready\":true,\"listener_audience\":\"listener-1\"},\"freshness\":{\"issued_at_unix_s\":1999999940,\"expires_at_unix_s\":2000003600}}"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "cross-path-listener",
+      "now_unix_s": 2000000000,
+      "json": "{\"v\":2,\"profile\":\"flowersec-tunnel-endpoint-set/2\",\"rendezvous_group_id\":\"group-1\",\"endpoint_instance_id\":\"tunnel-1\",\"listeners\":[{\"carrier\":\"websocket\",\"network_mode\":\"dial\",\"path\":\"direct\",\"session_role\":\"client\",\"url\":\"wss://tunnel.example/flowersec/v2/direct\",\"advertised_url\":\"\",\"bind_endpoint\":\"\",\"wire_profile\":\"flowersec-direct/2\"}],\"certificate\":{\"ready\":true,\"not_after_unix_s\":2000007200,\"verified_server_names\":[\"tunnel.example\"]},\"audience\":{\"ready\":true,\"listener_audience\":\"listener-1\"},\"freshness\":{\"issued_at_unix_s\":1999999940,\"expires_at_unix_s\":2000003600}}"
+    },
+    {
+      "name": "expired",
+      "now_unix_s": 2000000000,
+      "json": "{\"v\":2,\"profile\":\"flowersec-tunnel-endpoint-set/2\",\"rendezvous_group_id\":\"group-1\",\"endpoint_instance_id\":\"tunnel-1\",\"listeners\":[{\"carrier\":\"websocket\",\"network_mode\":\"dial\",\"path\":\"tunnel\",\"session_role\":\"client\",\"url\":\"wss://tunnel.example/flowersec/v2/tunnel\",\"advertised_url\":\"\",\"bind_endpoint\":\"\",\"wire_profile\":\"flowersec-tunnel/2\"}],\"certificate\":{\"ready\":true,\"not_after_unix_s\":2000007200,\"verified_server_names\":[\"tunnel.example\"]},\"audience\":{\"ready\":true,\"listener_audience\":\"listener-1\"},\"freshness\":{\"issued_at_unix_s\":1999999940,\"expires_at_unix_s\":2000000000}}"
+    },
+    {
+      "name": "audience-not-ready",
+      "now_unix_s": 2000000000,
+      "json": "{\"v\":2,\"profile\":\"flowersec-tunnel-endpoint-set/2\",\"rendezvous_group_id\":\"group-1\",\"endpoint_instance_id\":\"tunnel-1\",\"listeners\":[{\"carrier\":\"websocket\",\"network_mode\":\"dial\",\"path\":\"tunnel\",\"session_role\":\"client\",\"url\":\"wss://tunnel.example/flowersec/v2/tunnel\",\"advertised_url\":\"\",\"bind_endpoint\":\"\",\"wire_profile\":\"flowersec-tunnel/2\"}],\"certificate\":{\"ready\":true,\"not_after_unix_s\":2000007200,\"verified_server_names\":[\"tunnel.example\"]},\"audience\":{\"ready\":false,\"listener_audience\":\"listener-1\"},\"freshness\":{\"issued_at_unix_s\":1999999940,\"expires_at_unix_s\":2000003600}}"
+    },
+    {
+      "name": "stale",
+      "now_unix_s": 2000000000,
+      "json": "{\"v\":2,\"profile\":\"flowersec-tunnel-endpoint-set/2\",\"rendezvous_group_id\":\"group-1\",\"endpoint_instance_id\":\"tunnel-1\",\"listeners\":[{\"carrier\":\"websocket\",\"network_mode\":\"dial\",\"path\":\"tunnel\",\"session_role\":\"client\",\"url\":\"wss://tunnel.example/flowersec/v2/tunnel\",\"advertised_url\":\"\",\"bind_endpoint\":\"\",\"wire_profile\":\"flowersec-tunnel/2\"}],\"certificate\":{\"ready\":true,\"not_after_unix_s\":2000007200,\"verified_server_names\":[\"tunnel.example\"]},\"audience\":{\"ready\":true,\"listener_audience\":\"listener-1\"},\"freshness\":{\"issued_at_unix_s\":1999999600,\"expires_at_unix_s\":2000003600}}"
+    },
+    {
+      "name": "webtransport-listen-tcp-bind",
+      "now_unix_s": 2000000000,
+      "json": "{\"v\":2,\"profile\":\"flowersec-tunnel-endpoint-set/2\",\"rendezvous_group_id\":\"group-1\",\"endpoint_instance_id\":\"tunnel-1\",\"listeners\":[{\"carrier\":\"webtransport\",\"network_mode\":\"listen\",\"path\":\"tunnel\",\"session_role\":\"server\",\"url\":\"\",\"advertised_url\":\"https://tunnel.example/flowersec/webtransport/v2/tunnel\",\"bind_endpoint\":\"tcp://0.0.0.0:443\",\"wire_profile\":\"flowersec-tunnel/2\"}],\"certificate\":{\"ready\":true,\"not_after_unix_s\":2000007200,\"verified_server_names\":[\"tunnel.example\"]},\"audience\":{\"ready\":true,\"listener_audience\":\"listener-1\"},\"freshness\":{\"issued_at_unix_s\":1999999940,\"expires_at_unix_s\":2000003600}}"
+    }
+  ]
+}

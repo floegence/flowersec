@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress interop-stress-full fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench bench-test check stability-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress interop-stress-full fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench bench-test check stability-check transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-ab transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
 
 INTEROP_CELLS ?= go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust
 INTEROP_REPORT_DIR ?= $(or $(TMPDIR),/tmp)
@@ -53,6 +53,7 @@ go-test:
 	cd tools/manifestgen && go test ./...
 	cd tools/releasenotes && go test ./...
 	cd tools/stabilitycheck && go test ./...
+	cd tools/transportcheck && go test ./...
 
 go-test-race:
 	cd flowersec-go && go test -race ./...
@@ -61,6 +62,7 @@ go-test-race:
 	cd tools/manifestgen && go test -race ./...
 	cd tools/releasenotes && go test -race ./...
 	cd tools/stabilitycheck && go test -race ./...
+	./scripts/run-go-test-race-shards.sh tools/transportcheck 4 10m
 
 go-vet:
 	cd flowersec-go && go vet ./...
@@ -69,6 +71,7 @@ go-vet:
 	cd tools/manifestgen && go vet ./...
 	cd tools/releasenotes && go vet ./...
 	cd tools/stabilitycheck && go vet ./...
+	cd tools/transportcheck && go vet ./...
 
 go-vulncheck:
 	cd flowersec-go && GOTOOLCHAIN=$(GOVULNCHECK_GOTOOLCHAIN) go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
@@ -117,7 +120,7 @@ swift-package-check:
 swift-source-guard:
 	@status=1; \
 	if command -v rg >/dev/null 2>&1; then \
-		if rg -n --glob '!.build/**' --glob '!.git/**' --glob '!.swiftpm/**' --glob '!dist/**' --glob '!node_modules/**' '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \
+		if rg -n --glob '!.build/**' --glob '!.git/**' --glob '!.swiftpm/**' --glob '!dist/**' --glob '!node_modules/**' --glob '!docs/MIGRATION_TRANSPORT_V2.md' '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \
 			status=0; \
 		else \
 			status=$$?; \
@@ -204,6 +207,8 @@ rust-release-check: rust-check rust-audit rust-deny rust-cover-check rust-semver
 release-check:
 	$(MAKE) check
 	$(MAKE) interop-stress-full
+	$(MAKE) transport-v2-release-evidence
+	$(MAKE) transport-v2-signed-evidence-check
 
 example-check:
 	cd examples && go test ./...
@@ -299,9 +304,94 @@ stability-check:
 	cd tools/stabilitycheck && go run . verify-parity
 	cd tools/stabilitycheck && go run . verify-docs
 	cd tools/stabilitycheck && go run . verify-go
+	cd tools/stabilitycheck && go run . verify-ts
 	cd tools/stabilitycheck && go run . verify-swift
 	cd tools/stabilitycheck && go run . verify-rust
 	cd tools/stabilitycheck && go run . report
+
+transport-v2-unit:
+	cd tools/transportcheck && go test ./...
+	cd tools/transportcheck && go run . manifest -manifest ../../testdata/transport_v2/performance_manifest.json -registry ../../testdata/transport_v2/case_registry.json
+	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-v2-unit -classification contract_only
+
+transport-conformance-smoke:
+	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-conformance-smoke -classification local_smoke
+	cd flowersec-go && go test -count=1 ./protocolv2 ./artifactv2 ./admissionv2 ./session
+	cd flowersec-ts && npx vitest run src/v2
+	cd flowersec-rust && cargo test --all-features --test transport_v2_contract --test transport_v2_crypto_vectors --test open_v2_vectors --test session_v2
+	swift test --filter 'TransportV2|IDNAHostV2'
+	@echo "classification=local_smoke; no signed release evidence is claimed"
+
+transport-browser-smoke:
+	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-browser-smoke -classification local_smoke
+	cd flowersec-ts && npx vitest run src/browser/connectV2.test.ts src/browser/webTransportCarrierInternalStage.test.ts src/v2/browserBundle.test.ts
+	cd flowersec-ts && npm run test:browser:chromium
+	@echo "classification=local_smoke; Chromium WebTransport interoperability evidence is not claimed"
+
+transport-interop-smoke:
+	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-interop-smoke -classification local_smoke
+	cd flowersec-ts && npx vitest run src/v2/session_go_interop.test.ts
+	cd flowersec-rust && cargo test --all-features --test raw_quic_v2 rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel
+	@echo "classification=local_smoke; the full cross-language release matrix is not claimed"
+
+WEAKNET_SMOKE_REPORT ?= /tmp/flowersec-weaknet-smoke.json
+WEAKNET_SMOKE_REPORT_ABS = $(abspath $(WEAKNET_SMOKE_REPORT))
+
+weaknet-smoke:
+	cd flowersec-go && FLOWERSEC_RUN_WEAKNET_SMOKE=1 WEAKNET_SMOKE_REPORT="$(WEAKNET_SMOKE_REPORT_ABS)" go test -count=1 -run '^TestWeaknetSmoke$$' ./internal/weaknetsmoke
+	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target weaknet-smoke -classification local_smoke -report "$(WEAKNET_SMOKE_REPORT_ABS)"
+
+quic-native-smoke:
+	@if [ "$(QUIC_NATIVE_REQUIRE_SIGNED_EVIDENCE)" = "1" ]; then \
+		echo "signed qlog-backed native QUIC evidence is unavailable; local_smoke cannot satisfy NS-N1/NS-N2"; \
+		exit 1; \
+	fi
+	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target quic-native-smoke -classification local_smoke
+	cd flowersec-go && go test -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesToNewPacketConn)$$' ./carrier/rawquic
+	cd flowersec-go && go test -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./tunnelv2
+	@echo "classification=local_smoke; qlog/system performance evidence is not claimed"
+
+quic-native-race-smoke:
+	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target quic-native-race-smoke -classification local_smoke
+	cd flowersec-go && go test -race -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesToNewPacketConn)$$' ./carrier/rawquic
+	cd flowersec-go && go test -race -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./tunnelv2
+	@echo "classification=local_smoke; qlog-backed race evidence is not claimed"
+
+TRANSPORT_V2_EVIDENCE_REPORT ?=
+TRANSPORT_V2_BASE_SHA ?=
+TRANSPORT_V2_RELEASE_RUNNER ?=
+override TRANSPORT_V2_TRUST_STORE := $(CURDIR)/testdata/transport_v2/evidence_trust_store.json
+override TRANSPORT_V2_TRUST_POLICY := $(CURDIR)/testdata/transport_v2/evidence_trust_policy.json
+
+define run_transport_v2_release_target
+	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \
+		echo "$@: requires TRANSPORT_V2_RELEASE_RUNNER, TRANSPORT_V2_EVIDENCE_REPORT, and TRANSPORT_V2_BASE_SHA" >&2; \
+		exit 2; \
+	fi
+	@if [ ! -x "$(TRANSPORT_V2_RELEASE_RUNNER)" ]; then \
+		echo "$@: release runner is not executable: $(TRANSPORT_V2_RELEASE_RUNNER)" >&2; \
+		exit 2; \
+	fi
+	"$(TRANSPORT_V2_RELEASE_RUNNER)" --target "$@" --report "$(TRANSPORT_V2_EVIDENCE_REPORT)"
+	$(MAKE) transport-v2-signed-evidence-check
+endef
+
+transport-conformance-full weaknet-full weaknet-system quic-native-proof quic-native-race bench-transport-capacity bench-transport-ab:
+	$(run_transport_v2_release_target)
+
+transport-v2-release-evidence:
+	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \
+		echo "$@: requires TRANSPORT_V2_RELEASE_RUNNER, TRANSPORT_V2_EVIDENCE_REPORT, and TRANSPORT_V2_BASE_SHA" >&2; \
+		exit 2; \
+	fi
+	@if [ ! -x "$(TRANSPORT_V2_RELEASE_RUNNER)" ]; then \
+		echo "$@: release runner is not executable: $(TRANSPORT_V2_RELEASE_RUNNER)" >&2; \
+		exit 2; \
+	fi
+	"$(TRANSPORT_V2_RELEASE_RUNNER)" --target all --report "$(TRANSPORT_V2_EVIDENCE_REPORT)"
+
+transport-v2-signed-evidence-check:
+	./scripts/check-transport-v2-evidence.sh "$(TRANSPORT_V2_EVIDENCE_REPORT)" "$(TRANSPORT_V2_BASE_SHA)"
 
 go-cover-check:
 	cd tools/stabilitycheck && go run . verify-go-coverage
@@ -325,6 +415,9 @@ check:
 	$(MAKE) readme-localization-check
 	$(MAKE) gen-check
 	$(MAKE) stability-check
+	$(MAKE) transport-v2-unit
+	$(MAKE) weaknet-smoke
+	$(MAKE) quic-native-smoke
 	$(MAKE) bench-test
 	$(MAKE) lint-check
 	$(MAKE) ts-build

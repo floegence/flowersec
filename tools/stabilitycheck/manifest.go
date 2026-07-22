@@ -33,11 +33,13 @@ type manifest struct {
 }
 
 type docsManifest struct {
-	APIContract  string   `json:"api_contract"`
-	ChangePolicy string   `json:"change_policy"`
-	Readme       string   `json:"readme"`
-	ErrorModel   string   `json:"error_model"`
-	CLITokens    []string `json:"cli_tokens"`
+	APIContract       string   `json:"api_contract"`
+	ChangePolicy      string   `json:"change_policy"`
+	Readme            string   `json:"readme"`
+	ErrorModel        string   `json:"error_model"`
+	TransportV2API    string   `json:"transport_v2_api"`
+	CLITokens         []string `json:"cli_tokens"`
+	TransportV2Tokens []string `json:"transport_v2_tokens"`
 }
 
 type goManifest struct {
@@ -49,13 +51,16 @@ type goCompileTarget struct {
 	Package         string          `json:"package"`
 	Alias           string          `json:"alias"`
 	DocPackageToken string          `json:"doc_package_token"`
+	StabilityGroup  string          `json:"stability_group,omitempty"`
 	Entries         []goCompileExpr `json:"entries"`
 }
 
 type goCompileExpr struct {
-	Kind     string `json:"kind"`
-	Expr     string `json:"expr"`
-	DocToken string `json:"doc_token"`
+	Kind           string `json:"kind"`
+	Expr           string `json:"expr"`
+	DocToken       string `json:"doc_token"`
+	StabilityGroup string `json:"stability_group,omitempty"`
+	Signature      string `json:"signature,omitempty"`
 }
 
 type tsManifest struct {
@@ -67,6 +72,7 @@ type tsSubpath struct {
 	PackageJSONExport string   `json:"package_json_export"`
 	DocTokens         []string `json:"doc_tokens"`
 	RuntimeExports    []string `json:"runtime_exports"`
+	TypeExports       []string `json:"type_exports,omitempty"`
 }
 
 type swiftManifest struct {
@@ -138,7 +144,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 	if m.Version != 1 {
 		return fmt.Errorf("unsupported manifest version %d", m.Version)
 	}
-	for _, p := range []string{m.Docs.APIContract, m.Docs.ChangePolicy, m.Docs.Readme, m.Docs.ErrorModel} {
+	for _, p := range []string{m.Docs.APIContract, m.Docs.ChangePolicy, m.Docs.Readme, m.Docs.ErrorModel, m.Docs.TransportV2API} {
 		if strings.TrimSpace(p) == "" {
 			return errors.New("docs paths must not be empty")
 		}
@@ -147,6 +153,12 @@ func validateManifest(repoRoot string, m *manifest) error {
 		}
 	}
 	if err := requireUnique("docs.cli_tokens", m.Docs.CLITokens); err != nil {
+		return err
+	}
+	if len(m.Docs.TransportV2Tokens) == 0 {
+		return errors.New("docs.transport_v2_tokens must not be empty")
+	}
+	if err := requireUnique("docs.transport_v2_tokens", m.Docs.TransportV2Tokens); err != nil {
 		return err
 	}
 	if strings.TrimSpace(m.Go.ModulePath) == "" {
@@ -168,6 +180,9 @@ func validateManifest(repoRoot string, m *manifest) error {
 		if strings.TrimSpace(target.DocPackageToken) == "" {
 			return fmt.Errorf("go target %q doc_package_token must not be empty", target.Package)
 		}
+		if target.StabilityGroup != "" && target.StabilityGroup != "transport_v2" {
+			return fmt.Errorf("go target %q has unsupported stability_group %q", target.Package, target.StabilityGroup)
+		}
 		if len(target.Entries) == 0 {
 			return fmt.Errorf("go target %q must have entries", target.Package)
 		}
@@ -177,7 +192,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 		seenExpr := make([]string, 0, len(target.Entries))
 		for _, entry := range target.Entries {
 			switch entry.Kind {
-			case "func", "method", "type", "const":
+			case "func", "method", "interface_method", "field", "type", "const", "var":
 			default:
 				return fmt.Errorf("go entry %q has unsupported kind %q", entry.Expr, entry.Kind)
 			}
@@ -186,6 +201,15 @@ func validateManifest(repoRoot string, m *manifest) error {
 			}
 			if strings.TrimSpace(entry.DocToken) == "" {
 				return fmt.Errorf("go entry %q doc_token must not be empty", entry.Expr)
+			}
+			if (entry.Kind == "interface_method" || entry.Kind == "field") && strings.TrimSpace(entry.Signature) == "" {
+				return fmt.Errorf("go %s %q signature must not be empty", entry.Kind, entry.Expr)
+			}
+			if entry.Kind != "interface_method" && entry.Kind != "field" && strings.TrimSpace(entry.Signature) != "" {
+				return fmt.Errorf("go entry %q signature is only valid for interface_method or field", entry.Expr)
+			}
+			if entry.StabilityGroup != "" && entry.StabilityGroup != "transport_v2" {
+				return fmt.Errorf("go entry %q has unsupported stability_group %q", entry.Expr, entry.StabilityGroup)
 			}
 			seenExpr = append(seenExpr, entry.Expr)
 		}
@@ -232,6 +256,9 @@ func validateManifest(repoRoot string, m *manifest) error {
 			}
 		}
 		if err := requireUnique("ts.runtime_exports("+subpath.Specifier+")", subpath.RuntimeExports); err != nil {
+			return err
+		}
+		if err := requireUnique("ts.type_exports("+subpath.Specifier+")", subpath.TypeExports); err != nil {
 			return err
 		}
 		for _, symbol := range subpath.RuntimeExports {

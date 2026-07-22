@@ -1,6 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 
 import { createExitPromise } from "./harnessProcess.js";
@@ -9,6 +10,7 @@ import { createLineReader, createTextBuffer, readJsonLine } from "./interopUtils
 export type HarnessReady = Readonly<{
   ws_url: string;
   grant_client: unknown;
+  direct_info: unknown;
   controlplane_base_url: string;
   entry_ticket: string;
 }>;
@@ -46,6 +48,7 @@ type StartJSONReadyProcessOptions = Readonly<{
   env?: NodeJS.ProcessEnv;
   readyTimeoutMs: number;
   label: string;
+  cleanup?: () => void;
 }>;
 
 export function ensureBuiltDist(): void {
@@ -74,22 +77,28 @@ export async function getFreePort(): Promise<number> {
 }
 
 export async function startGoHarness(): Promise<StartedProcess<HarnessReady>> {
+  const cwd = path.join(process.cwd(), "..", "flowersec-go");
+  const built = buildTemporaryGoBinary(cwd, "./internal/cmd/flowersec-e2e-harness", "flowersec-e2e-harness");
   return await startJSONReadyProcess<HarnessReady>({
-    command: "go",
-    args: ["run", "./internal/cmd/flowersec-e2e-harness"],
-    cwd: path.join(process.cwd(), "..", "flowersec-go"),
+    command: built.binary,
+    args: [],
+    cwd,
     readyTimeoutMs: 60_000,
     label: "go harness",
+    cleanup: built.cleanup,
   });
 }
 
 export async function startDirectDemo(origin: string): Promise<StartedProcess<DirectDemoReady>> {
+  const cwd = path.join(process.cwd(), "..", "examples");
+  const built = buildTemporaryGoBinary(cwd, "./go/direct_demo", "flowersec-direct-demo");
   return await startJSONReadyProcess<DirectDemoReady>({
-    command: "go",
-    args: ["run", "./go/direct_demo", "--allow-origin", origin],
-    cwd: path.join(process.cwd(), "..", "examples"),
+    command: built.binary,
+    args: ["--allow-origin", origin],
+    cwd,
     readyTimeoutMs: 60_000,
     label: "direct demo",
+    cleanup: built.cleanup,
   });
 }
 
@@ -188,17 +197,48 @@ async function startJSONReadyProcess<T>(options: StartJSONReadyProcessOptions): 
       ready,
       stderr,
       stop: async () => {
-        if (proc.exitCode == null && proc.signalCode == null) {
-          proc.kill("SIGTERM");
+        try {
+          if (proc.exitCode == null && proc.signalCode == null) {
+            proc.kill("SIGTERM");
+          }
+          await createExitPromise(proc).catch(() => undefined);
+        } finally {
+          options.cleanup?.();
         }
-        await createExitPromise(proc).catch(() => undefined);
       },
     };
   } catch (error) {
-    if (proc.exitCode == null && proc.signalCode == null) {
-      proc.kill("SIGTERM");
+    try {
+      if (proc.exitCode == null && proc.signalCode == null) {
+        proc.kill("SIGTERM");
+      }
+      await createExitPromise(proc).catch(() => undefined);
+    } finally {
+      options.cleanup?.();
     }
-    await createExitPromise(proc).catch(() => undefined);
     throw new Error(`${options.label} failed to start: ${String(error)}\nstderr:\n${stderr()}`);
   }
+}
+
+function buildTemporaryGoBinary(
+  cwd: string,
+  packagePath: string,
+  binaryName: string
+): Readonly<{ binary: string; cleanup: () => void }> {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-e2e-"));
+  const binary = path.join(directory, binaryName);
+  try {
+    execFileSync("go", ["build", "-o", binary, packagePath], {
+      cwd,
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: 60_000,
+    });
+  } catch (error) {
+    fs.rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    binary,
+    cleanup: () => fs.rmSync(directory, { recursive: true, force: true }),
+  };
 }

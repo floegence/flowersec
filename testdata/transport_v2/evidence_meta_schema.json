@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "signed_classification": "signed_transport_evidence",
+  "tdd_stages": ["red", "green", "refactor"],
+  "gates": [
+    {
+      "target": "transport-v2-unit",
+      "allowed_classifications": ["contract_only"],
+      "report_required": false
+    },
+    {
+      "target": "transport-conformance-smoke",
+      "allowed_classifications": ["local_smoke"],
+      "report_required": false
+    },
+    {
+      "target": "transport-browser-smoke",
+      "allowed_classifications": ["local_smoke"],
+      "report_required": false
+    },
+    {
+      "target": "transport-interop-smoke",
+      "allowed_classifications": ["local_smoke"],
+      "report_required": false
+    },
+    {
+      "target": "weaknet-smoke",
+      "allowed_classifications": ["local_smoke"],
+      "report_required": true
+    },
+    {
+      "target": "quic-native-smoke",
+      "allowed_classifications": ["local_smoke"],
+      "report_required": false
+    },
+    {
+      "target": "quic-native-race-smoke",
+      "allowed_classifications": ["local_smoke"],
+      "report_required": false
+    }
+  ]
+}

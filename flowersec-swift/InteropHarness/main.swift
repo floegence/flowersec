@@ -407,8 +407,29 @@ private func exerciseLimitAction(_ client: FlowersecClient, name: String) async 
       _ = try await client.openStream(kind: "hold")
       throw HarnessError("active stream limit accepted the second user stream")
     } catch let error as FlowersecError where error.code == .resourceExhausted {
-      try await held.reset()
-      try await rpcControl(client, typeID: 5)
+      let controlResult: Result<Void, Error>
+      do {
+        try await rpcControl(client, typeID: 5)
+        controlResult = .success(())
+      } catch {
+        controlResult = .failure(error)
+      }
+      let resetResult: Result<Void, Error>
+      do {
+        try await held.reset()
+        resetResult = .success(())
+      } catch {
+        resetResult = .failure(error)
+      }
+      switch (controlResult, resetResult) {
+      case (.success, .success): break
+      case (.failure(let error), .success): throw error
+      case (.success, .failure(let error)): throw error
+      case (.failure(let controlError), .failure(let resetError)):
+        throw HarnessError(
+          "active stream control failed: \(describe(controlError)); reset cleanup failed: \(describe(resetError))"
+        )
+      }
       return false
     }
   case "inbound_streams", "frame":

@@ -182,6 +182,10 @@ export class YamuxStream {
     return this.resetTask;
   }
 
+  abort(err: Error = new Error("stream aborted")): void {
+    if (this.fail(err)) this.session.onStreamClosed(this.id);
+  }
+
   private fail(err: Error): boolean {
     if (this.state === "reset") return false;
     this.state = "reset";

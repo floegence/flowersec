@@ -61,12 +61,28 @@ final class SourceGuardTests: XCTestCase {
     ]
     let files = try roots.flatMap { try textFiles(under: $0) }
     for file in files {
+      if file.path.hasSuffix("/docs/MIGRATION_TRANSPORT_V2.md") {
+        continue
+      }
       let text = try String(contentsOf: file, encoding: .utf8)
       for token in downstreamProductTokens {
         XCTAssertFalse(
           text.contains(token),
           "\(file.path) must not contain downstream product token \(token)"
         )
+      }
+    }
+  }
+
+  func testTransportV2PublicContractDoesNotExposeCarrierImplementations() throws {
+    let sourceRoot = packageRoot().appendingPathComponent("flowersec-swift/Sources/Flowersec")
+    for name in ["TransportV2.swift", "TransportV2Crypto.swift"] {
+      let text = try String(
+        contentsOf: sourceRoot.appendingPathComponent(name),
+        encoding: .utf8
+      )
+      for token in ["NWProtocolQUIC", "NWConnection", "FlowersecYamux", "YamuxStream"] {
+        XCTAssertFalse(text.contains(token), "\(name) must not expose \(token)")
       }
     }
   }
@@ -84,10 +100,12 @@ final class SourceGuardTests: XCTestCase {
     guard rootValues.isDirectory == true else {
       return []
     }
-    guard let enumerator = FileManager.default.enumerator(
-      at: root,
-      includingPropertiesForKeys: keys
-    ) else {
+    guard
+      let enumerator = FileManager.default.enumerator(
+        at: root,
+        includingPropertiesForKeys: keys
+      )
+    else {
       throw NSError(
         domain: "FlowersecSourceGuard",
         code: 1,

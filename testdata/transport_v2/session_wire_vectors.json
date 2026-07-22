@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "profile": "flowersec/2",
+  "stream_key_update_ack": [
+    {
+      "logical_id_hex": "0102030405060708",
+      "transition_id_hex": "1112131415161718",
+      "next_epoch_hex": "21222324",
+      "payload_hex": "0102030405060708111213141516171821222324"
+    }
+  ]
+}

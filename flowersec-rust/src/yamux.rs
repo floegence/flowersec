@@ -106,6 +106,19 @@ impl Default for YamuxLimits {
 }
 
 impl YamuxLimits {
+    /// Applies the exact SessionV2 carrier stream limit while preserving the
+    /// remaining Yamux resource policy.
+    pub fn with_session_v2_logical_stream_limit(
+        mut self,
+        logical_max: u16,
+    ) -> Result<Self, YamuxError> {
+        let carrier_max = crate::transport_v2::carrier_inbound_stream_limit_v2(logical_max)
+            .map_err(|_| YamuxError::InvalidLimits)? as usize;
+        self.max_inbound_streams = carrier_max;
+        self.max_active_streams = self.max_active_streams.max(carrier_max);
+        self.validate()
+    }
+
     pub fn validate(self) -> Result<Self, YamuxError> {
         if self.max_active_streams == 0
             || self.max_inbound_streams == 0
@@ -1044,6 +1057,86 @@ impl YamuxSession {
             return;
         }
         notified.await;
+    }
+}
+
+#[async_trait]
+impl crate::transport_v2::CarrierStreamV2 for YamuxStream {
+    async fn read(&self, payload: &mut [u8]) -> std::io::Result<usize> {
+        match YamuxStream::read(self)
+            .await
+            .map_err(std::io::Error::other)?
+        {
+            Some(bytes) => {
+                let length = bytes.len().min(payload.len());
+                payload[..length].copy_from_slice(&bytes[..length]);
+                if length != bytes.len() {
+                    let mut buffered = self.0.read_buffer.lock().await;
+                    buffered.extend(bytes[length..].iter().copied());
+                }
+                Ok(length)
+            }
+            None => Ok(0),
+        }
+    }
+
+    async fn write(&self, payload: &[u8]) -> std::io::Result<usize> {
+        YamuxStream::write(self, payload)
+            .await
+            .map_err(std::io::Error::other)?;
+        Ok(payload.len())
+    }
+
+    async fn close_write(&self) -> std::io::Result<()> {
+        YamuxStream::close(self)
+            .await
+            .map_err(std::io::Error::other)
+    }
+
+    async fn reset(&self) -> std::io::Result<()> {
+        YamuxStream::reset(self)
+            .await
+            .map_err(std::io::Error::other)
+    }
+
+    async fn close(&self) -> std::io::Result<()> {
+        YamuxStream::close(self)
+            .await
+            .map_err(std::io::Error::other)
+    }
+}
+
+#[async_trait]
+impl crate::transport_v2::CarrierSessionV2 for YamuxSession {
+    fn kind(&self) -> crate::transport_v2::CarrierKind {
+        crate::transport_v2::CarrierKind::Wss
+    }
+
+    fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+        u32::try_from(self.inner.limits.max_inbound_streams)
+            .expect("validated Yamux inbound capacity fits u32")
+    }
+
+    async fn open_stream(&self) -> std::io::Result<Arc<dyn crate::transport_v2::CarrierStreamV2>> {
+        YamuxSession::open_stream(self)
+            .await
+            .map(|stream| Arc::new(stream) as Arc<dyn crate::transport_v2::CarrierStreamV2>)
+            .map_err(std::io::Error::other)
+    }
+
+    async fn accept_stream(
+        &self,
+    ) -> std::io::Result<Arc<dyn crate::transport_v2::CarrierStreamV2>> {
+        YamuxSession::accept_stream(self)
+            .await
+            .map(|stream| Arc::new(stream) as Arc<dyn crate::transport_v2::CarrierStreamV2>)
+            .map_err(std::io::Error::other)
+    }
+
+    async fn close(&self) -> std::io::Result<()> {
+        YamuxSession::close(self)
+            .await
+            .map_err(std::io::Error::other)
     }
 }
 

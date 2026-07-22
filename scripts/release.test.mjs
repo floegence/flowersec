@@ -179,6 +179,7 @@ function createReleasePolicyFixture(t) {
     "scripts/check-release-version-consistency.mjs",
     "scripts/check-release-version-consistency.test.mjs",
     "scripts/check-release-workflow-policy.sh",
+    "scripts/check-transport-v2-evidence.sh",
     "scripts/release.sh",
     "scripts/release.test.mjs",
   ];
@@ -265,6 +266,12 @@ test("release gates stay wired into local checks and publication workflows", () 
   assert.match(makefile, /^release-policy-check:\n(?:\t.*\n)*\t\$\(MAKE\) release-version-check$/m);
   assert.match(makefile, /^release-policy-check:\n(?:\t.*\n)*\t\$\(MAKE\) release-test$/m);
   assert.match(makefile, /^check:\n\t\$\(MAKE\) release-policy-check$/m);
+  for (const target of ["transport-v2-unit", "weaknet-smoke", "quic-native-smoke"]) {
+    assert.match(makefile, new RegExp(`^check:\\n(?:\\t.*\\n)*\\t\\$\\(MAKE\\) ${target}$`, "m"));
+  }
+  for (const target of ["transport-v2-release-evidence", "transport-v2-signed-evidence-check"]) {
+    assert.match(makefile, new RegExp(`^release-check:\\n(?:\\t.*\\n)*\\t\\$\\(MAKE\\) ${target}$`, "m"));
+  }
   assert.match(
     releaseWorkflow,
     /^\s+run: node scripts\/check-release-version-consistency\.mjs "\$\{\{ steps\.vars\.outputs\.version \}\}"$/m,
@@ -304,6 +311,32 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     const result = runReleasePolicy(root);
     assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
     assert.match(result.stderr, /release-test/);
+  });
+
+  await t.test("signed Transport v2 evidence disconnected from release-check", () => {
+    const root = createReleasePolicyFixture(t);
+    const makefilePath = path.join(root, "Makefile");
+    const makefile = fs.readFileSync(makefilePath, "utf8");
+    fs.writeFileSync(
+      makefilePath,
+      makefile.replace("\t$(MAKE) transport-v2-signed-evidence-check\n", ""),
+    );
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /transport-v2-signed-evidence-check/);
+  });
+
+  await t.test("Transport v2 evidence generation disconnected from release-check", () => {
+    const root = createReleasePolicyFixture(t);
+    const makefilePath = path.join(root, "Makefile");
+    const makefile = fs.readFileSync(makefilePath, "utf8");
+    fs.writeFileSync(
+      makefilePath,
+      makefile.replace("\t$(MAKE) transport-v2-release-evidence\n", ""),
+    );
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /transport-v2-release-evidence/);
   });
 
   await t.test("commented unified workflow version check", () => {

@@ -29,6 +29,21 @@ Fields:
 
 Human-readable detail belongs in the message and underlying cause.
 
+Transport v2 candidate racing keeps the high-level failure singular while
+retaining bounded candidate diagnostics:
+
+- Go: `fserrors.Error.Diagnostics` contains `CandidateDiagnostic` values.
+- TypeScript: `FlowersecError.diagnostics` contains
+  `FlowersecCandidateDiagnostic` values.
+
+Go diagnostics expose `CandidateID`, `Carrier`, `Stage`, `Code`, and `Err`;
+TypeScript exposes `candidateId`, `carrier`, `stage`, `code`, and `message`.
+Candidate diagnostics are
+for one connection attempt only. Callers must not use candidate order or the
+human-readable message to select a primary carrier, decide retryability, or
+create unbounded metric labels. The top-level registered `{ path, stage, code
+}` remains the retry and product-state contract.
+
 ## Error codes
 
 The machine-readable source of truth is `stability/connect_error_code_registry.json`.

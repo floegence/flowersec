@@ -78,10 +78,19 @@ export type FlowersecErrorCode =
   | "resource_exhausted"
   | "not_connected";
 
+export type FlowersecCandidateDiagnostic = Readonly<{
+  candidateId: string;
+  carrier: string;
+  stage: FlowersecStage;
+  code: FlowersecErrorCode;
+  message: string;
+}>;
+
 export class FlowersecError extends Error {
   readonly code: FlowersecErrorCode;
   readonly stage: FlowersecStage;
   readonly path: FlowersecPath;
+  readonly diagnostics: readonly FlowersecCandidateDiagnostic[];
   override readonly cause?: unknown;
 
   constructor(
@@ -91,6 +100,7 @@ export class FlowersecError extends Error {
       path: FlowersecPath;
       message?: string;
       cause?: unknown;
+      diagnostics?: readonly FlowersecCandidateDiagnostic[];
     }>,
   ) {
     const prefix = `${args.path} ${args.stage} (${args.code})`;
@@ -106,6 +116,8 @@ export class FlowersecError extends Error {
     this.code = args.code;
     this.stage = args.stage;
     this.path = args.path;
+    this.diagnostics = Object.freeze((args.diagnostics ?? []).map((diagnostic) =>
+      Object.freeze({ ...diagnostic })));
     if (args.cause !== undefined) this.cause = args.cause;
   }
 }

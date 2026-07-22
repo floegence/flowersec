@@ -13,14 +13,19 @@ pub mod error;
 pub mod framing;
 #[path = "gen/mod.rs"]
 pub mod generated;
+pub mod idna_v2;
 pub mod observability;
+pub mod protocol_v2;
 pub mod proxy;
+pub mod raw_quic_v2;
 pub mod reconnect;
 pub mod rpc;
+pub mod session_v2;
 pub mod streamhello;
 pub mod streamio;
 pub mod transport;
 pub mod transport_security;
+pub mod transport_v2;
 pub mod yamux;
 
 pub use artifact::{ConnectArtifact, CorrelationContext, CorrelationKv, ScopeMetadataEntry};

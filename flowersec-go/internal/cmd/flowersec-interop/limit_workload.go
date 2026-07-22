@@ -226,7 +226,10 @@ func runGoLimitAction(ctx context.Context, connected client.Client, limitCase, t
 		if !isGoResourceError(err) {
 			return fmt.Errorf("active stream limit returned %v", err)
 		}
-		return errors.Join(held.Reset(), rpcControl(ctx, connected, rpcTypeComplete))
+		return completeActiveStreamLimit(
+			func() error { return rpcControl(ctx, connected, rpcTypeComplete) },
+			held.Reset,
+		)
 	case "inbound_streams", "frame":
 		stream, err := connected.OpenStream(ctx, "hold")
 		if err != nil {
@@ -325,6 +328,12 @@ func runGoLimitAction(ctx context.Context, connected client.Client, limitCase, t
 	default:
 		return fmt.Errorf("unknown limit case %q for %s", limitCase, transport)
 	}
+}
+
+func completeActiveStreamLimit(control, reset func() error) error {
+	controlErr := control()
+	resetErr := reset()
+	return errors.Join(controlErr, resetErr)
 }
 
 func (e *environment) runGoLimitsAgainstHarness(

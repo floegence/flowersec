@@ -11,7 +11,7 @@ ci_workflow=.github/workflows/ci.yml
 
 version_checker=scripts/check-release-version-consistency.mjs
 
-for required in Makefile "$release_workflow" "$rust_workflow" "$ci_workflow" scripts/release.sh "$version_checker" scripts/release.test.mjs scripts/check-release-version-consistency.test.mjs .githooks/pre-push; do
+for required in Makefile "$release_workflow" "$rust_workflow" "$ci_workflow" scripts/release.sh "$version_checker" scripts/release.test.mjs scripts/check-release-version-consistency.test.mjs scripts/check-transport-v2-evidence.sh .githooks/pre-push; do
   if [[ ! -f "$required" ]]; then
     echo "missing release policy file: $required" >&2
     exit 1
@@ -162,6 +162,13 @@ require_make_recipe release-version-check 'node scripts/check-release-version-co
 require_make_recipe release-test 'node --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs'
 require_make_recipe precommit '$(MAKE) release-policy-check'
 require_make_recipe check '$(MAKE) release-policy-check'
+require_make_recipe check '$(MAKE) transport-v2-unit'
+require_make_recipe check '$(MAKE) weaknet-smoke'
+require_make_recipe check '$(MAKE) quic-native-smoke'
+require_make_recipe release-check '$(MAKE) check'
+require_make_recipe release-check '$(MAKE) interop-stress-full'
+require_make_recipe release-check '$(MAKE) transport-v2-release-evidence'
+require_make_recipe release-check '$(MAKE) transport-v2-signed-evidence-check'
 
 if ! grep -Eq '^node scripts/check-release-version-consistency\.mjs "\$version"$' scripts/release.sh; then
   echo "the release script must validate all maintained version facts" >&2

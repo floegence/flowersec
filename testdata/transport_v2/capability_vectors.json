@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "digest_label": "flowersec-v2-runtime-capability\u0000",
+  "vectors": [
+    {
+      "name": "go-native",
+      "canonical_json": "{\"language\":\"go\",\"runtime\":\"native\",\"schemaVersion\":2,\"tuples\":[{\"carrier\":\"raw_quic\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"raw_quic\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"},{\"carrier\":\"raw_quic\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"server\"},{\"carrier\":\"raw_quic\",\"networkMode\":\"listen\",\"path\":\"direct\",\"sessionRole\":\"server\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"server\"},{\"carrier\":\"websocket\",\"networkMode\":\"listen\",\"path\":\"direct\",\"sessionRole\":\"server\"},{\"carrier\":\"webtransport\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"webtransport\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"},{\"carrier\":\"webtransport\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"server\"},{\"carrier\":\"webtransport\",\"networkMode\":\"listen\",\"path\":\"direct\",\"sessionRole\":\"server\"}],\"unsupported\":[]}",
+      "digest_hex": "06777d52b900c51fb81b2e88c7b507bd80061e281717d1461c3bce3cdf7d63e2"
+    },
+    {
+      "name": "typescript-browser",
+      "canonical_json": "{\"language\":\"typescript\",\"runtime\":\"browser\",\"schemaVersion\":2,\"tuples\":[{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"server\"},{\"carrier\":\"webtransport\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"webtransport\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"},{\"carrier\":\"webtransport\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"server\"}],\"unsupported\":[{\"carrier\":\"raw_quic\",\"reason\":\"browser_no_raw_udp\"}]}",
+      "digest_hex": "748ef17ceb5143ec6bd6cc87f1a81dc0a718ec08296dfeead93c0fd42f7a2fa6"
+    },
+    {
+      "name": "typescript-node",
+      "canonical_json": "{\"language\":\"typescript\",\"runtime\":\"node\",\"schemaVersion\":2,\"tuples\":[],\"unsupported\":[{\"carrier\":\"raw_quic\",\"reason\":\"no_production_grade_node_quic_runtime\"},{\"carrier\":\"websocket\",\"reason\":\"transport_v2_websocket_adapter_not_committed\"},{\"carrier\":\"webtransport\",\"reason\":\"no_production_grade_node_quic_runtime\"}]}",
+      "digest_hex": "9c3bae6ee30a41638214d62a41f11a173ab7e8cade3135a60f217cfc3de31388"
+    },
+    {
+      "name": "rust-native",
+      "canonical_json": "{\"language\":\"rust\",\"runtime\":\"native\",\"schemaVersion\":2,\"tuples\":[],\"unsupported\":[{\"carrier\":\"raw_quic\",\"reason\":\"rust_transport_v2_connector_not_committed\"},{\"carrier\":\"websocket\",\"reason\":\"transport_v2_websocket_adapter_not_committed\"},{\"carrier\":\"webtransport\",\"reason\":\"rust_webtransport_not_committed\"}]}",
+      "digest_hex": "2c180b3d084bb66eb291b04ee6a4e5f07bd47d181da0a49537e05d8250ed1e0d"
+    },
+    {
+      "name": "swift-apple",
+      "canonical_json": "{\"language\":\"swift\",\"runtime\":\"apple\",\"schemaVersion\":2,\"tuples\":[],\"unsupported\":[{\"carrier\":\"raw_quic\",\"reason\":\"network_framework_quic_contract_incomplete_on_supported_targets\"},{\"carrier\":\"websocket\",\"reason\":\"transport_v2_websocket_adapter_not_committed\"},{\"carrier\":\"webtransport\",\"reason\":\"network_framework_quic_contract_incomplete_on_supported_targets\"}]}",
+      "digest_hex": "2342046bebbac825376343fa335994fde094a7d07e8248cb033aab468208f79e"
+    }
+  ]
+}
