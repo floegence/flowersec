@@ -29,8 +29,8 @@ func TestConfigUsesNativeBoundedQUICCapabilities(t *testing.T) {
 	if config.InitialConnectionReceiveWindow != 256<<10 || config.MaxConnectionReceiveWindow != 8<<20 {
 		t.Fatalf("connection windows = %d/%d", config.InitialConnectionReceiveWindow, config.MaxConnectionReceiveWindow)
 	}
-	if config.Allow0RTT || config.EnableDatagrams {
-		t.Fatal("raw QUIC must not enable 0-RTT or datagrams")
+	if config.Allow0RTT || !config.EnableDatagrams {
+		t.Fatal("raw QUIC must disable 0-RTT and enable native datagrams")
 	}
 	if !config.EnableStreamResetPartialDelivery {
 		t.Fatal("raw QUIC must negotiate native stream reset support")

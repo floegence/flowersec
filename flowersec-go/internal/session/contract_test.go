@@ -36,6 +36,9 @@ type testSession struct{}
 func (testSession) Path() session.PathKind             { return session.PathDirect }
 func (testSession) EndpointInstanceID() (string, bool) { return "", false }
 func (testSession) RPC() session.RPCPeer               { return testRPCPeer{} }
+func (testSession) UnreliableMessages() (session.UnreliableMessageChannel, error) {
+	return nil, session.ErrUnreliableUnavailable
+}
 func (testSession) OpenStream(context.Context, string, session.Metadata) (session.ByteStream, error) {
 	return testByteStream{}, nil
 }

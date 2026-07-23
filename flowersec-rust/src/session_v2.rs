@@ -7,7 +7,7 @@ use std::{
         Arc, Mutex as StdMutex, OnceLock, Weak,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
@@ -29,17 +29,21 @@ use crate::{
     crypto_v2::{Suite, generate_ephemeral_keypair},
     protocol_v2::{
         AEAD_TAG_V2_SIZE, CipherSuiteV2, DirectionV2, EpochRootsV2, INNER_HEADER_V2_SIZE,
-        InnerRecordTypeV2, MAX_DATA_V2_BYTES, OpenPayloadV2, RECORD_HEADER_V2_SIZE, RecordHeaderV2,
-        SETUP_PREFACE_V2_SIZE, SetupPrefaceV2, StreamOpenerRoleV2, compute_fss2_hash_v2,
-        compute_open_hash_v2, compute_setup_mac_v2, decode_inner_record_v2, decode_open_payload_v2,
-        derive_control_material_v2, derive_epoch_zero_v2, derive_next_epoch_v2,
-        derive_stream_material_v2, encode_inner_record_v2, encode_open_payload_v2, open_record_v2,
-        seal_record_v2, verify_setup_mac_v2,
+        InnerRecordTypeV2, MAX_DATA_V2_BYTES, MAX_UNRELIABLE_PLAINTEXT_V2_BYTES,
+        MAX_UNRELIABLE_WIRE_V2_BYTES, OpenPayloadV2, RECORD_HEADER_V2_SIZE, RecordHeaderV2,
+        SETUP_PREFACE_V2_SIZE, SetupPrefaceV2, StreamOpenerRoleV2, UNRELIABLE_HEADER_V2_SIZE,
+        UnreliableHeaderV2, compute_fss2_hash_v2, compute_open_hash_v2, compute_setup_mac_v2,
+        decode_inner_record_v2, decode_open_payload_v2, derive_control_material_v2,
+        derive_epoch_zero_v2, derive_next_epoch_v2, derive_stream_material_v2,
+        derive_unreliable_material_v2, encode_inner_record_v2, encode_open_payload_v2,
+        open_record_v2, open_unreliable_v2, seal_record_v2, seal_unreliable_v2,
+        verify_setup_mac_v2,
     },
     transport_v2::{
-        ByteStreamV2, CarrierSessionV2, CarrierStreamV2, IncomingStreamV2, JsonObjectV2, PathKind,
-        RpcPeerV2, SessionError, SessionRole, SessionV2, StreamTerminalError,
-        carrier_inbound_stream_limit_v2,
+        ByteStreamV2, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2,
+        IncomingStreamV2, JsonObjectV2, PathKind, RpcPeerV2, SessionError, SessionRole, SessionV2,
+        StreamTerminalError, UnreliableMessageChannelV2, UnreliableMessageError,
+        UnreliableSendOutcome, carrier_inbound_stream_limit_v2,
     },
 };
 
@@ -50,6 +54,9 @@ const RESERVED_RPC_KIND: &str = "flowersec.rpc.v2";
 const MAX_LEDGER_SLOTS: u64 = 1_048_576;
 const NORMAL_CLOSE_REASON_V2: u16 = 1;
 const IDLE_TIMEOUT_REASON_V2: u16 = 4;
+pub(crate) const UNRELIABLE_MESSAGES_FEATURE_V1: u32 = 0x0000_0001;
+const KNOWN_FEATURES_V2: u32 = UNRELIABLE_MESSAGES_FEATURE_V1;
+const UNRELIABLE_SEND_BUDGET: usize = 64;
 
 /// Authenticated configuration for one side of a v2 session.
 #[derive(Clone)]
@@ -166,6 +173,7 @@ impl SessionConfigV2 {
 struct HandshakeMaterialV2 {
     h3: [u8; 32],
     session_prk: [u8; 32],
+    negotiated_features: u32,
 }
 
 /// Application-owned bidirectional RPC dispatch for the reserved encrypted
@@ -472,6 +480,12 @@ pub struct EncryptedSessionV2 {
     canceled: CancellationToken,
     terminal: StdMutex<Option<TerminalCauseV2>>,
     rpc: SessionRpcPeerV2,
+    unreliable: SessionUnreliableMessageChannelV2,
+    negotiated_features: u32,
+    unreliable_send_sequence: StdMutex<(u32, u64)>,
+    unreliable_send_budget: Semaphore,
+    unreliable_receive_lock: Mutex<()>,
+    unreliable_replay: StdMutex<HashMap<u32, ReplayWindowV2>>,
     ready: Notify,
     self_weak: OnceLock<Weak<SelfSession>>,
 }
@@ -507,15 +521,25 @@ async fn establish_session_v2_inner(
     carrier: Arc<dyn CarrierSessionV2>,
     config: SessionConfigV2,
 ) -> io::Result<Arc<dyn SessionV2>> {
+    let locally_supported_features = if carrier
+        .unreliable_message_max_size()
+        .is_some_and(|maximum| maximum >= MAX_UNRELIABLE_WIRE_V2_BYTES)
+    {
+        UNRELIABLE_MESSAGES_FEATURE_V1
+    } else {
+        0
+    };
     let (control, material) = match config.role {
         SessionRole::Client => {
             let control = carrier.open_stream().await?;
-            let material = client_handshake_v2(&control, &config).await?;
+            let material =
+                client_handshake_v2(&control, &config, locally_supported_features).await?;
             (control, material)
         }
         SessionRole::Server => {
             let control = carrier.accept_stream().await?;
-            let material = server_handshake_v2(&control, &config).await?;
+            let material =
+                server_handshake_v2(&control, &config, locally_supported_features).await?;
             (control, material)
         }
     };
@@ -601,6 +625,14 @@ async fn establish_session_v2_inner(
             read_buffer: Mutex::new(VecDeque::new()),
             next_request_id: AtomicU64::new(1),
         },
+        unreliable: SessionUnreliableMessageChannelV2 {
+            session: OnceLock::new(),
+        },
+        negotiated_features: material.negotiated_features,
+        unreliable_send_sequence: StdMutex::new((0, 1)),
+        unreliable_send_budget: Semaphore::new(UNRELIABLE_SEND_BUDGET),
+        unreliable_receive_lock: Mutex::new(()),
+        unreliable_replay: StdMutex::new(HashMap::new()),
         ready: Notify::new(),
         self_weak: OnceLock::new(),
     }));
@@ -613,6 +645,11 @@ async fn establish_session_v2_inner(
         .session
         .set(Arc::downgrade(&session))
         .expect("RPC session reference is initialized once");
+    session
+        .unreliable
+        .session
+        .set(Arc::downgrade(&session))
+        .expect("unreliable message session reference is initialized once");
     finish_ready_v2(&session.0).await?;
     let accept_session = session.clone();
     tokio::spawn(async move { accept_carrier_loop_v2(accept_session).await });
@@ -652,6 +689,59 @@ struct SessionRpcPeerV2 {
     stream: Mutex<Option<Box<dyn ByteStreamV2>>>,
     read_buffer: Mutex<VecDeque<u8>>,
     next_request_id: AtomicU64,
+}
+
+struct SessionUnreliableMessageChannelV2 {
+    session: OnceLock<Weak<SelfSession>>,
+}
+
+impl std::fmt::Debug for SessionUnreliableMessageChannelV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SessionUnreliableMessageChannelV2(..)")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ReplayWindowV2 {
+    highest: Option<u64>,
+    seen: u128,
+}
+
+impl ReplayWindowV2 {
+    fn contains(&self, sequence: u64) -> bool {
+        let Some(highest) = self.highest else {
+            return false;
+        };
+        if sequence > highest {
+            return false;
+        }
+        let distance = highest - sequence;
+        distance >= 128 || self.seen & (1_u128 << distance) != 0
+    }
+
+    fn insert(&mut self, sequence: u64) {
+        match self.highest {
+            None => {
+                self.highest = Some(sequence);
+                self.seen = 1;
+            }
+            Some(highest) if sequence > highest => {
+                let distance = sequence - highest;
+                self.seen = if distance >= 128 {
+                    1
+                } else {
+                    (self.seen << distance) | 1
+                };
+                self.highest = Some(sequence);
+            }
+            Some(highest) => {
+                let distance = highest - sequence;
+                if distance < 128 {
+                    self.seen |= 1_u128 << distance;
+                }
+            }
+        }
+    }
 }
 
 struct PendingSessionRekeyV2 {
@@ -704,9 +794,46 @@ impl RpcPeerV2 for SessionRpcPeerV2 {
 }
 
 #[async_trait]
+impl UnreliableMessageChannelV2 for SessionUnreliableMessageChannelV2 {
+    fn max_message_size(&self) -> usize {
+        MAX_UNRELIABLE_PLAINTEXT_V2_BYTES
+    }
+
+    async fn send(
+        &self,
+        payload: Bytes,
+        expires_at: SystemTime,
+    ) -> Result<UnreliableSendOutcome, UnreliableMessageError> {
+        let session = self
+            .session
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or(UnreliableMessageError::Closed)?;
+        send_unreliable_message_v2(&session, payload, expires_at).await
+    }
+
+    async fn receive(&self) -> Result<Bytes, UnreliableMessageError> {
+        let session = self
+            .session
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or(UnreliableMessageError::Closed)?;
+        receive_unreliable_message_v2(&session).await
+    }
+}
+
+#[async_trait]
 impl SessionV2 for SelfSession {
     fn rpc(&self) -> &dyn RpcPeerV2 {
         &self.rpc
+    }
+    fn unreliable_messages(
+        &self,
+    ) -> Result<&dyn UnreliableMessageChannelV2, UnreliableMessageError> {
+        if self.negotiated_features & UNRELIABLE_MESSAGES_FEATURE_V1 == 0 {
+            return Err(UnreliableMessageError::Unavailable);
+        }
+        Ok(&self.unreliable)
     }
     async fn open_stream(
         &self,
@@ -750,6 +877,187 @@ impl SessionV2 for SelfSession {
     }
 }
 
+async fn send_unreliable_message_v2(
+    session: &SelfSession,
+    payload: Bytes,
+    expires_at: SystemTime,
+) -> Result<UnreliableSendOutcome, UnreliableMessageError> {
+    if session.negotiated_features & UNRELIABLE_MESSAGES_FEATURE_V1 == 0 {
+        return Err(UnreliableMessageError::Unavailable);
+    }
+    if payload.is_empty() {
+        return Err(UnreliableMessageError::InvalidInput);
+    }
+    if payload.len() > MAX_UNRELIABLE_PLAINTEXT_V2_BYTES {
+        return Err(UnreliableMessageError::TooLarge);
+    }
+    let expires_at_unix_ms = unix_millis(expires_at)?;
+    if expires_at_unix_ms <= unix_millis(SystemTime::now())? {
+        return Err(UnreliableMessageError::Expired);
+    }
+    if session.closed.load(Ordering::Acquire) {
+        return Err(UnreliableMessageError::Closed);
+    }
+    let _send_permit = session
+        .unreliable_send_budget
+        .try_acquire()
+        .map_err(|_| UnreliableMessageError::DroppedBudget)?;
+    if expires_at_unix_ms <= unix_millis(SystemTime::now())? {
+        return Err(UnreliableMessageError::Expired);
+    }
+
+    let wire = {
+        let state = session.state.lock().await;
+        let epoch = state.send_epoch;
+        let roots = state
+            .send_roots
+            .get(&epoch)
+            .ok_or(UnreliableMessageError::Failed)?;
+        let material =
+            derive_unreliable_material_v2(roots, &session.h3, session.send_direction, epoch)
+                .map_err(|_| UnreliableMessageError::Failed)?;
+        let sequence = {
+            let mut sequence = session
+                .unreliable_send_sequence
+                .lock()
+                .expect("unreliable send sequence lock poisoned");
+            if sequence.0 != epoch {
+                *sequence = (epoch, 1);
+            }
+            let value = sequence.1;
+            sequence.1 = value.checked_add(1).ok_or(UnreliableMessageError::Failed)?;
+            value
+        };
+        let header = UnreliableHeaderV2 {
+            epoch,
+            sequence,
+            expires_at_unix_ms,
+            ciphertext_length: (payload.len() + AEAD_TAG_V2_SIZE) as u32,
+        };
+        let raw_header = header
+            .encode()
+            .map_err(|_| UnreliableMessageError::Failed)?;
+        let ciphertext = seal_unreliable_v2(
+            session.config.suite,
+            &material,
+            &session.h3,
+            session.send_direction,
+            header,
+            &payload,
+        )
+        .map_err(|_| UnreliableMessageError::Failed)?;
+        let mut wire = Vec::with_capacity(raw_header.len() + ciphertext.len());
+        wire.extend_from_slice(&raw_header);
+        wire.extend_from_slice(&ciphertext);
+        Bytes::from(wire)
+    };
+
+    session
+        .carrier
+        .send_unreliable_message(wire)
+        .await
+        .map_err(map_carrier_unreliable_error)?;
+    touch_activity_v2(session);
+    Ok(UnreliableSendOutcome::Accepted)
+}
+
+async fn receive_unreliable_message_v2(
+    session: &SelfSession,
+) -> Result<Bytes, UnreliableMessageError> {
+    if session.negotiated_features & UNRELIABLE_MESSAGES_FEATURE_V1 == 0 {
+        return Err(UnreliableMessageError::Unavailable);
+    }
+    let _receive = session.unreliable_receive_lock.lock().await;
+    loop {
+        let wire = tokio::select! {
+            biased;
+            _ = session.canceled.cancelled() => return Err(UnreliableMessageError::Closed),
+            result = session.carrier.receive_unreliable_message() => {
+                result.map_err(map_carrier_unreliable_error)?
+            }
+        };
+        if !(UNRELIABLE_HEADER_V2_SIZE + AEAD_TAG_V2_SIZE + 1..=MAX_UNRELIABLE_WIRE_V2_BYTES)
+            .contains(&wire.len())
+        {
+            continue;
+        }
+        let Ok(header) = UnreliableHeaderV2::decode(&wire[..UNRELIABLE_HEADER_V2_SIZE]) else {
+            continue;
+        };
+        if wire.len() != UNRELIABLE_HEADER_V2_SIZE + header.ciphertext_length as usize
+            || header.expires_at_unix_ms <= unix_millis(SystemTime::now())?
+        {
+            continue;
+        }
+        {
+            let replay = session
+                .unreliable_replay
+                .lock()
+                .expect("unreliable replay lock poisoned");
+            if replay
+                .get(&header.epoch)
+                .is_some_and(|window| window.contains(header.sequence))
+            {
+                continue;
+            }
+        }
+        let plaintext = {
+            let state = session.state.lock().await;
+            let Some(roots) = state.recv_roots.get(&header.epoch) else {
+                continue;
+            };
+            let Ok(material) = derive_unreliable_material_v2(
+                roots,
+                &session.h3,
+                session.recv_direction,
+                header.epoch,
+            ) else {
+                continue;
+            };
+            let Ok(plaintext) = open_unreliable_v2(
+                session.config.suite,
+                &material,
+                &session.h3,
+                session.recv_direction,
+                header,
+                &wire[UNRELIABLE_HEADER_V2_SIZE..],
+            ) else {
+                continue;
+            };
+            plaintext
+        };
+        if header.expires_at_unix_ms <= unix_millis(SystemTime::now())? {
+            continue;
+        }
+        session
+            .unreliable_replay
+            .lock()
+            .expect("unreliable replay lock poisoned")
+            .entry(header.epoch)
+            .or_default()
+            .insert(header.sequence);
+        touch_activity_v2(session);
+        return Ok(Bytes::from(plaintext));
+    }
+}
+
+fn unix_millis(value: SystemTime) -> Result<u64, UnreliableMessageError> {
+    let millis = value
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| UnreliableMessageError::InvalidInput)?
+        .as_millis();
+    u64::try_from(millis).map_err(|_| UnreliableMessageError::InvalidInput)
+}
+
+fn map_carrier_unreliable_error(error: CarrierUnreliableMessageErrorV2) -> UnreliableMessageError {
+    match error {
+        CarrierUnreliableMessageErrorV2::Unavailable => UnreliableMessageError::Unavailable,
+        CarrierUnreliableMessageErrorV2::TooLarge => UnreliableMessageError::TooLarge,
+        CarrierUnreliableMessageErrorV2::Dropped => UnreliableMessageError::DroppedBudget,
+        CarrierUnreliableMessageErrorV2::Closed => UnreliableMessageError::Closed,
+    }
+}
+
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
@@ -786,6 +1094,7 @@ fn proto(error: impl std::fmt::Display) -> io::Error {
 async fn client_handshake_v2(
     control: &Arc<dyn CarrierStreamV2>,
     config: &SessionConfigV2,
+    locally_supported_features: u32,
 ) -> io::Result<HandshakeMaterialV2> {
     let (private, public) =
         generate_ephemeral_keypair(handshake_suite(config.suite)).map_err(proto)?;
@@ -804,7 +1113,7 @@ async fn client_handshake_v2(
         max_inbound_streams: config.max_inbound_streams,
         nonce_c_b64u: b64(&nonce),
         profile: "flowersec/2".into(),
-        selected_features: 0,
+        selected_features: locally_supported_features,
         session_contract_hash_b64u: b64(&config.session_contract_hash),
         suite: suite_id(config.suite),
     };
@@ -813,7 +1122,7 @@ async fn client_handshake_v2(
     write_all_v2(control, &init_raw).await?;
     let server_raw = read_handshake_frame_v2(control, 2).await?;
     let server: ServerFinishedWire = canonical_handshake_v2(&server_raw[HANDSHAKE_HEADER_BYTES..])?;
-    validate_server_v2(&server, config)?;
+    validate_server_v2(&server, config, locally_supported_features)?;
     let peer_public = decode_b64(&server.server_eph_pub_b64u)?;
     let shared = private.derive_shared_secret(&peer_public).map_err(proto)?;
     let handshake_prk = hkdf_extract_v2(&config.psk, shared.expose());
@@ -858,12 +1167,14 @@ async fn client_handshake_v2(
     Ok(HandshakeMaterialV2 {
         h3,
         session_prk: hkdf_extract_v2(&h3, &handshake_prk),
+        negotiated_features: server.selected_features,
     })
 }
 
 async fn server_handshake_v2(
     control: &Arc<dyn CarrierStreamV2>,
     config: &SessionConfigV2,
+    locally_supported_features: u32,
 ) -> io::Result<HandshakeMaterialV2> {
     let mut preface = [0; CONTROL_PREFACE_BYTES];
     read_exact_v2(control, &mut preface).await?;
@@ -886,7 +1197,7 @@ async fn server_handshake_v2(
         handshake_id: b64(&handshake_id),
         max_inbound_streams: config.max_inbound_streams,
         nonce_s_b64u: b64(&nonce),
-        selected_features: 0,
+        selected_features: init.selected_features & locally_supported_features,
         server_admission_binding_b64u: b64(&config.local_admission_binding),
         server_endpoint_instance_id: config
             .local_endpoint_instance_id
@@ -940,6 +1251,7 @@ async fn server_handshake_v2(
     Ok(HandshakeMaterialV2 {
         h3,
         session_prk: hkdf_extract_v2(&h3, &handshake_prk),
+        negotiated_features: core.selected_features,
     })
 }
 
@@ -948,7 +1260,7 @@ fn validate_client_v2(init: &ClientInitWire, config: &SessionConfigV2) -> io::Re
         || init.channel_id != config.channel_id
         || init.client_role != 1
         || init.suite != suite_id(config.suite)
-        || init.selected_features != 0
+        || init.selected_features & !KNOWN_FEATURES_V2 != 0
         || init.max_inbound_streams != config.max_inbound_streams
         || decode_fixed_32(&init.session_contract_hash_b64u)? != config.session_contract_hash
     {
@@ -958,8 +1270,13 @@ fn validate_client_v2(init: &ClientInitWire, config: &SessionConfigV2) -> io::Re
     validate_peer_endpoint_v2(&init.client_endpoint_instance_id, config)
 }
 
-fn validate_server_v2(server: &ServerFinishedWire, config: &SessionConfigV2) -> io::Result<()> {
-    if server.selected_features != 0
+fn validate_server_v2(
+    server: &ServerFinishedWire,
+    config: &SessionConfigV2,
+    offered_features: u32,
+) -> io::Result<()> {
+    if server.selected_features & !KNOWN_FEATURES_V2 != 0
+        || server.selected_features & !offered_features != 0
         || server.max_inbound_streams != config.max_inbound_streams
         || decode_fixed_32(&server.session_contract_hash_b64u)? != config.session_contract_hash
         || decode_b64(&server.handshake_id)?.len() != 16
@@ -3731,6 +4048,23 @@ mod tests {
         payload[8..].copy_from_slice(&0_u16.to_be_bytes());
         assert!(validate_stream_reset_payload_v2(&payload).is_err());
         assert!(validate_stream_reset_payload_v2(&payload[..9]).is_err());
+    }
+
+    #[test]
+    fn unreliable_replay_window_tracks_out_of_order_and_rejects_duplicates() {
+        let mut window = ReplayWindowV2::default();
+        assert!(!window.contains(7));
+        window.insert(7);
+        assert!(window.contains(7));
+        assert!(!window.contains(9));
+        window.insert(9);
+        assert!(window.contains(9));
+        assert!(!window.contains(8));
+        window.insert(8);
+        assert!(window.contains(8));
+        window.insert(140);
+        assert!(window.contains(7), "sequences outside the window are stale");
+        assert!(window.contains(140));
     }
 
     #[tokio::test]

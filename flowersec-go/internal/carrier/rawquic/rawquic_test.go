@@ -397,7 +397,7 @@ func TestNativeStreamFlowControlStallDoesNotBlockSibling(t *testing.T) {
 	}
 }
 
-func TestSourceContainsNoYamuxOrDatagramAPISurface(t *testing.T) {
+func TestSourceContainsNoYamuxOrConcreteDatagramAPISurface(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
@@ -410,10 +410,8 @@ func TestSourceContainsNoYamuxOrDatagramAPISurface(t *testing.T) {
 	if strings.Contains(strings.ToLower(raw), "yamux") {
 		t.Fatal("raw QUIC adapter must not reference Yamux")
 	}
-	for _, forbidden := range []string{"SendDatagram", "ReceiveDatagram"} {
-		if strings.Contains(raw, forbidden) {
-			t.Fatalf("raw QUIC adapter exposes %s", forbidden)
-		}
+	if !strings.Contains(raw, "conn.SendDatagram") || !strings.Contains(raw, "conn.ReceiveDatagram") {
+		t.Fatal("raw QUIC adapter must use native QUIC DATAGRAM")
 	}
 	if strings.Contains(raw, "func NewConfig(") {
 		t.Fatal("raw QUIC public API must not expose a quic-go Config builder")

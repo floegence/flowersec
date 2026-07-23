@@ -62,7 +62,13 @@ canonical_json)`.
 
 Flowersec application 0-RTT is forbidden. Raw QUIC must use non-early dial and listen APIs. The Go WebTransport adapter must override the dependency's early-dial default with `quic.DialAddr`; server configuration keeps `Allow0RTT=false`.
 
-Reliable Flowersec streams never use QUIC DATAGRAM frames. Transport v2 exposes no public DATAGRAM API. The signed Go WebTransport dependency requires transport-level DATAGRAM negotiation and partial-reset support, but Flowersec does not call its datagram send or receive methods.
+Reliable Flowersec streams never use QUIC DATAGRAM frames. Raw QUIC and
+WebTransport may expose the same carrier-neutral `UnreliableMessageChannel`
+only when native DATAGRAM support and the `unreliable_messages_v1` FSH2
+feature are both negotiated. The channel is unavailable on WebSocket and must
+never fall back to a reliable stream. Its payloads use an independent,
+directional, epoch-bound AEAD domain; admission, handshake, control, Artifact,
+and credential values are not valid channel payload types.
 
 Every QUIC-family logical stream maps to a native bidirectional stream and uses native FIN, RESET_STREAM, STOP_SENDING, stream limits, and stream/connection flow control. Structural tests use qlog and a Yamux factory spy because the public WebTransport stream wrapper does not expose its underlying QUIC stream ID.
 

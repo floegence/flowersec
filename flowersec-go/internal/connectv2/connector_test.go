@@ -886,6 +886,9 @@ func (value *fakeSessionV2) Path() session.PathKind             { return value.c
 func (value *fakeSessionV2) ChosenCarrier() carrier.Kind        { return value.carrierSession.Kind() }
 func (value *fakeSessionV2) EndpointInstanceID() (string, bool) { return "", false }
 func (value *fakeSessionV2) RPC() session.RPCPeer               { return fakeRPCPeer{} }
+func (value *fakeSessionV2) UnreliableMessages() (session.UnreliableMessageChannel, error) {
+	return nil, session.ErrUnreliableUnavailable
+}
 func (value *fakeSessionV2) OpenStream(context.Context, string, session.Metadata) (session.ByteStream, error) {
 	return nil, errors.New("unused")
 }

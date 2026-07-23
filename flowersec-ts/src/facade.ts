@@ -9,10 +9,15 @@ export type {
   RpcResultV2,
   SessionErrorCode,
   StreamOpenOptionsV2,
+  UnreliableMessageChannelV2,
+  UnreliableMessageSendOptionsV2,
+  UnreliableMessageSendResultV2,
+  UnreliableMessageV2,
   SessionTerminationV2,
   SessionV2,
 } from "./v2/contract.js";
 export { SessionError } from "./v2/contract.js";
+export { createUnreliableMessageV2, UnreliableMessageError } from "./v2/unreliableMessage.js";
 export {
   TRANSPORT_V2_VERSION_POLICY,
   createArtifactAcquireContextV2,

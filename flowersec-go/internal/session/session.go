@@ -61,12 +61,34 @@ type RPCPeer interface {
 	Notify(ctx context.Context, typeID uint32, request any) error
 }
 
+type UnreliableSendStatus string
+
+const (
+	UnreliableAccepted       UnreliableSendStatus = "accepted"
+	UnreliableDroppedExpired UnreliableSendStatus = "dropped_expired"
+	UnreliableDroppedBudget  UnreliableSendStatus = "dropped_budget"
+	UnreliableDroppedCarrier UnreliableSendStatus = "dropped_carrier"
+)
+
+type UnreliableSendOptions struct {
+	ExpiresAt time.Time
+}
+
+// UnreliableMessageChannel sends independent encrypted messages over a native
+// unreliable carrier. Accepted means queued locally, never delivered.
+type UnreliableMessageChannel interface {
+	MaxMessageBytes() int
+	Send(context.Context, []byte, UnreliableSendOptions) (UnreliableSendStatus, error)
+	Receive(context.Context) ([]byte, error)
+}
+
 // SessionV2 is shared by WSS, raw QUIC, and WebTransport. Implementations must
 // not expose Yamux or a concrete QUIC stack through this interface.
 type SessionV2 interface {
 	Path() PathKind
 	EndpointInstanceID() (string, bool)
 	RPC() RPCPeer
+	UnreliableMessages() (UnreliableMessageChannel, error)
 	OpenStream(ctx context.Context, kind string, metadata Metadata) (ByteStream, error)
 	AcceptStream(ctx context.Context) (IncomingStream, error)
 	Rekey(ctx context.Context) error

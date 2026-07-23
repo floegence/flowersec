@@ -11,11 +11,13 @@ The only supported application import is `github.com/floegence/flowersec/flowers
 - Session values: `flowersec.Session`, `flowersec.Metadata`, `flowersec.ByteStream`, `flowersec.IncomingStream`, and `flowersec.RPCPeer`.
 - Streams: `flowersec.ByteStream.Read(...)`, `flowersec.ByteStream.Write(...)`, `flowersec.ByteStream.Close()`, `flowersec.ByteStream.Kind()`, `flowersec.ByteStream.TerminalError()`, `flowersec.ByteStream.CloseWrite()`, and `flowersec.ByteStream.Reset()`.
 - RPC: `flowersec.RPCPeer.Call(...)`, `flowersec.RPCPeer.Notify(...)`, and sanitized application `flowersec.RPCError` values.
+- Optional unreliable messages: `flowersec.Session.UnreliableMessages()` returns the carrier-neutral `flowersec.UnreliableMessageChannel`; `flowersec.UnreliableMessageChannel.MaxMessageBytes()`, `flowersec.UnreliableMessageChannel.Send(...)`, and `flowersec.UnreliableMessageChannel.Receive(...)` use `flowersec.UnreliableSendOptions` and `flowersec.UnreliableSendStatus` without exposing DATAGRAM or carrier objects.
 - Session lifecycle: `flowersec.Session.RPC()`, `flowersec.Session.OpenStream(...)`, `flowersec.Session.AcceptStream(...)`, `flowersec.Session.Rekey(...)`, `flowersec.Session.ProbeLiveness(...)`, `flowersec.Session.Termination()`, `flowersec.Session.WaitClosed(...)`, and `flowersec.Session.Close()`.
 - Redacted failures: `flowersec.ConnectError.Error()`, `flowersec.ConnectError.Unwrap()`, `flowersec.ConnectError.Is(...)`, `flowersec.ConnectError.Code()`, `flowersec.SessionError`, `flowersec.SessionErrorCode`, `flowersec.SessionError.Error()`, `flowersec.SessionError.Unwrap()`, `flowersec.SessionError.Code()`, and `flowersec.RPCError.Error()`.
 - Opaque formatting and serialization: `flowersec.Artifact.String()`, `flowersec.Artifact.GoString()`, `flowersec.Artifact.MarshalJSON()`, `flowersec.ArtifactLease.String()`, `flowersec.ArtifactLease.GoString()`, `flowersec.ArtifactLease.MarshalJSON()`, `flowersec.Connector.String()`, and `flowersec.Connector.GoString()`.
 - Connection outcomes: `flowersec.ConnectInvalid`, `flowersec.ConnectCanceled`, `flowersec.ConnectTimeout`, `flowersec.ConnectFailed`, `flowersec.ErrInvalidConnectorOptions`, and `flowersec.ErrConnectionFailed`.
-- Session outcomes: `flowersec.SessionCanceled`, `flowersec.SessionTimeout`, `flowersec.SessionClosed`, `flowersec.SessionGoingAway`, `flowersec.SessionResourceExhausted`, `flowersec.SessionStreamRejected`, `flowersec.SessionStreamReset`, `flowersec.SessionRekeyFailed`, `flowersec.SessionLivenessFailed`, and `flowersec.SessionOperationFailed`.
+- Session outcomes: `flowersec.SessionCanceled`, `flowersec.SessionTimeout`, `flowersec.SessionClosed`, `flowersec.SessionGoingAway`, `flowersec.SessionResourceExhausted`, `flowersec.SessionStreamRejected`, `flowersec.SessionStreamReset`, `flowersec.SessionRekeyFailed`, `flowersec.SessionLivenessFailed`, `flowersec.SessionUnreliableUnavailable`, `flowersec.SessionUnreliableTooLarge`, `flowersec.SessionUnreliableDropped`, and `flowersec.SessionOperationFailed`.
+- Unreliable send outcomes: `flowersec.UnreliableAccepted`, `flowersec.UnreliableDroppedExpired`, `flowersec.UnreliableDroppedBudget`, and `flowersec.UnreliableDroppedCarrier`.
 
 Opaque values have fixed redacted string and JSON behavior. Zero-value or deserialized handles cannot create a valid connector or spend lease.
 
@@ -23,7 +25,7 @@ Opaque values have fixed redacted string and JSON behavior. Zero-value or deseri
 
 The supported package entrypoints are `@floegence/flowersec-core`, `@floegence/flowersec-core/browser`, and `@floegence/flowersec-core/node`.
 
-The root exposes `Artifact`, `ArtifactLeaseV2`, the carrier-neutral `SessionV2`, `RPCPeerV2`, `ByteStreamV2`, reconnect orchestration, `ConnectError`, and `SessionError`. Browser applications add `connectBrowserSessionV2(...)`; Node.js applications add `connectNodeSessionV2(...)` with carrier-neutral TLS options. Low-level carrier factories, capability descriptors, candidate diagnostics, wire contracts, and cryptographic state are not package exports.
+The root exposes `Artifact`, `ArtifactLeaseV2`, the carrier-neutral `SessionV2`, `RPCPeerV2`, `ByteStreamV2`, reconnect orchestration, `ConnectError`, and `SessionError`. A negotiated session may expose `UnreliableMessageChannelV2`; applications construct its opaque payload with `createUnreliableMessageV2(...)` and receive redacted `UnreliableMessageError` values. Browser applications add `connectBrowserSessionV2(...)`; Node.js applications add `connectNodeSessionV2(...)` with carrier-neutral TLS options. Low-level carrier factories, capability descriptors, candidate diagnostics, wire contracts, and cryptographic state are not package exports.
 
 ## Swift
 
@@ -31,7 +33,7 @@ Applications `import Flowersec` from the `Flowersec` product. The public lifecyc
 
 ## Rust
 
-The `flowersec` crate exposes `Artifact`, `ArtifactError`, `ArtifactLease`, `ArtifactSpendError`, `Connector`, `ConnectorOptions`, `ConnectError`, `ConnectErrorCode`, `Session`, `SessionError`, `RpcPeer`, `ByteStream`, `IncomingStream`, `JsonObject`, and `StreamTerminalError`. Quinn connections, admission frames, capability descriptors, candidate plans, session ledgers, and implementation modules remain crate-private.
+The `flowersec` crate exposes `Artifact`, `ArtifactError`, `ArtifactLease`, `ArtifactSpendError`, `Connector`, `ConnectorOptions`, `ConnectError`, `ConnectErrorCode`, `Session`, `SessionError`, `RpcPeer`, `ByteStream`, `IncomingStream`, `JsonObject`, `StreamTerminalError`, and the carrier-neutral optional `UnreliableMessageChannel`. Quinn connections, admission frames, capability descriptors, candidate plans, session ledgers, and implementation modules remain crate-private.
 
 ## Error Boundary
 

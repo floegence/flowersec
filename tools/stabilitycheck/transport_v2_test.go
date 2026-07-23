@@ -114,6 +114,7 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		"flowersec.Artifact", "flowersec.ArtifactLease", "flowersec.ParseArtifact",
 		"flowersec.NewArtifactLease", "flowersec.Connector", "flowersec.NewConnector",
 		"flowersec.Session", "flowersec.ByteStream", "flowersec.RPCPeer", "flowersec.ConnectError",
+		"flowersec.UnreliableMessageChannel", "flowersec.UnreliableSendOptions",
 	} {
 		requireGoManifestEntry(t, m, goRoot, expression)
 	}
@@ -142,6 +143,7 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		t.Fatalf("manifest docs must register the Transport v2 API document and CarrierSession token")
 	}
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "SessionV2")
+	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "UnreliableMessageChannelV2")
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/browser", "BrowserSessionConnectorV2Options")
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/node", "ByteStreamV2")
 	for _, specifier := range []string{"@floegence/flowersec-core/browser", "@floegence/flowersec-core/node"} {
@@ -231,7 +233,8 @@ func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 			"flowersec.ByteStream.Kind", "flowersec.ByteStream.TerminalError",
 			"flowersec.ByteStream.CloseWrite", "flowersec.ByteStream.Reset",
 			"flowersec.RPCPeer.Call", "flowersec.RPCPeer.Notify",
-			"flowersec.Session.RPC",
+			"flowersec.UnreliableMessageChannel.MaxMessageBytes", "flowersec.UnreliableMessageChannel.Send",
+			"flowersec.UnreliableMessageChannel.Receive", "flowersec.Session.RPC", "flowersec.Session.UnreliableMessages",
 			"flowersec.Session.OpenStream", "flowersec.Session.AcceptStream", "flowersec.Session.Rekey",
 			"flowersec.Session.ProbeLiveness", "flowersec.Session.Termination",
 			"flowersec.Session.WaitClosed", "flowersec.Session.Close",
@@ -556,11 +559,11 @@ func TestTransportV2ContractRejectsInvalidRegistryStates(t *testing.T) {
 			wantErr: "0-RTT must be forbidden",
 		},
 		{
-			name: "public datagram API exposed",
+			name: "public datagram API bypasses negotiated channel",
 			mutate: func(copy *transportV2Contract) {
 				copy.Policies.PublicDatagramAPI = "exposed"
 			},
-			wantErr: "public API unexposed",
+			wantErr: "negotiated native unreliable message channel",
 		},
 		{
 			name: "unsupported carrier missing",

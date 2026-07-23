@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,36 @@ func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 	_ = connect
 	if got, want := fmt.Sprintf("%v %#v", connector, connector), "Flowersec.Connector flowersec.Connector"; got != want {
 		t.Fatalf("connector formatting = %q, want %q", got, want)
+	}
+}
+
+func TestUnreliableMessagePublicSurfaceIsOpaqueAndCarrierNeutral(t *testing.T) {
+	channel := reflect.TypeOf((*flowersec.UnreliableMessageChannel)(nil)).Elem()
+	if channel.NumMethod() != 3 {
+		t.Fatalf("UnreliableMessageChannel methods = %d, want 3", channel.NumMethod())
+	}
+	for index := range channel.NumMethod() {
+		signature := channel.Method(index).Type.String()
+		for _, forbidden := range []string{"Artifact", "Credential", "Admission", "Handshake", "Control", "Carrier", "QUIC", "WebTransport", "Yamux"} {
+			if strings.Contains(signature, forbidden) {
+				t.Fatalf("public unreliable signature %q exposes %q", signature, forbidden)
+			}
+		}
+	}
+	options := reflect.TypeOf(flowersec.UnreliableSendOptions{})
+	if options.NumField() != 1 || options.Field(0).Name != "ExpiresAt" || options.Field(0).Type != reflect.TypeOf(time.Time{}) {
+		t.Fatalf("UnreliableSendOptions = %v", options)
+	}
+	wantStatuses := []flowersec.UnreliableSendStatus{
+		flowersec.UnreliableAccepted,
+		flowersec.UnreliableDroppedExpired,
+		flowersec.UnreliableDroppedBudget,
+		flowersec.UnreliableDroppedCarrier,
+	}
+	for _, status := range wantStatuses {
+		if status == "" {
+			t.Fatal("empty unreliable send status")
+		}
 	}
 }
 

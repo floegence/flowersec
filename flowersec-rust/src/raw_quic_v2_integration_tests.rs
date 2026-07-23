@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
     sync::{Arc, OnceLock},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use crate::raw_quic_v2::{
@@ -17,7 +17,7 @@ use crate::{
     artifact_v2::{Artifact, ArtifactLease},
     protocol_v2::CipherSuiteV2,
     session_v2::{RpcHandlerV2, SessionConfigV2, establish_session_v2},
-    transport_v2::{CarrierSessionV2, PathKind, SessionRole},
+    transport_v2::{CarrierSessionV2, CarrierUnreliableMessageErrorV2, PathKind, SessionRole},
 };
 use base64::{
     Engine as _,
@@ -76,6 +76,23 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
             )
             .await
             .expect("establish facade server session");
+            let unreliable = session
+                .unreliable_messages()
+                .expect("raw QUIC negotiated unreliable messages after READY");
+            assert_eq!(
+                unreliable.receive().await.expect("receive client datagram"),
+                Bytes::from_static(b"client-datagram")
+            );
+            assert_eq!(
+                unreliable
+                    .send(
+                        Bytes::from_static(b"server-datagram"),
+                        SystemTime::now() + Duration::from_secs(2),
+                    )
+                    .await
+                    .expect("send server datagram"),
+                crate::UnreliableSendOutcome::Accepted
+            );
             let incoming = session
                 .accept_stream()
                 .await
@@ -135,6 +152,48 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
             .connect(&mut lease, CancellationToken::new())
             .await
             .expect("connect through public facade");
+        let unreliable = session
+            .unreliable_messages()
+            .expect("public facade exposes negotiated unreliable messages");
+        assert_eq!(unreliable.max_message_size(), 1_024);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), unreliable.receive())
+                .await
+                .is_err(),
+            "canceling receive must not close the channel"
+        );
+        assert_eq!(
+            unreliable
+                .send(
+                    Bytes::from_static(b"client-datagram"),
+                    SystemTime::now() + Duration::from_secs(2),
+                )
+                .await
+                .expect("send client datagram"),
+            crate::UnreliableSendOutcome::Accepted
+        );
+        assert_eq!(
+            unreliable.receive().await.expect("receive server datagram"),
+            Bytes::from_static(b"server-datagram")
+        );
+        assert_eq!(
+            unreliable
+                .send(
+                    Bytes::from(vec![0_u8; 1_025]),
+                    SystemTime::now() + Duration::from_secs(2),
+                )
+                .await,
+            Err(crate::UnreliableMessageError::TooLarge)
+        );
+        assert_eq!(
+            unreliable
+                .send(
+                    Bytes::from_static(b"expired"),
+                    SystemTime::now() - Duration::from_millis(1),
+                )
+                .await,
+            Err(crate::UnreliableMessageError::Expired)
+        );
         let stream = session
             .open_stream("facade-client", serde_json::Map::new())
             .await
@@ -841,7 +900,7 @@ async fn raw_quic_control_and_rpc_slots_preserve_one_data_stream_capacity() {
 }
 
 #[test]
-fn public_source_hides_quinn_yamux_datagrams_and_early_data() {
+fn public_source_hides_quinn_yamux_and_early_data() {
     let source = include_str!("../src/raw_quic_v2.rs");
     for line in source.lines() {
         let public = line.trim_start().starts_with("pub ");
@@ -854,11 +913,9 @@ fn public_source_hides_quinn_yamux_datagrams_and_early_data() {
             "public Yamux surface: {line}"
         );
     }
-    assert!(!source.contains("send_datagram"));
-    assert!(!source.contains("read_datagram"));
     assert!(!source.contains("into_0rtt"));
     assert!(source.contains("max_concurrent_uni_streams(0"));
-    assert!(source.contains("datagram_receive_buffer_size(None)"));
+    assert!(source.contains("datagram_receive_buffer_size(Some("));
     assert!(source.contains("enable_early_data = false"));
     assert!(source.contains("max_early_data_size = 0"));
     assert!(source.contains("with_protocol_versions(&[&rustls::version::TLS13])"));
@@ -872,6 +929,99 @@ fn public_source_hides_quinn_yamux_datagrams_and_early_data() {
             .any(|line| line.trim_start().starts_with("rcgen"))
     );
     assert!(!lockfile.lines().any(|line| line == "name = \"rcgen\""));
+}
+
+#[tokio::test]
+async fn raw_quic_negotiates_and_transfers_native_unreliable_messages() {
+    let (_listener, client, server) = new_pair(
+        RawQuicPathProfile::Direct,
+        default_limits(),
+        default_limits(),
+    )
+    .await;
+    let client_max = CarrierSessionV2::unreliable_message_max_size(&client)
+        .expect("client negotiated QUIC DATAGRAM");
+    let server_max = CarrierSessionV2::unreliable_message_max_size(&server)
+        .expect("server negotiated QUIC DATAGRAM");
+    assert!(client_max >= 1_000);
+    assert!(server_max >= 1_000);
+
+    CarrierSessionV2::send_unreliable_message(&client, Bytes::from_static(b"native-datagram"))
+        .await
+        .expect("send native QUIC DATAGRAM");
+    assert_eq!(
+        CarrierSessionV2::receive_unreliable_message(&server)
+            .await
+            .expect("receive native QUIC DATAGRAM"),
+        Bytes::from_static(b"native-datagram")
+    );
+}
+
+#[tokio::test]
+async fn raw_quic_unreliable_messages_reject_oversize_without_stream_fallback() {
+    let (_listener, client, server) = new_pair(
+        RawQuicPathProfile::Direct,
+        default_limits(),
+        default_limits(),
+    )
+    .await;
+    let maximum = CarrierSessionV2::unreliable_message_max_size(&client).unwrap();
+    let result =
+        CarrierSessionV2::send_unreliable_message(&client, Bytes::from(vec![0_u8; maximum + 1]))
+            .await;
+    assert_eq!(result, Err(CarrierUnreliableMessageErrorV2::TooLarge));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), server.accept_stream())
+            .await
+            .is_err(),
+        "oversize DATAGRAM must not open a reliable stream"
+    );
+}
+
+#[tokio::test]
+async fn raw_quic_unreliable_send_reports_exhausted_budget_without_queue_fallback() {
+    let profile = RawQuicPathProfile::Direct;
+    let limits = default_limits();
+    let listener = RawQuicListener::bind(loopback_ephemeral(), server_config(profile, limits))
+        .expect("bind budget listener");
+    let address = listener.local_addr().expect("budget listener address");
+    let constrained = client_config(profile, limits)
+        .with_datagram_send_buffer_for_test(1)
+        .expect("constrain DATAGRAM send budget");
+    let (client, server) = tokio::join!(
+        RawQuicSession::dial(loopback_ephemeral(), address, "localhost", constrained),
+        listener.accept(),
+    );
+    let client = client.expect("dial constrained DATAGRAM client");
+    let server = server.expect("accept constrained DATAGRAM client");
+    assert_eq!(
+        CarrierSessionV2::send_unreliable_message(&client, Bytes::from_static(b"budget")).await,
+        Err(CarrierUnreliableMessageErrorV2::Dropped)
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), server.accept_stream())
+            .await
+            .is_err(),
+        "exhausted DATAGRAM budget must not open a reliable stream"
+    );
+}
+
+#[tokio::test]
+async fn raw_quic_unreliable_receive_stops_when_connection_closes() {
+    let (_listener, client, server) = new_pair(
+        RawQuicPathProfile::Direct,
+        default_limits(),
+        default_limits(),
+    )
+    .await;
+    let receive = CarrierSessionV2::receive_unreliable_message(&server);
+    client.close();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), receive)
+            .await
+            .expect("close must wake DATAGRAM receive"),
+        Err(CarrierUnreliableMessageErrorV2::Closed)
+    );
 }
 
 #[tokio::test]

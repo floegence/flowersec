@@ -139,6 +139,21 @@
             "doc_token": "`flowersec.RPCError`"
           },
           {
+            "kind": "type",
+            "expr": "flowersec.UnreliableMessageChannel",
+            "doc_token": "`flowersec.UnreliableMessageChannel`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.UnreliableSendOptions",
+            "doc_token": "`flowersec.UnreliableSendOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.UnreliableSendStatus",
+            "doc_token": "`flowersec.UnreliableSendStatus`"
+          },
+          {
             "kind": "interface_method",
             "expr": "flowersec.ByteStream.Read",
             "signature": "func(flowersec.ByteStream, []byte) (int, error)",
@@ -194,9 +209,33 @@
           },
           {
             "kind": "interface_method",
+            "expr": "flowersec.UnreliableMessageChannel.MaxMessageBytes",
+            "signature": "func(flowersec.UnreliableMessageChannel) int",
+            "doc_token": "`flowersec.UnreliableMessageChannel.MaxMessageBytes()`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.UnreliableMessageChannel.Send",
+            "signature": "func(flowersec.UnreliableMessageChannel, context.Context, []byte, flowersec.UnreliableSendOptions) (flowersec.UnreliableSendStatus, error)",
+            "doc_token": "`flowersec.UnreliableMessageChannel.Send(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.UnreliableMessageChannel.Receive",
+            "signature": "func(flowersec.UnreliableMessageChannel, context.Context) ([]byte, error)",
+            "doc_token": "`flowersec.UnreliableMessageChannel.Receive(...)`"
+          },
+          {
+            "kind": "interface_method",
             "expr": "flowersec.Session.RPC",
             "signature": "func(flowersec.Session) flowersec.RPCPeer",
             "doc_token": "`flowersec.Session.RPC()`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.Session.UnreliableMessages",
+            "signature": "func(flowersec.Session) (flowersec.UnreliableMessageChannel, error)",
+            "doc_token": "`flowersec.Session.UnreliableMessages()`"
           },
           {
             "kind": "interface_method",
@@ -367,8 +406,43 @@
           },
           {
             "kind": "const",
+            "expr": "flowersec.SessionUnreliableUnavailable",
+            "doc_token": "`flowersec.SessionUnreliableUnavailable`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.SessionUnreliableTooLarge",
+            "doc_token": "`flowersec.SessionUnreliableTooLarge`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.SessionUnreliableDropped",
+            "doc_token": "`flowersec.SessionUnreliableDropped`"
+          },
+          {
+            "kind": "const",
             "expr": "flowersec.SessionOperationFailed",
             "doc_token": "`flowersec.SessionOperationFailed`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.UnreliableAccepted",
+            "doc_token": "`flowersec.UnreliableAccepted`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.UnreliableDroppedExpired",
+            "doc_token": "`flowersec.UnreliableDroppedExpired`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.UnreliableDroppedBudget",
+            "doc_token": "`flowersec.UnreliableDroppedBudget`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.UnreliableDroppedCarrier",
+            "doc_token": "`flowersec.UnreliableDroppedCarrier`"
           },
           {
             "kind": "var",
@@ -392,17 +466,22 @@
         "doc_tokens": [
           "`@floegence/flowersec-core`",
           "`ArtifactLeaseV2`",
-          "`SessionV2`"
+          "`SessionV2`",
+          "`UnreliableMessageChannelV2`",
+          "`createUnreliableMessageV2(...)`",
+          "`UnreliableMessageError`"
         ],
         "runtime_exports": [
           "Artifact",
           "ConnectError",
           "SessionError",
           "TRANSPORT_V2_VERSION_POLICY",
+          "UnreliableMessageError",
           "createArtifactAcquireContextV2",
           "createArtifactLeaseV2",
           "createArtifactV2Resolver",
           "createSessionReconnectManagerV2",
+          "createUnreliableMessageV2",
           "parseArtifact"
         ],
         "type_exports": [
@@ -431,7 +510,11 @@
           "SessionReconnectStatusV2",
           "SessionTerminationV2",
           "SessionV2",
-          "StreamOpenOptionsV2"
+          "StreamOpenOptionsV2",
+          "UnreliableMessageChannelV2",
+          "UnreliableMessageSendOptionsV2",
+          "UnreliableMessageSendResultV2",
+          "UnreliableMessageV2"
         ]
       },
       {
@@ -446,11 +529,13 @@
           "ConnectError",
           "SessionError",
           "TRANSPORT_V2_VERSION_POLICY",
+          "UnreliableMessageError",
           "connectNodeSessionV2",
           "createArtifactAcquireContextV2",
           "createArtifactLeaseV2",
           "createArtifactV2Resolver",
           "createSessionReconnectManagerV2",
+          "createUnreliableMessageV2",
           "parseArtifact"
         ],
         "type_exports": [
@@ -481,7 +566,11 @@
           "SessionReconnectStatusV2",
           "SessionTerminationV2",
           "SessionV2",
-          "StreamOpenOptionsV2"
+          "StreamOpenOptionsV2",
+          "UnreliableMessageChannelV2",
+          "UnreliableMessageSendOptionsV2",
+          "UnreliableMessageSendResultV2",
+          "UnreliableMessageV2"
         ]
       },
       {
@@ -496,11 +585,13 @@
           "ConnectError",
           "SessionError",
           "TRANSPORT_V2_VERSION_POLICY",
+          "UnreliableMessageError",
           "connectBrowserSessionV2",
           "createArtifactAcquireContextV2",
           "createArtifactLeaseV2",
           "createArtifactV2Resolver",
           "createSessionReconnectManagerV2",
+          "createUnreliableMessageV2",
           "parseArtifact"
         ],
         "type_exports": [
@@ -530,7 +621,11 @@
           "SessionReconnectStatusV2",
           "SessionTerminationV2",
           "SessionV2",
-          "StreamOpenOptionsV2"
+          "StreamOpenOptionsV2",
+          "UnreliableMessageChannelV2",
+          "UnreliableMessageSendOptionsV2",
+          "UnreliableMessageSendResultV2",
+          "UnreliableMessageV2"
         ]
       }
     ]
@@ -1071,7 +1166,8 @@
       "`flowersec`",
       "`Connector`",
       "`ConnectorOptions`",
-      "`Session`"
+      "`Session`",
+      "`UnreliableMessageChannel`"
     ],
     "compile_entries": [
       "let _ = std::mem::size_of::<flowersec::Artifact>()",
@@ -1088,7 +1184,10 @@
       "let _: Option<&dyn flowersec::RpcPeer> = None",
       "let _: Option<&dyn flowersec::Session> = None",
       "let _ = std::mem::size_of::<flowersec::SessionError>()",
-      "let _ = std::mem::size_of::<flowersec::StreamTerminalError>()"
+      "let _ = std::mem::size_of::<flowersec::StreamTerminalError>()",
+      "let _: Option<&dyn flowersec::UnreliableMessageChannel> = None",
+      "let _ = std::mem::size_of::<flowersec::UnreliableMessageError>()",
+      "let _ = std::mem::size_of::<flowersec::UnreliableSendOutcome>()"
     ]
   },
   "coverage": {

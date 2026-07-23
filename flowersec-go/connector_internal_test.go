@@ -31,6 +31,18 @@ func TestConnectorMapsInternalResultToCarrierNeutralSession(t *testing.T) {
 	}
 }
 
+func TestUnreliableUnavailableProjectsStablePublicCode(t *testing.T) {
+	current := &opaqueSession{inner: inertSession{path: session.PathDirect}}
+	channel, err := current.UnreliableMessages()
+	if channel != nil {
+		t.Fatalf("channel = %#v, want nil", channel)
+	}
+	var projected *SessionError
+	if !errors.As(err, &projected) || projected.Code() != SessionUnreliableUnavailable {
+		t.Fatalf("UnreliableMessages error = %#v, want %q", err, SessionUnreliableUnavailable)
+	}
+}
+
 func TestConnectorRedactsInternalCandidateFailure(t *testing.T) {
 	connector := &Connector{inner: staticConnectorBackend{err: errors.New("candidate secret-id at wss://secret.example failed")}}
 
@@ -136,6 +148,9 @@ type inertSession struct{ path session.PathKind }
 func (value inertSession) Path() session.PathKind       { return value.path }
 func (inertSession) EndpointInstanceID() (string, bool) { return "", false }
 func (inertSession) RPC() session.RPCPeer               { return nil }
+func (inertSession) UnreliableMessages() (session.UnreliableMessageChannel, error) {
+	return nil, session.ErrUnreliableUnavailable
+}
 func (inertSession) OpenStream(context.Context, string, session.Metadata) (session.ByteStream, error) {
 	return nil, nil
 }

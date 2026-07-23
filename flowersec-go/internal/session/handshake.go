@@ -13,18 +13,20 @@ import (
 )
 
 type handshakeMaterial struct {
-	h3         [32]byte
-	sessionPRK [32]byte
+	h3               [32]byte
+	sessionPRK       [32]byte
+	selectedFeatures uint32
 }
 
 func performHandshake(ctx context.Context, carrierSession carrier.Session, config Config) (carrier.Stream, handshakeMaterial, error) {
+	availableFeatures := carrierFeatures(carrierSession)
 	if config.Role == RoleClient {
 		control, err := carrierSession.OpenStream(ctx)
 		if err != nil {
 			return nil, handshakeMaterial{}, err
 		}
 		stopWatch := watchStreamContext(ctx, control)
-		material, err := performClientHandshake(control, config)
+		material, err := performClientHandshake(control, config, availableFeatures)
 		stopWatch()
 		return control, material, err
 	}
@@ -33,7 +35,7 @@ func performHandshake(ctx context.Context, carrierSession carrier.Session, confi
 		return nil, handshakeMaterial{}, err
 	}
 	stopWatch := watchStreamContext(ctx, control)
-	material, err := performServerHandshake(control, config)
+	material, err := performServerHandshake(control, config, availableFeatures)
 	stopWatch()
 	return control, material, err
 }
@@ -56,7 +58,7 @@ func watchStreamContext(ctx context.Context, stream carrier.Stream) func() {
 	}
 }
 
-func performClientHandshake(control carrier.Stream, config Config) (handshakeMaterial, error) {
+func performClientHandshake(control carrier.Stream, config Config, availableFeatures uint32) (handshakeMaterial, error) {
 	privateKey, publicKey, err := protocolv2.GenerateEphemeralKey(config.Suite, rand.Reader)
 	if err != nil {
 		return handshakeMaterial{}, err
@@ -70,7 +72,7 @@ func performClientHandshake(control carrier.Stream, config Config) (handshakeMat
 		Profile: "flowersec/2", ChannelID: config.ChannelID,
 		SessionContractHash: config.SessionContractHash, ClientRole: byte(protocolv2.RoleClient),
 		Suite: config.Suite, ClientEphemeralPublic: publicKey, NonceC: nonce,
-		SelectedFeatures: 0, MaxInboundStreams: config.MaxInboundStreams,
+		SelectedFeatures: availableFeatures, MaxInboundStreams: config.MaxInboundStreams,
 		ClientAdmissionBinding:   config.LocalAdmissionBinding,
 		ClientEndpointInstanceID: config.LocalEndpointInstanceID,
 	}
@@ -93,7 +95,7 @@ func performClientHandshake(control carrier.Stream, config Config) (handshakeMat
 	if err != nil {
 		return handshakeMaterial{}, err
 	}
-	if err := protocolv2.ValidateServerFinished(serverFinished, handshakeExpectations(config, false)); err != nil {
+	if err := protocolv2.ValidateServerFinished(serverFinished, handshakeExpectations(config, false, availableFeatures)); err != nil {
 		return handshakeMaterial{}, err
 	}
 	sharedSecret, err := protocolv2.ComputeECDHSharedSecret(config.Suite, privateKey, serverFinished.Core.ServerEphemeralPublic)
@@ -145,10 +147,10 @@ func performClientHandshake(control carrier.Stream, config Config) (handshakeMat
 	if err != nil {
 		return handshakeMaterial{}, err
 	}
-	return handshakeMaterial{h3: h3, sessionPRK: protocolv2.DeriveSessionPRK(h3, handshakePRK)}, nil
+	return handshakeMaterial{h3: h3, sessionPRK: protocolv2.DeriveSessionPRK(h3, handshakePRK), selectedFeatures: serverFinished.Core.SelectedFeatures}, nil
 }
 
-func performServerHandshake(control carrier.Stream, config Config) (handshakeMaterial, error) {
+func performServerHandshake(control carrier.Stream, config Config, availableFeatures uint32) (handshakeMaterial, error) {
 	fsc2 := make([]byte, protocolv2.ControlPrefaceSize)
 	if _, err := io.ReadFull(control, fsc2); err != nil {
 		return handshakeMaterial{}, err
@@ -164,7 +166,7 @@ func performServerHandshake(control carrier.Stream, config Config) (handshakeMat
 	if err != nil {
 		return handshakeMaterial{}, err
 	}
-	if err := protocolv2.ValidateClientInit(clientInit, handshakeExpectations(config, true)); err != nil {
+	if err := protocolv2.ValidateClientInit(clientInit, handshakeExpectations(config, true, availableFeatures)); err != nil {
 		return handshakeMaterial{}, err
 	}
 	privateKey, publicKey, err := protocolv2.GenerateEphemeralKey(config.Suite, rand.Reader)
@@ -191,7 +193,7 @@ func performServerHandshake(control carrier.Stream, config Config) (handshakeMat
 		Suite: config.Suite, HandshakeID: handshakeID,
 		ServerEphemeralPublic: publicKey, NonceS: nonce,
 		SessionContractHash: config.SessionContractHash,
-		SelectedFeatures:    0, MaxInboundStreams: config.MaxInboundStreams,
+		SelectedFeatures:    clientInit.SelectedFeatures & availableFeatures, MaxInboundStreams: config.MaxInboundStreams,
 		ServerAdmissionBinding:   config.LocalAdmissionBinding,
 		ServerEndpointInstanceID: config.LocalEndpointInstanceID,
 	}}
@@ -245,10 +247,10 @@ func performServerHandshake(control carrier.Stream, config Config) (handshakeMat
 	if err != nil {
 		return handshakeMaterial{}, err
 	}
-	return handshakeMaterial{h3: h3, sessionPRK: protocolv2.DeriveSessionPRK(h3, handshakePRK)}, nil
+	return handshakeMaterial{h3: h3, sessionPRK: protocolv2.DeriveSessionPRK(h3, handshakePRK), selectedFeatures: server.Core.SelectedFeatures}, nil
 }
 
-func handshakeExpectations(config Config, peerIsClient bool) protocolv2.HandshakeExpectations {
+func handshakeExpectations(config Config, peerIsClient bool, availableFeatures uint32) protocolv2.HandshakeExpectations {
 	path := protocolv2.HandshakeDirect
 	if config.Path == PathTunnel {
 		path = protocolv2.HandshakeTunnel
@@ -258,11 +260,20 @@ func handshakeExpectations(config Config, peerIsClient bool) protocolv2.Handshak
 		Suite: config.Suite, MaxInboundStreams: config.MaxInboundStreams,
 		AdmissionBinding:           config.PeerAdmissionBinding,
 		ExpectedEndpointInstanceID: config.ExpectedPeerEndpointInstanceID,
+		AvailableFeatures:          availableFeatures,
 	}
 	if peerIsClient {
 		expectation.ChannelID = config.ChannelID
 	}
 	return expectation
+}
+
+func carrierFeatures(carrierSession carrier.Session) uint32 {
+	unreliable, ok := carrierSession.(carrier.UnreliableTransport)
+	if ok && unreliable.UnreliableAvailable() {
+		return protocolv2.FeatureUnreliableMessages
+	}
+	return 0
 }
 
 func (s *engineSession) finishReadyBoundary() error {

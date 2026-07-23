@@ -49,9 +49,8 @@ func BindSessionLimits(limits Limits, maxLogical uint16) (Limits, error) {
 	return rawquic.BindSessionLimits(limits, maxLogical)
 }
 
-// newQUICConfig enables the capabilities required by HTTP/3 WebTransport while
-// keeping application early data disabled. Datagram transport is required by
-// the WebTransport stack but is deliberately absent from Flowersec's API.
+// newQUICConfig enables native HTTP/3 datagrams and partial stream reset while
+// keeping application early data disabled.
 func newQUICConfig(limits Limits) (*quic.Config, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
@@ -209,7 +208,7 @@ func wrapSession(inner *wt.Session, capacity uint16, path carrier.Path) (*Sessio
 	if state.Used0RTT {
 		return nil, ErrEarlyData
 	}
-	if state.TLS.Version != tls.VersionTLS13 || !state.SupportsDatagrams.Local ||
+	if state.TLS.Version != tls.VersionTLS13 || !state.SupportsDatagrams.Local || !state.SupportsDatagrams.Remote ||
 		!state.SupportsStreamResetPartialDelivery.Local {
 		return nil, ErrInvalidSession
 	}
@@ -221,6 +220,33 @@ func wrapSession(inner *wt.Session, capacity uint16, path carrier.Path) (*Sessio
 func (*Session) Kind() carrier.Kind                 { return carrier.KindWebTransport }
 func (session *Session) Path() carrier.Path         { return session.path }
 func (session *Session) MaxIncomingStreams() uint16 { return session.capacity }
+
+func (*Session) UnreliableAvailable() bool { return true }
+
+func (session *Session) SendUnreliable(payload []byte) error {
+	if len(payload) == 0 || len(payload) > carrier.MaxUnreliableWireBytes {
+		return carrier.ErrUnreliableTooLarge
+	}
+	if err := session.inner.SendDatagram(payload); err != nil {
+		var tooLarge *quic.DatagramTooLargeError
+		if errors.As(err, &tooLarge) {
+			return fmt.Errorf("%w: native limit %d", carrier.ErrUnreliableTooLarge, tooLarge.MaxDatagramPayloadSize)
+		}
+		return err
+	}
+	return nil
+}
+
+func (session *Session) ReceiveUnreliable(ctx context.Context) ([]byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	payload, err := session.inner.ReceiveDatagram(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
 
 func pathForConnectPath(path string) (carrier.Path, error) {
 	switch path {
@@ -413,4 +439,5 @@ func validateApplicationError(applicationError carrier.ApplicationError) error {
 }
 
 var _ carrier.Session = (*Session)(nil)
+var _ carrier.UnreliableTransport = (*Session)(nil)
 var _ carrier.Stream = (*Stream)(nil)

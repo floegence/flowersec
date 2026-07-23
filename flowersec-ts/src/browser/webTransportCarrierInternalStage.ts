@@ -3,11 +3,18 @@ export type BrowserWebTransportBidirectionalStreamInternalStage = Readonly<{
   writable: WritableStream<Uint8Array>;
 }>;
 
+export type BrowserWebTransportDatagramDuplexInternalStage = Readonly<{
+  readonly maxDatagramSize: number;
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<Uint8Array>;
+}>;
+
 export type BrowserWebTransportLikeInternalStage = Readonly<{
   ready: Promise<void>;
   closed: Promise<unknown>;
   incomingBidirectionalStreams: ReadableStream<BrowserWebTransportBidirectionalStreamInternalStage>;
   incomingUnidirectionalStreams: ReadableStream<ReadableStream<Uint8Array>>;
+  datagrams?: BrowserWebTransportDatagramDuplexInternalStage;
   createBidirectionalStream(): Promise<BrowserWebTransportBidirectionalStreamInternalStage>;
   close(closeInfo?: Readonly<{ closeCode?: number; reason?: string }>): void;
 }>;
@@ -24,10 +31,21 @@ export type BrowserWebTransportCarrierStreamInternalStage = Readonly<{
   abort(error?: Error): void;
 }>;
 
+export type BrowserWebTransportUnreliableDatagramsInternalStage = Readonly<{
+  readonly maxDatagramSize: number;
+  send(
+    data: Uint8Array,
+    options?: Readonly<{ signal?: AbortSignal; expiresAt?: number }>,
+  ): Promise<"accepted" | "dropped_budget" | "dropped_expired">;
+  receive(options?: Readonly<{ signal?: AbortSignal }>): Promise<Uint8Array>;
+}>;
+
 export type BrowserWebTransportCarrierInternalStage = Readonly<{
   kind: "webtransport";
   path: "direct" | "tunnel";
   inboundBidirectionalStreamCapacity: number;
+  readonly unreliableDatagrams: BrowserWebTransportUnreliableDatagramsInternalStage | undefined;
+  requireUnreliableDatagrams(): Promise<BrowserWebTransportUnreliableDatagramsInternalStage>;
   openStream(options?: Readonly<{ signal?: AbortSignal }>): Promise<BrowserWebTransportCarrierStreamInternalStage>;
   acceptStream(options?: Readonly<{ signal?: AbortSignal }>): Promise<BrowserWebTransportCarrierStreamInternalStage>;
   close(): Promise<void>;
@@ -39,6 +57,8 @@ export type CreateBrowserWebTransportCarrierInternalStageOptions = Readonly<{
   signal?: AbortSignal;
   closeTimeoutMs?: number;
   maxIncomingStreams?: number;
+  datagramSendBudgetBytes?: number;
+  now?: () => number;
   webTransportFactory?: BrowserWebTransportFactoryInternalStage;
 }>;
 
@@ -46,6 +66,8 @@ type CarrierErrorCode =
   | "invalid_webtransport_url"
   | "operation_aborted"
   | "carrier_closed"
+  | "datagram_too_large"
+  | "datagram_unavailable"
   | "stream_reset"
   | "write_closed"
   | "webtransport_unavailable";
@@ -65,6 +87,7 @@ const TUNNEL_PATH = "/flowersec/webtransport/v2/tunnel";
 const DEFAULT_CLOSE_TIMEOUT_MS = 1_000;
 const MAX_CLOSE_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_INCOMING_STREAMS = 130;
+const DEFAULT_DATAGRAM_SEND_BUDGET_MULTIPLIER = 64;
 
 export async function createBrowserWebTransportCarrierInternalStage(
   rawURL: string | URL,
@@ -75,7 +98,14 @@ export async function createBrowserWebTransportCarrierInternalStage(
   const maxIncomingStreams = normalizeMaxIncomingStreams(options.maxIncomingStreams);
   const factory = options.webTransportFactory ?? defaultWebTransportFactory;
   const transport = factory(url);
-  const carrier = new BrowserWebTransportCarrier(transport, options.path, closeTimeoutMs, maxIncomingStreams);
+  const carrier = new BrowserWebTransportCarrier(
+    transport,
+    options.path,
+    closeTimeoutMs,
+    maxIncomingStreams,
+    options.datagramSendBudgetBytes,
+    options.now ?? Date.now,
+  );
 
   try {
     await waitWithSignal(transport.ready, options.signal, () => {
@@ -92,6 +122,7 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
   readonly kind = "webtransport" as const;
   readonly path: "direct" | "tunnel";
   readonly inboundBidirectionalStreamCapacity: number;
+  readonly unreliableDatagrams: BrowserWebTransportUnreliableDatagrams | undefined;
 
   private readonly bidirectionalReader: ReadableStreamDefaultReader<BrowserWebTransportBidirectionalStreamInternalStage>;
   private readonly unidirectionalReader: ReadableStreamDefaultReader<ReadableStream<Uint8Array>>;
@@ -111,6 +142,8 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
     path: "direct" | "tunnel",
     closeTimeoutMs: number,
     private readonly maxIncomingStreams: number,
+    datagramSendBudgetBytes: number | undefined,
+    now: () => number,
   ) {
     this.transport = transport;
     this.path = path;
@@ -118,6 +151,11 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
     this.closeTimeoutMs = closeTimeoutMs;
     this.bidirectionalReader = transport.incomingBidirectionalStreams.getReader();
     this.unidirectionalReader = transport.incomingUnidirectionalStreams.getReader();
+    this.unreliableDatagrams = createUnreliableDatagrams(
+      transport.datagrams,
+      datagramSendBudgetBytes,
+      now,
+    );
     void this.pumpIncomingBidirectionalStreams();
     void this.rejectIncomingUnidirectionalStreams();
     void transport.closed.then(
@@ -128,6 +166,17 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
         this.handleTransportClosed(asError(error));
       },
     );
+  }
+
+  async requireUnreliableDatagrams(): Promise<BrowserWebTransportUnreliableDatagramsInternalStage> {
+    this.assertOpen();
+    if (this.unreliableDatagrams === undefined) {
+      throw new BrowserWebTransportCarrierInternalStageError(
+        "datagram_unavailable",
+        "WebTransport DATAGRAM was not negotiated by this browser transport",
+      );
+    }
+    return this.unreliableDatagrams;
   }
 
   async openStream(
@@ -199,6 +248,7 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
     const closeError = carrierClosedError();
     this.failAcceptWaiters(closeError);
     for (const stream of this.queuedIncoming.splice(0)) stream.abort(closeError);
+    this.unreliableDatagrams?.abort(closeError);
     this.closeTransport(6, "flowersec carrier aborted");
     if (!this.readerCleanupIssued) {
       this.readerCleanupIssued = true;
@@ -212,6 +262,10 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
     const closeError = carrierClosedError();
     this.failAcceptWaiters(closeError);
     const queued = this.queuedIncoming.splice(0);
+
+    if (this.unreliableDatagrams !== undefined) {
+      await settleWithin(this.unreliableDatagrams.close(), this.closeTimeoutMs);
+    }
 
     this.closeTransport(0, "flowersec carrier close");
 
@@ -288,6 +342,7 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
     this.terminalError = error;
     this.failAcceptWaiters(error);
     for (const stream of this.queuedIncoming.splice(0)) void stream.reset();
+    this.unreliableDatagrams?.abort(error);
     void this.bidirectionalReader.cancel(error).catch(() => {});
     void this.unidirectionalReader.cancel(error).catch(() => {});
   }
@@ -301,6 +356,176 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
     if (this.closing) throw carrierClosedError();
   }
 }
+
+class BrowserWebTransportUnreliableDatagrams implements BrowserWebTransportUnreliableDatagramsInternalStage {
+  readonly maxDatagramSize: number;
+
+  private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
+  private readonly writer: WritableStreamDefaultWriter<Uint8Array>;
+  private readonly incoming = new DatagramQueue();
+  private pendingSendBytes = 0;
+  private terminalError: Error | undefined;
+  private closing = false;
+  private abortIssued = false;
+  private closePromise: Promise<void> | undefined;
+
+  constructor(
+    native: BrowserWebTransportDatagramDuplexInternalStage,
+    private readonly sendBudgetBytes: number,
+    private readonly now: () => number,
+  ) {
+    this.maxDatagramSize = native.maxDatagramSize;
+    this.reader = native.readable.getReader();
+    this.writer = native.writable.getWriter();
+    void this.pumpIncoming();
+  }
+
+  async send(
+    data: Uint8Array,
+    options: Readonly<{ signal?: AbortSignal; expiresAt?: number }> = {},
+  ): Promise<"accepted" | "dropped_budget" | "dropped_expired"> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    if (!(data instanceof Uint8Array)) throw new TypeError("WebTransport datagram send requires Uint8Array");
+    if (data.byteLength < 1 || data.byteLength > this.maxDatagramSize) {
+      throw new BrowserWebTransportCarrierInternalStageError(
+        "datagram_too_large",
+        `WebTransport datagram must contain 1 to ${this.maxDatagramSize} bytes`,
+      );
+    }
+    const expiresAt = normalizeExpiry(options.expiresAt);
+    if (expiresAt !== undefined && expiresAt <= this.now()) return "dropped_expired";
+    if (this.pendingSendBytes + data.byteLength > this.sendBudgetBytes) return "dropped_budget";
+
+    this.pendingSendBytes += data.byteLength;
+    try {
+      if (expiresAt !== undefined && expiresAt <= this.now()) return "dropped_expired";
+      await waitWithSignal(this.writer.write(data.slice()), options.signal);
+      return "accepted";
+    } catch (error) {
+      if (this.closing || this.terminalError !== undefined) throw carrierClosedError();
+      throw error;
+    } finally {
+      this.pendingSendBytes -= data.byteLength;
+    }
+  }
+
+  async receive(options: Readonly<{ signal?: AbortSignal }> = {}): Promise<Uint8Array> {
+    this.assertOpen();
+    return await this.incoming.shift(options.signal);
+  }
+
+  close(): Promise<void> {
+    this.closePromise ??= this.closeOnce();
+    return this.closePromise;
+  }
+
+  abort(error: Error = carrierClosedError()): void {
+    if (this.abortIssued) return;
+    this.abortIssued = true;
+    this.closing = true;
+    this.terminalError = error;
+    this.incoming.fail(error);
+    void this.reader.cancel(error).catch(() => undefined);
+    void this.writer.abort(error).catch(() => undefined);
+  }
+
+  private async closeOnce(): Promise<void> {
+    if (this.closing) return;
+    this.closing = true;
+    const error = carrierClosedError();
+    this.terminalError = error;
+    this.incoming.fail(error);
+    await Promise.allSettled([this.reader.cancel(error), this.writer.close()]);
+  }
+
+  private async pumpIncoming(): Promise<void> {
+    try {
+      while (!this.closing) {
+        const result = await this.reader.read();
+        if (result.done) {
+          this.fail(carrierClosedError());
+          return;
+        }
+        if (result.value.byteLength < 1 || result.value.byteLength > this.maxDatagramSize) continue;
+        this.incoming.push(result.value.slice());
+      }
+    } catch (error) {
+      if (!this.closing) this.fail(asError(error));
+    }
+  }
+
+  private fail(error: Error): void {
+    if (this.terminalError !== undefined) return;
+    this.terminalError = error;
+    this.incoming.fail(error);
+  }
+
+  private assertOpen(): void {
+    if (this.terminalError !== undefined) throw this.terminalError;
+    if (this.closing) throw carrierClosedError();
+  }
+}
+
+class DatagramQueue {
+  private readonly values: Uint8Array[] = [];
+  private readonly waiters = new Set<DatagramWaiter>();
+  private terminalError: Error | undefined;
+
+  push(value: Uint8Array): void {
+    if (this.terminalError !== undefined) return;
+    const waiter = this.waiters.values().next().value as DatagramWaiter | undefined;
+    if (waiter !== undefined) {
+      waiter.deliver(value);
+      return;
+    }
+    this.values.push(value);
+  }
+
+  shift(signal?: AbortSignal): Promise<Uint8Array> {
+    throwIfAborted(signal);
+    if (this.terminalError !== undefined) return Promise.reject(this.terminalError);
+    const value = this.values.shift();
+    if (value !== undefined) return Promise.resolve(value);
+    return new Promise<Uint8Array>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        this.waiters.delete(waiter);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const waiter: DatagramWaiter = {
+        deliver: (next) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(next);
+        },
+        fail: (error) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(error);
+        },
+      };
+      const onAbort = () => waiter.fail(abortedError());
+      this.waiters.add(waiter);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted === true) onAbort();
+    });
+  }
+
+  fail(error: Error): void {
+    if (this.terminalError !== undefined) return;
+    this.terminalError = error;
+    this.values.length = 0;
+    for (const waiter of [...this.waiters]) waiter.fail(error);
+  }
+}
+
+type DatagramWaiter = Readonly<{
+  deliver(value: Uint8Array): void;
+  fail(error: Error): void;
+}>;
 
 class BrowserWebTransportCarrierStream implements BrowserWebTransportCarrierStreamInternalStage {
   private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
@@ -445,6 +670,32 @@ function normalizeMaxIncomingStreams(value: number | undefined): number {
     throw new RangeError("maxIncomingStreams must be an integer from 1 to 130");
   }
   return limit;
+}
+
+function createUnreliableDatagrams(
+  native: BrowserWebTransportDatagramDuplexInternalStage | undefined,
+  configuredBudgetBytes: number | undefined,
+  now: () => number,
+): BrowserWebTransportUnreliableDatagrams | undefined {
+  if (native === undefined || !Number.isSafeInteger(native.maxDatagramSize) || native.maxDatagramSize < 1) {
+    return undefined;
+  }
+  const defaultBudget = native.maxDatagramSize * DEFAULT_DATAGRAM_SEND_BUDGET_MULTIPLIER;
+  const budget = configuredBudgetBytes ?? defaultBudget;
+  if (!Number.isSafeInteger(budget) || budget < native.maxDatagramSize) {
+    throw new RangeError("datagramSendBudgetBytes must be a safe integer at least maxDatagramSize");
+  }
+  const sampledNow = now();
+  if (!Number.isFinite(sampledNow)) throw new TypeError("now must return a finite timestamp");
+  return new BrowserWebTransportUnreliableDatagrams(native, budget, now);
+}
+
+function normalizeExpiry(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError("expiresAt must be a non-negative safe integer Unix timestamp in milliseconds");
+  }
+  return value;
 }
 
 function defaultWebTransportFactory(url: string): BrowserWebTransportLikeInternalStage {

@@ -9,6 +9,7 @@ import type {
   OperationOptionsV2,
   PathKind,
   StreamOpenOptionsV2,
+  UnreliableMessageChannelV2,
 } from "./contract.js";
 import type { CarrierSessionV2, CarrierStreamV2 } from "./carrier.js";
 import type { SessionContractV2 } from "./artifact.js";
@@ -75,6 +76,11 @@ import {
   StreamLifetimeLedgerV2Error,
   maxLogicalStreamIDV2,
 } from "./streamLifetimeLedger.js";
+import {
+  UNRELIABLE_MESSAGES_FEATURE_V2,
+  UNRELIABLE_MESSAGE_WIRE_BYTES_V2,
+  createInternalUnreliableMessageChannelV2,
+} from "./unreliableMessage.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -146,7 +152,11 @@ export class SessionV2Error extends Error {
   }
 }
 
-type HandshakeMaterial = Readonly<{ h3: Uint8Array; sessionPRK: Uint8Array }>;
+type HandshakeMaterial = Readonly<{
+  h3: Uint8Array;
+  sessionPRK: Uint8Array;
+  selectedFeatures: number;
+}>;
 
 export async function establishSessionV2(
   carrier: CarrierSessionV2,
@@ -163,9 +173,10 @@ export async function establishSessionV2(
       ? await carrier.openStream(signalOptions(establishSignal.signal))
       : await carrier.acceptStream(signalOptions(establishSignal.signal));
     const reader = new ExactReader(control);
+    const localFeatures = supportedFeatures(carrier.unreliableDatagrams);
     const material = config.role === "client"
-      ? await clientHandshake(control, reader, config, establishSignal.signal)
-      : await serverHandshake(control, reader, config, establishSignal.signal);
+      ? await clientHandshake(control, reader, config, localFeatures, establishSignal.signal)
+      : await serverHandshake(control, reader, config, localFeatures, establishSignal.signal);
     const session = new SessionV2(carrier, control, reader, config, material);
     await session.finishReadyBoundary();
     session.start();
@@ -186,6 +197,7 @@ export class SessionV2 implements SessionV2Contract {
   readonly endpointInstanceId: string | undefined;
   readonly rpc: RpcClient;
   readonly termination: Promise<SessionTerminationV2>;
+  readonly unreliableMessages: UnreliableMessageChannelV2 | undefined;
   terminalError: Error | undefined;
 
   private readonly role: 1 | 2;
@@ -262,6 +274,23 @@ export class SessionV2 implements SessionV2Contract {
     this.h3 = material.h3.slice();
     this.sendRoots.set(0, deriveEpochZero(material.sessionPRK, this.sendDirection));
     this.receiveRoots.set(0, deriveEpochZero(material.sessionPRK, this.receiveDirection));
+    this.unreliableMessages = (material.selectedFeatures & UNRELIABLE_MESSAGES_FEATURE_V2) !== 0
+      ? createInternalUnreliableMessageChannelV2({
+          transport: requireUnreliableDatagrams(carrier),
+          suite: config.suite,
+          h3: this.h3,
+          sendDirection: this.sendDirection,
+          receiveDirection: this.receiveDirection,
+          currentSendEpoch: () => ({
+            epoch: this.sendEpoch,
+            epochSecret: this.rootForSend(this.sendEpoch).epochSecret,
+          }),
+          receiveEpochSecret: (epoch) =>
+            epoch <= this.receiveEpoch && epoch + 1 >= this.receiveEpoch
+              ? this.receiveRoots.get(epoch)?.epochSecret
+              : undefined,
+        })
+      : undefined;
     this.outboundPermits = new AsyncSemaphore(config.maxInboundStreams);
     this.inboundPermits = new AsyncSemaphore(config.maxInboundStreams);
     const rpcReadState = { reader: undefined as ExactReader | undefined };
@@ -1463,6 +1492,7 @@ async function clientHandshake(
   control: CarrierStreamV2,
   reader: ExactReader,
   config: SessionConfigV2,
+  offeredFeatures: number,
   signal?: AbortSignal,
 ): Promise<HandshakeMaterial> {
   const key = generateEphemeralKeyV2(config.suite);
@@ -1475,7 +1505,7 @@ async function clientHandshake(
     suite: config.suite,
     clientEphemeralPublic: key.publicKey,
     nonceC: randomBytes(32),
-    selectedFeatures: 0,
+    selectedFeatures: offeredFeatures,
     maxInboundStreams: config.maxInboundStreams,
     clientAdmissionBinding: config.localAdmissionBinding,
     clientEndpointInstanceID: config.localEndpointInstanceID,
@@ -1485,6 +1515,9 @@ async function clientHandshake(
   const serverRaw = await readHandshakeFrame(reader, signal);
   const server = decodeServerFinishedV2(serverRaw, config.suite);
   validateServerFinishedV2(server, expectations(config, false));
+  if ((server.core.selectedFeatures & ~offeredFeatures) !== 0) {
+    throw protocolError("server selected an unoffered feature");
+  }
   const shared = computeSharedSecretV2(config.suite, key.privateKey, server.core.serverEphemeralPublic);
   const handshakePRK = deriveHandshakePRKV2(config.psk, shared);
   const h0 = computeHandshakeH0V2(fsc2, initRaw);
@@ -1500,13 +1533,18 @@ async function clientHandshake(
   });
   await writeAll(control, clientRaw, signal);
   const h3 = computeHandshakeH3V2(h2, clientRaw);
-  return { h3, sessionPRK: deriveSessionPRKV2(h3, handshakePRK) };
+  return {
+    h3,
+    sessionPRK: deriveSessionPRKV2(h3, handshakePRK),
+    selectedFeatures: server.core.selectedFeatures,
+  };
 }
 
 async function serverHandshake(
   control: CarrierStreamV2,
   reader: ExactReader,
   config: SessionConfigV2,
+  localFeatures: number,
   signal?: AbortSignal,
 ): Promise<HandshakeMaterial> {
   const fsc2 = await reader.readExactly(16, signal);
@@ -1523,7 +1561,7 @@ async function serverHandshake(
     serverEphemeralPublic: key.publicKey,
     nonceS: randomBytes(32),
     sessionContractHash: config.sessionContractHash,
-    selectedFeatures: 0,
+    selectedFeatures: client.selectedFeatures & localFeatures,
     maxInboundStreams: config.maxInboundStreams,
     serverAdmissionBinding: config.localAdmissionBinding,
     serverEndpointInstanceID: config.localEndpointInstanceID,
@@ -1544,7 +1582,11 @@ async function serverHandshake(
     throw protocolError("client confirm mismatch");
   }
   const h3 = computeHandshakeH3V2(h2, clientFinishedRaw);
-  return { h3, sessionPRK: deriveSessionPRKV2(h3, handshakePRK) };
+  return {
+    h3,
+    sessionPRK: deriveSessionPRKV2(h3, handshakePRK),
+    selectedFeatures: core.selectedFeatures,
+  };
 }
 
 function expectations(config: SessionConfigV2, peerIsClient: boolean): HandshakeExpectationsV2 {
@@ -1836,6 +1878,22 @@ function validateConfig(carrier: CarrierSessionV2, config: SessionConfigV2): voi
   } else if (config.localEndpointInstanceID === "" || config.expectedPeerEndpointInstanceID === "") {
     throw new SessionV2Error("handshake", "tunnel session endpoint IDs are required");
   }
+}
+
+function supportedFeatures(datagrams: CarrierSessionV2["unreliableDatagrams"]): number {
+  return datagrams !== undefined && datagrams.maxDatagramSize >= UNRELIABLE_MESSAGE_WIRE_BYTES_V2
+    ? UNRELIABLE_MESSAGES_FEATURE_V2
+    : 0;
+}
+
+function requireUnreliableDatagrams(
+  carrier: CarrierSessionV2,
+): NonNullable<CarrierSessionV2["unreliableDatagrams"]> {
+  const datagrams = carrier.unreliableDatagrams;
+  if (datagrams === undefined || datagrams.maxDatagramSize < UNRELIABLE_MESSAGE_WIRE_BYTES_V2) {
+    throw new SessionV2Error("handshake", "negotiated unreliable messages require native DATAGRAM support");
+  }
+  return datagrams;
 }
 
 function encodeMetadata(value: JsonObjectV2): Uint8Array {

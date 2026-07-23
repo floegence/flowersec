@@ -33,8 +33,13 @@ export type {
   SessionTerminationV2,
   SessionV2,
   StreamOpenOptionsV2,
+  UnreliableMessageChannelV2,
+  UnreliableMessageSendOptionsV2,
+  UnreliableMessageSendResultV2,
+  UnreliableMessageV2,
 } from "../v2/contract.js";
 export { SessionError } from "../v2/contract.js";
+export { createUnreliableMessageV2, UnreliableMessageError } from "../v2/unreliableMessage.js";
 export { connectBrowserSessionV2 } from "./connectV2.js";
 export type {
   BrowserSessionConnectorV2Options,

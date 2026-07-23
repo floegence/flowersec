@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "vectors": [
+    {
+      "name": "chacha20poly1305_client_to_server_epoch_7",
+      "suite": 1,
+      "session_prk_b64u": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+      "h3_b64u": "ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A",
+      "direction": 1,
+      "epoch": 7,
+      "sequence": 11,
+      "expires_at_unix_ms": 2000000000000,
+      "plaintext_b64u": "Zmxvd2Vyc2VjLWRhdGFncmFtLXZlY3Rvcg",
+      "epoch_secret_b64u": "-Sqg9ayalehSjg_bpe0hzMwbkoq0rL_qhabS100Tzak",
+      "unreliable_root_b64u": "7H1LSS3qqRtrteWiH1FT8e_OfXxz694ceDw8_1XaPwA",
+      "material_secret_b64u": "5dPGeC9kRcm84VYboAXReylXhPvfulYlSbM04bnKzWE",
+      "record_key_b64u": "bxa_3-q8rmJFjhPRCCjLAftqxDbPkjyrUTBuPsTaWLY",
+      "nonce_prefix_b64u": "yvOoUA",
+      "nonce_b64u": "yvOoUAAAAAAAAAAL",
+      "header_hex": "465344320200002000000007000000000000000b000001d1a94a200000000029",
+      "aad_b64u": "Zmxvd2Vyc2VjLXYyLXVucmVsaWFibGUAISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0ABRlNEMgIAACAAAAAHAAAAAAAAAAsAAAHRqUogAAAAACk",
+      "ciphertext_b64u": "6xKaXsr7pHbPVVvmXzBrIJ5u5O_Fam3DEvr5iDhgag5b9Lkuk7xud0E",
+      "wire_b64u": "RlNEMgIAACAAAAAHAAAAAAAAAAsAAAHRqUogAAAAACnrEppeyvukds9VW-ZfMGsgnm7k78VqbcMS-vmIOGBqDlv0uS6TvG53QQ"
+    }
+  ]
+}

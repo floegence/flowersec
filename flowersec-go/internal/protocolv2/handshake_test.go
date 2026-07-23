@@ -107,7 +107,7 @@ func TestClientInitStrictFieldValidation(t *testing.T) {
 		{name: "channel", mutate: func(v *protocolv2.ClientInit) { v.ChannelID = "bad channel" }},
 		{name: "role", mutate: func(v *protocolv2.ClientInit) { v.ClientRole = 2 }},
 		{name: "suite", mutate: func(v *protocolv2.ClientInit) { v.Suite = 3 }},
-		{name: "features", mutate: func(v *protocolv2.ClientInit) { v.SelectedFeatures = 1 }},
+		{name: "unknown features", mutate: func(v *protocolv2.ClientInit) { v.SelectedFeatures = 2 }},
 		{name: "max zero", mutate: func(v *protocolv2.ClientInit) { v.MaxInboundStreams = 0 }},
 		{name: "max 129", mutate: func(v *protocolv2.ClientInit) { v.MaxInboundStreams = 129 }},
 		{name: "endpoint grammar", mutate: func(v *protocolv2.ClientInit) { v.ClientEndpointInstanceID = "bad endpoint" }},

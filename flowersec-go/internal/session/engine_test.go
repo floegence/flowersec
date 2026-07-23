@@ -1441,14 +1441,21 @@ type memoryCarrierSession struct {
 	writeHook   func([]byte)
 	closeBlock  <-chan struct{}
 	closeActive atomic.Int32
+
+	datagramMu         sync.Mutex
+	datagrams          chan []byte
+	lastDatagram       []byte
+	datagramSendBlock  <-chan struct{}
+	datagramActive     atomic.Int32
+	unreliableDisabled bool
 }
 
 func newMemoryCarrierPair(kind carrier.Kind) (*memoryCarrierSession, *memoryCarrierSession) {
 	clientCtx, clientStop := context.WithCancelCause(context.Background())
 	serverCtx, serverStop := context.WithCancelCause(context.Background())
 	defaultCapacity, _ := carrier.RequiredIncomingStreams(2)
-	client := &memoryCarrierSession{kind: kind, path: carrier.PathTunnel, ctx: clientCtx, stop: clientStop, maxIncomingStreams: defaultCapacity, incoming: make(chan carrier.Stream, 256)}
-	server := &memoryCarrierSession{kind: kind, path: carrier.PathTunnel, ctx: serverCtx, stop: serverStop, maxIncomingStreams: defaultCapacity, incoming: make(chan carrier.Stream, 256)}
+	client := &memoryCarrierSession{kind: kind, path: carrier.PathTunnel, ctx: clientCtx, stop: clientStop, maxIncomingStreams: defaultCapacity, incoming: make(chan carrier.Stream, 256), datagrams: make(chan []byte, 256)}
+	server := &memoryCarrierSession{kind: kind, path: carrier.PathTunnel, ctx: serverCtx, stop: serverStop, maxIncomingStreams: defaultCapacity, incoming: make(chan carrier.Stream, 256), datagrams: make(chan []byte, 256)}
 	client.peer = server
 	server.peer = client
 	return client, server
@@ -1506,6 +1513,49 @@ func (s *memoryCarrierSession) AcceptStream(ctx context.Context) (carrier.Stream
 		return nil, context.Cause(s.ctx)
 	case stream := <-s.incoming:
 		return stream, nil
+	}
+}
+
+func (s *memoryCarrierSession) UnreliableAvailable() bool {
+	return s.kind != carrier.KindWebSocket && !s.unreliableDisabled
+}
+
+func (s *memoryCarrierSession) SendUnreliable(payload []byte) error {
+	if !s.UnreliableAvailable() {
+		return carrier.ErrUnreliableUnavailable
+	}
+	copyPayload := append([]byte(nil), payload...)
+	s.datagramMu.Lock()
+	s.lastDatagram = append(s.lastDatagram[:0], payload...)
+	s.datagramMu.Unlock()
+	s.datagramActive.Add(1)
+	defer s.datagramActive.Add(-1)
+	if s.datagramSendBlock != nil {
+		select {
+		case <-s.ctx.Done():
+			return context.Cause(s.ctx)
+		case <-s.datagramSendBlock:
+		}
+	}
+	select {
+	case <-s.ctx.Done():
+		return context.Cause(s.ctx)
+	case s.peer.datagrams <- copyPayload:
+		return nil
+	}
+}
+
+func (s *memoryCarrierSession) ReceiveUnreliable(ctx context.Context) ([]byte, error) {
+	if !s.UnreliableAvailable() {
+		return nil, carrier.ErrUnreliableUnavailable
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.ctx.Done():
+		return nil, context.Cause(s.ctx)
+	case payload := <-s.datagrams:
+		return payload, nil
 	}
 }
 

@@ -15,16 +15,20 @@ import (
 )
 
 var (
-	ErrInvalidConfig     = errors.New("invalid Flowersec v2 session configuration")
-	ErrHandshake         = errors.New("Flowersec v2 session handshake failed")
-	ErrSessionClosed     = errors.New("Flowersec v2 session closed")
-	ErrSessionProtocol   = errors.New("Flowersec v2 session protocol violation")
-	ErrGoingAway         = errors.New("Flowersec v2 session is going away")
-	ErrResourceExhausted = errors.New("Flowersec v2 session resource exhausted")
-	ErrOpenRejected      = errors.New("Flowersec v2 logical stream open rejected")
-	ErrLivenessProbe     = errors.New("Flowersec v2 liveness probe failed")
-	ErrRekey             = errors.New("Flowersec v2 session rekey failed")
-	ErrRekeyInProgress   = errors.New("Flowersec v2 session rekey already in progress")
+	ErrInvalidConfig             = errors.New("invalid Flowersec v2 session configuration")
+	ErrHandshake                 = errors.New("Flowersec v2 session handshake failed")
+	ErrSessionClosed             = errors.New("Flowersec v2 session closed")
+	ErrSessionProtocol           = errors.New("Flowersec v2 session protocol violation")
+	ErrGoingAway                 = errors.New("Flowersec v2 session is going away")
+	ErrResourceExhausted         = errors.New("Flowersec v2 session resource exhausted")
+	ErrOpenRejected              = errors.New("Flowersec v2 logical stream open rejected")
+	ErrLivenessProbe             = errors.New("Flowersec v2 liveness probe failed")
+	ErrRekey                     = errors.New("Flowersec v2 session rekey failed")
+	ErrRekeyInProgress           = errors.New("Flowersec v2 session rekey already in progress")
+	ErrUnreliableUnavailable     = errors.New("Flowersec v2 unreliable messages unavailable")
+	ErrUnreliableMessageTooLarge = errors.New("Flowersec v2 unreliable message too large")
+	ErrUnreliableInvalidExpiry   = errors.New("Flowersec v2 unreliable message expiry invalid")
+	ErrUnreliableDropped         = errors.New("Flowersec v2 unreliable message dropped")
 )
 
 const (
@@ -133,6 +137,7 @@ type engineSession struct {
 	hasLastRekeyACK     bool
 
 	rpcPeer     *sessionRPCPeer
+	unreliable  *unreliableChannel
 	rpcServerMu sync.Mutex
 	rpcServing  bool
 
@@ -310,6 +315,14 @@ func newEngineSession(carrierSession carrier.Session, control carrier.Stream, co
 	}
 	session.initControlActor()
 	session.rpcPeer = &sessionRPCPeer{session: session}
+	if material.selectedFeatures&protocolv2.FeatureUnreliableMessages != 0 {
+		transport, ok := carrierSession.(carrier.UnreliableTransport)
+		if !ok || !transport.UnreliableAvailable() {
+			cancel(ErrUnreliableUnavailable)
+			return nil, ErrUnreliableUnavailable
+		}
+		session.unreliable = newUnreliableChannel(session, transport)
+	}
 	return session, nil
 }
 
@@ -335,6 +348,13 @@ func (s *engineSession) start() {
 func (s *engineSession) Path() PathKind              { return s.config.Path }
 func (s *engineSession) ChosenCarrier() carrier.Kind { return s.carrier.Kind() }
 func (s *engineSession) RPC() RPCPeer                { return s.rpcPeer }
+
+func (s *engineSession) UnreliableMessages() (UnreliableMessageChannel, error) {
+	if s.unreliable == nil {
+		return nil, ErrUnreliableUnavailable
+	}
+	return s.unreliable, nil
+}
 
 func (s *engineSession) EndpointInstanceID() (string, bool) {
 	if s.config.Path != PathTunnel {

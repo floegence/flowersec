@@ -61,6 +61,7 @@ func (*Connector) GoString() string { return "flowersec.Connector" }
 // Session is the carrier-neutral Flowersec v2 session contract.
 type Session interface {
 	RPC() RPCPeer
+	UnreliableMessages() (UnreliableMessageChannel, error)
 	OpenStream(context.Context, string, Metadata) (ByteStream, error)
 	AcceptStream(context.Context) (IncomingStream, error)
 	Rekey(context.Context) error
@@ -68,6 +69,27 @@ type Session interface {
 	Termination() <-chan struct{}
 	WaitClosed(context.Context) error
 	Close() error
+}
+
+type UnreliableSendStatus string
+
+const (
+	UnreliableAccepted       UnreliableSendStatus = "accepted"
+	UnreliableDroppedExpired UnreliableSendStatus = "dropped_expired"
+	UnreliableDroppedBudget  UnreliableSendStatus = "dropped_budget"
+	UnreliableDroppedCarrier UnreliableSendStatus = "dropped_carrier"
+)
+
+type UnreliableSendOptions struct {
+	ExpiresAt time.Time
+}
+
+// UnreliableMessageChannel sends opaque end-to-end encrypted messages without
+// retransmission. An accepted send is queued locally and may still be lost.
+type UnreliableMessageChannel interface {
+	MaxMessageBytes() int
+	Send(context.Context, []byte, UnreliableSendOptions) (UnreliableSendStatus, error)
+	Receive(context.Context) ([]byte, error)
 }
 
 // Metadata is the bounded JSON object attached to an application stream.
@@ -142,16 +164,19 @@ func (err *ConnectError) Code() ConnectErrorCode {
 type SessionErrorCode string
 
 const (
-	SessionCanceled          SessionErrorCode = "canceled"
-	SessionTimeout           SessionErrorCode = "timeout"
-	SessionClosed            SessionErrorCode = "closed"
-	SessionGoingAway         SessionErrorCode = "going_away"
-	SessionResourceExhausted SessionErrorCode = "resource_exhausted"
-	SessionStreamRejected    SessionErrorCode = "stream_rejected"
-	SessionStreamReset       SessionErrorCode = "stream_reset"
-	SessionRekeyFailed       SessionErrorCode = "rekey_failed"
-	SessionLivenessFailed    SessionErrorCode = "liveness_failed"
-	SessionOperationFailed   SessionErrorCode = "operation_failed"
+	SessionCanceled              SessionErrorCode = "canceled"
+	SessionTimeout               SessionErrorCode = "timeout"
+	SessionClosed                SessionErrorCode = "closed"
+	SessionGoingAway             SessionErrorCode = "going_away"
+	SessionResourceExhausted     SessionErrorCode = "resource_exhausted"
+	SessionStreamRejected        SessionErrorCode = "stream_rejected"
+	SessionStreamReset           SessionErrorCode = "stream_reset"
+	SessionRekeyFailed           SessionErrorCode = "rekey_failed"
+	SessionLivenessFailed        SessionErrorCode = "liveness_failed"
+	SessionUnreliableUnavailable SessionErrorCode = "unreliable_unavailable"
+	SessionUnreliableTooLarge    SessionErrorCode = "unreliable_too_large"
+	SessionUnreliableDropped     SessionErrorCode = "unreliable_dropped"
+	SessionOperationFailed       SessionErrorCode = "operation_failed"
 )
 
 // SessionError contains no carrier, wire, key, credential, or peer detail.
@@ -275,6 +300,14 @@ func (*opaqueSession) GoString() string { return "flowersec.Session" }
 
 func (current *opaqueSession) RPC() RPCPeer { return &opaqueRPCPeer{inner: current.inner.RPC()} }
 
+func (current *opaqueSession) UnreliableMessages() (UnreliableMessageChannel, error) {
+	channel, err := current.inner.UnreliableMessages()
+	if err != nil {
+		return nil, redactSessionError(err)
+	}
+	return &opaqueUnreliableMessageChannel{inner: channel}, nil
+}
+
 func (current *opaqueSession) OpenStream(ctx context.Context, kind string, metadata Metadata) (ByteStream, error) {
 	stream, err := current.inner.OpenStream(ctx, kind, session.Metadata(metadata))
 	if err != nil {
@@ -312,6 +345,26 @@ func (current *opaqueSession) Close() error { return redactNilSessionError(curre
 
 type opaqueRPCPeer struct {
 	inner session.RPCPeer
+}
+
+type opaqueUnreliableMessageChannel struct {
+	inner session.UnreliableMessageChannel
+}
+
+func (*opaqueUnreliableMessageChannel) String() string { return "Flowersec.UnreliableMessageChannel" }
+func (*opaqueUnreliableMessageChannel) GoString() string {
+	return "flowersec.UnreliableMessageChannel"
+}
+func (channel *opaqueUnreliableMessageChannel) MaxMessageBytes() int {
+	return channel.inner.MaxMessageBytes()
+}
+func (channel *opaqueUnreliableMessageChannel) Send(ctx context.Context, payload []byte, options UnreliableSendOptions) (UnreliableSendStatus, error) {
+	status, err := channel.inner.Send(ctx, payload, session.UnreliableSendOptions{ExpiresAt: options.ExpiresAt})
+	return UnreliableSendStatus(status), redactNilSessionError(err)
+}
+func (channel *opaqueUnreliableMessageChannel) Receive(ctx context.Context) ([]byte, error) {
+	payload, err := channel.inner.Receive(ctx)
+	return payload, redactNilSessionError(err)
 }
 
 // RPCError is a sanitized application error returned by a remote RPC handler.
@@ -420,6 +473,12 @@ func redactSessionError(err error) *SessionError {
 		code = SessionRekeyFailed
 	case errors.Is(err, session.ErrLivenessProbe):
 		code = SessionLivenessFailed
+	case errors.Is(err, session.ErrUnreliableUnavailable):
+		code = SessionUnreliableUnavailable
+	case errors.Is(err, session.ErrUnreliableMessageTooLarge):
+		code = SessionUnreliableTooLarge
+	case errors.Is(err, session.ErrUnreliableDropped):
+		code = SessionUnreliableDropped
 	}
 	return &SessionError{code: code}
 }

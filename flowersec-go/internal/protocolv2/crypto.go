@@ -254,6 +254,16 @@ func expand32(prk [32]byte, info []byte) ([32]byte, error) {
 	return out, nil
 }
 
+func unreliableNoncePrefix(secret [32]byte) ([4]byte, error) {
+	raw, err := internalhkdf.ExpandSHA256(secret, labelWith("flowersec v2 unreliable nonce"), 4)
+	if err != nil {
+		return [4]byte{}, err
+	}
+	var out [4]byte
+	copy(out[:], raw)
+	return out, nil
+}
+
 func (d Direction) validate() error {
 	if d != DirectionClientToServer && d != DirectionServerToClient {
 		return ErrInvalidDirection

@@ -2,7 +2,7 @@
 
 This document is the normative byte-level contract for `flowersec/2`. The
 machine-readable registry is `stability/transport_v2_contract.json`, and the
-normative vectors are the seven files registered by its `wire_fixtures` field.
+normative vectors are the nine files registered by its `wire_fixtures` field.
 All multibyte integers are unsigned big-endian. Receivers reject non-zero
 reserved bytes, undeclared trailing bytes, unknown fields, non-canonical JSON,
 invalid UTF-8, size violations, and values outside the registries below.
@@ -10,8 +10,10 @@ invalid UTF-8, size violations, and values outside the registries below.
 Transport v2 uses the same session wire over WebSocket, raw QUIC, and
 WebTransport. WebSocket uses one hop-local Yamux session after admission. Raw
 QUIC and WebTransport map every Flowersec stream directly to one native
-bidirectional stream and never add Yamux. Application data is never sent as a
-QUIC or WebTransport datagram.
+bidirectional stream and never add Yamux. Reliable application data is never
+sent as a QUIC or WebTransport datagram. An independently encrypted FSD2
+unreliable message is permitted only after native DATAGRAM and the matching
+FSH2 feature are negotiated; it is never carried on a reliable stream.
 
 ## Connection Order
 
@@ -96,7 +98,7 @@ Every FSH2 frame is `12 + payload_length` bytes:
 | 12 | variable | canonical UTF-8 JSON payload |
 
 CLIENT_INIT binds the profile, channel, session contract hash, suite, client
-ephemeral key, 32-byte client nonce, selected features, inbound stream limit,
+ephemeral key, 32-byte client nonce, offered features, inbound stream limit,
 admission binding, and path-specific endpoint identity. SERVER_FINISHED binds
 the server ephemeral key, 16-to-32-byte handshake ID, 32-byte server nonce, the
 same contract and limits, server admission binding and endpoint identity, plus
@@ -129,7 +131,11 @@ reject an unsupported suite, invalid or all-zero shared secret, wrong message
 order or type, non-canonical encoding, mismatched channel/contract/limit,
 invalid endpoint identity, admission-binding mismatch, handshake-ID mismatch,
 or confirmation mismatch. Comparison of confirmations and established bindings
-is constant-time. Application 0-RTT is forbidden.
+is constant-time. Application 0-RTT is forbidden. Feature bit `0x00000001` is
+`unreliable_messages_v1`: the client offers it only when the selected carrier
+has native DATAGRAM support, and the server echoes the intersection. Unknown
+bits are rejected. The channel remains unavailable until the authenticated
+`SESSION_READY` / `SESSION_READY_ACK` barrier completes.
 
 ## Epoch and Record Keys
 
@@ -155,6 +161,52 @@ nonce_prefix = HKDF-Expand(record_secret, L("flowersec v2 nonce"), 4)
 The stream label is `flowersec v2 stream`; the control label is
 `flowersec v2 control` with logical ID zero. The exact results are in
 `testdata/transport_v2/crypto_vectors.json`.
+
+## FSD2 Unreliable Message
+
+FSD2 exists only on negotiated raw QUIC or WebTransport DATAGRAM support. It
+has a 32-byte cleartext header followed by exactly `ciphertext_length` bytes:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 4 | ASCII `FSD2` |
+| 4 | 1 | version `2` |
+| 5 | 1 | flags, zero |
+| 6 | 2 | header length, `32` |
+| 8 | 4 | epoch |
+| 12 | 8 | sequence |
+| 20 | 8 | absolute expiry in Unix milliseconds |
+| 28 | 4 | ciphertext length, `17..1040` |
+
+The plaintext is `1..1024` opaque application bytes. Empty and oversized
+messages are rejected before carrier access. Expiry must be in the future when
+sent. A receiver silently drops expired, duplicate, stale-epoch, malformed, or
+authentication-failed datagrams and continues receiving; these outcomes never
+close the reliable session. Sequence numbers are unique and increasing within
+each `(direction, epoch)`, but delivery remains unordered and lossy.
+
+The unreliable keys are independent from reliable stream and control keys:
+
+```text
+unreliable_root = HKDF-Expand(epoch_secret,
+  L("flowersec v2 unreliable root"), 32)
+unreliable_secret = HKDF-Expand(unreliable_root,
+  L("flowersec v2 unreliable", h3, direction, BE32(epoch)), 32)
+unreliable_key = HKDF-Expand(unreliable_secret,
+  L("flowersec v2 unreliable key"), 32)
+unreliable_nonce_prefix = HKDF-Expand(unreliable_secret,
+  L("flowersec v2 unreliable nonce"), 4)
+nonce = unreliable_nonce_prefix || BE64(sequence)
+AAD = L("flowersec-v2-unreliable", h3, direction, FSD2_header)
+```
+
+The negotiated session suite supplies the AEAD and its 16-byte tag. Public
+sends use a fixed 64-operation non-blocking budget: native acceptance reports
+`accepted`, while local budget exhaustion reports `dropped_budget`. Neither is
+a delivery acknowledgement. Typed `unavailable`, `oversize`, `expired`, and
+closed outcomes expose no carrier, route, key, or credential detail. The exact
+key, header, ciphertext, expiry, replay, and type-isolation cases are frozen by
+`testdata/transport_v2/datagram_vectors.json`.
 
 ## FSS2 Stream Setup
 

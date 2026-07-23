@@ -12,6 +12,7 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use bytes::Bytes;
 use quinn::{Endpoint, VarInt};
 use rustls::pki_types::CertificateDer;
 #[cfg(test)]
@@ -86,7 +87,7 @@ impl SessionContractV2 {
             || self.max_inbound_streams != config.max_inbound_streams
             || self.default_suite != suite_id(config.suite)
             || !self.allowed_suites.contains(&suite_id(config.suite))
-            || self.selected_features != 0
+            || self.selected_features & !crate::session_v2::UNRELIABLE_MESSAGES_FEATURE_V1 != 0
             || config.psk != self.psk
             || config.idle_timeout != Duration::from_secs(self.idle_timeout_seconds)
             || config.deadlines.establish != Duration::from_secs(self.establish_timeout_seconds)
@@ -127,6 +128,10 @@ const FSB2_HEADER_BYTES: usize = 12;
 const MAX_FSB2_PAYLOAD_BYTES: usize = 32_768;
 const MAX_FSB2_CANDIDATES: usize = 4;
 const MAX_FSB2_CREDENTIAL_BYTES: usize = 8_192;
+const DATAGRAM_RECEIVE_BUFFER_BYTES: usize = 256 * 1024;
+const DATAGRAM_SEND_BUDGET: usize = 64;
+const DATAGRAM_SEND_BUFFER_BYTES: usize =
+    DATAGRAM_SEND_BUDGET * crate::protocol_v2::MAX_UNRELIABLE_WIRE_V2_BYTES;
 
 /// Identifies the only two registered raw QUIC wire profiles.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -345,6 +350,17 @@ impl RawQuicClientConfig {
             limits,
             inner,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_datagram_send_buffer_for_test(
+        mut self,
+        bytes: usize,
+    ) -> Result<Self, RawQuicError> {
+        let mut transport = transport_config(self.limits)?;
+        transport.datagram_send_buffer_size(bytes);
+        self.inner.transport_config(Arc::new(transport));
+        Ok(self)
     }
 }
 
@@ -607,6 +623,44 @@ impl RawQuicSession {
             .await
             .map_err(|error| RawQuicError::Stream(error.to_string()))?;
         Ok(RawQuicStream::new(send, receive))
+    }
+
+    fn unreliable_message_max_size(&self) -> Option<usize> {
+        self.connection.max_datagram_size()
+    }
+
+    fn send_unreliable_message(
+        &self,
+        payload: Bytes,
+    ) -> Result<(), crate::transport_v2::CarrierUnreliableMessageErrorV2> {
+        use crate::transport_v2::CarrierUnreliableMessageErrorV2 as Error;
+
+        let Some(maximum) = self.connection.max_datagram_size() else {
+            return Err(Error::Unavailable);
+        };
+        if payload.len() > maximum {
+            return Err(Error::TooLarge);
+        }
+        if self.connection.datagram_send_buffer_space() < payload.len() {
+            return Err(Error::Dropped);
+        }
+        self.connection
+            .send_datagram(payload)
+            .map_err(|error| match error {
+                quinn::SendDatagramError::UnsupportedByPeer
+                | quinn::SendDatagramError::Disabled => Error::Unavailable,
+                quinn::SendDatagramError::TooLarge => Error::TooLarge,
+                quinn::SendDatagramError::ConnectionLost(_) => Error::Closed,
+            })
+    }
+
+    async fn receive_unreliable_message(
+        &self,
+    ) -> Result<Bytes, crate::transport_v2::CarrierUnreliableMessageErrorV2> {
+        self.connection
+            .read_datagram()
+            .await
+            .map_err(|_| crate::transport_v2::CarrierUnreliableMessageErrorV2::Closed)
     }
 
     /// Commits one already-spent FSB2 credential, requires an exact successful
@@ -1273,6 +1327,23 @@ impl crate::transport_v2::CarrierSessionV2 for RawQuicSession {
             .map_err(io::Error::other)
     }
 
+    fn unreliable_message_max_size(&self) -> Option<usize> {
+        RawQuicSession::unreliable_message_max_size(self)
+    }
+
+    async fn send_unreliable_message(
+        &self,
+        payload: Bytes,
+    ) -> Result<(), crate::transport_v2::CarrierUnreliableMessageErrorV2> {
+        RawQuicSession::send_unreliable_message(self, payload)
+    }
+
+    async fn receive_unreliable_message(
+        &self,
+    ) -> Result<Bytes, crate::transport_v2::CarrierUnreliableMessageErrorV2> {
+        RawQuicSession::receive_unreliable_message(self).await
+    }
+
     async fn close(&self) -> io::Result<()> {
         RawQuicSession::close(self);
         Ok(())
@@ -1298,8 +1369,8 @@ fn transport_config(limits: RawQuicLimits) -> Result<quinn::TransportConfig, Raw
             RawQuicError::InvalidLimits("invalid connection idle timeout")
         })?))
         .keep_alive_interval(Some(limits.keep_alive_interval))
-        .datagram_receive_buffer_size(None)
-        .datagram_send_buffer_size(0);
+        .datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER_BYTES))
+        .datagram_send_buffer_size(DATAGRAM_SEND_BUFFER_BYTES);
     Ok(transport)
 }
 

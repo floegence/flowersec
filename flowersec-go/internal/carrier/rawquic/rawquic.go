@@ -96,7 +96,8 @@ func (limits Limits) Validate() error {
 }
 
 // newConfig builds the non-early QUIC policy shared by clients and servers.
-// Unidirectional application streams and unreliable datagrams are disabled.
+// Unidirectional application streams stay disabled; unreliable messages use
+// native RFC 9221 DATAGRAM frames when the Flowersec handshake selects them.
 func newConfig(limits Limits) (*quic.Config, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
@@ -112,7 +113,7 @@ func newConfig(limits Limits) (*quic.Config, error) {
 		MaxIncomingUniStreams:            -1,
 		KeepAlivePeriod:                  limits.KeepAlivePeriod,
 		Allow0RTT:                        false,
-		EnableDatagrams:                  false,
+		EnableDatagrams:                  true,
 		EnableStreamResetPartialDelivery: true,
 	}, nil
 }
@@ -251,6 +252,9 @@ func newSession(conn *quic.Conn, transport *quic.Transport, packetConn net.Packe
 	if !validALPN(state.TLS.NegotiatedProtocol) {
 		return nil, ErrInvalidALPN
 	}
+	if !state.SupportsDatagrams.Local || !state.SupportsDatagrams.Remote {
+		return nil, carrier.ErrUnreliableUnavailable
+	}
 	path := carrier.PathDirect
 	if state.TLS.NegotiatedProtocol == ALPNTunnel {
 		path = carrier.PathTunnel
@@ -261,6 +265,33 @@ func newSession(conn *quic.Conn, transport *quic.Transport, packetConn net.Packe
 func (*Session) Kind() carrier.Kind                 { return carrier.KindQUIC }
 func (session *Session) Path() carrier.Path         { return session.path }
 func (session *Session) MaxIncomingStreams() uint16 { return session.capacity }
+
+func (*Session) UnreliableAvailable() bool { return true }
+
+func (session *Session) SendUnreliable(payload []byte) error {
+	if len(payload) == 0 || len(payload) > carrier.MaxUnreliableWireBytes {
+		return carrier.ErrUnreliableTooLarge
+	}
+	if err := session.conn.SendDatagram(payload); err != nil {
+		var tooLarge *quic.DatagramTooLargeError
+		if errors.As(err, &tooLarge) {
+			return fmt.Errorf("%w: native limit %d", carrier.ErrUnreliableTooLarge, tooLarge.MaxDatagramPayloadSize)
+		}
+		return err
+	}
+	return nil
+}
+
+func (session *Session) ReceiveUnreliable(ctx context.Context) ([]byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	payload, err := session.conn.ReceiveDatagram(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
 
 func (session *Session) OpenStream(ctx context.Context) (carrier.Stream, error) {
 	stream, err := session.conn.OpenStreamSync(ctx)
@@ -455,4 +486,5 @@ func hasServerCertificate(config *tls.Config) bool {
 func validALPN(value string) bool { return value == ALPNDirect || value == ALPNTunnel }
 
 var _ carrier.Session = (*Session)(nil)
+var _ carrier.UnreliableTransport = (*Session)(nil)
 var _ carrier.Stream = (*Stream)(nil)

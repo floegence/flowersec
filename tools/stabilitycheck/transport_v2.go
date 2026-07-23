@@ -273,6 +273,18 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 		},
 		Unsupported: map[string]string{},
 	},
+	"datagram": {
+		Path: "testdata/transport_v2/datagram_vectors.json",
+		Consumers: map[string]transportV2WireConsumerExpectation{
+			"go_native":          {Source: "flowersec-go/internal/protocolv2/unreliable_vectors_test.go", Tokens: []string{"DeriveUnreliableMaterial", "SealUnreliable", "OpenUnreliable"}},
+			"typescript_browser": {Source: "flowersec-ts/src/v2/unreliableMessage.test.ts", Tokens: []string{"createInternalUnreliableMessageChannelV2", "datagram_vectors.json", "wire_b64u"}},
+			"typescript_node":    {Source: "flowersec-ts/src/v2/unreliableMessage.test.ts", Tokens: []string{"createInternalUnreliableMessageChannelV2", "datagram_vectors.json", "wire_b64u"}},
+			"rust_native":        {Source: "flowersec-rust/src/protocol_v2.rs", Tokens: []string{"derive_unreliable_material_v2", "seal_unreliable_v2", "open_unreliable_v2", "datagram_vectors.json"}},
+		},
+		Unsupported: map[string]string{
+			"swift_apple": "unreliable_message_channel_not_supported",
+		},
+	},
 	"endpoint_set": {
 		Path: "testdata/transport_v2/endpoint_set_vectors.json",
 		Consumers: map[string]transportV2WireConsumerExpectation{
@@ -432,8 +444,8 @@ func validateTransportV2Policies(policy transportV2Policies) error {
 	if policy.Application0RTT != "forbidden" {
 		return errors.New("transport v2 application 0-RTT must be forbidden")
 	}
-	if policy.ReliablePayloadDatagrams != "forbidden" || policy.PublicDatagramAPI != "not_exposed" || policy.WebTransportDatagramSupport != "transport_required_not_exposed" {
-		return errors.New("transport v2 datagram policy must forbid reliable payload use and keep the public API unexposed")
+	if policy.ReliablePayloadDatagrams != "forbidden" || policy.PublicDatagramAPI != "optional_unreliable_message_channel" || policy.WebTransportDatagramSupport != "native_required_when_negotiated" {
+		return errors.New("transport v2 datagram policy must expose only the negotiated native unreliable message channel")
 	}
 	return nil
 }

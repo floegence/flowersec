@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   createBrowserWebTransportCarrierInternalStage,
   type BrowserWebTransportBidirectionalStreamInternalStage,
+  type BrowserWebTransportDatagramDuplexInternalStage,
   type BrowserWebTransportLikeInternalStage,
 } from "./webTransportCarrierInternalStage.js";
 
@@ -289,11 +290,110 @@ describe("browser WebTransport carrier internal stage", () => {
     await carrier.close();
   });
 
+  test("exposes native datagrams only when the WebTransport API is available and never falls back to streams", async () => {
+    const unavailable = new FakeWebTransport();
+    unavailable.resolveReady();
+    const unavailableCarrier = await createCarrier(unavailable);
+    expect(unavailableCarrier.unreliableDatagrams).toBeUndefined();
+    await expect(unavailableCarrier.requireUnreliableDatagrams()).rejects.toMatchObject({
+      code: "datagram_unavailable",
+    });
+    expect(unavailable.createBidirectionalStream).not.toHaveBeenCalled();
+    await unavailableCarrier.close();
+
+    const fake = new FakeWebTransport({ datagrams: { maxDatagramSize: 1_200 } });
+    fake.resolveReady();
+    const carrier = await createCarrier(fake);
+    const datagrams = await carrier.requireUnreliableDatagrams();
+    expect(carrier.unreliableDatagrams).toBe(datagrams);
+    expect(datagrams.maxDatagramSize).toBe(1_200);
+
+    await expect(datagrams.send(Uint8Array.of(1, 2, 3))).resolves.toBe("accepted");
+    expect(fake.datagramWrites).toEqual([Uint8Array.of(1, 2, 3)]);
+    fake.enqueueIncomingDatagram(Uint8Array.of(4, 5));
+    await expect(datagrams.receive()).resolves.toEqual(Uint8Array.of(4, 5));
+    expect(fake.createBidirectionalStream).not.toHaveBeenCalled();
+    await carrier.close();
+  });
+
+  test("enforces native datagram max size, send budget, and local expiry without reliable fallback", async () => {
+    let now = 1_000;
+    const fake = new FakeWebTransport({ datagrams: { maxDatagramSize: 8 } });
+    fake.resolveReady();
+    const carrier = await createCarrier(fake, 25, undefined, {
+      datagramSendBudgetBytes: 8,
+      now: () => now,
+    });
+    const datagrams = await carrier.requireUnreliableDatagrams();
+
+    await expect(datagrams.send(new Uint8Array(9))).rejects.toMatchObject({
+      code: "datagram_too_large",
+    });
+    await expect(datagrams.send(Uint8Array.of(1), { expiresAt: 999 })).resolves.toBe("dropped_expired");
+
+    const gate = fake.blockNextDatagramWrite();
+    const first = datagrams.send(new Uint8Array(8).fill(2));
+    await flushTasks();
+    await expect(datagrams.send(Uint8Array.of(3))).resolves.toBe("dropped_budget");
+    expect(fake.createBidirectionalStream).not.toHaveBeenCalled();
+    gate.resolve();
+    await expect(first).resolves.toBe("accepted");
+
+    now = 2_000;
+    await expect(datagrams.send(Uint8Array.of(4), { expiresAt: 2_001 })).resolves.toBe("accepted");
+    expect(fake.datagramWrites).toEqual([new Uint8Array(8).fill(2), Uint8Array.of(4)]);
+    await carrier.close();
+  });
+
+  test("cancels datagram operations and releases native readers and writers on close or abort", async () => {
+    const closingFake = new FakeWebTransport({ datagrams: { maxDatagramSize: 1_200 } });
+    closingFake.resolveReady();
+    const closingCarrier = await createCarrier(closingFake);
+    const closingDatagrams = await closingCarrier.requireUnreliableDatagrams();
+    const receiveAbort = new AbortController();
+    const receiving = closingDatagrams.receive({ signal: receiveAbort.signal });
+    receiveAbort.abort();
+    await expect(receiving).rejects.toMatchObject({ code: "operation_aborted" });
+    await closingCarrier.close();
+    expect(closingFake.datagramReadCancel).toHaveBeenCalledTimes(1);
+    expect(closingFake.datagramWriteClose).toHaveBeenCalledTimes(1);
+    await expect(closingDatagrams.send(Uint8Array.of(1))).rejects.toMatchObject({ code: "carrier_closed" });
+
+    const abortingFake = new FakeWebTransport({ datagrams: { maxDatagramSize: 1_200 } });
+    abortingFake.resolveReady();
+    const abortingCarrier = await createCarrier(abortingFake);
+    const abortingDatagrams = await abortingCarrier.requireUnreliableDatagrams();
+    abortingCarrier.abort();
+    await eventually(() => {
+      expect(abortingFake.datagramReadCancel).toHaveBeenCalledTimes(1);
+      expect(abortingFake.datagramWriteAbort).toHaveBeenCalledTimes(1);
+    });
+    await expect(abortingDatagrams.receive()).rejects.toMatchObject({ code: "carrier_closed" });
+    expect(abortingFake.createBidirectionalStream).not.toHaveBeenCalled();
+  });
+
+  test("bounds carrier close when the native datagram writer never closes", async () => {
+    vi.useFakeTimers();
+    const fake = new FakeWebTransport({
+      datagrams: { maxDatagramSize: 1_200 },
+      hangDatagramClose: true,
+    });
+    fake.resolveReady();
+    const carrier = await createCarrier(fake, 25);
+    let closed = false;
+    const closing = carrier.close().then(() => { closed = true; });
+    await vi.advanceTimersByTimeAsync(24);
+    expect(closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await closing;
+    expect(fake.close).toHaveBeenCalledTimes(1);
+    expect(fake.datagramWriteClose).toHaveBeenCalledTimes(1);
+  });
+
   test("keeps the adapter carrier-only and its factory package-internal", () => {
     const source = readFileSync(new URL("./webTransportCarrierInternalStage.ts", import.meta.url), "utf8");
     const browserIndex = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     expect(source.toLowerCase()).not.toContain("ya" + "mux");
-    expect(source.toLowerCase()).not.toContain("data" + "gram");
     expect(source).not.toContain("SessionV2");
     expect(source).not.toContain("ByteStreamV2");
     expect(browserIndex).not.toContain(
@@ -303,12 +403,18 @@ describe("browser WebTransport carrier internal stage", () => {
   });
 });
 
-async function createCarrier(fake: FakeWebTransport, closeTimeoutMs = 25, maxIncomingStreams?: number) {
+async function createCarrier(
+  fake: FakeWebTransport,
+  closeTimeoutMs = 25,
+  maxIncomingStreams?: number,
+  extra: Readonly<{ datagramSendBudgetBytes?: number; now?: () => number }> = {},
+) {
   return await createBrowserWebTransportCarrierInternalStage(
     "https://direct.example/flowersec/webtransport/v2/direct",
     {
       path: "direct",
       closeTimeoutMs,
+      ...extra,
       ...(maxIncomingStreams === undefined ? {} : { maxIncomingStreams }),
       webTransportFactory: () => fake,
     },
@@ -331,17 +437,26 @@ class FakeWebTransport implements BrowserWebTransportLikeInternalStage {
   });
   readonly bidirectionalSourceCancel = vi.fn((): void | Promise<void> => undefined);
   readonly unidirectionalSourceCancel = vi.fn((): void | Promise<void> => undefined);
+  readonly datagramReadCancel = vi.fn((): void | Promise<void> => undefined);
+  readonly datagramWriteClose = vi.fn((): void | Promise<void> => undefined);
+  readonly datagramWriteAbort = vi.fn((): void | Promise<void> => undefined);
+  readonly datagramWrites: Uint8Array[] = [];
   readonly incomingBidirectionalStreams: ReadableStream<BrowserWebTransportBidirectionalStreamInternalStage>;
   readonly incomingUnidirectionalStreams: ReadableStream<ReadableStream<Uint8Array>>;
+  readonly datagrams?: BrowserWebTransportDatagramDuplexInternalStage;
 
   private readonly settleClosedOnClose: boolean;
   private bidirectionalController!: ReadableStreamDefaultController<BrowserWebTransportBidirectionalStreamInternalStage>;
   private unidirectionalController!: ReadableStreamDefaultController<ReadableStream<Uint8Array>>;
+  private datagramController!: ReadableStreamDefaultController<Uint8Array>;
+  private nextDatagramWriteGate: Deferred<void> | undefined;
 
   constructor(
     options: Readonly<{
       settleClosedOnClose?: boolean;
       settleIncomingSourceCancel?: boolean;
+      datagrams?: Readonly<{ maxDatagramSize: number }>;
+      hangDatagramClose?: boolean;
     }> = {},
   ) {
     this.settleClosedOnClose = options.settleClosedOnClose ?? true;
@@ -361,6 +476,28 @@ class FakeWebTransport implements BrowserWebTransportLikeInternalStage {
       },
       cancel: this.unidirectionalSourceCancel,
     });
+    if (options.datagrams !== undefined) {
+      if (options.hangDatagramClose === true) {
+        this.datagramWriteClose.mockImplementation(async () => await new Promise<void>(() => undefined));
+      }
+      this.datagrams = {
+        maxDatagramSize: options.datagrams.maxDatagramSize,
+        readable: new ReadableStream<Uint8Array>({
+          start: (controller) => { this.datagramController = controller; },
+          cancel: this.datagramReadCancel,
+        }),
+        writable: new WritableStream<Uint8Array>({
+          write: async (data) => {
+            this.datagramWrites.push(new Uint8Array(data));
+            const gate = this.nextDatagramWriteGate;
+            this.nextDatagramWriteGate = undefined;
+            if (gate !== undefined) await gate.promise;
+          },
+          close: this.datagramWriteClose,
+          abort: this.datagramWriteAbort,
+        }),
+      };
+    }
   }
 
   resolveReady(): void {
@@ -373,6 +510,16 @@ class FakeWebTransport implements BrowserWebTransportLikeInternalStage {
 
   enqueueIncomingUnidirectional(stream: ReadableStream<Uint8Array>): void {
     this.unidirectionalController.enqueue(stream);
+  }
+
+  enqueueIncomingDatagram(data: Uint8Array): void {
+    this.datagramController.enqueue(data);
+  }
+
+  blockNextDatagramWrite(): Deferred<void> {
+    const gate = deferred<void>();
+    this.nextDatagramWriteGate = gate;
+    return gate;
   }
 }
 

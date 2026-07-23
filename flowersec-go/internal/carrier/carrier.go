@@ -30,11 +30,14 @@ var (
 	ErrInvalidPath           = errors.New("invalid carrier path")
 	ErrInvalidStreamCapacity = errors.New("invalid carrier stream capacity")
 	ErrStreamReset           = errors.New("carrier stream reset")
+	ErrUnreliableUnavailable = errors.New("carrier unreliable messages unavailable")
+	ErrUnreliableTooLarge    = errors.New("carrier unreliable message too large")
 )
 
 const (
 	MaxLogicalIncomingStreams = 128
 	ReservedSessionStreams    = 2
+	MaxUnreliableWireBytes    = 1_072
 )
 
 // RequiredIncomingStreams returns the physical bidirectional stream budget for
@@ -102,4 +105,13 @@ type Session interface {
 	CloseWithErrorContext(context.Context, ApplicationError) error
 	CloseWithError(ApplicationError) error
 	Close() error
+}
+
+// UnreliableTransport is an optional native message substrate implemented only
+// by carriers that negotiated unreliable datagrams. Payloads are copied by the
+// implementation and are never retransmitted or mapped onto a reliable stream.
+type UnreliableTransport interface {
+	UnreliableAvailable() bool
+	SendUnreliable([]byte) error
+	ReceiveUnreliable(context.Context) ([]byte, error)
 }

@@ -14,6 +14,7 @@ const CONTROL_PREFACE_BYTES = 16;
 const HANDSHAKE_HEADER_BYTES = 12;
 const MAX_HANDSHAKE_PAYLOAD_BYTES = 8_192;
 const registryIDPattern = /^[A-Za-z0-9._~-]+$/;
+const KNOWN_FEATURES_V2 = 0x00000001;
 
 export enum HandshakeMessageTypeV2 {
   ClientInit = 1,
@@ -404,7 +405,7 @@ function validateClientInit(message: ClientInitV2): void {
     message.profile !== "flowersec/2" ||
     !validRegistryID(message.channelID, false) ||
     message.clientRole !== 1 ||
-    message.selectedFeatures !== 0 ||
+    (message.selectedFeatures & ~KNOWN_FEATURES_V2) !== 0 ||
     message.maxInboundStreams < 1 || message.maxInboundStreams > 128 ||
     !validRegistryID(message.clientEndpointInstanceID, true)
   ) {
@@ -419,7 +420,7 @@ function validateClientInit(message: ClientInitV2): void {
 function validateServerCore(core: ServerFinishedCoreV2): void {
   validateHandshakeID(core.handshakeID);
   if (
-    core.selectedFeatures !== 0 ||
+    (core.selectedFeatures & ~KNOWN_FEATURES_V2) !== 0 ||
     core.maxInboundStreams < 1 || core.maxInboundStreams > 128 ||
     !validRegistryID(core.serverEndpointInstanceID, true)
   ) {

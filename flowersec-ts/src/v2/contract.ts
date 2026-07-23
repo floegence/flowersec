@@ -14,6 +14,32 @@ export type OperationOptionsV2 = Readonly<{
   signal?: AbortSignal;
 }>;
 
+declare const unreliableMessageBrandV2: unique symbol;
+
+/** Opaque application payload accepted by the unreliable message channel. */
+export type UnreliableMessageV2 = Readonly<{
+  readonly data: Uint8Array;
+  readonly [unreliableMessageBrandV2]: true;
+}>;
+
+export type UnreliableMessageSendOptionsV2 = OperationOptionsV2 & Readonly<{
+  expiresAtUnixMs: number;
+}>;
+
+export type UnreliableMessageSendResultV2 =
+  | "accepted"
+  | "dropped_budget"
+  | "dropped_expired";
+
+export interface UnreliableMessageChannelV2 {
+  readonly maxMessageSize: 1024;
+  send(
+    message: UnreliableMessageV2,
+    options: UnreliableMessageSendOptionsV2,
+  ): Promise<UnreliableMessageSendResultV2>;
+  receive(options?: OperationOptionsV2): Promise<UnreliableMessageV2>;
+}
+
 export type StreamOpenOptionsV2 = OperationOptionsV2 &
   Readonly<{
     metadata?: JsonObjectV2;
@@ -74,6 +100,7 @@ export type SessionTerminationV2 = Readonly<{
 export interface SessionV2 {
   readonly rpc: RpcPeerV2;
   readonly termination: Promise<SessionTerminationV2>;
+  readonly unreliableMessages?: UnreliableMessageChannelV2;
 
   openStream(kind: string, options?: StreamOpenOptionsV2): Promise<ByteStreamV2>;
   acceptStream(options?: OperationOptionsV2): Promise<IncomingStreamV2>;
@@ -107,6 +134,7 @@ export interface InternalSessionV2 {
   readonly endpointInstanceId: string | undefined;
   readonly rpc: RpcClient;
   readonly termination: Promise<Readonly<{ error: Error }>>;
+  readonly unreliableMessages?: UnreliableMessageChannelV2 | undefined;
 
   openStream(kind: string, options?: StreamOpenOptionsV2): Promise<InternalByteStreamV2>;
   acceptStream(options?: OperationOptionsV2): Promise<InternalIncomingStreamV2>;

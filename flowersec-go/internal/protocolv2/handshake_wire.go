@@ -95,6 +95,7 @@ type HandshakeExpectations struct {
 	MaxInboundStreams          uint16
 	AdmissionBinding           [32]byte
 	ExpectedEndpointInstanceID string
+	AvailableFeatures          uint32
 }
 
 type clientInitWire struct {
@@ -429,6 +430,7 @@ func ValidateServerFinished(message ServerFinished, expected HandshakeExpectatio
 		return err
 	}
 	if message.Core.Suite != expected.Suite || message.Core.MaxInboundStreams != expected.MaxInboundStreams ||
+		message.Core.SelectedFeatures & ^expected.AvailableFeatures != 0 ||
 		!constantArrayEqual(message.Core.SessionContractHash, expected.SessionContractHash) || !validAdmissionBinding(expected.Path, message.Core.ServerAdmissionBinding, expected.AdmissionBinding) ||
 		!validExpectedEndpoint(expected.Path, message.Core.ServerEndpointInstanceID, expected.ExpectedEndpointInstanceID) {
 		return ErrHandshakeBinding
@@ -438,7 +440,7 @@ func ValidateServerFinished(message ServerFinished, expected HandshakeExpectatio
 
 func validateClientInitFields(message ClientInit) error {
 	if message.Profile != "flowersec/2" || !validHandshakeRegistryID(message.ChannelID, false) || message.ClientRole != byte(RoleClient) ||
-		(message.Suite != SuiteChaCha20Poly1305 && message.Suite != SuiteAES256GCM) || message.SelectedFeatures != 0 ||
+		(message.Suite != SuiteChaCha20Poly1305 && message.Suite != SuiteAES256GCM) || message.SelectedFeatures & ^SupportedFeatureMask != 0 ||
 		message.MaxInboundStreams < 1 || message.MaxInboundStreams > 128 || !validHandshakeRegistryID(message.ClientEndpointInstanceID, true) {
 		return ErrInvalidHandshakeMessage
 	}
@@ -449,7 +451,7 @@ func validateClientInitFields(message ClientInit) error {
 }
 
 func validateServerCoreFields(core ServerFinishedCore) error {
-	if len(core.HandshakeID) < 16 || len(core.HandshakeID) > 32 || core.SelectedFeatures != 0 ||
+	if len(core.HandshakeID) < 16 || len(core.HandshakeID) > 32 || core.SelectedFeatures & ^SupportedFeatureMask != 0 ||
 		core.MaxInboundStreams < 1 || core.MaxInboundStreams > 128 || !validHandshakeRegistryID(core.ServerEndpointInstanceID, true) {
 		return ErrInvalidHandshakeMessage
 	}

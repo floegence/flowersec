@@ -1,4 +1,8 @@
-use std::{fmt, io, sync::Arc, time::Duration};
+use std::{
+    fmt, io,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -40,8 +44,39 @@ pub trait CarrierSessionV2: fmt::Debug + Send + Sync + 'static {
     async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>>;
     /// Accepts one peer-opened carrier stream.
     async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>>;
+    /// Returns the currently negotiated maximum carrier datagram size.
+    /// `None` means this connection cannot carry unreliable messages.
+    fn unreliable_message_max_size(&self) -> Option<usize> {
+        None
+    }
+    /// Sends one unreliable carrier message without waiting for reliable
+    /// delivery or falling back to a stream.
+    async fn send_unreliable_message(
+        &self,
+        _payload: Bytes,
+    ) -> Result<(), CarrierUnreliableMessageErrorV2> {
+        Err(CarrierUnreliableMessageErrorV2::Unavailable)
+    }
+    /// Receives one unreliable carrier message.
+    async fn receive_unreliable_message(&self) -> Result<Bytes, CarrierUnreliableMessageErrorV2> {
+        Err(CarrierUnreliableMessageErrorV2::Unavailable)
+    }
     /// Closes the complete carrier session.
     async fn close(&self) -> io::Result<()>;
+}
+
+/// Closed carrier-level failure set used by the encrypted unreliable-message
+/// layer without exposing a concrete QUIC or WebTransport implementation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub(crate) enum CarrierUnreliableMessageErrorV2 {
+    #[error("unreliable messages are unavailable on this carrier")]
+    Unavailable,
+    #[error("unreliable message exceeds the negotiated maximum")]
+    TooLarge,
+    #[error("unreliable message was dropped by the bounded send budget")]
+    Dropped,
+    #[error("unreliable message carrier is closed")]
+    Closed,
 }
 
 /// Maximum logical application streams accepted from one peer in SessionV2.
@@ -502,6 +537,49 @@ pub enum SessionError {
     Failed,
 }
 
+/// Stable, redacted failure set for carrier-neutral unreliable messages.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum UnreliableMessageError {
+    #[error("unreliable messages are unavailable for this session")]
+    Unavailable,
+    #[error("invalid unreliable message")]
+    InvalidInput,
+    #[error("unreliable message exceeds the negotiated maximum")]
+    TooLarge,
+    #[error("unreliable message expired before it was sent")]
+    Expired,
+    #[error("unreliable message was dropped by the bounded send budget")]
+    DroppedBudget,
+    #[error("unreliable message operation was canceled")]
+    Canceled,
+    #[error("unreliable message channel is closed")]
+    Closed,
+    #[error("unreliable message operation failed")]
+    Failed,
+}
+
+/// Observable result of submitting one message to the native unreliable
+/// carrier. It does not imply delivery or ordering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnreliableSendOutcome {
+    Accepted,
+}
+
+/// Opaque, carrier-neutral unreliable message access owned by a session.
+#[async_trait]
+pub trait UnreliableMessageChannelV2: fmt::Debug + Send + Sync + 'static {
+    /// Maximum plaintext size accepted on this channel.
+    fn max_message_size(&self) -> usize;
+    /// Authenticates and submits one message with an absolute expiration time.
+    async fn send(
+        &self,
+        payload: Bytes,
+        expires_at: SystemTime,
+    ) -> Result<UnreliableSendOutcome, UnreliableMessageError>;
+    /// Receives the next authenticated, unexpired, non-replayed message.
+    async fn receive(&self) -> Result<Bytes, UnreliableMessageError>;
+}
+
 impl SessionError {
     pub(crate) fn from_io(error: &io::Error) -> Self {
         match error.kind() {
@@ -633,6 +711,12 @@ pub trait RpcPeerV2: fmt::Debug + Send + Sync + 'static {
 pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
     /// Borrows the session's carrier-neutral RPC peer.
     fn rpc(&self) -> &dyn RpcPeerV2;
+    /// Borrows unreliable message access after FSH2 negotiation and READY.
+    fn unreliable_messages(
+        &self,
+    ) -> Result<&dyn UnreliableMessageChannelV2, UnreliableMessageError> {
+        Err(UnreliableMessageError::Unavailable)
+    }
     /// Opens an encrypted logical stream with canonical setup metadata.
     async fn open_stream(
         &self,

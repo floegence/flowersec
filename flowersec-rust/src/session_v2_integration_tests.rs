@@ -2,9 +2,9 @@ use std::{
     io,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use crate::{
@@ -14,12 +14,12 @@ use crate::{
         memory_carrier_pair_v2, memory_carrier_pair_v2_with_capacity,
     },
     transport_v2::{
-        CarrierKind, CarrierSessionV2, CarrierStreamV2, PathKind, SessionError, SessionRole,
-        SessionV2,
+        CarrierKind, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2, PathKind,
+        SessionError, SessionRole, SessionV2, UnreliableMessageError,
     },
 };
 use bytes::Bytes;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, Semaphore};
 
 #[tokio::test]
 async fn exact_handshake_and_ready_boundary_establish_a_memory_pair() {
@@ -57,8 +57,156 @@ async fn exact_handshake_and_ready_boundary_establish_a_memory_pair() {
     );
     let client: Arc<dyn SessionV2> = client_result.expect("client session");
     let server: Arc<dyn SessionV2> = server_result.expect("server session");
+    assert_eq!(
+        client.unreliable_messages().unwrap_err(),
+        UnreliableMessageError::Unavailable,
+        "a carrier without native DATAGRAM must remain explicitly unavailable"
+    );
     client.close().await.expect("close client");
     server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn client_datagram_offer_with_unsupported_server_reaches_ready_without_unreliable_channel() {
+    let (client_inner, server_carrier) = memory_carrier_pair_v2();
+    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(GatedUnreliableCarrierSession {
+        inner: client_inner,
+        gate_sends: false,
+        started: Arc::new(AtomicUsize::new(0)),
+        started_notify: Arc::new(Notify::new()),
+        release: Arc::new(Semaphore::new(0)),
+    });
+    let client = SessionConfigV2 {
+        role: SessionRole::Client,
+        path: PathKind::Direct,
+        channel_id: "rust-asymmetric-unreliable-feature".into(),
+        session_contract_hash: [0x34; 32],
+        suite: CipherSuiteV2::ChaCha20Poly1305,
+        psk: [0x43; 32],
+        max_inbound_streams: 4,
+        idle_timeout: Duration::ZERO,
+        local_admission_binding: [1; 32],
+        peer_admission_binding: Some([2; 32]),
+        local_endpoint_instance_id: None,
+        expected_peer_endpoint_instance_id: None,
+        rpc_handler: None,
+        deadlines: Default::default(),
+    };
+    let server = SessionConfigV2 {
+        role: SessionRole::Server,
+        local_admission_binding: [2; 32],
+        peer_admission_binding: Some([1; 32]),
+        ..client.clone()
+    };
+
+    let (client_result, server_result) = tokio::join!(
+        establish_session_v2(client_carrier, client),
+        establish_session_v2(server_carrier, server),
+    );
+    let client = client_result.expect("client reaches SESSION_READY");
+    let server = server_result.expect("server reaches SESSION_READY_ACK");
+    assert_eq!(
+        client.unreliable_messages().unwrap_err(),
+        UnreliableMessageError::Unavailable
+    );
+    assert_eq!(
+        server.unreliable_messages().unwrap_err(),
+        UnreliableMessageError::Unavailable
+    );
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn unreliable_send_budget_drops_the_sixty_fifth_pending_send() {
+    let (client_inner, server_inner) = memory_carrier_pair_v2_with_capacity(3);
+    let started = Arc::new(AtomicUsize::new(0));
+    let started_notify = Arc::new(Notify::new());
+    let release = Arc::new(Semaphore::new(0));
+    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(GatedUnreliableCarrierSession {
+        inner: client_inner,
+        gate_sends: true,
+        started: started.clone(),
+        started_notify: started_notify.clone(),
+        release: release.clone(),
+    });
+    let server_carrier: Arc<dyn CarrierSessionV2> = Arc::new(GatedUnreliableCarrierSession {
+        inner: server_inner,
+        gate_sends: false,
+        started: Arc::new(AtomicUsize::new(0)),
+        started_notify: Arc::new(Notify::new()),
+        release: Arc::new(Semaphore::new(0)),
+    });
+    let client_config = SessionConfigV2 {
+        role: SessionRole::Client,
+        path: PathKind::Direct,
+        channel_id: "rust-unreliable-budget".into(),
+        session_contract_hash: [0x71; 32],
+        suite: CipherSuiteV2::ChaCha20Poly1305,
+        psk: [0x72; 32],
+        max_inbound_streams: 1,
+        idle_timeout: Duration::ZERO,
+        local_admission_binding: [1; 32],
+        peer_admission_binding: Some([2; 32]),
+        local_endpoint_instance_id: None,
+        expected_peer_endpoint_instance_id: None,
+        rpc_handler: None,
+        deadlines: Default::default(),
+    };
+    let server_config = SessionConfigV2 {
+        role: SessionRole::Server,
+        local_admission_binding: [2; 32],
+        peer_admission_binding: Some([1; 32]),
+        ..client_config.clone()
+    };
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("establish budget client");
+    let server = server.expect("establish budget server");
+    let mut pending = Vec::new();
+    for value in 0_u8..64 {
+        let client = client.clone();
+        pending.push(tokio::spawn(async move {
+            client
+                .unreliable_messages()
+                .expect("negotiated unreliable channel")
+                .send(
+                    Bytes::from(vec![value]),
+                    SystemTime::now() + Duration::from_secs(30),
+                )
+                .await
+        }));
+    }
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while started.load(Ordering::Acquire) != 64 {
+            started_notify.notified().await;
+        }
+    })
+    .await
+    .expect("64 sends occupy the explicit pending budget");
+    assert_eq!(
+        client
+            .unreliable_messages()
+            .unwrap()
+            .send(
+                Bytes::from_static(b"sixty-fifth"),
+                SystemTime::now() + Duration::from_secs(30),
+            )
+            .await,
+        Err(UnreliableMessageError::DroppedBudget)
+    );
+    assert_eq!(started.load(Ordering::Acquire), 64);
+    release.add_permits(64);
+    for send in pending {
+        assert_eq!(
+            send.await.expect("join pending unreliable send"),
+            Ok(crate::UnreliableSendOutcome::Accepted)
+        );
+    }
+    client.close().await.expect("close budget client");
+    server.close().await.expect("close budget server");
 }
 
 #[derive(Debug)]
@@ -89,6 +237,63 @@ struct CapacityReportingCarrierSession {
     inner: Arc<dyn CarrierSessionV2>,
     capacity: u32,
     opens: Arc<AtomicU64>,
+}
+
+#[derive(Debug)]
+struct GatedUnreliableCarrierSession {
+    inner: Arc<dyn CarrierSessionV2>,
+    gate_sends: bool,
+    started: Arc<AtomicUsize>,
+    started_notify: Arc<Notify>,
+    release: Arc<Semaphore>,
+}
+
+#[async_trait::async_trait]
+impl CarrierSessionV2 for GatedUnreliableCarrierSession {
+    fn kind(&self) -> CarrierKind {
+        self.inner.kind()
+    }
+
+    fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+        self.inner.inbound_bidirectional_stream_capacity()
+    }
+
+    async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+        self.inner.open_stream().await
+    }
+
+    async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+        self.inner.accept_stream().await
+    }
+
+    fn unreliable_message_max_size(&self) -> Option<usize> {
+        Some(1_072)
+    }
+
+    async fn send_unreliable_message(
+        &self,
+        _payload: Bytes,
+    ) -> Result<(), CarrierUnreliableMessageErrorV2> {
+        if self.gate_sends {
+            self.started.fetch_add(1, Ordering::AcqRel);
+            self.started_notify.notify_waiters();
+            let permit = self
+                .release
+                .acquire()
+                .await
+                .map_err(|_| CarrierUnreliableMessageErrorV2::Closed)?;
+            permit.forget();
+        }
+        Ok(())
+    }
+
+    async fn receive_unreliable_message(&self) -> Result<Bytes, CarrierUnreliableMessageErrorV2> {
+        std::future::pending().await
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
 }
 
 #[async_trait::async_trait]

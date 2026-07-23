@@ -19,8 +19,15 @@ func TestTransportV2WireFixtureRegistryIsRequired(t *testing.T) {
 	if contract.Docs.Wire != "docs/TRANSPORT_V2_WIRE.md" {
 		t.Fatalf("transport v2 wire document = %q", contract.Docs.Wire)
 	}
-	if len(contract.WireFixtures) != 8 {
-		t.Fatalf("transport v2 normative wire fixture count = %d, want 8", len(contract.WireFixtures))
+	if len(contract.WireFixtures) != 9 {
+		t.Fatalf("transport v2 normative wire fixture count = %d, want 9", len(contract.WireFixtures))
+	}
+	foundDatagram := false
+	for _, fixture := range contract.WireFixtures {
+		foundDatagram = foundDatagram || fixture.ID == "datagram"
+	}
+	if !foundDatagram {
+		t.Fatal("transport v2 normative wire fixtures are missing datagram")
 	}
 }
 

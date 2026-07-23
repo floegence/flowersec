@@ -27,6 +27,10 @@ pub const OPEN_FIXED_PAYLOAD_V2_BYTES: usize = 46;
 pub const MAX_OPEN_V2_BYTES: usize = 8_192;
 pub const MAX_OPEN_KIND_V2_BYTES: usize = 128;
 pub const MAX_OPEN_METADATA_V2_BYTES: usize = 4_096;
+pub(crate) const UNRELIABLE_HEADER_V2_SIZE: usize = 32;
+pub(crate) const MAX_UNRELIABLE_PLAINTEXT_V2_BYTES: usize = 1_024;
+pub(crate) const MAX_UNRELIABLE_WIRE_V2_BYTES: usize =
+    UNRELIABLE_HEADER_V2_SIZE + MAX_UNRELIABLE_PLAINTEXT_V2_BYTES + AEAD_TAG_V2_SIZE;
 
 const MAX_OPEN_METADATA_DEPTH: usize = 4;
 const MAX_OPEN_METADATA_NODES: usize = 64;
@@ -133,6 +137,8 @@ pub enum ProtocolV2Error {
     Crypto,
     #[error("v2 HKDF expansion failed")]
     Hkdf,
+    #[error("invalid Flowersec v2 unreliable message")]
+    InvalidUnreliableMessage,
 }
 
 /// Direction of one v2 record key schedule.
@@ -181,8 +187,7 @@ pub struct EpochRootsV2 {
 }
 
 impl EpochRootsV2 {
-    #[cfg(test)]
-    pub fn epoch_secret(&self) -> &[u8; 32] {
+    pub(crate) fn epoch_secret(&self) -> &[u8; 32] {
         &self.epoch_secret
     }
 
@@ -200,6 +205,67 @@ impl EpochRootsV2 {
 
     pub fn rekey_root(&self) -> &[u8; 32] {
         &self.rekey_root
+    }
+}
+
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+pub(crate) struct UnreliableMaterialV2 {
+    key: [u8; 32],
+    nonce_prefix: [u8; 4],
+}
+
+impl std::fmt::Debug for UnreliableMaterialV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("UnreliableMaterialV2([REDACTED])")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct UnreliableHeaderV2 {
+    pub epoch: u32,
+    pub sequence: u64,
+    pub expires_at_unix_ms: u64,
+    pub ciphertext_length: u32,
+}
+
+impl UnreliableHeaderV2 {
+    pub(crate) fn encode(self) -> Result<[u8; UNRELIABLE_HEADER_V2_SIZE], ProtocolV2Error> {
+        let ciphertext_length = usize::try_from(self.ciphertext_length)
+            .map_err(|_| ProtocolV2Error::InvalidUnreliableMessage)?;
+        if !(AEAD_TAG_V2_SIZE..=MAX_UNRELIABLE_PLAINTEXT_V2_BYTES + AEAD_TAG_V2_SIZE)
+            .contains(&ciphertext_length)
+            || self.expires_at_unix_ms == 0
+        {
+            return Err(ProtocolV2Error::InvalidUnreliableMessage);
+        }
+        let mut raw = [0_u8; UNRELIABLE_HEADER_V2_SIZE];
+        raw[..4].copy_from_slice(b"FSD2");
+        raw[4] = 2;
+        raw[6..8].copy_from_slice(&(UNRELIABLE_HEADER_V2_SIZE as u16).to_be_bytes());
+        raw[8..12].copy_from_slice(&self.epoch.to_be_bytes());
+        raw[12..20].copy_from_slice(&self.sequence.to_be_bytes());
+        raw[20..28].copy_from_slice(&self.expires_at_unix_ms.to_be_bytes());
+        raw[28..32].copy_from_slice(&self.ciphertext_length.to_be_bytes());
+        Ok(raw)
+    }
+
+    pub(crate) fn decode(raw: &[u8]) -> Result<Self, ProtocolV2Error> {
+        if raw.len() != UNRELIABLE_HEADER_V2_SIZE
+            || &raw[..4] != b"FSD2"
+            || raw[4] != 2
+            || raw[5] != 0
+            || u16::from_be_bytes(raw[6..8].try_into().unwrap()) != UNRELIABLE_HEADER_V2_SIZE as u16
+        {
+            return Err(ProtocolV2Error::InvalidUnreliableMessage);
+        }
+        let header = Self {
+            epoch: u32::from_be_bytes(raw[8..12].try_into().unwrap()),
+            sequence: u64::from_be_bytes(raw[12..20].try_into().unwrap()),
+            expires_at_unix_ms: u64::from_be_bytes(raw[20..28].try_into().unwrap()),
+            ciphertext_length: u32::from_be_bytes(raw[28..32].try_into().unwrap()),
+        };
+        header.encode()?;
+        Ok(header)
     }
 }
 
@@ -548,6 +614,105 @@ pub fn derive_control_material_v2(
         record_key: expand_32(&secret, &label_with(b"flowersec v2 record key", &[]))?,
         nonce_prefix: expand_4(&secret, &label_with(b"flowersec v2 nonce", &[]))?,
     })
+}
+
+pub(crate) fn derive_unreliable_material_v2(
+    roots: &EpochRootsV2,
+    h3: &[u8; 32],
+    direction: DirectionV2,
+    epoch: u32,
+) -> Result<UnreliableMaterialV2, ProtocolV2Error> {
+    let unreliable_root = expand_32(
+        roots.epoch_secret(),
+        &label_with(b"flowersec v2 unreliable root", &[]),
+    )?;
+    let material = expand_32(
+        &unreliable_root,
+        &label_with(
+            b"flowersec v2 unreliable",
+            &[h3, &[direction as u8], &epoch.to_be_bytes()],
+        ),
+    )?;
+    Ok(UnreliableMaterialV2 {
+        key: expand_32(&material, &label_with(b"flowersec v2 unreliable key", &[]))?,
+        nonce_prefix: expand_4(
+            &material,
+            &label_with(b"flowersec v2 unreliable nonce", &[]),
+        )?,
+    })
+}
+
+pub(crate) fn seal_unreliable_v2(
+    suite: CipherSuiteV2,
+    material: &UnreliableMaterialV2,
+    h3: &[u8; 32],
+    direction: DirectionV2,
+    header: UnreliableHeaderV2,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, ProtocolV2Error> {
+    if plaintext.is_empty()
+        || plaintext.len() > MAX_UNRELIABLE_PLAINTEXT_V2_BYTES
+        || plaintext.len() + AEAD_TAG_V2_SIZE != header.ciphertext_length as usize
+    {
+        return Err(ProtocolV2Error::InvalidUnreliableMessage);
+    }
+    let raw_header = header.encode()?;
+    let aad = label_with(
+        b"flowersec-v2-unreliable",
+        &[h3, &[direction as u8], &raw_header],
+    );
+    let nonce = record_nonce(material.nonce_prefix, header.sequence);
+    match suite {
+        CipherSuiteV2::ChaCha20Poly1305 => seal_chacha(&material.key, nonce, &aad, plaintext),
+        CipherSuiteV2::Aes256Gcm => {
+            let cipher =
+                Aes256Gcm::new_from_slice(&material.key).map_err(|_| ProtocolV2Error::Crypto)?;
+            cipher
+                .encrypt(
+                    (&nonce).into(),
+                    Payload {
+                        msg: plaintext,
+                        aad: &aad,
+                    },
+                )
+                .map_err(|_| ProtocolV2Error::Crypto)
+        }
+    }
+}
+
+pub(crate) fn open_unreliable_v2(
+    suite: CipherSuiteV2,
+    material: &UnreliableMaterialV2,
+    h3: &[u8; 32],
+    direction: DirectionV2,
+    header: UnreliableHeaderV2,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, ProtocolV2Error> {
+    if ciphertext.len() != header.ciphertext_length as usize {
+        return Err(ProtocolV2Error::InvalidUnreliableMessage);
+    }
+    let raw_header = header.encode()?;
+    let aad = label_with(
+        b"flowersec-v2-unreliable",
+        &[h3, &[direction as u8], &raw_header],
+    );
+    let nonce = record_nonce(material.nonce_prefix, header.sequence);
+    match suite {
+        CipherSuiteV2::ChaCha20Poly1305 => open_chacha(&material.key, nonce, &aad, ciphertext),
+        CipherSuiteV2::Aes256Gcm => {
+            let cipher =
+                Aes256Gcm::new_from_slice(&material.key).map_err(|_| ProtocolV2Error::Crypto)?;
+            cipher
+                .decrypt(
+                    (&nonce).into(),
+                    Payload {
+                        msg: ciphertext,
+                        aad: &aad,
+                    },
+                )
+                .map_err(|_| ProtocolV2Error::Authentication)
+        }
+    }
 }
 
 pub fn derive_next_epoch_v2(
@@ -1063,4 +1228,213 @@ fn parse_hex_u32(value: &[u8]) -> u32 {
                 _ => 0,
             }
     })
+}
+
+#[cfg(test)]
+mod unreliable_message_tests {
+    use super::*;
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+    #[test]
+    fn fsd2_header_and_domain_separated_aead_are_strict() {
+        let session_prk = [0x31; 32];
+        let h3 = [0x42; 32];
+        let roots = derive_epoch_zero_v2(&session_prk, DirectionV2::ClientToServer).unwrap();
+        let material =
+            derive_unreliable_material_v2(&roots, &h3, DirectionV2::ClientToServer, 0).unwrap();
+        let header = UnreliableHeaderV2 {
+            epoch: 0,
+            sequence: 7,
+            expires_at_unix_ms: 2_000_000_000_000,
+            ciphertext_length: (4 + AEAD_TAG_V2_SIZE) as u32,
+        };
+        let raw = header.encode().unwrap();
+        assert_eq!(&raw[..4], b"FSD2");
+        assert_eq!(raw[4], 2);
+        assert_eq!(u16::from_be_bytes(raw[6..8].try_into().unwrap()), 32);
+        assert_eq!(UnreliableHeaderV2::decode(&raw).unwrap(), header);
+
+        let ciphertext = seal_unreliable_v2(
+            CipherSuiteV2::ChaCha20Poly1305,
+            &material,
+            &h3,
+            DirectionV2::ClientToServer,
+            header,
+            b"data",
+        )
+        .unwrap();
+        assert_ne!(ciphertext, b"data");
+        assert_eq!(
+            open_unreliable_v2(
+                CipherSuiteV2::ChaCha20Poly1305,
+                &material,
+                &h3,
+                DirectionV2::ClientToServer,
+                header,
+                &ciphertext,
+            )
+            .unwrap(),
+            b"data"
+        );
+
+        let peer_roots = derive_epoch_zero_v2(&session_prk, DirectionV2::ServerToClient).unwrap();
+        let peer_material =
+            derive_unreliable_material_v2(&peer_roots, &h3, DirectionV2::ServerToClient, 0)
+                .unwrap();
+        assert!(
+            open_unreliable_v2(
+                CipherSuiteV2::ChaCha20Poly1305,
+                &peer_material,
+                &h3,
+                DirectionV2::ServerToClient,
+                header,
+                &ciphertext,
+            )
+            .is_err(),
+            "unreliable keys must be direction-separated"
+        );
+        let mut altered_h3 = h3;
+        altered_h3[0] ^= 1;
+        assert!(
+            open_unreliable_v2(
+                CipherSuiteV2::ChaCha20Poly1305,
+                &material,
+                &altered_h3,
+                DirectionV2::ClientToServer,
+                header,
+                &ciphertext,
+            )
+            .is_err(),
+            "unreliable AAD must bind the FSH2 transcript"
+        );
+    }
+
+    #[test]
+    fn fsd2_rejects_empty_oversize_and_mutated_header_context() {
+        let roots = derive_epoch_zero_v2(&[0x51; 32], DirectionV2::ClientToServer).unwrap();
+        let material =
+            derive_unreliable_material_v2(&roots, &[0x61; 32], DirectionV2::ClientToServer, 0)
+                .unwrap();
+        let header = UnreliableHeaderV2 {
+            epoch: 0,
+            sequence: 1,
+            expires_at_unix_ms: 2_000_000_000_000,
+            ciphertext_length: (1 + AEAD_TAG_V2_SIZE) as u32,
+        };
+        assert!(
+            seal_unreliable_v2(
+                CipherSuiteV2::Aes256Gcm,
+                &material,
+                &[0x61; 32],
+                DirectionV2::ClientToServer,
+                header,
+                b"",
+            )
+            .is_err()
+        );
+        let mut invalid = header.encode().unwrap();
+        invalid[5] = 1;
+        assert!(UnreliableHeaderV2::decode(&invalid).is_err());
+        let oversized = UnreliableHeaderV2 {
+            ciphertext_length: (MAX_UNRELIABLE_PLAINTEXT_V2_BYTES + AEAD_TAG_V2_SIZE + 1) as u32,
+            ..header
+        };
+        assert!(oversized.encode().is_err());
+    }
+
+    #[test]
+    fn consumes_shared_fsd2_datagram_vectors() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v2/datagram_vectors.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture["schema_version"], 1);
+        let vectors = fixture["vectors"].as_array().unwrap();
+        assert!(!vectors.is_empty());
+        for vector in vectors {
+            let decode = |name: &str| {
+                URL_SAFE_NO_PAD
+                    .decode(vector[name].as_str().unwrap())
+                    .unwrap()
+            };
+            let session_prk: [u8; 32] = decode("session_prk_b64u").try_into().unwrap();
+            let h3: [u8; 32] = decode("h3_b64u").try_into().unwrap();
+            let direction =
+                DirectionV2::try_from(vector["direction"].as_u64().unwrap() as u8).unwrap();
+            let epoch = vector["epoch"].as_u64().unwrap() as u32;
+            let sequence = vector["sequence"].as_u64().unwrap();
+            let plaintext = decode("plaintext_b64u");
+            let suite = match vector["suite"].as_u64().unwrap() {
+                1 => CipherSuiteV2::ChaCha20Poly1305,
+                2 => CipherSuiteV2::Aes256Gcm,
+                _ => panic!("unknown shared DATAGRAM suite"),
+            };
+
+            let mut roots = derive_epoch_zero_v2(&session_prk, direction).unwrap();
+            for next_epoch in 1..=epoch {
+                roots =
+                    derive_next_epoch_v2(roots.rekey_root(), &h3, direction, next_epoch).unwrap();
+            }
+            assert_eq!(
+                roots.epoch_secret().as_slice(),
+                decode("epoch_secret_b64u").as_slice()
+            );
+            let root = expand_32(
+                roots.epoch_secret(),
+                &label_with(b"flowersec v2 unreliable root", &[]),
+            )
+            .unwrap();
+            assert_eq!(root.as_slice(), decode("unreliable_root_b64u").as_slice());
+            let secret = expand_32(
+                &root,
+                &label_with(
+                    b"flowersec v2 unreliable",
+                    &[&h3, &[direction as u8], &epoch.to_be_bytes()],
+                ),
+            )
+            .unwrap();
+            assert_eq!(secret.as_slice(), decode("material_secret_b64u").as_slice());
+            let material = derive_unreliable_material_v2(&roots, &h3, direction, epoch).unwrap();
+            assert_eq!(
+                material.key.as_slice(),
+                decode("record_key_b64u").as_slice()
+            );
+            assert_eq!(
+                material.nonce_prefix.as_slice(),
+                decode("nonce_prefix_b64u").as_slice()
+            );
+            assert_eq!(
+                record_nonce(material.nonce_prefix, sequence),
+                decode("nonce_b64u").as_slice()
+            );
+            let header = UnreliableHeaderV2 {
+                epoch,
+                sequence,
+                expires_at_unix_ms: vector["expires_at_unix_ms"].as_u64().unwrap(),
+                ciphertext_length: (plaintext.len() + AEAD_TAG_V2_SIZE) as u32,
+            };
+            let raw_header = header.encode().unwrap();
+            assert_eq!(hex_lower(&raw_header), vector["header_hex"]);
+            let aad = label_with(
+                b"flowersec-v2-unreliable",
+                &[&h3, &[direction as u8], &raw_header],
+            );
+            assert_eq!(aad, decode("aad_b64u"));
+            let ciphertext =
+                seal_unreliable_v2(suite, &material, &h3, direction, header, &plaintext).unwrap();
+            assert_eq!(ciphertext, decode("ciphertext_b64u"));
+            let mut wire = raw_header.to_vec();
+            wire.extend_from_slice(&ciphertext);
+            assert_eq!(wire, decode("wire_b64u"));
+        }
+    }
+
+    fn hex_lower(raw: &[u8]) -> String {
+        use std::fmt::Write as _;
+        let mut output = String::with_capacity(raw.len() * 2);
+        for byte in raw {
+            write!(&mut output, "{byte:02x}").unwrap();
+        }
+        output
+    }
 }

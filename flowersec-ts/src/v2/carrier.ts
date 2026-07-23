@@ -14,10 +14,20 @@ export interface CarrierStreamV2 {
   abort(error?: Error): void;
 }
 
+export interface CarrierUnreliableDatagramsV2 {
+  readonly maxDatagramSize: number;
+  send(
+    data: Uint8Array,
+    options?: Readonly<{ signal?: AbortSignal; expiresAt?: number }>,
+  ): Promise<"accepted" | "dropped_budget" | "dropped_expired">;
+  receive(options?: OperationOptionsV2): Promise<Uint8Array>;
+}
+
 export interface CarrierSessionV2 {
   readonly kind: CarrierKind;
   readonly path: PathKind;
   readonly inboundBidirectionalStreamCapacity: number;
+  readonly unreliableDatagrams?: CarrierUnreliableDatagramsV2 | undefined;
   openStream(options?: OperationOptionsV2): Promise<CarrierStreamV2>;
   acceptStream(options?: OperationOptionsV2): Promise<CarrierStreamV2>;
   close(error?: Readonly<{ code: number; reason: string }>): Promise<void>;
@@ -54,6 +64,7 @@ export type NativeCarrierSessionV2 = Readonly<{
   kind: "webtransport" | "raw_quic";
   path: PathKind;
   inboundBidirectionalStreamCapacity: number;
+  unreliableDatagrams?: CarrierUnreliableDatagramsV2 | undefined;
   openStream(options?: OperationOptionsV2): Promise<NativeCarrierStreamV2>;
   acceptStream(options?: OperationOptionsV2): Promise<NativeCarrierStreamV2>;
   close(): Promise<void>;
@@ -174,6 +185,7 @@ class MemoryCarrierSession implements CarrierSessionV2 {
   readonly kind: CarrierKind;
   readonly path: PathKind;
   readonly inboundBidirectionalStreamCapacity: number;
+  readonly unreliableDatagrams = undefined;
 
   private readonly incoming = new AsyncQueue<CarrierStreamV2>();
   private closed = false;
@@ -395,6 +407,7 @@ class WebSocketYamuxCarrierSession implements CarrierSessionV2 {
   readonly kind = "websocket" as const;
   readonly path: PathKind;
   readonly inboundBidirectionalStreamCapacity: number;
+  readonly unreliableDatagrams = undefined;
 
   private readonly incoming = new AsyncQueue<CarrierStreamV2>();
   private readonly yamux: YamuxSession;
@@ -501,11 +514,13 @@ class NativeCarrierSessionAdapter implements CarrierSessionV2 {
   readonly kind: "webtransport" | "raw_quic";
   readonly path: PathKind;
   readonly inboundBidirectionalStreamCapacity: number;
+  readonly unreliableDatagrams: CarrierUnreliableDatagramsV2 | undefined;
 
   constructor(private readonly native: NativeCarrierSessionV2) {
     this.kind = native.kind;
     this.path = native.path;
     this.inboundBidirectionalStreamCapacity = native.inboundBidirectionalStreamCapacity;
+    this.unreliableDatagrams = native.unreliableDatagrams;
   }
 
   async openStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {

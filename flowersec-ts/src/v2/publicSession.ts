@@ -15,9 +15,11 @@ import { SessionError } from "./contract.js";
 export function projectSessionV2(session: InternalSessionV2): SessionV2 {
   const rpc = projectRpcPeerV2(session.rpc);
   const termination = session.termination.then(({ error }) => ({ error: redactSessionError(error) }));
+  const unreliable = session.unreliableMessages;
   return Object.freeze({
     rpc,
     termination,
+    ...(unreliable === undefined ? {} : { unreliableMessages: unreliable }),
     async openStream(kind: string, options?: StreamOpenOptionsV2): Promise<ByteStreamV2> {
       try {
         return projectByteStreamV2(await session.openStream(kind, options));

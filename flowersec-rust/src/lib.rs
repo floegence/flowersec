@@ -50,6 +50,8 @@ pub use connector_v2::{ConnectError, ConnectErrorCode, Connector, ConnectorOptio
 pub use transport_v2::{
     ByteStreamV2 as ByteStream, IncomingStreamV2 as IncomingStream, JsonObjectV2 as JsonObject,
     RpcPeerV2 as RpcPeer, SessionError, SessionV2 as Session, StreamTerminalError,
+    UnreliableMessageChannelV2 as UnreliableMessageChannel, UnreliableMessageError,
+    UnreliableSendOutcome,
 };
 
 #[cfg(test)]

@@ -61,6 +61,17 @@
       ]
     },
     {
+      "id": "datagram",
+      "path": "testdata/transport_v2/datagram_vectors.json",
+      "runtime_consumers": [
+        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/protocolv2/unreliable_vectors_test.go" },
+        { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/unreliableMessage.test.ts" },
+        { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/unreliableMessage.test.ts" },
+        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/protocol_v2.rs" },
+        { "runtime": "swift_apple", "applicability": "unsupported", "unsupported_reason": "unreliable_message_channel_not_supported" }
+      ]
+    },
+    {
       "id": "endpoint_set",
       "path": "testdata/transport_v2/endpoint_set_vectors.json",
       "runtime_consumers": [
@@ -124,6 +135,10 @@
     {
       "id": "endpoint_set_v2_codec_not_implemented",
       "description": "This runtime does not expose the deployment-facing custom tunnel endpoint-set v2 codec and must not claim conformance by parsing the fixture as generic JSON."
+    },
+    {
+      "id": "unreliable_message_channel_not_supported",
+      "description": "This runtime has no production native DATAGRAM carrier and must not claim FSD2 support by parsing the fixture as generic bytes."
     }
   ],
   "policies": {
@@ -132,8 +147,8 @@
     "quic_yamux": "forbidden",
     "application_0rtt": "forbidden",
     "reliable_payload_datagrams": "forbidden",
-    "public_datagram_api": "not_exposed",
-    "webtransport_datagram_support": "transport_required_not_exposed"
+    "public_datagram_api": "optional_unreliable_message_channel",
+    "webtransport_datagram_support": "native_required_when_negotiated"
   },
   "carriers": [
     {
