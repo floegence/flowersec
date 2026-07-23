@@ -7,8 +7,8 @@
       "root": {
         "ecosystem": "go",
         "name": "github.com/floegence/flowersec/flowersec-go/v2",
-        "version": "v0.28.0",
-        "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0"
+        "version": "v2.0.0",
+        "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0"
       },
       "components": [
         {
@@ -388,57 +388,57 @@
       ],
       "edges": [
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/github.com/quic-go/quic-go@v0.60.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/github.com/quic-go/webtransport-go@v0.11.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/golang.org/x/crypto@v0.53.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/golang.org/x/net@v0.56.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/golang.org/x/sys@v0.46.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.0.0",
           "to": "pkg:golang/golang.org/x/text@v0.39.0",
           "kind": "runtime"
         },
@@ -550,8 +550,8 @@
       "root": {
         "ecosystem": "go",
         "name": "github.com/floegence/flowersec/tools/idlgen",
-        "version": "0.28.0",
-        "purl": "pkg:golang/github.com/floegence/flowersec/tools/idlgen@0.28.0"
+        "version": "2.0.0",
+        "purl": "pkg:golang/github.com/floegence/flowersec/tools/idlgen@2.0.0"
       },
       "components": [],
       "edges": []
@@ -562,8 +562,8 @@
       "root": {
         "ecosystem": "go",
         "name": "github.com/floegence/flowersec/tools/releasenotes",
-        "version": "0.28.0",
-        "purl": "pkg:golang/github.com/floegence/flowersec/tools/releasenotes@0.28.0"
+        "version": "2.0.0",
+        "purl": "pkg:golang/github.com/floegence/flowersec/tools/releasenotes@2.0.0"
       },
       "components": [],
       "edges": []
@@ -574,8 +574,8 @@
       "root": {
         "ecosystem": "go",
         "name": "github.com/floegence/flowersec/tools/stabilitycheck",
-        "version": "0.28.0",
-        "purl": "pkg:golang/github.com/floegence/flowersec/tools/stabilitycheck@0.28.0"
+        "version": "2.0.0",
+        "purl": "pkg:golang/github.com/floegence/flowersec/tools/stabilitycheck@2.0.0"
       },
       "components": [],
       "edges": []
@@ -586,8 +586,8 @@
       "root": {
         "ecosystem": "go",
         "name": "github.com/floegence/flowersec/tools/transportcheck",
-        "version": "0.28.0",
-        "purl": "pkg:golang/github.com/floegence/flowersec/tools/transportcheck@0.28.0"
+        "version": "2.0.0",
+        "purl": "pkg:golang/github.com/floegence/flowersec/tools/transportcheck@2.0.0"
       },
       "components": [
         {
@@ -627,7 +627,7 @@
       ],
       "edges": [
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/tools/transportcheck@0.28.0",
+          "from": "pkg:golang/github.com/floegence/flowersec/tools/transportcheck@2.0.0",
           "to": "pkg:golang/filippo.io/edwards25519@v1.1.1",
           "kind": "runtime"
         }
@@ -639,8 +639,8 @@
       "root": {
         "ecosystem": "npm",
         "name": "@floegence/flowersec-core",
-        "version": "0.28.0",
-        "purl": "pkg:npm/%40floegence/flowersec-core@0.28.0"
+        "version": "2.0.0",
+        "purl": "pkg:npm/%40floegence/flowersec-core@2.0.0"
       },
       "components": [
         {
@@ -8229,92 +8229,92 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/%40noble/ciphers@0.6.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/%40noble/curves@1.9.7",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/%40noble/hashes@1.8.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/%40playwright/test@1.58.2",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/%40types/node@24.12.2",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/%40types/ws@8.18.1",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/%40typescript-eslint/eslint-plugin@8.53.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/%40typescript-eslint/parser@8.53.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/%40vitest/coverage-v8@4.1.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/ajv-formats-draft2019@1.6.1",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/ajv-formats@3.0.1",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/ajv@8.20.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/eslint@9.39.2",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/tr46@5.0.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/typescript@5.9.3",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/vite@8.0.16",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/vitest@4.1.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+          "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
           "to": "pkg:npm/ws@8.21.0",
           "kind": "runtime"
         },
@@ -9766,8 +9766,8 @@
       "root": {
         "ecosystem": "cargo",
         "name": "flowersec",
-        "version": "0.28.0",
-        "purl": "pkg:cargo/flowersec@0.28.0"
+        "version": "2.0.0",
+        "purl": "pkg:cargo/flowersec@2.0.0"
       },
       "components": [
         {
@@ -18171,182 +18171,182 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/aes-gcm@0.10.3",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/async-trait@0.1.89",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/base64@0.22.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/bytes@1.12.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/ed25519-dalek@2.2.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/futures-util@0.3.32",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/hkdf@0.12.4",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/hmac@0.12.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/http-body-util@0.1.4",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/http@1.4.2",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/idna_adapter@1.1.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/idna_mapping@1.0.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/idna@1.1.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/p256@0.13.2",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/proptest@1.11.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/quinn@0.11.11",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/rand@0.8.7",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/reqwest@0.13.4",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/ring@0.17.14",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/rustls@0.23.42",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/serde_json@1.0.150",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/serde_repr@0.1.20",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/serde@1.0.228",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/sha2@0.10.9",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/subtle@2.6.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/tempfile@3.27.0",
           "kind": "dev"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/thiserror@2.0.18",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/tokio-tungstenite@0.30.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/tokio-util@0.7.18",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/tokio@1.52.3",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/tower@0.5.3",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/tracing@0.1.44",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/unicode-normalization@0.1.25",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/url@2.5.8",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/x25519-dalek@2.0.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/flowersec@0.28.0",
+          "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/zeroize@1.9.0",
           "kind": "runtime"
         },
@@ -40197,8 +40197,8 @@
       "root": {
         "ecosystem": "swift",
         "name": "Flowersec",
-        "version": "0.28.0",
-        "purl": "pkg:swift/Flowersec@0.28.0"
+        "version": "2.0.0",
+        "purl": "pkg:swift/Flowersec@2.0.0"
       },
       "components": [
         {
@@ -41007,22 +41007,22 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/Flowersec@0.28.0",
+          "from": "pkg:swift/Flowersec@2.0.0",
           "to": "pkg:swift/async-http-client@1.35.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/Flowersec@0.28.0",
+          "from": "pkg:swift/Flowersec@2.0.0",
           "to": "pkg:swift/swift-crypto@4.5.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/Flowersec@0.28.0",
+          "from": "pkg:swift/Flowersec@2.0.0",
           "to": "pkg:swift/swift-nio-ssl@2.37.2",
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/Flowersec@0.28.0",
+          "from": "pkg:swift/Flowersec@2.0.0",
           "to": "pkg:swift/swift-nio@2.101.3",
           "kind": "runtime"
         },
@@ -41189,8 +41189,8 @@
       "root": {
         "ecosystem": "swift",
         "name": "FlowersecSwiftClientExample",
-        "version": "0.28.0",
-        "purl": "pkg:swift/FlowersecSwiftClientExample@0.28.0"
+        "version": "2.0.0",
+        "purl": "pkg:swift/FlowersecSwiftClientExample@2.0.0"
       },
       "components": [
         {
@@ -41999,22 +41999,22 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/FlowersecSwiftClientExample@0.28.0",
+          "from": "pkg:swift/FlowersecSwiftClientExample@2.0.0",
           "to": "pkg:swift/async-http-client@1.35.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/FlowersecSwiftClientExample@0.28.0",
+          "from": "pkg:swift/FlowersecSwiftClientExample@2.0.0",
           "to": "pkg:swift/swift-crypto@4.5.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/FlowersecSwiftClientExample@0.28.0",
+          "from": "pkg:swift/FlowersecSwiftClientExample@2.0.0",
           "to": "pkg:swift/swift-nio-ssl@2.37.2",
           "kind": "runtime"
         },
         {
-          "from": "pkg:swift/FlowersecSwiftClientExample@0.28.0",
+          "from": "pkg:swift/FlowersecSwiftClientExample@2.0.0",
           "to": "pkg:swift/swift-nio@2.101.3",
           "kind": "runtime"
         },
@@ -61535,362 +61535,362 @@
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/aes-gcm@0.10.3",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/async-trait@0.1.89",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/base64@0.22.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/bytes@1.12.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/ed25519-dalek@2.2.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/futures-util@0.3.32",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/hkdf@0.12.4",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/hmac@0.12.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/http-body-util@0.1.4",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/http@1.4.2",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/idna_adapter@1.1.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/idna_mapping@1.0.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/idna@1.1.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/libfuzzer-sys@0.4.13",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/p256@0.13.2",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/proptest@1.11.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/quinn@0.11.11",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/rand@0.8.7",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/reqwest@0.13.4",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/ring@0.17.14",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/rustls@0.23.42",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/serde_json@1.0.150",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/serde_json@1.0.150",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/serde_repr@0.1.20",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/serde@1.0.228",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/sha2@0.10.9",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/subtle@2.6.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/tempfile@3.27.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/thiserror@2.0.18",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/tokio-tungstenite@0.30.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/tokio-util@0.7.18",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/tokio@1.52.3",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/tower@0.5.3",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/tracing@0.1.44",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/unicode-normalization@0.1.25",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/url@2.5.8",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/x25519-dalek@2.0.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/zeroize@1.9.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/filippo.io/edwards25519@v1.1.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/github.com/quic-go/quic-go@v0.60.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/github.com/quic-go/webtransport-go@v0.11.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/golang.org/x/crypto@v0.53.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/golang.org/x/net@v0.56.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/golang.org/x/sys@v0.46.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:golang/golang.org/x/text@v0.39.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/%40noble/ciphers@0.6.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/%40noble/curves@1.9.7",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/%40noble/hashes@1.8.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/%40playwright/test@1.58.2",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/%40types/node@24.12.2",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/%40types/ws@8.18.1",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/%40typescript-eslint/eslint-plugin@8.53.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/%40typescript-eslint/parser@8.53.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/%40vitest/coverage-v8@4.1.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/ajv-formats-draft2019@1.6.1",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/ajv-formats@3.0.1",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/ajv@8.20.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/eslint@9.39.2",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/tr46@5.0.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/typescript@5.9.3",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/vite@8.0.16",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/vitest@4.1.0",
       "kind": "dev"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:npm/ws@8.21.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:swift/async-http-client@1.35.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:swift/swift-crypto@4.5.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:swift/swift-nio-ssl@2.37.2",
       "kind": "runtime"
     },
     {
-      "from": "pkg:generic/flowersec-source@0.28.0",
+      "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:swift/swift-nio@2.101.3",
       "kind": "runtime"
     },

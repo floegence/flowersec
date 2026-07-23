@@ -78,7 +78,7 @@ test("non-published Rust roots remain licensed and version their local Flowersec
     assert.match(manifest, /^license = "MIT"$/m, `${manifestPath} must declare its license`);
     assert.match(
       manifest,
-      /^flowersec = \{ version = "=0\.28\.0", path = "[^"]+" \}$/m,
+      /^flowersec = \{ version = "=2\.0\.0", path = "[^"]+" \}$/m,
       `${manifestPath} must not use a wildcard local dependency`,
     );
   }

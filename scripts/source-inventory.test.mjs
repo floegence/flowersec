@@ -52,12 +52,12 @@ function fixtureGraph() {
     root: {
       ecosystem: "npm",
       name: "@floegence/flowersec-core",
-      version: "0.28.0",
-      purl: "pkg:npm/%40floegence/flowersec-core@0.28.0",
+      version: "2.0.0",
+      purl: "pkg:npm/%40floegence/flowersec-core@2.0.0",
     },
     components,
     edges: components.map((component) => ({
-      from: "pkg:npm/%40floegence/flowersec-core@0.28.0",
+      from: "pkg:npm/%40floegence/flowersec-core@2.0.0",
       to: component.purl,
       kind: "runtime",
     })),
@@ -176,7 +176,7 @@ test("SPDX, CycloneDX, and notices are deterministic and preserve license decisi
   const spdx = renderSpdx("fixture", graph, "abc123");
   assert.equal(spdx.spdxVersion, "SPDX-2.3");
   assert.equal(spdx.packages[0].name, "@floegence/flowersec-core");
-  assert.equal(spdx.packages[0].versionInfo, "0.28.0");
+  assert.equal(spdx.packages[0].versionInfo, "2.0.0");
   assert.notEqual(spdx.packages[0].versionInfo, "abc123");
   assert.ok(spdx.relationships.some((edge) => edge.relationshipType === "DEPENDS_ON"));
   assert.equal(spdx.creationInfo.created, "1970-01-01T00:00:00Z");
@@ -185,7 +185,7 @@ test("SPDX, CycloneDX, and notices are deterministic and preserve license decisi
   const cyclone = renderCycloneDx("fixture", graph, "abc123");
   assert.equal(cyclone.bomFormat, "CycloneDX");
   assert.equal(cyclone.specVersion, "1.5");
-  assert.equal(cyclone.metadata.component.version, "0.28.0");
+  assert.equal(cyclone.metadata.component.version, "2.0.0");
   assert.notEqual(cyclone.metadata.component.version, "abc123");
   assert.equal(cyclone.components.length, 2);
   assert.ok(cyclone.serialNumber.startsWith("urn:uuid:"));
@@ -488,7 +488,7 @@ test("source and package graphs preserve real dependency edges and npm runtime c
   const npmSpdx = JSON.parse(artifacts.get("flowersec-ts/sbom/spdx.json"));
   const npmCyclone = JSON.parse(artifacts.get("flowersec-ts/sbom/cyclonedx.json"));
   assert.equal(npmSpdx.packages[0].name, "@floegence/flowersec-core");
-  assert.equal(npmSpdx.packages[0].versionInfo, "0.28.0");
+  assert.equal(npmSpdx.packages[0].versionInfo, "2.0.0");
   assert.ok(npmSpdx.relationships.some((edge) => edge.relationshipType === "DEPENDS_ON"));
   assert.equal(npmSpdx.packages.some((pkg) => pkg.name === "typescript"), false);
   assert.equal(npmSpdx.packages.some((pkg) => pkg.name === "vitest"), false);
