@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,9 +29,13 @@ type endpoint struct {
 }
 
 func main() {
+	pathFlag := flag.String("path", "direct", "carrier path: direct or tunnel")
+	flag.Parse()
+	subprotocol, sessionPath, endpointPath, err := pathConfiguration(*pathFlag)
+	must(err)
 	result := make(chan error, 1)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		result <- serveSession(writer, request)
+		result <- serveSession(writer, request, subprotocol, sessionPath, endpointPath)
 	}))
 	server.EnableHTTP2 = false
 	server.TLS = &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13}
@@ -42,7 +47,7 @@ func main() {
 		must(errors.New("test TLS server did not expose its certificate"))
 	}
 	address := endpoint{
-		URL: strings.Replace(server.URL, "https://", "wss://", 1) + "/flowersec/v2/direct",
+		URL: strings.Replace(server.URL, "https://", "wss://", 1) + endpointPath,
 		CAPEM: string(pem.EncodeToMemory(&pem.Block{
 			Type:  "CERTIFICATE",
 			Bytes: certificate.Raw,
@@ -58,9 +63,18 @@ func main() {
 	}
 }
 
-func serveSession(writer http.ResponseWriter, request *http.Request) error {
+func serveSession(
+	writer http.ResponseWriter,
+	request *http.Request,
+	subprotocol string,
+	sessionPath session.PathKind,
+	endpointPath string,
+) error {
+	if request.URL.Path != endpointPath {
+		return fmt.Errorf("unexpected WebSocket path %q", request.URL.Path)
+	}
 	upgrader := websocket.Upgrader{
-		Subprotocols: []string{carrierws.SubprotocolDirect},
+		Subprotocols: []string{subprotocol},
 		CheckOrigin:  allowedOrigin,
 	}
 	connection, err := upgrader.Upgrade(writer, request, nil)
@@ -84,7 +98,7 @@ func serveSession(writer http.ResponseWriter, request *http.Request) error {
 	transport, err := carrierws.NewAfterAdmission(
 		connection,
 		carrierws.ServerRole,
-		carrierws.SubprotocolDirect,
+		subprotocol,
 		resources,
 		carrierws.LivenessPolicy{},
 	)
@@ -95,16 +109,26 @@ func serveSession(writer http.ResponseWriter, request *http.Request) error {
 	for index := range psk {
 		psk[index] = byte(index + 1)
 	}
+	peerBinding := decoded.LocalAdmissionBinding
+	localEndpointInstanceID := ""
+	expectedPeerEndpointInstanceID := ""
+	if sessionPath == session.PathTunnel {
+		peerBinding = [32]byte{}
+		localEndpointInstanceID = "endpoint-server"
+		expectedPeerEndpointInstanceID = "endpoint-client"
+	}
 	established, err := session.Establish(ctx, transport, session.Config{
-		Role:                  session.RoleServer,
-		Path:                  session.PathDirect,
-		ChannelID:             decoded.Request.ChannelID,
-		SessionContractHash:   decoded.Request.SessionContractHash,
-		Suite:                 protocolv2.SuiteChaCha20Poly1305,
-		PSK:                   psk,
-		MaxInboundStreams:     64,
-		LocalAdmissionBinding: decoded.LocalAdmissionBinding,
-		PeerAdmissionBinding:  decoded.LocalAdmissionBinding,
+		Role:                           session.RoleServer,
+		Path:                           sessionPath,
+		ChannelID:                      decoded.Request.ChannelID,
+		SessionContractHash:            decoded.Request.SessionContractHash,
+		Suite:                          protocolv2.SuiteChaCha20Poly1305,
+		PSK:                            psk,
+		MaxInboundStreams:              64,
+		LocalAdmissionBinding:          decoded.LocalAdmissionBinding,
+		PeerAdmissionBinding:           peerBinding,
+		LocalEndpointInstanceID:        localEndpointInstanceID,
+		ExpectedPeerEndpointInstanceID: expectedPeerEndpointInstanceID,
 	})
 	if err != nil {
 		return err
@@ -151,6 +175,17 @@ func serveSession(writer http.ResponseWriter, request *http.Request) error {
 	}
 	time.Sleep(50 * time.Millisecond)
 	return nil
+}
+
+func pathConfiguration(value string) (string, session.PathKind, string, error) {
+	switch value {
+	case "direct":
+		return carrierws.SubprotocolDirect, session.PathDirect, "/flowersec/v2/direct", nil
+	case "tunnel":
+		return carrierws.SubprotocolTunnel, session.PathTunnel, "/flowersec/v2/tunnel", nil
+	default:
+		return "", "", "", fmt.Errorf("invalid carrier path %q", value)
+	}
 }
 
 func allowedOrigin(request *http.Request) bool {
