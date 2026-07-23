@@ -25,7 +25,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    e2ee::{Suite, generate_ephemeral_keypair},
+    crypto_v2::{Suite, generate_ephemeral_keypair},
     protocol_v2::{
         AEAD_TAG_V2_SIZE, CipherSuiteV2, DirectionV2, EpochRootsV2, INNER_HEADER_V2_SIZE,
         InnerRecordTypeV2, MAX_DATA_V2_BYTES, OpenPayloadV2, RECORD_HEADER_V2_SIZE, RecordHeaderV2,
@@ -43,7 +43,7 @@ use crate::{
 
 const CONTROL_PREFACE_BYTES: usize = 16;
 const HANDSHAKE_HEADER_BYTES: usize = 12;
-const MAX_HANDSHAKE_PAYLOAD_BYTES: usize = 8_192;
+pub(crate) const MAX_HANDSHAKE_PAYLOAD_BYTES: usize = 8_192;
 const RESERVED_RPC_KIND: &str = "flowersec.rpc.v2";
 const MAX_LEDGER_SLOTS: u64 = 1_048_576;
 const NORMAL_CLOSE_REASON_V2: u16 = 1;
@@ -3523,13 +3523,13 @@ mod tests {
                 server.server_eph_pub_b64u, vector["server_public_b64u"],
                 "{id}: server public"
             );
-            let client_shared = crate::e2ee::derive_shared_secret(
+            let client_shared = crate::crypto_v2::derive_shared_secret(
                 handshake_suite(suite),
                 &client_private,
                 &server_public,
             )
             .unwrap_or_else(|error| panic!("{id}: client ECDH: {error}"));
-            let server_shared = crate::e2ee::derive_shared_secret(
+            let server_shared = crate::crypto_v2::derive_shared_secret(
                 handshake_suite(suite),
                 &server_private,
                 &client_public,

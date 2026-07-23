@@ -87,6 +87,39 @@ final class SourceGuardTests: XCTestCase {
     }
   }
 
+  func testTransportV2PublicContractKeepsBinaryCarrierAndCryptoInternal() throws {
+    let sourceRoot = packageRoot().appendingPathComponent("flowersec-swift/Sources/Flowersec")
+    let connector = try String(
+      contentsOf: sourceRoot.appendingPathComponent("ConnectorV2.swift"),
+      encoding: .utf8)
+    let crypto = try String(
+      contentsOf: sourceRoot.appendingPathComponent("TransportV2Crypto.swift"),
+      encoding: .utf8)
+    XCTAssertFalse(connector.contains("public protocol FlowersecBinaryTransport"))
+    XCTAssertFalse(crypto.contains("public enum TransportCipherSuiteV2"))
+    XCTAssertFalse(crypto.contains("  public "), "v2 wire key material must remain internal")
+  }
+
+  func testSwiftPublicSurfaceDoesNotRestoreTransportV1() throws {
+    let sourceRoot = packageRoot().appendingPathComponent("flowersec-swift/Sources/Flowersec")
+    for name in [
+      "Controlplane.swift", "Endpoint.swift", "Handshake.swift", "HandshakeFrames.swift",
+      "ProxyClient.swift", "ProxyServer.swift", "Reconnect.swift", "RecordCodec.swift",
+      "SecureChannel.swift", "ServerHandshake.swift",
+    ] {
+      XCTAssertFalse(FileManager.default.fileExists(atPath: sourceRoot.appendingPathComponent(name).path))
+    }
+
+    for name in ["InternalSessionSupport.swift", "ProxyNIOWebSocket.swift", "ProxyTypes.swift", "RPC.swift", "RPCServer.swift", "SDKDefaults.swift", "Yamux.swift", "YamuxChannel.swift"] {
+      let text = try String(contentsOf: sourceRoot.appendingPathComponent(name), encoding: .utf8)
+      XCTAssertFalse(text.contains("public "), "\(name) must remain an internal v2 implementation detail")
+    }
+
+    let generated = sourceRoot.appendingPathComponent("Generated")
+    let generatedFiles = try swiftFiles(under: generated)
+    XCTAssertTrue(generatedFiles.isEmpty, "Transport v1 generated Swift sources must not be maintained")
+  }
+
   private func swiftFiles(under root: URL) throws -> [URL] {
     try textFiles(under: root).filter { $0.pathExtension == "swift" }
   }

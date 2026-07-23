@@ -1,11 +1,11 @@
 import Foundation
 
-public struct RPCServerOptions: Equatable, Sendable {
-  public var maxConcurrentRequests: Int
-  public var maxQueuedRequests: Int
-  public var maxQueuedNotifications: Int
+internal struct RPCServerOptions: Equatable, Sendable {
+  internal var maxConcurrentRequests: Int
+  internal var maxQueuedRequests: Int
+  internal var maxQueuedNotifications: Int
 
-  public init(
+  internal init(
     maxConcurrentRequests: Int = FlowersecSDKDefaults.RPC.maxConcurrentRequests,
     maxQueuedRequests: Int = FlowersecSDKDefaults.RPC.maxQueuedRequests,
     maxQueuedNotifications: Int = FlowersecSDKDefaults.RPC.maxQueuedNotifications
@@ -25,18 +25,18 @@ public struct RPCServerOptions: Equatable, Sendable {
   }
 }
 
-public typealias RPCHandler = @Sendable (Data) async throws -> Data
+internal typealias RPCHandler = @Sendable (Data) async throws -> Data
 
-public actor RPCRouter {
+internal actor RPCRouter {
   private var handlers: [UInt32: RPCHandler] = [:]
 
-  public init() {}
+  internal init() {}
 
-  public func register(_ typeID: UInt32, handler: @escaping RPCHandler) {
+  internal func register(_ typeID: UInt32, handler: @escaping RPCHandler) {
     handlers[typeID] = handler
   }
 
-  public func register<Request: Decodable & Sendable, Response: Encodable & Sendable>(
+  internal func register<Request: Decodable & Sendable, Response: Encodable & Sendable>(
     _ typeID: UInt32,
     handler: @escaping @Sendable (Request) async throws -> Response
   ) {
@@ -52,7 +52,7 @@ public actor RPCRouter {
   }
 }
 
-public actor RPCServer {
+internal actor RPCServer {
   private let stream: any FlowersecByteStream
   private let router: RPCRouter
   private let options: RPCServerOptions
@@ -68,7 +68,7 @@ public actor RPCServer {
   private var terminalError: FlowersecError?
   private var closed = false
 
-  public init(
+  internal init(
     stream: any FlowersecByteStream,
     router: RPCRouter,
     options: RPCServerOptions = RPCServerOptions(),
@@ -81,7 +81,7 @@ public actor RPCServer {
     self.path = path
   }
 
-  public func notify<Payload: Encodable & Sendable>(
+  internal func notify<Payload: Encodable & Sendable>(
     _ typeID: UInt32,
     _ payload: Payload
   ) async throws {
@@ -96,7 +96,7 @@ public actor RPCServer {
     try await writeEnvelope(envelope)
   }
 
-  public func serve() async throws {
+  internal func serve() async throws {
     do {
       while !Task.isCancelled && !closed {
         let frame = try await FlowersecJSONFrame.read(from: stream)
@@ -118,7 +118,7 @@ public actor RPCServer {
     }
   }
 
-  public func close() async {
+  internal func close() async {
     guard !closed else { return }
     closed = true
     requestQueue.removeAll()

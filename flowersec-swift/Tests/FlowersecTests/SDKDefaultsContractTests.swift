@@ -5,10 +5,8 @@ import Testing
 struct SDKDefaultsContractTests {
   @Test func defaultsMatchSharedStabilityManifest() throws {
     let root = URL(fileURLWithPath: #filePath)
-      .deletingLastPathComponent()
-      .deletingLastPathComponent()
-      .deletingLastPathComponent()
-      .deletingLastPathComponent()
+      .deletingLastPathComponent().deletingLastPathComponent()
+      .deletingLastPathComponent().deletingLastPathComponent()
     let data = try Data(contentsOf: root.appending(path: "stability/sdk_defaults.json"))
     let document = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
@@ -48,7 +46,6 @@ struct SDKDefaultsContractTests {
       "reconnect.jitter_ratio": FlowersecSDKDefaults.Reconnect.jitterRatio,
     ]
     let expected = try runtimeLeaves(document)
-
     #expect(Set(actual.keys) == Set(expected.keys))
     #expect(actual == expected)
   }

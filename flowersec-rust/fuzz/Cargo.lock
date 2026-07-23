@@ -487,11 +487,8 @@ dependencies = [
 name = "flowersec-fuzz"
 version = "0.0.0"
 dependencies = [
- "async-trait",
  "flowersec",
  "libfuzzer-sys",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

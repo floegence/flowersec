@@ -17,9 +17,8 @@ use flowersec::{
     transport_v2::{
         CarrierKind, CarrierSessionV2, CarrierStreamV2, PathKind, SessionRole, SessionV2,
     },
-    yamux::{ByteDuplex, Mode, YamuxError, YamuxLimits, YamuxSession},
 };
-use tokio::sync::{Mutex, Notify, mpsc};
+use tokio::sync::Notify;
 
 #[tokio::test]
 async fn exact_handshake_and_ready_boundary_establish_a_memory_pair() {
@@ -469,50 +468,6 @@ async fn establish_pair() -> (Arc<dyn SessionV2>, Arc<dyn SessionV2>) {
     (client.expect("client"), server.expect("server"))
 }
 
-#[derive(Debug)]
-struct YamuxMemoryDuplex {
-    incoming: Mutex<mpsc::Receiver<Vec<u8>>>,
-    outgoing: mpsc::Sender<Vec<u8>>,
-}
-
-#[async_trait::async_trait]
-impl ByteDuplex for YamuxMemoryDuplex {
-    async fn read(&self) -> Result<Vec<u8>, YamuxError> {
-        self.incoming
-            .lock()
-            .await
-            .recv()
-            .await
-            .ok_or(YamuxError::Closed)
-    }
-
-    async fn write(&self, bytes: &[u8]) -> Result<(), YamuxError> {
-        self.outgoing
-            .send(bytes.to_vec())
-            .await
-            .map_err(|_| YamuxError::Closed)
-    }
-
-    async fn close(&self) -> Result<(), YamuxError> {
-        Ok(())
-    }
-}
-
-fn yamux_memory_pair() -> (Arc<YamuxMemoryDuplex>, Arc<YamuxMemoryDuplex>) {
-    let (client_tx, server_rx) = mpsc::channel(64);
-    let (server_tx, client_rx) = mpsc::channel(64);
-    (
-        Arc::new(YamuxMemoryDuplex {
-            incoming: Mutex::new(client_rx),
-            outgoing: client_tx,
-        }),
-        Arc::new(YamuxMemoryDuplex {
-            incoming: Mutex::new(server_rx),
-            outgoing: server_tx,
-        }),
-    )
-}
-
 #[tokio::test]
 async fn physical_capacity_mismatch_fails_before_control_stream_open() {
     let (inner, _peer) = memory_carrier_pair_v2();
@@ -536,88 +491,6 @@ fn memory_carrier_pair_for_logical(
     logical: u16,
 ) -> (Arc<dyn CarrierSessionV2>, Arc<dyn CarrierSessionV2>) {
     memory_carrier_pair_v2_with_capacity(u32::from(logical) + 2)
-}
-
-#[tokio::test]
-async fn yamux_control_and_rpc_slots_preserve_one_data_stream_capacity() {
-    let limits = YamuxLimits::default()
-        .with_session_v2_logical_stream_limit(1)
-        .expect("SessionV2 Yamux limits");
-    assert_eq!(limits.max_inbound_streams, 3);
-    assert!(limits.max_active_streams >= 3);
-    let (client_io, server_io) = yamux_memory_pair();
-    let client_carrier: Arc<dyn CarrierSessionV2> =
-        Arc::new(YamuxSession::new(client_io, Mode::Client, limits).expect("client Yamux"));
-    let server_carrier: Arc<dyn CarrierSessionV2> =
-        Arc::new(YamuxSession::new(server_io, Mode::Server, limits).expect("server Yamux"));
-    let client_config = SessionConfigV2 {
-        role: SessionRole::Client,
-        path: PathKind::Direct,
-        channel_id: "yamux-capacity-one".into(),
-        session_contract_hash: [0x51; 32],
-        suite: CipherSuiteV2::ChaCha20Poly1305,
-        psk: [0x52; 32],
-        max_inbound_streams: 1,
-        idle_timeout: Duration::ZERO,
-        local_admission_binding: [1; 32],
-        peer_admission_binding: Some([2; 32]),
-        local_endpoint_instance_id: None,
-        expected_peer_endpoint_instance_id: None,
-        rpc_handler: Some(Arc::new(EchoRpc)),
-        deadlines: Default::default(),
-    };
-    let server_config = SessionConfigV2 {
-        role: SessionRole::Server,
-        local_admission_binding: [2; 32],
-        peer_admission_binding: Some([1; 32]),
-        ..client_config.clone()
-    };
-    let (client, server) = tokio::join!(
-        establish_session_v2(client_carrier, client_config),
-        establish_session_v2(server_carrier, server_config),
-    );
-    let client = client.expect("client SessionV2");
-    let server = server.expect("server SessionV2");
-    let rpc = client
-        .rpc()
-        .call(1, serde_json::json!({"capacity": "reserved"}))
-        .await
-        .expect("reserved RPC stream");
-    assert_eq!(rpc["request"]["capacity"], "reserved");
-
-    let (first, first_incoming) = tokio::join!(
-        client.open_stream("first", serde_json::Map::new()),
-        server.accept_stream(),
-    );
-    let first = first.expect("first logical stream");
-    let _first_incoming = first_incoming.expect("accept first logical stream");
-    assert!(
-        tokio::time::timeout(
-            Duration::from_millis(100),
-            client.open_stream("blocked", serde_json::Map::new()),
-        )
-        .await
-        .is_err(),
-        "second logical stream bypassed the SessionV2 semaphore"
-    );
-
-    first.reset().await.expect("reset first logical stream");
-    client
-        .probe_liveness()
-        .await
-        .expect("observe peer after reset control record");
-    let (third, third_incoming) = tokio::time::timeout(Duration::from_secs(2), async {
-        tokio::join!(
-            client.open_stream("third", serde_json::Map::new()),
-            server.accept_stream(),
-        )
-    })
-    .await
-    .expect("capacity was not released after reset");
-    assert_eq!(third.expect("third logical stream").id(), 5);
-    assert_eq!(third_incoming.expect("accept third logical stream").id(), 5);
-    client.close().await.expect("close client");
-    server.close().await.expect("close server");
 }
 
 #[tokio::test]

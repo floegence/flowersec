@@ -1,4 +1,3 @@
-export { createNodeWsFactory } from "./wsFactory.js";
 export { connectNodeSessionV2 } from "./connectV2.js";
 export type { NodeSessionConnectorV2Options } from "./connectV2.js";
 export {
@@ -43,7 +42,6 @@ export type {
 } from "../v2/reconnect.js";
 export type {
   ByteStreamV2,
-  CarrierKind,
   IncomingStreamV2,
   JsonObjectV2,
   JsonPrimitiveV2,
@@ -68,26 +66,3 @@ export type {
   TransportSecurityPolicyPreset,
   NetworkPlaintextPolicyOptions,
 } from "../client-connect/transportSecurity.js";
-export { connectDirectNode, connectNode, connectTunnelNode } from "./connect.js";
-export type {
-  DirectNodeReconnectConfig,
-  NodeReconnectConfig,
-  TunnelNodeReconnectConfig,
-} from "./reconnectConfig.js";
-export {
-  createDirectNodeReconnectConfig,
-  createNodeReconnectConfig,
-  createTunnelNodeReconnectConfig,
-} from "./reconnectConfig.js";
-export * from "../endpoint/index.js";
-export * from "../endpoint/node.js";
-export * from "../proxy/server.js";
-export type {
-  ConnectArtifact,
-  CorrelationContext,
-  CorrelationKV,
-  DirectClientConnectArtifact,
-  ScopeMetadataEntry,
-  TunnelClientConnectArtifact,
-} from "../connect/artifact.js";
-export { assertConnectArtifact } from "../connect/artifact.js";

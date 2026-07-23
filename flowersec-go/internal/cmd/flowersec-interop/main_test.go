@@ -83,10 +83,10 @@ func TestExternalClientHarnessesCheckControlBeforeResetCleanup(t *testing.T) {
 		},
 		{
 			name:          "rust",
-			path:          "flowersec-rust/examples/interop_harness.rs",
-			startMarker:   `"active_streams" => {`,
-			controlMarker: "let control_result = rpc_control(client, 5).await;",
-			resetMarker:   "let reset_result = held.reset().await;",
+			path:          "flowersec-rust/tests/raw_quic_v2.rs",
+			startMarker:   "async fn raw_quic_control_and_rpc_slots_preserve_one_data_stream_capacity()",
+			controlMarker: "let rpc = client",
+			resetMarker:   "first.reset().await",
 		},
 	}
 	for _, test := range tests {

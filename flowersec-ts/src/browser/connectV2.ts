@@ -655,9 +655,10 @@ class BrowserArtifactExpiredError extends Error {
 export async function connectBrowserSessionV2(
   lease: BrowserArtifactLeaseV2,
   options: BrowserSessionConnectorV2Options & Readonly<{ signal?: AbortSignal }>,
-): Promise<BrowserSessionConnectResultV2> {
+): Promise<SessionV2> {
   const connector = new BrowserSessionConnectorV2(lease, options);
-  return await connector.connect(options.signal === undefined ? {} : { signal: options.signal });
+  const result = await connector.connect(options.signal === undefined ? {} : { signal: options.signal });
+  return result.session;
 }
 
 type BrowserWebSocketLikeV2 = WebSocketLike & Readonly<{ protocol?: string }>;

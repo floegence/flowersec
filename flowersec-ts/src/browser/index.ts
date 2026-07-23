@@ -1,4 +1,3 @@
-export type { ConnectBrowserOptions, DirectConnectBrowserOptions, TunnelConnectBrowserOptions } from "./connect.js";
 export {
   BROWSER_RUNTIME_CAPABILITY_V2,
   decodeRuntimeCapabilityDescriptorV2,
@@ -42,7 +41,6 @@ export type {
 } from "../v2/reconnect.js";
 export type {
   ByteStreamV2,
-  CarrierKind,
   IncomingStreamV2,
   JsonObjectV2,
   JsonPrimitiveV2,
@@ -53,12 +51,8 @@ export type {
   StreamOpenOptionsV2,
 } from "../v2/contract.js";
 export { SessionV2 } from "../v2/session.js";
-export { connectBrowser, connectDirectBrowser, connectTunnelBrowser } from "./connect.js";
-export { BrowserSessionConnectorV2, connectBrowserSessionV2 } from "./connectV2.js";
+export { connectBrowserSessionV2 } from "./connectV2.js";
 export type {
-  BrowserArtifactLeaseV2,
-  BrowserConnectorStateV2,
-  BrowserSessionConnectResultV2,
   BrowserSessionConnectorV2Options,
 } from "./connectV2.js";
 export { FlowersecError } from "../utils/errors.js";
@@ -75,27 +69,3 @@ export type {
   TransportSecurityPolicyPreset,
   NetworkPlaintextPolicyOptions,
 } from "../client-connect/transportSecurity.js";
-export type {
-  ConnectArtifact,
-  CorrelationContext,
-  CorrelationKV,
-  DirectClientConnectArtifact,
-  ScopeMetadataEntry,
-  TunnelClientConnectArtifact,
-} from "../connect/artifact.js";
-export { assertConnectArtifact } from "../connect/artifact.js";
-export type { RequestConnectArtifactInput, RequestEntryConnectArtifactInput } from "../controlplane/request.js";
-export {
-  requestConnectArtifact,
-  requestEntryConnectArtifact,
-} from "../controlplane/request.js";
-export type {
-  BrowserReconnectConfig,
-  DirectBrowserReconnectConfig,
-  TunnelBrowserReconnectConfig,
-} from "./reconnectConfig.js";
-export {
-  createBrowserReconnectConfig,
-  createDirectBrowserReconnectConfig,
-  createTunnelBrowserReconnectConfig,
-} from "./reconnectConfig.js";

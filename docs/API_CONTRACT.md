@@ -373,103 +373,43 @@ Multi-tenant tunnel isolation is keyed only by `(audience, issuer)`. Tenant IDs 
 Package entrypoints:
 
 - `@floegence/flowersec-core`
-  - `connect(...)`
-  - `connectTunnel(...)`
-  - `connectDirect(...)`
-  - `ConnectArtifact`
-  - `CorrelationContext`
-  - `CorrelationKV`
-  - `TunnelClientConnectArtifact`
-  - `DirectClientConnectArtifact`
-  - `ScopeMetadataEntry`
-  - `assertConnectArtifact(...)`
+  - opaque Transport v2 acquisition: `Artifact`, `parseArtifact(...)`,
+    `ArtifactLeaseV2`, `ArtifactSourceV2`, `createArtifactLeaseV2(...)`, and
+    `createArtifactV2Resolver(...)`
+  - carrier-neutral Transport v2 session contracts: `SessionV2`,
+    `ByteStreamV2`, `IncomingStreamV2`, and reconnect manager types
+  - runtime capability descriptors and strict codecs
   - `RequireTLS`
   - `AllowPlaintextForLoopback`
   - `createNetworkPlaintextPolicy(...)`
   - `NetworkPlaintextPolicyOptions`
   - `PlaintextRiskAcceptance`
   - `TransportSecurityPolicy`
-  - `LivenessOptions`
-  - `WebSocketLimits`
-  - `YamuxLimits`
-  - Transport v2 session exports: `SessionV2`, `establishSessionV2(...)`,
-    `SessionConfigV2`, deadline types, `CarrierSessionV2`, `CarrierStreamV2`,
-    `NativeCarrierSessionV2`, `NativeCarrierStreamV2`,
-    `WebSocketBinaryTransportV2`, `WebSocketResourcePolicyV2`, and admission
-    adapters
-  - Transport v2 artifact exports: `ArtifactV2`, candidate/path/session types,
-    `ArtifactV2Error`, `decodeArtifactV2JSON(...)`,
-    `encodeArtifactV2JSON(...)`, and `validateArtifactV2(...)`
-  - Transport v2 acquisition exports: `ArtifactLeaseV2`, `ArtifactSourceV2`,
-    `ArtifactAcquireContextV2`, `ArtifactVersionPolicyV2`,
-    `createArtifactAcquireContextV2(...)`, `createArtifactLeaseV2(...)`, and
-    `createArtifactV2Resolver(...)`
-  - connect option `maxOutboundBufferedBytes`
-  - connected client method `rekey()`
-  - connected stream method `reset()`
 - `@floegence/flowersec-core/node`
-  - `connectNode(...)`
-  - `connectTunnelNode(...)`
-  - `connectDirectNode(...)`
-  - `createNodeReconnectConfig(...)`
-  - `createTunnelNodeReconnectConfig(...)`
-  - `createDirectNodeReconnectConfig(...)`
-  - `createNodeWsFactory()`
-  - `ConnectArtifact`
-  - `CorrelationContext`
-  - `CorrelationKV`
-  - `TunnelClientConnectArtifact`
-  - `DirectClientConnectArtifact`
-  - `ScopeMetadataEntry`
-  - `assertConnectArtifact(...)`
+  - `connectNodeSessionV2(...)` and `NodeSessionConnectorV2Options`
+  - opaque acquisition and carrier-neutral session contracts
   - `RequireTLS`
   - `AllowPlaintextForLoopback`
   - `createNetworkPlaintextPolicy(...)`
   - `NetworkPlaintextPolicyOptions`
   - `PlaintextRiskAcceptance`
-  - `serveProxySession(...)`
-  - `serveProxyStream(...)`
-  - `ProxyServerOptions`
-  - `ProxyServerOptions.maxConcurrentStreams`
-  - `ProxyServerOptions.maxWsQueuedBytes`
-  - the same Transport v2 artifact, acquisition, session, deadline, and
-    carrier-neutral stream exports as the root entry, excluding the native
-    admission adapter
   - `NODE_RUNTIME_CAPABILITY_V2`
-  - Node currently advertises no production Transport v2 carrier. Its existing
-    package WebSocket utilities do not constitute a committed v2 admission and
-    carrier adapter.
+  - Node advertises WebSocket dial tuples for direct clients and both tunnel
+    roles; raw QUIC and WebTransport remain typed unavailable
 - `@floegence/flowersec-core/browser`
-  - `connectBrowser(...)`
-  - `connectTunnelBrowser(...)`
-  - `connectDirectBrowser(...)`
-  - `ConnectArtifact`
-  - `CorrelationContext`
-  - `CorrelationKV`
-  - `TunnelClientConnectArtifact`
-  - `DirectClientConnectArtifact`
-  - `ScopeMetadataEntry`
-  - `assertConnectArtifact(...)`
-  - `RequestConnectArtifactInput`
-  - `RequestEntryConnectArtifactInput`
-  - `requestConnectArtifact(...)`
-  - `requestEntryConnectArtifact(...)`
-  - `createBrowserReconnectConfig(...)`
-  - `createTunnelBrowserReconnectConfig(...)`
-  - `createDirectBrowserReconnectConfig(...)`
+  - `connectBrowserSessionV2(...)` and `BrowserSessionConnectorV2Options`
+  - opaque acquisition and carrier-neutral session contracts
   - `RequireTLS`
   - `AllowPlaintextForLoopback`
   - `createNetworkPlaintextPolicy(...)`
   - `NetworkPlaintextPolicyOptions`
   - `PlaintextRiskAcceptance`
-  - the same Transport v2 artifact, acquisition, session, deadline, and
-    carrier-neutral stream exports as the root entry
   - `BROWSER_RUNTIME_CAPABILITY_V2`
   - `detectBrowserRuntimeCapabilityV2(...)` and `BrowserRuntimeFeaturesV2` for
     removing WebSocket or WebTransport tuples when the actual browser API is
     unavailable
-  - `BrowserSessionConnectorV2`, `connectBrowserSessionV2(...)`, and browser
-    candidate/lease types; carrier construction stages remain package-internal
+  - carrier construction, selected candidates, raw artifacts, wire contracts,
+    and Yamux remain package-internal
 - `@floegence/flowersec-core/controlplane`
   - `requestConnectArtifact(...)`
   - `requestEntryConnectArtifact(...)`
@@ -554,125 +494,16 @@ TypeScript connection contract notes:
 
 ## SwiftPM module
 
-Package:
+The SwiftPM product and module are both `Flowersec` (`import Flowersec`). The maintained public surface is Transport v2-only:
 
-- `Flowersec`
-  - SwiftPM product: `Flowersec`
-  - module import: `import Flowersec`
+- Opaque artifacts: `parseArtifactV2(...)`, `ArtifactV2`, and `ArtifactLeaseV2`
+- Connection: `ConnectorV2`, `ConnectorOptionsV2`, and redacted `ConnectErrorV2`
+- Carrier-neutral sessions: `SessionV2`, `RPCPeerV2`, `ByteStreamV2`, and `IncomingStreamV2`
+- Portable stream metadata: `StreamMetadataV2` and `JSONValueV2`
+- Capability negotiation: `RuntimeCapabilitiesV2` and its descriptor/tuple value types
+- Host normalization: `IDNAHostV2`
 
-Connection and session entrypoints:
-
-- `Flowersec.connect(...)`
-- `Flowersec.connectTunnel(...)`
-- `Flowersec.connectDirect(...)`
-- `FlowersecClient`
-- `FlowersecClient.rpc`
-- `FlowersecClient.openStream(...)`
-- `FlowersecClient.probeLiveness(...)`
-- `FlowersecClient.rekey()`
-- `FlowersecClient.close()`
-- `ConnectOptions`
-  - `ConnectOptions.connectTimeout`
-  - `ConnectOptions.handshakeTimeout`
-  - `ConnectOptions.maxOutboundBufferedBytes`
-  - `ConnectOptions.scopeResolvers`
-  - `ConnectOptions.relaxedOptionalScopeValidation`
-- `ConnectScopeResolver`
-- `ConnectScopeResolverMap`
-- `DirectConnectOptions`
-- `TunnelConnectOptions`
-- `TransportSecurityPolicy`
-- `TransportSecurityPolicyInput`
-- `TransportSecurityPolicy.networkPlaintext(options:)`
-- `NetworkPlaintextPolicyOptions`
-- `PlaintextRiskAcceptance`
-- `TransportSecurityDiagnostic`
-- `TransportRuntime`
-- `DiagnosticEvent`
-- `DiagnosticCodeDomain`
-- `DiagnosticResult`
-- `LivenessOptions`
-- `YamuxLimits`
-
-Rust exposes the matching `TransportSecurityPolicy::network_plaintext(...)`,
-`NetworkPlaintextPolicyOptions`, and `PlaintextRiskAcceptance` APIs.
-
-Artifact acquisition requires an absolute HTTPS URL by default. Go
-`client.ConnectArtifactRequestConfig.AllowLoopbackHTTP`, TypeScript
-`ConnectArtifactRequestConfig.allowLoopbackHTTP`, Swift
-`ArtifactRequestOptions.allowLoopbackHTTP`, and Rust
-`ConnectArtifactRequestConfig.allow_loopback_http` opt in to HTTP only for literal
-`localhost`, canonical `127.0.0.0/8`, or `::1` targets. Artifact clients reject
-userinfo, unsupported schemes, non-canonical loopback addresses, and redirects.
-Rust custom HTTP configuration is accepted only through
-`flowersec::controlplane::client::ArtifactHttpClient`, which always disables
-redirects. Its explicit option is
-`flowersec::controlplane::client::ConnectArtifactRequestConfig.allow_loopback_http`.
-
-RPC and stream building blocks:
-
-- `RPCClient`
-- `RPCClient.start()`
-- `RPCClient.call(...)`
-- `RPCClient.notify(...)`
-- `RPCClient.onNotify(...)`
-- `RPCClient.close()`
-- `FlowersecRPCStream`
-- `FlowersecByteStream`
-- `FlowersecByteStream.reset()`
-- `RPCSubscription`
-- `RPCEnvelope`
-- `RPCErrorPayload`
-- `FlowersecRPCError`
-- `FlowersecJSONFrame`
-- `RPCServerOptions`
-- `RPCRouter`
-- `RPCServer`
-
-Endpoint, controlplane, reconnect, and proxy building blocks:
-
-- `Endpoint`
-- `EndpointSession`
-- `EndpointSession.rekey()`
-- `EndpointSession.terminationError()`
-- `EndpointOptions`
-- `DirectEndpointCredential`
-- `DirectCredentialResolver`
-- `Controlplane`
-- `FST2Token`
-- `TokenIssuer`
-  - `TokenIssuer.addVerificationKey(kid:publicKey:)`
-  - `TokenIssuer.rotate(kid:seed:)`
-  - `TokenIssuer.retireVerificationKey(kid:)`
-- `ChannelInitService`
-- `ArtifactSource`
-- `ReconnectManager`
-- `ReconnectConfig`
-- `ReconnectSettings`
-- `ProxyClient`
-- `ProxyServer`
-- `ProxyContractOptions`
-- `ProxyServerOptions`
-- `ProxyServerOptions.maxConcurrentStreams`
-- `FlowersecSDKDefaults.Proxy.maxConcurrentStreams`
-- `ProxyCookieJar`
-
-Artifact and wire value types:
-
-- `ConnectArtifact`
-- `ConnectArtifactMetadata`
-- `DirectConnectInfo`
-- `ChannelInitGrant`
-- `ScopeMetadataEntry`
-- `ScopePayload`
-- `ScopePayloadValue`
-- `CorrelationContext`
-- `CorrelationKV`
-- `Suite`
-- `FlowersecError`
-- `FlowersecPath`
-- `FlowersecStage`
-- `FlowersecCode`
+Carrier candidates, credentials, wire frames, cryptographic material, Yamux, raw artifacts, spend ledgers, and concrete transport adapters are SDK-internal. On macOS, `ConnectorV2` supports direct and tunnel WSS dialing with TLS 1.3 and exact subprotocol validation. The cross-Apple descriptor does not advertise macOS evidence as iOS capability.
 
 ## Rust crate
 
@@ -797,7 +628,7 @@ Portable client artifact handling trims `channel_id`, rejects empty values and v
 
 Resolved direct INIT validation uses the same stable tuples in all four SDKs before the resolver runs: an empty `channel_id` is `direct/validate/missing_channel_id`; leading or trailing whitespace and identifiers longer than 256 UTF-8 bytes are `direct/validate/invalid_input`; unsupported protocol versions, roles, or cipher suites are `direct/handshake/handshake_failed`. These structural checks protect the resolver boundary but do not authenticate the peer. When one INIT contains multiple invalid fields, which validation error is reported first is not a portable contract.
 
-Credential resolvers must be non-consuming. `commitAuthenticated` runs only after PSK authentication and before Yamux, and the backing credential-store transaction must be idempotent, cancellation-safe, and bounded by its own deadline. The SDK handshake deadline bounds connection establishment and the caller-visible result, but it cannot roll back an external side effect that a callback already started. A callback may therefore finish after the SDK has returned timeout or cancellation; that late completion must never authorize or create the failed Flowersec connection. At worst, a correctly isolated credential transaction may consume a credential whose connection has already failed. Swift custom `FlowersecBinaryTransport` implementations must make `close()` idempotent and cancellation-cooperative because timeout and cancellation initiate cleanup without waiting indefinitely for custom transport code.
+Credential resolvers must be non-consuming. `commitAuthenticated` runs only after PSK authentication and before Yamux, and the backing credential-store transaction must be idempotent, cancellation-safe, and bounded by its own deadline. The SDK handshake deadline bounds connection establishment and the caller-visible result, but it cannot roll back an external side effect that a callback already started. A callback may therefore finish after the SDK has returned timeout or cancellation; that late completion must never authorize or create the failed Flowersec connection. At worst, a correctly isolated credential transaction may consume a credential whose connection has already failed. Swift carrier transports are SDK-internal and cleanup remains cancellation-cooperative and idempotent.
 
 Tunnel attach cancellation has an explicit submission boundary. SDKs must reject observable cancellation before transport policy, connection start, and attach submission, and must close the transport immediately when cancellation is observed during a pending attach. Once an attach frame has been handed to the system WebSocket send operation, cancellation cannot retract it or prove that the peer did not receive the one-time token. The call still returns cancellation and closes the transport, but callers must not assume that the artifact remains reusable after that boundary.
 

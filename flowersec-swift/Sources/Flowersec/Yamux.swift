@@ -1,15 +1,15 @@
 import Foundation
 
-public struct YamuxLimits: Equatable, Sendable {
-  public var maxActiveStreams: Int
-  public var maxInboundStreams: Int
-  public var maxFrameBytes: Int
-  public var preferredOutboundFrameBytes: Int
-  public var maxStreamWriteQueueBytes: Int
-  public var maxStreamReceiveBytes: Int
-  public var maxSessionReceiveBytes: Int
+internal struct YamuxLimits: Equatable, Sendable {
+  internal var maxActiveStreams: Int
+  internal var maxInboundStreams: Int
+  internal var maxFrameBytes: Int
+  internal var preferredOutboundFrameBytes: Int
+  internal var maxStreamWriteQueueBytes: Int
+  internal var maxStreamReceiveBytes: Int
+  internal var maxSessionReceiveBytes: Int
 
-  public init(
+  internal init(
     maxActiveStreams: Int = FlowersecSDKDefaults.Yamux.maxActiveStreams,
     maxInboundStreams: Int = FlowersecSDKDefaults.Yamux.maxInboundStreams,
     maxFrameBytes: Int = FlowersecSDKDefaults.Yamux.maxFrameBytes,
@@ -65,7 +65,7 @@ public struct YamuxLimits: Equatable, Sendable {
   }
 }
 
-public enum LivenessOptions: Equatable, Sendable {
+internal enum LivenessOptions: Equatable, Sendable {
   case pathDefault
   case disabled
   case enabled(interval: Duration, timeout: Duration)

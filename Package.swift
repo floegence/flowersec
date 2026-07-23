@@ -31,17 +31,6 @@ let package = Package(
       ],
       path: "flowersec-swift/Sources/Flowersec"
     ),
-    .executableTarget(
-      name: "FlowersecInteropHarness",
-      dependencies: [
-        "Flowersec",
-        .product(name: "NIOCore", package: "swift-nio"),
-        .product(name: "NIOHTTP1", package: "swift-nio"),
-        .product(name: "NIOPosix", package: "swift-nio"),
-        .product(name: "NIOWebSocket", package: "swift-nio"),
-      ],
-      path: "flowersec-swift/InteropHarness"
-    ),
     .testTarget(
       name: "FlowersecTests",
       dependencies: ["Flowersec"],

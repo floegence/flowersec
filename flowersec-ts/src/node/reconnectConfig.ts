@@ -1,5 +1,5 @@
 import type { ClientObserverLike } from "../observability/observer.js";
-import type { ConnectOptions } from "../facade.js";
+import type { ConnectOptions } from "../connect/legacyFacade.js";
 import type { DirectConnectOptions } from "../direct-client/connect.js";
 import type { TunnelConnectOptions } from "../tunnel-client/connect.js";
 import type { AutoReconnectConfig, ConnectConfig as ReconnectConnectConfig } from "../reconnect/index.js";

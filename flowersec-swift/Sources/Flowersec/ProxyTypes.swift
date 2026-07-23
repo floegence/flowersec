@@ -1,41 +1,41 @@
 import Foundation
 
-public enum ProxyProtocol {
-  public static let version = 1
-  public static let http1Kind = "flowersec-proxy/http1"
-  public static let webSocketKind = "flowersec-proxy/ws"
+internal enum ProxyProtocol {
+  internal static let version = 1
+  internal static let http1Kind = "flowersec-proxy/http1"
+  internal static let webSocketKind = "flowersec-proxy/ws"
 }
 
-public struct ProxyHeader: Codable, Equatable, Sendable {
-  public var name: String
-  public var value: String
+internal struct ProxyHeader: Codable, Equatable, Sendable {
+  internal var name: String
+  internal var value: String
 
-  public init(name: String, value: String) {
+  internal init(name: String, value: String) {
     self.name = name
     self.value = value
   }
 }
 
-public struct ProxyRemoteError: Codable, Equatable, Sendable {
-  public var code: String
-  public var message: String
+internal struct ProxyRemoteError: Codable, Equatable, Sendable {
+  internal var code: String
+  internal var message: String
 
-  public init(code: String, message: String) {
+  internal init(code: String, message: String) {
     self.code = code
     self.message = message
   }
 }
 
-public struct ProxyHTTPRequestMeta: Codable, Equatable, Sendable {
-  public var version: Int
-  public var requestID: String
-  public var method: String
-  public var path: String
-  public var headers: [ProxyHeader]
-  public var externalOrigin: String?
-  public var timeoutMilliseconds: Int64?
+internal struct ProxyHTTPRequestMeta: Codable, Equatable, Sendable {
+  internal var version: Int
+  internal var requestID: String
+  internal var method: String
+  internal var path: String
+  internal var headers: [ProxyHeader]
+  internal var externalOrigin: String?
+  internal var timeoutMilliseconds: Int64?
 
-  public init(
+  internal init(
     version: Int = ProxyProtocol.version,
     requestID: String,
     method: String,
@@ -64,15 +64,15 @@ public struct ProxyHTTPRequestMeta: Codable, Equatable, Sendable {
   }
 }
 
-public struct ProxyHTTPResponseMeta: Codable, Equatable, Sendable {
-  public var version: Int
-  public var requestID: String
-  public var ok: Bool
-  public var status: Int?
-  public var headers: [ProxyHeader]
-  public var error: ProxyRemoteError?
+internal struct ProxyHTTPResponseMeta: Codable, Equatable, Sendable {
+  internal var version: Int
+  internal var requestID: String
+  internal var ok: Bool
+  internal var status: Int?
+  internal var headers: [ProxyHeader]
+  internal var error: ProxyRemoteError?
 
-  public init(
+  internal init(
     version: Int = ProxyProtocol.version,
     requestID: String,
     ok: Bool,
@@ -97,7 +97,7 @@ public struct ProxyHTTPResponseMeta: Codable, Equatable, Sendable {
     case error
   }
 
-  public init(from decoder: any Decoder) throws {
+  internal init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     version = try container.decode(Int.self, forKey: .version)
     requestID = try container.decode(String.self, forKey: .requestID)
@@ -108,13 +108,13 @@ public struct ProxyHTTPResponseMeta: Codable, Equatable, Sendable {
   }
 }
 
-public struct ProxyWebSocketOpenMeta: Codable, Equatable, Sendable {
-  public var version: Int
-  public var connectionID: String
-  public var path: String
-  public var headers: [ProxyHeader]
+internal struct ProxyWebSocketOpenMeta: Codable, Equatable, Sendable {
+  internal var version: Int
+  internal var connectionID: String
+  internal var path: String
+  internal var headers: [ProxyHeader]
 
-  public init(
+  internal init(
     version: Int = ProxyProtocol.version,
     connectionID: String,
     path: String,
@@ -134,14 +134,14 @@ public struct ProxyWebSocketOpenMeta: Codable, Equatable, Sendable {
   }
 }
 
-public struct ProxyWebSocketOpenResponse: Codable, Equatable, Sendable {
-  public var version: Int
-  public var connectionID: String
-  public var ok: Bool
-  public var selectedProtocol: String?
-  public var error: ProxyRemoteError?
+internal struct ProxyWebSocketOpenResponse: Codable, Equatable, Sendable {
+  internal var version: Int
+  internal var connectionID: String
+  internal var ok: Bool
+  internal var selectedProtocol: String?
+  internal var error: ProxyRemoteError?
 
-  public init(
+  internal init(
     version: Int = ProxyProtocol.version,
     connectionID: String,
     ok: Bool,
@@ -164,15 +164,15 @@ public struct ProxyWebSocketOpenResponse: Codable, Equatable, Sendable {
   }
 }
 
-public struct ProxyHTTPRequest: Equatable, Sendable {
-  public var method: String
-  public var path: String
-  public var headers: [ProxyHeader]
-  public var externalOrigin: String?
-  public var timeout: Duration?
-  public var body: Data
+internal struct ProxyHTTPRequest: Equatable, Sendable {
+  internal var method: String
+  internal var path: String
+  internal var headers: [ProxyHeader]
+  internal var externalOrigin: String?
+  internal var timeout: Duration?
+  internal var body: Data
 
-  public init(
+  internal init(
     method: String,
     path: String,
     headers: [ProxyHeader] = [],
@@ -188,24 +188,24 @@ public struct ProxyHTTPRequest: Equatable, Sendable {
     self.body = body
   }
 
-  public static func get(_ path: String, headers: [ProxyHeader] = []) -> ProxyHTTPRequest {
+  internal static func get(_ path: String, headers: [ProxyHeader] = []) -> ProxyHTTPRequest {
     ProxyHTTPRequest(method: "GET", path: path, headers: headers)
   }
 }
 
-public struct ProxyHTTPResponse: Equatable, Sendable {
-  public var status: Int
-  public var headers: [ProxyHeader]
-  public var body: Data
+internal struct ProxyHTTPResponse: Equatable, Sendable {
+  internal var status: Int
+  internal var headers: [ProxyHeader]
+  internal var body: Data
 
-  public init(status: Int, headers: [ProxyHeader], body: Data) {
+  internal init(status: Int, headers: [ProxyHeader], body: Data) {
     self.status = status
     self.headers = headers
     self.body = body
   }
 }
 
-public enum ProxyWebSocketOperation: UInt8, Codable, Equatable, Sendable {
+internal enum ProxyWebSocketOperation: UInt8, Codable, Equatable, Sendable {
   case text = 1
   case binary = 2
   case close = 8
@@ -213,16 +213,16 @@ public enum ProxyWebSocketOperation: UInt8, Codable, Equatable, Sendable {
   case pong = 10
 }
 
-public struct ProxyWebSocketFrame: Equatable, Sendable {
-  public var operation: ProxyWebSocketOperation
-  public var payload: Data
+internal struct ProxyWebSocketFrame: Equatable, Sendable {
+  internal var operation: ProxyWebSocketOperation
+  internal var payload: Data
 
-  public init(operation: ProxyWebSocketOperation, payload: Data = Data()) {
+  internal init(operation: ProxyWebSocketOperation, payload: Data = Data()) {
     self.operation = operation
     self.payload = payload
   }
 
-  public static func close(code: UInt16? = nil, reason: String = "") throws
+  internal static func close(code: UInt16? = nil, reason: String = "") throws
     -> ProxyWebSocketFrame
   {
     guard reason.utf8.count <= 123 else { throw ProxyError.invalidMetadata("close reason is too long") }
@@ -237,20 +237,20 @@ public struct ProxyWebSocketFrame: Equatable, Sendable {
   }
 }
 
-public struct ProxyContractOptions: Equatable, Sendable {
-  public var maxJSONFrameBytes: Int
-  public var maxChunkBytes: Int
-  public var maxBodyBytes: Int
-  public var maxWebSocketFrameBytes: Int
-  public var defaultHTTPRequestTimeout: Duration?
-  public var extraRequestHeaders: [String]
-  public var extraResponseHeaders: [String]
-  public var blockedResponseHeaders: [String]
-  public var extraWebSocketHeaders: [String]
-  public var forbiddenCookieNames: [String]
-  public var forbiddenCookieNamePrefixes: [String]
+internal struct ProxyContractOptions: Equatable, Sendable {
+  internal var maxJSONFrameBytes: Int
+  internal var maxChunkBytes: Int
+  internal var maxBodyBytes: Int
+  internal var maxWebSocketFrameBytes: Int
+  internal var defaultHTTPRequestTimeout: Duration?
+  internal var extraRequestHeaders: [String]
+  internal var extraResponseHeaders: [String]
+  internal var blockedResponseHeaders: [String]
+  internal var extraWebSocketHeaders: [String]
+  internal var forbiddenCookieNames: [String]
+  internal var forbiddenCookieNamePrefixes: [String]
 
-  public init(
+  internal init(
     maxJSONFrameBytes: Int = FlowersecSDKDefaults.Proxy.maxJSONFrameBytes,
     maxChunkBytes: Int = FlowersecSDKDefaults.Proxy.maxChunkBytes,
     maxBodyBytes: Int = FlowersecSDKDefaults.Proxy.maxBodyBytes,
@@ -277,16 +277,16 @@ public struct ProxyContractOptions: Equatable, Sendable {
   }
 }
 
-public struct ProxyServerOptions: Equatable, Sendable {
-  public var upstream: URL
-  public var upstreamOrigin: String
-  public var allowedUpstreamHosts: [String]
-  public var contract: ProxyContractOptions
-  public var defaultTimeout: Duration?
-  public var maxTimeout: Duration?
-  public var maxConcurrentStreams: Int
+internal struct ProxyServerOptions: Equatable, Sendable {
+  internal var upstream: URL
+  internal var upstreamOrigin: String
+  internal var allowedUpstreamHosts: [String]
+  internal var contract: ProxyContractOptions
+  internal var defaultTimeout: Duration?
+  internal var maxTimeout: Duration?
+  internal var maxConcurrentStreams: Int
 
-  public init(
+  internal init(
     upstream: URL,
     upstreamOrigin: String,
     allowedUpstreamHosts: [String] = [],
@@ -307,7 +307,7 @@ public struct ProxyServerOptions: Equatable, Sendable {
   }
 }
 
-public enum ProxyError: LocalizedError, Equatable, Sendable {
+internal enum ProxyError: LocalizedError, Equatable, Sendable {
   case invalidConfiguration(String)
   case invalidPath
   case invalidMetadata(String)
@@ -319,7 +319,7 @@ public enum ProxyError: LocalizedError, Equatable, Sendable {
   case upstream(String)
   case canceled
 
-  public var errorDescription: String? {
+  internal var errorDescription: String? {
     switch self {
     case .invalidConfiguration(let message): return "Invalid proxy configuration: \(message)"
     case .invalidPath: return "The proxy path is invalid."
@@ -359,14 +359,11 @@ struct ProxyUpstreamFailure: LocalizedError, Sendable {
   var errorDescription: String? { message }
 }
 
-public protocol ProxyStreamRoute: Sendable {
+internal protocol ProxyStreamRoute: Sendable {
   func openStream(kind: String) async throws -> any FlowersecByteStream
 }
 
-extension FlowersecClient: ProxyStreamRoute {}
-extension EndpointSession: ProxyStreamRoute {}
-
-public struct ProxyHeaderPolicy: Sendable {
+internal struct ProxyHeaderPolicy: Sendable {
   private enum Direction { case request, response, webSocket }
 
   private static let requestHeaders: Set<String> = [
@@ -395,7 +392,7 @@ public struct ProxyHeaderPolicy: Sendable {
   private let forbiddenCookieNames: Set<String>
   private let forbiddenCookieNamePrefixes: [String]
 
-  public init(options: ProxyContractOptions = ProxyContractOptions()) throws {
+  internal init(options: ProxyContractOptions = ProxyContractOptions()) throws {
     requestHeaders = Self.requestHeaders.union(try proxyHeaderNameSet(options.extraRequestHeaders))
     responseHeaders = Self.responseHeaders.union(try proxyHeaderNameSet(options.extraResponseHeaders))
     blockedResponseHeaders = try proxyHeaderNameSet(options.blockedResponseHeaders)
@@ -406,15 +403,15 @@ public struct ProxyHeaderPolicy: Sendable {
     forbiddenCookieNamePrefixes = try proxyNonemptyNames(options.forbiddenCookieNamePrefixes)
   }
 
-  public func filterRequest(_ headers: [ProxyHeader]) -> [ProxyHeader] {
+  internal func filterRequest(_ headers: [ProxyHeader]) -> [ProxyHeader] {
     filter(headers, direction: .request)
   }
 
-  public func filterResponse(_ headers: [ProxyHeader]) -> [ProxyHeader] {
+  internal func filterResponse(_ headers: [ProxyHeader]) -> [ProxyHeader] {
     filter(headers, direction: .response)
   }
 
-  public func filterWebSocket(_ headers: [ProxyHeader]) -> [ProxyHeader] {
+  internal func filterWebSocket(_ headers: [ProxyHeader]) -> [ProxyHeader] {
     filter(headers, direction: .webSocket)
   }
 
@@ -453,7 +450,7 @@ public struct ProxyHeaderPolicy: Sendable {
   }
 }
 
-public struct ProxyCookieJar: Sendable {
+internal struct ProxyCookieJar: Sendable {
   private struct Cookie: Sendable {
     var name: String
     var value: String
@@ -462,9 +459,9 @@ public struct ProxyCookieJar: Sendable {
 
   private var cookies: [String: Cookie] = [:]
 
-  public init() {}
+  internal init() {}
 
-  public mutating func capture(requestPath: String, headers: [ProxyHeader]) {
+  internal mutating func capture(requestPath: String, headers: [ProxyHeader]) {
     let defaultPath = proxyDefaultCookiePath(requestPath)
     for header in headers where header.name.caseInsensitiveCompare("set-cookie") == .orderedSame {
       let parts = header.value.split(separator: ";", omittingEmptySubsequences: false)
@@ -490,7 +487,7 @@ public struct ProxyCookieJar: Sendable {
     }
   }
 
-  public func requestHeader(for path: String) -> ProxyHeader? {
+  internal func requestHeader(for path: String) -> ProxyHeader? {
     let values = cookies.values
       .filter { proxyCookiePathMatches(cookiePath: $0.path, requestPath: path) }
       .sorted { $0.path.count > $1.path.count }

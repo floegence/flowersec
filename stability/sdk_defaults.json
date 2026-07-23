@@ -51,6 +51,6 @@
     "go": "flowersec-go/internal/defaults/defaults_contract_test.go",
     "typescript": "flowersec-ts/src/defaults_contract.test.ts",
     "swift": "flowersec-swift/Tests/FlowersecTests/SDKDefaultsContractTests.swift",
-    "rust": "flowersec-rust/tests/defaults_contract.rs"
+    "rust": "flowersec-rust/src/defaults_contract.rs"
   }
 }

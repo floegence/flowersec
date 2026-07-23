@@ -1,50 +1,50 @@
 import CoreFoundation
 import Foundation
 
-public struct FlowersecRPCError: LocalizedError, Equatable, Sendable {
-  public var code: UInt32
-  public var message: String
+internal struct FlowersecRPCError: LocalizedError, Equatable, Sendable {
+  internal var code: UInt32
+  internal var message: String
 
-  public init(code: UInt32, message: String) {
+  internal init(code: UInt32, message: String) {
     self.code = code
     self.message = message
   }
 
-  public var errorDescription: String? { message }
+  internal var errorDescription: String? { message }
 }
 
-public struct FlowersecStreamResetError: LocalizedError, Equatable, Sendable {
-  public var path: FlowersecPath
+internal struct FlowersecStreamResetError: LocalizedError, Equatable, Sendable {
+  internal var path: FlowersecPath
 
-  public init(path: FlowersecPath) {
+  internal init(path: FlowersecPath) {
     self.path = path
   }
 
-  public var errorDescription: String? { "The peer reset the stream." }
+  internal var errorDescription: String? { "The peer reset the stream." }
 }
 
-public struct RPCSubscription: Sendable {
+internal struct RPCSubscription: Sendable {
   private let cancelHandler: @Sendable () -> Void
 
-  public init(cancelHandler: @escaping @Sendable () -> Void) {
+  internal init(cancelHandler: @escaping @Sendable () -> Void) {
     self.cancelHandler = cancelHandler
   }
 
-  public func cancel() {
+  internal func cancel() {
     cancelHandler()
   }
 }
 
-public protocol FlowersecRPCStream: AnyObject, FlowersecByteStream {}
+internal protocol FlowersecRPCStream: AnyObject, FlowersecByteStream {}
 
-public protocol FlowersecByteStream: Sendable {
+internal protocol FlowersecByteStream: Sendable {
   func write(_ data: Data) async throws
   func readExact(_ length: Int) async throws -> Data
   func close() async
   func reset() async throws
 }
 
-public actor RPCClient {
+internal actor RPCClient {
   static let maximumPortableRequestID: UInt64 = 9_007_199_254_740_991
 
   private struct PendingCall {
@@ -67,7 +67,7 @@ public actor RPCClient {
   private var readTask: Task<Void, Never>?
   private var closed = false
 
-  public init(stream: any FlowersecRPCStream, path: FlowersecPath = .direct) {
+  internal init(stream: any FlowersecRPCStream, path: FlowersecPath = .direct) {
     self.stream = stream
     self.path = path
   }
@@ -82,12 +82,12 @@ public actor RPCClient {
     self.nextRequestID = nextRequestID
   }
 
-  public func start() {
+  internal func start() {
     guard !closed, readTask == nil else { return }
     readTask = Task { await self.readLoop() }
   }
 
-  public func call<Request: Encodable, Response: Decodable>(
+  internal func call<Request: Encodable, Response: Decodable>(
     _ typeID: UInt32,
     _ request: Request,
     timeout: Duration = .seconds(8)
@@ -157,7 +157,7 @@ public actor RPCClient {
     }
   }
 
-  public func notify<Payload: Encodable>(_ typeID: UInt32, _ payload: Payload) async throws {
+  internal func notify<Payload: Encodable>(_ typeID: UInt32, _ payload: Payload) async throws {
     let envelope = RPCEnvelope(
       typeID: typeID,
       requestID: 0,
@@ -168,7 +168,7 @@ public actor RPCClient {
     try await writeEnvelope(envelope)
   }
 
-  public nonisolated func onNotify(
+  internal nonisolated func onNotify(
     _ typeID: UInt32,
     handler: @escaping @Sendable (Data) async -> Void
   ) -> RPCSubscription {
@@ -190,7 +190,7 @@ public actor RPCClient {
     notifyHandlers[typeID] = handlers
   }
 
-  public func close() async {
+  internal func close() async {
     terminate(with: FlowersecError.closed(path: path))
   }
 
@@ -312,585 +312,16 @@ public actor RPCClient {
   }
 }
 
-public final class FlowersecClient: @unchecked Sendable {
-  public let rpc: RPCClient
-  private let secure: FlowersecSecureChannel
-  private let yamux: FlowersecYamuxClient
-  private let path: FlowersecPath
-
-  init(
-    rpc: RPCClient,
-    secure: FlowersecSecureChannel,
-    yamux: FlowersecYamuxClient,
-    path: FlowersecPath
-  ) {
-    self.rpc = rpc
-    self.secure = secure
-    self.yamux = yamux
-    self.path = path
-  }
-
-  public func close() async {
-    await rpc.close()
-    await yamux.close()
-  }
-
-  public func probeLiveness(timeout: Duration = .seconds(10)) async throws -> Duration {
-    try await yamux.probeLiveness(timeout: timeout)
-  }
-
-  public func rekey() async throws {
-    do {
-      try await secure.rekey()
-    } catch is CancellationError {
-      throw CancellationError()
-    } catch {
-      throw FlowersecError(
-        path: path,
-        stage: .secure,
-        code: .rekeyFailed,
-        message: "Secure channel rekey failed: \(error.localizedDescription)"
-      )
-    }
-  }
-
-  public func terminated() async -> (any Error)? {
-    await yamux.terminated()
-  }
-
-  public func openStream(kind: String) async throws -> any FlowersecByteStream {
-    let trimmedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedKind.isEmpty else {
-      throw FlowersecError.missingStreamKind(path: path)
-    }
-    let stream = try await yamux.openStream()
-    do {
-      try await FlowersecJSONFrame.write(
-        StreamHello(kind: trimmedKind, version: 1).encoded(),
-        to: stream
-      )
-    } catch let error as FlowersecError {
-      throw error.withPath(path)
-    }
-    return stream
-  }
-}
-
-private enum HandshakeRaceResult: @unchecked Sendable {
-  case completed(FlowersecSecureChannel)
-  case failed(any Error)
-  case timedOut
-}
-
-public enum Flowersec {
-  public static func connect(
-    _ artifact: ConnectArtifact,
-    options: ConnectOptions = ConnectOptions()
-  ) async throws -> FlowersecClient {
-    switch artifact {
-    case .direct(let rawInfo, let metadata):
-      let info = try preparedDirectConnectInfo(rawInfo)
-      return try await connectDirect(
-        info,
-        options: try await artifactOptions(options, metadata: metadata, path: .direct)
-      )
-    case .tunnel(let rawGrant, let metadata):
-      let grant = try preparedTunnelGrant(rawGrant)
-      return try await connectTunnel(
-        grant,
-        options: try await artifactOptions(options, metadata: metadata, path: .tunnel)
-      )
-    }
-  }
-
-  public static func connectDirect(
-    info: DirectConnectInfo,
-    origin: String
-  ) async throws -> FlowersecClient {
-    let options = DirectConnectOptions(origin: origin)
-    return try await connectDirect(info, options: options)
-  }
-
-  public static func connectDirect(
-    _ rawInfo: DirectConnectInfo,
-    options: DirectConnectOptions = DirectConnectOptions()
-  ) async throws -> FlowersecClient {
-    let info = try preparedDirectConnectInfo(rawInfo)
-    try validate(options: options, path: .direct)
-    try await FlowersecTransportSecurity.enforce(url: info.wsURL, path: .direct, options: options)
-    let transport = FlowersecWebSocketBinaryTransport(
-      url: info.wsURL,
-      origin: options.origin,
-      connectTimeout: options.connectTimeout,
-      path: .direct,
-      onDiagnosticEvent: options.onDiagnosticEvent
-    )
-    try await resumeWebSocketTransport(transport)
-    return try await establishConnection(
-      info,
-      transport: transport,
-      options: options,
-      path: .direct,
-      idleTimeout: nil
-    )
-  }
-
-  public static func connectTunnel(
-    _ rawGrant: ChannelInitGrant,
-    options: TunnelConnectOptions = TunnelConnectOptions()
-  ) async throws -> FlowersecClient {
-    let grant = try preparedTunnelGrant(rawGrant)
-    try validate(options: options, path: .tunnel)
-    try Task.checkCancellation()
-    try await FlowersecTransportSecurity.enforce(
-      url: grant.tunnelURL, path: .tunnel, options: options)
-    try Task.checkCancellation()
-    let transport = FlowersecWebSocketBinaryTransport(
-      url: grant.tunnelURL,
-      origin: options.origin,
-      connectTimeout: options.connectTimeout,
-      path: .tunnel,
-      onDiagnosticEvent: options.onDiagnosticEvent
-    )
-    do {
-      try Task.checkCancellation()
-      try await resumeWebSocketTransport(transport)
-      try Task.checkCancellation()
-      let endpointInstanceID = try Data.secureRandom(count: 16).base64URLEncodedString()
-      let attach = try TunnelAttach(
-        v: 1,
-        channelID: grant.channelID,
-        role: grant.role,
-        token: grant.token,
-        endpointInstanceID: endpointInstanceID,
-        caps: nil
-      ).encoded()
-      try Task.checkCancellation()
-      try await writeTunnelAttach(
-        transport: transport,
-        text: attach
-      )
-    } catch {
-      await transport.close()
-      if Task.isCancelled || error is CancellationError {
-        throw CancellationError()
-      }
-      throw error
-    }
-    return try await establishConnection(
-      DirectConnectInfo(
-        wsURL: grant.tunnelURL,
-        channelID: grant.channelID,
-        psk: grant.psk,
-        channelInitExpiresAtUnixS: grant.channelInitExpiresAtUnixS,
-        defaultSuite: grant.defaultSuite
-      ),
-      transport: transport,
-      options: options,
-      path: .tunnel,
-      idleTimeout: .seconds(max(0, grant.idleTimeoutSeconds))
-    )
-  }
-
-  static func writeTunnelAttach(
-    transport: any FlowersecTunnelAttachTransport,
-    text: String
-  ) async throws {
-    do {
-      try Task.checkCancellation()
-      try await withTaskCancellationHandler {
-        try Task.checkCancellation()
-        try await transport.writeText(text)
-        try Task.checkCancellation()
-      } onCancel: {
-        Task { await transport.close() }
-      }
-    } catch {
-      Task { await transport.close() }
-      if Task.isCancelled || error is CancellationError {
-        throw CancellationError()
-      }
-      throw error
-    }
-  }
-
-  static func resumeWebSocketTransport(
-    _ transport: FlowersecWebSocketBinaryTransport
-  ) async throws {
-    do {
-      try await transport.resume()
-    } catch {
-      await transport.close()
-      throw error
-    }
-  }
-
-  static func establishConnection(
-    _ info: DirectConnectInfo,
-    transport: any FlowersecBinaryTransport,
-    options: ConnectOptions,
-    path: FlowersecPath,
-    idleTimeout: Duration?
-  ) async throws -> FlowersecClient {
-    var secure: FlowersecSecureChannel?
-    var yamux: FlowersecYamuxClient?
-    var stream: FlowersecYamuxStream?
-    var rpc: RPCClient?
-    do {
-      let automaticLiveness = try resolvedLiveness(
-        options.liveness,
-        path: path,
-        idleTimeout: idleTimeout
-      )
-      let establishedSecure = try await runHandshake(
-        transport: transport,
-        info: info,
-        options: options,
-        path: path
-      )
-      secure = establishedSecure
-      let establishedYamux = FlowersecYamuxClient(
-        channel: establishedSecure,
-        limits: options.yamuxLimits,
-        automaticLiveness: automaticLiveness,
-        path: path,
-        onDiagnosticEvent: options.onDiagnosticEvent
-      )
-      yamux = establishedYamux
-      let establishedStream = try await establishedYamux.openStream()
-      stream = establishedStream
-      do {
-        try await FlowersecJSONFrame.write(
-          StreamHello(kind: "rpc", version: 1).encoded(),
-          to: establishedStream
-        )
-      } catch let error as FlowersecError {
-        throw error.withPath(path)
-      }
-      let establishedRPC = RPCClient(stream: establishedStream, path: path)
-      rpc = establishedRPC
-      await establishedRPC.start()
-      await establishedYamux.start()
-      try Task.checkCancellation()
-      return FlowersecClient(
-        rpc: establishedRPC,
-        secure: establishedSecure,
-        yamux: establishedYamux,
-        path: path
-      )
-    } catch {
-      await rpc?.close()
-      await stream?.close()
-      await yamux?.close()
-      await secure?.close()
-      await transport.close()
-      if Task.isCancelled {
-        throw CancellationError()
-      }
-      throw error
-    }
-  }
-
-  private static func validate(options: ConnectOptions, path: FlowersecPath) throws {
-    let maxPlaintext = FlowersecWire.maxRecordBytes - 18 - 16
-    guard options.outboundRecordChunkBytes > 0,
-      options.outboundRecordChunkBytes <= maxPlaintext
-    else {
-      throw FlowersecError(
-        path: path,
-        stage: .validate,
-        code: .invalidOption,
-        message: "outboundRecordChunkBytes must fit within the record plaintext limit."
-      )
-    }
-    guard options.handshakeTimeout > .zero else {
-      throw FlowersecError(
-        path: path,
-        stage: .validate,
-        code: .invalidOption,
-        message: "handshakeTimeout must be positive."
-      )
-    }
-    guard options.maxOutboundBufferedBytes > 0 else {
-      throw FlowersecError(
-        path: path,
-        stage: .validate,
-        code: .invalidOption,
-        message: "maxOutboundBufferedBytes must be positive."
-      )
-    }
-    do {
-      try options.yamuxLimits.validate()
-      _ = try resolvedLiveness(options.liveness, path: path, idleTimeout: .seconds(1))
-    } catch var error as FlowersecError {
-      error.path = path
-      error.stage = .validate
-      error.code = .invalidOption
-      throw error
-    }
-  }
-
-  private static func preparedDirectConnectInfo(
-    _ rawInfo: DirectConnectInfo
-  ) throws -> DirectConnectInfo {
-    var info = rawInfo
-    info.channelID = try normalizedChannelID(info.channelID, path: .direct)
-    guard info.channelInitExpiresAtUnixS > 0 else {
-      throw FlowersecError(
-        path: .direct,
-        stage: .validate,
-        code: .missingInitExp,
-        message: "Direct connect info is missing channel init expiry."
-      )
-    }
-    guard info.psk.count == 32 else {
-      throw FlowersecError(
-        path: .direct,
-        stage: .validate,
-        code: .invalidPSK,
-        message: "Direct connect info must contain a 32-byte E2EE key."
-      )
-    }
-    return info
-  }
-
-  private static func preparedTunnelGrant(
-    _ rawGrant: ChannelInitGrant
-  ) throws -> ChannelInitGrant {
-    var grant = rawGrant
-    guard grant.role == 1 else {
-      throw FlowersecError(
-        path: .tunnel,
-        stage: .validate,
-        code: .roleMismatch,
-        message: "Tunnel client grants must use the client role."
-      )
-    }
-    grant.channelID = try normalizedChannelID(grant.channelID, path: .tunnel)
-    grant.token = grant.token.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !grant.token.isEmpty else {
-      throw FlowersecError(
-        path: .tunnel,
-        stage: .validate,
-        code: .missingToken,
-        message: "Tunnel grant is missing token."
-      )
-    }
-    guard grant.channelInitExpiresAtUnixS > 0 else {
-      throw FlowersecError(
-        path: .tunnel,
-        stage: .validate,
-        code: .missingInitExp,
-        message: "Tunnel grant is missing channel init expiry."
-      )
-    }
-    guard grant.psk.count == 32 else {
-      throw FlowersecError(
-        path: .tunnel,
-        stage: .validate,
-        code: .invalidPSK,
-        message: "Tunnel grant must contain a 32-byte E2EE key."
-      )
-    }
-    guard !grant.allowedSuites.isEmpty, grant.allowedSuites.contains(grant.defaultSuite) else {
-      throw FlowersecError(
-        path: .tunnel,
-        stage: .validate,
-        code: .invalidSuite,
-        message: "Default suite must be included in non-empty allowed_suites."
-      )
-    }
-    return grant
-  }
-
-  private static func normalizedChannelID(
-    _ rawChannelID: String,
-    path: FlowersecPath
-  ) throws -> String {
-    let channelID = rawChannelID.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !channelID.isEmpty else {
-      throw FlowersecError(
-        path: path,
-        stage: .validate,
-        code: .missingChannelID,
-        message: "Connect artifact is missing channel_id."
-      )
-    }
-    guard channelID.utf8.count <= 256 else {
-      throw FlowersecError(
-        path: path,
-        stage: .validate,
-        code: .invalidInput,
-        message: "Connect artifact channel_id exceeds 256 UTF-8 bytes."
-      )
-    }
-    return channelID
-  }
-
-  private static func runHandshake(
-    transport: any FlowersecBinaryTransport,
-    info: DirectConnectInfo,
-    options: ConnectOptions,
-    path: FlowersecPath
-  ) async throws -> FlowersecSecureChannel {
-    try await withTaskCancellationHandler {
-      try await withThrowingTaskGroup(of: HandshakeRaceResult.self) { group in
-        group.addTask {
-          do {
-            return .completed(
-              try await FlowersecHandshake.runClientHandshake(
-                transport: transport,
-                info: info,
-                outboundRecordChunkBytes: options.outboundRecordChunkBytes,
-                maxOutboundBufferedBytes: options.maxOutboundBufferedBytes,
-                path: path,
-                onDiagnosticEvent: options.onDiagnosticEvent
-              )
-            )
-          } catch {
-            return .failed(error)
-          }
-        }
-        group.addTask {
-          do {
-            try await Task.sleep(for: options.handshakeTimeout)
-            return .timedOut
-          } catch {
-            return .failed(error)
-          }
-        }
-
-        guard let result = try await group.next() else {
-          throw FlowersecError(
-            path: path,
-            stage: .handshake,
-            code: .handshakeFailed,
-            message: "The Flowersec handshake ended without a result."
-          )
-        }
-        group.cancelAll()
-        if Task.isCancelled {
-          await transport.close()
-          throw CancellationError()
-        }
-        switch result {
-        case .completed(let channel):
-          return channel
-        case .failed(let error):
-          throw error
-        case .timedOut:
-          await transport.close()
-          throw FlowersecError(
-            path: path,
-            stage: .handshake,
-            code: .timeout,
-            message: "The Flowersec handshake timed out."
-          )
-        }
-      }
-    } onCancel: {
-      Task { await transport.close() }
-    }
-  }
-
-  private static func artifactOptions(
-    _ options: ConnectOptions,
-    metadata: ConnectArtifactMetadata,
-    path: FlowersecPath
-  ) async throws -> ConnectOptions {
-    var resolved = options
-    if let correlation = metadata.correlation, let observer = options.onDiagnosticEvent {
-      resolved.onDiagnosticEvent = { event in
-        var correlated = event
-        if let traceID = correlation.traceID {
-          correlated.traceID = traceID
-        }
-        if let sessionID = correlation.sessionID {
-          correlated.sessionID = sessionID
-        }
-        observer(correlated)
-      }
-    }
-    for entry in metadata.scoped {
-      guard let resolver = options.scopeResolvers[entry.scope] else {
-        if entry.critical {
-          throw FlowersecError(
-            path: path,
-            stage: .validate,
-            code: .resolveFailed,
-            message: "Missing scope resolver for \(entry.scope)@\(entry.scopeVersion)."
-          )
-        }
-        resolved.onDiagnosticEvent?(
-          DiagnosticEvent(
-            path: path,
-            stage: .scope,
-            codeDomain: .event,
-            code: "scope_ignored_missing_resolver",
-            result: .skip
-          )
-        )
-        continue
-      }
-      do {
-        try await resolver(entry)
-      } catch {
-        if !entry.critical, options.relaxedOptionalScopeValidation {
-          resolved.onDiagnosticEvent?(
-            DiagnosticEvent(
-              path: path,
-              stage: .scope,
-              codeDomain: .event,
-              code: "scope_ignored_relaxed_validation",
-              result: .skip
-            )
-          )
-          continue
-        }
-        throw FlowersecError(
-          path: path,
-          stage: .validate,
-          code: .resolveFailed,
-          message: "Scope validation failed for \(entry.scope)@\(entry.scopeVersion)."
-        )
-      }
-    }
-    return resolved
-  }
-
-  private static func resolvedLiveness(
-    _ options: LivenessOptions,
-    path: FlowersecPath,
-    idleTimeout: Duration?
-  ) throws -> (interval: Duration, timeout: Duration)? {
-    switch options {
-    case .disabled:
-      return nil
-    case .pathDefault:
-      guard path == .tunnel, let idleTimeout, idleTimeout > .zero else { return nil }
-      let interval = max(.milliseconds(500), idleTimeout / 2)
-      return (interval, min(.seconds(10), interval))
-    case .enabled(let interval, let timeout):
-      guard interval > .zero, timeout > .zero else {
-        throw FlowersecError.invalidConnectInfo(
-          "Liveness interval and timeout must both be positive."
-        )
-      }
-      return (interval, timeout)
-    }
-  }
-}
-
-public struct RPCEnvelope: Equatable, Sendable {
+internal struct RPCEnvelope: Equatable, Sendable {
   static let maximumPortableID: UInt64 = 9_007_199_254_740_991
 
-  public var typeID: UInt32
-  public var requestID: UInt64
-  public var responseTo: UInt64
-  public var payload: Data
-  public var error: RPCErrorPayload?
+  internal var typeID: UInt32
+  internal var requestID: UInt64
+  internal var responseTo: UInt64
+  internal var payload: Data
+  internal var error: RPCErrorPayload?
 
-  public init(
+  internal init(
     typeID: UInt32, requestID: UInt64, responseTo: UInt64, payload: Data, error: RPCErrorPayload?
   ) {
     self.typeID = typeID
@@ -900,7 +331,7 @@ public struct RPCEnvelope: Equatable, Sendable {
     self.error = error
   }
 
-  public init(data: Data) throws {
+  internal init(data: Data) throws {
     guard
       let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
       let typeNumber = root["type_id"] as? NSNumber,
@@ -923,7 +354,7 @@ public struct RPCEnvelope: Equatable, Sendable {
     payload = try Self.encodeRawJSONObject(root["payload"] ?? [:])
   }
 
-  public func encoded() throws -> Data {
+  internal func encoded() throws -> Data {
     guard requestID <= Self.maximumPortableID, responseTo <= Self.maximumPortableID else {
       throw FlowersecError.invalidRPC("RPC envelope IDs exceed the portable JSON range.")
     }
@@ -970,11 +401,11 @@ public struct RPCEnvelope: Equatable, Sendable {
   }
 }
 
-public struct RPCErrorPayload: Equatable, Sendable {
-  public var code: UInt32
-  public var message: String
+internal struct RPCErrorPayload: Equatable, Sendable {
+  internal var code: UInt32
+  internal var message: String
 
-  public init(code: UInt32, message: String) {
+  internal init(code: UInt32, message: String) {
     self.code = code
     self.message = message
   }
@@ -992,8 +423,8 @@ private struct StreamHello {
   }
 }
 
-public enum FlowersecJSONFrame {
-  public static func write(_ data: Data, to stream: any FlowersecByteStream) async throws {
+internal enum FlowersecJSONFrame {
+  internal static func write(_ data: Data, to stream: any FlowersecByteStream) async throws {
     guard data.count <= FlowersecWire.jsonFrameMaxBytes else {
       throw FlowersecError.invalidRPC("JSON frame is too large.")
     }
@@ -1003,7 +434,7 @@ public enum FlowersecJSONFrame {
     try await stream.write(frame)
   }
 
-  public static func read(from stream: any FlowersecByteStream) async throws -> Data {
+  internal static func read(from stream: any FlowersecByteStream) async throws -> Data {
     let header = try await stream.readExact(4)
     guard header.count == 4 else {
       throw FlowersecError.invalidRPC("JSON frame ended before the length header.")

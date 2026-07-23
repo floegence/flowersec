@@ -29,7 +29,7 @@ gen-check: gen
 		flowersec-ts/src/_examples
 
 gen-core:
-	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.core.txt -go-out ../../flowersec-go/gen -ts-out ../../flowersec-ts/src/gen -rust-out ../../flowersec-rust/src/gen -swift-out ../../flowersec-swift/Sources/Flowersec
+	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.core.txt -go-out ../../flowersec-go/gen -ts-out ../../flowersec-ts/src/gen
 	cd flowersec-go && gofmt -w gen
 	cd flowersec-rust && cargo fmt --all
 
@@ -37,7 +37,6 @@ gen-examples:
 	# Demo IDL is for examples/integration tests only; do not ship it as a public API surface.
 	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.examples.txt -go-out ../../examples/gen -ts-out ../../flowersec-ts/src/_examples
 	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.examples.txt -go-out ../../flowersec-go/internal/testgen -ts-out ../../flowersec-ts/src/_examples
-	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.examples.txt -swift-out ../../flowersec-swift/Tests/FlowersecTests -swift-import Flowersec
 	gofmt -w examples/gen
 	cd flowersec-go && gofmt -w internal/testgen
 

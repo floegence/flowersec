@@ -1,6 +1,6 @@
 # Flowersec for Rust
 
-The Tokio-native Rust SDK for Flowersec end-to-end encrypted direct and tunneled sessions. It implements the legacy v1 portable stack plus Transport v2 wire/session primitives and a tested raw QUIC adapter.
+The `flowersec` crate is the Tokio-native Rust SDK for Flowersec v2 end-to-end encrypted direct and tunneled sessions. Its maintained public entrypoints use opaque artifacts, the carrier-neutral Connector, and Session; the legacy v1 facade has been removed.
 
 The crate targets Rust 1.85 or newer on Linux, macOS, and Windows, uses rustls by default, and contains no Flowersec-authored `unsafe`.
 
@@ -20,48 +20,17 @@ WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
 QUIC-family carriers use native QUIC streams and never Yamux.
 Flowersec application 0-RTT is disabled.
 Flowersec does not use QUIC DATAGRAM frames.
-`flowersec-tunnel` remains a v1 WebSocket/Yamux CLI.
 
 Transport v2 production carrier support: raw QUIC client dialing for direct and tunnel paths.
 
-Rust advertises the two raw QUIC client-dial tuples proven by the public `Connector`: direct/client and tunnel/client. The connector consumes an opaque `ArtifactLease`, races compatible candidates, durably spends before FSB2 credentials are written, and returns only the carrier-neutral `Session` contract. Raw QUIC listener/server roles, WebSocket, and WebTransport remain unavailable. Existing `connect`, controlplane, proxy, and Yamux examples remain v1.
-
-## Cookbook
-
-Start with the [Rust cookbook](https://github.com/floegence/flowersec/tree/main/examples/rust). Its runnable client covers artifact fetch, tunnel connect, typed RPC, custom streams, liveness, HTTP proxy, and WebSocket proxy. Crate tests provide executable endpoint, reconnect, controlplane, and policy references.
+Rust advertises the two raw QUIC client-dial tuples proven by the public `Connector`: direct/client and tunnel/client. The connector consumes an opaque `ArtifactLease`, races compatible candidates, durably spends before FSB2 credentials are written, and returns only the carrier-neutral `Session` contract. Raw QUIC listener/server roles, WebSocket, and WebTransport remain unavailable.
 
 ## Entrypoints
 
-- Client connect: `connect`, `connect_direct`, and `connect_tunnel`
-- Endpoint sessions: `endpoint::{accept_direct, accept_direct_resolved, connect_tunnel}`
-- RPC: `rpc::{RpcClient, Router, Server}`
-- Streams: `yamux::YamuxStream`
-- Controlplane: `controlplane`
-- Reconnect: `reconnect::ReconnectManager`
-- Proxy: `proxy::{ProxyClient, ProxyServer}`
-- Diagnostics: `observability`
-- Transport v2 protocol/session: `protocol_v2`, `session_v2`, and `transport_v2`
-- Production raw QUIC client facade: `Connector`, `ConnectorOptions`, opaque `artifact_v2::ArtifactLease`, and carrier-neutral `Session`
-
-High-level WebSocket connections require TLS by default. Use `TransportSecurityPolicy::allow_plaintext_for_loopback()` only for literal local development targets.
-
-Endpoint servers should accept raw async streams with `TungsteniteTransport::accept(...)`; it applies Flowersec's encrypted-record message and frame limits and bounds the HTTP WebSocket upgrade with the default handshake timeout. Use `accept_with_timeout(...)` to select a different upgrade deadline. `TungsteniteTransport::new(...)` returns `io::Result` and rejects a supplied `WebSocketStream` unless it already enforces equivalent or stricter message and frame limits.
-
-## Proxy Server
-
-`ProxyServer` streams HTTP request and response chunks directly between the Flowersec stream and reqwest. `ServerOptions.max_concurrent_streams` independently caps active HTTP and WebSocket proxy streams; use `flowersec::defaults::PROXY_MAX_CONCURRENT_STREAMS` for the shared default of 64. Excess streams are reset immediately.
-
-## Liveness
-
-Client and endpoint options expose `yamux::LivenessOptions`:
-
-- `PathDefault` disables automatic probes for direct sessions and derives tunnel probes from the grant idle timeout.
-- `Disabled` disables automatic probes for either path.
-- `Enabled { interval, timeout }` uses explicit positive durations.
-
-The path-default tunnel interval is half the idle timeout with a 500 ms minimum; the probe timeout is the smaller of 10 seconds and that interval. Existing manual `probe_liveness(...)` methods remain available independently of automatic probes. A manual probe timeout is terminal: it closes the session because transport liveness can no longer be established safely.
-
-The release introducing these public option fields is a pre-1.0 source change. Consumers that construct `ConnectOptions`, `EndpointOptions`, or `DirectAcceptOptions` with exhaustive struct literals must set `liveness` or use `..Default::default()`. The same release changes `TungsteniteTransport::new(...)` to return `io::Result` so an unbounded injected stream cannot silently bypass the encrypted-record transport limit.
+- Parse an opaque artifact with `artifact_v2::Artifact::parse` and bind its durable single-use callback with `artifact_v2::ArtifactLease`.
+- Configure trust and the connection deadline with `ConnectorOptions`, then establish through `Connector`.
+- Use the carrier-neutral `Session` API for streams, RPC, rekey, liveness, termination, and bounded close.
+- Runtime capability inspection is available through `transport_v2::native_rust_capability_descriptor_v2`.
 
 ## Runtime Boundaries
 

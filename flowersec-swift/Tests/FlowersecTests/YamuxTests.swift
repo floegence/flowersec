@@ -203,34 +203,6 @@ final class FlowersecYamuxTests: XCTestCase {
     }
   }
 
-  func testPublicClientProbeTransportFailureUsesPingFailed() async {
-    let yamux = FlowersecYamuxClient(channel: FailingWriteYamuxChannel(), path: .tunnel)
-    let client = FlowersecClient(
-      rpc: RPCClient(stream: PendingRPCStream()),
-      secure: FlowersecSecureChannel(
-        transport: NoopBinaryTransport(),
-        keys: testRecordKeyState(),
-        path: .tunnel
-      ),
-      yamux: yamux,
-      path: .tunnel
-    )
-
-    do {
-      _ = try await client.probeLiveness(timeout: .seconds(1))
-      XCTFail("Expected the probe transport write to fail")
-    } catch let error as FlowersecError {
-      XCTAssertEqual(error.path, .tunnel)
-      XCTAssertEqual(error.stage, .yamux)
-      XCTAssertEqual(error.code, .pingFailed)
-    } catch {
-      XCTFail("Expected FlowersecError, got \(error)")
-    }
-
-    let termination = await client.terminated() as? FlowersecError
-    XCTAssertEqual(termination?.code, .notConnected)
-  }
-
   func testTunnelProbeValidationUsesTunnelPath() async throws {
     let channel = InMemoryYamuxChannel()
     let client = FlowersecYamuxClient(channel: channel, path: .tunnel)
@@ -580,21 +552,6 @@ private actor NoopBinaryTransport: FlowersecBinaryTransport {
   func close() async {}
 }
 
-private func testRecordKeyState() -> FlowersecRecordKeyState {
-  FlowersecRecordKeyState(
-    sendKey: Data(repeating: 1, count: 32),
-    recvKey: Data(repeating: 2, count: 32),
-    sendNoncePrefix: Data(repeating: 3, count: 4),
-    recvNoncePrefix: Data(repeating: 4, count: 4),
-    rekeyBase: Data(repeating: 5, count: 32),
-    transcript: Data(repeating: 6, count: 32),
-    sendDirection: 1,
-    recvDirection: 2,
-    sendSeq: 1,
-    recvSeq: 1
-  )
-}
-
 private final class InMemoryYamuxChannel: FlowersecYamuxChannel, @unchecked Sendable {
   private let state = InMemoryYamuxChannelState()
 
@@ -639,7 +596,7 @@ private actor InMemoryYamuxChannelState {
     while incoming.count < length && !closed {
       await waitForRead()
     }
-    guard incoming.count >= length else { throw FlowersecError.closed }
+    guard incoming.count >= length else { throw FlowersecError.closed() }
     let data = Data(incoming.prefix(length))
     incoming.removeFirst(length)
     return data

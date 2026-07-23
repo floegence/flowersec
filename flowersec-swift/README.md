@@ -1,6 +1,6 @@
 # Flowersec Swift
 
-The native Swift SDK for Flowersec end-to-end encrypted direct and tunneled sessions. It implements the legacy v1 portable stack plus Transport v2 wire, cryptographic, and session primitives for Apple platforms.
+The native Swift SDK for Flowersec Transport v2 end-to-end encrypted sessions on Apple platforms.
 
 ## Install
 
@@ -28,28 +28,20 @@ Use `RuntimeCapabilitiesV2.macOS` for macOS candidate negotiation. `RuntimeCapab
 
 Create `ConnectorOptionsV2` with trust, admission-reason, and deadline policy, initialize `ConnectorV2` from the opaque lease, then call `ConnectorV2.connect()`. Failures are projected through the stable, redacted `ConnectErrorV2` codes without exposing candidate credentials or carrier internals.
 
-Do not treat the v1 `ConnectArtifact`, `ReconnectManager`, `FlowersecByteStream`, or Yamux options as v2 substitutes. Transport v2 defines WebSocket, raw QUIC, and WebTransport as equal carrier classes, keeps Yamux only on WebSocket hops, and disables 0-RTT and QUIC DATAGRAM. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](../docs/MIGRATION_TRANSPORT_V2.md).
+Transport v2 defines WebSocket, raw QUIC, and WebTransport as equal carrier classes, keeps Yamux internal and only on WebSocket hops, and disables 0-RTT and QUIC DATAGRAM. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](../docs/MIGRATION_TRANSPORT_V2.md).
 
 ## Cookbook
 
-Start with the [Swift cookbook](https://github.com/floegence/flowersec/tree/main/examples/swift). Its runnable client covers artifact fetch, tunnel connect, typed RPC, custom streams, liveness, HTTP proxy, and WebSocket proxy. Focused SDK tests provide executable endpoint, reconnect, controlplane, and security-policy references.
+Start with the [Swift cookbook](https://github.com/floegence/flowersec/tree/main/examples/swift). It prints the canonical Apple capability descriptor and can establish a macOS WSS session from an opaque Transport v2 artifact.
 
 ## Entrypoints
 
-- Client connect: `Flowersec.connect`, `connectDirect`, and `connectTunnel`
-- Endpoint sessions: `Endpoint.acceptDirect` and `Endpoint.connectTunnel`
-- RPC: `RPCRouter`, `RPCServer`, and the connected client RPC surface
-- Streams: `FlowersecByteStream`
-- Controlplane: `Controlplane` and `ChannelInitService`
-- Reconnect: `ReconnectManager`
-- Proxy: `ProxyClient` and `ProxyServer`
-- Diagnostics: `ConnectOptions.onDiagnosticEvent`
+- Artifact boundary: `parseArtifactV2` and `ArtifactLeaseV2`
+- Session connect: `ConnectorV2.connect()`
+- Sessions and streams: `SessionV2`, `RPCPeerV2`, and `ByteStreamV2`
+- Capability negotiation: `RuntimeCapabilitiesV2`
 
-High-level WebSocket connections require TLS by default. Use `.allowPlaintextForLoopback` only for literal local development targets.
-
-## Proxy Server
-
-`ProxyServer` streams HTTP request and response chunks directly between the Flowersec stream and AsyncHTTPClient. `ProxyServerOptions.maxConcurrentStreams` defaults to 64 and independently caps active HTTP and WebSocket proxy streams; excess streams are reset immediately.
+WebSocket connections require TLS 1.3 and exact Flowersec v2 subprotocol negotiation.
 
 ## Runtime Boundaries
 

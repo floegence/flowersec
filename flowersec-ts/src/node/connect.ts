@@ -3,7 +3,7 @@ import type { DirectConnectOptions } from "../direct-client/connect.js";
 import type { TunnelConnectOptions } from "../tunnel-client/connect.js";
 import { connectDirect } from "../direct-client/connect.js";
 import { connectTunnel } from "../tunnel-client/connect.js";
-import { connect, type ConnectOptions } from "../facade.js";
+import { connectLegacy, type ConnectOptions } from "../connect/legacyFacade.js";
 import type { ConnectArtifact } from "../connect/artifact.js";
 
 import type { ChannelInitGrant } from "../gen/flowersec/controlplane/v1.gen.js";
@@ -19,7 +19,7 @@ export async function connectNode(input: ConnectArtifact, opts: ConnectOptions):
       maxPayload: defaultWsMaxPayload(opts),
       perMessageDeflate: false,
     });
-  return await connect(input, { ...opts, wsFactory });
+  return await connectLegacy(input, { ...opts, wsFactory });
 }
 
 export async function connectTunnelNode(grant: ChannelInitGrant, opts: TunnelConnectOptions): Promise<Client>;

@@ -6,7 +6,6 @@ export const transportV2CommonReadmeLiterals = Object.freeze([
   "QUIC-family carriers use native QUIC streams and never Yamux.",
   "Flowersec application 0-RTT is disabled.",
   "Flowersec does not use QUIC DATAGRAM frames.",
-  "`flowersec-tunnel` remains a v1 WebSocket/Yamux CLI.",
 ]);
 
 export const transportV2ReadmeContracts = Object.freeze({

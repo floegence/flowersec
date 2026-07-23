@@ -9,43 +9,12 @@ license = "MIT"
 cargo-fuzz = true
 
 [dependencies]
-async-trait = "0.1"
 flowersec = { version = "=0.28.0", path = ".." }
 libfuzzer-sys = "0.4"
-serde_json = "1"
-tokio = { version = "1", features = ["rt", "sync", "time"] }
 
 [[bin]]
 name = "artifact"
 path = "fuzz_targets/artifact.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "handshake"
-path = "fuzz_targets/handshake.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "token"
-path = "fuzz_targets/token.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "yamux"
-path = "fuzz_targets/yamux.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "proxy"
-path = "fuzz_targets/proxy.rs"
 test = false
 doc = false
 bench = false

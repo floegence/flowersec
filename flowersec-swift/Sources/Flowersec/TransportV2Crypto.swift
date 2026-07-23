@@ -16,7 +16,7 @@ enum TransportDirectionV2: UInt8, Codable, Equatable, Sendable {
   case serverToClient = 2
 }
 
-public enum TransportCipherSuiteV2: UInt16, Codable, Equatable, Sendable {
+enum TransportCipherSuiteV2: UInt16, Codable, Equatable, Sendable {
   case chacha20Poly1305 = 1
   case aes256GCM = 2
 }
@@ -52,14 +52,14 @@ struct EpochRootsV2: Sendable, CustomStringConvertible, CustomDebugStringConvert
   private let setupRootStorage: SensitiveBytesV2
   private let rekeyRootStorage: SensitiveBytesV2
 
-  public var epochSecret: Data { epochSecretStorage.copy() }
-  public var controlRoot: Data { controlRootStorage.copy() }
-  public var streamRoot: Data { streamRootStorage.copy() }
-  public var setupRoot: Data { setupRootStorage.copy() }
-  public var rekeyRoot: Data { rekeyRootStorage.copy() }
+  var epochSecret: Data { epochSecretStorage.copy() }
+  var controlRoot: Data { controlRootStorage.copy() }
+  var streamRoot: Data { streamRootStorage.copy() }
+  var setupRoot: Data { setupRootStorage.copy() }
+  var rekeyRoot: Data { rekeyRootStorage.copy() }
 
-  public var description: String { "EpochRootsV2([REDACTED])" }
-  public var debugDescription: String { description }
+  var description: String { "EpochRootsV2([REDACTED])" }
+  var debugDescription: String { description }
 
   fileprivate init(
     epochSecret: Data,
@@ -81,12 +81,12 @@ struct RecordMaterialV2: Sendable, CustomStringConvertible, CustomDebugStringCon
   private let recordKeyStorage: SensitiveBytesV2
   private let noncePrefixStorage: SensitiveBytesV2
 
-  public var secret: Data { secretStorage.copy() }
-  public var recordKey: Data { recordKeyStorage.copy() }
-  public var noncePrefix: Data { noncePrefixStorage.copy() }
+  var secret: Data { secretStorage.copy() }
+  var recordKey: Data { recordKeyStorage.copy() }
+  var noncePrefix: Data { noncePrefixStorage.copy() }
 
-  public var description: String { "RecordMaterialV2([REDACTED])" }
-  public var debugDescription: String { description }
+  var description: String { "RecordMaterialV2([REDACTED])" }
+  var debugDescription: String { description }
 
   fileprivate init(secret: Data, recordKey: Data, noncePrefix: Data) {
     secretStorage = SensitiveBytesV2(secret)
@@ -96,12 +96,12 @@ struct RecordMaterialV2: Sendable, CustomStringConvertible, CustomDebugStringCon
 }
 
 struct SetupPrefaceV2: Equatable, Sendable {
-  public let openerRole: StreamOpenerRoleV2
-  public let logicalStreamID: UInt64
-  public let initialEpoch: UInt32
-  public let setupMAC: Data
+  let openerRole: StreamOpenerRoleV2
+  let logicalStreamID: UInt64
+  let initialEpoch: UInt32
+  let setupMAC: Data
 
-  public init(
+  init(
     openerRole: StreamOpenerRoleV2,
     logicalStreamID: UInt64,
     initialEpoch: UInt32
@@ -117,7 +117,7 @@ struct SetupPrefaceV2: Equatable, Sendable {
     )
   }
 
-  public func withSetupMAC(_ setupMAC: Data) throws -> SetupPrefaceV2 {
+  func withSetupMAC(_ setupMAC: Data) throws -> SetupPrefaceV2 {
     guard setupMAC.count == TransportV2Crypto.setupMACBytes else {
       throw TransportV2CryptoError.invalidKeyMaterial
     }
@@ -129,7 +129,7 @@ struct SetupPrefaceV2: Equatable, Sendable {
     )
   }
 
-  public func encoded() throws -> Data {
+  func encoded() throws -> Data {
     guard
       Self.validLogicalStreamID(role: openerRole, id: logicalStreamID),
       setupMAC.count == TransportV2Crypto.setupMACBytes
@@ -150,7 +150,7 @@ struct SetupPrefaceV2: Equatable, Sendable {
     return output
   }
 
-  public init(encoded: Data) throws {
+  init(encoded: Data) throws {
     guard
       encoded.count == TransportV2Crypto.setupPrefaceBytes,
       Data(encoded[0..<4]) == Data("FSS2".utf8),
@@ -198,17 +198,17 @@ struct SetupPrefaceV2: Equatable, Sendable {
 }
 
 struct RecordHeaderV2: Equatable, Sendable {
-  public let epoch: UInt32
-  public let sequence: UInt64
-  public let ciphertextLength: UInt32
+  let epoch: UInt32
+  let sequence: UInt64
+  let ciphertextLength: UInt32
 
-  public init(epoch: UInt32, sequence: UInt64, ciphertextLength: UInt32) {
+  init(epoch: UInt32, sequence: UInt64, ciphertextLength: UInt32) {
     self.epoch = epoch
     self.sequence = sequence
     self.ciphertextLength = ciphertextLength
   }
 
-  public func encoded() throws -> Data {
+  func encoded() throws -> Data {
     guard Int(ciphertextLength) >= TransportV2Crypto.aeadTagBytes else {
       throw TransportV2CryptoError.invalidRecordHeader
     }
@@ -228,7 +228,7 @@ struct RecordHeaderV2: Equatable, Sendable {
     return output
   }
 
-  public init(encoded: Data) throws {
+  init(encoded: Data) throws {
     guard
       encoded.count == TransportV2Crypto.recordHeaderBytes,
       Data(encoded[0..<4]) == Data("FSR2".utf8),
@@ -250,16 +250,16 @@ struct RecordHeaderV2: Equatable, Sendable {
 
 /// Stateless v2 wire and crypto primitives. Session code must enforce nonce and epoch invariants.
 enum TransportV2Crypto {
-  public static let protocolVersion: UInt8 = 2
-  public static let setupPrefaceBytes = 56
-  public static let setupMACBytes = 32
-  public static let recordHeaderBytes = 24
-  public static let innerHeaderBytes = 8
-  public static let aeadTagBytes = 16
-  public static let maxDataBytes = 16_384
-  public static let maxCiphertextBytes = innerHeaderBytes + maxDataBytes + aeadTagBytes
+  static let protocolVersion: UInt8 = 2
+  static let setupPrefaceBytes = 56
+  static let setupMACBytes = 32
+  static let recordHeaderBytes = 24
+  static let innerHeaderBytes = 8
+  static let aeadTagBytes = 16
+  static let maxDataBytes = 16_384
+  static let maxCiphertextBytes = innerHeaderBytes + maxDataBytes + aeadTagBytes
 
-  public static func deriveEpochZero(
+  static func deriveEpochZero(
     sessionPRK: Data,
     direction: TransportDirectionV2
   ) throws -> EpochRootsV2 {
@@ -307,7 +307,7 @@ enum TransportV2Crypto {
     return roots
   }
 
-  public static func deriveStreamMaterial(
+  static func deriveStreamMaterial(
     streamRoot: Data,
     h3: Data,
     logicalStreamID: UInt64,
@@ -357,7 +357,7 @@ enum TransportV2Crypto {
     return material
   }
 
-  public static func deriveControlMaterial(
+  static func deriveControlMaterial(
     controlRoot: Data,
     h3: Data,
     direction: TransportDirectionV2,
@@ -373,7 +373,7 @@ enum TransportV2Crypto {
     )
   }
 
-  public static func deriveNextEpoch(
+  static func deriveNextEpoch(
     rekeyRoot: Data,
     h3: Data,
     direction: TransportDirectionV2,
@@ -396,7 +396,7 @@ enum TransportV2Crypto {
     )
   }
 
-  public static func deriveEpochRoots(epochSecret: Data) throws -> EpochRootsV2 {
+  static func deriveEpochRoots(epochSecret: Data) throws -> EpochRootsV2 {
     guard epochSecret.count == 32 else {
       throw TransportV2CryptoError.invalidKeyMaterial
     }
@@ -425,7 +425,7 @@ enum TransportV2Crypto {
     )
   }
 
-  public static func computeSetupMAC(
+  static func computeSetupMAC(
     setupRoot: Data,
     h3: Data,
     preface: SetupPrefaceV2
@@ -442,7 +442,7 @@ enum TransportV2Crypto {
     )
   }
 
-  public static func verifySetupMAC(
+  static func verifySetupMAC(
     setupRoot: Data,
     h3: Data,
     preface: SetupPrefaceV2
@@ -457,7 +457,7 @@ enum TransportV2Crypto {
     )
   }
 
-  public static func encodeInnerRecord(type: InnerRecordTypeV2, payload: Data) throws -> Data {
+  static func encodeInnerRecord(type: InnerRecordTypeV2, payload: Data) throws -> Data {
     try validateInnerRecord(type: type, payloadCount: payload.count)
 
     var output = Data()
@@ -469,7 +469,7 @@ enum TransportV2Crypto {
     return output
   }
 
-  public static func decodeInnerRecord(_ encoded: Data) throws -> (InnerRecordTypeV2, Data) {
+  static func decodeInnerRecord(_ encoded: Data) throws -> (InnerRecordTypeV2, Data) {
     guard
       encoded.count >= innerHeaderBytes,
       encoded[1] == 0,
@@ -487,7 +487,7 @@ enum TransportV2Crypto {
     return (type, Data(encoded[innerHeaderBytes...]))
   }
 
-  public static func recordAAD(
+  static func recordAAD(
     h3: Data,
     logicalStreamID: UInt64,
     direction: TransportDirectionV2,
@@ -507,7 +507,7 @@ enum TransportV2Crypto {
     )
   }
 
-  public static func sealRecord(
+  static func sealRecord(
     suite: TransportCipherSuiteV2,
     key: Data,
     noncePrefix: Data,
@@ -555,7 +555,7 @@ enum TransportV2Crypto {
     }
   }
 
-  public static func openRecord(
+  static func openRecord(
     suite: TransportCipherSuiteV2,
     key: Data,
     noncePrefix: Data,

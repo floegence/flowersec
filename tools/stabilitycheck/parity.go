@@ -18,27 +18,20 @@ const (
 )
 
 var requiredPortableCapabilityIDs = []string{
-	"wire_idl",
-	"connect",
-	"security",
-	"session",
+	"opaque_artifact",
+	"opaque_connector",
+	"secure_session",
 	"rpc",
-	"endpoint",
-	"controlplane",
-	"reconnect",
-	"proxy",
-	"observability",
+	"carrier_contract",
+	"wire_security",
 }
 
 var requiredSharedFixtureIDs = []string{
-	"connect_artifact",
-	"e2ee",
-	"issuer_rotation",
-	"runtime_contracts",
-	"token",
-	"portable_protocol_contracts",
-	"connect_error_registry",
-	"connect_diagnostics_registry",
+	"artifact_v2",
+	"crypto_v2",
+	"handshake_v2",
+	"open_unicode_v2",
+	"session_wire_v2",
 }
 
 type capabilityManifest struct {
@@ -521,7 +514,7 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", capabilityManifestPath, err)
 	}
-	if m.Version != 1 {
+	if m.Version != 2 {
 		return nil, fmt.Errorf("unsupported capability manifest version %d", m.Version)
 	}
 	if len(m.Languages) == 0 || len(m.PortableCapabilities) == 0 {
