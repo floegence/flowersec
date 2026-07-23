@@ -4,6 +4,7 @@
 //! Native Rust support for Flowersec secure direct and tunneled sessions.
 
 pub mod artifact;
+pub mod artifact_v2;
 pub mod client;
 pub mod controlplane;
 pub mod defaults;
