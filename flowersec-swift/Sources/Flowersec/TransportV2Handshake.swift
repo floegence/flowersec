@@ -1,7 +1,7 @@
 import Crypto
 import Foundation
 
-public protocol TransportV2CarrierStream: Sendable {
+protocol TransportV2CarrierStream: Sendable {
   var carrierStreamID: UInt64 { get }
 
   func read(maxBytes: Int) async throws -> Data?
@@ -14,7 +14,7 @@ public protocol TransportV2CarrierStream: Sendable {
   func close() async
 }
 
-public protocol TransportV2CarrierSession: Sendable {
+protocol TransportV2CarrierSession: Sendable {
   var chosenCarrier: CarrierKind { get }
   /// Exact peer-initiated physical bidirectional-stream capacity available to
   /// Flowersec after admission. It includes control, RPC, and application slots.
@@ -66,24 +66,24 @@ struct TransportV2SessionDeadlines: Sendable {
   }
 }
 
-public struct TransportV2SessionConfig: Sendable {
-  public let role: SessionRoleV2
-  public let path: PathKind
-  public let channelID: String
-  public let sessionContractHash: Data
-  public let suite: TransportCipherSuiteV2
-  public let psk: Data
-  public let maxInboundStreams: UInt16
-  public let idleTimeoutSeconds: UInt32
-  public let localAdmissionBinding: Data
-  public let peerAdmissionBinding: Data
-  public let localEndpointInstanceID: String
-  public let expectedPeerEndpointInstanceID: String
-  public var rpcRouter: RPCRouter?
-  public var rpcServerOptions: RPCServerOptions
+struct TransportV2SessionConfig: Sendable {
+  let role: SessionRoleV2
+  let path: PathKind
+  let channelID: String
+  let sessionContractHash: Data
+  let suite: TransportCipherSuiteV2
+  let psk: Data
+  let maxInboundStreams: UInt16
+  let idleTimeoutSeconds: UInt32
+  let localAdmissionBinding: Data
+  let peerAdmissionBinding: Data
+  let localEndpointInstanceID: String
+  let expectedPeerEndpointInstanceID: String
+  var rpcRouter: RPCRouter?
+  var rpcServerOptions: RPCServerOptions
   var deadlines: TransportV2SessionDeadlines
 
-  public init(
+  init(
     role: SessionRoleV2,
     path: PathKind,
     channelID: String,

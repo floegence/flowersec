@@ -118,7 +118,7 @@ public actor TransportV2Session: SessionV2 {
     ]
   }
 
-  public static func establish(
+  static func establish(
     carrier: any TransportV2CarrierSession,
     config: TransportV2SessionConfig
   ) async throws -> TransportV2Session {

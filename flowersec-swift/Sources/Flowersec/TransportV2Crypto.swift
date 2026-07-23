@@ -1,7 +1,7 @@
 import Crypto
 import Foundation
 
-public enum TransportV2CryptoError: Error, Equatable, Sendable {
+enum TransportV2CryptoError: Error, Equatable, Sendable {
   case invalidKeyMaterial
   case invalidSetupPreface
   case invalidRecordHeader
@@ -11,7 +11,7 @@ public enum TransportV2CryptoError: Error, Equatable, Sendable {
   case cryptographicFailure
 }
 
-public enum TransportDirectionV2: UInt8, Codable, Equatable, Sendable {
+enum TransportDirectionV2: UInt8, Codable, Equatable, Sendable {
   case clientToServer = 1
   case serverToClient = 2
 }
@@ -21,12 +21,12 @@ public enum TransportCipherSuiteV2: UInt16, Codable, Equatable, Sendable {
   case aes256GCM = 2
 }
 
-public enum StreamOpenerRoleV2: UInt8, Codable, Equatable, Sendable {
+enum StreamOpenerRoleV2: UInt8, Codable, Equatable, Sendable {
   case client = 1
   case server = 2
 }
 
-public enum InnerRecordTypeV2: UInt8, Codable, Equatable, Sendable {
+enum InnerRecordTypeV2: UInt8, Codable, Equatable, Sendable {
   case open = 1
   case openACK = 2
   case openReject = 3
@@ -45,7 +45,7 @@ public enum InnerRecordTypeV2: UInt8, Codable, Equatable, Sendable {
   case streamKeyUpdateACK = 25
 }
 
-public struct EpochRootsV2: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+struct EpochRootsV2: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
   private let epochSecretStorage: SensitiveBytesV2
   private let controlRootStorage: SensitiveBytesV2
   private let streamRootStorage: SensitiveBytesV2
@@ -76,7 +76,7 @@ public struct EpochRootsV2: Sendable, CustomStringConvertible, CustomDebugString
   }
 }
 
-public struct RecordMaterialV2: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+struct RecordMaterialV2: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
   private let secretStorage: SensitiveBytesV2
   private let recordKeyStorage: SensitiveBytesV2
   private let noncePrefixStorage: SensitiveBytesV2
@@ -95,7 +95,7 @@ public struct RecordMaterialV2: Sendable, CustomStringConvertible, CustomDebugSt
   }
 }
 
-public struct SetupPrefaceV2: Equatable, Sendable {
+struct SetupPrefaceV2: Equatable, Sendable {
   public let openerRole: StreamOpenerRoleV2
   public let logicalStreamID: UInt64
   public let initialEpoch: UInt32
@@ -197,7 +197,7 @@ public struct SetupPrefaceV2: Equatable, Sendable {
   }
 }
 
-public struct RecordHeaderV2: Equatable, Sendable {
+struct RecordHeaderV2: Equatable, Sendable {
   public let epoch: UInt32
   public let sequence: UInt64
   public let ciphertextLength: UInt32
@@ -249,7 +249,7 @@ public struct RecordHeaderV2: Equatable, Sendable {
 }
 
 /// Stateless v2 wire and crypto primitives. Session code must enforce nonce and epoch invariants.
-public enum TransportV2Crypto {
+enum TransportV2Crypto {
   public static let protocolVersion: UInt8 = 2
   public static let setupPrefaceBytes = 56
   public static let setupMACBytes = 32

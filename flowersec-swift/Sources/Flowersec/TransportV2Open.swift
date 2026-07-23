@@ -1,11 +1,11 @@
 import CoreFoundation
 import Foundation
 
-public enum OpenPayloadErrorV2: Error, Equatable, Sendable {
+enum OpenPayloadErrorV2: Error, Equatable, Sendable {
   case invalidPayload
 }
 
-public struct OpenPayloadV2: Equatable, Sendable {
+struct OpenPayloadV2: Equatable, Sendable {
   public static let fixedPayloadBytes = 46
   public static let maxPayloadBytes = 8_192
   public static let maxKindBytes = 128
