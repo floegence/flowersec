@@ -1,0 +1,234 @@
+{
+  "allowed": [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "NCSA",
+    "Zlib"
+  ],
+  "review": [
+    "CDLA-Permissive-2.0",
+    "LGPL-2.1-or-later",
+    "MPL-2.0",
+    "Python-2.0",
+    "Unicode-3.0",
+    "Unlicense"
+  ],
+  "denied": [
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later"
+  ],
+  "exceptions": [
+    "LLVM-exception"
+  ],
+  "licenseRefs": {},
+  "bundledNotices": {
+    "pkg:npm/punycode@2.3.1": {
+      "copyright": "Copyright Mathias Bynens <https://mathiasbynens.be/>",
+      "license": "MIT",
+      "licenseTextLines": [
+        "Copyright Mathias Bynens <https://mathiasbynens.be/>",
+        "",
+        "Permission is hereby granted, free of charge, to any person obtaining",
+        "a copy of this software and associated documentation files (the",
+        "\"Software\"), to deal in the Software without restriction, including",
+        "without limitation the rights to use, copy, modify, merge, publish,",
+        "distribute, sublicense, and/or sell copies of the Software, and to",
+        "permit persons to whom the Software is furnished to do so, subject to",
+        "the following conditions:",
+        "",
+        "The above copyright notice and this permission notice shall be",
+        "included in all copies or substantial portions of the Software.",
+        "",
+        "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,",
+        "EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF",
+        "MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND",
+        "NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE",
+        "LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION",
+        "OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION",
+        "WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+      ],
+      "sha256": "483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a"
+    },
+    "pkg:npm/tr46@5.0.0": {
+      "copyright": "Copyright (c) Sebastian Mayr",
+      "license": "MIT",
+      "licenseTextLines": [
+        "The MIT License (MIT)",
+        "",
+        "Copyright (c) Sebastian Mayr",
+        "",
+        "Permission is hereby granted, free of charge, to any person obtaining a copy",
+        "of this software and associated documentation files (the \"Software\"), to deal",
+        "in the Software without restriction, including without limitation the rights",
+        "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell",
+        "copies of the Software, and to permit persons to whom the Software is",
+        "furnished to do so, subject to the following conditions:",
+        "",
+        "The above copyright notice and this permission notice shall be included in all",
+        "copies or substantial portions of the Software.",
+        "",
+        "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR",
+        "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,",
+        "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE",
+        "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER",
+        "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,",
+        "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE",
+        "SOFTWARE."
+      ],
+      "sha256": "499d6d466d064e0460427967a344e2a32fcb86ea8c6cd1a285ec4f1fa03fba67"
+    }
+  },
+  "legacyExpressionMappings": {
+    "Apache-2.0 / MIT": "Apache-2.0 OR MIT",
+    "MIT/Apache-2.0": "MIT OR Apache-2.0",
+    "Unlicense/MIT": "Unlicense OR MIT"
+  },
+  "reviewAuthority": {
+    "reviewer": "flowersec-security-license-review",
+    "reviewedAt": "2026-07-22",
+    "policyRevision": "source-license-policy-v2"
+  },
+  "expressionDecisions": {
+    "(Apache-2.0 OR MIT) AND Unicode-3.0": {
+      "decision": "approved",
+      "concludedExpression": "MIT AND Unicode-3.0"
+    },
+    "(MIT OR Apache-2.0) AND NCSA": {
+      "decision": "approved",
+      "concludedExpression": "MIT AND NCSA"
+    },
+    "(MIT OR Apache-2.0) AND Unicode-3.0": {
+      "decision": "approved",
+      "concludedExpression": "MIT AND Unicode-3.0"
+    },
+    "0BSD": {
+      "decision": "approved",
+      "concludedExpression": "0BSD"
+    },
+    "Apache-2.0": {
+      "decision": "approved",
+      "concludedExpression": "Apache-2.0"
+    },
+    "Apache-2.0 AND ISC": {
+      "decision": "approved",
+      "concludedExpression": "Apache-2.0 AND ISC"
+    },
+    "Apache-2.0 OR ISC OR MIT": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "Apache-2.0 OR MIT": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "BSD-2-Clause": {
+      "decision": "approved",
+      "concludedExpression": "BSD-2-Clause"
+    },
+    "BSD-2-Clause OR Apache-2.0 OR MIT": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "BSD-3-Clause": {
+      "decision": "approved",
+      "concludedExpression": "BSD-3-Clause"
+    },
+    "CC0-1.0 OR MIT-0 OR Apache-2.0": {
+      "decision": "approved",
+      "concludedExpression": "Apache-2.0"
+    },
+    "CC0-1.0": {
+      "decision": "approved",
+      "concludedExpression": "CC0-1.0"
+    },
+    "CDLA-Permissive-2.0": {
+      "decision": "approved",
+      "concludedExpression": "CDLA-Permissive-2.0"
+    },
+    "ISC": {
+      "decision": "approved",
+      "concludedExpression": "ISC"
+    },
+    "ISC AND (Apache-2.0 OR ISC)": {
+      "decision": "approved",
+      "concludedExpression": "ISC"
+    },
+    "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)": {
+      "decision": "approved",
+      "concludedExpression": "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)"
+    },
+    "MIT": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "MIT OR Apache-2.0": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "MIT OR Apache-2.0 OR BSD-1-Clause": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "MIT OR Apache-2.0 OR LGPL-2.1-or-later": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "MIT OR Apache-2.0 OR Zlib": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "MPL-2.0": {
+      "decision": "approved",
+      "concludedExpression": "MPL-2.0"
+    },
+    "Python-2.0": {
+      "decision": "approved",
+      "concludedExpression": "Python-2.0"
+    },
+    "Unlicense OR MIT": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    },
+    "Zlib OR Apache-2.0 OR MIT": {
+      "decision": "approved",
+      "concludedExpression": "MIT"
+    }
+  },
+  "swift": {
+    "async-http-client": "Apache-2.0",
+    "swift-algorithms": "Apache-2.0",
+    "swift-asn1": "Apache-2.0",
+    "swift-async-algorithms": "Apache-2.0",
+    "swift-atomics": "Apache-2.0",
+    "swift-certificates": "Apache-2.0",
+    "swift-collections": "Apache-2.0",
+    "swift-configuration": "Apache-2.0",
+    "swift-crypto": "Apache-2.0",
+    "swift-distributed-tracing": "Apache-2.0",
+    "swift-http-structured-headers": "Apache-2.0",
+    "swift-http-types": "Apache-2.0",
+    "swift-log": "Apache-2.0",
+    "swift-nio": "Apache-2.0",
+    "swift-nio-extras": "Apache-2.0",
+    "swift-nio-http2": "Apache-2.0",
+    "swift-nio-ssl": "Apache-2.0",
+    "swift-nio-transport-services": "Apache-2.0",
+    "swift-numerics": "Apache-2.0",
+    "swift-service-context": "Apache-2.0",
+    "swift-service-lifecycle": "Apache-2.0",
+    "swift-system": "Apache-2.0"
+  }
+}

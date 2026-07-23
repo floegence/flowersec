@@ -6,7 +6,7 @@ repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)
 cd "$repo_root"
 
 version=${1:-}
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo "usage: scripts/release.sh <major.minor.patch>" >&2
   exit 2
 fi
@@ -56,7 +56,7 @@ for tag in "${tags[@]}"; do
   fi
 done
 
-make release-check
+env -u MAKE -u MAKE_COMMAND -u MAKEFLAGS -u GNUMAKEFLAGS -u MFLAGS -u MAKEFILES -u MAKEFILE_LIST -u MAKEOVERRIDES -u MAKELEVEL -u MAKE_RESTARTS -u MAKECMDGOALS make release-check
 
 if [[ -n "$(git status --short)" ]]; then
   echo "release-check modified the worktree" >&2

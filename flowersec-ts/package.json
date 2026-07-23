@@ -18,7 +18,9 @@
     "dist/**",
     "README.md",
     "LICENSE",
-    "YAMUX_ALIGNMENT.md"
+    "YAMUX_ALIGNMENT.md",
+    "THIRD_PARTY_NOTICES.md",
+    "sbom/**"
   ],
   "publishConfig": {
     "access": "public"
@@ -109,8 +111,9 @@
     "node": ">=24.0.0"
   },
   "overrides": {
-    "brace-expansion@^1.1.7": "^1.1.13",
-    "brace-expansion@^2.0.1": "^2.0.3",
+    "brace-expansion@^1.1.7": "^1.1.16",
+    "brace-expansion@^2.0.1": "^2.1.2",
+    "js-yaml": "^4.3.0",
     "postcss": "^8.5.12"
   },
   "scripts": {
@@ -141,6 +144,9 @@
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
     "@vitest/coverage-v8": "4.1.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "ajv-formats-draft2019": "1.6.1",
     "eslint": "^9.17.0",
     "typescript": "^5.7.2",
     "vite": "^8.0.16",

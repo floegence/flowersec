@@ -23,7 +23,7 @@ function readJSON(filePath) {
 }
 
 function requireVersion(value, label) {
-  if (typeof value !== "string" || !/^\d+\.\d+\.\d+$/.test(value)) {
+  if (typeof value !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value)) {
     throw new Error(`${label} must contain a semantic version`);
   }
   return value;

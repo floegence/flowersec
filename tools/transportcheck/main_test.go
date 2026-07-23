@@ -2214,7 +2214,7 @@ func TestMakeTargetsUseEvidenceClassificationGate(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"check:\n\t$(MAKE) release-policy-check",
+		"check: security-makefile-check security-dependency-check\n\t$(MAKE) release-policy-check",
 		"\t$(MAKE) transport-v2-unit",
 		"\t$(MAKE) weaknet-smoke",
 		"\t$(MAKE) quic-native-smoke",

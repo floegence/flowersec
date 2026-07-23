@@ -11,7 +11,7 @@ documentation = "https://docs.rs/flowersec"
 readme = "README.md"
 keywords = ["websocket", "e2ee", "rpc", "tunnel", "yamux"]
 categories = ["network-programming", "cryptography", "asynchronous"]
-include = ["src/**", "README.md", "LICENSE", "Cargo.toml"]
+include = ["src/**", "README.md", "LICENSE", "Cargo.toml", "THIRD_PARTY_NOTICES.md", "sbom/**"]
 
 [features]
 default = ["rustls-native-roots"]

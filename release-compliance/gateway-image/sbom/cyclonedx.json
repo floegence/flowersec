@@ -1,0 +1,130 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:05dfeb80-6aec-5404-8e22-0a3e849a2f09",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "library",
+      "name": "flowersec-gateway-image",
+      "version": "0.28.0",
+      "purl": "pkg:generic/flowersec-gateway-image@0.28.0",
+      "bom-ref": "pkg:generic/flowersec-gateway-image@0.28.0"
+    },
+    "properties": [
+      {
+        "name": "flowersec:source-inventory-sha256",
+        "value": "a88f1332654d9520b5f206ada459e7103634e503fb3075b19f7624551f124586"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "github.com/gorilla/websocket",
+      "version": "v1.5.3",
+      "purl": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
+      "bom-ref": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/gorilla/websocket"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-2-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/libp2p/go-buffer-pool",
+      "version": "v0.0.2",
+      "purl": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
+      "bom-ref": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/libp2p/go-buffer-pool"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/libp2p/go-yamux/v5",
+      "version": "v5.1.0",
+      "purl": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
+      "bom-ref": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
+      "licenses": [
+        {
+          "expression": "MPL-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/libp2p/go-yamux/v5"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MPL-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "true"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:generic/flowersec-gateway-image@0.28.0",
+      "dependsOn": [
+        "pkg:golang/github.com/gorilla/websocket@v1.5.3",
+        "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0"
+      ]
+    },
+    {
+      "ref": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
+      "dependsOn": [
+        "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2"
+      ]
+    }
+  ]
+}

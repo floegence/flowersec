@@ -1,12 +1,9 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress interop-stress-full fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench bench-test check stability-check transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-ab transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check source-inventory readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress interop-stress-full fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench bench-test check stability-check transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-ab transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
 
 INTEROP_CELLS ?= go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust
 INTEROP_REPORT_DIR ?= $(or $(TMPDIR),/tmp)
 INTEROP_DEADLINE_MS ?= 0
 CHECK_INTEROP ?= 1
-
-GOVULNCHECK_VERSION ?= v1.1.4
-GOVULNCHECK_GOTOOLCHAIN ?= go1.26.5
 
 YAMUX_INTEROP ?= 1
 YAMUX_INTEROP_STRESS ?= 0
@@ -74,7 +71,7 @@ go-vet:
 	cd tools/transportcheck && go vet ./...
 
 go-vulncheck:
-	cd flowersec-go && GOTOOLCHAIN=$(GOVULNCHECK_GOTOOLCHAIN) go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	node scripts/check-go-security.mjs
 
 ts-test:
 	cd flowersec-ts && \
@@ -97,18 +94,18 @@ ts-ci:
 	cd flowersec-ts && npm ci --audit=false
 
 ts-ensure-deps:
-	@if [ ! -x flowersec-ts/node_modules/.bin/eslint ] || [ ! -x flowersec-ts/node_modules/.bin/vitest ] || [ ! -x flowersec-ts/node_modules/.bin/tsc ] || [ ! -f flowersec-ts/node_modules/@vitest/coverage-v8/package.json ]; then \
+	@if [ ! -x flowersec-ts/node_modules/.bin/eslint ] || [ ! -x flowersec-ts/node_modules/.bin/vitest ] || [ ! -x flowersec-ts/node_modules/.bin/tsc ] || [ ! -f flowersec-ts/node_modules/@vitest/coverage-v8/package.json ] || [ ! -f flowersec-ts/node_modules/ajv/package.json ] || [ ! -f flowersec-ts/node_modules/ajv-formats/package.json ] || [ ! -f flowersec-ts/node_modules/ajv-formats-draft2019/package.json ]; then \
 		echo "flowersec-ts dependencies missing or incomplete; running npm ci --audit=false"; \
 		cd flowersec-ts && npm ci --audit=false; \
 	fi
 
 ts-audit:
-	cd flowersec-ts && npm audit --audit-level=high --omit=dev
+	cd flowersec-ts && npm audit --audit-level=info --include=prod --include=dev --include=optional --include=peer
 
 ts-lint:
 	cd flowersec-ts && npm run lint
 
-ts-build:
+ts-build: ts-ensure-deps
 	cd flowersec-ts && rm -rf dist && npm run build
 
 ts-package-check:
@@ -116,6 +113,9 @@ ts-package-check:
 
 swift-package-check:
 	swift package describe >/dev/null
+
+swift-security-check:
+	node scripts/check-swift-security.mjs
 
 swift-source-guard:
 	@status=1; \
@@ -153,7 +153,7 @@ swift-cover-check:
 	@coverage_path=$$(swift test --show-codecov-path); \
 		node scripts/check-swift-coverage.mjs "$$coverage_path" 79 80
 
-swift-check: swift-package-check swift-source-guard swift-build swift-test swift-cover-check
+swift-check: swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check
 
 rust-fmt-check:
 	cd flowersec-rust && cargo fmt --all --check
@@ -176,10 +176,9 @@ rust-package-check:
 	cd flowersec-rust && cargo publish --dry-run --allow-dirty
 
 rust-audit:
-	cd flowersec-rust && cargo audit
+	node scripts/check-rust-security.mjs
 
-rust-deny:
-	cd flowersec-rust && cargo deny check
+rust-deny: rust-audit
 
 rust-cover-check:
 	cd flowersec-rust && cargo llvm-cov --all-features --fail-under-lines 85
@@ -264,6 +263,16 @@ release-version-check:
 release-test:
 	node --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs
 
+security-makefile-check:
+	node scripts/check-security-makefile.mjs Makefile
+
+security-dependency-check: ts-build
+	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/source-inventory.test.mjs scripts/security-makefile.test.mjs
+	node scripts/generate-source-inventory.mjs --check
+
+source-inventory:
+	node scripts/generate-source-inventory.mjs
+
 readme-localization-check:
 	node ./scripts/check-readme-localizations.mjs
 
@@ -287,7 +296,7 @@ precommit-swift:
 precommit-rust:
 	$(MAKE) rust-check
 
-precommit:
+precommit: security-makefile-check security-dependency-check
 	$(MAKE) release-policy-check
 	$(MAKE) readme-localization-check
 	$(MAKE) gen-check
@@ -409,7 +418,7 @@ nightly-check:
 	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAndVerify -fuzztime=5s ./controlplane/token
 	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAttachWithConstraints -fuzztime=5s ./tunnel/protocol
 
-check:
+check: security-makefile-check security-dependency-check
 	$(MAKE) release-policy-check
 	$(MAKE) ts-ci
 	$(MAKE) readme-localization-check

@@ -1,0 +1,644 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "flowersec-swift",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-swift/a88f1332654d9520b5f206ada459e7103634e503fb3075b19f7624551f124586",
+  "creationInfo": {
+    "created": "1970-01-01T00:00:00Z",
+    "creators": [
+      "Tool: flowersec-source-inventory-1"
+    ]
+  },
+  "packages": [
+    {
+      "name": "Flowersec",
+      "SPDXID": "SPDXRef-Package-b9a84ca118a8fa155174",
+      "versionInfo": "0.28.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "Flowersec source inventory SHA-256: a88f1332654d9520b5f206ada459e7103634e503fb3075b19f7624551f124586",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/Flowersec@0.28.0"
+        }
+      ]
+    },
+    {
+      "name": "async-http-client",
+      "SPDXID": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "versionInfo": "1.35.0",
+      "downloadLocation": "https://github.com/swift-server/async-http-client.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/async-http-client@1.35.0"
+        }
+      ]
+    },
+    {
+      "name": "swift-algorithms",
+      "SPDXID": "SPDXRef-Package-fe6e84de973b06a9123d",
+      "versionInfo": "1.2.1",
+      "downloadLocation": "https://github.com/apple/swift-algorithms.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-algorithms@1.2.1"
+        }
+      ]
+    },
+    {
+      "name": "swift-asn1",
+      "SPDXID": "SPDXRef-Package-1141aad31780b67cd845",
+      "versionInfo": "1.7.1",
+      "downloadLocation": "https://github.com/apple/swift-asn1.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-asn1@1.7.1"
+        }
+      ]
+    },
+    {
+      "name": "swift-async-algorithms",
+      "SPDXID": "SPDXRef-Package-3206f378ab0ac432eb87",
+      "versionInfo": "1.1.5",
+      "downloadLocation": "https://github.com/apple/swift-async-algorithms.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-async-algorithms@1.1.5"
+        }
+      ]
+    },
+    {
+      "name": "swift-atomics",
+      "SPDXID": "SPDXRef-Package-c733df779db813c17c27",
+      "versionInfo": "1.3.1",
+      "downloadLocation": "https://github.com/apple/swift-atomics.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-atomics@1.3.1"
+        }
+      ]
+    },
+    {
+      "name": "swift-certificates",
+      "SPDXID": "SPDXRef-Package-bf80a8b4b7fc40075730",
+      "versionInfo": "1.19.3",
+      "downloadLocation": "https://github.com/apple/swift-certificates.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-certificates@1.19.3"
+        }
+      ]
+    },
+    {
+      "name": "swift-collections",
+      "SPDXID": "SPDXRef-Package-eb2ed1954ef203d42537",
+      "versionInfo": "1.6.0",
+      "downloadLocation": "https://github.com/apple/swift-collections.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-collections@1.6.0"
+        }
+      ]
+    },
+    {
+      "name": "swift-configuration",
+      "SPDXID": "SPDXRef-Package-b5c1478e4e83b95f5f83",
+      "versionInfo": "1.2.0",
+      "downloadLocation": "https://github.com/apple/swift-configuration.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-configuration@1.2.0"
+        }
+      ]
+    },
+    {
+      "name": "swift-crypto",
+      "SPDXID": "SPDXRef-Package-419502d17340d5451b1c",
+      "versionInfo": "4.5.1",
+      "downloadLocation": "https://github.com/apple/swift-crypto.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-crypto@4.5.1"
+        }
+      ]
+    },
+    {
+      "name": "swift-distributed-tracing",
+      "SPDXID": "SPDXRef-Package-f7c762b46b448d764b41",
+      "versionInfo": "1.4.1",
+      "downloadLocation": "https://github.com/apple/swift-distributed-tracing.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-distributed-tracing@1.4.1"
+        }
+      ]
+    },
+    {
+      "name": "swift-http-structured-headers",
+      "SPDXID": "SPDXRef-Package-1de5e5cbb4236f013110",
+      "versionInfo": "1.7.0",
+      "downloadLocation": "https://github.com/apple/swift-http-structured-headers.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-http-structured-headers@1.7.0"
+        }
+      ]
+    },
+    {
+      "name": "swift-http-types",
+      "SPDXID": "SPDXRef-Package-0f49b39b44c95da3d65c",
+      "versionInfo": "1.6.0",
+      "downloadLocation": "https://github.com/apple/swift-http-types.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-http-types@1.6.0"
+        }
+      ]
+    },
+    {
+      "name": "swift-log",
+      "SPDXID": "SPDXRef-Package-7c026e6ffbda003a1f93",
+      "versionInfo": "1.14.0",
+      "downloadLocation": "https://github.com/apple/swift-log.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-log@1.14.0"
+        }
+      ]
+    },
+    {
+      "name": "swift-nio",
+      "SPDXID": "SPDXRef-Package-c0d4b20277ee969bbef6",
+      "versionInfo": "2.101.3",
+      "downloadLocation": "https://github.com/apple/swift-nio.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-nio@2.101.3"
+        }
+      ]
+    },
+    {
+      "name": "swift-nio-extras",
+      "SPDXID": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "versionInfo": "1.34.3",
+      "downloadLocation": "https://github.com/apple/swift-nio-extras.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-nio-extras@1.34.3"
+        }
+      ]
+    },
+    {
+      "name": "swift-nio-http2",
+      "SPDXID": "SPDXRef-Package-b96f1b1871dfee078bd0",
+      "versionInfo": "1.44.0",
+      "downloadLocation": "https://github.com/apple/swift-nio-http2.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-nio-http2@1.44.0"
+        }
+      ]
+    },
+    {
+      "name": "swift-nio-ssl",
+      "SPDXID": "SPDXRef-Package-0ffde91adf1f9a16bb0f",
+      "versionInfo": "2.37.2",
+      "downloadLocation": "https://github.com/apple/swift-nio-ssl.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-nio-ssl@2.37.2"
+        }
+      ]
+    },
+    {
+      "name": "swift-nio-transport-services",
+      "SPDXID": "SPDXRef-Package-ad73ef643003587a0dac",
+      "versionInfo": "1.28.0",
+      "downloadLocation": "https://github.com/apple/swift-nio-transport-services.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-nio-transport-services@1.28.0"
+        }
+      ]
+    },
+    {
+      "name": "swift-numerics",
+      "SPDXID": "SPDXRef-Package-debda36a3b0db45e5267",
+      "versionInfo": "1.1.1",
+      "downloadLocation": "https://github.com/apple/swift-numerics.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-numerics@1.1.1"
+        }
+      ]
+    },
+    {
+      "name": "swift-service-context",
+      "SPDXID": "SPDXRef-Package-739a4073008f62532c77",
+      "versionInfo": "1.3.0",
+      "downloadLocation": "https://github.com/apple/swift-service-context.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-service-context@1.3.0"
+        }
+      ]
+    },
+    {
+      "name": "swift-service-lifecycle",
+      "SPDXID": "SPDXRef-Package-80bbcf99311d11c5df02",
+      "versionInfo": "2.11.0",
+      "downloadLocation": "https://github.com/swift-server/swift-service-lifecycle",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-service-lifecycle@2.11.0"
+        }
+      ]
+    },
+    {
+      "name": "swift-system",
+      "SPDXID": "SPDXRef-Package-9f49307d34bc574d280e",
+      "versionInfo": "1.7.5",
+      "downloadLocation": "https://github.com/apple/swift-system.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:swift/swift-system@1.7.5"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Package-b9a84ca118a8fa155174"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-fe6e84de973b06a9123d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c733df779db813c17c27"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b5c1478e4e83b95f5f83"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f7c762b46b448d764b41"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-7c026e6ffbda003a1f93"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-ee2e1cb2901783a226bd"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b96f1b1871dfee078bd0"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0ffde91adf1f9a16bb0f"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-ad73ef643003587a0dac"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2e2435e6452b9f367f2f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-739a4073008f62532c77"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-b9a84ca118a8fa155174",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-2e2435e6452b9f367f2f"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-b9a84ca118a8fa155174",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-419502d17340d5451b1c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-b9a84ca118a8fa155174",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0ffde91adf1f9a16bb0f"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-b9a84ca118a8fa155174",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-fe6e84de973b06a9123d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-debda36a3b0db45e5267"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-3206f378ab0ac432eb87",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-eb2ed1954ef203d42537"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-bf80a8b4b7fc40075730",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-1141aad31780b67cd845"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-bf80a8b4b7fc40075730",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-419502d17340d5451b1c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-b5c1478e4e83b95f5f83",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-eb2ed1954ef203d42537"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-b5c1478e4e83b95f5f83",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-80bbcf99311d11c5df02"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-b5c1478e4e83b95f5f83",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-9f49307d34bc574d280e"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-419502d17340d5451b1c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-1141aad31780b67cd845"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-f7c762b46b448d764b41",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-739a4073008f62532c77"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-fe6e84de973b06a9123d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-1141aad31780b67cd845"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-3206f378ab0ac432eb87"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c733df779db813c17c27"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-bf80a8b4b7fc40075730"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-1de5e5cbb4236f013110"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0f49b39b44c95da3d65c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-7c026e6ffbda003a1f93"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b96f1b1871dfee078bd0"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0ffde91adf1f9a16bb0f"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ee2e1cb2901783a226bd",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-80bbcf99311d11c5df02"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-b96f1b1871dfee078bd0",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c733df779db813c17c27"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-b96f1b1871dfee078bd0",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-0ffde91adf1f9a16bb0f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ad73ef643003587a0dac",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c733df779db813c17c27"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-ad73ef643003587a0dac",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c0d4b20277ee969bbef6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c733df779db813c17c27"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c0d4b20277ee969bbef6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-eb2ed1954ef203d42537"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c0d4b20277ee969bbef6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-9f49307d34bc574d280e"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-80bbcf99311d11c5df02",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-3206f378ab0ac432eb87"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-80bbcf99311d11c5df02",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-7c026e6ffbda003a1f93"
+    }
+  ]
+}

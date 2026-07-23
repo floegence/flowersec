@@ -1,0 +1,231 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:33c422d8-aa78-556d-8474-1b07bc45f5fb",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "library",
+      "name": "@floegence/flowersec-core",
+      "version": "0.28.0",
+      "purl": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-core@0.28.0"
+    },
+    "properties": [
+      {
+        "name": "flowersec:source-inventory-sha256",
+        "value": "a88f1332654d9520b5f206ada459e7103634e503fb3075b19f7624551f124586"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "@noble/ciphers",
+      "version": "0.6.0",
+      "purl": "pkg:npm/%40noble/ciphers@0.6.0",
+      "bom-ref": "pkg:npm/%40noble/ciphers@0.6.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@noble/ciphers/-/ciphers-0.6.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@noble/curves",
+      "version": "1.9.7",
+      "purl": "pkg:npm/%40noble/curves@1.9.7",
+      "bom-ref": "pkg:npm/%40noble/curves@1.9.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@noble/curves/-/curves-1.9.7.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@noble/hashes",
+      "version": "1.8.0",
+      "purl": "pkg:npm/%40noble/hashes@1.8.0",
+      "bom-ref": "pkg:npm/%40noble/hashes@1.8.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@noble/hashes/-/hashes-1.8.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "punycode",
+      "version": "2.3.1",
+      "purl": "pkg:npm/punycode@2.3.1",
+      "bom-ref": "pkg:npm/punycode@2.3.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tr46",
+      "version": "5.0.0",
+      "purl": "pkg:npm/tr46@5.0.0",
+      "bom-ref": "pkg:npm/tr46@5.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/tr46/-/tr46-5.0.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ws",
+      "version": "8.21.0",
+      "purl": "pkg:npm/ws@8.21.0",
+      "bom-ref": "pkg:npm/ws@8.21.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/ws/-/ws-8.21.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:npm/%40floegence/flowersec-core@0.28.0",
+      "dependsOn": [
+        "pkg:npm/%40noble/ciphers@0.6.0",
+        "pkg:npm/%40noble/curves@1.9.7",
+        "pkg:npm/%40noble/hashes@1.8.0",
+        "pkg:npm/tr46@5.0.0",
+        "pkg:npm/ws@8.21.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40noble/ciphers@0.6.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40noble/curves@1.9.7",
+      "dependsOn": [
+        "pkg:npm/%40noble/hashes@1.8.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40noble/hashes@1.8.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/punycode@2.3.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/tr46@5.0.0",
+      "dependsOn": [
+        "pkg:npm/punycode@2.3.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/ws@8.21.0",
+      "dependsOn": []
+    }
+  ]
+}

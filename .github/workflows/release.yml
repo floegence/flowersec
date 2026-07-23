@@ -36,7 +36,7 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -52,14 +52,14 @@ jobs:
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: flowersec-go/go.mod
           cache: true
           cache-dependency-path: flowersec-go/go.sum
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -72,20 +72,27 @@ jobs:
           npx -y npm@11.5.1 --version
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
       - name: Validate release version facts
-        run: node scripts/check-release-version-consistency.mjs "${{ steps.vars.outputs.version }}"
+        env:
+          RELEASE_VERSION: ${{ steps.vars.outputs.version }}
+        run: node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION"
 
       - name: Verify all language tags point to this commit
-        run: scripts/verify-release-tags.sh "${{ steps.vars.outputs.version }}" "${GITHUB_SHA}"
+        env:
+          RELEASE_VERSION: ${{ steps.vars.outputs.version }}
+        run: scripts/verify-release-tags.sh "$RELEASE_VERSION" "$GITHUB_SHA"
 
       - name: Build release artifacts
+        env:
+          RELEASE_DATE: ${{ steps.vars.outputs.date }}
+          RELEASE_VERSION: ${{ steps.vars.outputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
-          COMMIT="${GITHUB_SHA}"
-          DATE="${{ steps.vars.outputs.date }}"
+          VERSION="$RELEASE_VERSION"
+          COMMIT="$GITHUB_SHA"
+          DATE="$RELEASE_DATE"
 
           mkdir -p dist
 
@@ -101,6 +108,12 @@ jobs:
             npm pack --silent && \
             mv "floegence-flowersec-core-${VERSION}.tgz" "../dist/" \
           )
+
+          demo_ts_runtime="$(mktemp -d)"
+          trap 'rm -rf "$demo_ts_runtime"' EXIT
+          cp flowersec-ts/package.json flowersec-ts/package-lock.json "$demo_ts_runtime/"
+          npm ci --omit=dev --ignore-scripts --audit=false --prefix "$demo_ts_runtime"
+          cp -R flowersec-ts/dist "$demo_ts_runtime/dist"
 
           build_one() {
             local os="$1"
@@ -123,6 +136,7 @@ jobs:
             )
 
             cp LICENSE "$dir/"
+            scripts/stage-release-compliance.sh tunnel "$dir"
 
             if [[ "$archive_ext" == "zip" ]]; then
               ( cd "$dir" && zip -qr "../dist/${dir}.zip" . )
@@ -173,6 +187,7 @@ jobs:
             cp docs/PROXY_GATEWAY_DEPLOYMENT.md "$dir/docs/PROXY_GATEWAY_DEPLOYMENT.md"
 
             cp LICENSE "$dir/"
+            scripts/stage-release-compliance.sh tools "$dir"
 
             if [[ "$archive_ext" == "zip" ]]; then
               ( cd "$dir" && zip -qr "../dist/${dir}.zip" . )
@@ -204,6 +219,7 @@ jobs:
             cp docs/PROXY_GATEWAY_DEPLOYMENT.md "$dir/docs/PROXY_GATEWAY_DEPLOYMENT.md"
             cp docs/PROXY.md "$dir/docs/PROXY.md"
             cp LICENSE "$dir/"
+            scripts/stage-release-compliance.sh gateway "$dir"
 
             if [[ "$archive_ext" == "zip" ]]; then
               ( cd "$dir" && zip -qr "../dist/${dir}.zip" . )
@@ -282,8 +298,7 @@ jobs:
             )
 
             # Demo assets (TS dist + scripts + docs).
-            mkdir -p "$dir/flowersec-ts"
-            cp -R flowersec-ts/dist "$dir/flowersec-ts/dist"
+            cp -R "$demo_ts_runtime" "$dir/flowersec-ts"
             mkdir -p "$dir/examples"
             cp examples/README.md "$dir/examples/README.md"
             cp -R examples/ts "$dir/examples/ts"
@@ -291,6 +306,7 @@ jobs:
             cp docs/STREAMS.md "$dir/docs/STREAMS.md"
 
             cp LICENSE "$dir/"
+            scripts/stage-release-compliance.sh demos "$dir"
 
             if [[ "$archive_ext" == "zip" ]]; then
               ( cd "$dir" && zip -qr "../dist/${dir}.zip" . )
@@ -326,37 +342,42 @@ jobs:
           ( cd dist && sha256sum * > checksums.txt )
 
       - name: Generate release notes
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.tag }}
         run: |
           set -euo pipefail
           go run ./tools/releasenotes \
-            --current-tag "${{ steps.vars.outputs.tag }}" \
+            --current-tag "$RELEASE_TAG" \
             --current-ref "${GITHUB_SHA}" \
             --output release-notes.md
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             dist/*
           body_path: release-notes.md
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver-opts: image=moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push tunnel image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: docker/flowersec-tunnel/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          sbom: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/flowersec-tunnel:${{ steps.vars.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/flowersec-tunnel:latest
@@ -366,12 +387,13 @@ jobs:
             DATE=${{ steps.vars.outputs.date }}
 
       - name: Build and push proxy gateway image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: docker/flowersec-proxy-gateway/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          sbom: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/flowersec-proxy-gateway:${{ steps.vars.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/flowersec-proxy-gateway:latest
@@ -381,9 +403,11 @@ jobs:
             DATE=${{ steps.vars.outputs.date }}
 
       - name: Publish npm package
+        env:
+          RELEASE_VERSION: ${{ steps.vars.outputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.vars.outputs.version }}"
+          VERSION="$RELEASE_VERSION"
           PKG="@floegence/flowersec-core"
 
           # Make reruns safe: if the version is already published, do nothing.

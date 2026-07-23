@@ -27,6 +27,8 @@ test-results/
 # Swift
 .build/
 Package.resolved
+!/Package.resolved
+!/examples/swift/Package.resolved
 DerivedData/
 
 # IDE

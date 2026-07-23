@@ -91,6 +91,12 @@ test("accepts one version across every release source", () => {
   assert.equal(validateReleaseVersions(matchingVersions(), "0.26.0"), "0.26.0");
 });
 
+test("rejects non-canonical numeric semantic versions", () => {
+  for (const version of ["00.26.0", "0.026.0", "0.26.00", "+0.26.0"]) {
+    assert.throws(() => validateReleaseVersions(matchingVersions(version)), /semantic version/);
+  }
+});
+
 test("rejects drift in each release source", () => {
   for (const label of sourceLabels) {
     const versions = matchingVersions();

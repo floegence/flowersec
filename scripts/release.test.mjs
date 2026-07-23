@@ -56,6 +56,7 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   const bin = path.join(root, "bin");
   const gitLog = path.join(root, "git.log");
   const realGit = run("sh", ["-c", "command -v git"]);
+  const realMake = run("sh", ["-c", "command -v make"]);
   fs.mkdirSync(path.join(repo, "scripts"), { recursive: true });
   fs.mkdirSync(path.join(repo, "flowersec-ts"), { recursive: true });
   fs.mkdirSync(path.join(repo, "flowersec-rust/fuzz"), { recursive: true });
@@ -130,7 +131,7 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   run("git", ["-C", repo, "remote", "add", "origin", origin]);
   run("git", ["-C", repo, "push", "-u", "origin", "main"]);
 
-  return { bin, gitLog, origin, realGit, repo };
+  return { bin, gitLog, origin, realGit, realMake, repo };
 }
 
 function runReleaseScript(fixture, env = {}) {
@@ -172,13 +173,19 @@ function createReleasePolicyFixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const files = [
     "Makefile",
+    ".github/dependabot.yml",
     ".githooks/pre-push",
     ".github/workflows/ci.yml",
     ".github/workflows/release.yml",
     ".github/workflows/rust-release.yml",
+    "docker/flowersec-proxy-gateway/Dockerfile",
+    "docker/flowersec-tunnel/Dockerfile",
     "scripts/check-release-version-consistency.mjs",
     "scripts/check-release-version-consistency.test.mjs",
+    "scripts/check-container-release-policy.mjs",
+    "scripts/check-release-workflows.rb",
     "scripts/check-release-workflow-policy.sh",
+    "scripts/check-security-makefile.mjs",
     "scripts/check-transport-v2-evidence.sh",
     "scripts/release.sh",
     "scripts/release.test.mjs",
@@ -239,6 +246,18 @@ test("release fixtures cannot modify an inherited hook repository", (t) => {
   assert.equal(fs.readFileSync(sentinelConfig, "utf8"), before);
 });
 
+test("release script rejects non-canonical versions before repository access", () => {
+  for (const version of ["02.0.0", "2.00.0", "2.0.00"]) {
+    const result = spawnSync("bash", ["scripts/release.sh", version], {
+      cwd: sourceRoot,
+      encoding: "utf8",
+      env: isolatedEnvironment(),
+    });
+    assert.equal(result.status, 2, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /major\.minor\.patch/);
+  }
+});
+
 test("release gates stay wired into local checks and publication workflows", () => {
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   const releaseWorkflow = fs.readFileSync(
@@ -265,23 +284,32 @@ test("release gates stay wired into local checks and publication workflows", () 
   );
   assert.match(makefile, /^release-policy-check:\n(?:\t.*\n)*\t\$\(MAKE\) release-version-check$/m);
   assert.match(makefile, /^release-policy-check:\n(?:\t.*\n)*\t\$\(MAKE\) release-test$/m);
-  assert.match(makefile, /^check:\n\t\$\(MAKE\) release-policy-check$/m);
+  assert.match(
+    makefile,
+    /^check: security-makefile-check security-dependency-check\n\t\$\(MAKE\) release-policy-check$/m,
+  );
   for (const target of ["transport-v2-unit", "weaknet-smoke", "quic-native-smoke"]) {
-    assert.match(makefile, new RegExp(`^check:\\n(?:\\t.*\\n)*\\t\\$\\(MAKE\\) ${target}$`, "m"));
+    assert.match(
+      makefile,
+      new RegExp(
+        `^check: security-makefile-check security-dependency-check\\n(?:\\t.*\\n)*\\t\\$\\(MAKE\\) ${target}$`,
+        "m",
+      ),
+    );
   }
   for (const target of ["transport-v2-release-evidence", "transport-v2-signed-evidence-check"]) {
     assert.match(makefile, new RegExp(`^release-check:\\n(?:\\t.*\\n)*\\t\\$\\(MAKE\\) ${target}$`, "m"));
   }
   assert.match(
     releaseWorkflow,
-    /^\s+run: node scripts\/check-release-version-consistency\.mjs "\$\{\{ steps\.vars\.outputs\.version \}\}"$/m,
+    /^\s+RELEASE_VERSION: \$\{\{ steps\.vars\.outputs\.version \}\}\n\s+run: node scripts\/check-release-version-consistency\.mjs "\$RELEASE_VERSION"$/m,
   );
   assert.match(
     rustWorkflow,
-    /^\s+run: node scripts\/check-release-version-consistency\.mjs "\$\{\{ steps\.version\.outputs\.version \}\}"$/m,
+    /^\s+RELEASE_VERSION: \$\{\{ steps\.version\.outputs\.version \}\}\n\s+run: node scripts\/check-release-version-consistency\.mjs "\$RELEASE_VERSION"$/m,
   );
   for (const workflow of [releaseWorkflow, rustWorkflow]) {
-    const rustSetup = workflow.indexOf("uses: dtolnay/rust-toolchain@stable");
+    const rustSetup = workflow.indexOf("uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4");
     const versionCheck = workflow.indexOf("run: node scripts/check-release-version-consistency.mjs");
     assert.ok(rustSetup >= 0 && rustSetup < versionCheck, "Rust must be set up before Cargo metadata validation");
   }
@@ -296,12 +324,207 @@ test("release gates stay wired into local checks and publication workflows", () 
   assert.match(ciWorkflow, /^\s+run: scripts\/check-release-workflow-policy\.sh$/m);
 });
 
+test("release workflows pin actions and pass expressions through fields, not shell source", () => {
+  const workflows = [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/rust-release.yml",
+  ].map((file) => ({ file, source: fs.readFileSync(path.join(sourceRoot, file), "utf8") }));
+  for (const { file, source } of workflows) {
+    for (const match of source.matchAll(/^\s*uses:\s+(\S+)(?:\s+#\s*(\S+))?$/gm)) {
+      if (match[1].startsWith("./")) continue;
+      assert.match(match[1], /@[0-9a-f]{40}$/, `${file} must pin ${match[1]} to a commit`);
+      assert.ok(match[2], `${file} must retain a readable version comment for ${match[1]}`);
+    }
+  }
+  const ruby = [
+    'require "psych"',
+    'ARGV.each do |file|',
+    '  workflow = Psych.safe_load(File.read(file), aliases: false)',
+    '  workflow.fetch("jobs").each_value do |job|',
+    '    Array(job["steps"]).each do |step|',
+    '      abort("#{file}: #{step["name"] || step["uses"]} interpolates an expression into run") if step["run"]&.include?("${{")',
+    '    end',
+    '  end',
+    'end',
+  ].join("\n");
+  const result = spawnSync("ruby", ["-W0", "-rpsych", "-e", ruby, ...workflows.map(({ file }) => file)], {
+    cwd: sourceRoot,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  const dependabot = fs.readFileSync(path.join(sourceRoot, ".github/dependabot.yml"), "utf8");
+  assert.match(dependabot, /^\s+- package-ecosystem: github-actions$/m);
+  assert.match(dependabot, /^\s+interval: weekly$/m);
+});
+
+test("Rust recovery rejects non-canonical versions before invoking git", (t) => {
+  const ruby = [
+    'require "psych"',
+    'workflow = Psych.safe_load(File.read(ARGV.fetch(0)), aliases: false)',
+    'step = workflow.fetch("jobs").fetch("publish").fetch("steps").find { |entry| entry["name"] == "Checkout release commit" }',
+    'print step.fetch("run")',
+  ].join("\n");
+  const extracted = spawnSync("ruby", ["-W0", "-rpsych", "-e", ruby, ".github/workflows/rust-release.yml"], {
+    cwd: sourceRoot,
+    encoding: "utf8",
+  });
+  assert.equal(extracted.status, 0, `${extracted.stdout}${extracted.stderr}`);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-rust-release-input-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bin = path.join(root, "bin");
+  const gitLog = path.join(root, "git.log");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "git"), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(gitLog)}\nexit 99\n`);
+  fs.chmodSync(path.join(bin, "git"), 0o755);
+
+  for (const version of [
+    "02.0.0",
+    '2.0.0"; echo unexpected; #',
+    "2.0.0$(echo unexpected)",
+    "2.0.0;printf${IFS}unexpected",
+  ]) {
+    const output = path.join(root, `output-${Math.random()}`);
+    const result = spawnSync("bash", ["-c", extracted.stdout], {
+      cwd: sourceRoot,
+      encoding: "utf8",
+      env: isolatedEnvironment({
+        GITHUB_OUTPUT: output,
+        PATH: `${bin}:${process.env.PATH}`,
+        RELEASE_VERSION_INPUT: version,
+      }),
+    });
+    assert.equal(result.status, 2, `${result.stdout}${result.stderr}`);
+  }
+  assert.equal(fs.existsSync(gitLog), false, "invalid versions must fail before git");
+});
+
 test("release policy rejects disconnected or commented-out gates", async (t) => {
   await t.test("current policy passes", () => {
     const root = createReleasePolicyFixture(t);
     const result = runReleasePolicy(root);
     assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   });
+
+  for (const bypass of [
+    { name: "npm publication before the release gate", run: "npm publish" },
+    { name: "GitHub release publication before the release gate", run: "gh release create bypass" },
+  ]) {
+    await t.test(`rejects ${bypass.name}`, () => {
+      const root = createReleasePolicyFixture(t);
+      const workflowPath = path.join(root, ".github/workflows/release.yml");
+      const workflow = fs.readFileSync(workflowPath, "utf8");
+      const marker = "  release:\n    needs: prepare\n    runs-on: ubuntu-latest\n    steps:\n";
+      assert.ok(workflow.includes(marker));
+      fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed command\n        run: ${bypass.run}\n\n`));
+      const result = runReleasePolicy(root);
+      assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+      assert.match(result.stderr, /step sequence|publication|unreviewed/i);
+    });
+  }
+
+  await t.test("rejects cargo publication before the Rust gate", () => {
+    const root = createReleasePolicyFixture(t);
+    const workflowPath = path.join(root, ".github/workflows/rust-release.yml");
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    const marker = "  publish:\n    runs-on: ubuntu-latest\n    steps:\n";
+    assert.ok(workflow.includes(marker));
+    fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed cargo publication\n        run: cargo publish\n\n`));
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /step sequence|publication|unreviewed/i);
+  });
+
+  await t.test("rejects an unreviewed publication action", () => {
+    const root = createReleasePolicyFixture(t);
+    const workflowPath = path.join(root, ".github/workflows/release.yml");
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    const marker = "  release:\n    needs: prepare\n    runs-on: ubuntu-latest\n    steps:\n";
+    assert.ok(workflow.includes(marker));
+    fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}      - name: Unreviewed publisher\n        uses: example/publish-action@v1\n\n`));
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /step sequence|publication|unreviewed/i);
+  });
+
+  for (const mutation of [
+    { name: "workflow", file: ".github/workflows/bypass.yaml", contents: "name: bypass\non: push\njobs: {}\n" },
+    {
+      name: "job",
+      file: ".github/workflows/release.yml",
+      marker: "jobs:\n",
+      replacement: "jobs:\n  bypass:\n    runs-on: ubuntu-latest\n    steps: []\n",
+    },
+    {
+      name: "harmless-looking step",
+      file: ".github/workflows/ci.yml",
+      marker: "    steps:\n",
+      replacement: "    steps:\n      - name: Unreviewed step\n        run: echo bypass\n\n",
+    },
+  ]) {
+    await t.test(`rejects an unreviewed ${mutation.name}`, () => {
+      const root = createReleasePolicyFixture(t);
+      const target = path.join(root, mutation.file);
+      if (mutation.contents) {
+        fs.writeFileSync(target, mutation.contents);
+      } else {
+        const source = fs.readFileSync(target, "utf8");
+        assert.ok(source.includes(mutation.marker));
+        fs.writeFileSync(target, source.replace(mutation.marker, mutation.replacement));
+      }
+      const result = runReleasePolicy(root);
+      assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+      assert.match(result.stderr, /workflow|job|step sequence|unreviewed/i);
+    });
+  }
+
+  await t.test("release validation rejects injected environment controls", () => {
+    const root = createReleasePolicyFixture(t);
+    const workflowPath = path.join(root, ".github/workflows/release.yml");
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    const marker = "          RELEASE_VERSION: ${{ steps.vars.outputs.version }}\n";
+    assert.ok(workflow.includes(marker));
+    fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}          NODE_OPTIONS: --require ./bypass.cjs\n`));
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /environment|reviewed value|version facts/i);
+  });
+
+  for (const mutation of [
+    "        shell: bash --noprofile --norc -c 'true; exit 0; #' {0}\n",
+    "        working-directory: flowersec-ts\n",
+  ]) {
+    await t.test(`release validation rejects semantic override ${mutation.trim()}`, () => {
+      const root = createReleasePolicyFixture(t);
+      const workflowPath = path.join(root, ".github/workflows/release.yml");
+      const workflow = fs.readFileSync(workflowPath, "utf8");
+      const marker = "      - name: Validate release version facts\n";
+      assert.ok(workflow.includes(marker));
+      fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}${mutation}`));
+      const result = runReleasePolicy(root);
+      assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+      assert.match(result.stderr, /fields|validation|version facts/i);
+    });
+  }
+
+  for (const mutation of [
+    ["working-directory: flowersec-rust", "working-directory: ."],
+    ["CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}", "CARGO_REGISTRY_TOKEN: attacker-token"],
+    ["run: cargo publish --no-verify", "run: cargo publish --allow-dirty"],
+    ["uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18", "uses: example/auth-action@v1"],
+  ]) {
+    await t.test(`Rust publication rejects changed contract ${mutation[0]}`, () => {
+      const root = createReleasePolicyFixture(t);
+      const workflowPath = path.join(root, ".github/workflows/rust-release.yml");
+      const workflow = fs.readFileSync(workflowPath, "utf8");
+      assert.ok(workflow.includes(mutation[0]));
+      fs.writeFileSync(workflowPath, workflow.replace(mutation[0], mutation[1]));
+      const result = runReleasePolicy(root);
+      assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+      assert.match(result.stderr, /Rust|crate|publish|action|token|directory/i);
+    });
+  }
 
   await t.test("release tests disconnected from release-policy-check", () => {
     const root = createReleasePolicyFixture(t);
@@ -311,6 +534,18 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     const result = runReleasePolicy(root);
     assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
     assert.match(result.stderr, /release-test/);
+  });
+
+  await t.test("Dependabot action updates cannot be replaced by block-scalar decoys", () => {
+    const root = createReleasePolicyFixture(t);
+    const configPath = path.join(root, ".github/dependabot.yml");
+    const config = fs.readFileSync(configPath, "utf8");
+    fs.writeFileSync(configPath, `${config
+      .replace("package-ecosystem: github-actions", "package-ecosystem: npm")
+      .replace("interval: weekly", "interval: daily")}decoy: |2\n  - package-ecosystem: github-actions\n      interval: weekly\n`);
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /Dependabot|reviewed value|fields/i);
   });
 
   await t.test("signed Transport v2 evidence disconnected from release-check", () => {
@@ -346,8 +581,8 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     fs.writeFileSync(
       workflowPath,
       workflow.replace(
-        '        run: node scripts/check-release-version-consistency.mjs "${{ steps.vars.outputs.version }}"',
-        '        # run: node scripts/check-release-version-consistency.mjs "${{ steps.vars.outputs.version }}"',
+        '        run: node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION"',
+        '        # run: node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION"',
       ),
     );
     const result = runReleasePolicy(root);
@@ -376,6 +611,64 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     });
   }
 
+  const equivalentControlKeyMutations = [
+    "        if : ${{ false }}\n",
+    "        \"if\": ${{ false }}\n",
+    "        'if' : ${{ false }}\n",
+    "        \"\\u0069f\": ${{ false }}\n",
+    "        continue-on-error : true\n",
+    "        \"continue-on-error\": true\n",
+    "        \"continue-on-\\u0065rror\": true\n",
+  ];
+  for (const step of [
+    { file: ".github/workflows/release.yml", name: "Validate release version facts" },
+    { file: ".github/workflows/release.yml", name: "Publish GitHub Release" },
+    { file: ".github/workflows/rust-release.yml", name: "Publish crate" },
+  ]) {
+    for (const mutation of equivalentControlKeyMutations) {
+      await t.test(`${step.name} rejects equivalent YAML key ${mutation.trim()}`, () => {
+        const root = createReleasePolicyFixture(t);
+        const workflowPath = path.join(root, step.file);
+        const workflow = fs.readFileSync(workflowPath, "utf8");
+        const marker = `      - name: ${step.name}\n`;
+        assert.ok(workflow.includes(marker), `${step.file} is missing ${step.name}`);
+        fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}${mutation}`));
+        const result = runReleasePolicy(root);
+        assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+      });
+    }
+  }
+
+  const criticalSteps = [
+    { file: ".github/workflows/release.yml", name: "Build release artifacts" },
+    { file: ".github/workflows/release.yml", name: "Generate release notes" },
+    { file: ".github/workflows/release.yml", name: "Publish GitHub Release" },
+    { file: ".github/workflows/release.yml", name: "Build and push tunnel image" },
+    { file: ".github/workflows/release.yml", name: "Build and push proxy gateway image" },
+    { file: ".github/workflows/release.yml", name: "Publish npm package" },
+    { file: ".github/workflows/rust-release.yml", name: "Check whether version is already published" },
+    { file: ".github/workflows/rust-release.yml", name: "Authenticate to crates.io" },
+    { file: ".github/workflows/rust-release.yml", name: "Publish crate" },
+  ];
+  for (const step of criticalSteps) {
+    for (const mutation of [
+      "        if: ${{ always() }}\n",
+      "        continue-on-error: true\n",
+    ]) {
+      await t.test(`${step.name} rejects ${mutation.trim()}`, () => {
+        const root = createReleasePolicyFixture(t);
+        const workflowPath = path.join(root, step.file);
+        const workflow = fs.readFileSync(workflowPath, "utf8");
+        const marker = `      - name: ${step.name}\n`;
+        assert.ok(workflow.includes(marker), `${step.file} is missing ${step.name}`);
+        fs.writeFileSync(workflowPath, workflow.replace(marker, `${marker}${mutation}`));
+        const result = runReleasePolicy(root);
+        assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+        assert.match(result.stderr, /publication step|Rust publication step|duplicate YAML key|fields/);
+      });
+    }
+  }
+
   await t.test("unified workflow version failure is swallowed", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
@@ -383,14 +676,224 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     fs.writeFileSync(
       workflowPath,
       workflow.replace(
-        'run: node scripts/check-release-version-consistency.mjs "${{ steps.vars.outputs.version }}"',
-        'run: node scripts/check-release-version-consistency.mjs "${{ steps.vars.outputs.version }}" || true',
+        'run: node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION"',
+        'run: node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION" || true',
       ),
     );
     const result = runReleasePolicy(root);
     assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
     assert.match(result.stderr, /unified release workflow/);
   });
+
+  await t.test("indented fake targets cannot hide no-op real gates", () => {
+    const root = createReleasePolicyFixture(t);
+    const makefilePath = path.join(root, "Makefile");
+    const replaceTarget = (source, target, replacement) => {
+      const lines = source.split("\n");
+      const start = lines.findIndex((line) => line.startsWith(`${target}:`));
+      assert.ok(start >= 0, `missing Make target ${target}`);
+      let end = start + 1;
+      while (end < lines.length && (lines[end].startsWith("\t") || lines[end].trim() === "")) end += 1;
+      lines.splice(start, end - start, ...replacement.split("\n"));
+      return lines.join("\n");
+    };
+    let makefile = fs.readFileSync(makefilePath, "utf8");
+    makefile = replaceTarget(makefile, "check", [
+      "check :",
+      "\t@:",
+      "",
+      "policy-decoy-check:",
+      "\tcheck:",
+      "\t$(MAKE) release-policy-check",
+      "\t$(MAKE) transport-v2-unit",
+      "\t$(MAKE) weaknet-smoke",
+      "\t$(MAKE) quic-native-smoke",
+    ].join("\n"));
+    makefile = replaceTarget(makefile, "release-check", [
+      "release-check :",
+      "\t@:",
+      "",
+      "policy-decoy-release-check:",
+      "\trelease-check:",
+      "\t$(MAKE) check",
+      "\t$(MAKE) interop-stress-full",
+      "\t$(MAKE) transport-v2-release-evidence",
+      "\t$(MAKE) transport-v2-signed-evidence-check",
+    ].join("\n"));
+    fs.writeFileSync(makefilePath, makefile);
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /Makefile target (?:check|release-check)/);
+  });
+
+  await t.test("Make definitions cannot hide no-op effective release gates", () => {
+    const root = createReleasePolicyFixture(t);
+    const makefilePath = path.join(root, "Makefile");
+    const makefile = fs.readFileSync(makefilePath, "utf8");
+    const replaceTarget = (source, target, replacement) => {
+      const lines = source.split("\n");
+      const start = lines.findIndex((line) => line.startsWith(`${target}:`));
+      assert.ok(start >= 0, `missing Make target ${target}`);
+      let end = start + 1;
+      while (end < lines.length && (lines[end].startsWith("\t") || lines[end].trim() === "")) end += 1;
+      lines.splice(start, end - start, ...replacement.split("\n"));
+      return lines.join("\n");
+    };
+    let mutated = replaceTarget(makefile, "check", [
+      "define policy_decoy_check",
+      "check:",
+      "\t$(MAKE) release-policy-check",
+      "\t$(MAKE) transport-v2-unit",
+      "\t$(MAKE) weaknet-smoke",
+      "\t$(MAKE) quic-native-smoke",
+      "endef",
+      "check::",
+      "\t@:",
+    ].join("\n"));
+    mutated = replaceTarget(mutated, "release-check", [
+      "define policy_decoy_release_check",
+      "release-check:",
+      "\t$(MAKE) check",
+      "\t$(MAKE) interop-stress-full",
+      "\t$(MAKE) transport-v2-release-evidence",
+      "\t$(MAKE) transport-v2-signed-evidence-check",
+      "endef",
+      "release-check::",
+      "\t@:",
+    ].join("\n"));
+    fs.writeFileSync(makefilePath, mutated);
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /effective|Makefile target|release gate/i);
+  });
+
+  await t.test("validation run must be a direct step field", () => {
+    const root = createReleasePolicyFixture(t);
+    const workflowPath = path.join(root, ".github/workflows/release.yml");
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    const expected = [
+      "      - name: Validate release version facts",
+      "        env:",
+      "          RELEASE_VERSION: ${{ steps.vars.outputs.version }}",
+      '        run: node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION"',
+    ].join("\n");
+    const replacement = [
+      "      - name: Validate release version facts",
+      "        env:",
+      "          RELEASE_VERSION: ${{ steps.vars.outputs.version }}",
+      '          run: node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION"',
+      "        run: echo bypassed",
+    ].join("\n");
+    assert.ok(workflow.includes(expected));
+    fs.writeFileSync(workflowPath, workflow.replace(expected, replacement));
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /version facts|direct step field|unified release workflow/i);
+  });
+
+  await t.test("Rust setup uses must be a direct step field", () => {
+    const root = createReleasePolicyFixture(t);
+    const workflowPath = path.join(root, ".github/workflows/release.yml");
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    const expected = [
+      "      - name: Setup Rust",
+      "        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable",
+    ].join("\n");
+    const replacement = [
+      "      - name: Setup Rust",
+      "        env:",
+      "          uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
+      "        run: echo bypassed",
+    ].join("\n");
+    assert.ok(workflow.includes(expected));
+    fs.writeFileSync(workflowPath, workflow.replace(expected, replacement));
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /Setup Rust|direct step field|set up Rust/i);
+  });
+
+  await t.test("Rust publish condition must be a direct step field", () => {
+    const root = createReleasePolicyFixture(t);
+    const workflowPath = path.join(root, ".github/workflows/rust-release.yml");
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    const expected = [
+      "      - name: Publish crate",
+      "        if: steps.published.outputs.exists != 'true'",
+      "        working-directory: flowersec-rust",
+      "        env:",
+      "          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}",
+    ].join("\n");
+    const replacement = [
+      "      - name: Publish crate",
+      "        working-directory: flowersec-rust",
+      "        env:",
+      "          if: steps.published.outputs.exists != 'true'",
+      "          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}",
+    ].join("\n");
+    assert.ok(workflow.includes(expected));
+    fs.writeFileSync(workflowPath, workflow.replace(expected, replacement));
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /approved condition|direct step field|Rust publication step|fields/i);
+  });
+
+  await t.test("workflow aliases and merge keys are rejected", () => {
+    const root = createReleasePolicyFixture(t);
+    const workflowPath = path.join(root, ".github/workflows/release.yml");
+    const workflow = fs.readFileSync(workflowPath, "utf8");
+    const marker = "jobs:\n";
+    assert.ok(workflow.includes(marker));
+    fs.writeFileSync(
+      workflowPath,
+      workflow.replace(marker, "guard: &guard\n  if: ${{ false }}\n\njobs:\n")
+        .replace("  release:\n", "  release:\n    <<: *guard\n"),
+    );
+    const result = runReleasePolicy(root);
+    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, /alias|anchor|merge|unconditional/i);
+  });
+
+  for (const implicitKey of ["yes", "true", "ON"]) {
+    await t.test(`implicit YAML scalar key ${implicitKey} cannot shadow the Actions on key`, () => {
+      const root = createReleasePolicyFixture(t);
+      const workflowPath = path.join(root, ".github/workflows/release.yml");
+      const workflow = fs.readFileSync(workflowPath, "utf8");
+      const reviewedTrigger = [
+        "on:",
+        "  push:",
+        "    tags:",
+        "      - \"flowersec-go/v*\"",
+      ].join("\n");
+      assert.ok(workflow.includes(reviewedTrigger));
+      fs.writeFileSync(workflowPath, workflow.replace(reviewedTrigger, [
+        "on: {}",
+        `${implicitKey}:`,
+        "  push:",
+        "    tags:",
+        "      - \"flowersec-go/v*\"",
+      ].join("\n")));
+      const result = runReleasePolicy(root);
+      assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+      assert.match(result.stderr, /implicit|mapping key|ambiguous|on key/i);
+    });
+  }
+
+  for (const mutation of [
+    ["push: true", "push: yes"],
+    ["fetch-depth: 0", "fetch-depth: 00"],
+    ["fetch-depth: 0", "fetch-depth: +0"],
+  ]) {
+    await t.test(`non-canonical YAML scalar ${mutation[1]} is rejected`, () => {
+      const root = createReleasePolicyFixture(t);
+      const workflowPath = path.join(root, ".github/workflows/release.yml");
+      const workflow = fs.readFileSync(workflowPath, "utf8");
+      assert.ok(workflow.includes(mutation[0]));
+      fs.writeFileSync(workflowPath, workflow.replace(mutation[0], mutation[1]));
+      const result = runReleasePolicy(root);
+      assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+      assert.match(result.stderr, /canonical|implicit|scalar|reviewed value/i);
+    });
+  }
 
   await t.test("hosted CI invokes the full local release gate", () => {
     const root = createReleasePolicyFixture(t);
@@ -414,10 +917,12 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     const workflow = fs.readFileSync(workflowPath, "utf8");
     const guardedSteps = [
       "      - name: Setup Rust",
-      "        uses: dtolnay/rust-toolchain@stable",
+      "        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable",
       "",
       "      - name: Validate release version facts",
-      '        run: node scripts/check-release-version-consistency.mjs "${{ steps.vars.outputs.version }}"',
+      "        env:",
+      "          RELEASE_VERSION: ${{ steps.vars.outputs.version }}",
+      '        run: node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION"',
       "",
     ].join("\n");
     assert.ok(workflow.includes(guardedSteps));
@@ -439,7 +944,9 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     const workflow = fs.readFileSync(workflowPath, "utf8");
     const validationStep = [
       "      - name: Validate release version facts",
-      '        run: node scripts/check-release-version-consistency.mjs "${{ steps.vars.outputs.version }}"',
+      "        env:",
+      "          RELEASE_VERSION: ${{ steps.vars.outputs.version }}",
+      '        run: node scripts/check-release-version-consistency.mjs "$RELEASE_VERSION"',
       "",
     ].join("\n");
     assert.ok(workflow.includes(validationStep));
@@ -449,7 +956,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     );
     const result = runReleasePolicy(root);
     assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-    assert.match(result.stderr, /in order|before every publication step/);
+    assert.match(result.stderr, /in order|before every publication step|step sequence/);
   });
 
   await t.test("release tag verification moved after publication", () => {
@@ -458,7 +965,9 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     const workflow = fs.readFileSync(workflowPath, "utf8");
     const verificationStep = [
       "      - name: Verify all language tags point to this commit",
-      '        run: scripts/verify-release-tags.sh "${{ steps.vars.outputs.version }}" "${GITHUB_SHA}"',
+      "        env:",
+      "          RELEASE_VERSION: ${{ steps.vars.outputs.version }}",
+      '        run: scripts/verify-release-tags.sh "$RELEASE_VERSION" "$GITHUB_SHA"',
       "",
     ].join("\n");
     assert.ok(workflow.includes(verificationStep));
@@ -468,7 +977,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     );
     const result = runReleasePolicy(root);
     assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-    assert.match(result.stderr, /before every publication step/);
+    assert.match(result.stderr, /before every publication step|step sequence/);
   });
 
   for (const tt of [
@@ -476,18 +985,27 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     { file: ".github/workflows/release.yml", job: "rust-publish" },
     { file: ".github/workflows/rust-release.yml", job: "publish" },
   ]) {
-    await t.test(`${tt.job} job is disabled`, () => {
-      const root = createReleasePolicyFixture(t);
-      const workflowPath = path.join(root, tt.file);
-      const workflow = fs.readFileSync(workflowPath, "utf8");
-      fs.writeFileSync(
-        workflowPath,
-        workflow.replace(`  ${tt.job}:\n`, `  ${tt.job}:\n    if: \${{ false }}\n`),
-      );
-      const result = runReleasePolicy(root);
-      assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-      assert.match(result.stderr, /must remain unconditional/);
-    });
+    for (const mutation of [
+      "    if: ${{ false }}\n",
+      "    if : ${{ false }}\n",
+      "    \"if\": ${{ false }}\n",
+      "    'if' : ${{ false }}\n",
+      "    \"\\x69f\": ${{ false }}\n",
+      "    \"\\u0069f\": ${{ false }}\n",
+    ]) {
+      await t.test(`${tt.job} job rejects ${mutation.trim()}`, () => {
+        const root = createReleasePolicyFixture(t);
+        const workflowPath = path.join(root, tt.file);
+        const workflow = fs.readFileSync(workflowPath, "utf8");
+        fs.writeFileSync(
+          workflowPath,
+          workflow.replace(`  ${tt.job}:\n`, `  ${tt.job}:\n${mutation}`),
+        );
+        const result = runReleasePolicy(root);
+        assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+        assert.match(result.stderr, /must remain unconditional|fields/);
+      });
+    }
   }
 });
 
@@ -565,6 +1083,34 @@ test("release stops before git tag or push when release-check changes HEAD", (t)
 
   assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
   assert.match(result.stderr, /release-check changed HEAD/);
+  assertReleaseDidNotStartPublication(fixture);
+});
+
+test("release make gate ignores hostile inherited make control variables", (t) => {
+  const fixture = createReleaseScriptFixture(t);
+  fs.writeFileSync(
+    path.join(fixture.repo, "Makefile"),
+    ".PHONY: release-check fail\nrelease-check:\n\t$(MAKE) fail\nfail:\n\t@false\n",
+  );
+  fs.writeFileSync(path.join(fixture.repo, "attacker.mk"), "SHELL := /usr/bin/true\n");
+  fs.writeFileSync(
+    path.join(fixture.bin, "make"),
+    `#!/bin/sh\nexec ${JSON.stringify(fixture.realMake)} \"$@\"\n`,
+  );
+  fs.chmodSync(path.join(fixture.bin, "make"), 0o755);
+  run("git", ["-C", fixture.repo, "add", "Makefile", "attacker.mk"]);
+  run("git", ["-C", fixture.repo, "commit", "-m", "test: add failing release gate"]);
+  run("git", ["-C", fixture.repo, "push", "origin", "main"]);
+
+  const result = runReleaseScript(fixture, {
+    MAKE: "true",
+    MAKE_COMMAND: "true",
+    MAKEFILES: "attacker.mk",
+    MAKEFLAGS: "-i",
+    GNUMAKEFLAGS: "-i",
+  });
+
+  assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
   assertReleaseDidNotStartPublication(fixture);
 });
 

@@ -3,13 +3,14 @@ name = "flowersec-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
+license = "MIT"
 
 [package.metadata]
 cargo-fuzz = true
 
 [dependencies]
 async-trait = "0.1"
-flowersec = { path = ".." }
+flowersec = { version = "=0.28.0", path = ".." }
 libfuzzer-sys = "0.4"
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync", "time"] }

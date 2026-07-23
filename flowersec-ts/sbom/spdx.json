@@ -1,0 +1,177 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "flowersec-ts",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/a88f1332654d9520b5f206ada459e7103634e503fb3075b19f7624551f124586",
+  "creationInfo": {
+    "created": "1970-01-01T00:00:00Z",
+    "creators": [
+      "Tool: flowersec-source-inventory-1"
+    ]
+  },
+  "packages": [
+    {
+      "name": "@floegence/flowersec-core",
+      "SPDXID": "SPDXRef-Package-d1b16494994d79cc0e6a",
+      "versionInfo": "0.28.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "Flowersec source inventory SHA-256: a88f1332654d9520b5f206ada459e7103634e503fb3075b19f7624551f124586",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-core@0.28.0"
+        }
+      ]
+    },
+    {
+      "name": "@noble/ciphers",
+      "SPDXID": "SPDXRef-Package-24f128c8779cacb70e46",
+      "versionInfo": "0.6.0",
+      "downloadLocation": "https://registry.npmjs.org/@noble/ciphers/-/ciphers-0.6.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40noble/ciphers@0.6.0"
+        }
+      ]
+    },
+    {
+      "name": "@noble/curves",
+      "SPDXID": "SPDXRef-Package-6a42d288421aaee354ff",
+      "versionInfo": "1.9.7",
+      "downloadLocation": "https://registry.npmjs.org/@noble/curves/-/curves-1.9.7.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40noble/curves@1.9.7"
+        }
+      ]
+    },
+    {
+      "name": "@noble/hashes",
+      "SPDXID": "SPDXRef-Package-d976986d5d79eddc7789",
+      "versionInfo": "1.8.0",
+      "downloadLocation": "https://registry.npmjs.org/@noble/hashes/-/hashes-1.8.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40noble/hashes@1.8.0"
+        }
+      ]
+    },
+    {
+      "name": "punycode",
+      "SPDXID": "SPDXRef-Package-28dd8732f1abbdf198c8",
+      "versionInfo": "2.3.1",
+      "downloadLocation": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/punycode@2.3.1"
+        }
+      ]
+    },
+    {
+      "name": "tr46",
+      "SPDXID": "SPDXRef-Package-f8b45a289df643042b94",
+      "versionInfo": "5.0.0",
+      "downloadLocation": "https://registry.npmjs.org/tr46/-/tr46-5.0.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/tr46@5.0.0"
+        }
+      ]
+    },
+    {
+      "name": "ws",
+      "SPDXID": "SPDXRef-Package-38fe7b92bdac2a86fb61",
+      "versionInfo": "8.21.0",
+      "downloadLocation": "https://registry.npmjs.org/ws/-/ws-8.21.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/ws@8.21.0"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Package-d1b16494994d79cc0e6a"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d1b16494994d79cc0e6a",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-24f128c8779cacb70e46"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d1b16494994d79cc0e6a",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-6a42d288421aaee354ff"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d1b16494994d79cc0e6a",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-d976986d5d79eddc7789"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d1b16494994d79cc0e6a",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f8b45a289df643042b94"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d1b16494994d79cc0e6a",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-38fe7b92bdac2a86fb61"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-6a42d288421aaee354ff",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-d976986d5d79eddc7789"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-f8b45a289df643042b94",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28dd8732f1abbdf198c8"
+    }
+  ]
+}

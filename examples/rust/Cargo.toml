@@ -3,8 +3,9 @@ name = "flowersec-rust-client-example"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "MIT"
 
 [dependencies]
-flowersec = { path = "../../flowersec-rust" }
+flowersec = { version = "=0.28.0", path = "../../flowersec-rust" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

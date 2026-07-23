@@ -1,0 +1,793 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:1694aeaf-92d2-5a0d-8462-3df644eddc35",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "library",
+      "name": "Flowersec",
+      "version": "0.28.0",
+      "purl": "pkg:swift/Flowersec@0.28.0",
+      "bom-ref": "pkg:swift/Flowersec@0.28.0"
+    },
+    "properties": [
+      {
+        "name": "flowersec:source-inventory-sha256",
+        "value": "a88f1332654d9520b5f206ada459e7103634e503fb3075b19f7624551f124586"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "async-http-client",
+      "version": "1.35.0",
+      "purl": "pkg:swift/async-http-client@1.35.0",
+      "bom-ref": "pkg:swift/async-http-client@1.35.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/swift-server/async-http-client.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-algorithms",
+      "version": "1.2.1",
+      "purl": "pkg:swift/swift-algorithms@1.2.1",
+      "bom-ref": "pkg:swift/swift-algorithms@1.2.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-algorithms.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-asn1",
+      "version": "1.7.1",
+      "purl": "pkg:swift/swift-asn1@1.7.1",
+      "bom-ref": "pkg:swift/swift-asn1@1.7.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-asn1.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-async-algorithms",
+      "version": "1.1.5",
+      "purl": "pkg:swift/swift-async-algorithms@1.1.5",
+      "bom-ref": "pkg:swift/swift-async-algorithms@1.1.5",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-async-algorithms.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-atomics",
+      "version": "1.3.1",
+      "purl": "pkg:swift/swift-atomics@1.3.1",
+      "bom-ref": "pkg:swift/swift-atomics@1.3.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-atomics.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-certificates",
+      "version": "1.19.3",
+      "purl": "pkg:swift/swift-certificates@1.19.3",
+      "bom-ref": "pkg:swift/swift-certificates@1.19.3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-certificates.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-collections",
+      "version": "1.6.0",
+      "purl": "pkg:swift/swift-collections@1.6.0",
+      "bom-ref": "pkg:swift/swift-collections@1.6.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-collections.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-configuration",
+      "version": "1.2.0",
+      "purl": "pkg:swift/swift-configuration@1.2.0",
+      "bom-ref": "pkg:swift/swift-configuration@1.2.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-configuration.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-crypto",
+      "version": "4.5.1",
+      "purl": "pkg:swift/swift-crypto@4.5.1",
+      "bom-ref": "pkg:swift/swift-crypto@4.5.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-crypto.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-distributed-tracing",
+      "version": "1.4.1",
+      "purl": "pkg:swift/swift-distributed-tracing@1.4.1",
+      "bom-ref": "pkg:swift/swift-distributed-tracing@1.4.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-distributed-tracing.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-http-structured-headers",
+      "version": "1.7.0",
+      "purl": "pkg:swift/swift-http-structured-headers@1.7.0",
+      "bom-ref": "pkg:swift/swift-http-structured-headers@1.7.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-http-structured-headers.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-http-types",
+      "version": "1.6.0",
+      "purl": "pkg:swift/swift-http-types@1.6.0",
+      "bom-ref": "pkg:swift/swift-http-types@1.6.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-http-types.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-log",
+      "version": "1.14.0",
+      "purl": "pkg:swift/swift-log@1.14.0",
+      "bom-ref": "pkg:swift/swift-log@1.14.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-log.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-nio",
+      "version": "2.101.3",
+      "purl": "pkg:swift/swift-nio@2.101.3",
+      "bom-ref": "pkg:swift/swift-nio@2.101.3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-nio.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-nio-extras",
+      "version": "1.34.3",
+      "purl": "pkg:swift/swift-nio-extras@1.34.3",
+      "bom-ref": "pkg:swift/swift-nio-extras@1.34.3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-nio-extras.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-nio-http2",
+      "version": "1.44.0",
+      "purl": "pkg:swift/swift-nio-http2@1.44.0",
+      "bom-ref": "pkg:swift/swift-nio-http2@1.44.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-nio-http2.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-nio-ssl",
+      "version": "2.37.2",
+      "purl": "pkg:swift/swift-nio-ssl@2.37.2",
+      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.2",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-nio-ssl.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-nio-transport-services",
+      "version": "1.28.0",
+      "purl": "pkg:swift/swift-nio-transport-services@1.28.0",
+      "bom-ref": "pkg:swift/swift-nio-transport-services@1.28.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-nio-transport-services.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-numerics",
+      "version": "1.1.1",
+      "purl": "pkg:swift/swift-numerics@1.1.1",
+      "bom-ref": "pkg:swift/swift-numerics@1.1.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-numerics.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-service-context",
+      "version": "1.3.0",
+      "purl": "pkg:swift/swift-service-context@1.3.0",
+      "bom-ref": "pkg:swift/swift-service-context@1.3.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-service-context.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-service-lifecycle",
+      "version": "2.11.0",
+      "purl": "pkg:swift/swift-service-lifecycle@2.11.0",
+      "bom-ref": "pkg:swift/swift-service-lifecycle@2.11.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/swift-server/swift-service-lifecycle"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swift-system",
+      "version": "1.7.5",
+      "purl": "pkg:swift/swift-system@1.7.5",
+      "bom-ref": "pkg:swift/swift-system@1.7.5",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-system.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:swift/Flowersec@0.28.0",
+      "dependsOn": [
+        "pkg:swift/async-http-client@1.35.0",
+        "pkg:swift/swift-crypto@4.5.1",
+        "pkg:swift/swift-nio-ssl@2.37.2",
+        "pkg:swift/swift-nio@2.101.3"
+      ]
+    },
+    {
+      "ref": "pkg:swift/async-http-client@1.35.0",
+      "dependsOn": [
+        "pkg:swift/swift-algorithms@1.2.1",
+        "pkg:swift/swift-atomics@1.3.1",
+        "pkg:swift/swift-configuration@1.2.0",
+        "pkg:swift/swift-distributed-tracing@1.4.1",
+        "pkg:swift/swift-log@1.14.0",
+        "pkg:swift/swift-nio-extras@1.34.3",
+        "pkg:swift/swift-nio-http2@1.44.0",
+        "pkg:swift/swift-nio-ssl@2.37.2",
+        "pkg:swift/swift-nio-transport-services@1.28.0",
+        "pkg:swift/swift-nio@2.101.3",
+        "pkg:swift/swift-service-context@1.3.0"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-algorithms@1.2.1",
+      "dependsOn": [
+        "pkg:swift/swift-numerics@1.1.1"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-asn1@1.7.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:swift/swift-async-algorithms@1.1.5",
+      "dependsOn": [
+        "pkg:swift/swift-collections@1.6.0"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-atomics@1.3.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:swift/swift-certificates@1.19.3",
+      "dependsOn": [
+        "pkg:swift/swift-asn1@1.7.1",
+        "pkg:swift/swift-crypto@4.5.1"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-collections@1.6.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:swift/swift-configuration@1.2.0",
+      "dependsOn": [
+        "pkg:swift/swift-collections@1.6.0",
+        "pkg:swift/swift-service-lifecycle@2.11.0",
+        "pkg:swift/swift-system@1.7.5"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-crypto@4.5.1",
+      "dependsOn": [
+        "pkg:swift/swift-asn1@1.7.1"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-distributed-tracing@1.4.1",
+      "dependsOn": [
+        "pkg:swift/swift-service-context@1.3.0"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-http-structured-headers@1.7.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:swift/swift-http-types@1.6.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:swift/swift-log@1.14.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:swift/swift-nio@2.101.3",
+      "dependsOn": [
+        "pkg:swift/swift-atomics@1.3.1",
+        "pkg:swift/swift-collections@1.6.0",
+        "pkg:swift/swift-system@1.7.5"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-nio-extras@1.34.3",
+      "dependsOn": [
+        "pkg:swift/swift-algorithms@1.2.1",
+        "pkg:swift/swift-asn1@1.7.1",
+        "pkg:swift/swift-async-algorithms@1.1.5",
+        "pkg:swift/swift-atomics@1.3.1",
+        "pkg:swift/swift-certificates@1.19.3",
+        "pkg:swift/swift-http-structured-headers@1.7.0",
+        "pkg:swift/swift-http-types@1.6.0",
+        "pkg:swift/swift-log@1.14.0",
+        "pkg:swift/swift-nio-http2@1.44.0",
+        "pkg:swift/swift-nio-ssl@2.37.2",
+        "pkg:swift/swift-nio@2.101.3",
+        "pkg:swift/swift-service-lifecycle@2.11.0"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-nio-http2@1.44.0",
+      "dependsOn": [
+        "pkg:swift/swift-atomics@1.3.1",
+        "pkg:swift/swift-nio@2.101.3"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-nio-ssl@2.37.2",
+      "dependsOn": [
+        "pkg:swift/swift-nio@2.101.3"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-nio-transport-services@1.28.0",
+      "dependsOn": [
+        "pkg:swift/swift-atomics@1.3.1",
+        "pkg:swift/swift-nio@2.101.3"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-numerics@1.1.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:swift/swift-service-context@1.3.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:swift/swift-service-lifecycle@2.11.0",
+      "dependsOn": [
+        "pkg:swift/swift-async-algorithms@1.1.5",
+        "pkg:swift/swift-log@1.14.0"
+      ]
+    },
+    {
+      "ref": "pkg:swift/swift-system@1.7.5",
+      "dependsOn": []
+    }
+  ]
+}
