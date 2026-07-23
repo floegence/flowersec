@@ -7,11 +7,19 @@ export default defineConfig({
   timeout: 30_000,
   use: {
     headless: true,
+    ignoreHTTPSErrors: true,
   },
   projects: [
     {
       name: "chromium",
-      use: { browserName: "chromium" },
+      use: {
+        browserName: "chromium",
+        channel: "chromium",
+      },
+    },
+    {
+      name: "webkit-smoke",
+      use: { browserName: "webkit" },
     },
   ],
 });
