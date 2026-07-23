@@ -34,7 +34,7 @@ trust material, disables 0-RTT and QUIC DATAGRAM, and is covered by Go
 interoperability tests. Those implementation details do not change the public
 connector or session contract.
 
-Transport v2 production carrier support: raw QUIC client dialing for direct and tunnel paths.
+Transport v2 production carrier support: raw QUIC direct client dialing and runtime-owned direct server listening, plus tunnel dialing for both session roles.
 
 Flowersec disables application 0-RTT and does not use QUIC DATAGRAM.
 

@@ -19,8 +19,8 @@
     },
     {
       "name": "rust-native",
-      "canonical_json": "{\"language\":\"rust\",\"runtime\":\"native\",\"schemaVersion\":2,\"tuples\":[{\"carrier\":\"raw_quic\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"raw_quic\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"}],\"unsupported\":[{\"carrier\":\"websocket\",\"reason\":\"transport_v2_websocket_adapter_not_committed\"},{\"carrier\":\"webtransport\",\"reason\":\"rust_webtransport_not_committed\"}]}",
-      "digest_hex": "ddfab2ec85ed98cf12f3e6af1ce18078b7d8347357dde2c29a9eb2d1c32e77b4"
+      "canonical_json": "{\"language\":\"rust\",\"runtime\":\"native\",\"schemaVersion\":2,\"tuples\":[{\"carrier\":\"raw_quic\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"raw_quic\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"},{\"carrier\":\"raw_quic\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"server\"},{\"carrier\":\"raw_quic\",\"networkMode\":\"listen\",\"path\":\"direct\",\"sessionRole\":\"server\"}],\"unsupported\":[{\"carrier\":\"websocket\",\"reason\":\"transport_v2_websocket_adapter_not_committed\"},{\"carrier\":\"webtransport\",\"reason\":\"rust_webtransport_not_committed\"}]}",
+      "digest_hex": "a00bb1a56a38b4247b30e4e966586917a38ebd48b1323702d17a615892e5a766"
     },
     {
       "name": "swift-apple",

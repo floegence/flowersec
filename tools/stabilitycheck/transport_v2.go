@@ -790,13 +790,6 @@ func transportV2TupleKey(tuple transportV2RuntimeTuple) string {
 func expectedTransportV2TupleKeys(runtimeID string, carriers []string) []string {
 	keys := make([]string, 0, len(carriers)*4)
 	for _, carrier := range carriers {
-		if runtimeID == "rust_native" {
-			keys = append(keys,
-				carrier+"|dial|client|direct",
-				carrier+"|dial|client|tunnel",
-			)
-			continue
-		}
 		keys = append(keys,
 			carrier+"|dial|client|direct",
 			carrier+"|dial|client|tunnel",

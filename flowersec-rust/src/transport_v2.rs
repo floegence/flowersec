@@ -201,8 +201,8 @@ impl CapabilityTupleV2 {
 
 /// Exact end-to-end v2 tuples supported by the native Rust runtime.
 ///
-/// The public Connector proves client dialing for direct and tunnel artifacts.
-/// Listener and server roles remain unadvertised.
+/// The production connector proves direct client dialing and both tunnel
+/// session roles. The runtime-owned listener proves the direct server role.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const NATIVE_RUST_CAPABILITIES_V2: &[CapabilityTupleV2] = &[
     CapabilityTupleV2::new(
@@ -216,6 +216,18 @@ pub(crate) const NATIVE_RUST_CAPABILITIES_V2: &[CapabilityTupleV2] = &[
         NetworkMode::Dial,
         SessionRole::Client,
         PathKind::Tunnel,
+    ),
+    CapabilityTupleV2::new(
+        CarrierKind::RawQuic,
+        NetworkMode::Dial,
+        SessionRole::Server,
+        PathKind::Tunnel,
+    ),
+    CapabilityTupleV2::new(
+        CarrierKind::RawQuic,
+        NetworkMode::Listen,
+        SessionRole::Server,
+        PathKind::Direct,
     ),
 ];
 

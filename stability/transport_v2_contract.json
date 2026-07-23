@@ -290,7 +290,9 @@
       "environment": "native",
       "tuples": [
         { "carrier": "raw_quic", "network_mode": "dial", "path": "direct", "session_role": "client" },
-        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "client" }
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "server" },
+        { "carrier": "raw_quic", "network_mode": "listen", "path": "direct", "session_role": "server" }
       ],
       "unsupported": [
         { "carrier": "websocket", "reason": "transport_v2_websocket_adapter_not_committed" },

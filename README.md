@@ -80,7 +80,7 @@ The [cookbook index](examples/README.md) contains only v2 examples and verificat
 | Production WebSocket dialing | Yes | Browser and Node.js | macOS | No |
 | Production raw QUIC dialing | Yes | No | No | Yes |
 | Production WebTransport dialing | Yes | Browser | No | No |
-| Listener support | Go library APIs | Browser runtime constraints | Not advertised | Not advertised |
+| Listener support | Go library APIs | Browser runtime constraints | Not advertised | Runtime-owned raw QUIC |
 
 Each support row is backed by production connector code and end-to-end tests. Unsupported carriers fail closed; they are never silent fallbacks. Capability descriptors and carrier selection remain internal.
 

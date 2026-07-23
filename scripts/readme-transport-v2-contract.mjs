@@ -11,7 +11,7 @@ export const transportV2ReadmeContracts = Object.freeze({
   "README.md": "Unsupported carriers fail closed; they are never silent fallbacks.",
   "flowersec-go/README.md": "Transport v2 production carrier support: WebSocket, raw QUIC, and WebTransport.",
   "flowersec-ts/README.md": "Transport v2 production carrier support: browsers support WebSocket and WebTransport; Node.js supports WebSocket dialing for direct clients and both tunnel roles.",
-  "flowersec-rust/README.md": "Transport v2 production carrier support: raw QUIC client dialing for direct and tunnel paths.",
+  "flowersec-rust/README.md": "Transport v2 production carrier support: raw QUIC direct client dialing and runtime-owned direct server listening, plus tunnel dialing for both session roles.",
   "flowersec-swift/README.md": "Transport v2 production carrier support: macOS supports WebSocket direct and tunnel dial sessions; iOS advertises no production carrier.",
   "examples/README.md": "Every maintained cookbook is v2-only.",
 });

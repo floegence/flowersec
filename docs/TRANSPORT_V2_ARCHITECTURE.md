@@ -168,12 +168,11 @@ Rust pins `quinn =0.11.11` with default features disabled and only `runtime-toki
   committed v2 WebSocket admission/carrier adapter, and raw QUIC plus
   WebTransport remain unavailable until a production-grade runtime API passes
   the dependency gate.
-- Rust native: no production Transport v2 carrier tuple. The raw QUIC adapter
-  remains public and tested, but raw QUIC is registered as
-  `rust_transport_v2_connector_not_committed` until complete ArtifactV2
-  acquisition, equal-candidate race, durable-spend, and server admission paths
-  are committed. Its carrier-neutral Yamux adapter likewise does not advertise
-  WebSocket Transport v2.
+- Rust native: raw QUIC direct client dialing and runtime-owned direct server
+  listening, plus tunnel dialing for both session roles. The opaque Connector
+  owns ArtifactV2 acquisition, equal-candidate race, durable spend, and client
+  admission; the runtime listener owns server admission. WebSocket and
+  WebTransport remain unsupported.
 - Swift Apple: portable Transport v2 protocol/session code only. No network carrier tuple is advertised until a production WebSocket admission/carrier adapter is committed; raw QUIC and WebTransport remain blocked by the Network.framework contract across supported deployment targets.
 
 Unsupported states carry registered reason tokens. Missing tuples are unsupported; they must not be inferred by combining other modes or roles.

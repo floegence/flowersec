@@ -75,6 +75,12 @@
       "owner": "go",
       "reason": "Go owns the deployable native raw QUIC listener used by cross-language validation.",
       "evidence": ["flowersec-go/internal/carrier/rawquic"]
+    },
+    {
+      "id": "rust_native_raw_quic",
+      "owner": "rust",
+      "reason": "Rust owns its native raw QUIC connector and runtime listener implementation.",
+      "evidence": ["flowersec-rust/src/raw_quic_v2_integration_tests.rs"]
     }
   ],
   "shared_fixtures": [
