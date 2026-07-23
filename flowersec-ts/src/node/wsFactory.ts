@@ -20,12 +20,14 @@ export type NodeWsFactoryOptions = Readonly<{
   //
   // Disabling compression avoids compression-bomb style DoS risks and aligns with the Go client defaults.
   perMessageDeflate?: boolean;
+  /** Additional trusted CA certificate(s) for private WSS deployments. */
+  ca?: string | Uint8Array;
 }>;
 
 // createNodeWsFactory returns a wsFactory compatible with connectTunnel/connectDirect in Node.js.
 //
 // It uses the "ws" package to set the Origin header explicitly (browsers set Origin automatically).
-export function createNodeWsFactory(opts: NodeWsFactoryOptions = {}): (url: string, origin: string) => WebSocketLike {
+export function createNodeWsFactory(opts: NodeWsFactoryOptions = {}): (url: string, origin: string, subprotocol?: string) => WebSocketLike {
   const require = createRequire(import.meta.url);
   const wsMod = require("ws") as any;
   const WebSocketCtor = wsMod?.WebSocket ?? wsMod;
@@ -37,11 +39,12 @@ export function createNodeWsFactory(opts: NodeWsFactoryOptions = {}): (url: stri
   const maxPayload = maxPayloadRaw;
   const perMessageDeflate = opts.perMessageDeflate ?? false;
 
-  return (url: string, origin: string): WebSocketLike => {
-    const raw = new WebSocketCtor(url, {
+  return (url: string, origin: string, subprotocol?: string): WebSocketLike => {
+    const raw = new WebSocketCtor(url, subprotocol === undefined ? undefined : [subprotocol], {
       headers: { Origin: origin },
       maxPayload,
       perMessageDeflate,
+      ...(opts.ca === undefined ? {} : { ca: opts.ca }),
     });
 
     // Map (type -> user listener -> wrapped listener) so removeEventListener works.

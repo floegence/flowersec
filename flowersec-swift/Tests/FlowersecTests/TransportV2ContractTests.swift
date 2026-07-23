@@ -4,6 +4,15 @@ import Testing
 @testable import Flowersec
 
 struct TransportV2ContractTests {
+  @Test func macOSCapabilityAdvertisesOnlyVerifiedWSSDialTuples() throws {
+    let descriptor = RuntimeCapabilitiesV2.macOS
+    try descriptor.validate()
+    #expect(descriptor.tuples.map(\.carrier) == [.webSocket, .webSocket, .webSocket])
+    #expect(descriptor.tuples.map(\.path) == [.direct, .tunnel, .tunnel])
+    #expect(descriptor.tuples.map(\.sessionRole) == [.client, .client, .server])
+    #expect(descriptor.unsupported.map(\.carrier) == [.rawQUIC, .webTransport])
+  }
+
   @Test func carrierRegistryValuesMatchPortableContract() {
     #expect(CarrierKind.webSocket.rawValue == "websocket")
     #expect(CarrierKind.rawQUIC.rawValue == "raw_quic")

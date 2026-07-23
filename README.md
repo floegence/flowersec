@@ -81,7 +81,7 @@ Flowersec application 0-RTT is disabled.
 Flowersec does not use QUIC DATAGRAM frames.
 `flowersec-tunnel` remains a v1 WebSocket/Yamux CLI.
 
-Transport v2 production carrier support: Go native supports WebSocket, raw QUIC, and WebTransport; TypeScript browsers support WebSocket and WebTransport; TypeScript Node.js, Rust native, and Swift Apple advertise no production carrier.
+Transport v2 production carrier support: Go native supports WebSocket, raw QUIC, and WebTransport; TypeScript browsers support WebSocket and WebTransport; TypeScript Node.js supports WebSocket dialing for direct clients and both tunnel roles; Rust native supports raw QUIC client dialing; Swift macOS supports WebSocket direct and tunnel dial sessions; Swift iOS advertises no production carrier.
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
@@ -117,7 +117,7 @@ Transport v1 integrations use the legacy artifact path. Transport v2 integration
 ArtifactV2 -> equal candidate selection -> authenticated SessionV2 -> RPC / stream / proxy
 ```
 
-The current release exposes the complete production carrier set in Go and browser WebTransport/WebSocket adapters in TypeScript. Node.js, Rust, and Swift publish portable v2 protocol/session pieces but do not advertise a production v2 network-carrier tuple. The `flowersec-tunnel` CLI and existing cookbook binaries remain v1 WebSocket examples until a v2 listener is explicitly shipped.
+The current release exposes the complete production carrier set in Go, browser WebTransport/WebSocket adapters in TypeScript, Node.js WebSocket dialing for direct clients and both tunnel roles, Rust raw QUIC direct/tunnel client dialing, and Swift macOS WebSocket dialing for direct clients and both tunnel roles. Node.js raw QUIC and WebTransport, Rust listener/server roles, and Swift iOS production carriers remain unavailable. The `flowersec-tunnel` CLI and existing cookbook binaries remain v1 WebSocket examples until a v2 listener is explicitly shipped.
 
 The cookbooks point to runnable source instead of duplicating large API examples in multiple documents. See the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](docs/MIGRATION_TRANSPORT_V2.md) for the exact capability matrix and breaking lifecycle changes.
 
@@ -130,8 +130,8 @@ The cookbooks point to runnable source instead of duplicating large API examples
 | --- | :---: | :---: | :---: | :---: |
 | v1 client and endpoint sessions | Yes | Yes | Yes | Yes |
 | v2 wire, session, and lifecycle contracts | Yes | Yes | Yes | Yes |
-| v2 production WebSocket carrier | Yes | Browser: Yes / Node: No | No | No |
-| v2 production raw QUIC carrier | Yes | No | No | Adapter tested; not advertised |
+| v2 production WebSocket carrier | Yes | Browser: Yes / Node: Dial | macOS: Dial / iOS: No | No |
+| v2 production raw QUIC carrier | Yes | No | No | Client dial: direct and tunnel |
 | v2 production WebTransport carrier | Yes | Browser: Yes / Node: No | No | No |
 | RPC, events, and carrier-neutral byte streams | Yes | Yes | Yes | Yes |
 

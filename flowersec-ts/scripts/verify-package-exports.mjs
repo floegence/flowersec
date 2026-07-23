@@ -198,10 +198,13 @@ ${checks}
       language: 'typescript',
       runtime: 'node',
       schemaVersion: 2,
-      tuples: [],
+      tuples: [
+        { carrier: 'websocket', networkMode: 'dial', path: 'direct', sessionRole: 'client' },
+        { carrier: 'websocket', networkMode: 'dial', path: 'tunnel', sessionRole: 'client' },
+        { carrier: 'websocket', networkMode: 'dial', path: 'tunnel', sessionRole: 'server' },
+      ],
       unsupported: [
         { carrier: 'raw_quic', reason: 'no_production_grade_node_quic_runtime' },
-        { carrier: 'websocket', reason: 'transport_v2_websocket_adapter_not_committed' },
         { carrier: 'webtransport', reason: 'no_production_grade_node_quic_runtime' },
       ],
     });

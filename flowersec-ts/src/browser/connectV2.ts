@@ -135,12 +135,13 @@ export class BrowserSessionConnectorV2 {
       } catch (error) {
         throw connectorError(path, "validate", "invalid_option", error);
       }
-      if (capability.language !== "typescript" || capability.runtime !== "browser") {
+      const expectedRuntime = browserConnectorRuntimes.get(this) ?? "browser";
+      if (capability.language !== "typescript" || capability.runtime !== expectedRuntime) {
         throw connectorError(
           path,
           "validate",
           "invalid_option",
-          new TypeError("browser SessionV2 requires a TypeScript browser capability descriptor"),
+          new TypeError(`SessionV2 connector requires a TypeScript ${expectedRuntime} capability descriptor`),
         );
       }
       const requiredRole = this.artifact.path.kind === "tunnel" && this.artifact.path.role === 2
@@ -489,17 +490,31 @@ const browserConnectorAttemptFactories = new WeakMap<
   BrowserSessionConnectorV2,
   BrowserCandidateAttemptFactoryV2
 >();
+const browserConnectorRuntimes = new WeakMap<BrowserSessionConnectorV2, "browser" | "node">();
 
 export function createBrowserSessionConnectorV2InternalStage(
   lease: BrowserArtifactLeaseV2,
   options: BrowserSessionConnectorV2Options & Readonly<{
     attemptFactory: BrowserCandidateAttemptFactoryV2;
+    runtime?: "browser" | "node";
   }>,
 ): BrowserSessionConnectorV2 {
-  const { attemptFactory, ...publicOptions } = options;
+  const { attemptFactory, runtime, ...publicOptions } = options;
   const connector = new BrowserSessionConnectorV2(lease, publicOptions);
   browserConnectorAttemptFactories.set(connector, attemptFactory);
+  if (runtime !== undefined) browserConnectorRuntimes.set(connector, runtime);
   return connector;
+}
+
+export function createWebSocketAttemptFactoryV2InternalStage(
+  factory: (url: string, subprotocol: string) => BrowserWebSocketLikeV2,
+): BrowserCandidateAttemptFactoryV2 {
+  return {
+    create(candidate, artifact) {
+      if (candidate.carrier !== "websocket") throw new Error(`unsupported Node carrier ${candidate.carrier}`);
+      return new BrowserWebSocketAttempt(candidate, artifact.path.kind, factory);
+    },
+  };
 }
 
 async function closeCommittedBrowserSession(

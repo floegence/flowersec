@@ -22,9 +22,9 @@ Flowersec application 0-RTT is disabled.
 Flowersec does not use QUIC DATAGRAM frames.
 `flowersec-tunnel` remains a v1 WebSocket/Yamux CLI.
 
-Transport v2 production carrier support: none; raw QUIC remains public and tested but is not a production capability tuple.
+Transport v2 production carrier support: raw QUIC client dialing for direct and tunnel paths.
 
-Rust currently advertises no production Transport v2 carrier tuple: complete `ArtifactV2` acquisition, equal-candidate durable-spend connection ownership, and server admission are not yet committed as one production connector. Existing `connect`, controlplane, proxy, and Yamux examples remain v1. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](../docs/MIGRATION_TRANSPORT_V2.md).
+Rust advertises the two raw QUIC client-dial tuples proven by the public `Connector`: direct/client and tunnel/client. The connector consumes an opaque `ArtifactLease`, races compatible candidates, durably spends before FSB2 credentials are written, and returns only the carrier-neutral `Session` contract. Raw QUIC listener/server roles, WebSocket, and WebTransport remain unavailable. Existing `connect`, controlplane, proxy, and Yamux examples remain v1.
 
 ## Cookbook
 
@@ -41,7 +41,7 @@ Start with the [Rust cookbook](https://github.com/floegence/flowersec/tree/main/
 - Proxy: `proxy::{ProxyClient, ProxyServer}`
 - Diagnostics: `observability`
 - Transport v2 protocol/session: `protocol_v2`, `session_v2`, and `transport_v2`
-- Tested non-advertised raw QUIC adapter: `raw_quic_v2`
+- Production raw QUIC client facade: `Connector`, `ConnectorOptions`, opaque `artifact_v2::ArtifactLease`, and carrier-neutral `Session`
 
 High-level WebSocket connections require TLS by default. Use `TransportSecurityPolicy::allow_plaintext_for_loopback()` only for literal local development targets.
 

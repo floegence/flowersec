@@ -21,7 +21,8 @@ enum ProxyNIOWebSocketConnector {
     url: URL,
     headers: [ProxyHeader],
     maxFrameBytes: Int,
-    timeout: Duration?
+    timeout: Duration?,
+    trustRoots: [NIOSSLCertificate]? = nil
   ) async throws -> any ProxyUpstreamWebSocket {
     guard let scheme = url.scheme?.lowercased(), scheme == "ws" || scheme == "wss",
       let host = url.host
@@ -88,7 +89,10 @@ enum ProxyNIOWebSocketConnector {
       )
       do {
         if scheme == "wss" {
-          let context = try NIOSSLContext(configuration: .makeClientConfiguration())
+          var tls = TLSConfiguration.makeClientConfiguration()
+          tls.minimumTLSVersion = .tlsv13
+          if let trustRoots { tls.trustRoots = .certificates(trustRoots) }
+          let context = try NIOSSLContext(configuration: tls)
           try channel.pipeline.syncOperations.addHandler(
             NIOSSLClientHandler(context: context, serverHostname: host)
           )

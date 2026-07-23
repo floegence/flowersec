@@ -1834,6 +1834,7 @@
           "createTunnelNodeReconnectConfig",
           "createDirectNodeReconnectConfig",
           "createNodeWsFactory",
+          "connectNodeSessionV2",
           "assertConnectArtifact",
           "SessionV2",
           "Artifact",
@@ -1863,6 +1864,7 @@
           "ArtifactDecoderV2",
           "ArtifactInputV2",
           "ArtifactLeaseV2",
+          "NodeSessionConnectorV2Options",
           "ArtifactSourceV2",
           "ArtifactVersionPolicyV2",
           "ByteStreamV2",
@@ -2159,7 +2161,12 @@
       "`TransportV2Session.acceptStream()`",
       "`TransportV2Session.close()`",
       "`IDNAHostV2.lookupASCII(_:)`",
-      "`RuntimeCapabilitiesV2.apple`"
+      "`RuntimeCapabilitiesV2.apple`",
+      "`RuntimeCapabilitiesV2.macOS`",
+      "`ConnectorV2`",
+      "`ConnectorV2.connect()`",
+      "`ConnectorOptionsV2`",
+      "`ConnectErrorV2`"
     ],
     "symbols": [
       {
@@ -5843,7 +5850,26 @@
       {"kind":"swift.property","name":"TransportV2Session.rpc","doc_token":""},
       {"kind":"swift.struct","name":"ArtifactLeaseV2","doc_token":""},
       {"kind":"swift.type.method","name":"IDNAHostV2.lookupASCII(_:)","doc_token":""},
-      {"kind":"swift.type.property","name":"IDNAHostV2.unicodeVersion","doc_token":""}
+      {"kind":"swift.type.property","name":"IDNAHostV2.unicodeVersion","doc_token":""},
+      {"kind":"swift.enum","name":"ConnectErrorV2","doc_token":"`ConnectErrorV2`"},
+      {"kind":"swift.enum.case","name":"ConnectErrorV2.admissionRejected","doc_token":""},
+      {"kind":"swift.enum.case","name":"ConnectErrorV2.canceled","doc_token":""},
+      {"kind":"swift.enum.case","name":"ConnectErrorV2.connectionFailed","doc_token":""},
+      {"kind":"swift.enum.case","name":"ConnectErrorV2.expiredArtifact","doc_token":""},
+      {"kind":"swift.enum.case","name":"ConnectErrorV2.invalidOptions","doc_token":""},
+      {"kind":"swift.enum.case","name":"ConnectErrorV2.timeout","doc_token":""},
+      {"kind":"swift.enum.case","name":"ConnectErrorV2.unsupportedCarrier","doc_token":""},
+      {"kind":"swift.init","name":"ConnectErrorV2.init(rawValue:)","doc_token":""},
+      {"kind":"swift.init","name":"ConnectorOptionsV2.init(origin:admissionReasons:connectTimeout:trustRootsPEM:)","doc_token":""},
+      {"kind":"swift.init","name":"ConnectorV2.init(lease:options:)","doc_token":"`ConnectorV2`"},
+      {"kind":"swift.method","name":"ConnectorV2.connect()","doc_token":"`ConnectorV2.connect()`"},
+      {"kind":"swift.property","name":"ConnectorOptionsV2.admissionReasons","doc_token":""},
+      {"kind":"swift.property","name":"ConnectorOptionsV2.connectTimeout","doc_token":""},
+      {"kind":"swift.property","name":"ConnectorOptionsV2.origin","doc_token":""},
+      {"kind":"swift.property","name":"ConnectorOptionsV2.trustRootsPEM","doc_token":""},
+      {"kind":"swift.struct","name":"ConnectorOptionsV2","doc_token":"`ConnectorOptionsV2`"},
+      {"kind":"swift.struct","name":"ConnectorV2","doc_token":"`ConnectorV2`"},
+      {"kind":"swift.type.property","name":"RuntimeCapabilitiesV2.macOS","doc_token":"`RuntimeCapabilitiesV2.macOS`"}
     ]
   },
   "rust": {
@@ -5852,6 +5878,10 @@
     "doc_tokens": [
       "`flowersec`",
       "`flowersec::connect(...)`",
+      "`Connector`",
+      "`ConnectorOptions`",
+      "`artifact_v2::ArtifactLease`",
+      "`Session`",
       "`flowersec::client::ConnectOptions`",
       "`flowersec::client::ConnectOptions.liveness`",
       "`flowersec::endpoint`",
@@ -5884,6 +5914,9 @@
       "let _ = flowersec::connect",
       "let _ = flowersec::connect_direct",
       "let _ = flowersec::connect_tunnel",
+      "let _ = flowersec::Connector::new",
+      "let _ = flowersec::Connector::connect",
+      "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
       "let _ = std::mem::size_of::<flowersec::Client>()",
       "let _ = std::mem::size_of::<flowersec::ConnectArtifact>()",
       "let _ = std::mem::size_of::<flowersec::client::ConnectOptions>()",

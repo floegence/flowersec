@@ -16,14 +16,188 @@ use flowersec::raw_quic_v2::{
     RawQuicPathProfile, RawQuicServerConfig, RawQuicSession, RawQuicStream, SessionContractV2,
 };
 use flowersec::{
+    Connector, ConnectorOptions,
+    artifact_v2::{Artifact, ArtifactLease},
     protocol_v2::CipherSuiteV2,
     session_v2::{RpcHandlerV2, SessionConfigV2, establish_session_v2},
     transport_v2::{CarrierSessionV2, PathKind, SessionRole},
 };
 use sha2::Digest as _;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio_util::sync::CancellationToken;
 
 const TEST_CERT_DER_B64: &str = "MIIBjzCCAUGgAwIBAgIUW8hQEpQsUJN9a6qqF2g6hsNpSm8wBQYDK2VwMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAeFw0yNjA3MjAxOTAxMjFaFw0zNjA3MTcxOTAxMjFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAqMAUGAytlcAMhAAihki/Jec+1EaC6E6PsSxjMYFAazrgkNiUIlbj/+A/0o4GkMIGhMB0GA1UdDgQWBBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAfBgNVHSMEGDAWgBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEwBQYDK2VwA0EArZng3XitiH2E1pW/NTxQvEOBXJYpYE8coQmLV4yTjfI43CWHMG6lIrwk/so67oe6Z2R4iHGjUm3Tuy50Fl8hBw==";
 const TEST_KEY_DER_B64: &str = "MC4CAQAwBQYDK2VwBCIEICxYUWHqGoh0CBBohsaNg/NThm1n3UeWCzYuq6jS+Qi6";
+
+#[tokio::test]
+async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end() {
+    for profile in [RawQuicPathProfile::Direct, RawQuicPathProfile::Tunnel] {
+        let limits = session_limits(1);
+        let listener = RawQuicListener::bind(loopback_ephemeral(), server_config(profile, limits))
+            .expect("bind facade E2E listener");
+        let address = listener.local_addr().expect("facade listener address");
+        let server_task = tokio::spawn(async move {
+            let raw = listener.accept().await.expect("accept facade QUIC");
+            let admission = raw
+                .accept_stream()
+                .await
+                .expect("accept facade FSB2 stream");
+            let fsb2 = read_to_end(&admission).await;
+            assert_eq!(&fsb2[..4], b"FSB2");
+            admission
+                .write_all(&admission_success_fixture())
+                .await
+                .expect("write facade FSA2");
+            admission.close_write().await.expect("finish facade FSA2");
+            let path = if profile == RawQuicPathProfile::Direct {
+                PathKind::Direct
+            } else {
+                PathKind::Tunnel
+            };
+            let binding = fsb2_binding(&fsb2);
+            let (local, peer) = if path == PathKind::Direct {
+                (None, None)
+            } else {
+                (Some("endpoint-server"), Some("endpoint-client"))
+            };
+            let session = establish_session_v2(
+                Arc::new(raw),
+                raw_session_config(
+                    SessionRole::Server,
+                    path,
+                    binding,
+                    (path == PathKind::Direct).then_some(binding),
+                    local,
+                    peer,
+                    Duration::from_secs(30),
+                ),
+            )
+            .await
+            .expect("establish facade server session");
+            let incoming = session
+                .accept_stream()
+                .await
+                .expect("accept facade client stream");
+            assert_eq!(incoming.kind(), "facade-client");
+            assert_eq!(
+                incoming.stream().read().await.expect("read client payload"),
+                Some(Bytes::from_static(b"request"))
+            );
+            assert_eq!(
+                incoming.stream().read().await.expect("read client FIN"),
+                None
+            );
+            incoming
+                .stream()
+                .write(Bytes::from_static(b"response"))
+                .await
+                .expect("write response");
+            incoming
+                .stream()
+                .close_write()
+                .await
+                .expect("finish response");
+            let outbound = session
+                .open_stream("facade-server", serde_json::Map::new())
+                .await
+                .expect("open server stream");
+            outbound
+                .write(Bytes::from_static(b"server-push"))
+                .await
+                .expect("write server push");
+            outbound.close_write().await.expect("finish server push");
+            assert_eq!(
+                outbound.read().await.expect("read client reverse FIN"),
+                None
+            );
+            session
+        });
+
+        let artifact = Artifact::parse(public_connector_artifact(address, profile))
+            .expect("parse opaque facade artifact");
+        let spend_count = Arc::new(AtomicUsize::new(0));
+        let observed = spend_count.clone();
+        let mut lease = ArtifactLease::new(artifact, move || {
+            let observed = observed.clone();
+            async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        });
+        let connector = Connector::new(ConnectorOptions {
+            trust_roots_der: vec![test_cert_der()],
+            connect_timeout: Duration::from_secs(10),
+        })
+        .expect("create public connector");
+        let session = connector
+            .connect(&mut lease, CancellationToken::new())
+            .await
+            .expect("connect through public facade");
+        assert_eq!(
+            session.path(),
+            if profile == RawQuicPathProfile::Direct {
+                PathKind::Direct
+            } else {
+                PathKind::Tunnel
+            }
+        );
+        let stream = session
+            .open_stream("facade-client", serde_json::Map::new())
+            .await
+            .expect("open client stream");
+        stream
+            .write(Bytes::from_static(b"request"))
+            .await
+            .expect("write client payload");
+        stream.close_write().await.expect("finish client request");
+        assert_eq!(
+            stream.read().await.expect("read response"),
+            Some(Bytes::from_static(b"response"))
+        );
+        assert_eq!(stream.read().await.expect("read response FIN"), None);
+        let incoming = session.accept_stream().await.expect("accept server push");
+        assert_eq!(incoming.kind(), "facade-server");
+        assert_eq!(
+            incoming.stream().read().await.expect("read server push"),
+            Some(Bytes::from_static(b"server-push"))
+        );
+        assert_eq!(
+            incoming.stream().read().await.expect("read server FIN"),
+            None
+        );
+        incoming
+            .stream()
+            .close_write()
+            .await
+            .expect("finish reverse direction");
+        assert_eq!(spend_count.load(Ordering::SeqCst), 1);
+        assert!(lease.is_committed());
+        let server = server_task.await.expect("join facade server");
+        session.close().await.expect("close facade client");
+        server.close().await.expect("close facade server");
+    }
+}
+
+fn public_connector_artifact(address: SocketAddr, profile: RawQuicPathProfile) -> Vec<u8> {
+    let contract = session_contract(1);
+    let candidate = serde_json::json!({
+        "id":"q1", "carrier":"raw_quic", "url":format!("quic://localhost:{}", address.port()),
+        "wire_profile":format!("flowersec-{}/2", profile_name(profile)),
+    });
+    let path = match profile {
+        RawQuicPathProfile::Direct => {
+            serde_json::json!({"kind":"direct","rendezvous_group_id":"group-1","listener_audience":"listener-1","routing_token":"routing-token","candidates":[candidate]})
+        }
+        RawQuicPathProfile::Tunnel => {
+            serde_json::json!({"kind":"tunnel","rendezvous_group_id":"group-1","listener_audience":"listener-1","role":1,"local_endpoint_instance_id":"endpoint-client","expected_peer_endpoint_instance_id":"endpoint-server","token":"attach-token","candidates":[candidate]})
+        }
+    };
+    serde_json::to_vec(&serde_json::json!({
+        "v":2,"profile":"flowersec/2",
+        "session":{"channel_id":"channel-1","init_expire_at_unix_s":2000000000_i64,"idle_timeout_seconds":60,"establish_timeout_seconds":30,"rekey_prepare_timeout_seconds":10,"rekey_completion_timeout_seconds":30,"max_inbound_streams":1,"e2ee_psk_b64u":URL_SAFE_NO_PAD.encode([0x92;32]),"allowed_suites":[1,2],"default_suite":1,"selected_features":0,"contract_hash_b64u":URL_SAFE_NO_PAD.encode(contract.contract_hash)},
+        "path":path,"scoped":[],"correlation":{"v":2,"tags":[]}
+    })).expect("encode facade artifact")
+}
 
 #[test]
 fn limits_are_bounded_and_validate_relationships() {

@@ -164,10 +164,22 @@ impl CapabilityTupleV2 {
 
 /// Exact end-to-end v2 tuples supported by the native Rust runtime.
 ///
-/// The raw QUIC adapter remains public and fully tested, but it is not a
-/// runtime tuple until Rust also has production ArtifactV2, admission, and
-/// equal-candidate connector paths that can consume it.
-pub const NATIVE_RUST_CAPABILITIES_V2: &[CapabilityTupleV2] = &[];
+/// The public Connector proves client dialing for direct and tunnel artifacts.
+/// Listener and server roles remain unadvertised.
+pub const NATIVE_RUST_CAPABILITIES_V2: &[CapabilityTupleV2] = &[
+    CapabilityTupleV2::new(
+        CarrierKind::RawQuic,
+        NetworkMode::Dial,
+        SessionRole::Client,
+        PathKind::Direct,
+    ),
+    CapabilityTupleV2::new(
+        CarrierKind::RawQuic,
+        NetworkMode::Dial,
+        SessionRole::Client,
+        PathKind::Tunnel,
+    ),
+];
 
 /// Builds the canonical descriptor advertised by the native Rust runtime.
 pub fn native_rust_capability_descriptor_v2() -> RuntimeCapabilityDescriptorV2 {
@@ -177,10 +189,6 @@ pub fn native_rust_capability_descriptor_v2() -> RuntimeCapabilityDescriptorV2 {
         schema_version: 2,
         tuples: NATIVE_RUST_CAPABILITIES_V2.to_vec(),
         unsupported: vec![
-            UnsupportedRuntimeCarrierV2 {
-                carrier: CarrierKind::RawQuic,
-                reason: "rust_transport_v2_connector_not_committed".into(),
-            },
             UnsupportedRuntimeCarrierV2 {
                 carrier: CarrierKind::Wss,
                 reason: "transport_v2_websocket_adapter_not_committed".into(),

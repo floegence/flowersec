@@ -18,7 +18,20 @@ fn logical_stream_limit_reserves_control_and_rpc_carrier_streams() {
     assert!(carrier_inbound_stream_limit_v2(129).is_err());
 }
 
-const EXPECTED_NATIVE_RUST_CAPABILITIES: [CapabilityTupleV2; 0] = [];
+const EXPECTED_NATIVE_RUST_CAPABILITIES: [CapabilityTupleV2; 2] = [
+    CapabilityTupleV2::new(
+        CarrierKind::RawQuic,
+        NetworkMode::Dial,
+        SessionRole::Client,
+        PathKind::Direct,
+    ),
+    CapabilityTupleV2::new(
+        CarrierKind::RawQuic,
+        NetworkMode::Dial,
+        SessionRole::Client,
+        PathKind::Tunnel,
+    ),
+];
 
 #[test]
 fn native_rust_capabilities_are_the_signed_exact_tuples() {

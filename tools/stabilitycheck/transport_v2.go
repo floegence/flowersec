@@ -226,8 +226,8 @@ var transportV2CarrierExpectations = map[string]transportV2CarrierExpectation{
 var transportV2RuntimeCarrierExpectations = map[string][]string{
 	"go_native":          {"raw_quic", "websocket", "webtransport"},
 	"typescript_browser": {"websocket", "webtransport"},
-	"typescript_node":    {},
-	"rust_native":        {},
+	"typescript_node":    {"websocket"},
+	"rust_native":        {"raw_quic"},
 	"swift_apple":        {},
 }
 
@@ -338,12 +338,10 @@ var transportV2UnsupportedExpectations = map[string]map[string]string{
 		"raw_quic": "browser_no_raw_udp",
 	},
 	"typescript_node": {
-		"websocket":    "transport_v2_websocket_adapter_not_committed",
 		"raw_quic":     "no_production_grade_node_quic_runtime",
 		"webtransport": "no_production_grade_node_quic_runtime",
 	},
 	"rust_native": {
-		"raw_quic":     "rust_transport_v2_connector_not_committed",
 		"websocket":    "transport_v2_websocket_adapter_not_committed",
 		"webtransport": "rust_webtransport_not_committed",
 	},
@@ -700,7 +698,6 @@ func validateTransportV2Reasons(reasons []transportV2UnsupportedReason) (map[str
 		"browser_webtransport_api_unavailable",
 		"network_framework_quic_contract_incomplete_on_supported_targets",
 		"no_production_grade_node_quic_runtime",
-		"rust_transport_v2_connector_not_committed",
 		"rust_webtransport_not_committed",
 		"transport_v2_websocket_adapter_not_committed",
 	}
@@ -782,6 +779,13 @@ func transportV2TupleKey(tuple transportV2RuntimeTuple) string {
 func expectedTransportV2TupleKeys(runtimeID string, carriers []string) []string {
 	keys := make([]string, 0, len(carriers)*4)
 	for _, carrier := range carriers {
+		if runtimeID == "rust_native" {
+			keys = append(keys,
+				carrier+"|dial|client|direct",
+				carrier+"|dial|client|tunnel",
+			)
+			continue
+		}
 		keys = append(keys,
 			carrier+"|dial|client|direct",
 			carrier+"|dial|client|tunnel",

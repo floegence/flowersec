@@ -20,11 +20,11 @@ Flowersec application 0-RTT is disabled.
 Flowersec does not use QUIC DATAGRAM frames.
 `flowersec-tunnel` remains a v1 WebSocket/Yamux CLI.
 
-Transport v2 production carrier support: browsers support WebSocket and WebTransport; Node.js has no production carrier.
+Transport v2 production carrier support: browsers support WebSocket and WebTransport; Node.js supports WebSocket dialing for direct clients and both tunnel roles.
 
 Use `connectBrowserSessionV2(...)` with an `ArtifactSourceV2`, await the ready `SessionV2` before attaching RPC, use `ByteStreamV2` FIN/reset semantics, and await asynchronous disconnect. `SessionReconnectManagerV2` reacquires a fresh durable artifact lease for every attempt and never recycles a serialized one-time artifact.
 
-The Node.js entrypoint exports portable v2 types and codecs but advertises no production Transport v2 network-carrier tuple. Raw QUIC is unavailable in browser JavaScript, and the package does not cast a v1 `ConnectArtifact` into `ArtifactV2`. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](../docs/MIGRATION_TRANSPORT_V2.md).
+The Node.js entrypoint exports `connectNodeSessionV2(...)` and advertises WebSocket dial tuples for direct clients and tunnel client/server roles. Node.js raw QUIC and WebTransport remain typed unavailable. Raw QUIC is unavailable in browser JavaScript, and the package does not cast a v1 `ConnectArtifact` into `ArtifactV2`. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](../docs/MIGRATION_TRANSPORT_V2.md).
 
 ## Cookbook
 
@@ -41,6 +41,7 @@ Start with the [TypeScript cookbook](https://github.com/floegence/flowersec/tree
 - HTTP/WebSocket proxy and browser runtime: `@floegence/flowersec-core/proxy`
 - Observability: `@floegence/flowersec-core/observability`
 - Transport v2 browser session: `connectBrowserSessionV2`, `SessionV2`, `ByteStreamV2`
+- Transport v2 Node.js WebSocket session: `connectNodeSessionV2`, `NodeSessionConnectorV2Options`
 - Transport v2 artifact/reconnect: `ArtifactSourceV2`, `ArtifactLeaseV2`, `SessionReconnectManagerV2`
 
 High-level WebSocket connections require TLS by default. Use `AllowPlaintextForLoopback` only for literal local development targets.

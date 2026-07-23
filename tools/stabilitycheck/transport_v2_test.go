@@ -39,8 +39,8 @@ func TestTransportV2ContractDeclaresSignedSliceZeroRegistry(t *testing.T) {
 	wantRuntimeCarriers := map[string][]string{
 		"go_native":          {"raw_quic", "websocket", "webtransport"},
 		"typescript_browser": {"websocket", "webtransport"},
-		"typescript_node":    {},
-		"rust_native":        {},
+		"typescript_node":    {"websocket"},
+		"rust_native":        {"raw_quic"},
 		"swift_apple":        {},
 	}
 	for _, runtime := range contract.Runtimes {
@@ -215,13 +215,10 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 			"JsonPrimitiveV2", "JsonValueV2", "NetworkModeV2", "OperationOptionsV2",
 			"SessionRoleV2", "SessionTerminationV2", "UnsupportedRuntimeCarrierV2",
 			"SessionReconnectConfigV2", "SessionReconnectManagerV2", "SessionReconnectStateV2",
-			"FlowersecCandidateDiagnostic",
 		} {
 			requireTSTypeExport(t, raw.TS.Subpaths, specifier, exportName)
 		}
 	}
-	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "FlowersecCandidateDiagnostic")
-
 	requireSwiftManifestSymbol(t, m, "swift.protocol", "SessionV2")
 	requireSwiftManifestSymbol(t, m, "swift.protocol", "ByteStreamV2")
 	requireSwiftManifestSymbol(t, m, "swift.enum", "CarrierKind")

@@ -1,4 +1,6 @@
 export { createNodeWsFactory } from "./wsFactory.js";
+export { connectNodeSessionV2 } from "./connectV2.js";
+export type { NodeSessionConnectorV2Options } from "./connectV2.js";
 export {
   NODE_RUNTIME_CAPABILITY_V2,
   decodeRuntimeCapabilityDescriptorV2,

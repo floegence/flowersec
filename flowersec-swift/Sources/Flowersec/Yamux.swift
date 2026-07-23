@@ -912,6 +912,29 @@ actor FlowersecYamuxStream: FlowersecRPCStream, FlowersecByteStream {
     return out
   }
 
+  func read(maxBytes: Int) async throws -> Data? {
+    guard maxBytes > 0 else { return Data() }
+    while true {
+      if let failure { throw failure }
+      let available = readBuffer.count - readOffset
+      if available > 0 {
+        let count = min(maxBytes, available)
+        let end = readOffset + count
+        let output = Data(readBuffer[readOffset..<end])
+        readOffset = end
+        compactReadBufferAfterConsumption()
+        await session?.releaseReceiveBytes(streamID: id, bytes: count)
+        try await session?.sendWindowUpdate(streamID: id, bytes: UInt32(count))
+        if readBuffer.isEmpty, localFinished, remoteFinished {
+          await session?.finalizeDrainedStream(streamID: id)
+        }
+        return output
+      }
+      if remoteFinished { return nil }
+      try await waitForData()
+    }
+  }
+
   func close() async {
     guard !localFinished, !terminalClosed else { return }
     localFinished = true

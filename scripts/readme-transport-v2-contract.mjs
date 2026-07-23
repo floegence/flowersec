@@ -10,11 +10,11 @@ export const transportV2CommonReadmeLiterals = Object.freeze([
 ]);
 
 export const transportV2ReadmeContracts = Object.freeze({
-  "README.md": "Transport v2 production carrier support: Go native supports WebSocket, raw QUIC, and WebTransport; TypeScript browsers support WebSocket and WebTransport; TypeScript Node.js, Rust native, and Swift Apple advertise no production carrier.",
+  "README.md": "Transport v2 production carrier support: Go native supports WebSocket, raw QUIC, and WebTransport; TypeScript browsers support WebSocket and WebTransport; TypeScript Node.js supports WebSocket dialing for direct clients and both tunnel roles; Rust native supports raw QUIC client dialing; Swift macOS supports WebSocket direct and tunnel dial sessions; Swift iOS advertises no production carrier.",
   "flowersec-go/README.md": "Transport v2 production carrier support: WebSocket, raw QUIC, and WebTransport.",
-  "flowersec-ts/README.md": "Transport v2 production carrier support: browsers support WebSocket and WebTransport; Node.js has no production carrier.",
-  "flowersec-rust/README.md": "Transport v2 production carrier support: none; raw QUIC remains public and tested but is not a production capability tuple.",
-  "flowersec-swift/README.md": "Transport v2 production carrier support: none; the package provides portable protocol and session code only.",
+  "flowersec-ts/README.md": "Transport v2 production carrier support: browsers support WebSocket and WebTransport; Node.js supports WebSocket dialing for direct clients and both tunnel roles.",
+  "flowersec-rust/README.md": "Transport v2 production carrier support: raw QUIC client dialing for direct and tunnel paths.",
+  "flowersec-swift/README.md": "Transport v2 production carrier support: macOS supports WebSocket direct and tunnel dial sessions; iOS advertises no production carrier.",
   "examples/README.md": "Transport v2 example support: none; the runnable examples remain v1 WebSocket/Yamux examples.",
 });
 

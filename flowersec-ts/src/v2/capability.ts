@@ -80,10 +80,13 @@ export const BROWSER_RUNTIME_CAPABILITY_V2 = descriptor(
 
 export const NODE_RUNTIME_CAPABILITY_V2 = descriptor(
   "node",
-  [],
+  [
+    tuple("websocket", "dial", "direct", "client"),
+    tuple("websocket", "dial", "tunnel", "client"),
+    tuple("websocket", "dial", "tunnel", "server"),
+  ],
   [
     unsupported("raw_quic", "no_production_grade_node_quic_runtime"),
-    unsupported("websocket", "transport_v2_websocket_adapter_not_committed"),
     unsupported("webtransport", "no_production_grade_node_quic_runtime"),
   ],
 );

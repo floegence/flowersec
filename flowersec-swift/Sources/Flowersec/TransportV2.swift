@@ -238,6 +238,32 @@ public enum RuntimeCapabilityCodecErrorV2: Error, Equatable, Sendable {
 }
 
 public enum RuntimeCapabilitiesV2 {
+  /// Capabilities backed by production adapters and physical macOS system tests.
+  public static let macOS = RuntimeCapabilityDescriptorV2(
+    schemaVersion: 2,
+    language: "swift",
+    runtime: "macos",
+    tuples: [
+      RuntimeCapabilityTupleV2(
+        carrier: .webSocket, networkMode: .dial, path: .direct, sessionRole: .client),
+      RuntimeCapabilityTupleV2(
+        carrier: .webSocket, networkMode: .dial, path: .tunnel, sessionRole: .client),
+      RuntimeCapabilityTupleV2(
+        carrier: .webSocket, networkMode: .dial, path: .tunnel, sessionRole: .server),
+    ],
+    unsupported: [
+      UnsupportedRuntimeCarrierV2(
+        carrier: .rawQUIC,
+        reason: "network_framework_quic_contract_incomplete_on_supported_targets"
+      ),
+      UnsupportedRuntimeCarrierV2(
+        carrier: .webTransport,
+        reason: "network_framework_quic_contract_incomplete_on_supported_targets"
+      ),
+    ]
+  )
+
+  /// Conservative cross-Apple descriptor. macOS-only evidence is not projected onto iOS.
   public static let apple = RuntimeCapabilityDescriptorV2(
     schemaVersion: 2,
     language: "swift",

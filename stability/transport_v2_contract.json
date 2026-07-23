@@ -211,10 +211,6 @@
       "description": "Rust WebTransport is not part of the signed Slice 0 native carrier matrix."
     },
     {
-      "id": "rust_transport_v2_connector_not_committed",
-      "description": "The Rust raw QUIC adapter is available, but no production ArtifactV2, admission, and equal-candidate connector path consumes it yet."
-    },
-    {
       "id": "network_framework_quic_contract_incomplete_on_supported_targets",
       "description": "Network.framework does not yet satisfy the complete raw QUIC and WebTransport contract on every supported Apple deployment target."
     },
@@ -264,10 +260,13 @@
       "id": "typescript_node",
       "language": "typescript",
       "environment": "node",
-      "tuples": [],
+      "tuples": [
+        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client" },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server" }
+      ],
       "unsupported": [
         { "carrier": "raw_quic", "reason": "no_production_grade_node_quic_runtime" },
-        { "carrier": "websocket", "reason": "transport_v2_websocket_adapter_not_committed" },
         { "carrier": "webtransport", "reason": "no_production_grade_node_quic_runtime" }
       ]
     },
@@ -275,9 +274,11 @@
       "id": "rust_native",
       "language": "rust",
       "environment": "native",
-      "tuples": [],
+      "tuples": [
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "direct", "session_role": "client" },
+        { "carrier": "raw_quic", "network_mode": "dial", "path": "tunnel", "session_role": "client" }
+      ],
       "unsupported": [
-        { "carrier": "raw_quic", "reason": "rust_transport_v2_connector_not_committed" },
         { "carrier": "websocket", "reason": "transport_v2_websocket_adapter_not_committed" },
         { "carrier": "webtransport", "reason": "rust_webtransport_not_committed" }
       ]

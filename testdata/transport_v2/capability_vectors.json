@@ -14,13 +14,13 @@
     },
     {
       "name": "typescript-node",
-      "canonical_json": "{\"language\":\"typescript\",\"runtime\":\"node\",\"schemaVersion\":2,\"tuples\":[],\"unsupported\":[{\"carrier\":\"raw_quic\",\"reason\":\"no_production_grade_node_quic_runtime\"},{\"carrier\":\"websocket\",\"reason\":\"transport_v2_websocket_adapter_not_committed\"},{\"carrier\":\"webtransport\",\"reason\":\"no_production_grade_node_quic_runtime\"}]}",
-      "digest_hex": "9c3bae6ee30a41638214d62a41f11a173ab7e8cade3135a60f217cfc3de31388"
+      "canonical_json": "{\"language\":\"typescript\",\"runtime\":\"node\",\"schemaVersion\":2,\"tuples\":[{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"server\"}],\"unsupported\":[{\"carrier\":\"raw_quic\",\"reason\":\"no_production_grade_node_quic_runtime\"},{\"carrier\":\"webtransport\",\"reason\":\"no_production_grade_node_quic_runtime\"}]}",
+      "digest_hex": "4ae03ed980b3f999532f5e5e9e5366667e59db307aee0d1423e27df11b3ca139"
     },
     {
       "name": "rust-native",
-      "canonical_json": "{\"language\":\"rust\",\"runtime\":\"native\",\"schemaVersion\":2,\"tuples\":[],\"unsupported\":[{\"carrier\":\"raw_quic\",\"reason\":\"rust_transport_v2_connector_not_committed\"},{\"carrier\":\"websocket\",\"reason\":\"transport_v2_websocket_adapter_not_committed\"},{\"carrier\":\"webtransport\",\"reason\":\"rust_webtransport_not_committed\"}]}",
-      "digest_hex": "2c180b3d084bb66eb291b04ee6a4e5f07bd47d181da0a49537e05d8250ed1e0d"
+      "canonical_json": "{\"language\":\"rust\",\"runtime\":\"native\",\"schemaVersion\":2,\"tuples\":[{\"carrier\":\"raw_quic\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"raw_quic\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"}],\"unsupported\":[{\"carrier\":\"websocket\",\"reason\":\"transport_v2_websocket_adapter_not_committed\"},{\"carrier\":\"webtransport\",\"reason\":\"rust_webtransport_not_committed\"}]}",
+      "digest_hex": "ddfab2ec85ed98cf12f3e6af1ce18078b7d8347357dde2c29a9eb2d1c32e77b4"
     },
     {
       "name": "swift-apple",

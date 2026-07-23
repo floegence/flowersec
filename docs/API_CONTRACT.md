@@ -323,10 +323,14 @@ selection treats all issued and runtime-supported candidates equally.
 
 The Swift package exposes the carrier-neutral `TransportV2Session`, configured
 by `TransportV2SessionConfig` and driven through an injected
-`TransportV2CarrierSession`. `IDNAHostV2.lookupASCII(_:)` provides the frozen
-portable IDNA profile. These are portable protocol surfaces, not production
-carrier registrations: `RuntimeCapabilitiesV2.apple` currently advertises no
-carrier tuples. `RuntimeCapabilityDescriptorV2.canonicalJSON()`,
+`TransportV2CarrierSession`. `ConnectorV2`, constructed with
+`ConnectorOptionsV2`, consumes an opaque artifact lease and returns only the
+carrier-neutral session; `ConnectorV2.connect()` reports redacted
+`ConnectErrorV2` values. `RuntimeCapabilitiesV2.macOS` advertises the verified
+WebSocket dial tuples, while `RuntimeCapabilitiesV2.apple` remains conservative
+and advertises no carrier tuples until physical iOS evidence exists.
+`IDNAHostV2.lookupASCII(_:)` provides the frozen portable IDNA profile.
+`RuntimeCapabilityDescriptorV2.canonicalJSON()`,
 `RuntimeCapabilityDescriptorV2.decodeCanonicalJSON(_:)`, and
 `RuntimeCapabilityDescriptorV2.digest()` implement the shared codec.
 Every Swift carrier implementation must report
@@ -740,14 +744,13 @@ Transport v2 modules and entrypoints:
 - `runtime_capability_digest_v2(...)`
 - `runtime_capability_digest_hex_v2(...)`
 
-The native Rust runtime currently advertises no production Transport v2
-carrier tuple. The raw QUIC adapter remains public and tested: it uses Quinn
-native bidirectional streams and maps directional close, FIN, `RESET_STREAM`,
-and `STOP_SENDING` directly without inserting Yamux. It is explicitly reported
-as `rust_transport_v2_connector_not_committed` until Rust has the complete
-ArtifactV2 acquisition, equal-candidate race, durable-spend, and server
-admission path. The existing Rust WebSocket-over-Yamux implementation remains
-a v1 adapter and is not advertised as Transport v2 support.
+The native Rust runtime advertises raw QUIC client dialing for direct and tunnel
+paths. The public `Connector`, configured with `ConnectorOptions`, consumes an
+opaque `artifact_v2::ArtifactLease`, races compatible candidates, commits the
+durable spend before writing FSB2, and returns a carrier-neutral `Session`.
+The Quinn adapter maps directional close, FIN, `RESET_STREAM`, and
+`STOP_SENDING` directly without inserting Yamux. Raw QUIC server/listen roles,
+WebSocket, and WebTransport remain unavailable.
 
 `flowersec::session_v2::EncryptedSessionV2` implements the transport-neutral
 `flowersec::transport_v2::SessionV2` contract. `SessionV2::wait_closed()` waits

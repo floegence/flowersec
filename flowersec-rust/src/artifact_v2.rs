@@ -178,6 +178,147 @@ impl Artifact {
         let binding = hash_admission(&raw);
         Ok(EncodedFsb2 { raw, binding })
     }
+
+    pub(crate) fn raw_quic_dial_plan(&self) -> Result<RawQuicDialPlan, ArtifactError> {
+        let (
+            path,
+            role,
+            local_endpoint_instance_id,
+            expected_peer_endpoint_instance_id,
+            candidates,
+        ) = match &self.0.wire.path {
+            PathWire::Direct { candidates, .. } => (
+                crate::transport_v2::PathKind::Direct,
+                crate::transport_v2::SessionRole::Client,
+                None,
+                None,
+                candidates,
+            ),
+            PathWire::Tunnel {
+                role,
+                local_endpoint_instance_id,
+                expected_peer_endpoint_instance_id,
+                candidates,
+                ..
+            } => (
+                crate::transport_v2::PathKind::Tunnel,
+                if *role == 1 {
+                    crate::transport_v2::SessionRole::Client
+                } else {
+                    crate::transport_v2::SessionRole::Server
+                },
+                Some(local_endpoint_instance_id.clone()),
+                Some(expected_peer_endpoint_instance_id.clone()),
+                candidates,
+            ),
+        };
+        let raw_quic_candidates = candidates
+            .iter()
+            .filter(|candidate| matches!(candidate.carrier, CarrierWire::RawQuic))
+            .map(|candidate| {
+                let normalized_url = normalize_url(
+                    if path == crate::transport_v2::PathKind::Direct {
+                        "direct"
+                    } else {
+                        "tunnel"
+                    },
+                    candidate,
+                )?;
+                let url = url::Url::parse(&normalized_url)
+                    .map_err(|_| ArtifactError::InvalidCandidate)?;
+                Ok(RawQuicCandidatePlan {
+                    id: candidate.id.clone(),
+                    host: url
+                        .host_str()
+                        .ok_or(ArtifactError::InvalidCandidate)?
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .to_owned(),
+                    port: url.port().unwrap_or(443),
+                })
+            })
+            .collect::<Result<Vec<_>, ArtifactError>>()?;
+        if raw_quic_candidates.is_empty() {
+            return Err(ArtifactError::InvalidCandidate);
+        }
+        let session = &self.0.wire.session;
+        let psk = decode32(&session.e2ee_psk_b64u).ok_or(ArtifactError::InvalidArtifact)?;
+        let contract_hash =
+            decode32(&session.contract_hash_b64u).ok_or(ArtifactError::InvalidArtifact)?;
+        let suite = match session.default_suite {
+            1 => crate::protocol_v2::CipherSuiteV2::ChaCha20Poly1305,
+            2 => crate::protocol_v2::CipherSuiteV2::Aes256Gcm,
+            _ => return Err(ArtifactError::InvalidArtifact),
+        };
+        Ok(RawQuicDialPlan {
+            candidates: raw_quic_candidates,
+            path,
+            local_endpoint_instance_id,
+            expected_peer_endpoint_instance_id,
+            expires_at_unix_seconds: session.init_expire_at_unix_s,
+            session_config: crate::session_v2::SessionConfigV2 {
+                role,
+                path,
+                channel_id: session.channel_id.clone(),
+                session_contract_hash: contract_hash,
+                suite,
+                psk,
+                max_inbound_streams: session.max_inbound_streams,
+                idle_timeout: std::time::Duration::from_secs(u64::from(
+                    session.idle_timeout_seconds,
+                )),
+                local_admission_binding: [0; 32],
+                peer_admission_binding: None,
+                local_endpoint_instance_id: None,
+                expected_peer_endpoint_instance_id: None,
+                rpc_handler: None,
+                deadlines: crate::session_v2::SessionDeadlinesV2 {
+                    establish: std::time::Duration::from_secs(u64::from(
+                        session.establish_timeout_seconds,
+                    )),
+                    rekey_prepare: std::time::Duration::from_secs(u64::from(
+                        session.rekey_prepare_timeout_seconds,
+                    )),
+                    rekey_completion: std::time::Duration::from_secs(u64::from(
+                        session.rekey_completion_timeout_seconds,
+                    )),
+                    ..Default::default()
+                },
+            },
+            session_contract: crate::raw_quic_v2::SessionContractV2 {
+                channel_id: session.channel_id.clone(),
+                idle_timeout_seconds: u64::from(session.idle_timeout_seconds),
+                establish_timeout_seconds: u64::from(session.establish_timeout_seconds),
+                rekey_prepare_timeout_seconds: u64::from(session.rekey_prepare_timeout_seconds),
+                rekey_completion_timeout_seconds: u64::from(
+                    session.rekey_completion_timeout_seconds,
+                ),
+                max_inbound_streams: session.max_inbound_streams,
+                psk,
+                allowed_suites: session.allowed_suites.clone(),
+                default_suite: session.default_suite,
+                selected_features: session.selected_features,
+                contract_hash,
+            },
+        })
+    }
+}
+
+pub(crate) struct RawQuicDialPlan {
+    pub(crate) candidates: Vec<RawQuicCandidatePlan>,
+    pub(crate) path: crate::transport_v2::PathKind,
+    pub(crate) local_endpoint_instance_id: Option<String>,
+    pub(crate) expected_peer_endpoint_instance_id: Option<String>,
+    pub(crate) expires_at_unix_seconds: i64,
+    pub(crate) session_config: crate::session_v2::SessionConfigV2,
+    pub(crate) session_contract: crate::raw_quic_v2::SessionContractV2,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RawQuicCandidatePlan {
+    pub(crate) id: String,
+    pub(crate) host: String,
+    pub(crate) port: u16,
 }
 
 #[allow(dead_code)]
@@ -772,6 +913,16 @@ mod tests {
         ))
         .unwrap();
         for vector in fixture["positive"].as_array().unwrap() {
+            let wire: serde_json::Value =
+                serde_json::from_str(vector["artifact_json"].as_str().unwrap()).unwrap();
+            if !wire["path"]["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|candidate| candidate["carrier"] == "raw_quic")
+            {
+                continue;
+            }
             let artifact = Artifact::parse(vector["artifact_json"].as_str().unwrap()).unwrap();
             let candidates = canonicalize_candidates(&artifact.0.wire).unwrap();
             let canonical = serde_json::to_vec(&candidates).unwrap();
@@ -803,6 +954,30 @@ mod tests {
                 artifact.encode_fsb2("absent"),
                 Err(ArtifactError::InvalidFsb2)
             ));
+        }
+    }
+
+    #[test]
+    fn raw_quic_plan_stays_internal_and_matches_signed_artifact() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v2/artifact_vectors.json"
+        ))
+        .unwrap();
+        for vector in fixture["positive"].as_array().unwrap() {
+            let artifact = Artifact::parse(vector["artifact_json"].as_str().unwrap()).unwrap();
+            let plan = artifact.raw_quic_dial_plan().unwrap();
+            assert_eq!(plan.candidates[0].id, "q1");
+            assert!(!plan.candidates[0].host.starts_with('['));
+            assert_eq!(plan.candidates[0].port, 443);
+            assert_eq!(
+                plan.session_contract.contract_hash,
+                plan.session_config.session_contract_hash
+            );
+            assert_eq!(plan.session_contract.psk, plan.session_config.psk);
+            assert_eq!(
+                plan.session_contract.canonical_hash(),
+                plan.session_contract.contract_hash
+            );
         }
     }
 

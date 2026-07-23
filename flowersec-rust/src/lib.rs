@@ -6,6 +6,7 @@
 pub mod artifact;
 pub mod artifact_v2;
 pub mod client;
+mod connector_v2;
 pub mod controlplane;
 pub mod defaults;
 pub mod e2ee;
@@ -31,4 +32,6 @@ pub mod yamux;
 
 pub use artifact::{ConnectArtifact, CorrelationContext, CorrelationKv, ScopeMetadataEntry};
 pub use client::{Client, ConnectOptions, connect, connect_direct, connect_tunnel};
+pub use connector_v2::{ConnectError, ConnectErrorCode, Connector, ConnectorOptions};
 pub use error::{ErrorCode, FlowersecError, Path, Stage};
+pub use transport_v2::SessionV2 as Session;
