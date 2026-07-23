@@ -2087,19 +2087,6 @@
         ]
       },
       {
-        "specifier": "@floegence/flowersec-core/framing",
-        "package_json_export": "./framing",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/framing`"
-        ],
-        "runtime_exports": [
-          "readJsonFrame",
-          "writeJsonFrame",
-          "JsonFramingError",
-          "DEFAULT_MAX_JSON_FRAME_BYTES"
-        ]
-      },
-      {
         "specifier": "@floegence/flowersec-core/streamio",
         "package_json_export": "./streamio",
         "doc_tokens": [
@@ -2195,46 +2182,6 @@
         ]
       },
       {
-        "specifier": "@floegence/flowersec-core/yamux",
-        "package_json_export": "./yamux",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/yamux`",
-          "`YamuxLimits`",
-          "`DEFAULT_YAMUX_LIMITS`"
-        ],
-        "runtime_exports": [
-          "YamuxSession",
-          "ByteReader",
-          "StreamEOFError",
-          "isStreamEOFError",
-          "DEFAULT_YAMUX_LIMITS"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/e2ee",
-        "package_json_export": "./e2ee",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/e2ee`"
-        ],
-        "runtime_exports": [
-          "clientHandshake",
-          "SecureChannel"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/ws",
-        "package_json_export": "./ws",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/ws`",
-          "`WebSocketLimits`",
-          "`DEFAULT_WEB_SOCKET_LIMITS`"
-        ],
-        "runtime_exports": [
-          "WebSocketBinaryTransport",
-          "DEFAULT_WEB_SOCKET_LIMITS"
-        ]
-      },
-      {
         "specifier": "@floegence/flowersec-core/observability",
         "package_json_export": "./observability",
         "doc_tokens": [
@@ -2249,17 +2196,6 @@
           "withObserverContext",
           "emitObserverDiagnostic",
           "nowSeconds"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/streamhello",
-        "package_json_export": "./streamhello",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/streamhello`"
-        ],
-        "runtime_exports": [
-          "readStreamHello",
-          "writeStreamHello"
         ]
       }
     ]

@@ -17,6 +17,18 @@ const forbiddenRuntimeExportsBySubpath = new Map([
   ['@floegence/flowersec-core/proxy', ['resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST']],
 ]);
 const removedLegacyRuntimeExports = new Set(['requestChannelGrant', 'requestEntryChannelGrant']);
+const removedImplementationSubpaths = [
+  'framing',
+  'yamux',
+  'e2ee',
+  'ws',
+  'streamhello',
+  'gen/flowersec/controlplane/v1',
+  'gen/flowersec/direct/v1',
+  'gen/flowersec/e2ee/v1',
+  'gen/flowersec/rpc/v1',
+  'gen/flowersec/tunnel/v1',
+];
 
 function isRemovedLegacyPackageExport(subpath) {
   return subpath === './internal' || subpath.startsWith('./internal/');
@@ -128,6 +140,14 @@ function verifyInstalledPackage() {
   const script = `
     import assert from 'node:assert/strict';
 ${checks}
+
+    for (const subpath of ${JSON.stringify(removedImplementationSubpaths)}) {
+      await assert.rejects(
+        import('@floegence/flowersec-core/' + subpath),
+        (error) => error?.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+        'removed implementation subpath remained runtime-importable: ' + subpath,
+      );
+    }
 
     const reconnect = await import('@floegence/flowersec-core/reconnect');
     const mgr = reconnect.createReconnectManager();
@@ -361,6 +381,18 @@ import type {
   WebSocketBinaryTransportV2,
   WebSocketResourcePolicyV2,
 } from '@floegence/flowersec-core';
+// @ts-expect-error implementation framing is not a public package subpath.
+import type {} from '@floegence/flowersec-core/framing';
+// @ts-expect-error the WebSocket Yamux implementation is package-internal.
+import type {} from '@floegence/flowersec-core/yamux';
+// @ts-expect-error transport crypto is package-internal.
+import type {} from '@floegence/flowersec-core/e2ee';
+// @ts-expect-error carrier adapters are package-internal.
+import type {} from '@floegence/flowersec-core/ws';
+// @ts-expect-error stream wire framing is package-internal.
+import type {} from '@floegence/flowersec-core/streamhello';
+// @ts-expect-error generated protocol modules are not public package subpaths.
+import type {} from '@floegence/flowersec-core/gen/flowersec/rpc/v1';
 
 declare const session: SessionV2;
 declare const stream: ByteStreamV2;
