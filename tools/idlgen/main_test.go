@@ -77,6 +77,43 @@ func TestRustGenerationIncludesTypedRPCBothDirections(t *testing.T) {
 	}
 }
 
+func TestGeneratedRPCUsesNamespaceVersion(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", "idl", "flowersec", "demo", "v1", "demo.fidl.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input schema
+	if err := json.Unmarshal(data, &input); err != nil {
+		t.Fatal(err)
+	}
+	input.Namespace = "flowersec.demo.v2"
+	out := t.TempDir()
+	for _, generate := range []func(string, schema) error{genGo, genGoRPC, genRust, genRustRPC, genTS, genTSRPC, genTSFacade} {
+		if err := generate(out, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assertGeneratedContains := func(path string, tokens ...string) {
+		t.Helper()
+		contents, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, token := range tokens {
+			if !strings.Contains(string(contents), token) {
+				t.Fatalf("%s is missing %q:\n%s", path, token, contents)
+			}
+		}
+	}
+	assertGeneratedContains("flowersec/demo/v2/types.gen.go", "package v2")
+	assertGeneratedContains("flowersec/demo/v2/rpc.gen.go", "rpcwire \"github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v2\"")
+	assertGeneratedContains("flowersec/demo/v2_rpc.rs", "crate::generated::flowersec::rpc::v2::RpcError")
+	assertGeneratedContains("flowersec/demo/v2.facade.gen.ts", "controlplane/v2.gen.js", "direct/v2.gen.js")
+}
+
 func TestRustGenerationRedactsSensitiveMessageFields(t *testing.T) {
 	t.Parallel()
 
