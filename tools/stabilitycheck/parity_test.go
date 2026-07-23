@@ -37,29 +37,17 @@ func TestCapabilityManifestRequiresPortableContractsAndSharedFixtures(t *testing
 	})
 }
 
-func TestInteropProfilesRequireMixedAndStreamingQualityGates(t *testing.T) {
+func TestInteropMatrixContainsOnlyV2Evidence(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var profiles interopProfiles
-	if err := decodeStrictJSONFile(filepath.Join(repoRoot, "testdata/interop/v1/profiles.json"), &profiles); err != nil {
+	capabilities, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	smoke := profiles.Profiles["smoke"]
-	if smoke.Streams.MixedConcurrent != 2 || smoke.Streams.MixedBytesPerStream <= smoke.Streams.BytesPerStream {
-		t.Fatalf("smoke mixed workload is not a distinct deterministic contract: %+v", smoke.Streams)
-	}
-	stress := profiles.Profiles["stress"]
-	if stress.Streams.MixedConcurrent != 8 || stress.Proxy.StreamingHTTPBodyBytes != 16*1024*1024 {
-		t.Fatalf("stress streaming workload is incomplete: streams=%+v proxy=%+v", stress.Streams, stress.Proxy)
-	}
-
-	smoke.Streams.MixedConcurrent = 0
-	profiles.Profiles["smoke"] = smoke
-	if err := validateInteropProfiles(profiles); err == nil || !strings.Contains(err.Error(), "smoke mixed workload") {
-		t.Fatalf("unexpected validation result: %v", err)
+	if err := verifyInteropMatrix(repoRoot, capabilities); err != nil {
+		t.Fatal(err)
 	}
 }
 

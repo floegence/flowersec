@@ -1,6 +1,7 @@
 //! Frozen Unicode 15.1 host normalization for Flowersec v2 artifacts and policies.
 
 /// Unicode version used by the Flowersec v2 IDNA contract.
+#[cfg(test)]
 pub const UNICODE_VERSION: &str = "15.1.0";
 
 /// Stable failure returned when a host is not valid under the v2 IDNA contract.

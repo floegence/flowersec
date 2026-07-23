@@ -32,8 +32,6 @@ const protectedMakeControlVariables = new Set([
 ]);
 
 const expectedSecurityConfiguration = new Map([
-  ["INTEROP_CELLS", "go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust"],
-  ["INTEROP_DEADLINE_MS", "0"],
   ["CHECK_INTEROP", "1"],
   ["YAMUX_INTEROP", "1"],
   ["YAMUX_INTEROP_STRESS", "0"],
@@ -48,7 +46,7 @@ const expectedSecurityConfiguration = new Map([
 const expectedSwiftSourceGuardRecipe = [
   "\t@status=1; \\",
   "\tif command -v rg >/dev/null 2>&1; then \\",
-  "\tif rg -n --glob '!.build/**' --glob '!.git/**' --glob '!.swiftpm/**' --glob '!dist/**' --glob '!node_modules/**' --glob '!docs/MIGRATION_TRANSPORT_V2.md' '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \\",
+  "\tif rg -n --glob '!.build/**' --glob '!.git/**' --glob '!.swiftpm/**' --glob '!dist/**' --glob '!node_modules/**' '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \\",
   "\tstatus=0; \\",
   "\telse \\",
   "\tstatus=$$?; \\",
@@ -317,7 +315,6 @@ export function verifySecurityMakefile(makefile) {
     ["release-test", ["\tnode --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs"]],
     ["release-check", [
       "\t$(MAKE) check",
-      "\t$(MAKE) interop-stress-full",
       "\t$(MAKE) transport-v2-release-evidence",
       "\t$(MAKE) transport-v2-signed-evidence-check",
     ]],

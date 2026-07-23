@@ -9,7 +9,7 @@ repository = "https://github.com/floegence/flowersec"
 homepage = "https://github.com/floegence/flowersec"
 documentation = "https://docs.rs/flowersec"
 readme = "README.md"
-keywords = ["websocket", "e2ee", "rpc", "tunnel", "yamux"]
+keywords = ["websocket", "quic", "e2ee", "rpc", "tunnel"]
 categories = ["network-programming", "cryptography", "asynchronous"]
 include = ["src/**", "README.md", "LICENSE", "Cargo.toml", "THIRD_PARTY_NOTICES.md", "sbom/**"]
 

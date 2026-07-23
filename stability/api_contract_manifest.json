@@ -12,14 +12,7 @@
       "raw QUIC",
       "WebTransport"
     ],
-    "cli_tokens": [
-      "`flowersec-tunnel`",
-      "`flowersec-proxy-gateway`",
-      "`flowersec-issuer-keygen`",
-      "`flowersec-channelinit`",
-      "`flowersec-directinit`",
-      "`idlgen`"
-    ]
+    "cli_tokens": []
   },
   "go": {
     "module_path": "github.com/floegence/flowersec/flowersec-go/v2",
@@ -27,1687 +20,366 @@
       {
         "package": "github.com/floegence/flowersec/flowersec-go/v2",
         "alias": "flowersec",
+        "stability_group": "transport_v2",
         "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2`",
         "entries": [
-          {"kind":"type","expr":"flowersec.Artifact","doc_token":"`flowersec.Artifact`"},
-          {"kind":"type","expr":"flowersec.ArtifactLease","doc_token":"`flowersec.ArtifactLease`"},
-          {"kind":"func","expr":"flowersec.ParseArtifact","doc_token":"`flowersec.ParseArtifact(...)`"},
-          {"kind":"func","expr":"flowersec.NewArtifactLease","doc_token":"`flowersec.NewArtifactLease(...)`"},
-          {"kind":"var","expr":"flowersec.ErrInvalidArtifact","doc_token":"`flowersec.ErrInvalidArtifact`"},
-          {"kind":"type","expr":"flowersec.AdmissionReason","doc_token":"`flowersec.AdmissionReason`"},
-          {"kind":"type","expr":"flowersec.AdmissionReasonRegistry","doc_token":"`flowersec.AdmissionReasonRegistry`"},
-          {"kind":"type","expr":"flowersec.ConnectorOptions","doc_token":"`flowersec.ConnectorOptions`"},
-          {"kind":"type","expr":"flowersec.Connector","doc_token":"`flowersec.Connector`"},
-          {"kind":"type","expr":"flowersec.ConnectError","doc_token":"`flowersec.ConnectError`"},
-          {"kind":"type","expr":"flowersec.Session","doc_token":"`flowersec.Session`"},
-          {"kind":"type","expr":"flowersec.Path","doc_token":"`flowersec.Path`"},
-          {"kind":"type","expr":"flowersec.Metadata","doc_token":"`flowersec.Metadata`"},
-          {"kind":"type","expr":"flowersec.ByteStream","doc_token":"`flowersec.ByteStream`"},
-          {"kind":"type","expr":"flowersec.IncomingStream","doc_token":"`flowersec.IncomingStream`"},
-          {"kind":"type","expr":"flowersec.RPCPeer","doc_token":"`flowersec.RPCPeer`"},
-          {"kind":"func","expr":"flowersec.NewConnector","doc_token":"`flowersec.NewConnector(...)`"},
-          {"kind":"method","expr":"(*flowersec.Connector).Connect","doc_token":"`flowersec.Connector.Connect(...)`"},
-          {"kind":"method","expr":"(*flowersec.ConnectError).Error","doc_token":"`flowersec.ConnectError.Error()`"},
-          {"kind":"method","expr":"(*flowersec.ConnectError).Unwrap","doc_token":"`flowersec.ConnectError.Unwrap()`"},
-          {"kind":"const","expr":"flowersec.PathDirect","doc_token":"`flowersec.PathDirect`"},
-          {"kind":"const","expr":"flowersec.PathTunnel","doc_token":"`flowersec.PathTunnel`"},
-          {"kind":"var","expr":"flowersec.ErrInvalidConnectorOptions","doc_token":"`flowersec.ErrInvalidConnectorOptions`"},
-          {"kind":"var","expr":"flowersec.ErrConnectionFailed","doc_token":"`flowersec.ErrConnectionFailed`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/client",
-        "alias": "client",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/client`",
-        "entries": [
           {
-            "kind": "func",
-            "expr": "client.Connect",
-            "doc_token": "`client.Connect(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.ConnectTunnel",
-            "doc_token": "`client.ConnectTunnel(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.ConnectDirect",
-            "doc_token": "`client.ConnectDirect(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.WithObserver",
-            "doc_token": "`client.WithObserver(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.WithTransportSecurityPolicy",
-            "doc_token": "`client.WithTransportSecurityPolicy(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.WithOutboundRecordChunkBytes",
-            "doc_token": "`client.WithOutboundRecordChunkBytes(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.WithMaxBufferedBytes",
-            "doc_token": "`client.WithMaxBufferedBytes(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.WithMaxOutboundBufferedBytes",
-            "doc_token": "`client.WithMaxOutboundBufferedBytes(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.WithYamuxLimits",
-            "doc_token": "`client.WithYamuxLimits(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.WithLiveness",
-            "doc_token": "`client.WithLiveness(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "client.WithLivenessDisabled",
-            "doc_token": "`client.WithLivenessDisabled()`"
+            "kind": "type",
+            "expr": "flowersec.Artifact",
+            "doc_token": "`flowersec.Artifact`"
           },
           {
             "kind": "type",
-            "expr": "client.LivenessOptions",
-            "doc_token": "`client.LivenessOptions`"
+            "expr": "flowersec.ArtifactLease",
+            "doc_token": "`flowersec.ArtifactLease`"
           },
           {
-            "kind": "type",
-            "expr": "client.YamuxLimits",
-            "doc_token": "`client.YamuxLimits`"
+            "kind": "func",
+            "expr": "flowersec.ParseArtifact",
+            "doc_token": "`flowersec.ParseArtifact(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewArtifactLease",
+            "doc_token": "`flowersec.NewArtifactLease(...)`"
           },
           {
             "kind": "method",
-            "expr": "client.Client.ProbeLiveness",
-            "doc_token": "`client.Client.ProbeLiveness(...)`"
+            "expr": "flowersec.Artifact.String",
+            "doc_token": "`flowersec.Artifact.String()`"
           },
           {
             "kind": "method",
-            "expr": "client.Client.Rekey",
-            "doc_token": "`client.Client.Rekey()`"
+            "expr": "flowersec.Artifact.GoString",
+            "doc_token": "`flowersec.Artifact.GoString()`"
           },
           {
             "kind": "method",
-            "expr": "client.Client.OpenStream",
-            "doc_token": "`client.Client.OpenStream(...)`"
+            "expr": "flowersec.Artifact.MarshalJSON",
+            "doc_token": "`flowersec.Artifact.MarshalJSON()`"
           },
           {
-            "kind": "func",
-            "expr": "client.RequireTLS",
-            "doc_token": "`client.RequireTLS`"
+            "kind": "method",
+            "expr": "flowersec.ArtifactLease.MarshalJSON",
+            "doc_token": "`flowersec.ArtifactLease.MarshalJSON()`"
           },
           {
-            "kind": "func",
-            "expr": "client.AllowPlaintextForLoopback",
-            "doc_token": "`client.AllowPlaintextForLoopback`"
+            "kind": "method",
+            "expr": "flowersec.ArtifactLease.String",
+            "doc_token": "`flowersec.ArtifactLease.String()`"
           },
           {
-            "kind": "func",
-            "expr": "client.NewNetworkPlaintextPolicy",
-            "doc_token": "`client.NewNetworkPlaintextPolicy(...)`"
+            "kind": "method",
+            "expr": "flowersec.ArtifactLease.GoString",
+            "doc_token": "`flowersec.ArtifactLease.GoString()`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidArtifact",
+            "doc_token": "`flowersec.ErrInvalidArtifact`"
           },
           {
             "kind": "type",
-            "expr": "client.NetworkPlaintextPolicyOptions",
-            "doc_token": "`client.NetworkPlaintextPolicyOptions`"
+            "expr": "flowersec.ConnectorOptions",
+            "doc_token": "`flowersec.ConnectorOptions`"
           },
           {
             "kind": "type",
-            "expr": "client.PlaintextRiskAcceptance",
-            "doc_token": "`client.PlaintextRiskAcceptance`"
+            "expr": "flowersec.Connector",
+            "doc_token": "`flowersec.Connector`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ConnectError",
+            "doc_token": "`flowersec.ConnectError`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ConnectErrorCode",
+            "doc_token": "`flowersec.ConnectErrorCode`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.SessionError",
+            "doc_token": "`flowersec.SessionError`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.SessionErrorCode",
+            "doc_token": "`flowersec.SessionErrorCode`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.Session",
+            "doc_token": "`flowersec.Session`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.Metadata",
+            "doc_token": "`flowersec.Metadata`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ByteStream",
+            "doc_token": "`flowersec.ByteStream`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.IncomingStream",
+            "doc_token": "`flowersec.IncomingStream`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.RPCPeer",
+            "doc_token": "`flowersec.RPCPeer`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.RPCError",
+            "doc_token": "`flowersec.RPCError`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.ByteStream.Read",
+            "signature": "func(flowersec.ByteStream, []byte) (int, error)",
+            "doc_token": "`flowersec.ByteStream.Read(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.ByteStream.Write",
+            "signature": "func(flowersec.ByteStream, []byte) (int, error)",
+            "doc_token": "`flowersec.ByteStream.Write(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.ByteStream.Close",
+            "signature": "func(flowersec.ByteStream) error",
+            "doc_token": "`flowersec.ByteStream.Close()`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.ByteStream.Kind",
+            "signature": "func(flowersec.ByteStream) string",
+            "doc_token": "`flowersec.ByteStream.Kind()`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.ByteStream.TerminalError",
+            "signature": "func(flowersec.ByteStream) *flowersec.SessionError",
+            "doc_token": "`flowersec.ByteStream.TerminalError()`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.ByteStream.CloseWrite",
+            "signature": "func(flowersec.ByteStream) error",
+            "doc_token": "`flowersec.ByteStream.CloseWrite()`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.ByteStream.Reset",
+            "signature": "func(flowersec.ByteStream) error",
+            "doc_token": "`flowersec.ByteStream.Reset()`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.RPCPeer.Call",
+            "signature": "func(flowersec.RPCPeer, context.Context, uint32, any, any) error",
+            "doc_token": "`flowersec.RPCPeer.Call(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.RPCPeer.Notify",
+            "signature": "func(flowersec.RPCPeer, context.Context, uint32, any) error",
+            "doc_token": "`flowersec.RPCPeer.Notify(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.Session.RPC",
+            "signature": "func(flowersec.Session) flowersec.RPCPeer",
+            "doc_token": "`flowersec.Session.RPC()`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.Session.OpenStream",
+            "signature": "func(flowersec.Session, context.Context, string, flowersec.Metadata) (flowersec.ByteStream, error)",
+            "doc_token": "`flowersec.Session.OpenStream(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.Session.AcceptStream",
+            "signature": "func(flowersec.Session, context.Context) (flowersec.IncomingStream, error)",
+            "doc_token": "`flowersec.Session.AcceptStream(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.Session.Rekey",
+            "signature": "func(flowersec.Session, context.Context) error",
+            "doc_token": "`flowersec.Session.Rekey(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.Session.ProbeLiveness",
+            "signature": "func(flowersec.Session, context.Context) (time.Duration, error)",
+            "doc_token": "`flowersec.Session.ProbeLiveness(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.Session.Termination",
+            "signature": "func(flowersec.Session) <-chan struct{}",
+            "doc_token": "`flowersec.Session.Termination()`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.Session.WaitClosed",
+            "signature": "func(flowersec.Session, context.Context) error",
+            "doc_token": "`flowersec.Session.WaitClosed(...)`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.Session.Close",
+            "signature": "func(flowersec.Session) error",
+            "doc_token": "`flowersec.Session.Close()`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewConnector",
+            "doc_token": "`flowersec.NewConnector(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.Connector).Connect",
+            "doc_token": "`flowersec.Connector.Connect(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.Connector).String",
+            "doc_token": "`flowersec.Connector.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.Connector).GoString",
+            "doc_token": "`flowersec.Connector.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectError).Error",
+            "doc_token": "`flowersec.ConnectError.Error()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectError).Unwrap",
+            "doc_token": "`flowersec.ConnectError.Unwrap()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectError).Is",
+            "doc_token": "`flowersec.ConnectError.Is(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ConnectError).Code",
+            "doc_token": "`flowersec.ConnectError.Code()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionError).Error",
+            "doc_token": "`flowersec.SessionError.Error()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionError).Unwrap",
+            "doc_token": "`flowersec.SessionError.Unwrap()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionError).Code",
+            "doc_token": "`flowersec.SessionError.Code()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.RPCError).Error",
+            "doc_token": "`flowersec.RPCError.Error()`"
           },
           {
             "kind": "const",
-            "expr": "client.PlaintextRiskAcceptPreE2ECredentialExposure",
-            "doc_token": "`client.PlaintextRiskAcceptPreE2ECredentialExposure`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/endpoint",
-        "alias": "endpoint",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/endpoint`",
-        "entries": [
-          {
-            "kind": "func",
-            "expr": "endpoint.ConnectTunnel",
-            "doc_token": "`endpoint.ConnectTunnel(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.NewDirectHandler",
-            "doc_token": "`endpoint.NewDirectHandler(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.AcceptDirectWS",
-            "doc_token": "`endpoint.AcceptDirectWS(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.NewDirectHandlerResolved",
-            "doc_token": "`endpoint.NewDirectHandlerResolved(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.AcceptDirectWSResolved",
-            "doc_token": "`endpoint.AcceptDirectWSResolved(...)`"
-          },
-          {
-            "kind": "type",
-            "expr": "endpoint.Suite",
-            "doc_token": "`endpoint.Suite`"
+            "expr": "flowersec.ConnectInvalid",
+            "doc_token": "`flowersec.ConnectInvalid`"
           },
           {
             "kind": "const",
-            "expr": "endpoint.SuiteX25519HKDFAES256GCM",
-            "doc_token": "`SuiteX25519HKDFAES256GCM`"
+            "expr": "flowersec.ConnectCanceled",
+            "doc_token": "`flowersec.ConnectCanceled`"
           },
           {
             "kind": "const",
-            "expr": "endpoint.SuiteP256HKDFAES256GCM",
-            "doc_token": "`SuiteP256HKDFAES256GCM`"
-          },
-          {
-            "kind": "type",
-            "expr": "endpoint.UpgraderOptions",
-            "doc_token": "`endpoint.UpgraderOptions`"
-          },
-          {
-            "kind": "type",
-            "expr": "endpoint.HandshakeCache",
-            "doc_token": "`endpoint.HandshakeCache`"
-          },
-          {
-            "kind": "type",
-            "expr": "endpoint.AcceptDirectOptions",
-            "doc_token": "`endpoint.AcceptDirectOptions`"
-          },
-          {
-            "kind": "type",
-            "expr": "endpoint.AcceptDirectResolverOptions",
-            "doc_token": "`endpoint.AcceptDirectResolverOptions`"
-          },
-          {
-            "kind": "type",
-            "expr": "endpoint.DirectHandshakeCredential",
-            "doc_token": "`endpoint.DirectHandshakeCredential`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.WithTransportSecurityPolicy",
-            "doc_token": "`endpoint.WithTransportSecurityPolicy(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.WithOutboundRecordChunkBytes",
-            "doc_token": "`endpoint.WithOutboundRecordChunkBytes(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.WithMaxBufferedBytes",
-            "doc_token": "`endpoint.WithMaxBufferedBytes(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.WithMaxOutboundBufferedBytes",
-            "doc_token": "`endpoint.WithMaxOutboundBufferedBytes(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.WithYamuxLimits",
-            "doc_token": "`endpoint.WithYamuxLimits(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.WithLiveness",
-            "doc_token": "`endpoint.WithLiveness(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.WithLivenessDisabled",
-            "doc_token": "`endpoint.WithLivenessDisabled()`"
-          },
-          {
-            "kind": "type",
-            "expr": "endpoint.LivenessOptions",
-            "doc_token": "`endpoint.LivenessOptions`"
-          },
-          {
-            "kind": "type",
-            "expr": "endpoint.YamuxLimits",
-            "doc_token": "`endpoint.YamuxLimits`"
-          },
-          {
-            "kind": "method",
-            "expr": "endpoint.Session.ProbeLiveness",
-            "doc_token": "`endpoint.Session.ProbeLiveness(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "endpoint.NewNetworkPlaintextPolicy",
-            "doc_token": "`endpoint.NewNetworkPlaintextPolicy(...)`"
-          },
-          {
-            "kind": "type",
-            "expr": "endpoint.NetworkPlaintextPolicyOptions",
-            "doc_token": "`endpoint.NetworkPlaintextPolicyOptions`"
-          },
-          {
-            "kind": "type",
-            "expr": "endpoint.PlaintextRiskAcceptance",
-            "doc_token": "`endpoint.PlaintextRiskAcceptance`"
+            "expr": "flowersec.ConnectTimeout",
+            "doc_token": "`flowersec.ConnectTimeout`"
           },
           {
             "kind": "const",
-            "expr": "endpoint.PlaintextRiskAcceptPreE2ECredentialExposure",
-            "doc_token": "`endpoint.PlaintextRiskAcceptPreE2ECredentialExposure`"
-          },
-          {
-            "kind": "method",
-            "expr": "endpoint.Session.Rekey",
-            "doc_token": "`endpoint.Session.Rekey()`"
-          },
-          {
-            "kind": "method",
-            "expr": "endpoint.Session.OpenStream",
-            "doc_token": "`endpoint.Session.OpenStream(...)`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/stream",
-        "alias": "stream",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/stream`",
-        "entries": [
-          {
-            "kind": "type",
-            "expr": "stream.Stream",
-            "doc_token": "`stream.Stream`"
-          },
-          {
-            "kind": "method",
-            "expr": "stream.Stream.Reset",
-            "doc_token": "`stream.Stream.Reset()`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/transportsecurity",
-        "alias": "transportsecurity",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/transportsecurity`",
-        "entries": [
-          {
-            "kind": "type",
-            "expr": "transportsecurity.Policy",
-            "doc_token": "`transportsecurity.Policy`"
-          },
-          {
-            "kind": "type",
-            "expr": "transportsecurity.Input",
-            "doc_token": "`transportsecurity.Input`"
-          },
-          {
-            "kind": "func",
-            "expr": "transportsecurity.RequireTLS",
-            "doc_token": "`transportsecurity.RequireTLS(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "transportsecurity.AllowPlaintextForLoopback",
-            "doc_token": "`transportsecurity.AllowPlaintextForLoopback(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "transportsecurity.NewNetworkPlaintextPolicy",
-            "doc_token": "`transportsecurity.NewNetworkPlaintextPolicy(...)`"
-          },
-          {
-            "kind": "type",
-            "expr": "transportsecurity.NetworkPlaintextPolicyOptions",
-            "doc_token": "`transportsecurity.NetworkPlaintextPolicyOptions`"
-          },
-          {
-            "kind": "type",
-            "expr": "transportsecurity.PlaintextRiskAcceptance",
-            "doc_token": "`transportsecurity.PlaintextRiskAcceptance`"
+            "expr": "flowersec.ConnectFailed",
+            "doc_token": "`flowersec.ConnectFailed`"
           },
           {
             "kind": "const",
-            "expr": "transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure",
-            "doc_token": "`transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve",
-        "alias": "serve",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve`",
-        "entries": [
-          {
-            "kind": "func",
-            "expr": "serve.New",
-            "doc_token": "`serve.New(...)`"
-          },
-          {
-            "kind": "method",
-            "expr": "(*serve.Server).Handle",
-            "doc_token": "`srv.Handle(...)`"
-          },
-          {
-            "kind": "method",
-            "expr": "(*serve.Server).HandleStream",
-            "doc_token": "`srv.HandleStream(...)`"
-          },
-          {
-            "kind": "method",
-            "expr": "(*serve.Server).ServeSession",
-            "doc_token": "`srv.ServeSession(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "serve.ServeTunnel",
-            "doc_token": "`serve.ServeTunnel(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "serve.NewDirectHandler",
-            "doc_token": "`serve.NewDirectHandler(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "serve.NewDirectHandlerResolved",
-            "doc_token": "`serve.NewDirectHandlerResolved(...)`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/protocolio",
-        "alias": "protocolio",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/protocolio`",
-        "entries": [
-          {
-            "kind": "func",
-            "expr": "protocolio.DecodeGrantClientJSON",
-            "doc_token": "`protocolio.DecodeGrantClientJSON(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "protocolio.DecodeGrantServerJSON",
-            "doc_token": "`protocolio.DecodeGrantServerJSON(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "protocolio.DecodeGrantJSON",
-            "doc_token": "`protocolio.DecodeGrantJSON(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "protocolio.DecodeDirectConnectInfoJSON",
-            "doc_token": "`protocolio.DecodeDirectConnectInfoJSON(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "protocolio.DecodeConnectArtifactJSON",
-            "doc_token": "`protocolio.DecodeConnectArtifactJSON(...)`"
-          },
-          {
-            "kind": "type",
-            "expr": "protocolio.ConnectArtifact",
-            "doc_token": "`protocolio.ConnectArtifact`"
-          },
-          {
-            "kind": "type",
-            "expr": "protocolio.TunnelClientConnectArtifact",
-            "doc_token": "`protocolio.TunnelClientConnectArtifact`"
-          },
-          {
-            "kind": "type",
-            "expr": "protocolio.DirectClientConnectArtifact",
-            "doc_token": "`protocolio.DirectClientConnectArtifact`"
-          },
-          {
-            "kind": "type",
-            "expr": "protocolio.CorrelationContext",
-            "doc_token": "`protocolio.CorrelationContext`"
-          },
-          {
-            "kind": "type",
-            "expr": "protocolio.CorrelationKV",
-            "doc_token": "`protocolio.CorrelationKV`"
-          },
-          {
-            "kind": "type",
-            "expr": "protocolio.ScopeMetadataEntry",
-            "doc_token": "`protocolio.ScopeMetadataEntry`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/client",
-        "alias": "cpclient",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/client`",
-        "entries": [
-          {
-            "kind": "func",
-            "expr": "cpclient.RequestConnectArtifact",
-            "doc_token": "`client.RequestConnectArtifact(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "cpclient.RequestEntryConnectArtifact",
-            "doc_token": "`client.RequestEntryConnectArtifact(...)`"
-          },
-          {
-            "kind": "type",
-            "expr": "cpclient.ConnectArtifactRequestConfig",
-            "doc_token": "`client.ConnectArtifactRequestConfig.AllowLoopbackHTTP`"
-          },
-          {
-            "kind": "type",
-            "expr": "cpclient.RequestError",
-            "doc_token": "`client.RequestError`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/http",
-        "alias": "cphttp",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/http`",
-        "entries": [
-          {
-            "kind": "const",
-            "expr": "cphttp.DefaultMaxBodyBytes",
-            "doc_token": "`controlplanehttp.DefaultMaxBodyBytes`"
-          },
-          {
-            "kind": "type",
-            "expr": "cphttp.ArtifactRequest",
-            "doc_token": "`controlplanehttp.ArtifactRequest`"
-          },
-          {
-            "kind": "type",
-            "expr": "cphttp.ArtifactEnvelope",
-            "doc_token": "`controlplanehttp.ArtifactEnvelope`"
-          },
-          {
-            "kind": "type",
-            "expr": "cphttp.ErrorEnvelope",
-            "doc_token": "`controlplanehttp.ErrorEnvelope`"
-          },
-          {
-            "kind": "type",
-            "expr": "cphttp.ArtifactRequestMetadata",
-            "doc_token": "`controlplanehttp.ArtifactRequestMetadata`"
-          },
-          {
-            "kind": "type",
-            "expr": "cphttp.ArtifactIssueInput",
-            "doc_token": "`controlplanehttp.ArtifactIssueInput`"
-          },
-          {
-            "kind": "type",
-            "expr": "cphttp.ArtifactHandlerOptions",
-            "doc_token": "`controlplanehttp.ArtifactHandlerOptions`"
-          },
-          {
-            "kind": "type",
-            "expr": "cphttp.RequestError",
-            "doc_token": "`controlplanehttp.RequestError`"
-          },
-          {
-            "kind": "func",
-            "expr": "cphttp.NewRequestError",
-            "doc_token": "`controlplanehttp.NewRequestError(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "cphttp.DecodeArtifactRequest",
-            "doc_token": "`controlplanehttp.DecodeArtifactRequest(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "cphttp.WriteArtifactEnvelope",
-            "doc_token": "`controlplanehttp.WriteArtifactEnvelope(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "cphttp.WriteErrorEnvelope",
-            "doc_token": "`controlplanehttp.WriteErrorEnvelope(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "cphttp.NewArtifactHandler",
-            "doc_token": "`controlplanehttp.NewArtifactHandler(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "cphttp.NewEntryArtifactHandler",
-            "doc_token": "`controlplanehttp.NewEntryArtifactHandler(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "cphttp.DefaultRequestMetadata",
-            "doc_token": "`controlplanehttp.DefaultRequestMetadata(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "cphttp.IssueArtifact",
-            "doc_token": "`controlplanehttp.IssueArtifact(...)`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/observability",
-        "alias": "fsobs",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/observability`",
-        "entries": [
-          {
-            "kind": "type",
-            "expr": "fsobs.DiagnosticEvent",
-            "doc_token": "`observability.DiagnosticEvent`"
-          },
-          {
-            "kind": "type",
-            "expr": "fsobs.ClientObserver",
-            "doc_token": "`observability.ClientObserver`"
-          },
-          {
-            "kind": "func",
-            "expr": "fsobs.NormalizeClientObserver",
-            "doc_token": "`observability.NormalizeClientObserver(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "fsobs.WithClientObserverContext",
-            "doc_token": "`observability.WithClientObserverContext(...)`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/origin",
-        "alias": "origin",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/origin`",
-        "entries": [
-          {
-            "kind": "func",
-            "expr": "origin.FromWSURL",
-            "doc_token": "`origin.FromWSURL(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "origin.ForTunnel",
-            "doc_token": "`origin.ForTunnel(...)`"
-          },
-          {
-            "kind": "type",
-            "expr": "origin.PolicyV2",
-            "doc_token": "`CarrierSession`",
-            "stability_group": "transport_v2"
-          },
-          {
-            "kind": "type",
-            "expr": "origin.PolicyV2Options",
-            "doc_token": "`CarrierSession`",
-            "stability_group": "transport_v2"
-          },
-          {
-            "kind": "func",
-            "expr": "origin.NewPolicyV2",
-            "doc_token": "`CarrierSession`",
-            "stability_group": "transport_v2"
-          },
-          {
-            "kind": "method",
-            "expr": "(*origin.PolicyV2).Allows",
-            "doc_token": "`CarrierSession`",
-            "stability_group": "transport_v2"
-          },
-          {
-            "kind": "method",
-            "expr": "(*origin.PolicyV2).CheckRequest",
-            "doc_token": "`CarrierSession`",
-            "stability_group": "transport_v2"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/reconnect",
-        "alias": "reconnect",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/reconnect`",
-        "entries": [
-          {
-            "kind": "func",
-            "expr": "reconnect.NewManager",
-            "doc_token": "`reconnect.NewManager(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "reconnect.OnceSource",
-            "doc_token": "`reconnect.OnceSource(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "reconnect.RefreshableSource",
-            "doc_token": "`reconnect.RefreshableSource(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "reconnect.ControlplaneSource",
-            "doc_token": "`reconnect.ControlplaneSource(...)`"
-          },
-          {
-            "kind": "type",
-            "expr": "reconnect.Config",
-            "doc_token": "`reconnect.Config`"
-          },
-          {
-            "kind": "type",
-            "expr": "reconnect.Settings",
-            "doc_token": "`reconnect.Settings`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/proxy",
-        "alias": "proxy",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/proxy`",
-        "entries": [
-          {
-            "kind": "func",
-            "expr": "proxy.Register",
-            "doc_token": "`proxy.Register(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "proxy.NewClient",
-            "doc_token": "`proxy.NewClient(...)`"
-          },
-          {
-            "kind": "type",
-            "expr": "proxy.Options",
-            "doc_token": "`proxy.Options`"
+            "expr": "flowersec.SessionCanceled",
+            "doc_token": "`flowersec.SessionCanceled`"
           },
           {
             "kind": "const",
-            "expr": "proxy.DefaultMaxConcurrentStreams",
-            "doc_token": "`proxy.DefaultMaxConcurrentStreams`"
-          },
-          {
-            "kind": "type",
-            "expr": "proxy.ClientHTTPRequest",
-            "doc_token": "`proxy.ClientHTTPRequest`"
-          },
-          {
-            "kind": "type",
-            "expr": "proxy.ClientHTTPResponse",
-            "doc_token": "`proxy.ClientHTTPResponse`"
-          },
-          {
-            "kind": "type",
-            "expr": "proxy.ClientWebSocket",
-            "doc_token": "`proxy.ClientWebSocket`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/proxy/preset",
-        "alias": "proxypreset",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/proxy/preset`",
-        "entries": [
-          {
-            "kind": "type",
-            "expr": "proxypreset.Manifest",
-            "doc_token": "`preset.Manifest`"
-          },
-          {
-            "kind": "func",
-            "expr": "proxypreset.DecodeJSON",
-            "doc_token": "`preset.DecodeJSON(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "proxypreset.LoadFile",
-            "doc_token": "`preset.LoadFile(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "proxypreset.ApplyBridgeOptions",
-            "doc_token": "`preset.ApplyBridgeOptions(...)`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/rpc",
-        "alias": "rpc",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/rpc`",
-        "entries": [
-          {
-            "kind": "func",
-            "expr": "rpc.NewRouter",
-            "doc_token": "`rpc.NewRouter(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "rpc.NewServer",
-            "doc_token": "`rpc.NewServer(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "rpc.NewServerWithOptions",
-            "doc_token": "`rpc.NewServerWithOptions(...)`"
-          },
-          {
-            "kind": "type",
-            "expr": "rpc.ServerOptions",
-            "doc_token": "`rpc.ServerOptions`"
-          },
-          {
-            "kind": "func",
-            "expr": "rpc.NewClient",
-            "doc_token": "`rpc.NewClient(...)`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe",
-        "alias": "jsonframe",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe`",
-        "entries": [
-          {
-            "kind": "func",
-            "expr": "jsonframe.ReadJSONFrame",
-            "doc_token": "`jsonframe.ReadJSONFrame(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "jsonframe.WriteJSONFrame",
-            "doc_token": "`jsonframe.WriteJSONFrame(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "jsonframe.ReadJSONFrameDefaultMax",
-            "doc_token": "`jsonframe.ReadJSONFrameDefaultMax(...)`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/fserrors",
-        "alias": "fserrors",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/fserrors`",
-        "entries": [
-          {
-            "kind": "type",
-            "expr": "fserrors.Path",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/v2/fserrors`"
-          },
-          {
-            "kind": "type",
-            "expr": "fserrors.Stage",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/v2/fserrors`"
-          },
-          {
-            "kind": "type",
-            "expr": "fserrors.Code",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/v2/fserrors`"
-          },
-          {
-            "kind": "type",
-            "expr": "fserrors.CandidateDiagnostic",
-            "doc_token": "`fserrors.CandidateDiagnostic`"
-          },
-          {
-            "kind": "type",
-            "expr": "fserrors.Error",
-            "doc_token": "`fserrors.Error`"
-          },
-          {
-            "kind": "field",
-            "expr": "(fserrors.Error{}).Diagnostics",
-            "signature": "[]fserrors.CandidateDiagnostic",
-            "doc_token": "`fserrors.Error.Diagnostics`"
+            "expr": "flowersec.SessionTimeout",
+            "doc_token": "`flowersec.SessionTimeout`"
           },
           {
             "kind": "const",
-            "expr": "fserrors.CodeResourceExhausted",
-            "doc_token": "`fserrors.CodeResourceExhausted`"
+            "expr": "flowersec.SessionClosed",
+            "doc_token": "`flowersec.SessionClosed`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.SessionGoingAway",
+            "doc_token": "`flowersec.SessionGoingAway`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.SessionResourceExhausted",
+            "doc_token": "`flowersec.SessionResourceExhausted`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.SessionStreamRejected",
+            "doc_token": "`flowersec.SessionStreamRejected`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.SessionStreamReset",
+            "doc_token": "`flowersec.SessionStreamReset`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.SessionRekeyFailed",
+            "doc_token": "`flowersec.SessionRekeyFailed`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.SessionLivenessFailed",
+            "doc_token": "`flowersec.SessionLivenessFailed`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.SessionOperationFailed",
+            "doc_token": "`flowersec.SessionOperationFailed`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidConnectorOptions",
+            "doc_token": "`flowersec.ErrInvalidConnectorOptions`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrConnectionFailed",
+            "doc_token": "`flowersec.ErrConnectionFailed`"
           }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer",
-        "alias": "issuer",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer`",
-        "entries": [
-          {
-            "kind": "type",
-            "expr": "issuer.Keyset",
-            "doc_token": "`issuer.Keyset`"
-          },
-          {
-            "kind": "func",
-            "expr": "issuer.New",
-            "doc_token": "`issuer.New(...)`"
-          },
-          {
-            "kind": "func",
-            "expr": "issuer.NewRandom",
-            "doc_token": "`issuer.NewRandom(...)`"
-          },
-          {
-            "kind": "method",
-            "expr": "(*issuer.Keyset).AddVerificationKey",
-            "doc_token": "`issuer.Keyset.AddVerificationKey(...)`"
-          },
-          {
-            "kind": "method",
-            "expr": "(*issuer.Keyset).Rotate",
-            "doc_token": "`issuer.Keyset.Rotate(...)`"
-          },
-          {
-            "kind": "method",
-            "expr": "(*issuer.Keyset).RetireVerificationKey",
-            "doc_token": "`issuer.Keyset.RetireVerificationKey(...)`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit",
-        "alias": "channelinit",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit`",
-        "entries": [
-          {
-            "kind": "type",
-            "expr": "channelinit.Service",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/token",
-        "alias": "token",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/token`",
-        "entries": [
-          {
-            "kind": "func",
-            "expr": "token.Verify",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/token`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/tunnel/server",
-        "alias": "tunnelserver",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/tunnel/server`",
-        "entries": [
-          {
-            "kind": "type",
-            "expr": "tunnelserver.Config",
-            "doc_token": "`server.Config`"
-          },
-          {
-            "kind": "type",
-            "expr": "tunnelserver.ReplayCache",
-            "doc_token": "`server.ReplayCache`"
-          },
-          {
-            "kind": "type",
-            "expr": "tunnelserver.TokenUseCache",
-            "doc_token": "`server.TokenUseCache`"
-          },
-          {
-            "kind": "func",
-            "expr": "tunnelserver.NewTokenUseCache",
-            "doc_token": "`server.NewTokenUseCache(...)`"
-          }
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/admissionv2",
-        "alias": "admissionv2",
-        "doc_package_token": "`CarrierSession`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "admissionv2.Authorize", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "admissionv2.ResponseError", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "admissionv2.Commit", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "admissionv2.Receive", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "admissionv2.Respond", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "admissionv2.Serve", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*admissionv2.ResponseError).Error", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*admissionv2.ResponseError).Unwrap", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "admissionv2.ErrAdmissionRejected", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "admissionv2.ErrAdmissionRetryable", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "admissionv2.ErrInvalidAuthorizer", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "admissionv2.ErrTrailingBytes", "doc_token": "`CarrierSession`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/artifactv2",
-        "alias": "artifactv2",
-        "doc_package_token": "`CarrierSession`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "artifactv2.Artifact", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.ArtifactPath", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.Candidate", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.CanonicalCandidate", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.Carrier", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.PathKind", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.Request", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.DecodedRequest", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.AdmissionResponse", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.AdmissionStatus", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.ReasonRegistry", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.SessionContract", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.DecodeArtifactJSON", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.MarshalArtifactJSON", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.ValidateArtifact", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.CanonicalizeCandidates", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.ComputeSessionContractHash", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.BuildRequest", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.MarshalRequest", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.ParseRequest", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.ReadRequest", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.MarshalResponse", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.ParseResponse", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.ReadResponse", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "artifactv2.AdmissionBinding", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.Profile", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.MaxCanonicalFSB2Payload", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.AdmissionReject", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.AdmissionRetryable", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.AdmissionSuccess", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.CarrierRawQUIC", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.CarrierWebSocket", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.CarrierWebTransport", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.CorrelationContext", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.CorrelationTag", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "artifactv2.ErrArtifactTooLarge", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "artifactv2.ErrFSB2PayloadTooLarge", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "artifactv2.ErrInvalidArtifact", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "artifactv2.ErrInvalidCandidate", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "artifactv2.ErrInvalidFSA2", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "artifactv2.ErrInvalidFSB2", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "artifactv2.ErrNonCanonicalFSB2", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "artifactv2.ErrUnknownAdmissionCode", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.FSA2HeaderSize", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.FSB2HeaderSize", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.MaxAdmissionCredentialBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.MaxAdmissionReasonBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.MaxArtifactJSONBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.MaxCandidates", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.MaxCanonicalCandidateBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.MaxCanonicalCandidateSet", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.PathDirect", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "artifactv2.PathTunnel", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "artifactv2.ScopeMetadata", "doc_token": "`CarrierSession`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/endpointsetv2",
-        "alias": "endpointsetv2",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/endpointsetv2`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "endpointsetv2.EndpointSet", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "type", "expr": "endpointsetv2.ListenerTuple", "doc_token": "`endpointsetv2.ListenerTuple`"},
-          {"kind": "type", "expr": "endpointsetv2.CertificateReadiness", "doc_token": "`endpointsetv2.CertificateReadiness`"},
-          {"kind": "type", "expr": "endpointsetv2.AudienceReadiness", "doc_token": "`endpointsetv2.AudienceReadiness`"},
-          {"kind": "type", "expr": "endpointsetv2.Freshness", "doc_token": "`endpointsetv2.Freshness`"},
-          {"kind": "field", "expr": "(endpointsetv2.EndpointSet{}).Version", "signature": "int", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "field", "expr": "(endpointsetv2.EndpointSet{}).Profile", "signature": "string", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "field", "expr": "(endpointsetv2.EndpointSet{}).RendezvousGroupID", "signature": "string", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "field", "expr": "(endpointsetv2.EndpointSet{}).EndpointInstanceID", "signature": "string", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "field", "expr": "(endpointsetv2.EndpointSet{}).Listeners", "signature": "[]endpointsetv2.ListenerTuple", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "field", "expr": "(endpointsetv2.EndpointSet{}).Certificate", "signature": "endpointsetv2.CertificateReadiness", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "field", "expr": "(endpointsetv2.EndpointSet{}).Audience", "signature": "endpointsetv2.AudienceReadiness", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "field", "expr": "(endpointsetv2.EndpointSet{}).Freshness", "signature": "endpointsetv2.Freshness", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "field", "expr": "(endpointsetv2.ListenerTuple{}).Carrier", "signature": "carrier.Kind", "doc_token": "`endpointsetv2.ListenerTuple`"},
-          {"kind": "field", "expr": "(endpointsetv2.ListenerTuple{}).NetworkMode", "signature": "session.NetworkMode", "doc_token": "`endpointsetv2.ListenerTuple`"},
-          {"kind": "field", "expr": "(endpointsetv2.ListenerTuple{}).Path", "signature": "carrier.Path", "doc_token": "`endpointsetv2.ListenerTuple`"},
-          {"kind": "field", "expr": "(endpointsetv2.ListenerTuple{}).SessionRole", "signature": "session.SessionRole", "doc_token": "`endpointsetv2.ListenerTuple`"},
-          {"kind": "field", "expr": "(endpointsetv2.ListenerTuple{}).URL", "signature": "string", "doc_token": "`endpointsetv2.ListenerTuple`"},
-          {"kind": "field", "expr": "(endpointsetv2.ListenerTuple{}).AdvertisedURL", "signature": "string", "doc_token": "`endpointsetv2.ListenerTuple`"},
-          {"kind": "field", "expr": "(endpointsetv2.ListenerTuple{}).BindEndpoint", "signature": "string", "doc_token": "`endpointsetv2.ListenerTuple`"},
-          {"kind": "field", "expr": "(endpointsetv2.ListenerTuple{}).WireProfile", "signature": "string", "doc_token": "`endpointsetv2.ListenerTuple`"},
-          {"kind": "field", "expr": "(endpointsetv2.CertificateReadiness{}).Ready", "signature": "bool", "doc_token": "`endpointsetv2.CertificateReadiness`"},
-          {"kind": "field", "expr": "(endpointsetv2.CertificateReadiness{}).NotAfterUnixSeconds", "signature": "int64", "doc_token": "`endpointsetv2.CertificateReadiness`"},
-          {"kind": "field", "expr": "(endpointsetv2.CertificateReadiness{}).VerifiedServerNames", "signature": "[]string", "doc_token": "`endpointsetv2.CertificateReadiness`"},
-          {"kind": "field", "expr": "(endpointsetv2.AudienceReadiness{}).Ready", "signature": "bool", "doc_token": "`endpointsetv2.AudienceReadiness`"},
-          {"kind": "field", "expr": "(endpointsetv2.AudienceReadiness{}).ListenerAudience", "signature": "string", "doc_token": "`endpointsetv2.AudienceReadiness`"},
-          {"kind": "field", "expr": "(endpointsetv2.Freshness{}).IssuedAtUnixSeconds", "signature": "int64", "doc_token": "`endpointsetv2.Freshness`"},
-          {"kind": "field", "expr": "(endpointsetv2.Freshness{}).ExpiresAtUnixSeconds", "signature": "int64", "doc_token": "`endpointsetv2.Freshness`"},
-          {"kind": "func", "expr": "endpointsetv2.Validate", "doc_token": "`endpointsetv2.Validate(...)`"},
-          {"kind": "func", "expr": "endpointsetv2.CompatibleListeners", "doc_token": "`endpointsetv2.CompatibleListeners(...)`"},
-          {"kind": "func", "expr": "endpointsetv2.MarshalJSON", "doc_token": "`endpointsetv2.MarshalJSON(...)`"},
-          {"kind": "func", "expr": "endpointsetv2.DecodeJSON", "doc_token": "`endpointsetv2.DecodeJSON(...)`"},
-          {"kind": "const", "expr": "endpointsetv2.Profile", "doc_token": "`endpointsetv2.Profile`"},
-          {"kind": "const", "expr": "endpointsetv2.TunnelWireProfile", "doc_token": "`endpointsetv2.TunnelWireProfile`"},
-          {"kind": "const", "expr": "endpointsetv2.MaxJSONBytes", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "const", "expr": "endpointsetv2.MaxListeners", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "const", "expr": "endpointsetv2.MaxFreshnessAgeSeconds", "doc_token": "`endpointsetv2.MaxFreshnessAgeSeconds`"},
-          {"kind": "var", "expr": "endpointsetv2.ErrInvalidEndpointSet", "doc_token": "`endpointsetv2.ErrInvalidEndpointSet`"},
-          {"kind": "var", "expr": "endpointsetv2.ErrEndpointSetTooLarge", "doc_token": "`endpointsetv2.EndpointSet`"},
-          {"kind": "var", "expr": "endpointsetv2.ErrNoCompatibleListener", "doc_token": "`endpointsetv2.ErrNoCompatibleListener`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/carrier",
-        "alias": "carrier",
-        "doc_package_token": "`CarrierSession`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "carrier.Kind", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrier.Path", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrier.ApplicationError", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrier.Session", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrier.Stream", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Stream.Read", "signature": "func(carrier.Stream, []byte) (int, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Stream.Write", "signature": "func(carrier.Stream, []byte) (int, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Stream.Close", "signature": "func(carrier.Stream) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Stream.CloseWrite", "signature": "func(carrier.Stream) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Stream.Reset", "signature": "func(carrier.Stream) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Stream.Context", "signature": "func(carrier.Stream) context.Context", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Session.Kind", "signature": "func(carrier.Session) carrier.Kind", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Session.Path", "signature": "func(carrier.Session) carrier.Path", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Session.MaxIncomingStreams", "signature": "func(carrier.Session) uint16", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Session.OpenStream", "signature": "func(carrier.Session, context.Context) (carrier.Stream, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Session.AcceptStream", "signature": "func(carrier.Session, context.Context) (carrier.Stream, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Session.CloseWithErrorContext", "signature": "func(carrier.Session, context.Context, carrier.ApplicationError) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Session.CloseWithError", "signature": "func(carrier.Session, carrier.ApplicationError) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "carrier.Session.Close", "signature": "func(carrier.Session) error", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrier.KindWebSocket", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrier.KindQUIC", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrier.KindWebTransport", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrier.PathDirect", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrier.PathTunnel", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "carrier.Kind.Validate", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "carrier.Path.Validate", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrier.ErrInvalidKind", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrier.ErrInvalidPath", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrier.ErrInvalidStreamCapacity", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrier.ErrStreamReset", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrier.MaxApplicationErrorReasonBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrier.MaxLogicalIncomingStreams", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrier.RequiredIncomingStreams", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrier.ReservedSessionStreams", "doc_token": "`CarrierSession`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic",
-        "alias": "rawquic",
-        "doc_package_token": "`CarrierSession`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "rawquic.Limits", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "rawquic.Listener", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "rawquic.Session", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "rawquic.Stream", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "rawquic.DefaultLimits", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "rawquic.Dial", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "rawquic.Listen", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Session).OpenStream", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Session).AcceptStream", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Session).Migrate", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "rawquic.ValidateApplicationError", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "rawquic.ALPNDirect", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "rawquic.ALPNTunnel", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Listener).Accept", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Listener).Addr", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Listener).Close", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Session).Close", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Session).CloseWithError", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Session).CloseWithErrorContext", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Session).Kind", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Session).Path", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Session).MaxIncomingStreams", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Stream).Close", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Stream).CloseWrite", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Stream).Context", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Stream).Read", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Stream).Reset", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*rawquic.Stream).Write", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "rawquic.BindSessionLimits", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "rawquic.ErrEarlyData", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "rawquic.ErrInvalidALPN", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "rawquic.ErrInvalidApplicationError", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "rawquic.ErrInvalidLimits", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "rawquic.ErrInvalidTLS", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "rawquic.Limits.Validate", "doc_token": "`CarrierSession`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/carrier/websocket",
-        "alias": "carrierws",
-        "doc_package_token": "`CarrierSession`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "carrierws.Role", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrierws.ResourcePolicy", "doc_token": "`ResourcePolicy`"},
-          {"kind": "type", "expr": "carrierws.LivenessPolicy", "doc_token": "`LivenessPolicy`"},
-          {"kind": "type", "expr": "carrierws.DeferredTunnelServer", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrierws.Session", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrierws.Stream", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierws.ValidateReady", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierws.CommitAdmission", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierws.ServeAdmission", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierws.NewAfterAdmission", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierws.NewDeferredTunnelServer", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierws.DefaultResourcePolicy", "doc_token": "`ResourcePolicy`"},
-          {"kind": "func", "expr": "carrierws.BindSessionResourcePolicy", "doc_token": "`ResourcePolicy`"},
-          {"kind": "method", "expr": "(*carrierws.DeferredTunnelServer).ReceiveAdmission", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.DeferredTunnelServer).SendAdmission", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.DeferredTunnelServer).WaitWhilePending", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.DeferredTunnelServer).Activate", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.DeferredTunnelServer).CloseWithError", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.DeferredTunnelServer).CloseWithErrorContext", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrierws.SubprotocolDirect", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrierws.SubprotocolTunnel", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Session).AcceptStream", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Session).Close", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Session).CloseWithError", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Session).CloseWithErrorContext", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Session).Kind", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Session).Path", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Session).MaxIncomingStreams", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Session).OpenStream", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Stream).Close", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Stream).CloseWrite", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Stream).Context", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Stream).Read", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Stream).Reset", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierws.Stream).Write", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrierws.ClientRole", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierws.ErrDeferredAdmissionState", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierws.ErrInvalidAdmissionMessage", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierws.ErrInvalidApplicationError", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierws.ErrInvalidRole", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierws.ErrInvalidSubprotocol", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierws.ErrNonBinaryMessage", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierws.ErrTLS13Required", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierws.ErrUnexpectedWaitingMessage", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrierws.ServerRole", "doc_token": "`CarrierSession`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/carrier/webtransport",
-        "alias": "carrierwt",
-        "doc_package_token": "`CarrierSession`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "carrierwt.Limits", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrierwt.Dialer", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrierwt.Server", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrierwt.Session", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "carrierwt.Stream", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierwt.DefaultLimits", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierwt.ValidateURL", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierwt.NewDialer", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierwt.NewServer", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrierwt.PathDirect", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrierwt.PathTunnel", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Dialer).Close", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Dialer).Dial", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Server).Close", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Server).Serve", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Server).SetHandler", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Server).Upgrade", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Session).AcceptStream", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Session).Close", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Session).CloseWithError", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Session).CloseWithErrorContext", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Session).Kind", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Session).Path", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Session).MaxIncomingStreams", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Session).OpenStream", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Stream).Close", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Stream).CloseWrite", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Stream).Context", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Stream).Read", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Stream).Reset", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*carrierwt.Stream).Write", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "carrierwt.BindSessionLimits", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierwt.ErrEarlyData", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierwt.ErrInvalidApplicationError", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierwt.ErrInvalidSession", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierwt.ErrInvalidTLS", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierwt.ErrInvalidURL", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "carrierwt.ErrOriginPolicyRequired", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "carrierwt.MaxH3IncomingUniStreams", "doc_token": "`CarrierSession`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/connectv2",
-        "alias": "connectv2",
-        "doc_package_token": "`CarrierSession`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "connectv2.AdmissionFactory", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.AdmissionHandle", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.Attempt", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.CarrierDial", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.Connector", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.ConnectorOption", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.Factory", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.Policy", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.Prepared", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.RawQUICDialConfig", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.WebSocketDialConfig", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.WebTransportDialConfig", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.Result", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.State", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "connectv2.AdmissionHandle.CommitAdmission", "signature": "func(connectv2.AdmissionHandle, context.Context, []byte, artifactv2.ReasonRegistry) (carrier.Session, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "connectv2.AdmissionHandle.Close", "signature": "func(connectv2.AdmissionHandle, context.Context) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "connectv2.Attempt.Ready", "signature": "func(connectv2.Attempt, context.Context) (connectv2.Prepared, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "connectv2.Attempt.Abort", "signature": "func(connectv2.Attempt, context.Context) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "connectv2.Factory.NewAttempt", "signature": "func(connectv2.Factory, artifactv2.Candidate, artifactv2.SessionContract) (connectv2.Attempt, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "connectv2.Prepared.Commit", "signature": "func(connectv2.Prepared, context.Context, []byte) (carrier.Session, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "connectv2.Prepared.Close", "signature": "func(connectv2.Prepared, context.Context) error", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "connectv2.NewAdmissionFactory", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "connectv2.NewRawQUICCarrierDial", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "connectv2.NewWebSocketCarrierDial", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "connectv2.NewWebTransportCarrierDial", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "connectv2.NewConnector", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "connectv2.WithConnectorClock", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*connectv2.Connector).Connect", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrArtifactExpired", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.Adaptive", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.RequireWebSocket", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.RequireQUICFamily", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*connectv2.AdmissionFactory).NewAttempt", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*connectv2.Connector).State", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "connectv2.ArtifactLease", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrArtifactClaimed", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrAttemptAlreadyUsed", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrCommitAlreadyUsed", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrInvalidArtifactLease", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrInvalidCarrierCandidate", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrInvalidCarrierDialConfig", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrInvalidFactory", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrInvalidPolicy", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrLoserCloseTimeout", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrMissingCarrierDial", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "connectv2.ErrNoCompatibleTransport", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "connectv2.State.String", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.StateCommitting", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.StateEstablished", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.StateLosersLocallyClosed", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.StatePreconnect", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.StateSpent", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.StateTerminated", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.StateValidated", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "connectv2.StateWinnerSelected", "doc_token": "`CarrierSession`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/protocolv2",
-        "alias": "protocolv2",
-        "doc_package_token": "`CarrierSession`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "protocolv2.Direction", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.Suite", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.EpochRoots", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.RecordMaterial", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.SetupPreface", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.RecordHeader", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.InnerType", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.HandshakeExpectations", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.OpenPayload", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.DeriveEpochZero", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.DeriveStreamMaterial", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ComputeSetupMAC", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.SealRecord", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.OpenRecord", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalOpenPayload", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalOpenMetadata", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseOpenPayload", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxCiphertextBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxOpenMetadataBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.ControlActor).CommitSessionUpdate", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.ControlActor).CommitStreamReset", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.ControlActor).Pop", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.ControlReceiveState).Accept", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.ControlReceiveState).CommitSessionUpdate", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.ControlReceiveState).ControlEpoch", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.ControlReceiveState).ExpectedSequence", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.ControlReceiveState).SessionEpoch", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).CarrierEOF", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).CarrierReset", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).CleanClosed", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).LocalHalfClosed", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).OpenRejected", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).ReceiveOpen", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).ReceiveOpenACK", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).ReceiveOpenReject", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).ReceiveRecord", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).RemoteHalfClosed", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).Reset", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).SendOpen", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).SendOpenACK", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).SendOpenReject", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).SendRecord", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).State", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.LogicalStreamState).TerminalError", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.StreamLedger).Frontier", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.StreamLedger).LocalResetCommitted", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.StreamLedger).LocalTerminalBeforeOpen", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.StreamLedger).PeerReset", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.StreamLedger).State", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.StreamLedger).ValidFSS2", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.StreamLedger).ValidFSS2ForAbandoned", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*protocolv2.StreamLedger).ValidOpen", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.AEADTagBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.ClientFinished", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.ClientInit", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ComputeClientConfirm", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ComputeECDHSharedSecret", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ComputeFSS2Hash", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ComputeHandshakeH0", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ComputeHandshakeH1", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ComputeHandshakeH2", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ComputeHandshakeH3", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ComputeOpenHash", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ComputeServerConfirm", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.ControlActor", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.ControlPrefaceSize", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.ControlReceiveState", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.ControlRecord", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.DeriveControlMaterial", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.DeriveEpochRoots", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.DeriveHandshakePRK", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.DeriveNextEpoch", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.DeriveSessionPRK", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.DirectionClientToServer", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.DirectionServerToClient", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.EphemeralPublicKey", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrAuthentication", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrControlQueueFull", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrControlSequence", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrControlUpdateState", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrCounterExhausted", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrDuplicateStreamID", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrFutureControlEpoch", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrHandshakeBinding", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrHandshakePayloadTooLarge", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidControlPreface", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidDirection", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidEphemeralKey", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidHandshakeFrame", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidHandshakeMessage", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidHandshakePSK", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidInnerRecord", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidLedgerState", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidOpenACK", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidOpenKind", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidOpenMetadata", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidOpenPayload", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidOpenReject", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidRecordHeader", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidSetupPreface", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidSharedSecret", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidSuite", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrInvalidTranscript", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrLateControlEpoch", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrLedgerCapacity", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrOpenNotAcknowledged", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrOpenRejected", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrRecordTooLarge", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrStreamClosed", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrStreamProtocol", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrStreamReset", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrStreamTruncated", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrUnknownInnerType", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "protocolv2.ErrWriteAfterFIN", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.GenerateEphemeralKey", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.HandshakeClientFinished", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.HandshakeClientInit", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.HandshakeDirect", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.HandshakeFrame", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.HandshakeHeaderSize", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.HandshakeMessageType", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.HandshakePath", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.HandshakeServerFinished", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.HandshakeTunnel", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerData", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerFIN", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerGoAway", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerHeaderSize", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerOpen", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerOpenACK", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerOpenReject", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerPing", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerPong", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerSessionClose", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerSessionKeyUpdate", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerSessionKeyUpdateACK", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerSessionReady", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerSessionReadyACK", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerStreamKeyUpdate", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerStreamKeyUpdateACK", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.InnerStreamReset", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.LateSetupAction", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LateSetupReset", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LedgerAbandonedNoFSS2", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LedgerOpenSeen", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.LedgerState", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LedgerUnseen", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LedgerUsedOrTerminal", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LogicalStreamActive", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LogicalStreamCleanClosed", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LogicalStreamHalfClosed", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LogicalStreamOpening", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.LogicalStreamPhase", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LogicalStreamRejected", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.LogicalStreamResetTerminal", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.LogicalStreamState", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalClientFinished", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalClientFinishedCore", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalClientInit", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalControlPreface", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalInnerRecord", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalOpenACK", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalOpenReject", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalServerFinished", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MarshalServerFinishedCore", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxControlBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxDataBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxHandshakePayloadBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.MaxLogicalStreamID", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxOpenBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxOpenKindBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxOpenMetadataArray", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxOpenMetadataDepth", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxOpenMetadataKey", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxOpenMetadataKeys", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxOpenMetadataNodes", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxOpenMetadataString", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.MaxStreamLedgerSlots", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.NewControlActor", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.NewControlReceiveState", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.NewInboundLogicalStreamState", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.NewOutboundLogicalStreamState", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.NewStreamLedger", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.OpenFixedPayloadBytes", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.OpenReject", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.OpenRejectGoingAway", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.OpenRejectInvalidMetadata", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.OpenRejectPolicyRejected", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.OpenRejectReason", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.OpenRejectResourceExhausted", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.OpenRejectUnsupportedKind", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseClientFinished", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseClientInit", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseControlPreface", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseEphemeralPublicKey", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseHandshakeFrame", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseInnerRecord", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseOpenACK", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseOpenReject", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseRecordHeader", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseServerFinished", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ParseSetupPreface", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ReadHandshakeFrame", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "protocolv2.RecordHeader.MarshalBinary", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.RecordHeaderSize", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.Role", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.RoleClient", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.RoleServer", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.ServerFinished", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.ServerFinishedCore", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "protocolv2.SetupPreface.MarshalBinary", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.SetupPrefaceSize", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "protocolv2.StreamLedger", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.SuiteAES256GCM", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "protocolv2.SuiteChaCha20Poly1305", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ValidateClientInit", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.ValidateServerFinished", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.VerifyClientConfirm", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.VerifyServerConfirm", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "protocolv2.VerifySetupMAC", "doc_token": "`CarrierSession`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/session",
-        "alias": "session",
-        "doc_package_token": "`CarrierSession`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "session.PathKind", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.NetworkMode", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.SessionRole", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.Metadata", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.ByteStream", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.IncomingStream", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.RPCPeer", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.SessionV2", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.CapabilityTuple", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.CapabilityDescriptor", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.UnsupportedCapability", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.Config", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "session.Engine", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.ByteStream.Read", "signature": "func(session.ByteStream, []byte) (int, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.ByteStream.Write", "signature": "func(session.ByteStream, []byte) (int, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.ByteStream.Close", "signature": "func(session.ByteStream) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.ByteStream.ID", "signature": "func(session.ByteStream) uint64", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.ByteStream.Kind", "signature": "func(session.ByteStream) string", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.ByteStream.TerminalError", "signature": "func(session.ByteStream) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.ByteStream.CloseWrite", "signature": "func(session.ByteStream) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.ByteStream.Reset", "signature": "func(session.ByteStream) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.RPCPeer.Call", "signature": "func(session.RPCPeer, context.Context, uint32, any, any) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.RPCPeer.Notify", "signature": "func(session.RPCPeer, context.Context, uint32, any) error", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "session.GoCapabilities", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "session.EncodeCapabilityDescriptor", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "session.DecodeCapabilityDescriptor", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "session.CapabilityDescriptorDigest", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "session.Establish", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.SessionV2.Path", "signature": "func(session.SessionV2) session.PathKind", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.SessionV2.EndpointInstanceID", "signature": "func(session.SessionV2) (string, bool)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.SessionV2.RPC", "signature": "func(session.SessionV2) session.RPCPeer", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.SessionV2.OpenStream", "signature": "func(session.SessionV2, context.Context, string, session.Metadata) (session.ByteStream, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.SessionV2.AcceptStream", "signature": "func(session.SessionV2, context.Context) (session.IncomingStream, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.SessionV2.Rekey", "signature": "func(session.SessionV2, context.Context) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.SessionV2.ProbeLiveness", "signature": "func(session.SessionV2, context.Context) (time.Duration, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.SessionV2.Termination", "signature": "func(session.SessionV2) <-chan struct{}", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.SessionV2.WaitClosed", "signature": "func(session.SessionV2, context.Context) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "session.SessionV2.Close", "signature": "func(session.SessionV2) error", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "session.CapabilityDescriptor.Supports", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "session.CapabilityDescriptor.Validate", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrDuplicateCapability", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrGoingAway", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrHandshake", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrInvalidCapability", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrInvalidConfig", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrLivenessProbe", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrOpenRejected", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrRekey", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrRekeyInProgress", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrResourceExhausted", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrSessionClosed", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "session.ErrSessionProtocol", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "session.NetworkDial", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "session.NetworkListen", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "session.PathDirect", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "session.PathTunnel", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "session.RoleClient", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "session.RoleServer", "doc_token": "`CarrierSession`"}
-        ]
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/tunnelv2",
-        "alias": "tunnelv2",
-        "doc_package_token": "`CarrierSession`",
-        "stability_group": "transport_v2",
-        "entries": [
-          {"kind": "type", "expr": "tunnelv2.Limits", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "tunnelv2.Authorization", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "tunnelv2.Authorize", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "tunnelv2.Config", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "tunnelv2.Coordinator", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "tunnelv2.Lease", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "tunnelv2.NativeStreamLeg", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "tunnelv2.PendingLeg", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "tunnelv2.VerifiedClaims", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "tunnelv2.WaitingStreamRejector", "doc_token": "`CarrierSession`"},
-          {"kind": "type", "expr": "tunnelv2.WebSocketPendingLeg", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "tunnelv2.Lease.Release", "signature": "func(tunnelv2.Lease)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "tunnelv2.PendingLeg.CarrierKind", "signature": "func(tunnelv2.PendingLeg) carrier.Kind", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "tunnelv2.PendingLeg.ReceiveAdmission", "signature": "func(tunnelv2.PendingLeg, context.Context) (*artifactv2.DecodedRequest, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "tunnelv2.PendingLeg.SendAdmission", "signature": "func(tunnelv2.PendingLeg, context.Context, artifactv2.AdmissionResponse, artifactv2.ReasonRegistry) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "tunnelv2.PendingLeg.Activate", "signature": "func(tunnelv2.PendingLeg, context.Context) (carrier.Session, error)", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "tunnelv2.PendingLeg.CloseWithError", "signature": "func(tunnelv2.PendingLeg, context.Context, carrier.ApplicationError) error", "doc_token": "`CarrierSession`"},
-          {"kind": "interface_method", "expr": "tunnelv2.WaitingStreamRejector.RejectWaitingStreams", "signature": "func(tunnelv2.WaitingStreamRejector, context.Context) error", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "tunnelv2.DefaultLimits", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "tunnelv2.Bridge", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "tunnelv2.DefaultReasonRegistry", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "tunnelv2.DefaultConfig", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "tunnelv2.NewCoordinator", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "tunnelv2.NewNativeStreamLeg", "doc_token": "`CarrierSession`"},
-          {"kind": "func", "expr": "tunnelv2.NewWebSocketPendingLeg", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.Coordinator).Serve", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.NativeStreamLeg).ReceiveAdmission", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.NativeStreamLeg).CarrierKind", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.NativeStreamLeg).SendAdmission", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.NativeStreamLeg).RejectWaitingStreams", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.NativeStreamLeg).Activate", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.NativeStreamLeg).CloseWithError", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.WebSocketPendingLeg).ReceiveAdmission", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.WebSocketPendingLeg).CarrierKind", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.WebSocketPendingLeg).SendAdmission", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.WebSocketPendingLeg).RejectWaitingStreams", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.WebSocketPendingLeg).Activate", "doc_token": "`CarrierSession`"},
-          {"kind": "method", "expr": "(*tunnelv2.WebSocketPendingLeg).CloseWithError", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrAdmissionState", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrCarrierMismatch", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrCapacity", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrControlClosed", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrCredentialReplay", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrInvalidAuthorization", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrInvalidConfig", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrInvalidLimits", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrInvalidNativeLeg", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrPairMismatch", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrPairTimeout", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrReplaced", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrReplacementDenied", "doc_token": "`CarrierSession`"},
-          {"kind": "var", "expr": "tunnelv2.ErrWaitingGuardStuck", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "tunnelv2.ReasonCapacity", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "tunnelv2.ReasonCredentialReplay", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "tunnelv2.ReasonInvalidCredential", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "tunnelv2.ReasonPairMismatch", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "tunnelv2.ReasonPairTimeout", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "tunnelv2.ReasonReplaced", "doc_token": "`CarrierSession`"},
-          {"kind": "const", "expr": "tunnelv2.ReasonReplacementDenied", "doc_token": "`CarrierSession`"}
         ]
       }
     ]
@@ -1720,64 +392,46 @@
         "doc_tokens": [
           "`@floegence/flowersec-core`",
           "`ArtifactLeaseV2`",
-          "`SessionV2`",
-          "`createNetworkPlaintextPolicy(...)`",
-          "`NetworkPlaintextPolicyOptions`",
-          "`PlaintextRiskAcceptance`"
+          "`SessionV2`"
         ],
         "runtime_exports": [
-          "FlowersecError",
-          "SessionV2",
           "Artifact",
-          "parseArtifact",
-          "BROWSER_RUNTIME_CAPABILITY_V2",
-          "NODE_RUNTIME_CAPABILITY_V2",
-          "decodeRuntimeCapabilityDescriptorV2",
-          "detectBrowserRuntimeCapabilityV2",
-          "encodeRuntimeCapabilityDescriptorV2",
-          "runtimeCapabilityDigestHexV2",
-          "runtimeCapabilityDigestV2",
-          "validateRuntimeCapabilityDescriptorV2",
+          "ConnectError",
+          "SessionError",
           "TRANSPORT_V2_VERSION_POLICY",
           "createArtifactAcquireContextV2",
           "createArtifactLeaseV2",
           "createArtifactV2Resolver",
           "createSessionReconnectManagerV2",
-          "RequireTLS",
-          "AllowPlaintextForLoopback",
-          "createNetworkPlaintextPolicy",
-          "PlaintextRiskAcceptance"
+          "parseArtifact"
         ],
         "type_exports": [
           "Artifact",
           "ArtifactAcquireContextV2",
           "ArtifactAcquireContextOptionsV2",
-          "ArtifactDecoderV2",
-          "ArtifactInputV2",
           "ArtifactLeaseV2",
           "ArtifactSourceV2",
           "ArtifactVersionPolicyV2",
           "ByteStreamV2",
-          "BrowserRuntimeFeaturesV2",
+          "ConnectError",
+          "ConnectErrorCode",
           "IncomingStreamV2",
           "JsonObjectV2",
           "JsonPrimitiveV2",
           "JsonValueV2",
-          "NetworkModeV2",
           "OperationOptionsV2",
-          "PathKind",
-          "RuntimeCapabilityDescriptorV2",
-          "RuntimeCapabilityTupleV2",
-          "SessionRoleV2",
+          "RpcPeerV2",
+          "RpcResultV2",
           "SessionAutoReconnectConfigV2",
+          "SessionError",
+          "SessionErrorCode",
           "SessionReconnectConfigV2",
           "SessionReconnectManagerV2",
           "SessionReconnectStateV2",
           "SessionReconnectStatusV2",
           "SessionTerminationV2",
           "SessionV2",
-          "StreamOpenOptionsV2",
-          "UnsupportedRuntimeCarrierV2"
+          "StreamOpenOptionsV2"
         ]
       },
       {
@@ -1785,63 +439,49 @@
         "package_json_export": "./node",
         "doc_tokens": [
           "`@floegence/flowersec-core/node`",
-          "`connectNodeSessionV2(...)`",
-          "`createNetworkPlaintextPolicy(...)`",
-          "`NetworkPlaintextPolicyOptions`",
-          "`PlaintextRiskAcceptance`"
+          "`connectNodeSessionV2(...)`"
         ],
         "runtime_exports": [
-          "connectNodeSessionV2",
-          "SessionV2",
           "Artifact",
-          "parseArtifact",
-          "decodeRuntimeCapabilityDescriptorV2",
-          "encodeRuntimeCapabilityDescriptorV2",
-          "runtimeCapabilityDigestHexV2",
-          "runtimeCapabilityDigestV2",
-          "validateRuntimeCapabilityDescriptorV2",
+          "ConnectError",
+          "SessionError",
           "TRANSPORT_V2_VERSION_POLICY",
+          "connectNodeSessionV2",
           "createArtifactAcquireContextV2",
           "createArtifactLeaseV2",
           "createArtifactV2Resolver",
           "createSessionReconnectManagerV2",
-          "RequireTLS",
-          "AllowPlaintextForLoopback",
-          "createNetworkPlaintextPolicy",
-          "PlaintextRiskAcceptance",
-          "NODE_RUNTIME_CAPABILITY_V2"
+          "parseArtifact"
         ],
         "type_exports": [
           "Artifact",
           "ArtifactAcquireContextV2",
           "ArtifactAcquireContextOptionsV2",
-          "ArtifactDecoderV2",
-          "ArtifactInputV2",
           "ArtifactLeaseV2",
-          "NodeSessionConnectorV2Options",
           "ArtifactSourceV2",
           "ArtifactVersionPolicyV2",
           "ByteStreamV2",
-          "BrowserRuntimeFeaturesV2",
+          "ConnectError",
+          "ConnectErrorCode",
           "IncomingStreamV2",
           "JsonObjectV2",
           "JsonPrimitiveV2",
           "JsonValueV2",
-          "NetworkModeV2",
+          "NodeSessionConnectorV2Options",
+          "NodeSessionTLSOptionsV2",
           "OperationOptionsV2",
-          "PathKind",
-          "RuntimeCapabilityDescriptorV2",
-          "RuntimeCapabilityTupleV2",
-          "SessionRoleV2",
+          "RpcPeerV2",
+          "RpcResultV2",
           "SessionAutoReconnectConfigV2",
+          "SessionError",
+          "SessionErrorCode",
           "SessionReconnectConfigV2",
           "SessionReconnectManagerV2",
           "SessionReconnectStateV2",
           "SessionReconnectStatusV2",
           "SessionTerminationV2",
           "SessionV2",
-          "StreamOpenOptionsV2",
-          "UnsupportedRuntimeCarrierV2"
+          "StreamOpenOptionsV2"
         ]
       },
       {
@@ -1849,222 +489,48 @@
         "package_json_export": "./browser",
         "doc_tokens": [
           "`@floegence/flowersec-core/browser`",
-          "`connectBrowserSessionV2(...)`",
-          "`createNetworkPlaintextPolicy(...)`",
-          "`NetworkPlaintextPolicyOptions`",
-          "`PlaintextRiskAcceptance`"
+          "`connectBrowserSessionV2(...)`"
         ],
         "runtime_exports": [
-          "SessionV2",
           "Artifact",
-          "parseArtifact",
-          "decodeRuntimeCapabilityDescriptorV2",
-          "encodeRuntimeCapabilityDescriptorV2",
-          "runtimeCapabilityDigestHexV2",
-          "runtimeCapabilityDigestV2",
-          "validateRuntimeCapabilityDescriptorV2",
+          "ConnectError",
+          "SessionError",
           "TRANSPORT_V2_VERSION_POLICY",
+          "connectBrowserSessionV2",
           "createArtifactAcquireContextV2",
           "createArtifactLeaseV2",
           "createArtifactV2Resolver",
           "createSessionReconnectManagerV2",
-          "connectBrowserSessionV2",
-          "RequireTLS",
-          "AllowPlaintextForLoopback",
-          "createNetworkPlaintextPolicy",
-          "PlaintextRiskAcceptance",
-          "BROWSER_RUNTIME_CAPABILITY_V2",
-          "detectBrowserRuntimeCapabilityV2"
+          "parseArtifact"
         ],
         "type_exports": [
           "Artifact",
           "ArtifactAcquireContextV2",
           "ArtifactAcquireContextOptionsV2",
-          "ArtifactDecoderV2",
-          "ArtifactInputV2",
           "ArtifactLeaseV2",
           "ArtifactSourceV2",
           "ArtifactVersionPolicyV2",
           "BrowserSessionConnectorV2Options",
-          "BrowserRuntimeFeaturesV2",
           "ByteStreamV2",
+          "ConnectError",
+          "ConnectErrorCode",
           "IncomingStreamV2",
           "JsonObjectV2",
           "JsonPrimitiveV2",
           "JsonValueV2",
-          "NetworkModeV2",
           "OperationOptionsV2",
-          "PathKind",
-          "RuntimeCapabilityDescriptorV2",
-          "RuntimeCapabilityTupleV2",
-          "SessionRoleV2",
+          "RpcPeerV2",
+          "RpcResultV2",
           "SessionAutoReconnectConfigV2",
+          "SessionError",
+          "SessionErrorCode",
           "SessionReconnectConfigV2",
           "SessionReconnectManagerV2",
           "SessionReconnectStateV2",
           "SessionReconnectStatusV2",
           "SessionTerminationV2",
           "SessionV2",
-          "StreamOpenOptionsV2",
-          "UnsupportedRuntimeCarrierV2"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/controlplane",
-        "package_json_export": "./controlplane",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/controlplane`",
-          "`requestConnectArtifact(...)`",
-          "`requestEntryConnectArtifact(...)`",
-          "`ControlplaneRequestError`",
-          "`ConnectArtifactRequestConfig.allowLoopbackHTTP`",
-          "`DEFAULT_CONNECT_ARTIFACT_PATH`",
-          "`DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH`",
-          "`IssuerKeyset`",
-          "`signToken(...)`",
-          "`verifyToken(...)`",
-          "`ChannelInitService`"
-        ],
-        "runtime_exports": [
-          "requestConnectArtifact",
-          "requestEntryConnectArtifact",
-          "ControlplaneRequestError",
-          "DEFAULT_CONNECT_ARTIFACT_PATH",
-          "DEFAULT_ENTRY_CONNECT_ARTIFACT_PATH",
-          "IssuerKeyset",
-          "signToken",
-          "verifyToken",
-          "ChannelInitService"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/endpoint",
-        "package_json_export": "./endpoint",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/endpoint`",
-          "`Session`",
-          "`Session.rekey()`",
-          "`acceptDirect(...)`",
-          "`acceptDirectResolved(...)`",
-          "`connectTunnel(...)`"
-        ],
-        "runtime_exports": [
-          "Session",
-          "acceptDirect",
-          "acceptDirectResolved",
-          "connectTunnel"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/streamio",
-        "package_json_export": "./streamio",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/streamio`",
-          "`createJsonFrameChannel(...)`",
-          "`openJsonFrameChannel(...)`"
-        ],
-        "runtime_exports": [
-          "readMaybe",
-          "createByteReader",
-          "readExactly",
-          "readNBytes",
-          "createJsonFrameChannel",
-          "openJsonFrameChannel"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/proxy",
-        "package_json_export": "./proxy",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/proxy`",
-          "`createProxyRuntime(...)`",
-          "`maxConcurrentHttpStreams`",
-          "`maxQueuedHttpRequests`",
-          "`createProxyServiceWorkerScript(...)`",
-          "`createProxyIntegrationServiceWorkerScript(...)`",
-          "`registerProxyIntegration(...)`",
-          "`registerServiceWorkerAndEnsureControl(...)`",
-          "`connectArtifactProxyBrowser(...)`",
-          "`connectArtifactProxyControllerBrowser(...)`",
-          "`createServiceWorkerControllerGuard(...)`",
-          "`registerProxyControllerWindow(...)`",
-          "`registerProxyAppWindow(...)`",
-          "`registerProxyAppWindowWithServiceWorkerControl(...)`",
-          "`installWebSocketPatch(...)`",
-          "`disableUpstreamServiceWorkerRegister()`",
-          "`assertProxyPresetManifest(...)`",
-          "`resolveProxyPreset(...)`",
-          "`DEFAULT_PROXY_PRESET_MANIFEST`"
-        ],
-        "runtime_exports": [
-          "createProxyRuntime",
-          "createProxyServiceWorkerScript",
-          "createProxyIntegrationServiceWorkerScript",
-          "registerProxyIntegration",
-          "registerServiceWorkerAndEnsureControl",
-          "connectArtifactProxyBrowser",
-          "connectArtifactProxyControllerBrowser",
-          "createServiceWorkerControllerGuard",
-          "registerProxyControllerWindow",
-          "registerProxyAppWindow",
-          "registerProxyAppWindowWithServiceWorkerControl",
-          "installWebSocketPatch",
-          "disableUpstreamServiceWorkerRegister",
-          "assertProxyPresetManifest",
-          "resolveProxyPreset",
-          "DEFAULT_PROXY_PRESET_MANIFEST"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/reconnect",
-        "package_json_export": "./reconnect",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/reconnect`",
-          "`createReconnectManager()`",
-          "`ReconnectManager.connectIfNeeded(...)`",
-          "`ArtifactSource`",
-          "`createArtifactResolver(...)`",
-          "`createControlplaneArtifactSource(...)`"
-        ],
-        "runtime_exports": [
-          "createReconnectManager",
-          "createArtifactResolver",
-          "createControlplaneArtifactSource"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/rpc",
-        "package_json_export": "./rpc",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/rpc`",
-          "`RpcProxy`",
-          "`RpcServer`",
-          "`RpcServerOptions`",
-          "`RpcServerTransport`"
-        ],
-        "runtime_exports": [
-          "RpcClient",
-          "RpcServer",
-          "RpcCallError",
-          "RpcProxy",
-          "callTyped"
-        ]
-      },
-      {
-        "specifier": "@floegence/flowersec-core/observability",
-        "package_json_export": "./observability",
-        "doc_tokens": [
-          "`@floegence/flowersec-core/observability`",
-          "`DiagnosticEvent`",
-          "`normalizeObserver(...)`",
-          "`withObserverContext(...)`"
-        ],
-        "runtime_exports": [
-          "NoopObserver",
-          "normalizeObserver",
-          "withObserverContext",
-          "emitObserverDiagnostic",
-          "nowSeconds"
+          "StreamOpenOptionsV2"
         ]
       }
     ]
@@ -2076,185 +542,526 @@
     "doc_tokens": [
       "`Flowersec`",
       "`import Flowersec`",
-      "`TransportV2Session`",
-      "`TransportV2Session.acceptStream()`",
-      "`TransportV2Session.close()`",
-      "`IDNAHostV2.lookupASCII(_:)`",
-      "`RuntimeCapabilitiesV2.apple`",
-      "`RuntimeCapabilitiesV2.macOS`",
+      "`ArtifactV2`",
+      "`ArtifactLeaseV2`",
       "`ConnectorV2`",
       "`ConnectorV2.connect()`",
       "`ConnectorOptionsV2`",
-      "`ConnectErrorV2`"
+      "`SessionV2`",
+      "`ConnectErrorV2`",
+      "`SessionErrorV2`"
     ],
     "symbols": [
-      {"kind":"swift.enum","name":"CarrierKind","doc_token":""},
-      {"kind":"swift.enum","name":"RuntimeCapabilityCodecErrorV2","doc_token":""},
-      {"kind":"swift.enum","name":"JSONValueV2","doc_token":""},
-      {"kind":"swift.enum","name":"NetworkModeV2","doc_token":""},
-      {"kind":"swift.enum","name":"PathKind","doc_token":""},
-      {"kind":"swift.enum","name":"RuntimeCapabilitiesV2","doc_token":""},
-      {"kind":"swift.enum","name":"SessionRoleV2","doc_token":""},
-      {"kind":"swift.enum","name":"StreamMetadataErrorV2","doc_token":""},
-      {"kind":"swift.enum.case","name":"CarrierKind.rawQUIC","doc_token":""},
-      {"kind":"swift.enum.case","name":"CarrierKind.webSocket","doc_token":""},
-      {"kind":"swift.enum.case","name":"CarrierKind.webTransport","doc_token":""},
-      {"kind":"swift.enum.case","name":"JSONValueV2.array(_:)","doc_token":""},
-      {"kind":"swift.enum.case","name":"JSONValueV2.bool(_:)","doc_token":""},
-      {"kind":"swift.enum.case","name":"JSONValueV2.integer(_:)","doc_token":""},
-      {"kind":"swift.enum.case","name":"JSONValueV2.null","doc_token":""},
-      {"kind":"swift.enum.case","name":"JSONValueV2.object(_:)","doc_token":""},
-      {"kind":"swift.enum.case","name":"JSONValueV2.string(_:)","doc_token":""},
-      {"kind":"swift.enum.case","name":"NetworkModeV2.dial","doc_token":""},
-      {"kind":"swift.enum.case","name":"NetworkModeV2.listen","doc_token":""},
-      {"kind":"swift.enum.case","name":"PathKind.direct","doc_token":""},
-      {"kind":"swift.enum.case","name":"PathKind.tunnel","doc_token":""},
-      {"kind":"swift.enum.case","name":"RuntimeCapabilityCodecErrorV2.invalid","doc_token":""},
-      {"kind":"swift.enum.case","name":"RuntimeCapabilityCodecErrorV2.nonCanonical","doc_token":""},
-      {"kind":"swift.enum.case","name":"SessionRoleV2.client","doc_token":""},
-      {"kind":"swift.enum.case","name":"SessionRoleV2.server","doc_token":""},
-      {"kind":"swift.enum.case","name":"StreamMetadataErrorV2.arrayTooLong","doc_token":""},
-      {"kind":"swift.enum.case","name":"StreamMetadataErrorV2.depthExceeded","doc_token":""},
-      {"kind":"swift.enum.case","name":"StreamMetadataErrorV2.emptyKey","doc_token":""},
-      {"kind":"swift.enum.case","name":"StreamMetadataErrorV2.encodedTooLarge","doc_token":""},
-      {"kind":"swift.enum.case","name":"StreamMetadataErrorV2.keyNotNormalized","doc_token":""},
-      {"kind":"swift.enum.case","name":"StreamMetadataErrorV2.keyTooLong","doc_token":""},
-      {"kind":"swift.enum.case","name":"StreamMetadataErrorV2.nodeLimitExceeded","doc_token":""},
-      {"kind":"swift.enum.case","name":"StreamMetadataErrorV2.objectTooLarge","doc_token":""},
-      {"kind":"swift.enum.case","name":"StreamMetadataErrorV2.stringTooLong","doc_token":""},
-      {"kind":"swift.enum.case","name":"StreamMetadataErrorV2.unsafeInteger","doc_token":""},
-      {"kind":"swift.init","name":"CarrierKind.init(rawValue:)","doc_token":""},
-      {"kind":"swift.init","name":"IncomingStreamV2.init(id:kind:metadata:stream:)","doc_token":""},
-      {"kind":"swift.init","name":"NetworkModeV2.init(rawValue:)","doc_token":""},
-      {"kind":"swift.init","name":"PathKind.init(rawValue:)","doc_token":""},
-      {"kind":"swift.init","name":"RuntimeCapabilityDescriptorV2.init(from:)","doc_token":""},
-      {"kind":"swift.init","name":"RuntimeCapabilityDescriptorV2.init(schemaVersion:language:runtime:tuples:unsupported:)","doc_token":""},
-      {"kind":"swift.init","name":"RuntimeCapabilityTupleV2.init(carrier:networkMode:path:sessionRole:)","doc_token":""},
-      {"kind":"swift.init","name":"RuntimeCapabilityTupleV2.init(from:)","doc_token":""},
-      {"kind":"swift.init","name":"SessionRoleV2.init(rawValue:)","doc_token":""},
-      {"kind":"swift.init","name":"StreamMetadataV2.init(_:)","doc_token":""},
-      {"kind":"swift.init","name":"UnsupportedRuntimeCarrierV2.init(from:)","doc_token":""},
-      {"kind":"swift.init","name":"UnsupportedRuntimeCarrierV2.init(carrier:reason:)","doc_token":""},
-      {"kind":"swift.method","name":"ByteStreamV2.close()","doc_token":""},
-      {"kind":"swift.method","name":"ByteStreamV2.closeWrite()","doc_token":""},
-      {"kind":"swift.method","name":"ByteStreamV2.read(maxBytes:)","doc_token":""},
-      {"kind":"swift.method","name":"ByteStreamV2.reset()","doc_token":""},
-      {"kind":"swift.method","name":"ByteStreamV2.terminalError()","doc_token":""},
-      {"kind":"swift.method","name":"ByteStreamV2.write(_:)","doc_token":""},
-      {"kind":"swift.method","name":"RPCPeerV2.call(_:_:as:timeout:)","doc_token":""},
-      {"kind":"swift.method","name":"RPCPeerV2.notify(_:_:)","doc_token":""},
-      {"kind":"swift.method","name":"RuntimeCapabilityDescriptorV2.canonicalJSON()","doc_token":""},
-      {"kind":"swift.method","name":"RuntimeCapabilityDescriptorV2.digest()","doc_token":""},
-      {"kind":"swift.method","name":"RuntimeCapabilityDescriptorV2.digestHex()","doc_token":""},
-      {"kind":"swift.method","name":"RuntimeCapabilityDescriptorV2.validate()","doc_token":""},
-      {"kind":"swift.method","name":"SessionV2.acceptStream()","doc_token":""},
-      {"kind":"swift.method","name":"SessionV2.close()","doc_token":""},
-      {"kind":"swift.method","name":"SessionV2.openStream(kind:)","doc_token":""},
-      {"kind":"swift.method","name":"SessionV2.openStream(kind:metadata:)","doc_token":""},
-      {"kind":"swift.method","name":"SessionV2.probeLiveness()","doc_token":""},
-      {"kind":"swift.method","name":"SessionV2.rekey()","doc_token":""},
-      {"kind":"swift.method","name":"SessionV2.waitClosed()","doc_token":""},
-      {"kind":"swift.property","name":"ByteStreamV2.id","doc_token":""},
-      {"kind":"swift.property","name":"ByteStreamV2.kind","doc_token":""},
-      {"kind":"swift.property","name":"IncomingStreamV2.id","doc_token":""},
-      {"kind":"swift.property","name":"IncomingStreamV2.kind","doc_token":""},
-      {"kind":"swift.property","name":"IncomingStreamV2.metadata","doc_token":""},
-      {"kind":"swift.property","name":"IncomingStreamV2.stream","doc_token":""},
-      {"kind":"swift.property","name":"RuntimeCapabilityDescriptorV2.language","doc_token":""},
-      {"kind":"swift.property","name":"RuntimeCapabilityDescriptorV2.runtime","doc_token":""},
-      {"kind":"swift.property","name":"RuntimeCapabilityDescriptorV2.schemaVersion","doc_token":""},
-      {"kind":"swift.property","name":"RuntimeCapabilityDescriptorV2.tuples","doc_token":""},
-      {"kind":"swift.property","name":"RuntimeCapabilityDescriptorV2.unsupported","doc_token":""},
-      {"kind":"swift.property","name":"RuntimeCapabilityTupleV2.carrier","doc_token":""},
-      {"kind":"swift.property","name":"RuntimeCapabilityTupleV2.networkMode","doc_token":""},
-      {"kind":"swift.property","name":"RuntimeCapabilityTupleV2.path","doc_token":""},
-      {"kind":"swift.property","name":"RuntimeCapabilityTupleV2.sessionRole","doc_token":""},
-      {"kind":"swift.property","name":"SessionV2.endpointInstanceID","doc_token":""},
-      {"kind":"swift.property","name":"SessionV2.path","doc_token":""},
-      {"kind":"swift.property","name":"SessionV2.rpc","doc_token":""},
-      {"kind":"swift.property","name":"StreamMetadataV2.encodedByteCount","doc_token":""},
-      {"kind":"swift.property","name":"StreamMetadataV2.values","doc_token":""},
-      {"kind":"swift.property","name":"UnsupportedRuntimeCarrierV2.carrier","doc_token":""},
-      {"kind":"swift.property","name":"UnsupportedRuntimeCarrierV2.reason","doc_token":""},
-      {"kind":"swift.protocol","name":"ByteStreamV2","doc_token":""},
-      {"kind":"swift.protocol","name":"RPCPeerV2","doc_token":""},
-      {"kind":"swift.protocol","name":"SessionV2","doc_token":""},
-      {"kind":"swift.struct","name":"IncomingStreamV2","doc_token":""},
-      {"kind":"swift.struct","name":"RuntimeCapabilityDescriptorV2","doc_token":""},
-      {"kind":"swift.struct","name":"RuntimeCapabilityTupleV2","doc_token":""},
-      {"kind":"swift.struct","name":"StreamMetadataV2","doc_token":""},
-      {"kind":"swift.struct","name":"UnsupportedRuntimeCarrierV2","doc_token":""},
-      {"kind":"swift.type.method","name":"RuntimeCapabilityDescriptorV2.decodeCanonicalJSON(_:)","doc_token":""},
-      {"kind":"swift.type.property","name":"RuntimeCapabilitiesV2.apple","doc_token":""},
-      {"kind":"swift.type.property","name":"StreamMetadataV2.empty","doc_token":""},
-      {"kind":"swift.type.property","name":"StreamMetadataV2.maxArrayItems","doc_token":""},
-      {"kind":"swift.type.property","name":"StreamMetadataV2.maxDepth","doc_token":""},
-      {"kind":"swift.type.property","name":"StreamMetadataV2.maxEncodedBytes","doc_token":""},
-      {"kind":"swift.type.property","name":"StreamMetadataV2.maxKeyBytes","doc_token":""},
-      {"kind":"swift.type.property","name":"StreamMetadataV2.maxNodes","doc_token":""},
-      {"kind":"swift.type.property","name":"StreamMetadataV2.maxObjectKeys","doc_token":""},
-      {"kind":"swift.type.property","name":"StreamMetadataV2.maxStringBytes","doc_token":""},
-      {"kind":"swift.type.property","name":"StreamMetadataV2.maximumSafeInteger","doc_token":""},
-      {"kind":"swift.class","name":"ArtifactV2","doc_token":""},
-      {"kind":"swift.class","name":"TransportV2Session","doc_token":""},
-      {"kind":"swift.enum","name":"ArtifactCodecErrorV2","doc_token":""},
-      {"kind":"swift.enum","name":"ArtifactLeaseErrorV2","doc_token":""},
-      {"kind":"swift.enum","name":"IDNAHostErrorV2","doc_token":""},
-      {"kind":"swift.enum","name":"IDNAHostV2","doc_token":""},
-      {"kind":"swift.enum","name":"TransportV2SessionError","doc_token":""},
-      {"kind":"swift.enum.case","name":"ArtifactCodecErrorV2.artifactTooLarge","doc_token":""},
-      {"kind":"swift.enum.case","name":"ArtifactCodecErrorV2.invalidArtifact","doc_token":""},
-      {"kind":"swift.enum.case","name":"ArtifactCodecErrorV2.invalidCandidate","doc_token":""},
-      {"kind":"swift.enum.case","name":"ArtifactLeaseErrorV2.alreadyCommitted","doc_token":""},
-      {"kind":"swift.enum.case","name":"IDNAHostErrorV2.invalidHost","doc_token":""},
-      {"kind":"swift.enum.case","name":"TransportV2SessionError.closed","doc_token":""},
-      {"kind":"swift.enum.case","name":"TransportV2SessionError.goingAway","doc_token":""},
-      {"kind":"swift.enum.case","name":"TransportV2SessionError.handshakeFailed","doc_token":""},
-      {"kind":"swift.enum.case","name":"TransportV2SessionError.invalidConfiguration","doc_token":""},
-      {"kind":"swift.enum.case","name":"TransportV2SessionError.livenessFailed","doc_token":""},
-      {"kind":"swift.enum.case","name":"TransportV2SessionError.openRejected(_:)","doc_token":""},
-      {"kind":"swift.enum.case","name":"TransportV2SessionError.protocolViolation","doc_token":""},
-      {"kind":"swift.enum.case","name":"TransportV2SessionError.rekeyFailed","doc_token":""},
-      {"kind":"swift.enum.case","name":"TransportV2SessionError.resourceExhausted","doc_token":""},
-      {"kind":"swift.enum.case","name":"TransportV2SessionError.streamReset","doc_token":""},
-      {"kind":"swift.func","name":"parseArtifactV2(_:)","doc_token":""},
-      {"kind":"swift.init","name":"ArtifactLeaseV2.init(artifact:commitSpend:)","doc_token":""},
-      {"kind":"swift.method","name":"ArtifactLeaseV2.commitSpend()","doc_token":""},
-      {"kind":"swift.method","name":"TransportV2Session.acceptStream()","doc_token":""},
-      {"kind":"swift.method","name":"TransportV2Session.close()","doc_token":""},
-      {"kind":"swift.method","name":"TransportV2Session.openStream(kind:metadata:)","doc_token":""},
-      {"kind":"swift.method","name":"TransportV2Session.probeLiveness()","doc_token":""},
-      {"kind":"swift.method","name":"TransportV2Session.rekey()","doc_token":""},
-      {"kind":"swift.method","name":"TransportV2Session.waitClosed()","doc_token":""},
-      {"kind":"swift.property","name":"ArtifactLeaseV2.artifact","doc_token":""},
-      {"kind":"swift.property","name":"ArtifactV2.customMirror","doc_token":""},
-      {"kind":"swift.property","name":"ArtifactV2.debugDescription","doc_token":""},
-      {"kind":"swift.property","name":"ArtifactV2.description","doc_token":""},
-      {"kind":"swift.property","name":"TransportV2Session.endpointInstanceID","doc_token":""},
-      {"kind":"swift.property","name":"TransportV2Session.path","doc_token":""},
-      {"kind":"swift.property","name":"TransportV2Session.rpc","doc_token":""},
-      {"kind":"swift.struct","name":"ArtifactLeaseV2","doc_token":""},
-      {"kind":"swift.type.method","name":"IDNAHostV2.lookupASCII(_:)","doc_token":""},
-      {"kind":"swift.type.property","name":"IDNAHostV2.unicodeVersion","doc_token":""},
-      {"kind":"swift.enum","name":"ConnectErrorV2","doc_token":"`ConnectErrorV2`"},
-      {"kind":"swift.enum.case","name":"ConnectErrorV2.admissionRejected","doc_token":""},
-      {"kind":"swift.enum.case","name":"ConnectErrorV2.canceled","doc_token":""},
-      {"kind":"swift.enum.case","name":"ConnectErrorV2.connectionFailed","doc_token":""},
-      {"kind":"swift.enum.case","name":"ConnectErrorV2.expiredArtifact","doc_token":""},
-      {"kind":"swift.enum.case","name":"ConnectErrorV2.invalidOptions","doc_token":""},
-      {"kind":"swift.enum.case","name":"ConnectErrorV2.timeout","doc_token":""},
-      {"kind":"swift.enum.case","name":"ConnectErrorV2.unsupportedCarrier","doc_token":""},
-      {"kind":"swift.init","name":"ConnectErrorV2.init(rawValue:)","doc_token":""},
-      {"kind":"swift.init","name":"ConnectorOptionsV2.init(origin:admissionReasons:connectTimeout:trustRootsPEM:)","doc_token":""},
-      {"kind":"swift.init","name":"ConnectorV2.init(lease:options:)","doc_token":"`ConnectorV2`"},
-      {"kind":"swift.method","name":"ConnectorV2.connect()","doc_token":"`ConnectorV2.connect()`"},
-      {"kind":"swift.property","name":"ConnectorOptionsV2.admissionReasons","doc_token":""},
-      {"kind":"swift.property","name":"ConnectorOptionsV2.connectTimeout","doc_token":""},
-      {"kind":"swift.property","name":"ConnectorOptionsV2.origin","doc_token":""},
-      {"kind":"swift.property","name":"ConnectorOptionsV2.trustRootsPEM","doc_token":""},
-      {"kind":"swift.struct","name":"ConnectorOptionsV2","doc_token":"`ConnectorOptionsV2`"},
-      {"kind":"swift.struct","name":"ConnectorV2","doc_token":"`ConnectorV2`"},
-      {"kind":"swift.type.property","name":"RuntimeCapabilitiesV2.macOS","doc_token":"`RuntimeCapabilitiesV2.macOS`"}
+      {
+        "kind": "swift.class",
+        "name": "ArtifactV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ArtifactCodecErrorV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ArtifactLeaseErrorV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "ConnectErrorV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "JSONValueV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "SessionErrorV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "StreamMetadataErrorV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ArtifactCodecErrorV2.artifactTooLarge",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ArtifactCodecErrorV2.invalidArtifact",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ArtifactCodecErrorV2.invalidCandidate",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ArtifactLeaseErrorV2.alreadyCommitted",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectErrorV2.canceled",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectErrorV2.connectionFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectErrorV2.expiredArtifact",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectErrorV2.invalidOptions",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "ConnectErrorV2.timeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "JSONValueV2.array(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "JSONValueV2.bool(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "JSONValueV2.integer(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "JSONValueV2.null",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "JSONValueV2.object(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "JSONValueV2.string(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "SessionErrorV2.canceled",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "SessionErrorV2.closed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "SessionErrorV2.goingAway",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "SessionErrorV2.livenessFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "SessionErrorV2.operationFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "SessionErrorV2.rekeyFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "SessionErrorV2.resourceExhausted",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "SessionErrorV2.streamRejected",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "SessionErrorV2.streamReset",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "SessionErrorV2.timeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "StreamMetadataErrorV2.arrayTooLong",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "StreamMetadataErrorV2.depthExceeded",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "StreamMetadataErrorV2.emptyKey",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "StreamMetadataErrorV2.encodedTooLarge",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "StreamMetadataErrorV2.keyNotNormalized",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "StreamMetadataErrorV2.keyTooLong",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "StreamMetadataErrorV2.nodeLimitExceeded",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "StreamMetadataErrorV2.objectTooLarge",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "StreamMetadataErrorV2.stringTooLong",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "StreamMetadataErrorV2.unsafeInteger",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.func",
+        "name": "parseArtifactV2(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ArtifactLeaseV2.init(artifact:commitSpend:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectErrorV2.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectorOptionsV2.init(origin:connectTimeout:trustRootsPEM:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "ConnectorV2.init(lease:options:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "IncomingStreamV2.init(kind:metadata:stream:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "RPCErrorV2.init(code:message:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "SessionErrorV2.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "StreamMetadataV2.init(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ArtifactLeaseV2.commitSpend()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ByteStreamV2.close()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ByteStreamV2.closeWrite()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ByteStreamV2.read(maxBytes:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ByteStreamV2.reset()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ByteStreamV2.terminalError()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ByteStreamV2.write(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "ConnectorV2.connect()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCPeerV2.call(_:_:as:timeout:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "RPCPeerV2.notify(_:_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "SessionV2.acceptStream()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "SessionV2.close()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "SessionV2.openStream(kind:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "SessionV2.openStream(kind:metadata:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "SessionV2.probeLiveness()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "SessionV2.rekey()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "SessionV2.waitClosed()",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ArtifactLeaseV2.artifact",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ArtifactV2.customMirror",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ArtifactV2.debugDescription",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ArtifactV2.description",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ByteStreamV2.kind",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectorOptionsV2.connectTimeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectorOptionsV2.origin",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "ConnectorOptionsV2.trustRootsPEM",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "IncomingStreamV2.kind",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "IncomingStreamV2.metadata",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "IncomingStreamV2.stream",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCErrorV2.code",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "RPCErrorV2.message",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "SessionV2.rpc",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "StreamMetadataV2.encodedByteCount",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "StreamMetadataV2.values",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.protocol",
+        "name": "ByteStreamV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.protocol",
+        "name": "RPCPeerV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.protocol",
+        "name": "SessionV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ArtifactLeaseV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ConnectorOptionsV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "ConnectorV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "IncomingStreamV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "RPCErrorV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "StreamMetadataV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "StreamMetadataV2.empty",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "StreamMetadataV2.maxArrayItems",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "StreamMetadataV2.maxDepth",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "StreamMetadataV2.maxEncodedBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "StreamMetadataV2.maxKeyBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "StreamMetadataV2.maxNodes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "StreamMetadataV2.maxObjectKeys",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "StreamMetadataV2.maxStringBytes",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.type.property",
+        "name": "StreamMetadataV2.maximumSafeInteger",
+        "doc_token": ""
+      }
     ]
   },
   "rust": {
@@ -2264,164 +1071,31 @@
       "`flowersec`",
       "`Connector`",
       "`ConnectorOptions`",
-      "`artifact_v2::ArtifactLease`",
       "`Session`"
     ],
     "compile_entries": [
-      "let _ = flowersec::Connector::new",
-      "let _ = flowersec::Connector::connect",
+      "let _ = std::mem::size_of::<flowersec::Artifact>()",
+      "let _ = std::mem::size_of::<flowersec::ArtifactError>()",
+      "let _ = std::mem::size_of::<flowersec::ArtifactLease>()",
+      "let _ = std::mem::size_of::<flowersec::ArtifactSpendError>()",
+      "let _: Option<&dyn flowersec::ByteStream> = None",
+      "let _ = std::mem::size_of::<flowersec::ConnectError>()",
+      "let _ = std::mem::size_of::<flowersec::ConnectErrorCode>()",
+      "let _ = std::mem::size_of::<flowersec::Connector>()",
       "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
-      "let _ = std::mem::size_of::<flowersec::artifact_v2::Artifact>()",
-      "let _ = std::mem::size_of::<flowersec::artifact_v2::ArtifactLease>()",
-      "let _ = std::mem::size_of::<flowersec::artifact_v2::ArtifactError>()",
-      "let _ = std::mem::size_of::<flowersec::artifact_v2::ArtifactSpendError>()",
-      "let _ = |input: &[u8]| flowersec::artifact_v2::Artifact::parse(input)",
-      "let _ = flowersec::artifact_v2::ArtifactLease::artifact",
-      "let _ = flowersec::artifact_v2::ArtifactLease::commit_spend",
-      "let _ = flowersec::artifact_v2::ArtifactLease::is_committed",
-      "let _: Option<&dyn flowersec::transport_v2::SessionV2> = None",
-      "let _: Option<&dyn flowersec::transport_v2::ByteStreamV2> = None",
-      "let _: Option<&dyn flowersec::transport_v2::RpcPeerV2> = None",
-      "let _ = std::mem::size_of::<flowersec::transport_v2::CarrierKind>()",
-      "let _ = std::mem::size_of::<flowersec::transport_v2::NetworkMode>()",
-      "let _ = std::mem::size_of::<flowersec::transport_v2::SessionRole>()",
-      "let _ = std::mem::size_of::<flowersec::transport_v2::PathKind>()",
-      "let _ = std::mem::size_of::<flowersec::transport_v2::CapabilityTupleV2>()",
-      "let _ = std::mem::size_of::<flowersec::transport_v2::UnsupportedRuntimeCarrierV2>()",
-      "let _ = std::mem::size_of::<flowersec::transport_v2::RuntimeCapabilityDescriptorV2>()",
-      "let _ = std::mem::size_of::<flowersec::transport_v2::RuntimeCapabilityCodecErrorV2>()",
-      "let _ = std::mem::size_of::<flowersec::transport_v2::IncomingStreamV2>()",
-      "let _ = flowersec::transport_v2::CapabilityTupleV2::new",
-      "let _ = flowersec::transport_v2::CapabilityTupleV2::is_valid",
-      "let _ = flowersec::transport_v2::validate_capabilities_v2",
-      "let _ = flowersec::transport_v2::NATIVE_RUST_CAPABILITIES_V2",
-      "let _ = flowersec::transport_v2::native_rust_capability_descriptor_v2",
-      "let _ = flowersec::transport_v2::encode_runtime_capability_descriptor_v2",
-      "let _ = flowersec::transport_v2::decode_runtime_capability_descriptor_v2",
-      "let _ = flowersec::transport_v2::runtime_capability_digest_v2",
-      "let _ = flowersec::transport_v2::runtime_capability_digest_hex_v2",
-      "let _ = flowersec::transport_v2::validate_runtime_capability_descriptor_v2",
-      "let _ = |session: &dyn flowersec::transport_v2::SessionV2| { let _ = session.wait_closed(); }",
-      "let _ = flowersec::protocol_v2::SETUP_PREFACE_V2_SIZE",
-      "let _ = flowersec::protocol_v2::RECORD_HEADER_V2_SIZE",
-      "let _ = flowersec::protocol_v2::MAX_CIPHERTEXT_V2_BYTES",
-      "let _ = std::mem::size_of::<flowersec::protocol_v2::ProtocolV2Error>()",
-      "let _ = std::mem::size_of::<flowersec::protocol_v2::DirectionV2>()",
-      "let _ = std::mem::size_of::<flowersec::protocol_v2::CipherSuiteV2>()",
-      "let _ = std::mem::size_of::<flowersec::protocol_v2::StreamOpenerRoleV2>()",
-      "let _ = std::mem::size_of::<flowersec::protocol_v2::EpochRootsV2>()",
-      "let _ = std::mem::size_of::<flowersec::protocol_v2::RecordMaterialV2>()",
-      "let _ = std::mem::size_of::<flowersec::protocol_v2::SetupPrefaceV2>()",
-      "let _ = std::mem::size_of::<flowersec::protocol_v2::RecordHeaderV2>()",
-      "let _ = std::mem::size_of::<flowersec::protocol_v2::InnerRecordTypeV2>()",
-      "let _ = flowersec::protocol_v2::derive_epoch_zero_v2",
-      "let _ = flowersec::protocol_v2::derive_stream_material_v2",
-      "let _ = flowersec::protocol_v2::compute_setup_mac_v2",
-      "let _ = flowersec::protocol_v2::encode_inner_record_v2",
-      "let _ = flowersec::protocol_v2::record_aad_v2",
-      "let _ = flowersec::protocol_v2::seal_record_v2",
-      "let _ = flowersec::protocol_v2::open_record_v2",
-      "let _ = flowersec::raw_quic_v2::ALPN_DIRECT",
-      "let _ = flowersec::raw_quic_v2::ALPN_TUNNEL",
-      "let _ = std::mem::size_of::<flowersec::raw_quic_v2::RawQuicPathProfile>()",
-      "let _ = flowersec::raw_quic_v2::RawQuicPathProfile::alpn",
-      "let _ = flowersec::raw_quic_v2::RawQuicLimits::default()",
-      "let _ = flowersec::raw_quic_v2::RawQuicLimits::validate",
-      "let _ = std::mem::size_of::<flowersec::raw_quic_v2::RawQuicError>()",
-      "let _ = std::mem::size_of::<flowersec::raw_quic_v2::RawQuicClientConfig>()",
-      "let _ = std::mem::size_of::<flowersec::raw_quic_v2::RawQuicServerConfig>()",
-      "let _ = std::mem::size_of::<flowersec::raw_quic_v2::RawQuicListener>()",
-      "let _ = std::mem::size_of::<flowersec::raw_quic_v2::RawQuicApplicationError>()",
-      "let _ = std::mem::size_of::<flowersec::raw_quic_v2::RawQuicSession>()",
-      "let _ = std::mem::size_of::<flowersec::raw_quic_v2::RawQuicStream>()",
-      "let _ = flowersec::raw_quic_v2::RawQuicClientConfig::new",
-      "let _ = flowersec::raw_quic_v2::RawQuicServerConfig::new",
-      "let _ = flowersec::raw_quic_v2::RawQuicListener::bind",
-      "let _ = flowersec::raw_quic_v2::RawQuicSession::dial",
-      "let _ = flowersec::raw_quic_v2::RawQuicSession::open_stream",
-      "let _ = flowersec::raw_quic_v2::RawQuicSession::accept_stream",
-      "let _ = flowersec::raw_quic_v2::RawQuicSession::close_with_error",
-      "let _ = flowersec::raw_quic_v2::RawQuicSession::migrate_local_address",
-      "let _ = flowersec::raw_quic_v2::RawQuicStream::id",
-      "let _ = flowersec::raw_quic_v2::RawQuicStream::read",
-      "let _ = flowersec::raw_quic_v2::RawQuicStream::write",
-      "let _ = flowersec::raw_quic_v2::RawQuicStream::close_write",
-      "let _ = flowersec::raw_quic_v2::RawQuicStream::reset"
+      "let _ = std::mem::size_of::<flowersec::IncomingStream>()",
+      "let _ = std::mem::size_of::<flowersec::JsonObject>()",
+      "let _: Option<&dyn flowersec::RpcPeer> = None",
+      "let _: Option<&dyn flowersec::Session> = None",
+      "let _ = std::mem::size_of::<flowersec::SessionError>()",
+      "let _ = std::mem::size_of::<flowersec::StreamTerminalError>()"
     ]
   },
   "coverage": {
     "go": [
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/client",
-        "min_statements_pct": 72
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/crypto/e2ee",
-        "min_statements_pct": 72
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit",
-        "min_statements_pct": 86
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/http",
-        "min_statements_pct": 74
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer",
-        "min_statements_pct": 78
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/token",
-        "min_statements_pct": 86
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/endpoint",
-        "min_statements_pct": 68
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve",
-        "min_statements_pct": 80
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/fserrors",
-        "min_statements_pct": 67
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/mux/yamux",
-        "min_statements_pct": 70
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/observability/prom",
-        "min_statements_pct": 90
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/proxy",
-        "min_statements_pct": 67
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/protocolio",
-        "min_statements_pct": 69
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/realtime/ws",
-        "min_statements_pct": 72
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/reconnect",
-        "min_statements_pct": 60
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/rpc",
-        "min_statements_pct": 91.5
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/transportsecurity",
-        "min_statements_pct": 19
-      },
-      {
-        "package": "github.com/floegence/flowersec/flowersec-go/v2/tunnel/server",
-        "min_statements_pct": 69
+        "package": "github.com/floegence/flowersec/flowersec-go/v2",
+        "min_statements_pct": 25
       }
     ],
     "ts": {

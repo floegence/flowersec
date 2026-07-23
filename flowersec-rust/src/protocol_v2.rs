@@ -181,6 +181,7 @@ pub struct EpochRootsV2 {
 }
 
 impl EpochRootsV2 {
+    #[cfg(test)]
     pub fn epoch_secret(&self) -> &[u8; 32] {
         &self.epoch_secret
     }
@@ -217,6 +218,7 @@ pub struct RecordMaterialV2 {
 }
 
 impl RecordMaterialV2 {
+    #[cfg(test)]
     pub fn secret(&self) -> &[u8; 32] {
         &self.secret
     }

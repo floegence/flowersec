@@ -15,163 +15,99 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center">
-  <strong>Comunicação criptografada de ponta a ponta, implementada de forma consistente em Go, TypeScript, Swift e Rust.</strong>
-</p>
-
-<p align="center">
-  Crie conexões seguras entre navegadores, Agents e serviços. Transporte RPC, eventos, fluxos de bytes, HTTP e WebSocket em uma única sessão direta ou com relay, sem expor ao relay o texto em claro da aplicação.
-</p>
-
-<p align="center">
-  <a href="#try-it-locally">Experimentar</a> |
-  <a href="#sdks-and-cookbooks">Cookbooks</a> |
-  <a href="#portable-contract">SDKs</a> |
-  <a href="#security">Segurança</a> |
-  <a href="#deploy-and-develop">Implantar</a>
-</p>
+<p align="center"><strong>Sessões independentes de carrier, com criptografia de ponta a ponta, para Go, TypeScript, Swift e Rust.</strong></p>
 
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
-![Languages](https://img.shields.io/badge/SDKs-Go%20%7C%20TypeScript%20%7C%20Swift%20%7C%20Rust-2563eb)
-![Security](https://img.shields.io/badge/data%20plane-E2EE-7c3aed)
-![Interop](https://img.shields.io/badge/interop-Go--reference-334155)
 
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
-## Por que Flowersec
+## Por que usar Flowersec
 
-- **Um único contrato portátil.** Go, TypeScript, Swift e Rust implementam o mesmo formato de rede e o mesmo comportamento de segurança, sessão, RPC, Endpoint, Controlplane, reconexão, proxy e observabilidade.
-- **Caminhos neutros ao Carrier.** Transport v2 trata WebSocket, raw QUIC e WebTransport como Carriers equivalentes. Capacidades Runtime exatas e política de produto escolhem candidatos, sem protocolo primário ou fallback permanente.
-- **Uma sessão, vários fluxos.** Multiplexe chamadas RPC, eventos, fluxos de bytes personalizados, requisições HTTP e tráfego WebSocket sobre a mesma conexão criptografada.
-- **Os componentes necessários estão incluídos.** O Flowersec fornece APIs Endpoint nativas, um Browser Runtime TypeScript, um Tunnel de código aberto, um Proxy Gateway e CLIs operacionais.
-
-Casos de uso comuns incluem Agents remotos, serviços privados, ferramentas Web internas, consoles operacionais no navegador e Controlplanes em tempo real.
+- Um único contrato para artifacts e sessões opacos nos quatro SDKs.
+- WebSocket, raw QUIC e WebTransport são opções de carrier equivalentes.
+- RPC e fluxos de bytes compartilham uma sessão autenticada sem expor às aplicações objetos de carrier, wire, chave ou ledger.
+- Relays em modo Tunnel encaminham fluxos criptografados sem encerrar a criptografia da aplicação.
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>
 
 ## Como funciona
 
-| Caminho | Formato da conexão | Limite de confiança |
+| Caminho | Formato da conexão | Transporte dos fluxos |
 | --- | --- | --- |
-| Direct | O cliente se conecta a um Endpoint de servidor acessível | Cliente e Endpoint encerram E2EE; nenhuma Controlplane online é necessária no caminho de dados |
-| Tunnel | Cliente e Endpoint se conectam ao mesmo Tunnel com Grants de uso único | A Controlplane prepara a conexão; o Tunnel associa as pontas e encaminha bytes criptografados |
-| Browser proxy | Um Browser Runtime ou Gateway transporta HTTP e WebSocket por Flowersec Streams | O modo Runtime preserva E2EE até o Endpoint; o modo Gateway confia deliberadamente ao Gateway o texto em claro L7 |
+| Direct | O cliente se conecta a um endpoint por meio de um candidato compatível | WebSocket usa Yamux local em cada salto; carriers da família QUIC usam fluxos bidirecionais nativos |
+| Tunnel | As pontas do cliente e do servidor são unidas por carriers compatíveis selecionados de forma independente | O Tunnel mapeia fluxos criptografados entre as pontas sem escolher um carrier principal |
 
-A Controlplane participa apenas da preparação da conexão. Ela emite ConnectArtifacts e Grants, mas não fica no caminho dos dados da aplicação criptografados de ponta a ponta.
-
-```mermaid
-flowchart LR
-  CP[Controlplane] -. "ArtifactV2 + signed capability tuples" .-> C[Client runtime]
-  C -->|"WebSocket: hop-local Yamux"| E[Endpoint]
-  C -->|"raw QUIC: native bidirectional streams"| E
-  B[Browser runtime] -->|"WebTransport: native HTTP/3 streams"| E
-  C -->|"mixed carrier encrypted bytes"| T[Tunnel]
-  B -->|"mixed carrier encrypted bytes"| T
-  T --> E
-```
-
-Transport v2 treats WebSocket, raw QUIC, and WebTransport as equal carrier classes. WebSocket keeps hop-local Yamux; raw QUIC and WebTransport use native bidirectional streams and disable 0-RTT and QUIC DATAGRAM. The exact runtime support matrix and breaking lifecycle migration are maintained in the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](docs/MIGRATION_TRANSPORT_V2.md).
+Raw QUIC e WebTransport preservam o comportamento nativo de FIN, RESET_STREAM, STOP_SENDING, controle de fluxo e migração. O Flowersec desativa o 0-RTT da aplicação e não usa QUIC DATAGRAM.
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
 
-## Experimentar localmente
+## Teste localmente
 
-A partir de um checkout do código-fonte, compile o pacote TypeScript e inicie a Demo Stack compartilhada:
+Execute as suítes de testes unitários v2:
 
 ```bash
-make ts-ensure-deps ts-build
-node ./examples/ts/dev-server.mjs | tee dev.json
+make transport-v2-unit
 ```
 
-O JSON gerado contém URLs de navegador para Direct, Tunnel e Proxy Runtime de ponta a ponta, além da URL da Controlplane usada pelos exemplos de SDK nativos. Os Release Demo Bundles incluem os binários necessários e o pacote TypeScript pré-compilado.
-
-Consulte o [índice de Cookbooks](examples/README.md) para os comandos exatos de Go, TypeScript, Swift e Rust.
+Para obter evidências específicas de cada carrier, execute `make transport-conformance-smoke`, `make transport-browser-smoke` e `make transport-interop-smoke`.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
 
 ## SDKs e Cookbooks
 
-| Linguagem | Pacote e instalação | Cookbook |
+| Linguagem | Pacote | Entrada pública |
 | --- | --- | --- |
-| Go | `go get github.com/floegence/flowersec/flowersec-go/v2@latest` | [Go](examples/go/README.md) |
-| TypeScript | `npm install @floegence/flowersec-core` | [TypeScript](examples/ts/README.md) |
-| Swift | Produto SwiftPM `Flowersec` | [Swift](examples/swift/README.md) |
-| Rust | `cargo add flowersec` | [Rust](examples/rust/README.md) |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector` |
+| TypeScript | `@floegence/flowersec-core` | entradas opacas v2 na raiz, em `/browser` e em `/node` |
+| Swift | Produto SwiftPM `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
+| Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
 
-Novas integrações seguem um único caminho independente de linguagem:
-
-```text
-ArtifactV2 -> equal candidate selection -> authenticated SessionV2 -> RPC / stream / proxy
-```
-
-Os Cookbooks apontam diretamente para código executável, em vez de duplicar grandes exemplos de API em vários documentos.
+O [índice de Cookbooks](examples/README.md) contém somente exemplos v2 e comandos de verificação.
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
 
-## Contrato portátil
+## Contrato portável
 
 | Capacidade | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| Sessões Client e Endpoint | Sim | Sim | Sim | Sim |
-| RPC, eventos e Streams personalizados | Sim | Sim | Sim | Sim |
-| Artifacts de Controlplane e reconexão | Sim | Sim | Sim | Sim |
-| Contrato Proxy HTTP e WebSocket | Sim | Sim | Sim | Sim |
-| Diagnósticos compartilhados e limites de recursos | Sim | Sim | Sim | Sim |
+| Artifact opaco, connector, sessão, RPC e fluxos de bytes | Sim | Sim | Sim | Sim |
+| Discagem WebSocket em produção | Sim | Browser e Node.js | macOS | Não |
+| Discagem raw QUIC em produção | Sim | Não | Não | Sim |
+| Discagem WebTransport em produção | Sim | Browser | Não | Não |
+| Suporte a listener | APIs da biblioteca Go | Restrições do ambiente de execução do navegador | Não anunciado | Não anunciado |
 
-As responsabilidades específicas de Runtime são explícitas: TypeScript mantém a integração Browser e Service Worker; Go mantém o Tunnel compartilhado, o Proxy Gateway e as CLIs; Swift e Rust fornecem integração SDK nativa sem duplicar esses componentes.
-
-A interoperabilidade é verificada continuamente nas duas direções com o Go Reference Client/Server para TypeScript, Swift e Rust, cobrindo Direct, Tunnel, RPC, Streams, Liveness, Rekey, Reset e tráfego Proxy.
-
-A tabela acima descreve as capacidades portáteis do Transport v1. As capacidades de rede de produção do Transport v2 seguem Runtime Tuples exatos.
-
-| Transport v2 capability | Go | TypeScript | Swift | Rust |
-| --- | :---: | :---: | :---: | :---: |
-| WebSocket carrier | Yes | Browser: Yes / Node: No | No | No |
-| raw QUIC carrier | Yes | No | No | Tested adapter; not advertised |
-| WebTransport carrier | Yes | Browser: Yes / Node: No | No | No |
-
-O smoke local de Transport v2 não é aprovação de produção entre linguagens. A release exige Evidence assinada de navegador real, rede fraca, qlog, migração e desempenho. A CLI `flowersec-tunnel` e os binários Cookbook atuais continuam Transport v1.
+Cada linha de suporte é respaldada por código de connector de produção e testes de ponta a ponta. Carriers sem suporte falham de forma fechada; nunca funcionam como fallbacks silenciosos. Os descritores de capacidade e a seleção de carrier permanecem internos.
 
 <!-- readme-section:security -->
 <a id="security"></a>
 
 ## Segurança
 
-- Conexões de alto nível exigem `wss://` por padrão. O desenvolvimento local com `ws://` requer uma Loopback Policy explícita.
-- Tunnel Grants são de uso único. Uma reconexão deve obter um novo `ConnectArtifact` ou Grant.
-- Após o handshake E2EE, o Tunnel não pode descriptografar os dados da aplicação. TLS ainda protege os metadados de conexão e Bearer Tokens anteriores a E2EE.
-- O modo Browser Runtime preserva E2EE através do relay. O Proxy Gateway é deliberadamente um componente L7 confiável.
+- Artifacts são handles opacos, limitados e de uso único. O registro persistente do consumo é concluído antes do envio do primeiro byte de credencial.
+- Carriers da família QUIC exigem TLS 1.3, ALPN exato, raízes de confiança explícitas e early data desativado.
+- Erros públicos são sanitizados e limitados; detalhes de candidate, wire, chave e ledger permanecem internos.
+- Cancelamento de sessão, deadlines, FIN, reset, liveness, rekey e limpeza obedecem a limites definidos.
 
-Antes do uso em produção, revise o [modelo de ameaças](docs/THREAT_MODEL.md), o [protocolo](docs/PROTOCOL.md) e o [modelo de erros](docs/ERROR_MODEL.md).
+Consulte a [arquitetura do Transport v2](docs/TRANSPORT_V2_ARCHITECTURE.md) e o [modelo de ameaças](docs/THREAT_MODEL.md).
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
 
 ## Implantação e desenvolvimento
 
-Guias de implantação:
+O runtime do Flowersec fornece as implementações dos listeners de produção para WebSocket, raw QUIC e WebTransport. Os SDKs de aplicação recebem apenas artifacts e sessões opacos; nenhuma CLI de compatibilidade removida faz parte do contrato v2.
 
-- [Auto-hospedar o Tunnel](docs/TUNNEL_DEPLOYMENT.md)
-- [Implantar o Proxy Gateway](docs/PROXY_GATEWAY_DEPLOYMENT.md)
-
-Estrutura do repositório:
-
-- `flowersec-go/`, `flowersec-ts/`, `flowersec-swift/`, `flowersec-rust/`: SDKs por linguagem
-- `examples/`: Cookbooks executáveis e Demo Stack compartilhada
-- `idl/`: definições de protocolo compartilhadas e entradas de contratos gerados
-- `docs/`: contratos duradouros de protocolo, segurança, interoperabilidade e implantação
-
-Instale os Hooks gerenciados pelo repositório uma vez em cada Worktree e execute a verificação local completa antes da integração:
+Instale os hooks do repositório e execute a verificação oficial antes da integração:
 
 ```bash
 make install-hooks
 make check
 ```
 
-O Flowersec é distribuído sob a [MIT License](LICENSE). Pacotes, binários, imagens e Release Notes publicados estão disponíveis em [GitHub Releases](https://github.com/floegence/flowersec/releases).
+Flowersec está disponível sob a [licença MIT](LICENSE). Os artefatos de release são publicados por meio do [GitHub Releases](https://github.com/floegence/flowersec/releases).

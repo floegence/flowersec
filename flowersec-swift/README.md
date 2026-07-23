@@ -1,50 +1,39 @@
 # Flowersec Swift
 
-The native Swift SDK for Flowersec Transport v2 end-to-end encrypted sessions on Apple platforms.
+The native Swift SDK for Flowersec v2 end-to-end encrypted sessions on Apple platforms.
 
 ## Install
 
 The repository root exposes the Swift package:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.28.0")
+.package(url: "https://github.com/floegence/flowersec.git", from: "2.0.0")
 ```
 
 Use the `Flowersec` library product.
 
-## Transport v2 Support
+## Public Contract
 
-Swift publishes the portable Transport v2 artifact, wire, cryptographic, session, stream, FIN/reset, and asynchronous close contracts. On macOS, `ConnectorV2` establishes direct and tunneled WebSocket sessions from an opaque `ArtifactLeaseV2`; it validates TLS and the exact v2 WebSocket subprotocol before durable spend and FSB2 admission. Raw QUIC and WebTransport remain outside the registered Network.framework contract. The cross-Apple and iOS capability descriptors remain conservative until equivalent physical iOS evidence exists.
+Parse an opaque `ArtifactV2` with `parseArtifactV2(...)`, bind it to a single-use `ArtifactLeaseV2`, initialize `ConnectorV2` with `ConnectorOptionsV2`, and call `ConnectorV2.connect()`. Applications receive only the carrier-neutral `SessionV2`, `RPCPeerV2`, `ByteStreamV2`, `IncomingStreamV2`, and bounded `StreamMetadataV2` contracts.
+
+`ConnectErrorV2` and `SessionErrorV2` are closed redacted error sets. A remote application RPC failure is `RPCErrorV2` with only its semantic code and sanitized message. Candidate credentials, carrier choice, admission reasons, path, endpoint identities, logical stream IDs, wire state, cryptographic keys, and Yamux are not public.
+
+## Production Support
 
 WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
-QUIC-family carriers use native QUIC streams and never Yamux.
-Flowersec application 0-RTT is disabled.
-Flowersec does not use QUIC DATAGRAM frames.
-`flowersec-tunnel` remains a v1 WebSocket/Yamux CLI.
+
+Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. The Swift SDK support below is narrower than the protocol carrier set.
+
+`ConnectorV2` establishes direct and tunneled WebSocket sessions on macOS. It validates TLS and the exact Flowersec v2 WebSocket subprotocol before durable spend and admission. WebSocket keeps Yamux internal to its hop. Raw QUIC and WebTransport are not exposed by the current Swift connector.
 
 Transport v2 production carrier support: macOS supports WebSocket direct and tunnel dial sessions; iOS advertises no production carrier.
 
-Use `RuntimeCapabilitiesV2.macOS` for macOS candidate negotiation. `RuntimeCapabilitiesV2.apple` intentionally does not inherit macOS-only evidence.
+Flowersec disables application 0-RTT and does not use QUIC DATAGRAM.
 
-Create `ConnectorOptionsV2` with trust, admission-reason, and deadline policy, initialize `ConnectorV2` from the opaque lease, then call `ConnectorV2.connect()`. Failures are projected through the stable, redacted `ConnectErrorV2` codes without exposing candidate credentials or carrier internals.
-
-Transport v2 defines WebSocket, raw QUIC, and WebTransport as equal carrier classes, keeps Yamux internal and only on WebSocket hops, and disables 0-RTT and QUIC DATAGRAM. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](../docs/MIGRATION_TRANSPORT_V2.md).
+WebSocket connections require TLS 1.3 and exact Flowersec v2 subprotocol negotiation. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) for the internal carrier contract.
 
 ## Cookbook
 
-Start with the [Swift cookbook](https://github.com/floegence/flowersec/tree/main/examples/swift). It prints the canonical Apple capability descriptor and can establish a macOS WSS session from an opaque Transport v2 artifact.
+The [Swift cookbook](https://github.com/floegence/flowersec/tree/main/examples/swift) prints the opaque public contract marker and can establish a macOS WSS session from a fresh artifact.
 
-## Entrypoints
-
-- Artifact boundary: `parseArtifactV2` and `ArtifactLeaseV2`
-- Session connect: `ConnectorV2.connect()`
-- Sessions and streams: `SessionV2`, `RPCPeerV2`, and `ByteStreamV2`
-- Capability negotiation: `RuntimeCapabilitiesV2`
-
-WebSocket connections require TLS 1.3 and exact Flowersec v2 subprotocol negotiation.
-
-## Runtime Boundaries
-
-Swift owns the native Apple-platform implementation of the portable contract. Browser Service Worker runtime APIs remain TypeScript-owned, while shared tunnel, gateway, and helper binaries remain Go-owned.
-
-Review the shared [API contract](../docs/API_CONTRACT.md), [protocol](../docs/PROTOCOL.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).
+Review the shared [API contract](../docs/API_CONTRACT.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).

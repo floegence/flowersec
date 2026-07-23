@@ -3,18 +3,17 @@ import { resolve } from "node:path";
 
 export const transportV2CommonReadmeLiterals = Object.freeze([
   "WebSocket, raw QUIC, and WebTransport are equal carrier candidates.",
-  "QUIC-family carriers use native QUIC streams and never Yamux.",
-  "Flowersec application 0-RTT is disabled.",
-  "Flowersec does not use QUIC DATAGRAM frames.",
+  "Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior.",
+  "Flowersec disables application 0-RTT and does not use QUIC DATAGRAM.",
 ]);
 
 export const transportV2ReadmeContracts = Object.freeze({
-  "README.md": "Transport v2 production carrier support: Go native supports WebSocket, raw QUIC, and WebTransport; TypeScript browsers support WebSocket and WebTransport; TypeScript Node.js supports WebSocket dialing for direct clients and both tunnel roles; Rust native supports raw QUIC client dialing; Swift macOS supports WebSocket direct and tunnel dial sessions; Swift iOS advertises no production carrier.",
+  "README.md": "Unsupported carriers fail closed; they are never silent fallbacks.",
   "flowersec-go/README.md": "Transport v2 production carrier support: WebSocket, raw QUIC, and WebTransport.",
   "flowersec-ts/README.md": "Transport v2 production carrier support: browsers support WebSocket and WebTransport; Node.js supports WebSocket dialing for direct clients and both tunnel roles.",
   "flowersec-rust/README.md": "Transport v2 production carrier support: raw QUIC client dialing for direct and tunnel paths.",
   "flowersec-swift/README.md": "Transport v2 production carrier support: macOS supports WebSocket direct and tunnel dial sessions; iOS advertises no production carrier.",
-  "examples/README.md": "Transport v2 example support: none; the runnable examples remain v1 WebSocket/Yamux examples.",
+  "examples/README.md": "Every maintained cookbook is v2-only.",
 });
 
 export function validateTransportV2Readmes(repoRoot) {

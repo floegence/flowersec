@@ -74,7 +74,6 @@ final class TransportV2SessionTests: XCTestCase {
       metadata: try StreamMetadataV2(["name": .string("cafe\u{301}")])
     )
     let inbound = try await serverSession.acceptStream()
-    XCTAssertEqual(inbound.id, 1)
     XCTAssertEqual(inbound.kind, "测试/echo")
     XCTAssertEqual(inbound.metadata.values["name"], .string("café"))
 
@@ -88,7 +87,6 @@ final class TransportV2SessionTests: XCTestCase {
 
     let reverse = try await serverSession.openStream(kind: "reverse")
     let reverseInbound = try await clientSession.acceptStream()
-    XCTAssertEqual(reverseInbound.id, 2)
     let reverseWritten = try await reverse.write(Data("world".utf8))
     XCTAssertEqual(reverseWritten, 5)
     let reverseReceived = try await reverseInbound.stream.read(maxBytes: 32)
@@ -847,7 +845,7 @@ final class TransportV2SessionTests: XCTestCase {
 
     let stream = try await clientSession.openStream(kind: "after-cancelled-accepts")
     let incoming = try await serverSession.acceptStream()
-    XCTAssertEqual(stream.id, incoming.id)
+    XCTAssertEqual(stream.kind, incoming.kind)
     await clientSession.close()
     await serverSession.close()
   }
@@ -905,8 +903,7 @@ final class TransportV2SessionTests: XCTestCase {
     try await clientSession.rekey()
     let stream = try await clientSession.openStream(kind: "after-reset")
     let incoming = try await serverSession.acceptStream()
-    XCTAssertEqual(stream.id, 3)
-    XCTAssertEqual(incoming.id, 3)
+    XCTAssertEqual(stream.kind, incoming.kind)
     await clientSession.close()
     await serverSession.close()
   }
@@ -1062,8 +1059,7 @@ final class TransportV2SessionTests: XCTestCase {
     try await clientSession.rekey()
     let stream = try await clientSession.openStream(kind: "after-cancel")
     let incoming = try await serverSession.acceptStream()
-    XCTAssertEqual(stream.id, 3)
-    XCTAssertEqual(incoming.id, 3)
+    XCTAssertEqual(stream.kind, incoming.kind)
     await clientSession.close()
     await serverSession.close()
   }
@@ -1093,8 +1089,7 @@ final class TransportV2SessionTests: XCTestCase {
 
     let stream = try await clientSession.openStream(kind: "after-late-fss2")
     let incoming = try await serverSession.acceptStream()
-    XCTAssertEqual(stream.id, 3)
-    XCTAssertEqual(incoming.id, 3)
+    XCTAssertEqual(stream.kind, incoming.kind)
     await clientSession.close()
     await serverSession.close()
   }
@@ -1125,8 +1120,7 @@ final class TransportV2SessionTests: XCTestCase {
     await gate.release()
     let stream = try await clientSession.openStream(kind: "after-cancel")
     let incoming = try await serverSession.acceptStream()
-    XCTAssertEqual(stream.id, 3)
-    XCTAssertEqual(incoming.id, 3)
+    XCTAssertEqual(stream.kind, incoming.kind)
     await clientSession.close()
     await serverSession.close()
   }

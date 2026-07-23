@@ -3,9 +3,8 @@ package flowersec_test
 import (
 	"context"
 	"crypto/x509"
-	"errors"
+	"fmt"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +13,7 @@ import (
 
 func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 	optionsType := reflect.TypeOf(flowersec.ConnectorOptions{})
-	wantFields := []string{"TrustRoots", "Origin", "AdmissionReasons", "ConnectTimeout"}
+	wantFields := []string{"TrustRoots", "Origin", "ConnectTimeout"}
 	if optionsType.NumField() != len(wantFields) {
 		t.Fatalf("ConnectorOptions has %d fields, want %d", optionsType.NumField(), len(wantFields))
 	}
@@ -26,8 +25,7 @@ func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 
 	options := flowersec.ConnectorOptions{
 		TrustRoots: x509.NewCertPool(), Origin: "https://client.example",
-		AdmissionReasons: flowersec.AdmissionReasonRegistry{"capacity": {}},
-		ConnectTimeout:   time.Second,
+		ConnectTimeout: time.Second,
 	}
 	var connector *flowersec.Connector
 	var connect func(context.Context) (flowersec.Session, error)
@@ -36,22 +34,48 @@ func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 		connect = connector.Connect
 	}
 	_ = connect
+	if got, want := fmt.Sprintf("%v %#v", connector, connector), "Flowersec.Connector flowersec.Connector"; got != want {
+		t.Fatalf("connector formatting = %q, want %q", got, want)
+	}
 }
 
 func TestConnectErrorPublicSnapshotContainsNoInternalDetail(t *testing.T) {
-	err := &flowersec.ConnectError{Path: "auto", Stage: "connect", Code: "dial_failed"}
-	want := "Flowersec connection failed (path=auto stage=connect code=dial_failed)"
+	var err *flowersec.ConnectError
+	want := "<nil>"
 	if got := err.Error(); got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
-	if !errors.Is(err, flowersec.ErrConnectionFailed) {
-		t.Fatal("ConnectError does not unwrap to the stable public sentinel")
+	if err.Code() != flowersec.ConnectFailed {
+		t.Fatalf("nil ConnectError code = %q, want %q", err.Code(), flowersec.ConnectFailed)
 	}
-	for _, forbidden := range []string{"candidate", "carrier", "wss://", "quic"} {
-		if strings.Contains(strings.ToLower(err.Error()), forbidden) {
-			t.Fatalf("Error() leaked forbidden detail %q", forbidden)
+	var _ interface{ Is(error) bool } = err
+	var _ interface{ Unwrap() error } = (*flowersec.SessionError)(nil)
+}
+
+func TestRPCErrorPublicSnapshotPreservesApplicationSemantics(t *testing.T) {
+	errorType := reflect.TypeOf(flowersec.RPCError{})
+	wantFields := []string{"Code", "Message"}
+	if errorType.NumField() != len(wantFields) {
+		t.Fatalf("RPCError has %d fields, want %d", errorType.NumField(), len(wantFields))
+	}
+	for index, want := range wantFields {
+		if got := errorType.Field(index).Name; got != want {
+			t.Fatalf("RPCError field %d = %q, want %q", index, got, want)
 		}
 	}
+	pointerType := reflect.PointerTo(errorType)
+	if pointerType.NumMethod() != 1 || pointerType.Method(0).Name != "Error" {
+		t.Fatalf("RPCError methods = %v, want only Error", pointerType)
+	}
+
+	err := &flowersec.RPCError{Code: 404, Message: "handler not found"}
+	if got, want := err.Error(), "Flowersec RPC failed (code=404)"; got != want {
+		t.Fatalf("RPC Error() = %q, want %q", got, want)
+	}
+	if err.Code != 404 || err.Message != "handler not found" {
+		t.Fatalf("RPC error = %#v, want application code/message", err)
+	}
+	var _ error = err
 }
 
 func TestConnectorRejectsInvalidCarrierNeutralOptions(t *testing.T) {

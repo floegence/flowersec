@@ -7,9 +7,9 @@ kind=${1:-}
 destination=${2:-}
 
 case "$kind" in
-  tunnel|tools|gateway|demos) ;;
+  runtime) ;;
   *)
-    echo "usage: scripts/stage-release-compliance.sh <tunnel|tools|gateway|demos> <destination>" >&2
+    echo "usage: scripts/stage-release-compliance.sh runtime <destination>" >&2
     exit 2
     ;;
 esac

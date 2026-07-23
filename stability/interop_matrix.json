@@ -1,39 +1,52 @@
 {
-  "version": 1,
+  "version": 2,
   "reference_language": "go",
   "languages": ["go", "typescript", "swift", "rust"],
-  "profile_path": "testdata/interop/v1/profiles.json",
-  "cases": [
-    "connect",
-    "rekey",
-    "streams",
-    "rpc",
-    "liveness",
-    "proxy",
-    "reconnect",
-    "limits",
-    "diagnostics"
-  ],
+  "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
   "cells": [
-    { "id": "go_to_go", "client": "go", "server": "go", "evidence": "flowersec-go/internal/cmd/flowersec-interop/main.go" },
-    { "id": "typescript_to_go", "client": "typescript", "server": "go", "evidence": "flowersec-ts/scripts/interop-harness.mjs" },
-    { "id": "swift_to_go", "client": "swift", "server": "go", "evidence": "flowersec-swift/InteropHarness/main.swift" },
-    { "id": "rust_to_go", "client": "rust", "server": "go", "evidence": "flowersec-rust/tests/raw_quic_v2.rs" },
-    { "id": "go_to_typescript", "client": "go", "server": "typescript", "evidence": "flowersec-ts/scripts/interop-harness.mjs" },
-    { "id": "go_to_swift", "client": "go", "server": "swift", "evidence": "flowersec-swift/InteropHarness/main.swift" },
-    { "id": "go_to_rust", "client": "go", "server": "rust", "evidence": "flowersec-rust/tests/raw_quic_v2.rs" }
+    {
+      "id": "go_to_go",
+      "client": "go",
+      "server": "go",
+      "carriers": ["websocket", "raw_quic", "webtransport"],
+      "paths": ["direct", "tunnel"],
+      "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
+      "evidence": "flowersec-go/internal/session/carrier_smoke_test.go"
+    },
+    {
+      "id": "typescript_to_go",
+      "client": "typescript",
+      "server": "go",
+      "carriers": ["websocket"],
+      "paths": ["direct"],
+      "cases": ["session", "streams", "rpc", "rekey", "fin"],
+      "evidence": "flowersec-ts/src/v2/session_go_interop.test.ts"
+    },
+    {
+      "id": "rust_to_go",
+      "client": "rust",
+      "server": "go",
+      "carriers": ["raw_quic"],
+      "paths": ["direct", "tunnel"],
+      "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
+      "evidence": "flowersec-rust/src/raw_quic_v2_integration_tests.rs"
+    },
+    {
+      "id": "go_to_rust",
+      "client": "go",
+      "server": "rust",
+      "carriers": ["raw_quic"],
+      "paths": ["direct", "tunnel"],
+      "cases": ["session", "streams", "rpc", "rekey", "fin", "reset"],
+      "evidence": "flowersec-rust/src/raw_quic_v2_integration_tests.rs"
+    }
   ],
-  "harnesses": {
-    "typescript": { "roles": ["client", "server"], "cases": ["connect", "rekey", "streams", "rpc", "liveness", "proxy", "reconnect", "limits", "diagnostics"], "evidence": "flowersec-ts/scripts/interop-harness.mjs" },
-    "swift": { "roles": ["client", "server"], "cases": ["connect", "rekey", "streams", "rpc", "liveness", "proxy", "reconnect", "limits", "diagnostics"], "evidence": "flowersec-swift/InteropHarness/main.swift" },
-    "rust": { "roles": ["client", "server"], "cases": ["connect", "rekey", "streams", "rpc", "liveness", "proxy", "reconnect", "limits", "diagnostics"], "evidence": "flowersec-rust/tests/raw_quic_v2.rs" }
-  },
   "capability_coverage": {
     "opaque_artifact": { "fixtures": ["artifact_v2"], "cases": [] },
-    "opaque_connector": { "fixtures": ["artifact_v2"], "cases": ["connect"] },
-    "secure_session": { "fixtures": ["session_wire_v2"], "cases": ["streams", "rekey", "liveness", "limits"] },
-    "rpc": { "fixtures": [], "cases": ["rpc", "limits"] },
-    "carrier_contract": { "fixtures": [], "cases": ["connect", "streams", "limits"] },
-    "wire_security": { "fixtures": ["crypto_v2", "handshake_v2", "open_unicode_v2"], "cases": ["rekey"] }
+    "opaque_connector": { "fixtures": [], "cases": ["session"] },
+    "secure_session": { "fixtures": ["session_wire_v2"], "cases": ["session", "streams", "rekey", "fin", "reset"] },
+    "rpc": { "fixtures": [], "cases": ["rpc"] },
+    "carrier_contract": { "fixtures": [], "cases": ["session", "streams", "fin", "reset"] },
+    "wire_security": { "fixtures": ["crypto_v2", "handshake_v2", "open_unicode_v2"], "cases": [] }
   }
 }

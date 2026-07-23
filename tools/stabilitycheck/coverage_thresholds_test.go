@@ -16,13 +16,7 @@ func TestCoverageQualityGates(t *testing.T) {
 	}
 
 	wantGo := map[string]float64{
-		"github.com/floegence/flowersec/flowersec-go/v2/controlplane/http":   74,
-		"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer": 78,
-		"github.com/floegence/flowersec/flowersec-go/v2/controlplane/token":  86,
-		"github.com/floegence/flowersec/flowersec-go/v2/fserrors":            67,
-		"github.com/floegence/flowersec/flowersec-go/v2/protocolio":          69,
-		"github.com/floegence/flowersec/flowersec-go/v2/transportsecurity":   19,
-		"github.com/floegence/flowersec/flowersec-go/v2/tunnel/server":       69,
+		"github.com/floegence/flowersec/flowersec-go/v2": 25,
 	}
 	gotGo := make(map[string]float64, len(m.Coverage.Go))
 	for _, target := range m.Coverage.Go {
@@ -32,6 +26,9 @@ func TestCoverageQualityGates(t *testing.T) {
 		if got := gotGo[pkg]; got != want {
 			t.Errorf("Go coverage threshold for %s = %.1f, want %.1f", pkg, got, want)
 		}
+	}
+	if len(gotGo) != len(wantGo) {
+		t.Errorf("Go coverage target count = %d, want %d", len(gotGo), len(wantGo))
 	}
 
 	if got, want := m.Coverage.TS, (tsCoverageTarget{Lines: 82, Functions: 82, Statements: 77, Branches: 68}); got != want {

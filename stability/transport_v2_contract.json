@@ -3,7 +3,6 @@
   "session_profile": "flowersec/2",
   "docs": {
     "architecture": "docs/TRANSPORT_V2_ARCHITECTURE.md",
-    "migration": "docs/MIGRATION_TRANSPORT_V2.md",
     "wire": "docs/TRANSPORT_V2_WIRE.md"
   },
   "capability_codec": {
@@ -32,7 +31,7 @@
       "id": "artifact_admission",
       "path": "testdata/transport_v2/artifact_vectors.json",
       "runtime_consumers": [
-        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/artifactv2/shared_vectors_test.go" },
+        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/artifactv2/shared_vectors_test.go" },
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
         { "runtime": "rust_native", "applicability": "unsupported", "unsupported_reason": "artifact_v2_codec_not_implemented" },
@@ -43,10 +42,10 @@
       "id": "capability",
       "path": "testdata/transport_v2/capability_vectors.json",
       "runtime_consumers": [
-        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/session/contract_test.go" },
+        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/session/contract_test.go" },
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/capability.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/capability.test.ts" },
-        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/tests/transport_v2_contract.rs" },
+        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/transport_v2.rs" },
         { "runtime": "swift_apple", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift" }
       ]
     },
@@ -54,10 +53,10 @@
       "id": "crypto",
       "path": "testdata/transport_v2/crypto_vectors.json",
       "runtime_consumers": [
-        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/protocolv2/crypto_vectors_test.go" },
+        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/protocolv2/crypto_vectors_test.go" },
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/protocol.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/protocol.test.ts" },
-        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/tests/transport_v2_crypto_vectors.rs" },
+        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/transport_v2_crypto_integration_tests.rs" },
         { "runtime": "swift_apple", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift" }
       ]
     },
@@ -65,7 +64,7 @@
       "id": "endpoint_set",
       "path": "testdata/transport_v2/endpoint_set_vectors.json",
       "runtime_consumers": [
-        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/endpointsetv2/shared_vectors_test.go" },
+        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/endpointsetv2/shared_vectors_test.go" },
         { "runtime": "typescript_browser", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
         { "runtime": "typescript_node", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
         { "runtime": "rust_native", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
@@ -76,7 +75,7 @@
       "id": "handshake",
       "path": "testdata/transport_v2/handshake_vectors.json",
       "runtime_consumers": [
-        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/protocolv2/handshake_vectors_test.go" },
+        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/protocolv2/handshake_vectors_test.go" },
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/handshake.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/handshake.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/session_v2.rs" },
@@ -90,7 +89,7 @@
         { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/idna15/idna_test.go" },
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
-        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/tests/idna_v2.rs" },
+        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/idna_v2_integration_tests.rs" },
         { "runtime": "swift_apple", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift" }
       ]
     },
@@ -98,10 +97,10 @@
       "id": "open_unicode",
       "path": "testdata/transport_v2/open_unicode_vectors.json",
       "runtime_consumers": [
-        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/protocolv2/open_unicode_vectors_test.go" },
+        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/protocolv2/open_unicode_vectors_test.go" },
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/open.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/open.test.ts" },
-        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/tests/open_v2_vectors.rs" },
+        { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/open_v2_integration_tests.rs" },
         { "runtime": "swift_apple", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift" }
       ]
     },
@@ -109,7 +108,7 @@
       "id": "session_wire",
       "path": "testdata/transport_v2/session_wire_vectors.json",
       "runtime_consumers": [
-        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/session/rekey_barrier_test.go" },
+        { "runtime": "go_native", "applicability": "required", "source": "flowersec-go/internal/session/rekey_barrier_test.go" },
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/session_wire.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/session_wire.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/session_v2.rs" },

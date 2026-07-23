@@ -4,10 +4,10 @@ import Foundation
 
 let openRejectResourceExhaustedReasonV2: UInt16 = 2
 
-public actor TransportV2Session: SessionV2 {
-  public nonisolated let path: PathKind
-  public nonisolated let endpointInstanceID: String?
-  public nonisolated let rpc: any RPCPeerV2
+actor TransportV2Session {
+  nonisolated let path: PathKind
+  nonisolated let endpointInstanceID: String?
+  nonisolated let rpc: any RPCPeerV2
 
   private let carrier: any TransportV2CarrierSession
   private let controlReader: TransportV2CarrierReader
@@ -170,14 +170,18 @@ public actor TransportV2Session: SessionV2 {
     }
   }
 
-  public func openStream(
+  func openStream(
     kind: String,
     metadata: StreamMetadataV2
   ) async throws -> any ByteStreamV2 {
     try await openStream(kind: kind, metadata: metadata, internalRPC: false)
   }
 
-  public func acceptStream() async throws -> IncomingStreamV2 {
+  func openStream(kind: String) async throws -> any ByteStreamV2 {
+    try await openStream(kind: kind, metadata: .empty)
+  }
+
+  func acceptStream() async throws -> IncomingStreamV2 {
     try Task.checkCancellation()
     guard !closing, !closed else { throw TransportV2SessionError.closed }
     if !incoming.isEmpty { return incoming.removeFirst() }
@@ -201,7 +205,7 @@ public actor TransportV2Session: SessionV2 {
     }
   }
 
-  public func rekey() async throws {
+  func rekey() async throws {
     let requestID = allocateLifecycleWaiterID()
     try await withTaskCancellationHandler {
       try await runRekey(requestID: requestID)
@@ -316,7 +320,7 @@ public actor TransportV2Session: SessionV2 {
     }
   }
 
-  public func probeLiveness() async throws -> Duration {
+  func probeLiveness() async throws -> Duration {
     guard !closing, !closed else { throw TransportV2SessionError.closed }
     let nonce = nextPing
     guard nonce != 0 else { throw TransportV2SessionError.resourceExhausted }
@@ -335,7 +339,7 @@ public actor TransportV2Session: SessionV2 {
     }
   }
 
-  public func waitClosed() async -> TransportV2SessionError {
+  func waitClosed() async -> TransportV2SessionError {
     if let terminationError { return terminationError }
     return await withCheckedContinuation { continuation in
       if let terminationError {
@@ -346,7 +350,7 @@ public actor TransportV2Session: SessionV2 {
     }
   }
 
-  public func close() async {
+  func close() async {
     if closed { return }
     let signal = initiateClose(
       goAwayReason: 1,
@@ -736,7 +740,6 @@ public actor TransportV2Session: SessionV2 {
       } else {
         await deliver(
           IncomingStreamV2(
-            id: preface.logicalStreamID,
             kind: open.kind,
             metadata: metadata,
             stream: stream
@@ -1681,7 +1684,7 @@ private actor TransportV2ByteStream: ByteStreamV2 {
     }
   }
 
-  public func read(maxBytes: Int) async throws -> Data? {
+  func read(maxBytes: Int) async throws -> Data? {
     guard maxBytes > 0 else { return Data() }
     while readBuffer.isEmpty {
       if remoteFIN { return nil }
@@ -1702,7 +1705,7 @@ private actor TransportV2ByteStream: ByteStreamV2 {
     return output
   }
 
-  public func write(_ data: Data) async throws -> Int {
+  func write(_ data: Data) async throws -> Int {
     guard terminal == nil else { throw terminal! }
     guard !localFIN else { throw TransportV2SessionError.streamReset }
     guard !data.isEmpty else { return 0 }
@@ -1716,7 +1719,7 @@ private actor TransportV2ByteStream: ByteStreamV2 {
     return data.count
   }
 
-  public func closeWrite() async throws {
+  func closeWrite() async throws {
     guard terminal == nil else { throw terminal! }
     guard !localFIN else { return }
     try await writeRecord(.fin, payload: Data())
@@ -1725,7 +1728,7 @@ private actor TransportV2ByteStream: ByteStreamV2 {
     await releaseIfFinished()
   }
 
-  public func reset() async {
+  func reset() async {
     guard terminal == nil else { return }
     terminal = .streamReset
     if let pendingSendRekey {
@@ -1740,9 +1743,11 @@ private actor TransportV2ByteStream: ByteStreamV2 {
     await session.streamFinished(id: id, inbound: inbound, internalRPC: internalRPC)
   }
 
-  public func close() async { await reset() }
+  func close() async { await reset() }
 
-  public func terminalError() async -> (any Error & Sendable)? { terminal }
+  func terminalError() async -> SessionErrorV2? { terminal.map(redactTransportErrorV2) }
+
+  func detailedTerminalError() -> TransportV2SessionError? { terminal }
 
   fileprivate func isUsableAfterOpenACK() -> Bool { terminal == nil }
 

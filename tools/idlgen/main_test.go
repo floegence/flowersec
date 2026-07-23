@@ -39,7 +39,7 @@ func TestVersionFlag(t *testing.T) {
 func TestRustGenerationIncludesTypedRPCBothDirections(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile(filepath.Join("..", "..", "idl", "flowersec", "demo", "v1", "demo.fidl.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "demo.fidl.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestRustGenerationIncludesTypedRPCBothDirections(t *testing.T) {
 	if err := genRustRPC(out, input); err != nil {
 		t.Fatal(err)
 	}
-	rpc, err := os.ReadFile(filepath.Join(out, "flowersec", "demo", "v1_rpc.rs"))
+	rpc, err := os.ReadFile(filepath.Join(out, "flowersec", "demo", "v2_rpc.rs"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestRustGenerationIncludesTypedRPCBothDirections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(module), "pub mod v1_rpc;") {
+	if !strings.Contains(string(module), "pub mod v2_rpc;") {
 		t.Fatalf("Rust RPC module is not exported:\n%s", module)
 	}
 }
@@ -80,7 +80,7 @@ func TestRustGenerationIncludesTypedRPCBothDirections(t *testing.T) {
 func TestGeneratedRPCUsesNamespaceVersion(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile(filepath.Join("..", "..", "idl", "flowersec", "demo", "v1", "demo.fidl.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "demo.fidl.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,10 +90,13 @@ func TestGeneratedRPCUsesNamespaceVersion(t *testing.T) {
 	}
 	input.Namespace = "flowersec.demo.v2"
 	out := t.TempDir()
-	for _, generate := range []func(string, schema) error{genGo, genGoRPC, genRust, genRustRPC, genTS, genTSRPC, genTSFacade} {
+	for _, generate := range []func(string, schema) error{genGo, genRust, genRustRPC, genTS, genTSRPC, genTSFacade} {
 		if err := generate(out, input); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := genGoRPC(out, input); err == nil {
+		t.Fatal("Go service stub generation unexpectedly exposed the internal RPC implementation")
 	}
 
 	assertGeneratedContains := func(path string, tokens ...string) {
@@ -109,7 +112,6 @@ func TestGeneratedRPCUsesNamespaceVersion(t *testing.T) {
 		}
 	}
 	assertGeneratedContains("flowersec/demo/v2/types.gen.go", "package v2")
-	assertGeneratedContains("flowersec/demo/v2/rpc.gen.go", "*rpc.RemoteError")
 	assertGeneratedContains("flowersec/demo/v2_rpc.rs", "crate::generated::flowersec::rpc::v2::RpcError")
 	assertGeneratedContains("flowersec/demo/v2.facade.gen.ts", "controlplane/v2.gen.js", "direct/v2.gen.js")
 }
@@ -119,7 +121,7 @@ func TestRustGenerationRedactsSensitiveMessageFields(t *testing.T) {
 
 	var input schema
 	if err := json.Unmarshal([]byte(`{
-		"namespace": "flowersec.secret.v1",
+		"namespace": "flowersec.secret.v2",
 		"messages": {
 			"PlainMessage": {
 				"fields": [{"name": "value", "type": "string", "sensitive": false}]
@@ -138,7 +140,7 @@ func TestRustGenerationRedactsSensitiveMessageFields(t *testing.T) {
 	if err := genRust(out, input); err != nil {
 		t.Fatal(err)
 	}
-	generated, err := os.ReadFile(filepath.Join(out, "flowersec", "secret", "v1.rs"))
+	generated, err := os.ReadFile(filepath.Join(out, "flowersec", "secret", "v2.rs"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,43 +167,43 @@ func TestSensitiveMetadataValidation(t *testing.T) {
 	}{
 		{
 			name:   "top level",
-			schema: `{"namespace":"flowersec.test.v1","sensitive":true,"messages":{}}`,
+			schema: `{"namespace":"flowersec.test.v2","sensitive":true,"messages":{}}`,
 		},
 		{
 			name:   "enum",
-			schema: `{"namespace":"flowersec.test.v1","enums":{"Kind":{"sensitive":true,"values":{}}},"messages":{}}`,
+			schema: `{"namespace":"flowersec.test.v2","enums":{"Kind":{"sensitive":true,"values":{}}},"messages":{}}`,
 		},
 		{
 			name:   "message",
-			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"sensitive":true,"fields":[]}}}`,
+			schema: `{"namespace":"flowersec.test.v2","messages":{"Thing":{"sensitive":true,"fields":[]}}}`,
 		},
 		{
 			name:   "service",
-			schema: `{"namespace":"flowersec.test.v1","messages":{"Req":{"fields":[]},"Resp":{"fields":[]}},"services":{"API":{"sensitive":true,"methods":{"Call":{"kind":"request","type_id":1,"request":"Req","response":"Resp"}}}}}`,
+			schema: `{"namespace":"flowersec.test.v2","messages":{"Req":{"fields":[]},"Resp":{"fields":[]}},"services":{"API":{"sensitive":true,"methods":{"Call":{"kind":"request","type_id":1,"request":"Req","response":"Resp"}}}}}`,
 		},
 		{
 			name:   "method",
-			schema: `{"namespace":"flowersec.test.v1","messages":{"Req":{"fields":[]},"Resp":{"fields":[]}},"services":{"API":{"methods":{"Call":{"sensitive":true,"kind":"request","type_id":1,"request":"Req","response":"Resp"}}}}}`,
+			schema: `{"namespace":"flowersec.test.v2","messages":{"Req":{"fields":[]},"Resp":{"fields":[]}},"services":{"API":{"methods":{"Call":{"sensitive":true,"kind":"request","type_id":1,"request":"Req","response":"Resp"}}}}}`,
 		},
 		{
 			name:   "string field value",
-			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":"yes"}]}}}`,
+			schema: `{"namespace":"flowersec.test.v2","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":"yes"}]}}}`,
 		},
 		{
 			name:   "null field value",
-			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":null}]}}}`,
+			schema: `{"namespace":"flowersec.test.v2","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":null}]}}}`,
 		},
 		{
 			name:   "number field value",
-			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":1}]}}}`,
+			schema: `{"namespace":"flowersec.test.v2","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":1}]}}}`,
 		},
 		{
 			name:   "object field value",
-			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":{}}]}}}`,
+			schema: `{"namespace":"flowersec.test.v2","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":{}}]}}}`,
 		},
 		{
 			name:   "array field value",
-			schema: `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":[]}]}}}`,
+			schema: `{"namespace":"flowersec.test.v2","messages":{"Thing":{"fields":[{"name":"value","type":"string","sensitive":[]}]}}}`,
 		},
 	}
 	for _, tt := range tests {
@@ -227,7 +229,7 @@ func TestSensitiveMetadataAllowsBooleanMessageFields(t *testing.T) {
 	t.Parallel()
 
 	in := t.TempDir()
-	contents := `{"namespace":"flowersec.test.v1","messages":{"Thing":{"fields":[{"name":"visible","type":"string","sensitive":false},{"name":"secret","type":"string","sensitive":true}]}}}`
+	contents := `{"namespace":"flowersec.test.v2","messages":{"Thing":{"fields":[{"name":"visible","type":"string","sensitive":false},{"name":"secret","type":"string","sensitive":true}]}}}`
 	if err := os.WriteFile(filepath.Join(in, "test.fidl.json"), []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +244,7 @@ func TestSensitiveMetadataDoesNotRejectUnrelatedExtensions(t *testing.T) {
 	t.Parallel()
 
 	contents := []byte(`{
-		"namespace":"flowersec.test.v1",
+		"namespace":"flowersec.test.v2",
 		"extension":{"owner":"test"},
 		"messages":{"Thing":{"extension":true,"fields":[{"name":"value","type":"string","extension":1}]}}
 	}`)
@@ -254,12 +256,12 @@ func TestSensitiveMetadataDoesNotRejectUnrelatedExtensions(t *testing.T) {
 func TestSwiftGenerationUsesUniqueDomainFilename(t *testing.T) {
 	t.Parallel()
 
-	input := schema{Namespace: "flowersec.demo.v1", Messages: map[string]messageDef{}, Enums: map[string]enumDef{}, Services: map[string]serviceDef{}}
+	input := schema{Namespace: "flowersec.demo.v2", Messages: map[string]messageDef{}, Enums: map[string]enumDef{}, Services: map[string]serviceDef{}}
 	out := t.TempDir()
 	if err := genSwift(out, "", input); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(out, "Generated", "demo", "demo_v1.gen.swift")); err != nil {
+	if _, err := os.Stat(filepath.Join(out, "Generated", "demo", "demo_v2.gen.swift")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -267,7 +269,7 @@ func TestSwiftGenerationUsesUniqueDomainFilename(t *testing.T) {
 func TestSwiftGenerationIncludesTypedRPCBothDirections(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile(filepath.Join("..", "..", "idl", "flowersec", "demo", "v1", "demo.fidl.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "demo.fidl.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +281,7 @@ func TestSwiftGenerationIncludesTypedRPCBothDirections(t *testing.T) {
 	if err := genSwift(out, "Flowersec", input); err != nil {
 		t.Fatal(err)
 	}
-	generated, err := os.ReadFile(filepath.Join(out, "Generated", "demo", "demo_v1.gen.swift"))
+	generated, err := os.ReadFile(filepath.Join(out, "Generated", "demo", "demo_v2.gen.swift"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +331,7 @@ func TestListFIDLFilesFromManifest(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(f1), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(f1, []byte(`{"namespace":"x.y.v1","messages":{},"services":{},"enums":{}}`), 0o644); err != nil {
+	if err := os.WriteFile(f1, []byte(`{"namespace":"x.y.v2","messages":{},"services":{},"enums":{}}`), 0o644); err != nil {
 		t.Fatalf("write fidl: %v", err)
 	}
 
@@ -380,6 +382,18 @@ func TestListFIDLFilesFromManifestRejectsMissingFile(t *testing.T) {
 	}
 }
 
+func TestRunAcceptsEmptyExplicitManifest(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "manifest.txt")
+	if err := os.WriteFile(manifest, []byte("# no generated IDLs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-in", root, "-manifest", manifest, "-go-out", filepath.Join(root, "gen")}, &stdout, &stderr); code != 0 {
+		t.Fatalf("run returned %d: %s", code, stderr.String())
+	}
+}
+
 func TestIDLDocumentationMatchesCurrentGeneratorAndTransportBoundary(t *testing.T) {
 	t.Parallel()
 
@@ -403,7 +417,7 @@ func TestIDLDocumentationMatchesCurrentGeneratorAndTransportBoundary(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(data), "Transport v2") || !strings.Contains(string(data), "FIDL") {
+		if !strings.Contains(string(data), "Transport v2") || !strings.Contains(string(data), "codec") {
 			t.Fatalf("%s must document the Transport v2/FIDL boundary", name)
 		}
 	}

@@ -18,12 +18,13 @@ use hmac::{Hmac, Mac};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
-    sync::{Mutex, Notify, OwnedMutexGuard, Semaphore, mpsc, oneshot},
-};
+#[cfg(test)]
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::sync::{Mutex, Notify, OwnedMutexGuard, Semaphore, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
+#[cfg(test)]
+use crate::transport_v2::CarrierKind;
 use crate::{
     crypto_v2::{Suite, generate_ephemeral_keypair},
     protocol_v2::{
@@ -36,8 +37,9 @@ use crate::{
         seal_record_v2, verify_setup_mac_v2,
     },
     transport_v2::{
-        ByteStreamV2, CarrierKind, CarrierSessionV2, CarrierStreamV2, IncomingStreamV2,
-        JsonObjectV2, PathKind, RpcPeerV2, SessionRole, SessionV2, carrier_inbound_stream_limit_v2,
+        ByteStreamV2, CarrierSessionV2, CarrierStreamV2, IncomingStreamV2, JsonObjectV2, PathKind,
+        RpcPeerV2, SessionError, SessionRole, SessionV2, StreamTerminalError,
+        carrier_inbound_stream_limit_v2,
     },
 };
 
@@ -164,7 +166,6 @@ impl SessionConfigV2 {
 struct HandshakeMaterialV2 {
     h3: [u8; 32],
     session_prk: [u8; 32],
-    peer_endpoint_instance_id: Option<String>,
 }
 
 /// Application-owned bidirectional RPC dispatch for the reserved encrypted
@@ -432,7 +433,6 @@ impl StreamLedgerV2 {
 pub struct EncryptedSessionV2 {
     carrier: Arc<dyn CarrierSessionV2>,
     config: SessionConfigV2,
-    peer_endpoint_instance_id: Option<String>,
     h3: [u8; 32],
     send_direction: DirectionV2,
     recv_direction: DirectionV2,
@@ -478,13 +478,7 @@ pub struct EncryptedSessionV2 {
 
 impl std::fmt::Debug for EncryptedSessionV2 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("EncryptedSessionV2")
-            .field("role", &self.config.role)
-            .field("path", &self.config.path)
-            .field("carrier", &self.carrier.kind())
-            .field("peer_endpoint_instance_id", &self.peer_endpoint_instance_id)
-            .finish_non_exhaustive()
+        formatter.write_str("EncryptedSessionV2 { <opaque> }")
     }
 }
 
@@ -548,7 +542,6 @@ async fn establish_session_v2_inner(
     let session = Arc::new(SelfSession(EncryptedSessionV2 {
         carrier,
         config,
-        peer_endpoint_instance_id: material.peer_endpoint_instance_id,
         h3: material.h3,
         send_direction,
         recv_direction,
@@ -698,22 +691,20 @@ impl RpcPeerV2 for SessionRpcPeerV2 {
         &self,
         type_id: u32,
         request: serde_json::Value,
-    ) -> io::Result<serde_json::Value> {
-        rpc_call_v2(self, type_id, request).await
+    ) -> Result<serde_json::Value, SessionError> {
+        rpc_call_v2(self, type_id, request)
+            .await
+            .map_err(|error| SessionError::from_io(&error))
     }
-    async fn notify(&self, type_id: u32, request: serde_json::Value) -> io::Result<()> {
-        rpc_notify_v2(self, type_id, request).await
+    async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), SessionError> {
+        rpc_notify_v2(self, type_id, request)
+            .await
+            .map_err(|error| SessionError::from_io(&error))
     }
 }
 
 #[async_trait]
 impl SessionV2 for SelfSession {
-    fn path(&self) -> PathKind {
-        self.config.path
-    }
-    fn endpoint_instance_id(&self) -> Option<&str> {
-        self.peer_endpoint_instance_id.as_deref()
-    }
     fn rpc(&self) -> &dyn RpcPeerV2 {
         &self.rpc
     }
@@ -721,32 +712,41 @@ impl SessionV2 for SelfSession {
         &self,
         kind: &str,
         metadata: JsonObjectV2,
-    ) -> io::Result<Box<dyn ByteStreamV2>> {
+    ) -> Result<Box<dyn ByteStreamV2>, SessionError> {
         if kind == RESERVED_RPC_KIND {
-            return Err(invalid("reserved RPC stream kind"));
+            return Err(SessionError::InvalidInput);
         }
-        open_stream_v2(self, kind, metadata).await
+        open_stream_v2(self, kind, metadata)
+            .await
+            .map_err(|error| SessionError::from_io(&error))
     }
-    async fn accept_stream(&self) -> io::Result<IncomingStreamV2> {
+    async fn accept_stream(&self) -> Result<IncomingStreamV2, SessionError> {
         let mut incoming = self.incoming_rx.lock().await;
         tokio::select! {
             biased;
             _ = self.canceled.cancelled() => Err(terminal_error_v2(self)),
             value = incoming.recv() => value.ok_or_else(|| terminal_error_v2(self)),
         }
+        .map_err(|error| SessionError::from_io(&error))
     }
-    async fn rekey(&self) -> io::Result<()> {
-        rekey_v2(self).await
+    async fn rekey(&self) -> Result<(), SessionError> {
+        rekey_v2(self)
+            .await
+            .map_err(|error| SessionError::from_io(&error))
     }
-    async fn probe_liveness(&self) -> io::Result<Duration> {
-        probe_v2(self).await
+    async fn probe_liveness(&self) -> Result<Duration, SessionError> {
+        probe_v2(self)
+            .await
+            .map_err(|error| SessionError::from_io(&error))
     }
-    async fn wait_closed(&self) -> io::Result<()> {
+    async fn wait_closed(&self) -> Result<(), SessionError> {
         self.canceled.cancelled().await;
-        Err(terminal_error_v2(self))
+        Err(SessionError::from_io(&terminal_error_v2(self)))
     }
-    async fn close(&self) -> io::Result<()> {
-        close_session_v2(self).await
+    async fn close(&self) -> Result<(), SessionError> {
+        close_session_v2(self)
+            .await
+            .map_err(|error| SessionError::from_io(&error))
     }
 }
 
@@ -858,7 +858,6 @@ async fn client_handshake_v2(
     Ok(HandshakeMaterialV2 {
         h3,
         session_prk: hkdf_extract_v2(&h3, &handshake_prk),
-        peer_endpoint_instance_id: nonempty(server.server_endpoint_instance_id),
     })
 }
 
@@ -941,7 +940,6 @@ async fn server_handshake_v2(
     Ok(HandshakeMaterialV2 {
         h3,
         session_prk: hkdf_extract_v2(&h3, &handshake_prk),
-        peer_endpoint_instance_id: nonempty(init.client_endpoint_instance_id),
     })
 }
 
@@ -1076,9 +1074,6 @@ fn decode_fixed_32(value: &str) -> io::Result<[u8; 32]> {
     decode_b64(value)?
         .try_into()
         .map_err(|_| invalid("expected 32-byte base64url value"))
-}
-fn nonempty(value: String) -> Option<String> {
-    (!value.is_empty()).then_some(value)
 }
 fn length_prefix(raw: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(4 + raw.len());
@@ -1979,19 +1974,14 @@ struct EncryptedStreamV2 {
     local_fin: AtomicBool,
     remote_fin: AtomicBool,
     reset: AtomicBool,
+    terminal: OnceLock<StreamTerminalError>,
     _outbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
     _inbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
 }
 
 impl std::fmt::Debug for EncryptedStreamV2 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("EncryptedStreamV2")
-            .field("id", &self.id)
-            .field("kind", &self.kind)
-            .field("send_epoch", &self.send_epoch.load(Ordering::Acquire))
-            .field("recv_epoch", &self.recv_epoch.load(Ordering::Acquire))
-            .finish_non_exhaustive()
+        formatter.write_str("EncryptedStreamV2 { <opaque> }")
     }
 }
 
@@ -2229,6 +2219,7 @@ async fn open_stream_with_capacity_v2(
         local_fin: AtomicBool::new(false),
         remote_fin: AtomicBool::new(false),
         reset: AtomicBool::new(false),
+        terminal: OnceLock::new(),
         _outbound_permit: StdMutex::new(permit),
         _inbound_permit: StdMutex::new(None),
     });
@@ -2292,36 +2283,90 @@ fn validate_open_reject_payload_v2(
 
 #[async_trait]
 impl ByteStreamV2 for StreamHandleV2 {
-    fn id(&self) -> u64 {
+    #[cfg(test)]
+    fn internal_test_id(&self) -> u64 {
         self.0.id
     }
     fn kind(&self) -> &str {
         &self.0.kind
     }
-    fn terminal_error(&self) -> Option<&(dyn std::error::Error + Send + Sync + 'static)> {
-        None
+    fn terminal_error(&self) -> Option<StreamTerminalError> {
+        self.0.terminal_error()
     }
-    async fn read(&self) -> io::Result<Option<Bytes>> {
-        self.0.read_next().await
+    async fn read(&self) -> Result<Option<Bytes>, SessionError> {
+        self.0
+            .read_next()
+            .await
+            .inspect_err(|error| self.0.record_terminal(error))
+            .map_err(|error| SessionError::from_io(&error))
     }
-    async fn write(&self, payload: Bytes) -> io::Result<usize> {
-        self.0.write_data(payload).await
+    async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
+        self.0
+            .write_data(payload)
+            .await
+            .inspect_err(|error| self.0.record_terminal(error))
+            .map_err(|error| SessionError::from_io(&error))
     }
-    async fn close_write(&self) -> io::Result<()> {
-        self.0.close_write_inner().await
+    async fn close_write(&self) -> Result<(), SessionError> {
+        self.0
+            .close_write_inner()
+            .await
+            .inspect_err(|error| self.0.record_terminal(error))
+            .map_err(|error| SessionError::from_io(&error))
     }
-    async fn reset(&self) -> io::Result<()> {
-        self.0.reset_inner().await
+    async fn reset(&self) -> Result<(), SessionError> {
+        self.0
+            .reset_inner()
+            .await
+            .map_err(|error| SessionError::from_io(&error))
     }
-    async fn close(&self) -> io::Result<()> {
+    async fn close(&self) -> Result<(), SessionError> {
         let _ = self.0.close_write_inner().await;
         let result = self.0.carrier.close().await;
+        if let Err(error) = &result {
+            self.0.record_terminal(error);
+        }
         self.0.release_capacity();
-        result
+        result.map_err(|error| SessionError::from_io(&error))
     }
 }
 
 impl EncryptedStreamV2 {
+    fn terminal_error(&self) -> Option<StreamTerminalError> {
+        if let Some(error) = self.terminal.get() {
+            return Some(*error);
+        }
+        if self.reset.load(Ordering::Acquire) {
+            return Some(StreamTerminalError::Reset);
+        }
+        let Some(session) = self.session.upgrade() else {
+            return Some(StreamTerminalError::Closed);
+        };
+        if !session.canceled.is_cancelled() {
+            return None;
+        }
+        let terminal = session.terminal.lock().expect("terminal lock poisoned");
+        Some(match terminal.as_ref().map(|cause| cause.kind) {
+            Some(io::ErrorKind::TimedOut) => StreamTerminalError::TimedOut,
+            Some(io::ErrorKind::InvalidData | io::ErrorKind::PermissionDenied) => {
+                StreamTerminalError::Failed
+            }
+            _ => StreamTerminalError::Closed,
+        })
+    }
+
+    fn record_terminal(&self, error: &io::Error) {
+        let redacted = match error.kind() {
+            io::ErrorKind::TimedOut => StreamTerminalError::TimedOut,
+            io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::NotConnected => StreamTerminalError::Closed,
+            _ => StreamTerminalError::Failed,
+        };
+        let _ = self.terminal.set(redacted);
+    }
+
     async fn write_data(&self, payload: Bytes) -> io::Result<usize> {
         if payload.is_empty() {
             return Ok(0);
@@ -2346,6 +2391,7 @@ impl EncryptedStreamV2 {
         Ok(())
     }
     async fn reset_inner(&self) -> io::Result<()> {
+        let _ = self.terminal.set(StreamTerminalError::Reset);
         if !self.reset.swap(true, Ordering::AcqRel) {
             if let Some(session) = self.session.upgrade() {
                 let mut payload = [0; 10];
@@ -2359,6 +2405,7 @@ impl EncryptedStreamV2 {
         Ok(())
     }
     async fn reset_local(&self) -> io::Result<()> {
+        let _ = self.terminal.set(StreamTerminalError::Reset);
         self.reset.store(true, Ordering::Release);
         let result = self.carrier.reset().await;
         self.release_capacity();
@@ -2765,6 +2812,7 @@ async fn accept_one_stream_v2(
         local_fin: AtomicBool::new(false),
         remote_fin: AtomicBool::new(false),
         reset: AtomicBool::new(false),
+        terminal: OnceLock::new(),
         _outbound_permit: StdMutex::new(None),
         _inbound_permit: StdMutex::new(permit),
     });
@@ -3205,11 +3253,13 @@ async fn read_stream_record_v2(
 }
 
 /// Creates a deterministic in-process carrier pair for protocol tests.
+#[cfg(test)]
 pub fn memory_carrier_pair_v2() -> (Arc<dyn CarrierSessionV2>, Arc<dyn CarrierSessionV2>) {
     memory_carrier_pair_v2_with_capacity(6)
 }
 
 /// Creates a deterministic carrier pair with an explicit physical capacity.
+#[cfg(test)]
 pub fn memory_carrier_pair_v2_with_capacity(
     inbound_bidirectional_stream_capacity: u32,
 ) -> (Arc<dyn CarrierSessionV2>, Arc<dyn CarrierSessionV2>) {
@@ -3231,6 +3281,7 @@ pub fn memory_carrier_pair_v2_with_capacity(
     )
 }
 
+#[cfg(test)]
 struct MemoryCarrierSessionV2 {
     outgoing: mpsc::Sender<Arc<dyn CarrierStreamV2>>,
     incoming: Mutex<mpsc::Receiver<Arc<dyn CarrierStreamV2>>>,
@@ -3238,12 +3289,14 @@ struct MemoryCarrierSessionV2 {
     inbound_bidirectional_stream_capacity: u32,
 }
 
+#[cfg(test)]
 impl std::fmt::Debug for MemoryCarrierSessionV2 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("MemoryCarrierSessionV2(..)")
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl CarrierSessionV2 for MemoryCarrierSessionV2 {
     fn kind(&self) -> CarrierKind {
@@ -3275,6 +3328,7 @@ impl CarrierSessionV2 for MemoryCarrierSessionV2 {
     }
 }
 
+#[cfg(test)]
 struct MemoryCarrierStreamV2 {
     read: Mutex<ReadHalf<tokio::io::DuplexStream>>,
     write: Mutex<WriteHalf<tokio::io::DuplexStream>>,
@@ -3282,6 +3336,7 @@ struct MemoryCarrierStreamV2 {
     finished: AtomicBool,
 }
 
+#[cfg(test)]
 impl MemoryCarrierStreamV2 {
     fn new(stream: tokio::io::DuplexStream) -> Self {
         let (read, write) = tokio::io::split(stream);
@@ -3294,12 +3349,14 @@ impl MemoryCarrierStreamV2 {
     }
 }
 
+#[cfg(test)]
 impl std::fmt::Debug for MemoryCarrierStreamV2 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("MemoryCarrierStreamV2(..)")
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl CarrierStreamV2 for MemoryCarrierStreamV2 {
     async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {

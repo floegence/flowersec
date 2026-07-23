@@ -28,7 +28,7 @@ protocol TransportV2CarrierSession: Sendable {
   nonisolated func abort(code: UInt16, reason: String)
 }
 
-public enum TransportV2SessionError: Error, Equatable, Sendable {
+enum TransportV2SessionError: Error, Equatable, Sendable {
   case invalidConfiguration
   case handshakeFailed
   case protocolViolation

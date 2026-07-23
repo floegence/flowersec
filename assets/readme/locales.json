@@ -19,12 +19,11 @@
     "TypeScript",
     "Swift",
     "Rust",
-    "E2EE",
-    "ConnectArtifact",
+    "flowersec.ParseArtifact",
+    "flowersec.NewConnector",
     "examples/README.md",
     "docs/THREAT_MODEL.md",
-    "docs/PROTOCOL.md",
-    "docs/ERROR_MODEL.md",
+    "docs/TRANSPORT_V2_ARCHITECTURE.md",
     "make check"
   ],
   "locales": [

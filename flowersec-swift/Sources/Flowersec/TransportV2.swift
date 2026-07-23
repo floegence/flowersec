@@ -1,78 +1,47 @@
 import Crypto
 import Foundation
 
-public enum CarrierKind: String, Codable, Equatable, Sendable {
+enum CarrierKind: String, Codable, Equatable, Sendable {
   case webSocket = "websocket"
   case rawQUIC = "raw_quic"
   case webTransport = "webtransport"
 }
 
-public enum PathKind: String, Codable, Equatable, Sendable {
+enum PathKind: String, Codable, Equatable, Sendable {
   case direct
   case tunnel
 }
 
-public enum NetworkModeV2: String, Codable, Equatable, Sendable {
+enum NetworkModeV2: String, Codable, Equatable, Sendable {
   case dial
   case listen
 }
 
-public enum SessionRoleV2: String, Codable, Equatable, Sendable {
+enum SessionRoleV2: String, Codable, Equatable, Sendable {
   case client
   case server
 }
 
-public struct RuntimeCapabilityTupleV2: Codable, Equatable, Sendable {
-  public let carrier: CarrierKind
-  public let networkMode: NetworkModeV2
-  public let path: PathKind
-  public let sessionRole: SessionRoleV2
-
-  public init(
-    carrier: CarrierKind,
-    networkMode: NetworkModeV2,
-    path: PathKind,
-    sessionRole: SessionRoleV2
-  ) {
-    self.carrier = carrier
-    self.networkMode = networkMode
-    self.path = path
-    self.sessionRole = sessionRole
-  }
+struct RuntimeCapabilityTupleV2: Codable, Equatable, Sendable {
+  let carrier: CarrierKind
+  let networkMode: NetworkModeV2
+  let path: PathKind
+  let sessionRole: SessionRoleV2
 }
 
-public struct UnsupportedRuntimeCarrierV2: Codable, Equatable, Sendable {
-  public let carrier: CarrierKind
-  public let reason: String
-
-  public init(carrier: CarrierKind, reason: String) {
-    self.carrier = carrier
-    self.reason = reason
-  }
+struct UnsupportedRuntimeCarrierV2: Codable, Equatable, Sendable {
+  let carrier: CarrierKind
+  let reason: String
 }
 
-public struct RuntimeCapabilityDescriptorV2: Codable, Equatable, Sendable {
-  public let schemaVersion: UInt8
-  public let language: String
-  public let runtime: String
-  public let tuples: [RuntimeCapabilityTupleV2]
-  public let unsupported: [UnsupportedRuntimeCarrierV2]
+struct RuntimeCapabilityDescriptorV2: Codable, Equatable, Sendable {
+  let schemaVersion: UInt8
+  let language: String
+  let runtime: String
+  let tuples: [RuntimeCapabilityTupleV2]
+  let unsupported: [UnsupportedRuntimeCarrierV2]
 
-  public init(
-    schemaVersion: UInt8,
-    language: String,
-    runtime: String,
-    tuples: [RuntimeCapabilityTupleV2],
-    unsupported: [UnsupportedRuntimeCarrierV2]
-  ) {
-    self.schemaVersion = schemaVersion
-    self.language = language
-    self.runtime = runtime
-    self.tuples = tuples
-    self.unsupported = unsupported
-  }
-
-  public func canonicalJSON() throws -> Data {
+  func canonicalJSON() throws -> Data {
     try validate()
     let object: [String: Any] = [
       "language": language,
@@ -96,7 +65,7 @@ public struct RuntimeCapabilityDescriptorV2: Codable, Equatable, Sendable {
     )
   }
 
-  public static func decodeCanonicalJSON(_ raw: Data) throws -> RuntimeCapabilityDescriptorV2 {
+  static func decodeCanonicalJSON(_ raw: Data) throws -> RuntimeCapabilityDescriptorV2 {
     guard let object = try JSONSerialization.jsonObject(with: raw) as? [String: Any] else {
       throw RuntimeCapabilityCodecErrorV2.invalid
     }
@@ -150,7 +119,7 @@ public struct RuntimeCapabilityDescriptorV2: Codable, Equatable, Sendable {
     return descriptor
   }
 
-  public func digest() throws -> Data {
+  func digest() throws -> Data {
     let canonical = try canonicalJSON()
     var preimage = Data("flowersec-v2-runtime-capability\0".utf8)
     preimage.appendUInt32BE(UInt32(canonical.count))
@@ -158,11 +127,11 @@ public struct RuntimeCapabilityDescriptorV2: Codable, Equatable, Sendable {
     return Data(SHA256.hash(data: preimage))
   }
 
-  public func digestHex() throws -> String {
+  func digestHex() throws -> String {
     try digest().map { String(format: "%02x", $0) }.joined()
   }
 
-  public func validate() throws {
+  func validate() throws {
     guard
       schemaVersion == 2,
       Self.validRegistryToken(language),
@@ -232,14 +201,14 @@ public struct RuntimeCapabilityDescriptorV2: Codable, Equatable, Sendable {
   }
 }
 
-public enum RuntimeCapabilityCodecErrorV2: Error, Equatable, Sendable {
+enum RuntimeCapabilityCodecErrorV2: Error, Equatable, Sendable {
   case invalid
   case nonCanonical
 }
 
-public enum RuntimeCapabilitiesV2 {
+enum RuntimeCapabilitiesV2 {
   /// Capabilities backed by production adapters and physical macOS system tests.
-  public static let macOS = RuntimeCapabilityDescriptorV2(
+  static let macOS = RuntimeCapabilityDescriptorV2(
     schemaVersion: 2,
     language: "swift",
     runtime: "macos",
@@ -264,7 +233,7 @@ public enum RuntimeCapabilitiesV2 {
   )
 
   /// Conservative cross-Apple descriptor. macOS-only evidence is not projected onto iOS.
-  public static let apple = RuntimeCapabilityDescriptorV2(
+  static let apple = RuntimeCapabilityDescriptorV2(
     schemaVersion: 2,
     language: "swift",
     runtime: "apple",
@@ -306,6 +275,37 @@ public enum StreamMetadataErrorV2: Error, Equatable, Sendable {
   case depthExceeded
   case nodeLimitExceeded
   case encodedTooLarge
+}
+
+/// Stable, carrier-neutral failures returned by session and byte-stream operations.
+///
+/// Wire close codes, carrier errors, cryptographic state, and peer credentials are
+/// intentionally collapsed into this closed set before crossing the public boundary.
+public enum SessionErrorV2: String, Error, Equatable, Sendable {
+  case canceled
+  case timeout
+  case closed
+  case goingAway = "going_away"
+  case resourceExhausted = "resource_exhausted"
+  case streamRejected = "stream_rejected"
+  case streamReset = "stream_reset"
+  case rekeyFailed = "rekey_failed"
+  case livenessFailed = "liveness_failed"
+  case operationFailed = "operation_failed"
+}
+
+/// An application-level error returned by a remote RPC handler.
+///
+/// This value carries only the remote application's semantic code and message;
+/// transport and carrier failures are returned as ``SessionErrorV2``.
+public struct RPCErrorV2: Error, Equatable, Sendable {
+  public let code: UInt32
+  public let message: String
+
+  public init(code: UInt32, message: String) {
+    self.code = code
+    self.message = message
+  }
 }
 
 public struct StreamMetadataV2: Equatable, Sendable {
@@ -414,7 +414,6 @@ public struct StreamMetadataV2: Equatable, Sendable {
 }
 
 public protocol ByteStreamV2: Sendable {
-  var id: UInt64 { get }
   var kind: String { get }
 
   func read(maxBytes: Int) async throws -> Data?
@@ -422,22 +421,19 @@ public protocol ByteStreamV2: Sendable {
   func closeWrite() async throws
   func reset() async
   func close() async
-  func terminalError() async -> (any Error & Sendable)?
+  func terminalError() async -> SessionErrorV2?
 }
 
 public struct IncomingStreamV2: Sendable {
-  public let id: UInt64
   public let kind: String
   public let metadata: StreamMetadataV2
   public let stream: any ByteStreamV2
 
   public init(
-    id: UInt64,
     kind: String,
     metadata: StreamMetadataV2,
     stream: any ByteStreamV2
   ) {
-    self.id = id
     self.kind = kind
     self.metadata = metadata
     self.stream = stream
@@ -456,15 +452,13 @@ public protocol RPCPeerV2: Sendable {
 }
 
 public protocol SessionV2: Sendable {
-  var path: PathKind { get }
-  var endpointInstanceID: String? { get }
   var rpc: any RPCPeerV2 { get }
 
   func openStream(kind: String, metadata: StreamMetadataV2) async throws -> any ByteStreamV2
   func acceptStream() async throws -> IncomingStreamV2
   func rekey() async throws
   func probeLiveness() async throws -> Duration
-  func waitClosed() async -> TransportV2SessionError
+  func waitClosed() async -> SessionErrorV2
   func close() async
 }
 

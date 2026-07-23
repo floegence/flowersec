@@ -31,17 +31,17 @@ make gen
 
 Generated outputs:
 
-- Go: `flowersec-go/gen/flowersec/<domain>/<version>/types.gen.go` (and `rpc.gen.go` if `services` is present)
+- Go: `flowersec-go/gen/flowersec/<domain>/<version>/types.gen.go`; Go service stubs are intentionally unavailable because the concrete RPC router is internal
 - TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.gen.ts` (and `<version>.rpc.gen.ts` plus `<version>.facade.gen.ts` if `services` is present)
 - Rust: `flowersec-rust/src/gen/flowersec/<domain>/<version>.rs` plus generated module indexes
 - Swift: `flowersec-swift/Sources/Flowersec/Generated/<domain>/<domain>_<version>.gen.swift`
 
 Transport v2 wire contracts are not generated from FIDL. They use the frozen
 JSON vectors and custom codecs under `testdata/transport_v2`, with their public
-surface guarded by `stability/transport_v2_contract.json`. The current FIDL
-manifests intentionally contain the v1 control-plane, direct, E2EE, RPC, and
-tunnel schemas only; adding a Transport v2 schema to a manifest would create a
-second, conflicting wire-contract authority.
+surface guarded by `stability/transport_v2_contract.json`. The maintained FIDL
+manifests are therefore intentionally empty. Generator behavior is covered by
+its own v2-only test fixture; adding a Transport v2 schema to a repository
+manifest would create a second, conflicting wire-contract authority.
 
 ## File layout and namespace
 
@@ -59,15 +59,14 @@ flowersec.<domain>.<version>
 
 The generator extracts:
 
-- `domain` as the second segment (e.g. `rpc` in `flowersec.rpc.v1`).
-- `version` as the last segment (e.g. `v1`).
+- `domain` as the second segment (e.g. `rpc` in `flowersec.rpc.v2`).
+- `version` as the last segment (e.g. `v2`).
 
 Notes:
 
 - The generator trusts the `namespace` to determine output paths; it does not infer
   `domain`/`version` from the on-disk directory names.
-- The `domain` is a logical protocol area. In this repo you will see domains like
-  `tunnel`, `e2ee`, `rpc`, and `controlplane`.
+- The `domain` is a logical protocol area owned by the schema author.
 
 ## JSON schema
 
@@ -293,7 +292,7 @@ Each method definition supports:
 
 ```
 {
-  "namespace": "flowersec.demo.v1",
+  "namespace": "flowersec.demo.v2",
   "enums": {},
   "messages": {
     "PingRequest": { "comment": "Ping request.", "fields": [] },
@@ -336,20 +335,13 @@ Typed RPC stubs use these asserts automatically.
 
 Given `-go-out` and `-ts-out`:
 
-- Go: `flowersec-go/gen/flowersec/<domain>/<version>/types.gen.go` with package name `v1`.
+- Go: `flowersec-go/gen/flowersec/<domain>/<version>/types.gen.go` with the version segment as its package name (for example, `v2`).
 - TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.gen.ts`.
 
 When `services` is present:
 
-- Go: `flowersec-go/gen/flowersec/<domain>/<version>/rpc.gen.go` (typed stubs; constants + clients + registration helpers).
 - TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.rpc.gen.ts` (typed client factory).
 - TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.facade.gen.ts` (ergonomic helpers: connect wrappers + service bundling).
-
-Go handler ergonomics:
-
-- Generated server handler interfaces return `(*Resp, error)` (instead of exposing the wire `RpcError` type).
-- To return a non-500 RPC error code/message, return `&rpc.Error{Code: ..., Message: ...}` (from `github.com/floegence/flowersec/flowersec-go/v2/rpc`).
-- Any other non-nil error is treated as an internal error: `code=500`, `message="internal error"`.
 
 ## Deterministic ordering
 
@@ -381,11 +373,11 @@ Or run the generator directly:
 
 ## Example
 
-A simplified example based on `idl/flowersec/tunnel/v1/tunnel.fidl.json`:
+A simplified v2 tunnel-domain example:
 
 ```
 {
-  "namespace": "flowersec.tunnel.v1",
+  "namespace": "flowersec.tunnel.v2",
   "enums": {
     "Role": {
       "comment": "Endpoint role for tunnel attach.",

@@ -38,6 +38,16 @@ const removedLegacyRuntimeExports = new Set([
   'decodeArtifactV2JSON',
   'encodeArtifactV2JSON',
   'validateArtifactV2',
+  'BROWSER_RUNTIME_CAPABILITY_V2',
+  'NODE_RUNTIME_CAPABILITY_V2',
+  'decodeRuntimeCapabilityDescriptorV2',
+  'detectBrowserRuntimeCapabilityV2',
+  'encodeRuntimeCapabilityDescriptorV2',
+  'runtimeCapabilityDigestHexV2',
+  'runtimeCapabilityDigestV2',
+  'validateRuntimeCapabilityDescriptorV2',
+  'FlowersecError',
+  'SessionV2',
 ]);
 const v2OnlyEntrypoints = new Set([
   '@floegence/flowersec-core',
@@ -55,6 +65,12 @@ const removedImplementationSubpaths = [
   'gen/flowersec/e2ee/v1',
   'gen/flowersec/rpc/v1',
   'gen/flowersec/tunnel/v1',
+  'v2/artifact',
+  'v2/protocol',
+  'v2/session',
+  'browser/connectV2',
+  'node/connectV2',
+  'utils/errors',
 ];
 
 function isRemovedLegacyPackageExport(subpath) {
@@ -143,7 +159,7 @@ function verifyInstalledPackage() {
     const lines = [
       `    const ${moduleVar} = await import(${JSON.stringify(subpath.specifier)});`
     ];
-    for (const exportName of subpath.runtime_exports) {
+    for (const exportName of subpath.runtime_exports.filter((name) => !removedLegacyRuntimeExports.has(name))) {
       lines.push(
         `    assert.equal(Object.prototype.hasOwnProperty.call(${moduleVar}, ${JSON.stringify(exportName)}), true, ${JSON.stringify(subpath.specifier + ' missing export ' + exportName)});`
       );
@@ -176,12 +192,20 @@ ${checks}
       );
     }
 
-    const reconnect = await import('@floegence/flowersec-core/reconnect');
-    const mgr = reconnect.createReconnectManager();
-    assert.equal(typeof mgr.connectIfNeeded, 'function');
-
     const browser = await import('@floegence/flowersec-core/browser');
     const root = await import('@floegence/flowersec-core');
+    assert.equal(root.ConnectError, browser.ConnectError);
+    const redacted = new root.ConnectError('connection_failed');
+    assert.deepEqual(
+      { name: redacted.name, code: redacted.code },
+      { name: 'ConnectError', code: 'connection_failed' },
+    );
+    assert.equal('path' in redacted, false);
+    assert.equal('stage' in redacted, false);
+    assert.equal('diagnostics' in redacted, false);
+    assert.equal('candidateId' in redacted, false);
+    assert.equal('carrier' in redacted, false);
+    assert.equal('cause' in redacted, false);
     const artifact = root.parseArtifact(${JSON.stringify(artifactFixture)});
     assert.deepEqual(Object.keys(artifact), []);
     assert.equal(JSON.stringify(artifact), '{}');
@@ -190,61 +214,22 @@ ${checks}
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestConnectArtifact'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestEntryConnectArtifact'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'createBrowserWebTransportCarrierInternalStage'), false);
-    assert.deepEqual(browser.BROWSER_RUNTIME_CAPABILITY_V2, {
-      language: 'typescript',
-      runtime: 'browser',
-      schemaVersion: 2,
-      tuples: [
-        { carrier: 'websocket', networkMode: 'dial', path: 'direct', sessionRole: 'client' },
-        { carrier: 'websocket', networkMode: 'dial', path: 'tunnel', sessionRole: 'client' },
-        { carrier: 'websocket', networkMode: 'dial', path: 'tunnel', sessionRole: 'server' },
-        { carrier: 'webtransport', networkMode: 'dial', path: 'direct', sessionRole: 'client' },
-        { carrier: 'webtransport', networkMode: 'dial', path: 'tunnel', sessionRole: 'client' },
-        { carrier: 'webtransport', networkMode: 'dial', path: 'tunnel', sessionRole: 'server' },
-      ],
-      unsupported: [{ carrier: 'raw_quic', reason: 'browser_no_raw_udp' }],
-    });
+    assert.equal(browser.BROWSER_RUNTIME_CAPABILITY_V2, undefined);
     assert.equal(browser.NODE_RUNTIME_CAPABILITY_V2, undefined);
+    assert.equal(browser.detectBrowserRuntimeCapabilityV2, undefined);
+    assert.equal(browser.runtimeCapabilityDigestHexV2, undefined);
 
     const node = await import('@floegence/flowersec-core/node');
-    assert.deepEqual(node.NODE_RUNTIME_CAPABILITY_V2, {
-      language: 'typescript',
-      runtime: 'node',
-      schemaVersion: 2,
-      tuples: [
-        { carrier: 'websocket', networkMode: 'dial', path: 'direct', sessionRole: 'client' },
-        { carrier: 'websocket', networkMode: 'dial', path: 'tunnel', sessionRole: 'client' },
-        { carrier: 'websocket', networkMode: 'dial', path: 'tunnel', sessionRole: 'server' },
-      ],
-      unsupported: [
-        { carrier: 'raw_quic', reason: 'no_production_grade_node_quic_runtime' },
-        { carrier: 'webtransport', reason: 'no_production_grade_node_quic_runtime' },
-      ],
-    });
+    assert.equal(node.NODE_RUNTIME_CAPABILITY_V2, undefined);
     assert.equal(node.BROWSER_RUNTIME_CAPABILITY_V2, undefined);
-    assert.deepEqual(browser.detectBrowserRuntimeCapabilityV2({
-      WebSocket: function WebSocket() {},
-      WebTransport: undefined,
-    }).tuples.map(({ carrier }) => carrier).filter((value, index, all) => all.indexOf(value) === index), ['websocket']);
+    assert.equal(root.BROWSER_RUNTIME_CAPABILITY_V2, undefined);
+    assert.equal(root.NODE_RUNTIME_CAPABILITY_V2, undefined);
   `;
 
   run(process.execPath, ['--input-type=module', '-'], consumerDir, script);
 }
 
-function verifyEndpointTypes() {
-  fs.writeFileSync(
-    path.join(consumerDir, 'index.ts'),
-    `import { Session, acceptDirect, acceptDirectResolved, connectTunnel } from '@floegence/flowersec-core/endpoint';
-import type { DirectAcceptOptions, DirectCredentialResolver, EndpointOptions, EndpointStream, TunnelEndpointOptions } from '@floegence/flowersec-core/endpoint';
-
-void Session;
-void acceptDirect;
-void acceptDirectResolved;
-void connectTunnel;
-const types: [DirectAcceptOptions?, DirectCredentialResolver?, EndpointOptions?, EndpointStream?, TunnelEndpointOptions?] = [];
-void types;
-`
-  );
+function verifyArtifactOnlyConnectTypes() {
   fs.writeFileSync(
     path.join(consumerDir, 'tsconfig.json'),
     JSON.stringify({
@@ -258,10 +243,6 @@ void types;
       include: ['*.ts'],
     }, null, 2)
   );
-  run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.json'], consumerDir);
-}
-
-function verifyArtifactOnlyConnectTypes() {
   fs.writeFileSync(
     path.join(consumerDir, 'artifact-only.ts'),
     `// @ts-expect-error Transport v1 root connect is removed.
@@ -293,30 +274,28 @@ function verifyTransportV2Types() {
   createArtifactAcquireContextV2,
   createArtifactV2Resolver,
   createSessionReconnectManagerV2,
-  FlowersecError,
+  ConnectError,
   parseArtifact,
 } from '@floegence/flowersec-core';
 import {
-  BROWSER_RUNTIME_CAPABILITY_V2,
   createArtifactLeaseV2 as createBrowserArtifactLeaseV2,
-  FlowersecError as BrowserFlowersecError,
+  ConnectError as BrowserConnectError,
 } from '@floegence/flowersec-core/browser';
 import {
-  NODE_RUNTIME_CAPABILITY_V2,
   createArtifactLeaseV2 as createNodeArtifactLeaseV2,
-  FlowersecError as NodeFlowersecError,
+  ConnectError as NodeConnectError,
 } from '@floegence/flowersec-core/node';
 import type {
   BrowserSessionConnectorV2Options,
   JsonPrimitiveV2 as BrowserJsonPrimitiveV2,
   JsonValueV2 as BrowserJsonValueV2,
-  NetworkModeV2 as BrowserNetworkModeV2,
   OperationOptionsV2 as BrowserOperationOptionsV2,
   SessionReconnectConfigV2 as BrowserSessionReconnectConfigV2,
-  SessionRoleV2 as BrowserSessionRoleV2,
+  SessionError as BrowserSessionError,
   SessionTerminationV2 as BrowserSessionTerminationV2,
-  UnsupportedRuntimeCarrierV2 as BrowserUnsupportedRuntimeCarrierV2,
 } from '@floegence/flowersec-core/browser';
+// @ts-expect-error capability descriptors are runtime-internal.
+import type { RuntimeCapabilityDescriptorV2 as BrowserRuntimeCapabilityDescriptorV2 } from '@floegence/flowersec-core/browser';
 // @ts-expect-error carrier SPI must remain package-internal.
 import type { CarrierSessionV2 as BrowserCarrierSessionV2 } from '@floegence/flowersec-core/browser';
 // @ts-expect-error native carrier SPI must remain package-internal.
@@ -336,13 +315,14 @@ import type { BrowserPreparedCandidateV2 } from '@floegence/flowersec-core/brows
 import type {
   JsonPrimitiveV2 as NodeJsonPrimitiveV2,
   JsonValueV2 as NodeJsonValueV2,
-  NetworkModeV2 as NodeNetworkModeV2,
+  NodeSessionConnectorV2Options,
   OperationOptionsV2 as NodeOperationOptionsV2,
   SessionReconnectConfigV2 as NodeSessionReconnectConfigV2,
-  SessionRoleV2 as NodeSessionRoleV2,
+  SessionError as NodeSessionError,
   SessionTerminationV2 as NodeSessionTerminationV2,
-  UnsupportedRuntimeCarrierV2 as NodeUnsupportedRuntimeCarrierV2,
 } from '@floegence/flowersec-core/node';
+// @ts-expect-error capability descriptors are runtime-internal.
+import type { RuntimeCapabilityDescriptorV2 as NodeRuntimeCapabilityDescriptorV2 } from '@floegence/flowersec-core/node';
 // @ts-expect-error carrier SPI must remain package-internal.
 import type { CarrierSessionV2 as NodeCarrierSessionV2 } from '@floegence/flowersec-core/node';
 // @ts-expect-error carrier resource policy must remain package-internal.
@@ -358,13 +338,14 @@ import type {
   ByteStreamV2,
   IncomingStreamV2,
   JsonObjectV2,
-  PathKind,
-  RuntimeCapabilityDescriptorV2,
+  SessionError,
   SessionReconnectConfigV2,
   SessionTerminationV2,
   SessionV2,
   StreamOpenOptionsV2,
 } from '@floegence/flowersec-core';
+// @ts-expect-error capability descriptors are runtime-internal.
+import type { RuntimeCapabilityDescriptorV2 } from '@floegence/flowersec-core';
 // @ts-expect-error raw artifacts must remain package-internal.
 import type { ArtifactV2 } from '@floegence/flowersec-core';
 // @ts-expect-error candidate details must remain package-internal.
@@ -379,6 +360,10 @@ import type { NativeCarrierSessionV2, NativeCarrierStreamV2 } from '@floegence/f
 import type { WebSocketBinaryTransportV2, WebSocketResourcePolicyV2 } from '@floegence/flowersec-core';
 // @ts-expect-error candidate diagnostics must remain package-internal.
 import type { FlowersecCandidateDiagnostic } from '@floegence/flowersec-core';
+// @ts-expect-error raw artifact input aliases must remain package-internal.
+import type { ArtifactInputV2, ArtifactDecoderV2 } from '@floegence/flowersec-core';
+// @ts-expect-error the previous diagnostic-bearing error is removed.
+import { FlowersecError } from '@floegence/flowersec-core';
 // @ts-expect-error session key material and handshake configuration are package-internal.
 import type { SessionConfigV2 } from '@floegence/flowersec-core';
 // @ts-expect-error implementation framing is not a public package subpath.
@@ -415,46 +400,60 @@ new Artifact();
 const forgedArtifact: Artifact = {};
 void forgedArtifact;
 
-const path: PathKind = session.path;
+// @ts-expect-error path selection is internal to the opaque session.
+void session.path;
+// @ts-expect-error peer endpoint identity is internal to the opaque session.
+void session.endpointInstanceId;
 // @ts-expect-error selected carriers are internal diagnostics, not session API.
 void session.chosenCarrier;
-const browserDescriptor: RuntimeCapabilityDescriptorV2 = BROWSER_RUNTIME_CAPABILITY_V2;
-const nodeDescriptor: RuntimeCapabilityDescriptorV2 = NODE_RUNTIME_CAPABILITY_V2;
+// @ts-expect-error logical stream IDs are internal wire bookkeeping.
+void stream.id;
+// @ts-expect-error incoming logical stream IDs are internal wire bookkeeping.
+void incoming.id;
 const accepted: ByteStreamV2 = incoming.stream;
 const lease: ArtifactLeaseV2 = createArtifactLeaseV2(artifact, commitSpend);
-const source: ArtifactSourceV2 = { kind: 'once', artifact: rawArtifact, commitSpend };
+const source: ArtifactSourceV2 = { kind: 'once', artifact, commitSpend };
+// @ts-expect-error lease construction accepts opaque Artifact handles only.
+createArtifactLeaseV2(rawArtifact, commitSpend);
+// @ts-expect-error one-time sources accept opaque Artifact handles only.
+const rawSource: ArtifactSourceV2 = { kind: 'once', artifact: rawArtifact, commitSpend };
 const resolveArtifact = createArtifactV2Resolver(source);
-const acquireContext: ArtifactAcquireContextV2 = createArtifactAcquireContextV2(
-  browserDescriptor,
-  { traceId: 'trace-1' },
-);
+const acquireContext: ArtifactAcquireContextV2 = createArtifactAcquireContextV2({ traceId: 'trace-1' });
 const reconnectManager = createSessionReconnectManagerV2();
 declare const reconnectConfig: SessionReconnectConfigV2;
 declare const termination: SessionTerminationV2;
-declare const browserTypes: readonly [BrowserJsonPrimitiveV2, BrowserJsonValueV2, BrowserNetworkModeV2, BrowserOperationOptionsV2, BrowserSessionReconnectConfigV2, BrowserSessionRoleV2, BrowserSessionTerminationV2, BrowserUnsupportedRuntimeCarrierV2];
-declare const nodeTypes: readonly [NodeJsonPrimitiveV2, NodeJsonValueV2, NodeNetworkModeV2, NodeOperationOptionsV2, NodeSessionReconnectConfigV2, NodeSessionRoleV2, NodeSessionTerminationV2, NodeUnsupportedRuntimeCarrierV2];
+declare const browserTypes: readonly [BrowserJsonPrimitiveV2, BrowserJsonValueV2, BrowserOperationOptionsV2, BrowserSessionReconnectConfigV2, BrowserSessionTerminationV2, BrowserSessionError, BrowserRuntimeCapabilityDescriptorV2];
+declare const nodeTypes: readonly [NodeJsonPrimitiveV2, NodeJsonValueV2, NodeOperationOptionsV2, NodeSessionReconnectConfigV2, NodeSessionTerminationV2, NodeSessionError, NodeRuntimeCapabilityDescriptorV2];
 const leakedWebSocketFactory: BrowserSessionConnectorV2Options = {
+  // @ts-expect-error admission policy is runtime-owned.
   admissionReasons: new Set(),
-  // @ts-expect-error carrier construction factories must remain package-internal.
-  webSocketFactory: () => { throw new Error('unreachable'); },
 };
 const leakedWebTransportFactory: BrowserSessionConnectorV2Options = {
-  admissionReasons: new Set(),
   // @ts-expect-error carrier construction factories must remain package-internal.
   webTransportFactory: () => { throw new Error('unreachable'); },
 };
 const leakedAttemptFactory: BrowserSessionConnectorV2Options = {
-  admissionReasons: new Set(),
   // @ts-expect-error low-level carrier attempt factories must remain package-internal.
   attemptFactory: { create: () => { throw new Error('unreachable'); } },
 };
+const leakedNodeCarrierOptions: NodeSessionConnectorV2Options = {
+  origin: 'https://app.example',
+  // @ts-expect-error Node carrier-specific tuning is package-internal.
+  webSocket: {},
+};
+declare const terminalError: SessionError;
+const connectError = new ConnectError('connection_failed');
+// @ts-expect-error public connection errors expose only their closed code.
+void connectError.path;
+// @ts-expect-error public connection errors expose only their closed code.
+void connectError.stage;
 
-void path;
+void ConnectError;
+void BrowserConnectError;
+void NodeConnectError;
 void FlowersecError;
-void BrowserFlowersecError;
-void NodeFlowersecError;
-void browserDescriptor;
-void nodeDescriptor;
+void rawSource;
+void (undefined as unknown as RuntimeCapabilityDescriptorV2);
 void accepted;
 void resolveArtifact(acquireContext);
 void reconnectManager.connectIfNeeded(reconnectConfig);
@@ -464,8 +463,10 @@ void nodeTypes;
 void leakedWebSocketFactory;
 void leakedWebTransportFactory;
 void leakedAttemptFactory;
-void createBrowserArtifactLeaseV2(rawArtifact, commitSpend);
-void createNodeArtifactLeaseV2(rawArtifact, commitSpend);
+void leakedNodeCarrierOptions;
+void terminalError;
+void createBrowserArtifactLeaseV2(artifact, commitSpend);
+void createNodeArtifactLeaseV2(artifact, commitSpend);
 void lease.commitSpend();
 void metadata;
 void openOptions;
@@ -492,7 +493,6 @@ try {
   installTarball(tarballPath);
   verifyBrowserDependencyGraph();
   verifyInstalledPackage();
-  verifyEndpointTypes();
   verifyArtifactOnlyConnectTypes();
   verifyTransportV2Types();
 } finally {

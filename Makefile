@@ -1,8 +1,5 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check source-inventory readme-localization-check example-check example-install-check interop-smoke interop-smoke-linux interop-smoke-swift interop-stress interop-stress-full fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust bench bench-test check stability-check transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check stability-check transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
 
-INTEROP_CELLS ?= go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust
-INTEROP_REPORT_DIR ?= $(or $(TMPDIR),/tmp)
-INTEROP_DEADLINE_MS ?= 0
 CHECK_INTEROP ?= 1
 
 YAMUX_INTEROP ?= 1
@@ -44,27 +41,21 @@ test: go-test ts-test
 
 go-test:
 	cd flowersec-go && go test ./...
-	cd examples && go test ./...
 	cd tools/idlgen && go test ./...
-	cd tools/manifestgen && go test ./...
 	cd tools/releasenotes && go test ./...
 	cd tools/stabilitycheck && go test ./...
 	cd tools/transportcheck && go test ./...
 
 go-test-race:
 	cd flowersec-go && go test -race ./...
-	cd examples && go test -race ./...
 	cd tools/idlgen && go test -race ./...
-	cd tools/manifestgen && go test -race ./...
 	cd tools/releasenotes && go test -race ./...
 	cd tools/stabilitycheck && go test -race ./...
 	./scripts/run-go-test-race-shards.sh tools/transportcheck 4 10m
 
 go-vet:
 	cd flowersec-go && go vet ./...
-	cd examples && go vet ./...
 	cd tools/idlgen && go vet ./...
-	cd tools/manifestgen && go vet ./...
 	cd tools/releasenotes && go vet ./...
 	cd tools/stabilitycheck && go vet ./...
 	cd tools/transportcheck && go vet ./...
@@ -119,7 +110,7 @@ swift-security-check:
 swift-source-guard:
 	@status=1; \
 	if command -v rg >/dev/null 2>&1; then \
-		if rg -n --glob '!.build/**' --glob '!.git/**' --glob '!.swiftpm/**' --glob '!dist/**' --glob '!node_modules/**' --glob '!docs/MIGRATION_TRANSPORT_V2.md' '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \
+		if rg -n --glob '!.build/**' --glob '!.git/**' --glob '!.swiftpm/**' --glob '!dist/**' --glob '!node_modules/**' '$(SWIFT_SOURCE_GUARD_PATTERN)' $(SWIFT_SOURCE_GUARD_PATHS); then \
 			status=0; \
 		else \
 			status=$$?; \
@@ -186,7 +177,7 @@ rust-fuzz-build:
 	cd flowersec-rust && cargo check --manifest-path fuzz/Cargo.toml --bins
 
 rust-fuzz-check:
-	cd flowersec-rust && for target in artifact handshake token yamux proxy; do cargo +nightly fuzz run "$$target" -- -max_total_time=10; done
+	cd flowersec-rust && cargo +nightly fuzz run artifact -- -max_total_time=10
 
 rust-semver-check:
 	@version=$$(sed -n 's/^version = "\([^"]*\)"/\1/p' flowersec-rust/Cargo.toml | head -1); \
@@ -204,43 +195,23 @@ rust-release-check: rust-check rust-audit rust-deny rust-cover-check rust-semver
 
 release-check:
 	$(MAKE) check
-	$(MAKE) interop-stress-full
 	$(MAKE) transport-v2-release-evidence
 	$(MAKE) transport-v2-signed-evidence-check
 
 example-check:
-	cd examples && go test ./...
 	find examples/ts -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
 	cargo check --locked --manifest-path examples/rust/Cargo.toml
 	swift build --package-path examples/swift
 
 example-install-check: example-check
 
-interop-smoke:
-	go run ./flowersec-go/internal/cmd/flowersec-interop -profile smoke -cells "$(INTEROP_CELLS)" -deadline-ms "$(INTEROP_DEADLINE_MS)" -report "$(INTEROP_REPORT_DIR)/flowersec-interop-smoke.json"
-
-interop-smoke-linux:
-	$(MAKE) interop-smoke INTEROP_CELLS=go_to_go,typescript_to_go,rust_to_go,go_to_typescript,go_to_rust INTEROP_DEADLINE_MS=120000
-
-interop-smoke-swift:
-	$(MAKE) interop-smoke INTEROP_CELLS=go_to_go,swift_to_go,go_to_swift INTEROP_DEADLINE_MS=90000
-
-interop-stress:
-	@for tool in go node npm cargo rustc swift; do \
-		command -v "$$tool" >/dev/null 2>&1 || { echo "missing required interop toolchain: $$tool"; exit 1; }; \
-	done
-	go run ./flowersec-go/internal/cmd/flowersec-interop -profile stress -cells "$(INTEROP_CELLS)" -report "$(INTEROP_REPORT_DIR)/flowersec-interop-stress.json"
-
-interop-stress-full:
-	$(MAKE) interop-stress INTEROP_CELLS="go_to_go,typescript_to_go,swift_to_go,rust_to_go,go_to_typescript,go_to_swift,go_to_rust"
-
 fmt:
-	gofmt -w flowersec-go examples/go examples/gen
+	gofmt -w flowersec-go examples/gen
 
 fmt-check:
-	@if [ -n "$$(gofmt -l flowersec-go examples/go examples/gen)" ]; then \
+	@if [ -n "$$(gofmt -l flowersec-go examples/gen)" ]; then \
 		echo "gofmt needed; run 'make fmt'"; \
-		gofmt -l flowersec-go examples/go examples/gen; \
+		gofmt -l flowersec-go examples/gen; \
 		exit 1; \
 	fi
 
@@ -307,7 +278,6 @@ precommit: security-makefile-check security-dependency-check
 	$(MAKE) precommit-rust
 
 stability-check:
-	cd tools/manifestgen && go run .
 	cd tools/stabilitycheck && go run . verify-manifest
 	cd tools/stabilitycheck && go run . verify-defaults
 	cd tools/stabilitycheck && go run . verify-parity
@@ -325,9 +295,9 @@ transport-v2-unit:
 
 transport-conformance-smoke:
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-conformance-smoke -classification local_smoke
-	cd flowersec-go && go test -count=1 ./protocolv2 ./artifactv2 ./admissionv2 ./session
+	cd flowersec-go && go test -count=1 ./internal/protocolv2 ./internal/artifactv2 ./internal/admissionv2 ./internal/session
 	cd flowersec-ts && npx vitest run src/v2
-	cd flowersec-rust && cargo test --all-features --test transport_v2_contract --test transport_v2_crypto_vectors --test open_v2_vectors --test session_v2
+	cd flowersec-rust && cargo test --all-features --lib --test transport_v2_contract
 	swift test --filter 'TransportV2|IDNAHostV2'
 	@echo "classification=local_smoke; no signed release evidence is claimed"
 
@@ -340,7 +310,7 @@ transport-browser-smoke:
 transport-interop-smoke:
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-interop-smoke -classification local_smoke
 	cd flowersec-ts && npx vitest run src/v2/session_go_interop.test.ts
-	cd flowersec-rust && cargo test --all-features --test raw_quic_v2 rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel
+	cd flowersec-rust && cargo test --all-features --lib rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel
 	@echo "classification=local_smoke; the full cross-language release matrix is not claimed"
 
 WEAKNET_SMOKE_REPORT ?= /tmp/flowersec-weaknet-smoke.json
@@ -356,14 +326,14 @@ quic-native-smoke:
 		exit 1; \
 	fi
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target quic-native-smoke -classification local_smoke
-	cd flowersec-go && go test -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesToNewPacketConn)$$' ./carrier/rawquic
-	cd flowersec-go && go test -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./tunnelv2
+	cd flowersec-go && go test -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesToNewPacketConn)$$' ./internal/carrier/rawquic
+	cd flowersec-go && go test -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./internal/tunnelv2
 	@echo "classification=local_smoke; qlog/system performance evidence is not claimed"
 
 quic-native-race-smoke:
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target quic-native-race-smoke -classification local_smoke
-	cd flowersec-go && go test -race -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesToNewPacketConn)$$' ./carrier/rawquic
-	cd flowersec-go && go test -race -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./tunnelv2
+	cd flowersec-go && go test -race -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesToNewPacketConn)$$' ./internal/carrier/rawquic
+	cd flowersec-go && go test -race -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./internal/tunnelv2
 	@echo "classification=local_smoke; qlog-backed race evidence is not claimed"
 
 TRANSPORT_V2_EVIDENCE_REPORT ?=
@@ -406,17 +376,14 @@ go-cover-check:
 	cd tools/stabilitycheck && go run . verify-go-coverage
 
 compat-check:
-	$(MAKE) interop-smoke-linux
+	$(MAKE) transport-conformance-smoke
 
 nightly-check:
 	$(MAKE) ts-ci
 	$(MAKE) stability-check
 	$(MAKE) rust-release-check
 	$(MAKE) rust-fuzz-check
-	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) interop-smoke-linux; fi
-	cd flowersec-go && go test -run '^$$' -fuzz=FuzzDecodeHandshakeFrame -fuzztime=5s ./crypto/e2ee
-	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAndVerify -fuzztime=5s ./controlplane/token
-	cd flowersec-go && go test -run '^$$' -fuzz=FuzzParseAttachWithConstraints -fuzztime=5s ./tunnel/protocol
+	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) transport-interop-smoke; fi
 
 check: security-makefile-check security-dependency-check
 	$(MAKE) release-policy-check
@@ -427,7 +394,6 @@ check: security-makefile-check security-dependency-check
 	$(MAKE) transport-v2-unit
 	$(MAKE) weaknet-smoke
 	$(MAKE) quic-native-smoke
-	$(MAKE) bench-test
 	$(MAKE) lint-check
 	$(MAKE) ts-build
 	$(MAKE) ts-browser-ensure
@@ -441,10 +407,4 @@ check: security-makefile-check security-dependency-check
 	$(MAKE) go-test-race
 	$(MAKE) go-vulncheck
 	$(MAKE) ts-audit
-	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) interop-smoke; fi
-
-bench:
-	bash tools/bench/bench.sh
-
-bench-test:
-	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tools/bench/bench_check_test.py
+	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) transport-interop-smoke; fi

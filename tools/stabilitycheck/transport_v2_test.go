@@ -97,67 +97,6 @@ func TestTransportV2ContractDeclaresSignedSliceZeroRegistry(t *testing.T) {
 		"business logic",
 		"stability/transport_v2_contract.json",
 	})
-	assertDocumentContains(t, repoRoot, contract.Docs.Migration, []string{
-		"v1",
-		"v2",
-		"dual-stack",
-		"redeven",
-		"redeven-portal",
-		"floe-webapp",
-		"rollback",
-		"capability",
-		"binding_generation",
-		"connection_generation",
-		"ATOMIC_AUTHORITY_SWAP",
-		"ArtifactLease",
-		"CommitSpend",
-		"custom tunnel",
-		"ProtocolProvider",
-		"RpcProxy",
-		"Service Worker",
-		"`scripts/release.sh <version>`",
-		"`CustomTunnelURL`",
-		"`custom_tunnel_endpoint_set_v2`",
-		"dual-read",
-		"dual-write",
-		"`endpointsetv2.DecodeJSON`",
-		"`endpointsetv2.CompatibleListeners`",
-		"`backend/pkg/deployment/deployment_contract_test.go`",
-		"`packages/boot/package.json`",
-		"`packages/protocol/package.json`",
-		"`packages/core/package.json`",
-		"`packages/init/package.json`",
-		"`packages/boot/test/release-contract.test.ts`",
-		"`packages/boot/test/doc-contract.test.ts`",
-		"`packages/protocol/test/doc-contract.test.ts`",
-		"`docs/protocol.md`",
-		"`docs/runtime.md`",
-		"`v<floe-version>`",
-		"`internal/session/dependency_contract_test.go`",
-		"`internal/envapp/ui_src/package-lock.json`",
-		"`internal/envapp/ui_src/pnpm-lock.yaml`",
-		"`internal/codeapp/ui_src/package-lock.json`",
-		"`desktop/package.json`",
-		"`desktop/package-lock.json`",
-		"`desktop/pnpm-lock.yaml`",
-		"`okf/architecture/runtime-transport-dependencies.md`",
-		"`okf/architecture/env-app-upstream-web-dependencies.md`",
-		"`README.md`",
-		"localized README",
-		"`THIRD_PARTY_NOTICES.md`",
-	})
-
-	migrationData, err := os.ReadFile(filepath.Join(repoRoot, contract.Docs.Migration))
-	if err != nil {
-		t.Fatal(err)
-	}
-	migration := string(migrationData)
-	flowersecRelease := strings.Index(migration, "### Flowersec Release")
-	floeRelease := strings.Index(migration, "### Floe Webapp Release")
-	redevenUpgrade := strings.Index(migration, "### Redeven Upgrade")
-	if flowersecRelease < 0 || floeRelease <= flowersecRelease || redevenUpgrade <= floeRelease {
-		t.Fatalf("downstream release order must be Flowersec, floe-webapp, then redeven")
-	}
 }
 
 func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
@@ -170,19 +109,14 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/session", "session.SessionV2")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier", "carrier.Session")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/artifactv2", "artifactv2.Artifact")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/connectv2", "connectv2.NewConnector")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/connectv2", "connectv2.WithConnectorClock")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/connectv2", "connectv2.ErrArtifactExpired")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/connectv2", "connectv2.ArtifactLease")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic", "rawquic.BindSessionLimits")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic", "rawquic.Limits.Validate")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/webtransport", "carrierwt.BindSessionLimits")
-	forbidGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic", "rawquic.NewConfig")
-	forbidGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/webtransport", "carrierwt.NewQUICConfig")
-	forbidGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/webtransport", "carrierwt.NewServerQUICConfig")
+	const goRoot = "github.com/floegence/flowersec/flowersec-go/v2"
+	for _, expression := range []string{
+		"flowersec.Artifact", "flowersec.ArtifactLease", "flowersec.ParseArtifact",
+		"flowersec.NewArtifactLease", "flowersec.Connector", "flowersec.NewConnector",
+		"flowersec.Session", "flowersec.ByteStream", "flowersec.RPCPeer", "flowersec.ConnectError",
+	} {
+		requireGoManifestEntry(t, m, goRoot, expression)
+	}
 
 	type rawManifest struct {
 		Docs struct {
@@ -208,12 +142,12 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		t.Fatalf("manifest docs must register the Transport v2 API document and CarrierSession token")
 	}
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "SessionV2")
-	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/browser", "RuntimeCapabilityDescriptorV2")
+	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/browser", "BrowserSessionConnectorV2Options")
 	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/node", "ByteStreamV2")
 	for _, specifier := range []string{"@floegence/flowersec-core/browser", "@floegence/flowersec-core/node"} {
 		for _, exportName := range []string{
-			"JsonPrimitiveV2", "JsonValueV2", "NetworkModeV2", "OperationOptionsV2",
-			"SessionRoleV2", "SessionTerminationV2", "UnsupportedRuntimeCarrierV2",
+			"JsonPrimitiveV2", "JsonValueV2", "OperationOptionsV2", "RpcPeerV2",
+			"RpcResultV2", "SessionErrorCode", "SessionTerminationV2",
 			"SessionReconnectConfigV2", "SessionReconnectManagerV2", "SessionReconnectStateV2",
 		} {
 			requireTSTypeExport(t, raw.TS.Subpaths, specifier, exportName)
@@ -221,22 +155,21 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 	}
 	requireSwiftManifestSymbol(t, m, "swift.protocol", "SessionV2")
 	requireSwiftManifestSymbol(t, m, "swift.protocol", "ByteStreamV2")
-	requireSwiftManifestSymbol(t, m, "swift.enum", "CarrierKind")
+	requireSwiftManifestSymbol(t, m, "swift.enum", "SessionErrorV2")
 
 	for _, entry := range []string{
-		"let _: Option<&dyn flowersec::transport_v2::SessionV2> = None",
-		"let _ = flowersec::protocol_v2::MAX_CIPHERTEXT_V2_BYTES",
-		"let _ = flowersec::raw_quic_v2::RawQuicLimits::default()",
+		"let _: Option<&dyn flowersec::Session> = None",
+		"let _ = std::mem::size_of::<flowersec::Artifact>()",
+		"let _ = std::mem::size_of::<flowersec::Connector>()",
 	} {
 		if !slices.Contains(m.Rust.CompileEntries, entry) {
 			t.Errorf("rust compile entries missing %q", entry)
 		}
 	}
 	assertDocumentContains(t, repoRoot, "docs/API_CONTRACT.md", []string{
-		"`flowersec::transport_v2`",
-		"`flowersec::raw_quic_v2`",
-		"`SessionV2::wait_closed()`",
-		"`native_rust_capability_descriptor_v2()`",
+		"`Connector`",
+		"`ConnectorOptions`",
+		"`Session`",
 	})
 }
 
@@ -254,7 +187,10 @@ func TestTransportV2GoExportsAreFullyRegistered(t *testing.T) {
 		if target.StabilityGroup != "transport_v2" {
 			continue
 		}
-		relativePackage := strings.TrimPrefix(target.Package, m.Go.ModulePath+"/")
+		relativePackage := "."
+		if target.Package != m.Go.ModulePath {
+			relativePackage = strings.TrimPrefix(target.Package, m.Go.ModulePath+"/")
+		}
 		if relativePackage == target.Package {
 			t.Fatalf("transport v2 package %q is outside module %q", target.Package, m.Go.ModulePath)
 		}
@@ -290,60 +226,15 @@ func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 	}
 
 	expected := map[string][]string{
-		"github.com/floegence/flowersec/flowersec-go/v2/session": {
-			"session.ByteStream.Read",
-			"session.ByteStream.Write",
-			"session.ByteStream.Close",
-			"session.ByteStream.ID",
-			"session.ByteStream.Kind",
-			"session.ByteStream.TerminalError",
-			"session.ByteStream.CloseWrite",
-			"session.ByteStream.Reset",
-			"session.RPCPeer.Call",
-			"session.RPCPeer.Notify",
-			"session.SessionV2.Path",
-			"session.SessionV2.EndpointInstanceID",
-			"session.SessionV2.RPC",
-			"session.SessionV2.OpenStream",
-			"session.SessionV2.AcceptStream",
-			"session.SessionV2.Rekey",
-			"session.SessionV2.ProbeLiveness",
-			"session.SessionV2.Termination",
-			"session.SessionV2.WaitClosed",
-			"session.SessionV2.Close",
-		},
-		"github.com/floegence/flowersec/flowersec-go/v2/carrier": {
-			"carrier.Stream.Read",
-			"carrier.Stream.Write",
-			"carrier.Stream.Close",
-			"carrier.Stream.CloseWrite",
-			"carrier.Stream.Reset",
-			"carrier.Stream.Context",
-			"carrier.Session.Kind",
-			"carrier.Session.MaxIncomingStreams",
-			"carrier.Session.OpenStream",
-			"carrier.Session.AcceptStream",
-			"carrier.Session.CloseWithErrorContext",
-			"carrier.Session.CloseWithError",
-			"carrier.Session.Close",
-		},
-		"github.com/floegence/flowersec/flowersec-go/v2/connectv2": {
-			"connectv2.AdmissionHandle.CommitAdmission",
-			"connectv2.AdmissionHandle.Close",
-			"connectv2.Attempt.Ready",
-			"connectv2.Attempt.Abort",
-			"connectv2.Factory.NewAttempt",
-			"connectv2.Prepared.Commit",
-			"connectv2.Prepared.Close",
-		},
-		"github.com/floegence/flowersec/flowersec-go/v2/tunnelv2": {
-			"tunnelv2.Lease.Release",
-			"tunnelv2.PendingLeg.ReceiveAdmission",
-			"tunnelv2.PendingLeg.CarrierKind",
-			"tunnelv2.PendingLeg.SendAdmission",
-			"tunnelv2.PendingLeg.Activate",
-			"tunnelv2.PendingLeg.CloseWithError",
-			"tunnelv2.WaitingStreamRejector.RejectWaitingStreams",
+		"github.com/floegence/flowersec/flowersec-go/v2": {
+			"flowersec.ByteStream.Read", "flowersec.ByteStream.Write", "flowersec.ByteStream.Close",
+			"flowersec.ByteStream.Kind", "flowersec.ByteStream.TerminalError",
+			"flowersec.ByteStream.CloseWrite", "flowersec.ByteStream.Reset",
+			"flowersec.RPCPeer.Call", "flowersec.RPCPeer.Notify",
+			"flowersec.Session.RPC",
+			"flowersec.Session.OpenStream", "flowersec.Session.AcceptStream", "flowersec.Session.Rekey",
+			"flowersec.Session.ProbeLiveness", "flowersec.Session.Termination",
+			"flowersec.Session.WaitClosed", "flowersec.Session.Close",
 		},
 	}
 
@@ -354,7 +245,7 @@ func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 	}
 }
 
-func TestTransportV2ConnectErrorRegistryCoversCancelableStages(t *testing.T) {
+func TestTransportV2InternalConnectErrorRegistryCoversCancelableStages(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -364,13 +255,17 @@ func TestTransportV2ConnectErrorRegistryCoversCancelableStages(t *testing.T) {
 		t.Fatal(err)
 	}
 	var registry struct {
-		Codes []struct {
+		Visibility string `json:"visibility"`
+		Codes      []struct {
 			Code   string   `json:"code"`
 			Stages []string `json:"stages"`
 		} `json:"codes"`
 	}
 	if err := json.Unmarshal(data, &registry); err != nil {
 		t.Fatal(err)
+	}
+	if registry.Visibility != "internal" {
+		t.Fatalf("connect error registry visibility = %q, want internal", registry.Visibility)
 	}
 
 	requiredStages := []string{"validate", "connect", "attach", "handshake", "reconnect", "close"}
@@ -684,7 +579,7 @@ func TestTransportV2ContractRejectsInvalidRegistryStates(t *testing.T) {
 		{
 			name: "swapped document ownership",
 			mutate: func(copy *transportV2Contract) {
-				copy.Docs.Architecture, copy.Docs.Migration = copy.Docs.Migration, copy.Docs.Architecture
+				copy.Docs.Architecture, copy.Docs.Wire = copy.Docs.Wire, copy.Docs.Architecture
 			},
 			wantErr: "architecture document path",
 		},

@@ -1,9 +1,8 @@
 import type {
   ByteStreamV2,
-  CarrierKind,
   IncomingStreamV2,
   JsonObjectV2,
-  PathKind,
+  SessionError,
   SessionV2,
   StreamOpenOptionsV2,
 } from "./contract.js";
@@ -20,10 +19,6 @@ import { expect, test } from "vitest";
 type Assert<T extends true> = T;
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-type _CarrierKindsAreFrozen = Assert<Equal<CarrierKind, "websocket" | "raw_quic" | "webtransport">>;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-type _PathKindsAreFrozen = Assert<Equal<PathKind, "direct" | "tunnel">>;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 type _CarrierCapacityIsRequired = Assert<Equal<CarrierSessionV2["inboundBidirectionalStreamCapacity"], number>>;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -59,25 +54,27 @@ function typecheckContract(
   metadata: JsonObjectV2,
   openOptions: StreamOpenOptionsV2,
 ): void {
-  const path: PathKind = session.path;
+  // @ts-expect-error path selection is an internal diagnostic, not session API.
+  void session.path;
   // @ts-expect-error carrier selection is an internal diagnostic, not session API.
   void session.chosenCarrier;
-  const peerID: string | undefined = session.endpointInstanceId;
-  const streamID: bigint = stream.id;
+  // @ts-expect-error peer endpoint identity is not exposed by the opaque session API.
+  void session.endpointInstanceId;
+  // @ts-expect-error logical stream IDs are wire bookkeeping, not public API.
+  void stream.id;
   const streamKind: string = stream.kind;
-  const incomingID: bigint = incoming.id;
+  // @ts-expect-error accepted logical stream IDs remain package-internal.
+  void incoming.id;
   const incomingKind: string = incoming.kind;
   const incomingMetadata: JsonObjectV2 = incoming.metadata;
   const incomingStream: ByteStreamV2 = incoming.stream;
+  const terminalError: SessionError | undefined = stream.terminalError;
 
-  void path;
-  void peerID;
-  void streamID;
   void streamKind;
-  void incomingID;
   void incomingKind;
   void incomingMetadata;
   void incomingStream;
+  void terminalError;
   void metadata;
   void openOptions;
 

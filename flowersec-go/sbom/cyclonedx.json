@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:46758599-ae3b-59c6-81de-ae0c2cbc90b1",
+  "serialNumber": "urn:uuid:6d9be36b-49e3-5922-8232-a9f92dc4e1a8",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,67 +14,11 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "52abe3a28453bb4f6dfe804481cd380402b21728cca983d35e5dfefa5872aed0"
+        "value": "acf5265733e2d0da87391e4347865924fce27bbc0871e49ef36e002a5856b3ea"
       }
     ]
   },
   "components": [
-    {
-      "type": "library",
-      "name": "github.com/beorn7/perks",
-      "version": "v1.0.1",
-      "purl": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-      "bom-ref": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/beorn7/perks"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/cespare/xxhash/v2",
-      "version": "v2.3.0",
-      "purl": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-      "bom-ref": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/cespare/xxhash/v2"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
     {
       "type": "library",
       "name": "github.com/dunglas/httpsfv",
@@ -124,62 +68,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "BSD-2-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/hashicorp/yamux",
-      "version": "v0.1.2",
-      "purl": "pkg:golang/github.com/hashicorp/yamux@v0.1.2",
-      "bom-ref": "pkg:golang/github.com/hashicorp/yamux@v0.1.2",
-      "licenses": [
-        {
-          "expression": "MPL-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/hashicorp/yamux"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MPL-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "true"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/klauspost/compress",
-      "version": "v1.17.9",
-      "purl": "pkg:golang/github.com/klauspost/compress@v1.17.9",
-      "bom-ref": "pkg:golang/github.com/klauspost/compress@v1.17.9",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/klauspost/compress"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -240,146 +128,6 @@
         {
           "name": "flowersec:source-offer-required",
           "value": "true"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/munnerz/goautoneg",
-      "version": "v0.0.0-20191010083416-a7dc8b61c822",
-      "purl": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-      "bom-ref": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-      "licenses": [
-        {
-          "expression": "BSD-3-Clause"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/munnerz/goautoneg"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-3-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/prometheus/client_golang",
-      "version": "v1.20.5",
-      "purl": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "bom-ref": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/prometheus/client_golang"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/prometheus/client_model",
-      "version": "v0.6.1",
-      "purl": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-      "bom-ref": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/prometheus/client_model"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/prometheus/common",
-      "version": "v0.55.0",
-      "purl": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "bom-ref": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/prometheus/common"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/prometheus/procfs",
-      "version": "v0.15.1",
-      "purl": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-      "bom-ref": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/prometheus/procfs"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
         }
       ]
     },
@@ -578,70 +326,24 @@
           "value": "false"
         }
       ]
-    },
-    {
-      "type": "library",
-      "name": "google.golang.org/protobuf",
-      "version": "v1.34.2",
-      "purl": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-      "bom-ref": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-      "licenses": [
-        {
-          "expression": "BSD-3-Clause"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://google.golang.org/protobuf"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-3-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
     }
   ],
   "dependencies": [
     {
       "ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
       "dependsOn": [
-        "pkg:golang/github.com/beorn7/perks@v1.0.1",
-        "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
         "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
         "pkg:golang/github.com/gorilla/websocket@v1.5.3",
-        "pkg:golang/github.com/hashicorp/yamux@v0.1.2",
-        "pkg:golang/github.com/klauspost/compress@v1.17.9",
         "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
         "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-        "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-        "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-        "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-        "pkg:golang/github.com/prometheus/common@v0.55.0",
-        "pkg:golang/github.com/prometheus/procfs@v0.15.1",
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
         "pkg:golang/github.com/quic-go/quic-go@v0.60.0",
         "pkg:golang/github.com/quic-go/webtransport-go@v0.11.1",
         "pkg:golang/golang.org/x/crypto@v0.53.0",
         "pkg:golang/golang.org/x/net@v0.56.0",
         "pkg:golang/golang.org/x/sys@v0.46.0",
-        "pkg:golang/golang.org/x/text@v0.39.0",
-        "pkg:golang/google.golang.org/protobuf@v1.34.2"
+        "pkg:golang/golang.org/x/text@v0.39.0"
       ]
-    },
-    {
-      "ref": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-      "dependsOn": []
     },
     {
       "ref": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
@@ -652,14 +354,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:golang/github.com/hashicorp/yamux@v0.1.2",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:golang/github.com/klauspost/compress@v1.17.9",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
       "dependsOn": []
     },
@@ -667,53 +361,6 @@
       "ref": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
       "dependsOn": [
         "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2"
-      ]
-    },
-    {
-      "ref": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "dependsOn": [
-        "pkg:golang/github.com/beorn7/perks@v1.0.1",
-        "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-        "pkg:golang/github.com/klauspost/compress@v1.17.9",
-        "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-        "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-        "pkg:golang/github.com/prometheus/common@v0.55.0",
-        "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-        "pkg:golang/golang.org/x/net@v0.56.0",
-        "pkg:golang/golang.org/x/sys@v0.46.0",
-        "pkg:golang/golang.org/x/text@v0.39.0",
-        "pkg:golang/google.golang.org/protobuf@v1.34.2"
-      ]
-    },
-    {
-      "ref": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-      "dependsOn": [
-        "pkg:golang/google.golang.org/protobuf@v1.34.2"
-      ]
-    },
-    {
-      "ref": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "dependsOn": [
-        "pkg:golang/github.com/beorn7/perks@v1.0.1",
-        "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-        "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-        "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-        "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-        "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-        "pkg:golang/golang.org/x/net@v0.56.0",
-        "pkg:golang/golang.org/x/sys@v0.46.0",
-        "pkg:golang/golang.org/x/text@v0.39.0",
-        "pkg:golang/google.golang.org/protobuf@v1.34.2"
-      ]
-    },
-    {
-      "ref": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-      "dependsOn": [
-        "pkg:golang/golang.org/x/sys@v0.46.0"
       ]
     },
     {
@@ -766,10 +413,6 @@
     },
     {
       "ref": "pkg:golang/golang.org/x/text@v0.39.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:golang/google.golang.org/protobuf@v1.34.2",
       "dependsOn": []
     }
   ]

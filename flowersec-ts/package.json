@@ -18,7 +18,6 @@
     "dist/**",
     "README.md",
     "LICENSE",
-    "YAMUX_ALIGNMENT.md",
     "THIRD_PARTY_NOTICES.md",
     "sbom/**"
   ],
@@ -37,34 +36,6 @@
     "./browser": {
       "types": "./dist/browser/index.d.ts",
       "default": "./dist/browser/index.js"
-    },
-    "./controlplane": {
-      "types": "./dist/controlplane/index.d.ts",
-      "default": "./dist/controlplane/index.js"
-    },
-    "./endpoint": {
-      "types": "./dist/endpoint/index.d.ts",
-      "default": "./dist/endpoint/index.js"
-    },
-    "./streamio": {
-      "types": "./dist/streamio/index.d.ts",
-      "default": "./dist/streamio/index.js"
-    },
-    "./proxy": {
-      "types": "./dist/proxy/index.d.ts",
-      "default": "./dist/proxy/index.js"
-    },
-    "./reconnect": {
-      "types": "./dist/reconnect/index.d.ts",
-      "default": "./dist/reconnect/index.js"
-    },
-    "./rpc": {
-      "types": "./dist/rpc/index.d.ts",
-      "default": "./dist/rpc/index.js"
-    },
-    "./observability": {
-      "types": "./dist/observability/index.d.ts",
-      "default": "./dist/observability/index.js"
     }
   },
   "engines": {
@@ -77,7 +48,7 @@
     "postcss": "^8.5.12"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node ./scripts/build-browser-vendor.mjs",
+    "build": "node ./scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node ./scripts/build-browser-vendor.mjs && node ./scripts/prune-dist.mjs",
     "bench": "vitest bench --run",
     "test": "npm run build && vitest run",
     "test:browser": "npm run build && playwright test",

@@ -16,12 +16,8 @@ import {
 } from "./check-swift-security.mjs";
 
 export const releaseComplianceKinds = Object.freeze([
-  "tunnel",
-  "tools",
-  "gateway",
-  "demos",
-  "tunnel-image",
-  "gateway-image",
+  "runtime",
+  "runtime-image",
 ]);
 
 export const requiredArtifactPaths = [
@@ -554,9 +550,8 @@ function collectGoSumEvidence(moduleDirectories) {
 }
 
 function collectGoContexts(repoRoot, policy, releaseVersion) {
-  const workspace = JSON.parse(run("go", ["work", "edit", "-json"], repoRoot));
   const licenseMap = readJson(path.join(repoRoot, "scripts/third-party-go-licenses.json"));
-  const moduleDirectories = collectGoModuleDirectories(repoRoot, workspace);
+  const moduleDirectories = collectGoModuleDirectories(repoRoot);
   const sumEvidence = collectGoSumEvidence(moduleDirectories);
   return moduleDirectories.map((moduleDir) => {
     const relative = path.relative(repoRoot, moduleDir);
@@ -1590,9 +1585,6 @@ function renderSbomScope(kind) {
     "",
     `The SPDX and CycloneDX documents in \`sbom/\` describe the runtime dependency union for the exact ${kind} targets and platforms declared in \`scripts/release-go-targets.json\`.`,
   ];
-  if (kind === "demos") {
-    lines.push("This includes the TypeScript runtime dependencies installed from the locked production dependency graph under `flowersec-ts/node_modules` in every demo archive.");
-  }
   lines.push("Build-only, test-only, and unrelated module dependencies are excluded.");
   if (kind.endsWith("-image")) {
     lines.push(

@@ -17,14 +17,17 @@ import {
   SessionV2Error,
   type SessionConfigV2,
   type SessionDeadlineFactoryV2,
-  type SessionV2,
+  type SessionV2 as InternalSessionV2,
 } from "../v2/session.js";
+import type { SessionV2 } from "../v2/contract.js";
 import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
 import { unwrapArtifact } from "../v2/opaqueArtifact.js";
 import {
   AbortError,
-  FlowersecError,
+  ConnectError,
   TimeoutError,
+  connectErrorDetailsInternal,
+  createConnectErrorInternal,
   type FlowersecCandidateDiagnostic,
   type FlowersecErrorCode,
   type FlowersecPath,
@@ -39,6 +42,7 @@ import {
   createBrowserWebTransportCarrierInternalStage,
   type BrowserWebTransportCarrierInternalStage,
 } from "./webTransportCarrierInternalStage.js";
+import { projectSessionV2 } from "../v2/publicSession.js";
 
 export type BrowserConnectorStateV2 =
   | "validated"
@@ -53,7 +57,7 @@ export type BrowserArtifactLeaseV2 = ArtifactLeaseV2;
 
 export type BrowserPreparedCandidateV2 = Readonly<{
   candidate: CanonicalArtifactCandidateV2;
-  commit(rawFSB2: Uint8Array, reasons: ReadonlySet<string>, config: SessionConfigV2, signal?: AbortSignal): Promise<SessionV2>;
+  commit(rawFSB2: Uint8Array, reasons: ReadonlySet<string>, config: SessionConfigV2, signal?: AbortSignal): Promise<InternalSessionV2>;
   close(): Promise<void>;
   abort(): void;
 }>;
@@ -69,6 +73,12 @@ export type BrowserCandidateAttemptFactoryV2 = Readonly<{
 }>;
 
 export type BrowserSessionConnectorV2Options = Readonly<{
+  signal?: AbortSignal;
+  loserCloseTimeoutMs?: number;
+  now?: () => number;
+}>;
+
+type BrowserSessionConnectorInternalOptionsV2 = Readonly<{
   admissionReasons: ReadonlySet<string>;
   deadlineFactory?: SessionDeadlineFactoryV2;
   loserCloseTimeoutMs?: number;
@@ -78,7 +88,7 @@ export type BrowserSessionConnectorV2Options = Readonly<{
 
 export type BrowserSessionConnectResultV2 = Readonly<{
   candidate: CanonicalArtifactCandidateV2;
-  session: SessionV2;
+  session: InternalSessionV2;
 }>;
 
 export class BrowserSessionConnectorV2 {
@@ -87,7 +97,7 @@ export class BrowserSessionConnectorV2 {
   private readonly artifact: ArtifactV2;
   constructor(
     private readonly lease: BrowserArtifactLeaseV2,
-    private readonly options: BrowserSessionConnectorV2Options,
+    private readonly options: BrowserSessionConnectorInternalOptionsV2,
   ) {
     this.artifact = unwrapArtifact(lease.artifact);
   }
@@ -433,7 +443,7 @@ export class BrowserSessionConnectorV2 {
           diagnostics,
         );
       }
-      let session: SessionV2 | undefined;
+      let session: InternalSessionV2 | undefined;
       stage = "attach";
       try {
         throwIfAborted(operationSignal);
@@ -494,7 +504,7 @@ const browserConnectorRuntimes = new WeakMap<BrowserSessionConnectorV2, "browser
 
 export function createBrowserSessionConnectorV2InternalStage(
   lease: BrowserArtifactLeaseV2,
-  options: BrowserSessionConnectorV2Options & Readonly<{
+  options: BrowserSessionConnectorInternalOptionsV2 & Readonly<{
     attemptFactory: BrowserCandidateAttemptFactoryV2;
     runtime?: "browser" | "node";
   }>,
@@ -518,7 +528,7 @@ export function createWebSocketAttemptFactoryV2InternalStage(
 }
 
 async function closeCommittedBrowserSession(
-  session: SessionV2 | undefined,
+  session: InternalSessionV2 | undefined,
   prepared: BrowserPreparedCandidateV2,
 ): Promise<void> {
   const operations: Array<() => Promise<void>> = [() => prepared.close()];
@@ -654,11 +664,15 @@ class BrowserArtifactExpiredError extends Error {
 
 export async function connectBrowserSessionV2(
   lease: BrowserArtifactLeaseV2,
-  options: BrowserSessionConnectorV2Options & Readonly<{ signal?: AbortSignal }>,
+  options: BrowserSessionConnectorV2Options = {},
 ): Promise<SessionV2> {
-  const connector = new BrowserSessionConnectorV2(lease, options);
-  const result = await connector.connect(options.signal === undefined ? {} : { signal: options.signal });
-  return result.session;
+  const { signal, ...connectorOptions } = options;
+  const connector = new BrowserSessionConnectorV2(lease, {
+    ...connectorOptions,
+    admissionReasons: new Set(),
+  });
+  const result = await connector.connect(signal === undefined ? {} : { signal });
+  return projectSessionV2(result.session);
 }
 
 type BrowserWebSocketLikeV2 = WebSocketLike & Readonly<{ protocol?: string }>;
@@ -937,12 +951,11 @@ function connectorError(
   code: FlowersecErrorCode,
   cause: unknown,
   diagnostics: readonly FlowersecCandidateDiagnostic[] = [],
-): FlowersecError {
-  return new FlowersecError({
+): ConnectError {
+  return createConnectErrorInternal({
     path,
     stage,
     code,
-    message: asError(cause).message,
     cause,
     diagnostics,
   });
@@ -955,16 +968,16 @@ function normalizeConnectorError(
   diagnostics: readonly FlowersecCandidateDiagnostic[],
   cancellationSignal?: AbortSignal,
   timeoutSignal?: AbortSignal,
-): FlowersecError {
-  if (error instanceof FlowersecError) {
-    const merged = mergeDiagnostics(error.diagnostics, diagnostics);
-    if (merged.length === error.diagnostics.length) return error;
-    return new FlowersecError({
-      path: error.path,
-      stage: error.stage,
-      code: error.code,
-      message: flowersecErrorDetail(error),
-      cause: error.cause ?? error,
+): ConnectError {
+  if (error instanceof ConnectError) {
+    const details = connectErrorDetailsInternal(error);
+    const merged = mergeDiagnostics(details.diagnostics, diagnostics);
+    if (merged.length === details.diagnostics.length) return error;
+    return createConnectErrorInternal({
+      path,
+      stage: details.stage,
+      code: details.code,
+      cause: details.cause ?? error,
       diagnostics: merged,
     });
   }
@@ -975,11 +988,6 @@ function normalizeConnectorError(
     error,
     diagnostics,
   );
-}
-
-function flowersecErrorDetail(error: FlowersecError): string {
-  const prefix = `${error.path} ${error.stage} (${error.code}): `;
-  return error.message.startsWith(prefix) ? error.message.slice(prefix.length) : error.message;
 }
 
 function fallbackCodeForStage(stage: FlowersecStage): FlowersecErrorCode {

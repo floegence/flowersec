@@ -1,5 +1,5 @@
-import Foundation
 import Crypto
+import Foundation
 import NIOCore
 import NIOFoundationCompat
 import NIOHTTP1
@@ -25,7 +25,8 @@ final class ConnectorV2Tests: XCTestCase {
     let candidateURL = original.path.candidates.first(where: { $0.carrier == "websocket" })!.url
     let localURL = "wss://localhost:\(server.port)/flowersec/v2/tunnel"
     let clientRaw = source.replacingOccurrences(of: candidateURL, with: localURL)
-    let serverRaw = clientRaw
+    let serverRaw =
+      clientRaw
       .replacingOccurrences(of: "\"role\":1", with: "\"role\":2")
       .replacingOccurrences(of: "endpoint-client", with: "endpoint-swap")
       .replacingOccurrences(of: "endpoint-server", with: "endpoint-client")
@@ -109,8 +110,10 @@ final class ConnectorV2Tests: XCTestCase {
     let accepted = ConnectorAcceptedTransport()
     let raw = try loadArtifactJSON(index: vectorIndex)
     let original = try parseArtifactV2(Data(raw.utf8)).value
-    let expectedProtocol = original.path.kind == "direct" ? "flowersec.direct.v2" : "flowersec.tunnel.v2"
-    let server = try await ConnectorWSSServer.start(tls: tls, selectedProtocol: expectedProtocol, accepted: accepted)
+    let expectedProtocol =
+      original.path.kind == "direct" ? "flowersec.direct.v2" : "flowersec.tunnel.v2"
+    let server = try await ConnectorWSSServer.start(
+      tls: tls, selectedProtocol: expectedProtocol, accepted: accepted)
     let rewritten = raw.replacingOccurrences(
       of: original.path.candidates.first(where: { $0.carrier == "websocket" })!.url,
       with: "wss://localhost:\(server.port)/flowersec/v2/\(original.path.kind)"
@@ -155,7 +158,8 @@ final class ConnectorV2Tests: XCTestCase {
     let fsb2 = try await transport.readBinary()
     try await transport.writeBinary(Data([70, 83, 65, 50, 2, 0, 0, 0]))
     let wire = artifact.value
-    var preimage = Data("flowersec-v2-admission\0".utf8); preimage.append(fsb2)
+    var preimage = Data("flowersec-v2-admission\0".utf8)
+    preimage.append(fsb2)
     let binding = Data(SHA256.hash(data: preimage))
     let path: PathKind = wire.path.kind == "direct" ? .direct : .tunnel
     let carrier = WebSocketCarrierSessionV2(
@@ -211,13 +215,7 @@ final class ConnectorV2Tests: XCTestCase {
     XCTAssertThrowsError(
       try ConnectorV2(
         lease: lease,
-        options: ConnectorOptionsV2(origin: "http://example.com", admissionReasons: [])
-      )
-    ) { XCTAssertEqual($0 as? ConnectErrorV2, .invalidOptions) }
-    XCTAssertThrowsError(
-      try ConnectorV2(
-        lease: lease,
-        options: ConnectorOptionsV2(admissionReasons: ["Invalid-Reason"])
+        options: ConnectorOptionsV2(origin: "http://example.com")
       )
     ) { XCTAssertEqual($0 as? ConnectErrorV2, .invalidOptions) }
   }
@@ -229,7 +227,7 @@ final class ConnectorV2Tests: XCTestCase {
     let transport = ConnectorAdmissionTransport(events: events)
     let connector = try ConnectorV2(
       lease: lease,
-      options: ConnectorOptionsV2(admissionReasons: ["capacity"]),
+      options: ConnectorOptionsV2(),
       dial: { _, _, _ in
         await events.append("dial")
         return transport
@@ -240,7 +238,7 @@ final class ConnectorV2Tests: XCTestCase {
       _ = try await connector.connect()
       XCTFail("admission rejection unexpectedly established a session")
     } catch {
-      XCTAssertEqual(error as? ConnectErrorV2, .admissionRejected)
+      XCTAssertEqual(error as? ConnectErrorV2, .connectionFailed)
     }
     let recordedEvents = await events.values()
     XCTAssertEqual(recordedEvents, ["dial", "spend", "write", "read", "close"])
@@ -357,8 +355,12 @@ private actor ConnectorAcceptedTransport {
 
   func deliver(_ transport: ConnectorNIOBinaryTransport, protocolValue: String?) {
     selectedProtocol = protocolValue
-    if let waiter = waiters.first { waiters.removeFirst(); waiter.resume(returning: transport) }
-    else { values.append(transport) }
+    if let waiter = waiters.first {
+      waiters.removeFirst()
+      waiter.resume(returning: transport)
+    } else {
+      values.append(transport)
+    }
   }
 
   func accept() async throws -> ConnectorNIOBinaryTransport {
@@ -375,7 +377,9 @@ private final class ConnectorWSSServer: @unchecked Sendable {
   private let channel: any Channel
 
   private init(port: Int, group: MultiThreadedEventLoopGroup, channel: any Channel) {
-    self.port = port; self.group = group; self.channel = channel
+    self.port = port
+    self.group = group
+    self.channel = channel
   }
 
   static func start(
@@ -411,16 +415,23 @@ private final class ConnectorWSSServer: @unchecked Sendable {
                 maxAccumulatedFrameCount: 1024,
                 maxAccumulatedFrameSize: FlowersecSDKDefaults.Yamux.maxFrameBytes + 12),
               handler
-            ).map { Task { await accepted.deliver(transport, protocolValue: request.headers.first(name: "sec-websocket-protocol")) } }
+            ).map {
+              Task {
+                await accepted.deliver(
+                  transport, protocolValue: request.headers.first(name: "sec-websocket-protocol"))
+              }
+            }
           })
         let upgrade: NIOHTTPServerUpgradeSendableConfiguration = (
-          upgraders: [upgrader], completionHandler: { _ in })
+          upgraders: [upgrader], completionHandler: { _ in }
+        )
         do {
           try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: context))
           return channel.pipeline.configureHTTPServerPipeline(withServerUpgrade: upgrade)
         } catch { return channel.eventLoop.makeFailedFuture(error) }
       }.bind(host: "127.0.0.1", port: 0).get()
-    return ConnectorWSSServer(port: try XCTUnwrap(channel.localAddress?.port), group: group, channel: channel)
+    return ConnectorWSSServer(
+      port: try XCTUnwrap(channel.localAddress?.port), group: group, channel: channel)
   }
 
   func close() async {
@@ -439,16 +450,21 @@ private final class ConnectorNIOBinaryTransport: FlowersecBinaryTransport, @unch
   init(channel: any Channel) { self.channel = channel }
 
   func writeBinary(_ data: Data) async throws {
-    var buffer = channel.allocator.buffer(capacity: data.count); buffer.writeBytes(data)
+    var buffer = channel.allocator.buffer(capacity: data.count)
+    buffer.writeBytes(data)
     try await channel.writeAndFlush(WebSocketFrame(fin: true, opcode: .binary, data: buffer)).get()
   }
 
   func readBinary() async throws -> Data {
     try await withCheckedThrowingContinuation { continuation in
       lock.withLock {
-        if closed { continuation.resume(throwing: ConnectorQueueError.closed) }
-        else if !frames.isEmpty { continuation.resume(returning: frames.removeFirst()) }
-        else { waiters.append(continuation) }
+        if closed {
+          continuation.resume(throwing: ConnectorQueueError.closed)
+        } else if !frames.isEmpty {
+          continuation.resume(returning: frames.removeFirst())
+        } else {
+          waiters.append(continuation)
+        }
       }
     }
   }
@@ -460,16 +476,24 @@ private final class ConnectorNIOBinaryTransport: FlowersecBinaryTransport, @unch
 
   func receive(_ data: Data) {
     let waiter = lock.withLock { () -> CheckedContinuation<Data, Error>? in
-      if let waiter = waiters.first { waiters.removeFirst(); return waiter }
-      frames.append(data); return nil
+      if let waiter = waiters.first {
+        waiters.removeFirst()
+        return waiter
+      }
+      frames.append(data)
+      return nil
     }
     waiter?.resume(returning: data)
   }
 
   func finish() {
     let pending = lock.withLock { () -> [CheckedContinuation<Data, Error>] in
-      guard !closed else { return [] }; closed = true
-      let pending = waiters; waiters.removeAll(); frames.removeAll(); return pending
+      guard !closed else { return [] }
+      closed = true
+      let pending = waiters
+      waiters.removeAll()
+      frames.removeAll()
+      return pending
     }
     for waiter in pending { waiter.resume(throwing: ConnectorQueueError.closed) }
   }
@@ -481,12 +505,21 @@ private final class ConnectorNIOWebSocketHandler: ChannelInboundHandler, @unchec
   init(transport: ConnectorNIOBinaryTransport) { self.transport = transport }
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     let frame = unwrapInboundIn(data)
-    guard frame.opcode == .binary else { context.close(promise: nil); return }
+    guard frame.opcode == .binary else {
+      context.close(promise: nil)
+      return
+    }
     var payload = frame.unmaskedData
     transport.receive(payload.readData(length: payload.readableBytes) ?? Data())
   }
-  func channelInactive(context: ChannelHandlerContext) { transport.finish(); context.fireChannelInactive() }
-  func errorCaught(context: ChannelHandlerContext, error: any Error) { transport.finish(); context.close(promise: nil) }
+  func channelInactive(context: ChannelHandlerContext) {
+    transport.finish()
+    context.fireChannelInactive()
+  }
+  func errorCaught(context: ChannelHandlerContext, error: any Error) {
+    transport.finish()
+    context.close(promise: nil)
+  }
 }
 
 private actor ConnectorEventRecorder {

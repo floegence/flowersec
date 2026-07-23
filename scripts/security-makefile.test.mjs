@@ -122,7 +122,6 @@ test("security gate configuration cannot be overridden by source or environment"
   for (const mutation of [
     "CHECK_INTEROP := 0",
     "CHECK_INTEROP := 1 ",
-    "INTEROP_CELLS :=",
     "YAMUX_INTEROP := 0",
     "SWIFT_SOURCE_GUARD_PATTERN := a^",
   ]) {
@@ -134,7 +133,6 @@ test("security gate configuration cannot be overridden by source or environment"
   for (const [name, value] of [
     ["CHECK_INTEROP", "0"],
     ["CHECK_INTEROP", " 1"],
-    ["INTEROP_CELLS", ""],
     ["YAMUX_INTEROP", "0"],
   ]) {
     const result = check(canonical, { [name]: value });

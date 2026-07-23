@@ -111,8 +111,8 @@ struct TransportV2ContractTests {
 
     let opened = try await session.openStream(kind: "rpc", metadata: .empty)
     let accepted = try await session.acceptStream()
-    #expect(opened.id == 7)
-    #expect(accepted.id == 7)
+    #expect(opened.kind == "rpc")
+    #expect(accepted.kind == "rpc")
     #expect(accepted.metadata == .empty)
     #expect(try await opened.write(Data([1, 2])) == 2)
     try await opened.closeWrite()
@@ -162,7 +162,7 @@ private actor ContractByteStreamV2: ByteStreamV2 {
   func closeWrite() async throws {}
   func reset() async {}
   func close() async {}
-  func terminalError() async -> (any Error & Sendable)? { nil }
+  func terminalError() async -> SessionErrorV2? { nil }
 }
 
 private final class ContractSessionV2: SessionV2, @unchecked Sendable {
@@ -184,11 +184,11 @@ private final class ContractSessionV2: SessionV2, @unchecked Sendable {
   }
 
   func acceptStream() async throws -> IncomingStreamV2 {
-    IncomingStreamV2(id: stream.id, kind: stream.kind, metadata: .empty, stream: stream)
+    IncomingStreamV2(kind: stream.kind, metadata: .empty, stream: stream)
   }
 
   func rekey() async throws {}
   func probeLiveness() async throws -> Duration { .milliseconds(1) }
-  func waitClosed() async -> TransportV2SessionError { .closed }
+  func waitClosed() async -> SessionErrorV2 { .closed }
   func close() async {}
 }

@@ -33,7 +33,7 @@ test("Transport v2 README contract rejects missing common semantics", (t) => {
     target,
     fs.readFileSync(target, "utf8").replace(transportV2CommonReadmeLiterals[1], "QUIC uses a mux."),
   );
-  assert.match(validateTransportV2Readmes(root).join("\n"), /flowersec-go\/README\.md.*native QUIC streams/);
+  assert.match(validateTransportV2Readmes(root).join("\n"), /flowersec-go\/README\.md.*native FIN/);
 });
 
 test("Transport v2 README contract rejects overstated SDK support", (t) => {

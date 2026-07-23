@@ -111,30 +111,12 @@ function assertSameModuleSet(repoRoot, leftLabel, left, rightLabel, right) {
 
 export function collectGoModuleDirectories(
   repoRoot,
-  workspace,
   manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "scripts/go-security-modules.json"), "utf8")),
   discoveredModules = discoverGoModuleDirectories(repoRoot),
 ) {
-  if (!Array.isArray(workspace?.Use) || workspace.Use.length === 0) {
-    throw new Error("go.work contains no Go modules");
-  }
-
-  const workspaceModules = new Set();
-  for (const entry of workspace.Use) {
-    if (typeof entry?.DiskPath !== "string" || entry.DiskPath === "") {
-      throw new Error("go.work contains a module without DiskPath");
-    }
-    const moduleDir = path.resolve(repoRoot, entry.DiskPath);
-    const relative = path.relative(repoRoot, moduleDir);
-    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new Error(`Go module is outside the repository: ${entry.DiskPath}`);
-    }
-    workspaceModules.add(moduleDir);
-  }
   const manifestModules = normalizeManifestModules(repoRoot, manifest);
   const treeModules = new Set(discoveredModules.map((moduleDir) => path.resolve(moduleDir)));
   assertSameModuleSet(repoRoot, "maintained tree", treeModules, "security manifest", manifestModules);
-  assertSameModuleSet(repoRoot, "go.work", workspaceModules, "security manifest", manifestModules);
   return [...treeModules].sort();
 }
 
@@ -146,11 +128,10 @@ export function runGoSecurityChecks({
   discoverModules = discoverGoModuleDirectories,
   run = defaultRun,
 }) {
-  const workspace = JSON.parse(run("go", ["work", "edit", "-json"], { cwd: repoRoot }));
   const manifest = moduleManifest ?? JSON.parse(
     fs.readFileSync(path.join(repoRoot, "scripts/go-security-modules.json"), "utf8"),
   );
-  const modules = collectGoModuleDirectories(repoRoot, workspace, manifest, discoverModules(repoRoot));
+  const modules = collectGoModuleDirectories(repoRoot, manifest, discoverModules(repoRoot));
   const environment = {
     GOTOOLCHAIN: goToolchain,
     GOWORK: "off",

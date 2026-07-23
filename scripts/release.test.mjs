@@ -61,7 +61,6 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   fs.mkdirSync(path.join(repo, "flowersec-ts"), { recursive: true });
   fs.mkdirSync(path.join(repo, "flowersec-rust/fuzz"), { recursive: true });
   fs.mkdirSync(path.join(repo, "examples/rust"), { recursive: true });
-  fs.mkdirSync(path.join(repo, "docs/releases"), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
 
   for (const script of ["release.sh", "check-release-version-consistency.mjs"]) {
@@ -77,10 +76,6 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
         return !source.endsWith("_test.go");
       },
     },
-  );
-  fs.copyFileSync(
-    path.join(sourceRoot, "docs/releases/0.26.0.md"),
-    path.join(repo, "docs/releases/0.26.0.md"),
   );
   fs.writeFileSync(
     path.join(repo, "flowersec-ts/package.json"),
@@ -178,8 +173,7 @@ function createReleasePolicyFixture(t) {
     ".github/workflows/ci.yml",
     ".github/workflows/release.yml",
     ".github/workflows/rust-release.yml",
-    "docker/flowersec-proxy-gateway/Dockerfile",
-    "docker/flowersec-tunnel/Dockerfile",
+    "docker/flowersec-runtime/Dockerfile",
     "scripts/check-release-version-consistency.mjs",
     "scripts/check-release-version-consistency.test.mjs",
     "scripts/check-container-release-policy.mjs",
@@ -649,8 +643,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     { file: ".github/workflows/release.yml", name: "Build release artifacts" },
     { file: ".github/workflows/release.yml", name: "Generate release notes" },
     { file: ".github/workflows/release.yml", name: "Publish GitHub Release" },
-    { file: ".github/workflows/release.yml", name: "Build and push tunnel image" },
-    { file: ".github/workflows/release.yml", name: "Build and push proxy gateway image" },
+    { file: ".github/workflows/release.yml", name: "Build and push runtime image" },
     { file: ".github/workflows/release.yml", name: "Publish npm package" },
     { file: ".github/workflows/rust-release.yml", name: "Check whether version is already published" },
     { file: ".github/workflows/rust-release.yml", name: "Authenticate to crates.io" },
@@ -1030,43 +1023,6 @@ test("release validates maintained versions before publication", (t) => {
   assert.match(result.stderr, /release versions are inconsistent/);
   assertReleaseDidNotStartPublication(fixture);
 });
-
-for (const tt of [
-  {
-    name: "missing",
-    write(repo) {
-      fs.rmSync(path.join(repo, "docs/releases/0.26.0.md"));
-    },
-    error: /docs\/releases\/0\.26\.0\.md/,
-  },
-  {
-    name: "wrong heading",
-    write(repo) {
-      fs.writeFileSync(path.join(repo, "docs/releases/0.26.0.md"), "# Flowersec 0.25.0\n\nDetails.\n");
-    },
-    error: /must start with/,
-  },
-  {
-    name: "heading only",
-    write(repo) {
-      fs.writeFileSync(path.join(repo, "docs/releases/0.26.0.md"), "# Flowersec 0.26.0\n");
-    },
-    error: /must include content after/,
-  },
-]) {
-  test(`release rejects ${tt.name} curated notes before publication`, (t) => {
-    const fixture = createReleaseScriptFixture(t);
-    tt.write(fixture.repo);
-    run("git", ["-C", fixture.repo, "add", "-A"]);
-    run("git", ["-C", fixture.repo, "commit", "-m", `test: ${tt.name} release notes`]);
-    run("git", ["-C", fixture.repo, "push", "origin", "main"]);
-
-    const result = runReleaseScript(fixture);
-    assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-    assert.match(result.stderr, tt.error);
-    assertReleaseDidNotStartPublication(fixture);
-  });
-}
 
 test("release stops before git tag or push when release-check dirties the worktree", (t) => {
   const fixture = createReleaseScriptFixture(

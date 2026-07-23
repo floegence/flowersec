@@ -11,12 +11,14 @@ export function parseArtifact(input: string | Uint8Array): Artifact {
   return wrapArtifact(decodeArtifactV2JSON(input));
 }
 
+/** @internal */
 export function wrapArtifact(value: ArtifactV2): Artifact {
   const artifact = new (Artifact as unknown as { new(): Artifact })();
   artifactValues.set(artifact, value);
   return Object.freeze(artifact) as Artifact;
 }
 
+/** @internal */
 export function unwrapArtifact(artifact: Artifact): ArtifactV2 {
   const value = artifactValues.get(artifact);
   if (value === undefined) throw new TypeError("invalid Flowersec artifact handle");

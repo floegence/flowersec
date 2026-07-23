@@ -1,10 +1,8 @@
 {
   "schema": "flowersec.go-security-modules.v1",
   "modules": [
-    "examples",
     "flowersec-go",
     "tools/idlgen",
-    "tools/manifestgen",
     "tools/releasenotes",
     "tools/stabilitycheck",
     "tools/transportcheck"

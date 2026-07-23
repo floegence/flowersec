@@ -2,264 +2,6 @@
   "schema": "flowersec.source-dependencies.v2",
   "contexts": [
     {
-      "id": "go:examples",
-      "ecosystem": "go",
-      "root": {
-        "ecosystem": "go",
-        "name": "github.com/floegence/flowersec-examples",
-        "version": "0.28.0",
-        "purl": "pkg:golang/github.com/floegence/flowersec-examples@0.28.0"
-      },
-      "components": [
-        {
-          "ecosystem": "go",
-          "name": "github.com/gorilla/websocket",
-          "version": "v1.5.3",
-          "declaredLicense": "BSD-2-Clause",
-          "concludedLicense": "BSD-2-Clause",
-          "source": "https://github.com/gorilla/websocket",
-          "purl": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "BSD-2-Clause",
-            "concludedExpression": "BSD-2-Clause",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=",
-            "sourceEvidenceSha256": "e5db9edafb12bd7b948f05f4cf27b6e29f50562b3917862d70573cb063ab6725",
-            "expressionEvidenceSha256": "89214d52811b2e956bdcc436def440e5b889616a6f06e0e0ce37f335caaff930",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "github.com/hashicorp/yamux",
-          "version": "v0.1.2",
-          "declaredLicense": "MPL-2.0",
-          "concludedLicense": "MPL-2.0",
-          "source": "https://github.com/hashicorp/yamux",
-          "purl": "pkg:golang/github.com/hashicorp/yamux@v0.1.2",
-          "sourceOfferRequired": true,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MPL-2.0",
-            "concludedExpression": "MPL-2.0",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:XtB8kyFOyHXYVFnwT5C3+Bdo8gArse7j2AQ0DA0Uey8=",
-            "sourceEvidenceSha256": "f119bae27ea89e108c8b3d391ed075fc5e37307906ed9c58787b59a29bac2d86",
-            "expressionEvidenceSha256": "3d79829e743233a5db69f309dede87208547e232cd8ff7ae509ac505517e8d49",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": true,
-              "fulfillment": "exact-upstream-source-and-integrity-recorded"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "github.com/libp2p/go-buffer-pool",
-          "version": "v0.0.2",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/libp2p/go-buffer-pool",
-          "purl": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:QNK2iAFa8gjAe1SPz6mHSMuCcjs+X1wlHzeOSqcmlfs=",
-            "sourceEvidenceSha256": "5cd0ccad895ad2e3ef0e6f1d37cdce070a9ef42ae227b1bde825c7007d78a915",
-            "expressionEvidenceSha256": "cbc0555f62d0305be77ac6715895cab71f38e3b867cb50f1e97a1ba2121fc183",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "github.com/libp2p/go-yamux/v5",
-          "version": "v5.1.0",
-          "declaredLicense": "MPL-2.0",
-          "concludedLicense": "MPL-2.0",
-          "source": "https://github.com/libp2p/go-yamux/v5",
-          "purl": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-          "sourceOfferRequired": true,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MPL-2.0",
-            "concludedExpression": "MPL-2.0",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:8Qlxj4E9JGJAQVW6+uj2o7mqkqsIVlSUGmTWhlXzoHE=",
-            "sourceEvidenceSha256": "ee4b35a3bab985f03a947ea73040d3ea6356b923b802bc2c7ce25c4e1290c5f9",
-            "expressionEvidenceSha256": "44aaf3f2107a16168a64875ac8bb642d8ba945ad0f983ae385c7d1719bca0928",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": true,
-              "fulfillment": "exact-upstream-source-and-integrity-recorded"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "golang.org/x/crypto",
-          "version": "v0.53.0",
-          "declaredLicense": "BSD-3-Clause",
-          "concludedLicense": "BSD-3-Clause",
-          "source": "https://golang.org/x/crypto",
-          "purl": "pkg:golang/golang.org/x/crypto@v0.53.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "BSD-3-Clause",
-            "concludedExpression": "BSD-3-Clause",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:QZ4Muo8THX6CizN2vPPd5fBGHyogrdK9fG4wLPFUsto=",
-            "sourceEvidenceSha256": "e007544b6c13b250ed3f6c12cb77112561ca88cbb754641872fb957a316f40a3",
-            "expressionEvidenceSha256": "5fce3b1b8ad20b8f136db91be5daa4709d49a72fe4da952cbc87d451a06f3671",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "golang.org/x/text",
-          "version": "v0.39.0",
-          "declaredLicense": "BSD-3-Clause",
-          "concludedLicense": "BSD-3-Clause",
-          "source": "https://golang.org/x/text",
-          "purl": "pkg:golang/golang.org/x/text@v0.39.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "BSD-3-Clause",
-            "concludedExpression": "BSD-3-Clause",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:UbZz4pLOvn600D6Oh6GGEI6VAmndrEBLv8/6BEXzyus=",
-            "sourceEvidenceSha256": "f1f41630a2166c3747011818404e37d56a722916feed3da03f1426191cf67194",
-            "expressionEvidenceSha256": "0aa46dd7b14385a44b750ee8386afde5df692c80f17690e793198323427bd7d2",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec-examples@0.28.0",
-          "to": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec-examples@0.28.0",
-          "to": "pkg:golang/github.com/hashicorp/yamux@v0.1.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec-examples@0.28.0",
-          "to": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec-examples@0.28.0",
-          "to": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec-examples@0.28.0",
-          "to": "pkg:golang/golang.org/x/crypto@v0.53.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec-examples@0.28.0",
-          "to": "pkg:golang/golang.org/x/text@v0.39.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-          "to": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/golang.org/x/crypto@v0.53.0",
-          "to": "pkg:golang/golang.org/x/text@v0.39.0",
-          "kind": "runtime"
-        }
-      ]
-    },
-    {
       "id": "go:flowersec-go",
       "ecosystem": "go",
       "root": {
@@ -269,74 +11,6 @@
         "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0"
       },
       "components": [
-        {
-          "ecosystem": "go",
-          "name": "github.com/beorn7/perks",
-          "version": "v1.0.1",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/beorn7/perks",
-          "purl": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=",
-            "sourceEvidenceSha256": "d3654e2b97b7bffa4d9518035dd02dcf4e9c08bb1ed499e1c8ce8fea77a25103",
-            "expressionEvidenceSha256": "91cdb01c3f2155e3c5421a5f68549e469f4965fd9776e0dd8fde03951fa530aa",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "github.com/cespare/xxhash/v2",
-          "version": "v2.3.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/cespare/xxhash/v2",
-          "purl": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=",
-            "sourceEvidenceSha256": "10a9b34454c2ab44eaa0867ac35a2026bb155b738b9ace06f976ce92bc1654c9",
-            "expressionEvidenceSha256": "bb494647d65b45a4e9a349a4324c4be5cb30e6c05d757b6646639d1dc972140b",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
         {
           "ecosystem": "go",
           "name": "github.com/dunglas/httpsfv",
@@ -407,74 +81,6 @@
         },
         {
           "ecosystem": "go",
-          "name": "github.com/hashicorp/yamux",
-          "version": "v0.1.2",
-          "declaredLicense": "MPL-2.0",
-          "concludedLicense": "MPL-2.0",
-          "source": "https://github.com/hashicorp/yamux",
-          "purl": "pkg:golang/github.com/hashicorp/yamux@v0.1.2",
-          "sourceOfferRequired": true,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MPL-2.0",
-            "concludedExpression": "MPL-2.0",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:XtB8kyFOyHXYVFnwT5C3+Bdo8gArse7j2AQ0DA0Uey8=",
-            "sourceEvidenceSha256": "f119bae27ea89e108c8b3d391ed075fc5e37307906ed9c58787b59a29bac2d86",
-            "expressionEvidenceSha256": "3d79829e743233a5db69f309dede87208547e232cd8ff7ae509ac505517e8d49",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": true,
-              "fulfillment": "exact-upstream-source-and-integrity-recorded"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "github.com/klauspost/compress",
-          "version": "v1.17.9",
-          "declaredLicense": "Apache-2.0",
-          "concludedLicense": "Apache-2.0",
-          "source": "https://github.com/klauspost/compress",
-          "purl": "pkg:golang/github.com/klauspost/compress@v1.17.9",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "Apache-2.0",
-            "concludedExpression": "Apache-2.0",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:6KIumPrER1LHsvBVuDa0r5xaG0Es51mhhB9BQB2qeMA=",
-            "sourceEvidenceSha256": "7797c2dff57cd7283ba97fa5434898459c403941a6c9bc06c27a50c134c692e4",
-            "expressionEvidenceSha256": "2d83c09817848f5ffb54d69a33373105399c84fb4f8abec64b3aff324dbf1f4a",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
           "name": "github.com/libp2p/go-buffer-pool",
           "version": "v0.0.2",
           "declaredLicense": "MIT",
@@ -538,176 +144,6 @@
             "sourceOffer": {
               "required": true,
               "fulfillment": "exact-upstream-source-and-integrity-recorded"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "github.com/munnerz/goautoneg",
-          "version": "v0.0.0-20191010083416-a7dc8b61c822",
-          "declaredLicense": "BSD-3-Clause",
-          "concludedLicense": "BSD-3-Clause",
-          "source": "https://github.com/munnerz/goautoneg",
-          "purl": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "BSD-3-Clause",
-            "concludedExpression": "BSD-3-Clause",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=",
-            "sourceEvidenceSha256": "bcc55e725c7da340d9cc853edc52624dee58c96ef49c1eedfe06f0ef1ce8c0c5",
-            "expressionEvidenceSha256": "5a5114b474ca4d7ca40fc94c0879be73661ded599be9b745248723b45fc1dc3d",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "github.com/prometheus/client_golang",
-          "version": "v1.20.5",
-          "declaredLicense": "Apache-2.0",
-          "concludedLicense": "Apache-2.0",
-          "source": "https://github.com/prometheus/client_golang",
-          "purl": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "Apache-2.0",
-            "concludedExpression": "Apache-2.0",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:cxppBPuYhUnsO6yo/aoRol4L7q7UFfdm+bR9r+8l63Y=",
-            "sourceEvidenceSha256": "dd7a1815d7dd8377ce3815c7b91c0dc24070914573fd8ad7f156d2a986102075",
-            "expressionEvidenceSha256": "c36f92065c448804a85ac190697ff8a6e3131f6b5f0278f29d7fa7817f1666ec",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "github.com/prometheus/client_model",
-          "version": "v0.6.1",
-          "declaredLicense": "Apache-2.0",
-          "concludedLicense": "Apache-2.0",
-          "source": "https://github.com/prometheus/client_model",
-          "purl": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "Apache-2.0",
-            "concludedExpression": "Apache-2.0",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:ZKSh/rekM+n3CeS952MLRAdFwIKqeY8b62p8ais2e9E=",
-            "sourceEvidenceSha256": "9dccf265b68423d49c52cf7eea7f816714b5bbea312b9b2260f0555164dbaeaa",
-            "expressionEvidenceSha256": "33e2b2925e253e58b0e0044444431161b1c9eccd30dbdbc8cb1f18ebe27923be",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "github.com/prometheus/common",
-          "version": "v0.55.0",
-          "declaredLicense": "Apache-2.0",
-          "concludedLicense": "Apache-2.0",
-          "source": "https://github.com/prometheus/common",
-          "purl": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "Apache-2.0",
-            "concludedExpression": "Apache-2.0",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:KEi6DK7lXW/m7Ig5i47x0vRzuBsHuvJdi5ee6Y3G1dc=",
-            "sourceEvidenceSha256": "fd35860def21d709893df0c6e0e4b179b96038c0ef3e0fe98d32ef2aa2c7ad8a",
-            "expressionEvidenceSha256": "74b0cb6b41002401a17002d2f290870e35ea15d56022486908133a4eeee8fe7d",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "go",
-          "name": "github.com/prometheus/procfs",
-          "version": "v0.15.1",
-          "declaredLicense": "Apache-2.0",
-          "concludedLicense": "Apache-2.0",
-          "source": "https://github.com/prometheus/procfs",
-          "purl": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "Apache-2.0",
-            "concludedExpression": "Apache-2.0",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:YagwOFzUgYfKKHX6Dr+sHT7km/hxC76UB0learggepc=",
-            "sourceEvidenceSha256": "beeac1394bb4e5fda47dc31354a2f6b8aea92a6633b550a0a94b0cadbd1acb8a",
-            "expressionEvidenceSha256": "4c02bbd06da9553fb6a0204e183ef8140571b2c9dbfead64ba4775756ab49575",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
             }
           }
         },
@@ -948,53 +384,9 @@
               "fulfillment": "not-required-by-concluded-license"
             }
           }
-        },
-        {
-          "ecosystem": "go",
-          "name": "google.golang.org/protobuf",
-          "version": "v1.34.2",
-          "declaredLicense": "BSD-3-Clause",
-          "concludedLicense": "BSD-3-Clause",
-          "source": "https://google.golang.org/protobuf",
-          "purl": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "BSD-3-Clause",
-            "concludedExpression": "BSD-3-Clause",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:6xV6lTsCfpGD21XK49h7MhtcApnLqkfYgPcdHftf6hg=",
-            "sourceEvidenceSha256": "fd67fe2b9fe9e202d06c81c2144c9ee0e88ff8a7bd9668b3cbbf2fa698eb5e05",
-            "expressionEvidenceSha256": "7de64b5fbdbdd197d21c7a3135d1bdc140d44e6e4385117ab4fbd9e59e5103ec",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
         }
       ],
       "edges": [
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
-          "to": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
-          "to": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-          "kind": "runtime"
-        },
         {
           "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
           "to": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
@@ -1007,47 +399,12 @@
         },
         {
           "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
-          "to": "pkg:golang/github.com/hashicorp/yamux@v0.1.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
-          "to": "pkg:golang/github.com/klauspost/compress@v1.17.9",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
           "to": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
           "to": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
-          "to": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
-          "to": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
-          "to": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
-          "to": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
-          "to": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
           "kind": "runtime"
         },
         {
@@ -1086,128 +443,8 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v0.28.0",
-          "to": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-          "kind": "runtime"
-        },
-        {
           "from": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
           "to": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/github.com/klauspost/compress@v1.17.9",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/golang.org/x/net@v0.56.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/golang.org/x/sys@v0.46.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/golang.org/x/text@v0.39.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "to": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-          "to": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "to": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "to": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "to": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "to": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "to": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "to": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "to": "pkg:golang/golang.org/x/net@v0.56.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "to": "pkg:golang/golang.org/x/sys@v0.46.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "to": "pkg:golang/golang.org/x/text@v0.39.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-          "to": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-          "to": "pkg:golang/golang.org/x/sys@v0.46.0",
           "kind": "runtime"
         },
         {
@@ -1315,18 +552,6 @@
         "name": "github.com/floegence/flowersec/tools/idlgen",
         "version": "0.28.0",
         "purl": "pkg:golang/github.com/floegence/flowersec/tools/idlgen@0.28.0"
-      },
-      "components": [],
-      "edges": []
-    },
-    {
-      "id": "go:tools/manifestgen",
-      "ecosystem": "go",
-      "root": {
-        "ecosystem": "go",
-        "name": "github.com/floegence/flowersec/tools/manifestgen",
-        "version": "0.28.0",
-        "purl": "pkg:golang/github.com/floegence/flowersec/tools/manifestgen@0.28.0"
       },
       "components": [],
       "edges": []
@@ -38827,6 +38052,11 @@
         {
           "from": "pkg:cargo/flowersec-rust-client-example@0.1.0",
           "to": "pkg:cargo/serde_json@1.0.150",
+          "kind": "dev"
+        },
+        {
+          "from": "pkg:cargo/flowersec-rust-client-example@0.1.0",
+          "to": "pkg:cargo/serde_json@1.0.150",
           "kind": "runtime"
         },
         {
@@ -50939,74 +50169,6 @@
     },
     {
       "ecosystem": "go",
-      "name": "github.com/beorn7/perks",
-      "version": "v1.0.1",
-      "declaredLicense": "MIT",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/beorn7/perks",
-      "purl": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=",
-        "sourceEvidenceSha256": "d3654e2b97b7bffa4d9518035dd02dcf4e9c08bb1ed499e1c8ce8fea77a25103",
-        "expressionEvidenceSha256": "91cdb01c3f2155e3c5421a5f68549e469f4965fd9776e0dd8fde03951fa530aa",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "go",
-      "name": "github.com/cespare/xxhash/v2",
-      "version": "v2.3.0",
-      "declaredLicense": "MIT",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/cespare/xxhash/v2",
-      "purl": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=",
-        "sourceEvidenceSha256": "10a9b34454c2ab44eaa0867ac35a2026bb155b738b9ace06f976ce92bc1654c9",
-        "expressionEvidenceSha256": "bb494647d65b45a4e9a349a4324c4be5cb30e6c05d757b6646639d1dc972140b",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "go",
       "name": "github.com/dunglas/httpsfv",
       "version": "v1.1.0",
       "declaredLicense": "BSD-3-Clause",
@@ -51059,74 +50221,6 @@
         "sourceEvidenceValue": "h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=",
         "sourceEvidenceSha256": "e5db9edafb12bd7b948f05f4cf27b6e29f50562b3917862d70573cb063ab6725",
         "expressionEvidenceSha256": "89214d52811b2e956bdcc436def440e5b889616a6f06e0e0ce37f335caaff930",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "go",
-      "name": "github.com/hashicorp/yamux",
-      "version": "v0.1.2",
-      "declaredLicense": "MPL-2.0",
-      "concludedLicense": "MPL-2.0",
-      "source": "https://github.com/hashicorp/yamux",
-      "purl": "pkg:golang/github.com/hashicorp/yamux@v0.1.2",
-      "sourceOfferRequired": true,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MPL-2.0",
-        "concludedExpression": "MPL-2.0",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:XtB8kyFOyHXYVFnwT5C3+Bdo8gArse7j2AQ0DA0Uey8=",
-        "sourceEvidenceSha256": "f119bae27ea89e108c8b3d391ed075fc5e37307906ed9c58787b59a29bac2d86",
-        "expressionEvidenceSha256": "3d79829e743233a5db69f309dede87208547e232cd8ff7ae509ac505517e8d49",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": true,
-          "fulfillment": "exact-upstream-source-and-integrity-recorded"
-        }
-      }
-    },
-    {
-      "ecosystem": "go",
-      "name": "github.com/klauspost/compress",
-      "version": "v1.17.9",
-      "declaredLicense": "Apache-2.0",
-      "concludedLicense": "Apache-2.0",
-      "source": "https://github.com/klauspost/compress",
-      "purl": "pkg:golang/github.com/klauspost/compress@v1.17.9",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "Apache-2.0",
-        "concludedExpression": "Apache-2.0",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:6KIumPrER1LHsvBVuDa0r5xaG0Es51mhhB9BQB2qeMA=",
-        "sourceEvidenceSha256": "7797c2dff57cd7283ba97fa5434898459c403941a6c9bc06c27a50c134c692e4",
-        "expressionEvidenceSha256": "2d83c09817848f5ffb54d69a33373105399c84fb4f8abec64b3aff324dbf1f4a",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -51206,176 +50300,6 @@
         "sourceOffer": {
           "required": true,
           "fulfillment": "exact-upstream-source-and-integrity-recorded"
-        }
-      }
-    },
-    {
-      "ecosystem": "go",
-      "name": "github.com/munnerz/goautoneg",
-      "version": "v0.0.0-20191010083416-a7dc8b61c822",
-      "declaredLicense": "BSD-3-Clause",
-      "concludedLicense": "BSD-3-Clause",
-      "source": "https://github.com/munnerz/goautoneg",
-      "purl": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "BSD-3-Clause",
-        "concludedExpression": "BSD-3-Clause",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=",
-        "sourceEvidenceSha256": "bcc55e725c7da340d9cc853edc52624dee58c96ef49c1eedfe06f0ef1ce8c0c5",
-        "expressionEvidenceSha256": "5a5114b474ca4d7ca40fc94c0879be73661ded599be9b745248723b45fc1dc3d",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "go",
-      "name": "github.com/prometheus/client_golang",
-      "version": "v1.20.5",
-      "declaredLicense": "Apache-2.0",
-      "concludedLicense": "Apache-2.0",
-      "source": "https://github.com/prometheus/client_golang",
-      "purl": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "Apache-2.0",
-        "concludedExpression": "Apache-2.0",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:cxppBPuYhUnsO6yo/aoRol4L7q7UFfdm+bR9r+8l63Y=",
-        "sourceEvidenceSha256": "dd7a1815d7dd8377ce3815c7b91c0dc24070914573fd8ad7f156d2a986102075",
-        "expressionEvidenceSha256": "c36f92065c448804a85ac190697ff8a6e3131f6b5f0278f29d7fa7817f1666ec",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "go",
-      "name": "github.com/prometheus/client_model",
-      "version": "v0.6.1",
-      "declaredLicense": "Apache-2.0",
-      "concludedLicense": "Apache-2.0",
-      "source": "https://github.com/prometheus/client_model",
-      "purl": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "Apache-2.0",
-        "concludedExpression": "Apache-2.0",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:ZKSh/rekM+n3CeS952MLRAdFwIKqeY8b62p8ais2e9E=",
-        "sourceEvidenceSha256": "9dccf265b68423d49c52cf7eea7f816714b5bbea312b9b2260f0555164dbaeaa",
-        "expressionEvidenceSha256": "33e2b2925e253e58b0e0044444431161b1c9eccd30dbdbc8cb1f18ebe27923be",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "go",
-      "name": "github.com/prometheus/common",
-      "version": "v0.55.0",
-      "declaredLicense": "Apache-2.0",
-      "concludedLicense": "Apache-2.0",
-      "source": "https://github.com/prometheus/common",
-      "purl": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "Apache-2.0",
-        "concludedExpression": "Apache-2.0",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:KEi6DK7lXW/m7Ig5i47x0vRzuBsHuvJdi5ee6Y3G1dc=",
-        "sourceEvidenceSha256": "fd35860def21d709893df0c6e0e4b179b96038c0ef3e0fe98d32ef2aa2c7ad8a",
-        "expressionEvidenceSha256": "74b0cb6b41002401a17002d2f290870e35ea15d56022486908133a4eeee8fe7d",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "go",
-      "name": "github.com/prometheus/procfs",
-      "version": "v0.15.1",
-      "declaredLicense": "Apache-2.0",
-      "concludedLicense": "Apache-2.0",
-      "source": "https://github.com/prometheus/procfs",
-      "purl": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "Apache-2.0",
-        "concludedExpression": "Apache-2.0",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:YagwOFzUgYfKKHX6Dr+sHT7km/hxC76UB0learggepc=",
-        "sourceEvidenceSha256": "beeac1394bb4e5fda47dc31354a2f6b8aea92a6633b550a0a94b0cadbd1acb8a",
-        "expressionEvidenceSha256": "4c02bbd06da9553fb6a0204e183ef8140571b2c9dbfead64ba4775756ab49575",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
         }
       }
     },
@@ -51603,40 +50527,6 @@
         "sourceEvidenceValue": "h1:UbZz4pLOvn600D6Oh6GGEI6VAmndrEBLv8/6BEXzyus=",
         "sourceEvidenceSha256": "f1f41630a2166c3747011818404e37d56a722916feed3da03f1426191cf67194",
         "expressionEvidenceSha256": "0aa46dd7b14385a44b750ee8386afde5df692c80f17690e793198323427bd7d2",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "go",
-      "name": "google.golang.org/protobuf",
-      "version": "v1.34.2",
-      "declaredLicense": "BSD-3-Clause",
-      "concludedLicense": "BSD-3-Clause",
-      "source": "https://google.golang.org/protobuf",
-      "purl": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "BSD-3-Clause",
-        "concludedExpression": "BSD-3-Clause",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:6xV6lTsCfpGD21XK49h7MhtcApnLqkfYgPcdHftf6hg=",
-        "sourceEvidenceSha256": "fd67fe2b9fe9e202d06c81c2144c9ee0e88ff8a7bd9668b3cbbf2fa698eb5e05",
-        "expressionEvidenceSha256": "7de64b5fbdbdd197d21c7a3135d1bdc140d44e6e4385117ab4fbd9e59e5103ec",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -62752,6 +61642,11 @@
     {
       "from": "pkg:generic/flowersec-source@0.28.0",
       "to": "pkg:cargo/serde_json@1.0.150",
+      "kind": "dev"
+    },
+    {
+      "from": "pkg:generic/flowersec-source@0.28.0",
+      "to": "pkg:cargo/serde_json@1.0.150",
       "kind": "runtime"
     },
     {
@@ -62836,16 +61731,6 @@
     },
     {
       "from": "pkg:generic/flowersec-source@0.28.0",
-      "to": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@0.28.0",
-      "to": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@0.28.0",
       "to": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
       "kind": "runtime"
     },
@@ -62856,47 +61741,12 @@
     },
     {
       "from": "pkg:generic/flowersec-source@0.28.0",
-      "to": "pkg:golang/github.com/hashicorp/yamux@v0.1.2",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@0.28.0",
-      "to": "pkg:golang/github.com/klauspost/compress@v1.17.9",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@0.28.0",
       "to": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
       "kind": "runtime"
     },
     {
       "from": "pkg:generic/flowersec-source@0.28.0",
       "to": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@0.28.0",
-      "to": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@0.28.0",
-      "to": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@0.28.0",
-      "to": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@0.28.0",
-      "to": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@0.28.0",
-      "to": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
       "kind": "runtime"
     },
     {
@@ -62932,11 +61782,6 @@
     {
       "from": "pkg:generic/flowersec-source@0.28.0",
       "to": "pkg:golang/golang.org/x/text@v0.39.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@0.28.0",
-      "to": "pkg:golang/google.golang.org/protobuf@v1.34.2",
       "kind": "runtime"
     },
     {
@@ -63052,121 +61897,6 @@
     {
       "from": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
       "to": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/github.com/klauspost/compress@v1.17.9",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/golang.org/x/net@v0.56.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/golang.org/x/sys@v0.46.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/golang.org/x/text@v0.39.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "to": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-      "to": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "to": "pkg:golang/github.com/beorn7/perks@v1.0.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "to": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "to": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "to": "pkg:golang/github.com/prometheus/client_golang@v1.20.5",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "to": "pkg:golang/github.com/prometheus/client_model@v0.6.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "to": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "to": "pkg:golang/golang.org/x/net@v0.56.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "to": "pkg:golang/golang.org/x/sys@v0.46.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "to": "pkg:golang/golang.org/x/text@v0.39.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/common@v0.55.0",
-      "to": "pkg:golang/google.golang.org/protobuf@v1.34.2",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:golang/github.com/prometheus/procfs@v0.15.1",
-      "to": "pkg:golang/golang.org/x/sys@v0.46.0",
       "kind": "runtime"
     },
     {

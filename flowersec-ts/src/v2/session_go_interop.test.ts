@@ -38,9 +38,9 @@ const sessionContract = (JSON.parse(
 
 describe("TypeScript-Go SessionV2 interop", () => {
   test("runs handshake, logical stream, liveness, and bilateral rekey over a byte-stream carrier fixture", async () => {
-    const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
-    const peer = spawn("go", ["run", "./flowersec-ts/src/v2/interop/go_session_peer.go"], {
-      cwd: repoRoot,
+    const goRoot = fileURLToPath(new URL("../../../flowersec-go", import.meta.url));
+    const peer = spawn("go", ["run", "./internal/cmd/ts-session-peer"], {
+      cwd: goRoot,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stderr: string[] = [];

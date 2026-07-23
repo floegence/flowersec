@@ -58,7 +58,6 @@ type transportV2EndpointSetCodec struct {
 
 type transportV2Docs struct {
 	Architecture string `json:"architecture"`
-	Migration    string `json:"migration"`
 	Wire         string `json:"wire"`
 }
 
@@ -243,7 +242,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 	"artifact_admission": {
 		Path: "testdata/transport_v2/artifact_vectors.json",
 		Consumers: map[string]transportV2WireConsumerExpectation{
-			"go_native":          {Source: "flowersec-go/artifactv2/shared_vectors_test.go", Tokens: []string{"DecodeArtifactJSON", "MarshalRequest", "ParseResponse"}},
+			"go_native":          {Source: "flowersec-go/internal/artifactv2/shared_vectors_test.go", Tokens: []string{"DecodeArtifactJSON", "MarshalRequest", "ParseResponse"}},
 			"typescript_browser": {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"decodeArtifactV2JSON", "buildFSB2RequestV2", "decodeFSA2ResponseV2"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"decodeArtifactV2JSON", "buildFSB2RequestV2", "decodeFSA2ResponseV2"}},
 		},
@@ -255,10 +254,10 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 	"capability": {
 		Path: "testdata/transport_v2/capability_vectors.json",
 		Consumers: map[string]transportV2WireConsumerExpectation{
-			"go_native":          {Source: "flowersec-go/session/contract_test.go", Tokens: []string{"EncodeCapabilityDescriptor", "DecodeCapabilityDescriptor", "CapabilityDescriptorDigest"}},
+			"go_native":          {Source: "flowersec-go/internal/session/contract_test.go", Tokens: []string{"EncodeCapabilityDescriptor", "DecodeCapabilityDescriptor", "CapabilityDescriptorDigest"}},
 			"typescript_browser": {Source: "flowersec-ts/src/v2/capability.test.ts", Tokens: []string{"encodeRuntimeCapabilityDescriptorV2", "decodeRuntimeCapabilityDescriptorV2", "runtimeCapabilityDigestHexV2"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/capability.test.ts", Tokens: []string{"encodeRuntimeCapabilityDescriptorV2", "decodeRuntimeCapabilityDescriptorV2", "runtimeCapabilityDigestHexV2"}},
-			"rust_native":        {Source: "flowersec-rust/tests/transport_v2_contract.rs", Tokens: []string{"encode_runtime_capability_descriptor_v2", "decode_runtime_capability_descriptor_v2", "runtime_capability_digest_hex_v2"}},
+			"rust_native":        {Source: "flowersec-rust/src/transport_v2.rs", Tokens: []string{"encode_runtime_capability_descriptor_v2", "decode_runtime_capability_descriptor_v2", "runtime_capability_digest_hex_v2"}},
 			"swift_apple":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift", Tokens: []string{"canonicalJSON", "decodeCanonicalJSON", "digestHex"}},
 		},
 		Unsupported: map[string]string{},
@@ -266,10 +265,10 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 	"crypto": {
 		Path: "testdata/transport_v2/crypto_vectors.json",
 		Consumers: map[string]transportV2WireConsumerExpectation{
-			"go_native":          {Source: "flowersec-go/protocolv2/crypto_vectors_test.go", Tokens: []string{"DeriveEpochZero", "SealRecord", "OpenRecord"}},
+			"go_native":          {Source: "flowersec-go/internal/protocolv2/crypto_vectors_test.go", Tokens: []string{"DeriveEpochZero", "SealRecord", "OpenRecord"}},
 			"typescript_browser": {Source: "flowersec-ts/src/v2/protocol.test.ts", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/protocol.test.ts", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
-			"rust_native":        {Source: "flowersec-rust/tests/transport_v2_crypto_vectors.rs", Tokens: []string{"derive_epoch_zero_v2", "seal_record_v2", "open_record_v2"}},
+			"rust_native":        {Source: "flowersec-rust/src/transport_v2_crypto_integration_tests.rs", Tokens: []string{"derive_epoch_zero_v2", "seal_record_v2", "open_record_v2"}},
 			"swift_apple":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
 		},
 		Unsupported: map[string]string{},
@@ -277,7 +276,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 	"endpoint_set": {
 		Path: "testdata/transport_v2/endpoint_set_vectors.json",
 		Consumers: map[string]transportV2WireConsumerExpectation{
-			"go_native": {Source: "flowersec-go/endpointsetv2/shared_vectors_test.go", Tokens: []string{"DecodeJSON", "MarshalJSON"}},
+			"go_native": {Source: "flowersec-go/internal/endpointsetv2/shared_vectors_test.go", Tokens: []string{"DecodeJSON", "MarshalJSON"}},
 		},
 		Unsupported: map[string]string{
 			"typescript_browser": "endpoint_set_v2_codec_not_implemented",
@@ -289,7 +288,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 	"handshake": {
 		Path: "testdata/transport_v2/handshake_vectors.json",
 		Consumers: map[string]transportV2WireConsumerExpectation{
-			"go_native":          {Source: "flowersec-go/protocolv2/handshake_vectors_test.go", Tokens: []string{"ComputeECDHSharedSecret", "ComputeHandshakeH0", "DeriveSessionPRK"}},
+			"go_native":          {Source: "flowersec-go/internal/protocolv2/handshake_vectors_test.go", Tokens: []string{"ComputeECDHSharedSecret", "ComputeHandshakeH0", "DeriveSessionPRK"}},
 			"typescript_browser": {Source: "flowersec-ts/src/v2/handshake.test.ts", Tokens: []string{"computeSharedSecretV2", "computeHandshakeH0V2", "deriveSessionPRKV2"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/handshake.test.ts", Tokens: []string{"computeSharedSecretV2", "computeHandshakeH0V2", "deriveSessionPRKV2"}},
 			"rust_native":        {Source: "flowersec-rust/src/session_v2.rs", Tokens: []string{"derive_shared_secret", "canonical_handshake_v2", "hkdf_extract_v2"}},
@@ -303,7 +302,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"go_native":          {Source: "flowersec-go/internal/idna15/idna_test.go", Tokens: []string{"LookupASCII", "UnicodeVersion"}},
 			"typescript_browser": {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"canonicalizeCandidatesV2", "idnaFixture"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"canonicalizeCandidatesV2", "idnaFixture"}},
-			"rust_native":        {Source: "flowersec-rust/tests/idna_v2.rs", Tokens: []string{"lookup_ascii", "UNICODE_VERSION"}},
+			"rust_native":        {Source: "flowersec-rust/src/idna_v2_integration_tests.rs", Tokens: []string{"lookup_ascii", "UNICODE_VERSION"}},
 			"swift_apple":        {Source: "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift", Tokens: []string{"lookupASCII", "unicodeVersion"}},
 		},
 		Unsupported: map[string]string{},
@@ -311,10 +310,10 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 	"open_unicode": {
 		Path: "testdata/transport_v2/open_unicode_vectors.json",
 		Consumers: map[string]transportV2WireConsumerExpectation{
-			"go_native":          {Source: "flowersec-go/protocolv2/open_unicode_vectors_test.go", Tokens: []string{"MarshalOpenPayload", "ParseOpenPayload"}},
+			"go_native":          {Source: "flowersec-go/internal/protocolv2/open_unicode_vectors_test.go", Tokens: []string{"MarshalOpenPayload", "ParseOpenPayload"}},
 			"typescript_browser": {Source: "flowersec-ts/src/v2/open.test.ts", Tokens: []string{"encodeOpenPayload", "decodeOpenPayload"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/open.test.ts", Tokens: []string{"encodeOpenPayload", "decodeOpenPayload"}},
-			"rust_native":        {Source: "flowersec-rust/tests/open_v2_vectors.rs", Tokens: []string{"encode_open_payload_v2", "decode_open_payload_v2"}},
+			"rust_native":        {Source: "flowersec-rust/src/open_v2_integration_tests.rs", Tokens: []string{"encode_open_payload_v2", "decode_open_payload_v2"}},
 			"swift_apple":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift", Tokens: []string{"OpenPayloadV2", "encoded", "decode"}},
 		},
 		Unsupported: map[string]string{},
@@ -322,7 +321,7 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 	"session_wire": {
 		Path: "testdata/transport_v2/session_wire_vectors.json",
 		Consumers: map[string]transportV2WireConsumerExpectation{
-			"go_native":          {Source: "flowersec-go/session/rekey_barrier_test.go", Tokens: []string{"marshalStreamKeyUpdateACK", "parseStreamKeyUpdateACK"}},
+			"go_native":          {Source: "flowersec-go/internal/session/rekey_barrier_test.go", Tokens: []string{"marshalStreamKeyUpdateACK", "parseStreamKeyUpdateACK"}},
 			"typescript_browser": {Source: "flowersec-ts/src/v2/session_wire.test.ts", Tokens: []string{"encodeStreamKeyUpdateACKV2", "decodeStreamKeyUpdateACKV2"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/session_wire.test.ts", Tokens: []string{"encodeStreamKeyUpdateACKV2", "decodeStreamKeyUpdateACKV2"}},
 			"rust_native":        {Source: "flowersec-rust/src/session_v2.rs", Tokens: []string{"encode_stream_key_update_ack_v2", "decode_stream_key_update_ack_v2"}},
@@ -898,17 +897,6 @@ func validateTransportV2Docs(repoRoot string, docs transportV2Docs) error {
 		"docs/TRANSPORT_V2_ARCHITECTURE.md": {
 			"CarrierSession", "native bidirectional stream", "Yamux", "0-RTT", "DATAGRAM", "business logic", "quinn", "rcgen", transportV2ContractPath,
 		},
-		"docs/MIGRATION_TRANSPORT_V2.md": {
-			"v1", "v2", "dual-stack", "redeven", "redeven-portal", "floe-webapp", "rollback", "capability",
-			"binding_generation", "connection_generation", "ATOMIC_AUTHORITY_SWAP", "ArtifactLease", "CommitSpend",
-			"custom tunnel", "ProtocolProvider", "RpcProxy", "Service Worker",
-			"### Flowersec Release", "### Floe Webapp Release", "### Redeven Upgrade",
-			"packages/boot/package.json", "packages/protocol/package.json", "packages/core/package.json", "packages/init/package.json",
-			"packages/boot/test/release-contract.test.ts", "packages/boot/test/doc-contract.test.ts", "packages/protocol/test/doc-contract.test.ts", "docs/protocol.md", "docs/runtime.md",
-			"internal/session/dependency_contract_test.go", "internal/envapp/ui_src/package-lock.json",
-			"internal/envapp/ui_src/pnpm-lock.yaml", "internal/codeapp/ui_src/package-lock.json", "desktop/package.json", "desktop/package-lock.json", "desktop/pnpm-lock.yaml",
-			"okf/architecture/runtime-transport-dependencies.md", "okf/architecture/env-app-upstream-web-dependencies.md", "README.md", "localized README", "THIRD_PARTY_NOTICES.md",
-		},
 		"docs/TRANSPORT_V2_WIRE.md": {
 			"FSB2", "FSA2", "FSC2", "FSH2", "FSS2", "FSR2", "OPEN", "OPEN_ACK",
 			"HKDF-Extract", "flowersec-v2-handshake", "reject", "testdata/transport_v2/handshake_vectors.json",
@@ -920,7 +908,6 @@ func validateTransportV2Docs(repoRoot string, docs transportV2Docs) error {
 		want  string
 	}{
 		{label: "architecture", path: docs.Architecture, want: "docs/TRANSPORT_V2_ARCHITECTURE.md"},
-		{label: "migration", path: docs.Migration, want: "docs/MIGRATION_TRANSPORT_V2.md"},
 		{label: "wire", path: docs.Wire, want: "docs/TRANSPORT_V2_WIRE.md"},
 	} {
 		if doc.path != doc.want {
@@ -933,15 +920,6 @@ func validateTransportV2Docs(repoRoot string, docs transportV2Docs) error {
 		for _, token := range want[doc.want] {
 			if !strings.Contains(string(data), token) {
 				return fmt.Errorf("transport v2 %s document %q missing token %q", doc.label, doc.path, token)
-			}
-		}
-		if doc.label == "migration" {
-			content := string(data)
-			flowersecRelease := strings.Index(content, "### Flowersec Release")
-			floeRelease := strings.Index(content, "### Floe Webapp Release")
-			redevenUpgrade := strings.Index(content, "### Redeven Upgrade")
-			if flowersecRelease < 0 || floeRelease <= flowersecRelease || redevenUpgrade <= floeRelease {
-				return errors.New("transport v2 downstream release order must be Flowersec, floe-webapp, then redeven")
 			}
 		}
 	}

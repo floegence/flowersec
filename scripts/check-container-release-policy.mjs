@@ -29,36 +29,20 @@ function parseDockerfile(source) {
 }
 
 export const containerDockerfileContracts = Object.freeze({
-  "docker/flowersec-tunnel/Dockerfile": Object.freeze({
+  "docker/flowersec-runtime/Dockerfile": Object.freeze({
     syntax: "# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e",
     buildFrom: "--platform=$BUILDPLATFORM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build",
-    buildOutput: "/out/flowersec-tunnel",
-    buildPackage: "./cmd/flowersec-tunnel",
+    buildOutput: "/out/flowersec-runtime",
+    buildPackage: "./cmd/flowersec-runtime",
     final: [
       { instruction: "FROM", value: "gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35" },
-      { instruction: "COPY", value: "--from=build /out/flowersec-tunnel /usr/local/bin/flowersec-tunnel" },
+      { instruction: "COPY", value: "--from=build /out/flowersec-runtime /usr/local/bin/flowersec-runtime" },
       { instruction: "COPY", value: "LICENSE /usr/share/doc/flowersec/LICENSE" },
-      { instruction: "COPY", value: "release-compliance/tunnel-image/THIRD_PARTY_NOTICES.md /usr/share/doc/flowersec/THIRD_PARTY_NOTICES.md" },
-      { instruction: "COPY", value: "release-compliance/tunnel-image/SBOM_SCOPE.md /usr/share/doc/flowersec/SBOM_SCOPE.md" },
-      { instruction: "COPY", value: "release-compliance/tunnel-image/sbom /usr/share/doc/flowersec/sbom" },
-      { instruction: "EXPOSE", value: "8080" },
-      { instruction: "ENTRYPOINT", value: "[\"/usr/local/bin/flowersec-tunnel\"]" },
-    ],
-  }),
-  "docker/flowersec-proxy-gateway/Dockerfile": Object.freeze({
-    syntax: "# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e",
-    buildFrom: "--platform=$BUILDPLATFORM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build",
-    buildOutput: "/out/flowersec-proxy-gateway",
-    buildPackage: "./cmd/flowersec-proxy-gateway",
-    final: [
-      { instruction: "FROM", value: "gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35" },
-      { instruction: "COPY", value: "--from=build /out/flowersec-proxy-gateway /usr/local/bin/flowersec-proxy-gateway" },
-      { instruction: "COPY", value: "LICENSE /usr/share/doc/flowersec/LICENSE" },
-      { instruction: "COPY", value: "release-compliance/gateway-image/THIRD_PARTY_NOTICES.md /usr/share/doc/flowersec/THIRD_PARTY_NOTICES.md" },
-      { instruction: "COPY", value: "release-compliance/gateway-image/SBOM_SCOPE.md /usr/share/doc/flowersec/SBOM_SCOPE.md" },
-      { instruction: "COPY", value: "release-compliance/gateway-image/sbom /usr/share/doc/flowersec/sbom" },
-      { instruction: "EXPOSE", value: "8080" },
-      { instruction: "ENTRYPOINT", value: "[\"/usr/local/bin/flowersec-proxy-gateway\"]" },
+      { instruction: "COPY", value: "release-compliance/runtime-image/THIRD_PARTY_NOTICES.md /usr/share/doc/flowersec/THIRD_PARTY_NOTICES.md" },
+      { instruction: "COPY", value: "release-compliance/runtime-image/SBOM_SCOPE.md /usr/share/doc/flowersec/SBOM_SCOPE.md" },
+      { instruction: "COPY", value: "release-compliance/runtime-image/sbom /usr/share/doc/flowersec/sbom" },
+      { instruction: "EXPOSE", value: "8080 443/udp" },
+      { instruction: "ENTRYPOINT", value: "[\"/usr/local/bin/flowersec-runtime\"]" },
     ],
   }),
 });

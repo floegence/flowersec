@@ -2,9 +2,13 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createArtifactLeaseV2, type ArtifactSourceV2 } from "./artifactLease.js";
-import { BROWSER_RUNTIME_CAPABILITY_V2 } from "./capability.js";
-import type { SessionTerminationV2, SessionV2 } from "./contract.js";
-import { FlowersecError, type FlowersecErrorCode } from "../utils/errors.js";
+import type { SessionV2 } from "./contract.js";
+import {
+  ConnectError,
+  createConnectErrorInternal,
+  type FlowersecErrorCode,
+} from "../utils/errors.js";
+import { parseArtifact } from "./opaqueArtifact.js";
 import {
   createSessionReconnectManagerV2,
   type SessionReconnectConfigV2,
@@ -14,6 +18,7 @@ const fixture = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/artifact_vectors.json", import.meta.url), "utf8"),
 ) as Readonly<{ positive: readonly Readonly<{ artifact_json: string }>[] }>;
 const rawArtifact = fixture.positive[0]!.artifact_json;
+const artifact = parseArtifact(rawArtifact);
 
 afterEach(() => vi.useRealTimers());
 
@@ -27,12 +32,11 @@ describe("SessionV2 reconnect lifecycle", () => {
       acquire: async () => {
         acquisitions++;
         events.push(`acquire:${acquisitions}`);
-        return createArtifactLeaseV2(rawArtifact, async () => events.push(`spend:${acquisitions}`));
+        return createArtifactLeaseV2(artifact, async () => events.push(`spend:${acquisitions}`));
       },
     };
     const config: SessionReconnectConfigV2 = {
       source,
-      capability: BROWSER_RUNTIME_CAPABILITY_V2,
       connect: async (lease) => {
         events.push(`connect:${acquisitions}`);
         await lease.commitSpend();
@@ -61,13 +65,12 @@ describe("SessionV2 reconnect lifecycle", () => {
       kind: "refreshable",
       acquire: async () => {
         acquisitions++;
-        return createArtifactLeaseV2(rawArtifact, async () => undefined);
+        return createArtifactLeaseV2(artifact, async () => undefined);
       },
     };
     const manager = createSessionReconnectManagerV2();
     await manager.connect({
       source,
-      capability: BROWSER_RUNTIME_CAPABILITY_V2,
       connect: async () => acquisitions === 1 ? first.session : second.session,
       autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0, jitterRatio: 0 },
     });
@@ -83,11 +86,10 @@ describe("SessionV2 reconnect lifecycle", () => {
   test("rejects auto reconnect for one-time artifact sources", async () => {
     const manager = createSessionReconnectManagerV2();
     await expect(manager.connect({
-      source: { kind: "once", artifact: rawArtifact, commitSpend: async () => undefined },
-      capability: BROWSER_RUNTIME_CAPABILITY_V2,
+      source: { kind: "once", artifact, commitSpend: async () => undefined },
       connect: async () => fakeSession().session,
       autoReconnect: { enabled: true },
-    })).rejects.toThrow("refreshable");
+    })).rejects.toMatchObject({ code: "invalid_options" });
     expect(manager.state().status).toBe("error");
   });
 
@@ -95,8 +97,7 @@ describe("SessionV2 reconnect lifecycle", () => {
     const active = fakeSession();
     const manager = createSessionReconnectManagerV2();
     const validConfig: SessionReconnectConfigV2 = {
-      source: { kind: "once", artifact: rawArtifact, commitSpend: async () => undefined },
-      capability: BROWSER_RUNTIME_CAPABILITY_V2,
+      source: { kind: "once", artifact, commitSpend: async () => undefined },
       connect: async () => active.session,
     };
     await manager.connect(validConfig);
@@ -105,10 +106,8 @@ describe("SessionV2 reconnect lifecycle", () => {
       ...validConfig,
       autoReconnect: { enabled: true },
     })).rejects.toMatchObject({
-      name: "FlowersecError",
-      path: "auto",
-      stage: "validate",
-      code: "invalid_option",
+      name: "ConnectError",
+      code: "invalid_options",
     });
 
     expect(active.closeCount()).toBe(0);
@@ -120,35 +119,31 @@ describe("SessionV2 reconnect lifecycle", () => {
     const manager = createSessionReconnectManagerV2();
     const malformed = {
       source: null,
-      capability: BROWSER_RUNTIME_CAPABILITY_V2,
       connect: async () => fakeSession().session,
     } as unknown as SessionReconnectConfigV2;
 
     await expect(manager.connect(malformed)).rejects.toMatchObject({
-      name: "FlowersecError",
-      path: "auto",
-      stage: "validate",
-      code: "invalid_option",
+      name: "ConnectError",
+      code: "invalid_options",
     });
     expect(manager.state()).toMatchObject({ status: "error", session: null });
-    expect(manager.state().error).toBeInstanceOf(FlowersecError);
+    expect(manager.state().error).toBeInstanceOf(ConnectError);
   });
 
-  test("does not retry FlowersecError codes classified as terminal by the shared registry", async () => {
+  test("does not retry internal terminal error codes", async () => {
     const registry = JSON.parse(
       readFileSync(new URL("../../../stability/connect_error_code_registry.json", import.meta.url), "utf8"),
     ) as Readonly<{ reconnect_terminal_codes: readonly FlowersecErrorCode[] }>;
 
     for (const code of registry.reconnect_terminal_codes) {
-      const failure = new FlowersecError({ path: "direct", stage: "validate", code });
+      const failure = createConnectErrorInternal({ path: "direct", stage: "validate", code });
       let attempts = 0;
       const manager = createSessionReconnectManagerV2();
       const config: SessionReconnectConfigV2 = {
         source: {
           kind: "refreshable",
-          acquire: async () => createArtifactLeaseV2(rawArtifact, async () => undefined),
+          acquire: async () => createArtifactLeaseV2(artifact, async () => undefined),
         },
-        capability: BROWSER_RUNTIME_CAPABILITY_V2,
         connect: async () => {
           attempts++;
           throw failure;
@@ -162,7 +157,7 @@ describe("SessionV2 reconnect lifecycle", () => {
     }
   });
 
-  test("does not reconnect sessions terminated by a registry terminal FlowersecError", async () => {
+  test("does not reconnect sessions terminated by an internal terminal error", async () => {
     const registry = JSON.parse(
       readFileSync(new URL("../../../stability/connect_error_code_registry.json", import.meta.url), "utf8"),
     ) as Readonly<{ reconnect_terminal_codes: readonly FlowersecErrorCode[] }>;
@@ -174,9 +169,8 @@ describe("SessionV2 reconnect lifecycle", () => {
       await manager.connect({
         source: {
           kind: "refreshable",
-          acquire: async () => createArtifactLeaseV2(rawArtifact, async () => undefined),
+          acquire: async () => createArtifactLeaseV2(artifact, async () => undefined),
         },
-        capability: BROWSER_RUNTIME_CAPABILITY_V2,
         connect: async () => {
           attempts++;
           if (attempts > 1) throw new Error("terminal session was retried");
@@ -184,7 +178,7 @@ describe("SessionV2 reconnect lifecycle", () => {
         },
         autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0, jitterRatio: 0 },
       });
-      const failure = new FlowersecError({ path: "direct", stage: "validate", code });
+      const failure = createConnectErrorInternal({ path: "direct", stage: "validate", code });
 
       active.terminate(failure);
       await eventually(() => {
@@ -203,9 +197,8 @@ describe("SessionV2 reconnect lifecycle", () => {
     const connecting = manager.connect({
       source: {
         kind: "refreshable",
-        acquire: async () => createArtifactLeaseV2(rawArtifact, async () => undefined),
+        acquire: async () => createArtifactLeaseV2(artifact, async () => undefined),
       },
-      capability: BROWSER_RUNTIME_CAPABILITY_V2,
       connect: async () => {
         attempts++;
         throw new Error("dial failed");
@@ -232,8 +225,7 @@ describe("SessionV2 reconnect lifecycle", () => {
 	const connectGate = new Promise<void>((resolve) => { releaseConnect = resolve; });
 	const manager = createSessionReconnectManagerV2();
 	const connecting = manager.connect({
-	  source: { kind: "once", artifact: rawArtifact, commitSpend: async () => undefined },
-	  capability: BROWSER_RUNTIME_CAPABILITY_V2,
+	  source: { kind: "once", artifact, commitSpend: async () => undefined },
 	  connect: async () => {
 		await connectGate;
 		return late.session;
@@ -261,8 +253,7 @@ describe("SessionV2 reconnect lifecycle", () => {
 	const events: string[] = [];
 	const manager = createSessionReconnectManagerV2();
 	const first = manager.connect({
-	  source: { kind: "once", artifact: rawArtifact, commitSpend: async () => undefined },
-	  capability: BROWSER_RUNTIME_CAPABILITY_V2,
+	  source: { kind: "once", artifact, commitSpend: async () => undefined },
 	  connect: async () => {
 		events.push("first-connect");
 		await firstGate;
@@ -276,10 +267,9 @@ describe("SessionV2 reconnect lifecycle", () => {
 		kind: "refreshable",
 		acquire: async () => {
 		  events.push("replacement-acquire");
-		  return createArtifactLeaseV2(rawArtifact, async () => undefined);
+		  return createArtifactLeaseV2(artifact, async () => undefined);
 		},
 	  },
-	  capability: BROWSER_RUNTIME_CAPABILITY_V2,
 	  connect: async () => fakeSession().session,
 	});
 	await flushMicrotasks();
@@ -304,10 +294,9 @@ describe("SessionV2 reconnect lifecycle", () => {
 		kind: "refreshable",
 		acquire: async () => {
 		  acquisitions++;
-		  return createArtifactLeaseV2(rawArtifact, async () => undefined);
+		  return createArtifactLeaseV2(artifact, async () => undefined);
 		},
 	  },
-	  capability: BROWSER_RUNTIME_CAPABILITY_V2,
 	  connect: async () => acquisitions === 1 ? first.session : second.session,
 	  autoReconnect: { enabled: true, maxAttempts: 2, initialDelayMs: 1_000, maxDelayMs: 1_000, jitterRatio: 0 },
 	});
@@ -325,31 +314,28 @@ describe("SessionV2 reconnect lifecycle", () => {
 	await manager.disconnect();
   });
 
-  test("normalizes public reconnect failures to FlowersecError", async () => {
+  test("normalizes public reconnect failures to ConnectError", async () => {
 	const invalidConfig = createSessionReconnectManagerV2();
 	await expect(invalidConfig.connect({
-	  source: { kind: "once", artifact: rawArtifact, commitSpend: async () => undefined },
-	  capability: BROWSER_RUNTIME_CAPABILITY_V2,
+	  source: { kind: "once", artifact, commitSpend: async () => undefined },
 	  connect: async () => fakeSession().session,
 	  autoReconnect: { enabled: true },
-	})).rejects.toMatchObject({ name: "FlowersecError", path: "auto", stage: "validate", code: "invalid_option" });
+	})).rejects.toMatchObject({ name: "ConnectError", code: "invalid_options" });
 
 	const acquireFailure = createSessionReconnectManagerV2();
 	await expect(acquireFailure.connect({
 	  source: { kind: "refreshable", acquire: async () => { throw new Error("registry unavailable"); } },
-	  capability: BROWSER_RUNTIME_CAPABILITY_V2,
 	  connect: async () => fakeSession().session,
-	})).rejects.toMatchObject({ name: "FlowersecError", path: "auto", stage: "validate", code: "resolve_failed" });
+	})).rejects.toMatchObject({ name: "ConnectError", code: "resolve_failed" });
 
 	const connectFailure = createSessionReconnectManagerV2();
 	await expect(connectFailure.connect({
-	  source: { kind: "once", artifact: rawArtifact, commitSpend: async () => undefined },
-	  capability: BROWSER_RUNTIME_CAPABILITY_V2,
+	  source: { kind: "once", artifact, commitSpend: async () => undefined },
 	  connect: async () => { throw new Error("dial failed"); },
-	})).rejects.toMatchObject({ name: "FlowersecError", path: "direct", stage: "connect", code: "dial_failed" });
+	})).rejects.toMatchObject({ name: "ConnectError", code: "connection_failed" });
 
 	for (const manager of [invalidConfig, acquireFailure, connectFailure]) {
-	  expect(manager.state().error).toBeInstanceOf(FlowersecError);
+	  expect(manager.state().error).toBeInstanceOf(ConnectError);
 	}
   });
 
@@ -357,8 +343,7 @@ describe("SessionV2 reconnect lifecycle", () => {
     const active = fakeSession(20);
     const manager = createSessionReconnectManagerV2();
     await manager.connect({
-      source: { kind: "once", artifact: rawArtifact, commitSpend: async () => undefined },
-      capability: BROWSER_RUNTIME_CAPABILITY_V2,
+      source: { kind: "once", artifact, commitSpend: async () => undefined },
       connect: async () => active.session,
     });
 
@@ -374,15 +359,13 @@ describe("SessionV2 reconnect lifecycle", () => {
     const second = fakeSession();
     const manager = createSessionReconnectManagerV2();
     await manager.connect({
-      source: { kind: "once", artifact: rawArtifact, commitSpend: async () => undefined },
-      capability: BROWSER_RUNTIME_CAPABILITY_V2,
+      source: { kind: "once", artifact, commitSpend: async () => undefined },
       connect: async () => first.session,
     });
 
     const disconnecting = manager.disconnect();
     await manager.connect({
-      source: { kind: "once", artifact: rawArtifact, commitSpend: async () => undefined },
-      capability: BROWSER_RUNTIME_CAPABILITY_V2,
+      source: { kind: "once", artifact, commitSpend: async () => undefined },
       connect: async () => second.session,
     });
     await disconnecting;
@@ -398,8 +381,8 @@ function fakeSession(closeDelayMs = 0): Readonly<{
   closeCount(): number;
 }> {
   let closeCount = 0;
-  let resolveTermination!: (value: SessionTerminationV2) => void;
-  const termination = new Promise<SessionTerminationV2>((resolve) => { resolveTermination = resolve; });
+  let resolveTermination!: (value: Readonly<{ error: Error }>) => void;
+  const termination = new Promise<Readonly<{ error: Error }>>((resolve) => { resolveTermination = resolve; });
   let terminal = false;
   const terminate = (error: Error) => {
     if (terminal) return;

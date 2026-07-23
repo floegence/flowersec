@@ -30,6 +30,9 @@ func TestOpaqueArtifactAndLease(t *testing.T) {
 	if err != nil || string(encoded) != "{}" {
 		t.Fatalf("lease JSON = %q, %v", encoded, err)
 	}
+	if got := fmt.Sprintf("%v %#v", lease, lease); got != "Flowersec.ArtifactLease flowersec.ArtifactLease" {
+		t.Fatalf("lease formatting leaked implementation: %q", got)
+	}
 }
 
 func TestOpaqueArtifactRejectsMalformedAndForgedValues(t *testing.T) {

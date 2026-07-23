@@ -1,12 +1,10 @@
 import Flowersec
 import Foundation
 
-func renderRuntimeCapabilityV2() throws -> String {
-  let descriptor = RuntimeCapabilitiesV2.apple
+func renderPublicContractV2() -> String {
   return """
-    descriptor=\(String(decoding: try descriptor.canonicalJSON(), as: UTF8.self))
-    tuple_count=\(descriptor.tuples.count)
-    digest=\(try descriptor.digestHex())
+    transport=v2
+    session_api=opaque
 
     """
 }
@@ -14,7 +12,7 @@ func renderRuntimeCapabilityV2() throws -> String {
 @main
 private enum FlowersecSwiftClientExample {
   static func main() async throws {
-    print(try renderRuntimeCapabilityV2(), terminator: "")
+    print(renderPublicContractV2(), terminator: "")
     guard let artifactPath = ProcessInfo.processInfo.environment["FSEC_ARTIFACT_V2_PATH"] else {
       return
     }

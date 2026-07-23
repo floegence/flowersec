@@ -154,7 +154,7 @@ test("source inventory output closure is explicit and package-local", async () =
     "flowersec-rust/sbom/cyclonedx.json",
     "sbom/swift/spdx.json",
     "sbom/swift/cyclonedx.json",
-    ...["tunnel", "tools", "gateway", "demos", "tunnel-image", "gateway-image"].flatMap((kind) => [
+    ...["runtime", "runtime-image"].flatMap((kind) => [
       `release-compliance/${kind}/THIRD_PARTY_NOTICES.md`,
       `release-compliance/${kind}/SBOM_SCOPE.md`,
       `release-compliance/${kind}/sbom/spdx.json`,
@@ -623,10 +623,8 @@ func main() {
 }
 `);
   const goModules = [
-    "examples",
     "flowersec-go",
     "tools/idlgen",
-    "tools/manifestgen",
     "tools/releasenotes",
     "tools/stabilitycheck",
     "tools/transportcheck",
@@ -641,7 +639,9 @@ func main() {
       "git",
       ["ls-files", "--cached", "--others", "--exclude-standard", "--", relative],
       { cwd: sourceRoot },
-    ).split("\n").filter(Boolean);
+    ).split("\n").filter((repositoryRelative) =>
+      repositoryRelative && fs.existsSync(path.join(sourceRoot, repositoryRelative))
+    );
     for (const repositoryRelative of moduleFiles) {
       const moduleRelative = path.relative(relative, repositoryRelative);
       const destination = path.join(stagedModuleRoot, moduleRelative);
@@ -678,7 +678,9 @@ func main() {
     "git",
     ["ls-files", "--cached", "--others", "--exclude-standard"],
     { cwd: sourceRoot },
-  ).split("\n").filter(Boolean);
+  ).split("\n").filter((repositoryRelative) =>
+    repositoryRelative && fs.existsSync(path.join(sourceRoot, repositoryRelative))
+  );
   run("tar", ["-cf", swiftArchive, "-T", "-"], {
     cwd: sourceRoot,
     input: `${sourcePaths.join("\n")}\n`,
@@ -714,9 +716,6 @@ test("release target matrix produces exact binary dependency graphs and full lic
       archive: [
         { goos: "linux", goarch: "amd64" },
         { goos: "linux", goarch: "arm64" },
-        { goos: "darwin", goarch: "amd64" },
-        { goos: "darwin", goarch: "arm64" },
-        { goos: "windows", goarch: "amd64" },
       ],
       image: [
         { goos: "linux", goarch: "amd64" },
@@ -724,45 +723,13 @@ test("release target matrix produces exact binary dependency graphs and full lic
       ],
     },
     distributions: {
-      tunnel: {
+      runtime: {
         platforms: "archive",
-        targets: [{ module: "flowersec-go", package: "./cmd/flowersec-tunnel" }],
+        targets: [{ module: "flowersec-go", package: "./cmd/flowersec-runtime" }],
       },
-      tools: {
-        platforms: "archive",
-        targets: [
-          { module: "flowersec-go", package: "./cmd/flowersec-issuer-keygen" },
-          { module: "flowersec-go", package: "./cmd/flowersec-channelinit" },
-          { module: "flowersec-go", package: "./cmd/flowersec-directinit" },
-          { module: "flowersec-go", package: "./cmd/flowersec-proxy-gateway" },
-        ],
-      },
-      gateway: {
-        platforms: "archive",
-        targets: [{ module: "flowersec-go", package: "./cmd/flowersec-proxy-gateway" }],
-      },
-      demos: {
-        platforms: "archive",
-        targets: [
-          { module: "flowersec-go", package: "./cmd/flowersec-tunnel" },
-          { module: "examples", package: "./go/controlplane_demo" },
-          { module: "examples", package: "./go/server_endpoint" },
-          { module: "examples", package: "./go/direct_demo" },
-          { module: "examples", package: "./go/go_client_tunnel_simple" },
-          { module: "examples", package: "./go/go_client_direct_simple" },
-          { module: "flowersec-go", package: "./cmd/flowersec-issuer-keygen" },
-          { module: "flowersec-go", package: "./cmd/flowersec-channelinit" },
-          { module: "flowersec-go", package: "./cmd/flowersec-directinit" },
-        ],
-        includeNpmRuntime: true,
-      },
-      "tunnel-image": {
+      "runtime-image": {
         platforms: "image",
-        targets: [{ module: "flowersec-go", package: "./cmd/flowersec-tunnel" }],
-      },
-      "gateway-image": {
-        platforms: "image",
-        targets: [{ module: "flowersec-go", package: "./cmd/flowersec-proxy-gateway" }],
+        targets: [{ module: "flowersec-go", package: "./cmd/flowersec-runtime" }],
       },
     },
   });
@@ -806,8 +773,6 @@ test("release target matrix produces exact binary dependency graphs and full lic
       .filter((component) => component.ecosystem === "go")
       .map((component) => `${component.name}@${component.version}`);
     assert.deepEqual(graphModules.sort(), [...actualModules].sort(), `${kind} exact Go binary closure`);
-    assert.equal(graphModules.some((module) => /quic-go|webtransport|qpack|httpsfv/.test(module)), false);
-
     const notice = artifacts.get(`release-compliance/${kind}/THIRD_PARTY_NOTICES.md`);
     assertReleaseNoticeLicenseClosure(notice, graph);
     for (const component of graph.components.filter((entry) => entry.ecosystem === "go")) {
@@ -825,9 +790,6 @@ test("release target matrix produces exact binary dependency graphs and full lic
   }
 
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
-  assert.match(workflow, /npm ci --omit=dev --ignore-scripts --audit=false --prefix "\$demo_ts_runtime"/);
-  assert.match(workflow, /cp flowersec-ts\/package\.json flowersec-ts\/package-lock\.json "\$demo_ts_runtime\/"/);
-  assert.match(workflow, /cp -R "\$demo_ts_runtime" "\$dir\/flowersec-ts"/);
   const archiveTargets = Object.values(manifest.distributions)
     .filter((definition) => definition.platforms === "archive")
     .flatMap((definition) => definition.targets.map((target) => target.package));
@@ -848,7 +810,7 @@ test("GitHub Release archives and container definitions carry exact runtime comp
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-compliance-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const kind of ["tunnel", "tools", "gateway", "demos"]) {
+  for (const kind of ["runtime"]) {
     const expected = new Map([
       ["THIRD_PARTY_NOTICES.md", artifacts.get(`release-compliance/${kind}/THIRD_PARTY_NOTICES.md`)],
       ["SBOM_SCOPE.md", artifacts.get(`release-compliance/${kind}/SBOM_SCOPE.md`)],
@@ -889,18 +851,17 @@ test("GitHub Release archives and container definitions carry exact runtime comp
   }
 
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
-  for (const kind of ["tunnel", "tools", "gateway", "demos"]) {
+  for (const kind of ["runtime"]) {
     assert.equal(
       (workflow.match(new RegExp(`scripts/stage-release-compliance\\.sh ${kind} "\\$dir"`, "g")) ?? []).length,
       1,
       `${kind} release archive compliance staging`,
     );
   }
-  assert.equal((workflow.match(/^\s+sbom: true$/gm) ?? []).length, 2, "both images need full-image SBOM attestations");
+  assert.equal((workflow.match(/^\s+sbom: true$/gm) ?? []).length, 1, "runtime image needs a full-image SBOM attestation");
 
   const dockerDefinitions = [
-    ["docker/flowersec-tunnel/Dockerfile", "tunnel-image"],
-    ["docker/flowersec-proxy-gateway/Dockerfile", "gateway-image"],
+    ["docker/flowersec-runtime/Dockerfile", "runtime-image"],
   ];
   for (const [dockerfile, kind] of dockerDefinitions) {
     const source = fs.readFileSync(path.join(sourceRoot, dockerfile), "utf8");

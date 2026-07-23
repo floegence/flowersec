@@ -1,63 +1,59 @@
-# Rust Cookbook
+# Rust Transport v2 Example
 
-The Rust example is a Transport v1 Tokio-native client that exercises artifact fetch, tunnel connect, typed RPC, custom streams, liveness, HTTP proxy, and WebSocket proxy.
+This package exercises the maintained Rust v2 public surface without exposing
+carrier candidates, credentials, keys, or wire contracts. It provides two
+workflows:
 
-## Run
+- parse an application-acquired opaque artifact without exposing its contents;
+- establish a session through the carrier-neutral `Connector` and `Session`.
 
-Requirements: Rust 1.85+, Node.js 24+, Go 1.26.5+, and `jq`.
+Transport selection and topology remain internal. Neither command prints a
+carrier, path, candidate, endpoint identity, stream identifier, credential,
+key, wire value, or transport diagnostic.
 
-Start the shared stack from the repository root:
+## Inspect an Opaque Artifact
+
+Acquire an artifact through the application control plane and save its JSON to
+a protected local file. Then run:
 
 ```bash
-make ts-ensure-deps ts-build
-node ./examples/ts/dev-server.mjs | tee dev.json
+cargo run --locked --manifest-path examples/rust/Cargo.toml -- \
+  artifact-v2 /secure/path/artifact.json
 ```
 
-In another terminal:
+The command validates the artifact and prints only `Artifact { <opaque> }` plus
+the unspent lease state. It never prints or serializes artifact fields.
+
+## Establish a Session
+
+Provide a DER-encoded trust root accepted by the listener and a new durable
+receipt path:
 
 ```bash
-FSEC_CONTROLPLANE_BASE_URL="$(jq -r '.controlplane_http_url' dev.json)" \
-  cargo run --manifest-path ./examples/rust/Cargo.toml
+cargo run --locked --manifest-path examples/rust/Cargo.toml -- \
+  connect-v2 /secure/path/artifact.json /secure/path/root.der \
+  /durable/state/artifact.spent
 ```
 
-Expected output includes these signals:
+The public `Connector` consumes only the opaque artifact lease and its trust and
+deadline options. Before establishing the encrypted session, it invokes the
+`ArtifactLease` callback to synchronize the create-new receipt. A successful
+connection prints only `session=ready` and the carrier-neutral liveness result,
+then closes the session cleanly. Reusing a receipt path fails closed.
 
-```text
-stream=flowersec-rust-example
-http_status=200
-websocket=
+The receipt does not contain the artifact or cryptographic material. Keep both
+paths outside the repository and apply permissions suitable for deployment
+secrets and state.
+
+## Verify
+
+```bash
+cargo test --locked --manifest-path examples/rust/Cargo.toml
+cargo clippy --locked --manifest-path examples/rust/Cargo.toml \
+  --all-targets -- -D warnings
 ```
 
-## Examples
-
-| Scenario | Source | Run or verify |
-| --- | --- | --- |
-| Artifact-first tunnel connect | [`main.rs`](src/main.rs) | Recommended command above |
-| Typed RPC and custom stream | [`main.rs`](src/main.rs) | Included in the recommended run |
-| Liveness probe | [`main.rs`](src/main.rs) | Included in the recommended run |
-| HTTP/WebSocket proxy client | [`main.rs`](src/main.rs) | Included in the recommended run |
-| Direct and tunnel client behavior | [`client.rs`](../../flowersec-rust/src/client.rs) | `cd flowersec-rust && cargo test --all-features client::tests` |
-| Endpoint and RPC server | [`endpoint.rs`](../../flowersec-rust/src/endpoint.rs) | `cd flowersec-rust && cargo test --all-features endpoint::tests` |
-| Reconnect | [`reconnect.rs`](../../flowersec-rust/src/reconnect.rs) | `cd flowersec-rust && cargo test --all-features reconnect::tests` |
-| Controlplane issuance and fetch | [`controlplane.rs`](../../flowersec-rust/src/controlplane.rs) | `cd flowersec-rust && cargo test --all-features controlplane::tests` |
-
-## Source Map
-
-- `src/main.rs` is the application-facing example and uses the high-level public crate surface.
-- The crate-local unit and integration tests are executable references for endpoint, reconnect, proxy policy, limits, and protocol edge cases.
-- The cross-language interoperability harness validates Rust in both client and server roles against the Go reference peer.
-
-## Runtime Boundaries
-
-Rust provides the portable Tokio-native client and endpoint contract for Linux, macOS, and Windows. It does not duplicate the TypeScript browser runtime or the Go-owned tunnel, gateway, and helper binaries.
-
-## Transport v2 Boundary
-
-Rust includes portable Transport v2 protocol/session code and a tested Quinn raw QUIC adapter with native bidirectional streams, no Yamux over QUIC, no 0-RTT, and no QUIC DATAGRAM. It does not yet advertise a production v2 carrier tuple because artifact acquisition, equal-candidate durable spend, and server admission are not committed as one connector. The runnable example above remains v1; use `cargo test --manifest-path flowersec-rust/Cargo.toml --test raw_quic_v2` as the adapter reference and follow the [migration guide](../../docs/MIGRATION_TRANSPORT_V2.md).
-
-## Troubleshooting
-
-- Missing `FSEC_CONTROLPLANE_BASE_URL`: keep the shared stack running and read `controlplane_http_url` from `dev.json`.
-- `token_replay`: rerun the client so it fetches a fresh artifact.
-- Local `ws://` rejection: the example explicitly uses `allow_plaintext_for_loopback`; production deployments should use `wss://`.
-- Toolchain mismatch: confirm `rustc --version` is 1.85 or newer.
+The integration test verifies artifact redaction. The compiled `connect-v2`
+workflow uses trusted roots, a bounded deadline, a cancellation token, durable
+single-use spend, the opaque connector boundary, session liveness, and bounded
+close.

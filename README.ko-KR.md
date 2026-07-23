@@ -15,101 +15,59 @@
 </p>
 <!-- readme-locales:end -->
 
-<p align="center">
-  <strong>Go, TypeScript, Swift, Rust에서 일관되게 구현된 종단 간 암호화 통신.</strong>
-</p>
-
-<p align="center">
-  브라우저, Agent, 서비스 사이에 안전한 연결을 구축합니다. 하나의 직접 또는 중계 세션으로 RPC, 이벤트, 바이트 스트림, HTTP, WebSocket을 전달하면서 중계 서버가 애플리케이션 평문을 볼 수 없게 합니다.
-</p>
-
-<p align="center">
-  <a href="#try-it-locally">직접 실행</a> |
-  <a href="#sdks-and-cookbooks">Cookbook</a> |
-  <a href="#portable-contract">SDK</a> |
-  <a href="#security">보안</a> |
-  <a href="#deploy-and-develop">배포</a>
-</p>
+<p align="center"><strong>Go, TypeScript, Swift, Rust를 위한 캐리어 중립적 종단 간 암호화 세션.</strong></p>
 
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
-![Languages](https://img.shields.io/badge/SDKs-Go%20%7C%20TypeScript%20%7C%20Swift%20%7C%20Rust-2563eb)
-![Security](https://img.shields.io/badge/data%20plane-E2EE-7c3aed)
-![Interop](https://img.shields.io/badge/interop-Go--reference-334155)
 
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
 ## Flowersec을 선택하는 이유
 
-- **하나의 이식 가능한 계약.** Go, TypeScript, Swift, Rust가 동일한 와이어 형식, 보안, 세션, RPC, Endpoint, Controlplane, 재연결, 프록시, 관측 가능성 동작을 구현합니다.
-- **Carrier 중립 경로.** Transport v2는 WebSocket, raw QUIC, WebTransport를 동등한 Carrier로 취급하며 정확한 Runtime 기능과 제품 정책으로 후보를 선택합니다. 영구 주 프로토콜이나 fallback은 없습니다.
-- **하나의 세션, 여러 흐름.** RPC 호출, 이벤트, 사용자 정의 바이트 스트림, HTTP 요청, WebSocket 트래픽을 동일한 암호화 연결에서 다중화합니다.
-- **필요한 구성 요소 제공.** 네이티브 Endpoint API, TypeScript 브라우저 Runtime, 오픈 소스 Tunnel, Proxy Gateway, 운영 CLI를 제공합니다.
-
-주요 사용 사례는 원격 Agent, 비공개 서비스, 내부 Web 도구, 브라우저 운영 콘솔, 실시간 Controlplane입니다.
+- 네 가지 SDK에서 하나의 불투명 Artifact 및 세션 계약을 사용합니다.
+- WebSocket, raw QUIC, WebTransport를 동등한 캐리어 후보로 취급합니다.
+- 애플리케이션에 캐리어, wire, key 또는 ledger 객체를 노출하지 않으면서 RPC와 바이트 스트림이 하나의 인증된 세션을 공유합니다.
+- Tunnel relay는 애플리케이션 암호화를 종료하지 않고 암호화된 스트림을 전달합니다.
 
 <!-- readme-section:how-it-works -->
 <a id="how-it-works"></a>
 
 ## 동작 방식
 
-| 경로 | 연결 형태 | 신뢰 경계 |
+| 경로 | 연결 형태 | 스트림 전송 |
 | --- | --- | --- |
-| Direct | 클라이언트가 접근 가능한 서버 Endpoint에 연결 | 클라이언트와 Endpoint가 E2EE를 종료하며 데이터 경로에 온라인 Controlplane이 필요하지 않음 |
-| Tunnel | 클라이언트와 Endpoint가 일회용 Grant로 같은 Tunnel에 연결 | Controlplane이 연결을 준비하고 Tunnel은 엔드포인트를 연결해 암호화된 바이트를 전달 |
-| Browser proxy | 브라우저 Runtime 또는 Gateway가 Flowersec Stream으로 HTTP와 WebSocket을 전달 | Runtime 모드는 브라우저부터 Endpoint까지 E2EE를 유지하고 Gateway 모드는 의도적으로 Gateway를 L7 평문 신뢰 경계로 사용 |
+| Direct | 클라이언트가 호환되는 후보를 사용해 Endpoint에 연결 | WebSocket은 hop-local Yamux를 사용하고, QUIC 계열 캐리어는 네이티브 양방향 스트림을 사용 |
+| Tunnel | 클라이언트와 서버 leg가 각각 독립적으로 선택한 호환 캐리어를 통해 합류 | Tunnel은 주 캐리어를 선택하지 않고 leg 간 암호화된 스트림을 매핑 |
 
-Controlplane은 연결 준비에만 참여합니다. ConnectArtifact와 Grant를 발급하지만 종단 간 암호화된 애플리케이션 데이터 경로에는 포함되지 않습니다.
-
-```mermaid
-flowchart LR
-  CP[Controlplane] -. "ArtifactV2 + signed capability tuples" .-> C[Client runtime]
-  C -->|"WebSocket: hop-local Yamux"| E[Endpoint]
-  C -->|"raw QUIC: native bidirectional streams"| E
-  B[Browser runtime] -->|"WebTransport: native HTTP/3 streams"| E
-  C -->|"mixed carrier encrypted bytes"| T[Tunnel]
-  B -->|"mixed carrier encrypted bytes"| T
-  T --> E
-```
-
-Transport v2 treats WebSocket, raw QUIC, and WebTransport as equal carrier classes. WebSocket keeps hop-local Yamux; raw QUIC and WebTransport use native bidirectional streams and disable 0-RTT and QUIC DATAGRAM. The exact runtime support matrix and breaking lifecycle migration are maintained in the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](docs/MIGRATION_TRANSPORT_V2.md).
+raw QUIC와 WebTransport는 네이티브 FIN, RESET_STREAM, STOP_SENDING, 흐름 제어 및 마이그레이션 동작을 유지합니다. Flowersec은 애플리케이션 0-RTT를 비활성화하며 QUIC DATAGRAM을 사용하지 않습니다.
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
 
 ## 로컬에서 실행
 
-소스 체크아웃에서 TypeScript 패키지를 빌드하고 공유 Demo Stack을 시작합니다.
+v2 단위 테스트 모음을 실행합니다.
 
 ```bash
-make ts-ensure-deps ts-build
-node ./examples/ts/dev-server.mjs | tee dev.json
+make transport-v2-unit
 ```
 
-생성된 JSON에는 Direct, Tunnel, 종단 간 Proxy Runtime 브라우저 URL과 네이티브 SDK 예제가 사용하는 Controlplane URL이 포함됩니다. Release Demo Bundle에는 필요한 바이너리와 미리 빌드된 TypeScript 패키지가 포함됩니다.
-
-정확한 Go, TypeScript, Swift, Rust 명령은 [Cookbook 인덱스](examples/README.md)를 참조하세요.
+캐리어별 증거는 `make transport-conformance-smoke`, `make transport-browser-smoke`, `make transport-interop-smoke`를 실행해 확인합니다.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
 
 ## SDK와 Cookbook
 
-| 언어 | 패키지 및 설치 | Cookbook |
+| 언어 | 패키지 | 공개 진입점 |
 | --- | --- | --- |
-| Go | `go get github.com/floegence/flowersec/flowersec-go/v2@latest` | [Go](examples/go/README.md) |
-| TypeScript | `npm install @floegence/flowersec-core` | [TypeScript](examples/ts/README.md) |
-| Swift | SwiftPM 제품 `Flowersec` | [Swift](examples/swift/README.md) |
-| Rust | `cargo add flowersec` | [Rust](examples/rust/README.md) |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector` |
+| TypeScript | `@floegence/flowersec-core` | root, `/browser`, `/node`의 불투명 v2 진입점 |
+| Swift | SwiftPM 제품 `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
+| Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
 
-새로운 통합은 언어와 무관한 하나의 경로를 따릅니다.
-
-```text
-ArtifactV2 -> equal candidate selection -> authenticated SessionV2 -> RPC / stream / proxy
-```
-
-Cookbook은 실행 가능한 소스로 직접 연결하여 여러 문서에 큰 API 예제를 중복하지 않습니다.
+[Cookbook 색인](examples/README.md)에는 v2 예제와 검증 명령만 포함됩니다.
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
@@ -118,60 +76,38 @@ Cookbook은 실행 가능한 소스로 직접 연결하여 여러 문서에 큰 
 
 | 기능 | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| Client 및 Endpoint 세션 | 지원 | 지원 | 지원 | 지원 |
-| RPC, 이벤트, 사용자 정의 Stream | 지원 | 지원 | 지원 | 지원 |
-| Controlplane Artifact 및 재연결 | 지원 | 지원 | 지원 | 지원 |
-| HTTP 및 WebSocket Proxy 계약 | 지원 | 지원 | 지원 | 지원 |
-| 공유 진단 및 리소스 제한 | 지원 | 지원 | 지원 | 지원 |
+| 불투명 Artifact, Connector, Session, RPC 및 바이트 스트림 | 지원 | 지원 | 지원 | 지원 |
+| 프로덕션 WebSocket dial | 지원 | Browser 및 Node.js | macOS | 미지원 |
+| 프로덕션 raw QUIC dial | 지원 | 미지원 | 미지원 | 지원 |
+| 프로덕션 WebTransport dial | 지원 | Browser | 미지원 | 미지원 |
+| Listener 지원 | Go 라이브러리 API | Browser runtime 제약 | 공개하지 않음 | 공개하지 않음 |
 
-Runtime별 책임은 명확합니다. TypeScript는 Browser 및 Service Worker 통합을, Go는 공유 Tunnel, Proxy Gateway, CLI를 담당합니다. Swift와 Rust는 이를 중복 구현하지 않고 네이티브 SDK 통합을 제공합니다.
-
-상호 운용성은 Go Reference Client/Server를 기준으로 TypeScript, Swift, Rust의 양방향 연결을 지속적으로 검증하며 Direct, Tunnel, RPC, Stream, Liveness, Rekey, Reset, Proxy 트래픽을 포함합니다.
-
-위 표는 Transport v1의 이식 가능한 기능입니다. Transport v2의 프로덕션 네트워크 기능은 정확한 Runtime Tuple을 따릅니다.
-
-| Transport v2 capability | Go | TypeScript | Swift | Rust |
-| --- | :---: | :---: | :---: | :---: |
-| WebSocket carrier | Yes | Browser: Yes / Node: No | No | No |
-| raw QUIC carrier | Yes | No | No | Tested adapter; not advertised |
-| WebTransport carrier | Yes | Browser: Yes / Node: No | No | No |
-
-Transport v2 local smoke는 언어 간 프로덕션 승인과 같지 않습니다. 릴리스에는 실제 브라우저, 약한 네트워크, qlog, 마이그레이션, 성능 서명 Evidence가 필요합니다. `flowersec-tunnel` CLI와 현재 Cookbook Binary는 Transport v1입니다.
+각 지원 항목은 프로덕션 Connector 코드와 종단 간 테스트로 검증됩니다. 지원하지 않는 캐리어는 fail closed하며, 암묵적인 fallback으로 사용되지 않습니다. Capability descriptor와 캐리어 선택은 내부에만 유지됩니다.
 
 <!-- readme-section:security -->
 <a id="security"></a>
 
 ## 보안
 
-- 고수준 연결은 기본적으로 `wss://`를 요구합니다. 로컬 `ws://` 개발에는 명시적인 Loopback Policy가 필요합니다.
-- Tunnel Grant는 한 번만 사용할 수 있습니다. 재연결에는 새로운 `ConnectArtifact` 또는 Grant가 필요합니다.
-- E2EE 핸드셰이크 이후 Tunnel은 애플리케이션 페이로드를 복호화할 수 없습니다. 하지만 E2EE 이전 연결 메타데이터와 Bearer Token 보호에는 TLS가 필요합니다.
-- Browser Runtime 모드는 중계 경로에서도 E2EE를 유지합니다. Proxy Gateway는 설계상 신뢰되는 L7 구성 요소입니다.
+- Artifact는 불투명하고 크기가 제한된 일회용 handle입니다. 첫 credential byte를 보내기 전에 durable spend가 완료됩니다.
+- QUIC 계열 캐리어는 TLS 1.3, 정확한 ALPN, 명시적 trust root 및 비활성화된 early data를 요구합니다.
+- 공개 오류는 정보가 제거되고 크기가 제한됩니다. candidate, wire, key 및 ledger 세부 정보는 내부에만 유지됩니다.
+- 세션 취소, deadline, FIN, reset, liveness, rekey 및 cleanup은 제한된 동작을 보장합니다.
 
-프로덕션 사용 전에 [위협 모델](docs/THREAT_MODEL.md), [프로토콜](docs/PROTOCOL.md), [오류 모델](docs/ERROR_MODEL.md)을 검토하세요.
+[Transport v2 아키텍처](docs/TRANSPORT_V2_ARCHITECTURE.md)와 [위협 모델](docs/THREAT_MODEL.md)을 참조하세요.
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
 
 ## 배포 및 개발
 
-배포 가이드:
+Flowersec runtime은 WebSocket, raw QUIC 및 WebTransport의 프로덕션 Listener 구현을 담당합니다. 애플리케이션 SDK에는 불투명 Artifact와 Session만 제공되며, 제거된 호환성 CLI는 v2 계약에 포함되지 않습니다.
 
-- [Tunnel 자체 호스팅](docs/TUNNEL_DEPLOYMENT.md)
-- [Proxy Gateway 배포](docs/PROXY_GATEWAY_DEPLOYMENT.md)
-
-저장소 구조:
-
-- `flowersec-go/`, `flowersec-ts/`, `flowersec-swift/`, `flowersec-rust/`: 언어별 SDK
-- `examples/`: 실행 가능한 Cookbook 및 공유 Demo Stack
-- `idl/`: 공유 프로토콜 정의와 생성 계약 입력
-- `docs/`: 장기 유지되는 프로토콜, 보안, 상호 운용성, 배포 계약
-
-각 Worktree에서 저장소 관리 Hooks를 한 번 설치하고 통합 전에 전체 로컬 게이트를 실행합니다.
+통합 전에 저장소 hook을 설치하고 authoritative gate를 실행합니다.
 
 ```bash
 make install-hooks
 make check
 ```
 
-Flowersec은 [MIT License](LICENSE)로 제공됩니다. 공개된 패키지, 바이너리, 이미지, Release Notes는 [GitHub Releases](https://github.com/floegence/flowersec/releases)에서 확인할 수 있습니다.
+Flowersec은 [MIT License](LICENSE)로 제공됩니다. Release artifact는 [GitHub Releases](https://github.com/floegence/flowersec/releases)를 통해 게시됩니다.

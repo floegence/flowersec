@@ -5,29 +5,14 @@ export type {
   JsonPrimitiveV2,
   JsonValueV2,
   OperationOptionsV2,
-  PathKind,
+  RpcPeerV2,
+  RpcResultV2,
+  SessionErrorCode,
   StreamOpenOptionsV2,
   SessionTerminationV2,
+  SessionV2,
 } from "./v2/contract.js";
-export { SessionV2 } from "./v2/session.js";
-export type {
-  NetworkModeV2,
-  RuntimeCapabilityDescriptorV2,
-  RuntimeCapabilityTupleV2,
-  SessionRoleV2,
-  UnsupportedRuntimeCarrierV2,
-  BrowserRuntimeFeaturesV2,
-} from "./v2/capability.js";
-export {
-  BROWSER_RUNTIME_CAPABILITY_V2,
-  NODE_RUNTIME_CAPABILITY_V2,
-  decodeRuntimeCapabilityDescriptorV2,
-  detectBrowserRuntimeCapabilityV2,
-  encodeRuntimeCapabilityDescriptorV2,
-  runtimeCapabilityDigestHexV2,
-  runtimeCapabilityDigestV2,
-  validateRuntimeCapabilityDescriptorV2,
-} from "./v2/capability.js";
+export { SessionError } from "./v2/contract.js";
 export {
   TRANSPORT_V2_VERSION_POLICY,
   createArtifactAcquireContextV2,
@@ -37,8 +22,6 @@ export {
 export type {
   ArtifactAcquireContextV2,
   ArtifactAcquireContextOptionsV2,
-  ArtifactDecoderV2,
-  ArtifactInputV2,
   ArtifactLeaseV2,
   ArtifactSourceV2,
   ArtifactVersionPolicyV2,
@@ -52,17 +35,5 @@ export type {
   SessionReconnectStateV2,
   SessionReconnectStatusV2,
 } from "./v2/reconnect.js";
-export type { FlowersecErrorCode, FlowersecPath, FlowersecStage } from "./utils/errors.js";
-export { FlowersecError } from "./utils/errors.js";
-export {
-  AllowPlaintextForLoopback,
-  createNetworkPlaintextPolicy,
-  PlaintextRiskAcceptance,
-  RequireTLS,
-} from "./client-connect/transportSecurity.js";
-export type {
-  NetworkPlaintextPolicyOptions,
-  TransportSecurityPolicy,
-  TransportSecurityPolicyInput,
-  TransportSecurityPolicyPreset,
-} from "./client-connect/transportSecurity.js";
+export type { ConnectErrorCode } from "./utils/errors.js";
+export { ConnectError } from "./utils/errors.js";

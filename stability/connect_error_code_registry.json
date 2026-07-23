@@ -1,6 +1,7 @@
 {
   "version": 1,
-  "namespace": "connect",
+  "visibility": "internal",
+  "namespace": "connect_internal",
   "domain": "error",
   "reconnect_terminal_codes": [
     "invalid_input",

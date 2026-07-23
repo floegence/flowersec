@@ -6,7 +6,7 @@
       "id": "opaque_artifact",
       "description": "Strict Flowersec v2 artifact parsing behind an opaque application-facing value",
       "implementations": {
-        "go": { "status": "complete", "evidence": ["flowersec-go/artifactv2/shared_vectors_test.go"] },
+        "go": { "status": "complete", "evidence": ["flowersec-go/internal/artifactv2/shared_vectors_test.go"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/artifact.test.ts"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift"] },
         "rust": { "status": "complete", "evidence": ["flowersec-rust/tests/artifact_v2_vectors.rs"] }
@@ -16,7 +16,7 @@
       "id": "opaque_connector",
       "description": "Lease-consuming direct and tunnel connection without exposing carrier credentials",
       "implementations": {
-        "go": { "status": "complete", "evidence": ["flowersec-go/connectv2/connector.go"] },
+        "go": { "status": "complete", "evidence": ["flowersec-go/connector.go"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/node/connectV2.integration.test.ts"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Tests/FlowersecTests/ConnectorV2Tests.swift"] },
         "rust": { "status": "complete", "evidence": ["flowersec-rust/src/connector_v2.rs"] }
@@ -26,17 +26,17 @@
       "id": "secure_session",
       "description": "Authenticated v2 sessions, bounded streams, rekey, cancellation, and close",
       "implementations": {
-        "go": { "status": "complete", "evidence": ["flowersec-go/session/contract_test.go"] },
+        "go": { "status": "complete", "evidence": ["flowersec-go/internal/session/contract_test.go"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/session_wire.test.ts"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift"] },
-        "rust": { "status": "complete", "evidence": ["flowersec-rust/tests/session_v2.rs"] }
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/session_v2_integration_tests.rs"] }
       }
     },
     {
       "id": "rpc",
       "description": "Bidirectional RPC over the reserved encrypted v2 stream kind",
       "implementations": {
-        "go": { "status": "complete", "evidence": ["flowersec-go/session/rpc_peer.go"] },
+        "go": { "status": "complete", "evidence": ["flowersec-go/internal/session/rpc_peer.go"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/session.ts"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/TransportV2.swift"] },
         "rust": { "status": "complete", "evidence": ["flowersec-rust/src/session_v2.rs"] }
@@ -46,7 +46,7 @@
       "id": "carrier_contract",
       "description": "Carrier-neutral stream semantics with WSS, raw QUIC, and WebTransport capability reporting",
       "implementations": {
-        "go": { "status": "complete", "evidence": ["flowersec-go/carrier/contract_test.go"] },
+        "go": { "status": "complete", "evidence": ["flowersec-go/internal/carrier/contract_test.go"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/capability.test.ts"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift"] },
         "rust": { "status": "complete", "evidence": ["flowersec-rust/tests/transport_v2_contract.rs"] }
@@ -56,10 +56,10 @@
       "id": "wire_security",
       "description": "Canonical v2 handshake, record protection, admission binding, and Unicode validation",
       "implementations": {
-        "go": { "status": "complete", "evidence": ["flowersec-go/protocolv2/crypto_vectors_test.go"] },
+        "go": { "status": "complete", "evidence": ["flowersec-go/internal/protocolv2/crypto_vectors_test.go"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/handshake.test.ts"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift"] },
-        "rust": { "status": "complete", "evidence": ["flowersec-rust/tests/transport_v2_crypto_vectors.rs"] }
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/transport_v2_crypto_integration_tests.rs"] }
       }
     }
   ],
@@ -74,7 +74,7 @@
       "id": "native_raw_quic",
       "owner": "go",
       "reason": "Go owns the deployable native raw QUIC listener used by cross-language validation.",
-      "evidence": ["flowersec-go/carrier/rawquic"]
+      "evidence": ["flowersec-go/internal/carrier/rawquic"]
     }
   ],
   "shared_fixtures": [
@@ -82,7 +82,7 @@
       "id": "artifact_v2",
       "path": "testdata/transport_v2/artifact_vectors.json",
       "consumers": {
-        "go": ["flowersec-go/artifactv2/shared_vectors_test.go"],
+        "go": ["flowersec-go/internal/artifactv2/shared_vectors_test.go"],
         "typescript": ["flowersec-ts/src/v2/artifact.test.ts"],
         "swift": ["flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift"],
         "rust": ["flowersec-rust/tests/artifact_v2_vectors.rs"]
@@ -92,40 +92,40 @@
       "id": "crypto_v2",
       "path": "testdata/transport_v2/crypto_vectors.json",
       "consumers": {
-        "go": ["flowersec-go/protocolv2/crypto_vectors_test.go"],
+        "go": ["flowersec-go/internal/protocolv2/crypto_vectors_test.go"],
         "typescript": ["flowersec-ts/src/v2/protocol.test.ts"],
         "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift"],
-        "rust": ["flowersec-rust/tests/transport_v2_crypto_vectors.rs"]
+        "rust": ["flowersec-rust/src/transport_v2_crypto_integration_tests.rs"]
       }
     },
     {
       "id": "handshake_v2",
       "path": "testdata/transport_v2/handshake_vectors.json",
       "consumers": {
-        "go": ["flowersec-go/protocolv2/handshake_vectors_test.go"],
+        "go": ["flowersec-go/internal/protocolv2/handshake_vectors_test.go"],
         "typescript": ["flowersec-ts/src/v2/handshake.test.ts"],
         "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift"],
-        "rust": ["flowersec-rust/tests/session_v2.rs"]
+        "rust": ["flowersec-rust/src/session_v2_integration_tests.rs"]
       }
     },
     {
       "id": "open_unicode_v2",
       "path": "testdata/transport_v2/open_unicode_vectors.json",
       "consumers": {
-        "go": ["flowersec-go/protocolv2/open_unicode_vectors_test.go"],
+        "go": ["flowersec-go/internal/protocolv2/open_unicode_vectors_test.go"],
         "typescript": ["flowersec-ts/src/v2/open.test.ts"],
         "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift"],
-        "rust": ["flowersec-rust/tests/open_v2_vectors.rs"]
+        "rust": ["flowersec-rust/src/open_v2_integration_tests.rs"]
       }
     },
     {
       "id": "session_wire_v2",
       "path": "testdata/transport_v2/session_wire_vectors.json",
       "consumers": {
-        "go": ["flowersec-go/session/contract_test.go"],
+        "go": ["flowersec-go/internal/session/contract_test.go"],
         "typescript": ["flowersec-ts/src/v2/session_wire.test.ts"],
         "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift"],
-        "rust": ["flowersec-rust/tests/session_v2.rs"]
+        "rust": ["flowersec-rust/src/session_v2_integration_tests.rs"]
       }
     }
   ]

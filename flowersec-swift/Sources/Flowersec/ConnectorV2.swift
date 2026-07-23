@@ -4,18 +4,15 @@ import NIOSSL
 
 public struct ConnectorOptionsV2: Sendable {
   public var origin: String?
-  public var admissionReasons: Set<String>
   public var connectTimeout: Duration
   public var trustRootsPEM: [Data]
 
   public init(
     origin: String? = nil,
-    admissionReasons: Set<String> = [],
     connectTimeout: Duration = .seconds(30),
     trustRootsPEM: [Data] = []
   ) {
     self.origin = origin
-    self.admissionReasons = admissionReasons
     self.connectTimeout = connectTimeout
     self.trustRootsPEM = trustRootsPEM
   }
@@ -23,11 +20,9 @@ public struct ConnectorOptionsV2: Sendable {
 
 public enum ConnectErrorV2: String, Error, Equatable, Sendable {
   case invalidOptions = "invalid_options"
-  case unsupportedCarrier = "unsupported_carrier"
   case expiredArtifact = "expired_artifact"
   case canceled = "canceled"
   case timeout
-  case admissionRejected = "admission_rejected"
   case connectionFailed = "connection_failed"
 }
 
@@ -35,7 +30,8 @@ public enum ConnectErrorV2: String, Error, Equatable, Sendable {
 public struct ConnectorV2: Sendable {
   private let lease: ArtifactLeaseV2
   private let options: ConnectorOptionsV2
-  private let dial: @Sendable (URL, String, ConnectorOptionsV2) async throws -> any FlowersecBinaryTransport
+  private let dial:
+    @Sendable (URL, String, ConnectorOptionsV2) async throws -> any FlowersecBinaryTransport
 
   public init(lease: ArtifactLeaseV2, options: ConnectorOptionsV2 = ConnectorOptionsV2()) throws {
     try Self.validate(options)
@@ -64,7 +60,9 @@ public struct ConnectorV2: Sendable {
   init(
     lease: ArtifactLeaseV2,
     options: ConnectorOptionsV2,
-    dial: @escaping @Sendable (URL, String, ConnectorOptionsV2) async throws -> any FlowersecBinaryTransport
+    dial:
+      @escaping @Sendable (URL, String, ConnectorOptionsV2) async throws ->
+      any FlowersecBinaryTransport
   ) throws {
     try Self.validate(options)
     self.lease = lease
@@ -101,7 +99,7 @@ public struct ConnectorV2: Sendable {
     }
     guard let candidate = artifact.path.candidates.first(where: { $0.carrier == "websocket" }),
       let url = URL(string: candidate.url)
-    else { throw ConnectErrorV2.unsupportedCarrier }
+    else { throw ConnectErrorV2.connectionFailed }
     let path: PathKind = artifact.path.kind == "direct" ? .direct : .tunnel
     let subprotocol = path == .direct ? "flowersec.direct.v2" : "flowersec.tunnel.v2"
     let transport = try await dial(url, subprotocol, options)
@@ -113,8 +111,8 @@ public struct ConnectorV2: Sendable {
         artifact: lease.artifact, chosenCandidateID: candidate.id)
       try await transport.writeBinary(fsb2)
       let response = try AdmissionCodecV2.decodeFSA2(
-        try await transport.readBinary(), reasons: options.admissionReasons)
-      guard response.status == .success else { throw ConnectErrorV2.admissionRejected }
+        try await transport.readBinary(), reasons: [])
+      guard response.status == .success else { throw ConnectErrorV2.connectionFailed }
 
       let carrier = WebSocketCarrierSessionV2(
         transport: transport,
@@ -137,7 +135,9 @@ public struct ConnectorV2: Sendable {
         localEndpointInstanceID: artifact.path.localEndpointInstanceID ?? "",
         expectedPeerEndpointInstanceID: artifact.path.expectedPeerEndpointInstanceID ?? ""
       )
-      return try await TransportV2Session.establish(carrier: carrier, config: config)
+      return OpaqueSessionV2(
+        try await TransportV2Session.establish(carrier: carrier, config: config)
+      )
     } catch {
       await transport.close()
       throw error
@@ -145,11 +145,7 @@ public struct ConnectorV2: Sendable {
   }
 
   private static func validate(_ options: ConnectorOptionsV2) throws {
-    guard options.connectTimeout > .zero,
-      options.admissionReasons.allSatisfy({
-        $0.range(of: "^[a-z][a-z0-9_]{0,63}$", options: .regularExpression) != nil
-      })
-    else { throw ConnectErrorV2.invalidOptions }
+    guard options.connectTimeout > .zero else { throw ConnectErrorV2.invalidOptions }
     do {
       for pem in options.trustRootsPEM {
         guard !pem.isEmpty, !(try NIOSSLCertificate.fromPEMBytes(Array(pem))).isEmpty else {
@@ -160,7 +156,7 @@ public struct ConnectorV2: Sendable {
     if let origin = options.origin {
       guard let value = URLComponents(string: origin), value.scheme == "https",
         value.host != nil, value.user == nil, value.password == nil,
-        (value.path.isEmpty || value.path == "/"), value.query == nil, value.fragment == nil
+        value.path.isEmpty || value.path == "/", value.query == nil, value.fragment == nil
       else { throw ConnectErrorV2.invalidOptions }
     }
   }
@@ -182,8 +178,8 @@ public struct ConnectorV2: Sendable {
   }
 }
 
-private extension Array {
-  var nilIfEmpty: Self? { isEmpty ? nil : self }
+extension Array {
+  fileprivate var nilIfEmpty: Self? { isEmpty ? nil : self }
 }
 
 private actor NIOWebSocketBinaryTransportV2: FlowersecBinaryTransport {
@@ -251,7 +247,10 @@ private final class WebSocketCarrierStreamV2: TransportV2CarrierStream, @uncheck
   }
 
   func read(maxBytes: Int) async throws -> Data? { try await stream.read(maxBytes: maxBytes) }
-  func write(_ data: Data) async throws -> Int { try await stream.write(data); return data.count }
+  func write(_ data: Data) async throws -> Int {
+    try await stream.write(data)
+    return data.count
+  }
   func closeWrite() async throws { await stream.close() }
   func reset(code: UInt16) async { try? await stream.reset() }
   nonisolated func abort(code: UInt16) { Task { try? await stream.reset() } }
@@ -274,7 +273,10 @@ private actor WebSocketYamuxChannelV2: FlowersecYamuxChannel {
     let end = offset + length
     let output = Data(buffer[offset..<end])
     offset = end
-    if offset == buffer.count { buffer.removeAll(keepingCapacity: true); offset = 0 }
+    if offset == buffer.count {
+      buffer.removeAll(keepingCapacity: true)
+      offset = 0
+    }
     return output
   }
 

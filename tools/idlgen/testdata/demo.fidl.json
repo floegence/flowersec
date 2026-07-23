@@ -1,0 +1,16 @@
+{
+  "namespace": "flowersec.demo.v2",
+  "messages": {
+    "PingRequest": { "fields": [] },
+    "PingResponse": { "fields": [{ "name": "ok", "type": "bool" }] },
+    "HelloNotification": { "fields": [{ "name": "message", "type": "string" }] }
+  },
+  "services": {
+    "Demo": {
+      "methods": {
+        "Ping": { "kind": "request", "type_id": 1, "request": "PingRequest", "response": "PingResponse" },
+        "Hello": { "kind": "notify", "type_id": 2, "request": "HelloNotification" }
+      }
+    }
+  }
+}

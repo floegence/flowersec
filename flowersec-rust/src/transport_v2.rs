@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, io, sync::Arc, time::Duration};
+use std::{fmt, io, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -31,6 +31,7 @@ pub trait CarrierStreamV2: fmt::Debug + Send + Sync + 'static {
 #[async_trait]
 pub trait CarrierSessionV2: fmt::Debug + Send + Sync + 'static {
     /// Returns the carrier represented by this session.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn kind(&self) -> CarrierKind;
     /// Returns the exact physical peer-initiated bidirectional stream capacity.
     /// Implementations must bind it before any FSC2/FSH2 bytes are written.
@@ -109,7 +110,7 @@ pub enum PathKind {
 
 /// One exact supported combination of carrier, network mode, role, and path.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct CapabilityTupleV2 {
+pub(crate) struct CapabilityTupleV2 {
     pub carrier: CarrierKind,
     pub network_mode: NetworkMode,
     pub session_role: SessionRole,
@@ -119,14 +120,14 @@ pub struct CapabilityTupleV2 {
 /// One explicit unsupported carrier reason. Absence is never interpreted as
 /// support because every registered carrier must appear on exactly one side.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnsupportedRuntimeCarrierV2 {
+pub(crate) struct UnsupportedRuntimeCarrierV2 {
     pub carrier: CarrierKind,
     pub reason: String,
 }
 
 /// Flat runtime capability descriptor shared across all SDK languages.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RuntimeCapabilityDescriptorV2 {
+pub(crate) struct RuntimeCapabilityDescriptorV2 {
     pub language: String,
     pub runtime: String,
     pub schema_version: u8,
@@ -134,6 +135,7 @@ pub struct RuntimeCapabilityDescriptorV2 {
     pub unsupported: Vec<UnsupportedRuntimeCarrierV2>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl CapabilityTupleV2 {
     /// Creates a capability tuple without changing or inferring any dimension.
     pub const fn new(
@@ -166,7 +168,8 @@ impl CapabilityTupleV2 {
 ///
 /// The public Connector proves client dialing for direct and tunnel artifacts.
 /// Listener and server roles remain unadvertised.
-pub const NATIVE_RUST_CAPABILITIES_V2: &[CapabilityTupleV2] = &[
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const NATIVE_RUST_CAPABILITIES_V2: &[CapabilityTupleV2] = &[
     CapabilityTupleV2::new(
         CarrierKind::RawQuic,
         NetworkMode::Dial,
@@ -182,7 +185,8 @@ pub const NATIVE_RUST_CAPABILITIES_V2: &[CapabilityTupleV2] = &[
 ];
 
 /// Builds the canonical descriptor advertised by the native Rust runtime.
-pub fn native_rust_capability_descriptor_v2() -> RuntimeCapabilityDescriptorV2 {
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn native_rust_capability_descriptor_v2() -> RuntimeCapabilityDescriptorV2 {
     RuntimeCapabilityDescriptorV2 {
         language: "rust".into(),
         runtime: "native".into(),
@@ -231,16 +235,18 @@ struct RuntimeCapabilityWireV2 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum RuntimeCapabilityCodecErrorV2 {
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum RuntimeCapabilityCodecErrorV2 {
     #[error("invalid runtime capability descriptor")]
     Invalid,
     #[error("runtime capability descriptor is not canonical JSON")]
     NonCanonical,
-    #[error("runtime capability JSON codec failed: {0}")]
-    Json(String),
+    #[error("runtime capability descriptor codec failed")]
+    Codec,
 }
 
-pub fn encode_runtime_capability_descriptor_v2(
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn encode_runtime_capability_descriptor_v2(
     descriptor: &RuntimeCapabilityDescriptorV2,
 ) -> Result<Vec<u8>, RuntimeCapabilityCodecErrorV2> {
     validate_runtime_capability_descriptor_v2(descriptor)?;
@@ -267,15 +273,15 @@ pub fn encode_runtime_capability_descriptor_v2(
             })
             .collect(),
     };
-    serde_json::to_vec(&wire)
-        .map_err(|error| RuntimeCapabilityCodecErrorV2::Json(error.to_string()))
+    serde_json::to_vec(&wire).map_err(|_| RuntimeCapabilityCodecErrorV2::Codec)
 }
 
-pub fn decode_runtime_capability_descriptor_v2(
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn decode_runtime_capability_descriptor_v2(
     raw: &[u8],
 ) -> Result<RuntimeCapabilityDescriptorV2, RuntimeCapabilityCodecErrorV2> {
-    let wire: RuntimeCapabilityWireV2 = serde_json::from_slice(raw)
-        .map_err(|error| RuntimeCapabilityCodecErrorV2::Json(error.to_string()))?;
+    let wire: RuntimeCapabilityWireV2 =
+        serde_json::from_slice(raw).map_err(|_| RuntimeCapabilityCodecErrorV2::Codec)?;
     let descriptor = RuntimeCapabilityDescriptorV2 {
         language: wire.language,
         runtime: wire.runtime,
@@ -306,7 +312,8 @@ pub fn decode_runtime_capability_descriptor_v2(
     Ok(descriptor)
 }
 
-pub fn runtime_capability_digest_v2(
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn runtime_capability_digest_v2(
     descriptor: &RuntimeCapabilityDescriptorV2,
 ) -> Result<[u8; 32], RuntimeCapabilityCodecErrorV2> {
     let canonical = encode_runtime_capability_descriptor_v2(descriptor)?;
@@ -317,7 +324,8 @@ pub fn runtime_capability_digest_v2(
     Ok(hasher.finalize().into())
 }
 
-pub fn runtime_capability_digest_hex_v2(
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn runtime_capability_digest_hex_v2(
     descriptor: &RuntimeCapabilityDescriptorV2,
 ) -> Result<String, RuntimeCapabilityCodecErrorV2> {
     use std::fmt::Write as _;
@@ -330,7 +338,8 @@ pub fn runtime_capability_digest_hex_v2(
     Ok(encoded)
 }
 
-pub fn validate_runtime_capability_descriptor_v2(
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn validate_runtime_capability_descriptor_v2(
     descriptor: &RuntimeCapabilityDescriptorV2,
 ) -> Result<(), RuntimeCapabilityCodecErrorV2> {
     if descriptor.schema_version != 2
@@ -373,6 +382,7 @@ pub fn validate_runtime_capability_descriptor_v2(
     Ok(())
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn valid_registry_token(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -383,6 +393,7 @@ fn valid_registry_token(value: &str) -> bool {
         })
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn capability_tuple_cmp(left: &CapabilityTupleV2, right: &CapabilityTupleV2) -> std::cmp::Ordering {
     (
         carrier_name(left.carrier),
@@ -398,6 +409,7 @@ fn capability_tuple_cmp(left: &CapabilityTupleV2, right: &CapabilityTupleV2) -> 
         ))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 const fn carrier_name(value: CarrierKind) -> &'static str {
     match value {
         CarrierKind::RawQuic => "raw_quic",
@@ -406,6 +418,7 @@ const fn carrier_name(value: CarrierKind) -> &'static str {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 const fn network_mode_name(value: NetworkMode) -> &'static str {
     match value {
         NetworkMode::Dial => "dial",
@@ -413,6 +426,7 @@ const fn network_mode_name(value: NetworkMode) -> &'static str {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 const fn session_role_name(value: SessionRole) -> &'static str {
     match value {
         SessionRole::Client => "client",
@@ -420,6 +434,7 @@ const fn session_role_name(value: SessionRole) -> &'static str {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 const fn path_name(value: PathKind) -> &'static str {
     match value {
         PathKind::Direct => "direct",
@@ -429,7 +444,8 @@ const fn path_name(value: PathKind) -> &'static str {
 
 /// Describes why a capability registry is not safe to advertise.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum CapabilityValidationErrorV2 {
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum CapabilityValidationErrorV2 {
     #[error("duplicate capability tuple: {0:?}")]
     Duplicate(CapabilityTupleV2),
     #[error("invalid capability tuple: {0:?}")]
@@ -437,7 +453,8 @@ pub enum CapabilityValidationErrorV2 {
 }
 
 /// Rejects invalid and duplicate tuples without filling in inferred capabilities.
-pub fn validate_capabilities_v2(
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn validate_capabilities_v2(
     capabilities: &[CapabilityTupleV2],
 ) -> Result<(), CapabilityValidationErrorV2> {
     for (index, capability) in capabilities.iter().copied().enumerate() {
@@ -451,25 +468,94 @@ pub fn validate_capabilities_v2(
     Ok(())
 }
 
+/// Stable, redacted terminal state for an encrypted logical byte stream.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum StreamTerminalError {
+    #[error("Flowersec stream closed")]
+    Closed,
+    #[error("Flowersec stream failed")]
+    Failed,
+    #[error("Flowersec stream reset")]
+    Reset,
+    #[error("Flowersec stream timed out")]
+    TimedOut,
+}
+
+/// Closed, redacted failure set shared by public session, stream, and RPC operations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum SessionError {
+    #[error("Flowersec operation was canceled")]
+    Canceled,
+    #[error("Flowersec session is closed")]
+    Closed,
+    #[error("invalid Flowersec operation")]
+    InvalidInput,
+    #[error("Flowersec operation was rejected")]
+    Rejected,
+    #[error("Flowersec resources are exhausted")]
+    ResourceExhausted,
+    #[error("Flowersec stream was reset")]
+    Reset,
+    #[error("Flowersec operation timed out")]
+    TimedOut,
+    #[error("Flowersec operation failed")]
+    Failed,
+}
+
+impl SessionError {
+    pub(crate) fn from_io(error: &io::Error) -> Self {
+        match error.kind() {
+            io::ErrorKind::Interrupted => Self::Canceled,
+            io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::UnexpectedEof => Self::Closed,
+            io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => Self::InvalidInput,
+            io::ErrorKind::PermissionDenied => Self::Rejected,
+            io::ErrorKind::OutOfMemory => Self::ResourceExhausted,
+            io::ErrorKind::ConnectionReset => Self::Reset,
+            io::ErrorKind::TimedOut => Self::TimedOut,
+            _ => Self::Failed,
+        }
+    }
+}
+
+impl From<SessionError> for io::Error {
+    fn from(error: SessionError) -> Self {
+        let kind = match error {
+            SessionError::Canceled => io::ErrorKind::Interrupted,
+            SessionError::Closed => io::ErrorKind::ConnectionAborted,
+            SessionError::InvalidInput => io::ErrorKind::InvalidInput,
+            SessionError::Rejected => io::ErrorKind::PermissionDenied,
+            SessionError::ResourceExhausted => io::ErrorKind::OutOfMemory,
+            SessionError::Reset => io::ErrorKind::ConnectionReset,
+            SessionError::TimedOut => io::ErrorKind::TimedOut,
+            SessionError::Failed => io::ErrorKind::Other,
+        };
+        io::Error::new(kind, error)
+    }
+}
+
 /// A reliable encrypted logical byte stream independent of the active carrier.
 #[async_trait]
 pub trait ByteStreamV2: fmt::Debug + Send + Sync + 'static {
-    /// Stable logical stream identifier.
-    fn id(&self) -> u64;
+    #[cfg(test)]
+    fn internal_test_id(&self) -> u64;
     /// Application stream kind negotiated by the Flowersec v2 stream setup.
     fn kind(&self) -> &str;
     /// Stable terminal failure, if the stream has already terminated abnormally.
-    fn terminal_error(&self) -> Option<&(dyn Error + Send + Sync + 'static)>;
+    /// The closed enum cannot retain carrier diagnostics, peer payloads, or secrets.
+    fn terminal_error(&self) -> Option<StreamTerminalError>;
     /// Reads the next non-empty byte chunk, or `None` after peer FIN.
-    async fn read(&self) -> io::Result<Option<Bytes>>;
+    async fn read(&self) -> Result<Option<Bytes>, SessionError>;
     /// Writes bytes and returns the accepted byte count.
-    async fn write(&self, payload: Bytes) -> io::Result<usize>;
+    async fn write(&self, payload: Bytes) -> Result<usize, SessionError>;
     /// Sends logical FIN while keeping the receive direction available.
-    async fn close_write(&self) -> io::Result<()>;
+    async fn close_write(&self) -> Result<(), SessionError>;
     /// Aborts both logical directions using the stable generic reset state.
-    async fn reset(&self) -> io::Result<()>;
+    async fn reset(&self) -> Result<(), SessionError>;
     /// Releases the stream and performs bounded local cleanup.
-    async fn close(&self) -> io::Result<()>;
+    async fn close(&self) -> Result<(), SessionError>;
 }
 
 /// One accepted logical stream and its authenticated setup metadata.
@@ -493,9 +579,9 @@ impl IncomingStreamV2 {
         }
     }
 
-    /// Returns the stable logical stream identifier.
-    pub fn id(&self) -> u64 {
-        self.stream.id()
+    #[cfg(test)]
+    pub(crate) fn internal_test_id(&self) -> u64 {
+        self.stream.internal_test_id()
     }
 
     /// Returns the application stream kind.
@@ -523,7 +609,6 @@ impl fmt::Debug for IncomingStreamV2 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("IncomingStreamV2")
-            .field("id", &self.id())
             .field("kind", &self.kind)
             .field("metadata", &self.metadata)
             .finish_non_exhaustive()
@@ -534,19 +619,18 @@ impl fmt::Debug for IncomingStreamV2 {
 #[async_trait]
 pub trait RpcPeerV2: fmt::Debug + Send + Sync + 'static {
     /// Performs one request-response call using a canonical JSON payload.
-    async fn call(&self, type_id: u32, request: serde_json::Value)
-    -> io::Result<serde_json::Value>;
+    async fn call(
+        &self,
+        type_id: u32,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, SessionError>;
     /// Sends one notification without waiting for an application response.
-    async fn notify(&self, type_id: u32, request: serde_json::Value) -> io::Result<()>;
+    async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), SessionError>;
 }
 
 /// Public Flowersec v2 session contract shared by WSS and raw QUIC.
 #[async_trait]
 pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
-    /// Returns the selected direct or tunnel path.
-    fn path(&self) -> PathKind;
-    /// Returns the authenticated peer endpoint instance identifier, when available.
-    fn endpoint_instance_id(&self) -> Option<&str>;
     /// Borrows the session's carrier-neutral RPC peer.
     fn rpc(&self) -> &dyn RpcPeerV2;
     /// Opens an encrypted logical stream with canonical setup metadata.
@@ -554,16 +638,73 @@ pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
         &self,
         kind: &str,
         metadata: JsonObjectV2,
-    ) -> io::Result<Box<dyn ByteStreamV2>>;
+    ) -> Result<Box<dyn ByteStreamV2>, SessionError>;
     /// Accepts the next authenticated logical stream.
-    async fn accept_stream(&self) -> io::Result<IncomingStreamV2>;
+    async fn accept_stream(&self) -> Result<IncomingStreamV2, SessionError>;
     /// Advances the session key epoch.
-    async fn rekey(&self) -> io::Result<()>;
+    async fn rekey(&self) -> Result<(), SessionError>;
     /// Performs a carrier-neutral liveness probe and returns its round-trip time.
-    async fn probe_liveness(&self) -> io::Result<Duration>;
+    async fn probe_liveness(&self) -> Result<Duration, SessionError>;
     /// Waits for authoritative session termination and returns its stable cause.
     /// Canceling this future never changes the session state.
-    async fn wait_closed(&self) -> io::Result<()>;
+    async fn wait_closed(&self) -> Result<(), SessionError>;
     /// Closes the session and performs bounded local cleanup.
-    async fn close(&self) -> io::Result<()>;
+    async fn close(&self) -> Result<(), SessionError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logical_stream_limit_reserves_control_and_rpc_carrier_streams() {
+        assert_eq!(carrier_inbound_stream_limit_v2(1).unwrap(), 3);
+        assert_eq!(carrier_inbound_stream_limit_v2(128).unwrap(), 130);
+        assert!(carrier_inbound_stream_limit_v2(0).is_err());
+        assert!(carrier_inbound_stream_limit_v2(129).is_err());
+    }
+
+    #[test]
+    fn native_capabilities_match_the_strict_shared_vector() {
+        validate_capabilities_v2(NATIVE_RUST_CAPABILITIES_V2).unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v2/capability_vectors.json"
+        ))
+        .unwrap();
+        let vector = fixture["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|value| value["name"] == "rust-native")
+            .unwrap();
+        let descriptor = native_rust_capability_descriptor_v2();
+        let canonical = encode_runtime_capability_descriptor_v2(&descriptor).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&canonical).unwrap(),
+            vector["canonical_json"].as_str().unwrap()
+        );
+        assert_eq!(
+            runtime_capability_digest_hex_v2(&descriptor).unwrap(),
+            vector["digest_hex"].as_str().unwrap()
+        );
+        assert_eq!(
+            decode_runtime_capability_descriptor_v2(&canonical).unwrap(),
+            descriptor
+        );
+    }
+
+    #[test]
+    fn capability_validation_rejects_duplicates_and_invalid_tuples() {
+        let valid = NATIVE_RUST_CAPABILITIES_V2[0];
+        assert!(validate_capabilities_v2(&[valid, valid]).is_err());
+        assert!(
+            validate_capabilities_v2(&[CapabilityTupleV2::new(
+                CarrierKind::RawQuic,
+                NetworkMode::Listen,
+                SessionRole::Client,
+                PathKind::Tunnel,
+            )])
+            .is_err()
+        );
+    }
 }

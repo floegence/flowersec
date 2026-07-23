@@ -75,7 +75,7 @@ describe("transport v2 artifact and admission vectors", () => {
   test("consumes Go-produced artifact, labeled hash, and every-winner FSB2 vectors", () => {
     expect(fixture.version).toBe(1);
     expect(fixture.profile).toBe("flowersec/2");
-    expect(fixture.source.producer).toBe("flowersec-go/artifactv2");
+    expect(fixture.source.producer).toBe("flowersec-go/internal/artifactv2");
     expect(fixture.positive).toHaveLength(2);
 
     for (const vector of fixture.positive) {

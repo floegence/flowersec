@@ -6,24 +6,24 @@ enum OpenPayloadErrorV2: Error, Equatable, Sendable {
 }
 
 struct OpenPayloadV2: Equatable, Sendable {
-  public static let fixedPayloadBytes = 46
-  public static let maxPayloadBytes = 8_192
-  public static let maxKindBytes = 128
-  public static let maxMetadataBytes = 4_096
+  static let fixedPayloadBytes = 46
+  static let maxPayloadBytes = 8_192
+  static let maxKindBytes = 128
+  static let maxMetadataBytes = 4_096
 
-  public let logicalStreamID: UInt64
-  public let fss2Hash: Data
-  public let kind: String
-  public let metadata: Data
+  let logicalStreamID: UInt64
+  let fss2Hash: Data
+  let kind: String
+  let metadata: Data
 
-  public init(logicalStreamID: UInt64, fss2Hash: Data, kind: String, metadata: Data) {
+  init(logicalStreamID: UInt64, fss2Hash: Data, kind: String, metadata: Data) {
     self.logicalStreamID = logicalStreamID
     self.fss2Hash = fss2Hash
     self.kind = kind
     self.metadata = metadata
   }
 
-  public func encoded() throws -> Data {
+  func encoded() throws -> Data {
     guard logicalStreamID != 0, fss2Hash.count == 32, Self.validKind(kind) else {
       throw OpenPayloadErrorV2.invalidPayload
     }
@@ -47,7 +47,7 @@ struct OpenPayloadV2: Equatable, Sendable {
     return output
   }
 
-  public static func decode(_ raw: Data) throws -> OpenPayloadV2 {
+  static func decode(_ raw: Data) throws -> OpenPayloadV2 {
     guard raw.count >= fixedPayloadBytes, raw.count <= maxPayloadBytes else {
       throw OpenPayloadErrorV2.invalidPayload
     }

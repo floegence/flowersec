@@ -5,40 +5,44 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"io"
 	"net/url"
-	"regexp"
+	"strconv"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v2/carrier/websocket"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/carrier/webtransport"
-	"github.com/floegence/flowersec/flowersec-go/v2/connectv2"
-	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v2/session"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	gorillaws "github.com/gorilla/websocket"
 )
 
 var (
 	ErrInvalidConnectorOptions = errors.New("invalid Flowersec connector options")
 	ErrConnectionFailed        = errors.New("Flowersec connection failed")
-	admissionReasonPattern     = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 )
 
-// AdmissionReason is an application-audited admission rejection reason.
-type AdmissionReason string
+// ConnectErrorCode is the closed, carrier-neutral connection outcome set.
+type ConnectErrorCode string
 
-// AdmissionReasonRegistry is the closed set of rejection reasons accepted
-// from the peer during admission.
-type AdmissionReasonRegistry map[AdmissionReason]struct{}
+const (
+	ConnectInvalid  ConnectErrorCode = "invalid"
+	ConnectCanceled ConnectErrorCode = "canceled"
+	ConnectTimeout  ConnectErrorCode = "timeout"
+	ConnectFailed   ConnectErrorCode = "failed"
+)
 
 // ConnectorOptions configures carrier-neutral client trust and lifecycle
 // policy. Carrier selection and carrier-specific tuning remain internal.
 type ConnectorOptions struct {
-	TrustRoots       *x509.CertPool
-	Origin           string
-	AdmissionReasons AdmissionReasonRegistry
-	ConnectTimeout   time.Duration
+	TrustRoots     *x509.CertPool
+	Origin         string
+	ConnectTimeout time.Duration
 }
 
 // Connector establishes a Flowersec v2 session without exposing the selected
@@ -48,10 +52,14 @@ type Connector struct {
 	timeout time.Duration
 }
 
+// String deliberately reveals no carrier or candidate state.
+func (*Connector) String() string { return "Flowersec.Connector" }
+
+// GoString deliberately reveals no carrier or candidate state.
+func (*Connector) GoString() string { return "flowersec.Connector" }
+
 // Session is the carrier-neutral Flowersec v2 session contract.
 type Session interface {
-	Path() Path
-	EndpointInstanceID() (string, bool)
 	RPC() RPCPeer
 	OpenStream(context.Context, string, Metadata) (ByteStream, error)
 	AcceptStream(context.Context) (IncomingStream, error)
@@ -62,35 +70,125 @@ type Session interface {
 	Close() error
 }
 
-type (
-	Path           = session.PathKind
-	Metadata       = session.Metadata
-	ByteStream     = session.ByteStream
-	IncomingStream = session.IncomingStream
-	RPCPeer        = session.RPCPeer
-)
+// Metadata is the bounded JSON object attached to an application stream.
+type Metadata map[string]any
 
-const (
-	PathDirect = session.PathDirect
-	PathTunnel = session.PathTunnel
-)
+// ByteStream is a carrier-neutral encrypted application stream.
+type ByteStream interface {
+	io.Reader
+	io.Writer
+	io.Closer
+	Kind() string
+	TerminalError() *SessionError
+	CloseWrite() error
+	Reset() error
+}
 
-// ConnectError is the redacted, stable public failure projection. It never
-// retains the internal cause or per-candidate diagnostics.
+// IncomingStream is one accepted application stream and its bounded metadata.
+type IncomingStream struct {
+	Kind     string
+	Metadata Metadata
+	Stream   ByteStream
+}
+
+// RPCPeer provides bidirectional RPC over the session's reserved stream.
+type RPCPeer interface {
+	Call(context.Context, uint32, any, any) error
+	Notify(context.Context, uint32, any) error
+}
+
+// ConnectError is the redacted, stable public connection failure.
 type ConnectError struct {
-	Path  string
-	Stage string
-	Code  string
+	code ConnectErrorCode
 }
 
 func (err *ConnectError) Error() string {
 	if err == nil {
 		return "<nil>"
 	}
-	return "Flowersec connection failed (path=" + err.Path + " stage=" + err.Stage + " code=" + err.Code + ")"
+	return "Flowersec connection failed (code=" + string(err.code) + ")"
 }
 
 func (*ConnectError) Unwrap() error { return ErrConnectionFailed }
+
+// Is preserves cancellation and deadline matching without exposing the
+// internal connection failure that produced this public projection.
+func (err *ConnectError) Is(target error) bool {
+	if target == ErrConnectionFailed {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	switch err.Code() {
+	case ConnectCanceled:
+		return target == context.Canceled
+	case ConnectTimeout:
+		return target == context.DeadlineExceeded
+	default:
+		return false
+	}
+}
+
+// Code returns the closed, carrier-neutral connection outcome.
+func (err *ConnectError) Code() ConnectErrorCode {
+	if err == nil || err.code == "" {
+		return ConnectFailed
+	}
+	return err.code
+}
+
+// SessionErrorCode is the closed failure set shared by sessions, RPC, and streams.
+type SessionErrorCode string
+
+const (
+	SessionCanceled          SessionErrorCode = "canceled"
+	SessionTimeout           SessionErrorCode = "timeout"
+	SessionClosed            SessionErrorCode = "closed"
+	SessionGoingAway         SessionErrorCode = "going_away"
+	SessionResourceExhausted SessionErrorCode = "resource_exhausted"
+	SessionStreamRejected    SessionErrorCode = "stream_rejected"
+	SessionStreamReset       SessionErrorCode = "stream_reset"
+	SessionRekeyFailed       SessionErrorCode = "rekey_failed"
+	SessionLivenessFailed    SessionErrorCode = "liveness_failed"
+	SessionOperationFailed   SessionErrorCode = "operation_failed"
+)
+
+// SessionError contains no carrier, wire, key, credential, or peer detail.
+type SessionError struct {
+	code SessionErrorCode
+}
+
+func (err *SessionError) Error() string {
+	if err == nil {
+		return "<nil>"
+	}
+	return "Flowersec session failed (code=" + string(err.code) + ")"
+}
+
+// Unwrap preserves stable cancellation and deadline matching. Other session
+// failures deliberately retain no public cause.
+func (err *SessionError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	switch err.Code() {
+	case SessionCanceled:
+		return context.Canceled
+	case SessionTimeout:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+// Code returns the closed carrier-neutral session outcome.
+func (err *SessionError) Code() SessionErrorCode {
+	if err == nil || err.code == "" {
+		return SessionOperationFailed
+	}
+	return err.code
+}
 
 type connectorBackend interface {
 	Connect(context.Context) (connectv2.Result, error)
@@ -103,14 +201,6 @@ func NewConnector(lease ArtifactLease, options ConnectorOptions) (*Connector, er
 		len(options.TrustRoots.Subjects()) == 0 || options.ConnectTimeout < 0 || !validOrigin(options.Origin) {
 		return nil, ErrInvalidConnectorOptions
 	}
-	reasons := make(artifactv2.ReasonRegistry, len(options.AdmissionReasons))
-	for reason := range options.AdmissionReasons {
-		if !admissionReasonPattern.MatchString(string(reason)) {
-			return nil, ErrInvalidConnectorOptions
-		}
-		reasons[string(reason)] = struct{}{}
-	}
-
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: options.TrustRoots.Clone()}
 	webSocketClient := *gorillaws.DefaultDialer
 	webSocketClient.TLSClientConfig = tlsConfig.Clone()
@@ -137,7 +227,7 @@ func NewConnector(lease ArtifactLease, options ConnectorOptions) (*Connector, er
 		artifactv2.CarrierWebSocket:    webSocketDial,
 		artifactv2.CarrierRawQUIC:      rawQUICDial,
 		artifactv2.CarrierWebTransport: webTransportDial,
-	}, reasons)
+	}, artifactv2.ReasonRegistry{})
 	if err != nil {
 		return nil, ErrInvalidConnectorOptions
 	}
@@ -173,19 +263,185 @@ func (connector *Connector) Connect(ctx context.Context) (Session, error) {
 	if result.Session == nil {
 		return nil, redactConnectError(ErrConnectionFailed)
 	}
-	return result.Session, nil
+	return &opaqueSession{inner: result.Session}, nil
+}
+
+type opaqueSession struct {
+	inner session.SessionV2
+}
+
+func (*opaqueSession) String() string   { return "Flowersec.Session" }
+func (*opaqueSession) GoString() string { return "flowersec.Session" }
+
+func (current *opaqueSession) RPC() RPCPeer { return &opaqueRPCPeer{inner: current.inner.RPC()} }
+
+func (current *opaqueSession) OpenStream(ctx context.Context, kind string, metadata Metadata) (ByteStream, error) {
+	stream, err := current.inner.OpenStream(ctx, kind, session.Metadata(metadata))
+	if err != nil {
+		return nil, redactSessionError(err)
+	}
+	return &opaqueByteStream{inner: stream}, nil
+}
+
+func (current *opaqueSession) AcceptStream(ctx context.Context) (IncomingStream, error) {
+	incoming, err := current.inner.AcceptStream(ctx)
+	if err != nil {
+		return IncomingStream{}, redactSessionError(err)
+	}
+	return IncomingStream{
+		Kind: incoming.Kind, Metadata: Metadata(incoming.Metadata), Stream: &opaqueByteStream{inner: incoming.Stream},
+	}, nil
+}
+
+func (current *opaqueSession) Rekey(ctx context.Context) error {
+	return redactNilSessionError(current.inner.Rekey(ctx))
+}
+
+func (current *opaqueSession) ProbeLiveness(ctx context.Context) (time.Duration, error) {
+	duration, err := current.inner.ProbeLiveness(ctx)
+	return duration, redactNilSessionError(err)
+}
+
+func (current *opaqueSession) Termination() <-chan struct{} { return current.inner.Termination() }
+
+func (current *opaqueSession) WaitClosed(ctx context.Context) error {
+	return redactNilSessionError(current.inner.WaitClosed(ctx))
+}
+
+func (current *opaqueSession) Close() error { return redactNilSessionError(current.inner.Close()) }
+
+type opaqueRPCPeer struct {
+	inner session.RPCPeer
+}
+
+// RPCError is a sanitized application error returned by a remote RPC handler.
+// Code and Message are application-level values; transport and session causes
+// are projected through SessionError instead.
+type RPCError struct {
+	Code    uint32
+	Message string
+}
+
+func (err *RPCError) Error() string {
+	if err == nil {
+		return "<nil>"
+	}
+	return "Flowersec RPC failed (code=" + strconv.FormatUint(uint64(err.Code), 10) + ")"
+}
+
+func (*opaqueRPCPeer) String() string   { return "Flowersec.RPCPeer" }
+func (*opaqueRPCPeer) GoString() string { return "flowersec.RPCPeer" }
+
+func (peer *opaqueRPCPeer) Call(ctx context.Context, typeID uint32, request, response any) error {
+	if peer == nil || peer.inner == nil {
+		return &SessionError{code: SessionClosed}
+	}
+	return redactRPCError(peer.inner.Call(ctx, typeID, request, response))
+}
+
+func (peer *opaqueRPCPeer) Notify(ctx context.Context, typeID uint32, request any) error {
+	if peer == nil || peer.inner == nil {
+		return &SessionError{code: SessionClosed}
+	}
+	return redactRPCError(peer.inner.Notify(ctx, typeID, request))
+}
+
+type opaqueByteStream struct {
+	inner session.ByteStream
+}
+
+func (*opaqueByteStream) String() string   { return "Flowersec.ByteStream" }
+func (*opaqueByteStream) GoString() string { return "flowersec.ByteStream" }
+
+func (stream *opaqueByteStream) Read(buffer []byte) (int, error) {
+	count, err := stream.inner.Read(buffer)
+	return count, redactNilSessionError(err)
+}
+
+func (stream *opaqueByteStream) Write(buffer []byte) (int, error) {
+	count, err := stream.inner.Write(buffer)
+	return count, redactNilSessionError(err)
+}
+
+func (stream *opaqueByteStream) Close() error { return redactNilSessionError(stream.inner.Close()) }
+
+func (stream *opaqueByteStream) Kind() string { return stream.inner.Kind() }
+
+func (stream *opaqueByteStream) TerminalError() *SessionError {
+	err := stream.inner.TerminalError()
+	if err == nil {
+		return nil
+	}
+	return redactSessionError(err)
+}
+
+func (stream *opaqueByteStream) CloseWrite() error {
+	return redactNilSessionError(stream.inner.CloseWrite())
+}
+
+func (stream *opaqueByteStream) Reset() error { return redactNilSessionError(stream.inner.Reset()) }
+
+func redactNilSessionError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactSessionError(err)
+}
+
+func redactRPCError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var application *internalrpc.CallError
+	if errors.As(err, &application) && application != nil {
+		return &RPCError{Code: application.Code, Message: application.Message}
+	}
+	return redactSessionError(err)
+}
+
+func redactSessionError(err error) *SessionError {
+	code := SessionOperationFailed
+	switch {
+	case errors.Is(err, context.Canceled):
+		code = SessionCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		code = SessionTimeout
+	case errors.Is(err, session.ErrSessionClosed):
+		code = SessionClosed
+	case errors.Is(err, session.ErrGoingAway):
+		code = SessionGoingAway
+	case errors.Is(err, session.ErrResourceExhausted):
+		code = SessionResourceExhausted
+	case errors.Is(err, session.ErrOpenRejected):
+		code = SessionStreamRejected
+	case errors.Is(err, protocolv2.ErrStreamReset):
+		code = SessionStreamReset
+	case errors.Is(err, session.ErrRekey), errors.Is(err, session.ErrRekeyInProgress):
+		code = SessionRekeyFailed
+	case errors.Is(err, session.ErrLivenessProbe):
+		code = SessionLivenessFailed
+	}
+	return &SessionError{code: code}
 }
 
 func redactConnectError(err error) error {
+	code := ConnectFailed
 	var internal *fserrors.Error
 	if errors.As(err, &internal) {
-		return &ConnectError{Path: string(internal.Path), Stage: string(internal.Stage), Code: string(internal.Code)}
+		switch internal.Code {
+		case fserrors.CodeCanceled:
+			code = ConnectCanceled
+		case fserrors.CodeTimeout:
+			code = ConnectTimeout
+		case fserrors.CodeInvalidInput, fserrors.CodeInvalidOption:
+			code = ConnectInvalid
+		}
+		return &ConnectError{code: code}
 	}
-	code := string(fserrors.CodeDialFailed)
 	if errors.Is(err, context.DeadlineExceeded) {
-		code = string(fserrors.CodeTimeout)
+		code = ConnectTimeout
 	} else if errors.Is(err, context.Canceled) {
-		code = string(fserrors.CodeCanceled)
+		code = ConnectCanceled
 	}
-	return &ConnectError{Path: string(fserrors.PathAuto), Stage: string(fserrors.StageConnect), Code: code}
+	return &ConnectError{code: code}
 }

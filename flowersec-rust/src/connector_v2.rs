@@ -39,16 +39,12 @@ pub enum ConnectErrorCode {
 
 /// A redacted connection failure that never retains carrier credentials or diagnostics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("Flowersec connection failed (path={path:?} code={code:?})")]
+#[error("Flowersec connection failed (code={code:?})")]
 pub struct ConnectError {
-    path: PathKind,
     code: ConnectErrorCode,
 }
 
 impl ConnectError {
-    pub const fn path(&self) -> PathKind {
-        self.path
-    }
     pub const fn code(&self) -> ConnectErrorCode {
         self.code
     }
@@ -205,7 +201,7 @@ impl Connector {
             .commit_spend()
             .await
             .map_err(|failure| match failure {
-                ArtifactSpendError::AlreadyCommitted | ArtifactSpendError::Commit(_) => {
+                ArtifactSpendError::AlreadyCommitted | ArtifactSpendError::CommitFailed => {
                     carrier.close();
                     error(path, ConnectErrorCode::SpendFailed)
                 }
@@ -287,7 +283,8 @@ async fn finish_establish(
 }
 
 const fn error(path: PathKind, code: ConnectErrorCode) -> ConnectError {
-    ConnectError { path, code }
+    let _ = path;
+    ConnectError { code }
 }
 
 #[cfg(test)]
@@ -332,8 +329,8 @@ mod tests {
     fn public_error_is_redacted() {
         let failure = error(PathKind::Tunnel, ConnectErrorCode::DialFailed);
         let text = failure.to_string().to_ascii_lowercase();
-        assert_eq!(failure.path(), PathKind::Tunnel);
         assert_eq!(failure.code(), ConnectErrorCode::DialFailed);
+        assert_eq!(text, "flowersec connection failed (code=dialfailed)");
         for forbidden in ["candidate", "carrier", "quic://", "token", "certificate"] {
             assert!(!text.contains(forbidden));
         }

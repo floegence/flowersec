@@ -6,13 +6,13 @@ import Foundation
   import Glibc
 #endif
 
-public enum IDNAHostErrorV2: Error, Equatable, Sendable {
+enum IDNAHostErrorV2: Error, Equatable, Sendable {
   case invalidHost
 }
 
 /// Frozen host normalization shared by Flowersec v2 artifacts and Origin policies.
-public enum IDNAHostV2 {
-  public static let unicodeVersion = "15.1.0"
+enum IDNAHostV2 {
+  static let unicodeVersion = "15.1.0"
 
   /// Returns a lowercase A-label host under the Flowersec v2 IDNA profile.
   ///
@@ -20,7 +20,7 @@ public enum IDNAHostV2 {
   /// ContextJ checks. The explicit scalar-age checks reject unassigned input and
   /// every character introduced after Unicode 15.1, including characters hidden
   /// inside an A-label, so newer host Unicode tables cannot widen this contract.
-  public static func lookupASCII(_ host: String) throws -> String {
+  static func lookupASCII(_ host: String) throws -> String {
     guard !host.isEmpty, !host.hasSuffix("."), host.utf8.count <= Int(Int32.max) else {
       throw IDNAHostErrorV2.invalidHost
     }

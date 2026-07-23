@@ -244,7 +244,7 @@ func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 		},
 	}
 
-	_, testFile, err := renderGoVerifier("/tmp/flowersec-go", m)
+	_, testFile, err := renderGoVerifier(m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestRenderGoVerifierIncludesTypedFieldChecks(t *testing.T) {
 		}},
 	}}
 
-	_, testFile, err := renderGoVerifier("/tmp/flowersec-go", m)
+	_, testFile, err := renderGoVerifier(m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,6 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 	text := string(data)
 	target := text[strings.Index(text, "stability-check:"):]
 	for _, command := range []string{
-		"tools/manifestgen",
 		"verify-manifest",
 		"verify-defaults",
 		"verify-parity",

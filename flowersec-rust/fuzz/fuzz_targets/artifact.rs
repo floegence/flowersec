@@ -1,6 +1,6 @@
 #![no_main]
 
-use flowersec::artifact_v2::Artifact;
+use flowersec::Artifact;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

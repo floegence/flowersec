@@ -3,10 +3,7 @@
   "platforms": {
     "archive": [
       { "goos": "linux", "goarch": "amd64" },
-      { "goos": "linux", "goarch": "arm64" },
-      { "goos": "darwin", "goarch": "amd64" },
-      { "goos": "darwin", "goarch": "arm64" },
-      { "goos": "windows", "goarch": "amd64" }
+      { "goos": "linux", "goarch": "arm64" }
     ],
     "image": [
       { "goos": "linux", "goarch": "amd64" },
@@ -14,52 +11,16 @@
     ]
   },
   "distributions": {
-    "tunnel": {
+    "runtime": {
       "platforms": "archive",
       "targets": [
-        { "module": "flowersec-go", "package": "./cmd/flowersec-tunnel" }
+        { "module": "flowersec-go", "package": "./cmd/flowersec-runtime" }
       ]
     },
-    "tools": {
-      "platforms": "archive",
-      "targets": [
-        { "module": "flowersec-go", "package": "./cmd/flowersec-issuer-keygen" },
-        { "module": "flowersec-go", "package": "./cmd/flowersec-channelinit" },
-        { "module": "flowersec-go", "package": "./cmd/flowersec-directinit" },
-        { "module": "flowersec-go", "package": "./cmd/flowersec-proxy-gateway" }
-      ]
-    },
-    "gateway": {
-      "platforms": "archive",
-      "targets": [
-        { "module": "flowersec-go", "package": "./cmd/flowersec-proxy-gateway" }
-      ]
-    },
-    "demos": {
-      "platforms": "archive",
-      "targets": [
-        { "module": "flowersec-go", "package": "./cmd/flowersec-tunnel" },
-        { "module": "examples", "package": "./go/controlplane_demo" },
-        { "module": "examples", "package": "./go/server_endpoint" },
-        { "module": "examples", "package": "./go/direct_demo" },
-        { "module": "examples", "package": "./go/go_client_tunnel_simple" },
-        { "module": "examples", "package": "./go/go_client_direct_simple" },
-        { "module": "flowersec-go", "package": "./cmd/flowersec-issuer-keygen" },
-        { "module": "flowersec-go", "package": "./cmd/flowersec-channelinit" },
-        { "module": "flowersec-go", "package": "./cmd/flowersec-directinit" }
-      ],
-      "includeNpmRuntime": true
-    },
-    "tunnel-image": {
+    "runtime-image": {
       "platforms": "image",
       "targets": [
-        { "module": "flowersec-go", "package": "./cmd/flowersec-tunnel" }
-      ]
-    },
-    "gateway-image": {
-      "platforms": "image",
-      "targets": [
-        { "module": "flowersec-go", "package": "./cmd/flowersec-proxy-gateway" }
+        { "module": "flowersec-go", "package": "./cmd/flowersec-runtime" }
       ]
     }
   }

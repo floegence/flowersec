@@ -22,12 +22,11 @@ type section struct {
 }
 
 type releaseNotes struct {
-	CurrentTag      string
-	PreviousTag     string
-	Version         string
-	Kind            releaseKind
-	CuratedMarkdown string
-	Sections        []section
+	CurrentTag  string
+	PreviousTag string
+	Version     string
+	Kind        releaseKind
+	Sections    []section
 }
 
 type releaseKind string
@@ -97,12 +96,7 @@ func versionFromTag(tag string, kind releaseKind) string {
 
 func renderMarkdown(notes *releaseNotes) string {
 	var b strings.Builder
-	if notes.CuratedMarkdown != "" {
-		b.WriteString(strings.TrimSpace(notes.CuratedMarkdown))
-		b.WriteString("\n\n## Changelog\n\n")
-	} else {
-		fmt.Fprintf(&b, "# Flowersec %s\n\n", notes.Version)
-	}
+	fmt.Fprintf(&b, "# Flowersec %s\n\n", notes.Version)
 	if notes.PreviousTag != "" {
 		fmt.Fprintf(&b, "Changes since `%s`.\n\n", notes.PreviousTag)
 	} else {
@@ -121,12 +115,9 @@ func renderMarkdown(notes *releaseNotes) string {
 	if notes.Kind == releaseKindSwift {
 		fmt.Fprintf(&b, "- SwiftPM package tag `%s` for the `Flowersec` library product.\n", notes.CurrentTag)
 	} else {
-		fmt.Fprintf(&b, "- `flowersec-tunnel_%s_<os>_<arch>` bundles for tunnel runtime installs.\n", notes.Version)
-		fmt.Fprintf(&b, "- `flowersec-tools_%s_<os>_<arch>` bundles for issuer/channel/direct setup tools.\n", notes.Version)
-		fmt.Fprintf(&b, "- `flowersec-proxy-gateway_%s_<os>_<arch>` bundles for proxy gateway deployments.\n", notes.Version)
-		fmt.Fprintf(&b, "- `flowersec-demos_%s_<os>_<arch>` bundles for demo and evaluation flows.\n", notes.Version)
+		fmt.Fprintf(&b, "- `flowersec-runtime_%s_linux_<arch>` bundles for Linux amd64 and arm64 runtime deployments.\n", notes.Version)
 		fmt.Fprintf(&b, "- `floegence-flowersec-core-%s.tgz` for no-clone TypeScript installs.\n", notes.Version)
-		b.WriteString("- GHCR tunnel and proxy gateway images are also published for this version.\n")
+		b.WriteString("- The multi-platform `ghcr.io/floegence/flowersec-runtime` image is also published for this version.\n")
 	}
 	return b.String()
 }

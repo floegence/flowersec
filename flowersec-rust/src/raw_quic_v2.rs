@@ -13,7 +13,9 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use quinn::{Endpoint, VarInt};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::pki_types::CertificateDer;
+#[cfg(test)]
+use rustls::pki_types::PrivateKeyDer;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 use tokio::sync::Mutex;
@@ -115,7 +117,9 @@ pub const ALPN_TUNNEL: &str = "flowersec-tunnel/2";
 
 const STREAM_RESET_CODE: u32 = 0x0000_f502;
 const SESSION_CLOSE_CODE: u32 = 0x0000_f500;
+#[cfg(test)]
 const MAX_APPLICATION_ERROR_CODE: u64 = (1_u64 << 62) - 1;
+#[cfg(test)]
 const MAX_APPLICATION_ERROR_REASON_BYTES: usize = 128;
 const MAX_STREAM_RECEIVE_WINDOW: u64 = 6 << 20;
 const MAX_CONNECTION_RECEIVE_WINDOW: u64 = 16 << 20;
@@ -253,9 +257,11 @@ pub enum RawQuicError {
     #[error("invalid raw QUIC trust configuration: {0}")]
     InvalidTrust(String),
     /// The supplied server certificate chain is empty or invalid.
+    #[cfg(test)]
     #[error("invalid raw QUIC certificate chain: {0}")]
     InvalidCertificate(String),
     /// The supplied private key is invalid or is not usable with the certificate.
+    #[cfg(test)]
     #[error("invalid raw QUIC private key: {0}")]
     InvalidPrivateKey(String),
     /// The TLS 1.3 configuration could not be constructed.
@@ -265,6 +271,7 @@ pub enum RawQuicError {
     #[error("raw QUIC endpoint failed: {0}")]
     Endpoint(#[source] io::Error),
     /// The local listener has stopped accepting connections.
+    #[cfg(test)]
     #[error("raw QUIC listener is closed")]
     ListenerClosed,
     /// A connection could not be started.
@@ -280,12 +287,15 @@ pub enum RawQuicError {
     #[error("raw QUIC stream operation failed: {0}")]
     Stream(String),
     /// Active migration is unavailable for a listener-owned server endpoint.
+    #[cfg(test)]
     #[error("raw QUIC active migration is unavailable for this session")]
     MigrationUnavailable,
     /// The client UDP socket could not be rebound for active path migration.
+    #[cfg(test)]
     #[error("raw QUIC active migration failed: {0}")]
     Migration(#[source] io::Error),
     /// An application close code or reason exceeded its stable bounds.
+    #[cfg(test)]
     #[error("invalid raw QUIC application close error")]
     InvalidApplicationError,
 }
@@ -336,16 +346,6 @@ impl RawQuicClientConfig {
             inner,
         })
     }
-
-    /// Returns the exact path profile configured for the handshake.
-    pub const fn profile(&self) -> RawQuicPathProfile {
-        self.profile
-    }
-
-    /// Returns the validated transport limits.
-    pub const fn limits(&self) -> RawQuicLimits {
-        self.limits
-    }
 }
 
 impl fmt::Debug for RawQuicClientConfig {
@@ -359,6 +359,7 @@ impl fmt::Debug for RawQuicClientConfig {
 }
 
 /// Server policy built from a caller-owned certificate chain and private key.
+#[cfg(test)]
 #[derive(Clone)]
 pub struct RawQuicServerConfig {
     profile: RawQuicPathProfile,
@@ -366,6 +367,7 @@ pub struct RawQuicServerConfig {
     inner: quinn::ServerConfig,
 }
 
+#[cfg(test)]
 impl RawQuicServerConfig {
     /// Builds a TLS 1.3-only server configuration from owned DER material.
     pub fn new(
@@ -406,18 +408,9 @@ impl RawQuicServerConfig {
             inner,
         })
     }
-
-    /// Returns the exact path profile configured for the handshake.
-    pub const fn profile(&self) -> RawQuicPathProfile {
-        self.profile
-    }
-
-    /// Returns the validated transport limits.
-    pub const fn limits(&self) -> RawQuicLimits {
-        self.limits
-    }
 }
 
+#[cfg(test)]
 impl fmt::Debug for RawQuicServerConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -429,6 +422,7 @@ impl fmt::Debug for RawQuicServerConfig {
 }
 
 /// A bound raw QUIC server endpoint.
+#[cfg(test)]
 pub struct RawQuicListener {
     endpoint: Endpoint,
     profile: RawQuicPathProfile,
@@ -436,6 +430,7 @@ pub struct RawQuicListener {
     max_inbound_bidirectional_streams: u32,
 }
 
+#[cfg(test)]
 impl RawQuicListener {
     /// Binds a UDP endpoint after all TLS and resource policy has been validated.
     pub fn bind(address: SocketAddr, config: RawQuicServerConfig) -> Result<Self, RawQuicError> {
@@ -472,14 +467,9 @@ impl RawQuicListener {
             false,
         )
     }
-
-    /// Stops accepting and closes sessions owned by this endpoint.
-    pub fn close(&self) {
-        self.endpoint
-            .close(VarInt::from_u32(SESSION_CLOSE_CODE), b"listener closed");
-    }
 }
 
+#[cfg(test)]
 impl fmt::Debug for RawQuicListener {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -492,6 +482,7 @@ impl fmt::Debug for RawQuicListener {
 }
 
 /// A bounded application close diagnostic.
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RawQuicApplicationError {
     /// QUIC application error code in the RFC 9000 varint range.
@@ -507,6 +498,7 @@ pub struct RawQuicSession {
     endpoint: Endpoint,
     profile: RawQuicPathProfile,
     max_inbound_bidirectional_streams: u32,
+    #[allow(dead_code)] // Explicit migration is exercised by crate-internal transport tests.
     migration_allowed: bool,
 }
 
@@ -568,11 +560,13 @@ impl RawQuicSession {
     }
 
     /// Returns the exact ALPN profile negotiated by TLS.
+    #[cfg(test)]
     pub const fn negotiated_profile(&self) -> RawQuicPathProfile {
         self.profile
     }
 
     /// Returns the effective local UDP address currently carrying this connection.
+    #[cfg(test)]
     pub fn local_address(&self) -> Result<SocketAddr, RawQuicError> {
         self.endpoint.local_addr().map_err(RawQuicError::Migration)
     }
@@ -580,6 +574,7 @@ impl RawQuicSession {
     /// Rebinds a client-owned UDP endpoint and actively validates the new QUIC path.
     /// Listener-owned server sessions reject this operation because rebinding their
     /// shared endpoint would move unrelated accepted connections.
+    #[cfg(test)]
     pub fn migrate_local_address(&self, address: SocketAddr) -> Result<SocketAddr, RawQuicError> {
         if !self.migration_allowed {
             return Err(RawQuicError::MigrationUnavailable);
@@ -687,6 +682,7 @@ impl RawQuicSession {
     }
 
     /// Closes the session with a bounded application diagnostic.
+    #[cfg(test)]
     pub fn close_with_error(
         &self,
         application_error: RawQuicApplicationError,
@@ -1119,11 +1115,6 @@ impl RawQuicStream {
             send_finished: AtomicBool::new(false),
             reset: AtomicBool::new(false),
         }
-    }
-
-    /// Returns the stable stream identifier within this connection.
-    pub const fn id(&self) -> u64 {
-        self.id
     }
 
     /// Reads bytes, returning zero only after a clean peer FIN.

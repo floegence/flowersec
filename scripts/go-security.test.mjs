@@ -13,7 +13,7 @@ async function loadChecker() {
   return import(pathToFileURL(checkerPath));
 }
 
-test("workspace, manifest, and maintained-tree Go module inventories are identical", async (t) => {
+test("manifest and maintained-tree Go module inventories are identical", async (t) => {
   const { collectGoModuleDirectories } = await loadChecker();
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-go-inventory-"));
   t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
@@ -21,32 +21,16 @@ test("workspace, manifest, and maintained-tree Go module inventories are identic
     fs.mkdirSync(path.join(repoRoot, module), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, module, "go.mod"), `module example.com/${module}\n`);
   }
-  const workspace = {
-    Use: [
-      { DiskPath: "./flowersec-go" },
-      { DiskPath: "./tools/transportcheck" },
-      { DiskPath: "./flowersec-go" },
-    ],
-  };
   const manifest = { modules: ["flowersec-go", "tools/transportcheck"] };
-  const modules = collectGoModuleDirectories(repoRoot, workspace, manifest);
+  const modules = collectGoModuleDirectories(repoRoot, manifest);
   assert.deepEqual(modules, [
     path.join(repoRoot, "flowersec-go"),
     path.join(repoRoot, "tools/transportcheck"),
   ]);
-  assert.throws(
-    () => collectGoModuleDirectories(repoRoot, { Use: [] }, manifest),
-    /no Go modules/,
-  );
-  assert.throws(
-    () => collectGoModuleDirectories(repoRoot, { Use: [{ DiskPath: "../outside" }] }, manifest),
-    /outside the repository/,
-  );
-
   fs.mkdirSync(path.join(repoRoot, "tools/unregistered"), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, "tools/unregistered/go.mod"), "module example.com/unregistered\n");
   assert.throws(
-    () => collectGoModuleDirectories(repoRoot, workspace, manifest),
+    () => collectGoModuleDirectories(repoRoot, manifest),
     /maintained tree.*tools\/unregistered.*security manifest/i,
   );
 });
@@ -56,14 +40,6 @@ test("every Go module is verified, resolved, and scanned with workspace mode dis
   const calls = [];
   const run = (command, args, options) => {
     calls.push({ command, args, options });
-    if (args.join(" ") === "work edit -json") {
-      return JSON.stringify({
-        Use: [
-          { DiskPath: "./flowersec-go" },
-          { DiskPath: "./tools/transportcheck" },
-        ],
-      });
-    }
     return "";
   };
 
@@ -83,8 +59,7 @@ test("every Go module is verified, resolved, and scanned with workspace mode dis
     path.join(sourceRoot, "flowersec-go"),
     path.join(sourceRoot, "tools/transportcheck"),
   ]);
-  assert.equal(calls.length, 7);
-  assert.deepEqual(calls[0].args, ["work", "edit", "-json"]);
+  assert.equal(calls.length, 6);
   for (const moduleDir of modules) {
     const moduleCalls = calls.filter((call) => call.options.cwd === moduleDir);
     assert.deepEqual(moduleCalls.map((call) => call.args), [

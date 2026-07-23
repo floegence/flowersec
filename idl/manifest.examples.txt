@@ -1,4 +1,1 @@
-# Example/test-only IDLs (not part of the public API surface).
-# Transport v2 is intentionally not represented in this FIDL manifest; its
-# examples must consume the frozen Transport v2 codecs and fixtures directly.
-flowersec/demo/v1/demo.fidl.json
+# Transport v2 examples consume the frozen codecs and fixtures directly.

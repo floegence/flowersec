@@ -1,135 +1,41 @@
-use std::{io, time::Duration};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use flowersec::transport_v2::{
-    ByteStreamV2, CapabilityTupleV2, CarrierKind, IncomingStreamV2, JsonObjectV2,
-    NATIVE_RUST_CAPABILITIES_V2, NetworkMode, PathKind, RpcPeerV2, SessionRole, SessionV2,
-    carrier_inbound_stream_limit_v2, decode_runtime_capability_descriptor_v2,
-    encode_runtime_capability_descriptor_v2, native_rust_capability_descriptor_v2,
-    runtime_capability_digest_hex_v2, validate_capabilities_v2,
+use flowersec::{
+    ByteStream, IncomingStream, JsonObject, RpcPeer, Session, SessionError, StreamTerminalError,
 };
-
-#[test]
-fn logical_stream_limit_reserves_control_and_rpc_carrier_streams() {
-    assert_eq!(carrier_inbound_stream_limit_v2(1).unwrap(), 3);
-    assert_eq!(carrier_inbound_stream_limit_v2(128).unwrap(), 130);
-    assert!(carrier_inbound_stream_limit_v2(0).is_err());
-    assert!(carrier_inbound_stream_limit_v2(129).is_err());
-}
-
-const EXPECTED_NATIVE_RUST_CAPABILITIES: [CapabilityTupleV2; 2] = [
-    CapabilityTupleV2::new(
-        CarrierKind::RawQuic,
-        NetworkMode::Dial,
-        SessionRole::Client,
-        PathKind::Direct,
-    ),
-    CapabilityTupleV2::new(
-        CarrierKind::RawQuic,
-        NetworkMode::Dial,
-        SessionRole::Client,
-        PathKind::Tunnel,
-    ),
-];
-
-#[test]
-fn native_rust_capabilities_are_the_signed_exact_tuples() {
-    assert_eq!(
-        NATIVE_RUST_CAPABILITIES_V2,
-        &EXPECTED_NATIVE_RUST_CAPABILITIES
-    );
-    validate_capabilities_v2(NATIVE_RUST_CAPABILITIES_V2)
-        .expect("the signed native Rust capability table is valid");
-}
-
-#[test]
-fn native_rust_descriptor_matches_the_shared_strict_codec_vector() {
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../testdata/transport_v2/capability_vectors.json"
-    ))
-    .unwrap();
-    let vector = fixture["vectors"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|value| value["name"] == "rust-native")
-        .unwrap();
-    let descriptor = native_rust_capability_descriptor_v2();
-    let canonical = encode_runtime_capability_descriptor_v2(&descriptor).unwrap();
-    assert_eq!(
-        std::str::from_utf8(&canonical).unwrap(),
-        vector["canonical_json"].as_str().unwrap()
-    );
-    assert_eq!(
-        runtime_capability_digest_hex_v2(&descriptor).unwrap(),
-        vector["digest_hex"].as_str().unwrap()
-    );
-    assert_eq!(
-        decode_runtime_capability_descriptor_v2(&canonical).unwrap(),
-        descriptor
-    );
-    let mut noncanonical = vec![b' '];
-    noncanonical.extend_from_slice(&canonical);
-    assert!(decode_runtime_capability_descriptor_v2(&noncanonical).is_err());
-}
-
-#[test]
-fn capability_validation_rejects_duplicates_and_invalid_role_path_pairs() {
-    let valid = CapabilityTupleV2::new(
-        CarrierKind::RawQuic,
-        NetworkMode::Dial,
-        SessionRole::Client,
-        PathKind::Direct,
-    );
-    let duplicate = [valid, valid];
-    let error = validate_capabilities_v2(&duplicate).expect_err("duplicate tuple must fail");
-    assert!(error.to_string().contains("duplicate"));
-
-    let invalid = [CapabilityTupleV2::new(
-        CarrierKind::RawQuic,
-        NetworkMode::Listen,
-        SessionRole::Client,
-        PathKind::Tunnel,
-    )];
-    let error = validate_capabilities_v2(&invalid).expect_err("listen/tunnel must fail");
-    assert!(error.to_string().contains("invalid"));
-}
 
 #[derive(Debug)]
 struct ProbeStream;
 
 #[async_trait]
-impl ByteStreamV2 for ProbeStream {
-    fn id(&self) -> u64 {
-        7
-    }
-
+impl ByteStream for ProbeStream {
     fn kind(&self) -> &str {
         "rpc"
     }
 
-    fn terminal_error(&self) -> Option<&(dyn std::error::Error + Send + Sync + 'static)> {
-        None
+    fn terminal_error(&self) -> Option<StreamTerminalError> {
+        Some(StreamTerminalError::Reset)
     }
 
-    async fn read(&self) -> io::Result<Option<Bytes>> {
+    async fn read(&self) -> Result<Option<Bytes>, SessionError> {
         Ok(None)
     }
 
-    async fn write(&self, payload: Bytes) -> io::Result<usize> {
+    async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
         Ok(payload.len())
     }
 
-    async fn close_write(&self) -> io::Result<()> {
+    async fn close_write(&self) -> Result<(), SessionError> {
         Ok(())
     }
 
-    async fn reset(&self) -> io::Result<()> {
+    async fn reset(&self) -> Result<(), SessionError> {
         Ok(())
     }
 
-    async fn close(&self) -> io::Result<()> {
+    async fn close(&self) -> Result<(), SessionError> {
         Ok(())
     }
 }
@@ -138,16 +44,16 @@ impl ByteStreamV2 for ProbeStream {
 struct ProbeRpc;
 
 #[async_trait]
-impl RpcPeerV2 for ProbeRpc {
+impl RpcPeer for ProbeRpc {
     async fn call(
         &self,
         _type_id: u32,
         request: serde_json::Value,
-    ) -> io::Result<serde_json::Value> {
+    ) -> Result<serde_json::Value, SessionError> {
         Ok(request)
     }
 
-    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> io::Result<()> {
+    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), SessionError> {
         Ok(())
     }
 }
@@ -158,57 +64,51 @@ struct ProbeSession {
 }
 
 #[async_trait]
-impl SessionV2 for ProbeSession {
-    fn path(&self) -> PathKind {
-        PathKind::Direct
-    }
-
-    fn endpoint_instance_id(&self) -> Option<&str> {
-        None
-    }
-
-    fn rpc(&self) -> &dyn RpcPeerV2 {
+impl Session for ProbeSession {
+    fn rpc(&self) -> &dyn RpcPeer {
         &self.rpc
     }
 
     async fn open_stream(
         &self,
         _kind: &str,
-        _metadata: JsonObjectV2,
-    ) -> io::Result<Box<dyn ByteStreamV2>> {
+        _metadata: JsonObject,
+    ) -> Result<Box<dyn ByteStream>, SessionError> {
         Ok(Box::new(ProbeStream))
     }
 
-    async fn accept_stream(&self) -> io::Result<IncomingStreamV2> {
-        Ok(IncomingStreamV2::new(
+    async fn accept_stream(&self) -> Result<IncomingStream, SessionError> {
+        Ok(IncomingStream::new(
             "rpc",
-            JsonObjectV2::new(),
+            JsonObject::new(),
             Box::new(ProbeStream),
         ))
     }
 
-    async fn rekey(&self) -> io::Result<()> {
+    async fn rekey(&self) -> Result<(), SessionError> {
         Ok(())
     }
 
-    async fn probe_liveness(&self) -> io::Result<Duration> {
+    async fn probe_liveness(&self) -> Result<Duration, SessionError> {
         Ok(Duration::ZERO)
     }
 
-    async fn wait_closed(&self) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::ConnectionAborted,
-            "probe session closed",
-        ))
+    async fn wait_closed(&self) -> Result<(), SessionError> {
+        Err(SessionError::Closed)
     }
 
-    async fn close(&self) -> io::Result<()> {
+    async fn close(&self) -> Result<(), SessionError> {
         Ok(())
     }
 }
 
-fn assert_session_object_safe(_session: Option<&dyn SessionV2>) {}
-fn assert_stream_object_safe(_stream: Option<&dyn ByteStreamV2>) {}
+fn assert_session_object_safe(_session: Option<&dyn Session>) {}
+fn assert_stream_object_safe(_stream: Option<&dyn ByteStream>) {}
+fn assert_terminal_error_is_closed(
+    error: Option<StreamTerminalError>,
+) -> Option<StreamTerminalError> {
+    error
+}
 
 #[test]
 fn v2_contract_is_object_safe_and_carrier_neutral() {
@@ -216,21 +116,90 @@ fn v2_contract_is_object_safe_and_carrier_neutral() {
     assert_session_object_safe(Some(&session));
     assert_stream_object_safe(None);
 
-    assert_eq!(session.path(), PathKind::Direct);
-    assert_eq!(session.endpoint_instance_id(), None);
-    let _rpc: &dyn RpcPeerV2 = session.rpc();
+    let _rpc: &dyn RpcPeer = session.rpc();
 
-    let incoming = IncomingStreamV2::new("rpc", JsonObjectV2::new(), Box::new(ProbeStream));
-    assert_eq!(incoming.id(), 7);
+    let incoming = IncomingStream::new("rpc", JsonObject::new(), Box::new(ProbeStream));
     assert_eq!(incoming.kind(), "rpc");
     assert!(incoming.metadata().is_empty());
     assert_eq!(incoming.stream().kind(), "rpc");
+    assert_eq!(
+        assert_terminal_error_is_closed(incoming.stream().terminal_error()),
+        Some(StreamTerminalError::Reset)
+    );
     assert!(format!("{incoming:?}").contains("IncomingStreamV2"));
-    let _stream: Box<dyn ByteStreamV2> = incoming.into_stream();
+    let _stream: Box<dyn ByteStream> = incoming.into_stream();
 
     let public_contract = include_str!("../src/transport_v2.rs");
     assert!(!public_contract.contains("quinn::"));
     assert!(!public_contract.contains("Yamux"));
+}
+
+#[test]
+fn crate_root_does_not_export_transport_topology() {
+    let facade = include_str!("../src/lib.rs");
+    for forbidden in [
+        "CapabilityTupleV2",
+        "CarrierKind",
+        "NetworkMode",
+        "PathKind",
+        "SessionRole",
+        "NATIVE_RUST_CAPABILITIES_V2",
+    ] {
+        assert!(
+            !facade.contains(forbidden),
+            "root facade exported {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn stream_terminal_errors_are_typed_and_redacted() {
+    let snapshots = [
+        (
+            StreamTerminalError::Closed,
+            "Closed",
+            "Flowersec stream closed",
+        ),
+        (
+            StreamTerminalError::Failed,
+            "Failed",
+            "Flowersec stream failed",
+        ),
+        (
+            StreamTerminalError::Reset,
+            "Reset",
+            "Flowersec stream reset",
+        ),
+        (
+            StreamTerminalError::TimedOut,
+            "TimedOut",
+            "Flowersec stream timed out",
+        ),
+    ];
+    for (error, debug, display) in snapshots {
+        assert_eq!(format!("{error:?}"), debug);
+        assert_eq!(error.to_string(), display);
+    }
+}
+
+#[test]
+fn session_errors_are_closed_and_redacted() {
+    let snapshots = [
+        (SessionError::Canceled, "Flowersec operation was canceled"),
+        (SessionError::Closed, "Flowersec session is closed"),
+        (SessionError::InvalidInput, "invalid Flowersec operation"),
+        (SessionError::Rejected, "Flowersec operation was rejected"),
+        (
+            SessionError::ResourceExhausted,
+            "Flowersec resources are exhausted",
+        ),
+        (SessionError::Reset, "Flowersec stream was reset"),
+        (SessionError::TimedOut, "Flowersec operation timed out"),
+        (SessionError::Failed, "Flowersec operation failed"),
+    ];
+    for (error, display) in snapshots {
+        assert_eq!(error.to_string(), display);
+    }
 }
 
 #[test]

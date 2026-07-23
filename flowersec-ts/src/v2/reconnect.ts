@@ -5,14 +5,15 @@ import {
   type ArtifactLeaseV2,
   type ArtifactSourceV2,
 } from "./artifactLease.js";
-import type { RuntimeCapabilityDescriptorV2 } from "./capability.js";
 import type { OperationOptionsV2, SessionV2 } from "./contract.js";
 import { ArtifactV2Error } from "./artifact.js";
 import { unwrapArtifact } from "./opaqueArtifact.js";
 import {
   AbortError,
-  FlowersecError,
+  ConnectError,
   TimeoutError,
+  connectErrorDetailsInternal,
+  createConnectErrorInternal,
   type FlowersecErrorCode,
   type FlowersecPath,
   type FlowersecStage,
@@ -31,7 +32,6 @@ export type SessionAutoReconnectConfigV2 = Readonly<{
 
 export type SessionReconnectConfigV2 = Readonly<{
   source: ArtifactSourceV2;
-  capability: RuntimeCapabilityDescriptorV2;
   connect(lease: ArtifactLeaseV2, options: OperationOptionsV2): Promise<SessionV2>;
   acquireContext?: Omit<ArtifactAcquireContextOptionsV2, "signal">;
   autoReconnect?: SessionAutoReconnectConfigV2;
@@ -39,7 +39,7 @@ export type SessionReconnectConfigV2 = Readonly<{
 
 export type SessionReconnectStateV2 = Readonly<{
   status: SessionReconnectStatusV2;
-  error: FlowersecError | null;
+  error: ConnectError | null;
   session: SessionV2 | null;
 }>;
 
@@ -165,7 +165,7 @@ class SessionReconnectManager implements SessionReconnectManagerV2 {
       try {
         await active.close();
       } catch (error) {
-        const failure = reconnectError(error, active.path, "close", "not_connected");
+        const failure = reconnectError(error, "auto", "close", "not_connected");
         if (this.generation === generation) {
           this.publish({ status: "error", error: failure, session: null });
         }
@@ -195,7 +195,7 @@ class SessionReconnectManager implements SessionReconnectManagerV2 {
       try {
         await previous.close();
       } catch (error) {
-        const failure = reconnectError(error, previous.path, "close", "not_connected");
+        const failure = reconnectError(error, "auto", "close", "not_connected");
         if (this.isActive(generation, config)) this.publish({ status: "error", error: failure, session: null });
         throw failure;
       }
@@ -211,7 +211,7 @@ class SessionReconnectManager implements SessionReconnectManagerV2 {
     settings: ReconnectSettings,
     delayBeforeFirstAttempt: boolean,
   ): Promise<void> {
-    let lastError: FlowersecError | undefined;
+    let lastError: ConnectError | undefined;
     for (let attempt = 0; attempt < settings.maxAttempts; attempt++) {
       if (!this.isActive(generation, config)) return;
       const controller = new AbortController();
@@ -225,7 +225,6 @@ class SessionReconnectManager implements SessionReconnectManagerV2 {
         let acquireContext: ReturnType<typeof createArtifactAcquireContextV2>;
         try {
           acquireContext = createArtifactAcquireContextV2(
-            config.capability,
             { ...config.acquireContext, signal: controller.signal },
           );
         } catch (error) {
@@ -310,14 +309,14 @@ class SessionReconnectManager implements SessionReconnectManagerV2 {
     session: SessionV2,
     error: Error,
   ): Promise<void> {
-    const failure = reconnectError(error, session.path, "close", "not_connected");
+    const failure = reconnectError(error, "auto", "close", "not_connected");
     const retry = settings.enabled && !isTerminalReconnectError(failure);
     this.publish({ status: retry ? "connecting" : "error", error: failure, session: null });
     try {
       await session.close();
     } catch (closeError) {
       if (!this.isActive(generation, config)) return;
-      const closeFailure = reconnectError(closeError, session.path, "close", "not_connected");
+      const closeFailure = reconnectError(closeError, "auto", "close", "not_connected");
       this.publish({ status: "error", error: closeFailure, session: null });
       throw closeFailure;
     }
@@ -382,9 +381,6 @@ function validateReconnectConfig(config: SessionReconnectConfigV2): ReconnectSet
   if (sourceKind !== "once" && sourceKind !== "refreshable") {
     throw new TypeError("SessionV2 reconnect source kind must be once or refreshable");
   }
-  if (config.capability === null || typeof config.capability !== "object") {
-    throw new TypeError("SessionV2 reconnect capability must be an object");
-  }
   if (typeof config.connect !== "function") {
     throw new TypeError("SessionV2 reconnect connect must be a function");
   }
@@ -421,7 +417,9 @@ async function reconnectDelay(attempt: number, settings: ReconnectSettings, sign
 
 function isTerminalReconnectError(error: Error): boolean {
   if (error instanceof AbortError || error.name === "AbortError") return true;
-  return error instanceof FlowersecError && (error.code === "canceled" || TERMINAL_RECONNECT_CODES.has(error.code));
+  return error instanceof ConnectError && (
+    error.code === "canceled" || TERMINAL_RECONNECT_CODES.has(connectErrorDetailsInternal(error).code)
+  );
 }
 
 function abortSignalReason(signal: AbortSignal): Error {
@@ -433,11 +431,11 @@ function reconnectError(
   path: FlowersecPath,
   stage: FlowersecStage,
   fallbackCode: FlowersecErrorCode,
-): FlowersecError {
-  if (error instanceof FlowersecError) return error;
+): ConnectError {
+  if (error instanceof ConnectError) return error;
   const cause = error instanceof Error ? error : new Error(String(error));
   let code = fallbackCode;
   if (cause instanceof AbortError || cause.name === "AbortError") code = "canceled";
   if (cause instanceof TimeoutError || cause.name === "TimeoutError") code = "timeout";
-  return new FlowersecError({ path, stage, code, message: cause.message, cause });
+  return createConnectErrorInternal({ path, stage, code, cause });
 }

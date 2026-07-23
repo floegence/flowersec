@@ -2,14 +2,13 @@ import { RpcClient } from "../rpc/client.js";
 import { RpcRouter, RpcServer, type RpcServerOptions } from "../rpc/server.js";
 
 import type {
-  ByteStreamV2,
-  IncomingStreamV2,
+  InternalByteStreamV2 as ByteStreamV2,
+  InternalIncomingStreamV2 as IncomingStreamV2,
+  InternalSessionV2 as SessionV2Contract,
   JsonObjectV2,
   OperationOptionsV2,
   PathKind,
   StreamOpenOptionsV2,
-  SessionV2 as SessionV2Contract,
-  SessionTerminationV2,
 } from "./contract.js";
 import type { CarrierSessionV2, CarrierStreamV2 } from "./carrier.js";
 import type { SessionContractV2 } from "./artifact.js";
@@ -84,6 +83,8 @@ const MAX_BUFFERED_STREAM_BYTES = 4 * 1024 * 1024;
 const RESERVED_RPC_KIND = "flowersec.rpc.v2";
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const DEFAULT_CLOSE_TIMEOUT_MS = 5_000;
+
+type SessionTerminationV2 = Readonly<{ error: Error }>;
 
 export type SessionRoleV2 = "client" | "server";
 

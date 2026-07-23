@@ -1,4 +1,4 @@
-import type { ClientPath } from "../client.js";
+type ClientPath = "direct" | "tunnel";
 
 export type ConnectResult = "ok" | "fail";
 export type ConnectReason =

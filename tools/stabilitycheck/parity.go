@@ -135,22 +135,17 @@ type interopMatrix struct {
 	Version            int                        `json:"version"`
 	ReferenceLanguage  string                     `json:"reference_language"`
 	Languages          []string                   `json:"languages"`
-	ProfilePath        string                     `json:"profile_path"`
 	Cases              []string                   `json:"cases"`
 	Cells              []interopCell              `json:"cells"`
-	Harnesses          map[string]interopHarness  `json:"harnesses"`
 	CapabilityCoverage map[string]interopCoverage `json:"capability_coverage"`
 }
 
 type interopCell struct {
-	ID       string `json:"id"`
-	Client   string `json:"client"`
-	Server   string `json:"server"`
-	Evidence string `json:"evidence"`
-}
-
-type interopHarness struct {
-	Roles    []string `json:"roles"`
+	ID       string   `json:"id"`
+	Client   string   `json:"client"`
+	Server   string   `json:"server"`
+	Carriers []string `json:"carriers"`
+	Paths    []string `json:"paths"`
 	Cases    []string `json:"cases"`
 	Evidence string   `json:"evidence"`
 }
@@ -287,8 +282,8 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
 		return fmt.Errorf("parse %s: %w", interopMatrixPath, err)
 	}
-	if matrix.Version != 1 || matrix.ReferenceLanguage != "go" {
-		return fmt.Errorf("%s must declare version 1 with Go as the reference language", interopMatrixPath)
+	if matrix.Version != 2 || matrix.ReferenceLanguage != "go" {
+		return fmt.Errorf("%s must declare version 2 with Go as the reference language", interopMatrixPath)
 	}
 	if !slices.Equal(matrix.Languages, capabilities.Languages) {
 		return fmt.Errorf("%s languages must match %s", interopMatrixPath, capabilityManifestPath)
@@ -299,27 +294,25 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if len(matrix.Cases) == 0 {
 		return errors.New("interop matrix cases must not be empty")
 	}
-	expectedCells := map[string][2]string{
-		"go_to_go":         {"go", "go"},
-		"typescript_to_go": {"typescript", "go"},
-		"swift_to_go":      {"swift", "go"},
-		"rust_to_go":       {"rust", "go"},
-		"go_to_typescript": {"go", "typescript"},
-		"go_to_swift":      {"go", "swift"},
-		"go_to_rust":       {"go", "rust"},
-	}
-	if len(matrix.Cells) != len(expectedCells) {
-		return fmt.Errorf("interop matrix must contain exactly %d cells", len(expectedCells))
+	if len(matrix.Cells) == 0 {
+		return errors.New("interop matrix must contain executable v2 cells")
 	}
 	cellIDs := make([]string, 0, len(matrix.Cells))
 	for _, cell := range matrix.Cells {
 		cellIDs = append(cellIDs, cell.ID)
-		expected, ok := expectedCells[cell.ID]
-		if !ok || expected != [2]string{cell.Client, cell.Server} {
-			return fmt.Errorf("interop matrix has unexpected cell %s (%s -> %s)", cell.ID, cell.Client, cell.Server)
-		}
 		if cell.Client != "go" && cell.Server != "go" {
 			return fmt.Errorf("non-Go pairwise interop edge is forbidden: %s", cell.ID)
+		}
+		if !slices.Contains(matrix.Languages, cell.Client) || !slices.Contains(matrix.Languages, cell.Server) {
+			return fmt.Errorf("interop cell %s names an unknown language", cell.ID)
+		}
+		if len(cell.Carriers) == 0 || len(cell.Paths) == 0 || len(cell.Cases) == 0 {
+			return fmt.Errorf("interop cell %s must declare carriers, paths, and cases", cell.ID)
+		}
+		for _, caseID := range cell.Cases {
+			if !slices.Contains(matrix.Cases, caseID) {
+				return fmt.Errorf("interop cell %s references unknown case %s", cell.ID, caseID)
+			}
 		}
 		if err := requireFile(repoRoot, "interop cell "+cell.ID, cell.Evidence); err != nil {
 			return err
@@ -327,24 +320,6 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	}
 	if err := requireUnique("interop cell ids", cellIDs); err != nil {
 		return err
-	}
-	for _, language := range []string{"typescript", "swift", "rust"} {
-		harness, ok := matrix.Harnesses[language]
-		if !ok {
-			return fmt.Errorf("interop matrix is missing the %s harness", language)
-		}
-		if !sameStringSet(harness.Roles, []string{"client", "server"}) {
-			return fmt.Errorf("interop harness %s must support client and server roles", language)
-		}
-		if !sameStringSet(harness.Cases, matrix.Cases) {
-			return fmt.Errorf("interop harness %s cases do not match the matrix", language)
-		}
-		if err := requireFile(repoRoot, "interop harness "+language, harness.Evidence); err != nil {
-			return err
-		}
-	}
-	if len(matrix.Harnesses) != 3 {
-		return errors.New("interop harnesses must contain exactly typescript, swift, and rust")
 	}
 	fixtureIDs := make([]string, 0, len(capabilities.SharedFixtures))
 	for _, fixture := range capabilities.SharedFixtures {
@@ -369,15 +344,7 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if len(matrix.CapabilityCoverage) != len(requiredPortableCapabilityIDs) {
 		return errors.New("interop capability coverage must contain every portable capability exactly once")
 	}
-	var profiles interopProfiles
-	profilePath := filepath.Join(repoRoot, matrix.ProfilePath)
-	if err := decodeStrictJSONFile(profilePath, &profiles); err != nil {
-		return fmt.Errorf("parse %s: %w", matrix.ProfilePath, err)
-	}
-	if err := validateInteropProfiles(profiles); err != nil {
-		return fmt.Errorf("validate %s: %w", matrix.ProfilePath, err)
-	}
-	fmt.Printf("Go-reference interop matrix OK: %d directed cells, %d cases\n", len(matrix.Cells), len(matrix.Cases))
+	fmt.Printf("Go-reference Transport v2 interop matrix OK: %d evidenced cells, %d cases\n", len(matrix.Cells), len(matrix.Cases))
 	return nil
 }
 

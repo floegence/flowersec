@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/floegence/flowersec/flowersec-go/v2/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 )
 
 // ErrInvalidArtifact reports an invalid or forged opaque artifact handle.
@@ -47,6 +47,12 @@ type ArtifactLease struct {
 	artifact    Artifact
 	commitSpend func(context.Context) error
 }
+
+// String deliberately reveals no artifact or callback contents.
+func (ArtifactLease) String() string { return "Flowersec.ArtifactLease" }
+
+// GoString deliberately reveals no artifact or callback contents.
+func (ArtifactLease) GoString() string { return "flowersec.ArtifactLease" }
 
 // NewArtifactLease creates a single-use connection lease. commitSpend must
 // durably record SPENT before returning nil.

@@ -25,6 +25,7 @@ import type { CipherSuiteV2 } from "../v2/protocol.js";
 import { establishSessionV2, type SessionConfigV2, type SessionV2 } from "../v2/session.js";
 import { WebSocketBinaryTransport } from "../ws-client/binaryTransport.js";
 import { base64urlDecode } from "../utils/base64url.js";
+import { parseArtifact } from "../v2/opaqueArtifact.js";
 
 type Fixture = Readonly<{ positive: readonly Readonly<{ path_kind: "direct" | "tunnel"; artifact_json: string }>[] }>;
 const fixture = JSON.parse(readFileSync(new URL("../../../testdata/transport_v2/artifact_vectors.json", import.meta.url), "utf8")) as Fixture;
@@ -94,10 +95,10 @@ describe("Node Transport v2 WSS production connector", () => {
     });
 
     let spendCount = 0;
-    const lease = createArtifactLeaseV2(localArtifact.raw, async () => { spendCount++; });
+    const lease = createArtifactLeaseV2(parseArtifact(localArtifact.raw), async () => { spendCount++; });
     const clientSessionPromise = connectNodeSessionV2(lease, {
       origin: "https://app.example",
-      webSocket: { ca: certificate },
+      tls: { ca: certificate },
     });
     const [client, server] = await Promise.all([clientSessionPromise, serverSessionPromise]);
     expect(upgradeProtocol).toBe(protocol);

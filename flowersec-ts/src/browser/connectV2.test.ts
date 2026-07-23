@@ -21,7 +21,12 @@ import {
   type BrowserPreparedCandidateV2,
 } from "./connectV2.js";
 import { wrapArtifact } from "../v2/opaqueArtifact.js";
-import { AbortError, FlowersecError, TimeoutError } from "../utils/errors.js";
+import {
+  AbortError,
+  ConnectError,
+  TimeoutError,
+  connectErrorDetailsInternal,
+} from "../utils/errors.js";
 
 const fixture = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/artifact_vectors.json", import.meta.url), "utf8"),
@@ -109,8 +114,6 @@ describe("browser SessionV2 equal-candidate connector", () => {
       idleTimeoutMs: 60_000,
     });
     await expect(connector.connect()).rejects.toMatchObject({
-      path: "direct",
-      stage: "validate",
       code: "invalid_input",
     });
     expect(connector.state).toBe("established");
@@ -133,14 +136,12 @@ describe("browser SessionV2 equal-candidate connector", () => {
     await eventually(() => expect(events).toContain("ready:w1"));
     ready.resolve();
     await expect(connecting).rejects.toMatchObject({
-      name: "FlowersecError",
-      path: "direct",
-      stage: "handshake",
-      code: "credential_commit_failed",
-    } satisfies Partial<FlowersecError>);
+      name: "ConnectError",
+      code: "credential_spend_failed",
+    } satisfies Partial<ConnectError>);
     expect(events).toEqual(["ready:w1", "spend", "close:w1"]);
     expect(connector.state).toBe("terminated");
-    await expect(connector.connect()).rejects.toThrow("already claimed");
+    await expect(connector.connect()).rejects.toMatchObject({ code: "invalid_input" });
   });
 
   test("applies artifact establish deadline before spend and leaves the durable lease recoverable", async () => {
@@ -173,12 +174,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     });
     deadline.abort(new Error("establish timeout"));
     await expect(connecting).rejects.toMatchObject({
-      path: "direct",
-      stage: "connect",
       code: "timeout",
-      diagnostics: expect.arrayContaining([
-        expect.objectContaining({ stage: "close", code: "timeout" }),
-      ]),
     });
     expect(events).not.toContain("spend");
     expect(events.some((event) => event.startsWith("commit:"))).toBe(false);
@@ -216,12 +212,10 @@ describe("browser SessionV2 equal-candidate connector", () => {
 
     const failure = await connector.connect().catch((error: unknown) => error);
     expect(failure).toMatchObject({
-      name: "FlowersecError",
-      path: "direct",
-      stage: "validate",
+      name: "ConnectError",
       code: "timeout",
     });
-    expect((failure as Error).message).toContain("expired");
+    expect((failure as Error).message).not.toContain("expired");
     expect(events).toEqual([]);
   });
 
@@ -244,7 +238,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     await eventually(() => expect(events).toContain("ready:w1"));
     now = expires;
     ready.resolve();
-    await expect(connecting).rejects.toThrow("expired");
+    await expect(connecting).rejects.toMatchObject({ code: "timeout" });
     expect(events).not.toContain("spend");
     expect(events.some((event) => event.startsWith("commit:"))).toBe(false);
   });
@@ -267,7 +261,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     const connecting = connector.connect();
     await eventually(() => expect(events).toContain("ready:w1"));
     ready.resolve();
-    await expect(connecting).rejects.toThrow("expired");
+    await expect(connecting).rejects.toMatchObject({ code: "timeout" });
     expect(events.filter((event) => event === "spend")).toHaveLength(1);
     expect(events.some((event) => event.startsWith("commit:"))).toBe(false);
   });
@@ -295,8 +289,6 @@ describe("browser SessionV2 equal-candidate connector", () => {
     const connecting = connector.connect({ signal: controller.signal });
     ready.resolve();
     await expect(connecting).rejects.toMatchObject({
-      path: "direct",
-      stage: "attach",
       code: "canceled",
     });
     expect(events).not.toContain("spend");
@@ -322,8 +314,6 @@ describe("browser SessionV2 equal-candidate connector", () => {
     const connecting = connector.connect({ signal: controller.signal });
     ready.resolve();
     await expect(connecting).rejects.toMatchObject({
-      path: "direct",
-      stage: "handshake",
       code: "canceled",
     });
     expect(events).toContain("spend");
@@ -351,8 +341,6 @@ describe("browser SessionV2 equal-candidate connector", () => {
     const connecting = connector.connect({ signal: controller.signal });
     ready.resolve();
     await expect(connecting).rejects.toMatchObject({
-      path: "direct",
-      stage: "attach",
       code: "canceled",
     });
     expect(events).toContain("commit:w1");
@@ -386,16 +374,11 @@ describe("browser SessionV2 equal-candidate connector", () => {
     wtReady.resolve();
     const failure = await connecting.catch((error: unknown) => error);
     expect(failure).toMatchObject({
-      name: "FlowersecError",
-      path: "direct",
-      stage: "close",
+      name: "ConnectError",
       code: "not_connected",
-      diagnostics: expect.arrayContaining([
-        expect.objectContaining({ candidateId: "w1", carrier: "websocket", stage: "close", code: "not_connected" }),
-      ]),
     });
-    expect(failure).toBeInstanceOf(FlowersecError);
-    expect((failure as Error).message).toContain("abort failed: w1");
+    expect(failure).toBeInstanceOf(ConnectError);
+    expect((failure as Error).message).not.toContain("abort failed: w1");
     expect(events).toContain("close:t1");
     expect(events).not.toContain("spend");
     expect(connector.state).toBe("terminated");
@@ -426,18 +409,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     });
     wtReady.resolve();
     await expect(connecting).rejects.toMatchObject({
-      path: "direct",
-      stage: "close",
       code: "timeout",
-      diagnostics: expect.arrayContaining([
-        expect.objectContaining({
-          candidateId: "w1",
-          carrier: "websocket",
-          stage: "close",
-          code: "timeout",
-          message: expect.stringContaining("cleanup timeout"),
-        }),
-      ]),
     });
     expect(events).toContain("abort:w1");
     expect(events).toContain("close:t1");
@@ -500,12 +472,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     });
     controller.abort(new Error("candidate race canceled"));
     await expect(connecting).rejects.toMatchObject({
-      path: "direct",
-      stage: "connect",
       code: "canceled",
-      diagnostics: expect.arrayContaining([
-        expect.objectContaining({ stage: "close", code: "canceled" }),
-      ]),
     });
     expect(connector.state).toBe("terminated");
     expect(events).toContain("abort:w1");
@@ -527,7 +494,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     const connecting = connector.connect();
     await eventually(() => expect(events).toContain("ready:w1"));
     ready.resolve();
-    await expect(connecting).rejects.toThrow("durability failed");
+    await expect(connecting).rejects.toMatchObject({ code: "credential_spend_failed" });
     expect(events).toContain("spend");
     expect(connector.state).toBe("terminated");
   });
@@ -548,13 +515,9 @@ describe("browser SessionV2 equal-candidate connector", () => {
         loserCloseTimeoutMs: 20,
       });
 
-      const failure = await connector.connect().catch((error: unknown) => error) as FlowersecError;
+      const failure = await connector.connect().catch((error: unknown) => error) as ConnectError;
       expect(failure).toMatchObject({
-        stage: "handshake",
-        code: "credential_commit_failed",
-        diagnostics: expect.arrayContaining([
-          expect.objectContaining({ stage: "close", code: "not_connected" }),
-        ]),
+        code: "credential_spend_failed",
       });
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -577,19 +540,11 @@ describe("browser SessionV2 equal-candidate connector", () => {
         loserCloseTimeoutMs: 20,
       });
 
-      const failurePromise = connector.connect().catch((error: unknown) => error) as Promise<FlowersecError>;
+      const failurePromise = connector.connect().catch((error: unknown) => error) as Promise<ConnectError>;
       await vi.advanceTimersByTimeAsync(20);
       const failure = await failurePromise;
       expect(failure).toMatchObject({
-        stage: "handshake",
-        code: "credential_commit_failed",
-        diagnostics: expect.arrayContaining([
-          expect.objectContaining({
-            stage: "close",
-            code: "timeout",
-            message: expect.stringContaining("prepared abort failed"),
-          }),
-        ]),
+        code: "credential_spend_failed",
       });
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -614,10 +569,8 @@ describe("browser SessionV2 equal-candidate connector", () => {
     await eventually(() => expect(events).toContain("ready:w1"));
     ready.resolve();
     await expect(connecting).rejects.toMatchObject({
-      name: "FlowersecError",
-      path: "direct",
-      stage: "attach",
-      code: "attach_failed",
+      name: "ConnectError",
+      code: "connection_failed",
     });
   });
 
@@ -639,9 +592,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     await eventually(() => expect(events).toContain("ready:w1"));
     ready.resolve();
     await expect(connecting).rejects.toMatchObject({
-      name: "FlowersecError",
-      path: "direct",
-      stage: "handshake",
+      name: "ConnectError",
       code: "handshake_failed",
     });
   });
@@ -661,21 +612,22 @@ describe("browser SessionV2 equal-candidate connector", () => {
     const connecting = connector.connect();
     await eventually(() => expect(events).toContain("ready:w1"));
     ready.reject(new Error("dial refused"));
-    const failure = await connecting.catch((error: unknown) => error) as FlowersecError;
+    const failure = await connecting.catch((error: unknown) => error) as ConnectError;
     expect(failure).toMatchObject({
-      path: "direct",
-      stage: "connect",
-      code: "dial_failed",
-      diagnostics: [{
+      code: "connection_failed",
+    });
+    const details = connectErrorDetailsInternal(failure);
+    expect(details.diagnostics).toEqual([{
         candidateId: "w1",
         carrier: "websocket",
         stage: "connect",
         code: "dial_failed",
         message: "dial refused",
-      }],
-    });
-    expect(Object.isFrozen(failure.diagnostics)).toBe(true);
-    expect(Object.isFrozen(failure.diagnostics[0])).toBe(true);
+      }]);
+    expect(Object.isFrozen(details.diagnostics)).toBe(true);
+    expect(Object.isFrozen(details.diagnostics[0])).toBe(true);
+    expect("diagnostics" in failure).toBe(false);
+    expect("cause" in failure).toBe(false);
   });
 
   test("bounds candidate diagnostic messages by UTF-8 bytes", async () => {
@@ -691,9 +643,10 @@ describe("browser SessionV2 equal-candidate connector", () => {
 
     const connecting = connector.connect();
     ready.reject(new Error(`dial refused: ${"界".repeat(1_000)}`));
-    const failure = await connecting.catch((error: unknown) => error) as FlowersecError;
-    expect(failure.diagnostics[0]!.message).toContain("dial refused");
-    expect(new TextEncoder().encode(failure.diagnostics[0]!.message).length).toBeLessThanOrEqual(1_024);
+    const failure = await connecting.catch((error: unknown) => error) as ConnectError;
+    const diagnostic = connectErrorDetailsInternal(failure).diagnostics[0]!;
+    expect(diagnostic.message).toContain("dial refused");
+    expect(new TextEncoder().encode(diagnostic.message).length).toBeLessThanOrEqual(1_024);
   });
 
   test("preserves candidate create timeout at the connect stage", async () => {
@@ -709,10 +662,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     });
 
     await expect(connector.connect()).rejects.toMatchObject({
-      path: "direct",
-      stage: "connect",
       code: "timeout",
-      diagnostics: [expect.objectContaining({ stage: "connect", code: "timeout" })],
     });
   });
 
@@ -730,10 +680,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     const connecting = connector.connect();
     ready.reject(new AbortError("candidate ready canceled"));
     await expect(connecting).rejects.toMatchObject({
-      path: "direct",
-      stage: "connect",
       code: "canceled",
-      diagnostics: [expect.objectContaining({ stage: "connect", code: "canceled" })],
     });
   });
 
@@ -750,9 +697,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     });
 
     await expect(connector.connect()).rejects.toMatchObject({
-      path: "direct",
-      stage: "validate",
-      code: "invalid_option",
+      code: "invalid_options",
     });
     expect(events).toEqual([]);
   });
@@ -769,9 +714,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     });
 
     await expect(connector.connect()).rejects.toMatchObject({
-      path: "direct",
-      stage: "validate",
-      code: "invalid_option",
+      code: "invalid_options",
     });
   });
 
@@ -790,9 +733,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     });
 
     await expect(connector.connect()).rejects.toMatchObject({
-      path: "direct",
-      stage: "validate",
-      code: "transport_policy_denied",
+      code: "connection_failed",
     });
   });
 
@@ -807,9 +748,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     });
 
     await expect(connector.connect()).rejects.toMatchObject({
-      path: "direct",
-      stage: "validate",
-      code: "invalid_option",
+      code: "invalid_options",
     });
   });
 });

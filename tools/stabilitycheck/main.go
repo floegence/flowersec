@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,8 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -701,7 +704,14 @@ func verifyGo(repoRoot string, m *manifest) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	goMod, goTest, err := renderGoVerifier(filepath.Join(repoRoot, "flowersec-go"), m)
+	goModulePath := filepath.Join(repoRoot, "flowersec-go")
+	version := goVerifierModuleVersion(m.Go.ModulePath)
+	proxyRoot := filepath.Join(tmpDir, "proxy")
+	if err := writeLocalGoModuleProxy(proxyRoot, goModulePath, m.Go.ModulePath, version); err != nil {
+		return err
+	}
+
+	goMod, goTest, err := renderGoVerifier(m)
 	if err != nil {
 		return err
 	}
@@ -714,7 +724,12 @@ func verifyGo(repoRoot string, m *manifest) error {
 
 	cmd := exec.Command("go", "test", "-mod=mod", "./...")
 	cmd.Dir = tmpDir
-	cmd.Env = withRepoGoToolchain()
+	cmd.Env = append(withRepoGoToolchain(),
+		"GOWORK=off",
+		"GOMODCACHE="+filepath.Join(tmpDir, "modcache"),
+		"GONOSUMDB="+m.Go.ModulePath,
+		"GOPROXY=file://"+filepath.ToSlash(proxyRoot)+",https://proxy.golang.org,direct",
+	)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -725,7 +740,86 @@ func verifyGo(repoRoot string, m *manifest) error {
 	return nil
 }
 
-func renderGoVerifier(goModulePath string, m *manifest) (string, string, error) {
+func goVerifierModuleVersion(modulePath string) string {
+	if match := regexp.MustCompile(`/v([2-9][0-9]*)$`).FindStringSubmatch(modulePath); match != nil {
+		return "v" + match[1] + ".0.0"
+	}
+	return "v0.0.0"
+}
+
+func writeLocalGoModuleProxy(proxyRoot, sourceRoot, modulePath, version string) error {
+	versionRoot := filepath.Join(proxyRoot, filepath.FromSlash(modulePath), "@v")
+	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
+		return err
+	}
+	moduleFile, err := os.ReadFile(filepath.Join(sourceRoot, "go.mod"))
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(versionRoot, version+".mod"), moduleFile, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(versionRoot, "list"), []byte(version+"\n"), 0o644); err != nil {
+		return err
+	}
+	info := []byte(`{"Version":"` + version + `","Time":"2026-01-01T00:00:00Z"}` + "\n")
+	if err := os.WriteFile(filepath.Join(versionRoot, version+".info"), info, 0o644); err != nil {
+		return err
+	}
+	archive, err := os.Create(filepath.Join(versionRoot, version+".zip"))
+	if err != nil {
+		return err
+	}
+	zipWriter := zip.NewWriter(archive)
+	prefix := modulePath + "@" + version + "/"
+	walkErr := filepath.WalkDir(sourceRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(sourceRoot, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if relative == "vendor" || relative == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+		header.Name = prefix + filepath.ToSlash(relative)
+		header.Method = zip.Deflate
+		writer, err := zipWriter.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(writer, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+	zipCloseErr := zipWriter.Close()
+	archiveCloseErr := archive.Close()
+	return errors.Join(walkErr, zipCloseErr, archiveCloseErr)
+}
+
+func renderGoVerifier(m *manifest) (string, string, error) {
 	var imports strings.Builder
 	var checks strings.Builder
 	interfaceGroups := make([]goInterfaceGuard, 0)
@@ -772,11 +866,7 @@ func renderGoVerifier(goModulePath string, m *manifest) (string, string, error) 
 		fmt.Fprintf(&checks, "\tvar _ %s = (manifestInterface%d)(nil)\n", group.receiver, index)
 	}
 
-	requireVersion := "v0.0.0"
-	if match := regexp.MustCompile(`/v([2-9][0-9]*)$`).FindStringSubmatch(m.Go.ModulePath); match != nil {
-		requireVersion = "v" + match[1] + ".0.0"
-	}
-	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.26.5\n\nrequire %s %s\n\nreplace %s => %s\n", m.Go.ModulePath, requireVersion, m.Go.ModulePath, filepath.ToSlash(goModulePath))
+	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.26.5\n\nrequire %s %s\n", m.Go.ModulePath, goVerifierModuleVersion(m.Go.ModulePath))
 	goTest := fmt.Sprintf("package flowersecstabilitychecktmp\n\nimport (\n%s)\n\nfunc TestContractSymbolsCompile(t *testing.T) {\n%s}\n", imports.String()+"\t\"testing\"\n", checks.String())
 	return goMod, goTest, nil
 }

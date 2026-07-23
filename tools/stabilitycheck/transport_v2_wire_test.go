@@ -63,7 +63,7 @@ func TestTransportV2WireFixtureRegistryRejectsFalseApplicability(t *testing.T) {
 		{
 			name: "consumer source drift",
 			mutate: func(copy *transportV2Contract) {
-				copy.WireFixtures[0].Consumers[0].Source = "flowersec-go/artifactv2/artifact.go"
+				copy.WireFixtures[0].Consumers[0].Source = "flowersec-go/internal/artifactv2/artifact.go"
 			},
 			wantErr: "exact required consumer source",
 		},

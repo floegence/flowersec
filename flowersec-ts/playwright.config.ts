@@ -13,11 +13,5 @@ export default defineConfig({
       name: "chromium",
       use: { browserName: "chromium" },
     },
-    {
-      name: "webkit-smoke",
-      testMatch: ["proxy-smoke.spec.ts", "window-bridge.spec.ts"],
-      grep: /@webkit-smoke/,
-      use: { browserName: "webkit" },
-    },
   ],
 });

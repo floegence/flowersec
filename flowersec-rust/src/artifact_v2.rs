@@ -20,25 +20,25 @@ const MAX_ADMISSION_REASON_BYTES: usize = 64;
 /// session APIs without learning carrier credentials or cryptographic material.
 ///
 /// ```
-/// use flowersec::artifact_v2::Artifact;
+/// use flowersec::Artifact;
 /// let raw = br#"{\"v\":2}"#;
 /// assert!(Artifact::parse(raw).is_err());
 /// ```
 ///
 /// ```compile_fail
-/// use flowersec::artifact_v2::Artifact;
+/// use flowersec::Artifact;
 /// let artifact = Artifact::default();
 /// ```
 ///
 /// ```compile_fail
-/// use flowersec::artifact_v2::Artifact;
+/// use flowersec::Artifact;
 /// fn serialize(artifact: &Artifact) {
 ///     let _ = serde_json::to_string(artifact);
 /// }
 /// ```
 ///
 /// ```compile_fail
-/// use flowersec::artifact_v2::Artifact;
+/// use flowersec::Artifact;
 /// fn expose(artifact: &Artifact) {
 ///     let _ = artifact.encode();
 /// }
@@ -57,17 +57,7 @@ pub enum ArtifactError {
     #[error("Flowersec v2 artifact is too large")]
     TooLarge,
     #[error("invalid Flowersec v2 artifact")]
-    InvalidArtifact,
-    #[error("invalid Flowersec v2 candidate")]
-    InvalidCandidate,
-    #[error("invalid FSB2 admission request")]
-    InvalidFsb2,
-    #[error("FSB2 canonical payload is too large")]
-    Fsb2PayloadTooLarge,
-    #[error("invalid FSA2 admission response")]
-    InvalidFsa2,
-    #[error("unknown FSA2 admission reason")]
-    UnknownAdmissionReason,
+    Invalid,
 }
 
 #[derive(Debug)]
@@ -86,9 +76,9 @@ impl Artifact {
         }
         reject_duplicate_json_keys(input)?;
         let wire: ArtifactWire =
-            serde_json::from_slice(input).map_err(|_| ArtifactError::InvalidArtifact)?;
+            serde_json::from_slice(input).map_err(|_| ArtifactError::Invalid)?;
         validate(&wire)?;
-        let canonical = serde_json::to_vec(&wire).map_err(|_| ArtifactError::InvalidArtifact)?;
+        let canonical = serde_json::to_vec(&wire).map_err(|_| ArtifactError::Invalid)?;
         if canonical.len() > MAX_ARTIFACT_BYTES {
             return Err(ArtifactError::TooLarge);
         }
@@ -114,13 +104,12 @@ impl Artifact {
             .iter()
             .any(|candidate| candidate.id == chosen_candidate_id)
         {
-            return Err(ArtifactError::InvalidFsb2);
+            return Err(ArtifactError::Invalid);
         }
-        let candidate_json =
-            serde_json::to_vec(&candidates).map_err(|_| ArtifactError::InvalidFsb2)?;
+        let candidate_json = serde_json::to_vec(&candidates).map_err(|_| ArtifactError::Invalid)?;
         let candidate_hash = hash_canonical(b"flowersec-v2-candidates\0", &candidate_json);
         let session_hash =
-            decode32(&self.0.wire.session.contract_hash_b64u).ok_or(ArtifactError::InvalidFsb2)?;
+            decode32(&self.0.wire.session.contract_hash_b64u).ok_or(ArtifactError::Invalid)?;
         let (path_code, payload) = match &self.0.wire.path {
             PathWire::Direct {
                 rendezvous_group_id,
@@ -140,7 +129,7 @@ impl Artifact {
                     routing_token: routing_token.clone(),
                     session_contract_hash_b64u: URL_SAFE_NO_PAD.encode(session_hash),
                 })
-                .map_err(|_| ArtifactError::InvalidFsb2)?,
+                .map_err(|_| ArtifactError::Invalid)?,
             ),
             PathWire::Tunnel {
                 rendezvous_group_id,
@@ -164,11 +153,11 @@ impl Artifact {
                     role: *role,
                     session_contract_hash_b64u: URL_SAFE_NO_PAD.encode(session_hash),
                 })
-                .map_err(|_| ArtifactError::InvalidFsb2)?,
+                .map_err(|_| ArtifactError::Invalid)?,
             ),
         };
         if payload.len() > MAX_CANONICAL_FSB2_PAYLOAD {
-            return Err(ArtifactError::Fsb2PayloadTooLarge);
+            return Err(ArtifactError::Invalid);
         }
         let mut raw = Vec::with_capacity(12 + payload.len());
         raw.extend_from_slice(b"FSB2");
@@ -224,13 +213,12 @@ impl Artifact {
                     },
                     candidate,
                 )?;
-                let url = url::Url::parse(&normalized_url)
-                    .map_err(|_| ArtifactError::InvalidCandidate)?;
+                let url = url::Url::parse(&normalized_url).map_err(|_| ArtifactError::Invalid)?;
                 Ok(RawQuicCandidatePlan {
                     id: candidate.id.clone(),
                     host: url
                         .host_str()
-                        .ok_or(ArtifactError::InvalidCandidate)?
+                        .ok_or(ArtifactError::Invalid)?
                         .trim_start_matches('[')
                         .trim_end_matches(']')
                         .to_owned(),
@@ -239,16 +227,15 @@ impl Artifact {
             })
             .collect::<Result<Vec<_>, ArtifactError>>()?;
         if raw_quic_candidates.is_empty() {
-            return Err(ArtifactError::InvalidCandidate);
+            return Err(ArtifactError::Invalid);
         }
         let session = &self.0.wire.session;
-        let psk = decode32(&session.e2ee_psk_b64u).ok_or(ArtifactError::InvalidArtifact)?;
-        let contract_hash =
-            decode32(&session.contract_hash_b64u).ok_or(ArtifactError::InvalidArtifact)?;
+        let psk = decode32(&session.e2ee_psk_b64u).ok_or(ArtifactError::Invalid)?;
+        let contract_hash = decode32(&session.contract_hash_b64u).ok_or(ArtifactError::Invalid)?;
         let suite = match session.default_suite {
             1 => crate::protocol_v2::CipherSuiteV2::ChaCha20Poly1305,
             2 => crate::protocol_v2::CipherSuiteV2::Aes256Gcm,
-            _ => return Err(ArtifactError::InvalidArtifact),
+            _ => return Err(ArtifactError::Invalid),
         };
         Ok(RawQuicDialPlan {
             candidates: raw_quic_candidates,
@@ -424,18 +411,18 @@ pub(crate) fn decode_fsa2(
     reasons: &[&str],
 ) -> Result<AdmissionResponse, ArtifactError> {
     if raw.len() < 8 || &raw[..4] != b"FSA2" || raw[4] != 2 {
-        return Err(ArtifactError::InvalidFsa2);
+        return Err(ArtifactError::Invalid);
     }
     let reason_len = u16::from_be_bytes([raw[6], raw[7]]) as usize;
     if reason_len > MAX_ADMISSION_REASON_BYTES || raw.len() != 8 + reason_len {
-        return Err(ArtifactError::InvalidFsa2);
+        return Err(ArtifactError::Invalid);
     }
-    let reason = std::str::from_utf8(&raw[8..]).map_err(|_| ArtifactError::InvalidFsa2)?;
+    let reason = std::str::from_utf8(&raw[8..]).map_err(|_| ArtifactError::Invalid)?;
     let status = match raw[5] {
         0 if reason.is_empty() => AdmissionStatus::Success,
         1 | 2 if valid_reason(reason) => {
             if !reasons.contains(&reason) {
-                return Err(ArtifactError::UnknownAdmissionReason);
+                return Err(ArtifactError::Invalid);
             }
             if raw[5] == 1 {
                 AdmissionStatus::Reject
@@ -443,7 +430,7 @@ pub(crate) fn decode_fsa2(
                 AdmissionStatus::Retryable
             }
         }
-        _ => return Err(ArtifactError::InvalidFsa2),
+        _ => return Err(ArtifactError::Invalid),
     };
     Ok(AdmissionResponse {
         status,
@@ -465,10 +452,8 @@ fn reject_duplicate_json_keys(input: &[u8]) -> Result<(), ArtifactError> {
     let mut deserializer = serde_json::Deserializer::from_slice(input);
     DuplicateKeySeed
         .deserialize(&mut deserializer)
-        .map_err(|_| ArtifactError::InvalidArtifact)?;
-    deserializer
-        .end()
-        .map_err(|_| ArtifactError::InvalidArtifact)
+        .map_err(|_| ArtifactError::Invalid)?;
+    deserializer.end().map_err(|_| ArtifactError::Invalid)
 }
 
 struct DuplicateKeySeed;
@@ -566,8 +551,8 @@ type SpendFn = Box<dyn FnMut() -> SpendFuture + Send>;
 pub enum ArtifactSpendError {
     #[error("artifact spend has already been committed")]
     AlreadyCommitted,
-    #[error("artifact spend commit failed: {0}")]
-    Commit(String),
+    #[error("artifact spend commit failed")]
+    CommitFailed,
 }
 
 /// Owns an artifact until the caller durably records its successful spend.
@@ -709,7 +694,7 @@ struct CorrelationTagWire {
 
 fn validate(wire: &ArtifactWire) -> Result<(), ArtifactError> {
     if wire.v != 2 || wire.profile != "flowersec/2" {
-        return Err(ArtifactError::InvalidArtifact);
+        return Err(ArtifactError::Invalid);
     }
     validate_session(&wire.session)?;
     let (kind, group, audience, candidates) = match &wire.path {
@@ -720,7 +705,7 @@ fn validate(wire: &ArtifactWire) -> Result<(), ArtifactError> {
             candidates,
         } => {
             if !valid_ascii(routing_token, 8192) {
-                return Err(ArtifactError::InvalidArtifact);
+                return Err(ArtifactError::Invalid);
             }
             ("direct", rendezvous_group_id, listener_audience, candidates)
         }
@@ -739,17 +724,17 @@ fn validate(wire: &ArtifactWire) -> Result<(), ArtifactError> {
                 || local_endpoint_instance_id == expected_peer_endpoint_instance_id
                 || !valid_ascii(token, 8192)
             {
-                return Err(ArtifactError::InvalidArtifact);
+                return Err(ArtifactError::Invalid);
             }
             ("tunnel", rendezvous_group_id, listener_audience, candidates)
         }
     };
     if !valid_id(group, 128) || !valid_id(audience, 128) {
-        return Err(ArtifactError::InvalidArtifact);
+        return Err(ArtifactError::Invalid);
     }
     validate_candidates(kind, candidates)?;
     if wire.scoped.len() > 8 {
-        return Err(ArtifactError::InvalidArtifact);
+        return Err(ArtifactError::Invalid);
     }
     let mut scopes = HashSet::new();
     for scope in &wire.scoped {
@@ -758,17 +743,17 @@ fn validate(wire: &ArtifactWire) -> Result<(), ArtifactError> {
             || !scopes.insert(&scope.scope)
             || serde_json::to_vec(&scope.payload).map_or(true, |v| v.len() > 4096)
         {
-            return Err(ArtifactError::InvalidArtifact);
+            return Err(ArtifactError::Invalid);
         }
     }
     if wire.correlation.v != 2 || wire.correlation.tags.len() > 8 {
-        return Err(ArtifactError::InvalidArtifact);
+        return Err(ArtifactError::Invalid);
     }
     let mut tags = HashSet::new();
     for tag in &wire.correlation.tags {
         if !valid_lower_id(&tag.key, 32) || !valid_ascii(&tag.value, 128) || !tags.insert(&tag.key)
         {
-            return Err(ArtifactError::InvalidArtifact);
+            return Err(ArtifactError::Invalid);
         }
     }
     Ok(())
@@ -783,32 +768,32 @@ fn validate_session(s: &SessionWire) -> Result<(), ArtifactError> {
         || !(1..=128).contains(&s.max_inbound_streams)
         || s.selected_features != 0
     {
-        return Err(ArtifactError::InvalidArtifact);
+        return Err(ArtifactError::Invalid);
     }
     if decode32(&s.e2ee_psk_b64u).is_none() || decode32(&s.contract_hash_b64u).is_none() {
-        return Err(ArtifactError::InvalidArtifact);
+        return Err(ArtifactError::Invalid);
     }
     if s.allowed_suites.is_empty()
         || !s.allowed_suites.windows(2).all(|w| w[0] < w[1])
         || !s.allowed_suites.iter().all(|x| matches!(x, 1 | 2))
         || !s.allowed_suites.contains(&s.default_suite)
     {
-        return Err(ArtifactError::InvalidArtifact);
+        return Err(ArtifactError::Invalid);
     }
     let canonical = serde_json::json!({"allowed_suites":s.allowed_suites,"channel_id":s.channel_id,"default_suite":s.default_suite,"establish_timeout_seconds":s.establish_timeout_seconds,"idle_timeout_seconds":s.idle_timeout_seconds,"max_inbound_streams":s.max_inbound_streams,"profile":"flowersec/2","rekey_completion_timeout_seconds":s.rekey_completion_timeout_seconds,"rekey_prepare_timeout_seconds":s.rekey_prepare_timeout_seconds,"selected_features":s.selected_features});
-    let bytes = serde_json::to_vec(&canonical).map_err(|_| ArtifactError::InvalidArtifact)?;
+    let bytes = serde_json::to_vec(&canonical).map_err(|_| ArtifactError::Invalid)?;
     let mut preimage = b"flowersec-v2-session-contract\0".to_vec();
     preimage.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
     preimage.extend_from_slice(&bytes);
     if Sha256::digest(preimage)[..] != decode32(&s.contract_hash_b64u).unwrap() {
-        return Err(ArtifactError::InvalidArtifact);
+        return Err(ArtifactError::Invalid);
     }
     Ok(())
 }
 
 fn validate_candidates(kind: &str, candidates: &[CandidateWire]) -> Result<(), ArtifactError> {
     if candidates.is_empty() || candidates.len() > 4 {
-        return Err(ArtifactError::InvalidCandidate);
+        return Err(ArtifactError::Invalid);
     }
     let mut ids = HashSet::new();
     let mut tuples = HashSet::new();
@@ -819,14 +804,14 @@ fn validate_candidates(kind: &str, candidates: &[CandidateWire]) -> Result<(), A
             || c.url.len() > 2048
             || c.wire_profile != format!("flowersec-{kind}/2")
         {
-            return Err(ArtifactError::InvalidCandidate);
+            return Err(ArtifactError::Invalid);
         }
         let normalized = normalize_url(kind, c)?;
         if !tuples.insert(format!(
             "{:?}\0{}\0{}",
             c.carrier, normalized, c.wire_profile
         )) {
-            return Err(ArtifactError::InvalidCandidate);
+            return Err(ArtifactError::Invalid);
         }
     }
     Ok(())
@@ -834,11 +819,11 @@ fn validate_candidates(kind: &str, candidates: &[CandidateWire]) -> Result<(), A
 
 fn normalize_url(kind: &str, c: &CandidateWire) -> Result<String, ArtifactError> {
     if c.url.contains(['\\', '?', '#', '%']) {
-        return Err(ArtifactError::InvalidCandidate);
+        return Err(ArtifactError::Invalid);
     }
-    let mut url = url::Url::parse(&c.url).map_err(|_| ArtifactError::InvalidCandidate)?;
+    let mut url = url::Url::parse(&c.url).map_err(|_| ArtifactError::Invalid)?;
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(ArtifactError::InvalidCandidate);
+        return Err(ArtifactError::Invalid);
     }
     let (scheme, path) = match c.carrier {
         CarrierWire::Websocket => ("wss", format!("/flowersec/v2/{kind}")),
@@ -851,11 +836,10 @@ fn normalize_url(kind: &str, c: &CandidateWire) -> Result<String, ArtifactError>
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        return Err(ArtifactError::InvalidCandidate);
+        return Err(ArtifactError::Invalid);
     }
     if url.port() == Some(443) {
-        url.set_port(None)
-            .map_err(|_| ArtifactError::InvalidCandidate)?;
+        url.set_port(None).map_err(|_| ArtifactError::Invalid)?;
     }
     url.set_path(&path);
     url.set_query(None);
@@ -952,7 +936,7 @@ mod tests {
             }
             assert!(matches!(
                 artifact.encode_fsb2("absent"),
-                Err(ArtifactError::InvalidFsb2)
+                Err(ArtifactError::Invalid)
             ));
         }
     }
@@ -1007,9 +991,9 @@ mod tests {
             let error =
                 decode_fsa2(&decode_hex(vector["value"].as_str().unwrap()), &reasons).unwrap_err();
             match vector["error_code"].as_str().unwrap() {
-                "invalid_fsa2" => assert!(matches!(error, ArtifactError::InvalidFsa2)),
+                "invalid_fsa2" => assert!(matches!(error, ArtifactError::Invalid)),
                 "unknown_admission_reason" => {
-                    assert!(matches!(error, ArtifactError::UnknownAdmissionReason))
+                    assert!(matches!(error, ArtifactError::Invalid))
                 }
                 code => panic!("unexpected shared error code {code}"),
             }
@@ -1018,7 +1002,7 @@ mod tests {
         trailing.push(0);
         assert!(matches!(
             decode_fsa2(&trailing, &reasons),
-            Err(ArtifactError::InvalidFsa2)
+            Err(ArtifactError::Invalid)
         ));
     }
 
@@ -1041,7 +1025,7 @@ mod tests {
             let n = observed.fetch_add(1, Ordering::SeqCst);
             async move {
                 if n == 0 {
-                    Err(ArtifactSpendError::Commit("disk".into()))
+                    Err(ArtifactSpendError::CommitFailed)
                 } else {
                     Ok(())
                 }
@@ -1049,7 +1033,7 @@ mod tests {
         });
         assert!(matches!(
             lease.commit_spend().await,
-            Err(ArtifactSpendError::Commit(_))
+            Err(ArtifactSpendError::CommitFailed)
         ));
         assert!(!lease.is_committed());
         assert!(lease.commit_spend().await.is_ok());
