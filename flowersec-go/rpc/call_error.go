@@ -1,7 +1,7 @@
 package rpc
 
 import (
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
 )
 
 // CallError represents an RPC-layer error returned in a response envelope.

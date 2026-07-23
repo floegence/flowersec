@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
 	"github.com/gorilla/websocket"
 )
 

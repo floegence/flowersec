@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
+	e2eev1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/e2ee/v1"
 )
 
 func TestParseSuite(t *testing.T) {

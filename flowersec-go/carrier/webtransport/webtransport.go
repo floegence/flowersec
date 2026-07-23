@@ -15,9 +15,9 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/floegence/flowersec/flowersec-go/carrier"
-	carrierlife "github.com/floegence/flowersec/flowersec-go/carrier/internal/lifecycle"
-	"github.com/floegence/flowersec/flowersec-go/carrier/rawquic"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
+	carrierlife "github.com/floegence/flowersec/flowersec-go/v2/carrier/internal/lifecycle"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic"
 	quic "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	wt "github.com/quic-go/webtransport-go"

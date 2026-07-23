@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
 )
 
 // DirectHandlerOptions configures an HTTP handler for direct (no-tunnel) server endpoints.

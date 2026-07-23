@@ -5,7 +5,7 @@ import (
 	stdhttp "net/http"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 func NewArtifactHandler(opts ArtifactHandlerOptions) stdhttp.Handler {

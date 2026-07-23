@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
 )
 
 func TestServeTunnel_MissingServer(t *testing.T) {

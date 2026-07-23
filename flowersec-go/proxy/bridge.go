@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
+	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
 )
 
 type StreamOpener interface {

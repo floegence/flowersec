@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve"
 )
 
 func TestRegisterEnforcesIndependentConcurrentStreamLimit(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/idna15"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/idna15"
 	"golang.org/x/net/publicsuffix"
 )
 

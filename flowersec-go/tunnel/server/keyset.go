@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
 )
 
 type IssuerKeyset struct {

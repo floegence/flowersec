@@ -10,14 +10,14 @@ import (
 	"os"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
-	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
-	"github.com/floegence/flowersec/flowersec-go/internal/securefile"
-	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/cmdutil"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/securefile"
+	fsversion "github.com/floegence/flowersec/flowersec-go/v2/internal/version"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 var (

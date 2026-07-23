@@ -8,8 +8,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/carrier"
-	"github.com/floegence/flowersec/flowersec-go/protocolv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolv2"
 )
 
 type handshakeMaterial struct {

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
+	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve"
 	"github.com/gorilla/websocket"
 )
 

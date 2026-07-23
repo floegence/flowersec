@@ -7,10 +7,10 @@ import (
 	"io"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 )
 
 // StreamHandler handles a single accepted stream.

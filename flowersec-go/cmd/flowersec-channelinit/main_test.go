@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 func TestVersionFlag(t *testing.T) {

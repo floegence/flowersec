@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
 )
 
 func TestTransportSecurityPresets(t *testing.T) {

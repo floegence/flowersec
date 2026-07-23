@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
 )
 
 // Client speaks the stable HTTP and WebSocket proxy stream protocols over Flowersec streams.

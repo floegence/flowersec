@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	directv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/direct/v1"
 )
 
 func TestConnectTunnel_RejectsInvalidEndpointInstanceID(t *testing.T) {

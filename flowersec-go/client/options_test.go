@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
-	"github.com/floegence/flowersec/flowersec-go/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/contextutil"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
 )
 
 func TestWithHeader_MergesAndOverridesByKey(t *testing.T) {

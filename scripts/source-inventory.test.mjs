@@ -649,7 +649,10 @@ func main() {
       fs.copyFileSync(path.join(sourceRoot, repositoryRelative), destination);
     }
     const archive = path.join(root, `${relative.replaceAll("/", "-")}.zip`);
-    run("go", ["run", ".", modulePath, "v0.0.0-securityinventory", stagedModuleRoot, archive], {
+    const archiveVersion = modulePath.endsWith("/v2")
+      ? "v2.0.0-securityinventory"
+      : "v0.0.0-securityinventory";
+    run("go", ["run", ".", modulePath, archiveVersion, stagedModuleRoot, archive], {
       cwd: goZipTool,
       env: { GOWORK: "off" },
     });
@@ -658,7 +661,7 @@ func main() {
     run("unzip", ["-q", archive, "-d", extract]);
     const files = stripArchivePrefix(
       extractedFiles(extract),
-      `${modulePath}@v0.0.0-securityinventory`,
+      `${modulePath}@${archiveVersion}`,
     );
     assert.equal(files.has("go.mod"), true, `${relative} module zip missing go.mod`);
     if (relative === "flowersec-go") {

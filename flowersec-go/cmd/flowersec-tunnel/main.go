@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
-	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/observability/prom"
-	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/cmdutil"
+	fsversion "github.com/floegence/flowersec/flowersec-go/v2/internal/version"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability/prom"
+	"github.com/floegence/flowersec/flowersec-go/v2/tunnel/server"
 )
 
 var (

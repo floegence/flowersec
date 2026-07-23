@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
-	cpclient "github.com/floegence/flowersec/flowersec-go/controlplane/client"
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/client"
+	cpclient "github.com/floegence/flowersec/flowersec-go/v2/controlplane/client"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 // SourceKind identifies whether a connect artifact can be acquired more than once.

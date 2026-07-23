@@ -10,8 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/floegence/flowersec/flowersec-go/carrier"
-	"github.com/floegence/flowersec/flowersec-go/protocolv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolv2"
 )
 
 type encryptedStream struct {
@@ -938,6 +938,18 @@ func (s *encryptedStream) startSendRekey(transition uint64, epoch uint32) *pendi
 		armed:      make(chan struct{}),
 		done:       make(chan struct{}),
 	}
+	s.sendRekeyMu.Lock()
+	if s.sendRekey != nil {
+		s.sendRekeyMu.Unlock()
+		pending.complete()
+		s.session.fail(ErrSessionProtocol)
+		return pending
+	}
+	// Publish the pending send transition before the writer goroutine runs. A
+	// peer may initiate the same transition concurrently, and its old-epoch ACK
+	// must remain readable even if its key-update record arrives first.
+	s.sendRekey = pending
+	s.sendRekeyMu.Unlock()
 	go s.runSendRekey(pending)
 	return pending
 }
@@ -955,13 +967,18 @@ func (s *encryptedStream) canRekeySend() bool {
 func (s *encryptedStream) runSendRekey(pending *pendingStreamRekey) {
 	s.sendMu.Lock()
 	if !s.canRekeySend() {
+		s.sendRekeyMu.Lock()
+		if s.sendRekey == pending {
+			s.sendRekey = nil
+		}
+		s.sendRekeyMu.Unlock()
 		s.sendMu.Unlock()
 		close(pending.armed)
 		pending.complete()
 		return
 	}
 	s.sendRekeyMu.Lock()
-	if s.sendRekey != nil {
+	if s.sendRekey != pending {
 		s.sendRekeyMu.Unlock()
 		s.sendMu.Unlock()
 		close(pending.armed)

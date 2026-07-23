@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/floegence/flowersec/flowersec-go/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
 )
 
 var (

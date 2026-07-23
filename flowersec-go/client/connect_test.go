@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	directv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 const testConnectPSK = "Zm9vYmFyYmF6cXV4eHl6MDEyMzQ1Njc4OWFiY2RlZg"

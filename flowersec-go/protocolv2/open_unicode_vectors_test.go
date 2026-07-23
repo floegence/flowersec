@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode"
 
-	protocolv2 "github.com/floegence/flowersec/flowersec-go/protocolv2"
+	protocolv2 "github.com/floegence/flowersec/flowersec-go/v2/protocolv2"
 )
 
 func TestOpenUnicodeAndCanonicalMetadataVectors(t *testing.T) {

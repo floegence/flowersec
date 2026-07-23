@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
 )
 
 // SecureChannel wraps a BinaryTransport with E2EE record framing, buffering, and a net.Conn-compatible API.

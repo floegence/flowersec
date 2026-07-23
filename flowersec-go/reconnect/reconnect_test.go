@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
-	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
+	"github.com/floegence/flowersec/flowersec-go/v2/client"
+	"github.com/floegence/flowersec/flowersec-go/v2/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/v2/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
+	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
 )
 
 func TestOnceSourceConsumesArtifactOnce(t *testing.T) {

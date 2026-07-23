@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
-	"github.com/floegence/flowersec/flowersec-go/internal/channelid"
-	"github.com/floegence/flowersec/flowersec-go/internal/timeutil"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/channelid"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/timeutil"
 )
 
 // Prefix identifies the token format version.

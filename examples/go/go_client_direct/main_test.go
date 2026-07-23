@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	directv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 func TestRun_HelpIncludesExamplesAndExitCodes(t *testing.T) {

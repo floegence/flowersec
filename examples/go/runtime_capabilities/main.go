@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/floegence/flowersec/flowersec-go/session"
+	"github.com/floegence/flowersec/flowersec-go/v2/session"
 )
 
 func runtimeCapabilityOutput() (string, error) {

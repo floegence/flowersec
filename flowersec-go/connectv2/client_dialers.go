@@ -10,12 +10,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/admissionv2"
-	"github.com/floegence/flowersec/flowersec-go/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/carrier"
-	"github.com/floegence/flowersec/flowersec-go/carrier/rawquic"
-	carrierws "github.com/floegence/flowersec/flowersec-go/carrier/websocket"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/carrier/webtransport"
+	"github.com/floegence/flowersec/flowersec-go/v2/admissionv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v2/carrier/websocket"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/carrier/webtransport"
 	gorillaws "github.com/gorilla/websocket"
 )
 

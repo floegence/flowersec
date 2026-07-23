@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
 )
 
 // PrivateKeyFile matches the JSON layout consumed by helper tools that mint control-plane tokens.

@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
-	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
-	"github.com/floegence/flowersec/flowersec-go/internal/securefile"
-	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	directv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/cmdutil"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/securefile"
+	fsversion "github.com/floegence/flowersec/flowersec-go/v2/internal/version"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 var (

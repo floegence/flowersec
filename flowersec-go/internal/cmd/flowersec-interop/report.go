@@ -8,7 +8,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/interopprotocol"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/interopprotocol"
 )
 
 type matrixReport struct {

@@ -8,8 +8,8 @@ import (
 	"net/url"
 	"strings"
 
-	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
-	realtimews "github.com/floegence/flowersec/flowersec-go/realtime/ws"
+	fsproxy "github.com/floegence/flowersec/flowersec-go/v2/proxy"
+	realtimews "github.com/floegence/flowersec/flowersec-go/v2/realtime/ws"
 	"github.com/gorilla/websocket"
 )
 

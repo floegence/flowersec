@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
-	"github.com/floegence/flowersec/flowersec-go/session/internalnormalize"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/session/internalnormalize"
 )
 
 // Connect validates a client-facing artifact and returns an RPC-ready session.

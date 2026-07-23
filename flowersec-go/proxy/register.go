@@ -5,7 +5,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve"
 )
 
 // Register registers the flowersec-proxy stream handlers (KindHTTP1 and KindWS) on the provided server.

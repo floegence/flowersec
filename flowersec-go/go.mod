@@ -1,4 +1,4 @@
-module github.com/floegence/flowersec/flowersec-go
+module github.com/floegence/flowersec/flowersec-go/v2
 
 go 1.26.5
 

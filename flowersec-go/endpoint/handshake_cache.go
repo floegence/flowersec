@@ -1,6 +1,6 @@
 package endpoint
 
-import "github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+import "github.com/floegence/flowersec/flowersec-go/v2/crypto/e2ee"
 
 // HandshakeCache caches server-side handshake state to support init retries.
 //

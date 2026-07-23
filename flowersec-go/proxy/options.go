@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
-	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
 )
 
 // ProtocolVersion is the current flowersec-proxy meta version (see docs/PROXY.md).

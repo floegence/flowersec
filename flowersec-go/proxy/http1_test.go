@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
 )
 
 func TestHTTP1Handler_GET_EndToEnd(t *testing.T) {

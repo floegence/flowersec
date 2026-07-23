@@ -10,7 +10,7 @@ See also:
 ## Install
 
 ```bash
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@latest
+go install github.com/floegence/flowersec/flowersec-go/v2/cmd/flowersec-proxy-gateway@latest
 flowersec-proxy-gateway --version
 ```
 

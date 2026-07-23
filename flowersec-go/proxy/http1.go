@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
 )
 
 func http1Handler(cfg *compiledOptions) func(ctx context.Context, stream io.ReadWriteCloser) {

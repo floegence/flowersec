@@ -3,9 +3,9 @@ package client
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/transportsecurity"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/transportsecurity"
 )
 
 type TransportRuntime = transportsecurity.Runtime

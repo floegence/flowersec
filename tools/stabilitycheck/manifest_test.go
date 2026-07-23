@@ -32,10 +32,10 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 			TransportV2Tokens: []string{"`CarrierSession`"},
 		},
 		Go: goManifest{
-			ModulePath: "github.com/floegence/flowersec/flowersec-go",
+			ModulePath: "github.com/floegence/flowersec/flowersec-go/v2",
 			CompileTargets: []goCompileTarget{
 				{
-					Package:         "github.com/floegence/flowersec/flowersec-go/client",
+					Package:         "github.com/floegence/flowersec/flowersec-go/v2/client",
 					Alias:           "client",
 					DocPackageToken: "`client`",
 					Entries: []goCompileExpr{
@@ -51,7 +51,7 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 			},
 		},
 		Coverage: coverageManifest{
-			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/client", MinStatementsPct: 1}},
+			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v2/client", MinStatementsPct: 1}},
 			TS: tsCoverageTarget{Lines: 1, Functions: 1, Statements: 1, Branches: 1},
 		},
 	}
@@ -189,9 +189,9 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 			TransportV2Tokens: []string{"`CarrierSession`"},
 		},
 		Go: goManifest{
-			ModulePath: "github.com/floegence/flowersec/flowersec-go",
+			ModulePath: "github.com/floegence/flowersec/flowersec-go/v2",
 			CompileTargets: []goCompileTarget{{
-				Package:         "github.com/floegence/flowersec/flowersec-go/client",
+				Package:         "github.com/floegence/flowersec/flowersec-go/v2/client",
 				Alias:           "client",
 				DocPackageToken: "`client`",
 				Entries: []goCompileExpr{{
@@ -219,7 +219,7 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 			CompileEntries: []string{"let _ = flowersec::connect"},
 		},
 		Coverage: coverageManifest{
-			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/client", MinStatementsPct: 1}},
+			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v2/client", MinStatementsPct: 1}},
 			TS: tsCoverageTarget{Lines: 1, Functions: 1, Statements: 1, Branches: 1},
 		},
 	}, root
@@ -228,10 +228,10 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 	m := &manifest{
 		Go: goManifest{
-			ModulePath: "github.com/floegence/flowersec/flowersec-go",
+			ModulePath: "github.com/floegence/flowersec/flowersec-go/v2",
 			CompileTargets: []goCompileTarget{
 				{
-					Package:         "github.com/floegence/flowersec/flowersec-go/endpoint",
+					Package:         "github.com/floegence/flowersec/flowersec-go/v2/endpoint",
 					Alias:           "endpoint",
 					DocPackageToken: "`endpoint`",
 					Entries: []goCompileExpr{
@@ -261,9 +261,9 @@ func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 
 func TestRenderGoVerifierIncludesTypedFieldChecks(t *testing.T) {
 	m := &manifest{Go: goManifest{
-		ModulePath: "github.com/floegence/flowersec/flowersec-go",
+		ModulePath: "github.com/floegence/flowersec/flowersec-go/v2",
 		CompileTargets: []goCompileTarget{{
-			Package: "github.com/floegence/flowersec/flowersec-go/fserrors",
+			Package: "github.com/floegence/flowersec/flowersec-go/v2/fserrors",
 			Alias:   "fserrors",
 			Entries: []goCompileExpr{{
 				Kind:      "field",

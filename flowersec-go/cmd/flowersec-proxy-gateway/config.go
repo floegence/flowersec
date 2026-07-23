@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
-	proxypreset "github.com/floegence/flowersec/flowersec-go/proxy/preset"
+	fsproxy "github.com/floegence/flowersec/flowersec-go/v2/proxy"
+	proxypreset "github.com/floegence/flowersec/flowersec-go/v2/proxy/preset"
 )
 
 const (

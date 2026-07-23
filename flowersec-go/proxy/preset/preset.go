@@ -8,7 +8,7 @@ import (
 	"os"
 	"regexp"
 
-	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
+	fsproxy "github.com/floegence/flowersec/flowersec-go/v2/proxy"
 )
 
 type Limits struct {

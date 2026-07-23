@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/carrier"
-	"github.com/floegence/flowersec/flowersec-go/session"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/session"
 )
 
 var testNow = time.Unix(2_000_000_000, 0)

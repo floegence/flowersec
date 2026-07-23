@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/timeutil"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/timeutil"
 )
 
 // ReplayCache enforces single-use semantics for scoped tunnel attach replay keys.

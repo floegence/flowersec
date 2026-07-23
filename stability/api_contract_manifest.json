@@ -22,12 +22,12 @@
     ]
   },
   "go": {
-    "module_path": "github.com/floegence/flowersec/flowersec-go",
+    "module_path": "github.com/floegence/flowersec/flowersec-go/v2",
     "compile_targets": [
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/client",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/client",
         "alias": "client",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/client`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/client`",
         "entries": [
           {
             "kind": "func",
@@ -142,9 +142,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/endpoint",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/endpoint",
         "alias": "endpoint",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/endpoint`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/endpoint`",
         "entries": [
           {
             "kind": "func",
@@ -294,9 +294,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/stream",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/stream",
         "alias": "stream",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/stream`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/stream`",
         "entries": [
           {
             "kind": "type",
@@ -311,9 +311,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/transportsecurity",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/transportsecurity",
         "alias": "transportsecurity",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/transportsecurity`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/transportsecurity`",
         "entries": [
           {
             "kind": "type",
@@ -358,9 +358,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/endpoint/serve",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve",
         "alias": "serve",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/endpoint/serve`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve`",
         "entries": [
           {
             "kind": "func",
@@ -400,9 +400,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/protocolio",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/protocolio",
         "alias": "protocolio",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/protocolio`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/protocolio`",
         "entries": [
           {
             "kind": "func",
@@ -462,9 +462,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/client",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/client",
         "alias": "cpclient",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/client`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/client`",
         "entries": [
           {
             "kind": "func",
@@ -489,9 +489,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/http",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/http",
         "alias": "cphttp",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/http`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/http`",
         "entries": [
           {
             "kind": "const",
@@ -576,9 +576,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/observability",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/observability",
         "alias": "fsobs",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/observability`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/observability`",
         "entries": [
           {
             "kind": "type",
@@ -603,9 +603,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/origin",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/origin",
         "alias": "origin",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/origin`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/origin`",
         "entries": [
           {
             "kind": "func",
@@ -650,9 +650,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/reconnect",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/reconnect",
         "alias": "reconnect",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/reconnect`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/reconnect`",
         "entries": [
           {
             "kind": "func",
@@ -687,9 +687,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/proxy",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/proxy",
         "alias": "proxy",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/proxy`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/proxy`",
         "entries": [
           {
             "kind": "func",
@@ -729,9 +729,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/proxy/preset",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/proxy/preset",
         "alias": "proxypreset",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/proxy/preset`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/proxy/preset`",
         "entries": [
           {
             "kind": "type",
@@ -756,9 +756,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/rpc",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/rpc",
         "alias": "rpc",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/rpc`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/rpc`",
         "entries": [
           {
             "kind": "func",
@@ -788,9 +788,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/framing/jsonframe",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe",
         "alias": "jsonframe",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/framing/jsonframe`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe`",
         "entries": [
           {
             "kind": "func",
@@ -810,24 +810,24 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/fserrors",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/fserrors",
         "alias": "fserrors",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/fserrors`",
         "entries": [
           {
             "kind": "type",
             "expr": "fserrors.Path",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`"
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/v2/fserrors`"
           },
           {
             "kind": "type",
             "expr": "fserrors.Stage",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`"
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/v2/fserrors`"
           },
           {
             "kind": "type",
             "expr": "fserrors.Code",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/fserrors`"
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/v2/fserrors`"
           },
           {
             "kind": "type",
@@ -853,9 +853,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/issuer",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer",
         "alias": "issuer",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/issuer`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer`",
         "entries": [
           {
             "kind": "type",
@@ -890,33 +890,33 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/channelinit",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit",
         "alias": "channelinit",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit`",
         "entries": [
           {
             "kind": "type",
             "expr": "channelinit.Service",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`"
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit`"
           }
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/token",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/token",
         "alias": "token",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/token`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/token`",
         "entries": [
           {
             "kind": "func",
             "expr": "token.Verify",
-            "doc_token": "`github.com/floegence/flowersec/flowersec-go/controlplane/token`"
+            "doc_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane/token`"
           }
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/tunnel/server",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/tunnel/server",
         "alias": "tunnelserver",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/tunnel/server`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/tunnel/server`",
         "entries": [
           {
             "kind": "type",
@@ -941,7 +941,7 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/admissionv2",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/admissionv2",
         "alias": "admissionv2",
         "doc_package_token": "`CarrierSession`",
         "stability_group": "transport_v2",
@@ -961,7 +961,7 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/artifactv2",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/artifactv2",
         "alias": "artifactv2",
         "doc_package_token": "`CarrierSession`",
         "stability_group": "transport_v2",
@@ -1023,9 +1023,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/endpointsetv2",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/endpointsetv2",
         "alias": "endpointsetv2",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/endpointsetv2`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/endpointsetv2`",
         "stability_group": "transport_v2",
         "entries": [
           {"kind": "type", "expr": "endpointsetv2.EndpointSet", "doc_token": "`endpointsetv2.EndpointSet`"},
@@ -1071,7 +1071,7 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/carrier",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/carrier",
         "alias": "carrier",
         "doc_package_token": "`CarrierSession`",
         "stability_group": "transport_v2",
@@ -1113,7 +1113,7 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/carrier/rawquic",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic",
         "alias": "rawquic",
         "doc_package_token": "`CarrierSession`",
         "stability_group": "transport_v2",
@@ -1156,7 +1156,7 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/carrier/websocket",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/carrier/websocket",
         "alias": "carrierws",
         "doc_package_token": "`CarrierSession`",
         "stability_group": "transport_v2",
@@ -1209,7 +1209,7 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/carrier/webtransport",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/carrier/webtransport",
         "alias": "carrierwt",
         "doc_package_token": "`CarrierSession`",
         "stability_group": "transport_v2",
@@ -1256,7 +1256,7 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/connectv2",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/connectv2",
         "alias": "connectv2",
         "doc_package_token": "`CarrierSession`",
         "stability_group": "transport_v2",
@@ -1319,7 +1319,7 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/protocolv2",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/protocolv2",
         "alias": "protocolv2",
         "doc_package_token": "`CarrierSession`",
         "stability_group": "transport_v2",
@@ -1547,7 +1547,7 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/session",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/session",
         "alias": "session",
         "doc_package_token": "`CarrierSession`",
         "stability_group": "transport_v2",
@@ -1614,7 +1614,7 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/tunnelv2",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/tunnelv2",
         "alias": "tunnelv2",
         "doc_package_token": "`CarrierSession`",
         "stability_group": "transport_v2",
@@ -6239,75 +6239,75 @@
   "coverage": {
     "go": [
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/client",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/client",
         "min_statements_pct": 72
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/crypto/e2ee",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/crypto/e2ee",
         "min_statements_pct": 72
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/channelinit",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit",
         "min_statements_pct": 86
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/http",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/http",
         "min_statements_pct": 74
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/issuer",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer",
         "min_statements_pct": 78
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/controlplane/token",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane/token",
         "min_statements_pct": 86
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/endpoint",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/endpoint",
         "min_statements_pct": 68
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/endpoint/serve",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve",
         "min_statements_pct": 80
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/fserrors",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/fserrors",
         "min_statements_pct": 67
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/mux/yamux",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/mux/yamux",
         "min_statements_pct": 70
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/observability/prom",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/observability/prom",
         "min_statements_pct": 90
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/proxy",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/proxy",
         "min_statements_pct": 67
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/protocolio",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/protocolio",
         "min_statements_pct": 69
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/realtime/ws",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/realtime/ws",
         "min_statements_pct": 72
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/reconnect",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/reconnect",
         "min_statements_pct": 60
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/rpc",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/rpc",
         "min_statements_pct": 91.5
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/transportsecurity",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/transportsecurity",
         "min_statements_pct": 19
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/tunnel/server",
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/tunnel/server",
         "min_statements_pct": 69
       }
     ],

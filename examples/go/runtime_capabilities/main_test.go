@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/session"
+	"github.com/floegence/flowersec/flowersec-go/v2/session"
 )
 
 func TestRuntimeCapabilityOutputUsesCanonicalSDKDescriptor(t *testing.T) {

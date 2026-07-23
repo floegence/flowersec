@@ -348,7 +348,7 @@ When `services` is present:
 Go handler ergonomics:
 
 - Generated server handler interfaces return `(*Resp, error)` (instead of exposing the wire `RpcError` type).
-- To return a non-500 RPC error code/message, return `&rpc.Error{Code: ..., Message: ...}` (from `github.com/floegence/flowersec/flowersec-go/rpc`).
+- To return a non-500 RPC error code/message, return `&rpc.Error{Code: ..., Message: ...}` (from `github.com/floegence/flowersec/flowersec-go/v2/rpc`).
 - Any other non-nil error is treated as an internal error: `code=500`, `message="internal error"`.
 
 ## Deterministic ordering

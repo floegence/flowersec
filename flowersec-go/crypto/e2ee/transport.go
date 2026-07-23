@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	fsws "github.com/floegence/flowersec/flowersec-go/realtime/ws"
+	fsws "github.com/floegence/flowersec/flowersec-go/v2/realtime/ws"
 	"github.com/gorilla/websocket"
 )
 

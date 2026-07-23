@@ -13,14 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	"github.com/floegence/flowersec/flowersec-go/proxy"
-	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
+	"github.com/floegence/flowersec/flowersec-go/v2/client"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
+	endpointserve "github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/proxy"
+	"github.com/floegence/flowersec/flowersec-go/v2/tunnel/server"
 	"github.com/gorilla/websocket"
 )
 

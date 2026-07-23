@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
 	"github.com/gorilla/websocket"
 )
 

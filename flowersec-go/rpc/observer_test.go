@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 )
 
 type resultObserver struct {

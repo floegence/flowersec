@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
 )
 
 type nopRWC struct{}

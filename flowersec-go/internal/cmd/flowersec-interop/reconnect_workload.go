@@ -11,11 +11,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	"github.com/floegence/flowersec/flowersec-go/internal/interopprotocol"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
-	"github.com/floegence/flowersec/flowersec-go/reconnect"
+	"github.com/floegence/flowersec/flowersec-go/v2/client"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/interopprotocol"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/reconnect"
 	"github.com/gorilla/websocket"
 )
 

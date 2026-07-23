@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/token"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
 )
 
 type Keyset struct {

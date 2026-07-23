@@ -772,7 +772,11 @@ func renderGoVerifier(goModulePath string, m *manifest) (string, string, error) 
 		fmt.Fprintf(&checks, "\tvar _ %s = (manifestInterface%d)(nil)\n", group.receiver, index)
 	}
 
-	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.26.5\n\nrequire %s v0.0.0\n\nreplace %s => %s\n", m.Go.ModulePath, m.Go.ModulePath, filepath.ToSlash(goModulePath))
+	requireVersion := "v0.0.0"
+	if match := regexp.MustCompile(`/v([2-9][0-9]*)$`).FindStringSubmatch(m.Go.ModulePath); match != nil {
+		requireVersion = "v" + match[1] + ".0.0"
+	}
+	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.26.5\n\nrequire %s %s\n\nreplace %s => %s\n", m.Go.ModulePath, requireVersion, m.Go.ModulePath, filepath.ToSlash(goModulePath))
 	goTest := fmt.Sprintf("package flowersecstabilitychecktmp\n\nimport (\n%s)\n\nfunc TestContractSymbolsCompile(t *testing.T) {\n%s}\n", imports.String()+"\t\"testing\"\n", checks.String())
 	return goMod, goTest, nil
 }

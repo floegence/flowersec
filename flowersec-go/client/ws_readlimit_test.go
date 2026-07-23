@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
-	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/client"
+	directv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/direct/v1"
 	"github.com/gorilla/websocket"
 )
 

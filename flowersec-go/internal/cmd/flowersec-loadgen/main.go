@@ -24,17 +24,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
-	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
-	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
+	"github.com/floegence/flowersec/flowersec-go/v2/client"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/v2/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v2/tunnel/server"
 )
 
 const (

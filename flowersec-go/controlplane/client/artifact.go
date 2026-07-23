@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 type ConnectArtifactRequestConfig struct {

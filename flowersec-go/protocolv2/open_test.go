@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	protocolv2 "github.com/floegence/flowersec/flowersec-go/protocolv2"
+	protocolv2 "github.com/floegence/flowersec/flowersec-go/v2/protocolv2"
 )
 
 func TestOpenPayloadExactBinaryLayoutAndHashes(t *testing.T) {

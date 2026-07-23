@@ -9,23 +9,23 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
-	cpclient "github.com/floegence/flowersec/flowersec-go/controlplane/client"
-	cphttp "github.com/floegence/flowersec/flowersec-go/controlplane/http"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/origin"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
-	"github.com/floegence/flowersec/flowersec-go/proxy"
-	proxypreset "github.com/floegence/flowersec/flowersec-go/proxy/preset"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
-	"github.com/floegence/flowersec/flowersec-go/transportsecurity"
+	"github.com/floegence/flowersec/flowersec-go/v2/client"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit"
+	cpclient "github.com/floegence/flowersec/flowersec-go/v2/controlplane/client"
+	cphttp "github.com/floegence/flowersec/flowersec-go/v2/controlplane/http"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/token"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/origin"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/proxy"
+	proxypreset "github.com/floegence/flowersec/flowersec-go/v2/proxy/preset"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v2/transportsecurity"
 )
 
 // Compile-time checks for the public Go API contract. If an entrypoint is renamed or removed,
@@ -182,6 +182,22 @@ func TestAPIContractDocCoversGoEntrypoints(t *testing.T) {
 		if !strings.Contains(docText, token) {
 			t.Fatalf("docs/API_CONTRACT.md missing manifest token: %q", token)
 		}
+	}
+}
+
+func TestGoModuleUsesV2SemanticImportPath(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	moduleRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
+	goMod, err := os.ReadFile(filepath.Join(moduleRoot, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	const moduleLine = "module github.com/floegence/flowersec/flowersec-go/v2\n"
+	if !strings.HasPrefix(string(goMod), moduleLine) {
+		t.Fatalf("go.mod must start with %q", strings.TrimSpace(moduleLine))
 	}
 }
 

@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
-	"github.com/floegence/flowersec/flowersec-go/internal/channelid"
-	"github.com/floegence/flowersec/flowersec-go/internal/timeutil"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/token"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	e2eev1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/e2ee/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/channelid"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/timeutil"
 )
 
 const (

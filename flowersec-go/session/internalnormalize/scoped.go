@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 type ScopeResolver func(context.Context, protocolio.ScopeMetadataEntry) error

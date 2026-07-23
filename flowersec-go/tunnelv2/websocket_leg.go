@@ -3,9 +3,9 @@ package tunnelv2
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/artifactv2"
-	"github.com/floegence/flowersec/flowersec-go/carrier"
-	carrierws "github.com/floegence/flowersec/flowersec-go/carrier/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v2/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v2/carrier/websocket"
 	gorillaws "github.com/gorilla/websocket"
 )
 

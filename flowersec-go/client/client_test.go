@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
-	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
-	"github.com/floegence/flowersec/flowersec-go/streamhello"
+	"github.com/floegence/flowersec/flowersec-go/v2/crypto/e2ee"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/v2/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v2/streamhello"
 )
 
 func newYamuxPair(t *testing.T) (client *fsyamux.Session, server *fsyamux.Session, closeFn func()) {

@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
 )
 
 func TestReadStreamHelloRejectsBadInputs(t *testing.T) {

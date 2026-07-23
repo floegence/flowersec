@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
-	"github.com/floegence/flowersec/flowersec-go/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
 )
 
 const maxInvalidJSONFrames = 3

@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/floegence/flowersec/flowersec-go/carrier"
-	carrierlife "github.com/floegence/flowersec/flowersec-go/carrier/internal/lifecycle"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
+	carrierlife "github.com/floegence/flowersec/flowersec-go/v2/carrier/internal/lifecycle"
 	quic "github.com/quic-go/quic-go"
 )
 

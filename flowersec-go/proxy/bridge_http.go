@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
 )
 
 func (b *Bridge) ProxyHTTP(w http.ResponseWriter, r *http.Request, route StreamOpener) error {

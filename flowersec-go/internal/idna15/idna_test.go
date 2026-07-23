@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/idna15"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/idna15"
 )
 
 func TestLookupASCIIUsesFrozenUnicode15_1UTS46(t *testing.T) {

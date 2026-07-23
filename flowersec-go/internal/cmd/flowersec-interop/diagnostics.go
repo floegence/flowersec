@@ -1,6 +1,6 @@
 package main
 
-import "github.com/floegence/flowersec/flowersec-go/internal/interopprotocol"
+import "github.com/floegence/flowersec/flowersec-go/v2/internal/interopprotocol"
 
 func recordDiagnostic(values *[]interopprotocol.Diagnostic, caseName, path string) error {
 	value, err := interopprotocol.DiagnosticFor(caseName, path)

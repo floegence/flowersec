@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
-	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
-	"github.com/floegence/flowersec/flowersec-go/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/crypto/e2ee"
+	tunnelv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/tunnel/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
 )
 
 func BenchmarkRouteOrBufferPaired(b *testing.B) {

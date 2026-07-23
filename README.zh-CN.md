@@ -98,7 +98,7 @@ node ./examples/ts/dev-server.mjs | tee dev.json
 
 | 语言 | 包与安装方式 | Cookbook |
 | --- | --- | --- |
-| Go | `go get github.com/floegence/flowersec/flowersec-go@latest` | [Go](examples/go/README.md) |
+| Go | `go get github.com/floegence/flowersec/flowersec-go/v2@latest` | [Go](examples/go/README.md) |
 | TypeScript | `npm install @floegence/flowersec-core` | [TypeScript](examples/ts/README.md) |
 | Swift | SwiftPM 产品 `Flowersec` | [Swift](examples/swift/README.md) |
 | Rust | `cargo add flowersec` | [Rust](examples/rust/README.md) |

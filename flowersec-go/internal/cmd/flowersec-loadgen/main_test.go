@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit"
 )
 
 func TestBuildOutputDeclaresHighLevelConnectionContract(t *testing.T) {

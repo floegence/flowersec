@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/artifactv2"
 )
 
 type artifactVectorFile struct {

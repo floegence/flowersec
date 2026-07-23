@@ -3,7 +3,7 @@ package rpc
 import (
 	"errors"
 
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
 )
 
 // Error is a server-side RPC error that can be returned by generated handlers.

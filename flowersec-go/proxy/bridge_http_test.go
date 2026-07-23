@@ -9,9 +9,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
-	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
+	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
 )
 
 type bridgeTestRoute struct {

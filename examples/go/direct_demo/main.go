@@ -19,10 +19,10 @@ import (
 
 	demov1 "github.com/floegence/flowersec-examples/gen/flowersec/demo/v1"
 	"github.com/floegence/flowersec-examples/go/exampleutil"
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
+	endpointserve "github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 )
 
 // direct_demo starts a direct (no tunnel) WebSocket server endpoint that speaks the full Flowersec stack:

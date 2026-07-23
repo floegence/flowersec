@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	fsversion "github.com/floegence/flowersec/flowersec-go/v2/internal/version"
 )
 
 func writeTenantConfigForCLI(t *testing.T) string {

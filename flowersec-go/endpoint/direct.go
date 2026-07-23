@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/contextutil"
-	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
-	"github.com/floegence/flowersec/flowersec-go/internal/wsutil"
-	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
-	"github.com/floegence/flowersec/flowersec-go/realtime/ws"
+	"github.com/floegence/flowersec/flowersec-go/v2/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	e2eev1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/e2ee/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/contextutil"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/wsutil"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/v2/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v2/realtime/ws"
 	"github.com/gorilla/websocket"
 )
 

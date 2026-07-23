@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
 )
 
 func TestRequestSchedulerIsIdleUntilSubmit(t *testing.T) {

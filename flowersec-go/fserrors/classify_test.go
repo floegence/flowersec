@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/v2/crypto/e2ee"
 	"github.com/gorilla/websocket"
 )
 

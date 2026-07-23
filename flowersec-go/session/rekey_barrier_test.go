@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
 )
 
 func TestRekeyAdvancesEveryActiveStream(t *testing.T) {

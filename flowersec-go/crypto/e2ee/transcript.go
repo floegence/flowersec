@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/bin"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/bin"
 )
 
 // ErrInvalidTranscriptInput signals a missing or oversized transcript field.

@@ -140,7 +140,7 @@ The connector enforces `init_expire_at_unix_s` at every irreversible boundary. A
 
 A custom tunnel registration for v2 is the structured, versioned
 `flowersec-tunnel-endpoint-set/2` endpoint set. Go control-plane consumers use
-`github.com/floegence/flowersec/flowersec-go/endpointsetv2` instead of defining
+`github.com/floegence/flowersec/flowersec-go/v2/endpointsetv2` instead of defining
 a product-local schema. It reports the rendezvous group, endpoint instance,
 exact WebSocket/raw QUIC/WebTransport listener tuples, certificate and audience
 readiness, and issued/expires freshness. A listen tuple records both its local

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
-	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/v2/mux/yamux"
 	"github.com/gorilla/websocket"
 )
 

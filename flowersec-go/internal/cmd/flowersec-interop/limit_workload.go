@@ -11,14 +11,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	endpointserve "github.com/floegence/flowersec/flowersec-go/endpoint/serve"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/interopprotocol"
-	"github.com/floegence/flowersec/flowersec-go/mux/yamux"
-	"github.com/floegence/flowersec/flowersec-go/proxy"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v2/client"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
+	endpointserve "github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/interopprotocol"
+	"github.com/floegence/flowersec/flowersec-go/v2/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v2/proxy"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 )
 
 const limitBodyBytes = 1024

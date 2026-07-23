@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
 )
 
 type Runtime string

@@ -3,7 +3,7 @@ package rpc
 import (
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
 )
 
 func TestSetMaxFrameBytes_Server_RejectsNegativeAndResetsZeroToDefault(t *testing.T) {

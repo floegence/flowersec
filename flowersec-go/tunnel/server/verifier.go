@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/token"
 )
 
 var ErrUnknownTenant = errors.New("unknown tenant")

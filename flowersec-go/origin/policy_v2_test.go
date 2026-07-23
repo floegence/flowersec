@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/origin"
+	"github.com/floegence/flowersec/flowersec-go/v2/origin"
 )
 
 func TestPolicyV2ExactAndSingleLabelWildcard(t *testing.T) {

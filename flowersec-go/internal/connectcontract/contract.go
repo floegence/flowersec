@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
-	"github.com/floegence/flowersec/flowersec-go/internal/channelid"
+	"github.com/floegence/flowersec/flowersec-go/v2/crypto/e2ee"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	directv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/channelid"
 )
 
 var (

@@ -106,7 +106,7 @@ See the [cookbook index](examples/README.md) for exact Go, TypeScript, Swift, an
 
 | Language | Package and install | Cookbook |
 | --- | --- | --- |
-| Go | `go get github.com/floegence/flowersec/flowersec-go@latest` | [Go](examples/go/README.md) |
+| Go | `go get github.com/floegence/flowersec/flowersec-go/v2@latest` | [Go](examples/go/README.md) |
 | TypeScript | `npm install @floegence/flowersec-core` | [TypeScript](examples/ts/README.md) |
 | Swift | SwiftPM product `Flowersec` | [Swift](examples/swift/README.md) |
 | Rust | `cargo add flowersec` | [Rust](examples/rust/README.md) |

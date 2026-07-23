@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	tunnelv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/tunnel/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
 )
 
 func makeAttach() tunnelv1.Attach {

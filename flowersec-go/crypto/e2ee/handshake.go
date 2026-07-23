@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
-	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
-	"github.com/floegence/flowersec/flowersec-go/internal/timeutil"
+	e2eev1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/e2ee/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/timeutil"
 )
 
 // ClientHandshakeOptions configures the client side of the E2EE handshake.

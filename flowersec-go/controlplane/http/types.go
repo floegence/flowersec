@@ -4,8 +4,8 @@ import (
 	"context"
 	stdhttp "net/http"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/defaults"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 const DefaultMaxBodyBytes int64 = defaults.ControlplaneMaxRequestBodyBytes

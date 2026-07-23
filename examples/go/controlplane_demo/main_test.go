@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 // These tests validate the minimal controlplane demo HTTP handler contract:

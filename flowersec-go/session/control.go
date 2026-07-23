@@ -10,7 +10,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/protocolv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolv2"
 )
 
 var errPeerSessionClose = errors.New("peer closed Flowersec v2 session")

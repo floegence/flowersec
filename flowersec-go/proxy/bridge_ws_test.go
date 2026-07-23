@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
-	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve"
+	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
 	"github.com/gorilla/websocket"
 )
 

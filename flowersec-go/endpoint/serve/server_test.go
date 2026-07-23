@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint"
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
-	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
+	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
 )
 
 func newServer(t *testing.T, opts Options) *Server {

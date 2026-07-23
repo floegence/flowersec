@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
-	"github.com/floegence/flowersec/flowersec-go/internal/securefile"
-	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/cmdutil"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/securefile"
+	fsversion "github.com/floegence/flowersec/flowersec-go/v2/internal/version"
 )
 
 var (

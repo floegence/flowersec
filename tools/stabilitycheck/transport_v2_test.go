@@ -170,19 +170,19 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/session", "session.SessionV2")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/carrier", "carrier.Session")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/artifactv2", "artifactv2.Artifact")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/connectv2", "connectv2.NewConnector")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/connectv2", "connectv2.WithConnectorClock")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/connectv2", "connectv2.ErrArtifactExpired")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/connectv2", "connectv2.ArtifactLease")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/carrier/rawquic", "rawquic.BindSessionLimits")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/carrier/rawquic", "rawquic.Limits.Validate")
-	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/carrier/webtransport", "carrierwt.BindSessionLimits")
-	forbidGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/carrier/rawquic", "rawquic.NewConfig")
-	forbidGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/carrier/webtransport", "carrierwt.NewQUICConfig")
-	forbidGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/carrier/webtransport", "carrierwt.NewServerQUICConfig")
+	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/session", "session.SessionV2")
+	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier", "carrier.Session")
+	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/artifactv2", "artifactv2.Artifact")
+	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/connectv2", "connectv2.NewConnector")
+	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/connectv2", "connectv2.WithConnectorClock")
+	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/connectv2", "connectv2.ErrArtifactExpired")
+	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/connectv2", "connectv2.ArtifactLease")
+	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic", "rawquic.BindSessionLimits")
+	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic", "rawquic.Limits.Validate")
+	requireGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/webtransport", "carrierwt.BindSessionLimits")
+	forbidGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic", "rawquic.NewConfig")
+	forbidGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/webtransport", "carrierwt.NewQUICConfig")
+	forbidGoManifestEntry(t, m, "github.com/floegence/flowersec/flowersec-go/v2/carrier/webtransport", "carrierwt.NewServerQUICConfig")
 
 	type rawManifest struct {
 		Docs struct {
@@ -293,7 +293,7 @@ func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 	}
 
 	expected := map[string][]string{
-		"github.com/floegence/flowersec/flowersec-go/session": {
+		"github.com/floegence/flowersec/flowersec-go/v2/session": {
 			"session.ByteStream.Read",
 			"session.ByteStream.Write",
 			"session.ByteStream.Close",
@@ -316,7 +316,7 @@ func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 			"session.SessionV2.WaitClosed",
 			"session.SessionV2.Close",
 		},
-		"github.com/floegence/flowersec/flowersec-go/carrier": {
+		"github.com/floegence/flowersec/flowersec-go/v2/carrier": {
 			"carrier.Stream.Read",
 			"carrier.Stream.Write",
 			"carrier.Stream.Close",
@@ -331,7 +331,7 @@ func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 			"carrier.Session.CloseWithError",
 			"carrier.Session.Close",
 		},
-		"github.com/floegence/flowersec/flowersec-go/connectv2": {
+		"github.com/floegence/flowersec/flowersec-go/v2/connectv2": {
 			"connectv2.AdmissionHandle.CommitAdmission",
 			"connectv2.AdmissionHandle.Close",
 			"connectv2.Attempt.Ready",
@@ -340,7 +340,7 @@ func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 			"connectv2.Prepared.Commit",
 			"connectv2.Prepared.Close",
 		},
-		"github.com/floegence/flowersec/flowersec-go/tunnelv2": {
+		"github.com/floegence/flowersec/flowersec-go/v2/tunnelv2": {
 			"tunnelv2.Lease.Release",
 			"tunnelv2.PendingLeg.ReceiveAdmission",
 			"tunnelv2.PendingLeg.CarrierKind",

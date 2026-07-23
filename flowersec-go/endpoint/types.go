@@ -1,6 +1,6 @@
 package endpoint
 
-import "github.com/floegence/flowersec/flowersec-go/fserrors"
+import "github.com/floegence/flowersec/flowersec-go/v2/fserrors"
 
 type Error = fserrors.Error
 

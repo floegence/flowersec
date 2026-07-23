@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
+	tunnelv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/tunnel/v1"
 )
 
 // Authorizer decides whether a tunnel attach/session is allowed to proceed.

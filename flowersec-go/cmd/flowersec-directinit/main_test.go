@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 func TestVersionFlag(t *testing.T) {

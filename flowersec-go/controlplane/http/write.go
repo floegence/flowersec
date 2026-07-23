@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	stdhttp "net/http"
 
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 func WriteArtifactEnvelope(w stdhttp.ResponseWriter, artifact *protocolio.ConnectArtifact) error {

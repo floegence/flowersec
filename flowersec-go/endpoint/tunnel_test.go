@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
 )
 
 func TestConnectTunnel_TransportPolicyRejectsBeforeDial(t *testing.T) {

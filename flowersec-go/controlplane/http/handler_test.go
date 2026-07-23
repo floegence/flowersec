@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	directv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	directv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/direct/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 func makeHandlerArtifact(channelID string, transport protocolio.ConnectArtifactTransport) *protocolio.ConnectArtifact {

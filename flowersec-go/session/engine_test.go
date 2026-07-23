@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/carrier"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/flowersec-go/protocolv2"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 )
 
 func TestSessionTerminationCanBeObservedAndWaited(t *testing.T) {

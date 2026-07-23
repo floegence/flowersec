@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	promobs "github.com/floegence/flowersec/flowersec-go/observability/prom"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	promobs "github.com/floegence/flowersec/flowersec-go/v2/observability/prom"
 	dto "github.com/prometheus/client_model/go"
 )
 

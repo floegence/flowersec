@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/admissionv2"
-	"github.com/floegence/flowersec/flowersec-go/artifactv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/admissionv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/artifactv2"
 	gorillaws "github.com/gorilla/websocket"
 )
 

@@ -7,14 +7,14 @@ The Go SDK for Flowersec end-to-end encrypted direct and tunneled sessions. It i
 Library:
 
 ```bash
-go get github.com/floegence/flowersec/flowersec-go@latest
+go get github.com/floegence/flowersec/flowersec-go/v2@latest
 ```
 
 Deployable services:
 
 ```bash
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-proxy-gateway@latest
+go install github.com/floegence/flowersec/flowersec-go/v2/cmd/flowersec-tunnel@latest
+go install github.com/floegence/flowersec/flowersec-go/v2/cmd/flowersec-proxy-gateway@latest
 ```
 
 Go module tags use the `flowersec-go/vX.Y.Z` repository prefix.
@@ -41,17 +41,17 @@ Start with the [Go cookbook](https://github.com/floegence/flowersec/tree/main/ex
 
 ## Entrypoints
 
-- Client: `github.com/floegence/flowersec/flowersec-go/client`
-- Endpoint: `github.com/floegence/flowersec/flowersec-go/endpoint`
-- Endpoint serving: `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
-- RPC: `github.com/floegence/flowersec/flowersec-go/rpc`
-- Reconnect: `github.com/floegence/flowersec/flowersec-go/reconnect`
-- Proxy: `github.com/floegence/flowersec/flowersec-go/proxy`
-- Controlplane: `github.com/floegence/flowersec/flowersec-go/controlplane`
-- Observability: `github.com/floegence/flowersec/flowersec-go/observability`
-- Transport v2 connect: `github.com/floegence/flowersec/flowersec-go/connectv2`
-- Transport v2 carriers: `github.com/floegence/flowersec/flowersec-go/carrier/{websocket,rawquic,webtransport}`
-- Transport v2 session and tunnel: `github.com/floegence/flowersec/flowersec-go/session` and `github.com/floegence/flowersec/flowersec-go/tunnelv2`
+- Client: `github.com/floegence/flowersec/flowersec-go/v2/client`
+- Endpoint: `github.com/floegence/flowersec/flowersec-go/v2/endpoint`
+- Endpoint serving: `github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve`
+- RPC: `github.com/floegence/flowersec/flowersec-go/v2/rpc`
+- Reconnect: `github.com/floegence/flowersec/flowersec-go/v2/reconnect`
+- Proxy: `github.com/floegence/flowersec/flowersec-go/v2/proxy`
+- Controlplane: `github.com/floegence/flowersec/flowersec-go/v2/controlplane`
+- Observability: `github.com/floegence/flowersec/flowersec-go/v2/observability`
+- Transport v2 connect: `github.com/floegence/flowersec/flowersec-go/v2/connectv2`
+- Transport v2 carriers: `github.com/floegence/flowersec/flowersec-go/v2/carrier/{websocket,rawquic,webtransport}`
+- Transport v2 session and tunnel: `github.com/floegence/flowersec/flowersec-go/v2/session` and `github.com/floegence/flowersec/flowersec-go/v2/tunnelv2`
 
 High-level WebSocket connections require TLS by default. Use `AllowPlaintextForLoopback` only for literal local development targets.
 

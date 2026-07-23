@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	"github.com/floegence/flowersec/flowersec-go/rpc"
-	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
+	"github.com/floegence/flowersec/flowersec-go/v2/client"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
+	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
 )
 
 func TestFileGrantSourceLoadsGrantClientWrapper(t *testing.T) {

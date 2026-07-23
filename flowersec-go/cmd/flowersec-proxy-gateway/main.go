@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/internal/cmdutil"
-	fsversion "github.com/floegence/flowersec/flowersec-go/internal/version"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/cmdutil"
+	fsversion "github.com/floegence/flowersec/flowersec-go/v2/internal/version"
 )
 
 var (

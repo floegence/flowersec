@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	e2eev1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	e2eev1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/e2ee/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
 )
 
 type scriptedTransport struct {

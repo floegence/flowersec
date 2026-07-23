@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/channelinit"
-	"github.com/floegence/flowersec/flowersec-go/tunnel/server"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit"
+	"github.com/floegence/flowersec/flowersec-go/v2/tunnel/server"
 )
 
 func TestE2E_TunnelHTTPAuthorizerAttachAndObserve(t *testing.T) {

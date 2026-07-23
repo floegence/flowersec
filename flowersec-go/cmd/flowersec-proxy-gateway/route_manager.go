@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/client"
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
-	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
-	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
+	"github.com/floegence/flowersec/flowersec-go/v2/client"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
+	fsproxy "github.com/floegence/flowersec/flowersec-go/v2/proxy"
+	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
 )
 
 type streamOpener = fsproxy.StreamOpener

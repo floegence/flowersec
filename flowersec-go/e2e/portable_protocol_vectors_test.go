@@ -9,12 +9,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	controlplanehttp "github.com/floegence/flowersec/flowersec-go/controlplane/http"
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1"
-	"github.com/floegence/flowersec/flowersec-go/observability"
-	"github.com/floegence/flowersec/flowersec-go/proxy"
-	"github.com/floegence/flowersec/flowersec-go/transportsecurity"
+	controlplanehttp "github.com/floegence/flowersec/flowersec-go/v2/controlplane/http"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/observability"
+	"github.com/floegence/flowersec/flowersec-go/v2/proxy"
+	"github.com/floegence/flowersec/flowersec-go/v2/transportsecurity"
 )
 
 type portableProtocolVectors struct {

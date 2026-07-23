@@ -31,7 +31,7 @@ Internal tooling under `flowersec-go/internal/cmd/*` is not part of the public C
 
 Recommended integration entrypoints:
 
-- `github.com/floegence/flowersec/flowersec-go/client`
+- `github.com/floegence/flowersec/flowersec-go/v2/client`
   - `client.Connect(...)`
   - `client.ConnectTunnel(...)`
   - `client.ConnectDirect(...)`
@@ -54,7 +54,7 @@ Recommended integration entrypoints:
   - `client.NetworkPlaintextPolicyOptions`
   - `client.PlaintextRiskAcceptance`
   - `client.PlaintextRiskAcceptPreE2ECredentialExposure`
-- `github.com/floegence/flowersec/flowersec-go/endpoint`
+- `github.com/floegence/flowersec/flowersec-go/v2/endpoint`
   - `endpoint.ConnectTunnel(...)`
   - `endpoint.NewDirectHandler(...)`
   - `endpoint.AcceptDirectWS(...)`
@@ -84,10 +84,10 @@ Recommended integration entrypoints:
   - `endpoint.PlaintextRiskAcceptPreE2ECredentialExposure`
   - `endpoint.Session.Rekey()`
   - `endpoint.Session.OpenStream(...)`
-- `github.com/floegence/flowersec/flowersec-go/stream`
+- `github.com/floegence/flowersec/flowersec-go/v2/stream`
   - `stream.Stream`
   - `stream.Stream.Reset()`
-- `github.com/floegence/flowersec/flowersec-go/transportsecurity`
+- `github.com/floegence/flowersec/flowersec-go/v2/transportsecurity`
   - `transportsecurity.Policy`
   - `transportsecurity.Input`
   - `transportsecurity.RequireTLS(...)`
@@ -96,7 +96,7 @@ Recommended integration entrypoints:
   - `transportsecurity.NetworkPlaintextPolicyOptions`
   - `transportsecurity.PlaintextRiskAcceptance`
   - `transportsecurity.PlaintextRiskAcceptPreE2ECredentialExposure`
-- `github.com/floegence/flowersec/flowersec-go/endpoint/serve`
+- `github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve`
   - `serve.New(...)`
   - `srv.Handle(...)`
   - `srv.HandleStream(...)`
@@ -104,7 +104,7 @@ Recommended integration entrypoints:
   - `serve.ServeTunnel(...)`
   - `serve.NewDirectHandler(...)`
   - `serve.NewDirectHandlerResolved(...)`
-- `github.com/floegence/flowersec/flowersec-go/protocolio`
+- `github.com/floegence/flowersec/flowersec-go/v2/protocolio`
   - `protocolio.DecodeGrantClientJSON(...)`
   - `protocolio.DecodeGrantServerJSON(...)`
   - `protocolio.DecodeGrantJSON(...)`
@@ -116,12 +116,12 @@ Recommended integration entrypoints:
   - `protocolio.CorrelationContext`
   - `protocolio.CorrelationKV`
   - `protocolio.ScopeMetadataEntry`
-- `github.com/floegence/flowersec/flowersec-go/controlplane/client`
+- `github.com/floegence/flowersec/flowersec-go/v2/controlplane/client`
   - `client.RequestConnectArtifact(...)`
   - `client.RequestEntryConnectArtifact(...)`
   - `client.ConnectArtifactRequestConfig.AllowLoopbackHTTP`
   - `client.RequestError`
-- `github.com/floegence/flowersec/flowersec-go/controlplane/http`
+- `github.com/floegence/flowersec/flowersec-go/v2/controlplane/http`
   - `controlplanehttp.DefaultMaxBodyBytes`
   - `controlplanehttp.ArtifactRequest`
   - `controlplanehttp.ArtifactEnvelope`
@@ -138,15 +138,15 @@ Recommended integration entrypoints:
   - `controlplanehttp.NewEntryArtifactHandler(...)`
   - `controlplanehttp.DefaultRequestMetadata(...)`
   - `controlplanehttp.IssueArtifact(...)`
-- `github.com/floegence/flowersec/flowersec-go/observability`
+- `github.com/floegence/flowersec/flowersec-go/v2/observability`
   - `observability.DiagnosticEvent`
   - `observability.ClientObserver`
   - `observability.NormalizeClientObserver(...)`
   - `observability.WithClientObserverContext(...)`
-- `github.com/floegence/flowersec/flowersec-go/origin`
+- `github.com/floegence/flowersec/flowersec-go/v2/origin`
   - `origin.FromWSURL(...)`
   - `origin.ForTunnel(...)`
-- `github.com/floegence/flowersec/flowersec-go/proxy`
+- `github.com/floegence/flowersec/flowersec-go/v2/proxy`
   - `proxy.Register(...)`
   - `proxy.NewClient(...)`
   - `proxy.Options`
@@ -154,7 +154,7 @@ Recommended integration entrypoints:
   - `proxy.ClientHTTPRequest`
   - `proxy.ClientHTTPResponse`
   - `proxy.ClientWebSocket`
-- `github.com/floegence/flowersec/flowersec-go/reconnect`
+- `github.com/floegence/flowersec/flowersec-go/v2/reconnect`
   - `reconnect.NewManager(...)`
   - `reconnect.OnceSource(...)`
   - `reconnect.RefreshableSource(...)`
@@ -162,36 +162,36 @@ Recommended integration entrypoints:
   - `reconnect.Config`
   - `reconnect.Settings`
   - `(*reconnect.Manager).Disconnect()`
-- `github.com/floegence/flowersec/flowersec-go/proxy/preset`
+- `github.com/floegence/flowersec/flowersec-go/v2/proxy/preset`
   - `preset.Manifest`
   - `preset.DecodeJSON(...)`
   - `preset.LoadFile(...)`
   - `preset.ApplyBridgeOptions(...)`
-- `github.com/floegence/flowersec/flowersec-go/rpc`
+- `github.com/floegence/flowersec/flowersec-go/v2/rpc`
   - `rpc.NewRouter(...)`
   - `rpc.NewServer(...)`
   - `rpc.NewServerWithOptions(...)`
   - `rpc.ServerOptions`
   - `rpc.NewClient(...)`
-- `github.com/floegence/flowersec/flowersec-go/framing/jsonframe`
+- `github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe`
   - `jsonframe.ReadJSONFrame(...)`
   - `jsonframe.WriteJSONFrame(...)`
   - `jsonframe.ReadJSONFrameDefaultMax(...)`
-- `github.com/floegence/flowersec/flowersec-go/fserrors`
+- `github.com/floegence/flowersec/flowersec-go/v2/fserrors`
   - shared machine-readable `{path, stage, code}` types
   - `fserrors.Error` and `fserrors.CandidateDiagnostic`
   - `fserrors.Error.Diagnostics`
   - `fserrors.CodeResourceExhausted`
-- `github.com/floegence/flowersec/flowersec-go/controlplane/issuer`
+- `github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer`
   - `issuer.Keyset`
   - `issuer.New(...)`
   - `issuer.NewRandom(...)`
   - `issuer.Keyset.AddVerificationKey(...)`
   - `issuer.Keyset.Rotate(...)`
   - `issuer.Keyset.RetireVerificationKey(...)`
-- `github.com/floegence/flowersec/flowersec-go/controlplane/channelinit`
-- `github.com/floegence/flowersec/flowersec-go/controlplane/token`
-- `github.com/floegence/flowersec/flowersec-go/tunnel/server`
+- `github.com/floegence/flowersec/flowersec-go/v2/controlplane/channelinit`
+- `github.com/floegence/flowersec/flowersec-go/v2/controlplane/token`
+- `github.com/floegence/flowersec/flowersec-go/v2/tunnel/server`
   - `server.Config`
     - `MaxTenantQueuedBytes`
     - `MaxTotalQueuedBytes`
@@ -202,7 +202,7 @@ Recommended integration entrypoints:
   - `server.TokenUseCache`
   - `server.NewTokenUseCache(...)`
   - `server.HTTPAuthorizerConfig.MaxResponseBytes`
-- `github.com/floegence/flowersec/flowersec-go/mux/yamux`
+- `github.com/floegence/flowersec/flowersec-go/v2/mux/yamux`
   - `yamux.Session.OpenStreamContext(...)`
 
 Transport v2 is a separate breaking contract built around `CarrierSession`:
@@ -210,7 +210,7 @@ Transport v2 is a separate breaking contract built around `CarrierSession`:
 - `admissionv2` and `artifactv2` own bounded FSB2/FSA2 admission, canonical
   artifacts, candidate binding, the session contract hash, and one-shot
   credential semantics.
-- `github.com/floegence/flowersec/flowersec-go/endpointsetv2` exposes the
+- `github.com/floegence/flowersec/flowersec-go/v2/endpointsetv2` exposes the
   business-neutral custom tunnel registry contract: `endpointsetv2.EndpointSet`,
   `endpointsetv2.ListenerTuple`, `endpointsetv2.CertificateReadiness`,
   `endpointsetv2.AudienceReadiness`, and `endpointsetv2.Freshness`.
@@ -329,11 +329,11 @@ to await repeatedly.
 
 Generated protocol packages:
 
-- `github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1`
-- `github.com/floegence/flowersec/flowersec-go/gen/flowersec/direct/v1`
-- `github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1`
-- `github.com/floegence/flowersec/flowersec-go/gen/flowersec/rpc/v1`
-- `github.com/floegence/flowersec/flowersec-go/gen/flowersec/e2ee/v1`
+- `github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1`
+- `github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/direct/v1`
+- `github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/tunnel/v1`
+- `github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1`
+- `github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/e2ee/v1`
 
 Go connection contract:
 

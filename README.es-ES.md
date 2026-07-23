@@ -98,7 +98,7 @@ Consulta el [índice de Cookbooks](examples/README.md) para ver los comandos exa
 
 | Lenguaje | Paquete e instalación | Cookbook |
 | --- | --- | --- |
-| Go | `go get github.com/floegence/flowersec/flowersec-go@latest` | [Go](examples/go/README.md) |
+| Go | `go get github.com/floegence/flowersec/flowersec-go/v2@latest` | [Go](examples/go/README.md) |
 | TypeScript | `npm install @floegence/flowersec-core` | [TypeScript](examples/ts/README.md) |
 | Swift | Producto SwiftPM `Flowersec` | [Swift](examples/swift/README.md) |
 | Rust | `cargo add flowersec` | [Rust](examples/rust/README.md) |

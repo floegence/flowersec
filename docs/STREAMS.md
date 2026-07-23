@@ -34,7 +34,7 @@ TypeScript:
 
 Go:
 
-- `github.com/floegence/flowersec/flowersec-go/framing/jsonframe` (length-prefixed JSON framing)
+- `github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe` (length-prefixed JSON framing)
 
 ## Size limits and safety
 
@@ -102,8 +102,8 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/floegence/flowersec/flowersec-go/endpoint/serve"
-	"github.com/floegence/flowersec/flowersec-go/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v2/endpoint/serve"
+	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
 )
 
 type ReadFileRequest struct {

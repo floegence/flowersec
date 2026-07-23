@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/controlplane/issuer"
-	"github.com/floegence/flowersec/flowersec-go/controlplane/token"
-	tunnelv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/tunnel/v1"
-	"github.com/floegence/flowersec/flowersec-go/internal/base64url"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
+	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/token"
+	tunnelv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/tunnel/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/base64url"
 	"github.com/gorilla/websocket"
 )
 

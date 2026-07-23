@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	fsproxy "github.com/floegence/flowersec/flowersec-go/proxy"
+	fsproxy "github.com/floegence/flowersec/flowersec-go/v2/proxy"
 )
 
 func TestDecodeJSONRejectsOwnerDocAndZeroTimeout(t *testing.T) {

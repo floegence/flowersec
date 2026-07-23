@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/crypto/e2ee"
-	"github.com/floegence/flowersec/flowersec-go/fserrors"
-	fsyamux "github.com/floegence/flowersec/flowersec-go/mux/yamux"
-	fsstream "github.com/floegence/flowersec/flowersec-go/stream"
-	"github.com/floegence/flowersec/flowersec-go/streamhello"
+	"github.com/floegence/flowersec/flowersec-go/v2/crypto/e2ee"
+	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/v2/mux/yamux"
+	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
+	"github.com/floegence/flowersec/flowersec-go/v2/streamhello"
 )
 
 const DefaultMaxStreamHelloBytes = 8 * 1024

@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	controlv1 "github.com/floegence/flowersec/flowersec-go/gen/flowersec/controlplane/v1"
-	"github.com/floegence/flowersec/flowersec-go/protocolio"
+	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
+	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 )
 
 func makeTunnelArtifact() *protocolio.ConnectArtifact {

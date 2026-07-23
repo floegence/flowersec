@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/carrier"
-	"github.com/floegence/flowersec/flowersec-go/carrier/rawquic"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic"
 )
 
 func TestLimitsRejectUnboundedOrInconsistentValues(t *testing.T) {

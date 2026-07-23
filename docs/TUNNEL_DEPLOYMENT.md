@@ -9,7 +9,7 @@ The tunnel is an untrusted rendezvous: it verifies one-time attach tokens and fo
 ### Option A: `go install`
 
 ```bash
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-tunnel@latest
+go install github.com/floegence/flowersec/flowersec-go/v2/cmd/flowersec-tunnel@latest
 flowersec-tunnel --version
 ```
 
@@ -90,7 +90,7 @@ Keyset file format (produced by `flowersec-issuer-keygen`):
 For local development, you can generate a keypair and the corresponding tunnel keyset file using:
 
 ```bash
-go install github.com/floegence/flowersec/flowersec-go/cmd/flowersec-issuer-keygen@latest
+go install github.com/floegence/flowersec/flowersec-go/v2/cmd/flowersec-issuer-keygen@latest
 flowersec-issuer-keygen --out-dir ./keys
 ```
 
