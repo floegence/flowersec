@@ -21,7 +21,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 	"github.com/floegence/flowersec/flowersec-go/v2/tunnel/server"
 )

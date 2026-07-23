@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 )
 

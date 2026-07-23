@@ -1,4 +1,4 @@
-import type { RpcEnvelope } from "../gen/flowersec/rpc/v1.gen.js";
+import type { RpcEnvelope } from "./wire.js";
 import { isSafeU32Number, isSafeU64Number } from "../utils/number.js";
 
 // assertRpcEnvelope validates numeric fields that are u32/u64 in the IDL.
@@ -20,4 +20,3 @@ export function assertRpcEnvelope(v: unknown): RpcEnvelope {
   }
   return o as RpcEnvelope;
 }
-

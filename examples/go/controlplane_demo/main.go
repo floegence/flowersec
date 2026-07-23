@@ -28,7 +28,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
 	directv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/direct/v1"
-	rpcwirev1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"
 	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 )
@@ -386,16 +385,16 @@ type serverEndpointRegisterResponse struct {
 	OK bool `json:"ok"`
 }
 
-func (c *serverEndpointConn) handleRegister(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcwirev1.RpcError) {
+func (c *serverEndpointConn) handleRegister(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpc.RemoteError) {
 	var req serverEndpointRegisterRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		msg := "invalid json"
-		return nil, &rpcwirev1.RpcError{Code: 400, Message: &msg}
+		return nil, &rpc.RemoteError{Code: 400, Message: &msg}
 	}
 	id := strings.TrimSpace(req.EndpointID)
 	if id == "" {
 		msg := "missing endpoint_id"
-		return nil, &rpcwirev1.RpcError{Code: 400, Message: &msg}
+		return nil, &rpc.RemoteError{Code: 400, Message: &msg}
 	}
 	c.mu.Lock()
 	prev := c.id

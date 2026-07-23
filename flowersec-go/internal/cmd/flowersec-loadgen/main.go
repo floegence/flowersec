@@ -29,7 +29,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/controlplane/issuer"
 	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
 	controlv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/controlplane/v1"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 	fsyamux "github.com/floegence/flowersec/flowersec-go/v2/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/v2/observability"
 	"github.com/floegence/flowersec/flowersec-go/v2/protocolio"

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/framing/jsonframe"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 	"github.com/floegence/flowersec/flowersec-go/v2/observability"
 )
 

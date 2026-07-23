@@ -13,7 +13,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v2/endpoint"
 	"github.com/floegence/flowersec/flowersec-go/v2/fserrors"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 	fsstream "github.com/floegence/flowersec/flowersec-go/v2/stream"
 )

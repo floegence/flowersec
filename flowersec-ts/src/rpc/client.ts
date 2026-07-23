@@ -1,4 +1,4 @@
-import type { RpcEnvelope, RpcError } from "../gen/flowersec/rpc/v1.gen.js";
+import type { RpcEnvelope, RpcError } from "./wire.js";
 import { normalizeObserver, nowSeconds, type ClientObserver, type ClientObserverLike, type RpcCallResult } from "../observability/observer.js";
 import { DEFAULT_MAX_JSON_FRAME_BYTES, readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
 import { assertRpcEnvelope } from "./validate.js";

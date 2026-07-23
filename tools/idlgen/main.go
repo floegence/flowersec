@@ -402,7 +402,6 @@ func genGoRPC(outRoot string, s schema) error {
 	buf.WriteString("import (\n")
 	buf.WriteString("\t\"context\"\n")
 	buf.WriteString("\t\"encoding/json\"\n\n")
-	fmt.Fprintf(&buf, "\trpcwire \"github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/%s\"\n", version)
 	buf.WriteString("\t\"github.com/floegence/flowersec/flowersec-go/v2/rpc\"\n")
 	buf.WriteString(")\n\n")
 
@@ -458,7 +457,7 @@ func genGoRPC(outRoot string, s schema) error {
 				reqType := exportName(m.Request)
 				respType := exportName(m.Response)
 				handlerMethod := exportName(mn)
-				fmt.Fprintf(&buf, "\tr.Register(%s, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {\n", typeIDConst)
+				fmt.Fprintf(&buf, "\tr.Register(%s, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpc.RemoteError) {\n", typeIDConst)
 				fmt.Fprintf(&buf, "\t\tvar req %s\n", reqType)
 				buf.WriteString("\t\tif len(payload) != 0 {\n")
 				fmt.Fprintf(&buf, "\t\t\tif err := json.Unmarshal(payload, &req); err != nil {\n")

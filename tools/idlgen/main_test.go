@@ -109,7 +109,7 @@ func TestGeneratedRPCUsesNamespaceVersion(t *testing.T) {
 		}
 	}
 	assertGeneratedContains("flowersec/demo/v2/types.gen.go", "package v2")
-	assertGeneratedContains("flowersec/demo/v2/rpc.gen.go", "rpcwire \"github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v2\"")
+	assertGeneratedContains("flowersec/demo/v2/rpc.gen.go", "*rpc.RemoteError")
 	assertGeneratedContains("flowersec/demo/v2_rpc.rs", "crate::generated::flowersec::rpc::v2::RpcError")
 	assertGeneratedContains("flowersec/demo/v2.facade.gen.ts", "controlplane/v2.gen.js", "direct/v2.gen.js")
 }

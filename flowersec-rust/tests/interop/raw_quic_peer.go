@@ -15,7 +15,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/admissionv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/carrier/rawquic"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/v2/protocolv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/session"
@@ -89,7 +88,7 @@ func runSessionServer(profile string) {
 	router := rpc.NewRouter()
 	postRekey := make(chan struct{}, 1)
 	doneOpen := make(chan struct{}, 1)
-	router.Register(22, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
+	router.Register(22, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpc.RemoteError) {
 		var marker map[string]any
 		if json.Unmarshal(payload, &marker) == nil {
 			if _, ok := marker["epoch"]; ok {
@@ -101,7 +100,7 @@ func runSessionServer(profile string) {
 		}
 		return append(json.RawMessage(nil), payload...), nil
 	})
-	router.Register(23, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
+	router.Register(23, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpc.RemoteError) {
 		select {
 		case doneOpen <- struct{}{}:
 		default:

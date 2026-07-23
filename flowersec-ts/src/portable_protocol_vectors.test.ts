@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
-import { assertRpcEnvelope } from "./gen/flowersec/rpc/v1.gen.js";
+import { assertRpcEnvelope } from "./rpc/validate.js";
 import type { DiagnosticEvent } from "./observability/observer.js";
 import type { HttpRequestMetaV1, WsOpenMetaV1 } from "./proxy/types.js";
 import {

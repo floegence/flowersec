@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { RpcEnvelope } from "../gen/flowersec/rpc/v1.gen.js";
+import type { RpcEnvelope } from "./wire.js";
 import { writeJsonFrame } from "../framing/jsonframe.js";
 import { readU32be } from "../utils/bin.js";
 import { RpcClient } from "./client.js";

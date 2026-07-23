@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 
-	rpcwire "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
 	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 )
 
@@ -29,7 +28,7 @@ type DemoHandler interface {
 }
 
 func RegisterDemo(r *rpc.Router, h DemoHandler) {
-	r.Register(DemoTypeID_Ping, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {
+	r.Register(DemoTypeID_Ping, func(ctx context.Context, payload json.RawMessage) (json.RawMessage, *rpc.RemoteError) {
 		var req PingRequest
 		if len(payload) != 0 {
 			if err := json.Unmarshal(payload, &req); err != nil {

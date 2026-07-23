@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/gen/flowersec/rpc/v1"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 	"github.com/floegence/flowersec/flowersec-go/v2/observability"
 	"github.com/floegence/flowersec/flowersec-go/v2/rpc"
 )

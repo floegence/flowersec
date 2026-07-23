@@ -1,4 +1,4 @@
-import type { StreamHello } from "../gen/flowersec/rpc/v1.gen.js";
+import type { StreamHello } from "../rpc/wire.js";
 import { readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
 
 // writeStreamHello sends the initial stream greeting.
