@@ -164,6 +164,8 @@ final class SourceGuardTests: XCTestCase {
       session.contains("var endpointInstanceID:"),
       "SessionV2 must not expose endpoint instance IDs"
     )
+    XCTAssertFalse(session.lowercased().contains("unreliable"), "Swift DATAGRAM is unavailable")
+    XCTAssertFalse(session.lowercased().contains("migrat"), "Swift migration is unavailable")
   }
 
   func testSwiftPublicSurfaceDoesNotRestoreTransportV1() throws {

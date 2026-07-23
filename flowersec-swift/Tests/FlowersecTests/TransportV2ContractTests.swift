@@ -4,13 +4,14 @@ import Testing
 @testable import Flowersec
 
 struct TransportV2ContractTests {
-  @Test func macOSCapabilityAdvertisesOnlyVerifiedWSSDialTuples() throws {
-    let descriptor = RuntimeCapabilitiesV2.macOS
-    try descriptor.validate()
-    #expect(descriptor.tuples.map(\.carrier) == [.webSocket, .webSocket, .webSocket])
-    #expect(descriptor.tuples.map(\.path) == [.direct, .tunnel, .tunnel])
-    #expect(descriptor.tuples.map(\.sessionRole) == [.client, .client, .server])
-    #expect(descriptor.unsupported.map(\.carrier) == [.rawQUIC, .webTransport])
+  @Test func appleCapabilitiesAdvertiseOnlyProductionWSSDialTuples() throws {
+    for descriptor in [RuntimeCapabilitiesV2.macOS, RuntimeCapabilitiesV2.iOS] {
+      try descriptor.validate()
+      #expect(descriptor.tuples.map(\.carrier) == [.webSocket, .webSocket, .webSocket])
+      #expect(descriptor.tuples.map(\.path) == [.direct, .tunnel, .tunnel])
+      #expect(descriptor.tuples.map(\.sessionRole) == [.client, .client, .server])
+      #expect(descriptor.unsupported.map(\.carrier) == [.rawQUIC, .webTransport])
+    }
   }
 
   @Test func carrierRegistryValuesMatchPortableContract() {
@@ -19,33 +20,7 @@ struct TransportV2ContractTests {
     #expect(CarrierKind.webTransport.rawValue == "webtransport")
   }
 
-  @Test func appleCapabilityDoesNotAdvertiseUnwiredCarriers() {
-    #expect(
-      RuntimeCapabilitiesV2.apple
-        == RuntimeCapabilityDescriptorV2(
-          schemaVersion: 2,
-          language: "swift",
-          runtime: "apple",
-          tuples: [],
-          unsupported: [
-            UnsupportedRuntimeCarrierV2(
-              carrier: .rawQUIC,
-              reason: "network_framework_quic_contract_incomplete_on_supported_targets"
-            ),
-            UnsupportedRuntimeCarrierV2(
-              carrier: .webSocket,
-              reason: "transport_v2_websocket_adapter_not_committed"
-            ),
-            UnsupportedRuntimeCarrierV2(
-              carrier: .webTransport,
-              reason: "network_framework_quic_contract_incomplete_on_supported_targets"
-            ),
-          ]
-        )
-    )
-  }
-
-  @Test func appleCapabilityMatchesSharedStrictCodecVector() throws {
+  @Test func appleCapabilitiesMatchSharedStrictCodecVectors() throws {
     let workingDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let relativePath = "testdata/transport_v2/capability_vectors.json"
     let candidates = [
@@ -55,15 +30,18 @@ struct TransportV2ContractTests {
     let url = try #require(candidates.first { FileManager.default.fileExists(atPath: $0.path) })
     let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
     let vectors = try #require(fixture?["vectors"] as? [[String: Any]])
-    let vector = try #require(vectors.first { $0["name"] as? String == "swift-apple" })
-    let canonical = try RuntimeCapabilitiesV2.apple.canonicalJSON()
-    #expect(String(decoding: canonical, as: UTF8.self) == vector["canonical_json"] as? String)
-    #expect(try RuntimeCapabilitiesV2.apple.digestHex() == vector["digest_hex"] as? String)
-    #expect(
-      try RuntimeCapabilityDescriptorV2.decodeCanonicalJSON(canonical)
-        == RuntimeCapabilitiesV2.apple)
-    #expect(throws: (any Error).self) {
-      try RuntimeCapabilityDescriptorV2.decodeCanonicalJSON(Data([0x20]) + canonical)
+    for (name, descriptor) in [
+      ("swift-ios", RuntimeCapabilitiesV2.iOS),
+      ("swift-macos", RuntimeCapabilitiesV2.macOS),
+    ] {
+      let vector = try #require(vectors.first { $0["name"] as? String == name })
+      let canonical = try descriptor.canonicalJSON()
+      #expect(String(decoding: canonical, as: UTF8.self) == vector["canonical_json"] as? String)
+      #expect(try descriptor.digestHex() == vector["digest_hex"] as? String)
+      #expect(try RuntimeCapabilityDescriptorV2.decodeCanonicalJSON(canonical) == descriptor)
+      #expect(throws: (any Error).self) {
+        try RuntimeCapabilityDescriptorV2.decodeCanonicalJSON(Data([0x20]) + canonical)
+      }
     }
   }
 

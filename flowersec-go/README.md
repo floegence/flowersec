@@ -27,7 +27,7 @@ WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
 
 Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. They use native bidirectional streams without Yamux. WebSocket uses hop-local Yamux internally.
 
-Flowersec disables application 0-RTT and does not use QUIC DATAGRAM.
+Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.
 
 Transport v2 production carrier support: WebSocket, raw QUIC, and WebTransport.
 

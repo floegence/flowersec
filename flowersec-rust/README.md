@@ -30,13 +30,14 @@ keys, and endpoint identities are unavailable to crate consumers.
 
 The current production connector implements raw QUIC dialing internally. It
 uses native bidirectional QUIC streams without Yamux, requires caller-provided
-trust material, disables 0-RTT and QUIC DATAGRAM, and is covered by Go
-interoperability tests. Those implementation details do not change the public
-connector or session contract.
+trust material, disables 0-RTT, and is covered by Go interoperability tests.
+Negotiated native DATAGRAM is used only by the separately encrypted,
+carrier-neutral unreliable-message channel. Those implementation details do
+not change the public connector or session contract.
 
 Transport v2 production carrier support: raw QUIC direct client dialing and runtime-owned direct server listening, plus tunnel dialing for both session roles.
 
-Flowersec disables application 0-RTT and does not use QUIC DATAGRAM.
+Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.
 
 ## Public API
 

@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::{BufRead, BufReader, Read},
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     path::PathBuf,
     process::{Command, Stdio},
     sync::{Arc, OnceLock},
@@ -569,7 +569,7 @@ async fn raw_quic_admission_preflight_binds_fsb2_to_session_config_before_openin
 }
 
 #[tokio::test]
-async fn active_connection_survives_local_udp_rebinding() {
+async fn production_stream_operation_reconciles_route_and_releases_the_old_udp_socket() {
     let (_listener, client, server) = new_pair(
         RawQuicPathProfile::Direct,
         default_limits(),
@@ -577,10 +577,49 @@ async fn active_connection_survives_local_udp_rebinding() {
     )
     .await;
     let previous = client.local_address().expect("client local address");
-    let rebound = client
-        .migrate_local_address(loopback_ephemeral())
-        .expect("rebind active raw QUIC session");
+    client.replace_observed_route_for_test(SocketAddr::from(([192, 0, 2, 1], 0)));
+    native_round_trip(&client, &server).await;
+    let rebound = client.local_address().expect("rebound local address");
     assert_ne!(rebound, previous);
+    assert_eq!(server.peer_address(), rebound);
+
+    let old_socket = UdpSocket::bind(previous).expect("old UDP socket was released");
+    native_round_trip(&client, &server).await;
+    drop(old_socket);
+}
+
+#[tokio::test]
+async fn failed_migration_preflight_retains_the_active_udp_path() {
+    let (_listener, client, server) = new_pair(
+        RawQuicPathProfile::Direct,
+        default_limits(),
+        default_limits(),
+    )
+    .await;
+    let previous = client.local_address().expect("client local address");
+    let occupied = UdpSocket::bind(loopback_ephemeral()).expect("occupy migration target");
+    let occupied_address = occupied.local_addr().expect("occupied local address");
+
+    assert!(client.migrate_local_address(occupied_address).is_err());
+    assert_eq!(
+        client.local_address().expect("unchanged local address"),
+        previous
+    );
+    native_round_trip(&client, &server).await;
+}
+
+#[tokio::test]
+async fn listener_owned_server_rejects_active_migration() {
+    let (_listener, client, server) = new_pair(
+        RawQuicPathProfile::Direct,
+        default_limits(),
+        default_limits(),
+    )
+    .await;
+    assert!(matches!(
+        server.migrate_local_address(loopback_ephemeral()),
+        Err(crate::raw_quic_v2::RawQuicError::MigrationUnavailable)
+    ));
     native_round_trip(&client, &server).await;
 }
 

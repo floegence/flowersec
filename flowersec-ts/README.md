@@ -46,7 +46,7 @@ The connectors select an eligible transport from the opaque artifact internally.
 
 Transport v2 production carrier support: browsers support WebSocket and WebTransport; Node.js supports WebSocket dialing for direct clients and both tunnel roles.
 
-Flowersec disables application 0-RTT and does not use QUIC DATAGRAM.
+Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.
 
 ## Verify
 

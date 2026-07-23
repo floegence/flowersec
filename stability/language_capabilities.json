@@ -81,6 +81,12 @@
       "owner": "rust",
       "reason": "Rust owns its native raw QUIC connector and runtime listener implementation.",
       "evidence": ["flowersec-rust/src/raw_quic_v2_integration_tests.rs"]
+    },
+    {
+      "id": "swift_apple_websocket",
+      "owner": "swift",
+      "reason": "The Swift production connector supports WSS direct and tunnel dialing on macOS and iOS.",
+      "evidence": ["flowersec-swift/Tests/FlowersecTests/ConnectorV2Tests.swift"]
     }
   ],
   "shared_fixtures": [

@@ -227,7 +227,8 @@ var transportV2RuntimeCarrierExpectations = map[string][]string{
 	"typescript_browser": {"websocket", "webtransport"},
 	"typescript_node":    {"websocket"},
 	"rust_native":        {"raw_quic"},
-	"swift_apple":        {},
+	"swift_ios":          {"websocket"},
+	"swift_macos":        {"websocket"},
 }
 
 var transportV2RuntimeExpectations = map[string]transportV2RuntimeExpectation{
@@ -235,7 +236,8 @@ var transportV2RuntimeExpectations = map[string]transportV2RuntimeExpectation{
 	"typescript_browser": {Language: "typescript", Environment: "browser"},
 	"typescript_node":    {Language: "typescript", Environment: "node"},
 	"rust_native":        {Language: "rust", Environment: "native"},
-	"swift_apple":        {Language: "swift", Environment: "apple"},
+	"swift_ios":          {Language: "swift", Environment: "ios"},
+	"swift_macos":        {Language: "swift", Environment: "macos"},
 }
 
 var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpectation{
@@ -245,10 +247,11 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"go_native":          {Source: "flowersec-go/internal/artifactv2/shared_vectors_test.go", Tokens: []string{"DecodeArtifactJSON", "MarshalRequest", "ParseResponse"}},
 			"typescript_browser": {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"decodeArtifactV2JSON", "buildFSB2RequestV2", "decodeFSA2ResponseV2"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"decodeArtifactV2JSON", "buildFSB2RequestV2", "decodeFSA2ResponseV2"}},
+			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift", Tokens: []string{"parseArtifactV2", "encodeFSB2", "decodeFSA2"}},
+			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift", Tokens: []string{"parseArtifactV2", "encodeFSB2", "decodeFSA2"}},
 		},
 		Unsupported: map[string]string{
 			"rust_native": "artifact_v2_codec_not_implemented",
-			"swift_apple": "artifact_v2_codec_not_implemented",
 		},
 	},
 	"capability": {
@@ -258,7 +261,8 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_browser": {Source: "flowersec-ts/src/v2/capability.test.ts", Tokens: []string{"encodeRuntimeCapabilityDescriptorV2", "decodeRuntimeCapabilityDescriptorV2", "runtimeCapabilityDigestHexV2"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/capability.test.ts", Tokens: []string{"encodeRuntimeCapabilityDescriptorV2", "decodeRuntimeCapabilityDescriptorV2", "runtimeCapabilityDigestHexV2"}},
 			"rust_native":        {Source: "flowersec-rust/src/transport_v2.rs", Tokens: []string{"encode_runtime_capability_descriptor_v2", "decode_runtime_capability_descriptor_v2", "runtime_capability_digest_hex_v2"}},
-			"swift_apple":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift", Tokens: []string{"canonicalJSON", "decodeCanonicalJSON", "digestHex"}},
+			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift", Tokens: []string{"canonicalJSON", "decodeCanonicalJSON", "digestHex"}},
+			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift", Tokens: []string{"canonicalJSON", "decodeCanonicalJSON", "digestHex"}},
 		},
 		Unsupported: map[string]string{},
 	},
@@ -269,7 +273,8 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_browser": {Source: "flowersec-ts/src/v2/protocol.test.ts", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/protocol.test.ts", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
 			"rust_native":        {Source: "flowersec-rust/src/transport_v2_crypto_integration_tests.rs", Tokens: []string{"derive_epoch_zero_v2", "seal_record_v2", "open_record_v2"}},
-			"swift_apple":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
+			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
+			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift", Tokens: []string{"deriveEpochZero", "sealRecord", "openRecord"}},
 		},
 		Unsupported: map[string]string{},
 	},
@@ -282,7 +287,8 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"rust_native":        {Source: "flowersec-rust/src/protocol_v2.rs", Tokens: []string{"derive_unreliable_material_v2", "seal_unreliable_v2", "open_unreliable_v2", "datagram_vectors.json"}},
 		},
 		Unsupported: map[string]string{
-			"swift_apple": "unreliable_message_channel_not_supported",
+			"swift_ios":   "unreliable_message_channel_not_supported",
+			"swift_macos": "unreliable_message_channel_not_supported",
 		},
 	},
 	"endpoint_set": {
@@ -294,7 +300,8 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_browser": "endpoint_set_v2_codec_not_implemented",
 			"typescript_node":    "endpoint_set_v2_codec_not_implemented",
 			"rust_native":        "endpoint_set_v2_codec_not_implemented",
-			"swift_apple":        "endpoint_set_v2_codec_not_implemented",
+			"swift_ios":          "endpoint_set_v2_codec_not_implemented",
+			"swift_macos":        "endpoint_set_v2_codec_not_implemented",
 		},
 	},
 	"handshake": {
@@ -304,7 +311,8 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_browser": {Source: "flowersec-ts/src/v2/handshake.test.ts", Tokens: []string{"computeSharedSecretV2", "computeHandshakeH0V2", "deriveSessionPRKV2"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/handshake.test.ts", Tokens: []string{"computeSharedSecretV2", "computeHandshakeH0V2", "deriveSessionPRKV2"}},
 			"rust_native":        {Source: "flowersec-rust/src/session_v2.rs", Tokens: []string{"derive_shared_secret", "canonical_handshake_v2", "hkdf_extract_v2"}},
-			"swift_apple":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift", Tokens: []string{"verifyVectorForTesting", "TransportV2HandshakeVectorInput"}},
+			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift", Tokens: []string{"verifyVectorForTesting", "TransportV2HandshakeVectorInput"}},
+			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift", Tokens: []string{"verifyVectorForTesting", "TransportV2HandshakeVectorInput"}},
 		},
 		Unsupported: map[string]string{},
 	},
@@ -315,7 +323,8 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_browser": {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"canonicalizeCandidatesV2", "idnaFixture"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"canonicalizeCandidatesV2", "idnaFixture"}},
 			"rust_native":        {Source: "flowersec-rust/src/idna_v2_integration_tests.rs", Tokens: []string{"lookup_ascii", "UNICODE_VERSION"}},
-			"swift_apple":        {Source: "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift", Tokens: []string{"lookupASCII", "unicodeVersion"}},
+			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift", Tokens: []string{"lookupASCII", "unicodeVersion"}},
+			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift", Tokens: []string{"lookupASCII", "unicodeVersion"}},
 		},
 		Unsupported: map[string]string{},
 	},
@@ -326,7 +335,8 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_browser": {Source: "flowersec-ts/src/v2/open.test.ts", Tokens: []string{"encodeOpenPayload", "decodeOpenPayload"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/open.test.ts", Tokens: []string{"encodeOpenPayload", "decodeOpenPayload"}},
 			"rust_native":        {Source: "flowersec-rust/src/open_v2_integration_tests.rs", Tokens: []string{"encode_open_payload_v2", "decode_open_payload_v2"}},
-			"swift_apple":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift", Tokens: []string{"OpenPayloadV2", "encoded", "decode"}},
+			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift", Tokens: []string{"OpenPayloadV2", "encoded", "decode"}},
+			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift", Tokens: []string{"OpenPayloadV2", "encoded", "decode"}},
 		},
 		Unsupported: map[string]string{},
 	},
@@ -337,7 +347,8 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"typescript_browser": {Source: "flowersec-ts/src/v2/session_wire.test.ts", Tokens: []string{"encodeStreamKeyUpdateACKV2", "decodeStreamKeyUpdateACKV2"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/session_wire.test.ts", Tokens: []string{"encodeStreamKeyUpdateACKV2", "decodeStreamKeyUpdateACKV2"}},
 			"rust_native":        {Source: "flowersec-rust/src/session_v2.rs", Tokens: []string{"encode_stream_key_update_ack_v2", "decode_stream_key_update_ack_v2"}},
-			"swift_apple":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift", Tokens: []string{"StreamKeyUpdateACKPayloadV2", "encoded"}},
+			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift", Tokens: []string{"StreamKeyUpdateACKPayloadV2", "encoded"}},
+			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift", Tokens: []string{"StreamKeyUpdateACKPayloadV2", "encoded"}},
 		},
 		Unsupported: map[string]string{},
 	},
@@ -356,9 +367,12 @@ var transportV2UnsupportedExpectations = map[string]map[string]string{
 		"websocket":    "transport_v2_websocket_adapter_not_committed",
 		"webtransport": "rust_webtransport_not_committed",
 	},
-	"swift_apple": {
+	"swift_ios": {
 		"raw_quic":     "network_framework_quic_contract_incomplete_on_supported_targets",
-		"websocket":    "transport_v2_websocket_adapter_not_committed",
+		"webtransport": "network_framework_quic_contract_incomplete_on_supported_targets",
+	},
+	"swift_macos": {
+		"raw_quic":     "network_framework_quic_contract_incomplete_on_supported_targets",
 		"webtransport": "network_framework_quic_contract_incomplete_on_supported_targets",
 	},
 }
@@ -612,7 +626,7 @@ func validateTransportV2WireFixtures(repoRoot string, contract *transportV2Contr
 	if len(contract.WireFixtures) != len(transportV2WireFixtureExpectations) {
 		return fmt.Errorf("transport v2 normative wire fixture count = %d, want %d", len(contract.WireFixtures), len(transportV2WireFixtureExpectations))
 	}
-	runtimeOrder := []string{"go_native", "typescript_browser", "typescript_node", "rust_native", "swift_apple"}
+	runtimeOrder := []string{"go_native", "typescript_browser", "typescript_node", "rust_native", "swift_ios", "swift_macos"}
 	fixtureIDs := make([]string, 0, len(contract.WireFixtures))
 	for _, fixture := range contract.WireFixtures {
 		fixtureIDs = append(fixtureIDs, fixture.ID)
@@ -742,7 +756,7 @@ func validateTransportV2Runtimes(runtimes []transportV2Runtime, reasons map[stri
 		return err
 	}
 	slices.Sort(runtimeIDs)
-	wantRuntimeIDs := []string{"go_native", "rust_native", "swift_apple", "typescript_browser", "typescript_node"}
+	wantRuntimeIDs := []string{"go_native", "rust_native", "swift_ios", "swift_macos", "typescript_browser", "typescript_node"}
 	if !slices.Equal(runtimeIDs, wantRuntimeIDs) {
 		return fmt.Errorf("transport runtime registry = %#v, want %#v", runtimeIDs, wantRuntimeIDs)
 	}
@@ -795,7 +809,7 @@ func expectedTransportV2TupleKeys(runtimeID string, carriers []string) []string 
 			carrier+"|dial|client|tunnel",
 			carrier+"|dial|server|tunnel",
 		)
-		if runtimeID != "typescript_browser" && runtimeID != "typescript_node" {
+		if runtimeID != "typescript_browser" && runtimeID != "typescript_node" && runtimeID != "swift_ios" && runtimeID != "swift_macos" {
 			keys = append(keys, carrier+"|listen|server|direct")
 		}
 	}

@@ -24,11 +24,11 @@ WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
 
 Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. The Swift SDK support below is narrower than the protocol carrier set.
 
-`ConnectorV2` establishes direct and tunneled WebSocket sessions on macOS. It validates TLS and the exact Flowersec v2 WebSocket subprotocol before durable spend and admission. WebSocket keeps Yamux internal to its hop. Raw QUIC and WebTransport are not exposed by the current Swift connector.
+`ConnectorV2` establishes direct and tunneled WebSocket sessions on macOS and iOS. It validates TLS and the exact Flowersec v2 WebSocket subprotocol before durable spend and admission. WebSocket keeps Yamux internal to its hop. Raw QUIC and WebTransport are not exposed by the current Swift connector.
 
-Transport v2 production carrier support: macOS supports WebSocket direct and tunnel dial sessions; iOS advertises no production carrier.
+Transport v2 production carrier support: macOS and iOS support WebSocket direct and tunnel dial sessions.
 
-Flowersec disables application 0-RTT and does not use QUIC DATAGRAM.
+Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.
 
 WebSocket connections require TLS 1.3 and exact Flowersec v2 subprotocol negotiation. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) for the internal carrier contract.
 

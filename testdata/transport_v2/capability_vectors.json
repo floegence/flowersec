@@ -23,9 +23,14 @@
       "digest_hex": "a00bb1a56a38b4247b30e4e966586917a38ebd48b1323702d17a615892e5a766"
     },
     {
-      "name": "swift-apple",
-      "canonical_json": "{\"language\":\"swift\",\"runtime\":\"apple\",\"schemaVersion\":2,\"tuples\":[],\"unsupported\":[{\"carrier\":\"raw_quic\",\"reason\":\"network_framework_quic_contract_incomplete_on_supported_targets\"},{\"carrier\":\"websocket\",\"reason\":\"transport_v2_websocket_adapter_not_committed\"},{\"carrier\":\"webtransport\",\"reason\":\"network_framework_quic_contract_incomplete_on_supported_targets\"}]}",
-      "digest_hex": "2342046bebbac825376343fa335994fde094a7d07e8248cb033aab468208f79e"
+      "name": "swift-ios",
+      "canonical_json": "{\"language\":\"swift\",\"runtime\":\"ios\",\"schemaVersion\":2,\"tuples\":[{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"server\"}],\"unsupported\":[{\"carrier\":\"raw_quic\",\"reason\":\"network_framework_quic_contract_incomplete_on_supported_targets\"},{\"carrier\":\"webtransport\",\"reason\":\"network_framework_quic_contract_incomplete_on_supported_targets\"}]}",
+      "digest_hex": "9fd31f28e278ad2314c53f53459ee914fdb54b81f9e53120b386c8652358e632"
+    },
+    {
+      "name": "swift-macos",
+      "canonical_json": "{\"language\":\"swift\",\"runtime\":\"macos\",\"schemaVersion\":2,\"tuples\":[{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"direct\",\"sessionRole\":\"client\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"client\"},{\"carrier\":\"websocket\",\"networkMode\":\"dial\",\"path\":\"tunnel\",\"sessionRole\":\"server\"}],\"unsupported\":[{\"carrier\":\"raw_quic\",\"reason\":\"network_framework_quic_contract_incomplete_on_supported_targets\"},{\"carrier\":\"webtransport\",\"reason\":\"network_framework_quic_contract_incomplete_on_supported_targets\"}]}",
+      "digest_hex": "ff0b1dd895421c4c0ca24575ad22e15aac1ba590d30672744a4c581d9c508e26"
     }
   ]
 }

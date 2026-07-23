@@ -35,7 +35,8 @@
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
         { "runtime": "rust_native", "applicability": "unsupported", "unsupported_reason": "artifact_v2_codec_not_implemented" },
-        { "runtime": "swift_apple", "applicability": "unsupported", "unsupported_reason": "artifact_v2_codec_not_implemented" }
+        { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift" },
+        { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift" }
       ]
     },
     {
@@ -46,7 +47,8 @@
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/capability.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/capability.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/transport_v2.rs" },
-        { "runtime": "swift_apple", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift" }
+        { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift" },
+        { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift" }
       ]
     },
     {
@@ -57,7 +59,8 @@
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/protocol.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/protocol.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/transport_v2_crypto_integration_tests.rs" },
-        { "runtime": "swift_apple", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift" }
+        { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift" },
+        { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2CryptoTests.swift" }
       ]
     },
     {
@@ -68,7 +71,8 @@
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/unreliableMessage.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/unreliableMessage.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/protocol_v2.rs" },
-        { "runtime": "swift_apple", "applicability": "unsupported", "unsupported_reason": "unreliable_message_channel_not_supported" }
+        { "runtime": "swift_ios", "applicability": "unsupported", "unsupported_reason": "unreliable_message_channel_not_supported" },
+        { "runtime": "swift_macos", "applicability": "unsupported", "unsupported_reason": "unreliable_message_channel_not_supported" }
       ]
     },
     {
@@ -79,7 +83,8 @@
         { "runtime": "typescript_browser", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
         { "runtime": "typescript_node", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
         { "runtime": "rust_native", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
-        { "runtime": "swift_apple", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" }
+        { "runtime": "swift_ios", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" },
+        { "runtime": "swift_macos", "applicability": "unsupported", "unsupported_reason": "endpoint_set_v2_codec_not_implemented" }
       ]
     },
     {
@@ -90,7 +95,8 @@
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/handshake.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/handshake.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/session_v2.rs" },
-        { "runtime": "swift_apple", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift" }
+        { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift" },
+        { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2HandshakeVectorTests.swift" }
       ]
     },
     {
@@ -101,7 +107,8 @@
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/artifact.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/idna_v2_integration_tests.rs" },
-        { "runtime": "swift_apple", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift" }
+        { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift" },
+        { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/IDNAHostV2Tests.swift" }
       ]
     },
     {
@@ -112,7 +119,8 @@
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/open.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/open.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/open_v2_integration_tests.rs" },
-        { "runtime": "swift_apple", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift" }
+        { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift" },
+        { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift" }
       ]
     },
     {
@@ -123,7 +131,8 @@
         { "runtime": "typescript_browser", "applicability": "required", "source": "flowersec-ts/src/v2/session_wire.test.ts" },
         { "runtime": "typescript_node", "applicability": "required", "source": "flowersec-ts/src/v2/session_wire.test.ts" },
         { "runtime": "rust_native", "applicability": "required", "source": "flowersec-rust/src/session_v2.rs" },
-        { "runtime": "swift_apple", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift" }
+        { "runtime": "swift_ios", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift" },
+        { "runtime": "swift_macos", "applicability": "required", "source": "flowersec-swift/Tests/FlowersecTests/TransportV2SessionTests.swift" }
       ]
     }
   ],
@@ -300,13 +309,30 @@
       ]
     },
     {
-      "id": "swift_apple",
+      "id": "swift_ios",
       "language": "swift",
-      "environment": "apple",
-      "tuples": [],
+      "environment": "ios",
+      "tuples": [
+        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client" },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server" }
+      ],
       "unsupported": [
         { "carrier": "raw_quic", "reason": "network_framework_quic_contract_incomplete_on_supported_targets" },
-        { "carrier": "websocket", "reason": "transport_v2_websocket_adapter_not_committed" },
+        { "carrier": "webtransport", "reason": "network_framework_quic_contract_incomplete_on_supported_targets" }
+      ]
+    },
+    {
+      "id": "swift_macos",
+      "language": "swift",
+      "environment": "macos",
+      "tuples": [
+        { "carrier": "websocket", "network_mode": "dial", "path": "direct", "session_role": "client" },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "client" },
+        { "carrier": "websocket", "network_mode": "dial", "path": "tunnel", "session_role": "server" }
+      ],
+      "unsupported": [
+        { "carrier": "raw_quic", "reason": "network_framework_quic_contract_incomplete_on_supported_targets" },
         { "carrier": "webtransport", "reason": "network_framework_quic_contract_incomplete_on_supported_targets" }
       ]
     }

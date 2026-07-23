@@ -26,7 +26,7 @@ The authenticated session handshake derives independent directional and epoch ke
 - WSS requires authenticated TLS outside explicit local test fixtures and accepts binary frames only.
 - Raw QUIC and WebTransport require exact ALPN, explicit trust roots, TLS 1.3, and disabled early data.
 - QUIC native FIN, RESET_STREAM, STOP_SENDING, flow control, and path migration remain visible to the carrier implementation but not to applications.
-- Flowersec does not use QUIC DATAGRAM; application streams remain reliable.
+- Application streams remain reliable and never fall back to QUIC DATAGRAM. Raw QUIC and WebTransport may expose negotiated native DATAGRAM only through the carrier-neutral, separately encrypted unreliable-message channel.
 
 ## Out Of Scope
 

@@ -40,7 +40,7 @@
 | Direct | Client connects to an endpoint using a compatible candidate | WebSocket uses hop-local Yamux; QUIC-family carriers use native bidirectional streams |
 | Tunnel | Client and server legs join through independently selected compatible carriers | The tunnel maps encrypted streams between legs without choosing a primary carrier |
 
-Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. Flowersec disables application 0-RTT and does not use QUIC DATAGRAM.
+Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. Flowersec disables application 0-RTT. Reliable streams never use QUIC DATAGRAM; runtimes with negotiated native DATAGRAM expose it only through carrier-neutral unreliable messages.
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
@@ -77,7 +77,7 @@ The [cookbook index](examples/README.md) contains only v2 examples and verificat
 | Capability | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
 | Opaque artifact, connector, session, RPC, and byte streams | Yes | Yes | Yes | Yes |
-| Production WebSocket dialing | Yes | Browser and Node.js | macOS | No |
+| Production WebSocket dialing | Yes | Browser and Node.js | macOS and iOS | No |
 | Production raw QUIC dialing | Yes | No | No | Yes |
 | Production WebTransport dialing | Yes | Browser | No | No |
 | Listener support | Go library APIs | Browser runtime constraints | Not advertised | Runtime-owned raw QUIC |

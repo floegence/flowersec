@@ -164,16 +164,17 @@ Rust pins `quinn =0.11.11` with default features disabled and only `runtime-toki
 - TypeScript browser: WebSocket and WebTransport when their constructors are
   present; `detectBrowserRuntimeCapabilityV2(...)` removes unavailable APIs at
   runtime. Raw UDP is unavailable.
-- TypeScript Node.js: no production Transport v2 carrier. The package has no
-  committed v2 WebSocket admission/carrier adapter, and raw QUIC plus
-  WebTransport remain unavailable until a production-grade runtime API passes
-  the dependency gate.
+- TypeScript Node.js: WebSocket direct client dialing and tunnel dialing for
+  both session roles. Raw QUIC and WebTransport remain unavailable until a
+  production-grade runtime API passes the dependency gate.
 - Rust native: raw QUIC direct client dialing and runtime-owned direct server
   listening, plus tunnel dialing for both session roles. The opaque Connector
   owns ArtifactV2 acquisition, equal-candidate race, durable spend, and client
   admission; the runtime listener owns server admission. WebSocket and
   WebTransport remain unsupported.
-- Swift Apple: portable Transport v2 protocol/session code only. No network carrier tuple is advertised until a production WebSocket admission/carrier adapter is committed; raw QUIC and WebTransport remain blocked by the Network.framework contract across supported deployment targets.
+- Swift macOS and iOS: WebSocket direct client dialing and tunnel dialing for
+  both session roles. Raw QUIC, WebTransport, DATAGRAM, and migration remain
+  unavailable across the supported deployment targets.
 
 Unsupported states carry registered reason tokens. Missing tuples are unsupported; they must not be inferred by combining other modes or roles.
 

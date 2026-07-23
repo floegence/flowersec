@@ -3,9 +3,9 @@
 use std::{
     collections::HashSet,
     fmt, io,
-    net::{Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::{
-        Arc,
+        Arc, Mutex as StdMutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -292,11 +292,9 @@ pub enum RawQuicError {
     #[error("raw QUIC stream operation failed: {0}")]
     Stream(String),
     /// Active migration is unavailable for a listener-owned server endpoint.
-    #[cfg(test)]
     #[error("raw QUIC active migration is unavailable for this session")]
     MigrationUnavailable,
     /// The client UDP socket could not be rebound for active path migration.
-    #[cfg(test)]
     #[error("raw QUIC active migration failed: {0}")]
     Migration(#[source] io::Error),
     /// An application close code or reason exceeded its stable bounds.
@@ -481,6 +479,7 @@ impl RawQuicListener {
             self.profile,
             self.max_inbound_bidirectional_streams,
             false,
+            None,
         )
     }
 }
@@ -514,8 +513,9 @@ pub struct RawQuicSession {
     endpoint: Endpoint,
     profile: RawQuicPathProfile,
     max_inbound_bidirectional_streams: u32,
-    #[allow(dead_code)] // Explicit migration is exercised by crate-internal transport tests.
     migration_allowed: bool,
+    migration_lock: Arc<StdMutex<()>>,
+    observed_route_local_address: Arc<StdMutex<Option<SocketAddr>>>,
 }
 
 impl RawQuicSession {
@@ -534,12 +534,14 @@ impl RawQuicSession {
             .await
             .map_err(|_| RawQuicError::Handshake("deadline exceeded".into()))?
             .map_err(|error| RawQuicError::Handshake(error.to_string()))?;
+        let observed_route_local_address = preferred_route_local_address(remote_address).ok();
         Self::from_connection(
             connection,
             endpoint,
             config.profile,
             config.limits.max_inbound_bidirectional_streams,
             true,
+            observed_route_local_address,
         )
     }
 
@@ -549,6 +551,7 @@ impl RawQuicSession {
         expected_profile: RawQuicPathProfile,
         max_inbound_bidirectional_streams: u32,
         migration_allowed: bool,
+        observed_route_local_address: Option<SocketAddr>,
     ) -> Result<Self, RawQuicError> {
         let handshake = connection
             .handshake_data()
@@ -572,6 +575,8 @@ impl RawQuicSession {
             profile: negotiated,
             max_inbound_bidirectional_streams,
             migration_allowed,
+            migration_lock: Arc::new(StdMutex::new(())),
+            observed_route_local_address: Arc::new(StdMutex::new(observed_route_local_address)),
         })
     }
 
@@ -582,19 +587,30 @@ impl RawQuicSession {
     }
 
     /// Returns the effective local UDP address currently carrying this connection.
-    #[cfg(test)]
-    pub fn local_address(&self) -> Result<SocketAddr, RawQuicError> {
+    pub(crate) fn local_address(&self) -> Result<SocketAddr, RawQuicError> {
         self.endpoint.local_addr().map_err(RawQuicError::Migration)
     }
 
-    /// Rebinds a client-owned UDP endpoint and actively validates the new QUIC path.
+    /// Starts migration by rebinding a client-owned UDP endpoint.
+    ///
+    /// Quinn retains the old receive socket until traffic arrives on the new socket and
+    /// performs QUIC path validation internally. Quinn does not expose path-validation
+    /// completion or a recoverable old socket, so callers must not treat this synchronous
+    /// return as validation completion or promise rollback after a successful rebind.
+    /// Bind and rebind failures leave the previous endpoint socket in place.
     /// Listener-owned server sessions reject this operation because rebinding their
     /// shared endpoint would move unrelated accepted connections.
-    #[cfg(test)]
-    pub fn migrate_local_address(&self, address: SocketAddr) -> Result<SocketAddr, RawQuicError> {
+    pub(crate) fn migrate_local_address(
+        &self,
+        address: SocketAddr,
+    ) -> Result<SocketAddr, RawQuicError> {
         if !self.migration_allowed {
             return Err(RawQuicError::MigrationUnavailable);
         }
+        let _migration = self
+            .migration_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let socket = std::net::UdpSocket::bind(address).map_err(RawQuicError::Migration)?;
         socket
             .set_nonblocking(true)
@@ -605,8 +621,47 @@ impl RawQuicSession {
         self.local_address()
     }
 
+    fn reconcile_active_path(&self) {
+        if !self.migration_allowed {
+            return;
+        }
+        let Ok(preferred) = preferred_route_local_address(self.connection.remote_address()) else {
+            return;
+        };
+        let mut observed = self
+            .observed_route_local_address
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(previous) = *observed else {
+            *observed = Some(preferred);
+            return;
+        };
+        if same_route_source(previous, preferred) {
+            return;
+        }
+        let mut migration_address = preferred;
+        migration_address.set_port(0);
+        if self.migrate_local_address(migration_address).is_ok() {
+            *observed = Some(preferred);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_observed_route_for_test(&self, address: SocketAddr) {
+        *self
+            .observed_route_local_address
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(address);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn peer_address(&self) -> SocketAddr {
+        self.connection.remote_address()
+    }
+
     /// Opens one native bidirectional QUIC stream.
     pub async fn open_stream(&self) -> Result<RawQuicStream, RawQuicError> {
+        self.reconcile_active_path();
         let (send, receive) = self
             .connection
             .open_bi()
@@ -617,6 +672,7 @@ impl RawQuicSession {
 
     /// Accepts one native bidirectional QUIC stream.
     pub async fn accept_stream(&self) -> Result<RawQuicStream, RawQuicError> {
+        self.reconcile_active_path();
         let (send, receive) = self
             .connection
             .accept_bi()
@@ -635,6 +691,7 @@ impl RawQuicSession {
     ) -> Result<(), crate::transport_v2::CarrierUnreliableMessageErrorV2> {
         use crate::transport_v2::CarrierUnreliableMessageErrorV2 as Error;
 
+        self.reconcile_active_path();
         let Some(maximum) = self.connection.max_datagram_size() else {
             return Err(Error::Unavailable);
         };
@@ -657,6 +714,7 @@ impl RawQuicSession {
     async fn receive_unreliable_message(
         &self,
     ) -> Result<Bytes, crate::transport_v2::CarrierUnreliableMessageErrorV2> {
+        self.reconcile_active_path();
         self.connection
             .read_datagram()
             .await
@@ -758,6 +816,24 @@ impl RawQuicSession {
         self.connection
             .close(VarInt::from_u32(SESSION_CLOSE_CODE), &[]);
     }
+}
+
+fn preferred_route_local_address(remote: SocketAddr) -> io::Result<SocketAddr> {
+    let bind_address = match remote.ip() {
+        IpAddr::V4(_) => SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+        IpAddr::V6(_) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
+    };
+    let socket = std::net::UdpSocket::bind(bind_address)?;
+    socket.connect(remote)?;
+    socket.local_addr()
+}
+
+fn same_route_source(left: SocketAddr, right: SocketAddr) -> bool {
+    left.ip() == right.ip()
+        && match (left, right) {
+            (SocketAddr::V6(left), SocketAddr::V6(right)) => left.scope_id() == right.scope_id(),
+            _ => true,
+        }
 }
 
 async fn read_exact_raw_quic(stream: &RawQuicStream, mut payload: &mut [u8]) -> io::Result<()> {

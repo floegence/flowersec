@@ -41,7 +41,8 @@ func TestTransportV2ContractDeclaresSignedSliceZeroRegistry(t *testing.T) {
 		"typescript_browser": {"websocket", "webtransport"},
 		"typescript_node":    {"websocket"},
 		"rust_native":        {"raw_quic"},
-		"swift_apple":        {},
+		"swift_ios":          {"websocket"},
+		"swift_macos":        {"websocket"},
 	}
 	for _, runtime := range contract.Runtimes {
 		want, ok := wantRuntimeCarriers[runtime.ID]

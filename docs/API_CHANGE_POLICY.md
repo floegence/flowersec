@@ -32,7 +32,7 @@ Removed v1 symbols, generated packages, package subpaths, and CLIs remain on neg
 
 ## Transport Behavior
 
-WebSocket, raw QUIC, and WebTransport are equal candidate classes. WebSocket may use hop-local Yamux internally; raw QUIC and WebTransport use native bidirectional streams and preserve native FIN, reset, stop-sending, flow-control, and migration behavior. Application 0-RTT and QUIC DATAGRAM are disabled.
+WebSocket, raw QUIC, and WebTransport are equal candidate classes. WebSocket may use hop-local Yamux internally; raw QUIC and WebTransport use native bidirectional streams and preserve native FIN, reset, stop-sending, flow-control, and migration behavior. Application 0-RTT is disabled. Reliable streams never use QUIC DATAGRAM; a negotiated native DATAGRAM path is available only through the carrier-neutral unreliable-message contract.
 
 Internal runtime support facts may contain only exact tuples backed by production connector/listener code and end-to-end evidence. Capability descriptors and carrier selection are not public SDK contracts. Unsupported carriers fail closed and are not fallbacks.
 

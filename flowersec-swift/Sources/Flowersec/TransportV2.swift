@@ -207,52 +207,34 @@ enum RuntimeCapabilityCodecErrorV2: Error, Equatable, Sendable {
 }
 
 enum RuntimeCapabilitiesV2 {
-  /// Capabilities backed by production adapters and physical macOS system tests.
-  static let macOS = RuntimeCapabilityDescriptorV2(
-    schemaVersion: 2,
-    language: "swift",
-    runtime: "macos",
-    tuples: [
-      RuntimeCapabilityTupleV2(
-        carrier: .webSocket, networkMode: .dial, path: .direct, sessionRole: .client),
-      RuntimeCapabilityTupleV2(
-        carrier: .webSocket, networkMode: .dial, path: .tunnel, sessionRole: .client),
-      RuntimeCapabilityTupleV2(
-        carrier: .webSocket, networkMode: .dial, path: .tunnel, sessionRole: .server),
-    ],
-    unsupported: [
-      UnsupportedRuntimeCarrierV2(
-        carrier: .rawQUIC,
-        reason: "network_framework_quic_contract_incomplete_on_supported_targets"
-      ),
-      UnsupportedRuntimeCarrierV2(
-        carrier: .webTransport,
-        reason: "network_framework_quic_contract_incomplete_on_supported_targets"
-      ),
-    ]
-  )
+  static let macOS = appleWebSocket(runtime: "macos")
+  static let iOS = appleWebSocket(runtime: "ios")
 
-  /// Conservative cross-Apple descriptor. macOS-only evidence is not projected onto iOS.
-  static let apple = RuntimeCapabilityDescriptorV2(
-    schemaVersion: 2,
-    language: "swift",
-    runtime: "apple",
-    tuples: [],
-    unsupported: [
-      UnsupportedRuntimeCarrierV2(
-        carrier: .rawQUIC,
-        reason: "network_framework_quic_contract_incomplete_on_supported_targets"
-      ),
-      UnsupportedRuntimeCarrierV2(
-        carrier: .webSocket,
-        reason: "transport_v2_websocket_adapter_not_committed"
-      ),
-      UnsupportedRuntimeCarrierV2(
-        carrier: .webTransport,
-        reason: "network_framework_quic_contract_incomplete_on_supported_targets"
-      ),
-    ]
-  )
+  private static func appleWebSocket(runtime: String) -> RuntimeCapabilityDescriptorV2 {
+    RuntimeCapabilityDescriptorV2(
+      schemaVersion: 2,
+      language: "swift",
+      runtime: runtime,
+      tuples: [
+        RuntimeCapabilityTupleV2(
+          carrier: .webSocket, networkMode: .dial, path: .direct, sessionRole: .client),
+        RuntimeCapabilityTupleV2(
+          carrier: .webSocket, networkMode: .dial, path: .tunnel, sessionRole: .client),
+        RuntimeCapabilityTupleV2(
+          carrier: .webSocket, networkMode: .dial, path: .tunnel, sessionRole: .server),
+      ],
+      unsupported: [
+        UnsupportedRuntimeCarrierV2(
+          carrier: .rawQUIC,
+          reason: "network_framework_quic_contract_incomplete_on_supported_targets"
+        ),
+        UnsupportedRuntimeCarrierV2(
+          carrier: .webTransport,
+          reason: "network_framework_quic_contract_incomplete_on_supported_targets"
+        ),
+      ]
+    )
+  }
 }
 
 public indirect enum JSONValueV2: Equatable, Sendable {
