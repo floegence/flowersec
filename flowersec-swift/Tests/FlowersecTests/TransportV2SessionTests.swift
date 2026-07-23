@@ -861,8 +861,6 @@ final class TransportV2SessionTests: XCTestCase {
       async let client = TransportV2Session.establish(
         carrier: clientCarrier, config: configs.client)
       let (clientSession, serverSession) = try await (client, server)
-      XCTAssertEqual(clientSession.chosenCarrier, kind)
-      XCTAssertEqual(serverSession.chosenCarrier, kind)
       await clientSession.close()
       await serverSession.close()
     }

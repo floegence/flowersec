@@ -305,7 +305,6 @@ func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 			"session.RPCPeer.Call",
 			"session.RPCPeer.Notify",
 			"session.SessionV2.Path",
-			"session.SessionV2.ChosenCarrier",
 			"session.SessionV2.EndpointInstanceID",
 			"session.SessionV2.RPC",
 			"session.SessionV2.OpenStream",

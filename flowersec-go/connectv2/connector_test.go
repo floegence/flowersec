@@ -269,8 +269,8 @@ func TestConnectEstablishesAndReturnsCarrierNeutralSessionV2(t *testing.T) {
 	if result.Session == nil {
 		t.Fatal("Connect returned a nil SessionV2")
 	}
-	if result.Session.ChosenCarrier() != carrier.KindQUIC {
-		t.Fatalf("chosen carrier = %q", result.Session.ChosenCarrier())
+	if result.Candidate.Carrier != artifactv2.CarrierRawQUIC {
+		t.Fatalf("chosen candidate carrier = %q", result.Candidate.Carrier)
 	}
 	if establish := events.first("establish:q1"); establish.IsZero() || establish.Before(events.first("commit:q1")) {
 		t.Fatalf("session establishment order = %v", events.values())

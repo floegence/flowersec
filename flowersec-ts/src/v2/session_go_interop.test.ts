@@ -55,7 +55,6 @@ describe("TypeScript-Go SessionV2 interop", () => {
       const carrier = new TCPFramedCarrier(socket);
       const session = await establishAdmittedNativeSessionV2(carrier, rawFSB2, new Set(), config());
       phase = "liveness";
-      expect(session.chosenCarrier).toBe("raw_quic");
       expect(await session.probeLiveness()).toBeGreaterThanOrEqual(0);
 
       const stream = await session.openStream("interop.echo");

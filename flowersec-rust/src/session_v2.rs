@@ -711,9 +711,6 @@ impl SessionV2 for SelfSession {
     fn path(&self) -> PathKind {
         self.config.path
     }
-    fn chosen_carrier(&self) -> CarrierKind {
-        self.carrier.kind()
-    }
     fn endpoint_instance_id(&self) -> Option<&str> {
         self.peer_endpoint_instance_id.as_deref()
     }

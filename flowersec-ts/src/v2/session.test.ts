@@ -60,7 +60,6 @@ describe("SessionV2", () => {
   test("establishes through READY and carries bidirectional encrypted logical streams", async () => {
     const [client, server] = await establishPair();
     expect(client).toBeInstanceOf(SessionV2);
-    expect(client.chosenCarrier).toBe("webtransport");
     expect(server.path).toBe("direct");
 
     const opened = client.openStream("echo", { metadata: { locale: "zh-CN", retry: 2 } });

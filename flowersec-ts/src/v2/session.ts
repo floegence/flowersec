@@ -182,7 +182,6 @@ export async function establishSessionV2(
 
 export class SessionV2 implements SessionV2Contract {
   readonly path: PathKind;
-  readonly chosenCarrier: CarrierSessionV2["kind"];
   readonly endpointInstanceId: string | undefined;
   readonly rpc: RpcClient;
   readonly termination: Promise<SessionTerminationV2>;
@@ -252,7 +251,6 @@ export class SessionV2 implements SessionV2Contract {
   ) {
     this.path = config.path;
     this.termination = this.terminationState.promise;
-    this.chosenCarrier = carrier.kind;
     this.endpointInstanceId = config.path === "tunnel" ? config.expectedPeerEndpointInstanceID : undefined;
     this.role = config.role === "client" ? 1 : 2;
     this.sendDirection = this.role === 1 ? DirectionV2.ClientToServer : DirectionV2.ServerToClient;

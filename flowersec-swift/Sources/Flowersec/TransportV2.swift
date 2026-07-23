@@ -431,7 +431,6 @@ public protocol RPCPeerV2: Sendable {
 
 public protocol SessionV2: Sendable {
   var path: PathKind { get }
-  var chosenCarrier: CarrierKind { get }
   var endpointInstanceID: String? { get }
   var rpc: any RPCPeerV2 { get }
 

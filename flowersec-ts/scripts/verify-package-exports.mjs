@@ -345,7 +345,6 @@ import type {
   ArtifactSourceV2,
   ArtifactV2,
   ByteStreamV2,
-  CarrierKind,
   CarrierSessionV2,
   CarrierStreamV2,
   FlowersecCandidateDiagnostic,
@@ -379,7 +378,8 @@ declare const webSocketPolicy: WebSocketResourcePolicyV2;
 declare const diagnostic: FlowersecCandidateDiagnostic;
 
 const path: PathKind = session.path;
-const carrier: CarrierKind = session.chosenCarrier;
+// @ts-expect-error selected carriers are internal diagnostics, not session API.
+void session.chosenCarrier;
 const browserDescriptor: RuntimeCapabilityDescriptorV2 = BROWSER_RUNTIME_CAPABILITY_V2;
 const nodeDescriptor: RuntimeCapabilityDescriptorV2 = NODE_RUNTIME_CAPABILITY_V2;
 const accepted: ByteStreamV2 = incoming.stream;
@@ -420,7 +420,6 @@ void path;
 void FlowersecError;
 void BrowserFlowersecError;
 void NodeFlowersecError;
-void carrier;
 void browserDescriptor;
 void nodeDescriptor;
 void accepted;

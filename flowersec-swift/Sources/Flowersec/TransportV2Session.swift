@@ -6,7 +6,6 @@ let openRejectResourceExhaustedReasonV2: UInt16 = 2
 
 public actor TransportV2Session: SessionV2 {
   public nonisolated let path: PathKind
-  public nonisolated let chosenCarrier: CarrierKind
   public nonisolated let endpointInstanceID: String?
   public nonisolated let rpc: any RPCPeerV2
 
@@ -88,7 +87,6 @@ public actor TransportV2Session: SessionV2 {
     controlReader = TransportV2CarrierReader(stream: control)
     controlWriter = TransportV2CarrierWriter(stream: control)
     path = config.path
-    chosenCarrier = carrier.chosenCarrier
     endpointInstanceID = config.path == .tunnel ? config.expectedPeerEndpointInstanceID : nil
     self.rpc = rpc
 

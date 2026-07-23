@@ -60,7 +60,8 @@ function typecheckContract(
   openOptions: StreamOpenOptionsV2,
 ): void {
   const path: PathKind = session.path;
-  const carrier: CarrierKind = session.chosenCarrier;
+  // @ts-expect-error carrier selection is an internal diagnostic, not session API.
+  void session.chosenCarrier;
   const peerID: string | undefined = session.endpointInstanceId;
   const streamID: bigint = stream.id;
   const streamKind: string = stream.kind;
@@ -70,7 +71,6 @@ function typecheckContract(
   const incomingStream: ByteStreamV2 = incoming.stream;
 
   void path;
-  void carrier;
   void peerID;
   void streamID;
   void streamKind;

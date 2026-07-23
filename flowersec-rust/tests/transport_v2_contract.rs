@@ -150,10 +150,6 @@ impl SessionV2 for ProbeSession {
         PathKind::Direct
     }
 
-    fn chosen_carrier(&self) -> CarrierKind {
-        CarrierKind::RawQuic
-    }
-
     fn endpoint_instance_id(&self) -> Option<&str> {
         None
     }
@@ -208,7 +204,6 @@ fn v2_contract_is_object_safe_and_carrier_neutral() {
     assert_stream_object_safe(None);
 
     assert_eq!(session.path(), PathKind::Direct);
-    assert_eq!(session.chosen_carrier(), CarrierKind::RawQuic);
     assert_eq!(session.endpoint_instance_id(), None);
     let _rpc: &dyn RpcPeerV2 = session.rpc();
 

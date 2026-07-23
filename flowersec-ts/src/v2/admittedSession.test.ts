@@ -87,7 +87,6 @@ describe("admitted production carrier adapters", () => {
     })();
     const client = establishAdmittedWebSocketSessionV2(clientBinary, rawWebSocketFSB2, new Set(), config("client"));
     const [clientSession, serverSession] = await Promise.all([client, server]);
-    expect(clientSession.chosenCarrier).toBe("websocket");
 
     const opening = clientSession.openStream("wss-yamux");
     const incoming = await serverSession.acceptStream();
@@ -149,7 +148,6 @@ describe("admitted production carrier adapters", () => {
       config("client", 8, undefined, rawWebTransportFSB2),
     );
     const [clientSession, serverSession] = await Promise.all([client, server]);
-    expect(clientSession.chosenCarrier).toBe("webtransport");
 
     const opening = clientSession.openStream("wt-native");
     const incoming = await serverSession.acceptStream();

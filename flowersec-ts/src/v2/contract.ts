@@ -44,7 +44,6 @@ export type SessionTerminationV2 = Readonly<{
 
 export interface SessionV2 {
   readonly path: PathKind;
-  readonly chosenCarrier: CarrierKind;
   readonly endpointInstanceId: string | undefined;
   readonly rpc: RpcClient;
   readonly termination: Promise<SessionTerminationV2>;

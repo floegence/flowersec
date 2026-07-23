@@ -65,7 +65,6 @@ type RPCPeer interface {
 // not expose Yamux or a concrete QUIC stack through this interface.
 type SessionV2 interface {
 	Path() PathKind
-	ChosenCarrier() carrier.Kind
 	EndpointInstanceID() (string, bool)
 	RPC() RPCPeer
 	OpenStream(ctx context.Context, kind string, metadata Metadata) (ByteStream, error)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -33,7 +34,6 @@ func (testRPCPeer) Notify(context.Context, uint32, any) error    { return nil }
 type testSession struct{}
 
 func (testSession) Path() session.PathKind             { return session.PathDirect }
-func (testSession) ChosenCarrier() carrier.Kind        { return carrier.KindQUIC }
 func (testSession) EndpointInstanceID() (string, bool) { return "", false }
 func (testSession) RPC() session.RPCPeer               { return testRPCPeer{} }
 func (testSession) OpenStream(context.Context, string, session.Metadata) (session.ByteStream, error) {
@@ -56,6 +56,10 @@ func TestSessionV2ContractIsCarrierNeutral(t *testing.T) {
 	var _ session.ByteStream = testByteStream{}
 	var _ session.RPCPeer = testRPCPeer{}
 	var _ session.SessionV2 = testSession{}
+	contract := reflect.TypeOf((*session.SessionV2)(nil)).Elem()
+	if _, exposed := contract.MethodByName("ChosenCarrier"); exposed {
+		t.Fatal("SessionV2 exposes the selected carrier")
+	}
 }
 
 func TestGoCapabilityDescriptorUsesExactTuples(t *testing.T) {

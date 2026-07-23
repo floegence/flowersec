@@ -537,8 +537,6 @@ pub trait RpcPeerV2: fmt::Debug + Send + Sync + 'static {
 pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
     /// Returns the selected direct or tunnel path.
     fn path(&self) -> PathKind;
-    /// Returns the carrier selected for this session.
-    fn chosen_carrier(&self) -> CarrierKind;
     /// Returns the authenticated peer endpoint instance identifier, when available.
     fn endpoint_instance_id(&self) -> Option<&str>;
     /// Borrows the session's carrier-neutral RPC peer.
