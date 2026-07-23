@@ -11,7 +11,7 @@ const (
 	SupportedFeatureMask             = FeatureUnreliableMessages
 
 	UnreliableHeaderSize         = 32
-	MaxUnreliableMessageBytes    = 1_024
+	MaxUnreliableMessageBytes    = 976
 	MaxUnreliableCiphertextBytes = MaxUnreliableMessageBytes + AEADTagBytes
 	MaxUnreliableWireBytes       = UnreliableHeaderSize + MaxUnreliableCiphertextBytes
 )

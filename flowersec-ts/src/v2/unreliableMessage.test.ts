@@ -107,8 +107,8 @@ describe("FSD2 unreliable message channel", () => {
       establishSessionV2(serverCarrier, serverConfig),
     ]);
 
-    expect(client.unreliableMessages?.maxMessageSize).toBe(1_024);
-    expect(server.unreliableMessages?.maxMessageSize).toBe(1_024);
+    expect(client.unreliableMessages?.maxMessageSize).toBe(976);
+    expect(server.unreliableMessages?.maxMessageSize).toBe(976);
     await client.unreliableMessages!.send(createUnreliableMessageV2(Uint8Array.of(7, 8)), {
       expiresAtUnixMs: Date.now() + 5_000,
     });

@@ -15,8 +15,8 @@ import { CipherSuiteV2 } from "./protocol.js";
 import type { DirectionV2 } from "./protocol.js";
 
 export const UNRELIABLE_MESSAGES_FEATURE_V2 = 0x00000001;
-export const UNRELIABLE_MESSAGE_MAX_PLAINTEXT_BYTES_V2 = 1_024 as const;
-export const UNRELIABLE_MESSAGE_WIRE_BYTES_V2 = 1_072 as const;
+export const UNRELIABLE_MESSAGE_MAX_PLAINTEXT_BYTES_V2 = 976 as const;
+export const UNRELIABLE_MESSAGE_WIRE_BYTES_V2 = 1_024 as const;
 
 const HEADER_BYTES = 32;
 const TAG_BYTES = 16;

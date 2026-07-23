@@ -464,6 +464,42 @@ func TestMaxInboundStreamsPermitIsContextBounded(t *testing.T) {
 	}
 }
 
+func TestCleanBilateralFINDoesNotResetNativeCarrierStream(t *testing.T) {
+	client, server := establishMemoryPair(t, carrier.KindQUIC, 1)
+	defer client.Close()
+	defer server.Close()
+
+	accepted := make(chan IncomingStream, 1)
+	acceptErr := make(chan error, 1)
+	go acceptOne(server, accepted, acceptErr)
+	opened, err := client.OpenStream(context.Background(), "clean-fin", Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := awaitIncoming(t, accepted, acceptErr)
+	clientCarrier := opened.(*encryptedStream).carrier.(*memoryStream)
+	serverCarrier := peer.Stream.(*encryptedStream).carrier.(*memoryStream)
+	clientRead := readAllAsync(opened)
+	serverRead := readAllAsync(peer.Stream)
+	closeErr := make(chan error, 2)
+	go func() { closeErr <- opened.CloseWrite() }()
+	go func() { closeErr <- peer.Stream.CloseWrite() }()
+	for range 2 {
+		if err := <-closeErr; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if result := <-clientRead; result.err != nil || len(result.payload) != 0 {
+		t.Fatalf("client read = %x, %v", result.payload, result.err)
+	}
+	if result := <-serverRead; result.err != nil || len(result.payload) != 0 {
+		t.Fatalf("server read = %x, %v", result.payload, result.err)
+	}
+	if clientCarrier.resetCount.Load() != 0 || serverCarrier.resetCount.Load() != 0 {
+		t.Fatalf("clean FIN reset native streams: client=%d server=%d", clientCarrier.resetCount.Load(), serverCarrier.resetCount.Load())
+	}
+}
+
 func TestProbeLivenessAndSessionRekeyGateNewStreams(t *testing.T) {
 	client, server := establishMemoryPair(t, carrier.KindQUIC, 4)
 	defer client.Close()
@@ -1629,6 +1665,7 @@ type memoryStream struct {
 	ctx              context.Context
 	stop             context.CancelCauseFunc
 	reset            sync.Once
+	resetCount       atomic.Int32
 	owner            *memoryCarrierSession
 	hookMu           sync.RWMutex
 	writeHook        func([]byte)
@@ -1683,6 +1720,7 @@ func (s *memoryStream) CloseWrite() error        { return s.writer.Close() }
 
 func (s *memoryStream) Reset() error {
 	s.reset.Do(func() {
+		s.resetCount.Add(1)
 		_ = s.reader.CloseWithError(carrier.ErrStreamReset)
 		_ = s.writer.CloseWithError(carrier.ErrStreamReset)
 		s.stop(carrier.ErrStreamReset)

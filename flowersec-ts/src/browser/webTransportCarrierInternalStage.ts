@@ -98,22 +98,25 @@ export async function createBrowserWebTransportCarrierInternalStage(
   const maxIncomingStreams = normalizeMaxIncomingStreams(options.maxIncomingStreams);
   const factory = options.webTransportFactory ?? defaultWebTransportFactory;
   const transport = factory(url);
-  const carrier = new BrowserWebTransportCarrier(
-    transport,
-    options.path,
-    closeTimeoutMs,
-    maxIncomingStreams,
-    options.datagramSendBudgetBytes,
-    options.now ?? Date.now,
-  );
+  let nativeCloseIssued = false;
+  const closeNative = () => {
+    if (nativeCloseIssued) return;
+    nativeCloseIssued = true;
+    transport.close({ closeCode: 6, reason: "WebTransport establishment canceled" });
+  };
 
   try {
-    await waitWithSignal(transport.ready, options.signal, () => {
-      carrier.abort({ code: 6, reason: "WebTransport ready canceled" });
-    });
-    return carrier;
+    await waitWithSignal(transport.ready, options.signal, closeNative);
+    return new BrowserWebTransportCarrier(
+      transport,
+      options.path,
+      closeTimeoutMs,
+      maxIncomingStreams,
+      options.datagramSendBudgetBytes,
+      options.now ?? Date.now,
+    );
   } catch (error) {
-    carrier.abort({ code: 6, reason: "WebTransport establishment failed" });
+    closeNative();
     throw error;
   }
 }

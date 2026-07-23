@@ -28,7 +28,7 @@ pub const MAX_OPEN_V2_BYTES: usize = 8_192;
 pub const MAX_OPEN_KIND_V2_BYTES: usize = 128;
 pub const MAX_OPEN_METADATA_V2_BYTES: usize = 4_096;
 pub(crate) const UNRELIABLE_HEADER_V2_SIZE: usize = 32;
-pub(crate) const MAX_UNRELIABLE_PLAINTEXT_V2_BYTES: usize = 1_024;
+pub(crate) const MAX_UNRELIABLE_PLAINTEXT_V2_BYTES: usize = 976;
 pub(crate) const MAX_UNRELIABLE_WIRE_V2_BYTES: usize =
     UNRELIABLE_HEADER_V2_SIZE + MAX_UNRELIABLE_PLAINTEXT_V2_BYTES + AEAD_TAG_V2_SIZE;
 

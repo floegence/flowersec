@@ -316,6 +316,21 @@ describe("browser WebTransport carrier internal stage", () => {
     await carrier.close();
   });
 
+  test("samples negotiated DATAGRAM capacity only after WebTransport becomes ready", async () => {
+    let maxDatagramSize = 0;
+    const fake = new FakeWebTransport({ datagrams: { maxDatagramSize: 1_200 } });
+    Object.defineProperty(fake.datagrams, "maxDatagramSize", {
+      get: () => maxDatagramSize,
+    });
+    const creating = createCarrier(fake);
+    maxDatagramSize = 1_200;
+    fake.resolveReady();
+
+    const carrier = await creating;
+    expect(carrier.unreliableDatagrams?.maxDatagramSize).toBe(1_200);
+    await carrier.close();
+  });
+
   test("enforces native datagram max size, send budget, and local expiry without reliable fallback", async () => {
     let now = 1_000;
     const fake = new FakeWebTransport({ datagrams: { maxDatagramSize: 8 } });

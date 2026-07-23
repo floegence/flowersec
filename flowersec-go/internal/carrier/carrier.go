@@ -37,7 +37,7 @@ var (
 const (
 	MaxLogicalIncomingStreams = 128
 	ReservedSessionStreams    = 2
-	MaxUnreliableWireBytes    = 1_072
+	MaxUnreliableWireBytes    = 1_024
 )
 
 // RequiredIncomingStreams returns the physical bidirectional stream budget for

@@ -23,7 +23,7 @@ func TestUnreliableMessagesRequireNegotiationAndNeverOpenReliableStreams(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if clientChannel.MaxMessageBytes() != 1024 {
+	if clientChannel.MaxMessageBytes() != 976 {
 		t.Fatalf("MaxMessageBytes = %d", clientChannel.MaxMessageBytes())
 	}
 

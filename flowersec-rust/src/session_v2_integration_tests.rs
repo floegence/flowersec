@@ -267,7 +267,7 @@ impl CarrierSessionV2 for GatedUnreliableCarrierSession {
     }
 
     fn unreliable_message_max_size(&self) -> Option<usize> {
-        Some(1_072)
+        Some(1_024)
     }
 
     async fn send_unreliable_message(

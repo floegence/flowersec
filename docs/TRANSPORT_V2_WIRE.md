@@ -176,9 +176,11 @@ has a 32-byte cleartext header followed by exactly `ciphertext_length` bytes:
 | 8 | 4 | epoch |
 | 12 | 8 | sequence |
 | 20 | 8 | absolute expiry in Unix milliseconds |
-| 28 | 4 | ciphertext length, `17..1040` |
+| 28 | 4 | ciphertext length, `17..992` |
 
-The plaintext is `1..1024` opaque application bytes. Empty and oversized
+The plaintext is `1..976` opaque application bytes, keeping the complete FSD2
+wire image within the 1024-byte native WebTransport DATAGRAM limit shared by
+production Chromium and raw QUIC. Empty and oversized
 messages are rejected before carrier access. Expiry must be in the future when
 sent. A receiver silently drops expired, duplicate, stale-epoch, malformed, or
 authentication-failed datagrams and continues receiving; these outcomes never

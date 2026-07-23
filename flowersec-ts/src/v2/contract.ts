@@ -32,7 +32,7 @@ export type UnreliableMessageSendResultV2 =
   | "dropped_expired";
 
 export interface UnreliableMessageChannelV2 {
-  readonly maxMessageSize: 1024;
+  readonly maxMessageSize: 976;
   send(
     message: UnreliableMessageV2,
     options: UnreliableMessageSendOptionsV2,

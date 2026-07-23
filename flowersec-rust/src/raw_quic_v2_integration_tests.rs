@@ -33,7 +33,11 @@ const TEST_KEY_DER_B64: &str = "MC4CAQAwBQYDK2VwBCIEICxYUWHqGoh0CBBohsaNg/NThm1n
 
 #[tokio::test]
 async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end() {
-    for profile in [RawQuicPathProfile::Direct, RawQuicPathProfile::Tunnel] {
+    for (profile, tunnel_role) in [
+        (RawQuicPathProfile::Direct, 1),
+        (RawQuicPathProfile::Tunnel, 1),
+        (RawQuicPathProfile::Tunnel, 2),
+    ] {
         let limits = session_limits(1);
         let listener = RawQuicListener::bind(loopback_ephemeral(), server_config(profile, limits))
             .expect("bind facade E2E listener");
@@ -56,16 +60,23 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
             } else {
                 PathKind::Tunnel
             };
+            let listener_role = if path == PathKind::Tunnel && tunnel_role == 2 {
+                SessionRole::Client
+            } else {
+                SessionRole::Server
+            };
             let binding = fsb2_binding(&fsb2);
             let (local, peer) = if path == PathKind::Direct {
                 (None, None)
-            } else {
+            } else if listener_role == SessionRole::Server {
                 (Some("endpoint-server"), Some("endpoint-client"))
+            } else {
+                (Some("endpoint-client"), Some("endpoint-server"))
             };
             let session = establish_session_v2(
                 Arc::new(raw),
                 raw_session_config(
-                    SessionRole::Server,
+                    listener_role,
                     path,
                     binding,
                     (path == PathKind::Direct).then_some(binding),
@@ -132,7 +143,7 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
             session
         });
 
-        let artifact = Artifact::parse(public_connector_artifact(address, profile))
+        let artifact = Artifact::parse(public_connector_artifact(address, profile, tunnel_role))
             .expect("parse opaque facade artifact");
         let spend_count = Arc::new(AtomicUsize::new(0));
         let observed = spend_count.clone();
@@ -155,7 +166,7 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
         let unreliable = session
             .unreliable_messages()
             .expect("public facade exposes negotiated unreliable messages");
-        assert_eq!(unreliable.max_message_size(), 1_024);
+        assert_eq!(unreliable.max_message_size(), 976);
         assert!(
             tokio::time::timeout(Duration::from_millis(10), unreliable.receive())
                 .await
@@ -231,7 +242,11 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
     }
 }
 
-fn public_connector_artifact(address: SocketAddr, profile: RawQuicPathProfile) -> Vec<u8> {
+fn public_connector_artifact(
+    address: SocketAddr,
+    profile: RawQuicPathProfile,
+    tunnel_role: u8,
+) -> Vec<u8> {
     let contract = session_contract(1);
     let candidate = serde_json::json!({
         "id":"q1", "carrier":"raw_quic", "url":format!("quic://localhost:{}", address.port()),
@@ -242,7 +257,12 @@ fn public_connector_artifact(address: SocketAddr, profile: RawQuicPathProfile) -
             serde_json::json!({"kind":"direct","rendezvous_group_id":"group-1","listener_audience":"listener-1","routing_token":"routing-token","candidates":[candidate]})
         }
         RawQuicPathProfile::Tunnel => {
-            serde_json::json!({"kind":"tunnel","rendezvous_group_id":"group-1","listener_audience":"listener-1","role":1,"local_endpoint_instance_id":"endpoint-client","expected_peer_endpoint_instance_id":"endpoint-server","token":"attach-token","candidates":[candidate]})
+            let (local, peer) = if tunnel_role == 1 {
+                ("endpoint-client", "endpoint-server")
+            } else {
+                ("endpoint-server", "endpoint-client")
+            };
+            serde_json::json!({"kind":"tunnel","rendezvous_group_id":"group-1","listener_audience":"listener-1","role":tunnel_role,"local_endpoint_instance_id":local,"expected_peer_endpoint_instance_id":peer,"token":"attach-token","candidates":[candidate]})
         }
     };
     serde_json::to_vec(&serde_json::json!({

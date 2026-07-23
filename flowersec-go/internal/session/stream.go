@@ -1304,7 +1304,7 @@ func (s *encryptedStream) releaseIfClean() {
 	clean := s.state.CleanClosed()
 	s.stateMu.Unlock()
 	if clean {
-		s.finish(nil, true)
+		s.finish(nil, false)
 	}
 }
 
