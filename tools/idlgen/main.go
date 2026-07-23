@@ -148,6 +148,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		// valid for releases whose public wire contract is implemented from frozen
 		// codecs and vectors instead of generated FIDL packages.
 		if strings.TrimSpace(manifestPath) != "" {
+			for _, outDir := range []string{goOut, tsOut, rustOut, swiftOut} {
+				if strings.TrimSpace(outDir) == "" {
+					continue
+				}
+				if err := os.MkdirAll(outDir, 0o755); err != nil {
+					fmt.Fprintln(stderr, err)
+					return 1
+				}
+			}
 			return 0
 		}
 		fmt.Fprintln(stderr, "no *.fidl.json files found")

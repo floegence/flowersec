@@ -388,9 +388,17 @@ func TestRunAcceptsEmptyExplicitManifest(t *testing.T) {
 	if err := os.WriteFile(manifest, []byte("# no generated IDLs\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	goOut := filepath.Join(root, "go-gen")
+	tsOut := filepath.Join(root, "ts-gen")
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"-in", root, "-manifest", manifest, "-go-out", filepath.Join(root, "gen")}, &stdout, &stderr); code != 0 {
+	if code := run([]string{"-in", root, "-manifest", manifest, "-go-out", goOut, "-ts-out", tsOut}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run returned %d: %s", code, stderr.String())
+	}
+	for _, output := range []string{goOut, tsOut} {
+		info, err := os.Stat(output)
+		if err != nil || !info.IsDir() {
+			t.Fatalf("empty explicit manifest output %q was not created: %v", output, err)
+		}
 	}
 }
 

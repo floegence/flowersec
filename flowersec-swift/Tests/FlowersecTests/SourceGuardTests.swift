@@ -187,9 +187,9 @@ final class SourceGuardTests: XCTestCase {
     }
 
     let generated = sourceRoot.appendingPathComponent("Generated")
-    let generatedFiles = try swiftFiles(under: generated)
-    XCTAssertTrue(
-      generatedFiles.isEmpty, "Transport v1 generated Swift sources must not be maintained")
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: generated.path),
+      "Transport v1 generated Swift source directory must not be maintained")
   }
 
   private func swiftFiles(under root: URL) throws -> [URL] {
