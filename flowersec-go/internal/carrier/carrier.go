@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 )
 
 // Kind identifies a v2 carrier without exposing its implementation type.
@@ -114,4 +115,11 @@ type UnreliableTransport interface {
 	UnreliableAvailable() bool
 	SendUnreliable([]byte) error
 	ReceiveUnreliable(context.Context) ([]byte, error)
+}
+
+// PathMigrator is an optional production-internal capability for transports
+// that can validate and activate a caller-provided local network path. It is
+// deliberately absent from Flowersec's public session contract.
+type PathMigrator interface {
+	Migrate(context.Context, net.PacketConn) error
 }

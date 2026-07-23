@@ -432,6 +432,9 @@ func TestRawQUICCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
+	if _, ok := clientSession.(carrier.PathMigrator); !ok {
+		t.Fatal("committed raw QUIC session lost its production-internal path migration capability")
+	}
 	t.Cleanup(func() { _ = clientSession.Close() })
 	select {
 	case <-authorized:

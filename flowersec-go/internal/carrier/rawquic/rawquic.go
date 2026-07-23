@@ -148,14 +148,25 @@ func Dial(ctx context.Context, address string, tlsConfig *tls.Config, limits Lim
 	if err != nil {
 		return nil, err
 	}
+	return dialPacketConn(ctx, remote, preparedTLS, config, uint16(limits.MaxInboundStreams), packetConn)
+}
+
+func dialPacketConn(
+	ctx context.Context,
+	remote net.Addr,
+	tlsConfig *tls.Config,
+	config *quic.Config,
+	capacity uint16,
+	packetConn net.PacketConn,
+) (*Session, error) {
 	transport := &quic.Transport{Conn: packetConn, ConnectionIDLength: connectionIDLength}
-	conn, err := transport.Dial(ctx, remote, preparedTLS, config)
+	conn, err := transport.Dial(ctx, remote, tlsConfig, config)
 	if err != nil {
 		_ = transport.Close()
 		_ = packetConn.Close()
 		return nil, err
 	}
-	session, err := newSession(conn, transport, packetConn, uint16(limits.MaxInboundStreams))
+	session, err := newSession(conn, transport, packetConn, capacity)
 	if err != nil {
 		_ = conn.CloseWithError(closeCode, "invalid negotiated transport")
 		_ = transport.Close()
@@ -236,6 +247,10 @@ type Session struct {
 
 	migrationMu sync.Mutex
 	migration   *migrationPath
+	// quic-go registers the live connection with every transport that sends a
+	// path probe. Closing one of those transports would terminate the connection,
+	// so their sockets remain session-owned until connection teardown.
+	migrationTransports []*migrationPath
 }
 
 type migrationPath struct {
@@ -324,8 +339,9 @@ func (session *Session) CloseWithErrorContext(ctx context.Context, applicationEr
 	session.closeOnce.Do(func() {
 		connectionErr := session.conn.CloseWithError(quic.ApplicationErrorCode(validated.Code), validated.Reason)
 		session.migrationMu.Lock()
-		migrationErr := closeActiveMigrationTransport(session.migration)
+		migrationErr := closeMigrationTransports(session.migrationTransports)
 		session.migration = nil
+		session.migrationTransports = nil
 		session.migrationMu.Unlock()
 		var transportErr, packetErr error
 		if session.transport != nil {
@@ -345,7 +361,8 @@ func (session *Session) Close() error {
 
 // Migrate validates a new client-side network path and atomically switches the
 // live QUIC connection to it. Ownership of packetConn transfers to the session
-// on entry; it is closed on failure, replacement, or session close.
+// on entry. Once probing starts, its transport remains owned until session close
+// because quic-go binds the live connection to every probed transport.
 func (session *Session) Migrate(ctx context.Context, packetConn net.PacketConn) error {
 	if session == nil || session.conn == nil || packetConn == nil {
 		if packetConn != nil {
@@ -370,37 +387,32 @@ func (session *Session) Migrate(ctx context.Context, packetConn net.PacketConn) 
 		return err
 	}
 	candidate := &migrationPath{path: path, transport: transport, conn: packetConn}
+	session.migrationTransports = append(session.migrationTransports, candidate)
 	if err := path.Probe(ctx); err != nil {
-		_ = closeMigrationPath(candidate)
+		_ = path.Close()
 		return err
 	}
 	if err := path.Switch(); err != nil {
-		_ = closeMigrationPath(candidate)
+		_ = path.Close()
 		return err
 	}
 	previous := session.migration
 	session.migration = candidate
-	_ = closeMigrationPath(previous)
+	if previous != nil {
+		_ = previous.path.Close()
+	}
 	return nil
 }
 
-func closeMigrationPath(migration *migrationPath) error {
-	if migration == nil {
-		return nil
+func closeMigrationTransports(migrations []*migrationPath) error {
+	var result error
+	for _, migration := range migrations {
+		if migration == nil {
+			continue
+		}
+		result = errors.Join(result, migration.transport.Close(), migration.conn.Close())
 	}
-	pathErr := migration.path.Close()
-	transportErr := migration.transport.Close()
-	connErr := migration.conn.Close()
-	return errors.Join(pathErr, transportErr, connErr)
-}
-
-func closeActiveMigrationTransport(migration *migrationPath) error {
-	if migration == nil {
-		return nil
-	}
-	transportErr := migration.transport.Close()
-	connErr := migration.conn.Close()
-	return errors.Join(transportErr, connErr)
+	return result
 }
 
 func ValidateApplicationError(applicationError carrier.ApplicationError) (carrier.ApplicationError, error) {
@@ -487,4 +499,5 @@ func validALPN(value string) bool { return value == ALPNDirect || value == ALPNT
 
 var _ carrier.Session = (*Session)(nil)
 var _ carrier.UnreliableTransport = (*Session)(nil)
+var _ carrier.PathMigrator = (*Session)(nil)
 var _ carrier.Stream = (*Stream)(nil)
