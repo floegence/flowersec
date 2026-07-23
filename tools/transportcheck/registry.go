@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -91,4 +92,69 @@ func validateCaseRegistry(registry *CaseRegistry) error {
 		}
 	}
 	return nil
+}
+
+func validateCaseOwnerRecipes(registry *CaseRegistry, makefilePath string) error {
+	if err := validateCaseRegistry(registry); err != nil {
+		return err
+	}
+	recipes, err := loadMakeRecipeTargets(makefilePath)
+	if err != nil {
+		return err
+	}
+	for _, entry := range registry.Cases {
+		if _, exists := recipes[entry.Owner]; !exists {
+			return fmt.Errorf("case %s owner target %q has no Make recipe", entry.ID, entry.Owner)
+		}
+		if entry.RaceOwner != "" {
+			if _, exists := recipes[entry.RaceOwner]; !exists {
+				return fmt.Errorf("case %s race_owner target %q has no Make recipe", entry.ID, entry.RaceOwner)
+			}
+		}
+	}
+	return nil
+}
+
+func loadMakeRecipeTargets(path string) (map[string]struct{}, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read Makefile %q: %w", path, err)
+	}
+	recipes := make(map[string]struct{})
+	var pending []string
+	hasRecipe := false
+	flush := func() {
+		if hasRecipe {
+			for _, target := range pending {
+				recipes[target] = struct{}{}
+			}
+		}
+		pending = nil
+		hasRecipe = false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "\t") {
+			if len(pending) > 0 && strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+				hasRecipe = true
+			}
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		colon := strings.IndexByte(line, ':')
+		if colon > 0 && !strings.Contains(line[:colon], "=") {
+			flush()
+			for _, target := range strings.Fields(line[:colon]) {
+				if targetPattern.MatchString(target) {
+					pending = append(pending, target)
+				}
+			}
+			continue
+		}
+		flush()
+	}
+	flush()
+	return recipes, nil
 }

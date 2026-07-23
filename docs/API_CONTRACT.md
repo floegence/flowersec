@@ -9,6 +9,8 @@ See also:
 - Error model: `docs/ERROR_MODEL.md`
 - API change policy: `docs/API_CHANGE_POLICY.md`
 - Flowersec 0.27 migration: `docs/MIGRATION_0.27.md`
+- Transport v2 breaking migration: `docs/MIGRATION_TRANSPORT_V2.md`
+- Transport v2 architecture and exact runtime matrix: `docs/TRANSPORT_V2_ARCHITECTURE.md`
 
 ## CLI surface
 
@@ -22,6 +24,8 @@ Supported user-facing binaries:
 - `idlgen`
 
 Internal tooling under `flowersec-go/internal/cmd/*` is not part of the public CLI contract.
+
+`flowersec-tunnel` is a Transport v1 WebSocket CLI in this release. Go Transport v2 WebSocket, raw QUIC, WebTransport, session, endpoint-set, and tunnel coordination are public library packages; the CLI does not silently enable v2 listeners or UDP/HTTP3 exposure.
 
 ## Go packages
 

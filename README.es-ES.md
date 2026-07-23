@@ -43,7 +43,7 @@
 ## Por qué Flowersec
 
 - **Un único contrato portable.** Go, TypeScript, Swift y Rust implementan el mismo formato de red y el mismo comportamiento de seguridad, sesión, RPC, Endpoint, Controlplane, reconexión, proxy y observabilidad.
-- **Directo o con relay.** Usa la ruta WebSocket directa más corta cuando el Endpoint sea accesible, o un Tunnel autoalojado sin revelar el texto plano de la aplicación.
+- **Rutas neutrales al Carrier.** Transport v2 trata WebSocket, raw QUIC y WebTransport como Carriers equivalentes. Las capacidades Runtime exactas y la política de producto eligen candidatos, sin protocolo primario ni fallback permanente.
 - **Una sesión, muchos flujos.** Multiplexa llamadas RPC, eventos, flujos de bytes personalizados, solicitudes HTTP y tráfico WebSocket sobre la misma conexión cifrada.
 - **Incluye los componentes necesarios.** Flowersec proporciona API Endpoint nativas, un Browser Runtime TypeScript, un Tunnel de código abierto, un Proxy Gateway y CLI operativas.
 
@@ -62,7 +62,18 @@ Los usos habituales incluyen Agents remotos, servicios privados, herramientas We
 
 La Controlplane solo prepara la conexión. Emite ConnectArtifacts y Grants, pero no forma parte de la ruta de datos de aplicación cifrada de extremo a extremo.
 
-![Patrones de conexión segura de Flowersec](docs/flowersec-connection-patterns-whiteboard.png)
+```mermaid
+flowchart LR
+  CP[Controlplane] -. "ArtifactV2 + signed capability tuples" .-> C[Client runtime]
+  C -->|"WebSocket: hop-local Yamux"| E[Endpoint]
+  C -->|"raw QUIC: native bidirectional streams"| E
+  B[Browser runtime] -->|"WebTransport: native HTTP/3 streams"| E
+  C -->|"mixed carrier encrypted bytes"| T[Tunnel]
+  B -->|"mixed carrier encrypted bytes"| T
+  T --> E
+```
+
+Transport v2 treats WebSocket, raw QUIC, and WebTransport as equal carrier classes. WebSocket keeps hop-local Yamux; raw QUIC and WebTransport use native bidirectional streams and disable 0-RTT and QUIC DATAGRAM. The exact runtime support matrix and breaking lifecycle migration are maintained in the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](docs/MIGRATION_TRANSPORT_V2.md).
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
@@ -95,7 +106,7 @@ Consulta el [índice de Cookbooks](examples/README.md) para ver los comandos exa
 Las integraciones nuevas siguen una única ruta independiente del lenguaje:
 
 ```text
-ConnectArtifact -> connect -> RPC / stream / proxy
+ArtifactV2 -> equal candidate selection -> authenticated SessionV2 -> RPC / stream / proxy
 ```
 
 Los Cookbooks enlazan directamente con código ejecutable en lugar de duplicar grandes ejemplos de API en varios documentos.
@@ -116,6 +127,16 @@ Los Cookbooks enlazan directamente con código ejecutable en lugar de duplicar g
 Las responsabilidades específicas de Runtime son explícitas: TypeScript mantiene la integración Browser y Service Worker; Go mantiene el Tunnel compartido, Proxy Gateway y las CLI; Swift y Rust proporcionan integración SDK nativa sin duplicar esos componentes.
 
 La interoperabilidad se comprueba continuamente en ambas direcciones con Go Reference Client/Server para TypeScript, Swift y Rust, cubriendo Direct, Tunnel, RPC, Streams, Liveness, Rekey, Reset y tráfico Proxy.
+
+La tabla anterior describe las capacidades portables de Transport v1. Las capacidades de red de producción de Transport v2 siguen Runtime Tuples exactos.
+
+| Transport v2 capability | Go | TypeScript | Swift | Rust |
+| --- | :---: | :---: | :---: | :---: |
+| WebSocket carrier | Yes | Browser: Yes / Node: No | No | No |
+| raw QUIC carrier | Yes | No | No | Tested adapter; not advertised |
+| WebTransport carrier | Yes | Browser: Yes / Node: No | No | No |
+
+El smoke local de Transport v2 no es una aprobación de producción entre lenguajes. La release requiere evidencia firmada de navegador real, red débil, qlog, migración y rendimiento. La CLI `flowersec-tunnel` y los binarios Cookbook actuales siguen siendo Transport v1.
 
 <!-- readme-section:security -->
 <a id="security"></a>

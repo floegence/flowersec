@@ -46,6 +46,43 @@ func TestCheckedInManifestAndRegistryAreValid(t *testing.T) {
 	}
 }
 
+func TestCheckedInRegistryOwnersHaveMakeRecipes(t *testing.T) {
+	registry := loadFixtureRegistry(t)
+	makefile := filepath.Join(filepath.Dir(fixturePath(t, "case_registry.json")), "..", "..", "Makefile")
+	if err := validateCaseOwnerRecipes(registry, makefile); err != nil {
+		t.Fatalf("validate checked-in owner recipes: %v", err)
+	}
+}
+
+func TestCaseOwnerRecipeValidationRejectsAllowlistedTargetWithoutRecipe(t *testing.T) {
+	registry := &CaseRegistry{
+		SchemaVersion: 1,
+		Cases: []CaseDefinition{{ID: "CAP-SOAK-HOURLY", Owner: "bench-transport-soak", Mode: "normal", Required: true, Profile: "soak", EvidenceFields: []string{"trace"}}},
+	}
+	makefile := filepath.Join(t.TempDir(), "Makefile")
+	if err := os.WriteFile(makefile, []byte(".PHONY: bench-transport-soak\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCaseOwnerRecipes(registry, makefile); err == nil || !strings.Contains(err.Error(), "bench-transport-soak") {
+		t.Fatalf("validateCaseOwnerRecipes() error = %v, want missing recipe", err)
+	}
+}
+
+func TestCaseOwnerRecipeValidationAcceptsMultiTargetRecipeAndRaceOwner(t *testing.T) {
+	registry := &CaseRegistry{
+		SchemaVersion: 1,
+		Cases: []CaseDefinition{{ID: "CAP-SOAK-HOURLY", Owner: "bench-transport-soak", RaceOwner: "quic-native-race", Mode: "normal", Required: true, Profile: "soak", EvidenceFields: []string{"trace"}}},
+	}
+	makefile := filepath.Join(t.TempDir(), "Makefile")
+	contents := "bench-transport-soak quic-native-race:\n\t@true\n"
+	if err := os.WriteFile(makefile, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCaseOwnerRecipes(registry, makefile); err != nil {
+		t.Fatalf("validateCaseOwnerRecipes() error = %v", err)
+	}
+}
+
 func TestCheckedInEvidenceTrustPolicyPinsExactRunner(t *testing.T) {
 	policy, err := loadEvidenceTrustPolicy(fixturePath(t, "evidence_trust_policy.json"))
 	if err != nil {

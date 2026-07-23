@@ -43,7 +43,7 @@
 ## Warum Flowersec
 
 - **Ein portabler Vertrag.** Go, TypeScript, Swift und Rust implementieren dasselbe Wire-Format sowie dasselbe Verhalten für Sicherheit, Sitzungen, RPC, Endpoints, Controlplane, Wiederverbindung, Proxy und Beobachtbarkeit.
-- **Direkt oder vermittelt.** Ist ein Endpoint erreichbar, wird der kürzeste direkte WebSocket-Pfad verwendet. Andernfalls erfolgt die Verbindung über einen selbst betriebenen Tunnel, ohne Anwendungsdaten im Klartext offenzulegen.
+- **Carrier-neutrale Pfade.** Transport v2 behandelt WebSocket, raw QUIC und WebTransport als gleichwertige Carrier. Exakte Runtime-Fähigkeiten und Produktrichtlinien wählen Kandidaten; es gibt kein dauerhaftes Primär- oder Fallback-Protokoll.
 - **Eine Sitzung, viele Datenflüsse.** RPC-Aufrufe, Ereignisse, eigene Byte-Streams, HTTP-Anfragen und WebSocket-Verkehr werden über dieselbe verschlüsselte Verbindung gemultiplext.
 - **Die nötigen Bausteine sind enthalten.** Flowersec liefert native Endpoint-APIs, eine TypeScript Browser Runtime, einen quelloffenen Tunnel, ein Proxy Gateway und Betriebs-CLIs.
 
@@ -62,7 +62,18 @@ Typische Einsatzfälle sind entfernte Agents, private Dienste, interne Web-Werkz
 
 Die Controlplane dient nur der Verbindungsvorbereitung. Sie stellt ConnectArtifacts und Grants aus, liegt aber nicht im Ende-zu-Ende-verschlüsselten Anwendungsdatenpfad.
 
-![Sichere Flowersec-Verbindungsmuster](docs/flowersec-connection-patterns-whiteboard.png)
+```mermaid
+flowchart LR
+  CP[Controlplane] -. "ArtifactV2 + signed capability tuples" .-> C[Client runtime]
+  C -->|"WebSocket: hop-local Yamux"| E[Endpoint]
+  C -->|"raw QUIC: native bidirectional streams"| E
+  B[Browser runtime] -->|"WebTransport: native HTTP/3 streams"| E
+  C -->|"mixed carrier encrypted bytes"| T[Tunnel]
+  B -->|"mixed carrier encrypted bytes"| T
+  T --> E
+```
+
+Transport v2 treats WebSocket, raw QUIC, and WebTransport as equal carrier classes. WebSocket keeps hop-local Yamux; raw QUIC and WebTransport use native bidirectional streams and disable 0-RTT and QUIC DATAGRAM. The exact runtime support matrix and breaking lifecycle migration are maintained in the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](docs/MIGRATION_TRANSPORT_V2.md).
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
@@ -95,7 +106,7 @@ Exakte Befehle für Go, TypeScript, Swift und Rust stehen im [Cookbook-Index](ex
 Neue Integrationen folgen einem sprachunabhängigen Pfad:
 
 ```text
-ConnectArtifact -> connect -> RPC / stream / proxy
+ArtifactV2 -> equal candidate selection -> authenticated SessionV2 -> RPC / stream / proxy
 ```
 
 Die Cookbooks verweisen direkt auf ausführbaren Quellcode, statt große API-Beispiele in mehreren Dokumenten zu duplizieren.
@@ -116,6 +127,16 @@ Die Cookbooks verweisen direkt auf ausführbaren Quellcode, statt große API-Bei
 Runtime-spezifische Zuständigkeiten bleiben klar: TypeScript besitzt die Browser- und Service-Worker-Integration, Go den gemeinsamen Tunnel, das Proxy Gateway und die CLIs. Swift und Rust liefern native SDK-Integration, ohne diese Komponenten zu duplizieren.
 
 Die Interoperabilität wird fortlaufend in beiden Richtungen gegen Go Reference Client/Server geprüft. Das umfasst Direct, Tunnel, RPC, Streams, Liveness, Rekey, Reset und Proxy-Verkehr für TypeScript, Swift und Rust.
+
+Die obige Tabelle beschreibt die portablen Fähigkeiten von Transport v1. Die produktiven Netzwerkfähigkeiten von Transport v2 folgen exakten Runtime Tuples.
+
+| Transport v2 capability | Go | TypeScript | Swift | Rust |
+| --- | :---: | :---: | :---: | :---: |
+| WebSocket carrier | Yes | Browser: Yes / Node: No | No | No |
+| raw QUIC carrier | Yes | No | No | Tested adapter; not advertised |
+| WebTransport carrier | Yes | Browser: Yes / Node: No | No | No |
+
+Lokaler Transport-v2-Smoke ist keine produktive sprachübergreifende Freigabe. Die Veröffentlichung benötigt signierte Evidenz für reale Browser, schwache Netze, qlog, Migration und Performance. Die `flowersec-tunnel` CLI und aktuelle Cookbook-Binaries bleiben Transport v1.
 
 <!-- readme-section:security -->
 <a id="security"></a>

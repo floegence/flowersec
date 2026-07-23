@@ -4,6 +4,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { validateTransportV2Readmes } from "./readme-transport-v2-contract.mjs";
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const manifestPath = resolve(repoRoot, "assets/readme/locales.json");
@@ -79,7 +81,7 @@ const source = readFileSync(sourcePath, "utf8");
 const sourceCodeBlocks = JSON.stringify(extractCodeBlocks(source));
 const sourceLinks = JSON.stringify(extractLinkTargets(source));
 const expectedHeadingLevels = JSON.stringify([1, ...manifest.sections.map((section) => section.level)]);
-const errors = [];
+const errors = validateTransportV2Readmes(repoRoot);
 
 const expectedRootReadmes = manifest.locales.map((locale) => locale.file).sort();
 const actualRootReadmes = readdirSync(repoRoot).filter((name) => /^README(?:\.[A-Za-z-]+)?\.md$/.test(name)).sort();

@@ -43,7 +43,7 @@
 ## Flowersec을 선택하는 이유
 
 - **하나의 이식 가능한 계약.** Go, TypeScript, Swift, Rust가 동일한 와이어 형식, 보안, 세션, RPC, Endpoint, Controlplane, 재연결, 프록시, 관측 가능성 동작을 구현합니다.
-- **직접 연결 또는 중계.** Endpoint에 접근할 수 있으면 가장 짧은 WebSocket 직접 경로를 사용하고, 그렇지 않으면 애플리케이션 평문을 Tunnel에 노출하지 않은 채 자체 호스팅 Tunnel에서 연결합니다.
+- **Carrier 중립 경로.** Transport v2는 WebSocket, raw QUIC, WebTransport를 동등한 Carrier로 취급하며 정확한 Runtime 기능과 제품 정책으로 후보를 선택합니다. 영구 주 프로토콜이나 fallback은 없습니다.
 - **하나의 세션, 여러 흐름.** RPC 호출, 이벤트, 사용자 정의 바이트 스트림, HTTP 요청, WebSocket 트래픽을 동일한 암호화 연결에서 다중화합니다.
 - **필요한 구성 요소 제공.** 네이티브 Endpoint API, TypeScript 브라우저 Runtime, 오픈 소스 Tunnel, Proxy Gateway, 운영 CLI를 제공합니다.
 
@@ -62,7 +62,18 @@
 
 Controlplane은 연결 준비에만 참여합니다. ConnectArtifact와 Grant를 발급하지만 종단 간 암호화된 애플리케이션 데이터 경로에는 포함되지 않습니다.
 
-![Flowersec 보안 연결 패턴](docs/flowersec-connection-patterns-whiteboard.png)
+```mermaid
+flowchart LR
+  CP[Controlplane] -. "ArtifactV2 + signed capability tuples" .-> C[Client runtime]
+  C -->|"WebSocket: hop-local Yamux"| E[Endpoint]
+  C -->|"raw QUIC: native bidirectional streams"| E
+  B[Browser runtime] -->|"WebTransport: native HTTP/3 streams"| E
+  C -->|"mixed carrier encrypted bytes"| T[Tunnel]
+  B -->|"mixed carrier encrypted bytes"| T
+  T --> E
+```
+
+Transport v2 treats WebSocket, raw QUIC, and WebTransport as equal carrier classes. WebSocket keeps hop-local Yamux; raw QUIC and WebTransport use native bidirectional streams and disable 0-RTT and QUIC DATAGRAM. The exact runtime support matrix and breaking lifecycle migration are maintained in the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](docs/MIGRATION_TRANSPORT_V2.md).
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
@@ -95,7 +106,7 @@ node ./examples/ts/dev-server.mjs | tee dev.json
 새로운 통합은 언어와 무관한 하나의 경로를 따릅니다.
 
 ```text
-ConnectArtifact -> connect -> RPC / stream / proxy
+ArtifactV2 -> equal candidate selection -> authenticated SessionV2 -> RPC / stream / proxy
 ```
 
 Cookbook은 실행 가능한 소스로 직접 연결하여 여러 문서에 큰 API 예제를 중복하지 않습니다.
@@ -116,6 +127,16 @@ Cookbook은 실행 가능한 소스로 직접 연결하여 여러 문서에 큰 
 Runtime별 책임은 명확합니다. TypeScript는 Browser 및 Service Worker 통합을, Go는 공유 Tunnel, Proxy Gateway, CLI를 담당합니다. Swift와 Rust는 이를 중복 구현하지 않고 네이티브 SDK 통합을 제공합니다.
 
 상호 운용성은 Go Reference Client/Server를 기준으로 TypeScript, Swift, Rust의 양방향 연결을 지속적으로 검증하며 Direct, Tunnel, RPC, Stream, Liveness, Rekey, Reset, Proxy 트래픽을 포함합니다.
+
+위 표는 Transport v1의 이식 가능한 기능입니다. Transport v2의 프로덕션 네트워크 기능은 정확한 Runtime Tuple을 따릅니다.
+
+| Transport v2 capability | Go | TypeScript | Swift | Rust |
+| --- | :---: | :---: | :---: | :---: |
+| WebSocket carrier | Yes | Browser: Yes / Node: No | No | No |
+| raw QUIC carrier | Yes | No | No | Tested adapter; not advertised |
+| WebTransport carrier | Yes | Browser: Yes / Node: No | No | No |
+
+Transport v2 local smoke는 언어 간 프로덕션 승인과 같지 않습니다. 릴리스에는 실제 브라우저, 약한 네트워크, qlog, 마이그레이션, 성능 서명 Evidence가 필요합니다. `flowersec-tunnel` CLI와 현재 Cookbook Binary는 Transport v1입니다.
 
 <!-- readme-section:security -->
 <a id="security"></a>

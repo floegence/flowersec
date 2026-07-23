@@ -2,6 +2,16 @@
 
 Run date: Sun Jul 19 16:57:31 CST 2026
 
+This file is a historical Transport v1 WebSocket/E2EE/Yamux baseline. Its `client.Connect` load generator and Yamux microbenchmarks do not measure or sign off Transport v2 raw QUIC, WebTransport, equal-candidate selection, mixed tunnel paths, migration, rebinding, PMTUD, or weak-network behavior.
+
+## Transport v2 evidence status
+
+Transport v2 performance requirements are machine-readable in `testdata/transport_v2/performance_manifest.json`; the weak-network, qlog, pcap, migration, browser, capacity, soak, and protocol cases are registered in `testdata/transport_v2/case_registry.json`. The matrix covers direct WebSocket/raw QUIC, WebSocket-WebSocket, QUIC-QUIC, WebSocket-QUIC, QUIC-WebSocket, browser WebTransport, browser WebTransport-to-WSS, and browser WebTransport-to-QUIC topologies.
+
+`make weaknet-smoke quic-native-smoke transport-browser-smoke` provides deterministic local smoke only. It cannot claim the 15-run performance matrix, common-kernel network behavior, real-browser HTTP/3, qlog/pcap semantics, migration/PMTUD, capacity, or soak results.
+
+Release sign-off requires a report for the clean final Git SHA from the exact audited Linux runner and production Ed25519 signer configured by `testdata/transport_v2/evidence_trust_policy.json`. The report is verified with `scripts/check-transport-v2-evidence.sh`; bootstrap-disabled keys or placeholder runner hashes authorize nothing. See `docs/TRANSPORT_V2_RELEASE_EVIDENCE.md` for the fail-closed operational sequence. No Transport v2 number in this file should be treated as release evidence.
+
 ## Environment
 
 - OS: macOS 26.5.1

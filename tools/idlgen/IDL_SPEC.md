@@ -3,7 +3,9 @@
 ## Overview
 
 The IDL used in this repository is a JSON-based schema with the suffix `.fidl.json`.
-`tools/idlgen` reads these files and generates Go and TypeScript types.
+`tools/idlgen` reads these files and generates Go, TypeScript, Rust, and Swift
+types. Repository generation uses `manifest.core.txt` for the stable public
+surface and `manifest.examples.txt` for example/test-only schemas.
 
 The generator scans the input directory recursively for `*.fidl.json` files. The
 `namespace` field is required and drives output paths.
@@ -31,6 +33,15 @@ Generated outputs:
 
 - Go: `flowersec-go/gen/flowersec/<domain>/<version>/types.gen.go` (and `rpc.gen.go` if `services` is present)
 - TypeScript: `flowersec-ts/src/gen/flowersec/<domain>/<version>.gen.ts` (and `<version>.rpc.gen.ts` plus `<version>.facade.gen.ts` if `services` is present)
+- Rust: `flowersec-rust/src/gen/flowersec/<domain>/<version>.rs` plus generated module indexes
+- Swift: `flowersec-swift/Sources/Flowersec/Generated/<domain>/<domain>_<version>.gen.swift`
+
+Transport v2 wire contracts are not generated from FIDL. They use the frozen
+JSON vectors and custom codecs under `testdata/transport_v2`, with their public
+surface guarded by `stability/transport_v2_contract.json`. The current FIDL
+manifests intentionally contain the v1 control-plane, direct, E2EE, RPC, and
+tunnel schemas only; adding a Transport v2 schema to a manifest would create a
+second, conflicting wire-contract authority.
 
 ## File layout and namespace
 
@@ -125,7 +136,7 @@ exception: it is rejected outside message fields or when its value is not a bool
 Notes:
 
 - `enums` and `messages` can be empty or omitted.
-- `services` can be empty or omitted. When present, `idlgen` generates typed RPC stubs (Go and TS).
+- `services` can be empty or omitted. When present, `idlgen` generates the supported typed RPC surface for all requested language outputs.
 - `comment` and `value_comments` are optional and only affect generated doc comments.
 - `sensitive` is an optional boolean allowed only on message fields. It does not change the
   wire schema or public field type. Rust messages containing a sensitive field use a generated
@@ -363,7 +374,9 @@ Or run the generator directly:
   -in ../../idl \
   -manifest ../../idl/manifest.core.txt \
   -go-out ../../flowersec-go/gen \
-  -ts-out ../../flowersec-ts/src/gen )
+  -ts-out ../../flowersec-ts/src/gen \
+  -rust-out ../../flowersec-rust/src/gen \
+  -swift-out ../../flowersec-swift/Sources/Flowersec )
 ```
 
 ## Example

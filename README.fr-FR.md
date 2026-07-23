@@ -43,7 +43,7 @@
 ## Pourquoi Flowersec
 
 - **Un contrat portable unique.** Go, TypeScript, Swift et Rust implémentent le même format filaire et les mêmes comportements de sécurité, session, RPC, Endpoint, Controlplane, reconnexion, proxy et observabilité.
-- **Connexion directe ou relayée.** Utilisez le chemin WebSocket direct le plus court lorsque l'Endpoint est accessible, ou un Tunnel auto-hébergé sans lui révéler le texte en clair de l'application.
+- **Chemins indépendants du Carrier.** Transport v2 traite WebSocket, raw QUIC et WebTransport comme des Carriers égaux. Les capacités Runtime exactes et la politique produit choisissent les candidats, sans protocole primaire ni fallback permanent.
 - **Une session, plusieurs flux.** Multiplexez les appels RPC, événements, flux d'octets personnalisés, requêtes HTTP et trafic WebSocket sur la même connexion chiffrée.
 - **Les composants utiles sont inclus.** Flowersec fournit des API Endpoint natives, un Browser Runtime TypeScript, un Tunnel open source, un Proxy Gateway et des CLI d'exploitation.
 
@@ -62,7 +62,18 @@ Les usages courants comprennent les Agents distants, les services privés, les o
 
 La Controlplane sert uniquement à préparer la connexion. Elle émet les ConnectArtifacts et Grants, mais ne se trouve pas dans le chemin des données applicatives chiffrées de bout en bout.
 
-![Schémas de connexion sécurisée Flowersec](docs/flowersec-connection-patterns-whiteboard.png)
+```mermaid
+flowchart LR
+  CP[Controlplane] -. "ArtifactV2 + signed capability tuples" .-> C[Client runtime]
+  C -->|"WebSocket: hop-local Yamux"| E[Endpoint]
+  C -->|"raw QUIC: native bidirectional streams"| E
+  B[Browser runtime] -->|"WebTransport: native HTTP/3 streams"| E
+  C -->|"mixed carrier encrypted bytes"| T[Tunnel]
+  B -->|"mixed carrier encrypted bytes"| T
+  T --> E
+```
+
+Transport v2 treats WebSocket, raw QUIC, and WebTransport as equal carrier classes. WebSocket keeps hop-local Yamux; raw QUIC and WebTransport use native bidirectional streams and disable 0-RTT and QUIC DATAGRAM. The exact runtime support matrix and breaking lifecycle migration are maintained in the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](docs/MIGRATION_TRANSPORT_V2.md).
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
@@ -95,7 +106,7 @@ Consultez l'[index des Cookbooks](examples/README.md) pour les commandes exactes
 Les nouvelles intégrations suivent un chemin unique indépendant du langage :
 
 ```text
-ConnectArtifact -> connect -> RPC / stream / proxy
+ArtifactV2 -> equal candidate selection -> authenticated SessionV2 -> RPC / stream / proxy
 ```
 
 Les Cookbooks pointent directement vers du code exécutable au lieu de dupliquer de grands exemples d'API dans plusieurs documents.
@@ -116,6 +127,16 @@ Les Cookbooks pointent directement vers du code exécutable au lieu de dupliquer
 Les responsabilités propres aux Runtimes restent explicites : TypeScript possède l'intégration Browser et Service Worker ; Go possède le Tunnel partagé, le Proxy Gateway et les CLI ; Swift et Rust fournissent une intégration SDK native sans dupliquer ces composants.
 
 L'interopérabilité est vérifiée en continu dans les deux directions avec le Go Reference Client/Server pour TypeScript, Swift et Rust, notamment Direct, Tunnel, RPC, Streams, Liveness, Rekey, Reset et trafic Proxy.
+
+Le tableau ci-dessus décrit les capacités portables de Transport v1. Les capacités réseau de production de Transport v2 suivent des Runtime Tuples exacts.
+
+| Transport v2 capability | Go | TypeScript | Swift | Rust |
+| --- | :---: | :---: | :---: | :---: |
+| WebSocket carrier | Yes | Browser: Yes / Node: No | No | No |
+| raw QUIC carrier | Yes | No | No | Tested adapter; not advertised |
+| WebTransport carrier | Yes | Browser: Yes / Node: No | No | No |
+
+Le smoke local Transport v2 ne constitue pas une validation de production multilangage. La release exige des preuves signées pour navigateur réel, réseau dégradé, qlog, migration et performances. La CLI `flowersec-tunnel` et les binaires Cookbook actuels restent Transport v1.
 
 <!-- readme-section:security -->
 <a id="security"></a>

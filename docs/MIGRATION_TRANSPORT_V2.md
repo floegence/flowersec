@@ -13,7 +13,7 @@ The authoritative carrier, path, runtime, and capability registry is `stability/
 
 ## Rollout Order
 
-1. Release Flowersec v2 SDK contracts and deploy v2-capable tunnel listeners without advertising them.
+1. Release Flowersec v2 SDK contracts. Deploy application-owned v2-capable tunnel listeners without advertising them; the published `flowersec-tunnel` CLI remains v1 in 0.28.0.
 2. Deploy a dual-stack artifact issuer that issues only candidates present in the exact requester, endpoint, and tunnel capability intersection.
 3. Upgrade native SDK consumers to the transport-neutral v2 artifact and session API while retaining their explicit v1 connection path.
 4. Upgrade browser SDK consumers after real-browser WebTransport interoperability passes. Preserve one visible connecting lifecycle while Flowersec races equal candidates internally.
@@ -55,7 +55,7 @@ dependency recorded by a completed migration.
 
 ### Floe Webapp Release
 
-1. Starting from the currently published `@floegence/flowersec-core@0.27.0`
+1. Starting from the pre-migration `@floegence/flowersec-core@0.27.0`
    pin, update `packages/boot/package.json` and
    `packages/protocol/package.json` to the new published Flowersec npm release.
    Keep `packages/core/package.json` and `packages/init/package.json` on the
@@ -68,7 +68,7 @@ dependency recorded by a completed migration.
    lockfile, engine, and no-local-shortcut contract. Update both
    `packages/boot/test/doc-contract.test.ts` and
    `packages/protocol/test/doc-contract.test.ts` assertions and the versioned
-   guidance in `docs/protocol.md` and `docs/runtime.md`; they currently name
+   guidance in `docs/protocol.md` and `docs/runtime.md`; the pre-migration baseline names
    `@floegence/flowersec-core@0.27.0` explicitly.
 3. Run the Floe Webapp local quality gate, including real-browser WebSocket and
    WebTransport adapter evidence, then create the matching `v<floe-version>`
@@ -79,12 +79,12 @@ dependency recorded by a completed migration.
 
 ### Redeven Upgrade
 
-1. Upgrade the Go side from its current Flowersec Go `v0.27.0` pin to the
+1. Upgrade the Go side from its pre-migration Flowersec Go `v0.27.0` pin to the
    published v2-capable module in `go.mod` and `go.sum`. Update
    `THIRD_PARTY_NOTICES.md` and the exact version assertions and previous-version
    rejection list in `internal/session/dependency_contract_test.go` in the same
    change.
-2. Upgrade the UI side from the current Floe Webapp `0.39.2` and Flowersec Core
+2. Upgrade the UI side from the pre-migration Floe Webapp `0.39.2` and Flowersec Core
    `0.27.0` pins to the releases completed above. Update the boot, protocol,
    core, and direct Flowersec dependencies and overrides in
    `internal/envapp/ui_src/package.json`, then regenerate

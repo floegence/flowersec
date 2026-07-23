@@ -1,7 +1,9 @@
-# Custom Yamux Streams (Meta + Bytes Pattern)
+# Transport v1 Custom Yamux Streams (Meta + Bytes Pattern)
 
-This document describes the recommended way to build **custom yamux streams** on top of Flowersec.
+This document describes the recommended way to build **custom Yamux streams** on Transport v1.
 It is intended for advanced integrations that go beyond the built-in RPC stream.
+
+Transport v2 instead exposes `SessionV2` and carrier-neutral `ByteStream`/`ByteStreamV2`. WebSocket v2 keeps hop-local Yamux internally, but raw QUIC and WebTransport map logical streams directly to native bidirectional streams. V2 callers must use FIN/reset semantics from the neutral stream API and must not pass Yamux tuning or cast a v2 stream to a Yamux stream. See `docs/MIGRATION_TRANSPORT_V2.md`.
 
 See also:
 

@@ -1,6 +1,6 @@
 # Flowersec for Rust
 
-The Tokio-native Rust SDK for Flowersec end-to-end encrypted direct and tunneled sessions. It implements the portable client, endpoint, RPC, stream, controlplane, reconnect, proxy, and observability contract.
+The Tokio-native Rust SDK for Flowersec end-to-end encrypted direct and tunneled sessions. It implements the legacy v1 portable stack plus Transport v2 wire/session primitives and a tested raw QUIC adapter.
 
 The crate targets Rust 1.85 or newer on Linux, macOS, and Windows, uses rustls by default, and contains no Flowersec-authored `unsafe`.
 
@@ -11,6 +11,20 @@ cargo add flowersec
 ```
 
 The default feature uses native root certificates. Use `default-features = false, features = ["rustls-webpki-roots"]` for an embedded WebPKI root set.
+
+## Transport v2 Support
+
+Rust publishes Transport v2 protocol/session primitives and a public raw QUIC adapter built on Quinn. The adapter uses native bidirectional QUIC streams without Yamux, requires caller-provided trust/certificate material, and disables 0-RTT and QUIC DATAGRAM. It is covered by Go interoperability tests.
+
+WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
+QUIC-family carriers use native QUIC streams and never Yamux.
+Flowersec application 0-RTT is disabled.
+Flowersec does not use QUIC DATAGRAM frames.
+`flowersec-tunnel` remains a v1 WebSocket/Yamux CLI.
+
+Transport v2 production carrier support: none; raw QUIC remains public and tested but is not a production capability tuple.
+
+Rust currently advertises no production Transport v2 carrier tuple: complete `ArtifactV2` acquisition, equal-candidate durable-spend connection ownership, and server admission are not yet committed as one production connector. Existing `connect`, controlplane, proxy, and Yamux examples remain v1. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](../docs/MIGRATION_TRANSPORT_V2.md).
 
 ## Cookbook
 
@@ -26,6 +40,8 @@ Start with the [Rust cookbook](https://github.com/floegence/flowersec/tree/main/
 - Reconnect: `reconnect::ReconnectManager`
 - Proxy: `proxy::{ProxyClient, ProxyServer}`
 - Diagnostics: `observability`
+- Transport v2 protocol/session: `protocol_v2`, `session_v2`, and `transport_v2`
+- Tested non-advertised raw QUIC adapter: `raw_quic_v2`
 
 High-level WebSocket connections require TLS by default. Use `TransportSecurityPolicy::allow_plaintext_for_loopback()` only for literal local development targets.
 

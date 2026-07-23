@@ -1,6 +1,6 @@
 # Go Cookbook
 
-Use the Go examples for clients, endpoints, controlplane integration, deployment helpers, and manual protocol-stack references.
+Use the Go examples for Transport v1 clients, endpoints, controlplane integration, deployment helpers, and manual protocol-stack references. The shared demo stack and `flowersec-tunnel` binary are v1 WebSocket/Yamux paths.
 
 ## Run
 
@@ -49,6 +49,12 @@ Expected output includes an RPC response, an RPC notification, and an echoed cus
 ## Runtime Boundaries
 
 Go owns the shared deployable tunnel, proxy gateway, key/grant helper CLIs, and the demo controlplane services. Browser and Service Worker runtime APIs remain TypeScript-owned.
+
+## Transport v2 Boundary
+
+Go's library advertises equal production WebSocket, raw QUIC, and WebTransport carrier tuples through `connectv2`, `carrier/*`, `session`, and `tunnelv2`. WebSocket uses hop-local Yamux; raw QUIC/WebTransport use native bidirectional streams, strict TLS 1.3/ALPN, no 0-RTT, and no QUIC DATAGRAM.
+
+This cookbook does not mint `ArtifactV2` or start v2 listeners yet. Use `go test ./flowersec-go/connectv2 ./flowersec-go/carrier/... ./flowersec-go/tunnelv2` as the executable API reference, and do not reinterpret the examples' v1 `ConnectArtifact` as `ArtifactV2`. Deployment wiring and the breaking lifecycle are documented in the [migration guide](../../docs/MIGRATION_TRANSPORT_V2.md).
 
 ## Troubleshooting
 

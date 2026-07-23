@@ -1,6 +1,12 @@
-# Controlplane Artifact Fetch
+# Controlplane Artifact Fetch (Transport v1)
 
-Flowersec uses one client-facing contract for fetching a `ConnectArtifact` from a controlplane.
+Transport v1 uses the client-facing contract below for fetching a `ConnectArtifact` from a controlplane.
+
+## Transport v2 boundary
+
+The `/v1/connect/artifact` envelope and its helpers do not issue or decode `ArtifactV2`. Transport v2 acquisition is downstream-owned and supplies an `ArtifactSourceV2`/durable lease containing an exact capability intersection, capability digest, bounded session contract, candidates, and single-use spend callback. The fetch receives the SDK-produced runtime capability descriptor; the controlplane must not reconstruct or broaden it.
+
+Keep v1 and v2 paths, stored credentials, pending/spent state, replay keys, and rollback policy isolated. Never cast `connect_artifact` to `ArtifactV2`, reuse a v1 helper as an implicit fallback, or recycle a serialized one-time v2 artifact for reconnect. See `docs/MIGRATION_TRANSPORT_V2.md` for the application-owned v2 controlplane sequence.
 
 ## Helper surface
 

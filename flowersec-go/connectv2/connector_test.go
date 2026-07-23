@@ -422,9 +422,11 @@ func TestCapabilityFilterUsesExactTuple(t *testing.T) {
 
 func TestArtifactCanOnlyBeClaimedOnceEvenWhenCommitFails(t *testing.T) {
 	attempts := newImmediateAttempts()
-	attempts["q1"].commitErr = errors.New("partial admission write")
+	commitErr := errors.New("partial admission write")
+	attempts["q1"].commitErr = commitErr
+	attempts["t1"].commitErr = commitErr
 	connector := connectv2.NewConnector(inMemoryLease(validArtifact(t)), allCapabilities(), connectv2.RequireQUICFamily, fakeFactory{attempts: attempts})
-	if _, err := connector.Connect(context.Background()); !errors.Is(err, attempts["q1"].commitErr) {
+	if _, err := connector.Connect(context.Background()); !errors.Is(err, commitErr) {
 		t.Fatalf("first Connect error = %v", err)
 	} else {
 		assertConnectError(t, err, fserrors.PathDirect, fserrors.StageAttach, fserrors.CodeAttachFailed)

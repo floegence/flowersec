@@ -43,7 +43,7 @@
 ## Por que Flowersec
 
 - **Um único contrato portátil.** Go, TypeScript, Swift e Rust implementam o mesmo formato de rede e o mesmo comportamento de segurança, sessão, RPC, Endpoint, Controlplane, reconexão, proxy e observabilidade.
-- **Direto ou com relay.** Use o caminho WebSocket direto mais curto quando o Endpoint estiver acessível, ou um Tunnel auto-hospedado sem revelar o texto em claro da aplicação.
+- **Caminhos neutros ao Carrier.** Transport v2 trata WebSocket, raw QUIC e WebTransport como Carriers equivalentes. Capacidades Runtime exatas e política de produto escolhem candidatos, sem protocolo primário ou fallback permanente.
 - **Uma sessão, vários fluxos.** Multiplexe chamadas RPC, eventos, fluxos de bytes personalizados, requisições HTTP e tráfego WebSocket sobre a mesma conexão criptografada.
 - **Os componentes necessários estão incluídos.** O Flowersec fornece APIs Endpoint nativas, um Browser Runtime TypeScript, um Tunnel de código aberto, um Proxy Gateway e CLIs operacionais.
 
@@ -62,7 +62,18 @@ Casos de uso comuns incluem Agents remotos, serviços privados, ferramentas Web 
 
 A Controlplane participa apenas da preparação da conexão. Ela emite ConnectArtifacts e Grants, mas não fica no caminho dos dados da aplicação criptografados de ponta a ponta.
 
-![Padrões de conexão segura do Flowersec](docs/flowersec-connection-patterns-whiteboard.png)
+```mermaid
+flowchart LR
+  CP[Controlplane] -. "ArtifactV2 + signed capability tuples" .-> C[Client runtime]
+  C -->|"WebSocket: hop-local Yamux"| E[Endpoint]
+  C -->|"raw QUIC: native bidirectional streams"| E
+  B[Browser runtime] -->|"WebTransport: native HTTP/3 streams"| E
+  C -->|"mixed carrier encrypted bytes"| T[Tunnel]
+  B -->|"mixed carrier encrypted bytes"| T
+  T --> E
+```
+
+Transport v2 treats WebSocket, raw QUIC, and WebTransport as equal carrier classes. WebSocket keeps hop-local Yamux; raw QUIC and WebTransport use native bidirectional streams and disable 0-RTT and QUIC DATAGRAM. The exact runtime support matrix and breaking lifecycle migration are maintained in the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](docs/MIGRATION_TRANSPORT_V2.md).
 
 <!-- readme-section:try-it-locally -->
 <a id="try-it-locally"></a>
@@ -95,7 +106,7 @@ Consulte o [índice de Cookbooks](examples/README.md) para os comandos exatos de
 Novas integrações seguem um único caminho independente de linguagem:
 
 ```text
-ConnectArtifact -> connect -> RPC / stream / proxy
+ArtifactV2 -> equal candidate selection -> authenticated SessionV2 -> RPC / stream / proxy
 ```
 
 Os Cookbooks apontam diretamente para código executável, em vez de duplicar grandes exemplos de API em vários documentos.
@@ -116,6 +127,16 @@ Os Cookbooks apontam diretamente para código executável, em vez de duplicar gr
 As responsabilidades específicas de Runtime são explícitas: TypeScript mantém a integração Browser e Service Worker; Go mantém o Tunnel compartilhado, o Proxy Gateway e as CLIs; Swift e Rust fornecem integração SDK nativa sem duplicar esses componentes.
 
 A interoperabilidade é verificada continuamente nas duas direções com o Go Reference Client/Server para TypeScript, Swift e Rust, cobrindo Direct, Tunnel, RPC, Streams, Liveness, Rekey, Reset e tráfego Proxy.
+
+A tabela acima descreve as capacidades portáteis do Transport v1. As capacidades de rede de produção do Transport v2 seguem Runtime Tuples exatos.
+
+| Transport v2 capability | Go | TypeScript | Swift | Rust |
+| --- | :---: | :---: | :---: | :---: |
+| WebSocket carrier | Yes | Browser: Yes / Node: No | No | No |
+| raw QUIC carrier | Yes | No | No | Tested adapter; not advertised |
+| WebTransport carrier | Yes | Browser: Yes / Node: No | No | No |
+
+O smoke local de Transport v2 não é aprovação de produção entre linguagens. A release exige Evidence assinada de navegador real, rede fraca, qlog, migração e desempenho. A CLI `flowersec-tunnel` e os binários Cookbook atuais continuam Transport v1.
 
 <!-- readme-section:security -->
 <a id="security"></a>

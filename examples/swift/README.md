@@ -1,6 +1,6 @@
 # Swift Cookbook
 
-The Swift example is a single production-shaped client that exercises artifact fetch, tunnel connect, typed RPC, custom streams, liveness, HTTP proxy, and WebSocket proxy.
+The Swift example is a single production-shaped Transport v1 client that exercises artifact fetch, tunnel connect, typed RPC, custom streams, liveness, HTTP proxy, and WebSocket proxy.
 
 ## Run
 
@@ -50,6 +50,10 @@ websocket=
 ## Runtime Boundaries
 
 Swift implements the complete portable client and endpoint contract for Apple platforms. Browser Service Worker runtime APIs remain TypeScript-owned, while shared tunnel, gateway, and helper binaries remain Go-owned.
+
+## Transport v2 Boundary
+
+Swift includes portable Transport v2 wire, cryptographic, session, stream, and asynchronous lifecycle code but advertises no production v2 network-carrier tuple. WebSocket, raw QUIC, and WebTransport remain equal carrier classes in the contract; Yamux is WebSocket-only and v2 disables 0-RTT and QUIC DATAGRAM. The runnable example above remains v1. Use `swift test --filter TransportV2` as the executable portable-contract reference and follow the [migration guide](../../docs/MIGRATION_TRANSPORT_V2.md).
 
 ## Troubleshooting
 

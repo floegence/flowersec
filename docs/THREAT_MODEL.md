@@ -1,11 +1,11 @@
 # Flowersec Threat Model and Security Boundaries
 
-This document explains what Flowersec can and cannot protect, based on the current repository implementation.
+This document explains what Flowersec Transport v1 and Transport v2 can and cannot protect, based on the current repository implementation. Runtime capability is exact: Go advertises the production v2 carrier set, TypeScript browser advertises WebSocket/WebTransport, and Node.js, Rust, and Swift do not currently advertise a production v2 network-carrier tuple.
 It is written for integrators and operators deploying either the tunnel path or the direct path.
 
 ## System model
 
-Flowersec builds an end-to-end encrypted, multiplexed connection over WebSocket:
+Transport v1 builds an end-to-end encrypted, Yamux-multiplexed connection over WebSocket:
 
 - **Tunnel path**: client and server connect to an (untrusted) tunnel, authenticate with a one-time token, then run the encrypted protocol stack through the tunnel's byte-forwarding.
 - **Direct path**: client connects directly to the server WebSocket endpoint, then runs the encrypted protocol stack directly (no tunnel).
@@ -14,8 +14,23 @@ Roles:
 
 - **Controlplane (trusted)**: issues signed one-time tunnel attach tokens and distributes session configuration (for example `ChannelInitGrant`).
 - **Tunnel (untrusted rendezvous)**: verifies attach tokens and forwards bytes between endpoints, but must not learn plaintext application data.
-- **Server endpoint (trusted)**: terminates E2EE, serves Yamux streams and RPC handlers.
-- **Client endpoint (trusted)**: initiates E2EE, opens Yamux streams and RPC calls.
+- **Server endpoint (trusted)**: terminates E2EE, serves logical streams and RPC handlers.
+- **Client endpoint (trusted)**: initiates E2EE, opens logical streams and RPC calls.
+
+## Transport v2 security boundaries
+
+Transport v2 keeps admission, carrier setup, the encrypted session, and logical streams as distinct boundaries:
+
+- **Equal carriers, exact capability**: WebSocket, raw QUIC, and WebTransport are equal carrier classes. A signed artifact contains exact candidates and capability bindings; a missing tuple is unsupported, not permission to fall back to another protocol.
+- **Credential-free race**: candidates may reach only the carrier-ready barrier before selection. Losers become locally unable to write. The winner's durable `CommitSpend` completes before the first FSB2 credential byte; unknown or partial writes leave the artifact spent.
+- **WebSocket**: production uses TLS and a versioned Flowersec subprotocol. Yamux is hop-local after FSA2 admission and cannot be inferred for another carrier.
+- **Raw QUIC**: TLS 1.3, the exact candidate ALPN, hostname/chain verification, and caller-supplied non-empty trust roots are mandatory. `InsecureSkipVerify`, 0-RTT, and QUIC DATAGRAM are forbidden.
+- **WebTransport**: the same TLS rules apply to HTTP/3. Origin and path routing are explicit, admission uses a reserved bidirectional CONNECT stream, and subsequent logical streams are native HTTP/3 bidirectional streams. A successful HTTP/3 connection alone is not Flowersec admission.
+- **Native stream isolation**: raw QUIC and WebTransport never run Yamux. FIN, reset, stop-sending, per-stream flow control, connection stream capacity, and application close remain native carrier semantics; one stream failure must not flatten or silently close siblings.
+- **Migration and rebinding**: raw QUIC may validate a new local path or UDP source port while preserving the authenticated connection ID and peer identity. Migration is not re-admission, must not broaden endpoint/certificate policy, and exposes network path metadata to observers even though payloads remain encrypted.
+- **Mixed tunnel paths**: a v2 tunnel may bridge WebSocket and QUIC-family legs. It is still an untrusted encrypted-byte relay and must not translate application plaintext, product routing policy, or credentials.
+
+The published `flowersec-tunnel` CLI remains Transport v1 WebSocket-only in this release. Transport v2 listener certificates, UDP/HTTP3 exposure, endpoint sets, and tunnel coordination are application-owned library wiring; CLI deployment documentation must not be read as v2 enablement.
 
 ## Proxy: HTTP/WS over Flowersec
 
@@ -75,7 +90,8 @@ Key and secret handling:
 - **Never log secrets**: do not log `e2ee_psk_b64u`, issuer private keys, or full bearer tokens.
 - **Memory cleanup is best-effort defense in depth**: Flowersec clears selected decoded PSK and active record-key buffers when their handshake or secure-channel lifetime ends. This shortens how long those values remain reachable; it does not guarantee secure erasure because runtimes, garbage collectors, copy-on-write storage, cryptographic libraries, compiler optimizations, and the operating system may retain other copies.
 - **Origin policy matters**: browsers enforce Origin rules and the tunnel/server should validate Origins. Avoid allowing `null`/no-Origin unless you fully control your clients. Wildcards like `*.example.com` match subdomains only; list the apex (`example.com`) explicitly if you need it.
-- **Resolve before consume**: one-time direct credentials should be resolved without consumption, authenticated through the PSK handshake, and atomically committed before Yamux. Flowersec's `ResolveCredential` contract enforces this ordering but the credential store remains an integrator responsibility.
+- **Resolve before consume (v1)**: one-time direct credentials should be resolved without consumption, authenticated through the PSK handshake, and atomically committed before Yamux. Flowersec's `ResolveCredential` contract enforces this ordering but the credential store remains an integrator responsibility.
+- **Commit before credential write (v2)**: `ArtifactV2` ownership remains downstream and must durably transition pending to spent before FSB2. A v1 credential or storage record cannot be cast, retried, or promoted into this state machine.
 
 ## Implementation references (current code)
 
@@ -88,6 +104,10 @@ This document aligns with the current implementation:
 - E2EE framing and handshake:
   - Go: `flowersec-go/crypto/e2ee/*` (`HandshakeMagic=FSEH`, `RecordMagic=FSEC`)
   - TS: `flowersec-ts/src/e2ee/*`
+- Transport v2 artifacts, carriers, session, and tunnel coordination:
+  - Go: `flowersec-go/{artifactv2,admissionv2,connectv2,carrier,session,tunnelv2}`
+  - TypeScript browser: `flowersec-ts/src/{browser,v2}`
+  - Exact runtime matrix: `stability/transport_v2_contract.json`
 
 See also:
 

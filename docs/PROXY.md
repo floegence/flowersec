@@ -1,5 +1,7 @@
 # flowersec-proxy (HTTP/WS over Flowersec) v1
 
+The concrete proxy wire and Yamux examples in this document are Transport v1. Transport v2 applications must adapt proxy framing to `SessionV2` carrier-neutral byte streams, attach RPC only after READY, and preserve native FIN/reset behavior. Raw QUIC and WebTransport never run Yamux. No current release demo or `flowersec-tunnel` CLI exposes a production v2 proxy path.
+
 This document defines the cross-language contract for **flowersec-proxy**:
 carrying HTTP/1.1 and WebSocket traffic over Flowersec custom Yamux streams.
 

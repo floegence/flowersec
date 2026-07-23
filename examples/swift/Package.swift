@@ -14,6 +14,10 @@ let package = Package(
       dependencies: [
         .product(name: "Flowersec", package: "Flowersec")
       ]
+    ),
+    .testTarget(
+      name: "FlowersecSwiftClientExampleTests",
+      dependencies: ["FlowersecSwiftClientExample"]
     )
   ]
 )

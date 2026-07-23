@@ -1,6 +1,6 @@
 # Rust Cookbook
 
-The Rust example is a Tokio-native client that exercises artifact fetch, tunnel connect, typed RPC, custom streams, liveness, HTTP proxy, and WebSocket proxy.
+The Rust example is a Transport v1 Tokio-native client that exercises artifact fetch, tunnel connect, typed RPC, custom streams, liveness, HTTP proxy, and WebSocket proxy.
 
 ## Run
 
@@ -50,6 +50,10 @@ websocket=
 ## Runtime Boundaries
 
 Rust provides the portable Tokio-native client and endpoint contract for Linux, macOS, and Windows. It does not duplicate the TypeScript browser runtime or the Go-owned tunnel, gateway, and helper binaries.
+
+## Transport v2 Boundary
+
+Rust includes portable Transport v2 protocol/session code and a tested Quinn raw QUIC adapter with native bidirectional streams, no Yamux over QUIC, no 0-RTT, and no QUIC DATAGRAM. It does not yet advertise a production v2 carrier tuple because artifact acquisition, equal-candidate durable spend, and server admission are not committed as one connector. The runnable example above remains v1; use `cargo test --manifest-path flowersec-rust/Cargo.toml --test raw_quic_v2` as the adapter reference and follow the [migration guide](../../docs/MIGRATION_TRANSPORT_V2.md).
 
 ## Troubleshooting
 

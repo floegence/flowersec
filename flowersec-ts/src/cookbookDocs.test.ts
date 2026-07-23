@@ -16,8 +16,8 @@ describe("cookbook documentation contracts", () => {
     expect(doc).toContain("examples/ts/README.md");
     expect(doc).toContain("examples/swift/README.md");
     expect(doc).toContain("examples/rust/README.md");
-    expect(doc).toContain("ConnectArtifact -> connect -> RPC / stream / proxy");
-    expect(doc).not.toMatch(/Migration\s+guide/);
+    expect(doc).toContain("ArtifactV2 -> equal candidate selection -> authenticated SessionV2 -> RPC / stream / proxy");
+    expect(doc).toContain("docs/MIGRATION_TRANSPORT_V2.md");
     expect(doc).not.toContain('from "@floegence/flowersec-core');
   });
 

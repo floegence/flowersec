@@ -1,8 +1,14 @@
-# Connect Artifacts
+# Connect Artifacts (Transport v1)
 
-Flowersec uses one canonical client-facing connect artifact: `ConnectArtifact`.
+Transport v1 uses one canonical client-facing connect artifact: `ConnectArtifact`.
 
 It is the required input for Go `client.Connect(...)` and the TypeScript `connect(...)`, `connectBrowser(...)`, and `connectNode(...)` entrypoints. It is also the integration shape for controlplanes, reconnect adapters, and CLI or demo minting flows.
+
+## Transport v2 boundary
+
+Transport v2 does not extend or reinterpret this envelope. It uses the separate `ArtifactV2` contract, exact signed carrier candidate tuples, a runtime capability descriptor and digest, and a durable single-use `ArtifactLeaseV2`/`ArtifactLease` spend callback. Candidate setup may race only before credential bytes are written; the winner durably commits spend before the first FSB2 byte.
+
+A v1 `ConnectArtifact`, grant, reconnect source, or stored credential cannot be cast to `ArtifactV2`, retried as v2, or used as fallback after a v2 commitment. Controlplanes must keep v1/v2 issuance, storage, replay state, endpoints, and rollback policy isolated. See `docs/MIGRATION_TRANSPORT_V2.md`, `docs/TRANSPORT_V2_ARCHITECTURE.md`, and `stability/transport_v2_contract.json`.
 
 ## Why it exists
 

@@ -1,16 +1,30 @@
 # Flowersec Swift
 
-The native Swift SDK for Flowersec end-to-end encrypted direct and tunneled sessions. It implements the portable client, endpoint, RPC, stream, controlplane, reconnect, proxy, and observability contract for Apple platforms.
+The native Swift SDK for Flowersec end-to-end encrypted direct and tunneled sessions. It implements the legacy v1 portable stack plus Transport v2 wire, cryptographic, and session primitives for Apple platforms.
 
 ## Install
 
 The repository root exposes the Swift package:
 
 ```swift
-.package(url: "https://github.com/floegence/flowersec.git", from: "0.24.0")
+.package(url: "https://github.com/floegence/flowersec.git", from: "0.28.0")
 ```
 
 Use the `Flowersec` library product.
+
+## Transport v2 Support
+
+Swift publishes the portable Transport v2 artifact, wire, cryptographic, session, stream, FIN/reset, and asynchronous close contracts. The Apple runtime currently advertises no production Transport v2 network-carrier tuple: a production WebSocket admission adapter is not committed, and raw QUIC/WebTransport remain outside the registered Network.framework contract.
+
+WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
+QUIC-family carriers use native QUIC streams and never Yamux.
+Flowersec application 0-RTT is disabled.
+Flowersec does not use QUIC DATAGRAM frames.
+`flowersec-tunnel` remains a v1 WebSocket/Yamux CLI.
+
+Transport v2 production carrier support: none; the package provides portable protocol and session code only.
+
+Do not treat the v1 `ConnectArtifact`, `ReconnectManager`, `FlowersecByteStream`, or Yamux options as v2 substitutes. Transport v2 defines WebSocket, raw QUIC, and WebTransport as equal carrier classes, keeps Yamux only on WebSocket hops, and disables 0-RTT and QUIC DATAGRAM. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](../docs/MIGRATION_TRANSPORT_V2.md).
 
 ## Cookbook
 

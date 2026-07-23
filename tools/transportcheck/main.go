@@ -23,8 +23,9 @@ func run(args []string, output io.Writer) error {
 	case "manifest":
 		flags := flag.NewFlagSet("manifest", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)
-		manifestPath := flags.String("manifest", "", "performance manifest path")
-		registryPath := flags.String("registry", "", "case registry path")
+			manifestPath := flags.String("manifest", "", "performance manifest path")
+			registryPath := flags.String("registry", "", "case registry path")
+			makefilePath := flags.String("makefile", "", "optional Makefile used to verify case owner recipes")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -42,9 +43,14 @@ func run(args []string, output io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if err := validateCaseRegistry(registry); err != nil {
-			return err
-		}
+			if err := validateCaseRegistry(registry); err != nil {
+				return err
+			}
+			if *makefilePath != "" {
+				if err := validateCaseOwnerRecipes(registry, *makefilePath); err != nil {
+					return err
+				}
+			}
 		loads, err := allocateLPT(manifest.Cells, manifest.EligibleLaneCount)
 		if err != nil {
 			return err

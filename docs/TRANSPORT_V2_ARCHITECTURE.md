@@ -6,6 +6,8 @@ The implementation is test-driven and split by explicit runtime capability tuple
 
 Local unit and smoke gates prove deterministic contract behavior but do not count as release evidence. A release additionally requires a clean-final-SHA signed evidence report covering the registered real-browser, qlog, common-kernel weak-network, migration, capacity, and 15-run performance cases. `make release-check` fails closed when that report or its audited base SHA is absent.
 
+The operational trust bootstrap, required environment, audited runner responsibilities, and exact release sequence are documented in `docs/TRANSPORT_V2_RELEASE_EVIDENCE.md`. The checked-in bootstrap-disabled signer and placeholder runner hashes intentionally prevent publication until a production runner policy is installed by a reviewed change.
+
 ## Boundaries
 
 Flowersec owns transport-neutral secure sessions, transport adapters, protocol validation, resource limits, and interoperability contracts. It does not own environment selection, tenant routing, provider authorization, rollout cohorts, billing policy, or other business logic. Those decisions remain in the downstream control plane and applications.

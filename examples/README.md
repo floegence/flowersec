@@ -1,6 +1,6 @@
 # Flowersec Cookbooks
 
-The cookbooks are the source-first guide to Flowersec. Each language page points to runnable programs, exact commands, expected output, and the tests that cover advanced behavior.
+The cookbooks are the source-first guide to Flowersec. Each language page points to runnable programs, exact commands, expected output, and the tests that cover advanced behavior. The packaged demo stack is a Transport v1 WebSocket/Yamux stack; it must not be used as evidence that a runtime advertises Transport v2.
 
 | Language | Cookbook | Primary runtime |
 | --- | --- | --- |
@@ -35,13 +35,33 @@ Important fields:
 
 ## Recommended Path
 
-New examples use `ConnectArtifact` as the client bootstrap value:
+The runnable demo examples use the Transport v1 `ConnectArtifact` bootstrap value:
 
 ```text
 controlplane -> ConnectArtifact -> high-level connect -> RPC / stream / proxy
 ```
 
 Raw grants and manually assembled protocol stacks remain available only as advanced implementation references.
+
+## Transport v2 References
+
+Transport v2 uses `ArtifactV2`, exact runtime capability tuples, equal WebSocket/raw QUIC/WebTransport candidate selection, durable spend, and an authenticated `SessionV2`. WebSocket keeps hop-local Yamux; raw QUIC and WebTransport use native bidirectional streams without Yamux. 0-RTT and QUIC DATAGRAM are disabled.
+
+WebSocket, raw QUIC, and WebTransport are equal carrier candidates. QUIC-family carriers use native QUIC streams and never Yamux. Flowersec application 0-RTT is disabled. Flowersec does not use QUIC DATAGRAM frames. `flowersec-tunnel` remains a v1 WebSocket/Yamux CLI.
+
+Transport v2 example support: none; the runnable examples remain v1 WebSocket/Yamux examples.
+
+The current executable references are verification programs rather than packaged demos:
+
+| Runtime | Current v2 status | Executable reference |
+| --- | --- | --- |
+| Go | Production WebSocket, raw QUIC, and WebTransport library carriers; CLI remains v1 | `go test ./flowersec-go/connectv2 ./flowersec-go/carrier/... ./flowersec-go/tunnelv2` |
+| TypeScript browser | Production WebSocket/WebTransport adapter; no raw QUIC | `make transport-browser-smoke` and `flowersec-ts/src/browser/connectV2.test.ts` |
+| TypeScript Node.js | No production v2 carrier tuple | Portable type/codec tests only |
+| Rust | Tested raw QUIC adapter; no advertised production v2 connector | `cargo test --manifest-path flowersec-rust/Cargo.toml --test raw_quic_v2` |
+| Swift | Portable v2 protocol/session only; no network carrier tuple | `swift test --filter TransportV2` |
+
+Local smoke does not replace the signed real-browser, weak-network, qlog, migration, and performance evidence required for release. See the [Transport v2 architecture](../docs/TRANSPORT_V2_ARCHITECTURE.md) and [migration guide](../docs/MIGRATION_TRANSPORT_V2.md).
 
 ## Shared Environment
 

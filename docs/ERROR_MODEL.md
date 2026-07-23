@@ -29,6 +29,8 @@ Fields:
 
 Human-readable detail belongs in the message and underlying cause.
 
+The registry is shared, but protocol-generation meaning stays explicit. `yamux` is a Transport v1 stage and may describe the hop-local WebSocket mux inside a v2 WebSocket carrier; raw QUIC and WebTransport never report Yamux as their native stream layer. Transport v2 admission, candidate preparation, TLS/HTTP3 setup, native stream capacity, and session establishment map to the registered high-level stage/code pair without inventing carrier-specific product states.
+
 Transport v2 candidate racing keeps the high-level failure singular while
 retaining bounded candidate diagnostics:
 
@@ -110,7 +112,7 @@ Common codes include:
 
 `resource_exhausted` means a configured generic transport, secure-channel, multiplexing, RPC, or queue limit was reached. Callers should apply backpressure, reduce concurrency, or reconnect with a fresh session as appropriate. It must not be used to encode an application-specific quota or policy. Transport implementations map their limit failures to the nearest high-level stage, such as `connect`, `secure`, `yamux`, `rpc`, or `close`.
 
-Yamux liveness probes use `yamux/timeout` when the configured ping deadline expires. Other ping or transport failures remain `ping_failed`, while caller cancellation remains `canceled`. A timed-out automatic probe also emits the low-cardinality `liveness_timeout` diagnostic event before the session terminates.
+Transport v1 Yamux liveness probes use `yamux/timeout` when the configured ping deadline expires. Other ping or transport failures remain `ping_failed`, while caller cancellation remains `canceled`. A timed-out automatic probe also emits the low-cardinality `liveness_timeout` diagnostic event before the session terminates. Transport v2 session liveness is carrier-neutral and must not be reported as Yamux for raw QUIC or WebTransport.
 
 The browser proxy runtime maps a full HTTP stream-admission queue to HTTP `503`. Its error message retains the shared `resource_exhausted` code; the Service Worker bridge wire is otherwise unchanged.
 
@@ -227,9 +229,11 @@ The four liveness/resource names above use `code_domain=event`. A failed operati
 
 ## Interoperability diagnostic evidence
 
-The Go-reference matrix records an ordered diagnostic evidence list for each transport/suite variant. Every entry includes `case`, `path`, `stage`, and `code`. `path` must equal the active `direct` or `tunnel` variant, and the ordered case list is fixed by `testdata/interop/v1/profiles.json`.
+The seven-cell Go-reference matrix described here is Transport v1. It records an ordered diagnostic evidence list for each transport/suite variant. Every entry includes `case`, `path`, `stage`, and `code`. `path` must equal the active `direct` or `tunnel` variant, and the ordered case list is fixed by `testdata/interop/v1/profiles.json`.
 
 Resource-boundary evidence uses the registered error-domain tuple `yamux/resource_exhausted` or `rpc/resource_exhausted`. The proxy body action additionally verifies the protocol-specific remote code `request_body_too_large`, but the matrix tuple remains `rpc/resource_exhausted` so all four SDKs use the same shared registry domain.
+
+Transport v2 uses `testdata/transport_v2/case_registry.json`, `performance_manifest.json`, shared wire vectors, candidate diagnostics, and signed release evidence. Local v2 smoke output is not part of the v1 seven-cell claim and cannot be presented as production real-browser, qlog, weak-network, migration, or performance evidence.
 
 ## Observability guidance
 

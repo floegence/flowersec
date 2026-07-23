@@ -342,3 +342,32 @@ func TestListFIDLFilesFromManifestRejectsMissingFile(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
+
+func TestIDLDocumentationMatchesCurrentGeneratorAndTransportBoundary(t *testing.T) {
+	t.Parallel()
+
+	spec, err := os.ReadFile("IDL_SPEC.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	specText := string(spec)
+	for _, token := range []string{
+		"Go, TypeScript, Rust, and Swift",
+		"Transport v2 wire contracts are not generated from FIDL",
+		"manifest.core.txt",
+		"manifest.examples.txt",
+	} {
+		if !strings.Contains(specText, token) {
+			t.Fatalf("IDL_SPEC.md is missing current-surface token %q", token)
+		}
+	}
+	for _, name := range []string{"../../idl/manifest.core.txt", "../../idl/manifest.examples.txt"} {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "Transport v2") || !strings.Contains(string(data), "FIDL") {
+			t.Fatalf("%s must document the Transport v2/FIDL boundary", name)
+		}
+	}
+}

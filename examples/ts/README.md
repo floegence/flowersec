@@ -1,6 +1,6 @@
 # TypeScript Cookbook
 
-Use the TypeScript examples for browser, Service Worker, Node.js, direct, tunnel, and proxy runtime workflows.
+Use the TypeScript examples for Transport v1 browser, Service Worker, Node.js, direct, tunnel, and proxy runtime workflows. The shared demo stack uses v1 `ConnectArtifact`, WebSocket, E2EE, and Yamux.
 
 ## Run
 
@@ -51,6 +51,12 @@ Open the URLs in `dev.json` to run the browser direct, tunnel, and proxy runtime
 ## Runtime Boundaries
 
 TypeScript owns Browser and Service Worker integration in addition to the portable Node client, endpoint, RPC, reconnect, controlplane, and proxy APIs. Shared tunnel and gateway binaries remain Go-owned.
+
+## Transport v2 Boundary
+
+The browser package advertises equal WebSocket and WebTransport v2 tuples when those constructors exist. WebSocket keeps hop-local Yamux; WebTransport uses native HTTP/3 bidirectional streams without Yamux, 0-RTT, or QUIC DATAGRAM. Node.js advertises no production v2 carrier tuple, and browsers cannot use raw QUIC.
+
+The current pages remain v1 until the demo controlplane can issue a real `ArtifactV2` and a real HTTP/3 edge is available. `flowersec-ts/src/browser/connectV2.test.ts` and `make transport-browser-smoke` are executable adapter references, not production browser evidence. Applications migrate through `ArtifactSourceV2`, `connectBrowserSessionV2`, `SessionReconnectManagerV2`, ready `SessionV2`, carrier-neutral `ByteStreamV2`, and awaited disconnect as described in the [migration guide](../../docs/MIGRATION_TRANSPORT_V2.md).
 
 ## Troubleshooting
 
