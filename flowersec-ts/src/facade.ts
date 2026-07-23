@@ -65,27 +65,6 @@ export {
   validateRuntimeCapabilityDescriptorV2,
 } from "./v2/capability.js";
 export {
-  ArtifactV2Error,
-  decodeArtifactV2JSON,
-  encodeArtifactV2JSON,
-  validateArtifactV2,
-} from "./v2/artifact.js";
-export type {
-  ArtifactCandidateV2,
-  ArtifactCarrierV2,
-  ArtifactPathKindV2,
-  ArtifactV2,
-  ArtifactV2ErrorCode,
-  CanonicalArtifactCandidateV2,
-  CanonicalCandidateSetV2,
-  CorrelationContextV2,
-  CorrelationTagV2,
-  DirectArtifactPathV2,
-  ScopeMetadataV2,
-  SessionContractV2,
-  TunnelArtifactPathV2,
-} from "./v2/artifact.js";
-export {
   TRANSPORT_V2_VERSION_POLICY,
   createArtifactAcquireContextV2,
   createArtifactLeaseV2,

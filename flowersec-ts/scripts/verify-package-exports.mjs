@@ -23,6 +23,10 @@ const removedLegacyRuntimeExports = new Set([
   'AdmissionSessionV2Error',
   'establishAdmittedNativeSessionV2',
   'establishAdmittedWebSocketSessionV2',
+  'ArtifactV2Error',
+  'decodeArtifactV2JSON',
+  'encodeArtifactV2JSON',
+  'validateArtifactV2',
 ]);
 const removedImplementationSubpaths = [
   'framing',
@@ -315,21 +319,16 @@ function verifyTransportV2Types() {
   createArtifactAcquireContextV2,
   createArtifactV2Resolver,
   createSessionReconnectManagerV2,
-  decodeArtifactV2JSON,
-  encodeArtifactV2JSON,
   FlowersecError,
-  validateArtifactV2,
 } from '@floegence/flowersec-core';
 import {
   BROWSER_RUNTIME_CAPABILITY_V2,
   createArtifactLeaseV2 as createBrowserArtifactLeaseV2,
-  decodeArtifactV2JSON as decodeBrowserArtifactV2JSON,
   FlowersecError as BrowserFlowersecError,
 } from '@floegence/flowersec-core/browser';
 import {
   NODE_RUNTIME_CAPABILITY_V2,
   createArtifactLeaseV2 as createNodeArtifactLeaseV2,
-  decodeArtifactV2JSON as decodeNodeArtifactV2JSON,
   FlowersecError as NodeFlowersecError,
 } from '@floegence/flowersec-core/node';
 import type {
@@ -381,7 +380,6 @@ import type {
   ArtifactAcquireContextV2,
   ArtifactLeaseV2,
   ArtifactSourceV2,
-  ArtifactV2,
   ByteStreamV2,
   IncomingStreamV2,
   JsonObjectV2,
@@ -392,6 +390,12 @@ import type {
   SessionV2,
   StreamOpenOptionsV2,
 } from '@floegence/flowersec-core';
+// @ts-expect-error raw artifacts must remain package-internal.
+import type { ArtifactV2 } from '@floegence/flowersec-core';
+// @ts-expect-error candidate details must remain package-internal.
+import type { ArtifactCandidateV2, CanonicalArtifactCandidateV2 } from '@floegence/flowersec-core';
+// @ts-expect-error session wire contracts must remain package-internal.
+import type { SessionContractV2 } from '@floegence/flowersec-core';
 // @ts-expect-error carrier SPI must remain package-internal.
 import type { CarrierSessionV2, CarrierStreamV2 } from '@floegence/flowersec-core';
 // @ts-expect-error native carrier SPI must remain package-internal.
@@ -429,9 +433,8 @@ void session.chosenCarrier;
 const browserDescriptor: RuntimeCapabilityDescriptorV2 = BROWSER_RUNTIME_CAPABILITY_V2;
 const nodeDescriptor: RuntimeCapabilityDescriptorV2 = NODE_RUNTIME_CAPABILITY_V2;
 const accepted: ByteStreamV2 = incoming.stream;
-const artifact: ArtifactV2 = decodeArtifactV2JSON(rawArtifact);
-const lease: ArtifactLeaseV2 = createArtifactLeaseV2(artifact, commitSpend);
-const source: ArtifactSourceV2 = { kind: 'once', artifact, commitSpend };
+const lease: ArtifactLeaseV2 = createArtifactLeaseV2(rawArtifact, commitSpend);
+const source: ArtifactSourceV2 = { kind: 'once', artifact: rawArtifact, commitSpend };
 const resolveArtifact = createArtifactV2Resolver(source);
 const acquireContext: ArtifactAcquireContextV2 = createArtifactAcquireContextV2(
   browserDescriptor,
@@ -465,8 +468,6 @@ void NodeFlowersecError;
 void browserDescriptor;
 void nodeDescriptor;
 void accepted;
-void encodeArtifactV2JSON(artifact);
-void validateArtifactV2(artifact);
 void resolveArtifact(acquireContext);
 void reconnectManager.connectIfNeeded(reconnectConfig);
 void termination;
@@ -475,8 +476,8 @@ void nodeTypes;
 void leakedWebSocketFactory;
 void leakedWebTransportFactory;
 void leakedAttemptFactory;
-void createBrowserArtifactLeaseV2(decodeBrowserArtifactV2JSON(rawArtifact), commitSpend);
-void createNodeArtifactLeaseV2(decodeNodeArtifactV2JSON(rawArtifact), commitSpend);
+void createBrowserArtifactLeaseV2(rawArtifact, commitSpend);
+void createNodeArtifactLeaseV2(rawArtifact, commitSpend);
 void lease.commitSpend();
 void metadata;
 void openOptions;
