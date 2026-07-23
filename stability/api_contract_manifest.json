@@ -33,7 +33,26 @@
           {"kind":"type","expr":"flowersec.ArtifactLease","doc_token":"`flowersec.ArtifactLease`"},
           {"kind":"func","expr":"flowersec.ParseArtifact","doc_token":"`flowersec.ParseArtifact(...)`"},
           {"kind":"func","expr":"flowersec.NewArtifactLease","doc_token":"`flowersec.NewArtifactLease(...)`"},
-          {"kind":"var","expr":"flowersec.ErrInvalidArtifact","doc_token":"`flowersec.ErrInvalidArtifact`"}
+          {"kind":"var","expr":"flowersec.ErrInvalidArtifact","doc_token":"`flowersec.ErrInvalidArtifact`"},
+          {"kind":"type","expr":"flowersec.AdmissionReason","doc_token":"`flowersec.AdmissionReason`"},
+          {"kind":"type","expr":"flowersec.AdmissionReasonRegistry","doc_token":"`flowersec.AdmissionReasonRegistry`"},
+          {"kind":"type","expr":"flowersec.ConnectorOptions","doc_token":"`flowersec.ConnectorOptions`"},
+          {"kind":"type","expr":"flowersec.Connector","doc_token":"`flowersec.Connector`"},
+          {"kind":"type","expr":"flowersec.ConnectError","doc_token":"`flowersec.ConnectError`"},
+          {"kind":"type","expr":"flowersec.Session","doc_token":"`flowersec.Session`"},
+          {"kind":"type","expr":"flowersec.Path","doc_token":"`flowersec.Path`"},
+          {"kind":"type","expr":"flowersec.Metadata","doc_token":"`flowersec.Metadata`"},
+          {"kind":"type","expr":"flowersec.ByteStream","doc_token":"`flowersec.ByteStream`"},
+          {"kind":"type","expr":"flowersec.IncomingStream","doc_token":"`flowersec.IncomingStream`"},
+          {"kind":"type","expr":"flowersec.RPCPeer","doc_token":"`flowersec.RPCPeer`"},
+          {"kind":"func","expr":"flowersec.NewConnector","doc_token":"`flowersec.NewConnector(...)`"},
+          {"kind":"method","expr":"(*flowersec.Connector).Connect","doc_token":"`flowersec.Connector.Connect(...)`"},
+          {"kind":"method","expr":"(*flowersec.ConnectError).Error","doc_token":"`flowersec.ConnectError.Error()`"},
+          {"kind":"method","expr":"(*flowersec.ConnectError).Unwrap","doc_token":"`flowersec.ConnectError.Unwrap()`"},
+          {"kind":"const","expr":"flowersec.PathDirect","doc_token":"`flowersec.PathDirect`"},
+          {"kind":"const","expr":"flowersec.PathTunnel","doc_token":"`flowersec.PathTunnel`"},
+          {"kind":"var","expr":"flowersec.ErrInvalidConnectorOptions","doc_token":"`flowersec.ErrInvalidConnectorOptions`"},
+          {"kind":"var","expr":"flowersec.ErrConnectionFailed","doc_token":"`flowersec.ErrConnectionFailed`"}
         ]
       },
       {

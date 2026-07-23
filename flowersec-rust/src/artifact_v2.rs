@@ -9,6 +9,10 @@ use sha2::{Digest, Sha256};
 use std::{collections::HashSet, future::Future, pin::Pin, sync::Arc};
 
 const MAX_ARTIFACT_BYTES: usize = 65_536;
+#[allow(dead_code)]
+const MAX_CANONICAL_FSB2_PAYLOAD: usize = 32_768;
+#[allow(dead_code)]
+const MAX_ADMISSION_REASON_BYTES: usize = 64;
 
 /// A validated Transport v2 artifact.
 ///
@@ -56,6 +60,14 @@ pub enum ArtifactError {
     InvalidArtifact,
     #[error("invalid Flowersec v2 candidate")]
     InvalidCandidate,
+    #[error("invalid FSB2 admission request")]
+    InvalidFsb2,
+    #[error("FSB2 canonical payload is too large")]
+    Fsb2PayloadTooLarge,
+    #[error("invalid FSA2 admission response")]
+    InvalidFsa2,
+    #[error("unknown FSA2 admission reason")]
+    UnknownAdmissionReason,
 }
 
 #[derive(Debug)]
@@ -91,6 +103,221 @@ impl Artifact {
     pub(crate) fn encode(&self) -> Box<[u8]> {
         self.0.canonical_json.clone()
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn encode_fsb2(
+        &self,
+        chosen_candidate_id: &str,
+    ) -> Result<EncodedFsb2, ArtifactError> {
+        let candidates = canonicalize_candidates(&self.0.wire)?;
+        if !candidates
+            .iter()
+            .any(|candidate| candidate.id == chosen_candidate_id)
+        {
+            return Err(ArtifactError::InvalidFsb2);
+        }
+        let candidate_json =
+            serde_json::to_vec(&candidates).map_err(|_| ArtifactError::InvalidFsb2)?;
+        let candidate_hash = hash_canonical(b"flowersec-v2-candidates\0", &candidate_json);
+        let session_hash =
+            decode32(&self.0.wire.session.contract_hash_b64u).ok_or(ArtifactError::InvalidFsb2)?;
+        let (path_code, payload) = match &self.0.wire.path {
+            PathWire::Direct {
+                rendezvous_group_id,
+                listener_audience,
+                routing_token,
+                ..
+            } => (
+                1,
+                serde_json::to_vec(&DirectFsb2Wire {
+                    candidate_set_hash_b64u: URL_SAFE_NO_PAD.encode(candidate_hash),
+                    candidates,
+                    channel_id: self.0.wire.session.channel_id.clone(),
+                    chosen_candidate_id: chosen_candidate_id.to_owned(),
+                    listener_audience: listener_audience.clone(),
+                    profile: self.0.wire.profile.clone(),
+                    rendezvous_group_id: rendezvous_group_id.clone(),
+                    routing_token: routing_token.clone(),
+                    session_contract_hash_b64u: URL_SAFE_NO_PAD.encode(session_hash),
+                })
+                .map_err(|_| ArtifactError::InvalidFsb2)?,
+            ),
+            PathWire::Tunnel {
+                rendezvous_group_id,
+                listener_audience,
+                role,
+                local_endpoint_instance_id,
+                token,
+                ..
+            } => (
+                2,
+                serde_json::to_vec(&TunnelFsb2Wire {
+                    attach_token: token.clone(),
+                    candidate_set_hash_b64u: URL_SAFE_NO_PAD.encode(candidate_hash),
+                    candidates,
+                    channel_id: self.0.wire.session.channel_id.clone(),
+                    chosen_candidate_id: chosen_candidate_id.to_owned(),
+                    endpoint_instance_id: local_endpoint_instance_id.clone(),
+                    listener_audience: listener_audience.clone(),
+                    profile: self.0.wire.profile.clone(),
+                    rendezvous_group_id: rendezvous_group_id.clone(),
+                    role: *role,
+                    session_contract_hash_b64u: URL_SAFE_NO_PAD.encode(session_hash),
+                })
+                .map_err(|_| ArtifactError::InvalidFsb2)?,
+            ),
+        };
+        if payload.len() > MAX_CANONICAL_FSB2_PAYLOAD {
+            return Err(ArtifactError::Fsb2PayloadTooLarge);
+        }
+        let mut raw = Vec::with_capacity(12 + payload.len());
+        raw.extend_from_slice(b"FSB2");
+        raw.extend_from_slice(&[2, path_code, 0, 0]);
+        raw.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        raw.extend_from_slice(&payload);
+        let binding = hash_admission(&raw);
+        Ok(EncodedFsb2 { raw, binding })
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) struct EncodedFsb2 {
+    pub(crate) raw: Vec<u8>,
+    pub(crate) binding: [u8; 32],
+}
+
+#[derive(Debug, Serialize)]
+#[allow(dead_code)]
+struct CanonicalCandidate {
+    carrier: CarrierWire,
+    id: String,
+    normalized_url: String,
+    wire_profile: String,
+}
+
+#[derive(Serialize)]
+#[allow(dead_code)]
+struct DirectFsb2Wire {
+    candidate_set_hash_b64u: String,
+    candidates: Vec<CanonicalCandidate>,
+    channel_id: String,
+    chosen_candidate_id: String,
+    listener_audience: String,
+    profile: String,
+    rendezvous_group_id: String,
+    routing_token: String,
+    session_contract_hash_b64u: String,
+}
+
+#[derive(Serialize)]
+#[allow(dead_code)]
+struct TunnelFsb2Wire {
+    attach_token: String,
+    candidate_set_hash_b64u: String,
+    candidates: Vec<CanonicalCandidate>,
+    channel_id: String,
+    chosen_candidate_id: String,
+    endpoint_instance_id: String,
+    listener_audience: String,
+    profile: String,
+    rendezvous_group_id: String,
+    role: u8,
+    session_contract_hash_b64u: String,
+}
+
+#[allow(dead_code)]
+fn canonicalize_candidates(wire: &ArtifactWire) -> Result<Vec<CanonicalCandidate>, ArtifactError> {
+    let (kind, source) = match &wire.path {
+        PathWire::Direct { candidates, .. } => ("direct", candidates),
+        PathWire::Tunnel { candidates, .. } => ("tunnel", candidates),
+    };
+    let mut candidates = source
+        .iter()
+        .map(|candidate| {
+            Ok(CanonicalCandidate {
+                carrier: candidate.carrier,
+                id: candidate.id.clone(),
+                normalized_url: normalize_url(kind, candidate)?,
+                wire_profile: candidate.wire_profile.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, ArtifactError>>()?;
+    candidates.sort_unstable_by(|left, right| left.id.cmp(&right.id));
+    Ok(candidates)
+}
+
+#[allow(dead_code)]
+fn hash_canonical(domain: &[u8], canonical: &[u8]) -> [u8; 32] {
+    let mut preimage = Vec::with_capacity(domain.len() + 4 + canonical.len());
+    preimage.extend_from_slice(domain);
+    preimage.extend_from_slice(&(canonical.len() as u32).to_be_bytes());
+    preimage.extend_from_slice(canonical);
+    Sha256::digest(preimage).into()
+}
+
+#[allow(dead_code)]
+fn hash_admission(raw: &[u8]) -> [u8; 32] {
+    let mut preimage = b"flowersec-v2-admission\0".to_vec();
+    preimage.extend_from_slice(raw);
+    Sha256::digest(preimage).into()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+pub(crate) enum AdmissionStatus {
+    Success,
+    Reject,
+    Retryable,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+pub(crate) struct AdmissionResponse {
+    pub(crate) status: AdmissionStatus,
+    pub(crate) reason: String,
+}
+
+#[allow(dead_code)]
+pub(crate) fn decode_fsa2(
+    raw: &[u8],
+    reasons: &[&str],
+) -> Result<AdmissionResponse, ArtifactError> {
+    if raw.len() < 8 || &raw[..4] != b"FSA2" || raw[4] != 2 {
+        return Err(ArtifactError::InvalidFsa2);
+    }
+    let reason_len = u16::from_be_bytes([raw[6], raw[7]]) as usize;
+    if reason_len > MAX_ADMISSION_REASON_BYTES || raw.len() != 8 + reason_len {
+        return Err(ArtifactError::InvalidFsa2);
+    }
+    let reason = std::str::from_utf8(&raw[8..]).map_err(|_| ArtifactError::InvalidFsa2)?;
+    let status = match raw[5] {
+        0 if reason.is_empty() => AdmissionStatus::Success,
+        1 | 2 if valid_reason(reason) => {
+            if !reasons.contains(&reason) {
+                return Err(ArtifactError::UnknownAdmissionReason);
+            }
+            if raw[5] == 1 {
+                AdmissionStatus::Reject
+            } else {
+                AdmissionStatus::Retryable
+            }
+        }
+        _ => return Err(ArtifactError::InvalidFsa2),
+    };
+    Ok(AdmissionResponse {
+        status,
+        reason: reason.to_owned(),
+    })
+}
+
+#[allow(dead_code)]
+fn valid_reason(reason: &str) -> bool {
+    !reason.is_empty()
+        && reason.len() <= MAX_ADMISSION_REASON_BYTES
+        && reason.as_bytes()[0].is_ascii_lowercase()
+        && reason
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
 fn reject_duplicate_json_keys(input: &[u8]) -> Result<(), ArtifactError> {
@@ -485,6 +712,10 @@ fn normalize_url(kind: &str, c: &CandidateWire) -> Result<String, ArtifactError>
     {
         return Err(ArtifactError::InvalidCandidate);
     }
+    if url.port() == Some(443) {
+        url.set_port(None)
+            .map_err(|_| ArtifactError::InvalidCandidate)?;
+    }
     url.set_path(&path);
     url.set_query(None);
     url.set_fragment(None);
@@ -522,6 +753,99 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+
+    fn decode_hex(value: &str) -> Vec<u8> {
+        value
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let text = std::str::from_utf8(pair).unwrap();
+                u8::from_str_radix(text, 16).unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn admission_encoding_matches_shared_vectors_byte_for_byte() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v2/artifact_vectors.json"
+        ))
+        .unwrap();
+        for vector in fixture["positive"].as_array().unwrap() {
+            let artifact = Artifact::parse(vector["artifact_json"].as_str().unwrap()).unwrap();
+            let candidates = canonicalize_candidates(&artifact.0.wire).unwrap();
+            let canonical = serde_json::to_vec(&candidates).unwrap();
+            assert_eq!(
+                canonical,
+                vector["candidates_canonical_json"]
+                    .as_str()
+                    .unwrap()
+                    .as_bytes()
+            );
+            assert_eq!(
+                URL_SAFE_NO_PAD.encode(hash_canonical(b"flowersec-v2-candidates\0", &canonical)),
+                vector["candidate_set_hash_b64u"].as_str().unwrap()
+            );
+            for winner in vector["winners"].as_array().unwrap() {
+                let encoded = artifact
+                    .encode_fsb2(winner["candidate_id"].as_str().unwrap())
+                    .unwrap();
+                assert_eq!(
+                    encoded.raw,
+                    decode_hex(winner["fsb2_hex"].as_str().unwrap())
+                );
+                assert_eq!(
+                    encoded.binding.as_slice(),
+                    decode_hex(winner["admission_binding_hex"].as_str().unwrap())
+                );
+            }
+            assert!(matches!(
+                artifact.encode_fsb2("absent"),
+                Err(ArtifactError::InvalidFsb2)
+            ));
+        }
+    }
+
+    #[test]
+    fn fsa2_strict_decode_matches_shared_positive_and_negative_vectors() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/transport_v2/artifact_vectors.json"
+        ))
+        .unwrap();
+        let reasons = ["invalid_token", "capacity"];
+        for vector in fixture["fsa2"].as_array().unwrap() {
+            let decoded =
+                decode_fsa2(&decode_hex(vector["frame_hex"].as_str().unwrap()), &reasons).unwrap();
+            let expected_status = match vector["status"].as_u64().unwrap() {
+                0 => AdmissionStatus::Success,
+                1 => AdmissionStatus::Reject,
+                2 => AdmissionStatus::Retryable,
+                _ => unreachable!(),
+            };
+            assert_eq!(decoded.status, expected_status);
+            assert_eq!(decoded.reason, vector["reason"].as_str().unwrap());
+        }
+        for vector in fixture["negative"].as_array().unwrap() {
+            if vector["kind"] != "fsa2_hex" {
+                continue;
+            }
+            let error =
+                decode_fsa2(&decode_hex(vector["value"].as_str().unwrap()), &reasons).unwrap_err();
+            match vector["error_code"].as_str().unwrap() {
+                "invalid_fsa2" => assert!(matches!(error, ArtifactError::InvalidFsa2)),
+                "unknown_admission_reason" => {
+                    assert!(matches!(error, ArtifactError::UnknownAdmissionReason))
+                }
+                code => panic!("unexpected shared error code {code}"),
+            }
+        }
+        let mut trailing = decode_hex(fixture["fsa2"][0]["frame_hex"].as_str().unwrap());
+        trailing.push(0);
+        assert!(matches!(
+            decode_fsa2(&trailing, &reasons),
+            Err(ArtifactError::InvalidFsa2)
+        ));
+    }
 
     #[tokio::test]
     async fn lease_commits_exactly_once_and_retries_failure() {

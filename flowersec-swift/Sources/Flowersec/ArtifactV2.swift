@@ -14,7 +14,7 @@ public enum ArtifactCodecErrorV2: Error, Equatable, Sendable {
 public final class ArtifactV2: @unchecked Sendable, CustomStringConvertible,
   CustomDebugStringConvertible, CustomReflectable
 {
-  fileprivate let value: ArtifactWireV2
+  let value: ArtifactWireV2
 
   fileprivate init(value: ArtifactWireV2) { self.value = value }
 
@@ -257,11 +257,11 @@ private enum ArtifactCodecV2 {
   }
 }
 
-private struct ArtifactWireV2: Decodable, Sendable {
+struct ArtifactWireV2: Decodable, Sendable {
   let v: Int; let profile: String; let session: SessionWireV2; let path: PathWireV2
   let scoped: [ScopeWireV2]; let correlation: CorrelationWireV2
 }
-private struct SessionWireV2: Decodable, Sendable {
+struct SessionWireV2: Decodable, Sendable {
   let channelID: String; let initExpireAtUnixSeconds: Int64; let idleTimeoutSeconds: UInt32
   let establishTimeoutSeconds: UInt16; let rekeyPrepareTimeoutSeconds: UInt16
   let rekeyCompletionTimeoutSeconds: UInt16; let maxInboundStreams: UInt16
@@ -277,7 +277,7 @@ private struct SessionWireV2: Decodable, Sendable {
     case selectedFeatures = "selected_features"; case contractHashBase64URL = "contract_hash_b64u"
   }
 }
-private struct PathWireV2: Decodable, Sendable {
+struct PathWireV2: Decodable, Sendable {
   let kind: String; let rendezvousGroupID: String; let listenerAudience: String
   let routingToken: String?; let role: UInt8?; let localEndpointInstanceID: String?
   let expectedPeerEndpointInstanceID: String?; let token: String?; let candidates: [CandidateWireV2]
@@ -287,17 +287,17 @@ private struct PathWireV2: Decodable, Sendable {
     case expectedPeerEndpointInstanceID = "expected_peer_endpoint_instance_id"; case token; case candidates
   }
 }
-private struct CandidateWireV2: Decodable, Sendable {
+struct CandidateWireV2: Decodable, Sendable {
   let id: String; let carrier: String; let url: String; let wireProfile: String
   enum CodingKeys: String, CodingKey { case id, carrier, url; case wireProfile = "wire_profile" }
 }
-private struct ScopeWireV2: Decodable, Sendable {
+struct ScopeWireV2: Decodable, Sendable {
   let scope: String; let scopeVersion: UInt16; let critical: Bool; let payload: [String: ArtifactJSONValueV2]
   enum CodingKeys: String, CodingKey { case scope; case scopeVersion = "scope_version"; case critical, payload }
 }
-private struct CorrelationWireV2: Decodable, Sendable { let v: Int; let tags: [TagWireV2] }
-private struct TagWireV2: Decodable, Sendable { let key: String; let value: String }
-private indirect enum ArtifactJSONValueV2: Codable, Sendable {
+struct CorrelationWireV2: Decodable, Sendable { let v: Int; let tags: [TagWireV2] }
+struct TagWireV2: Decodable, Sendable { let key: String; let value: String }
+indirect enum ArtifactJSONValueV2: Codable, Sendable {
   case null, bool(Bool), number(Double), string(String), array([ArtifactJSONValueV2]), object([String: ArtifactJSONValueV2])
   init(from decoder: Decoder) throws {
     let c = try decoder.singleValueContainer()

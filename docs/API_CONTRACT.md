@@ -277,13 +277,22 @@ Transport v2 is a separate breaking contract built around `CarrierSession`:
   `DecodeCapabilityDescriptor(...)`, and `CapabilityDescriptorDigest(...)`
   implement the shared flat capability codec and vectors.
 - The Go v2 root package `github.com/floegence/flowersec/flowersec-go/v2`
-  exposes only the opaque artifact acquisition boundary at this stage:
+  exposes the carrier-neutral artifact and session boundary:
   `flowersec.Artifact`, `flowersec.ArtifactLease`,
   `flowersec.ParseArtifact(...)`, `flowersec.NewArtifactLease(...)`, and
   `flowersec.ErrInvalidArtifact`. The handle and lease serialize as empty JSON
   objects and do not expose candidates, routes, credentials, or session wire
-  fields. Connection entry points move to this root facade only when their
-  production carrier implementations are complete.
+  fields. `flowersec.NewConnector(...)` constructs a `flowersec.Connector`
+  from carrier-neutral `flowersec.ConnectorOptions`,
+  `flowersec.AdmissionReason`, and `flowersec.AdmissionReasonRegistry`.
+  `flowersec.Connector.Connect(...)` returns only `flowersec.Session`, whose
+  application contracts are `flowersec.Path`, `flowersec.PathDirect`,
+  `flowersec.PathTunnel`, `flowersec.Metadata`, `flowersec.ByteStream`,
+  `flowersec.IncomingStream`, and `flowersec.RPCPeer`. Failures project to
+  `flowersec.ConnectError`; `flowersec.ConnectError.Error()` and
+  `flowersec.ConnectError.Unwrap()` expose only stable path/stage/code and the
+  `flowersec.ErrConnectionFailed` sentinel. Invalid construction returns
+  `flowersec.ErrInvalidConnectorOptions`.
 - The TypeScript root, browser, and Node entries expose `ArtifactV2`,
   `decodeArtifactV2JSON(...)`, `encodeArtifactV2JSON(...)`,
   `validateArtifactV2(...)`, `ArtifactLeaseV2`, `ArtifactSourceV2`,
