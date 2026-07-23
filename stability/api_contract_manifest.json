@@ -1714,6 +1714,8 @@
           "assertDirectConnectInfo",
           "assertConnectArtifact",
           "SessionV2",
+          "Artifact",
+          "parseArtifact",
           "BROWSER_RUNTIME_CAPABILITY_V2",
           "NODE_RUNTIME_CAPABILITY_V2",
           "decodeRuntimeCapabilityDescriptorV2",
@@ -1733,6 +1735,7 @@
           "PlaintextRiskAcceptance"
         ],
         "type_exports": [
+          "Artifact",
           "ArtifactAcquireContextV2",
           "ArtifactAcquireContextOptionsV2",
           "ArtifactDecoderV2",
@@ -1802,6 +1805,8 @@
           "createNodeWsFactory",
           "assertConnectArtifact",
           "SessionV2",
+          "Artifact",
+          "parseArtifact",
           "decodeRuntimeCapabilityDescriptorV2",
           "encodeRuntimeCapabilityDescriptorV2",
           "runtimeCapabilityDigestHexV2",
@@ -1821,6 +1826,7 @@
           "NODE_RUNTIME_CAPABILITY_V2"
         ],
         "type_exports": [
+          "Artifact",
           "ArtifactAcquireContextV2",
           "ArtifactAcquireContextOptionsV2",
           "ArtifactDecoderV2",
@@ -1889,6 +1895,8 @@
           "createTunnelBrowserReconnectConfig",
           "createDirectBrowserReconnectConfig",
           "SessionV2",
+          "Artifact",
+          "parseArtifact",
           "decodeRuntimeCapabilityDescriptorV2",
           "encodeRuntimeCapabilityDescriptorV2",
           "runtimeCapabilityDigestHexV2",
@@ -1909,6 +1917,7 @@
           "detectBrowserRuntimeCapabilityV2"
         ],
         "type_exports": [
+          "Artifact",
           "ArtifactAcquireContextV2",
           "ArtifactAcquireContextOptionsV2",
           "ArtifactDecoderV2",

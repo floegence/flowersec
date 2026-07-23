@@ -13,6 +13,9 @@ const consumerDir = path.join(tmpRoot, 'consumer');
 const manifest = JSON.parse(
   fs.readFileSync(path.join(repoRoot, 'stability', 'api_contract_manifest.json'), 'utf8')
 );
+const artifactFixture = JSON.parse(
+  fs.readFileSync(path.join(repoRoot, 'testdata', 'transport_v2', 'artifact_vectors.json'), 'utf8')
+).positive[0].artifact_json;
 const forbiddenRuntimeExportsBySubpath = new Map([
   ['@floegence/flowersec-core/proxy', ['resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST']],
 ]);
@@ -165,6 +168,12 @@ ${checks}
     assert.equal(typeof mgr.connectIfNeeded, 'function');
 
     const browser = await import('@floegence/flowersec-core/browser');
+    const root = await import('@floegence/flowersec-core');
+    const artifact = root.parseArtifact(${JSON.stringify(artifactFixture)});
+    assert.deepEqual(Object.keys(artifact), []);
+    assert.equal(JSON.stringify(artifact), '{}');
+    assert.throws(() => root.createArtifactLeaseV2({}, async () => {}), /invalid Flowersec artifact handle/);
+    assert.equal(root.createArtifactLeaseV2(artifact, async () => {}).artifact, artifact);
     assert.equal(typeof browser.requestConnectArtifact, 'function');
     assert.equal(typeof browser.requestEntryConnectArtifact, 'function');
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'createBrowserWebTransportCarrierInternalStage'), false);
@@ -315,11 +324,13 @@ function verifyTransportV2Types() {
   fs.writeFileSync(
     path.join(consumerDir, 'transport-v2.ts'),
     `import {
+  Artifact,
   createArtifactLeaseV2,
   createArtifactAcquireContextV2,
   createArtifactV2Resolver,
   createSessionReconnectManagerV2,
   FlowersecError,
+  parseArtifact,
 } from '@floegence/flowersec-core';
 import {
   BROWSER_RUNTIME_CAPABILITY_V2,
@@ -427,13 +438,26 @@ declare const openOptions: StreamOpenOptionsV2;
 declare const rawArtifact: string;
 declare const commitSpend: (signal?: AbortSignal) => Promise<void>;
 
+const artifact = parseArtifact(rawArtifact);
+Object.keys(artifact);
+JSON.stringify(artifact);
+// @ts-expect-error opaque artifacts do not expose path selection.
+void artifact.path;
+// @ts-expect-error opaque artifacts do not expose session wire details.
+void artifact.session;
+// @ts-expect-error opaque artifacts cannot be constructed by consumers.
+new Artifact();
+// @ts-expect-error plain objects cannot forge opaque artifact handles.
+const forgedArtifact: Artifact = {};
+void forgedArtifact;
+
 const path: PathKind = session.path;
 // @ts-expect-error selected carriers are internal diagnostics, not session API.
 void session.chosenCarrier;
 const browserDescriptor: RuntimeCapabilityDescriptorV2 = BROWSER_RUNTIME_CAPABILITY_V2;
 const nodeDescriptor: RuntimeCapabilityDescriptorV2 = NODE_RUNTIME_CAPABILITY_V2;
 const accepted: ByteStreamV2 = incoming.stream;
-const lease: ArtifactLeaseV2 = createArtifactLeaseV2(rawArtifact, commitSpend);
+const lease: ArtifactLeaseV2 = createArtifactLeaseV2(artifact, commitSpend);
 const source: ArtifactSourceV2 = { kind: 'once', artifact: rawArtifact, commitSpend };
 const resolveArtifact = createArtifactV2Resolver(source);
 const acquireContext: ArtifactAcquireContextV2 = createArtifactAcquireContextV2(

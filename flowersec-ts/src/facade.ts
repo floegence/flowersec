@@ -79,6 +79,7 @@ export type {
   ArtifactSourceV2,
   ArtifactVersionPolicyV2,
 } from "./v2/artifactLease.js";
+export { Artifact, parseArtifact } from "./v2/opaqueArtifact.js";
 export { createSessionReconnectManagerV2 } from "./v2/reconnect.js";
 export type {
   SessionAutoReconnectConfigV2,

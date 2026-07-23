@@ -10,6 +10,7 @@ import {
   type ArtifactSourceV2,
 } from "./artifactLease.js";
 import { BROWSER_RUNTIME_CAPABILITY_V2, runtimeCapabilityDigestHexV2 } from "./capability.js";
+import { unwrapArtifact } from "./opaqueArtifact.js";
 
 const fixture = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/artifact_vectors.json", import.meta.url), "utf8"),
@@ -24,7 +25,9 @@ describe("ArtifactV2 acquisition and durable spend leases", () => {
       if (signal !== undefined) spends.push(signal);
     });
 
-    expect(lease.artifact.profile).toBe("flowersec/2");
+    expect(Object.keys(lease.artifact)).toEqual([]);
+    expect(JSON.stringify(lease.artifact)).toBe("{}");
+    expect(unwrapArtifact(lease.artifact).profile).toBe("flowersec/2");
     await lease.commitSpend(controller.signal);
     expect(spends).toEqual([controller.signal]);
   });
@@ -39,9 +42,7 @@ describe("ArtifactV2 acquisition and durable spend leases", () => {
     await expect(resolveOnce(createArtifactAcquireContextV2(
       BROWSER_RUNTIME_CAPABILITY_V2,
       { traceId: "trace-1" },
-    ))).resolves.toMatchObject({
-      artifact: { v: 2, profile: "flowersec/2" },
-    });
+    ))).resolves.toMatchObject({ artifact: {} });
     await expect(resolveOnce(createArtifactAcquireContextV2(BROWSER_RUNTIME_CAPABILITY_V2))).rejects.toThrow("already been consumed");
 
     const acquired: unknown[] = [];

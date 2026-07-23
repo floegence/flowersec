@@ -15,17 +15,30 @@ import {
   type RuntimeCapabilityDescriptorV2,
 } from "../v2/capability.js";
 import {
-  createBrowserSessionConnectorV2InternalStage,
+  createBrowserSessionConnectorV2InternalStage as createBrowserSessionConnectorV2InternalStageWithOpaqueArtifact,
   type BrowserCandidateAttemptFactoryV2,
   type BrowserCandidateAttemptV2,
   type BrowserPreparedCandidateV2,
 } from "./connectV2.js";
+import { wrapArtifact } from "../v2/opaqueArtifact.js";
 import { AbortError, FlowersecError, TimeoutError } from "../utils/errors.js";
 
 const fixture = JSON.parse(
   readFileSync(new URL("../../../testdata/transport_v2/artifact_vectors.json", import.meta.url), "utf8"),
 ) as Readonly<{ positive: readonly Readonly<{ artifact_json: string }>[] }>;
 const artifact = decodeArtifactV2JSON(fixture.positive[0]!.artifact_json);
+
+function createBrowserSessionConnectorV2InternalStage(
+  lease: Omit<Parameters<typeof createBrowserSessionConnectorV2InternalStageWithOpaqueArtifact>[0], "artifact"> & {
+    readonly artifact: ArtifactV2;
+  },
+  options: Parameters<typeof createBrowserSessionConnectorV2InternalStageWithOpaqueArtifact>[1],
+) {
+  return createBrowserSessionConnectorV2InternalStageWithOpaqueArtifact({
+    ...lease,
+    artifact: wrapArtifact(lease.artifact),
+  }, options);
+}
 
 describe("browser SessionV2 equal-candidate connector", () => {
   test("does not start a candidate removed by runtime capability detection", async () => {

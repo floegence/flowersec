@@ -8,6 +8,7 @@ import {
 import type { RuntimeCapabilityDescriptorV2 } from "./capability.js";
 import type { OperationOptionsV2, SessionV2 } from "./contract.js";
 import { ArtifactV2Error } from "./artifact.js";
+import { unwrapArtifact } from "./opaqueArtifact.js";
 import {
   AbortError,
   FlowersecError,
@@ -243,7 +244,7 @@ class SessionReconnectManager implements SessionReconnectManagerV2 {
         try {
           session = await config.connect(lease, { signal: controller.signal });
         } catch (error) {
-          throw reconnectError(error, lease.artifact.path.kind, "connect", "dial_failed");
+          throw reconnectError(error, unwrapArtifact(lease.artifact).path.kind, "connect", "dial_failed");
         }
         if (!this.isActive(generation, config)) {
           try {

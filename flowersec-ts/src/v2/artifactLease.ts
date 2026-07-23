@@ -1,8 +1,5 @@
-import {
-  decodeArtifactV2JSON,
-  validateArtifactV2,
-  type ArtifactV2,
-} from "./artifact.js";
+import { validateArtifactV2 } from "./artifact.js";
+import { parseArtifact, unwrapArtifact, type Artifact } from "./opaqueArtifact.js";
 import {
   runtimeCapabilityDigestHexV2,
   validateRuntimeCapabilityDescriptorV2,
@@ -33,10 +30,10 @@ export type ArtifactAcquireContextOptionsV2 = Readonly<{
   versionPolicy?: ArtifactVersionPolicyV2;
 }>;
 
-export type ArtifactInputV2 = ArtifactV2 | string | Uint8Array;
+export type ArtifactInputV2 = Artifact | string | Uint8Array;
 
 export type ArtifactLeaseV2 = Readonly<{
-  artifact: ArtifactV2;
+  artifact: Artifact;
   commitSpend(signal?: AbortSignal): Promise<void>;
 }>;
 
@@ -51,7 +48,7 @@ export type ArtifactSourceV2 =
     acquire(context: ArtifactAcquireContextV2): Promise<ArtifactLeaseV2>;
   }>;
 
-export type ArtifactDecoderV2 = (input: string | Uint8Array) => ArtifactV2;
+export type ArtifactDecoderV2 = (input: string | Uint8Array) => Artifact;
 
 export function createArtifactAcquireContextV2(
   capability: RuntimeCapabilityDescriptorV2,
@@ -72,7 +69,7 @@ export function createArtifactAcquireContextV2(
 export function createArtifactLeaseV2(
   input: ArtifactInputV2,
   commitSpend: (signal?: AbortSignal) => Promise<void>,
-  decode: ArtifactDecoderV2 = decodeArtifactV2JSON,
+  decode: ArtifactDecoderV2 = parseArtifact,
 ): ArtifactLeaseV2 {
   const artifact = typeof input === "string" || input instanceof Uint8Array
     ? decode(input)
@@ -82,7 +79,7 @@ export function createArtifactLeaseV2(
 
 export function createArtifactV2Resolver(
   source: ArtifactSourceV2,
-  decode: ArtifactDecoderV2 = decodeArtifactV2JSON,
+  decode: ArtifactDecoderV2 = parseArtifact,
 ): (context: ArtifactAcquireContextV2) => Promise<ArtifactLeaseV2> {
   let consumed = false;
   return async (context) => {
@@ -90,7 +87,7 @@ export function createArtifactV2Resolver(
     throwIfAborted(context.signal);
     if (source.kind === "refreshable") {
       const lease = await source.acquire(context);
-      validateArtifactV2(lease.artifact);
+      validateArtifact(lease.artifact);
       return lease;
     }
     if (consumed) throw new Error("one-time ArtifactV2 source has already been consumed");
@@ -113,8 +110,8 @@ function validateAcquireContext(context: ArtifactAcquireContextV2): void {
   }
 }
 
-function validateArtifact(artifact: ArtifactV2): ArtifactV2 {
-  validateArtifactV2(artifact);
+function validateArtifact(artifact: Artifact): Artifact {
+  validateArtifactV2(unwrapArtifact(artifact));
   return artifact;
 }
 

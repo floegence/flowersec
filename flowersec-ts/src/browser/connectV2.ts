@@ -20,6 +20,7 @@ import {
   type SessionV2,
 } from "../v2/session.js";
 import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
+import { unwrapArtifact } from "../v2/opaqueArtifact.js";
 import {
   AbortError,
   FlowersecError,
@@ -83,13 +84,16 @@ export type BrowserSessionConnectResultV2 = Readonly<{
 export class BrowserSessionConnectorV2 {
   state: BrowserConnectorStateV2 = "validated";
   private claimed = false;
+  private readonly artifact: ArtifactV2;
   constructor(
     private readonly lease: BrowserArtifactLeaseV2,
     private readonly options: BrowserSessionConnectorV2Options,
-  ) {}
+  ) {
+    this.artifact = unwrapArtifact(lease.artifact);
+  }
 
   async connect(options: Readonly<{ signal?: AbortSignal }> = {}): Promise<BrowserSessionConnectResultV2> {
-    const path = browserConnectorPath(this.lease?.artifact);
+    const path = browserConnectorPath(this.artifact);
     if (this.claimed) {
       throw connectorError(path, "validate", "invalid_input", new Error("Flowersec v2 artifact is already claimed"));
     }
@@ -110,13 +114,13 @@ export class BrowserSessionConnectorV2 {
       }
       let canonical: ReturnType<typeof validateArtifactV2>;
       try {
-        canonical = validateArtifactV2(this.lease.artifact);
+        canonical = validateArtifactV2(this.artifact);
       } catch (error) {
         throw connectorError(path, "validate", "invalid_input", error);
       }
       let remaining: number;
       try {
-        remaining = artifactRemainingMilliseconds(this.lease.artifact, this.options.now);
+        remaining = artifactRemainingMilliseconds(this.artifact, this.options.now);
       } catch (error) {
         throw connectorError(
           path,
@@ -139,12 +143,12 @@ export class BrowserSessionConnectorV2 {
           new TypeError("browser SessionV2 requires a TypeScript browser capability descriptor"),
         );
       }
-      const requiredRole = this.lease.artifact.path.kind === "tunnel" && this.lease.artifact.path.role === 2
+      const requiredRole = this.artifact.path.kind === "tunnel" && this.artifact.path.role === 2
         ? "server"
         : "client";
       const supported = new Set(capability.tuples
         .filter(({ networkMode, sessionRole, path }) =>
-          networkMode === "dial" && sessionRole === requiredRole && path === this.lease.artifact.path.kind)
+          networkMode === "dial" && sessionRole === requiredRole && path === this.artifact.path.kind)
         .map(({ carrier }) => carrier));
       const candidates = canonical.candidates.filter((candidate) => supported.has(candidate.carrier));
       if (candidates.length === 0) {
@@ -157,7 +161,7 @@ export class BrowserSessionConnectorV2 {
       }
       try {
         deadline = createConnectorDeadline(Math.min(
-          this.lease.artifact.session.establish_timeout_seconds * 1_000,
+          this.artifact.session.establish_timeout_seconds * 1_000,
           remaining,
         ), this.options.deadlineFactory);
       } catch (error) {
@@ -176,7 +180,7 @@ export class BrowserSessionConnectorV2 {
       const createErrors: Error[] = [];
       for (const candidate of candidates) {
         try {
-          const attempt = attemptFactory.create(candidate, this.lease.artifact);
+          const attempt = attemptFactory.create(candidate, this.artifact);
           if (attempt == null) throw new TypeError("browser candidate factory returned no attempt");
           attempts.push(attempt);
         } catch (error) {
@@ -304,7 +308,7 @@ export class BrowserSessionConnectorV2 {
 
       stage = "validate";
       try {
-        artifactRemainingMilliseconds(this.lease.artifact, this.options.now);
+        artifactRemainingMilliseconds(this.artifact, this.options.now);
       } catch (error) {
         const closeFailure = await captureCandidateCleanupFailure(
           selected.attempt.candidate,
@@ -331,8 +335,8 @@ export class BrowserSessionConnectorV2 {
       let rawFSB2: Uint8Array;
       let config: SessionConfigV2;
       try {
-        rawFSB2 = encodeFSB2RequestV2(buildFSB2RequestV2(this.lease.artifact, selected.attempt.candidate.id));
-        config = sessionConfig(this.lease.artifact, rawFSB2, this.options.deadlineFactory);
+        rawFSB2 = encodeFSB2RequestV2(buildFSB2RequestV2(this.artifact, selected.attempt.candidate.id));
+        config = sessionConfig(this.artifact, rawFSB2, this.options.deadlineFactory);
       } catch (error) {
         const closeFailure = await captureCandidateCleanupFailure(
           selected.attempt.candidate,
@@ -405,7 +409,7 @@ export class BrowserSessionConnectorV2 {
       }
       stage = "validate";
       try {
-        artifactRemainingMilliseconds(this.lease.artifact, this.options.now);
+        artifactRemainingMilliseconds(this.artifact, this.options.now);
       } catch (error) {
         const closeFailure = await captureCandidateCleanupFailure(
           selected.attempt.candidate,
