@@ -16,7 +16,14 @@ const manifest = JSON.parse(
 const forbiddenRuntimeExportsBySubpath = new Map([
   ['@floegence/flowersec-core/proxy', ['resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST']],
 ]);
-const removedLegacyRuntimeExports = new Set(['requestChannelGrant', 'requestEntryChannelGrant']);
+const removedLegacyRuntimeExports = new Set([
+  'requestChannelGrant',
+  'requestEntryChannelGrant',
+  'establishSessionV2',
+  'AdmissionSessionV2Error',
+  'establishAdmittedNativeSessionV2',
+  'establishAdmittedWebSocketSessionV2',
+]);
 const removedImplementationSubpaths = [
   'framing',
   'yamux',
@@ -326,10 +333,7 @@ import {
   FlowersecError as NodeFlowersecError,
 } from '@floegence/flowersec-core/node';
 import type {
-  CarrierSessionV2 as BrowserCarrierSessionV2,
   BrowserSessionConnectorV2Options,
-  FlowersecCandidateDiagnostic as BrowserFlowersecCandidateDiagnostic,
-  NativeCarrierSessionV2 as BrowserNativeCarrierSessionV2,
   JsonPrimitiveV2 as BrowserJsonPrimitiveV2,
   JsonValueV2 as BrowserJsonValueV2,
   NetworkModeV2 as BrowserNetworkModeV2,
@@ -338,8 +342,17 @@ import type {
   SessionRoleV2 as BrowserSessionRoleV2,
   SessionTerminationV2 as BrowserSessionTerminationV2,
   UnsupportedRuntimeCarrierV2 as BrowserUnsupportedRuntimeCarrierV2,
-  WebSocketResourcePolicyV2 as BrowserWebSocketResourcePolicyV2,
 } from '@floegence/flowersec-core/browser';
+// @ts-expect-error carrier SPI must remain package-internal.
+import type { CarrierSessionV2 as BrowserCarrierSessionV2 } from '@floegence/flowersec-core/browser';
+// @ts-expect-error native carrier SPI must remain package-internal.
+import type { NativeCarrierSessionV2 as BrowserNativeCarrierSessionV2 } from '@floegence/flowersec-core/browser';
+// @ts-expect-error carrier resource policy must remain package-internal.
+import type { WebSocketResourcePolicyV2 as BrowserWebSocketResourcePolicyV2 } from '@floegence/flowersec-core/browser';
+// @ts-expect-error candidate diagnostics must remain package-internal.
+import type { FlowersecCandidateDiagnostic as BrowserFlowersecCandidateDiagnostic } from '@floegence/flowersec-core/browser';
+// @ts-expect-error session key material and handshake configuration are package-internal.
+import type { SessionConfigV2 as BrowserSessionConfigV2 } from '@floegence/flowersec-core/browser';
 // @ts-expect-error low-level carrier attempt factories must remain package-internal.
 import type { BrowserCandidateAttemptFactoryV2 } from '@floegence/flowersec-core/browser';
 // @ts-expect-error low-level carrier attempts must remain package-internal.
@@ -347,8 +360,6 @@ import type { BrowserCandidateAttemptV2 } from '@floegence/flowersec-core/browse
 // @ts-expect-error prepared carrier candidates must remain package-internal.
 import type { BrowserPreparedCandidateV2 } from '@floegence/flowersec-core/browser';
 import type {
-  CarrierSessionV2 as NodeCarrierSessionV2,
-  FlowersecCandidateDiagnostic as NodeFlowersecCandidateDiagnostic,
   JsonPrimitiveV2 as NodeJsonPrimitiveV2,
   JsonValueV2 as NodeJsonValueV2,
   NetworkModeV2 as NodeNetworkModeV2,
@@ -357,30 +368,40 @@ import type {
   SessionRoleV2 as NodeSessionRoleV2,
   SessionTerminationV2 as NodeSessionTerminationV2,
   UnsupportedRuntimeCarrierV2 as NodeUnsupportedRuntimeCarrierV2,
-  WebSocketResourcePolicyV2 as NodeWebSocketResourcePolicyV2,
 } from '@floegence/flowersec-core/node';
+// @ts-expect-error carrier SPI must remain package-internal.
+import type { CarrierSessionV2 as NodeCarrierSessionV2 } from '@floegence/flowersec-core/node';
+// @ts-expect-error carrier resource policy must remain package-internal.
+import type { WebSocketResourcePolicyV2 as NodeWebSocketResourcePolicyV2 } from '@floegence/flowersec-core/node';
+// @ts-expect-error candidate diagnostics must remain package-internal.
+import type { FlowersecCandidateDiagnostic as NodeFlowersecCandidateDiagnostic } from '@floegence/flowersec-core/node';
+// @ts-expect-error session key material and handshake configuration are package-internal.
+import type { SessionConfigV2 as NodeSessionConfigV2 } from '@floegence/flowersec-core/node';
 import type {
   ArtifactAcquireContextV2,
   ArtifactLeaseV2,
   ArtifactSourceV2,
   ArtifactV2,
   ByteStreamV2,
-  CarrierSessionV2,
-  CarrierStreamV2,
-  FlowersecCandidateDiagnostic,
   IncomingStreamV2,
   JsonObjectV2,
-  NativeCarrierSessionV2,
-  NativeCarrierStreamV2,
   PathKind,
   RuntimeCapabilityDescriptorV2,
   SessionReconnectConfigV2,
   SessionTerminationV2,
   SessionV2,
   StreamOpenOptionsV2,
-  WebSocketBinaryTransportV2,
-  WebSocketResourcePolicyV2,
 } from '@floegence/flowersec-core';
+// @ts-expect-error carrier SPI must remain package-internal.
+import type { CarrierSessionV2, CarrierStreamV2 } from '@floegence/flowersec-core';
+// @ts-expect-error native carrier SPI must remain package-internal.
+import type { NativeCarrierSessionV2, NativeCarrierStreamV2 } from '@floegence/flowersec-core';
+// @ts-expect-error WebSocket carrier SPI must remain package-internal.
+import type { WebSocketBinaryTransportV2, WebSocketResourcePolicyV2 } from '@floegence/flowersec-core';
+// @ts-expect-error candidate diagnostics must remain package-internal.
+import type { FlowersecCandidateDiagnostic } from '@floegence/flowersec-core';
+// @ts-expect-error session key material and handshake configuration are package-internal.
+import type { SessionConfigV2 } from '@floegence/flowersec-core';
 // @ts-expect-error implementation framing is not a public package subpath.
 import type {} from '@floegence/flowersec-core/framing';
 // @ts-expect-error the WebSocket Yamux implementation is package-internal.
@@ -401,13 +422,6 @@ declare const metadata: JsonObjectV2;
 declare const openOptions: StreamOpenOptionsV2;
 declare const rawArtifact: string;
 declare const commitSpend: (signal?: AbortSignal) => Promise<void>;
-declare const carrierSession: CarrierSessionV2;
-declare const carrierStream: CarrierStreamV2;
-declare const nativeCarrier: NativeCarrierSessionV2;
-declare const nativeStream: NativeCarrierStreamV2;
-declare const webSocketBinary: WebSocketBinaryTransportV2;
-declare const webSocketPolicy: WebSocketResourcePolicyV2;
-declare const diagnostic: FlowersecCandidateDiagnostic;
 
 const path: PathKind = session.path;
 // @ts-expect-error selected carriers are internal diagnostics, not session API.
@@ -428,10 +442,6 @@ declare const reconnectConfig: SessionReconnectConfigV2;
 declare const termination: SessionTerminationV2;
 declare const browserTypes: readonly [BrowserJsonPrimitiveV2, BrowserJsonValueV2, BrowserNetworkModeV2, BrowserOperationOptionsV2, BrowserSessionReconnectConfigV2, BrowserSessionRoleV2, BrowserSessionTerminationV2, BrowserUnsupportedRuntimeCarrierV2];
 declare const nodeTypes: readonly [NodeJsonPrimitiveV2, NodeJsonValueV2, NodeNetworkModeV2, NodeOperationOptionsV2, NodeSessionReconnectConfigV2, NodeSessionRoleV2, NodeSessionTerminationV2, NodeUnsupportedRuntimeCarrierV2];
-declare const browserCarrierTypes: readonly [BrowserCarrierSessionV2, BrowserNativeCarrierSessionV2, BrowserWebSocketResourcePolicyV2];
-declare const nodeCarrierTypes: readonly [NodeCarrierSessionV2, NodeWebSocketResourcePolicyV2];
-const browserDiagnostic: BrowserFlowersecCandidateDiagnostic = diagnostic;
-const nodeDiagnostic: NodeFlowersecCandidateDiagnostic = diagnostic;
 const leakedWebSocketFactory: BrowserSessionConnectorV2Options = {
   admissionReasons: new Set(),
   // @ts-expect-error carrier construction factories must remain package-internal.
@@ -462,19 +472,9 @@ void reconnectManager.connectIfNeeded(reconnectConfig);
 void termination;
 void browserTypes;
 void nodeTypes;
-void browserCarrierTypes;
-void nodeCarrierTypes;
-void browserDiagnostic;
-void nodeDiagnostic;
 void leakedWebSocketFactory;
 void leakedWebTransportFactory;
 void leakedAttemptFactory;
-void carrierSession.inboundBidirectionalStreamCapacity;
-void carrierStream.closeWrite();
-void nativeCarrier.inboundBidirectionalStreamCapacity;
-void nativeStream.closeWrite();
-void webSocketBinary.close();
-void webSocketPolicy.maxConcurrentStreams;
 void createBrowserArtifactLeaseV2(decodeBrowserArtifactV2JSON(rawArtifact), commitSpend);
 void createNodeArtifactLeaseV2(decodeNodeArtifactV2JSON(rawArtifact), commitSpend);
 void lease.commitSpend();
@@ -490,10 +490,6 @@ void stream.yamuxStream;
 void stream.quicStream;
 // @ts-expect-error v2 public sessions do not expose the v1 mux implementation.
 void session.mux;
-// @ts-expect-error v2 carrier sessions do not expose a concrete Yamux session.
-void carrierSession.yamux;
-// @ts-expect-error physical stream capacity is reported by the carrier, not configured as Yamux policy.
-void webSocketPolicy.maxInboundStreams;
 `
   );
   run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.json'], consumerDir);

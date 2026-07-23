@@ -8,8 +8,9 @@ import type {
   RuntimeCapabilityTupleV2 as BrowserRuntimeCapabilityTupleV2,
   SessionRoleV2 as BrowserSessionRoleV2,
   UnsupportedRuntimeCarrierV2 as BrowserUnsupportedRuntimeCarrierV2,
-  FlowersecCandidateDiagnostic as BrowserFlowersecCandidateDiagnostic,
 } from "../browser/index.js";
+// @ts-expect-error candidate selection diagnostics are package-internal.
+import type { FlowersecCandidateDiagnostic as BrowserFlowersecCandidateDiagnostic } from "../browser/index.js";
 import { FlowersecError as BrowserFlowersecError } from "../browser/index.js";
 import type {
   ArtifactAcquireContextOptionsV2 as NodeArtifactAcquireContextOptionsV2,
@@ -21,8 +22,9 @@ import type {
   RuntimeCapabilityTupleV2 as NodeRuntimeCapabilityTupleV2,
   SessionRoleV2 as NodeSessionRoleV2,
   UnsupportedRuntimeCarrierV2 as NodeUnsupportedRuntimeCarrierV2,
-  FlowersecCandidateDiagnostic as NodeFlowersecCandidateDiagnostic,
 } from "../node/index.js";
+// @ts-expect-error candidate selection diagnostics are package-internal.
+import type { FlowersecCandidateDiagnostic as NodeFlowersecCandidateDiagnostic } from "../node/index.js";
 import { FlowersecError as NodeFlowersecError } from "../node/index.js";
 // @ts-expect-error Internal carrier stages must not be exported by the browser entry.
 import { createBrowserWebTransportCarrierInternalStage } from "../browser/index.js";

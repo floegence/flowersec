@@ -72,27 +72,7 @@ export type {
   SessionTerminationV2,
   StreamOpenOptionsV2,
 } from "../v2/contract.js";
-export type {
-  CarrierSessionV2,
-  CarrierStreamV2,
-  NativeCarrierSessionV2,
-  NativeCarrierStreamV2,
-  WebSocketBinaryTransportV2,
-  WebSocketResourcePolicyV2,
-} from "../v2/carrier.js";
-export { SessionV2, establishSessionV2 } from "../v2/session.js";
-export type {
-  SessionConfigV2,
-  SessionDeadlineFactoryV2,
-  SessionDeadlineHandleV2,
-  SessionDeadlinePhaseV2,
-  SessionDeadlinesV2,
-} from "../v2/session.js";
-export {
-  AdmissionSessionV2Error,
-  establishAdmittedNativeSessionV2,
-  establishAdmittedWebSocketSessionV2,
-} from "../v2/admittedSession.js";
+export { SessionV2 } from "../v2/session.js";
 export { connectBrowser, connectDirectBrowser, connectTunnelBrowser } from "./connect.js";
 export { BrowserSessionConnectorV2, connectBrowserSessionV2 } from "./connectV2.js";
 export type {
@@ -102,12 +82,7 @@ export type {
   BrowserSessionConnectorV2Options,
 } from "./connectV2.js";
 export { FlowersecError } from "../utils/errors.js";
-export type {
-  FlowersecCandidateDiagnostic,
-  FlowersecErrorCode,
-  FlowersecPath,
-  FlowersecStage,
-} from "../utils/errors.js";
+export type { FlowersecErrorCode, FlowersecPath, FlowersecStage } from "../utils/errors.js";
 export {
   AllowPlaintextForLoopback,
   createNetworkPlaintextPolicy,
