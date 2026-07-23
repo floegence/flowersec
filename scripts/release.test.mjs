@@ -358,6 +358,12 @@ test("release workflows pin actions and pass expressions through fields, not she
   assert.match(dependabot, /^\s+interval: weekly$/m);
 });
 
+test("release workflow parser passes filenames compatibly across Psych versions", () => {
+  const checker = fs.readFileSync(path.join(sourceRoot, "scripts/check-release-workflows.rb"), "utf8");
+  assert.match(checker, /Psych\.parse_stream\(source, filename: path\)/);
+  assert.doesNotMatch(checker, /Psych\.parse_stream\(source, path\)/);
+});
+
 test("Rust recovery rejects non-canonical versions before invoking git", (t) => {
   const ruby = [
     'require "psych"',

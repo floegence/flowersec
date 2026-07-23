@@ -73,7 +73,7 @@ end
 
 def load_workflow(path)
   source = File.read(path)
-  stream = Psych.parse_stream(source, path)
+  stream = Psych.parse_stream(source, filename: path)
   require_condition(stream.children.length == 1, "#{path} must contain exactly one YAML document")
   document = stream.children.first
   require_condition(document.root, "#{path} must not be empty")
