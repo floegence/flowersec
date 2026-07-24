@@ -125,6 +125,21 @@ test("open-loop scheduler preserves ordinals, rate schedule, and inflight cap", 
   assert.ok(maximum <= 3, `maximum inflight ${maximum}`);
 });
 
+test("open-loop scheduler captures an early operation rejection", async () => {
+  await assert.rejects(
+    runOpenLoop({
+      operations: 2,
+      maxInflight: 1,
+      intervalMs: 10,
+      operation: async (ordinal) => {
+        if (ordinal === 1) throw new Error("first operation failed");
+        return ordinal;
+      },
+    }),
+    /first operation failed/,
+  );
+});
+
 test("acquires an exact fresh artifact batch from the runner-owned endpoint", async () => {
   let request;
   const artifacts = await acquireArtifactBatch(forcedPlan, {

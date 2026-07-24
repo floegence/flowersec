@@ -528,6 +528,7 @@ func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) 
 	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		carrierSession, upgradeErr := server.Upgrade(writer, request)
 		if upgradeErr != nil {
+			endpoint.failPending(fmt.Errorf("WebTransport upgrade: %w", upgradeErr))
 			return
 		}
 		endpoint.serveNative(carrierSession)

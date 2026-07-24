@@ -47,11 +47,25 @@ export async function collectBrowserReleaseWorkload(input, dependencies = {}) {
     report.browser.version = browser.version();
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     const page = await context.newPage();
+    const diagnostics = [];
+    const recordDiagnostic = (value) => {
+      if (diagnostics.length < 32) diagnostics.push(value.slice(0, 512));
+    };
+    page.on("requestfailed", (request) => recordDiagnostic(`request failed: ${request.url()} ${request.failure()?.errorText ?? "unknown"}`));
+    page.on("response", (response) => {
+      if (response.status() >= 400) recordDiagnostic(`response ${response.status()}: ${response.url()}`);
+    });
+    page.on("pageerror", (error) => recordDiagnostic(`page error: ${error.message}`));
+    page.on("console", (message) => {
+      if (message.type() === "error") recordDiagnostic(`console error: ${message.text()}`);
+    });
+    report.browser.diagnostics = diagnostics;
     await page.exposeBinding("__flowersecCommitArtifactSpend", async (_source, token) => {
       await ledger.commit(token);
     });
     await installWebTransportCertificateHash(page, plan.certificate_hash);
     await page.goto(site.origin, { waitUntil: "networkidle" });
+    await preloadBrowserSDK(page);
 
     const execute = async () => {
       if (plan.mode === "adaptive") {
@@ -372,6 +386,7 @@ async function startBrowserModuleSite(bindAddress, advertiseHost) {
     try {
       const url = new URL(request.url ?? "/", "http://invalid.invalid");
       if (url.pathname === "/") return respond(response, 200, "text/html; charset=utf-8", browserPage());
+      if (url.pathname === "/favicon.ico") return respond(response, 204, "image/x-icon", "");
       if (url.pathname.startsWith("/dist/")) {
         return await serveFile(response, distRoot, url.pathname.slice(6), false);
       }
@@ -401,6 +416,22 @@ async function startBrowserModuleSite(bindAddress, advertiseHost) {
       return closing;
     },
   };
+}
+
+async function preloadBrowserSDK(page) {
+  let failure;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await page.evaluate(async () => { await import("/dist/browser/index.js"); });
+      return;
+    } catch (error) {
+      failure = error;
+      if (!/ERR_NETWORK_CHANGED|Failed to fetch dynamically imported module/.test(String(error)) || attempt === 3) break;
+      await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      await page.reload({ waitUntil: "networkidle" });
+    }
+  }
+  throw failure;
 }
 
 async function serveFile(response, root, encodedRelative, allowExtensionFallback) {

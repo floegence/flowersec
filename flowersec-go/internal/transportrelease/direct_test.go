@@ -2,6 +2,9 @@ package transportrelease
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -244,6 +247,24 @@ func TestProductDirectBrowserEndpointRequiresConcreteOriginAndExposesCertificate
 	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || len(decoded) != 32 {
 		t.Fatalf("certificate hash = %q: %v", encoded, err)
+	}
+}
+
+func TestWebTransportReleaseCertificateUsesBrowserCompatibleP256(t *testing.T) {
+	serverTLS, _, err := localTLSForHost(carrier.KindWebTransport, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := x509.ParseCertificate(serverTLS.Certificates[0].Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if certificate.PublicKeyAlgorithm != x509.ECDSA {
+		t.Fatalf("WebTransport certificate algorithm = %s, want ECDSA P-256", certificate.PublicKeyAlgorithm)
+	}
+	publicKey, ok := certificate.PublicKey.(*ecdsa.PublicKey)
+	if !ok || publicKey.Curve != elliptic.P256() {
+		t.Fatal("WebTransport certificate does not use ECDSA P-256")
 	}
 }
 

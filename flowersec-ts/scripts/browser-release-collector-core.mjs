@@ -104,6 +104,7 @@ export async function runOpenLoop({
   const phaseStart = now();
   const pending = new Set();
   const results = new Array(operations);
+  let firstFailure;
   for (let ordinal = 1; ordinal <= operations; ordinal++) {
     const scheduledAtMs = phaseStart + ((ordinal - 1) * intervalMs);
     await waitUntil(scheduledAtMs, now);
@@ -111,11 +112,15 @@ export async function runOpenLoop({
     let task;
     task = Promise.resolve()
       .then(() => operation(ordinal, scheduledAtMs))
-      .then((result) => { results[ordinal - 1] = result; })
+      .then(
+        (result) => { results[ordinal - 1] = result; },
+        (error) => { firstFailure ??= error; },
+      )
       .finally(() => pending.delete(task));
     pending.add(task);
   }
   await Promise.all(pending);
+  if (firstFailure !== undefined) throw firstFailure;
   return results;
 }
 

@@ -5,7 +5,9 @@ package transportrelease
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -407,9 +409,20 @@ func localTLSForHost(kind carrier.Kind, listenHost string) (*tls.Config, *tls.Co
 	default:
 		return nil, nil, fmt.Errorf("unsupported carrier %q", kind)
 	}
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, nil, err
+	var publicKey any
+	var privateKey any
+	if kind == carrier.KindWebTransport {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return nil, nil, err
+		}
+		publicKey, privateKey = &key.PublicKey, key
+	} else {
+		keyPublic, keyPrivate, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, nil, err
+		}
+		publicKey, privateKey = keyPublic, keyPrivate
 	}
 	serverName := "localhost"
 	ipAddresses := []net.IP{net.ParseIP("127.0.0.1")}
