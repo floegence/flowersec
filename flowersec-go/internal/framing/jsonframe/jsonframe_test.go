@@ -2,6 +2,7 @@ package jsonframe
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"testing"
@@ -22,6 +23,30 @@ func TestWriteJSONFrameWriterError(t *testing.T) {
 	if err := WriteJSONFrame(errWriter{}, map[string]any{"ok": true}); err == nil {
 		t.Fatal("expected error")
 	}
+}
+
+func TestWriteJSONFrameSubmitsOneCompleteFrame(t *testing.T) {
+	writer := &countingWriter{}
+	if err := WriteJSONFrame(writer, map[string]any{"ok": true}); err != nil {
+		t.Fatal(err)
+	}
+	if writer.writes != 1 {
+		t.Fatalf("writes = %d, want one complete frame submission", writer.writes)
+	}
+	if got := int(binary.BigEndian.Uint32(writer.payload[:4])); got != len(writer.payload)-4 {
+		t.Fatalf("frame payload length = %d, want %d", got, len(writer.payload)-4)
+	}
+}
+
+type countingWriter struct {
+	writes  int
+	payload []byte
+}
+
+func (w *countingWriter) Write(payload []byte) (int, error) {
+	w.writes++
+	w.payload = append(w.payload, payload...)
+	return len(payload), nil
 }
 
 func TestReadJSONFrameEOF(t *testing.T) {

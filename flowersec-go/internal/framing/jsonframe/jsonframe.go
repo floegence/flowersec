@@ -23,13 +23,23 @@ func WriteJSONFrame(w io.Writer, v any) error {
 	if err != nil {
 		return err
 	}
-	var hdr [4]byte
-	bin.PutU32BE(hdr[:], uint32(len(b)))
-	if _, err := w.Write(hdr[:]); err != nil {
-		return err
+	frame := make([]byte, 4+len(b))
+	bin.PutU32BE(frame[:4], uint32(len(b)))
+	copy(frame[4:], b)
+	for len(frame) > 0 {
+		n, err := w.Write(frame)
+		if n < 0 || n > len(frame) {
+			return io.ErrShortWrite
+		}
+		frame = frame[n:]
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
 	}
-	_, err = w.Write(b)
-	return err
+	return nil
 }
 
 // ReadJSONFrame reads a length-prefixed JSON payload with a maximum size guard.
