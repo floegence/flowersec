@@ -12,6 +12,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/linuxnetlab"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/tunnelworkload"
 )
 
 func TestWorkloadScheduleContainsEveryIndependentRun(t *testing.T) {
@@ -116,6 +117,24 @@ func TestFaultProfileFromFrozenNetworkPlan(t *testing.T) {
 func TestFaultProfileRejectsCleanNetworkPlan(t *testing.T) {
 	if _, err := faultProfileFromPlan(transportrelease.NetworkPlan{}, "/release/packet_fault.o"); err == nil {
 		t.Fatal("accepted network plan without traffic shaping")
+	}
+}
+
+func TestTunnelTopologyMatrixIsFrozen(t *testing.T) {
+	want := []tunnelworkload.Topology{
+		tunnelworkload.TopologyWW,
+		tunnelworkload.TopologyQQ,
+		tunnelworkload.TopologyWQ,
+		tunnelworkload.TopologyQW,
+	}
+	got := tunnelworkload.Topologies()
+	if len(got) != len(want) {
+		t.Fatalf("tunnel topology count = %d, want %d", len(got), len(want))
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("tunnel topology %d = %s, want %s", index, got[index], want[index])
+		}
 	}
 }
 
@@ -227,8 +246,29 @@ func TestPrivilegedProductionCarriersTraverseKernelProfile(t *testing.T) {
 						t.Fatal(err)
 					}
 					if len(result.Cold) != profile.Cold.Operations || len(result.RPC) != profile.RPC.Operations ||
-						result.Bulk.BytesPerDirection != profile.Bulk.ScoreBytesPerDirection || result.CleanupDuration <= 0 || result.Kernel == nil {
+						result.Bulk.BytesPerDirection != profile.Bulk.ScoreBytesPerDirection || result.CleanupDuration <= 0 ||
+						result.Resource.FinishedAt.Before(result.Resource.StartedAt) || result.Kernel == nil {
 						t.Fatalf("incomplete production workload: %+v", result)
+					}
+				})
+			}
+		})
+	}
+	for _, profile := range []transportrelease.ProfilePlan{plan, edgePlan} {
+		profile := profile
+		t.Run(profile.ID+"-tunnel", func(t *testing.T) {
+			for _, topology := range tunnelworkload.Topologies() {
+				t.Run(string(topology), func(t *testing.T) {
+					ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+					defer cancel()
+					result, err := runNetworkTunnel(ctx, topology, profile, 1, bpfObject)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(result.Workload.Cold) != profile.Cold.Operations || len(result.Workload.RPC) != profile.RPC.Operations ||
+						result.Workload.Bulk.BytesPerDirection != profile.Bulk.ScoreBytesPerDirection || result.Workload.CleanupDuration <= 0 ||
+						result.Resource.FinishedAt.Before(result.Resource.StartedAt) || result.Kernel == nil {
+						t.Fatalf("incomplete production tunnel workload: %+v", result)
 					}
 				})
 			}

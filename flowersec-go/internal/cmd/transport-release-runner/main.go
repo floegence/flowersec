@@ -22,12 +22,16 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/linuxnetlab"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/tunnelworkload"
 )
 
 const (
 	baselineTarget    = "direct-clean-baseline"
 	networkCellTarget = "direct-network-profile-cell"
+	tunnelCellTarget  = "tunnel-network-profile-cell"
 	networkWorkerArg  = "--network-cell-worker"
+	networkModeDirect = "direct"
+	networkModeTunnel = "tunnel"
 )
 
 var gitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -61,6 +65,22 @@ type networkCellReport struct {
 	Results         []baselineCarrierResult      `json:"results"`
 }
 
+type tunnelCellReport struct {
+	SchemaVersion   int                          `json:"schema_version"`
+	Classification  string                       `json:"classification"`
+	SourceSHA       string                       `json:"source_sha"`
+	ManifestDigest  string                       `json:"manifest_digest"`
+	ManifestSHA256  string                       `json:"manifest_file_sha256"`
+	Runner          baselineRunner               `json:"runner"`
+	ProfileID       string                       `json:"profile_id"`
+	Network         transportrelease.NetworkPlan `json:"network"`
+	Topology        tunnelworkload.Topology      `json:"topology"`
+	BPFObjectSHA256 string                       `json:"bpf_object_sha256"`
+	StartedAt       time.Time                    `json:"started_at"`
+	FinishedAt      time.Time                    `json:"finished_at"`
+	Results         []tunnelCarrierResult        `json:"results"`
+}
+
 type baselineRunner struct {
 	OS            string `json:"os"`
 	Architecture  string `json:"architecture"`
@@ -68,13 +88,14 @@ type baselineRunner struct {
 }
 
 type baselineCarrierResult struct {
-	Run             int                                 `json:"run"`
-	Carrier         string                              `json:"carrier"`
-	Cold            []transportrelease.ConnectOperation `json:"cold"`
-	RPC             []transportrelease.Operation        `json:"rpc"`
-	Bulk            transportrelease.BulkResult         `json:"bulk"`
-	CleanupDuration time.Duration                       `json:"cleanup_duration_ns"`
-	Kernel          *networkKernelResult                `json:"kernel,omitempty"`
+	Run             int                                  `json:"run"`
+	Carrier         string                               `json:"carrier"`
+	Cold            []transportrelease.ConnectOperation  `json:"cold"`
+	RPC             []transportrelease.Operation         `json:"rpc"`
+	Bulk            transportrelease.BulkResult          `json:"bulk"`
+	CleanupDuration time.Duration                        `json:"cleanup_duration_ns"`
+	Resource        transportrelease.ResourceMeasurement `json:"resource"`
+	Kernel          *networkKernelResult                 `json:"kernel,omitempty"`
 }
 
 type networkKernelResult struct {
@@ -88,11 +109,20 @@ type networkKernelResult struct {
 }
 
 type networkWorkerRequest struct {
+	Mode            string                       `json:"mode"`
 	Kind            carrier.Kind                 `json:"kind"`
+	Topology        tunnelworkload.Topology      `json:"topology"`
 	Plan            transportrelease.ProfilePlan `json:"plan"`
 	ClientNamespace string                       `json:"client_namespace"`
 	ServerNamespace string                       `json:"server_namespace"`
 	ServerAddress   string                       `json:"server_address"`
+}
+
+type tunnelCarrierResult struct {
+	Run      int                                  `json:"run"`
+	Workload tunnelworkload.Result                `json:"workload"`
+	Resource transportrelease.ResourceMeasurement `json:"resource"`
+	Kernel   *networkKernelResult                 `json:"kernel,omitempty"`
 }
 
 var networkWorkerArguments = func() []string { return []string{networkWorkerArg} }
@@ -121,11 +151,12 @@ func run(args []string) error {
 	sourceRoot := flags.String("source-root", "", "clean source checkout root")
 	profileID := flags.String("profile", "", "frozen network profile")
 	carrierName := flags.String("carrier", "", "direct carrier")
+	topologyName := flags.String("topology", "", "tunnel carrier topology")
 	bpfObject := flags.String("bpf-object", "", "compiled packet-fault eBPF object")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if (*target != baselineTarget && *target != networkCellTarget) || *manifestPath == "" || *reportPath == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
+	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget) || *manifestPath == "" || *reportPath == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
 		return errors.New("runner requires a supported --target, --manifest, --report, --source-root, and a full --source-sha")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
@@ -146,9 +177,18 @@ func run(args []string) error {
 		return err
 	}
 	if *target == networkCellTarget {
+		if *topologyName != "" {
+			return errors.New("direct network profile cell does not accept --topology")
+		}
 		return runNetworkCell(*reportPath, *sourceSHA, *profileID, carrier.Kind(*carrierName), *bpfObject, plan, manifest)
 	}
-	if *profileID != "" || *carrierName != "" || *bpfObject != "" {
+	if *target == tunnelCellTarget {
+		if *carrierName != "" {
+			return errors.New("tunnel network profile cell does not accept --carrier")
+		}
+		return runTunnelCell(*reportPath, *sourceSHA, *profileID, tunnelworkload.Topology(*topologyName), *bpfObject, plan, manifest)
+	}
+	if *profileID != "" || *carrierName != "" || *topologyName != "" || *bpfObject != "" {
 		return errors.New("direct clean baseline does not accept network profile flags")
 	}
 	kernel, err := kernelRelease()
@@ -214,6 +254,10 @@ func runCarrier(ctx context.Context, kind carrier.Kind, plan transportrelease.Pr
 }
 
 func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductDirectEndpoint, kind carrier.Kind, plan transportrelease.ProfilePlan) (baselineCarrierResult, error) {
+	resourceStart, err := transportrelease.CaptureResourceSnapshot()
+	if err != nil {
+		return baselineCarrierResult{}, err
+	}
 	endpointClosed := false
 	defer func() {
 		if !endpointClosed {
@@ -279,9 +323,17 @@ func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductD
 	if err != nil || deadlineErr != nil {
 		return baselineCarrierResult{}, errors.Join(err, deadlineErr)
 	}
+	resourceFinish, err := transportrelease.CaptureResourceSnapshot()
+	if err != nil {
+		return baselineCarrierResult{}, err
+	}
+	resource, err := transportrelease.CompleteResourceMeasurement(resourceStart, resourceFinish)
+	if err != nil {
+		return baselineCarrierResult{}, err
+	}
 	return baselineCarrierResult{
 		Carrier: string(kind), Cold: cold, RPC: rpc, Bulk: bulk,
-		CleanupDuration: time.Since(cleanupStarted),
+		CleanupDuration: time.Since(cleanupStarted), Resource: resource,
 	}, nil
 }
 
@@ -404,7 +456,7 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 		return result, err
 	}
 	request := networkWorkerRequest{
-		Kind: kind, Plan: plan, ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
+		Mode: networkModeDirect, Kind: kind, Plan: plan, ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
 		ServerAddress: config.ServerAddress.Addr().String(),
 	}
 	requestJSON, err := json.Marshal(request)
@@ -442,6 +494,127 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 		ClientInterface: config.ClientInterface, ServerInterface: config.ServerInterface,
 		ClientAddress: config.ClientAddress.String(), ServerAddress: config.ServerAddress.String(),
 		Faults: evidence,
+	}
+	return result, nil
+}
+
+func runTunnelCell(reportPath, sourceSHA, profileID string, topology tunnelworkload.Topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+	if profileID != "mobile-v1" && profileID != "edge-v1" {
+		return errors.New("tunnel network profile cell requires mobile-v1 or edge-v1")
+	}
+	if _, _, err := topology.Carriers(); err != nil {
+		return err
+	}
+	bpfBytes, err := linuxnetlab.ReadVerifiedBPFObject(bpfObject)
+	if err != nil {
+		return err
+	}
+	frozenBPFObject, cleanupBPFObject, err := freezeBPFObject(bpfBytes)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, cleanupBPFObject()) }()
+	bpfDigest := sha256.Sum256(bpfBytes)
+	profile := plan.Mobile
+	if profileID == "edge-v1" {
+		profile = plan.Edge
+	}
+	kernel, err := kernelRelease()
+	if err != nil {
+		return err
+	}
+	report := tunnelCellReport{
+		SchemaVersion: 1, Classification: "linux_kernel_tunnel_network_profile",
+		SourceSHA: sourceSHA, ManifestDigest: manifest.Digest,
+		ManifestSHA256: hex.EncodeToString(manifest.SHA256Sum[:]),
+		Runner:         baselineRunner{OS: runtime.GOOS, Architecture: runtime.GOARCH, KernelRelease: kernel},
+		ProfileID:      profile.ID, Network: profile.Network, Topology: topology,
+		BPFObjectSHA256: hex.EncodeToString(bpfDigest[:]), StartedAt: time.Now().UTC(),
+	}
+	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
+	cellCtx, cancelCell := context.WithTimeout(context.Background(), cellDeadline)
+	defer cancelCell()
+	cellStarted := time.Now()
+	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
+		result, err := runNetworkTunnel(cellCtx, topology, profile, runNumber, frozenBPFObject)
+		if err != nil {
+			return fmt.Errorf("%s %s run %d: %w", profile.ID, topology, runNumber, err)
+		}
+		result.Run = runNumber
+		report.Results = append(report.Results, result)
+	}
+	if err := completedWithin(cellCtx, cellStarted, cellDeadline); err != nil {
+		return fmt.Errorf("%s %s cell watchdog: %w", profile.ID, topology, err)
+	}
+	report.FinishedAt = time.Now().UTC()
+	return writeNewReport(reportPath, report)
+}
+
+func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, plan transportrelease.ProfilePlan, runNumber int, bpfObject string) (result tunnelCarrierResult, resultErr error) {
+	cellID := strings.ToLower(plan.ID + "-tunnel-" + string(topology))
+	config, err := linuxnetlab.ConfigForCell(cellID, runNumber, plan.Network.LinkMTU, plan.Network.Firewall)
+	if err != nil {
+		return result, err
+	}
+	lab, err := linuxnetlab.Open(ctx, linuxnetlab.ExecRunner{}, config)
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Duration(plan.CleanupDeadlineSeconds)*time.Second)
+		resultErr = errors.Join(resultErr, lab.Close(cleanupCtx))
+		cancel()
+	}()
+	profile, err := faultProfileFromPlan(plan.Network, bpfObject)
+	if err != nil {
+		return result, err
+	}
+	if err := lab.ApplyFaultProfile(ctx, profile); err != nil {
+		return result, err
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return result, err
+	}
+	request := networkWorkerRequest{
+		Mode: networkModeTunnel, Topology: topology, Plan: plan,
+		ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
+		ServerAddress: config.ServerAddress.Addr().String(),
+	}
+	requestJSON, err := json.Marshal(request)
+	if err != nil {
+		return result, err
+	}
+	arguments := append([]string{"netns", "exec", config.ClientNamespace, executable}, networkWorkerArguments()...)
+	command := exec.CommandContext(ctx, "ip", arguments...)
+	command.Stdin = bytes.NewReader(requestJSON)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Run(); err != nil {
+		evidenceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		evidence, evidenceErr := lab.FaultEvidence(evidenceCtx)
+		cancel()
+		return result, fmt.Errorf("tunnel network worker: %w: stdout=%s stderr=%s kernel_evidence=%+v evidence_error=%v", err, strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), evidence, evidenceErr)
+	}
+	if err := json.NewDecoder(&stdout).Decode(&result); err != nil {
+		return result, fmt.Errorf("decode tunnel network worker result: %w", err)
+	}
+	if result.Workload.Topology != topology {
+		return result, errors.New("network worker returned the wrong tunnel topology")
+	}
+	evidenceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	evidence, err := lab.FaultEvidence(evidenceCtx)
+	cancel()
+	if err != nil {
+		return result, err
+	}
+	if err := validateKernelEvidence(plan.Network, evidence); err != nil {
+		return result, err
+	}
+	result.Kernel = &networkKernelResult{
+		ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
+		ClientInterface: config.ClientInterface, ServerInterface: config.ServerInterface,
+		ClientAddress: config.ClientAddress.String(), ServerAddress: config.ServerAddress.String(), Faults: evidence,
 	}
 	return result, nil
 }
@@ -494,9 +667,6 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 	if err := decoder.Decode(&request); err != nil {
 		return fmt.Errorf("decode network worker request: %w", err)
 	}
-	if err := request.Kind.Validate(); err != nil {
-		return err
-	}
 	if request.Plan.ID != "mobile-v1" && request.Plan.ID != "edge-v1" {
 		return errors.New("network worker requires a frozen weak-network profile")
 	}
@@ -505,19 +675,56 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(request.Plan.CellWatchdogMinutes)*time.Minute)
 	defer cancel()
-	var endpoint *transportrelease.ProductDirectEndpoint
-	if err := linuxnetlab.InNamespace(request.ServerNamespace, func() error {
-		var openErr error
-		endpoint, openErr = transportrelease.OpenProductDirectEndpointAt(ctx, request.Kind, request.ServerAddress)
-		return openErr
-	}); err != nil {
-		return err
+	switch request.Mode {
+	case networkModeDirect:
+		if err := request.Kind.Validate(); err != nil {
+			return err
+		}
+		var endpoint *transportrelease.ProductDirectEndpoint
+		if err := linuxnetlab.InNamespace(request.ServerNamespace, func() error {
+			var openErr error
+			endpoint, openErr = transportrelease.OpenProductDirectEndpointAt(ctx, request.Kind, request.ServerAddress)
+			return openErr
+		}); err != nil {
+			return err
+		}
+		result, err := runEndpointCarrier(ctx, endpoint, request.Kind, request.Plan)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(result)
+	case networkModeTunnel:
+		if _, _, err := request.Topology.Carriers(); err != nil {
+			return err
+		}
+		resourceStart, err := transportrelease.CaptureResourceSnapshot()
+		if err != nil {
+			return err
+		}
+		var endpoint *tunnelworkload.Endpoint
+		if err := linuxnetlab.InNamespace(request.ServerNamespace, func() error {
+			var openErr error
+			endpoint, openErr = tunnelworkload.OpenEndpointAt(ctx, request.Topology, request.ServerAddress)
+			return openErr
+		}); err != nil {
+			return err
+		}
+		workload, err := tunnelworkload.Run(ctx, endpoint, request.Plan)
+		if err != nil {
+			return err
+		}
+		resourceFinish, err := transportrelease.CaptureResourceSnapshot()
+		if err != nil {
+			return err
+		}
+		resource, err := transportrelease.CompleteResourceMeasurement(resourceStart, resourceFinish)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(tunnelCarrierResult{Workload: workload, Resource: resource})
+	default:
+		return errors.New("network worker mode is outside the frozen release matrix")
 	}
-	result, err := runEndpointCarrier(ctx, endpoint, request.Kind, request.Plan)
-	if err != nil {
-		return err
-	}
-	return json.NewEncoder(output).Encode(result)
 }
 
 func faultProfileFromPlan(network transportrelease.NetworkPlan, bpfObject string) (linuxnetlab.FaultProfile, error) {
