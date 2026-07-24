@@ -195,7 +195,6 @@ rust-release-check: rust-check rust-audit rust-deny rust-cover-check rust-semver
 
 release-check:
 	$(MAKE) check
-	$(MAKE) transport-v2-release-evidence
 	$(MAKE) transport-v2-signed-evidence-check
 
 example-check:
@@ -303,8 +302,9 @@ transport-conformance-smoke:
 
 transport-browser-smoke:
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-browser-smoke -classification local_smoke
+	cd flowersec-ts && npm run build
 	cd flowersec-ts && npx vitest run src/browser/connectV2.test.ts src/browser/webTransportCarrierInternalStage.test.ts src/v2/browserBundle.test.ts
-	cd flowersec-ts && npm run test:browser:chromium
+	cd flowersec-ts && npx playwright test --project=chromium
 	@echo "classification=local_smoke; Chromium WebTransport interoperability evidence is not claimed"
 
 transport-interop-smoke:
@@ -326,48 +326,48 @@ quic-native-smoke:
 		exit 1; \
 	fi
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target quic-native-smoke -classification local_smoke
-	cd flowersec-go && go test -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesToNewPacketConn)$$' ./internal/carrier/rawquic
+	cd flowersec-go && go test -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesExclusivelyToNewPacketConn)$$' ./internal/carrier/rawquic
 	cd flowersec-go && go test -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./internal/tunnelv2
 	@echo "classification=local_smoke; qlog/system performance evidence is not claimed"
 
 quic-native-race-smoke:
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target quic-native-race-smoke -classification local_smoke
-	cd flowersec-go && go test -race -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesToNewPacketConn)$$' ./internal/carrier/rawquic
+	cd flowersec-go && go test -race -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesExclusivelyToNewPacketConn)$$' ./internal/carrier/rawquic
 	cd flowersec-go && go test -race -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./internal/tunnelv2
 	@echo "classification=local_smoke; qlog-backed race evidence is not claimed"
 
 TRANSPORT_V2_EVIDENCE_REPORT ?=
+TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT ?=
 TRANSPORT_V2_BASE_SHA ?=
 TRANSPORT_V2_RELEASE_RUNNER ?=
 override TRANSPORT_V2_TRUST_STORE := $(CURDIR)/testdata/transport_v2/evidence_trust_store.json
 override TRANSPORT_V2_TRUST_POLICY := $(CURDIR)/testdata/transport_v2/evidence_trust_policy.json
 
 define run_transport_v2_release_target
-	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \
-		echo "$@: requires TRANSPORT_V2_RELEASE_RUNNER, TRANSPORT_V2_EVIDENCE_REPORT, and TRANSPORT_V2_BASE_SHA" >&2; \
+	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \
+		echo "$@: requires TRANSPORT_V2_RELEASE_RUNNER, TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT, and TRANSPORT_V2_BASE_SHA" >&2; \
 		exit 2; \
 	fi
 	@if [ ! -x "$(TRANSPORT_V2_RELEASE_RUNNER)" ]; then \
 		echo "$@: release runner is not executable: $(TRANSPORT_V2_RELEASE_RUNNER)" >&2; \
 		exit 2; \
 	fi
-	"$(TRANSPORT_V2_RELEASE_RUNNER)" --target "$@" --report "$(TRANSPORT_V2_EVIDENCE_REPORT)"
-	$(MAKE) transport-v2-signed-evidence-check
+	"$(TRANSPORT_V2_RELEASE_RUNNER)" --target "$@" --report "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)"
 endef
 
 transport-conformance-full weaknet-full weaknet-system quic-native-proof quic-native-race bench-transport-capacity bench-transport-soak bench-transport-ab:
 	$(run_transport_v2_release_target)
 
 transport-v2-release-evidence:
-	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \
-		echo "$@: requires TRANSPORT_V2_RELEASE_RUNNER, TRANSPORT_V2_EVIDENCE_REPORT, and TRANSPORT_V2_BASE_SHA" >&2; \
+	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \
+		echo "$@: requires TRANSPORT_V2_RELEASE_RUNNER, TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT, and TRANSPORT_V2_BASE_SHA" >&2; \
 		exit 2; \
 	fi
 	@if [ ! -x "$(TRANSPORT_V2_RELEASE_RUNNER)" ]; then \
 		echo "$@: release runner is not executable: $(TRANSPORT_V2_RELEASE_RUNNER)" >&2; \
 		exit 2; \
 	fi
-	"$(TRANSPORT_V2_RELEASE_RUNNER)" --target all --report "$(TRANSPORT_V2_EVIDENCE_REPORT)"
+	"$(TRANSPORT_V2_RELEASE_RUNNER)" --target all --report "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)"
 
 transport-v2-signed-evidence-check:
 	./scripts/check-transport-v2-evidence.sh "$(TRANSPORT_V2_EVIDENCE_REPORT)" "$(TRANSPORT_V2_BASE_SHA)"

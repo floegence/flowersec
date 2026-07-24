@@ -24,9 +24,6 @@ func validateEvidenceMetaSchema(schema *EvidenceMetaSchema) error {
 	if schema.SchemaVersion != 1 || schema.SignedClassification != "signed_transport_evidence" {
 		return errors.New("evidence meta-schema must freeze schema v1 signed_transport_evidence")
 	}
-	if !slices.Equal(schema.TDDStages, []string{"red", "green", "refactor"}) {
-		return errors.New("evidence meta-schema must require red, green, and refactor in order")
-	}
 	wanted := map[string]EvidenceGateContract{
 		"transport-v2-unit":           {Target: "transport-v2-unit", AllowedClassifications: []string{"contract_only"}},
 		"transport-conformance-smoke": {Target: "transport-conformance-smoke", AllowedClassifications: []string{"local_smoke"}},

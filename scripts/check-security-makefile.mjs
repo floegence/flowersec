@@ -315,7 +315,6 @@ export function verifySecurityMakefile(makefile) {
     ["release-test", ["\tnode --test scripts/check-release-version-consistency.test.mjs scripts/release.test.mjs"]],
     ["release-check", [
       "\t$(MAKE) check",
-      "\t$(MAKE) transport-v2-release-evidence",
       "\t$(MAKE) transport-v2-signed-evidence-check",
     ]],
   ]);

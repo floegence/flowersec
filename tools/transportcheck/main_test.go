@@ -57,7 +57,7 @@ func TestCheckedInRegistryOwnersHaveMakeRecipes(t *testing.T) {
 func TestCaseOwnerRecipeValidationRejectsAllowlistedTargetWithoutRecipe(t *testing.T) {
 	registry := &CaseRegistry{
 		SchemaVersion: 1,
-		Cases: []CaseDefinition{{ID: "CAP-SOAK-HOURLY", Owner: "bench-transport-soak", Mode: "normal", Required: true, Profile: "soak", EvidenceFields: []string{"trace"}}},
+		Cases:         []CaseDefinition{{ID: "CAP-SOAK-HOURLY", Owner: "bench-transport-soak", Mode: "normal", Required: true, Profile: "soak", EvidenceFields: []string{"trace"}}},
 	}
 	makefile := filepath.Join(t.TempDir(), "Makefile")
 	if err := os.WriteFile(makefile, []byte(".PHONY: bench-transport-soak\n"), 0o644); err != nil {
@@ -71,7 +71,7 @@ func TestCaseOwnerRecipeValidationRejectsAllowlistedTargetWithoutRecipe(t *testi
 func TestCaseOwnerRecipeValidationAcceptsMultiTargetRecipeAndRaceOwner(t *testing.T) {
 	registry := &CaseRegistry{
 		SchemaVersion: 1,
-		Cases: []CaseDefinition{{ID: "CAP-SOAK-HOURLY", Owner: "bench-transport-soak", RaceOwner: "quic-native-race", Mode: "normal", Required: true, Profile: "soak", EvidenceFields: []string{"trace"}}},
+		Cases:         []CaseDefinition{{ID: "CAP-SOAK-HOURLY", Owner: "bench-transport-soak", RaceOwner: "quic-native-race", Mode: "normal", Required: true, Profile: "soak", EvidenceFields: []string{"trace"}}},
 	}
 	makefile := filepath.Join(t.TempDir(), "Makefile")
 	contents := "bench-transport-soak quic-native-race:\n\t@true\n"
@@ -697,15 +697,6 @@ func TestRaceCaseRequiresExecutionAttestation(t *testing.T) {
 	evidence.Execution = nil
 	result := checkEvidence(manifest, registry, report, report.baseDir)
 	assertResult(t, result, statusFail, "execution attestation")
-}
-
-func TestTDDEvidenceRequiresRawStageOutput(t *testing.T) {
-	manifest := loadFixtureManifest(t)
-	registry := loadFixtureRegistry(t)
-	report := completeReport(t, manifest, registry)
-	report.TDD[0].Red.OutputArtifact = EvidenceArtifact{}
-	result := checkEvidence(manifest, registry, report, report.baseDir)
-	assertResult(t, result, statusFail, "TDD slice "+report.TDD[0].Slice+" red stage output")
 }
 
 func TestOutageMetricRequiresSameRunFaultBinding(t *testing.T) {
@@ -1872,6 +1863,71 @@ func TestEvidenceRejectsArtifactImpersonationAndTampering(t *testing.T) {
 	}
 }
 
+func TestEvidenceRejectsIntermediateDirectorySymlinks(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		metadata bool
+	}{
+		{name: "artifact"},
+		{name: "metadata", metadata: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := loadFixtureManifest(t)
+			registry := loadFixtureRegistry(t)
+			report := completeReport(t, manifest, registry)
+			phase := &report.Cells[0].Runs[0].Phases[0]
+			artifact := phase.Artifacts["trace"]
+			outside := t.TempDir()
+			linkName := "outside-" + test.name
+			if err := os.Symlink(outside, filepath.Join(report.baseDir, linkName)); err != nil {
+				t.Fatal(err)
+			}
+
+			if test.metadata {
+				data, err := os.ReadFile(filepath.Join(report.baseDir, artifact.MetaPath))
+				if err != nil {
+					t.Fatal(err)
+				}
+				name := filepath.Base(artifact.MetaPath)
+				if err := os.WriteFile(filepath.Join(outside, name), data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				artifact.MetaPath = filepath.Join(linkName, name)
+			} else {
+				data, err := os.ReadFile(filepath.Join(report.baseDir, artifact.Path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				name := filepath.Base(artifact.Path)
+				if err := os.WriteFile(filepath.Join(outside, name), data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				artifact.Path = filepath.Join(linkName, name)
+
+				metadata := ArtifactMetadata{
+					SchemaVersion: 1, Context: "cell " + report.Cells[0].CellID + " run 1 phase cold", Kind: "trace",
+					ArtifactPath: artifact.Path, ArtifactSHA256: artifact.SHA256,
+				}
+				metadataData, err := json.Marshal(metadata)
+				if err != nil {
+					t.Fatal(err)
+				}
+				metadataName := "outside-artifact.meta.json"
+				if err := os.WriteFile(filepath.Join(report.baseDir, metadataName), metadataData, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				metadataSum := sha256.Sum256(metadataData)
+				artifact.MetaPath = metadataName
+				artifact.MetaSHA256 = hex.EncodeToString(metadataSum[:])
+			}
+			phase.Artifacts["trace"] = artifact
+
+			result := checkEvidence(manifest, registry, report, report.baseDir)
+			assertResult(t, result, statusFail, "symbolic link")
+		})
+	}
+}
+
 func TestEvidenceRejectsCaseSpecificQlogAndPCAPImpersonation(t *testing.T) {
 	t.Run("flow isolation qlog has no blocking or RPC proof", func(t *testing.T) {
 		manifest := loadFixtureManifest(t)
@@ -2101,7 +2157,7 @@ func TestRepositoryTrustPolicyRejectsRunnerIdentityTampering(t *testing.T) {
 	}
 }
 
-func TestEvidenceRequiresSignedSourceAndTDDEvidence(t *testing.T) {
+func TestEvidenceRequiresSignedSource(t *testing.T) {
 	tests := []struct {
 		name       string
 		mutate     func(*EvidenceReport)
@@ -2114,18 +2170,6 @@ func TestEvidenceRequiresSignedSourceAndTDDEvidence(t *testing.T) {
 		{name: "same base and final", mutate: func(report *EvidenceReport) { report.Source.BaseSHA = report.Source.FinalSHA }, wantStatus: statusFail, wantIssue: "must differ"},
 		{name: "dirty source", mutate: func(report *EvidenceReport) { report.Source.Dirty = boolPointer(true) }, wantStatus: statusFail, wantIssue: "dirty=false"},
 		{name: "untracked source", mutate: func(report *EvidenceReport) { report.Source.UntrackedFileCount = intPointer(1) }, wantStatus: statusFail, wantIssue: "untracked_file_count"},
-		{name: "missing TDD record", mutate: func(report *EvidenceReport) { report.TDD = nil }, wantStatus: statusInconclusive, wantIssue: "TDD evidence"},
-		{name: "red unexpectedly passed", mutate: func(report *EvidenceReport) { report.TDD[0].Red.ExitCode = intPointer(0) }, wantStatus: statusFail, wantIssue: "red stage"},
-		{name: "green failed", mutate: func(report *EvidenceReport) { report.TDD[0].Green.ExitCode = intPointer(1) }, wantStatus: statusFail, wantIssue: "green stage"},
-		{name: "refactor log missing", mutate: func(report *EvidenceReport) { report.TDD[0].Refactor.Artifact = EvidenceArtifact{} }, wantStatus: statusInconclusive, wantIssue: "refactor stage artifact"},
-		{
-			name: "plain text TDD trace",
-			mutate: func(report *EvidenceReport) {
-				report.TDD[0].Green.Artifact = rewriteEvidenceArtifact(t, report.baseDir, report.TDD[0].Green.Artifact, []byte("go test passed\n"))
-			},
-			wantStatus: statusFail,
-			wantIssue:  "not a bound structured evidence envelope",
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -2137,15 +2181,6 @@ func TestEvidenceRequiresSignedSourceAndTDDEvidence(t *testing.T) {
 			assertResult(t, result, test.wantStatus, test.wantIssue)
 		})
 	}
-}
-
-func TestEvidenceRequiresEveryFrozenTDDSlice(t *testing.T) {
-	manifest := loadFixtureManifest(t)
-	registry := loadFixtureRegistry(t)
-	report := completeReport(t, manifest, registry)
-	report.TDD = report.TDD[:len(report.TDD)-1]
-	result := checkEvidence(manifest, registry, report, report.baseDir)
-	assertResult(t, result, statusFail, "missing TDD evidence slice")
 }
 
 func TestEvidenceMatchesAuditedRepositoryState(t *testing.T) {
@@ -2311,7 +2346,7 @@ func TestExternalReleaseEvidenceTargetsFailClosedWithoutRunner(t *testing.T) {
 	}
 }
 
-func TestReleaseCheckRunsOneFailClosedAllEvidenceRunner(t *testing.T) {
+func TestUnsignedCollectorIsExplicitAndExcludedFromReleaseCheck(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	if err != nil {
 		t.Fatal(err)
@@ -2319,16 +2354,19 @@ func TestReleaseCheckRunsOneFailClosedAllEvidenceRunner(t *testing.T) {
 	makefile := string(data)
 	for _, required := range []string{
 		"transport-v2-release-evidence:",
-		`"$(TRANSPORT_V2_RELEASE_RUNNER)" --target all --report "$(TRANSPORT_V2_EVIDENCE_REPORT)"`,
-		"\t$(MAKE) transport-v2-release-evidence",
+		`"$(TRANSPORT_V2_RELEASE_RUNNER)" --target all --report "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)"`,
+		"release-check:\n\t$(MAKE) check\n\t$(MAKE) transport-v2-signed-evidence-check",
 	} {
 		if !strings.Contains(makefile, required) {
-			t.Errorf("Makefile is missing all-evidence release runner wiring %q", required)
+			t.Errorf("Makefile is missing collector/release boundary %q", required)
 		}
+	}
+	if strings.Contains(makefile, "release-check:\n\t$(MAKE) check\n\t$(MAKE) transport-v2-release-evidence") {
+		t.Fatal("release-check must not execute the unsigned collector")
 	}
 	command := exec.Command(
 		"make", "--no-print-directory", "transport-v2-release-evidence",
-		"TRANSPORT_V2_RELEASE_RUNNER=", "TRANSPORT_V2_EVIDENCE_REPORT=",
+		"TRANSPORT_V2_RELEASE_RUNNER=", "TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT=",
 		"TRANSPORT_V2_BASE_SHA=", "TRANSPORT_V2_TRUST_STORE=",
 	)
 	command.Dir = filepath.Join("..", "..")
@@ -2670,6 +2708,15 @@ func TestStrictJSONRejectsUnknownFields(t *testing.T) {
 	}
 	if _, err := loadPerformanceManifest(path); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("loadPerformanceManifest() error = %v, want unknown field", err)
+	}
+
+	reportPath := filepath.Join(t.TempDir(), "report.json")
+	reportData := []byte(`{"schema_version":1,"classification":"signed_transport_evidence","manifest_digest":"x","source":{},"runner":{},"tdd":[],"cells":[],"cases":[],"attestation":{}}`)
+	if err := os.WriteFile(reportPath, reportData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadEvidenceReport(reportPath); err == nil || !strings.Contains(err.Error(), "unknown field \"tdd\"") {
+		t.Fatalf("loadEvidenceReport() error = %v, want retired tdd field rejection", err)
 	}
 }
 
@@ -3408,30 +3455,9 @@ func completeReport(t *testing.T, manifest *PerformanceManifest, registry *CaseR
 // only in tests so production evidence validation never pays this cost.
 func cloneEvidenceReport(source *EvidenceReport) *EvidenceReport {
 	cloned := *source
-	cloned.TDD = cloneTDDEvidence(source.TDD)
 	cloned.Cells = cloneCellEvidence(source.Cells)
 	cloned.Cases = cloneCaseEvidence(source.Cases)
 	return &cloned
-}
-
-func cloneTDDEvidence(source []TDDEvidenceRecord) []TDDEvidenceRecord {
-	if source == nil {
-		return nil
-	}
-	cloned := make([]TDDEvidenceRecord, len(source))
-	for index, record := range source {
-		cloned[index] = record
-		cloned[index].Red = cloneTDDStage(record.Red)
-		cloned[index].Green = cloneTDDStage(record.Green)
-		cloned[index].Refactor = cloneTDDStage(record.Refactor)
-	}
-	return cloned
-}
-
-func cloneTDDStage(source TDDStageEvidence) TDDStageEvidence {
-	cloned := source
-	cloned.ExitCode = cloneInt(source.ExitCode)
-	return cloned
 }
 
 func cloneCellEvidence(source []CellEvidence) []CellEvidence {
@@ -3570,14 +3596,6 @@ func buildCompleteReport(t *testing.T, manifest *PerformanceManifest, registry *
 			ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
 		},
 		baseDir: directory,
-	}
-	for _, slice := range frozenTDDSlices {
-		report.TDD = append(report.TDD, TDDEvidenceRecord{
-			Slice:    slice,
-			Red:      fixtureTDDStage(t, directory, slice, "red"),
-			Green:    fixtureTDDStage(t, directory, slice, "green"),
-			Refactor: fixtureTDDStage(t, directory, slice, "refactor"),
-		})
 	}
 	for _, cell := range manifest.Cells {
 		profile := profileByID(t, manifest, cell.ProfileID)
@@ -4455,47 +4473,6 @@ func fixtureRaceExecution(t *testing.T, directory, caseID string) *CaseExecution
 		SourceSHA256: strings.Repeat("a", 64), BinarySHA256: strings.Repeat("b", 64),
 		TestListArtifact: writeEvidenceArtifact(t, directory, testListContext, "execution_log", ".json", testListData),
 		OutputArtifact:   writeEvidenceArtifact(t, directory, outputContext, "execution_log", ".json", outputData),
-	}
-}
-
-func fixtureTDDStage(t *testing.T, directory, slice, stage string) TDDStageEvidence {
-	t.Helper()
-	testID := "TestTDD_" + strings.ReplaceAll(slice, "-", "_")
-	args := []string{"-run", testID, "."}
-	exitCode := 0
-	if stage == "red" {
-		exitCode = 1
-	}
-	startedAtNS, finishedAtNS := int64(1), int64(2)
-	switch stage {
-	case "green":
-		startedAtNS, finishedAtNS = 3, 4
-	case "refactor":
-		startedAtNS, finishedAtNS = 5, 6
-	}
-	failureAssertion := ""
-	output := "PASS " + testID
-	if stage == "red" {
-		failureAssertion = "expected failure assertion"
-		output = "FAIL " + testID + ": " + failureAssertion
-	}
-	outputContext := fmt.Sprintf("TDD slice %s %s stage output", slice, stage)
-	outputData, err := json.Marshal(ExecutionLogArtifact{
-		SchemaVersion: 1, Kind: "transport_execution_log", Context: outputContext, Role: "tdd_output",
-		Command: "go test", Args: args, TestName: testID, ExitCode: exitCode, Output: output,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sourceSum := sha256.Sum256([]byte(slice + "\x00" + stage + "\x00source"))
-	binarySum := sha256.Sum256([]byte(slice + "\x00" + stage + "\x00binary"))
-	return TDDStageEvidence{
-		Command: "go test", Args: args, TestID: testID,
-		SourceSHA256: hex.EncodeToString(sourceSum[:]), BinarySHA256: hex.EncodeToString(binarySum[:]),
-		FailureAssertion: failureAssertion, StartedAtNS: startedAtNS, FinishedAtNS: finishedAtNS,
-		ExitCode:       intPointer(exitCode),
-		Artifact:       writeStructuredArtifact(t, directory, fmt.Sprintf("TDD slice %s %s stage", slice, stage), "trace"),
-		OutputArtifact: writeEvidenceArtifact(t, directory, outputContext, "execution_log", ".json", outputData),
 	}
 }
 

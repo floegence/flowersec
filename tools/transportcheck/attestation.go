@@ -123,3 +123,19 @@ func evidenceSigningBytes(report *EvidenceReport) ([]byte, error) {
 	canonical.Attestation.Signature = ""
 	return json.Marshal(canonical)
 }
+
+func signEvidenceAttestation(report *EvidenceReport, keyID string, privateKey ed25519.PrivateKey) error {
+	if report == nil {
+		return errors.New("evidence report is missing")
+	}
+	if strings.TrimSpace(keyID) == "" || len(privateKey) != ed25519.PrivateKeySize {
+		return errors.New("evidence signing key is invalid")
+	}
+	report.Attestation = EvidenceAttestation{Scheme: "ed25519", KeyID: keyID}
+	message, err := evidenceSigningBytes(report)
+	if err != nil {
+		return err
+	}
+	report.Attestation.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, message))
+	return nil
+}

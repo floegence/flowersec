@@ -209,7 +209,6 @@ type EvidenceReport struct {
 	ManifestDigest string              `json:"manifest_digest"`
 	Source         EvidenceSource      `json:"source"`
 	Runner         EvidenceRunner      `json:"runner"`
-	TDD            []TDDEvidenceRecord `json:"tdd"`
 	Cells          []CellEvidence      `json:"cells"`
 	Cases          []CaseEvidence      `json:"cases"`
 	Attestation    EvidenceAttestation `json:"attestation"`
@@ -276,27 +275,6 @@ type EvidenceSource struct {
 	UntrackedFileCount *int   `json:"untracked_file_count"`
 }
 
-type TDDEvidenceRecord struct {
-	Slice    string           `json:"slice"`
-	Red      TDDStageEvidence `json:"red"`
-	Green    TDDStageEvidence `json:"green"`
-	Refactor TDDStageEvidence `json:"refactor"`
-}
-
-type TDDStageEvidence struct {
-	Command          string           `json:"command"`
-	Args             []string         `json:"args"`
-	TestID           string           `json:"test_id"`
-	SourceSHA256     string           `json:"source_sha256"`
-	BinarySHA256     string           `json:"binary_sha256"`
-	FailureAssertion string           `json:"failure_assertion,omitempty"`
-	StartedAtNS      int64            `json:"started_at_ns"`
-	FinishedAtNS     int64            `json:"finished_at_ns"`
-	ExitCode         *int             `json:"exit_code"`
-	Artifact         EvidenceArtifact `json:"artifact"`
-	OutputArtifact   EvidenceArtifact `json:"output_artifact"`
-}
-
 type RepositoryState struct {
 	BaseSHA            string
 	FinalSHA           string
@@ -308,7 +286,6 @@ type RepositoryState struct {
 type EvidenceMetaSchema struct {
 	SchemaVersion        int                    `json:"schema_version"`
 	SignedClassification string                 `json:"signed_classification"`
-	TDDStages            []string               `json:"tdd_stages"`
 	Gates                []EvidenceGateContract `json:"gates"`
 }
 

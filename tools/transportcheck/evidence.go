@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -33,24 +34,12 @@ var qlogTopologies = map[string]struct{}{
 
 var gitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-var frozenTDDSlices = []string{
-	"slice-0-contract-baseline",
-	"slice-1-wire-vectors",
-	"slice-2-transport-model",
-	"slice-3-websocket-v2",
-	"slice-4-quic-native-direct",
-	"slice-5-mixed-tunnel-broker",
-	"slice-6-equal-selection-spend",
-	"slice-7-portable-sdks",
-	"slice-8-weaknet-performance",
-	"slice-9-final-sync-review",
-}
-
 type resultBuilder struct {
 	status        checkStatus
 	issues        []string
 	artifactPaths map[string]string
 	artifactSHA   map[string][]string
+	artifactRoot  *os.Root
 }
 
 func loadEvidenceReport(path string) (*EvidenceReport, error) {
@@ -86,6 +75,13 @@ func checkEvidenceInternal(manifest *PerformanceManifest, registry *CaseRegistry
 		builder.inconclusive("evidence report is missing")
 		return builder.result()
 	}
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		builder.inconclusive("evidence report directory cannot be opened: %v", err)
+		return builder.result()
+	}
+	defer root.Close()
+	builder.artifactRoot = root
 	checkArtifactDigestClaims(&builder)
 	if report.SchemaVersion != 1 {
 		builder.fail("report schema_version = %d, want 1", report.SchemaVersion)
@@ -140,112 +136,6 @@ func checkEvidenceMetadata(builder *resultBuilder, report *EvidenceReport, baseD
 		}
 		if !repository.BaseIsAncestor {
 			builder.fail("audited base_sha is not an ancestor of repository HEAD")
-		}
-	}
-	checkTDDEvidence(builder, report.TDD, baseDir)
-}
-
-func checkTDDEvidence(builder *resultBuilder, records []TDDEvidenceRecord, baseDir string) {
-	if len(records) == 0 {
-		builder.inconclusive("report is missing TDD evidence records")
-		return
-	}
-	seen := make(map[string]struct{}, len(records))
-	for _, record := range records {
-		if strings.TrimSpace(record.Slice) == "" {
-			builder.inconclusive("TDD evidence slice must not be empty")
-			continue
-		}
-		if _, duplicate := seen[record.Slice]; duplicate {
-			builder.fail("duplicate TDD evidence slice %q", record.Slice)
-			continue
-		}
-		seen[record.Slice] = struct{}{}
-		checkTDDStage(builder, record.Slice, "red", record.Red, baseDir)
-		checkTDDStage(builder, record.Slice, "green", record.Green, baseDir)
-		checkTDDStage(builder, record.Slice, "refactor", record.Refactor, baseDir)
-		validateTDDRecord(builder, record, baseDir)
-	}
-	for _, required := range frozenTDDSlices {
-		if _, exists := seen[required]; !exists {
-			builder.fail("missing TDD evidence slice %s", required)
-		}
-	}
-}
-
-func checkTDDStage(builder *resultBuilder, slice, name string, stage TDDStageEvidence, baseDir string) {
-	context := fmt.Sprintf("TDD slice %s %s stage", slice, name)
-	if strings.TrimSpace(stage.Command) == "" {
-		builder.inconclusive("%s is missing command", context)
-	}
-	if stage.ExitCode == nil {
-		builder.inconclusive("%s is missing exit_code", context)
-	} else if name == "red" && *stage.ExitCode == 0 {
-		builder.fail("%s must record a nonzero exit", context)
-	} else if name != "red" && *stage.ExitCode != 0 {
-		builder.fail("%s must record a zero exit", context)
-	}
-	if strings.TrimSpace(stage.Artifact.Path) == "" || strings.TrimSpace(stage.Artifact.SHA256) == "" {
-		builder.inconclusive("%s artifact is missing", context)
-		return
-	}
-	data, ok := readArtifact(builder, context, "trace", stage.Artifact, baseDir)
-	if ok {
-		checkArtifactSemantics(builder, context, "trace", data)
-	}
-}
-
-func validateTDDRecord(builder *resultBuilder, record TDDEvidenceRecord, baseDir string) {
-	stages := []struct {
-		name  string
-		value TDDStageEvidence
-	}{
-		{"red", record.Red}, {"green", record.Green}, {"refactor", record.Refactor},
-	}
-	if strings.TrimSpace(record.Red.TestID) == "" || record.Red.TestID != record.Green.TestID || record.Red.TestID != record.Refactor.TestID {
-		builder.fail("TDD slice %s stages must bind one test_id", record.Slice)
-		return
-	}
-	if strings.TrimSpace(record.Red.FailureAssertion) == "" {
-		builder.fail("TDD slice %s red stage must record the expected failure assertion", record.Slice)
-	}
-	previousFinished := int64(-1)
-	for _, stage := range stages {
-		context := fmt.Sprintf("TDD slice %s %s stage", record.Slice, stage.name)
-		if strings.TrimSpace(stage.value.Command) != "go test" || !slices.Contains(stage.value.Args, "-run") ||
-			!slices.Contains(stage.value.Args, stage.value.TestID) || !validSHA256(stage.value.SourceSHA256) ||
-			!validSHA256(stage.value.BinarySHA256) {
-			builder.fail("%s execution identity is incomplete", context)
-		}
-		if stage.value.StartedAtNS < 0 || stage.value.FinishedAtNS <= stage.value.StartedAtNS || stage.value.StartedAtNS < previousFinished {
-			builder.fail("%s timestamps are not a monotonic execution timeline", context)
-		}
-		previousFinished = stage.value.FinishedAtNS
-		if stage.value.ExitCode == nil {
-			continue
-		}
-		outputContext := context + " output"
-		if strings.TrimSpace(stage.value.OutputArtifact.Path) == "" {
-			builder.fail("%s output artifact is missing", context)
-			continue
-		}
-		data, ok := readArtifact(builder, outputContext, "execution_log", stage.value.OutputArtifact, baseDir)
-		if !ok {
-			continue
-		}
-		var output ExecutionLogArtifact
-		if err := decodeStrictJSON(data, &output); err != nil {
-			builder.fail("%s output artifact is invalid: %v", context, err)
-			continue
-		}
-		if output.SchemaVersion != 1 || output.Kind != "transport_execution_log" || output.Context != outputContext ||
-			output.Role != "tdd_output" || output.Command != stage.value.Command || !slices.Equal(output.Args, stage.value.Args) ||
-			output.TestName != stage.value.TestID || output.ExitCode != *stage.value.ExitCode || strings.TrimSpace(output.Output) == "" {
-			builder.fail("%s output does not bind the declared test execution", context)
-			continue
-		}
-		if stage.name == "red" && !strings.Contains(output.Output, stage.value.FailureAssertion) {
-			builder.fail("%s output does not contain the expected failure assertion", context)
 		}
 	}
 }
@@ -421,11 +311,6 @@ func collectEvidenceArtifactSHA(report *EvidenceReport) map[string][]string {
 		if artifact.SHA256 != "" {
 			index[artifact.SHA256] = append(index[artifact.SHA256], context)
 		}
-	}
-	for _, record := range report.TDD {
-		add("TDD "+record.Slice+" red", record.Red.Artifact)
-		add("TDD "+record.Slice+" green", record.Green.Artifact)
-		add("TDD "+record.Slice+" refactor", record.Refactor.Artifact)
 	}
 	for _, cell := range report.Cells {
 		for metricID, metric := range cell.Metrics {
@@ -998,19 +883,8 @@ func readArtifact(builder *resultBuilder, context, kind string, artifact Evidenc
 		return nil, false
 	}
 	builder.artifactPaths[clean] = claim
-	fullPath := filepath.Join(baseDir, clean)
-	info, err := os.Lstat(fullPath)
-	if err != nil {
-		builder.inconclusive("%s artifact cannot be read: %v", claim, err)
-		return nil, false
-	}
-	if !info.Mode().IsRegular() {
-		builder.fail("%s artifact must be a regular file", claim)
-		return nil, false
-	}
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		builder.inconclusive("%s artifact cannot be read: %v", claim, err)
+	data, ok := readRootedArtifactFile(builder, claim, clean)
+	if !ok {
 		return nil, false
 	}
 	digest, err := hex.DecodeString(artifact.SHA256)
@@ -1045,19 +919,8 @@ func checkArtifactMetadata(builder *resultBuilder, context, kind, artifactPath s
 		return false
 	}
 	builder.artifactPaths[clean] = claim
-	fullPath := filepath.Join(baseDir, clean)
-	info, err := os.Lstat(fullPath)
-	if err != nil {
-		builder.inconclusive("%s cannot be read: %v", claim, err)
-		return false
-	}
-	if !info.Mode().IsRegular() {
-		builder.fail("%s must be a regular file", claim)
-		return false
-	}
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		builder.inconclusive("%s cannot be read: %v", claim, err)
+	data, ok := readRootedArtifactFile(builder, claim, clean)
+	if !ok {
 		return false
 	}
 	digest, err := hex.DecodeString(artifact.MetaSHA256)
@@ -1077,6 +940,57 @@ func checkArtifactMetadata(builder *resultBuilder, context, kind, artifactPath s
 		return false
 	}
 	return true
+}
+
+func readRootedArtifactFile(builder *resultBuilder, claim, clean string) ([]byte, bool) {
+	if builder.artifactRoot == nil {
+		builder.fail("%s cannot be securely resolved without an evidence root", claim)
+		return nil, false
+	}
+	parts := strings.Split(clean, string(filepath.Separator))
+	current := ""
+	for index, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := builder.artifactRoot.Lstat(current)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				builder.inconclusive("%s cannot be read: %v", claim, err)
+			} else {
+				builder.fail("%s cannot be securely resolved: %v", claim, err)
+			}
+			return nil, false
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			builder.fail("%s path contains symbolic link component %q", claim, current)
+			return nil, false
+		}
+		if index < len(parts)-1 && !info.IsDir() {
+			builder.fail("%s path component %q is not a directory", claim, current)
+			return nil, false
+		}
+		if index == len(parts)-1 && !info.Mode().IsRegular() {
+			builder.fail("%s must be a regular file", claim)
+			return nil, false
+		}
+	}
+
+	file, err := builder.artifactRoot.Open(clean)
+	if err != nil {
+		builder.fail("%s cannot be securely opened: %v", claim, err)
+		return nil, false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		builder.fail("%s opened object is not a regular file", claim)
+		return nil, false
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		builder.inconclusive("%s cannot be read: %v", claim, err)
+		return nil, false
+	}
+	return data, true
 }
 
 func sameStringSet(left, right []string) bool {

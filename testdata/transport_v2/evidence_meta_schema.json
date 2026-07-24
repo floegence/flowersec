@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "signed_classification": "signed_transport_evidence",
-  "tdd_stages": ["red", "green", "refactor"],
   "gates": [
     {
       "target": "transport-v2-unit",

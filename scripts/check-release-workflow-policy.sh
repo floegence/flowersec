@@ -31,7 +31,7 @@ if ! grep -Eq '^node scripts/check-release-version-consistency\.mjs "\$version"$
   echo "the release script must validate all maintained version facts" >&2
   exit 1
 fi
-if ! grep -Fxq 'env -u MAKE -u MAKE_COMMAND -u MAKEFLAGS -u GNUMAKEFLAGS -u MFLAGS -u MAKEFILES -u MAKEFILE_LIST -u MAKEOVERRIDES -u MAKELEVEL -u MAKE_RESTARTS -u MAKECMDGOALS make release-check' scripts/release.sh; then
+if ! grep -Fxq 'env -u MAKE -u MAKE_COMMAND -u MAKEFLAGS -u GNUMAKEFLAGS -u MFLAGS -u MAKEFILES -u MAKEFILE_LIST -u MAKEOVERRIDES -u MAKELEVEL -u MAKE_RESTARTS -u MAKECMDGOALS -u TRANSPORT_V2_RELEASE_RUNNER -u TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT TRANSPORT_V2_EVIDENCE_REPORT="$evidence_report" TRANSPORT_V2_BASE_SHA="$evidence_base_sha" make release-check' scripts/release.sh; then
   echo "the release script must isolate release-check from inherited make controls" >&2
   exit 1
 fi

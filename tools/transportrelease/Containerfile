@@ -1,0 +1,94 @@
+FROM public.ecr.aws/docker/library/golang@sha256:3f6236bd765f898a2a3c2946112b04097814c4529d44534674700cd07b9c6b4c AS go_toolchain
+FROM public.ecr.aws/docker/library/node@sha256:1c0c30ea9d4e20052cdc6e9e0d36b9006edd890bd1ebc4f826991f7587a389d1 AS node_toolchain
+FROM public.ecr.aws/docker/library/rust@sha256:16a7f242108de02f10fe4a392991679bafa7694e59f5b40a54d5af1be9b40d03 AS rust_toolchain
+
+FROM public.ecr.aws/ubuntu/ubuntu@sha256:52df9b1ee71626e0088f7d400d5c6b5f7bb916f8f0c82b474289a4ece6cf3faf
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        clang \
+        conntrack \
+        curl \
+        ethtool \
+        git \
+        iproute2 \
+        iptables \
+        jq \
+        libasound2t64 \
+        libatk-bridge2.0-0t64 \
+        libatk1.0-0t64 \
+        libatspi2.0-0t64 \
+        libbpf-dev \
+        libcap2-bin \
+        libcairo2 \
+        libcups2t64 \
+        libdbus-1-3 \
+        libdrm2 \
+        libfontconfig1 \
+        libfreetype6 \
+        libgbm1 \
+        libglib2.0-0t64 \
+        libnspr4 \
+        libnss3 \
+        libpango-1.0-0 \
+        libssl-dev \
+        libx11-6 \
+        libxcb1 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxext6 \
+        libxfixes3 \
+        libxkbcommon0 \
+        libxrandr2 \
+        linux-tools-common \
+        llvm \
+        lsof \
+        make \
+        nftables \
+        openssl \
+        pkg-config \
+        procps \
+        python3 \
+        socat \
+        tcpdump \
+        time \
+        unzip \
+        util-linux \
+        xz-utils \
+        xvfb \
+        fonts-freefont-ttf \
+        fonts-ipafont-gothic \
+        fonts-liberation \
+        fonts-noto-color-emoji \
+        fonts-tlwg-loma-otf \
+        fonts-unifont \
+        fonts-wqy-zenhei \
+        xfonts-cyrillic \
+        xfonts-scalable \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=go_toolchain /usr/local/go /usr/local/go
+COPY --from=node_toolchain /usr/local/bin/node /usr/local/bin/node
+COPY --from=node_toolchain /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=rust_toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust_toolchain /usr/local/rustup /usr/local/rustup
+
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+ENV PATH=/usr/local/go/bin:/usr/local/cargo/bin:${PATH}
+ENV CARGO_HOME=/cache/cargo
+ENV GOCACHE=/cache/go-build
+ENV GOMODCACHE=/cache/go-mod
+ENV GOPROXY=https://goproxy.cn,direct
+ENV npm_config_cache=/cache/npm
+ENV PLAYWRIGHT_BROWSERS_PATH=/cache/playwright
+ENV RUSTUP_HOME=/usr/local/rustup
+
+WORKDIR /workspace/flowersec
+
+CMD ["sleep", "infinity"]

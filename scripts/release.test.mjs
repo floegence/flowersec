@@ -58,6 +58,7 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   const realGit = run("sh", ["-c", "command -v git"]);
   const realMake = run("sh", ["-c", "command -v make"]);
   fs.mkdirSync(path.join(repo, "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "evidence"), { recursive: true });
   fs.mkdirSync(path.join(repo, "flowersec-ts"), { recursive: true });
   fs.mkdirSync(path.join(repo, "flowersec-rust/fuzz"), { recursive: true });
   fs.mkdirSync(path.join(repo, "examples/rust"), { recursive: true });
@@ -92,6 +93,8 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   fs.writeFileSync(path.join(repo, "flowersec-rust/fuzz/Cargo.toml"), "[package]\nname = \"fuzz\"\n");
   fs.writeFileSync(path.join(repo, "examples/rust/Cargo.toml"), "[package]\nname = \"example\"\n");
   fs.writeFileSync(path.join(repo, "tracked.txt"), "clean\n");
+  const evidenceReport = path.join(repo, "evidence/report.json");
+  fs.writeFileSync(evidenceReport, "{}\n");
 
   fs.writeFileSync(
     path.join(bin, "cargo"),
@@ -126,7 +129,7 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   run("git", ["-C", repo, "remote", "add", "origin", origin]);
   run("git", ["-C", repo, "push", "-u", "origin", "main"]);
 
-  return { bin, gitLog, origin, realGit, realMake, repo };
+  return { bin, evidenceReport, gitLog, origin, realGit, realMake, repo };
 }
 
 function runReleaseScript(fixture, env = {}) {
@@ -137,6 +140,8 @@ function runReleaseScript(fixture, env = {}) {
       FLOWERSEC_TEST_GIT_LOG: fixture.gitLog,
       FLOWERSEC_TEST_REAL_GIT: fixture.realGit,
       PATH: `${fixture.bin}:${process.env.PATH}`,
+      TRANSPORT_V2_BASE_SHA: "1".repeat(40),
+      TRANSPORT_V2_EVIDENCE_REPORT: fixture.evidenceReport,
       ...env,
     }),
   });
@@ -291,9 +296,8 @@ test("release gates stay wired into local checks and publication workflows", () 
       ),
     );
   }
-  for (const target of ["transport-v2-release-evidence", "transport-v2-signed-evidence-check"]) {
-    assert.match(makefile, new RegExp(`^release-check:\\n(?:\\t.*\\n)*\\t\\$\\(MAKE\\) ${target}$`, "m"));
-  }
+  assert.match(makefile, /^release-check:\n(?:\t.*\n)*\t\$\(MAKE\) transport-v2-signed-evidence-check$/m);
+  assert.doesNotMatch(makefile, /^release-check:\n(?:\t.*\n)*\t\$\(MAKE\) transport-v2-release-evidence$/m);
   assert.match(
     releaseWorkflow,
     /^\s+RELEASE_VERSION: \$\{\{ steps\.vars\.outputs\.version \}\}\n\s+run: node scripts\/check-release-version-consistency\.mjs "\$RELEASE_VERSION"$/m,
@@ -561,17 +565,20 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /transport-v2-signed-evidence-check/);
   });
 
-  await t.test("Transport v2 evidence generation disconnected from release-check", () => {
+  await t.test("Transport v2 evidence generation cannot run inside release-check", () => {
     const root = createReleasePolicyFixture(t);
     const makefilePath = path.join(root, "Makefile");
     const makefile = fs.readFileSync(makefilePath, "utf8");
     fs.writeFileSync(
       makefilePath,
-      makefile.replace("\t$(MAKE) transport-v2-release-evidence\n", ""),
+      makefile.replace(
+        "\t$(MAKE) transport-v2-signed-evidence-check\n",
+        "\t$(MAKE) transport-v2-release-evidence\n\t$(MAKE) transport-v2-signed-evidence-check\n",
+      ),
     );
     const result = runReleasePolicy(root);
     assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-    assert.match(result.stderr, /transport-v2-release-evidence/);
+    assert.match(result.stderr, /release-check|transport-v2-release-evidence/);
   });
 
   await t.test("commented unified workflow version check", () => {
@@ -716,7 +723,6 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
       "\trelease-check:",
       "\t$(MAKE) check",
       "\t$(MAKE) interop-stress-full",
-      "\t$(MAKE) transport-v2-release-evidence",
       "\t$(MAKE) transport-v2-signed-evidence-check",
     ].join("\n"));
     fs.writeFileSync(makefilePath, makefile);
@@ -754,7 +760,6 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
       "release-check:",
       "\t$(MAKE) check",
       "\t$(MAKE) interop-stress-full",
-      "\t$(MAKE) transport-v2-release-evidence",
       "\t$(MAKE) transport-v2-signed-evidence-check",
       "endef",
       "release-check::",
@@ -1024,6 +1029,46 @@ test("release validates maintained versions before publication", (t) => {
   assertReleaseDidNotStartPublication(fixture);
 });
 
+test("release requires immutable signed Transport v2 evidence before publication", (t) => {
+  const fixture = createReleaseScriptFixture(t);
+  const result = runReleaseScript(fixture, { TRANSPORT_V2_EVIDENCE_REPORT: "" });
+
+  assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.match(result.stderr, /TRANSPORT_V2_EVIDENCE_REPORT/);
+  assertReleaseDidNotStartPublication(fixture);
+});
+
+test("release never executes an injected Transport v2 collector", (t) => {
+  const fixture = createReleaseScriptFixture(
+    t,
+    "#!/bin/sh\ntest -z \"${TRANSPORT_V2_RELEASE_RUNNER+x}\"\ntest -z \"${TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT+x}\"\n",
+  );
+  const runnerLog = path.join(path.dirname(fixture.repo), "runner.log");
+  const runner = path.join(path.dirname(fixture.repo), "hostile-runner");
+  fs.writeFileSync(runner, `#!/bin/sh\nprintf invoked > ${JSON.stringify(runnerLog)}\nexit 99\n`);
+  fs.chmodSync(runner, 0o755);
+
+  const result = runReleaseScript(fixture, {
+    TRANSPORT_V2_RELEASE_RUNNER: runner,
+    TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT: path.join(path.dirname(fixture.repo), "unsigned.json"),
+  });
+
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.equal(fs.existsSync(runnerLog), false, "release invoked the evidence collector");
+});
+
+test("release rejects a signed evidence report changed by the gate", (t) => {
+  const fixture = createReleaseScriptFixture(
+    t,
+    "#!/bin/sh\nprintf tampered >> \"$TRANSPORT_V2_EVIDENCE_REPORT\"\n",
+  );
+  const result = runReleaseScript(fixture);
+
+  assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.match(result.stderr, /changed the signed Transport v2 evidence report/);
+  assertReleaseDidNotStartPublication(fixture);
+});
+
 test("release stops before git tag or push when release-check dirties the worktree", (t) => {
   const fixture = createReleaseScriptFixture(
     t,
@@ -1172,4 +1217,40 @@ test("pre-push accepts only the complete release tag set for the gated commit", 
       }
     });
   }
+});
+
+test("transport browser smoke builds a clean TypeScript checkout before bundle tests", () => {
+  const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
+  const target = makefile.match(/^transport-browser-smoke:\n((?:\t.*\n)+)/m)?.[1];
+  assert.ok(target, "transport-browser-smoke target is missing");
+  const build = target.indexOf("\tcd flowersec-ts && npm run build\n");
+  const bundleTest = target.indexOf("src/v2/browserBundle.test.ts");
+  assert.notEqual(build, -1, "transport-browser-smoke must build the browser package");
+  assert.ok(build < bundleTest, "the browser package must be built before bundle tests");
+});
+
+test("transport release runner is pinned and scoped to its dedicated container", () => {
+  const containerfile = fs.readFileSync(
+    path.join(sourceRoot, "tools/transportrelease/Containerfile"),
+    "utf8",
+  );
+  const provision = fs.readFileSync(
+    path.join(sourceRoot, "scripts/provision-transport-release-runner.sh"),
+    "utf8",
+  );
+
+  assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/golang@sha256:[0-9a-f]{64} AS go_toolchain$/m);
+  assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/node@sha256:[0-9a-f]{64} AS node_toolchain$/m);
+  assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/rust@sha256:[0-9a-f]{64} AS rust_toolchain$/m);
+  assert.match(containerfile, /^FROM public\.ecr\.aws\/ubuntu\/ubuntu@sha256:[0-9a-f]{64}$/m);
+  for (const dependency of ["libnss3", "libgbm1", "fonts-noto-color-emoji"]) {
+    assert.match(containerfile, new RegExp(`^\\s+${dependency} \\\\$`, "m"));
+  }
+  assert.match(containerfile, /^ENV GOPROXY=https:\/\/goproxy\.cn,direct$/m);
+
+  assert.match(provision, /^container_name=flowersec-release-ubuntu24$/m);
+  assert.match(provision, /docker rm --force "\$container_name"/);
+  assert.doesNotMatch(provision, /docker (?:rm|system prune)[^\n]*(?:--all|-a|\*)/);
+  assert.match(provision, /npm ci --audit=false/);
+  assert.match(provision, /npx playwright install chromium/);
 });
