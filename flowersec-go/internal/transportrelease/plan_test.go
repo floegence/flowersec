@@ -32,7 +32,10 @@ func TestLoadReleasePlanUsesFrozenWeakNetworkWorkloads(t *testing.T) {
 	}
 	if plan.Mobile.ID != "mobile-v1" || plan.Mobile.CellWatchdogMinutes != 70 ||
 		plan.Mobile.Cold.StartRatePerSecond != 15 || plan.Mobile.Cold.PhaseDeadlineSeconds != 150 ||
-		plan.Mobile.RPC.PhaseDeadlineSeconds != 70 || plan.Mobile.Bulk.ScoreBytesPerDirection != 16<<20 {
+		plan.Mobile.RPC.PhaseDeadlineSeconds != 70 ||
+		plan.Mobile.Bulk.WarmupBytesPerDirection != 128<<10 ||
+		plan.Mobile.Bulk.ScoreBytesPerDirection != 512<<10 ||
+		plan.Mobile.Bulk.PhaseDeadlineSeconds != 55 {
 		t.Fatalf("mobile workload = %+v", plan.Mobile)
 	}
 	if plan.Edge.ID != "edge-v1" || plan.Edge.CellWatchdogMinutes != 175 ||

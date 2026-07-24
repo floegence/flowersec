@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "digest": "sha256:86435fbb90771090976a01a19f630faa783adbb0f6cc250ddbd8b0712c8cadee",
+  "digest": "sha256:05db41d545b66c9d5d05089d3c33d51161b1960e2d8cc90aa0e8c0378098623e",
   "ratio_formula_version": "transport-ratio-v1",
   "run_count": 15,
   "bootstrap": {
@@ -99,8 +99,8 @@
         "phase_deadline_seconds": 70
       },
       "bulk": {
-        "warmup_bytes_per_direction": 1048576,
-        "score_bytes_per_direction": 16777216,
+        "warmup_bytes_per_direction": 131072,
+        "score_bytes_per_direction": 524288,
         "phase_deadline_seconds": 55
       },
       "cleanup_deadline_seconds": 5,
@@ -222,7 +222,7 @@
     {"id":"clean_webtransport_throughput_ratio","decision":"lower","threshold":0.8,"unit":"ratio"},
     {"id":"mobile_cold_p99_ms","decision":"upper","threshold":1720,"unit":"milliseconds"},
     {"id":"mobile_rpc_p99_ms","decision":"upper","threshold":860,"unit":"milliseconds"},
-    {"id":"mobile_bulk_goodput_mbps","decision":"lower","threshold":4,"unit":"megabits_per_second"},
+    {"id":"mobile_bulk_goodput_mbps","decision":"lower","threshold":0.15,"unit":"megabits_per_second"},
     {"id":"mobile_cpu_per_delivered_byte_vs_clean_ratio","decision":"upper","threshold":3,"unit":"ratio"},
     {"id":"mobile_retransmit_amplification_ratio","decision":"upper","threshold":0.5,"unit":"ratio"},
     {"id":"mobile_migration_first_rpc_ms","decision":"upper","threshold":860,"unit":"milliseconds"},

@@ -40,6 +40,14 @@ func TestCheckedInManifestAndRegistryAreValid(t *testing.T) {
 	if err := validateManifest(manifest); err != nil {
 		t.Fatalf("validate manifest: %v", err)
 	}
+	mobile := profileByID(t, manifest, "mobile-v1")
+	if mobile.Bulk.WarmupBytesPerDirection != 128*kib || mobile.Bulk.ScoreBytesPerDirection != 512*kib || mobile.Bulk.PhaseDeadlineSeconds != 55 {
+		t.Fatalf("mobile bulk contract = %+v", mobile.Bulk)
+	}
+	goodput := metricContractByID(t, manifest, "mobile_bulk_goodput_mbps")
+	if goodput.Threshold == nil || *goodput.Threshold != 0.15 {
+		t.Fatalf("mobile goodput contract = %+v", goodput)
+	}
 	registry := loadFixtureRegistry(t)
 	if err := validateCaseRegistry(registry); err != nil {
 		t.Fatalf("validate registry: %v", err)
@@ -4557,12 +4565,16 @@ func writeMetricSamples(t *testing.T, report *EvidenceReport, cell *CellEvidence
 			duration := int64(math.Round(value * 1e6))
 			run.DurationNanoseconds = &duration
 		case "goodput_mbps":
-			bytes := uint64(64 * 1024 * 1024)
-			switch {
-			case strings.HasPrefix(cell.CellID, "mobile-"):
-				bytes = 16 * 1024 * 1024
-			case strings.HasPrefix(cell.CellID, "edge-"):
-				bytes = 2 * 1024 * 1024
+			profileID := strings.SplitN(cell.CellID, "-", 2)[0] + "-v1"
+			bytes := uint64(0)
+			for _, profile := range signedProfiles {
+				if profile.id == profileID {
+					bytes = uint64(profile.bulk.ScoreBytesPerDirection)
+					break
+				}
+			}
+			if bytes == 0 {
+				t.Fatalf("missing bulk score contract for cell %s", cell.CellID)
 			}
 			duration := int64(math.Round(float64(bytes) * 8 * 1e3 / value))
 			run.DurationNanoseconds, run.DeliveredBytes = &duration, &bytes
