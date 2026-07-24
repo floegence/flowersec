@@ -24,6 +24,42 @@ func TestLoadReleasePlanUsesFrozenCleanWorkloads(t *testing.T) {
 	}
 }
 
+func TestLoadReleasePlanUsesFrozenWeakNetworkWorkloads(t *testing.T) {
+	plan, _, err := LoadReleasePlan("../../../testdata/transport_v2/performance_manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Mobile.ID != "mobile-v1" || plan.Mobile.CellWatchdogMinutes != 70 ||
+		plan.Mobile.Cold.StartRatePerSecond != 15 || plan.Mobile.Cold.PhaseDeadlineSeconds != 150 ||
+		plan.Mobile.RPC.PhaseDeadlineSeconds != 70 || plan.Mobile.Bulk.ScoreBytesPerDirection != 16<<20 {
+		t.Fatalf("mobile workload = %+v", plan.Mobile)
+	}
+	if plan.Edge.ID != "edge-v1" || plan.Edge.CellWatchdogMinutes != 175 ||
+		plan.Edge.Cold.StartRatePerSecond != 5 || plan.Edge.Cold.PhaseDeadlineSeconds != 430 ||
+		plan.Edge.RPC.PhaseDeadlineSeconds != 170 || plan.Edge.Bulk.ScoreBytesPerDirection != 2<<20 {
+		t.Fatalf("edge workload = %+v", plan.Edge)
+	}
+
+	mobileNetwork := plan.Mobile.Network
+	if mobileNetwork.EvidenceLayer != "kernel_packet" || mobileNetwork.OneWayDelayMilliseconds != 60 ||
+		mobileNetwork.Loss.Mode != "periodic" || mobileNetwork.Loss.EveryNth != 50 ||
+		mobileNetwork.Shape == nil || mobileNetwork.Shape.RateBitsPerSecond != 5_000_000 ||
+		mobileNetwork.Shape.TokenBurstBytes != 32_768 || mobileNetwork.Shape.QueueBytes != 262_144 ||
+		mobileNetwork.LinkMTU != 1280 || len(mobileNetwork.JitterMilliseconds) != 8 {
+		t.Fatalf("mobile network = %+v", mobileNetwork)
+	}
+
+	edgeNetwork := plan.Edge.Network
+	if edgeNetwork.EvidenceLayer != "kernel_packet" || edgeNetwork.OneWayDelayMilliseconds != 150 ||
+		edgeNetwork.Loss.Mode != "burst" || edgeNetwork.Loss.BlockSize != 100 ||
+		edgeNetwork.Loss.BurstFirst != 41 || edgeNetwork.Loss.BurstLast != 45 ||
+		edgeNetwork.Shape == nil || edgeNetwork.Shape.RateBitsPerSecond != 1_000_000 ||
+		edgeNetwork.Shape.TokenBurstBytes != 16_384 || edgeNetwork.Shape.QueueBytes != 65_536 ||
+		edgeNetwork.LinkMTU != 1280 || len(edgeNetwork.JitterMilliseconds) != 8 {
+		t.Fatalf("edge network = %+v", edgeNetwork)
+	}
+}
+
 func TestLoadReleasePlanRejectsManifestOutsideFrozenContract(t *testing.T) {
 	raw, err := os.ReadFile("../../../testdata/transport_v2/performance_manifest.json")
 	if err != nil {
