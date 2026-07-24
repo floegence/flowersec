@@ -19,29 +19,29 @@ import (
 // Operation records one real workload operation without pre-aggregating its
 // timing or byte evidence.
 type Operation struct {
-	Ordinal       int
-	StartedAt     time.Time
-	Duration      time.Duration
-	InputBytes    int
-	OutputBytes   int
-	PayloadSHA256 [32]byte
+	Ordinal       int           `json:"ordinal"`
+	StartedAt     time.Time     `json:"started_at"`
+	Duration      time.Duration `json:"duration_ns"`
+	InputBytes    int           `json:"input_bytes"`
+	OutputBytes   int           `json:"output_bytes"`
+	PayloadSHA256 [32]byte      `json:"payload_sha256"`
 }
 
 // ConnectOperation records one distinct artifact-to-READY connection and its
 // bounded cleanup. ScheduledAt is the frozen rate schedule, not a reconstruction.
 type ConnectOperation struct {
-	Ordinal         int
-	ScheduledAt     time.Time
-	StartedAt       time.Time
-	Duration        time.Duration
-	CleanupDuration time.Duration
+	Ordinal         int           `json:"ordinal"`
+	ScheduledAt     time.Time     `json:"scheduled_at"`
+	StartedAt       time.Time     `json:"started_at"`
+	Duration        time.Duration `json:"duration_ns"`
+	CleanupDuration time.Duration `json:"cleanup_duration_ns"`
 }
 
 // BulkResult records the scored simultaneous transfer in both directions.
 type BulkResult struct {
-	StartedAt         time.Time
-	Duration          time.Duration
-	BytesPerDirection int64
+	StartedAt         time.Time     `json:"started_at"`
+	Duration          time.Duration `json:"duration_ns"`
+	BytesPerDirection int64         `json:"bytes_per_direction"`
 }
 
 // RunCold connects an exact number of independently issued artifacts at the
@@ -99,6 +99,9 @@ func RunCold(ctx context.Context, endpoint *ProductDirectEndpoint, operations, m
 		}(ordinal, scheduled)
 	}
 	group.Wait()
+	if err := contextCompletionError(ctx); err != nil {
+		return nil, err
+	}
 	close(workErrors)
 	var joined error
 	for err := range workErrors {
@@ -175,6 +178,9 @@ func RunRPC(ctx context.Context, pair *ProductDirectPair, operations, workers, p
 		return nil, ctx.Err()
 	case <-done:
 	}
+	if err := contextCompletionError(ctx); err != nil {
+		return nil, err
+	}
 	close(workErrors)
 	var joined error
 	for err := range workErrors {
@@ -189,6 +195,16 @@ func RunRPC(ctx context.Context, pair *ProductDirectPair, operations, workers, p
 		}
 	}
 	return results, nil
+}
+
+func contextCompletionError(ctx context.Context) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
 }
 
 // RunBulk performs a non-scored warmup followed by a scored transfer over two
