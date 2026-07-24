@@ -369,7 +369,7 @@ func transferExact(ctx context.Context, writer, reader flowersession.ByteStream,
 	stopCancellation := context.AfterFunc(ctx, reset)
 	defer stopCancellation()
 	go func() {
-		chunk := bytes.Repeat([]byte{fill}, 32*1024)
+		chunk := bytes.Repeat([]byte{fill}, 64*1024)
 		remaining := total
 		var writeErr error
 		for remaining > 0 {

@@ -63,7 +63,10 @@ type openResponse struct {
 	err      error
 }
 
-const reservedRPCStreamKind = "flowersec.rpc.v2"
+const (
+	reservedRPCStreamKind  = "flowersec.rpc.v2"
+	maxCoalescedWriteBytes = 4 * protocolv2.MaxDataBytes
+)
 
 func (s *engineSession) OpenStream(ctx context.Context, kind string, metadata Metadata) (ByteStream, error) {
 	if kind == reservedRPCStreamKind {
@@ -583,28 +586,44 @@ func (s *encryptedStream) Write(payload []byte) (int, error) {
 	}
 	written := 0
 	for len(payload) != 0 {
-		chunk := payload
-		if len(chunk) > protocolv2.MaxDataBytes {
-			chunk = chunk[:protocolv2.MaxDataBytes]
+		batch := payload
+		if len(batch) > maxCoalescedWriteBytes {
+			batch = batch[:maxCoalescedWriteBytes]
 		}
 		if err := s.lockSendReady(); err != nil {
 			return written, err
 		}
-		s.stateMu.Lock()
-		err := s.state.SendRecord(protocolv2.InnerData)
-		s.stateMu.Unlock()
-		if err != nil {
-			s.sendMu.Unlock()
-			return written, err
+		wire := make([]byte, 0, len(batch)+4*(protocolv2.RecordHeaderSize+protocolv2.InnerHeaderSize+protocolv2.AEADTagBytes))
+		remaining := batch
+		for len(remaining) != 0 {
+			chunk := remaining
+			if len(chunk) > protocolv2.MaxDataBytes {
+				chunk = chunk[:protocolv2.MaxDataBytes]
+			}
+			s.stateMu.Lock()
+			err := s.state.SendRecord(protocolv2.InnerData)
+			s.stateMu.Unlock()
+			if err != nil {
+				s.sendMu.Unlock()
+				return written, err
+			}
+			wire, err = s.appendRecordLocked(wire, protocolv2.InnerData, chunk)
+			if err != nil {
+				s.sendMu.Unlock()
+				s.localReset(err)
+				return written, err
+			}
+			remaining = remaining[len(chunk):]
 		}
-		if err := s.writeRecordLocked(protocolv2.InnerData, chunk); err != nil {
+		if err := writeAll(s.carrier, wire); err != nil {
 			s.sendMu.Unlock()
 			s.localReset(err)
 			return written, err
 		}
+		s.session.touchActivity()
 		s.sendMu.Unlock()
-		written += len(chunk)
-		payload = payload[len(chunk):]
+		written += len(batch)
+		payload = payload[len(batch):]
 	}
 	return written, nil
 }
@@ -1170,22 +1189,34 @@ func (s *encryptedStream) writeRecord(typ protocolv2.InnerType, payload []byte) 
 }
 
 func (s *encryptedStream) writeRecordLocked(typ protocolv2.InnerType, payload []byte) error {
-	inner, err := protocolv2.MarshalInnerRecord(typ, payload)
+	raw, err := s.appendRecordLocked(nil, typ, payload)
 	if err != nil {
 		return err
 	}
+	if err := writeAll(s.carrier, raw); err != nil {
+		return err
+	}
+	s.session.touchActivity()
+	return nil
+}
+
+func (s *encryptedStream) appendRecordLocked(destination []byte, typ protocolv2.InnerType, payload []byte) ([]byte, error) {
+	inner, err := protocolv2.MarshalInnerRecord(typ, payload)
+	if err != nil {
+		return nil, err
+	}
 	if s.sendExhausted {
-		return protocolv2.ErrCounterExhausted
+		return nil, protocolv2.ErrCounterExhausted
 	}
 	s.session.cryptoMu.RLock()
 	roots, ok := s.session.sendRoots[s.sendEpoch]
 	s.session.cryptoMu.RUnlock()
 	if !ok {
-		return ErrSessionProtocol
+		return nil, ErrSessionProtocol
 	}
 	material, err := protocolv2.DeriveStreamMaterial(roots.StreamRoot, s.session.h3, s.id, s.session.sendDir, s.sendEpoch)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	header := protocolv2.RecordHeader{
 		Epoch: s.sendEpoch, Sequence: s.sendSeq,
@@ -1193,25 +1224,20 @@ func (s *encryptedStream) writeRecordLocked(typ protocolv2.InnerType, payload []
 	}
 	ciphertext, err := protocolv2.SealRecord(s.session.config.Suite, material.RecordKey, material.NoncePrefix, s.session.h3, s.id, s.session.sendDir, header, inner)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rawHeader, err := header.MarshalBinary()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if s.sendSeq == math.MaxUint64 {
 		s.sendExhausted = true
 	} else {
 		s.sendSeq++
 	}
-	raw := make([]byte, 0, len(rawHeader)+len(ciphertext))
-	raw = append(raw, rawHeader...)
-	raw = append(raw, ciphertext...)
-	if err := writeAll(s.carrier, raw); err != nil {
-		return err
-	}
-	s.session.touchActivity()
-	return nil
+	destination = append(destination, rawHeader...)
+	destination = append(destination, ciphertext...)
+	return destination, nil
 }
 
 func (s *encryptedStream) localReset(cause error) {

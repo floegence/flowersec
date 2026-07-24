@@ -98,6 +98,66 @@ func TestEstablishAndBidirectionalLogicalStreams(t *testing.T) {
 	assertHalfCloseRoundTrip(t, serverStream, clientAccepted.Stream, []byte("server event"), []byte("client ack"))
 }
 
+func TestByteStreamCoalescesFourEncryptedRecordsIntoOneCarrierWrite(t *testing.T) {
+	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+	defer client.Close()
+	defer server.Close()
+
+	accepted := make(chan IncomingStream, 1)
+	acceptErr := make(chan error, 1)
+	go acceptOne(server, accepted, acceptErr)
+	stream, err := client.OpenStream(context.Background(), "coalesced-records", Metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := awaitIncoming(t, accepted, acceptErr)
+
+	var writes atomic.Int32
+	var wire []byte
+	stream.(*encryptedStream).carrier.(*memoryStream).setWriteHook(func(payload []byte) {
+		writes.Add(1)
+		wire = append(wire[:0], payload...)
+	})
+	payload := bytes.Repeat([]byte{0x5a}, 4*protocolv2.MaxDataBytes)
+	readDone := make(chan error, 1)
+	go func() {
+		got := make([]byte, len(payload))
+		_, readErr := io.ReadFull(peer.Stream, got)
+		if readErr == nil && !bytes.Equal(got, payload) {
+			readErr = errors.New("coalesced record payload mismatch")
+		}
+		readDone <- readErr
+	}()
+	if count, err := stream.Write(payload); err != nil || count != len(payload) {
+		t.Fatalf("Write = %d, %v", count, err)
+	}
+	if err := <-readDone; err != nil {
+		t.Fatal(err)
+	}
+	if got := writes.Load(); got != 1 {
+		t.Fatalf("carrier writes = %d, want 1", got)
+	}
+	records := 0
+	for len(wire) != 0 {
+		if len(wire) < protocolv2.RecordHeaderSize {
+			t.Fatalf("truncated coalesced wire after %d records", records)
+		}
+		header, err := protocolv2.ParseRecordHeader(wire[:protocolv2.RecordHeaderSize])
+		if err != nil {
+			t.Fatal(err)
+		}
+		recordBytes := protocolv2.RecordHeaderSize + int(header.CiphertextLength)
+		if len(wire) < recordBytes {
+			t.Fatalf("record %d exceeds coalesced wire", records)
+		}
+		wire = wire[recordBytes:]
+		records++
+	}
+	if records != 4 {
+		t.Fatalf("encrypted records = %d, want 4", records)
+	}
+}
+
 func TestEstablishRejectsCarrierStreamCapacityMismatchBeforeHandshake(t *testing.T) {
 	clientCarrier, _ := newMemoryCarrierPair(carrier.KindQUIC)
 	clientConfig, _ := testEngineConfigs(2)
