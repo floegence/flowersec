@@ -1,0 +1,116 @@
+package transportrelease
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+
+	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+)
+
+// ServeBrowserBulk serves the fixed bidirectional bulk phases used by the
+// Chromium release collector. RPC echo is already owned by the session router.
+func ServeBrowserBulk(ctx context.Context, session flowersession.SessionV2, bytesPerPhase []int64) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if session == nil || len(bytesPerPhase) == 0 {
+		return errors.New("browser bulk workload is not initialized")
+	}
+	for phase, byteCount := range bytesPerPhase {
+		if byteCount < 1 {
+			return fmt.Errorf("browser bulk phase %d has an invalid byte count", phase+1)
+		}
+		outgoing, err := session.OpenStream(ctx, "release-bulk", flowersession.Metadata{"direction": "server-to-client"})
+		if err != nil {
+			return fmt.Errorf("browser bulk phase %d open: %w", phase+1, err)
+		}
+		incoming, err := session.AcceptStream(ctx)
+		if err != nil {
+			_ = outgoing.Reset()
+			return fmt.Errorf("browser bulk phase %d accept: %w", phase+1, err)
+		}
+		if incoming.Kind != "release-bulk" || incoming.Metadata["direction"] != "client-to-server" {
+			_ = incoming.Stream.Reset()
+			_ = outgoing.Reset()
+			return fmt.Errorf("browser bulk phase %d metadata mismatch", phase+1)
+		}
+		if err := serveBrowserBulkPhase(ctx, incoming.Stream, outgoing, byteCount); err != nil {
+			return fmt.Errorf("browser bulk phase %d: %w", phase+1, err)
+		}
+	}
+	return nil
+}
+
+func serveBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteStream, byteCount int64) error {
+	defer incoming.Close()
+	stopCancellation := context.AfterFunc(ctx, func() {
+		_ = incoming.Reset()
+		_ = outgoing.Reset()
+	})
+	defer stopCancellation()
+	if err := readExactFill(ctx, incoming, byteCount, 0xa5); err != nil {
+		_ = outgoing.Reset()
+		return fmt.Errorf("read client stream: %w", err)
+	}
+	if err := writeExactFill(ctx, outgoing, byteCount, 0x5a); err != nil {
+		return fmt.Errorf("write server stream: %w", err)
+	}
+	return nil
+}
+
+func readExactFill(ctx context.Context, stream io.Reader, total int64, fill byte) error {
+	buffer := make([]byte, 32*1024)
+	remaining := total
+	for remaining > 0 {
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
+		want := int64(len(buffer))
+		if remaining < want {
+			want = remaining
+		}
+		count, err := io.ReadFull(stream, buffer[:want])
+		if err != nil {
+			return err
+		}
+		for _, value := range buffer[:count] {
+			if value != fill {
+				return errors.New("browser bulk payload mismatch")
+			}
+		}
+		remaining -= int64(count)
+	}
+	one := make([]byte, 1)
+	if count, err := stream.Read(one); count != 0 || !errors.Is(err, io.EOF) {
+		return errors.New("browser bulk stream did not end at the exact byte count")
+	}
+	return nil
+}
+
+func writeExactFill(ctx context.Context, stream releaseByteStream, total int64, fill byte) error {
+	buffer := make([]byte, 32*1024)
+	for index := range buffer {
+		buffer[index] = fill
+	}
+	remaining := total
+	for remaining > 0 {
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
+		want := int64(len(buffer))
+		if remaining < want {
+			want = remaining
+		}
+		count, err := stream.Write(buffer[:want])
+		if err != nil {
+			return err
+		}
+		if count != int(want) {
+			return io.ErrShortWrite
+		}
+		remaining -= int64(count)
+	}
+	return stream.CloseWrite()
+}

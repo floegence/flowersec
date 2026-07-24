@@ -29,7 +29,9 @@ const (
 	baselineTarget    = "direct-clean-baseline"
 	networkCellTarget = "direct-network-profile-cell"
 	tunnelCellTarget  = "tunnel-network-profile-cell"
+	browserCellTarget = "browser-webtransport-cell"
 	networkWorkerArg  = "--network-cell-worker"
+	browserWorkerArg  = "--browser-cell-worker"
 	networkModeDirect = "direct"
 	networkModeTunnel = "tunnel"
 )
@@ -81,6 +83,28 @@ type tunnelCellReport struct {
 	Results         []tunnelCarrierResult        `json:"results"`
 }
 
+type browserCellReport struct {
+	SchemaVersion   int                          `json:"schema_version"`
+	Classification  string                       `json:"classification"`
+	SourceSHA       string                       `json:"source_sha"`
+	ManifestDigest  string                       `json:"manifest_digest"`
+	ManifestSHA256  string                       `json:"manifest_file_sha256"`
+	Runner          baselineRunner               `json:"runner"`
+	ProfileID       string                       `json:"profile_id"`
+	Network         transportrelease.NetworkPlan `json:"network"`
+	Topology        string                       `json:"topology"`
+	BPFObjectSHA256 string                       `json:"bpf_object_sha256,omitempty"`
+	StartedAt       time.Time                    `json:"started_at"`
+	FinishedAt      time.Time                    `json:"finished_at"`
+	Results         []browserCellResult          `json:"results"`
+}
+
+type browserCellResult struct {
+	Run      int                 `json:"run"`
+	Workload json.RawMessage     `json:"workload"`
+	Kernel   networkKernelResult `json:"kernel"`
+}
+
 type baselineRunner struct {
 	OS            string `json:"os"`
 	Architecture  string `json:"architecture"`
@@ -128,6 +152,13 @@ type tunnelCarrierResult struct {
 var networkWorkerArguments = func() []string { return []string{networkWorkerArg} }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == browserWorkerArg {
+		if err := runBrowserWorker(os.Stdin, os.Stdout); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == networkWorkerArg {
 		if err := runNetworkWorker(os.Stdin, os.Stdout); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
@@ -156,7 +187,7 @@ func run(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget) || *manifestPath == "" || *reportPath == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
+	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget && *target != browserCellTarget) || *manifestPath == "" || *reportPath == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
 		return errors.New("runner requires a supported --target, --manifest, --report, --source-root, and a full --source-sha")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
@@ -187,6 +218,12 @@ func run(args []string) error {
 			return errors.New("tunnel network profile cell does not accept --carrier")
 		}
 		return runTunnelCell(*reportPath, *sourceSHA, *profileID, tunnelworkload.Topology(*topologyName), *bpfObject, plan, manifest)
+	}
+	if *target == browserCellTarget {
+		if *carrierName != "" || *topologyName != "" {
+			return errors.New("browser WebTransport cell does not accept --carrier or --topology")
+		}
+		return runBrowserCell(*reportPath, *sourceSHA, *sourceRoot, *profileID, *bpfObject, plan, manifest)
 	}
 	if *profileID != "" || *carrierName != "" || *topologyName != "" || *bpfObject != "" {
 		return errors.New("direct clean baseline does not accept network profile flags")

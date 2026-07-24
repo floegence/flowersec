@@ -1,0 +1,391 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/linuxnetlab"
+)
+
+func runBrowserCell(reportPath, sourceSHA, sourceRoot, profileID, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+	profile := plan.Clean
+	if profileID == "mobile-v1" {
+		profile = plan.Mobile
+	} else if profileID == "edge-v1" {
+		profile = plan.Edge
+	} else if profileID != "clean-v1" {
+		return errors.New("browser WebTransport cell requires clean-v1, mobile-v1, or edge-v1")
+	}
+	if profileID == "clean-v1" && bpfObject != "" {
+		return errors.New("clean browser WebTransport cell does not accept a BPF object")
+	}
+	if profileID != "clean-v1" && bpfObject == "" {
+		return errors.New("weak-network browser WebTransport cell requires --bpf-object")
+	}
+	var frozenBPFObject, bpfDigest string
+	if bpfObject != "" {
+		bpfBytes, err := linuxnetlab.ReadVerifiedBPFObject(bpfObject)
+		if err != nil {
+			return err
+		}
+		var cleanup func() error
+		frozenBPFObject, cleanup, err = freezeBPFObject(bpfBytes)
+		if err != nil {
+			return err
+		}
+		defer func() { resultErr = errors.Join(resultErr, cleanup()) }()
+		digest := sha256.Sum256(bpfBytes)
+		bpfDigest = hex.EncodeToString(digest[:])
+	}
+	kernel, err := kernelRelease()
+	if err != nil {
+		return err
+	}
+	report := browserCellReport{
+		SchemaVersion: 1, Classification: "linux_chromium_webtransport_profile",
+		SourceSHA: sourceSHA, ManifestDigest: manifest.Digest, ManifestSHA256: hex.EncodeToString(manifest.SHA256Sum[:]),
+		Runner:    baselineRunner{OS: runtime.GOOS, Architecture: runtime.GOARCH, KernelRelease: kernel},
+		ProfileID: profile.ID, Network: profile.Network, Topology: "browser_webtransport", BPFObjectSHA256: bpfDigest,
+		StartedAt: time.Now().UTC(),
+	}
+	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), cellDeadline)
+	defer cancel()
+	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
+		result, err := runBrowserNetworkCarrier(ctx, profile, runNumber, frozenBPFObject, sourceRoot)
+		if err != nil {
+			return fmt.Errorf("%s browser WebTransport run %d: %w", profile.ID, runNumber, err)
+		}
+		report.Results = append(report.Results, result)
+	}
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	report.FinishedAt = time.Now().UTC()
+	return writeNewReport(reportPath, report)
+}
+
+func runBrowserNetworkCarrier(ctx context.Context, plan transportrelease.ProfilePlan, runNumber int, bpfObject, sourceRoot string) (result browserCellResult, resultErr error) {
+	config, err := linuxnetlab.ConfigForCell(plan.ID+"-browser-webtransport", runNumber, plan.Network.LinkMTU, plan.Network.Firewall)
+	if err != nil {
+		return result, err
+	}
+	lab, err := linuxnetlab.Open(ctx, linuxnetlab.ExecRunner{}, config)
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Duration(plan.CleanupDeadlineSeconds)*time.Second)
+		resultErr = errors.Join(resultErr, lab.Close(cleanupCtx))
+		cancel()
+	}()
+	if bpfObject != "" {
+		profile, err := faultProfileFromPlan(plan.Network, bpfObject)
+		if err != nil {
+			return result, err
+		}
+		if err := lab.ApplyFaultProfile(ctx, profile); err != nil {
+			return result, err
+		}
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return result, err
+	}
+	request := browserWorkerRequest{
+		Plan: plan, Topology: "browser_webtransport", RunNumber: runNumber,
+		ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
+		ServerAddress: config.ServerAddress.Addr().String(), SourceRoot: sourceRoot,
+	}
+	requestJSON, err := json.Marshal(request)
+	if err != nil {
+		return result, err
+	}
+	command := exec.CommandContext(ctx, executable, browserWorkerArg)
+	command.Stdin = bytes.NewReader(requestJSON)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Run(); err != nil {
+		return result, fmt.Errorf("browser worker: %w: stdout=%s stderr=%s", err, strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()))
+	}
+	var envelope struct {
+		SchemaVersion int    `json:"schema_version"`
+		Topology      string `json:"topology"`
+		ProfileID     string `json:"profile_id"`
+		RunNumber     int    `json:"run_number"`
+		Status        string `json:"status"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || envelope.SchemaVersion != 1 || envelope.Topology != "browser_webtransport" ||
+		envelope.ProfileID != plan.ID || envelope.RunNumber != runNumber || envelope.Status != "passed" {
+		return result, errors.New("browser worker returned a mismatched result")
+	}
+	result = browserCellResult{Run: runNumber, Workload: append(json.RawMessage(nil), stdout.Bytes()...)}
+	var faults linuxnetlab.KernelFaultEvidence
+	if bpfObject != "" {
+		evidenceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		faults, err = lab.FaultEvidence(evidenceCtx)
+		cancel()
+		if err != nil {
+			return result, err
+		}
+		if err := validateKernelEvidence(plan.Network, faults); err != nil {
+			return result, err
+		}
+	}
+	result.Kernel = networkKernelResult{
+		ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
+		ClientInterface: config.ClientInterface, ServerInterface: config.ServerInterface,
+		ClientAddress: config.ClientAddress.String(), ServerAddress: config.ServerAddress.String(), Faults: faults,
+	}
+	return result, nil
+}
+
+type browserWorkerRequest struct {
+	Plan            transportrelease.ProfilePlan `json:"plan"`
+	Topology        string                       `json:"topology"`
+	RunNumber       int                          `json:"run_number"`
+	ClientNamespace string                       `json:"client_namespace"`
+	ServerNamespace string                       `json:"server_namespace"`
+	ServerAddress   string                       `json:"server_address"`
+	SourceRoot      string                       `json:"source_root"`
+}
+
+type browserCollectorPlan struct {
+	SchemaVersion       int                          `json:"schema_version"`
+	Topology            string                       `json:"topology"`
+	ProfileID           string                       `json:"profile_id"`
+	RunNumber           int                          `json:"run_number"`
+	Mode                string                       `json:"mode"`
+	ArtifactSourceURL   string                       `json:"artifact_source_url"`
+	CertificateHash     string                       `json:"certificate_hash"`
+	ClientNamespace     string                       `json:"client_netns"`
+	ModuleBindAddress   string                       `json:"module_bind_address"`
+	ModuleAdvertiseHost string                       `json:"module_advertise_host"`
+	CellDeadlineMS      int64                        `json:"cell_deadline_ms"`
+	Cold                browserCollectorColdPlan     `json:"cold"`
+	RPC                 browserCollectorRPCPlan      `json:"rpc"`
+	Bulk                browserCollectorBulkPlan     `json:"bulk"`
+	CleanupDeadlineMS   int64                        `json:"cleanup_deadline_ms"`
+	Network             transportrelease.NetworkPlan `json:"network"`
+}
+
+type browserCollectorColdPlan struct {
+	Operations          int   `json:"operations"`
+	MaxInflight         int   `json:"max_inflight"`
+	StartRatePerSecond  int   `json:"start_rate_per_second"`
+	OperationDeadlineMS int64 `json:"operation_deadline_ms"`
+	PhaseDeadlineMS     int64 `json:"phase_deadline_ms"`
+}
+
+type browserCollectorRPCPlan struct {
+	Operations          int   `json:"operations"`
+	Workers             int   `json:"workers"`
+	RequestBytes        int   `json:"request_bytes"`
+	OperationDeadlineMS int64 `json:"operation_deadline_ms"`
+	PhaseDeadlineMS     int64 `json:"phase_deadline_ms"`
+}
+
+type browserCollectorBulkPlan struct {
+	WarmupBytesPerDirection int64 `json:"warmup_bytes_per_direction"`
+	ScoreBytesPerDirection  int64 `json:"score_bytes_per_direction"`
+	PhaseDeadlineMS         int64 `json:"phase_deadline_ms"`
+}
+
+func runBrowserWorker(input io.Reader, output io.Writer) (resultErr error) {
+	decoder := json.NewDecoder(io.LimitReader(input, 128<<10))
+	decoder.DisallowUnknownFields()
+	var request browserWorkerRequest
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return errors.New("decode browser worker request")
+	}
+	if err := validateBrowserWorkerRequest(request); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(request.Plan.CellWatchdogMinutes)*time.Minute)
+	defer cancel()
+
+	allowedOrigin := "http://" + request.ServerAddress
+	var endpoint *transportrelease.ProductDirectEndpoint
+	if err := linuxnetlab.InNamespace(request.ServerNamespace, func() error {
+		var openErr error
+		endpoint, openErr = transportrelease.OpenProductDirectBrowserEndpointAt(ctx, request.ServerAddress, allowedOrigin)
+		return openErr
+	}); err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, endpoint.Close()) }()
+	certificateHash, err := endpoint.CertificateHashBase64URL()
+	if err != nil {
+		return err
+	}
+	source, err := newBrowserArtifactSource(endpoint, request.Plan, request.Topology, request.RunNumber)
+	if err != nil {
+		return err
+	}
+	listener, server, sourceURL, err := startBrowserArtifactHTTPServer(request.ServerNamespace, request.ServerAddress, source)
+	if err != nil {
+		return err
+	}
+	serverClosed := false
+	defer func() {
+		if !serverClosed {
+			resultErr = errors.Join(resultErr, closeBrowserArtifactHTTPServer(server, listener))
+		}
+	}()
+
+	collectorPlan := newBrowserCollectorPlan(request, sourceURL, certificateHash)
+	collectorResult, err := executeBrowserCollector(ctx, request.SourceRoot, request.ServerNamespace, collectorPlan)
+	serverClosed = true
+	closeErr := closeBrowserArtifactHTTPServer(server, listener)
+	finalizeErr := source.Finalize(ctx, err != nil)
+	if err != nil || closeErr != nil || finalizeErr != nil {
+		return errors.Join(err, closeErr, finalizeErr)
+	}
+	if _, err := output.Write(collectorResult); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateBrowserWorkerRequest(request browserWorkerRequest) error {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		return errors.New("browser release worker requires Linux amd64")
+	}
+	if request.Topology != "browser_webtransport" || request.RunNumber < 1 ||
+		request.ClientNamespace == "" || request.ServerNamespace == "" || request.ClientNamespace == request.ServerNamespace ||
+		net.ParseIP(request.ServerAddress) == nil || !filepath.IsAbs(request.SourceRoot) {
+		return errors.New("browser release worker request is outside the supported topology")
+	}
+	plan := request.Plan
+	if plan.ID == "" || plan.Cold.Operations < 1 || plan.Cold.MaxInflight < 1 || plan.Cold.MaxInflight > plan.Cold.Operations ||
+		plan.Cold.StartRatePerSecond < 1 || plan.Cold.OperationDeadlineSeconds < 1 || plan.Cold.PhaseDeadlineSeconds < 1 ||
+		plan.RPC.Operations < 1 || plan.RPC.Workers < 1 || plan.RPC.Workers > plan.RPC.Operations || plan.RPC.RequestBytes < 2 ||
+		plan.RPC.OperationDeadlineSeconds < 1 || plan.RPC.PhaseDeadlineSeconds < 1 ||
+		plan.Bulk.WarmupBytesPerDirection < 1 || plan.Bulk.ScoreBytesPerDirection < 1 || plan.Bulk.PhaseDeadlineSeconds < 1 ||
+		plan.CleanupDeadlineSeconds < 1 || plan.CellWatchdogMinutes < 1 || plan.Cold.Retries != 0 || plan.RPC.Retries != 0 {
+		return errors.New("browser release worker plan is invalid")
+	}
+	for _, relative := range []string{
+		"flowersec-ts/scripts/browser-release-collector.mjs",
+		"flowersec-ts/scripts/chromium-netns-launcher.sh",
+		"flowersec-ts/dist/browser/index.js",
+	} {
+		info, err := os.Stat(filepath.Join(request.SourceRoot, relative))
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("browser release worker source is incomplete: %s", relative)
+		}
+	}
+	return nil
+}
+
+func startBrowserArtifactHTTPServer(namespace, address string, handler http.Handler) (net.Listener, *http.Server, string, error) {
+	var listener net.Listener
+	if err := linuxnetlab.InNamespace(namespace, func() error {
+		var listenErr error
+		listener, listenErr = net.Listen("tcp4", net.JoinHostPort(address, "0"))
+		return listenErr
+	}); err != nil {
+		return nil, nil, "", err
+	}
+	server := &http.Server{
+		Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
+		WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second,
+	}
+	go func() { _ = server.Serve(listener) }()
+	port := listener.Addr().(*net.TCPAddr).Port
+	return listener, server, "http://" + net.JoinHostPort(address, fmt.Sprint(port)) + "/artifacts", nil
+}
+
+func closeBrowserArtifactHTTPServer(server *http.Server, listener net.Listener) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	shutdownErr := server.Shutdown(ctx)
+	listenerErr := listener.Close()
+	if errors.Is(listenerErr, net.ErrClosed) {
+		listenerErr = nil
+	}
+	return errors.Join(shutdownErr, listenerErr)
+}
+
+func newBrowserCollectorPlan(request browserWorkerRequest, sourceURL, certificateHash string) browserCollectorPlan {
+	seconds := func(value int) int64 { return int64(value) * 1000 }
+	return browserCollectorPlan{
+		SchemaVersion: 1, Topology: request.Topology, ProfileID: request.Plan.ID, RunNumber: request.RunNumber, Mode: "forced",
+		ArtifactSourceURL: sourceURL, CertificateHash: certificateHash, ClientNamespace: request.ClientNamespace,
+		ModuleBindAddress: request.ServerAddress, ModuleAdvertiseHost: request.ServerAddress,
+		CellDeadlineMS: seconds(request.Plan.CellWatchdogMinutes * 60), CleanupDeadlineMS: seconds(request.Plan.CleanupDeadlineSeconds),
+		Cold: browserCollectorColdPlan{
+			Operations: request.Plan.Cold.Operations, MaxInflight: request.Plan.Cold.MaxInflight,
+			StartRatePerSecond:  request.Plan.Cold.StartRatePerSecond,
+			OperationDeadlineMS: seconds(request.Plan.Cold.OperationDeadlineSeconds), PhaseDeadlineMS: seconds(request.Plan.Cold.PhaseDeadlineSeconds),
+		},
+		RPC: browserCollectorRPCPlan{
+			Operations: request.Plan.RPC.Operations, Workers: request.Plan.RPC.Workers, RequestBytes: request.Plan.RPC.RequestBytes,
+			OperationDeadlineMS: seconds(request.Plan.RPC.OperationDeadlineSeconds), PhaseDeadlineMS: seconds(request.Plan.RPC.PhaseDeadlineSeconds),
+		},
+		Bulk: browserCollectorBulkPlan{
+			WarmupBytesPerDirection: request.Plan.Bulk.WarmupBytesPerDirection,
+			ScoreBytesPerDirection:  request.Plan.Bulk.ScoreBytesPerDirection,
+			PhaseDeadlineMS:         seconds(request.Plan.Bulk.PhaseDeadlineSeconds),
+		},
+		Network: request.Plan.Network,
+	}
+}
+
+func executeBrowserCollector(ctx context.Context, sourceRoot, serverNamespace string, plan browserCollectorPlan) ([]byte, error) {
+	directory, err := os.MkdirTemp("", "flowersec-browser-collector-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(directory)
+	planPath := filepath.Join(directory, "plan.json")
+	resultPath := filepath.Join(directory, "result.json")
+	planJSON, err := json.Marshal(plan)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(planPath, planJSON, 0o600); err != nil {
+		return nil, err
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		return nil, err
+	}
+	collector := filepath.Join(sourceRoot, "flowersec-ts", "scripts", "browser-release-collector.mjs")
+	command := exec.CommandContext(ctx, "ip", "netns", "exec", serverNamespace, node, collector, "--plan", planPath, "--result", resultPath)
+	command.Dir = filepath.Join(sourceRoot, "flowersec-ts")
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Run(); err != nil {
+		result, _ := os.ReadFile(resultPath)
+		return nil, fmt.Errorf("browser collector: %w: stdout=%s stderr=%s result=%s", err, strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), strings.TrimSpace(string(result)))
+	}
+	result, err := os.ReadFile(resultPath)
+	if err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		SchemaVersion  int    `json:"schema_version"`
+		Classification string `json:"classification"`
+		Status         string `json:"status"`
+	}
+	if err := json.Unmarshal(result, &envelope); err != nil || envelope.SchemaVersion != 1 || envelope.Classification != "raw_browser_transport_workload" || envelope.Status != "passed" {
+		return nil, errors.New("browser collector returned an invalid result")
+	}
+	return result, nil
+}

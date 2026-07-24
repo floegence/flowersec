@@ -2,6 +2,8 @@ package transportrelease
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -111,6 +113,65 @@ func TestProductDirectRPCPreservesExactPayload(t *testing.T) {
 	}
 }
 
+func TestBrowserBulkServerUsesNativeBidirectionalStreams(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	pair, err := OpenProductDirect(ctx, carrier.KindWebTransport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pair.Close()
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- ServeBrowserBulk(ctx, pair.Server, []int64{64 * 1024, 256 * 1024}) }()
+	for _, byteCount := range []int64{64 * 1024, 256 * 1024} {
+		accepted := make(chan struct {
+			stream releaseByteStream
+			err    error
+		}, 1)
+		go func() {
+			incoming, acceptErr := pair.Client.AcceptStream(ctx)
+			if acceptErr == nil && (incoming.Kind != "release-bulk" || incoming.Metadata["direction"] != "server-to-client") {
+				acceptErr = errors.New("server bulk metadata mismatch")
+			}
+			accepted <- struct {
+				stream releaseByteStream
+				err    error
+			}{stream: incoming.Stream, err: acceptErr}
+		}()
+		outgoing, err := pair.Client.OpenStream(ctx, "release-bulk", map[string]any{"direction": "client-to-server"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		incoming := <-accepted
+		if incoming.err != nil {
+			t.Fatal(incoming.err)
+		}
+		results := make(chan error, 2)
+		go func() {
+			if err := writeExactFill(ctx, outgoing, byteCount, 0xa5); err != nil {
+				results <- fmt.Errorf("client write: %w", err)
+				return
+			}
+			results <- nil
+		}()
+		go func() {
+			if err := readExactFill(ctx, incoming.stream, byteCount, 0x5a); err != nil {
+				results <- fmt.Errorf("client read: %w", err)
+				return
+			}
+			results <- nil
+		}()
+		if err := errors.Join(<-results, <-results); err != nil {
+			t.Fatal(err)
+		}
+		_ = outgoing.Close()
+		_ = incoming.stream.Close()
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProductDirectEndpointReusesListenerForConcurrentArtifacts(t *testing.T) {
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {
@@ -162,6 +223,84 @@ func TestProductDirectEndpointRejectsNonConcreteListenAddress(t *testing.T) {
 		if _, err := OpenProductDirectEndpointAt(context.Background(), carrier.KindWebSocket, address); err == nil {
 			t.Fatalf("accepted listen address %q", address)
 		}
+	}
+}
+
+func TestProductDirectBrowserEndpointRequiresConcreteOriginAndExposesCertificateHash(t *testing.T) {
+	for _, origin := range []string{"", "https://example.test", "file:///tmp/site", "http://0.0.0.0:9000", "http://224.0.0.1"} {
+		if _, err := OpenProductDirectBrowserEndpointAt(context.Background(), "127.0.0.1", origin); err == nil {
+			t.Fatalf("accepted browser origin %q", origin)
+		}
+	}
+	endpoint, err := OpenProductDirectBrowserEndpointAt(context.Background(), "127.0.0.1", "http://127.0.0.1:9000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endpoint.Close()
+	encoded, err := endpoint.CertificateHashBase64URL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) != 32 {
+		t.Fatalf("certificate hash = %q: %v", encoded, err)
+	}
+}
+
+func TestBrowserOriginAuthorizationPinsSchemeAndExplicitIPAddress(t *testing.T) {
+	allowed := "http://198.18.0.2"
+	for _, origin := range []string{"http://198.18.0.2:39123", "http://198.18.0.2"} {
+		if !browserOriginAllowed(origin, allowed) {
+			t.Fatalf("origin %q was rejected", origin)
+		}
+	}
+	for _, origin := range []string{"https://198.18.0.2:39123", "http://198.18.0.3:39123", "http://example.test:39123", "http://198.18.0.2:39123/path"} {
+		if browserOriginAllowed(origin, allowed) {
+			t.Fatalf("origin %q was accepted", origin)
+		}
+	}
+	if browserOriginAllowed("http://198.18.0.2:39124", "http://198.18.0.2:39123") {
+		t.Fatal("origin with the wrong pinned port was accepted")
+	}
+}
+
+func TestProductDirectBrowserArtifactsAreFreshAndCancelable(t *testing.T) {
+	endpoint, err := OpenProductDirectBrowserEndpointAt(context.Background(), "127.0.0.1", "http://127.0.0.1:9000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endpoint.Close()
+
+	first, err := endpoint.IssueBrowserArtifact()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := endpoint.IssueBrowserArtifact()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ArtifactJSON() == second.ArtifactJSON() {
+		t.Fatal("browser artifact was reused")
+	}
+	for _, issued := range []*ProductDirectBrowserArtifact{first, second} {
+		var value map[string]any
+		if err := json.Unmarshal([]byte(issued.ArtifactJSON()), &value); err != nil {
+			t.Fatal(err)
+		}
+		if value["v"] != float64(2) {
+			t.Fatalf("artifact version = %v", value["v"])
+		}
+		issued.Cancel()
+		issued.Cancel()
+	}
+	endpoint.pendingMu.Lock()
+	pending := len(endpoint.pending)
+	endpoint.pendingMu.Unlock()
+	if pending != 0 {
+		t.Fatalf("pending artifacts after cancellation = %d", pending)
+	}
+	if _, err := first.AwaitServer(context.Background()); err == nil {
+		t.Fatal("canceled artifact could be awaited")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -41,12 +42,14 @@ var errProductDirectEndpointClosed = errors.New("product direct endpoint closed"
 // still issues and durably spends a distinct artifact, so cold-connect timing
 // excludes certificate and listener provisioning without weakening admission.
 type ProductDirectEndpoint struct {
-	kind         carrier.Kind
-	listenHost   string
-	candidateURL string
-	trustRoots   *x509.CertPool
-	ctx          context.Context
-	cancel       context.CancelCauseFunc
+	kind            carrier.Kind
+	listenHost      string
+	candidateURL    string
+	trustRoots      *x509.CertPool
+	certificateHash [sha256.Size]byte
+	allowedOrigin   string
+	ctx             context.Context
+	cancel          context.CancelCauseFunc
 
 	pendingMu sync.Mutex
 	pending   map[[sha256.Size]byte]*admissionExpectation
@@ -54,6 +57,19 @@ type ProductDirectEndpoint struct {
 	closeOnce      sync.Once
 	closeErr       error
 	transportClose func() error
+}
+
+// ProductDirectBrowserArtifact is a one-shot artifact issued by a release
+// endpoint for consumption by the real browser SDK. It intentionally exposes
+// only serialized input and the resulting server session.
+type ProductDirectBrowserArtifact struct {
+	endpoint *ProductDirectEndpoint
+	rawJSON  string
+	expected *admissionExpectation
+	digest   [sha256.Size]byte
+
+	mu       sync.Mutex
+	consumed bool
 }
 
 // ProductDirectPair is a one-shot production connection established through
@@ -93,6 +109,19 @@ func OpenProductDirectEndpoint(ctx context.Context, kind carrier.Kind) (*Product
 // OpenProductDirectEndpointAt provisions a production endpoint on one explicit
 // IP address. Release workloads use this inside an isolated network namespace.
 func OpenProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenHost string) (*ProductDirectEndpoint, error) {
+	return openProductDirectEndpointAt(ctx, kind, listenHost, releaseRunnerOrigin)
+}
+
+// OpenProductDirectBrowserEndpointAt provisions a WebTransport endpoint that
+// admits only the isolated browser module-site scheme and explicit IP address.
+func OpenProductDirectBrowserEndpointAt(ctx context.Context, listenHost, browserOrigin string) (*ProductDirectEndpoint, error) {
+	if err := validateBrowserOrigin(browserOrigin); err != nil {
+		return nil, err
+	}
+	return openProductDirectEndpointAt(ctx, carrier.KindWebTransport, listenHost, browserOrigin)
+}
+
+func openProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenHost, allowedOrigin string) (*ProductDirectEndpoint, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -105,8 +134,10 @@ func OpenProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenH
 		return nil, err
 	}
 	endpointCtx, cancel := context.WithCancelCause(ctx)
+	certificateHash := sha256.Sum256(serverTLS.Certificates[0].Certificate[0])
 	endpoint := &ProductDirectEndpoint{
 		kind: kind, listenHost: listenHost, trustRoots: clientTLS.RootCAs, ctx: endpointCtx, cancel: cancel,
+		certificateHash: certificateHash, allowedOrigin: allowedOrigin,
 		pending: make(map[[sha256.Size]byte]*admissionExpectation),
 	}
 	if err := endpoint.start(serverTLS); err != nil {
@@ -114,6 +145,100 @@ func OpenProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenH
 		return nil, err
 	}
 	return endpoint, nil
+}
+
+// CertificateHashBase64URL returns the release endpoint's leaf-certificate
+// SHA-256 digest for Chromium's serverCertificateHashes option.
+func (endpoint *ProductDirectEndpoint) CertificateHashBase64URL() (string, error) {
+	if endpoint == nil || endpoint.kind != carrier.KindWebTransport || endpoint.certificateHash == ([sha256.Size]byte{}) {
+		return "", errors.New("WebTransport certificate hash is unavailable")
+	}
+	return base64.RawURLEncoding.EncodeToString(endpoint.certificateHash[:]), nil
+}
+
+// IssueBrowserArtifact registers a fresh one-shot artifact without opening a
+// Go client connection. The caller must await or cancel every issued artifact.
+func (endpoint *ProductDirectEndpoint) IssueBrowserArtifact() (*ProductDirectBrowserArtifact, error) {
+	if endpoint == nil || endpoint.kind != carrier.KindWebTransport || endpoint.ctx == nil {
+		return nil, errors.New("browser artifact endpoint is not initialized")
+	}
+	if err := context.Cause(endpoint.ctx); err != nil {
+		return nil, err
+	}
+	contract, err := releaseSessionContract()
+	if err != nil {
+		return nil, err
+	}
+	artifact := directArtifact(endpoint.kind, endpoint.candidateURL, contract)
+	expectedFSB2, err := expectedDirectAdmission(artifact)
+	if err != nil {
+		return nil, err
+	}
+	expected := &admissionExpectation{raw: expectedFSB2, contract: contract, result: make(chan productServerResult, 1)}
+	digest, err := endpoint.register(expected)
+	if err != nil {
+		return nil, err
+	}
+	rawArtifact, err := artifactv2.MarshalArtifactJSON(artifact)
+	if err != nil {
+		endpoint.abandon(digest, expected)
+		return nil, err
+	}
+	return &ProductDirectBrowserArtifact{
+		endpoint: endpoint, rawJSON: string(rawArtifact), expected: expected, digest: digest,
+	}, nil
+}
+
+// ArtifactJSON returns the opaque serialized artifact consumed by the browser.
+func (artifact *ProductDirectBrowserArtifact) ArtifactJSON() string {
+	if artifact == nil {
+		return ""
+	}
+	return artifact.rawJSON
+}
+
+// AwaitServer waits for the browser to complete admission and encrypted READY.
+// It can be called exactly once.
+func (artifact *ProductDirectBrowserArtifact) AwaitServer(ctx context.Context) (flowersession.SessionV2, error) {
+	if artifact == nil || artifact.endpoint == nil || artifact.expected == nil {
+		return nil, errors.New("browser artifact is not initialized")
+	}
+	artifact.mu.Lock()
+	if artifact.consumed {
+		artifact.mu.Unlock()
+		return nil, errors.New("browser artifact was already consumed")
+	}
+	artifact.consumed = true
+	artifact.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case result := <-artifact.expected.result:
+		artifact.endpoint.unregister(artifact.digest, artifact.expected)
+		return result.session, result.err
+	case <-ctx.Done():
+		artifact.endpoint.abandon(artifact.digest, artifact.expected)
+		return nil, context.Cause(ctx)
+	case <-artifact.endpoint.ctx.Done():
+		artifact.endpoint.abandon(artifact.digest, artifact.expected)
+		return nil, context.Cause(artifact.endpoint.ctx)
+	}
+}
+
+// Cancel abandons an artifact that will not be consumed by the browser.
+func (artifact *ProductDirectBrowserArtifact) Cancel() {
+	if artifact == nil || artifact.endpoint == nil || artifact.expected == nil {
+		return
+	}
+	artifact.mu.Lock()
+	if artifact.consumed {
+		artifact.mu.Unlock()
+		return
+	}
+	artifact.consumed = true
+	artifact.mu.Unlock()
+	artifact.endpoint.abandon(artifact.digest, artifact.expected)
 }
 
 // Connect measures one complete public connector path through encrypted READY.
@@ -395,7 +520,7 @@ func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) 
 		return err
 	}
 	server, err := carrierwt.NewServer(serverTLS, limits, func(request *http.Request) bool {
-		return request.Header.Get("Origin") == releaseRunnerOrigin
+		return browserOriginAllowed(request.Header.Get("Origin"), endpoint.allowedOrigin)
 	})
 	if err != nil {
 		return err
@@ -428,6 +553,31 @@ func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) 
 		return errors.Join(serverErr, packetErr, serveErr)
 	}
 	return nil
+}
+
+func validateBrowserOrigin(raw string) error {
+	origin, err := url.Parse(raw)
+	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.User != nil ||
+		origin.Host == "" || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+		return errors.New("browser origin must be an absolute HTTP origin")
+	}
+	address := net.ParseIP(origin.Hostname())
+	if address == nil || address.IsUnspecified() || address.IsMulticast() {
+		return errors.New("browser origin must use a concrete unicast IP address")
+	}
+	return nil
+}
+
+func browserOriginAllowed(raw, allowed string) bool {
+	origin, err := url.Parse(raw)
+	if err != nil || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+		return false
+	}
+	want, err := url.Parse(allowed)
+	if err != nil || origin.Scheme != want.Scheme || origin.Hostname() != want.Hostname() {
+		return false
+	}
+	return want.Port() == "" || origin.Port() == want.Port()
 }
 
 func (endpoint *ProductDirectEndpoint) serveNative(carrierSession carrier.Session) {

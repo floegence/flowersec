@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +94,57 @@ func TestCompletedWithinRejectsExpiredContext(t *testing.T) {
 func TestCompletedWithinRejectsElapsedLimit(t *testing.T) {
 	if err := completedWithin(context.Background(), time.Now().Add(-2*time.Second), time.Second); err == nil {
 		t.Fatal("accepted completion after explicit phase limit")
+	}
+}
+
+func TestBrowserArtifactSourceIssuesAndSpendsEveryArtifactOnce(t *testing.T) {
+	endpoint, err := transportrelease.OpenProductDirectBrowserEndpointAt(context.Background(), "127.0.0.1", "http://127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endpoint.Close()
+	plan := transportrelease.ProfilePlan{
+		ID: "mobile-v1", Cold: transportrelease.ColdPlan{Operations: 2},
+		CleanupDeadlineSeconds: 1, CellWatchdogMinutes: 1,
+	}
+	source, err := newBrowserArtifactSource(endpoint, plan, "browser_webtransport", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(browserArtifactRequest{
+		SchemaVersion: 1, Action: "acquire", Topology: "browser_webtransport",
+		ProfileID: "mobile-v1", RunNumber: 3, Phase: "cold", Count: 2,
+	})
+	request := httptest.NewRequest(http.MethodPost, "/artifacts", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	source.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("acquire status = %d: %s", response.Code, response.Body.String())
+	}
+	var batch browserArtifactResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &batch); err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Artifacts) != 2 || batch.Artifacts[0].SpendToken == batch.Artifacts[1].SpendToken {
+		t.Fatalf("invalid artifact batch: %+v", batch)
+	}
+	for _, artifact := range batch.Artifacts {
+		spendBody, _ := json.Marshal(browserArtifactRequest{SchemaVersion: 1, Action: "spend", SpendToken: artifact.SpendToken})
+		for attempt, want := range []int{http.StatusNoContent, http.StatusConflict} {
+			spendRequest := httptest.NewRequest(http.MethodPost, "/artifacts", bytes.NewReader(spendBody))
+			spendRequest.Header.Set("Content-Type", "application/json")
+			spendResponse := httptest.NewRecorder()
+			source.ServeHTTP(spendResponse, spendRequest)
+			if spendResponse.Code != want {
+				t.Fatalf("spend attempt %d status = %d, want %d", attempt+1, spendResponse.Code, want)
+			}
+		}
+	}
+	finalizeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := source.Finalize(finalizeCtx, true); err == nil {
+		t.Fatal("aborted incomplete browser source finalized successfully")
 	}
 }
 
