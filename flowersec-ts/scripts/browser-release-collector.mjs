@@ -163,17 +163,32 @@ async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
           clearTimeout(timer);
         }
         const durationNs = Math.max(1, Math.round((performance.now() - started) * 1_000_000));
-        const cleanupStarted = performance.now();
-        await Promise.race([
-          session.close(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("cold cleanup deadline exceeded")), cleanupMs)),
-        ]);
+        let cleanupDurationNs;
+        try {
+          const readinessController = new AbortController();
+          const readinessTimer = setTimeout(
+            () => readinessController.abort(new Error("cold readiness confirmation deadline exceeded")),
+            operationDeadlineMs,
+          );
+          try {
+            await session.probeLiveness({ signal: readinessController.signal });
+          } finally {
+            clearTimeout(readinessTimer);
+          }
+        } finally {
+          const cleanupStarted = performance.now();
+          await Promise.race([
+            session.close(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("cold cleanup deadline exceeded")), cleanupMs)),
+          ]);
+          cleanupDurationNs = Math.max(1, Math.round((performance.now() - cleanupStarted) * 1_000_000));
+        }
         return {
           ordinal: ordinalValue,
           scheduled_at: scheduledAtValue,
           started_at: startedAt,
           duration_ns: durationNs,
-          cleanup_duration_ns: Math.max(1, Math.round((performance.now() - cleanupStarted) * 1_000_000)),
+          cleanup_duration_ns: cleanupDurationNs,
         };
       }, {
         item: artifacts[ordinal - 1],
