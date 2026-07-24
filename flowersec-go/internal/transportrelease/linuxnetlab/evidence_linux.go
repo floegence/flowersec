@@ -18,8 +18,14 @@ func (lab *Lab) FaultEvidence(ctx context.Context) (KernelFaultEvidence, error) 
 	if err != nil {
 		return KernelFaultEvidence{}, err
 	}
+	if err := validateKernelFaultStats("client", client); err != nil {
+		return KernelFaultEvidence{}, err
+	}
 	server, err := lab.readFaultStats(ctx, "server")
 	if err != nil {
+		return KernelFaultEvidence{}, err
+	}
+	if err := validateKernelFaultStats("server", server); err != nil {
 		return KernelFaultEvidence{}, err
 	}
 	return KernelFaultEvidence{Client: client, Server: server}, nil

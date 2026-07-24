@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadReleasePlanUsesFrozenCleanWorkloads(t *testing.T) {
@@ -38,6 +39,14 @@ func TestLoadReleasePlanUsesFrozenWeakNetworkWorkloads(t *testing.T) {
 		plan.Edge.Cold.StartRatePerSecond != 5 || plan.Edge.Cold.PhaseDeadlineSeconds != 430 ||
 		plan.Edge.RPC.PhaseDeadlineSeconds != 170 || plan.Edge.Bulk.ScoreBytesPerDirection != 2<<20 {
 		t.Fatalf("edge workload = %+v", plan.Edge)
+	}
+	if plan.Mobile.Fault.ReorderPercent != 1 || plan.Mobile.Fault.DuplicatePercent != 1 ||
+		plan.Mobile.Fault.OutageStart != time.Second || plan.Mobile.Fault.OutageDuration != 2*time.Second {
+		t.Fatalf("mobile fault matrix = %+v", plan.Mobile.Fault)
+	}
+	if plan.Edge.Fault.ReorderPercent != 2 || plan.Edge.Fault.DuplicatePercent != 2 ||
+		plan.Edge.Fault.OutageStart != time.Second || plan.Edge.Fault.OutageDuration != 2*time.Second {
+		t.Fatalf("edge fault matrix = %+v", plan.Edge.Fault)
 	}
 
 	mobileNetwork := plan.Mobile.Network

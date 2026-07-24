@@ -10,9 +10,10 @@ import (
 )
 
 type recordingRunner struct {
-	commands []string
-	failAt   int
-	failFrom int
+	commands  []string
+	failAt    int
+	failFrom  int
+	ifindexes int
 }
 
 func (runner *recordingRunner) Run(_ context.Context, name string, args ...string) error {
@@ -21,6 +22,13 @@ func (runner *recordingRunner) Run(_ context.Context, name string, args ...strin
 		return errors.New("injected command failure")
 	}
 	return nil
+}
+
+func (runner *recordingRunner) InterfaceIndex(_ context.Context, namespace, device string) (int, error) {
+	runner.commands = append(runner.commands, fmt.Sprintf("ifindex [%s %s]", namespace, device))
+	index := 321 + runner.ifindexes
+	runner.ifindexes++
+	return index, nil
 }
 
 func TestConfigForCellHandlesFinalAddressSlot(t *testing.T) {

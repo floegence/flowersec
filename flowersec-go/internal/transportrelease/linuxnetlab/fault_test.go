@@ -22,15 +22,17 @@ func mobileFaultProfile(t *testing.T) FaultProfile {
 		Jitter:   []time.Duration{0, 8 * time.Millisecond, -4 * time.Millisecond, 12 * time.Millisecond, -8 * time.Millisecond, 4 * time.Millisecond, -2 * time.Millisecond, 6 * time.Millisecond},
 		LossMode: LossPeriodic, EveryNth: 50, RateBitsPerSecond: 5_000_000,
 		TokenBurstBytes: 32_768, QueueBytes: 262_144, LinkMTU: 1280,
+		ReorderPercent: 1, DuplicatePercent: 1, ReorderDelay: 250 * time.Millisecond,
+		OutageStart: time.Second, OutageDuration: 2 * time.Second,
 	}
 }
 
 func TestEncodeFaultConfigMatchesBPFLayout(t *testing.T) {
-	encoded, err := encodeFaultConfig(mobileFaultProfile(t))
+	encoded, err := encodeFaultConfig(mobileFaultProfile(t), 321)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(encoded) != 104 {
+	if len(encoded) != 144 {
 		t.Fatalf("config bytes = %d", len(encoded))
 	}
 	if got := binary.LittleEndian.Uint64(encoded[0:8]); got != uint64(60*time.Millisecond) {
@@ -42,9 +44,34 @@ func TestEncodeFaultConfigMatchesBPFLayout(t *testing.T) {
 			t.Fatalf("jitter[%d] = %d, want %d", index, got, want)
 		}
 	}
-	for offset, want := range map[int]uint32{72: 8, 76: 1, 80: 50, 96: 1280} {
+	for offset, want := range map[int]uint32{72: 8, 76: 1, 80: 50, 96: 1280, 104: 100, 108: 100, 136: 321} {
 		if got := binary.LittleEndian.Uint32(encoded[offset : offset+4]); got != want {
 			t.Fatalf("offset %d = %d, want %d", offset, got, want)
+		}
+	}
+	for offset, want := range map[int]uint64{
+		112: uint64(time.Second), 120: uint64(2 * time.Second), 128: uint64(250 * time.Millisecond),
+	} {
+		if got := binary.LittleEndian.Uint64(encoded[offset : offset+8]); got != want {
+			t.Fatalf("offset %d = %d, want %d", offset, got, want)
+		}
+	}
+}
+
+func TestEncodeFaultConfigSupportsFrozenMobileAndEdgeMatrix(t *testing.T) {
+	for _, percent := range []int{1, 2} {
+		profile := mobileFaultProfile(t)
+		profile.ReorderPercent = percent
+		profile.DuplicatePercent = percent
+		encoded, err := encodeFaultConfig(profile, 400+percent)
+		if err != nil {
+			t.Fatalf("percent %d: %v", percent, err)
+		}
+		if got := binary.LittleEndian.Uint32(encoded[104:108]); got != uint32(percent*100) {
+			t.Fatalf("reorder basis points = %d", got)
+		}
+		if got := binary.LittleEndian.Uint32(encoded[108:112]); got != uint32(percent*100) {
+			t.Fatalf("duplicate basis points = %d", got)
 		}
 	}
 }
@@ -102,6 +129,21 @@ func TestApplyFaultProfileBuildsTwoIsolatedKernelDirections(t *testing.T) {
 	if count := strings.Count(joined, "[map update pinned "); count != 2 {
 		t.Fatalf("map updates = %d", count)
 	}
+	for index, side := range []struct {
+		namespace string
+		device    string
+	}{{config.ClientNamespace, config.ClientInterface}, {config.ServerNamespace, config.ServerInterface}} {
+		ifbUp := strings.Index(joined, "--net=/var/run/netns/"+side.namespace+" -- ip link set dev "+side.device+"i mtu 1280 up")
+		resolved := strings.Index(joined, "ifindex ["+side.namespace+" "+side.device+"i]")
+		encoded, err := encodeFaultConfig(mobileFaultProfile(t), 321+index)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mapUpdate := strings.Index(joined, strings.Join(byteArguments(encoded), " "))
+		if ifbUp < 0 || resolved < ifbUp || mapUpdate < resolved {
+			t.Fatalf("IFB/config order is not fail-closed for %s:\n%s", side.namespace, joined)
+		}
+	}
 	if err := lab.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -114,13 +156,36 @@ func TestApplyFaultProfileBuildsTwoIsolatedKernelDirections(t *testing.T) {
 func TestFaultProfileRejectsNonFrozenBounds(t *testing.T) {
 	profile := mobileFaultProfile(t)
 	profile.Jitter = profile.Jitter[:7]
-	if _, err := encodeFaultConfig(profile); err == nil {
+	if _, err := encodeFaultConfig(profile, 321); err == nil {
 		t.Fatal("accepted a non-eight-value jitter cycle")
 	}
 	profile = mobileFaultProfile(t)
 	profile.QueueBytes = profile.TokenBurstBytes - 1
-	if _, err := encodeFaultConfig(profile); err == nil {
+	if _, err := encodeFaultConfig(profile, 321); err == nil {
 		t.Fatal("accepted queue smaller than token burst")
+	}
+}
+
+func TestFaultProfileRejectsUnfrozenPacketFaultMatrix(t *testing.T) {
+	tests := map[string]func(*FaultProfile){
+		"unsupported reorder percentage":   func(profile *FaultProfile) { profile.ReorderPercent = 3 },
+		"unsupported duplicate percentage": func(profile *FaultProfile) { profile.DuplicatePercent = 3 },
+		"one-sided outage":                 func(profile *FaultProfile) { profile.OutageDuration = 0 },
+		"wrong outage start":               func(profile *FaultProfile) { profile.OutageStart = 2 * time.Second },
+		"missing reorder delay":            func(profile *FaultProfile) { profile.ReorderDelay = 0 },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			profile := mobileFaultProfile(t)
+			mutate(&profile)
+			if _, err := encodeFaultConfig(profile, 321); err == nil {
+				t.Fatal("accepted an unfrozen fault matrix")
+			}
+		})
+	}
+	profile := mobileFaultProfile(t)
+	if _, err := encodeFaultConfig(profile, 0); err == nil {
+		t.Fatal("accepted duplicate injection without a target IFB")
 	}
 }
 

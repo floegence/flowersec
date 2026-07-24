@@ -22,6 +22,13 @@ struct fault_config {
 	__u32 burst_last;
 	__u32 link_mtu;
 	__u32 reserved;
+	__u32 reorder_basis_points;
+	__u32 duplicate_basis_points;
+	__u64 outage_start_ns;
+	__u64 outage_duration_ns;
+	__u64 reorder_delay_ns;
+	__u32 duplicate_ifindex;
+	__u32 reserved_2;
 };
 
 struct fault_stats {
@@ -34,6 +41,12 @@ struct fault_stats {
 	__u64 mtu_drop_packets;
 	__u64 gso_packets;
 	__u64 timestamp_errors;
+	__u64 reorder_packets;
+	__u64 duplicate_packets;
+	__u64 duplicate_errors;
+	__u64 outage_drop_packets;
+	__u64 first_packet_ns;
+	__u64 delivered_packets;
 	__u64 jitter_slot_packets[FLOWERSEC_MAX_JITTER_VALUES];
 };
 
@@ -51,6 +64,16 @@ struct {
 	__type(value, struct fault_stats);
 } flowersec_fault_stats SEC(".maps");
 
+static __always_inline __u8 selected_ordinal(__u64 ordinal, __u32 basis_points, __u64 offset)
+{
+	__u64 period;
+
+	if (basis_points == 0 || basis_points > 10000)
+		return 0;
+	period = 10000 / basis_points;
+	return (ordinal - 1 + offset) % period == 0;
+}
+
 SEC("classifier")
 int flowersec_packet_fault(struct __sk_buff *skb)
 {
@@ -58,10 +81,13 @@ int flowersec_packet_fault(struct __sk_buff *skb)
 	struct fault_config *config = bpf_map_lookup_elem(&flowersec_fault_config, &key);
 	struct fault_stats *stats = bpf_map_lookup_elem(&flowersec_fault_stats, &key);
 	__u64 ordinal;
+	__u64 now;
+	__u64 first_packet_ns;
 	__s64 jitter = 0;
 	__s64 delay;
 	__u32 l3_length = 0;
 	__u32 jitter_slot = 0;
+	__u8 reorder = 0;
 
 	if (!config || !stats)
 		return TC_ACT_SHOT;
@@ -104,6 +130,20 @@ int flowersec_packet_fault(struct __sk_buff *skb)
 		__sync_fetch_and_add(&stats->mtu_drop_packets, 1);
 		return TC_ACT_SHOT;
 	}
+	now = bpf_ktime_get_ns();
+	first_packet_ns = stats->first_packet_ns;
+	if (first_packet_ns == 0) {
+		__u64 previous = __sync_val_compare_and_swap(&stats->first_packet_ns, 0, now);
+		first_packet_ns = previous == 0 ? now : previous;
+	}
+	if (config->outage_duration_ns > 0 && now >= first_packet_ns) {
+		__u64 elapsed = now - first_packet_ns;
+		if (elapsed >= config->outage_start_ns &&
+		    elapsed - config->outage_start_ns < config->outage_duration_ns) {
+			__sync_fetch_and_add(&stats->outage_drop_packets, 1);
+			return TC_ACT_SHOT;
+		}
+	}
 	if (config->loss_mode == FLOWERSEC_LOSS_PERIODIC &&
 	    config->every_nth > 0 && ordinal % config->every_nth == 0) {
 		__sync_fetch_and_add(&stats->periodic_loss_packets, 1);
@@ -123,8 +163,11 @@ int flowersec_packet_fault(struct __sk_buff *skb)
 		__sync_fetch_and_add(&stats->jitter_slot_packets[jitter_slot], 1);
 	}
 	delay = (__s64)config->base_delay_ns + jitter;
+	reorder = selected_ordinal(ordinal, config->reorder_basis_points, 0);
+	if (reorder)
+		delay += (__s64)config->reorder_delay_ns;
 	if (delay > 0) {
-		__u64 delivery = bpf_ktime_get_ns() + (__u64)delay;
+		__u64 delivery = now + (__u64)delay;
 		__sync_fetch_and_add(&stats->delay_packets, 1);
 		if (jitter != 0)
 			__sync_fetch_and_add(&stats->jitter_packets, 1);
@@ -132,7 +175,19 @@ int flowersec_packet_fault(struct __sk_buff *skb)
 			__sync_fetch_and_add(&stats->timestamp_errors, 1);
 			return TC_ACT_SHOT;
 		}
+		if (reorder)
+			__sync_fetch_and_add(&stats->reorder_packets, 1);
 	}
+	if (config->duplicate_basis_points > 0 && config->duplicate_basis_points <= 10000) {
+		__u64 duplicate_period = 10000 / config->duplicate_basis_points;
+		if (selected_ordinal(ordinal, config->duplicate_basis_points, duplicate_period / 2)) {
+			if (bpf_clone_redirect(skb, config->duplicate_ifindex, 0) < 0)
+				__sync_fetch_and_add(&stats->duplicate_errors, 1);
+			else
+				__sync_fetch_and_add(&stats->duplicate_packets, 1);
+		}
+	}
+	__sync_fetch_and_add(&stats->delivered_packets, 1);
 	/* Continue to the lower-priority mirred filter; direct redirect clears EDT. */
 	return TC_ACT_UNSPEC;
 }

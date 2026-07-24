@@ -178,6 +178,101 @@ func TestPrivilegedExactFaultSchedules(t *testing.T) {
 	}
 }
 
+func TestPrivilegedReorderDuplicateAndOutage(t *testing.T) {
+	if os.Getenv("FLOWERSEC_LINUX_NETLAB_INTEGRATION") != "1" {
+		t.Skip("set FLOWERSEC_LINUX_NETLAB_INTEGRATION=1 on the audited privileged Linux runner")
+	}
+	bpfObject := os.Getenv("FLOWERSEC_BPF_OBJECT")
+	if bpfObject == "" {
+		t.Skip("set FLOWERSEC_BPF_OBJECT to the verifier-loaded classifier object")
+	}
+	profile := FaultProfile{
+		BPFObject: bpfObject, BaseDelay: 60 * time.Millisecond,
+		Jitter:   []time.Duration{0, 8 * time.Millisecond, -4 * time.Millisecond, 12 * time.Millisecond, -8 * time.Millisecond, 4 * time.Millisecond, -2 * time.Millisecond, 6 * time.Millisecond},
+		LossMode: LossPeriodic, EveryNth: 50, RateBitsPerSecond: 5_000_000,
+		TokenBurstBytes: 32_768, QueueBytes: 262_144, LinkMTU: 1280,
+		ReorderPercent: 1, DuplicatePercent: 1, ReorderDelay: 250 * time.Millisecond,
+		OutageStart: time.Second, OutageDuration: 2 * time.Second,
+	}
+	config, err := ConfigForCell("matrix-real", os.Getpid()%9999+1, profile.LinkMTU, FrozenFirewall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	lab, err := Open(ctx, ExecRunner{}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if err := lab.Close(cleanupCtx); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := lab.ApplyFaultProfile(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	receiverScript := `import json,socket,struct,sys,time
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind((sys.argv[1],38401)); s.settimeout(.2)
+end=time.monotonic()+6; values=[]
+while time.monotonic()<end:
+  try: values.append(struct.unpack('!I',s.recvfrom(64)[0])[0])
+  except TimeoutError: pass
+print(json.dumps(values))`
+	receiver := exec.CommandContext(ctx, "ip", "netns", "exec", config.ServerNamespace, "python3", "-c", receiverScript, config.ServerAddress.Addr().String())
+	var receiverOutput bytes.Buffer
+	receiver.Stdout = &receiverOutput
+	receiver.Stderr = &receiverOutput
+	if err := receiver.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	senderScript := `import socket,struct,sys,time
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+for sequence in range(1,401):
+  s.sendto(struct.pack('!I',sequence),(sys.argv[1],38401)); time.sleep(.01)`
+	sender := exec.CommandContext(ctx, "ip", "netns", "exec", config.ClientNamespace, "python3", "-c", senderScript, config.ServerAddress.Addr().String())
+	if output, err := sender.CombinedOutput(); err != nil {
+		t.Fatalf("send fault matrix sequence: %v: %s", err, output)
+	}
+	if err := receiver.Wait(); err != nil {
+		t.Fatalf("receive fault matrix sequence: %v: %s\n%s", err, receiverOutput.Bytes(), networkDiagnostics(config))
+	}
+	var values []int
+	if err := json.Unmarshal(receiverOutput.Bytes(), &values); err != nil {
+		t.Fatalf("decode received sequence: %v: %s", err, receiverOutput.Bytes())
+	}
+	counts := make(map[int]int, len(values))
+	outOfOrder := false
+	for index, value := range values {
+		counts[value]++
+		if index > 0 && value < values[index-1] {
+			outOfOrder = true
+		}
+	}
+	duplicated := false
+	for _, count := range counts {
+		if count > 1 {
+			duplicated = true
+			break
+		}
+	}
+	if !duplicated || !outOfOrder {
+		t.Fatalf("kernel matrix did not produce duplicate and out-of-order delivery: %v", values)
+	}
+	stats := readFaultStats(t, config, "server")
+	if stats.ReorderPackets == 0 || stats.DuplicatePackets == 0 || stats.OutageDropPackets == 0 ||
+		stats.FirstPacketNS == 0 || stats.DuplicateErrors != 0 {
+		t.Fatalf("kernel matrix counters are incomplete: %+v", stats)
+	}
+	if err := validateKernelFaultStats("server", KernelFaultStats(stats)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func exchangeUDPPackets(t *testing.T, ctx context.Context, config Config, sent, clientDelivered, serverDelivered int) {
 	t.Helper()
 	receiverScript := `import socket,sys
@@ -282,6 +377,12 @@ type faultStats struct {
 	MTUDropPackets      uint64    `json:"mtu_drop_packets"`
 	GSOPackets          uint64    `json:"gso_packets"`
 	TimestampErrors     uint64    `json:"timestamp_errors"`
+	ReorderPackets      uint64    `json:"reorder_packets"`
+	DuplicatePackets    uint64    `json:"duplicate_packets"`
+	DuplicateErrors     uint64    `json:"duplicate_errors"`
+	OutageDropPackets   uint64    `json:"outage_drop_packets"`
+	FirstPacketNS       uint64    `json:"first_packet_ns"`
+	DeliveredPackets    uint64    `json:"delivered_packets"`
 	JitterSlotPackets   [8]uint64 `json:"jitter_slot_packets"`
 }
 
@@ -318,7 +419,9 @@ func assertFaultStats(t *testing.T, config Config, direction string, profile Fau
 		stats.PeriodicLossPackets != wantPeriodic || stats.BurstLossPackets != wantBurst ||
 		stats.JitterSlotPackets != wantJitterSlots ||
 		stats.MTUDropPackets != 0 || stats.GSOPackets != 0 || stats.TimestampErrors != 0 ||
-		stats.Packets != stats.DelayPackets+stats.PeriodicLossPackets+stats.BurstLossPackets {
+		stats.ReorderPackets != 0 || stats.DuplicatePackets != 0 || stats.DuplicateErrors != 0 || stats.OutageDropPackets != 0 ||
+		stats.FirstPacketNS == 0 || stats.DeliveredPackets != wantDelay ||
+		stats.Packets != stats.DeliveredPackets+stats.PeriodicLossPackets+stats.BurstLossPackets {
 		t.Fatalf("%s fault stats = %+v", direction, stats)
 	}
 }

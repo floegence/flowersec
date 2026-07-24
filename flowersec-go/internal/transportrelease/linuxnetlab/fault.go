@@ -33,11 +33,15 @@ type FaultProfile struct {
 	TokenBurstBytes   int
 	QueueBytes        int
 	LinkMTU           int
+	ReorderPercent    int
+	DuplicatePercent  int
+	OutageStart       time.Duration
+	OutageDuration    time.Duration
+	ReorderDelay      time.Duration
 }
 
 func (lab *Lab) ApplyFaultProfile(ctx context.Context, profile FaultProfile) (resultErr error) {
-	encoded, err := encodeFaultConfig(profile)
-	if err != nil {
+	if err := validateFaultProfile(profile); err != nil {
 		return err
 	}
 	object, err := verifiedBPFObject(profile.BPFObject)
@@ -68,14 +72,14 @@ func (lab *Lab) ApplyFaultProfile(ctx context.Context, profile FaultProfile) (re
 		{"server", lab.config.ServerNamespace, lab.config.ServerInterface},
 	}
 	for _, direction := range directions {
-		if err := lab.applyDirection(ctx, labDirectory, object, encoded, profile, direction.name, direction.namespace, direction.device); err != nil {
+		if err := lab.applyDirection(ctx, labDirectory, object, profile, direction.name, direction.namespace, direction.device); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (lab *Lab) applyDirection(ctx context.Context, labDirectory, object string, encoded []byte, profile FaultProfile, name, namespace, device string) error {
+func (lab *Lab) applyDirection(ctx context.Context, labDirectory, object string, profile FaultProfile, name, namespace, device string) error {
 	directory := filepath.Join(labDirectory, name)
 	maps := filepath.Join(directory, "maps")
 	program := filepath.Join(directory, "program")
@@ -91,11 +95,6 @@ func (lab *Lab) applyDirection(ctx context.Context, labDirectory, object string,
 	lab.addCleanup(command{"rm", []string{"-f", statsMap}})
 	lab.addCleanup(command{"rm", []string{"-f", program}})
 	if err := lab.run(ctx, command{bpfTool, []string{"prog", "load", object, program, "type", "classifier", "pinmaps", maps}}); err != nil {
-		return err
-	}
-	updateArgs := []string{"map", "update", "pinned", configMap, "key", "hex", "00", "00", "00", "00", "value", "hex"}
-	updateArgs = append(updateArgs, byteArguments(encoded)...)
-	if err := lab.run(ctx, command{bpfTool, updateArgs}); err != nil {
 		return err
 	}
 	networkCommand := func(args ...string) command {
@@ -141,6 +140,27 @@ func (lab *Lab) applyDirection(ctx context.Context, labDirectory, object string,
 	); err != nil {
 		return err
 	}
+	duplicateIfIndex := 0
+	if profile.DuplicatePercent > 0 {
+		resolver, ok := lab.runner.(interfaceIndexResolver)
+		if !ok {
+			return errors.New("duplicate injection requires an IFB interface index resolver")
+		}
+		resolvedIndex, err := resolver.InterfaceIndex(ctx, namespace, ifb)
+		if err != nil {
+			return fmt.Errorf("resolve duplicate IFB %s in %s: %w", ifb, namespace, err)
+		}
+		duplicateIfIndex = resolvedIndex
+	}
+	encoded, err := encodeFaultConfig(profile, duplicateIfIndex)
+	if err != nil {
+		return err
+	}
+	updateArgs := []string{"map", "update", "pinned", configMap, "key", "hex", "00", "00", "00", "00", "value", "hex"}
+	updateArgs = append(updateArgs, byteArguments(encoded)...)
+	if err := lab.run(ctx, command{bpfTool, updateArgs}); err != nil {
+		return err
+	}
 	clsactDelete := networkCommand("tc", "qdisc", "del", "dev", device, "clsact")
 	if err := lab.managed(ctx,
 		networkCommand("tc", "qdisc", "add", "dev", device, "clsact"),
@@ -169,32 +189,63 @@ func (lab *Lab) addCleanup(value command) {
 	lab.closed = false
 }
 
-func encodeFaultConfig(profile FaultProfile) ([]byte, error) {
+type interfaceIndexResolver interface {
+	InterfaceIndex(context.Context, string, string) (int, error)
+}
+
+func validateFaultProfile(profile FaultProfile) error {
 	if profile.BaseDelay <= 0 || len(profile.Jitter) != 8 || profile.RateBitsPerSecond < 1 ||
 		profile.TokenBurstBytes < 1 || profile.QueueBytes < profile.TokenBurstBytes || profile.LinkMTU < 1280 || profile.LinkMTU > 9000 {
-		return nil, errors.New("fault profile is outside the frozen network bounds")
+		return errors.New("fault profile is outside the frozen network bounds")
 	}
 	for _, jitter := range profile.Jitter {
 		if profile.BaseDelay+jitter < 0 {
-			return nil, errors.New("fault profile has negative effective delay")
+			return errors.New("fault profile has negative effective delay")
 		}
 	}
-	lossMode := uint32(0)
 	switch profile.LossMode {
 	case LossPeriodic:
 		if profile.EveryNth < 2 || profile.BlockSize != 0 || profile.BurstFirst != 0 || profile.BurstLast != 0 {
-			return nil, errors.New("invalid periodic loss profile")
+			return errors.New("invalid periodic loss profile")
 		}
-		lossMode = 1
 	case LossBurst:
 		if profile.EveryNth != 0 || profile.BlockSize < 1 || profile.BurstFirst < 1 || profile.BurstLast < profile.BurstFirst || profile.BurstLast > profile.BlockSize {
-			return nil, errors.New("invalid burst loss profile")
+			return errors.New("invalid burst loss profile")
 		}
-		lossMode = 2
 	default:
-		return nil, errors.New("unknown fault loss mode")
+		return errors.New("unknown fault loss mode")
 	}
-	encoded := make([]byte, 104)
+	if !frozenFaultPercent(profile.ReorderPercent) || !frozenFaultPercent(profile.DuplicatePercent) {
+		return errors.New("fault percentages are outside the frozen matrix")
+	}
+	if profile.ReorderPercent == 0 && profile.ReorderDelay != 0 || profile.ReorderPercent > 0 && profile.ReorderDelay <= 0 {
+		return errors.New("reorder delay does not match the frozen matrix")
+	}
+	if profile.OutageStart == 0 && profile.OutageDuration == 0 {
+		return nil
+	}
+	if profile.OutageStart != time.Second || profile.OutageDuration != 2*time.Second {
+		return errors.New("outage schedule is outside the frozen matrix")
+	}
+	return nil
+}
+
+func frozenFaultPercent(value int) bool {
+	return value == 0 || value == 1 || value == 2
+}
+
+func encodeFaultConfig(profile FaultProfile, duplicateIfIndex int) ([]byte, error) {
+	if err := validateFaultProfile(profile); err != nil {
+		return nil, err
+	}
+	if profile.DuplicatePercent > 0 && duplicateIfIndex <= 0 || profile.DuplicatePercent == 0 && duplicateIfIndex != 0 {
+		return nil, errors.New("duplicate IFB index does not match the frozen matrix")
+	}
+	lossMode := uint32(1)
+	if profile.LossMode == LossBurst {
+		lossMode = 2
+	}
+	encoded := make([]byte, 144)
 	binary.LittleEndian.PutUint64(encoded[0:8], uint64(profile.BaseDelay))
 	for index, jitter := range profile.Jitter {
 		binary.LittleEndian.PutUint64(encoded[8+index*8:16+index*8], uint64(int64(jitter)))
@@ -206,6 +257,12 @@ func encodeFaultConfig(profile FaultProfile) ([]byte, error) {
 	binary.LittleEndian.PutUint32(encoded[88:92], uint32(profile.BurstFirst))
 	binary.LittleEndian.PutUint32(encoded[92:96], uint32(profile.BurstLast))
 	binary.LittleEndian.PutUint32(encoded[96:100], uint32(profile.LinkMTU))
+	binary.LittleEndian.PutUint32(encoded[104:108], uint32(profile.ReorderPercent*100))
+	binary.LittleEndian.PutUint32(encoded[108:112], uint32(profile.DuplicatePercent*100))
+	binary.LittleEndian.PutUint64(encoded[112:120], uint64(profile.OutageStart))
+	binary.LittleEndian.PutUint64(encoded[120:128], uint64(profile.OutageDuration))
+	binary.LittleEndian.PutUint64(encoded[128:136], uint64(profile.ReorderDelay))
+	binary.LittleEndian.PutUint32(encoded[136:140], uint32(duplicateIfIndex))
 	return encoded, nil
 }
 

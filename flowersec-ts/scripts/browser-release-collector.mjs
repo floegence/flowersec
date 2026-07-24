@@ -258,11 +258,18 @@ async function runSessionWorkload(page, artifact, plan) {
           const forwardAbort = () => operationController.abort(phaseSignal.reason);
           phaseSignal.addEventListener("abort", forwardAbort, { once: true });
           const timer = setTimeout(
-            () => operationController.abort(new Error("RPC operation deadline exceeded")),
+            () => operationController.abort(new DOMException("RPC operation deadline exceeded", "TimeoutError")),
             config.operation_deadline_ms,
           );
           try {
-            const response = await activeSession.rpc.call(1, payload, operationController.signal);
+            let response;
+            try {
+              response = await activeSession.rpc.call(1, payload, operationController.signal);
+            } catch (error) {
+              const durationMs = Math.max(0, performance.now() - started).toFixed(1);
+              const code = typeof error?.code === "string" ? error.code : "unclassified";
+              throw new Error(`RPC operation ${ordinal} failed after ${durationMs}ms with public code ${code}`, { cause: error });
+            }
             if (response.error !== undefined || response.payload !== payload) throw new Error("RPC echo payload mismatch");
             const output = new TextEncoder().encode(JSON.stringify(response.payload));
             if (output.byteLength !== config.request_bytes) throw new Error("RPC response byte count mismatch");
@@ -280,7 +287,26 @@ async function runSessionWorkload(page, artifact, plan) {
           }
         }
       });
-      await Promise.all(workers);
+      try {
+        await Promise.all(workers);
+      } catch (error) {
+        const livenessController = new AbortController();
+        const livenessTimer = setTimeout(
+          () => livenessController.abort(new DOMException("post-failure liveness deadline exceeded", "TimeoutError")),
+          config.operation_deadline_ms,
+        );
+        let liveness = "failed:unclassified";
+        try {
+          const durationMs = await activeSession.probeLiveness({ signal: livenessController.signal });
+          liveness = `passed:${durationMs.toFixed(1)}ms`;
+        } catch (livenessError) {
+          const code = typeof livenessError?.code === "string" ? livenessError.code : "unclassified";
+          liveness = `failed:${code}`;
+        } finally {
+          clearTimeout(livenessTimer);
+        }
+        throw new Error(`RPC workload failed; post-failure liveness ${liveness}; ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      }
       return records;
     }
 

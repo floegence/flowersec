@@ -61,6 +61,7 @@ type networkCellReport struct {
 	Runner          baselineRunner               `json:"runner"`
 	ProfileID       string                       `json:"profile_id"`
 	Network         transportrelease.NetworkPlan `json:"network"`
+	Fault           transportrelease.FaultPlan   `json:"fault_plan"`
 	BPFObjectSHA256 string                       `json:"bpf_object_sha256"`
 	StartedAt       time.Time                    `json:"started_at"`
 	FinishedAt      time.Time                    `json:"finished_at"`
@@ -76,6 +77,7 @@ type tunnelCellReport struct {
 	Runner          baselineRunner               `json:"runner"`
 	ProfileID       string                       `json:"profile_id"`
 	Network         transportrelease.NetworkPlan `json:"network"`
+	Fault           transportrelease.FaultPlan   `json:"fault_plan"`
 	Topology        tunnelworkload.Topology      `json:"topology"`
 	BPFObjectSHA256 string                       `json:"bpf_object_sha256"`
 	StartedAt       time.Time                    `json:"started_at"`
@@ -92,6 +94,7 @@ type browserCellReport struct {
 	Runner          baselineRunner               `json:"runner"`
 	ProfileID       string                       `json:"profile_id"`
 	Network         transportrelease.NetworkPlan `json:"network"`
+	Fault           transportrelease.FaultPlan   `json:"fault_plan"`
 	Topology        string                       `json:"topology"`
 	BPFObjectSHA256 string                       `json:"bpf_object_sha256,omitempty"`
 	StartedAt       time.Time                    `json:"started_at"`
@@ -220,10 +223,10 @@ func run(args []string) error {
 		return runTunnelCell(*reportPath, *sourceSHA, *profileID, tunnelworkload.Topology(*topologyName), *bpfObject, plan, manifest)
 	}
 	if *target == browserCellTarget {
-		if *carrierName != "" || *topologyName != "" {
-			return errors.New("browser WebTransport cell does not accept --carrier or --topology")
+		if *carrierName != "" {
+			return errors.New("browser WebTransport cell does not accept --carrier")
 		}
-		return runBrowserCell(*reportPath, *sourceSHA, *sourceRoot, *profileID, *bpfObject, plan, manifest)
+		return runBrowserCell(*reportPath, *sourceSHA, *sourceRoot, *profileID, *topologyName, *bpfObject, plan, manifest)
 	}
 	if *profileID != "" || *carrierName != "" || *topologyName != "" || *bpfObject != "" {
 		return errors.New("direct clean baseline does not accept network profile flags")
@@ -407,7 +410,7 @@ func runNetworkCell(reportPath, sourceSHA, profileID string, kind carrier.Kind, 
 		SourceSHA: sourceSHA, ManifestDigest: manifest.Digest,
 		ManifestSHA256: hex.EncodeToString(manifest.SHA256Sum[:]),
 		Runner:         baselineRunner{OS: runtime.GOOS, Architecture: runtime.GOARCH, KernelRelease: kernel},
-		ProfileID:      profile.ID, Network: profile.Network,
+		ProfileID:      profile.ID, Network: profile.Network, Fault: profile.Fault,
 		BPFObjectSHA256: hex.EncodeToString(bpfDigest[:]), StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
@@ -481,7 +484,7 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 		resultErr = errors.Join(resultErr, lab.Close(cleanupCtx))
 		cancel()
 	}()
-	profile, err := faultProfileFromPlan(plan.Network, bpfObject)
+	profile, err := faultProfileFromPlan(plan, bpfObject)
 	if err != nil {
 		return result, err
 	}
@@ -523,7 +526,7 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 	if err != nil {
 		return result, err
 	}
-	if err := validateKernelEvidence(plan.Network, evidence); err != nil {
+	if err := validateKernelEvidence(plan, evidence); err != nil {
 		return result, err
 	}
 	result.Kernel = &networkKernelResult{
@@ -565,7 +568,7 @@ func runTunnelCell(reportPath, sourceSHA, profileID string, topology tunnelworkl
 		SourceSHA: sourceSHA, ManifestDigest: manifest.Digest,
 		ManifestSHA256: hex.EncodeToString(manifest.SHA256Sum[:]),
 		Runner:         baselineRunner{OS: runtime.GOOS, Architecture: runtime.GOARCH, KernelRelease: kernel},
-		ProfileID:      profile.ID, Network: profile.Network, Topology: topology,
+		ProfileID:      profile.ID, Network: profile.Network, Fault: profile.Fault, Topology: topology,
 		BPFObjectSHA256: hex.EncodeToString(bpfDigest[:]), StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
@@ -602,7 +605,7 @@ func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, pla
 		resultErr = errors.Join(resultErr, lab.Close(cleanupCtx))
 		cancel()
 	}()
-	profile, err := faultProfileFromPlan(plan.Network, bpfObject)
+	profile, err := faultProfileFromPlan(plan, bpfObject)
 	if err != nil {
 		return result, err
 	}
@@ -645,7 +648,7 @@ func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, pla
 	if err != nil {
 		return result, err
 	}
-	if err := validateKernelEvidence(plan.Network, evidence); err != nil {
+	if err := validateKernelEvidence(plan, evidence); err != nil {
 		return result, err
 	}
 	result.Kernel = &networkKernelResult{
@@ -656,45 +659,98 @@ func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, pla
 	return result, nil
 }
 
-func validateKernelEvidence(network transportrelease.NetworkPlan, evidence linuxnetlab.KernelFaultEvidence) error {
+func validateKernelEvidence(plan transportrelease.ProfilePlan, evidence linuxnetlab.KernelFaultEvidence) error {
+	network := plan.Network
 	if len(network.JitterMilliseconds) != 8 {
 		return errors.New("kernel evidence requires the frozen eight-slot jitter schedule")
 	}
 	for direction, stats := range map[string]linuxnetlab.KernelFaultStats{"client": evidence.Client, "server": evidence.Server} {
-		if stats.Packets == 0 || stats.Bytes == 0 || stats.MTUDropPackets != 0 || stats.GSOPackets != 0 || stats.TimestampErrors != 0 {
+		if stats.Packets == 0 || stats.Bytes == 0 || stats.MTUDropPackets != 0 || stats.GSOPackets != 0 ||
+			stats.TimestampErrors != 0 || stats.DuplicateErrors != 0 {
 			return fmt.Errorf("%s kernel fault counters are incomplete: %+v", direction, stats)
 		}
-		wantPeriodic, wantBurst, wantJitter := uint64(0), uint64(0), uint64(0)
+		accounted := stats.DeliveredPackets + stats.OutageDropPackets + stats.PeriodicLossPackets + stats.BurstLossPackets
+		if accounted != stats.Packets || stats.DelayPackets != stats.DeliveredPackets {
+			return fmt.Errorf("%s kernel packet conservation failed: %+v", direction, stats)
+		}
+		if plan.Fault.OutageDuration > 0 {
+			if stats.FirstPacketNS == 0 || stats.OutageDropPackets == 0 {
+				return fmt.Errorf("%s kernel outage was not exercised: %+v", direction, stats)
+			}
+		} else if stats.OutageDropPackets != 0 {
+			return fmt.Errorf("%s kernel outage counters are unexpected: %+v", direction, stats)
+		}
+		wantPeriodic, wantBurst := uint64(0), uint64(0)
+		wantReorderEligible, wantDuplicateEligible := uint64(0), uint64(0)
 		var wantSlots [8]uint64
 		for ordinal := uint64(1); ordinal <= stats.Packets; ordinal++ {
-			dropped := false
+			deterministicLoss := false
 			switch network.Loss.Mode {
 			case "periodic":
 				if ordinal%uint64(network.Loss.EveryNth) == 0 {
 					wantPeriodic++
-					dropped = true
+					deterministicLoss = true
 				}
 			case "burst":
 				position := (ordinal-1)%uint64(network.Loss.BlockSize) + 1
 				if position >= uint64(network.Loss.BurstFirst) && position <= uint64(network.Loss.BurstLast) {
 					wantBurst++
-					dropped = true
+					deterministicLoss = true
 				}
 			}
-			if !dropped {
+			if !deterministicLoss {
 				slot := (ordinal - 1) % uint64(len(wantSlots))
 				wantSlots[slot]++
-				if network.JitterMilliseconds[slot] != 0 {
-					wantJitter++
+				if selectedFaultOrdinal(ordinal, plan.Fault.ReorderPercent, 0) {
+					wantReorderEligible++
+				}
+				period := faultOrdinalPeriod(plan.Fault.DuplicatePercent)
+				if selectedFaultOrdinal(ordinal, plan.Fault.DuplicatePercent, period/2) {
+					wantDuplicateEligible++
 				}
 			}
 		}
-		if stats.PeriodicLossPackets != wantPeriodic || stats.BurstLossPackets != wantBurst ||
-			stats.DelayPackets+wantPeriodic+wantBurst != stats.Packets || stats.JitterPackets != wantJitter || stats.JitterSlotPackets != wantSlots {
+		lossDeficit := wantPeriodic + wantBurst - stats.PeriodicLossPackets - stats.BurstLossPackets
+		if stats.PeriodicLossPackets > wantPeriodic || stats.BurstLossPackets > wantBurst || lossDeficit > stats.OutageDropPackets {
+			return fmt.Errorf("%s kernel deterministic loss counters are invalid: %+v", direction, stats)
+		}
+		var gotSlots, wantSlotTotal, gotJitter uint64
+		for slot := range wantSlots {
+			if stats.JitterSlotPackets[slot] > wantSlots[slot] {
+				return fmt.Errorf("%s kernel jitter slot %d exceeds its deterministic schedule: %+v", direction, slot, stats)
+			}
+			gotSlots += stats.JitterSlotPackets[slot]
+			wantSlotTotal += wantSlots[slot]
+			if network.JitterMilliseconds[slot] != 0 {
+				gotJitter += stats.JitterSlotPackets[slot]
+			}
+		}
+		if gotSlots != stats.DeliveredPackets || wantSlotTotal-gotSlots != stats.OutageDropPackets-lossDeficit || stats.JitterPackets != gotJitter ||
+			!faultCountWithinOutageBound(stats.ReorderPackets, wantReorderEligible, stats.OutageDropPackets) ||
+			!faultCountWithinOutageBound(stats.DuplicatePackets, wantDuplicateEligible, stats.OutageDropPackets) {
 			return fmt.Errorf("%s kernel fault conservation failed: %+v", direction, stats)
 		}
 	}
 	return nil
+}
+
+func faultOrdinalPeriod(percent int) uint64 {
+	if percent <= 0 || 100%percent != 0 {
+		return 0
+	}
+	return uint64(100 / percent)
+}
+
+func selectedFaultOrdinal(ordinal uint64, percent int, offset uint64) bool {
+	period := faultOrdinalPeriod(percent)
+	return period != 0 && (ordinal-1+offset)%period == 0
+}
+
+func faultCountWithinOutageBound(actual, eligible, outage uint64) bool {
+	if actual > eligible {
+		return false
+	}
+	return eligible-actual <= outage
 }
 
 func runNetworkWorker(input io.Reader, output io.Writer) error {
@@ -764,7 +820,8 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 	}
 }
 
-func faultProfileFromPlan(network transportrelease.NetworkPlan, bpfObject string) (linuxnetlab.FaultProfile, error) {
+func faultProfileFromPlan(plan transportrelease.ProfilePlan, bpfObject string) (linuxnetlab.FaultProfile, error) {
+	network := plan.Network
 	if network.Shape == nil {
 		return linuxnetlab.FaultProfile{}, errors.New("network profile requires a frozen traffic shape")
 	}
@@ -775,6 +832,13 @@ func faultProfileFromPlan(network transportrelease.NetworkPlan, bpfObject string
 		TokenBurstBytes:   network.Shape.TokenBurstBytes,
 		QueueBytes:        network.Shape.QueueBytes,
 		LinkMTU:           network.LinkMTU,
+		ReorderPercent:    plan.Fault.ReorderPercent,
+		DuplicatePercent:  plan.Fault.DuplicatePercent,
+		OutageStart:       plan.Fault.OutageStart,
+		OutageDuration:    plan.Fault.OutageDuration,
+	}
+	if profile.ReorderPercent > 0 {
+		profile.ReorderDelay = 250 * time.Millisecond
 	}
 	for _, jitter := range network.JitterMilliseconds {
 		profile.Jitter = append(profile.Jitter, time.Duration(jitter)*time.Millisecond)

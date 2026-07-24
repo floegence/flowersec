@@ -20,9 +20,18 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/linuxnetlab"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/tunnelworkload"
 )
 
-func runBrowserCell(reportPath, sourceSHA, sourceRoot, profileID, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+const browserDirectTopology = "browser_webtransport"
+
+func runBrowserCell(reportPath, sourceSHA, sourceRoot, profileID, topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+	if topology == "" {
+		topology = browserDirectTopology
+	}
+	if !supportedBrowserTopology(topology) {
+		return errors.New("browser cell requires browser_webtransport, browser_tunnel_wt_wss, or browser_tunnel_wt_quic")
+	}
 	profile := plan.Clean
 	if profileID == "mobile-v1" {
 		profile = plan.Mobile
@@ -60,14 +69,15 @@ func runBrowserCell(reportPath, sourceSHA, sourceRoot, profileID, bpfObject stri
 		SchemaVersion: 1, Classification: "linux_chromium_webtransport_profile",
 		SourceSHA: sourceSHA, ManifestDigest: manifest.Digest, ManifestSHA256: hex.EncodeToString(manifest.SHA256Sum[:]),
 		Runner:    baselineRunner{OS: runtime.GOOS, Architecture: runtime.GOARCH, KernelRelease: kernel},
-		ProfileID: profile.ID, Network: profile.Network, Topology: "browser_webtransport", BPFObjectSHA256: bpfDigest,
+		ProfileID: profile.ID, Network: profile.Network, Topology: topology, BPFObjectSHA256: bpfDigest,
+		Fault:     profile.Fault,
 		StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
 	ctx, cancel := context.WithTimeout(context.Background(), cellDeadline)
 	defer cancel()
 	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
-		result, err := runBrowserNetworkCarrier(ctx, profile, runNumber, frozenBPFObject, sourceRoot)
+		result, err := runBrowserNetworkCarrier(ctx, topology, profile, runNumber, frozenBPFObject, sourceRoot)
 		if err != nil {
 			return fmt.Errorf("%s browser WebTransport run %d: %w", profile.ID, runNumber, err)
 		}
@@ -80,8 +90,9 @@ func runBrowserCell(reportPath, sourceSHA, sourceRoot, profileID, bpfObject stri
 	return writeNewReport(reportPath, report)
 }
 
-func runBrowserNetworkCarrier(ctx context.Context, plan transportrelease.ProfilePlan, runNumber int, bpfObject, sourceRoot string) (result browserCellResult, resultErr error) {
-	config, err := linuxnetlab.ConfigForCell(plan.ID+"-browser-webtransport", runNumber, plan.Network.LinkMTU, plan.Network.Firewall)
+func runBrowserNetworkCarrier(ctx context.Context, topology string, plan transportrelease.ProfilePlan, runNumber int, bpfObject, sourceRoot string) (result browserCellResult, resultErr error) {
+	cellID := strings.ReplaceAll(plan.ID+"-"+topology, "_", "-")
+	config, err := linuxnetlab.ConfigForCell(cellID, runNumber, plan.Network.LinkMTU, plan.Network.Firewall)
 	if err != nil {
 		return result, err
 	}
@@ -95,7 +106,7 @@ func runBrowserNetworkCarrier(ctx context.Context, plan transportrelease.Profile
 		cancel()
 	}()
 	if bpfObject != "" {
-		profile, err := faultProfileFromPlan(plan.Network, bpfObject)
+		profile, err := faultProfileFromPlan(plan, bpfObject)
 		if err != nil {
 			return result, err
 		}
@@ -108,7 +119,7 @@ func runBrowserNetworkCarrier(ctx context.Context, plan transportrelease.Profile
 		return result, err
 	}
 	request := browserWorkerRequest{
-		Plan: plan, Topology: "browser_webtransport", RunNumber: runNumber,
+		Plan: plan, Topology: topology, RunNumber: runNumber,
 		ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
 		ServerAddress: config.ServerAddress.Addr().String(), SourceRoot: sourceRoot,
 	}
@@ -116,7 +127,7 @@ func runBrowserNetworkCarrier(ctx context.Context, plan transportrelease.Profile
 	if err != nil {
 		return result, err
 	}
-	command := exec.CommandContext(ctx, executable, browserWorkerArg)
+	command := exec.CommandContext(ctx, "ip", "netns", "exec", config.ClientNamespace, executable, browserWorkerArg)
 	command.Stdin = bytes.NewReader(requestJSON)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
@@ -130,7 +141,7 @@ func runBrowserNetworkCarrier(ctx context.Context, plan transportrelease.Profile
 		RunNumber     int    `json:"run_number"`
 		Status        string `json:"status"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || envelope.SchemaVersion != 1 || envelope.Topology != "browser_webtransport" ||
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || envelope.SchemaVersion != 1 || envelope.Topology != topology ||
 		envelope.ProfileID != plan.ID || envelope.RunNumber != runNumber || envelope.Status != "passed" {
 		return result, errors.New("browser worker returned a mismatched result")
 	}
@@ -143,7 +154,7 @@ func runBrowserNetworkCarrier(ctx context.Context, plan transportrelease.Profile
 		if err != nil {
 			return result, err
 		}
-		if err := validateKernelEvidence(plan.Network, faults); err != nil {
+		if err := validateKernelEvidence(plan, faults); err != nil {
 			return result, err
 		}
 	}
@@ -216,27 +227,54 @@ func runBrowserWorker(input io.Reader, output io.Writer) (resultErr error) {
 	if err := validateBrowserWorkerRequest(request); err != nil {
 		return err
 	}
+	if err := linuxnetlab.RequireCurrentNamespace(request.ClientNamespace); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(request.Plan.CellWatchdogMinutes)*time.Minute)
 	defer cancel()
 
 	allowedOrigin := "http://" + request.ServerAddress
-	var endpoint *transportrelease.ProductDirectEndpoint
+	var certificateHash string
+	var source *browserArtifactSource
+	var closeEndpoint func() error
 	if err := linuxnetlab.InNamespace(request.ServerNamespace, func() error {
-		var openErr error
-		endpoint, openErr = transportrelease.OpenProductDirectBrowserEndpointAt(ctx, request.ServerAddress, allowedOrigin)
+		if request.Topology == browserDirectTopology {
+			endpoint, openErr := transportrelease.OpenProductDirectBrowserEndpointAt(ctx, request.ServerAddress, allowedOrigin)
+			if openErr != nil {
+				return openErr
+			}
+			closeEndpoint = endpoint.Close
+			certificateHash, openErr = endpoint.CertificateHashBase64URL()
+			if openErr != nil {
+				return openErr
+			}
+			source, openErr = newBrowserArtifactSource(endpoint, request.Plan, request.Topology, request.RunNumber)
+			return openErr
+		}
+		endpoint, openErr := tunnelworkload.OpenBrowserEndpointAt(
+			ctx, tunnelworkload.BrowserTopology(request.Topology), request.ServerAddress, allowedOrigin,
+		)
+		if openErr != nil {
+			return openErr
+		}
+		closeEndpoint = func() error {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Duration(request.Plan.CleanupDeadlineSeconds)*time.Second)
+			defer cancel()
+			return endpoint.Close(cleanupCtx)
+		}
+		certificateHash, openErr = endpoint.CertificateHashBase64URL()
+		if openErr != nil {
+			return openErr
+		}
+		source, openErr = newBrowserTunnelArtifactSource(endpoint, request.Plan, request.Topology, request.RunNumber)
 		return openErr
 	}); err != nil {
+		if closeEndpoint != nil {
+			return errors.Join(err, closeEndpoint())
+		}
 		return err
 	}
-	defer func() { resultErr = errors.Join(resultErr, endpoint.Close()) }()
-	certificateHash, err := endpoint.CertificateHashBase64URL()
-	if err != nil {
-		return err
-	}
-	source, err := newBrowserArtifactSource(endpoint, request.Plan, request.Topology, request.RunNumber)
-	if err != nil {
-		return err
-	}
+	defer func() { resultErr = errors.Join(resultErr, closeEndpoint()) }()
 	listener, server, sourceURL, err := startBrowserArtifactHTTPServer(request.ServerNamespace, request.ServerAddress, source)
 	if err != nil {
 		return err
@@ -266,7 +304,7 @@ func validateBrowserWorkerRequest(request browserWorkerRequest) error {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return errors.New("browser release worker requires Linux amd64")
 	}
-	if request.Topology != "browser_webtransport" || request.RunNumber < 1 ||
+	if !supportedBrowserTopology(request.Topology) || request.RunNumber < 1 ||
 		request.ClientNamespace == "" || request.ServerNamespace == "" || request.ClientNamespace == request.ServerNamespace ||
 		net.ParseIP(request.ServerAddress) == nil || !filepath.IsAbs(request.SourceRoot) {
 		return errors.New("browser release worker request is outside the supported topology")
@@ -291,6 +329,14 @@ func validateBrowserWorkerRequest(request browserWorkerRequest) error {
 		}
 	}
 	return nil
+}
+
+func supportedBrowserTopology(topology string) bool {
+	return topology == browserDirectTopology || supportedBrowserTunnelTopology(topology)
+}
+
+func supportedBrowserTunnelTopology(topology string) bool {
+	return topology == string(tunnelworkload.BrowserTunnelWTWSS) || topology == string(tunnelworkload.BrowserTunnelWTQUIC)
 }
 
 func startBrowserArtifactHTTPServer(namespace, address string, handler http.Handler) (net.Listener, *http.Server, string, error) {

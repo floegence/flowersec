@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 )
 
 const FrozenPerformanceManifestDigest = "sha256:86435fbb90771090976a01a19f630faa783adbb0f6cc250ddbd8b0712c8cadee"
@@ -37,8 +38,16 @@ type ProfilePlan struct {
 	RPC                    RPCPlan
 	Bulk                   BulkPlan
 	Network                NetworkPlan
+	Fault                  FaultPlan
 	CleanupDeadlineSeconds int
 	CellWatchdogMinutes    int
+}
+
+type FaultPlan struct {
+	ReorderPercent   int           `json:"reorder_percent"`
+	DuplicatePercent int           `json:"duplicate_percent"`
+	OutageStart      time.Duration `json:"outage_start_ns"`
+	OutageDuration   time.Duration `json:"outage_duration_ns"`
 }
 
 type NetworkPlan struct {
@@ -106,6 +115,14 @@ type manifestPlan struct {
 		CleanupDeadlineSeconds int          `json:"cleanup_deadline_seconds"`
 		CellWatchdogMinutes    int          `json:"cell_watchdog_minutes"`
 	} `json:"profiles"`
+	FaultMatrix []struct {
+		ProfileID        string `json:"profile_id"`
+		Carrier          string `json:"carrier"`
+		ReorderPercent   int    `json:"reorder_percent"`
+		DuplicatePercent int    `json:"duplicate_percent"`
+		OutageStartNS    int64  `json:"outage_start_ns"`
+		OutageDurationNS int64  `json:"outage_duration_ns"`
+	} `json:"fault_matrix"`
 }
 
 // LoadReleasePlan reads workload values from the manifest instead of copying
@@ -124,6 +141,10 @@ func LoadReleasePlan(path string) (ReleasePlan, ManifestBinding, error) {
 		return ReleasePlan{}, ManifestBinding{}, errors.New("performance manifest does not match the frozen release contract")
 	}
 	binding := ManifestBinding{Digest: manifest.Digest, SHA256Sum: rawSum}
+	faultPlans, err := loadFaultPlans(manifest.FaultMatrix)
+	if err != nil {
+		return ReleasePlan{}, ManifestBinding{}, err
+	}
 	profiles := make(map[string]ProfilePlan, 3)
 	for _, profile := range manifest.Profiles {
 		if profile.ID != "clean-v1" && profile.ID != "mobile-v1" && profile.ID != "edge-v1" {
@@ -134,7 +155,7 @@ func LoadReleasePlan(path string) (ReleasePlan, ManifestBinding, error) {
 		}
 		plan := ProfilePlan{
 			ID: profile.ID, Cold: *profile.Cold, RPC: *profile.RPC, Bulk: *profile.Bulk,
-			Network:                *profile.Network,
+			Network: *profile.Network, Fault: faultPlans[profile.ID],
 			CleanupDeadlineSeconds: profile.CleanupDeadlineSeconds, CellWatchdogMinutes: profile.CellWatchdogMinutes,
 		}
 		if err := validateProfilePlan(plan); err != nil {
@@ -149,6 +170,48 @@ func LoadReleasePlan(path string) (ReleasePlan, ManifestBinding, error) {
 		RunCount: manifest.RunCount,
 		Clean:    profiles["clean-v1"], Mobile: profiles["mobile-v1"], Edge: profiles["edge-v1"],
 	}, binding, nil
+}
+
+func loadFaultPlans(rows []struct {
+	ProfileID        string `json:"profile_id"`
+	Carrier          string `json:"carrier"`
+	ReorderPercent   int    `json:"reorder_percent"`
+	DuplicatePercent int    `json:"duplicate_percent"`
+	OutageStartNS    int64  `json:"outage_start_ns"`
+	OutageDurationNS int64  `json:"outage_duration_ns"`
+}) (map[string]FaultPlan, error) {
+	wantCarriers := map[string]struct{}{"wss": {}, "raw_quic": {}, "webtransport": {}}
+	plans := make(map[string]FaultPlan, 3)
+	seen := make(map[string]map[string]struct{}, 3)
+	for _, row := range rows {
+		if row.ProfileID != "clean-v1" && row.ProfileID != "mobile-v1" && row.ProfileID != "edge-v1" {
+			continue
+		}
+		if _, ok := wantCarriers[row.Carrier]; !ok {
+			return nil, fmt.Errorf("fault matrix has unsupported carrier %q", row.Carrier)
+		}
+		if seen[row.ProfileID] == nil {
+			seen[row.ProfileID] = make(map[string]struct{}, 3)
+		}
+		if _, duplicate := seen[row.ProfileID][row.Carrier]; duplicate {
+			return nil, fmt.Errorf("fault matrix repeats %s/%s", row.ProfileID, row.Carrier)
+		}
+		seen[row.ProfileID][row.Carrier] = struct{}{}
+		plan := FaultPlan{
+			ReorderPercent: row.ReorderPercent, DuplicatePercent: row.DuplicatePercent,
+			OutageStart: time.Duration(row.OutageStartNS), OutageDuration: time.Duration(row.OutageDurationNS),
+		}
+		if previous, ok := plans[row.ProfileID]; ok && previous != plan {
+			return nil, fmt.Errorf("fault matrix differs by carrier for %s", row.ProfileID)
+		}
+		plans[row.ProfileID] = plan
+	}
+	for _, profileID := range []string{"clean-v1", "mobile-v1", "edge-v1"} {
+		if len(seen[profileID]) != len(wantCarriers) {
+			return nil, fmt.Errorf("fault matrix is incomplete for %s", profileID)
+		}
+	}
+	return plans, nil
 }
 
 func validateProfilePlan(plan ProfilePlan) error {

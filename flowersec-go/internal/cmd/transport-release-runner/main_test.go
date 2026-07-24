@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/linuxnetlab"
@@ -148,13 +149,102 @@ func TestBrowserArtifactSourceIssuesAndSpendsEveryArtifactOnce(t *testing.T) {
 	}
 }
 
+func TestBrowserTunnelArtifactSourceIssuesChromiumWebTransportLeg(t *testing.T) {
+	plan := transportrelease.ProfilePlan{
+		ID: "mobile-v1", Cold: transportrelease.ColdPlan{Operations: 1},
+		CleanupDeadlineSeconds: 2, CellWatchdogMinutes: 1,
+	}
+	for _, topology := range tunnelworkload.BrowserTopologies() {
+		t.Run(string(topology), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			endpoint, err := tunnelworkload.OpenBrowserEndpointAt(ctx, topology, "127.0.0.1", "http://127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer endpoint.Close(context.Background())
+			source, err := newBrowserTunnelArtifactSource(endpoint, plan, string(topology), 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := json.Marshal(browserArtifactRequest{
+				SchemaVersion: 1, Action: "acquire", Topology: string(topology),
+				ProfileID: plan.ID, RunNumber: 2, Phase: "cold", Count: 1,
+			})
+			request := httptest.NewRequest(http.MethodPost, "/artifacts", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			source.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("acquire status = %d: %s", response.Code, response.Body.String())
+			}
+			var batch browserArtifactResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &batch); err != nil || len(batch.Artifacts) != 1 {
+				t.Fatalf("artifact batch = %+v: %v", batch, err)
+			}
+			artifact, err := artifactv2.DecodeArtifactJSON(strings.NewReader(batch.Artifacts[0].ArtifactJSON))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if artifact.Path.Kind != artifactv2.PathTunnel || artifact.Path.Role != 1 || len(artifact.Path.Candidates) != 2 {
+				t.Fatalf("browser artifact contract = %+v", artifact.Path)
+			}
+			var browserCandidate artifactv2.Candidate
+			for _, candidate := range artifact.Path.Candidates {
+				if candidate.ID == "browser-leg" {
+					browserCandidate = candidate
+				}
+			}
+			if browserCandidate.Carrier != artifactv2.CarrierWebTransport {
+				t.Fatalf("browser candidate = %+v", browserCandidate)
+			}
+			spendBody, _ := json.Marshal(browserArtifactRequest{
+				SchemaVersion: 1, Action: "spend", SpendToken: batch.Artifacts[0].SpendToken,
+			})
+			spendRequest := httptest.NewRequest(http.MethodPost, "/artifacts", bytes.NewReader(spendBody))
+			spendRequest.Header.Set("Content-Type", "application/json")
+			spendResponse := httptest.NewRecorder()
+			source.ServeHTTP(spendResponse, spendRequest)
+			if spendResponse.Code != http.StatusNoContent {
+				t.Fatalf("spend status = %d", spendResponse.Code)
+			}
+			finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer finalizeCancel()
+			if err := source.Finalize(finalizeCtx, true); err == nil {
+				t.Fatal("aborted browser tunnel source finalized successfully")
+			}
+		})
+	}
+}
+
+func TestBrowserTopologyValidationIncludesFrozenMixedCells(t *testing.T) {
+	for _, topology := range []string{
+		browserDirectTopology,
+		string(tunnelworkload.BrowserTunnelWTWSS),
+		string(tunnelworkload.BrowserTunnelWTQUIC),
+	} {
+		if !supportedBrowserTopology(topology) {
+			t.Fatalf("supported topology %q was rejected", topology)
+		}
+	}
+	if supportedBrowserTopology("browser_tunnel_wt_wt") {
+		t.Fatal("unsupported browser tunnel topology was accepted")
+	}
+}
+
 func TestFaultProfileFromFrozenNetworkPlan(t *testing.T) {
-	plan := transportrelease.NetworkPlan{
-		OneWayDelayMilliseconds: 60,
-		JitterMilliseconds:      []int{0, 8, -4, 12, -8, 4, -2, 6},
-		Loss:                    transportrelease.LossPlan{Mode: "periodic", EveryNth: 50},
-		Shape:                   &transportrelease.ShapePlan{RateBitsPerSecond: 5_000_000, TokenBurstBytes: 32_768, QueueBytes: 262_144},
-		LinkMTU:                 1280,
+	plan := transportrelease.ProfilePlan{
+		Network: transportrelease.NetworkPlan{
+			OneWayDelayMilliseconds: 60,
+			JitterMilliseconds:      []int{0, 8, -4, 12, -8, 4, -2, 6},
+			Loss:                    transportrelease.LossPlan{Mode: "periodic", EveryNth: 50},
+			Shape:                   &transportrelease.ShapePlan{RateBitsPerSecond: 5_000_000, TokenBurstBytes: 32_768, QueueBytes: 262_144},
+			LinkMTU:                 1280,
+		},
+		Fault: transportrelease.FaultPlan{
+			ReorderPercent: 1, DuplicatePercent: 1,
+			OutageStart: time.Second, OutageDuration: 2 * time.Second,
+		},
 	}
 	profile, err := faultProfileFromPlan(plan, "/release/packet_fault.o")
 	if err != nil {
@@ -164,13 +254,15 @@ func TestFaultProfileFromFrozenNetworkPlan(t *testing.T) {
 		profile.LossMode != linuxnetlab.LossPeriodic || profile.EveryNth != 50 ||
 		profile.RateBitsPerSecond != 5_000_000 || profile.TokenBurstBytes != 32_768 ||
 		profile.QueueBytes != 262_144 || profile.LinkMTU != 1280 || len(profile.Jitter) != 8 ||
-		profile.Jitter[4] != -8*time.Millisecond {
+		profile.Jitter[4] != -8*time.Millisecond || profile.ReorderPercent != 1 ||
+		profile.DuplicatePercent != 1 || profile.ReorderDelay != 250*time.Millisecond ||
+		profile.OutageStart != time.Second || profile.OutageDuration != 2*time.Second {
 		t.Fatalf("unexpected fault profile: %+v", profile)
 	}
 }
 
 func TestFaultProfileRejectsCleanNetworkPlan(t *testing.T) {
-	if _, err := faultProfileFromPlan(transportrelease.NetworkPlan{}, "/release/packet_fault.o"); err == nil {
+	if _, err := faultProfileFromPlan(transportrelease.ProfilePlan{}, "/release/packet_fault.o"); err == nil {
 		t.Fatal("accepted network plan without traffic shaping")
 	}
 }
@@ -222,12 +314,15 @@ func TestFreezeBPFObjectCreatesReadOnlyPrivateCopy(t *testing.T) {
 }
 
 func TestValidateKernelEvidenceChecksExactLossAndConservation(t *testing.T) {
-	network := transportrelease.NetworkPlan{
-		JitterMilliseconds: []int{0, 8, -4, 12, -8, 4, -2, 6},
-		Loss:               transportrelease.LossPlan{Mode: "periodic", EveryNth: 50},
+	plan := transportrelease.ProfilePlan{
+		Network: transportrelease.NetworkPlan{
+			JitterMilliseconds: []int{0, 8, -4, 12, -8, 4, -2, 6},
+			Loss:               transportrelease.LossPlan{Mode: "periodic", EveryNth: 50},
+		},
 	}
+	network := plan.Network
 	stats := linuxnetlab.KernelFaultStats{
-		Packets: 100, Bytes: 64_000, DelayPackets: 98, PeriodicLossPackets: 2,
+		Packets: 100, Bytes: 64_000, DelayPackets: 98, DeliveredPackets: 98, PeriodicLossPackets: 2,
 	}
 	for ordinal := 1; ordinal <= 100; ordinal++ {
 		if ordinal%50 != 0 {
@@ -239,12 +334,49 @@ func TestValidateKernelEvidenceChecksExactLossAndConservation(t *testing.T) {
 		}
 	}
 	evidence := linuxnetlab.KernelFaultEvidence{Client: stats, Server: stats}
-	if err := validateKernelEvidence(network, evidence); err != nil {
+	if err := validateKernelEvidence(plan, evidence); err != nil {
 		t.Fatal(err)
 	}
 	evidence.Server.TimestampErrors = 1
-	if err := validateKernelEvidence(network, evidence); err == nil {
+	if err := validateKernelEvidence(plan, evidence); err == nil {
 		t.Fatal("accepted a kernel timestamp error")
+	}
+}
+
+func TestValidateKernelEvidenceAccountsForOutageAndDeterministicInjection(t *testing.T) {
+	plan := transportrelease.ProfilePlan{
+		Network: transportrelease.NetworkPlan{
+			JitterMilliseconds: []int{0, 8, -4, 12, -8, 4, -2, 6},
+			Loss:               transportrelease.LossPlan{Mode: "periodic", EveryNth: 50},
+		},
+		Fault: transportrelease.FaultPlan{
+			ReorderPercent: 1, DuplicatePercent: 1,
+			OutageStart: time.Second, OutageDuration: 2 * time.Second,
+		},
+	}
+	stats := linuxnetlab.KernelFaultStats{
+		Packets: 200, Bytes: 128_000, FirstPacketNS: 1,
+		OutageDropPackets: 10, PeriodicLossPackets: 3,
+		DeliveredPackets: 187, DelayPackets: 187,
+		ReorderPackets: 2, DuplicatePackets: 2,
+	}
+	for ordinal := uint64(1); ordinal <= stats.Packets; ordinal++ {
+		if ordinal >= 91 && ordinal <= 100 || ordinal%50 == 0 {
+			continue
+		}
+		slot := (ordinal - 1) % 8
+		stats.JitterSlotPackets[slot]++
+		if plan.Network.JitterMilliseconds[slot] != 0 {
+			stats.JitterPackets++
+		}
+	}
+	evidence := linuxnetlab.KernelFaultEvidence{Client: stats, Server: stats}
+	if err := validateKernelEvidence(plan, evidence); err != nil {
+		t.Fatal(err)
+	}
+	evidence.Server.DuplicatePackets = 3
+	if err := validateKernelEvidence(plan, evidence); err == nil {
+		t.Fatal("accepted duplication outside the deterministic ordinal schedule")
 	}
 }
 

@@ -14,10 +14,11 @@ import (
 
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/tunnelworkload"
 )
 
 type browserArtifactSource struct {
-	endpoint  *transportrelease.ProductDirectEndpoint
+	issue     func() (browserServerArtifact, error)
 	profile   transportrelease.ProfilePlan
 	topology  string
 	runNumber int
@@ -31,8 +32,18 @@ type browserArtifactSource struct {
 	cancel   context.CancelCauseFunc
 }
 
+type browserServerArtifact interface {
+	ArtifactJSON() string
+	AwaitServer(context.Context) (flowersession.SessionV2, error)
+	Cancel()
+}
+
+type startableBrowserServerArtifact interface {
+	Start()
+}
+
 type browserArtifactRecord struct {
-	artifact *transportrelease.ProductDirectBrowserArtifact
+	artifact browserServerArtifact
 	phase    string
 	spent    bool
 }
@@ -62,9 +73,27 @@ func newBrowserArtifactSource(endpoint *transportrelease.ProductDirectEndpoint, 
 	if endpoint == nil || topology != "browser_webtransport" || runNumber < 1 || profile.ID == "" {
 		return nil, errors.New("browser artifact source is not initialized")
 	}
+	return newBrowserArtifactSourceWithIssuer(func() (browserServerArtifact, error) {
+		return endpoint.IssueBrowserArtifact()
+	}, profile, topology, runNumber)
+}
+
+func newBrowserTunnelArtifactSource(endpoint *tunnelworkload.BrowserEndpoint, profile transportrelease.ProfilePlan, topology string, runNumber int) (*browserArtifactSource, error) {
+	if endpoint == nil || !supportedBrowserTunnelTopology(topology) || runNumber < 1 || profile.ID == "" {
+		return nil, errors.New("browser tunnel artifact source is not initialized")
+	}
+	return newBrowserArtifactSourceWithIssuer(func() (browserServerArtifact, error) {
+		return endpoint.IssueBrowserArtifact()
+	}, profile, topology, runNumber)
+}
+
+func newBrowserArtifactSourceWithIssuer(issue func() (browserServerArtifact, error), profile transportrelease.ProfilePlan, topology string, runNumber int) (*browserArtifactSource, error) {
+	if issue == nil {
+		return nil, errors.New("browser artifact issuer is required")
+	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	return &browserArtifactSource{
-		endpoint: endpoint, profile: profile, topology: topology, runNumber: runNumber,
+		issue: issue, profile: profile, topology: topology, runNumber: runNumber,
 		records: make(map[string]*browserArtifactRecord), acquired: make(map[string]bool),
 		errors: make(chan error, profile.Cold.Operations+1),
 		ctx:    ctx, cancel: cancel,
@@ -118,7 +147,7 @@ func (source *browserArtifactSource) acquire(writer http.ResponseWriter, input b
 	envelopes := make([]browserArtifactEnvelope, 0, wantCount)
 	issued := make([]*browserArtifactRecord, 0, wantCount)
 	for range wantCount {
-		artifact, err := source.endpoint.IssueBrowserArtifact()
+		artifact, err := source.issue()
 		if err != nil {
 			source.cancelIssued(issued)
 			http.Error(writer, "artifact issuance failed", http.StatusInternalServerError)
@@ -165,6 +194,9 @@ func (source *browserArtifactSource) spend(writer http.ResponseWriter, input bro
 		source.mu.Unlock()
 		http.Error(writer, "artifact spend rejected", http.StatusConflict)
 		return
+	}
+	if startable, ok := record.artifact.(startableBrowserServerArtifact); ok {
+		startable.Start()
 	}
 	record.spent = true
 	source.mu.Unlock()

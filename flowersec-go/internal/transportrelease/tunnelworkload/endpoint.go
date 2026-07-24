@@ -520,10 +520,22 @@ func (pair *Pair) Close(ctx context.Context) error {
 			{label: "client", session: pair.Client},
 			{label: "server", session: pair.Server},
 		}
+		closeErrors := make(chan error, len(sessions))
+		closeCount := 0
 		for _, entry := range sessions {
 			if entry.session != nil {
-				pair.closeErr = errors.Join(pair.closeErr, entry.session.Close())
+				closeCount++
+				go func(label string, session flowersession.SessionV2) {
+					if err := session.Close(); err != nil {
+						closeErrors <- fmt.Errorf("%s tunnel session close: %w", label, err)
+						return
+					}
+					closeErrors <- nil
+				}(entry.label, entry.session)
 			}
+		}
+		for range closeCount {
+			pair.closeErr = errors.Join(pair.closeErr, <-closeErrors)
 		}
 		for _, entry := range sessions {
 			if entry.session == nil {
