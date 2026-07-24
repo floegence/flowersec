@@ -33,6 +33,7 @@ type Config struct {
 
 type Lab struct {
 	runner  CommandRunner
+	config  Config
 	mu      sync.Mutex
 	cleanup []command
 	closed  bool
@@ -81,7 +82,7 @@ func open(ctx context.Context, runner CommandRunner, config Config, rollbackTime
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
-	lab := &Lab{runner: runner}
+	lab := &Lab{runner: runner, config: config}
 	steps := []step{
 		{command{"ip", []string{"netns", "add", config.ClientNamespace}}, &command{"ip", []string{"netns", "del", config.ClientNamespace}}},
 		{command{"ip", []string{"netns", "add", config.ServerNamespace}}, &command{"ip", []string{"netns", "del", config.ServerNamespace}}},
