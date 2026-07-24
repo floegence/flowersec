@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,13 @@ func TestProtocolStreamResetProjectsStablePublicCode(t *testing.T) {
 		t.Fatal("stream read error = nil, want reset projection")
 	} else if projected, ok := readErr.(*SessionError); !ok || projected.Code() != SessionStreamReset {
 		t.Fatalf("stream read error = %#v, want %q", readErr, SessionStreamReset)
+	}
+}
+
+func TestPublicByteStreamPreservesEOF(t *testing.T) {
+	stream := &opaqueByteStream{inner: staticByteStream{err: io.EOF}}
+	if count, err := stream.Read(make([]byte, 1)); count != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("Read = %d, %v, want 0, io.EOF", count, err)
 	}
 }
 

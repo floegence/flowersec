@@ -408,6 +408,9 @@ func (*opaqueByteStream) GoString() string { return "flowersec.ByteStream" }
 
 func (stream *opaqueByteStream) Read(buffer []byte) (int, error) {
 	count, err := stream.inner.Read(buffer)
+	if errors.Is(err, io.EOF) {
+		return count, io.EOF
+	}
 	return count, redactNilSessionError(err)
 }
 

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -26,6 +27,7 @@ const (
 	closeStatusCode      = 4000
 	maxCloseReasonBytes  = 123
 	yamuxHeaderSizeBytes = 12
+	closeControlTimeout  = 500 * time.Millisecond
 )
 
 // ResourcePolicy is the Flowersec-owned resource contract for a WebSocket
@@ -281,14 +283,30 @@ func (session *Session) CloseWithErrorContext(ctx context.Context, applicationEr
 		if session.beforeMuxClose != nil {
 			beforeCloseErr = session.beforeMuxClose()
 		}
-		session.closeErr = errors.Join(controlErr, beforeCloseErr, session.mux.Close())
+		session.closeErr = errors.Join(
+			normalizeWebSocketShutdownError(controlErr, true),
+			beforeCloseErr,
+			normalizeWebSocketShutdownError(session.mux.Close(), false),
+		)
 	})
 	return errors.Join(session.closeErr, context.Cause(ctx))
 }
 
+func normalizeWebSocketShutdownError(err error, allowTimeout bool) error {
+	if err == nil || errors.Is(err, net.ErrClosed) || errors.Is(err, gorillaws.ErrCloseSent) ||
+		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+		return nil
+	}
+	var networkError net.Error
+	if allowTimeout && errors.As(err, &networkError) && networkError.Timeout() {
+		return nil
+	}
+	return err
+}
+
 func closeControlDeadline(ctx context.Context) time.Time {
 	now := time.Now()
-	deadline := now.Add(2 * time.Second)
+	deadline := now.Add(closeControlTimeout)
 	if ctx.Err() != nil {
 		return now
 	}
