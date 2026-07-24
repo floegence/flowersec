@@ -287,9 +287,25 @@ func (session *Session) CloseWithErrorContext(ctx context.Context, applicationEr
 		return err
 	}
 	session.closeOnce.Do(func() {
-		session.closeErr = session.inner.CloseWithError(wt.SessionErrorCode(applicationError.Code), applicationError.Reason)
+		session.closeErr = normalizeSessionCloseError(session.inner.CloseWithError(wt.SessionErrorCode(applicationError.Code), applicationError.Reason))
 	})
 	return errors.Join(session.closeErr, context.Cause(ctx))
+}
+
+func normalizeSessionCloseError(err error) error {
+	if err == nil {
+		return nil
+	}
+	// webtransport-go cancels the CONNECT stream's write side immediately
+	// before closing it and quic-go reports that exact successful teardown.
+	const canceledStreamPrefix = "close called for canceled stream "
+	streamID := strings.TrimPrefix(err.Error(), canceledStreamPrefix)
+	if streamID != err.Error() {
+		if _, parseErr := strconv.ParseUint(streamID, 10, 64); parseErr == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 func (session *Session) Close() error {

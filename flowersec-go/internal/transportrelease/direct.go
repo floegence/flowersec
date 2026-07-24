@@ -151,17 +151,19 @@ func (pair *DirectPair) Close() error {
 		return nil
 	}
 	pair.closeOnce.Do(func() {
-		results := make(chan error, 2)
-		closing := 0
-		for _, current := range []flowersession.SessionV2{pair.Client, pair.Server} {
+		if pair.Client != nil {
+			pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(pair.Client.Close()))
+		}
+		for label, current := range map[string]flowersession.SessionV2{"client": pair.Client, "server": pair.Server} {
 			if current == nil {
 				continue
 			}
-			closing++
-			go func() { results <- current.Close() }()
-		}
-		for range closing {
-			pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(<-results))
+			select {
+			case <-current.Termination():
+			case <-time.After(3 * time.Second):
+				pair.closeErr = errors.Join(pair.closeErr, fmt.Errorf("%s did not terminate after authenticated close", label))
+				pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(current.Close()))
+			}
 		}
 		for index := len(pair.closers) - 1; index >= 0; index-- {
 			pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(pair.closers[index]()))

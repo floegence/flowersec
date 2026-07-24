@@ -3,7 +3,11 @@ package transportrelease
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +35,26 @@ import (
 
 const releaseRunnerOrigin = "https://release-runner.flowersec.invalid"
 
+var errProductDirectEndpointClosed = errors.New("product direct endpoint closed")
+
+// ProductDirectEndpoint owns one long-lived TLS listener. Each Connect call
+// still issues and durably spends a distinct artifact, so cold-connect timing
+// excludes certificate and listener provisioning without weakening admission.
+type ProductDirectEndpoint struct {
+	kind         carrier.Kind
+	candidateURL string
+	trustRoots   *x509.CertPool
+	ctx          context.Context
+	cancel       context.CancelCauseFunc
+
+	pendingMu sync.Mutex
+	pending   map[[sha256.Size]byte]*admissionExpectation
+
+	closeOnce      sync.Once
+	closeErr       error
+	transportClose func() error
+}
+
 // ProductDirectPair is a one-shot production connection established through
 // the public opaque artifact and connector APIs.
 type ProductDirectPair struct {
@@ -47,6 +71,21 @@ type ProductDirectPair struct {
 // flowersec.NewConnector. It includes TLS, admission, durable spend, FSH2, and
 // the encrypted READY boundary in the measured connection path.
 func OpenProductDirect(ctx context.Context, kind carrier.Kind) (*ProductDirectPair, error) {
+	endpoint, err := OpenProductDirectEndpoint(ctx, kind)
+	if err != nil {
+		return nil, err
+	}
+	pair, err := endpoint.Connect(ctx)
+	if err != nil {
+		_ = endpoint.Close()
+		return nil, err
+	}
+	pair.closers = append(pair.closers, endpoint.Close)
+	return pair, nil
+}
+
+// OpenProductDirectEndpoint provisions one reusable production endpoint.
+func OpenProductDirectEndpoint(ctx context.Context, kind carrier.Kind) (*ProductDirectEndpoint, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -54,26 +93,59 @@ func OpenProductDirect(ctx context.Context, kind carrier.Kind) (*ProductDirectPa
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := startProductDirectEndpoint(ctx, kind, serverTLS)
+	endpointCtx, cancel := context.WithCancelCause(ctx)
+	endpoint := &ProductDirectEndpoint{
+		kind: kind, trustRoots: clientTLS.RootCAs, ctx: endpointCtx, cancel: cancel,
+		pending: make(map[[sha256.Size]byte]*admissionExpectation),
+	}
+	if err := endpoint.start(serverTLS); err != nil {
+		cancel(err)
+		return nil, err
+	}
+	return endpoint, nil
+}
+
+// Connect measures one complete public connector path through encrypted READY.
+func (endpoint *ProductDirectEndpoint) Connect(ctx context.Context) (*ProductDirectPair, error) {
+	if endpoint == nil || endpoint.ctx == nil || endpoint.trustRoots == nil {
+		return nil, errors.New("product direct endpoint is not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := context.Cause(endpoint.ctx); err != nil {
+		return nil, err
+	}
+	contract, err := releaseSessionContract()
 	if err != nil {
 		return nil, err
 	}
-	contract := releaseSessionContract()
-	artifact := directArtifact(kind, endpoint.candidateURL, contract)
+	artifact := directArtifact(endpoint.kind, endpoint.candidateURL, contract)
 	expectedFSB2, err := expectedDirectAdmission(artifact)
 	if err != nil {
-		endpoint.close()
 		return nil, err
 	}
-	endpoint.expectation <- admissionExpectation{raw: expectedFSB2, contract: contract}
+	expected := &admissionExpectation{
+		raw: expectedFSB2, contract: contract, result: make(chan productServerResult, 1),
+	}
+	digest, err := endpoint.register(expected)
+	if err != nil {
+		return nil, err
+	}
+	established := false
+	defer func() {
+		if established {
+			endpoint.unregister(digest, expected)
+		} else {
+			endpoint.abandon(digest, expected)
+		}
+	}()
 	rawArtifact, err := artifactv2.MarshalArtifactJSON(artifact)
 	if err != nil {
-		endpoint.close()
 		return nil, err
 	}
 	opaqueArtifact, err := flowersec.ParseArtifact(rawArtifact)
 	if err != nil {
-		endpoint.close()
 		return nil, err
 	}
 	spendCount := &atomic.Int32{}
@@ -84,35 +156,40 @@ func OpenProductDirect(ctx context.Context, kind carrier.Kind) (*ProductDirectPa
 		return nil
 	})
 	if err != nil {
-		endpoint.close()
 		return nil, err
 	}
 	connector, err := flowersec.NewConnector(lease, flowersec.ConnectorOptions{
-		TrustRoots: clientTLS.RootCAs, Origin: releaseRunnerOrigin, ConnectTimeout: 15 * time.Second,
+		TrustRoots: endpoint.trustRoots, Origin: releaseRunnerOrigin, ConnectTimeout: connectorTimeout(ctx),
 	})
 	if err != nil {
-		endpoint.close()
 		return nil, err
 	}
 	client, err := connector.Connect(ctx)
 	if err != nil {
-		endpoint.close()
 		return nil, err
 	}
-	server := <-endpoint.serverResult
+	var server productServerResult
+	select {
+	case server = <-expected.result:
+	case <-ctx.Done():
+		_ = client.Close()
+		return nil, context.Cause(ctx)
+	case <-endpoint.ctx.Done():
+		_ = client.Close()
+		return nil, context.Cause(endpoint.ctx)
+	}
 	if server.err != nil {
 		_ = client.Close()
-		endpoint.close()
 		return nil, server.err
 	}
 	if spendCount.Load() != 1 {
 		_ = client.Close()
 		_ = server.session.Close()
-		endpoint.close()
 		return nil, fmt.Errorf("artifact spend count = %d, want 1", spendCount.Load())
 	}
+	established = true
 	return &ProductDirectPair{
-		Client: client, Server: server.session, spendCount: spendCount, closers: []func() error{endpoint.close},
+		Client: client, Server: server.session, spendCount: spendCount,
 	}, nil
 }
 
@@ -207,16 +284,11 @@ func (pair *ProductDirectPair) Close() error {
 	return pair.closeErr
 }
 
-type directEndpoint struct {
-	candidateURL string
-	expectation  chan admissionExpectation
-	serverResult chan productServerResult
-	close        func() error
-}
-
 type admissionExpectation struct {
 	raw      []byte
 	contract artifactv2.SessionContract
+	result   chan productServerResult
+	claimed  bool
 }
 
 type productServerResult struct {
@@ -224,77 +296,71 @@ type productServerResult struct {
 	err     error
 }
 
-func startProductDirectEndpoint(ctx context.Context, kind carrier.Kind, serverTLS *tls.Config) (*directEndpoint, error) {
-	endpoint := &directEndpoint{expectation: make(chan admissionExpectation, 1), serverResult: make(chan productServerResult, 1)}
-	switch kind {
+func (endpoint *ProductDirectEndpoint) start(serverTLS *tls.Config) error {
+	var err error
+	switch endpoint.kind {
 	case carrier.KindWebSocket:
-		return startProductWebSocketEndpoint(ctx, serverTLS, endpoint)
+		err = endpoint.startWebSocket(serverTLS)
 	case carrier.KindQUIC:
-		return startProductRawQUICEndpoint(ctx, serverTLS, endpoint)
+		err = endpoint.startRawQUIC(serverTLS)
 	case carrier.KindWebTransport:
-		return startProductWebTransportEndpoint(ctx, serverTLS, endpoint)
+		err = endpoint.startWebTransport(serverTLS)
 	default:
-		return nil, fmt.Errorf("unsupported direct carrier %q", kind)
+		err = fmt.Errorf("unsupported direct carrier %q", endpoint.kind)
 	}
+	if err == nil {
+		go func() {
+			<-endpoint.ctx.Done()
+			_ = endpoint.Close()
+		}()
+	}
+	return err
 }
 
-func startProductRawQUICEndpoint(ctx context.Context, serverTLS *tls.Config, endpoint *directEndpoint) (*directEndpoint, error) {
+func (endpoint *ProductDirectEndpoint) startRawQUIC(serverTLS *tls.Config) error {
 	limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), defaultMaxInboundStreams)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, limits)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	endpoint.candidateURL = "quic://localhost:" + fmt.Sprint(listener.Addr().(*net.UDPAddr).Port)
-	endpoint.close = listener.Close
+	endpoint.transportClose = listener.Close
 	go func() {
-		carrierSession, acceptErr := listener.Accept(ctx)
-		if acceptErr != nil {
-			endpoint.serverResult <- productServerResult{err: acceptErr}
-			return
+		for {
+			carrierSession, acceptErr := listener.Accept(endpoint.ctx)
+			if acceptErr != nil {
+				if endpoint.ctx.Err() == nil {
+					endpoint.cancel(acceptErr)
+					endpoint.failPending(acceptErr)
+				}
+				return
+			}
+			go endpoint.serveNative(carrierSession)
 		}
-		expected := <-endpoint.expectation
-		endpoint.serverResult <- admitNativeAndEstablish(ctx, carrierSession, expected)
 	}()
-	return endpoint, nil
+	return nil
 }
 
-func startProductWebSocketEndpoint(ctx context.Context, serverTLS *tls.Config, endpoint *directEndpoint) (*directEndpoint, error) {
+func (endpoint *ProductDirectEndpoint) startWebSocket(serverTLS *tls.Config) error {
 	listener, err := tls.Listen("tcp4", "127.0.0.1:0", serverTLS)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	upgrader := gorillaws.Upgrader{Subprotocols: []string{carrierws.SubprotocolDirect}}
 	httpServer := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		conn, upgradeErr := upgrader.Upgrade(writer, request, nil)
 		if upgradeErr != nil {
-			endpoint.serverResult <- productServerResult{err: upgradeErr}
 			return
 		}
-		expected := <-endpoint.expectation
-		decoded, admissionErr := carrierws.ServeAdmission(ctx, conn, artifactv2.ReasonRegistry{}, exactAdmissionAuthorizer(expected.raw))
-		if admissionErr != nil {
-			endpoint.serverResult <- productServerResult{err: admissionErr}
-			return
-		}
-		resources, resourceErr := carrierws.BindSessionResourcePolicy(carrierws.DefaultResourcePolicy(), defaultMaxInboundStreams)
-		if resourceErr != nil {
-			endpoint.serverResult <- productServerResult{err: resourceErr}
-			return
-		}
-		carrierSession, sessionErr := carrierws.NewAfterAdmission(conn, carrierws.ServerRole, carrierws.SubprotocolDirect, resources, carrierws.LivenessPolicy{})
-		if sessionErr != nil {
-			endpoint.serverResult <- productServerResult{err: sessionErr}
-			return
-		}
-		endpoint.serverResult <- establishProductServer(ctx, carrierSession, decoded, expected.contract)
+		endpoint.serveWebSocket(conn)
 	})}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- httpServer.Serve(listener) }()
 	endpoint.candidateURL = "wss://localhost:" + fmt.Sprint(listener.Addr().(*net.TCPAddr).Port) + "/flowersec/v2/direct"
-	endpoint.close = func() error {
+	endpoint.transportClose = func() error {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		shutdownErr := httpServer.Shutdown(closeCtx)
@@ -304,33 +370,31 @@ func startProductWebSocketEndpoint(ctx context.Context, serverTLS *tls.Config, e
 		}
 		return errors.Join(shutdownErr, serveErr)
 	}
-	return endpoint, nil
+	return nil
 }
 
-func startProductWebTransportEndpoint(ctx context.Context, serverTLS *tls.Config, endpoint *directEndpoint) (*directEndpoint, error) {
+func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) error {
 	limits, err := carrierwt.BindSessionLimits(carrierwt.DefaultLimits(), defaultMaxInboundStreams)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	server, err := carrierwt.NewServer(serverTLS, limits, func(request *http.Request) bool {
 		return request.Header.Get("Origin") == releaseRunnerOrigin
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		carrierSession, upgradeErr := server.Upgrade(writer, request)
 		if upgradeErr != nil {
-			endpoint.serverResult <- productServerResult{err: upgradeErr}
 			return
 		}
-		expected := <-endpoint.expectation
-		endpoint.serverResult <- admitNativeAndEstablish(ctx, carrierSession, expected)
+		endpoint.serveNative(carrierSession)
 	}))
 	packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		_ = server.Close()
-		return nil, err
+		return err
 	}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- server.Serve(packetConn) }()
@@ -338,7 +402,7 @@ func startProductWebTransportEndpoint(ctx context.Context, serverTLS *tls.Config
 		Scheme: "https", Host: net.JoinHostPort("localhost", fmt.Sprint(packetConn.LocalAddr().(*net.UDPAddr).Port)),
 		Path: carrierwt.PathDirect,
 	}).String()
-	endpoint.close = func() error {
+	endpoint.transportClose = func() error {
 		serverErr := server.Close()
 		packetErr := packetConn.Close()
 		serveErr := <-serveDone
@@ -347,19 +411,162 @@ func startProductWebTransportEndpoint(ctx context.Context, serverTLS *tls.Config
 		}
 		return errors.Join(serverErr, packetErr, serveErr)
 	}
-	return endpoint, nil
+	return nil
 }
 
-func admitNativeAndEstablish(ctx context.Context, carrierSession carrier.Session, expected admissionExpectation) productServerResult {
-	stream, err := carrierSession.AcceptStream(ctx)
+func (endpoint *ProductDirectEndpoint) serveNative(carrierSession carrier.Session) {
+	stream, err := carrierSession.AcceptStream(endpoint.ctx)
 	if err != nil {
-		return productServerResult{err: err}
+		_ = carrierSession.Close()
+		return
 	}
-	decoded, err := admissionv2.Serve(ctx, stream, artifactv2.ReasonRegistry{}, exactAdmissionAuthorizer(expected.raw))
+	decoded, err := admissionv2.Serve(endpoint.ctx, stream, artifactv2.ReasonRegistry{}, endpoint.authorize)
 	if err != nil {
-		return productServerResult{err: err}
+		_ = carrierSession.Close()
+		return
 	}
-	return establishProductServer(ctx, carrierSession, decoded, expected.contract)
+	expected := endpoint.lookup(decoded.Raw)
+	if expected == nil {
+		_ = carrierSession.Close()
+		return
+	}
+	endpoint.complete(expected, establishProductServer(endpoint.ctx, carrierSession, decoded, expected.contract))
+}
+
+func (endpoint *ProductDirectEndpoint) serveWebSocket(conn *gorillaws.Conn) {
+	decoded, err := carrierws.ServeAdmission(endpoint.ctx, conn, artifactv2.ReasonRegistry{}, endpoint.authorize)
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	expected := endpoint.lookup(decoded.Raw)
+	if expected == nil {
+		_ = conn.Close()
+		return
+	}
+	resources, err := carrierws.BindSessionResourcePolicy(carrierws.DefaultResourcePolicy(), defaultMaxInboundStreams)
+	if err != nil {
+		endpoint.complete(expected, productServerResult{err: err})
+		_ = conn.Close()
+		return
+	}
+	carrierSession, err := carrierws.NewAfterAdmission(conn, carrierws.ServerRole, carrierws.SubprotocolDirect, resources, carrierws.LivenessPolicy{})
+	if err != nil {
+		endpoint.complete(expected, productServerResult{err: err})
+		_ = conn.Close()
+		return
+	}
+	endpoint.complete(expected, establishProductServer(endpoint.ctx, carrierSession, decoded, expected.contract))
+}
+
+func (endpoint *ProductDirectEndpoint) register(expected *admissionExpectation) ([sha256.Size]byte, error) {
+	digest := sha256.Sum256(expected.raw)
+	endpoint.pendingMu.Lock()
+	defer endpoint.pendingMu.Unlock()
+	if err := context.Cause(endpoint.ctx); err != nil {
+		return digest, err
+	}
+	if _, exists := endpoint.pending[digest]; exists {
+		return digest, errors.New("duplicate release admission request")
+	}
+	endpoint.pending[digest] = expected
+	return digest, nil
+}
+
+func (endpoint *ProductDirectEndpoint) unregister(digest [sha256.Size]byte, expected *admissionExpectation) {
+	endpoint.pendingMu.Lock()
+	if endpoint.pending[digest] == expected {
+		delete(endpoint.pending, digest)
+	}
+	endpoint.pendingMu.Unlock()
+}
+
+func (endpoint *ProductDirectEndpoint) abandon(digest [sha256.Size]byte, expected *admissionExpectation) {
+	endpoint.unregister(digest, expected)
+	select {
+	case result := <-expected.result:
+		if result.session != nil {
+			_ = result.session.Close()
+		}
+	default:
+	}
+}
+
+func (endpoint *ProductDirectEndpoint) lookup(raw []byte) *admissionExpectation {
+	digest := sha256.Sum256(raw)
+	endpoint.pendingMu.Lock()
+	expected := endpoint.pending[digest]
+	if expected != nil && !bytes.Equal(expected.raw, raw) {
+		expected = nil
+	}
+	endpoint.pendingMu.Unlock()
+	return expected
+}
+
+func (endpoint *ProductDirectEndpoint) authorize(_ context.Context, decoded *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
+	if decoded == nil {
+		return artifactv2.AdmissionResponse{}, errors.New("admission request was not issued by this endpoint")
+	}
+	digest := sha256.Sum256(decoded.Raw)
+	endpoint.pendingMu.Lock()
+	expected := endpoint.pending[digest]
+	valid := expected != nil && bytes.Equal(expected.raw, decoded.Raw) && !expected.claimed
+	if valid {
+		expected.claimed = true
+	}
+	endpoint.pendingMu.Unlock()
+	if !valid {
+		return artifactv2.AdmissionResponse{}, errors.New("admission request was not issued by this endpoint")
+	}
+	return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
+}
+
+func (endpoint *ProductDirectEndpoint) complete(expected *admissionExpectation, result productServerResult) {
+	digest := sha256.Sum256(expected.raw)
+	endpoint.pendingMu.Lock()
+	active := endpoint.pending[digest] == expected
+	if active {
+		expected.result <- result
+	}
+	endpoint.pendingMu.Unlock()
+	if !active {
+		if result.session != nil {
+			_ = result.session.Close()
+		}
+		return
+	}
+}
+
+func (endpoint *ProductDirectEndpoint) failPending(err error) {
+	if err == nil {
+		err = errProductDirectEndpointClosed
+	}
+	endpoint.pendingMu.Lock()
+	pending := endpoint.pending
+	endpoint.pending = make(map[[sha256.Size]byte]*admissionExpectation)
+	endpoint.pendingMu.Unlock()
+	for _, expected := range pending {
+		select {
+		case expected.result <- productServerResult{err: err}:
+		default:
+		}
+	}
+}
+
+// Close stops admission of new connections. Established pairs remain owned by
+// their callers and must be closed independently.
+func (endpoint *ProductDirectEndpoint) Close() error {
+	if endpoint == nil {
+		return nil
+	}
+	endpoint.closeOnce.Do(func() {
+		endpoint.cancel(errProductDirectEndpointClosed)
+		endpoint.failPending(context.Cause(endpoint.ctx))
+		if endpoint.transportClose != nil {
+			endpoint.closeErr = normalizeCloseError(endpoint.transportClose())
+		}
+	})
+	return endpoint.closeErr
 }
 
 func establishProductServer(ctx context.Context, carrierSession carrier.Session, decoded *artifactv2.DecodedRequest, contract artifactv2.SessionContract) productServerResult {
@@ -384,15 +591,6 @@ func establishProductServer(ctx context.Context, carrierSession carrier.Session,
 	return productServerResult{session: established, err: err}
 }
 
-func exactAdmissionAuthorizer(expected []byte) admissionv2.Authorize {
-	return func(_ context.Context, decoded *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
-		if decoded == nil || !bytes.Equal(decoded.Raw, expected) {
-			return artifactv2.AdmissionResponse{}, errors.New("admission request differs from the issued artifact")
-		}
-		return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
-	}
-}
-
 func directArtifact(kind carrier.Kind, candidateURL string, contract artifactv2.SessionContract) artifactv2.Artifact {
 	carrierKind := artifactv2.CarrierWebSocket
 	switch kind {
@@ -415,22 +613,26 @@ func directArtifact(kind carrier.Kind, candidateURL string, contract artifactv2.
 	}
 }
 
-func releaseSessionContract() artifactv2.SessionContract {
+func releaseSessionContract() (artifactv2.SessionContract, error) {
+	var channelNonce [16]byte
+	if _, err := rand.Read(channelNonce[:]); err != nil {
+		return artifactv2.SessionContract{}, fmt.Errorf("generate release channel ID: %w", err)
+	}
 	contract := artifactv2.SessionContract{
-		ChannelID: "transport-release-product-direct", InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(),
+		ChannelID: "transport-release-" + hex.EncodeToString(channelNonce[:]), InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(),
 		IdleTimeoutSeconds: 60, EstablishTimeoutSeconds: 30,
 		RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
 		MaxInboundStreams: defaultMaxInboundStreams, AllowedSuites: []uint16{1}, DefaultSuite: 1,
 	}
-	for index := range contract.E2EEPSK {
-		contract.E2EEPSK[index] = byte(index + 1)
+	if _, err := rand.Read(contract.E2EEPSK[:]); err != nil {
+		return artifactv2.SessionContract{}, fmt.Errorf("generate release session PSK: %w", err)
 	}
 	hash, _, err := artifactv2.ComputeSessionContractHash(contract)
 	if err != nil {
-		panic(err)
+		return artifactv2.SessionContract{}, err
 	}
 	contract.ContractHash = hash
-	return contract
+	return contract, nil
 }
 
 func expectedDirectAdmission(artifact artifactv2.Artifact) ([]byte, error) {
@@ -439,4 +641,14 @@ func expectedDirectAdmission(artifact artifactv2.Artifact) ([]byte, error) {
 		return nil, err
 	}
 	return artifactv2.MarshalRequest(request)
+}
+
+func connectorTimeout(ctx context.Context) time.Duration {
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			return remaining
+		}
+		return time.Nanosecond
+	}
+	return 15 * time.Second
 }
