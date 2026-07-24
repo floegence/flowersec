@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -23,6 +24,8 @@ import (
 const baselineTarget = "direct-clean-baseline"
 
 var gitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+var buildSourceSHA string
 
 type baselineReport struct {
 	SchemaVersion  int                     `json:"schema_version"`
@@ -65,11 +68,12 @@ func run(args []string) error {
 	manifestPath := flags.String("manifest", "", "performance manifest path")
 	reportPath := flags.String("report", "", "new baseline report path")
 	sourceSHA := flags.String("source-sha", "", "exact source commit")
+	sourceRoot := flags.String("source-root", "", "clean source checkout root")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *target != baselineTarget || *manifestPath == "" || *reportPath == "" || !gitSHAPattern.MatchString(*sourceSHA) || flags.NArg() != 0 {
-		return errors.New("runner requires --target direct-clean-baseline, --manifest, --report, and a full --source-sha")
+	if *target != baselineTarget || *manifestPath == "" || *reportPath == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
+		return errors.New("runner requires --target direct-clean-baseline, --manifest, --report, --source-root, and a full --source-sha")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return errors.New("direct clean baseline requires Linux amd64")
@@ -80,6 +84,9 @@ func run(args []string) error {
 	}
 	if actualSourceSHA != *sourceSHA {
 		return fmt.Errorf("source SHA %s does not match executable revision %s", *sourceSHA, actualSourceSHA)
+	}
+	if err := verifySourceCheckout(*sourceRoot, *manifestPath, *sourceSHA); err != nil {
+		return err
 	}
 	plan, manifest, err := transportrelease.LoadReleasePlan(*manifestPath)
 	if err != nil {
@@ -254,10 +261,62 @@ func executableSourceSHA() (string, error) {
 			modified = setting.Value
 		}
 	}
-	if !gitSHAPattern.MatchString(revision) || modified != "false" {
-		return "", errors.New("executable must be built from a clean Git revision with VCS stamping enabled")
+	if revision != "" {
+		if !gitSHAPattern.MatchString(revision) || modified != "false" {
+			return "", errors.New("executable VCS stamp is not a clean full Git revision")
+		}
+		if buildSourceSHA != "" && buildSourceSHA != revision {
+			return "", errors.New("executable VCS and linked source revisions disagree")
+		}
+		return revision, nil
 	}
-	return revision, nil
+	if !gitSHAPattern.MatchString(buildSourceSHA) {
+		return "", errors.New("executable requires a full linked buildSourceSHA when automatic VCS stamping is unavailable")
+	}
+	return buildSourceSHA, nil
+}
+
+func verifySourceCheckout(root, manifestPath, sourceSHA string) error {
+	cleanRoot := filepath.Clean(root)
+	if !filepath.IsAbs(cleanRoot) || cleanRoot == string(filepath.Separator) {
+		return errors.New("source root must be an absolute checkout path")
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(cleanRoot)
+	if err != nil {
+		return errors.New("source root must resolve to an existing checkout")
+	}
+	cleanRoot = resolvedRoot
+	expectedManifest := filepath.Join(cleanRoot, "testdata", "transport_v2", "performance_manifest.json")
+	resolvedManifest, err := filepath.EvalSymlinks(filepath.Clean(manifestPath))
+	if err != nil || resolvedManifest != expectedManifest {
+		return errors.New("performance manifest must be the fixed file in the source checkout")
+	}
+	top, err := gitOutput(cleanRoot, "rev-parse", "--show-toplevel")
+	if err != nil || top != cleanRoot {
+		return errors.New("source root is not the exact Git checkout root")
+	}
+	head, err := gitOutput(cleanRoot, "rev-parse", "HEAD")
+	if err != nil || head != sourceSHA {
+		return errors.New("source checkout HEAD does not match source SHA")
+	}
+	status, err := gitOutput(cleanRoot, "status", "--porcelain", "--untracked-files=all")
+	if err != nil || status != "" {
+		return errors.New("source checkout must be clean")
+	}
+	return nil
+}
+
+func gitOutput(root string, args ...string) (string, error) {
+	commandArgs := append([]string{"-C", root}, args...)
+	command := exec.Command("git", commandArgs...)
+	command.Env = make([]string, 0, len(os.Environ()))
+	for _, item := range os.Environ() {
+		if !strings.HasPrefix(item, "GIT_") {
+			command.Env = append(command.Env, item)
+		}
+	}
+	output, err := command.Output()
+	return strings.TrimSpace(string(output)), err
 }
 
 func kernelRelease() (string, error) {
