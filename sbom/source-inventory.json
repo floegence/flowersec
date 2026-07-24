@@ -6290,11 +6290,11 @@
         {
           "ecosystem": "npm",
           "name": "nanoid",
-          "version": "3.3.11",
+          "version": "3.3.16",
           "declaredLicense": "MIT",
           "concludedLicense": "MIT",
-          "source": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.11.tgz",
-          "purl": "pkg:npm/nanoid@3.3.11",
+          "source": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz",
+          "purl": "pkg:npm/nanoid@3.3.16",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -6304,9 +6304,9 @@
             "reviewedAt": "2026-07-22",
             "policyRevision": "source-license-policy-v2",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==",
-            "sourceEvidenceSha256": "95291fdda03f6ba300a646031da5ae8d02cdfbb4779af50261fd3231c5145ac6",
-            "expressionEvidenceSha256": "680fb33a987e1e7dc09ccbabfbec25812be4fa51d32572d85f6e1089734c9a0a",
+            "sourceEvidenceValue": "sha512-bzlKTyNJ7+LdGIIwy8ijFpIqEQIvafahV7eYykJ8Cvh42EdJeODoJ6gUJXpQJvej1BddH8OqTXZNE/KfbWAu8Q==",
+            "sourceEvidenceSha256": "db56881541cce3f7bed7acd728f31714d65480bc666ee6695c61a57abb4e17f6",
+            "expressionEvidenceSha256": "86db860c242db2f83139f68355788758a603de4e5387a5fc8cb8362962614dc7",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -6800,11 +6800,11 @@
         {
           "ecosystem": "npm",
           "name": "postcss",
-          "version": "8.5.12",
+          "version": "8.5.23",
           "declaredLicense": "MIT",
           "concludedLicense": "MIT",
-          "source": "https://registry.npmjs.org/postcss/-/postcss-8.5.12.tgz",
-          "purl": "pkg:npm/postcss@8.5.12",
+          "source": "https://registry.npmjs.org/postcss/-/postcss-8.5.23.tgz",
+          "purl": "pkg:npm/postcss@8.5.23",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -6814,9 +6814,9 @@
             "reviewedAt": "2026-07-22",
             "policyRevision": "source-license-policy-v2",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-W62t/Se6rA0Az3DfCL0AqJwXuKwBeYg6nOaIgzP+xZ7N5BFCI7DYi1qs6ygUYT6rvfi6t9k65UMLJC+PHZpDAA==",
-            "sourceEvidenceSha256": "28939991a69e02dd924c360212301ecc6b8fbfbd78d5e9d083affe28b3a0c3b5",
-            "expressionEvidenceSha256": "2b76cb47ed8e7112d3a9f6315f85dca9c912f2c4574ecdb848c6cdcaf48bc690",
+            "sourceEvidenceValue": "sha512-g50586zr4bZmwFiTlflMu8E0bDTb5I5gertgwAKmsdUlTQIhZtunzUlD1WSzwcVWPoAVpsrA6vlfCD7oXvRwgg==",
+            "sourceEvidenceSha256": "b8fcdcc9fdd0b083be1c6a01fd6839d021023589dd7ee4e58103566268d0f2ca",
+            "expressionEvidenceSha256": "378529c540bcde6685d7fbba53fd7b32d4d3f0dfc3c7d7cfbb8846c422b46da0",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -9439,17 +9439,17 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/postcss@8.5.12",
-          "to": "pkg:npm/nanoid@3.3.11",
+          "from": "pkg:npm/postcss@8.5.23",
+          "to": "pkg:npm/nanoid@3.3.16",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/postcss@8.5.12",
+          "from": "pkg:npm/postcss@8.5.23",
           "to": "pkg:npm/picocolors@1.1.1",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/postcss@8.5.12",
+          "from": "pkg:npm/postcss@8.5.23",
           "to": "pkg:npm/source-map-js@1.2.1",
           "kind": "runtime"
         },
@@ -9620,7 +9620,7 @@
         },
         {
           "from": "pkg:npm/vite@8.0.16",
-          "to": "pkg:npm/postcss@8.5.12",
+          "to": "pkg:npm/postcss@8.5.23",
           "kind": "runtime"
         },
         {
@@ -56188,11 +56188,11 @@
     {
       "ecosystem": "npm",
       "name": "nanoid",
-      "version": "3.3.11",
+      "version": "3.3.16",
       "declaredLicense": "MIT",
       "concludedLicense": "MIT",
-      "source": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.11.tgz",
-      "purl": "pkg:npm/nanoid@3.3.11",
+      "source": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz",
+      "purl": "pkg:npm/nanoid@3.3.16",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -56202,9 +56202,9 @@
         "reviewedAt": "2026-07-22",
         "policyRevision": "source-license-policy-v2",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==",
-        "sourceEvidenceSha256": "95291fdda03f6ba300a646031da5ae8d02cdfbb4779af50261fd3231c5145ac6",
-        "expressionEvidenceSha256": "680fb33a987e1e7dc09ccbabfbec25812be4fa51d32572d85f6e1089734c9a0a",
+        "sourceEvidenceValue": "sha512-bzlKTyNJ7+LdGIIwy8ijFpIqEQIvafahV7eYykJ8Cvh42EdJeODoJ6gUJXpQJvej1BddH8OqTXZNE/KfbWAu8Q==",
+        "sourceEvidenceSha256": "db56881541cce3f7bed7acd728f31714d65480bc666ee6695c61a57abb4e17f6",
+        "expressionEvidenceSha256": "86db860c242db2f83139f68355788758a603de4e5387a5fc8cb8362962614dc7",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -56698,11 +56698,11 @@
     {
       "ecosystem": "npm",
       "name": "postcss",
-      "version": "8.5.12",
+      "version": "8.5.23",
       "declaredLicense": "MIT",
       "concludedLicense": "MIT",
-      "source": "https://registry.npmjs.org/postcss/-/postcss-8.5.12.tgz",
-      "purl": "pkg:npm/postcss@8.5.12",
+      "source": "https://registry.npmjs.org/postcss/-/postcss-8.5.23.tgz",
+      "purl": "pkg:npm/postcss@8.5.23",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -56712,9 +56712,9 @@
         "reviewedAt": "2026-07-22",
         "policyRevision": "source-license-policy-v2",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-W62t/Se6rA0Az3DfCL0AqJwXuKwBeYg6nOaIgzP+xZ7N5BFCI7DYi1qs6ygUYT6rvfi6t9k65UMLJC+PHZpDAA==",
-        "sourceEvidenceSha256": "28939991a69e02dd924c360212301ecc6b8fbfbd78d5e9d083affe28b3a0c3b5",
-        "expressionEvidenceSha256": "2b76cb47ed8e7112d3a9f6315f85dca9c912f2c4574ecdb848c6cdcaf48bc690",
+        "sourceEvidenceValue": "sha512-g50586zr4bZmwFiTlflMu8E0bDTb5I5gertgwAKmsdUlTQIhZtunzUlD1WSzwcVWPoAVpsrA6vlfCD7oXvRwgg==",
+        "sourceEvidenceSha256": "b8fcdcc9fdd0b083be1c6a01fd6839d021023589dd7ee4e58103566268d0f2ca",
+        "expressionEvidenceSha256": "378529c540bcde6685d7fbba53fd7b32d4d3f0dfc3c7d7cfbb8846c422b46da0",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -63240,17 +63240,17 @@
       "kind": "runtime"
     },
     {
-      "from": "pkg:npm/postcss@8.5.12",
-      "to": "pkg:npm/nanoid@3.3.11",
+      "from": "pkg:npm/postcss@8.5.23",
+      "to": "pkg:npm/nanoid@3.3.16",
       "kind": "runtime"
     },
     {
-      "from": "pkg:npm/postcss@8.5.12",
+      "from": "pkg:npm/postcss@8.5.23",
       "to": "pkg:npm/picocolors@1.1.1",
       "kind": "runtime"
     },
     {
-      "from": "pkg:npm/postcss@8.5.12",
+      "from": "pkg:npm/postcss@8.5.23",
       "to": "pkg:npm/source-map-js@1.2.1",
       "kind": "runtime"
     },
@@ -63421,7 +63421,7 @@
     },
     {
       "from": "pkg:npm/vite@8.0.16",
-      "to": "pkg:npm/postcss@8.5.12",
+      "to": "pkg:npm/postcss@8.5.23",
       "kind": "runtime"
     },
     {

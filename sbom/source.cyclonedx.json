@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:eead425e-4431-5559-8b1f-8e816c88abc9",
+  "serialNumber": "urn:uuid:b3578441-f655-5c30-82f6-25e8f1a14039",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "55118e7493883748afced40226eaa54587fbbc7f42947dff560450e46e739735"
+        "value": "7728708024ad1e4c26a019cca59ed2873f66350b31dba2d875eaf66f0675c3b4"
       }
     ]
   },
@@ -11558,9 +11558,9 @@
     {
       "type": "library",
       "name": "nanoid",
-      "version": "3.3.11",
-      "purl": "pkg:npm/nanoid@3.3.11",
-      "bom-ref": "pkg:npm/nanoid@3.3.11",
+      "version": "3.3.16",
+      "purl": "pkg:npm/nanoid@3.3.16",
+      "bom-ref": "pkg:npm/nanoid@3.3.16",
       "licenses": [
         {
           "expression": "MIT"
@@ -11569,7 +11569,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.11.tgz"
+          "url": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz"
         }
       ],
       "properties": [
@@ -11978,9 +11978,9 @@
     {
       "type": "library",
       "name": "postcss",
-      "version": "8.5.12",
-      "purl": "pkg:npm/postcss@8.5.12",
-      "bom-ref": "pkg:npm/postcss@8.5.12",
+      "version": "8.5.23",
+      "purl": "pkg:npm/postcss@8.5.23",
+      "bom-ref": "pkg:npm/postcss@8.5.23",
       "licenses": [
         {
           "expression": "MIT"
@@ -11989,7 +11989,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/postcss/-/postcss-8.5.12.tgz"
+          "url": "https://registry.npmjs.org/postcss/-/postcss-8.5.23.tgz"
         }
       ],
       "properties": [
@@ -16429,7 +16429,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/nanoid@3.3.11",
+      "ref": "pkg:npm/nanoid@3.3.16",
       "dependsOn": []
     },
     {
@@ -16510,9 +16510,9 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/postcss@8.5.12",
+      "ref": "pkg:npm/postcss@8.5.23",
       "dependsOn": [
-        "pkg:npm/nanoid@3.3.11",
+        "pkg:npm/nanoid@3.3.16",
         "pkg:npm/picocolors@1.1.1",
         "pkg:npm/source-map-js@1.2.1"
       ]
@@ -16684,7 +16684,7 @@
         "pkg:npm/fsevents@2.3.3",
         "pkg:npm/lightningcss@1.32.0",
         "pkg:npm/picomatch@4.0.4",
-        "pkg:npm/postcss@8.5.12",
+        "pkg:npm/postcss@8.5.23",
         "pkg:npm/rolldown@1.0.3",
         "pkg:npm/tinyglobby@0.2.17"
       ]

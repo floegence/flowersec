@@ -520,6 +520,12 @@ test("owned source inventory outputs reject omission, stale content, and extras"
   fs.appendFileSync(path.join(root, "flowersec-ts/THIRD_PARTY_NOTICES.md"), "stale\n");
   assert.throws(() => assertOwnedOutputClosure(root, artifacts), /stale/i);
   fs.writeFileSync(path.join(root, "flowersec-ts/THIRD_PARTY_NOTICES.md"), artifacts.get("flowersec-ts/THIRD_PARTY_NOTICES.md"));
+  const expectedOutput = path.join(root, "flowersec-go/THIRD_PARTY_NOTICES.md");
+  fs.rmSync(expectedOutput);
+  fs.symlinkSync(path.join(root, "flowersec-ts/THIRD_PARTY_NOTICES.md"), expectedOutput);
+  assert.throws(() => assertOwnedOutputClosure(root, artifacts), /regular file/i);
+  fs.rmSync(expectedOutput);
+  fs.writeFileSync(expectedOutput, artifacts.get("flowersec-go/THIRD_PARTY_NOTICES.md"));
   fs.writeFileSync(path.join(root, "sbom/obsolete.spdx.json"), "{}\n");
   assert.throws(() => assertOwnedOutputClosure(root, artifacts), /unexpected/i);
   fs.rmSync(path.join(root, "sbom/obsolete.spdx.json"));

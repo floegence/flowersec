@@ -57,6 +57,29 @@ function run(command, args, cwd, environment = {}, replaceEnvironment = false) {
   return result.stdout;
 }
 
+function readRegularFile(filePath, label) {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+  } catch (error) {
+    throw new Error(`${label}: ${filePath}`, { cause: error });
+  }
+  try {
+    const opened = fs.fstatSync(descriptor);
+    const linked = fs.lstatSync(filePath);
+    if (!opened.isFile() || !linked.isFile() || linked.isSymbolicLink()
+      || opened.dev !== linked.dev || opened.ino !== linked.ino) {
+      throw new Error(`${label}: ${filePath}`);
+    }
+    return fs.readFileSync(descriptor, "utf8");
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 export function resolveSwiftDependencyTree(packageRoot, cachePath, options = {}) {
   const commandRunner = options.run ?? ((command, args, runOptions) => (
     run(command, args, runOptions.cwd, runOptions.env, true)
@@ -706,11 +729,10 @@ function readGoLicenseFiles(module, mapping) {
   ));
   return fileNames.map((fileName) => {
     const filePath = path.join(module.Dir, fileName);
-    const stat = fs.lstatSync(filePath);
-    if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new Error(`Go module license material must be a regular file: ${module.Path} ${fileName}`);
-    }
-    const contents = fs.readFileSync(filePath, "utf8");
+    const contents = readRegularFile(
+      filePath,
+      `Go module license material must be a regular file: ${module.Path} ${fileName}`,
+    );
     if (contents.trim() === "" || contents.includes("\0")) {
       throw new Error(`Go module license material is empty or invalid: ${module.Path} ${fileName}`);
     }
@@ -1727,10 +1749,11 @@ export function assertOwnedOutputClosure(repoRoot, artifacts) {
   for (const [relative, expected] of artifacts) {
     const output = path.join(repoRoot, relative);
     if (!fs.existsSync(output)) throw new Error(`missing owned source inventory output ${relative}`);
-    if (!fs.lstatSync(output).isFile()) {
-      throw new Error(`owned source inventory output must be a regular file: ${relative}`);
-    }
-    if (fs.readFileSync(output, "utf8") !== expected) {
+    const contents = readRegularFile(
+      output,
+      `owned source inventory output must be a regular file: ${relative}`,
+    );
+    if (contents !== expected) {
       throw new Error(`stale owned source inventory output ${relative}`);
     }
   }

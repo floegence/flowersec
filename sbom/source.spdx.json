@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-source",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/55118e7493883748afced40226eaa54587fbbc7f42947dff560450e46e739735",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/7728708024ad1e4c26a019cca59ed2873f66350b31dba2d875eaf66f0675c3b4",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 55118e7493883748afced40226eaa54587fbbc7f42947dff560450e46e739735",
+      "comment": "Flowersec source inventory SHA-256: 7728708024ad1e4c26a019cca59ed2873f66350b31dba2d875eaf66f0675c3b4",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -7035,9 +7035,9 @@
     },
     {
       "name": "nanoid",
-      "SPDXID": "SPDXRef-Package-68577ca2c4a63e91bbb5",
-      "versionInfo": "3.3.11",
-      "downloadLocation": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.11.tgz",
+      "SPDXID": "SPDXRef-Package-03d3e084d50a88329516",
+      "versionInfo": "3.3.16",
+      "downloadLocation": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -7046,7 +7046,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/nanoid@3.3.11"
+          "referenceLocator": "pkg:npm/nanoid@3.3.16"
         }
       ]
     },
@@ -7290,9 +7290,9 @@
     },
     {
       "name": "postcss",
-      "SPDXID": "SPDXRef-Package-6a46beb3476a4cb89913",
-      "versionInfo": "8.5.12",
-      "downloadLocation": "https://registry.npmjs.org/postcss/-/postcss-8.5.12.tgz",
+      "SPDXID": "SPDXRef-Package-e0500813aa09c9528346",
+      "versionInfo": "8.5.23",
+      "downloadLocation": "https://registry.npmjs.org/postcss/-/postcss-8.5.23.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -7301,7 +7301,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/postcss@8.5.12"
+          "referenceLocator": "pkg:npm/postcss@8.5.23"
         }
       ]
     },
@@ -12796,17 +12796,17 @@
       "relatedSpdxElement": "SPDXRef-Package-8fd685bc92b8350d9308"
     },
     {
-      "spdxElementId": "SPDXRef-Package-6a46beb3476a4cb89913",
+      "spdxElementId": "SPDXRef-Package-e0500813aa09c9528346",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-68577ca2c4a63e91bbb5"
+      "relatedSpdxElement": "SPDXRef-Package-03d3e084d50a88329516"
     },
     {
-      "spdxElementId": "SPDXRef-Package-6a46beb3476a4cb89913",
+      "spdxElementId": "SPDXRef-Package-e0500813aa09c9528346",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-d36ad6ab388cdbd402ff"
     },
     {
-      "spdxElementId": "SPDXRef-Package-6a46beb3476a4cb89913",
+      "spdxElementId": "SPDXRef-Package-e0500813aa09c9528346",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-b5a918edaa07d35c207d"
     },
@@ -12978,7 +12978,7 @@
     {
       "spdxElementId": "SPDXRef-Package-3507f3ee2f8e34a0dfcf",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-6a46beb3476a4cb89913"
+      "relatedSpdxElement": "SPDXRef-Package-e0500813aa09c9528346"
     },
     {
       "spdxElementId": "SPDXRef-Package-3507f3ee2f8e34a0dfcf",
