@@ -230,7 +230,7 @@ func closeBrowserServerSession(session flowersession.SessionV2, deadline time.Du
 	defer timer.Stop()
 	select {
 	case <-session.Termination():
-		return nil
+		return normalizeBrowserServerTermination(session.WaitClosed(context.Background()))
 	case <-timer.C:
 		if err := session.Close(); err != nil {
 			return err
@@ -239,11 +239,18 @@ func closeBrowserServerSession(session flowersession.SessionV2, deadline time.Du
 		defer forceTimer.Stop()
 		select {
 		case <-session.Termination():
-			return nil
+			return normalizeBrowserServerTermination(session.WaitClosed(context.Background()))
 		case <-forceTimer.C:
 			return errors.New("browser server session did not terminate after forced close")
 		}
 	}
+}
+
+func normalizeBrowserServerTermination(err error) error {
+	if err == nil || errors.Is(err, flowersession.ErrSessionClosed) {
+		return nil
+	}
+	return fmt.Errorf("browser server session terminated unexpectedly: %w", err)
 }
 
 func (source *browserArtifactSource) Finalize(ctx context.Context, abort bool) error {

@@ -1204,10 +1204,10 @@ func (s *encryptedStream) writeRecordLocked(typ protocolv2.InnerType, payload []
 	} else {
 		s.sendSeq++
 	}
-	if err := writeAll(s.carrier, rawHeader); err != nil {
-		return err
-	}
-	if err := writeAll(s.carrier, ciphertext); err != nil {
+	raw := make([]byte, 0, len(rawHeader)+len(ciphertext))
+	raw = append(raw, rawHeader...)
+	raw = append(raw, ciphertext...)
+	if err := writeAll(s.carrier, raw); err != nil {
 		return err
 	}
 	s.session.touchActivity()

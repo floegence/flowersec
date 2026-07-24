@@ -241,6 +241,7 @@ async function runSessionWorkload(page, artifact, plan) {
     }
 
     async function runRPC(activeSession, config, phaseSignal) {
+      const phaseStarted = performance.now();
       const payload = "x".repeat(config.request_bytes - 2);
       const encoded = new TextEncoder().encode(JSON.stringify(payload));
       if (encoded.byteLength !== config.request_bytes) throw new Error("RPC request does not match the requested byte count");
@@ -290,6 +291,20 @@ async function runSessionWorkload(page, artifact, plan) {
       try {
         await Promise.all(workers);
       } catch (error) {
+        const completed = records.filter((record) => record !== undefined);
+        const durations = completed
+          .map((record) => record.duration_ns / 1_000_000)
+          .sort((left, right) => left - right);
+        const percentile = (quantile) => durations.length === 0
+          ? "unavailable"
+          : `${durations[Math.ceil(quantile * durations.length) - 1].toFixed(1)}ms`;
+        const progress = [
+          `completed ${completed.length}/${config.operations}`,
+          `phase elapsed ${Math.max(0, performance.now() - phaseStarted).toFixed(1)}ms`,
+          `completed latency p50=${percentile(0.50)}`,
+          `p95=${percentile(0.95)}`,
+          `p99=${percentile(0.99)}`,
+        ].join("; ");
         const livenessController = new AbortController();
         const livenessTimer = setTimeout(
           () => livenessController.abort(new DOMException("post-failure liveness deadline exceeded", "TimeoutError")),
@@ -305,7 +320,7 @@ async function runSessionWorkload(page, artifact, plan) {
         } finally {
           clearTimeout(livenessTimer);
         }
-        throw new Error(`RPC workload failed; post-failure liveness ${liveness}; ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        throw new Error(`RPC workload failed; ${progress}; post-failure liveness ${liveness}; ${error instanceof Error ? error.message : String(error)}`, { cause: error });
       }
       return records;
     }
@@ -382,7 +397,7 @@ async function runSessionWorkload(page, artifact, plan) {
 
     async function withSignalDeadline(operation, milliseconds, message) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(new Error(message)), milliseconds);
+      const timer = setTimeout(() => controller.abort(new DOMException(message, "TimeoutError")), milliseconds);
       try {
         return await operation(controller.signal);
       } finally {

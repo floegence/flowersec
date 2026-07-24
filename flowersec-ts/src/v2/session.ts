@@ -417,8 +417,7 @@ export class SessionV2 implements SessionV2Contract {
     };
     const ciphertext = sealRecord(this.config.suite, material, this.h3, stream.id, this.sendDirection, header, inner);
     stream.sendSequence += 1n;
-    await writeAll(stream.carrier, encodeRecordHeader(header), signal);
-    await writeAll(stream.carrier, ciphertext, signal);
+    await writeAll(stream.carrier, concat(encodeRecordHeader(header), ciphertext), signal);
     this.markAuthenticatedActivity();
   }
 
@@ -735,8 +734,7 @@ export class SessionV2 implements SessionV2Contract {
       };
       const ciphertext = sealRecord(this.config.suite, material, this.h3, 0n, this.sendDirection, header, inner);
       this.controlSendSequence += 1n;
-      await writeAll(this.control, encodeRecordHeader(header));
-      await writeAll(this.control, ciphertext);
+      await writeAll(this.control, concat(encodeRecordHeader(header), ciphertext));
       this.markAuthenticatedActivity();
     });
     this.controlWriteTail = task.catch(() => undefined);

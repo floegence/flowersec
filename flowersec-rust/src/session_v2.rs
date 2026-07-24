@@ -1487,8 +1487,11 @@ async fn send_control_v2(
         &inner,
     )
     .map_err(proto)?;
-    write_all_v2(&session.control, &header.encode().map_err(proto)?).await?;
-    write_all_v2(&session.control, &ciphertext).await?;
+    let raw_header = header.encode().map_err(proto)?;
+    let mut wire = Vec::with_capacity(raw_header.len() + ciphertext.len());
+    wire.extend_from_slice(&raw_header);
+    wire.extend_from_slice(&ciphertext);
+    write_all_v2(&session.control, &wire).await?;
     touch_activity_v2(session);
     Ok(())
 }
@@ -3521,8 +3524,11 @@ async fn write_stream_record_v2(
         &inner,
     )
     .map_err(proto)?;
-    write_all_v2(carrier, &header.encode().map_err(proto)?).await?;
-    write_all_v2(carrier, &ciphertext).await?;
+    let raw_header = header.encode().map_err(proto)?;
+    let mut wire = Vec::with_capacity(raw_header.len() + ciphertext.len());
+    wire.extend_from_slice(&raw_header);
+    wire.extend_from_slice(&ciphertext);
+    write_all_v2(carrier, &wire).await?;
     touch_activity_v2(session);
     Ok(())
 }

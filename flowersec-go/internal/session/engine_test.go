@@ -1696,12 +1696,12 @@ func (s *memoryStream) Write(payload []byte) (int, error) {
 		s.owner.runWriteHook(payload)
 	}
 	s.mutateMu.Lock()
-	if s.mutateSequence && len(payload) == protocolv2.RecordHeaderSize && bytes.HasPrefix(payload, []byte("FSR2")) {
+	if s.mutateSequence && len(payload) >= protocolv2.RecordHeaderSize && bytes.HasPrefix(payload, []byte("FSR2")) {
 		payload = append([]byte(nil), payload...)
 		binary.BigEndian.PutUint64(payload[12:20], binary.BigEndian.Uint64(payload[12:20])+1)
 		s.mutateSequence = false
 	}
-	if s.mutateCiphertext && len(payload) != 0 && !bytes.HasPrefix(payload, []byte("FSR2")) {
+	if s.mutateCiphertext && len(payload) > protocolv2.RecordHeaderSize && bytes.HasPrefix(payload, []byte("FSR2")) {
 		payload = append([]byte(nil), payload...)
 		payload[len(payload)-1] ^= 1
 		s.mutateCiphertext = false

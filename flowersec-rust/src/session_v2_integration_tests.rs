@@ -990,7 +990,7 @@ async fn dropping_a_queued_rekey_future_does_not_run_it_later() {
         .expect("only one later rekey should run");
     assert_eq!(
         writes.load(Ordering::Acquire),
-        4,
+        2,
         "dropped queued rekey emitted a third control record"
     );
     enabled.store(false, Ordering::Release);
@@ -1189,7 +1189,7 @@ async fn canceled_outbound_setup_commits_reset_before_later_rekey() {
 }
 
 #[tokio::test]
-async fn canceled_abandonment_finishes_the_partially_written_reset_record() {
+async fn canceled_abandonment_finishes_the_in_flight_reset_record() {
     let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
     let enabled = Arc::new(AtomicBool::new(false));
     let writes = Arc::new(AtomicU64::new(0));
@@ -1199,7 +1199,7 @@ async fn canceled_abandonment_finishes_the_partially_written_reset_record() {
         inner: client_inner,
         enabled: enabled.clone(),
         writes: writes.clone(),
-        block_on: 2,
+        block_on: 1,
         entered: entered.clone(),
         release: release.clone(),
     });
@@ -1249,14 +1249,14 @@ async fn canceled_abandonment_finishes_the_partially_written_reset_record() {
     };
     tokio::time::timeout(Duration::from_secs(1), entered.notified())
         .await
-        .expect("STREAM_RESET ciphertext write never blocked");
+        .expect("STREAM_RESET record write never blocked");
     opening.abort();
     release.notify_waiters();
 
     enabled.store(false, Ordering::Release);
     let (stream, incoming) = tokio::time::timeout(Duration::from_secs(1), async {
         tokio::join!(
-            client.open_stream("after-partial-reset", serde_json::Map::new()),
+            client.open_stream("after-in-flight-reset", serde_json::Map::new()),
             server.accept_stream(),
         )
     })
@@ -1292,7 +1292,7 @@ async fn goaway_boundary_tightening_rejects_an_already_allocated_open() {
         inner: server_inner,
         enabled: server_enabled.clone(),
         writes: server_writes.clone(),
-        block_on: 3,
+        block_on: 2,
         entered: server_entered.clone(),
         release: server_release.clone(),
     });

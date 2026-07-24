@@ -71,7 +71,7 @@ describe("SessionV2 protocol hardening", () => {
     ]);
     const controller = new AbortController();
     const opening = client.openStream("cancel-open", { signal: controller.signal });
-    await eventually(() => expect(clientCarrier.applicationWriteSignals.length).toBeGreaterThanOrEqual(3));
+    await eventually(() => expect(clientCarrier.applicationWriteSignals.length).toBeGreaterThanOrEqual(2));
     expect(clientCarrier.applicationWriteSignals.every((signal) => signal === controller.signal)).toBe(true);
     controller.abort(new Error("cancel setup"));
     await expect(opening).rejects.toThrow("cancel setup");
@@ -91,7 +91,7 @@ describe("SessionV2 protocol hardening", () => {
     clientCarrier.blockNextControlWrite();
     const controller = new AbortController();
     const opening = client.openStream("ordered-reset", { signal: controller.signal });
-    await eventually(() => expect(clientCarrier.applicationWrites).toBeGreaterThanOrEqual(3));
+    await eventually(() => expect(clientCarrier.applicationWrites).toBeGreaterThanOrEqual(2));
     controller.abort(new Error("cancel before ACK"));
     await eventually(() => expect(clientCarrier.controlWriteBlocked).toBe(true));
     expect(sessionInternals(client).outboundLedger.frontier).toBe(0n);
