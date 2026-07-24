@@ -50,14 +50,19 @@ func serveBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteSt
 		_ = outgoing.Reset()
 	})
 	defer stopCancellation()
-	if err := readExactFill(ctx, incoming, byteCount, 0xa5); err != nil {
+	results := make(chan error, 2)
+	go func() { results <- readExactFill(ctx, incoming, byteCount, 0xa5) }()
+	go func() { results <- writeExactFillData(ctx, outgoing, byteCount, 0x5a) }()
+	first := <-results
+	if first != nil {
+		_ = incoming.Reset()
 		_ = outgoing.Reset()
-		return fmt.Errorf("read client stream: %w", err)
 	}
-	if err := writeExactFill(ctx, outgoing, byteCount, 0x5a); err != nil {
-		return fmt.Errorf("write server stream: %w", err)
+	second := <-results
+	if err := errors.Join(first, second); err != nil {
+		return fmt.Errorf("bidirectional transfer: %w", err)
 	}
-	return nil
+	return outgoing.CloseWrite()
 }
 
 func readExactFill(ctx context.Context, stream io.Reader, total int64, fill byte) error {
@@ -90,6 +95,13 @@ func readExactFill(ctx context.Context, stream io.Reader, total int64, fill byte
 }
 
 func writeExactFill(ctx context.Context, stream releaseByteStream, total int64, fill byte) error {
+	if err := writeExactFillData(ctx, stream, total, fill); err != nil {
+		return err
+	}
+	return stream.CloseWrite()
+}
+
+func writeExactFillData(ctx context.Context, stream releaseByteStream, total int64, fill byte) error {
 	buffer := make([]byte, 32*1024)
 	for index := range buffer {
 		buffer[index] = fill
@@ -112,5 +124,5 @@ func writeExactFill(ctx context.Context, stream releaseByteStream, total int64, 
 		}
 		remaining -= int64(count)
 	}
-	return stream.CloseWrite()
+	return nil
 }

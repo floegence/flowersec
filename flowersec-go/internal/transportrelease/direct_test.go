@@ -175,6 +175,17 @@ func TestBrowserBulkServerUsesNativeBidirectionalStreams(t *testing.T) {
 	}
 }
 
+func TestBrowserBulkServerReadsAndWritesConcurrently(t *testing.T) {
+	started := make(chan struct{})
+	incoming := &coordinatedBrowserReadStream{writeStarted: started, stopped: make(chan struct{})}
+	outgoing := &coordinatedBrowserWriteStream{writeStarted: started, stopped: make(chan struct{})}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := serveBrowserBulkPhase(ctx, incoming, outgoing, 1024); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProductDirectEndpointReusesListenerForConcurrentArtifacts(t *testing.T) {
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {
@@ -390,6 +401,61 @@ func TestTransferExactResetsBlockedStreamsAtDeadline(t *testing.T) {
 type blockingReleaseStream struct {
 	stopped chan struct{}
 	once    sync.Once
+}
+
+type coordinatedBrowserReadStream struct {
+	writeStarted <-chan struct{}
+	stopped      chan struct{}
+	stopOnce     sync.Once
+	read         bool
+}
+
+func (stream *coordinatedBrowserReadStream) Read(buffer []byte) (int, error) {
+	if stream.read {
+		return 0, io.EOF
+	}
+	select {
+	case <-stream.writeStarted:
+	case <-stream.stopped:
+		return 0, io.ErrClosedPipe
+	}
+	stream.read = true
+	for index := range buffer {
+		buffer[index] = 0xa5
+	}
+	return len(buffer), nil
+}
+
+func (stream *coordinatedBrowserReadStream) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+func (stream *coordinatedBrowserReadStream) CloseWrite() error         { return nil }
+func (stream *coordinatedBrowserReadStream) Close() error              { return stream.Reset() }
+func (stream *coordinatedBrowserReadStream) Reset() error {
+	stream.stopOnce.Do(func() { close(stream.stopped) })
+	return nil
+}
+
+type coordinatedBrowserWriteStream struct {
+	writeStarted chan struct{}
+	stopped      chan struct{}
+	startOnce    sync.Once
+	stopOnce     sync.Once
+}
+
+func (stream *coordinatedBrowserWriteStream) Read([]byte) (int, error) { return 0, io.ErrClosedPipe }
+func (stream *coordinatedBrowserWriteStream) Write(buffer []byte) (int, error) {
+	stream.startOnce.Do(func() { close(stream.writeStarted) })
+	for _, value := range buffer {
+		if value != 0x5a {
+			return 0, errors.New("unexpected server bulk payload")
+		}
+	}
+	return len(buffer), nil
+}
+func (stream *coordinatedBrowserWriteStream) CloseWrite() error { return nil }
+func (stream *coordinatedBrowserWriteStream) Close() error      { return stream.Reset() }
+func (stream *coordinatedBrowserWriteStream) Reset() error {
+	stream.stopOnce.Do(func() { close(stream.stopped) })
+	return nil
 }
 
 func newBlockingReleaseStream() *blockingReleaseStream {
