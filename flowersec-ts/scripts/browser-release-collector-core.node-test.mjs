@@ -90,7 +90,10 @@ test("launches the actual Chromium process inside the named client netns", () =>
   assert.equal(options.env.FLOWERSEC_CLIENT_NETNS, "flowersec-client-01");
   assert.equal(options.env.FLOWERSEC_CHROMIUM_EXECUTABLE, "/cache/playwright/chromium/chrome");
   assert.equal(options.headless, true);
-	assert.deepEqual(options.args, ["--unsafely-treat-insecure-origin-as-secure=http://192.0.2.1:38123"]);
+  assert.deepEqual(options.args, [
+    "--unsafely-treat-insecure-origin-as-secure=http://192.0.2.1:38123",
+    "--quic-client-connection-options=TBBR",
+  ]);
   assert.throws(
     () => chromiumLaunchOptions(normalizeCollectorPlan({ ...forcedPlan, client_netns: "bad;namespace" }), "/chrome", launcher, "http://192.0.2.1:38123"),
     /namespace/,

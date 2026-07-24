@@ -63,7 +63,10 @@ export function chromiumLaunchOptions(plan, chromiumExecutable, launcherPath, mo
   return {
     headless: true,
     executablePath: launcher,
-    args: [`--unsafely-treat-insecure-origin-as-secure=${secureOrigin}`],
+    args: [
+      `--unsafely-treat-insecure-origin-as-secure=${secureOrigin}`,
+      "--quic-client-connection-options=TBBR",
+    ],
     env: {
       ...process.env,
       FLOWERSEC_CLIENT_NETNS: namespace(normalized.client_netns),
