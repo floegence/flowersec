@@ -42,6 +42,7 @@ var errProductDirectEndpointClosed = errors.New("product direct endpoint closed"
 // excludes certificate and listener provisioning without weakening admission.
 type ProductDirectEndpoint struct {
 	kind         carrier.Kind
+	listenHost   string
 	candidateURL string
 	trustRoots   *x509.CertPool
 	ctx          context.Context
@@ -86,16 +87,26 @@ func OpenProductDirect(ctx context.Context, kind carrier.Kind) (*ProductDirectPa
 
 // OpenProductDirectEndpoint provisions one reusable production endpoint.
 func OpenProductDirectEndpoint(ctx context.Context, kind carrier.Kind) (*ProductDirectEndpoint, error) {
+	return OpenProductDirectEndpointAt(ctx, kind, "127.0.0.1")
+}
+
+// OpenProductDirectEndpointAt provisions a production endpoint on one explicit
+// IP address. Release workloads use this inside an isolated network namespace.
+func OpenProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenHost string) (*ProductDirectEndpoint, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	serverTLS, clientTLS, err := localTLS(kind)
+	address := net.ParseIP(listenHost)
+	if address == nil || address.IsUnspecified() || address.IsMulticast() {
+		return nil, errors.New("product direct endpoint requires a concrete unicast IP address")
+	}
+	serverTLS, clientTLS, err := localTLSForHost(kind, listenHost)
 	if err != nil {
 		return nil, err
 	}
 	endpointCtx, cancel := context.WithCancelCause(ctx)
 	endpoint := &ProductDirectEndpoint{
-		kind: kind, trustRoots: clientTLS.RootCAs, ctx: endpointCtx, cancel: cancel,
+		kind: kind, listenHost: listenHost, trustRoots: clientTLS.RootCAs, ctx: endpointCtx, cancel: cancel,
 		pending: make(map[[sha256.Size]byte]*admissionExpectation),
 	}
 	if err := endpoint.start(serverTLS); err != nil {
@@ -265,16 +276,21 @@ func (pair *ProductDirectPair) Close() error {
 		if pair.Client != nil {
 			pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(pair.Client.Close()))
 		}
-		for label, termination := range map[string]<-chan struct{}{
-			"client": pair.Client.Termination(), "server": pair.Server.Termination(),
-		} {
+		select {
+		case <-pair.Client.Termination():
+		case <-time.After(3 * time.Second):
+			pair.closeErr = errors.Join(pair.closeErr, errors.New("client did not terminate after local close"))
+		}
+		select {
+		case <-pair.Server.Termination():
+		case <-time.After(3 * time.Second):
+			// A lossy path may discard the authenticated close packet. The
+			// release peer still must terminate locally within the cleanup bound.
+			pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(pair.Server.Close()))
 			select {
-			case <-termination:
-			case <-time.After(3 * time.Second):
-				pair.closeErr = errors.Join(pair.closeErr, fmt.Errorf("%s did not terminate after authenticated close", label))
-				if pair.Server != nil {
-					pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(pair.Server.Close()))
-				}
+			case <-pair.Server.Termination():
+			case <-time.After(time.Second):
+				pair.closeErr = errors.Join(pair.closeErr, errors.New("server did not terminate after forced close"))
 			}
 		}
 		for index := len(pair.closers) - 1; index >= 0; index-- {
@@ -322,11 +338,11 @@ func (endpoint *ProductDirectEndpoint) startRawQUIC(serverTLS *tls.Config) error
 	if err != nil {
 		return err
 	}
-	listener, err := rawquic.Listen("127.0.0.1:0", serverTLS, limits)
+	listener, err := rawquic.Listen(net.JoinHostPort(endpoint.listenHost, "0"), serverTLS, limits)
 	if err != nil {
 		return err
 	}
-	endpoint.candidateURL = "quic://localhost:" + fmt.Sprint(listener.Addr().(*net.UDPAddr).Port)
+	endpoint.candidateURL = "quic://" + net.JoinHostPort(endpoint.listenHost, fmt.Sprint(listener.Addr().(*net.UDPAddr).Port))
 	endpoint.transportClose = listener.Close
 	go func() {
 		for {
@@ -345,7 +361,7 @@ func (endpoint *ProductDirectEndpoint) startRawQUIC(serverTLS *tls.Config) error
 }
 
 func (endpoint *ProductDirectEndpoint) startWebSocket(serverTLS *tls.Config) error {
-	listener, err := tls.Listen("tcp4", "127.0.0.1:0", serverTLS)
+	listener, err := tls.Listen("tcp4", net.JoinHostPort(endpoint.listenHost, "0"), serverTLS)
 	if err != nil {
 		return err
 	}
@@ -359,7 +375,7 @@ func (endpoint *ProductDirectEndpoint) startWebSocket(serverTLS *tls.Config) err
 	})}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- httpServer.Serve(listener) }()
-	endpoint.candidateURL = "wss://localhost:" + fmt.Sprint(listener.Addr().(*net.TCPAddr).Port) + "/flowersec/v2/direct"
+	endpoint.candidateURL = "wss://" + net.JoinHostPort(endpoint.listenHost, fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)) + "/flowersec/v2/direct"
 	endpoint.transportClose = func() error {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -391,7 +407,7 @@ func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) 
 		}
 		endpoint.serveNative(carrierSession)
 	}))
-	packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(endpoint.listenHost)})
 	if err != nil {
 		_ = server.Close()
 		return err
@@ -399,7 +415,7 @@ func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) 
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- server.Serve(packetConn) }()
 	endpoint.candidateURL = (&url.URL{
-		Scheme: "https", Host: net.JoinHostPort("localhost", fmt.Sprint(packetConn.LocalAddr().(*net.UDPAddr).Port)),
+		Scheme: "https", Host: net.JoinHostPort(endpoint.listenHost, fmt.Sprint(packetConn.LocalAddr().(*net.UDPAddr).Port)),
 		Path: carrierwt.PathDirect,
 	}).String()
 	endpoint.transportClose = func() error {

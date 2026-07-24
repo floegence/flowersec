@@ -1,6 +1,10 @@
 package webtransport
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
+)
 
 func TestConfigUsesRequiredH3TransportWithoutApplicationEarlyData(t *testing.T) {
 	config, err := newQUICConfig(DefaultLimits())
@@ -12,6 +16,9 @@ func TestConfigUsesRequiredH3TransportWithoutApplicationEarlyData(t *testing.T) 
 	}
 	if !config.EnableDatagrams || !config.EnableStreamResetPartialDelivery {
 		t.Fatal("WebTransport dependency-required QUIC capabilities are missing")
+	}
+	if config.InitialPacketSize != rawquic.MinimumInitialPacketSize {
+		t.Fatalf("initial packet size = %d, want %d for a 1280-byte IP path", config.InitialPacketSize, rawquic.MinimumInitialPacketSize)
 	}
 	if config.MaxIncomingStreams != 130 || config.MaxIncomingUniStreams != MaxH3IncomingUniStreams {
 		t.Fatalf("stream limits = bidi %d uni %d", config.MaxIncomingStreams, config.MaxIncomingUniStreams)

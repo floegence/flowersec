@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -226,6 +227,35 @@ func verifiedBPFObject(path string) (string, error) {
 		return "", errors.New("BPF object must be a regular file")
 	}
 	return resolved, nil
+}
+
+func ReadVerifiedBPFObject(path string) ([]byte, error) {
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return nil, errors.New("BPF object path must be absolute")
+	}
+	file, err := os.Open(clean)
+	if err != nil {
+		return nil, errors.New("BPF object must be an existing non-symlink file")
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() {
+		return nil, errors.New("BPF object must be a regular file")
+	}
+	pathInfo, err := os.Lstat(clean)
+	if err != nil || pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, pathInfo) {
+		return nil, errors.New("BPF object path changed while it was opened")
+	}
+	const maxBPFObjectBytes = 16 << 20
+	value, err := io.ReadAll(io.LimitReader(file, maxBPFObjectBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read BPF object: %w", err)
+	}
+	if len(value) == 0 || len(value) > maxBPFObjectBytes {
+		return nil, errors.New("BPF object size is outside the release bound")
+	}
+	return value, nil
 }
 
 func byteArguments(value []byte) []string {

@@ -49,6 +49,28 @@ func TestEncodeFaultConfigMatchesBPFLayout(t *testing.T) {
 	}
 }
 
+func TestReadVerifiedBPFObjectRejectsSymlinkAndReturnsOpenedBytes(t *testing.T) {
+	directory := t.TempDir()
+	object := filepath.Join(directory, "packet_fault.o")
+	if err := os.WriteFile(object, []byte("verified object"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value, err := ReadVerifiedBPFObject(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(value) != "verified object" {
+		t.Fatalf("object bytes = %q", value)
+	}
+	link := filepath.Join(directory, "packet_fault-link.o")
+	if err := os.Symlink(object, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadVerifiedBPFObject(link); err == nil {
+		t.Fatal("accepted symlink BPF object")
+	}
+}
+
 func TestApplyFaultProfileBuildsTwoIsolatedKernelDirections(t *testing.T) {
 	config, err := ConfigForCell("mobile-01", 1, 1280, FrozenFirewall)
 	if err != nil {

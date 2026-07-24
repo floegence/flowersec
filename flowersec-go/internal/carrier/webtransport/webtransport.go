@@ -56,6 +56,7 @@ func newQUICConfig(limits Limits) (*quic.Config, error) {
 		return nil, err
 	}
 	return &quic.Config{
+		InitialPacketSize:                rawquic.MinimumInitialPacketSize,
 		HandshakeIdleTimeout:             limits.HandshakeIdleTimeout,
 		MaxIdleTimeout:                   limits.MaxIdleTimeout,
 		InitialStreamReceiveWindow:       limits.InitialStreamReceiveWindow,

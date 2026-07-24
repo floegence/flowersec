@@ -32,6 +32,9 @@ func TestConfigUsesNativeBoundedQUICCapabilities(t *testing.T) {
 	if config.Allow0RTT || !config.EnableDatagrams {
 		t.Fatal("raw QUIC must disable 0-RTT and enable native datagrams")
 	}
+	if config.InitialPacketSize != MinimumInitialPacketSize {
+		t.Fatalf("initial packet size = %d, want %d for a 1280-byte IP path", config.InitialPacketSize, MinimumInitialPacketSize)
+	}
 	if !config.EnableStreamResetPartialDelivery {
 		t.Fatal("raw QUIC must negotiate native stream reset support")
 	}

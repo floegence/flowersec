@@ -157,6 +157,14 @@ func TestProductDirectEndpointReusesListenerForConcurrentArtifacts(t *testing.T)
 	}
 }
 
+func TestProductDirectEndpointRejectsNonConcreteListenAddress(t *testing.T) {
+	for _, address := range []string{"", "0.0.0.0", "not-an-ip", "224.0.0.1"} {
+		if _, err := OpenProductDirectEndpointAt(context.Background(), carrier.KindWebSocket, address); err == nil {
+			t.Fatalf("accepted listen address %q", address)
+		}
+	}
+}
+
 func TestProductDirectWorkloadsUsePersistentEndpoint(t *testing.T) {
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {

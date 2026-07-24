@@ -17,6 +17,8 @@ import (
 	quic "github.com/quic-go/quic-go"
 )
 
+const MinimumInitialPacketSize uint16 = 1200
+
 const (
 	ALPNDirect = "flowersec-direct/2"
 	ALPNTunnel = "flowersec-tunnel/2"
@@ -103,6 +105,7 @@ func newConfig(limits Limits) (*quic.Config, error) {
 		return nil, err
 	}
 	return &quic.Config{
+		InitialPacketSize:                MinimumInitialPacketSize,
 		HandshakeIdleTimeout:             limits.HandshakeIdleTimeout,
 		MaxIdleTimeout:                   limits.MaxIdleTimeout,
 		InitialStreamReceiveWindow:       limits.InitialStreamReceiveWindow,

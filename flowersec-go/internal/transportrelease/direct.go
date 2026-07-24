@@ -393,6 +393,10 @@ func directSessionConfigs(maxInbound uint16) (flowersession.Config, flowersessio
 }
 
 func localTLS(kind carrier.Kind) (*tls.Config, *tls.Config, error) {
+	return localTLSForHost(kind, "")
+}
+
+func localTLSForHost(kind carrier.Kind, listenHost string) (*tls.Config, *tls.Config, error) {
 	nextProtocol := ""
 	switch kind {
 	case carrier.KindQUIC:
@@ -407,9 +411,19 @@ func localTLS(kind carrier.Kind) (*tls.Config, *tls.Config, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	serverName := "localhost"
+	ipAddresses := []net.IP{net.ParseIP("127.0.0.1")}
+	if listenHost != "" && listenHost != "127.0.0.1" {
+		address := net.ParseIP(listenHost)
+		if address == nil {
+			return nil, nil, errors.New("release TLS host must be an IP address")
+		}
+		serverName = listenHost
+		ipAddresses = append(ipAddresses, address)
+	}
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(20260724), Subject: pkix.Name{CommonName: "localhost"},
-		DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames: []string{"localhost"}, IPAddresses: ipAddresses,
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -427,7 +441,7 @@ func localTLS(kind carrier.Kind) (*tls.Config, *tls.Config, error) {
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: privateKey}},
 	}
-	client := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, ServerName: "localhost"}
+	client := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, ServerName: serverName}
 	if nextProtocol != "" {
 		server.NextProtos = []string{nextProtocol}
 		client.NextProtos = []string{nextProtocol}
