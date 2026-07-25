@@ -97,15 +97,29 @@ done
 
 readonly cgroup_supervisor=/sys/fs/cgroup/flowersec-release-supervisor
 mkdir -p "$cgroup_supervisor"
-while read -r cgroup_pid; do
-  [[ -n $cgroup_pid ]] || continue
-  if ! echo "$cgroup_pid" > "$cgroup_supervisor/cgroup.procs"; then
-    [[ ! -d /proc/$cgroup_pid ]] || fail "failed to move live process $cgroup_pid into the release supervisor cgroup"
+readonly required_cgroup_controllers="cpuset cpu memory pids"
+for controller in $required_cgroup_controllers; do
+  grep -qw "$controller" /sys/fs/cgroup/cgroup.controllers || fail "cgroup controller $controller is unavailable"
+done
+
+cgroup_controllers_delegated=0
+for ((cgroup_attempt = 1; cgroup_attempt <= 100; cgroup_attempt++)); do
+  while read -r cgroup_pid; do
+    [[ -n $cgroup_pid ]] || continue
+    if ! echo "$cgroup_pid" > "$cgroup_supervisor/cgroup.procs"; then
+      [[ ! -d /proc/$cgroup_pid ]] || fail "failed to move live process $cgroup_pid into the release supervisor cgroup"
+    fi
+  done < /sys/fs/cgroup/cgroup.procs
+
+  if [[ ! -s /sys/fs/cgroup/cgroup.procs ]] &&
+    echo "+cpuset +cpu +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null; then
+    cgroup_controllers_delegated=1
+    break
   fi
-done < /sys/fs/cgroup/cgroup.procs
-[[ ! -s /sys/fs/cgroup/cgroup.procs ]] || fail "release cgroup root still contains processes"
-echo "+cpuset +cpu +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control
-for controller in cpuset cpu memory pids; do
+  sleep 0.05
+done
+((cgroup_controllers_delegated)) || fail "could not empty the release cgroup root and delegate controllers within 5 seconds"
+for controller in $required_cgroup_controllers; do
   grep -qw "$controller" /sys/fs/cgroup/cgroup.subtree_control || fail "cgroup controller $controller was not delegated"
 done
 

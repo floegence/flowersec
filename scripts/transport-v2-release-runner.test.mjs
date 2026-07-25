@@ -93,7 +93,8 @@ test("provision installs the source-matched wrapper at one stable container path
   assert.match(provision, /sudo install -d -o root -g root -m 0755 "\$runner_root\/evidence"/);
   assert.match(provision, /FLOWERSEC_RELEASE_OWNER_UID=\$release_owner_uid/);
   assert.match(provision, /FLOWERSEC_RELEASE_OWNER_GID=\$release_owner_gid/);
-  assert.match(provision, /--privileged \\\n  --cgroupns host \\\n  --pid host \\\n  --network host/);
+  assert.match(provision, /--privileged \\\n  --cgroup-parent flowersec-release\.slice \\\n  --network host/);
+  assert.doesNotMatch(provision, /--(?:cgroupns|pid) host/);
   const dependencyInstall = provision.indexOf("npm ci --audit=false");
   const browserBuild = provision.indexOf("npm run build");
   const browserInstall = provision.indexOf("npx playwright install chromium");
@@ -102,4 +103,15 @@ test("provision installs the source-matched wrapper at one stable container path
   assert.notEqual(browserInstall, -1, "provision must install the pinned Chromium runtime");
   assert.ok(dependencyInstall < browserBuild, "dependencies must be installed before the browser bundle is built");
   assert.ok(browserBuild < browserInstall, "the browser bundle must be built before Chromium is installed");
+});
+
+test("release wrapper delegates cgroup controllers with a bounded live-process retry", () => {
+  const runner = fs.readFileSync(runnerPath, "utf8");
+  assert.match(runner, /readonly required_cgroup_controllers="cpuset cpu memory pids"/);
+  assert.match(runner, /for \(\(cgroup_attempt = 1; cgroup_attempt <= 100; cgroup_attempt\+\+\)\)/);
+  assert.match(runner, /done < \/sys\/fs\/cgroup\/cgroup\.procs/);
+  assert.match(runner, /\[\[ ! -s \/sys\/fs\/cgroup\/cgroup\.procs \]\] &&/);
+  assert.match(runner, /echo "\+cpuset \+cpu \+memory \+pids" > \/sys\/fs\/cgroup\/cgroup\.subtree_control/);
+  assert.match(runner, /sleep 0\.05/);
+  assert.match(runner, /within 5 seconds/);
 });

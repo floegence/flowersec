@@ -46,8 +46,7 @@ docker run --detach \
   --name "$container_name" \
   --hostname flowersec-linux-release-v1 \
   --privileged \
-  --cgroupns host \
-  --pid host \
+  --cgroup-parent flowersec-release.slice \
   --network host \
   --restart unless-stopped \
   --env "GOPROXY=${FLOWERSEC_RELEASE_GOPROXY:-https://goproxy.cn,direct}" \
