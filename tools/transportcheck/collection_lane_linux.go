@@ -117,12 +117,16 @@ func (set *linuxCollectionLaneSet) Close() error {
 		if path == "" {
 			continue
 		}
-		if data, err := os.ReadFile(filepath.Join(path, "cgroup.procs")); err == nil && strings.TrimSpace(string(data)) != "" {
+		populated, populatedErr := collectionCgroupPopulated(path)
+		if populatedErr != nil {
+			result = errors.Join(result, fmt.Errorf("read collection lane %d population: %w", index, populatedErr))
+		}
+		if populated {
 			result = errors.Join(result, fmt.Errorf("collection lane %d retained processes after runner exit", index))
 			_ = writeCgroupValue(path, "cgroup.kill", "1")
 		}
 		for attempt := 0; attempt < 20; attempt++ {
-			if err := os.Remove(path); err == nil || errors.Is(err, os.ErrNotExist) {
+			if err := removeCollectionCgroupTree(path); err == nil || errors.Is(err, os.ErrNotExist) {
 				break
 			} else if attempt == 19 {
 				result = errors.Join(result, fmt.Errorf("remove collection lane %d cgroup: %w", index, err))
@@ -135,6 +139,36 @@ func (set *linuxCollectionLaneSet) Close() error {
 	}
 	set.root = ""
 	return result
+}
+
+func collectionCgroupPopulated(path string) (bool, error) {
+	data, err := os.ReadFile(filepath.Join(path, "cgroup.events"))
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "populated" {
+			return fields[1] == "1", nil
+		}
+	}
+	return false, errors.New("cgroup.events has no populated state")
+}
+
+func removeCollectionCgroupTree(path string) error {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if err := removeCollectionCgroupTree(filepath.Join(path, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return os.Remove(path)
 }
 
 func (lane *linuxCollectionLane) Identity() collectionLaneIdentity { return lane.identity }

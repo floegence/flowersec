@@ -257,6 +257,13 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), maxDuration(contract.Cleanup, time.Second))
 		defer cancel()
+		if context.Cause(ctx) != nil {
+			resultErr = errors.Join(resultErr, endpoint.Close(cleanupCtx))
+			for _, session := range sessions {
+				_ = session.Close(cleanupCtx)
+			}
+			return
+		}
 		for _, session := range sessions {
 			_ = session.Close(cleanupCtx)
 		}

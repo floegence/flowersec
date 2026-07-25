@@ -638,13 +638,6 @@ func executeCollection(ctx context.Context, environment *collectEnvironment, pla
 	if err := environment.output.Verify(); err != nil {
 		return err
 	}
-	jobsRoot := filepath.Join(environment.request.ArtifactDirectory, "jobs")
-	published := false
-	defer func() {
-		if !published && environment.output.Verify() == nil {
-			_ = os.RemoveAll(jobsRoot)
-		}
-	}()
 	records, err := runCollectionJobs(ctx, environment.request, environment.manifest, environment.registry, plan.Jobs, environment.request.ArtifactDirectory, environment.output)
 	if err != nil {
 		return err
@@ -663,7 +656,6 @@ func executeCollection(ctx context.Context, environment *collectEnvironment, pla
 	if err := publishRawCollection(environment.output, environment.request.ReportPath, index); err != nil {
 		return err
 	}
-	published = true
 	return nil
 }
 
@@ -880,6 +872,7 @@ func runCollectionJob(ctx context.Context, request collectRequest, manifest *Per
 		return rawJobRecord{}, err
 	}
 	command := lane.Command(ctx, execution.executable, args...)
+	configureCollectionCommand(command)
 	command.Dir = execution.repository
 	command.Env = slices.DeleteFunc(command.Env, func(value string) bool { return strings.HasPrefix(value, "GIT_") })
 	command.Stdout, command.Stderr = stdout, stderr

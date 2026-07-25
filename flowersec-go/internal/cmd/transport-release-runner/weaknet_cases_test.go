@@ -277,7 +277,7 @@ func TestCaseSuitePublishesExactWeaknetAndConformanceFullResults(t *testing.T) {
 			}
 			defer destination.Close()
 			manifest := transportrelease.ManifestBinding{Digest: transportrelease.FrozenPerformanceManifestDigest}
-			if err := runCaseSuite(reportPath, destination, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", owner, "normal", "", "", transportrelease.ReleasePlan{}, manifest); err != nil {
+			if err := runCaseSuite(context.Background(), reportPath, destination, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", owner, "normal", "", "", transportrelease.ReleasePlan{}, manifest); err != nil {
 				t.Fatal(err)
 			}
 			data, err := os.ReadFile(reportPath)

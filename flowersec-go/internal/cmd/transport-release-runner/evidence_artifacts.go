@@ -200,6 +200,7 @@ func startPacketCapture(ctx context.Context, namespace, networkInterface, output
 	}
 	capture := &packetCapture{path: outputPath, done: make(chan error, 1), stderr: captureStderr{ready: make(chan struct{})}}
 	capture.command = packetCaptureCommand(ctx, namespace, networkInterface, outputPath)
+	configurePacketCaptureCommand(capture.command)
 	capture.command.Stderr = &capture.stderr
 	if err := capture.command.Start(); err != nil {
 		return nil, fmt.Errorf("start tcpdump: %w", err)
@@ -217,7 +218,7 @@ func startPacketCapture(ctx context.Context, namespace, networkInterface, output
 		case err := <-capture.done:
 			return nil, fmt.Errorf("tcpdump exited before capture became ready: %w: %s", err, strings.TrimSpace(capture.stderr.String()))
 		case <-readyDeadline.C:
-			_ = capture.command.Process.Kill()
+			_ = killPacketCaptureCommand(capture.command)
 			<-capture.done
 			return nil, errors.New("tcpdump did not initialize its pcap within 5 seconds")
 		case <-readyPoll.C:
@@ -233,7 +234,7 @@ func (capture *packetCapture) Stop() error {
 		return errors.New("packet capture is required")
 	}
 	capture.stop.Do(func() {
-		if err := capture.command.Process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if err := interruptPacketCaptureCommand(capture.command); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			capture.err = err
 		}
 		select {
@@ -242,7 +243,7 @@ func (capture *packetCapture) Stop() error {
 				capture.err = errors.Join(capture.err, fmt.Errorf("tcpdump: %w: %s", err, strings.TrimSpace(capture.stderr.String())))
 			}
 		case <-time.After(5 * time.Second):
-			capture.err = errors.Join(capture.err, errors.New("tcpdump did not stop within 5 seconds"), capture.command.Process.Kill())
+			capture.err = errors.Join(capture.err, errors.New("tcpdump did not stop within 5 seconds"), killPacketCaptureCommand(capture.command))
 			<-capture.done
 		}
 		value, err := os.ReadFile(capture.path)

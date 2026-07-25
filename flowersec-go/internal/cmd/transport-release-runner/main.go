@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -172,7 +173,9 @@ var networkWorkerArguments = func() []string { return []string{networkWorkerArg}
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == browserWorkerArg {
-		if err := runBrowserWorker(os.Stdin, os.Stdout); err != nil {
+		workerContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stopSignals()
+		if err := runBrowserWorkerWithContext(workerContext, os.Stdin, os.Stdout); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -192,13 +195,22 @@ func main() {
 		}
 		return
 	}
-	if err := run(os.Args[1:]); err != nil {
+	runnerContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stopSignals()
+	if err := runWithContext(runnerContext, os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
 func run(args []string) (resultErr error) {
+	return runWithContext(context.Background(), args)
+}
+
+func runWithContext(runnerContext context.Context, args []string) (resultErr error) {
+	if runnerContext == nil {
+		return errors.New("runner context is required")
+	}
 	flags := flag.NewFlagSet("transport-release-runner", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	target := flags.String("target", "", "runner target")
@@ -243,7 +255,7 @@ func run(args []string) (resultErr error) {
 		if needsBPF != (*bpfObject != "") {
 			return errors.New("release case suite BPF object does not match its owner")
 		}
-		return runCaseSuite(*reportPath, destination, *sourceSHA, *sourceRoot, *caseOwner, *caseMode, *caseID, *bpfObject, plan, manifest)
+		return runCaseSuite(runnerContext, *reportPath, destination, *sourceSHA, *sourceRoot, *caseOwner, *caseMode, *caseID, *bpfObject, plan, manifest)
 	}
 	if *caseOwner != "" || *caseMode != "" || *caseID != "" {
 		return errors.New("performance cell targets do not accept case owner, mode, or ID")

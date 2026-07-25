@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -294,6 +295,42 @@ func TestRunCapacityCaseSnapshotsQuiescedBrowserBeforeFinalClose(t *testing.T) {
 	}
 }
 
+func TestRunCapacityCaseCancellationClosesEndpointBeforeSessions(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 1, Ramp: time.Second, Hold: time.Second, Cleanup: 100 * time.Millisecond,
+		Watchdog: 2100 * time.Millisecond,
+		MaxRSS:   1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+	}
+	connected := make(chan struct{})
+	endpoint := &fakeCapacityEndpoint{connected: connected}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := runCapacityCase(ctx, capacityCaseDefinition{ID: "cancel-order", Profile: "cancel-order"}, contract, endpoint, monotonicSnapshots())
+		done <- err
+	}()
+	select {
+	case <-connected:
+	case <-time.After(time.Second):
+		t.Fatal("capacity session did not connect")
+	}
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runCapacityCase() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled capacity case did not return")
+	}
+	endpoint.mu.Lock()
+	defer endpoint.mu.Unlock()
+	if !slices.Equal(endpoint.closeOrder, []string{"endpoint", "session"}) {
+		t.Fatalf("cancel cleanup order = %v, want endpoint then session", endpoint.closeOrder)
+	}
+}
+
 func TestRunCapacityCaseProvesStreamPeakAndZeroResidual(t *testing.T) {
 	contract := capacityContract{
 		Sessions: 2, StreamsPerSession: 3, Ramp: 20 * time.Millisecond, Hold: 20 * time.Millisecond,
@@ -374,6 +411,9 @@ type fakeCapacityEndpoint struct {
 	closed               bool
 	inflightConnects     int
 	closeWhileConnecting bool
+	connected            chan struct{}
+	connectedOnce        sync.Once
+	closeOrder           []string
 }
 
 type fakeQuiescingCapacityEndpoint struct {
@@ -418,8 +458,12 @@ func (endpoint *fakeCapacityEndpoint) Connect(context.Context) (capacitySession,
 	session := &fakeCapacitySession{id: id, done: make(chan struct{}), onClose: func() {
 		endpoint.mu.Lock()
 		endpoint.disconnects++
+		endpoint.closeOrder = append(endpoint.closeOrder, "session")
 		endpoint.mu.Unlock()
 	}}
+	if endpoint.connected != nil {
+		endpoint.connectedOnce.Do(func() { close(endpoint.connected) })
+	}
 	if endpoint.terminateFirst && ordinal == 1 {
 		go func() {
 			time.Sleep(12 * time.Millisecond)
@@ -438,6 +482,7 @@ func (endpoint *fakeCapacityEndpoint) Close(context.Context) error {
 	endpoint.closeWhileConnecting = endpoint.inflightConnects != 0
 	endpoint.closed = true
 	endpoint.closes++
+	endpoint.closeOrder = append(endpoint.closeOrder, "endpoint")
 	return nil
 }
 

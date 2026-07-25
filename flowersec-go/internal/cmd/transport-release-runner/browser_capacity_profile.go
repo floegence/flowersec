@@ -53,12 +53,18 @@ func validateBrowserCapacityWorkerPlan(plan browserCapacityWorkerPlan, sourceRoo
 	return nil
 }
 
-func runBrowserCapacityWorker(request browserWorkerRequest, output io.Writer) error {
+func runBrowserCapacityWorker(ctx context.Context, request browserWorkerRequest, output io.Writer) error {
+	if ctx == nil {
+		return errors.New("browser capacity worker context is required")
+	}
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
 	definition, ok := lookupCapacityCase(request.Capacity.CaseID)
 	if !ok || (definition.Kind != capacityBrowserTunnel && definition.Kind != capacityBrowserStream) || browserCapacityTopology(definition) != request.Topology {
 		return errors.New("browser capacity worker case and topology do not match")
 	}
-	result, evidencePaths, err := runBrowserTunnelCapacityProfile(context.Background(), definition, browserCapacityEndpointConfig{
+	result, evidencePaths, err := runBrowserTunnelCapacityProfile(ctx, definition, browserCapacityEndpointConfig{
 		Topology: definition.BrowserTopology, SourceRoot: request.SourceRoot,
 		ClientNamespace: request.ClientNamespace, ServerNamespace: request.ServerNamespace, ServerAddress: request.ServerAddress,
 		EvidenceDirectory: request.Capacity.EvidenceDirectory,

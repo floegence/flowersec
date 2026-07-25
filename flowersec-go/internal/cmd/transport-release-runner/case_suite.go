@@ -120,7 +120,7 @@ type rawConfigRecord struct {
 	Value string `json:"value"`
 }
 
-func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA, sourceRoot, owner, mode, caseID, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) error {
+func runCaseSuite(parent context.Context, reportPath string, destination *artifactDestination, sourceSHA, sourceRoot, owner, mode, caseID, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) error {
 	if mode == "race" && !raceDetectorEnabled() {
 		return errors.New("race case suite requires a runner built with Go race instrumentation")
 	}
@@ -143,7 +143,7 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 	}
 	for _, definition := range definitions {
 		if owner == browserSmokeOwner {
-			caseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			caseCtx, cancel := newCaseContext(parent, 2*time.Minute)
 			result, runErr := runBrowserSmokeCase(caseCtx, destination, definition, mode, sourceRoot, plan)
 			cancel()
 			if runErr != nil {
@@ -153,7 +153,7 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 			continue
 		}
 		if owner == weaknetSystemOwner {
-			caseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			caseCtx, cancel := newCaseContext(parent, 2*time.Minute)
 			result, runErr := runWeaknetSystemCase(caseCtx, destination, definition, bpfObject)
 			cancel()
 			if runErr != nil {
@@ -163,7 +163,7 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 			continue
 		}
 		if owner == soakOwner {
-			caseCtx, cancel := context.WithTimeout(context.Background(), productionSoakContract().Duration+2*time.Minute)
+			caseCtx, cancel := newCaseContext(parent, productionSoakContract().Duration+2*time.Minute)
 			result, runErr := runRegisteredSoakCase(caseCtx, destination, definition)
 			cancel()
 			if runErr != nil {
@@ -177,7 +177,7 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 			if !ok || capacityDefinition.Profile != definition.Profile {
 				return fmt.Errorf("case %s: registered capacity definition is not frozen", definition.ID)
 			}
-			caseCtx, cancel := context.WithTimeout(context.Background(), capacityCaseTimeout(capacityDefinition))
+			caseCtx, cancel := newCaseContext(parent, capacityCaseTimeout(capacityDefinition))
 			result, runErr := runRegisteredCapacityCase(caseCtx, destination, definition, sourceRoot, plan)
 			cancel()
 			if runErr != nil {
@@ -187,7 +187,7 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 			continue
 		}
 		if owner == weaknetFullOwner {
-			caseCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			caseCtx, cancel := newCaseContext(parent, 30*time.Second)
 			result, runErr := runWeaknetFullCase(caseCtx, destination, definition, mode)
 			cancel()
 			if runErr != nil {
@@ -197,7 +197,7 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 			continue
 		}
 		if owner == quicNativeSmokeOwner {
-			caseCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			caseCtx, cancel := newCaseContext(parent, 30*time.Second)
 			result, runErr := runNativeSmokeCase(caseCtx, destination, definition, mode)
 			cancel()
 			if runErr != nil {
@@ -207,7 +207,7 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 			continue
 		}
 		if owner == quicNativeProofOwner {
-			caseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			caseCtx, cancel := newCaseContext(parent, 2*time.Minute)
 			result, runErr := runNativeProofCase(caseCtx, destination, definition, mode, bpfObject)
 			cancel()
 			if runErr != nil {
@@ -217,7 +217,7 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 			continue
 		}
 		if owner == quicNativeRaceOwner {
-			caseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			caseCtx, cancel := newCaseContext(parent, 2*time.Minute)
 			result, runErr := runNativeRaceCase(caseCtx, destination, definition, mode, sourceRoot, bpfObject, plan)
 			cancel()
 			if runErr != nil {
@@ -227,7 +227,7 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 			continue
 		}
 		started := time.Now()
-		caseCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		caseCtx, cancel := newCaseContext(parent, 30*time.Second)
 		completed, runErr := runConformanceSmokeCase(caseCtx, definition)
 		cancel()
 		if runErr != nil {
@@ -248,6 +248,10 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 		return err
 	}
 	return writeNewReport(reportPath, report)
+}
+
+func newCaseContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, timeout)
 }
 
 func runConformanceSmokeCase(ctx context.Context, definition releaseCaseDefinition) (releaseCaseRun, error) {

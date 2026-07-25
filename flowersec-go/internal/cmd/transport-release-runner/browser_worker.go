@@ -145,6 +145,7 @@ func runBrowserNetworkCarrierWithLabel(ctx context.Context, topology string, pla
 		return result, err
 	}
 	command := exec.CommandContext(ctx, "ip", "netns", "exec", config.ClientNamespace, executable, browserWorkerArg)
+	configureBrowserWorkerCommand(command)
 	command.Env = commandEnvironmentWithQLOG(evidence.qlogDir)
 	command.Stdin = bytes.NewReader(requestJSON)
 	var stdout, stderr bytes.Buffer
@@ -238,6 +239,13 @@ type browserCollectorBulkPlan struct {
 }
 
 func runBrowserWorker(input io.Reader, output io.Writer) (resultErr error) {
+	return runBrowserWorkerWithContext(context.Background(), input, output)
+}
+
+func runBrowserWorkerWithContext(parent context.Context, input io.Reader, output io.Writer) (resultErr error) {
+	if parent == nil {
+		return errors.New("browser worker context is required")
+	}
 	decoder := json.NewDecoder(io.LimitReader(input, 128<<10))
 	decoder.DisallowUnknownFields()
 	var request browserWorkerRequest
@@ -251,9 +259,9 @@ func runBrowserWorker(input io.Reader, output io.Writer) (resultErr error) {
 		return err
 	}
 	if request.Mode == "capacity" {
-		return runBrowserCapacityWorker(request, output)
+		return runBrowserCapacityWorker(parent, request, output)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(request.Plan.CellWatchdogMinutes)*time.Minute)
+	ctx, cancel := context.WithTimeout(parent, time.Duration(request.Plan.CellWatchdogMinutes)*time.Minute)
 	defer cancel()
 
 	allowedOrigin := "http://" + request.ServerAddress

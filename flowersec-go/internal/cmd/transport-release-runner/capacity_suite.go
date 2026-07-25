@@ -123,6 +123,7 @@ func runRegisteredBrowserCapacityCase(ctx context.Context, destination *artifact
 		return result, err
 	}
 	command := exec.CommandContext(ctx, "ip", "netns", "exec", config.ClientNamespace, executable, browserWorkerArg)
+	configureBrowserWorkerCommand(command)
 	command.Env = commandEnvironmentWithQLOG(evidence.qlogDir)
 	command.Stdin = bytes.NewReader(requestJSON)
 	var stdout, stderr bytes.Buffer

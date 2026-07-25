@@ -3,10 +3,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -42,7 +44,15 @@ func createLinuxProcessCgroup() (string, error) {
 	if _, err := os.Stat(filepath.Join(root, "cgroup.controllers")); err != nil {
 		return "", err
 	}
-	directory, err := os.MkdirTemp(root, "flowersec-browser-capacity-")
+	selfCgroup, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return "", err
+	}
+	parent, err := resolveLinuxProcessCgroupParent(root, selfCgroup)
+	if err != nil {
+		return "", err
+	}
+	directory, err := os.MkdirTemp(parent, "flowersec-browser-capacity-")
 	if err != nil {
 		return "", err
 	}
@@ -53,6 +63,34 @@ func createLinuxProcessCgroup() (string, error) {
 		}
 	}
 	return directory, nil
+}
+
+func resolveLinuxProcessCgroupParent(root string, selfCgroup []byte) (string, error) {
+	cleanRoot := filepath.Clean(root)
+	if !filepath.IsAbs(cleanRoot) || cleanRoot == string(filepath.Separator) {
+		return "", errors.New("cgroup root must be an absolute non-root path")
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(selfCgroup)), "\n") {
+		fields := strings.SplitN(line, ":", 3)
+		if len(fields) != 3 || fields[0] != "0" || fields[1] != "" {
+			continue
+		}
+		raw := strings.TrimSpace(fields[2])
+		if raw == "" || !filepath.IsAbs(raw) || filepath.Clean(raw) != raw {
+			return "", errors.New("unified process cgroup path is invalid")
+		}
+		parent := filepath.Join(cleanRoot, strings.TrimPrefix(raw, string(filepath.Separator)))
+		relative, err := filepath.Rel(cleanRoot, parent)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return "", errors.New("unified process cgroup path escapes the cgroup root")
+		}
+		info, err := os.Stat(parent)
+		if err != nil || !info.IsDir() {
+			return "", errors.New("unified process cgroup directory is unavailable")
+		}
+		return parent, nil
+	}
+	return "", errors.New("unified process cgroup membership is unavailable")
 }
 
 func (prepared *preparedBrowserCapacityCgroup) afterStart() error {

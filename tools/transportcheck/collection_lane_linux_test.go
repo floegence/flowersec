@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -61,5 +62,33 @@ func TestProductionCollectionLanesEnterDistinctCgroups(t *testing.T) {
 			}
 			closed = true
 		})
+	}
+}
+
+func TestProductionCollectionLaneCloseRemovesNestedPrivateCgroups(t *testing.T) {
+	if os.Getenv("FLOWERSEC_TEST_CGROUP_LANES") != "1" {
+		t.Skip("requires the dedicated privileged Linux release container")
+	}
+	set, err := openCollectionLaneSet(collectionCaseParallelism, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = set.Close()
+		}
+	}()
+	lane := set.Lane(0).(*linuxCollectionLane)
+	child := filepath.Join(lane.path, "flowersec-browser-capacity-test")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := set.Close(); err != nil {
+		t.Fatal(err)
+	}
+	closed = true
+	if _, err := os.Stat(child); !os.IsNotExist(err) {
+		t.Fatalf("nested private cgroup survived lane close: %v", err)
 	}
 }

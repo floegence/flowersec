@@ -693,7 +693,7 @@ func TestValidateRawCaseSuiteReportRejectsMissingExtraAndMismatchedClaims(t *tes
 	}
 }
 
-func TestExecuteCollectionRemovesFailedStagingAndPublishesNothing(t *testing.T) {
+func TestExecuteCollectionRetainsFailedStagingAndPublishesNothing(t *testing.T) {
 	root := canonicalCollectTestRoot(t)
 	artifactDirectory := filepath.Join(root, "bundle")
 	if err := os.Mkdir(artifactDirectory, 0o700); err != nil {
@@ -712,15 +712,23 @@ func TestExecuteCollectionRemovesFailedStagingAndPublishesNothing(t *testing.T) 
 	plan := collectionPlan{Target: "bench-transport-ab", Jobs: []collectionJob{{
 		ID: "clean-direct-baseline", CellIDs: []string{"clean-02", "clean-03"}, RunnerTarget: "direct-clean-baseline",
 	}}}
+	t.Setenv("FAKE_MANIFEST_DIGEST", environment.manifest.Digest)
 	if err := executeCollection(context.Background(), environment, plan); err == nil || !strings.Contains(err.Error(), "failed") {
 		t.Fatalf("executeCollection() error=%v, want low-level failure", err)
 	}
 	if _, err := os.Lstat(reportPath); !os.IsNotExist(err) {
 		t.Fatalf("failed collection published report: %v", err)
 	}
-	entries, err := os.ReadDir(artifactDirectory)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("failed collection published artifacts: entries=%v err=%v", entries, err)
+	for _, path := range []string{
+		filepath.Join(artifactDirectory, "jobs", "clean-direct-baseline", "command.json"),
+		filepath.Join(artifactDirectory, "jobs", "clean-direct-baseline", "stdout.log"),
+		filepath.Join(artifactDirectory, "jobs", "clean-direct-baseline", "stderr.log"),
+		filepath.Join(artifactDirectory, "jobs", "clean-direct-baseline", "cell.json"),
+		filepath.Join(artifactDirectory, "jobs", "clean-direct-baseline", "artifacts", "run-1", "traffic.pcap"),
+	} {
+		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("failed collection did not preserve diagnostic file %s: info=%v err=%v", path, info, err)
+		}
 	}
 }
 
