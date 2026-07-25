@@ -91,6 +91,25 @@ describe("SessionV2 lifecycle bounds", () => {
     expect(serverCarrier.aborts).toBe(0);
   });
 
+  test("flushes the session close record with a control FIN", async () => {
+    const [rawClientCarrier, serverCarrier] = createMemoryCarrierPairV2({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 3,
+    });
+    const clientCarrier = new CloseWriteFlushingCarrier(rawClientCarrier);
+    const [client, server] = await Promise.all([
+      establishSessionV2(clientCarrier, config("client", { idleTimeoutMs: 0, closeTimeoutMs: 100 })),
+      establishSessionV2(serverCarrier, config("server", { idleTimeoutMs: 0, closeTimeoutMs: 100 })),
+    ]);
+    clientCarrier.deferControlWrites = true;
+
+    await client.close();
+    await expect(server.waitClosed()).resolves.toMatchObject({ error: { code: "closed" } });
+    expect(clientCarrier.controlCloseWrites).toBe(1);
+    expect(clientCarrier.aborts).toBe(0);
+  });
+
   test("accepts normal peer carrier close as reciprocal close completion", async () => {
     const [rawClientCarrier, serverCarrier] = createMemoryCarrierPairV2({
       kind: "webtransport",
@@ -189,6 +208,70 @@ class DelayedReadCarrier implements CarrierSessionV2 {
 
   abort(error?: Readonly<{ code: number; reason: string }>): void {
     this.aborts++;
+    this.inner.abort(error);
+  }
+}
+
+class CloseWriteFlushingCarrier implements CarrierSessionV2 {
+  readonly kind: CarrierSessionV2["kind"];
+  readonly path: CarrierSessionV2["path"];
+  readonly inboundBidirectionalStreamCapacity: number;
+  readonly unreliableDatagrams: CarrierSessionV2["unreliableDatagrams"];
+  deferControlWrites = false;
+  controlCloseWrites = 0;
+  aborts = 0;
+
+  constructor(private readonly inner: CarrierSessionV2) {
+    this.kind = inner.kind;
+    this.path = inner.path;
+    this.inboundBidirectionalStreamCapacity = inner.inboundBidirectionalStreamCapacity;
+    this.unreliableDatagrams = inner.unreliableDatagrams;
+  }
+
+  async openStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
+    return new CloseWriteFlushingStream(await this.inner.openStream(options), this);
+  }
+
+  async acceptStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
+    return await this.inner.acceptStream(options);
+  }
+
+  async close(error?: Readonly<{ code: number; reason: string }>): Promise<void> {
+    await this.inner.close(error);
+  }
+
+  abort(error?: Readonly<{ code: number; reason: string }>): void {
+    this.aborts++;
+    this.inner.abort(error);
+  }
+}
+
+class CloseWriteFlushingStream implements CarrierStreamV2 {
+  private readonly pending: Uint8Array[] = [];
+
+  constructor(private readonly inner: CarrierStreamV2, private readonly owner: CloseWriteFlushingCarrier) {}
+
+  async read(options: OperationOptionsV2 = {}): Promise<Uint8Array | null> {
+    return await this.inner.read(options);
+  }
+
+  async write(data: Uint8Array, options: OperationOptionsV2 = {}): Promise<number> {
+    if (!this.owner.deferControlWrites) return await this.inner.write(data, options);
+    this.pending.push(data.slice());
+    return data.length;
+  }
+
+  async closeWrite(): Promise<void> {
+    this.owner.controlCloseWrites++;
+    for (const data of this.pending.splice(0)) await this.inner.write(data);
+    await this.inner.closeWrite();
+  }
+
+  async reset(): Promise<void> {
+    await this.inner.reset();
+  }
+
+  abort(error?: Error): void {
     this.inner.abort(error);
   }
 }

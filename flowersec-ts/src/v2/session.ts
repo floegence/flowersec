@@ -223,6 +223,7 @@ export class SessionV2 implements SessionV2Contract {
   private closePromise: Promise<void> | undefined;
   private closing = false;
   private sentSessionClose = false;
+  private sessionCloseCommitted = false;
   private readonly peerSessionClose = deferred<void>();
   private readonly streams = new Map<bigint, EncryptedStreamV2>();
   private readonly peerLedger: StreamLifetimeLedgerV2;
@@ -838,6 +839,8 @@ export class SessionV2 implements SessionV2Contract {
         if (!this.sentSessionClose) {
           this.sentSessionClose = true;
           await this.sendControl(InnerTypeV2.SessionClose, Uint8Array.of(0, 1));
+          this.sessionCloseCommitted = true;
+          await this.control.closeWrite();
         }
       } catch {
         // Closing is best-effort once the bounded shutdown has started.
@@ -1167,7 +1170,7 @@ export class SessionV2 implements SessionV2Contract {
 
   private fail(error: Error, abortCarrier = true): void {
     if (this.terminalError !== undefined) return;
-    const normalPeerCarrierClose = this.closing && this.sentSessionClose && error instanceof CarrierV2Error && error.code === "closed";
+    const normalPeerCarrierClose = this.closing && this.sessionCloseCommitted && error instanceof CarrierV2Error && error.code === "closed";
     if (normalPeerCarrierClose) this.peerSessionClose.resolve();
     this.terminalError = error;
     this.terminationState.resolve({ error });
