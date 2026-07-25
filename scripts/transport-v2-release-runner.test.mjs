@@ -82,6 +82,8 @@ test("provision installs the source-matched wrapper at one stable container path
   assert.match(provision, /\/workspace\/flowersec\/scripts\/transport-v2-release-runner\.sh/);
   assert.match(provision, /\/usr\/local\/bin\/flowersec-transport-v2-release-runner/);
   assert.match(provision, /test -x \/usr\/local\/bin\/flowersec-transport-v2-release-runner/);
+  assert.match(provision, /git config --global --add safe\.directory \/workspace\/flowersec/);
+  assert.match(provision, /git -C \/workspace\/flowersec rev-parse --show-toplevel/);
   assert.match(provision, /sudo install -d -o root -g root -m 0755 "\$runner_root\/evidence"/);
   assert.match(provision, /FLOWERSEC_RELEASE_OWNER_UID=\$release_owner_uid/);
   assert.match(provision, /FLOWERSEC_RELEASE_OWNER_GID=\$release_owner_gid/);
