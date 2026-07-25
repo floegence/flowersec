@@ -543,9 +543,9 @@ export function normalizeSwiftPins(lockfile) {
 
 export const requiredSwiftToolchainVersion = "6.3.1";
 
-function assertSwiftToolchain(versionOutput) {
-  const match = /Apple Swift version ([0-9]+\.[0-9]+\.[0-9]+)/.exec(versionOutput);
-  if (!match) throw new Error("cannot determine Apple Swift toolchain version");
+export function assertSwiftToolchain(versionOutput) {
+  const match = /(?:^|\s)(?:Apple )?Swift version ([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)/.exec(versionOutput);
+  if (!match) throw new Error("cannot determine Swift toolchain version");
   if (match[1] !== requiredSwiftToolchainVersion) {
     throw new Error(
       `Swift security resolution requires ${requiredSwiftToolchainVersion}, found ${match[1]}`,

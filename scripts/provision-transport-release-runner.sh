@@ -8,6 +8,8 @@ runner_root=${FLOWERSEC_RELEASE_RUNNER_ROOT:-$HOME/flowersec-release}
 repository_root=${FLOWERSEC_RELEASE_REPOSITORY_ROOT:-$runner_root/workspace/flowersec}
 host_bpftool=/usr/lib/linux-tools/$(uname -r)/bpftool
 host_linux_tools=$(dirname "$(readlink -f "$host_bpftool")")
+release_owner_uid=$(id -u)
+release_owner_gid=$(id -g)
 
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   echo "transport release runner requires a native Linux x86_64 host" >&2
@@ -28,8 +30,8 @@ fi
 
 install -d -m 0750 \
   "$runner_root/cache" \
-  "$runner_root/evidence" \
   "$runner_root/workspace"
+sudo install -d -o root -g root -m 0755 "$runner_root/evidence"
 
 docker build \
   --file "$repository_root/tools/transportrelease/Containerfile" \
@@ -47,6 +49,8 @@ docker run --detach \
   --network host \
   --restart unless-stopped \
   --env "GOPROXY=${FLOWERSEC_RELEASE_GOPROXY:-https://goproxy.cn,direct}" \
+  --env "FLOWERSEC_RELEASE_OWNER_UID=$release_owner_uid" \
+  --env "FLOWERSEC_RELEASE_OWNER_GID=$release_owner_gid" \
   --volume "$runner_root/workspace:/workspace" \
   --volume "$runner_root/evidence:/evidence" \
   --volume "$runner_root/cache:/cache" \
@@ -55,7 +59,12 @@ docker run --detach \
   --volume "$host_linux_tools:/opt/host-linux-tools:ro" \
   "$image_name" >/dev/null
 
+docker exec "$container_name" install -m 0555 \
+  /workspace/flowersec/scripts/transport-v2-release-runner.sh \
+  /usr/local/bin/flowersec-transport-v2-release-runner
+
 docker exec "$container_name" bash -euo pipefail -c '
+  test -x /usr/local/bin/flowersec-transport-v2-release-runner
   test "$(uname -m)" = x86_64
   test -w /sys/fs/bpf
   namespace=flowersec-provision-probe

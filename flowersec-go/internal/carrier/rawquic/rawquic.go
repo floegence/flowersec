@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -15,6 +16,8 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrierlife "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/internal/lifecycle"
 	quic "github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/qlog"
+	"github.com/quic-go/quic-go/qlogwriter"
 )
 
 const MinimumInitialPacketSize uint16 = 1200
@@ -118,7 +121,15 @@ func newConfig(limits Limits) (*quic.Config, error) {
 		Allow0RTT:                        false,
 		EnableDatagrams:                  true,
 		EnableStreamResetPartialDelivery: true,
+		Tracer:                           releaseEvidenceTracer,
 	}, nil
+}
+
+func releaseEvidenceTracer(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
+	if os.Getenv("FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE") != "1" {
+		return nil
+	}
+	return qlog.DefaultConnectionTracer(ctx, isClient, connID)
 }
 
 func Dial(ctx context.Context, address string, tlsConfig *tls.Config, limits Limits) (*Session, error) {

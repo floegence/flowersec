@@ -66,7 +66,7 @@ describe("Node Transport v2 WSS production connector", () => {
       handleProtocols(protocols) { return protocols.has(protocol) ? protocol : false; },
     });
     wss.on("headers", (_headers, request) => { upgradeProtocol = request.headers["sec-websocket-protocol"] ?? ""; });
-    httpsServer.listen(0, "localhost");
+    httpsServer.listen(0, "127.0.0.1");
     await once(httpsServer, "listening");
     const address = httpsServer.address();
     if (typeof address !== "object" || address === null) throw new Error("TLS server did not bind TCP");

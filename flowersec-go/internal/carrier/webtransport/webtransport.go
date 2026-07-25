@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,8 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	quic "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	http3qlog "github.com/quic-go/quic-go/http3/qlog"
+	"github.com/quic-go/quic-go/qlogwriter"
 	wt "github.com/quic-go/webtransport-go"
 )
 
@@ -69,7 +72,15 @@ func newQUICConfig(limits Limits) (*quic.Config, error) {
 		Allow0RTT:                        false,
 		EnableDatagrams:                  true,
 		EnableStreamResetPartialDelivery: true,
+		Tracer:                           releaseEvidenceTracer,
 	}, nil
+}
+
+func releaseEvidenceTracer(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
+	if os.Getenv("FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE") != "1" {
+		return nil
+	}
+	return http3qlog.DefaultConnectionTracer(ctx, isClient, connID)
 }
 
 // newServerQUICConfig reserves the long-lived HTTP/3 CONNECT request stream in

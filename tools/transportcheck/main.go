@@ -17,7 +17,7 @@ func main() {
 
 func run(args []string, output io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: transportcheck <manifest|evidence|sign> [flags]")
+		return errors.New("usage: transportcheck <manifest|collect|evidence|sign> [flags]")
 	}
 	switch args[0] {
 	case "manifest":
@@ -57,6 +57,32 @@ func run(args []string, output io.Writer) error {
 		}
 		_, _ = fmt.Fprintf(output, "manifest pass: digest=%s runs=%d cells=%d lane_loads_minutes=%v cases=%d\n", manifest.Digest, manifest.RunCount, len(manifest.Cells), loads, len(registry.Cases))
 		return nil
+	case "collect":
+		flags := flag.NewFlagSet("collect", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		request := collectRequest{}
+		flags.StringVar(&request.ManifestPath, "manifest", "", "performance manifest path")
+		flags.StringVar(&request.RegistryPath, "registry", "", "case registry path")
+		flags.StringVar(&request.RepositoryPath, "repo", "", "clean source checkout root")
+		flags.StringVar(&request.BaseSHA, "base-sha", "", "full ancestor Git SHA")
+		flags.StringVar(&request.FinalSHA, "final-sha", "", "exact clean source Git SHA")
+		flags.StringVar(&request.Target, "target", "", "release collection target")
+		flags.StringVar(&request.ReportPath, "report", "", "fresh raw collection report path")
+		flags.StringVar(&request.ArtifactDirectory, "artifact-dir", "", "fresh raw artifact directory")
+		flags.StringVar(&request.RunnerExecutable, "runner-executable", "", "low-level transport release runner")
+		flags.StringVar(&request.RunnerWrapper, "runner-wrapper", "", "audited top-level runner wrapper")
+		flags.StringVar(&request.BPFObject, "bpf-object", "", "compiled packet-fault BPF object")
+		flags.StringVar(&request.HostBPFTool, "host-bpftool", "", "exact host-kernel bpftool")
+		flags.StringVar(&request.TrustPolicyPath, "trust-policy", "", "repository trust policy")
+		flags.StringVar(&request.EffectiveConfigPath, "effective-config", "", "runner effective config")
+		flags.StringVar(&request.KernelRelease, "kernel-release", "", "actual host kernel release")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("collect does not accept positional arguments")
+		}
+		return collect(request)
 	case "evidence":
 		flags := flag.NewFlagSet("evidence", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)

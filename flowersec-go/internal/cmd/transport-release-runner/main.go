@@ -103,9 +103,10 @@ type browserCellReport struct {
 }
 
 type browserCellResult struct {
-	Run      int                 `json:"run"`
-	Workload json.RawMessage     `json:"workload"`
-	Kernel   networkKernelResult `json:"kernel"`
+	Run       int                 `json:"run"`
+	Workload  json.RawMessage     `json:"workload"`
+	Kernel    networkKernelResult `json:"kernel"`
+	Artifacts []releaseArtifact   `json:"artifacts"`
 }
 
 type baselineRunner struct {
@@ -123,6 +124,7 @@ type baselineCarrierResult struct {
 	CleanupDuration time.Duration                        `json:"cleanup_duration_ns"`
 	Resource        transportrelease.ResourceMeasurement `json:"resource"`
 	Kernel          *networkKernelResult                 `json:"kernel,omitempty"`
+	Artifacts       []releaseArtifact                    `json:"artifacts"`
 }
 
 type networkKernelResult struct {
@@ -146,10 +148,11 @@ type networkWorkerRequest struct {
 }
 
 type tunnelCarrierResult struct {
-	Run      int                                  `json:"run"`
-	Workload tunnelworkload.Result                `json:"workload"`
-	Resource transportrelease.ResourceMeasurement `json:"resource"`
-	Kernel   *networkKernelResult                 `json:"kernel,omitempty"`
+	Run       int                                  `json:"run"`
+	Workload  tunnelworkload.Result                `json:"workload"`
+	Resource  transportrelease.ResourceMeasurement `json:"resource"`
+	Kernel    *networkKernelResult                 `json:"kernel,omitempty"`
+	Artifacts []releaseArtifact                    `json:"artifacts"`
 }
 
 var networkWorkerArguments = func() []string { return []string{networkWorkerArg} }
@@ -175,7 +178,7 @@ func main() {
 	}
 }
 
-func run(args []string) error {
+func run(args []string) (resultErr error) {
 	flags := flag.NewFlagSet("transport-release-runner", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	target := flags.String("target", "", "runner target")
@@ -187,12 +190,18 @@ func run(args []string) error {
 	carrierName := flags.String("carrier", "", "direct carrier")
 	topologyName := flags.String("topology", "", "tunnel carrier topology")
 	bpfObject := flags.String("bpf-object", "", "compiled packet-fault eBPF object")
+	artifactDir := flags.String("artifact-dir", "", "existing empty release artifact directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget && *target != browserCellTarget) || *manifestPath == "" || *reportPath == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
-		return errors.New("runner requires a supported --target, --manifest, --report, --source-root, and a full --source-sha")
+	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget && *target != browserCellTarget) || *manifestPath == "" || *reportPath == "" || *artifactDir == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
+		return errors.New("runner requires a supported --target, --manifest, --report, --artifact-dir, --source-root, and a full --source-sha")
 	}
+	destination, err := newArtifactDestination(*artifactDir, *reportPath)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, destination.Close()) }()
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return errors.New("direct clean baseline requires Linux amd64")
 	}
@@ -214,19 +223,19 @@ func run(args []string) error {
 		if *topologyName != "" {
 			return errors.New("direct network profile cell does not accept --topology")
 		}
-		return runNetworkCell(*reportPath, *sourceSHA, *profileID, carrier.Kind(*carrierName), *bpfObject, plan, manifest)
+		return runNetworkCell(*reportPath, destination, *sourceSHA, *profileID, carrier.Kind(*carrierName), *bpfObject, plan, manifest)
 	}
 	if *target == tunnelCellTarget {
 		if *carrierName != "" {
 			return errors.New("tunnel network profile cell does not accept --carrier")
 		}
-		return runTunnelCell(*reportPath, *sourceSHA, *profileID, tunnelworkload.Topology(*topologyName), *bpfObject, plan, manifest)
+		return runTunnelCell(*reportPath, destination, *sourceSHA, *profileID, tunnelworkload.Topology(*topologyName), *bpfObject, plan, manifest)
 	}
 	if *target == browserCellTarget {
 		if *carrierName != "" {
 			return errors.New("browser WebTransport cell does not accept --carrier")
 		}
-		return runBrowserCell(*reportPath, *sourceSHA, *sourceRoot, *profileID, *topologyName, *bpfObject, plan, manifest)
+		return runBrowserCell(*reportPath, destination, *sourceSHA, *sourceRoot, *profileID, *topologyName, *bpfObject, plan, manifest)
 	}
 	if *profileID != "" || *carrierName != "" || *topologyName != "" || *bpfObject != "" {
 		return errors.New("direct clean baseline does not accept network profile flags")
@@ -249,7 +258,7 @@ func run(args []string) error {
 		cellCtx, cancelCell := context.WithTimeout(globalCtx, cellDeadline)
 		cellStarted := time.Now()
 		for _, runNumber := range cell.Runs {
-			result, err := runCarrier(cellCtx, cell.Carrier, plan.Clean)
+			result, err := runNetworkCarrier(cellCtx, cell.Carrier, plan.Clean, runNumber, "", destination)
 			if err != nil {
 				cancelCell()
 				return fmt.Errorf("%s run %d baseline: %w", cell.Carrier, runNumber, err)
@@ -264,6 +273,9 @@ func run(args []string) error {
 		}
 	}
 	report.FinishedAt = time.Now().UTC()
+	if err := destination.Verify(); err != nil {
+		return err
+	}
 	return writeNewReport(*reportPath, report)
 }
 
@@ -377,7 +389,7 @@ func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductD
 	}, nil
 }
 
-func runNetworkCell(reportPath, sourceSHA, profileID string, kind carrier.Kind, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+func runNetworkCell(reportPath string, destination *artifactDestination, sourceSHA, profileID string, kind carrier.Kind, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
 	if profileID != "mobile-v1" && profileID != "edge-v1" {
 		return errors.New("network profile cell requires mobile-v1 or edge-v1")
 	}
@@ -418,7 +430,7 @@ func runNetworkCell(reportPath, sourceSHA, profileID string, kind carrier.Kind, 
 	defer cancelCell()
 	cellStarted := time.Now()
 	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
-		result, err := runNetworkCarrier(cellCtx, kind, profile, runNumber, frozenBPFObject)
+		result, err := runNetworkCarrier(cellCtx, kind, profile, runNumber, frozenBPFObject, destination)
 		if err != nil {
 			return fmt.Errorf("%s %s run %d: %w", profile.ID, kind, runNumber, err)
 		}
@@ -429,6 +441,9 @@ func runNetworkCell(reportPath, sourceSHA, profileID string, kind carrier.Kind, 
 		return fmt.Errorf("%s %s cell watchdog: %w", profile.ID, kind, err)
 	}
 	report.FinishedAt = time.Now().UTC()
+	if err := destination.Verify(); err != nil {
+		return err
+	}
 	return writeNewReport(reportPath, report)
 }
 
@@ -469,7 +484,7 @@ func freezeBPFObject(value []byte) (path string, cleanup func() error, resultErr
 	return path, func() error { return os.RemoveAll(directory) }, nil
 }
 
-func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrelease.ProfilePlan, runNumber int, bpfObject string) (result baselineCarrierResult, resultErr error) {
+func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrelease.ProfilePlan, runNumber int, bpfObject string, destination *artifactDestination) (result baselineCarrierResult, resultErr error) {
 	cellID := strings.ReplaceAll(plan.ID+"-"+string(kind), "_", "-")
 	config, err := linuxnetlab.ConfigForCell(cellID, runNumber, plan.Network.LinkMTU, plan.Network.Firewall)
 	if err != nil {
@@ -484,12 +499,29 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 		resultErr = errors.Join(resultErr, lab.Close(cleanupCtx))
 		cancel()
 	}()
-	profile, err := faultProfileFromPlan(plan, bpfObject)
-	if err != nil {
-		return result, err
+	if bpfObject != "" {
+		profile, err := faultProfileFromPlan(plan, bpfObject)
+		if err != nil {
+			return result, err
+		}
+		if err := lab.ApplyFaultProfile(ctx, profile); err != nil {
+			return result, err
+		}
+	} else if plan.ID != "clean-v1" {
+		return result, errors.New("only the clean profile may run without a BPF object")
 	}
-	if err := lab.ApplyFaultProfile(ctx, profile); err != nil {
-		return result, err
+	var runArtifacts *runEvidence
+	if destination != nil {
+		label := fmt.Sprintf("%s-%s-run-%03d", plan.ID, strings.ReplaceAll(string(kind), "_", "-"), runNumber)
+		runArtifacts, err = startRunEvidence(ctx, destination, label, config.ClientNamespace, config.ClientInterface)
+		if err != nil {
+			return result, err
+		}
+		defer func() {
+			artifacts, finishErr := runArtifacts.Finish()
+			result.Artifacts = artifacts
+			resultErr = errors.Join(resultErr, finishErr)
+		}()
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -505,10 +537,16 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 	}
 	arguments := append([]string{"netns", "exec", config.ClientNamespace, executable}, networkWorkerArguments()...)
 	command := exec.CommandContext(ctx, "ip", arguments...)
+	if runArtifacts != nil {
+		command.Env = commandEnvironmentWithQLOG(runArtifacts.qlogDir)
+	}
 	command.Stdin = bytes.NewReader(requestJSON)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
+		if bpfObject == "" {
+			return result, fmt.Errorf("network worker: %w: stdout=%s stderr=%s", err, strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()))
+		}
 		evidenceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		evidence, evidenceErr := lab.FaultEvidence(evidenceCtx)
 		cancel()
@@ -520,14 +558,17 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 	if result.Carrier != string(kind) {
 		return result, errors.New("network worker returned the wrong carrier")
 	}
-	evidenceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	evidence, err := lab.FaultEvidence(evidenceCtx)
-	cancel()
-	if err != nil {
-		return result, err
-	}
-	if err := validateKernelEvidence(plan, evidence); err != nil {
-		return result, err
+	var evidence linuxnetlab.KernelFaultEvidence
+	if bpfObject != "" {
+		evidenceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		evidence, err = lab.FaultEvidence(evidenceCtx)
+		cancel()
+		if err != nil {
+			return result, err
+		}
+		if err := validateKernelEvidence(plan, evidence); err != nil {
+			return result, err
+		}
 	}
 	result.Kernel = &networkKernelResult{
 		ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
@@ -538,7 +579,7 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 	return result, nil
 }
 
-func runTunnelCell(reportPath, sourceSHA, profileID string, topology tunnelworkload.Topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+func runTunnelCell(reportPath string, destination *artifactDestination, sourceSHA, profileID string, topology tunnelworkload.Topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
 	if profileID != "mobile-v1" && profileID != "edge-v1" {
 		return errors.New("tunnel network profile cell requires mobile-v1 or edge-v1")
 	}
@@ -576,7 +617,7 @@ func runTunnelCell(reportPath, sourceSHA, profileID string, topology tunnelworkl
 	defer cancelCell()
 	cellStarted := time.Now()
 	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
-		result, err := runNetworkTunnel(cellCtx, topology, profile, runNumber, frozenBPFObject)
+		result, err := runNetworkTunnel(cellCtx, topology, profile, runNumber, frozenBPFObject, destination)
 		if err != nil {
 			return fmt.Errorf("%s %s run %d: %w", profile.ID, topology, runNumber, err)
 		}
@@ -587,10 +628,13 @@ func runTunnelCell(reportPath, sourceSHA, profileID string, topology tunnelworkl
 		return fmt.Errorf("%s %s cell watchdog: %w", profile.ID, topology, err)
 	}
 	report.FinishedAt = time.Now().UTC()
+	if err := destination.Verify(); err != nil {
+		return err
+	}
 	return writeNewReport(reportPath, report)
 }
 
-func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, plan transportrelease.ProfilePlan, runNumber int, bpfObject string) (result tunnelCarrierResult, resultErr error) {
+func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, plan transportrelease.ProfilePlan, runNumber int, bpfObject string, destination *artifactDestination) (result tunnelCarrierResult, resultErr error) {
 	cellID := strings.ToLower(plan.ID + "-tunnel-" + string(topology))
 	config, err := linuxnetlab.ConfigForCell(cellID, runNumber, plan.Network.LinkMTU, plan.Network.Firewall)
 	if err != nil {
@@ -612,6 +656,19 @@ func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, pla
 	if err := lab.ApplyFaultProfile(ctx, profile); err != nil {
 		return result, err
 	}
+	var runArtifacts *runEvidence
+	if destination != nil {
+		label := fmt.Sprintf("%s-tunnel-%s-run-%03d", plan.ID, strings.ToLower(string(topology)), runNumber)
+		runArtifacts, err = startRunEvidence(ctx, destination, label, config.ClientNamespace, config.ClientInterface)
+		if err != nil {
+			return result, err
+		}
+		defer func() {
+			artifacts, finishErr := runArtifacts.Finish()
+			result.Artifacts = artifacts
+			resultErr = errors.Join(resultErr, finishErr)
+		}()
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return result, err
@@ -627,6 +684,9 @@ func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, pla
 	}
 	arguments := append([]string{"netns", "exec", config.ClientNamespace, executable}, networkWorkerArguments()...)
 	command := exec.CommandContext(ctx, "ip", arguments...)
+	if runArtifacts != nil {
+		command.Env = commandEnvironmentWithQLOG(runArtifacts.qlogDir)
+	}
 	command.Stdin = bytes.NewReader(requestJSON)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
@@ -760,8 +820,8 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 	if err := decoder.Decode(&request); err != nil {
 		return fmt.Errorf("decode network worker request: %w", err)
 	}
-	if request.Plan.ID != "mobile-v1" && request.Plan.ID != "edge-v1" {
-		return errors.New("network worker requires a frozen weak-network profile")
+	if request.Plan.ID != "clean-v1" && request.Plan.ID != "mobile-v1" && request.Plan.ID != "edge-v1" {
+		return errors.New("network worker requires a frozen release profile")
 	}
 	if err := linuxnetlab.RequireCurrentNamespace(request.ClientNamespace); err != nil {
 		return err

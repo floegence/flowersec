@@ -1,8 +1,11 @@
 package rawquic
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	quic "github.com/quic-go/quic-go"
 )
 
 func TestConfigUsesNativeBoundedQUICCapabilities(t *testing.T) {
@@ -37,5 +40,20 @@ func TestConfigUsesNativeBoundedQUICCapabilities(t *testing.T) {
 	}
 	if !config.EnableStreamResetPartialDelivery {
 		t.Fatal("raw QUIC must negotiate native stream reset support")
+	}
+	if config.Tracer == nil {
+		t.Fatal("raw QUIC must expose native qlog when QLOGDIR is set")
+	}
+	t.Setenv("QLOGDIR", t.TempDir())
+	if trace := config.Tracer(context.Background(), true, quic.ConnectionIDFromBytes([]byte{1, 2, 3, 4})); trace != nil {
+		t.Fatal("raw QUIC exposed qlog outside a release evidence run")
+	}
+	t.Setenv("FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE", "1")
+	trace := config.Tracer(context.Background(), true, quic.ConnectionIDFromBytes([]byte{1, 2, 3, 4}))
+	if trace == nil {
+		t.Fatal("raw QUIC did not expose qlog during a release evidence run")
+	}
+	if err := trace.AddProducer().Close(); err != nil {
+		t.Fatal(err)
 	}
 }

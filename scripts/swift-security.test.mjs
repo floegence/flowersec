@@ -76,6 +76,19 @@ test("Swift security inventory contains the root and example locks", async () =>
   assert.equal(fs.existsSync(path.join(sourceRoot, "examples/swift/Package.resolved")), true);
 });
 
+test("Swift toolchain parser accepts Apple and official Linux releases", async () => {
+  const { assertSwiftToolchain } = await loadChecker();
+  assert.doesNotThrow(() => assertSwiftToolchain(
+    "swift-driver version: 1.148.6 Apple Swift version 6.3.1",
+  ));
+  assert.doesNotThrow(() => assertSwiftToolchain(
+    "Swift version 6.3.1 (swift-6.3.1-RELEASE)\nTarget: x86_64-unknown-linux-gnu",
+  ));
+  assert.throws(() => assertSwiftToolchain("Swift version 6.3.0"), /requires 6\.3\.1/);
+  assert.throws(() => assertSwiftToolchain("Swift version 6.3.1-dev"), /cannot determine/);
+  assert.throws(() => assertSwiftToolchain("unrecognized"), /cannot determine/);
+});
+
 test("Swift locks reject missing, duplicate, or incomplete pins", async () => {
   const { normalizeSwiftPins } = await loadChecker();
   const validPin = {

@@ -33,7 +33,10 @@ let package = Package(
     ),
     .testTarget(
       name: "FlowersecTests",
-      dependencies: ["Flowersec"],
+      dependencies: [
+        "Flowersec",
+        .product(name: "NIOFoundationCompat", package: "swift-nio"),
+      ],
       path: "flowersec-swift/Tests/FlowersecTests"
     ),
   ]

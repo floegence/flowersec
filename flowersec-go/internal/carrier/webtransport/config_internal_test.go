@@ -1,9 +1,11 @@
 package webtransport
 
 import (
+	"context"
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
+	quic "github.com/quic-go/quic-go"
 )
 
 func TestConfigUsesRequiredH3TransportWithoutApplicationEarlyData(t *testing.T) {
@@ -22,6 +24,21 @@ func TestConfigUsesRequiredH3TransportWithoutApplicationEarlyData(t *testing.T) 
 	}
 	if config.MaxIncomingStreams != 130 || config.MaxIncomingUniStreams != MaxH3IncomingUniStreams {
 		t.Fatalf("stream limits = bidi %d uni %d", config.MaxIncomingStreams, config.MaxIncomingUniStreams)
+	}
+	if config.Tracer == nil {
+		t.Fatal("WebTransport must expose HTTP/3 qlog when QLOGDIR is set")
+	}
+	t.Setenv("QLOGDIR", t.TempDir())
+	if trace := config.Tracer(context.Background(), true, quic.ConnectionIDFromBytes([]byte{1, 2, 3, 4})); trace != nil {
+		t.Fatal("WebTransport exposed qlog outside a release evidence run")
+	}
+	t.Setenv("FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE", "1")
+	trace := config.Tracer(context.Background(), true, quic.ConnectionIDFromBytes([]byte{1, 2, 3, 4}))
+	if trace == nil {
+		t.Fatal("WebTransport did not expose qlog during a release evidence run")
+	}
+	if err := trace.AddProducer().Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

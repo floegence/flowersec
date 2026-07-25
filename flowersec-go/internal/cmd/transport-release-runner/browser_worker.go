@@ -25,7 +25,7 @@ import (
 
 const browserDirectTopology = "browser_webtransport"
 
-func runBrowserCell(reportPath, sourceSHA, sourceRoot, profileID, topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+func runBrowserCell(reportPath string, destination *artifactDestination, sourceSHA, sourceRoot, profileID, topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
 	if topology == "" {
 		topology = browserDirectTopology
 	}
@@ -77,7 +77,7 @@ func runBrowserCell(reportPath, sourceSHA, sourceRoot, profileID, topology, bpfO
 	ctx, cancel := context.WithTimeout(context.Background(), cellDeadline)
 	defer cancel()
 	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
-		result, err := runBrowserNetworkCarrier(ctx, topology, profile, runNumber, frozenBPFObject, sourceRoot)
+		result, err := runBrowserNetworkCarrier(ctx, topology, profile, runNumber, frozenBPFObject, sourceRoot, destination)
 		if err != nil {
 			return fmt.Errorf("%s browser WebTransport run %d: %w", profile.ID, runNumber, err)
 		}
@@ -87,10 +87,13 @@ func runBrowserCell(reportPath, sourceSHA, sourceRoot, profileID, topology, bpfO
 		return err
 	}
 	report.FinishedAt = time.Now().UTC()
+	if err := destination.Verify(); err != nil {
+		return err
+	}
 	return writeNewReport(reportPath, report)
 }
 
-func runBrowserNetworkCarrier(ctx context.Context, topology string, plan transportrelease.ProfilePlan, runNumber int, bpfObject, sourceRoot string) (result browserCellResult, resultErr error) {
+func runBrowserNetworkCarrier(ctx context.Context, topology string, plan transportrelease.ProfilePlan, runNumber int, bpfObject, sourceRoot string, destination *artifactDestination) (result browserCellResult, resultErr error) {
 	cellID := strings.ReplaceAll(plan.ID+"-"+topology, "_", "-")
 	config, err := linuxnetlab.ConfigForCell(cellID, runNumber, plan.Network.LinkMTU, plan.Network.Firewall)
 	if err != nil {
@@ -114,6 +117,16 @@ func runBrowserNetworkCarrier(ctx context.Context, topology string, plan transpo
 			return result, err
 		}
 	}
+	label := fmt.Sprintf("%s-%s-run-%03d", plan.ID, strings.ReplaceAll(topology, "_", "-"), runNumber)
+	evidence, err := startRunEvidence(ctx, destination, label, config.ClientNamespace, config.ClientInterface)
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		artifacts, finishErr := evidence.Finish()
+		result.Artifacts = artifacts
+		resultErr = errors.Join(resultErr, finishErr)
+	}()
 	executable, err := os.Executable()
 	if err != nil {
 		return result, err
@@ -128,6 +141,7 @@ func runBrowserNetworkCarrier(ctx context.Context, topology string, plan transpo
 		return result, err
 	}
 	command := exec.CommandContext(ctx, "ip", "netns", "exec", config.ClientNamespace, executable, browserWorkerArg)
+	command.Env = commandEnvironmentWithQLOG(evidence.qlogDir)
 	command.Stdin = bytes.NewReader(requestJSON)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr

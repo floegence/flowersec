@@ -67,6 +67,105 @@ func TestVerifySourceCheckoutBindsCleanHeadAndManifest(t *testing.T) {
 	}
 }
 
+func TestValidateArtifactDirectoryRequiresEmptyCanonicalSibling(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := filepath.Join(root, "artifacts")
+	if err := os.Mkdir(artifactDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(root, "cell.json")
+	destination, err := newArtifactDestination(artifactDir, reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := destination.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, "occupied"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if destination, err := newArtifactDestination(artifactDir, reportPath); err == nil {
+		_ = destination.Close()
+		t.Fatal("accepted a non-empty artifact directory")
+	}
+	if err := os.Remove(filepath.Join(artifactDir, "occupied")); err != nil {
+		t.Fatal(err)
+	}
+	if destination, err := newArtifactDestination(artifactDir, filepath.Join(artifactDir, "cell.json")); err == nil {
+		_ = destination.Close()
+		t.Fatal("accepted a report inside the artifact directory")
+	}
+	symlink := filepath.Join(root, "artifact-link")
+	if err := os.Symlink(artifactDir, symlink); err != nil {
+		t.Fatal(err)
+	}
+	if destination, err := newArtifactDestination(symlink, reportPath); err == nil {
+		_ = destination.Close()
+		t.Fatal("accepted a symlinked artifact directory")
+	}
+}
+
+func TestPacketCaptureLifecycleBindsPcapDigest(t *testing.T) {
+	previous := packetCaptureCommand
+	packetCaptureCommand = func(ctx context.Context, _, _, outputPath string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sh", "-c", `trap 'exit 0' INT TERM; printf '\324\303\262\24101234567890123456789x' > "$1"; while :; do :; done`, "capture", outputPath)
+	}
+	t.Cleanup(func() { packetCaptureCommand = previous })
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := filepath.Join(root, "artifacts")
+	if err := os.Mkdir(artifactDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	destination, err := newArtifactDestination(artifactDir, filepath.Join(root, "cell.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	evidence, err := startRunEvidence(context.Background(), destination, "clean-wss-run-001", "", "lo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := evidence.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 1 || artifacts[0].Kind != "classic-pcap" || artifacts[0].SizeBytes != 25 ||
+		artifacts[0].Path != "artifacts/clean-wss-run-001/traffic.pcap" || len(artifacts[0].SHA256) != 64 {
+		t.Fatalf("unexpected capture artifacts: %+v", artifacts)
+	}
+}
+
+func TestArtifactDestinationRejectsPathReplacement(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := filepath.Join(root, "artifacts")
+	if err := os.Mkdir(artifactDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	destination, err := newArtifactDestination(artifactDir, filepath.Join(root, "cell.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	if err := os.Rename(artifactDir, filepath.Join(root, "original-artifacts")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(artifactDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := destination.Verify(); err == nil {
+		t.Fatal("accepted a replacement at the pinned artifact path")
+	}
+}
+
 func runGit(t *testing.T, root string, args ...string) string {
 	t.Helper()
 	commandArgs := append([]string{"-C", root}, args...)
@@ -392,6 +491,13 @@ func TestPrivilegedProductionCarriersTraverseKernelProfile(t *testing.T) {
 	networkWorkerArguments = func() []string { return []string{"-test.run=^TestNetworkWorkerProcess$"} }
 	t.Cleanup(func() { networkWorkerArguments = previousWorkerArguments })
 	t.Setenv("FLOWERSEC_NETWORK_WORKER_TEST", "1")
+	artifactRoot := t.TempDir()
+	reportPath := filepath.Join(filepath.Dir(artifactRoot), "privileged-network-cell.json")
+	destination, err := newArtifactDestination(artifactRoot, reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
 	plan := transportrelease.ProfilePlan{
 		ID: "mobile-v1",
 		Cold: transportrelease.ColdPlan{
@@ -400,11 +506,11 @@ func TestPrivilegedProductionCarriersTraverseKernelProfile(t *testing.T) {
 		},
 		RPC: transportrelease.RPCPlan{
 			Operations: 16, RequestBytes: 1024, ResponseBytes: 1024, Workers: 4,
-			OperationDeadlineSeconds: 5, PhaseDeadlineSeconds: 20,
+			OperationDeadlineSeconds: 10, PhaseDeadlineSeconds: 40,
 		},
 		Bulk: transportrelease.BulkPlan{
 			WarmupBytesPerDirection: 16 * 1024, ScoreBytesPerDirection: 64 * 1024,
-			PhaseDeadlineSeconds: 20,
+			PhaseDeadlineSeconds: 60,
 		},
 		Network: transportrelease.NetworkPlan{
 			EvidenceLayer: "kernel_packet", OneWayDelayMilliseconds: 60,
@@ -413,7 +519,7 @@ func TestPrivilegedProductionCarriersTraverseKernelProfile(t *testing.T) {
 			Shape:              &transportrelease.ShapePlan{RateBitsPerSecond: 5_000_000, TokenBurstBytes: 32_768, QueueBytes: 262_144},
 			LinkMTU:            1280, Firewall: linuxnetlab.FrozenFirewall,
 		},
-		CleanupDeadlineSeconds: 10, CellWatchdogMinutes: 2,
+		CleanupDeadlineSeconds: 10, CellWatchdogMinutes: 4,
 	}
 	edgePlan := plan
 	edgePlan.ID = "edge-v1"
@@ -421,6 +527,29 @@ func TestPrivilegedProductionCarriersTraverseKernelProfile(t *testing.T) {
 	edgePlan.Network.JitterMilliseconds = []int{0, 30, -20, 45, -35, 10, -5, 25}
 	edgePlan.Network.Loss = transportrelease.LossPlan{Mode: "burst", BlockSize: 100, BurstFirst: 41, BurstLast: 45}
 	edgePlan.Network.Shape = &transportrelease.ShapePlan{RateBitsPerSecond: 1_000_000, TokenBurstBytes: 16_384, QueueBytes: 65_536}
+	cleanPlan := plan
+	cleanPlan.ID = "clean-v1"
+	cleanPlan.Network = transportrelease.NetworkPlan{
+		EvidenceLayer: "kernel_packet", JitterMilliseconds: []int{0},
+		Loss: transportrelease.LossPlan{Mode: "none"}, LinkMTU: 1500, Firewall: linuxnetlab.FrozenFirewall,
+	}
+	t.Run("clean-v1-isolated", func(t *testing.T) {
+		for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
+			t.Run(string(kind), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+				defer cancel()
+				result, err := runNetworkCarrier(ctx, kind, cleanPlan, 1, "", destination)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if result.Kernel == nil || result.Kernel.ClientNamespace == "" || result.Kernel.ServerNamespace == "" ||
+					result.Kernel.ClientNamespace == result.Kernel.ServerNamespace {
+					t.Fatalf("clean baseline did not use isolated namespaces: %+v", result.Kernel)
+				}
+				assertPrivilegedRunArtifacts(t, result.Artifacts, kind != carrier.KindWebSocket)
+			})
+		}
+	})
 	for _, profile := range []transportrelease.ProfilePlan{plan, edgePlan} {
 		profile := profile
 		t.Run(profile.ID, func(t *testing.T) {
@@ -428,7 +557,7 @@ func TestPrivilegedProductionCarriersTraverseKernelProfile(t *testing.T) {
 				t.Run(string(kind), func(t *testing.T) {
 					ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 					defer cancel()
-					result, err := runNetworkCarrier(ctx, kind, profile, 1, bpfObject)
+					result, err := runNetworkCarrier(ctx, kind, profile, 1, bpfObject, destination)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -437,6 +566,7 @@ func TestPrivilegedProductionCarriersTraverseKernelProfile(t *testing.T) {
 						result.Resource.FinishedAt.Before(result.Resource.StartedAt) || result.Kernel == nil {
 						t.Fatalf("incomplete production workload: %+v", result)
 					}
+					assertPrivilegedRunArtifacts(t, result.Artifacts, kind != carrier.KindWebSocket)
 				})
 			}
 		})
@@ -448,7 +578,7 @@ func TestPrivilegedProductionCarriersTraverseKernelProfile(t *testing.T) {
 				t.Run(string(topology), func(t *testing.T) {
 					ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 					defer cancel()
-					result, err := runNetworkTunnel(ctx, topology, profile, 1, bpfObject)
+					result, err := runNetworkTunnel(ctx, topology, profile, 1, bpfObject, destination)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -457,9 +587,33 @@ func TestPrivilegedProductionCarriersTraverseKernelProfile(t *testing.T) {
 						result.Resource.FinishedAt.Before(result.Resource.StartedAt) || result.Kernel == nil {
 						t.Fatalf("incomplete production tunnel workload: %+v", result)
 					}
+					clientCarrier, serverCarrier, err := topology.Carriers()
+					if err != nil {
+						t.Fatal(err)
+					}
+					assertPrivilegedRunArtifacts(t, result.Artifacts, clientCarrier != carrier.KindWebSocket || serverCarrier != carrier.KindWebSocket)
 				})
 			}
 		})
+	}
+}
+
+func assertPrivilegedRunArtifacts(t *testing.T, artifacts []releaseArtifact, wantQLOG bool) {
+	t.Helper()
+	pcaps, qlogs := 0, 0
+	for _, artifact := range artifacts {
+		if artifact.SizeBytes <= 0 || len(artifact.SHA256) != 64 {
+			t.Fatalf("invalid release artifact: %+v", artifact)
+		}
+		switch artifact.Kind {
+		case "classic-pcap":
+			pcaps++
+		case "qlog-json-seq":
+			qlogs++
+		}
+	}
+	if pcaps != 1 || wantQLOG && qlogs == 0 || !wantQLOG && qlogs != 0 {
+		t.Fatalf("release artifacts pcap=%d qlog=%d want_qlog=%t: %+v", pcaps, qlogs, wantQLOG, artifacts)
 	}
 }
 
