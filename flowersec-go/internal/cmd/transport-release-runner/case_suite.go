@@ -173,7 +173,11 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 			continue
 		}
 		if owner == capacityOwner {
-			caseCtx, cancel := context.WithTimeout(context.Background(), productionCapacityContract().Watchdog+30*time.Second)
+			capacityDefinition, ok := lookupCapacityCase(definition.ID)
+			if !ok || capacityDefinition.Profile != definition.Profile {
+				return fmt.Errorf("case %s: registered capacity definition is not frozen", definition.ID)
+			}
+			caseCtx, cancel := context.WithTimeout(context.Background(), capacityCaseTimeout(capacityDefinition))
 			result, runErr := runRegisteredCapacityCase(caseCtx, destination, definition, sourceRoot, plan)
 			cancel()
 			if runErr != nil {

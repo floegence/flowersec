@@ -180,6 +180,10 @@ func capacityContractForDefinition(definition capacityCaseDefinition) capacityCo
 	return productionCapacityContract()
 }
 
+func capacityCaseTimeout(definition capacityCaseDefinition) time.Duration {
+	return capacityContractForDefinition(definition).Watchdog + 30*time.Second
+}
+
 func writeCapacityCoreArtifacts(destination *artifactDestination, directory string, result capacityCaseResult) error {
 	for _, artifact := range []struct {
 		name  string

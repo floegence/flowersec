@@ -81,6 +81,14 @@ func TestBrowserStreamCapacityContractIsFrozen(t *testing.T) {
 		contract.CalibrationRSS != 0 || contract.CalibrationOpenFDs != 0 || capacitySessionRamp(contract) != 15*time.Second {
 		t.Fatalf("browser stream capacity contract = %+v", contract)
 	}
+	definition, ok := lookupCapacityCase("CAP-STREAM-WT-DIRECT-100X128")
+	if !ok || capacityCaseTimeout(definition) != 180*time.Second {
+		t.Fatalf("browser stream capacity case timeout = %v, found=%t", capacityCaseTimeout(definition), ok)
+	}
+	regular, ok := lookupCapacityCase("CAP-DIRECT-WSS-1000")
+	if !ok || capacityCaseTimeout(regular) != 150*time.Second {
+		t.Fatalf("regular capacity case timeout = %v, found=%t", capacityCaseTimeout(regular), ok)
+	}
 }
 
 func TestBrowserWSSStreamCapacityRecordsTightYamuxResources(t *testing.T) {
