@@ -13,9 +13,46 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestStabilizePacketConnDisablesOOBButPreservesSocketControls(t *testing.T) {
+	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = udp.Close() })
+
+	stabilized := stabilizePacketConn(udp)
+	if stabilized == udp {
+		t.Fatal("UDP connection was not wrapped")
+	}
+	if _, exposesOOB := stabilized.(interface {
+		ReadMsgUDP([]byte, []byte) (int, int, int, *net.UDPAddr, error)
+		WriteMsgUDP([]byte, []byte, *net.UDPAddr) (int, int, error)
+	}); exposesOOB {
+		t.Fatal("stabilized connection still exposes the mutable GSO/OOB path")
+	}
+	controls, ok := stabilized.(interface {
+		SyscallConn() (syscall.RawConn, error)
+		SetReadBuffer(int) error
+		SetWriteBuffer(int) error
+	})
+	if !ok {
+		t.Fatal("stabilized connection lost DF/PMTUD or buffer controls")
+	}
+	if raw, err := controls.SyscallConn(); err != nil || raw == nil {
+		t.Fatalf("SyscallConn() = %v, %v", raw, err)
+	}
+	if err := controls.SetReadBuffer(256 << 10); err != nil {
+		t.Fatalf("SetReadBuffer: %v", err)
+	}
+	if err := controls.SetWriteBuffer(256 << 10); err != nil {
+		t.Fatalf("SetWriteBuffer: %v", err)
+	}
+}
 
 func TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs(t *testing.T) {
 	serverTLS, clientTLS := nativeTestTLS(t)

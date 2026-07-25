@@ -57,12 +57,14 @@ func TestLimitsRejectUnboundedOrInconsistentValues(t *testing.T) {
 }
 
 func TestBindSessionLimitsUsesExactPhysicalCapacity(t *testing.T) {
-	limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if limits.MaxInboundStreams != 3 {
-		t.Fatalf("physical inbound streams = %d, want 3", limits.MaxInboundStreams)
+	for _, logical := range []uint16{1, 128} {
+		limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), logical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := int64(logical) + 2; limits.MaxInboundStreams != want {
+			t.Fatalf("logical %d physical inbound streams = %d, want %d", logical, limits.MaxInboundStreams, want)
+		}
 	}
 	if _, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), 129); !errors.Is(err, carrier.ErrInvalidStreamCapacity) {
 		t.Fatalf("invalid logical capacity error = %v", err)

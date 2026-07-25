@@ -105,6 +105,8 @@ type engineSession struct {
 	receivedGoAway         bool
 	sentGoAway             bool
 	sentGoAwayLastAccepted uint64
+	peerSessionClose       chan struct{}
+	peerSessionCloseOnce   sync.Once
 
 	outboundPermits chan struct{}
 	inboundPermits  chan struct{}
@@ -299,6 +301,7 @@ func newEngineSession(carrierSession carrier.Session, control carrier.Stream, co
 		sendRoots:   map[uint32]protocolv2.EpochRoots{0: sendRoots},
 		recvRoots:   map[uint32]protocolv2.EpochRoots{0: receiveRoots},
 		openChanged: openChanged, nextID: nextID, closingCh: make(chan struct{}),
+		peerSessionClose: make(chan struct{}),
 		outboundPermits:  make(chan struct{}, maxInbound),
 		inboundPermits:   make(chan struct{}, maxInbound),
 		acceptCh:         make(chan IncomingStream, maxInbound),
@@ -416,24 +419,61 @@ func (s *engineSession) AcceptStream(ctx context.Context) (IncomingStream, error
 
 func (s *engineSession) Close() error {
 	s.closeOnce.Do(func() {
-		s.openMu.Lock()
-		s.closing = true
-		s.goingAway = true
-		if s.closingCh != nil {
-			close(s.closingCh)
-		}
-		s.openMu.Unlock()
+		s.markClosing()
 		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
 		defer cancelClose()
 		protocolErr := s.sendGoAway(1)
 		protocolErr = errors.Join(protocolErr, s.sendControl(protocolv2.InnerSessionClose, []byte{0, 1}))
 		protocolErr = errors.Join(protocolErr, s.flushControl(closeContext))
+		protocolErr = errors.Join(protocolErr, s.control.CloseWrite())
+		s.resetAllStreams()
+		select {
+		case <-s.peerSessionClose:
+		case <-closeContext.Done():
+		}
+		s.cancel(ErrSessionClosed)
+		carrierErr := closeCarrierWithin(closeContext, s.carrier, carrier.ApplicationError{Code: 1, Reason: "session closed"})
+		s.closeErr = errors.Join(protocolErr, carrierErr)
+	})
+	return s.closeErr
+}
+
+func (s *engineSession) markClosing() {
+	s.openMu.Lock()
+	if !s.closing {
+		s.closing = true
+		s.goingAway = true
+		close(s.closingCh)
+		s.closingCh = nil
+	}
+	s.openMu.Unlock()
+}
+
+func (s *engineSession) isClosing() bool {
+	s.openMu.Lock()
+	closing := s.closing
+	s.openMu.Unlock()
+	return closing
+}
+
+func (s *engineSession) signalPeerSessionClose() {
+	s.peerSessionCloseOnce.Do(func() { close(s.peerSessionClose) })
+}
+
+func (s *engineSession) handlePeerSessionClose() {
+	s.signalPeerSessionClose()
+	s.closeOnce.Do(func() {
+		s.markClosing()
+		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
+		defer cancelClose()
+		protocolErr := s.sendControl(protocolv2.InnerSessionClose, []byte{0, 1})
+		protocolErr = errors.Join(protocolErr, s.flushControl(closeContext))
+		protocolErr = errors.Join(protocolErr, s.control.CloseWrite())
 		s.cancel(ErrSessionClosed)
 		s.resetAllStreams()
 		carrierErr := closeCarrierWithin(closeContext, s.carrier, carrier.ApplicationError{Code: 1, Reason: "session closed"})
 		s.closeErr = errors.Join(protocolErr, carrierErr)
 	})
-	return s.closeErr
 }
 
 func closeCarrierWithin(ctx context.Context, carrierSession carrier.Session, applicationError carrier.ApplicationError) error {
@@ -452,7 +492,11 @@ func (s *engineSession) fail(err error) {
 		s.resetAllStreams()
 		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
 		defer cancelClose()
-		s.closeErr = closeCarrierWithin(closeContext, s.carrier, carrier.ApplicationError{Code: 6, Reason: "session protocol failure"})
+		applicationError := carrier.ApplicationError{Code: 6, Reason: "session protocol failure"}
+		if errors.Is(err, ErrSessionClosed) && !errors.Is(err, ErrSessionProtocol) {
+			applicationError = carrier.ApplicationError{Code: 1, Reason: "session closed"}
+		}
+		s.closeErr = closeCarrierWithin(closeContext, s.carrier, applicationError)
 	})
 }
 

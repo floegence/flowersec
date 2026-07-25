@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -25,6 +26,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
+	quic "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -79,6 +81,53 @@ func TestProductionTunnelCarrierCartesianMatrixCarriesEncryptedSessions(t *testi
 			_ = clientSession.Close()
 			_ = serverSession.Close()
 		})
+	}
+}
+
+func TestProductionWebTransportToRawQUICTunnelPreservesNormalSessionClose(t *testing.T) {
+	contract := productionTunnelContract(t)
+	clientFSB2 := validTunnelFSB2ForCarrier(t, 1, "client", "TQ-close-client", artifactv2.CarrierWebTransport)
+	serverFSB2 := validTunnelFSB2ForCarrier(t, 2, "server", "TQ-close-server", artifactv2.CarrierRawQUIC)
+	clientLeg := newProductionTunnelLeg(t, artifactv2.CarrierWebTransport, contract.MaxInboundStreams, clientFSB2)
+	serverLeg := newProductionTunnelLeg(t, artifactv2.CarrierRawQUIC, contract.MaxInboundStreams, serverFSB2)
+	coordinator := newProductionCoordinator(t)
+	bridgeContext, cancelBridge := context.WithCancel(context.Background())
+	defer cancelBridge()
+	clientServeDone := serveLeg(coordinator, bridgeContext, clientLeg.pending)
+	serverServeDone := serveLeg(coordinator, bridgeContext, serverLeg.pending)
+
+	clientCarrierSession := awaitProductionEndpoint(t, clientLeg.endpoint)
+	serverCarrierSession := awaitProductionEndpoint(t, serverLeg.endpoint)
+	clientConfig, serverConfig := productionTunnelSessionConfigs(contract, clientFSB2, serverFSB2)
+	clientSession, serverSession := establishProductionSessionPair(t, clientCarrierSession, serverCarrierSession, clientConfig, serverConfig)
+	if err := clientSession.Close(); err != nil {
+		t.Fatalf("client normal close: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := serverSession.WaitClosed(ctx)
+	if !errors.Is(err, flowersession.ErrSessionClosed) || errors.Is(err, flowersession.ErrSessionProtocol) {
+		t.Fatalf("tunneled peer normal close = %v, want ErrSessionClosed without ErrSessionProtocol", err)
+	}
+
+	cancelBridge()
+	assertProductionServeClosedNormally(t, clientServeDone)
+	assertProductionServeClosedNormally(t, serverServeDone)
+}
+
+func assertProductionServeClosedNormally(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if errors.Is(err, context.Canceled) || errors.Is(err, tunnelv2.ErrControlClosed) || errors.Is(err, flowersession.ErrSessionClosed) {
+			return
+		}
+		var applicationError *quic.ApplicationError
+		if !errors.As(err, &applicationError) || applicationError.ErrorCode != 1 {
+			t.Fatalf("Serve normal-close error = %v, want cancellation or QUIC application code 1", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("production Serve did not stop")
 	}
 }
 

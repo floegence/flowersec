@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"unicode/utf8"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
@@ -158,6 +159,12 @@ func (dialer *Dialer) Close() error {
 type Server struct {
 	inner    *wt.Server
 	capacity uint16
+
+	lifecycleMu sync.Mutex
+	serveCalled bool
+	closed      bool
+	closeOnce   sync.Once
+	closeErr    error
 }
 
 func NewServer(tlsConfig *tls.Config, limits Limits, checkOrigin func(*http.Request) bool) (*Server, error) {
@@ -198,8 +205,128 @@ func (server *Server) Upgrade(writer http.ResponseWriter, request *http.Request)
 	return wrapSession(inner, server.capacity, path)
 }
 
-func (server *Server) Serve(packetConn net.PacketConn) error { return server.inner.Serve(packetConn) }
-func (server *Server) Close() error                          { return server.inner.Close() }
+type serveStartPacketConn struct {
+	net.PacketConn
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (packetConn *serveStartPacketConn) markReady() {
+	packetConn.once.Do(func() { close(packetConn.ready) })
+}
+
+func (packetConn *serveStartPacketConn) ReadFrom(payload []byte) (int, net.Addr, error) {
+	packetConn.markReady()
+	return packetConn.PacketConn.ReadFrom(payload)
+}
+
+func (packetConn *serveStartPacketConn) WriteTo(payload []byte, address net.Addr) (int, error) {
+	packetConn.markReady()
+	return packetConn.PacketConn.WriteTo(payload, address)
+}
+
+func (packetConn *serveStartPacketConn) LocalAddr() net.Addr {
+	packetConn.markReady()
+	return packetConn.PacketConn.LocalAddr()
+}
+
+type oobServeStartPacketConn struct {
+	*serveStartPacketConn
+	oob        quic.OOBCapablePacketConn
+	connection net.Conn
+}
+
+func (packetConn *oobServeStartPacketConn) Read(payload []byte) (int, error) {
+	packetConn.markReady()
+	return packetConn.connection.Read(payload)
+}
+
+func (packetConn *oobServeStartPacketConn) Write(payload []byte) (int, error) {
+	packetConn.markReady()
+	return packetConn.connection.Write(payload)
+}
+
+func (packetConn *oobServeStartPacketConn) RemoteAddr() net.Addr {
+	packetConn.markReady()
+	return packetConn.connection.RemoteAddr()
+}
+
+func (packetConn *oobServeStartPacketConn) SyscallConn() (syscall.RawConn, error) {
+	packetConn.markReady()
+	return packetConn.oob.SyscallConn()
+}
+
+func (packetConn *oobServeStartPacketConn) SetReadBuffer(bytes int) error {
+	packetConn.markReady()
+	return packetConn.oob.SetReadBuffer(bytes)
+}
+
+func (packetConn *oobServeStartPacketConn) SetWriteBuffer(bytes int) error {
+	packetConn.markReady()
+	if tunable, ok := packetConn.PacketConn.(interface{ SetWriteBuffer(int) error }); ok {
+		return tunable.SetWriteBuffer(bytes)
+	}
+	return errors.New("packet connection does not support send-buffer tuning")
+}
+
+func (packetConn *oobServeStartPacketConn) ReadMsgUDP(payload, oob []byte) (int, int, int, *net.UDPAddr, error) {
+	packetConn.markReady()
+	return packetConn.oob.ReadMsgUDP(payload, oob)
+}
+
+func (packetConn *oobServeStartPacketConn) WriteMsgUDP(payload, oob []byte, address *net.UDPAddr) (int, int, error) {
+	packetConn.markReady()
+	return packetConn.oob.WriteMsgUDP(payload, oob, address)
+}
+
+func trackServeStart(packetConn net.PacketConn) (net.PacketConn, <-chan struct{}) {
+	tracked := &serveStartPacketConn{PacketConn: packetConn, ready: make(chan struct{})}
+	oob, hasOOB := packetConn.(quic.OOBCapablePacketConn)
+	connection, hasConnection := packetConn.(net.Conn)
+	if hasOOB && hasConnection {
+		return &oobServeStartPacketConn{serveStartPacketConn: tracked, oob: oob, connection: connection}, tracked.ready
+	}
+	return tracked, tracked.ready
+}
+
+func (server *Server) Serve(packetConn net.PacketConn) error {
+	if server == nil || server.inner == nil || packetConn == nil {
+		return ErrInvalidSession
+	}
+	server.lifecycleMu.Lock()
+	if server.closed || server.serveCalled {
+		server.lifecycleMu.Unlock()
+		return ErrInvalidSession
+	}
+	server.serveCalled = true
+	tracked, ready := trackServeStart(packetConn)
+	result := make(chan error, 1)
+	go func() { result <- server.inner.Serve(tracked) }()
+	select {
+	case <-ready:
+		// webtransport-go touches the PacketConn only after registering Serve in
+		// its internal refCount. Releasing Close after this point prevents Add
+		// from racing with Wait while preserving the optimized UDP interface.
+		server.lifecycleMu.Unlock()
+		return <-result
+	case err := <-result:
+		server.lifecycleMu.Unlock()
+		return err
+	}
+}
+
+func (server *Server) Close() error {
+	if server == nil || server.inner == nil {
+		return nil
+	}
+	server.closeOnce.Do(func() {
+		server.lifecycleMu.Lock()
+		server.closed = true
+		server.closeErr = server.inner.Close()
+		server.lifecycleMu.Unlock()
+	})
+	return server.closeErr
+}
 
 type Session struct {
 	inner     *wt.Session

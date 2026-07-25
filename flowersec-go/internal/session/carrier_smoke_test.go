@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"net"
 	"net/http"
@@ -58,20 +59,23 @@ func TestEngineRawQUICCarrierConformanceSmoke(t *testing.T) {
 	}
 	clientConfig, serverConfig := directEngineConfigs(4)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
+	defer client.Close()
+	defer server.Close()
 	assertCarrierEngineSmoke(t, client, server)
+	assertPeerObservedNormalSessionClose(t, client, server)
 }
 
 func TestEngineWebSocketCarrierConformanceSmoke(t *testing.T) {
 	clientCarrier, serverCarrier := newEngineWebSocketCarrierPair(t)
 	clientConfig, serverConfig := directEngineConfigs(4)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
+	defer client.Close()
+	defer server.Close()
 	assertCarrierEngineSmoke(t, client, server)
 }
 
 func assertCarrierEngineSmoke(t *testing.T, client, server *engineSession) {
 	t.Helper()
-	defer client.Close()
-	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	accepted := make(chan IncomingStream, 1)
@@ -99,6 +103,19 @@ func assertCarrierEngineSmoke(t *testing.T, client, server *engineSession) {
 	result := <-readResult
 	if result.err != nil || string(result.payload) != "encrypted carrier smoke" {
 		t.Fatalf("payload=%q error=%v", result.payload, result.err)
+	}
+}
+
+func assertPeerObservedNormalSessionClose(t *testing.T, closer, peer *engineSession) {
+	t.Helper()
+	if err := closer.Close(); err != nil {
+		t.Fatalf("normal session close: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := peer.WaitClosed(ctx)
+	if !errors.Is(err, ErrSessionClosed) || errors.Is(err, ErrSessionProtocol) {
+		t.Fatalf("peer normal close = %v, want ErrSessionClosed without ErrSessionProtocol", err)
 	}
 }
 

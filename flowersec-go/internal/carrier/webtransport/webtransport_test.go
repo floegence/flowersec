@@ -37,6 +37,34 @@ func TestBindSessionLimitsUsesExactPhysicalCapacity(t *testing.T) {
 	}
 }
 
+func TestServerCloseWaitsForServeRegistration(t *testing.T) {
+	for iteration := 0; iteration < 100; iteration++ {
+		serverTLS, _ := testTLSConfigs(t)
+		server, err := webtransport.NewServer(serverTLS, webtransport.DefaultLimits(), func(*http.Request) bool { return true })
+		if err != nil {
+			t.Fatal(err)
+		}
+		packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		serveDone := make(chan error, 1)
+		go func() { serveDone <- server.Serve(packetConn) }()
+		if err := server.Close(); err != nil {
+			t.Fatalf("iteration %d Close: %v", iteration, err)
+		}
+		_ = packetConn.Close()
+		select {
+		case <-serveDone:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("iteration %d Serve did not stop", iteration)
+		}
+		if err := server.Close(); err != nil {
+			t.Fatalf("iteration %d second Close: %v", iteration, err)
+		}
+	}
+}
+
 func TestCloseWithErrorContextAcceptsNilContext(t *testing.T) {
 	client, _ := newSessionPair(t, webtransport.PathDirect)
 	_ = client.CloseWithErrorContext(nil, carrier.ApplicationError{Reason: "test close"})

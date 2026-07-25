@@ -244,13 +244,17 @@ func (s *engineSession) controlLoop() {
 		typ, payload, err := s.readControl()
 		if err != nil {
 			if s.ctx.Err() == nil {
-				s.fail(fmt.Errorf("%w: control read: %v", ErrSessionProtocol, err))
+				if s.isClosing() {
+					s.signalPeerSessionClose()
+				} else {
+					s.fail(fmt.Errorf("%w: control read: %v", ErrSessionProtocol, err))
+				}
 			}
 			return
 		}
 		if err := s.handleControl(typ, payload); err != nil {
 			if errors.Is(err, errPeerSessionClose) {
-				s.fail(ErrSessionClosed)
+				s.handlePeerSessionClose()
 			} else {
 				s.fail(fmt.Errorf("%w: %v", ErrSessionProtocol, err))
 			}

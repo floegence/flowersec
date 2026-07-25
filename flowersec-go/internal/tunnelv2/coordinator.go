@@ -103,7 +103,7 @@ type Config struct {
 // DefaultConfig returns the production tunnel coordinator limits.
 func DefaultConfig() Config {
 	return Config{
-		PairTimeout: 10 * time.Second, MaxPendingLegs: 1024, MaxActivePairs: 512,
+		PairTimeout: 10 * time.Second, MaxPendingLegs: 1024, MaxActivePairs: 1024,
 		BridgeLimits: DefaultLimits(), Reasons: defaultReasons(), GuardStopTimeout: time.Second,
 		AdmissionResponseTimeout: 2 * time.Second, ActivationTimeout: 10 * time.Second,
 	}
@@ -415,18 +415,34 @@ func (coordinator *Coordinator) registerClaimed(ctx context.Context, leg *admitt
 	if generation.timer != nil {
 		generation.timer.Stop()
 	}
-	if coordinator.activePairs >= coordinator.config.MaxActivePairs {
+	if err := coordinator.reserveActivePairLocked(); err != nil {
 		coordinator.mu.Unlock()
 		go coordinator.rejectGeneration(generation, ErrCapacity, artifactv2.AdmissionRetryable, ReasonCapacity)
 		return generation, nil
 	}
 	coordinator.pendingLegs -= generation.pendingCount
 	generation.pendingCount = 0
-	coordinator.activePairs++
 	generation.active = true
 	coordinator.mu.Unlock()
 	go coordinator.activate(generation)
 	return generation, nil
+}
+
+// reserveActivePairLocked owns the production admission boundary atomically
+// with the active-pair counter. The caller must hold coordinator.mu.
+func (coordinator *Coordinator) reserveActivePairLocked() error {
+	if coordinator.activePairs >= coordinator.config.MaxActivePairs {
+		return ErrCapacity
+	}
+	coordinator.activePairs++
+	return nil
+}
+
+func (coordinator *Coordinator) releaseActivePairLocked() {
+	if coordinator.activePairs <= 0 {
+		panic("tunnel coordinator active-pair counter underflow")
+	}
+	coordinator.activePairs--
 }
 
 func (coordinator *Coordinator) activate(generation *pairGeneration) {
@@ -575,7 +591,7 @@ func (coordinator *Coordinator) finish(generation *pairGeneration, cause error) 
 		leg.authorization.Lease.Release()
 		_ = leg.stopWaitingGuard(coordinator.config.GuardStopTimeout)
 	}
-	_ = coordinator.closeAdmittedLegsMap(generation.roles, closeReason(cause))
+	_ = coordinator.closeAdmittedLegsMapWithError(generation.roles, closeApplicationError(cause))
 	close(generation.done)
 }
 
@@ -595,7 +611,7 @@ func (coordinator *Coordinator) detach(generation *pairGeneration, cause error) 
 		delete(coordinator.groups, generation.key)
 	}
 	if generation.active {
-		coordinator.activePairs--
+		coordinator.releaseActivePairLocked()
 	} else {
 		coordinator.pendingLegs -= generation.pendingCount
 		generation.pendingCount = 0
@@ -629,11 +645,21 @@ func (coordinator *Coordinator) closeAdmittedLegs(legs []*admittedLeg, reason st
 }
 
 func (coordinator *Coordinator) closeAdmittedLegsMap(legs map[uint8]*admittedLeg, reason string) error {
+	return coordinator.closeAdmittedLegsMapWithError(legs, carrier.ApplicationError{Reason: reason})
+}
+
+func (coordinator *Coordinator) closeAdmittedLegsMapWithError(legs map[uint8]*admittedLeg, applicationError carrier.ApplicationError) error {
 	pending := make([]PendingLeg, 0, len(legs))
 	for _, leg := range legs {
 		pending = append(pending, leg.pending)
 	}
-	return coordinator.closePendingLegs(pending, reason)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), coordinator.config.BridgeLimits.CleanupTimeout)
+	defer cancel()
+	var closeErrors []error
+	for _, leg := range pending {
+		closeErrors = append(closeErrors, leg.CloseWithError(cleanupCtx, applicationError))
+	}
+	return errors.Join(closeErrors...)
 }
 
 func (coordinator *Coordinator) closePendingLegs(legs []PendingLeg, reason string) error {
@@ -657,4 +683,11 @@ func closeReason(err error) string {
 	default:
 		return "tunnel_closed"
 	}
+}
+
+func closeApplicationError(err error) carrier.ApplicationError {
+	if errors.Is(err, ErrControlClosed) {
+		return carrier.ApplicationError{Code: 1, Reason: "session closed"}
+	}
+	return carrier.ApplicationError{Reason: closeReason(err)}
 }

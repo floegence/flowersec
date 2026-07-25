@@ -17,6 +17,13 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
 )
 
+func TestDefaultConfigAllows1024ActivePairs(t *testing.T) {
+	config := tunnelv2.DefaultConfig()
+	if config.MaxActivePairs != 1024 || config.MaxPendingLegs != 1024 {
+		t.Fatalf("default tunnel capacity = active %d pending %d", config.MaxActivePairs, config.MaxPendingLegs)
+	}
+}
+
 func TestCoordinatorWaitsForBothAuthorizedLegsBeforeSuccess(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
 	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindQUIC)

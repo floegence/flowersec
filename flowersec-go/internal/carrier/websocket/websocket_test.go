@@ -78,12 +78,15 @@ func TestSessionPathMatchesExactSubprotocol(t *testing.T) {
 }
 
 func TestBindSessionResourcePolicyUsesExactPhysicalCapacity(t *testing.T) {
-	policy, err := BindSessionResourcePolicy(DefaultResourcePolicy(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if policy.InboundBidirectionalStreams != 3 || policy.MaxConcurrentStreams < 3 {
-		t.Fatalf("bound policy = %+v", policy)
+	for _, logical := range []uint16{1, 128} {
+		policy, err := BindSessionResourcePolicy(DefaultResourcePolicy(), logical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := logical + 2
+		if policy.InboundBidirectionalStreams != want || policy.MaxConcurrentStreams < uint32(want) {
+			t.Fatalf("logical %d bound policy = %+v, want at least %d physical streams", logical, policy, want)
+		}
 	}
 }
 

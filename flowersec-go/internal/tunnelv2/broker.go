@@ -76,7 +76,7 @@ func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Li
 	tasks.Add(1)
 	go func() {
 		defer tasks.Done()
-		if err := spliceStreamPair(bridgeContext, clientControl, serverControl, limits.CopyBufferBytes, true); err != nil {
+		if err := spliceStreamPair(bridgeContext, clientControl, serverControl, limits.CopyBufferBytes, limits.CleanupTimeout); err != nil {
 			cancel(errors.Join(ErrControlClosed, err))
 			return
 		}
@@ -89,12 +89,16 @@ func Bridge(ctx context.Context, clientLeg, serverLeg carrier.Session, limits Li
 
 	<-bridgeContext.Done()
 	cause := context.Cause(bridgeContext)
+	applicationError := carrier.ApplicationError{Reason: "tunnel bridge closed"}
+	if errors.Is(cause, ErrControlClosed) {
+		applicationError = carrier.ApplicationError{Code: 1, Reason: "session closed"}
+	}
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), limits.CleanupTimeout)
 	defer cancelCleanup()
 	closeCtx, cancelClose := context.WithTimeout(context.Background(), limits.CleanupTimeout/2)
 	closeError := errors.Join(
-		clientLeg.CloseWithErrorContext(closeCtx, carrier.ApplicationError{Reason: "tunnel bridge closed"}),
-		serverLeg.CloseWithErrorContext(closeCtx, carrier.ApplicationError{Reason: "tunnel bridge closed"}),
+		clientLeg.CloseWithErrorContext(closeCtx, applicationError),
+		serverLeg.CloseWithErrorContext(closeCtx, applicationError),
 	)
 	cancelClose()
 	waitError := tasks.Wait(cleanupCtx)
@@ -137,7 +141,7 @@ func acceptLoop(
 		go func() {
 			defer tasks.Done()
 			defer func() { <-semaphore }()
-			_ = spliceStreamPair(ctx, incoming, outgoing, bufferBytes, false)
+			_ = spliceStreamPair(ctx, incoming, outgoing, bufferBytes, 0)
 		}()
 	}
 }
@@ -184,7 +188,7 @@ func closeBridgeSessions(timeout time.Duration, sessions ...carrier.Session) err
 	return errors.Join(closeErrors...)
 }
 
-func spliceStreamPair(ctx context.Context, left, right carrier.Stream, bufferBytes int, closeOnHalfClose bool) error {
+func spliceStreamPair(ctx context.Context, left, right carrier.Stream, bufferBytes int, halfCloseGrace time.Duration) error {
 	stopCancellation := context.AfterFunc(ctx, func() {
 		_ = left.Reset()
 		_ = right.Reset()
@@ -206,12 +210,24 @@ func spliceStreamPair(ctx context.Context, left, right carrier.Stream, bufferByt
 	go copyDirection(right, left)
 	go copyDirection(left, right)
 	first := <-results
-	if first != nil || closeOnHalfClose {
+	if first != nil {
 		_ = left.Reset()
 		_ = right.Reset()
+		return errors.Join(first, <-results)
 	}
-	second := <-results
-	return errors.Join(first, second)
+	if halfCloseGrace <= 0 {
+		return <-results
+	}
+	timer := time.NewTimer(halfCloseGrace)
+	defer timer.Stop()
+	select {
+	case second := <-results:
+		return second
+	case <-timer.C:
+		_ = left.Reset()
+		_ = right.Reset()
+		return <-results
+	}
 }
 
 func preferContextCause(ctx context.Context, fallback error) error {

@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -132,6 +133,28 @@ func releaseEvidenceTracer(ctx context.Context, isClient bool, connID quic.Conne
 	return qlog.DefaultConnectionTracer(ctx, isClient, connID)
 }
 
+type tunablePacketConn interface {
+	net.PacketConn
+	SyscallConn() (syscall.RawConn, error)
+	SetReadBuffer(int) error
+	SetWriteBuffer(int) error
+}
+
+// packetConnWithoutGSO retains the UDP socket controls required for DF / PMTUD
+// and buffer sizing, but deliberately omits quic.OOBCapablePacketConn. quic-go
+// v0.60 mutates its GSO fallback flag from the send queue while connection
+// state and path-switch code read it without synchronization. Raw QUIC supports
+// live migration, so exposing GSO would make normal session setup and migration
+// race. The basic QUIC packet path remains native UDP and keeps DF support.
+type packetConnWithoutGSO struct{ tunablePacketConn }
+
+func stabilizePacketConn(packetConn net.PacketConn) net.PacketConn {
+	if tunable, ok := packetConn.(tunablePacketConn); ok {
+		return &packetConnWithoutGSO{tunablePacketConn: tunable}
+	}
+	return packetConn
+}
+
 func Dial(ctx context.Context, address string, tlsConfig *tls.Config, limits Limits) (*Session, error) {
 	preparedTLS, err := prepareTLS(tlsConfig, false)
 	if err != nil {
@@ -173,7 +196,7 @@ func dialPacketConn(
 	capacity uint16,
 	packetConn net.PacketConn,
 ) (*Session, error) {
-	transport := &quic.Transport{Conn: packetConn, ConnectionIDLength: connectionIDLength}
+	transport := &quic.Transport{Conn: stabilizePacketConn(packetConn), ConnectionIDLength: connectionIDLength}
 	conn, err := transport.Dial(ctx, remote, tlsConfig, config)
 	if err != nil {
 		_ = transport.Close()
@@ -216,7 +239,7 @@ func Listen(address string, tlsConfig *tls.Config, limits Limits) (*Listener, er
 	if err != nil {
 		return nil, err
 	}
-	transport := &quic.Transport{Conn: packetConn, ConnectionIDLength: connectionIDLength}
+	transport := &quic.Transport{Conn: stabilizePacketConn(packetConn), ConnectionIDLength: connectionIDLength}
 	listener, err := transport.Listen(preparedTLS, config)
 	if err != nil {
 		_ = transport.Close()
@@ -294,6 +317,11 @@ func newSession(conn *quic.Conn, transport *quic.Transport, packetConn net.Packe
 func (*Session) Kind() carrier.Kind                 { return carrier.KindQUIC }
 func (session *Session) Path() carrier.Path         { return session.path }
 func (session *Session) MaxIncomingStreams() uint16 { return session.capacity }
+
+// LocalAddr and RemoteAddr are internal release-evidence observations of the
+// active QUIC path. They are intentionally absent from carrier.Session.
+func (session *Session) LocalAddr() net.Addr  { return session.conn.LocalAddr() }
+func (session *Session) RemoteAddr() net.Addr { return session.conn.RemoteAddr() }
 
 func (*Session) UnreliableAvailable() bool { return true }
 
@@ -393,7 +421,7 @@ func (session *Session) Migrate(ctx context.Context, packetConn net.PacketConn) 
 		_ = packetConn.Close()
 		return err
 	}
-	transport := &quic.Transport{Conn: packetConn, ConnectionIDLength: connectionIDLength}
+	transport := &quic.Transport{Conn: stabilizePacketConn(packetConn), ConnectionIDLength: connectionIDLength}
 	path, err := session.conn.AddPath(transport)
 	if err != nil {
 		_ = transport.Close()
@@ -444,6 +472,16 @@ type Stream struct {
 	closeWriteOnce sync.Once
 	closeWriteErr  error
 	resetOnce      sync.Once
+}
+
+// NativeStreamID exposes the QUIC bidirectional stream identity to internal
+// release evidence collectors. It is not part of the carrier or public SDK
+// contracts.
+func (stream *Stream) NativeStreamID() int64 {
+	if stream == nil || stream.stream == nil {
+		return -1
+	}
+	return int64(stream.stream.StreamID())
 }
 
 func (stream *Stream) Read(payload []byte) (int, error) {

@@ -114,24 +114,47 @@ func TestBrokerTargetOpenFailureIsIsolatedFromSiblingStream(t *testing.T) {
 	assertHalfCloseRoundTrip(t, survivorClient, survivorServer, "survivor", "still-alive")
 }
 
-func TestBrokerStopsWhenEitherControlDirectionCloses(t *testing.T) {
+func TestBrokerPreservesControlFINUntilPeerReplyCloses(t *testing.T) {
 	clientEndpoint, clientTunnel := memorySessionPair(carrier.KindWebSocket)
-	_, serverTunnel := memorySessionPair(carrier.KindQUIC)
+	serverEndpoint, serverTunnel := memorySessionPair(carrier.KindQUIC)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	bridgeDone := make(chan error, 1)
 	go func() { bridgeDone <- tunnelv2.Bridge(ctx, clientTunnel, serverTunnel, tunnelv2.DefaultLimits()) }()
-	control := openStream(t, clientEndpoint)
-	if err := control.CloseWrite(); err != nil {
+	clientControl := openStream(t, clientEndpoint)
+	serverControl := acceptStream(t, serverEndpoint)
+	if _, err := clientControl.Write([]byte("close-request")); err != nil {
 		t.Fatal(err)
+	}
+	if err := clientControl.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	request, err := io.ReadAll(serverControl)
+	if err != nil || string(request) != "close-request" {
+		t.Fatalf("server control request = %q, err = %v", request, err)
+	}
+	select {
+	case err := <-bridgeDone:
+		t.Fatalf("Bridge stopped before the peer control reply: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if _, err := serverControl.Write([]byte("close-response")); err != nil {
+		t.Fatal(err)
+	}
+	if err := serverControl.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	response, err := io.ReadAll(clientControl)
+	if err != nil || string(response) != "close-response" {
+		t.Fatalf("client control response = %q, err = %v", response, err)
 	}
 	select {
 	case err := <-bridgeDone:
 		if !errors.Is(err, tunnelv2.ErrControlClosed) {
 			t.Fatalf("Bridge control EOF error = %v", err)
 		}
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("Bridge waited for the other control direction after EOF")
+	case <-time.After(time.Second):
+		t.Fatal("Bridge did not stop after both control directions closed")
 	}
 }
 

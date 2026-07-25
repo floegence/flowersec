@@ -61,6 +61,30 @@ func TestStreamMemoryManagerDoesNotLeakActiveSlotOnReservationFailure(t *testing
 	}
 }
 
+func TestCapacityMemoryManagerHolds130ProtocolWindowStreams(t *testing.T) {
+	manager := &sessionMemoryManager{maxStreams: 130, maxStream: 256 * 1024, maxSession: 130 * 256 * 1024}
+	streams := make([]*streamMemoryManager, 130)
+	for index := range streams {
+		streams[index] = &streamMemoryManager{session: manager}
+		if err := streams[index].ReserveMemory(256*1024, 0); err != nil {
+			t.Fatalf("reserve stream %d: %v", index, err)
+		}
+	}
+	if manager.active != 130 || manager.sessionBytes != 130*256*1024 {
+		t.Fatalf("capacity manager = active:%d bytes:%d", manager.active, manager.sessionBytes)
+	}
+	overflow := &streamMemoryManager{session: manager}
+	if err := overflow.ReserveMemory(1, 0); !errors.Is(err, ErrResourceExhausted) {
+		t.Fatalf("capacity active overflow = %v", err)
+	}
+	for _, stream := range streams {
+		stream.Done()
+	}
+	if manager.active != 0 || manager.sessionBytes != 0 {
+		t.Fatalf("capacity manager residual = active:%d bytes:%d", manager.active, manager.sessionBytes)
+	}
+}
+
 type bytesConn struct{ io.Reader }
 
 func (*bytesConn) Write([]byte) (int, error)        { return 0, io.ErrClosedPipe }
