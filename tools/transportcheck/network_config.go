@@ -49,12 +49,12 @@ func validatePerformanceNetworkConfig(builder *resultBuilder, context string, ev
 	bindings := []struct {
 		kind string
 		key  string
-	}{{"pcap", "pcap_sha256"}, {"metrics", "ebpf_metrics_sha256"}}
-	if _, exists := evidence.Artifacts["qlog"]; exists {
+	}{{"pcap_attribution", "pcap_attribution_sha256"}, {"metrics", "ebpf_metrics_sha256"}}
+	if _, exists := evidence.Artifacts["qlog_attribution"]; exists {
 		bindings = append(bindings, struct {
 			kind string
 			key  string
-		}{"qlog", "qlog_sha256"})
+		}{"qlog_attribution", "qlog_attribution_sha256"})
 	}
 	for _, binding := range bindings {
 		ref, exists := evidence.Artifacts[binding.kind]

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,16 @@ type qlogEvent struct {
 }
 
 func validateQlogEvidence(context string, data []byte) error {
+	caseID := strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ")
+	if caseID == "CAP-SOAK-HOURLY" {
+		return validateSoakAttributionEnvelope(context, "transport_qlog_attribution", data)
+	}
+	if caseID == "BN-N5" || strings.HasPrefix(caseID, "CAP-STREAM-WT-") || isNativeQLOGCase(caseID) && isTypedQLOGAttribution(data) {
+		return validateTypedStructuredArtifact(context, "qlog_attribution", data)
+	}
+	if bytes.Contains(data, []byte{0x1e}) {
+		return validateRawNativeQLOGEvidence(context, data)
+	}
 	var document struct {
 		QlogVersion string `json:"qlog_version"`
 		Title       string `json:"title"`
@@ -92,6 +103,266 @@ func validateQlogEvidence(context string, data []byte) error {
 	return nil
 }
 
+func isNativeQLOGCase(caseID string) bool {
+	switch caseID {
+	case "NS-N1", "NS-N2", "NS-N3", "NS-N4",
+		"NP-FLOW-FULL", "NP-RESET-FIN", "NP-TARGET-LOSS", "NP-MAXDATA", "NP-STREAM-LIMIT":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTypedQLOGAttribution(data []byte) bool {
+	var envelope struct {
+		Kind string `json:"kind"`
+	}
+	return json.Unmarshal(data, &envelope) == nil && envelope.Kind == "transport_qlog_attribution"
+}
+
+func validateSoakAttributionEnvelope(context, kind string, data []byte) error {
+	var artifact PacketAttributionArtifact
+	if decodeStrictJSON(data, &artifact) != nil || artifact.SchemaVersion != 1 || artifact.Kind != kind || artifact.Context != context || len(artifact.Records) != 60 {
+		return errors.New("soak typed attribution identity or record count is invalid")
+	}
+	return nil
+}
+
+type rawNativeQLOGSummary struct {
+	connectionID   string
+	streamIDs      map[int64]struct{}
+	blockedIDs     map[int64]struct{}
+	resetIDs       map[int64]struct{}
+	stoppedIDs     map[int64]struct{}
+	dataBlocked    bool
+	streamsBlocked bool
+	packetSpaces   map[string]struct{}
+}
+
+func validateRawNativeQLOGEvidence(context string, data []byte) error {
+	if strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ") == "CAP-SOAK-HOURLY" {
+		summaries, err := parseRawNativeQLOGSeries(data)
+		if err != nil {
+			return err
+		}
+		if len(summaries) != 60 {
+			return fmt.Errorf("soak raw qlog contains %d connection traces, want 60", len(summaries))
+		}
+		return nil
+	}
+	summary, err := parseRawNativeQLOGEvidence(data)
+	if err != nil {
+		return err
+	}
+	caseID := strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ")
+	switch caseID {
+	case "NS-N1":
+		if len(summary.streamIDs) < 8 {
+			return fmt.Errorf("raw qlog contains %d native streams, want at least 8", len(summary.streamIDs))
+		}
+	case "NS-N2", "NS-N4", "NP-FLOW-FULL":
+		if !hasDistinctNativeSibling(summary.blockedIDs, summary.streamIDs) {
+			return errors.New("raw qlog does not prove stream-level blocking with a distinct progressing native sibling")
+		}
+	case "NS-N3", "NP-RESET-FIN":
+		resetID, ok := intersectNativeStreamIDs(summary.resetIDs, summary.stoppedIDs)
+		if !ok || !containsDistinctNativeStreamID(summary.streamIDs, resetID) {
+			return errors.New("raw qlog does not prove RESET_STREAM and STOP_SENDING with a distinct progressing native sibling")
+		}
+	case "NP-MAXDATA":
+		if !summary.dataBlocked {
+			return errors.New("raw qlog does not prove DATA_BLOCKED connection flow control")
+		}
+	case "NP-STREAM-LIMIT":
+		if !summary.streamsBlocked {
+			return errors.New("raw qlog does not prove STREAMS_BLOCKED native stream admission")
+		}
+	}
+	return nil
+}
+
+func parseRawNativeQLOGSeries(data []byte) ([]rawNativeQLOGSummary, error) {
+	var chunks [][]byte
+	var current []byte
+	for _, record := range bytes.Split(data, []byte{0x1e}) {
+		record = bytes.TrimSpace(record)
+		if len(record) == 0 {
+			continue
+		}
+		var envelope map[string]json.RawMessage
+		if json.Unmarshal(record, &envelope) != nil {
+			return nil, errors.New("raw qlog JSON sequence record is invalid")
+		}
+		if _, header := envelope["trace"]; header && len(current) > 0 {
+			chunks = append(chunks, current)
+			current = nil
+		}
+		current = append(current, 0x1e)
+		current = append(current, record...)
+		current = append(current, '\n')
+	}
+	if len(current) > 0 {
+		chunks = append(chunks, current)
+	}
+	if len(chunks) == 0 {
+		return nil, errors.New("raw qlog series is empty")
+	}
+	summaries := make([]rawNativeQLOGSummary, 0, len(chunks))
+	seen := make(map[string]struct{}, len(chunks))
+	for _, chunk := range chunks {
+		summary, err := parseRawNativeQLOGEvidence(chunk)
+		if err != nil {
+			return nil, err
+		}
+		if _, duplicate := seen[summary.connectionID]; duplicate {
+			return nil, errors.New("raw qlog series reuses a connection ID")
+		}
+		seen[summary.connectionID] = struct{}{}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
+}
+
+func parseRawNativeQLOGEvidence(data []byte) (rawNativeQLOGSummary, error) {
+	summary := rawNativeQLOGSummary{
+		streamIDs: make(map[int64]struct{}), blockedIDs: make(map[int64]struct{}),
+		resetIDs: make(map[int64]struct{}), stoppedIDs: make(map[int64]struct{}), packetSpaces: make(map[string]struct{}),
+	}
+	headerSeen := false
+	eventSeen := false
+	for _, record := range bytes.Split(data, []byte{0x1e}) {
+		record = bytes.TrimSpace(record)
+		if len(record) == 0 {
+			continue
+		}
+		var envelope map[string]json.RawMessage
+		if err := json.Unmarshal(record, &envelope); err != nil {
+			return summary, errors.New("raw qlog JSON sequence record is invalid")
+		}
+		if traceRaw, exists := envelope["trace"]; exists {
+			if headerSeen {
+				return summary, errors.New("raw qlog contains multiple sequence headers")
+			}
+			var header struct {
+				FileSchema          string `json:"file_schema"`
+				SerializationFormat string `json:"serialization_format"`
+				QlogVersion         string `json:"qlog_version"`
+				QlogFormat          string `json:"qlog_format"`
+				CodeVersion         string `json:"code_version"`
+			}
+			var trace struct {
+				CommonFields struct {
+					GroupID string `json:"group_id"`
+				} `json:"common_fields"`
+			}
+			if json.Unmarshal(record, &header) != nil || json.Unmarshal(traceRaw, &trace) != nil {
+				return summary, errors.New("raw qlog sequence header is invalid")
+			}
+			decodedGroup, groupErr := hex.DecodeString(trace.CommonFields.GroupID)
+			if header.FileSchema != "urn:ietf:params:qlog:file:sequential" || header.SerializationFormat != "application/qlog+json-seq" ||
+				header.QlogVersion != "0.3" || header.QlogFormat != "JSON-SEQ" || strings.TrimSpace(header.CodeVersion) == "" ||
+				groupErr != nil || len(decodedGroup) < 8 {
+				return summary, errors.New("raw qlog sequence header is invalid")
+			}
+			summary.connectionID = trace.CommonFields.GroupID
+			headerSeen = true
+			continue
+		}
+		if !headerSeen {
+			return summary, errors.New("raw qlog event precedes its sequence header")
+		}
+		var event struct {
+			Name string         `json:"name"`
+			Data map[string]any `json:"data"`
+		}
+		if json.Unmarshal(record, &event) != nil || !strings.Contains(event.Name, ":") || event.Data == nil {
+			return summary, errors.New("raw qlog event record is invalid")
+		}
+		if strings.HasPrefix(event.Name, "application:") {
+			return summary, errors.New("raw transport qlog must not contain application evidence")
+		}
+		eventSeen = true
+		if event.Name != "transport:packet_sent" {
+			continue
+		}
+		header, ok := event.Data["header"].(map[string]any)
+		packetType, typeOK := header["packet_type"].(string)
+		packetNumber, numberOK := header["packet_number"].(float64)
+		if !ok || !typeOK || !numberOK || !finite(packetNumber) || packetNumber < 0 || packetNumber != math.Trunc(packetNumber) ||
+			packetType != "initial" && packetType != "handshake" && packetType != "0RTT" && packetType != "1RTT" {
+			return summary, errors.New("raw qlog packet_sent event has an invalid packet-number space")
+		}
+		summary.packetSpaces[packetType] = struct{}{}
+		frames, _ := event.Data["frames"].([]any)
+		for _, value := range frames {
+			frame, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			frameType, _ := frame["frame_type"].(string)
+			switch frameType {
+			case "data_blocked":
+				summary.dataBlocked = true
+			case "streams_blocked":
+				summary.streamsBlocked = true
+			}
+			id, hasID := nativeQLOGStreamID(frame)
+			if !hasID {
+				continue
+			}
+			switch frameType {
+			case "stream":
+				summary.streamIDs[id] = struct{}{}
+			case "stream_data_blocked":
+				summary.blockedIDs[id] = struct{}{}
+			case "reset_stream":
+				summary.resetIDs[id] = struct{}{}
+			case "stop_sending":
+				summary.stoppedIDs[id] = struct{}{}
+			}
+		}
+	}
+	if !headerSeen || !eventSeen || len(summary.streamIDs) == 0 {
+		return summary, errors.New("raw qlog is missing its header, events, or native STREAM frames")
+	}
+	if _, has1RTT := summary.packetSpaces["1RTT"]; !has1RTT {
+		return summary, errors.New("raw qlog does not bind native evidence to the 1-RTT packet-number space")
+	}
+	return summary, nil
+}
+
+func nativeQLOGStreamID(frame map[string]any) (int64, bool) {
+	value, ok := frame["stream_id"].(float64)
+	return int64(value), ok && finite(value) && value >= 0 && value == float64(int64(value))
+}
+
+func hasDistinctNativeSibling(left, right map[int64]struct{}) bool {
+	for id := range left {
+		if containsDistinctNativeStreamID(right, id) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsDistinctNativeStreamID(ids map[int64]struct{}, excluded int64) bool {
+	for id := range ids {
+		if id != excluded {
+			return true
+		}
+	}
+	return false
+}
+
+func intersectNativeStreamIDs(left, right map[int64]struct{}) (int64, bool) {
+	for id := range left {
+		if _, exists := right[id]; exists {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
 func validateQlogCaseCorrelation(context string, events []qlogEvent) error {
 	caseID := strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ")
 	if len(events) == 0 {
@@ -155,18 +426,18 @@ func validateQlogCaseCorrelation(context string, events []qlogEvent) error {
 		}
 	}
 	if caseID == "NS-N2" || caseID == "NS-N4" || caseID == "NP-FLOW-FULL" {
-		if len(blocked) == 0 || len(rpc) == 0 || blocked[0] == rpc[0] {
-			return errors.New("flow-isolation qlog must prove a blocked stream and a different sibling RPC stream")
+		if len(blocked) == 0 {
+			return errors.New("flow-isolation qlog must prove a blocked native stream")
 		}
 	}
 	if caseID == "NS-N3" || caseID == "NP-RESET-FIN" {
-		if len(reset) == 0 || len(stopped) == 0 || len(rpc) == 0 || reset[0] != stopped[0] || reset[0] == rpc[0] {
-			return errors.New("reset-isolation qlog must correlate reset/stop on one stream and RPC on a sibling")
+		if len(reset) == 0 || len(stopped) == 0 || reset[0] != stopped[0] {
+			return errors.New("reset-isolation qlog must correlate reset and stop on one native stream")
 		}
 	}
 	if caseID == "NP-TARGET-LOSS" {
-		if len(released) == 0 || len(rpc) == 0 || released[0] == rpc[0] {
-			return errors.New("targeted-loss qlog must correlate the released target and a different sibling RPC")
+		if len(released) > 0 || len(rpc) > 0 {
+			return errors.New("targeted-loss application observations must not be stored in transport qlog")
 		}
 	}
 	return nil
@@ -225,6 +496,20 @@ func validateQlogEventFields(event qlogEvent) error {
 		if _, exists := event.data["connection_id"]; exists {
 			valid = valid && requireString("connection_id")
 		}
+	case "recovery:metrics_updated":
+		_, hasRTT := event.data["smoothed_rtt"]
+		_, hasBytes := event.data["bytes_in_flight"]
+		_, hasPTO := event.data["pto_count"]
+		valid = hasRTT || hasBytes || hasPTO
+		if hasRTT {
+			valid = valid && requireNumber("smoothed_rtt")
+		}
+		if hasBytes {
+			valid = valid && requireNumber("bytes_in_flight")
+		}
+		if hasPTO {
+			valid = valid && requireNumber("pto_count")
+		}
 	case "transport:connection_started":
 		valid = requireString("connection_id")
 	case "application:capacity_completed":
@@ -239,19 +524,19 @@ func validateQlogEventFields(event qlogEvent) error {
 func qlogRequirements(context string) (required []string, streamCount int, forbidden []string) {
 	caseID := strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ")
 	if !strings.HasPrefix(context, "case ") && !strings.HasPrefix(context, "race case ") {
-		return []string{"transport:metrics_updated"}, 0, nil
+		return []string{"recovery:metrics_updated"}, 0, nil
 	}
 	switch caseID {
 	case "NS-N1":
 		return []string{"transport:stream_opened"}, 8, nil
 	case "NS-N2", "NS-N4", "NP-FLOW-FULL":
-		return []string{"transport:stream_data_blocked", "application:rpc_completed"}, 0, []string{"transport:data_blocked"}
+		return []string{"transport:stream_data_blocked"}, 0, []string{"transport:data_blocked", "application:rpc_completed"}
 	case "NS-N3", "NP-RESET-FIN":
-		return []string{"transport:reset_stream", "transport:stop_sending", "application:rpc_completed"}, 0, nil
+		return []string{"transport:reset_stream", "transport:stop_sending"}, 0, []string{"application:rpc_completed"}
 	case "BN-N5":
 		return []string{"transport:stream_opened", "transport:reset_stream", "application:rpc_completed"}, 4, nil
 	case "NP-TARGET-LOSS":
-		return []string{"recovery:packet_lost", "application:rpc_completed", "application:targeted_loss_released"}, 0, nil
+		return []string{"recovery:packet_lost"}, 0, []string{"application:rpc_completed", "application:targeted_loss_released"}
 	case "NP-MAXDATA":
 		return []string{"transport:data_blocked"}, 0, nil
 	case "NP-STREAM-LIMIT":
@@ -262,6 +547,8 @@ func qlogRequirements(context string) (required []string, streamCount int, forbi
 		return []string{"transport:packet_too_large", "transport:metrics_updated", "application:rpc_completed"}, 0, nil
 	case "CAP-DIRECT-QUIC-1000", "CAP-DIRECT-WT-1000", "CAP-TUNNEL-WT-WSS-1000", "CAP-TUNNEL-WT-QUIC-1000", "CAP-QQ-1000", "CAP-WQ-1000", "CAP-QW-1000":
 		return []string{"transport:connection_started", "application:capacity_completed"}, 0, nil
+	case "CAP-STREAM-WT-DIRECT-100X128", "CAP-STREAM-WT-WSS-100X128", "CAP-STREAM-WT-QUIC-100X128":
+		return []string{"transport:connection_started", "transport:stream_opened"}, 12800, nil
 	default:
 		return []string{"transport:metrics_updated"}, 0, nil
 	}
@@ -599,6 +886,33 @@ func finite(value float64) bool {
 
 func validateTypedStructuredArtifact(context, kind string, data []byte) error {
 	switch kind {
+	case "pcap_attribution", "qlog_attribution":
+		var artifact PacketAttributionArtifact
+		if err := decodeStrictJSON(data, &artifact); err != nil {
+			return err
+		}
+		if artifact.SchemaVersion != 1 || artifact.Kind != "transport_"+kind || artifact.Context != context || len(artifact.Records) == 0 {
+			return errors.New("packet attribution must contain bound source records")
+		}
+		for index, record := range artifact.Records {
+			if record.Sequence != uint64(index+1) || !typedArtifactStemPattern.MatchString(record.SourceID) || !validSHA256(record.SourceSHA256) ||
+				record.ByteOffset < 0 || record.ByteLength <= 0 || record.UnixNanoseconds <= 0 {
+				return errors.New("packet attribution record sequence, source, range, or timestamp is invalid")
+			}
+			if kind == "pcap_attribution" && (record.Event != "" || record.ConnectionGroupID != "" || record.PacketNumberSpace != "" || record.PacketNumber != nil || record.NativeStreamID != nil) {
+				return errors.New("pcap attribution record contains qlog-only identity")
+			}
+			if kind == "qlog_attribution" && (strings.TrimSpace(record.Event) == "" || strings.TrimSpace(record.ConnectionGroupID) == "") {
+				return errors.New("qlog attribution record is missing event or connection identity")
+			}
+			if (record.PacketNumber == nil) != (record.PacketNumberSpace == "") {
+				return errors.New("qlog attribution packet number and PN space must be declared together")
+			}
+			if record.NativeStreamID != nil && (record.Event != "transport:stream_opened" && record.Event != "transport:reset_stream" || *record.NativeStreamID < 12 || *record.NativeStreamID%4 != 0) {
+				return errors.New("qlog stream attribution has an invalid native stream identity")
+			}
+		}
+		return nil
 	case "samples":
 		var artifact OperationSeriesArtifact
 		if err := decodeStrictJSON(data, &artifact); err != nil {
@@ -620,6 +934,14 @@ func validateTypedStructuredArtifact(context, kind string, data []byte) error {
 			if record.Sequence != uint64(index+1) || record.AtNS < 0 || index > 0 && record.AtNS < artifact.Records[index-1].AtNS ||
 				strings.TrimSpace(record.Event) == "" || !validSHA256(record.Digest) {
 				return errors.New("trace record sequence, timestamp, event, or digest is invalid")
+			}
+			if record.NativeStreamID != nil {
+				if *record.NativeStreamID < 0 || strings.TrimSpace(record.ConnectionID) == "" {
+					return errors.New("native application trace record has an invalid connection or stream identity")
+				}
+				if record.Event == "rpc_completed" && (strings.TrimSpace(record.RequestID) == "" || record.Status != "ok") {
+					return errors.New("native RPC trace record is missing its request identity or success status")
+				}
 			}
 		}
 		return nil

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -227,22 +228,30 @@ func validateMetricFaultBinding(builder *resultBuilder, manifest *PerformanceMan
 	if !ok || traceRef.SHA256 != binding.TraceSHA256 {
 		return fmt.Errorf("%s fault binding trace digest is not the same run rpc trace", metricID)
 	}
-	pcapRef, ok := phase.Artifacts["pcap"]
-	if !ok || pcapRef.SHA256 != binding.PCAPSHA256 {
-		return fmt.Errorf("%s fault binding pcap digest is not the same run rpc capture", metricID)
+	traceContext := fmt.Sprintf("cell %s run %d phase %s/%s", cell.CellID, run.RunNumber, phase.ProfileID, phase.Phase)
+	pcapSources, err := loadMetricFaultRawSources(builder, traceContext, phase, run, "pcap", binding.PCAPSHA256, baseDir)
+	if err != nil {
+		return fmt.Errorf("%s fault binding pcap attribution: %w", metricID, err)
 	}
-	qlogRef, hasQlog := phase.Artifacts["qlog"]
+	if len(pcapSources) != 1 {
+		return fmt.Errorf("%s fault binding pcap attribution spans %d raw captures, want one", metricID, len(pcapSources))
+	}
+	_, hasQlog := phase.Artifacts["qlog_attribution"]
+	var qlogSources [][]byte
 	if contract.requireMigration && !hasQlog {
 		return fmt.Errorf("%s migration fault binding requires a same-run rpc qlog", metricID)
 	}
 	if hasQlog {
-		if !validSHA256(binding.QlogSHA256) || qlogRef.SHA256 != binding.QlogSHA256 {
-			return fmt.Errorf("%s fault binding qlog digest is not the same run rpc qlog", metricID)
+		if !validSHA256(binding.QlogSHA256) {
+			return fmt.Errorf("%s fault binding qlog attribution digest is invalid", metricID)
+		}
+		qlogSources, err = loadMetricFaultRawSources(builder, traceContext, phase, run, "qlog", binding.QlogSHA256, baseDir)
+		if err != nil {
+			return fmt.Errorf("%s fault binding qlog attribution: %w", metricID, err)
 		}
 	} else if binding.QlogSHA256 != "" {
 		return fmt.Errorf("%s fault binding qlog digest is present without a same-run rpc qlog", metricID)
 	}
-	traceContext := fmt.Sprintf("cell %s run %d phase %s/%s", cell.CellID, run.RunNumber, phase.ProfileID, phase.Phase)
 	traceData, ok := readArtifact(builder, traceContext, "trace", traceRef, baseDir)
 	if !ok {
 		return fmt.Errorf("%s fault trace artifact is invalid", metricID)
@@ -255,19 +264,82 @@ func validateMetricFaultBinding(builder *resultBuilder, manifest *PerformanceMan
 		return err
 	}
 	if contract.requireMigration {
-		qlogData, qlogOK := readArtifact(builder, traceContext, "qlog", qlogRef, baseDir)
-		pcapData, pcapOK := readArtifact(builder, traceContext, "pcap", pcapRef, baseDir)
-		if !qlogOK || !pcapOK {
-			return fmt.Errorf("%s migration qlog or pcap artifact is invalid", metricID)
+		matches := 0
+		var validationErr error
+		for _, qlogData := range qlogSources {
+			qlogErr := validateMetricMigrationQlog(qlogData, binding)
+			pathErr := validateCorrelatedPathTransition(qlogData, pcapSources[0], binding.ConnectionID)
+			if qlogErr == nil && pathErr == nil {
+				matches++
+				continue
+			}
+			validationErr = errors.Join(validationErr, qlogErr, pathErr)
 		}
-		if err := validateMetricMigrationQlog(qlogData, binding); err != nil {
-			return fmt.Errorf("%s migration qlog does not prove the validated-path first RPC identity and timestamp: %w", metricID, err)
-		}
-		if err := validateCorrelatedPathTransition(qlogData, pcapData, binding.ConnectionID); err != nil {
-			return fmt.Errorf("%s migration qlog and pcap do not prove one correlated path transition: %w", metricID, err)
+		if matches != 1 {
+			return fmt.Errorf("%s migration qlog does not prove exactly one validated-path first RPC and correlated pcap transition: matches=%d: %w", metricID, matches, validationErr)
 		}
 	}
 	return nil
+}
+
+func loadMetricFaultRawSources(builder *resultBuilder, context string, phase *PhaseEvidence, run *RunEvidence, kind, attributionSHA, baseDir string) ([][]byte, error) {
+	ref, ok := phase.Artifacts[kind+"_attribution"]
+	if !ok || ref.SHA256 != attributionSHA {
+		return nil, errors.New("digest is not the same-run rpc attribution")
+	}
+	data, ok := readArtifact(builder, context, kind+"_attribution", ref, baseDir)
+	if !ok {
+		return nil, errors.New("attribution artifact is unreadable")
+	}
+	var attribution PacketAttributionArtifact
+	if decodeStrictJSON(data, &attribution) != nil || attribution.Kind != "transport_"+kind+"_attribution" ||
+		attribution.Context != context || len(attribution.Records) == 0 {
+		return nil, errors.New("attribution identity is invalid")
+	}
+	sources := make(map[string]string)
+	var sourceIDs []string
+	for _, record := range attribution.Records {
+		if digest, exists := sources[record.SourceID]; exists {
+			if digest != record.SourceSHA256 {
+				return nil, errors.New("one attributed source ID has multiple digests")
+			}
+			continue
+		}
+		sources[record.SourceID] = record.SourceSHA256
+		sourceIDs = append(sourceIDs, record.SourceID)
+	}
+	result := make([][]byte, 0, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		found := false
+		for _, source := range run.RawSources {
+			if source.ID != sourceID {
+				continue
+			}
+			found = true
+			if source.Kind != kind || source.Artifact.SHA256 != sources[sourceID] {
+				return nil, errors.New("attribution source identity differs from the indexed raw source")
+			}
+			rawContext := strings.SplitN(context, " phase ", 2)[0] + " raw sources"
+			raw, readOK := readArtifact(builder, rawContext, "raw_"+kind, source.Artifact, baseDir)
+			if !readOK {
+				return nil, errors.New("indexed raw source is unreadable")
+			}
+			if kind == "pcap" && !validPCAP(raw) {
+				return nil, errors.New("indexed raw pcap is invalid")
+			}
+			if kind == "qlog" {
+				if _, parseErr := parseQLOGSequenceSource(raw, source.ID); parseErr != nil {
+					return nil, fmt.Errorf("indexed raw qlog is invalid: %w", parseErr)
+				}
+			}
+			result = append(result, raw)
+			break
+		}
+		if !found {
+			return nil, errors.New("attribution source is absent from the same run")
+		}
+	}
+	return result, nil
 }
 
 func validateMetricFaultTimeline(trace TraceArtifact, traceContext string, binding *MetricFaultBinding, durationNS *int64, metricID string, contract metricFaultEventContract) error {
@@ -317,13 +389,54 @@ func validateMetricFaultTimeline(trace TraceArtifact, traceContext string, bindi
 	return nil
 }
 
-func validateMetricMigrationQlog(data []byte, binding *MetricFaultBinding) error {
+type normalizedMigrationQLOGEvent struct {
+	atNS int64
+	name string
+	data map[string]any
+}
+
+func normalizedMigrationQLOGEvents(data []byte) ([]normalizedMigrationQLOGEvent, error) {
+	if bytes.Contains(data, []byte{0x1e}) {
+		events, err := parseQLOGSequenceSource(data, "qlog-001")
+		if err != nil {
+			return nil, err
+		}
+		result := make([]normalizedMigrationQLOGEvent, 0, len(events))
+		for _, event := range events {
+			result = append(result, normalizedMigrationQLOGEvent{atNS: event.relativeNS, name: event.name, data: event.data})
+		}
+		return result, nil
+	}
 	var document struct {
 		Traces []struct {
 			Events []json.RawMessage `json:"events"`
 		} `json:"traces"`
 	}
 	if err := decodeSingleJSON(data, &document); err != nil || len(document.Traces) != 1 {
+		return nil, errors.New("qlog document is invalid")
+	}
+	result := make([]normalizedMigrationQLOGEvent, 0, len(document.Traces[0].Events))
+	for _, raw := range document.Traces[0].Events {
+		var fields []json.RawMessage
+		if json.Unmarshal(raw, &fields) != nil || len(fields) != 4 {
+			return nil, errors.New("qlog event is invalid")
+		}
+		var at float64
+		var category, name string
+		var eventData map[string]any
+		if json.Unmarshal(fields[0], &at) != nil || !finite(at) || at < 0 || at != float64(int64(at)) ||
+			json.Unmarshal(fields[1], &category) != nil || json.Unmarshal(fields[2], &name) != nil ||
+			json.Unmarshal(fields[3], &eventData) != nil {
+			return nil, errors.New("qlog event fields are invalid")
+		}
+		result = append(result, normalizedMigrationQLOGEvent{atNS: int64(at), name: category + ":" + name, data: eventData})
+	}
+	return result, nil
+}
+
+func validateMetricMigrationQlog(data []byte, binding *MetricFaultBinding) error {
+	events, err := normalizedMigrationQLOGEvents(data)
+	if err != nil {
 		return errors.New("migration qlog is invalid")
 	}
 	required := []struct {
@@ -336,19 +449,8 @@ func validateMetricMigrationQlog(data []byte, binding *MetricFaultBinding) error
 	}
 	position := 0
 	counts := make(map[string]int, len(required))
-	for _, raw := range document.Traces[0].Events {
-		var fields []json.RawMessage
-		if json.Unmarshal(raw, &fields) != nil || len(fields) != 4 {
-			return errors.New("migration qlog event is invalid")
-		}
-		var at float64
-		var category, name string
-		var eventData map[string]any
-		if json.Unmarshal(fields[0], &at) != nil || json.Unmarshal(fields[1], &category) != nil ||
-			json.Unmarshal(fields[2], &name) != nil || json.Unmarshal(fields[3], &eventData) != nil {
-			return errors.New("migration qlog event fields are invalid")
-		}
-		qualified := category + ":" + name
+	for _, event := range events {
+		qualified, eventData := event.name, event.data
 		requiredIndex := slices.IndexFunc(required, func(candidate struct {
 			name string
 			atNS int64
@@ -359,7 +461,7 @@ func validateMetricMigrationQlog(data []byte, binding *MetricFaultBinding) error
 			continue
 		}
 		counts[qualified]++
-		if position >= len(required) || requiredIndex != position || at != float64(required[position].atNS) ||
+		if position >= len(required) || requiredIndex != position || event.atNS != required[position].atNS ||
 			fmt.Sprint(eventData["connection_id"]) != binding.ConnectionID {
 			return fmt.Errorf("migration qlog event %s is out of order or has a different time/connection", qualified)
 		}

@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -185,7 +187,7 @@ func validateCaseEvidenceSemantics(builder *resultBuilder, manifest *Performance
 			values["outage"] != 1 || values["outage_duration_ns"] != float64(ordered[1].AtNS-ordered[0].AtNS) {
 			return errors.New("outage trace does not match its frozen schedule, counters, duration, or connection ID")
 		}
-		pcapData, err := loadCaseArtifact(builder, context, evidence, "pcap", baseDir)
+		pcapData, err := loadCaseSemanticArtifact(builder, context, evidence, "pcap", baseDir)
 		if err != nil {
 			return err
 		}
@@ -197,12 +199,96 @@ func validateCaseEvidenceSemantics(builder *resultBuilder, manifest *Performance
 		return validateRebindCase(builder, context, evidence, baseDir)
 	case "NP-PMTUD-STATE", "SYS-PMTUD-QUIC-IPV4", "SYS-PMTUD-QUIC-IPV6":
 		return validateQUICPMTUDCase(builder, context, evidence, baseDir)
+	case "BN-N5", "BS-C7", "BS-C8":
+		return validateBrowserSmokeCase(builder, context, evidence, baseDir)
 	default:
 		if _, exists := registeredCaseIdentityFallback[evidence.ID]; !exists {
 			return fmt.Errorf("case %s has no frozen semantic validator", evidence.ID)
 		}
 		return validateRegisteredCaseIdentity(builder, context, evidence, baseDir)
 	}
+}
+
+func validateBrowserSmokeCase(builder *resultBuilder, context string, evidence CaseEvidence, baseDir string) error {
+	metrics, config, trace, err := loadCaseCore(builder, context, evidence, baseDir)
+	if err != nil {
+		return err
+	}
+	topology := "browser_webtransport"
+	if evidence.ID == "BS-C8" {
+		topology = "browser_tunnel_wt_wss"
+	}
+	attachmentIndex := slices.IndexFunc(evidence.Attachments, func(attachment EvidenceAttachment) bool {
+		return attachment.Kind == "browser-controller-result"
+	})
+	if attachmentIndex < 0 {
+		return errors.New("browser smoke evidence is missing its raw Chromium workload attachment")
+	}
+	attachment := evidence.Attachments[attachmentIndex].Artifact
+	qlogCount, pcapCount := 0, 0
+	for _, source := range evidence.RawSources {
+		switch source.Kind {
+		case "qlog":
+			qlogCount++
+		case "pcap":
+			pcapCount++
+		}
+	}
+	if qlogCount < 1 || pcapCount != 1 {
+		return errors.New("browser smoke evidence is missing raw qlog or exact pcap sources")
+	}
+	if err := requireConfig(config, map[string]string{
+		"case_id": evidence.ID, "case_profile": evidence.Profile, "topology": topology,
+		"browser_engine": "chromium", "producer": "production-browser-worker", "browser_result_sha256": attachment.SHA256,
+		"trace_sha256": evidence.Evidence["trace"].SHA256, "metrics_sha256": evidence.Evidence["metrics"].SHA256,
+		"raw_qlog_count": strconv.Itoa(qlogCount), "watchdog": "completed",
+	}); err != nil {
+		return fmt.Errorf("browser smoke effective config: %w", err)
+	}
+	wantCompleted := float64(3)
+	if evidence.ID == "BN-N5" {
+		wantCompleted = 8
+	}
+	values, err := metricValuesWithUnit(metrics, "count", []string{"completed_operations", "browser_sessions", "rpc_completed", "watchdog_timeouts", "residual_sessions", "residual_streams"})
+	if err != nil || values["completed_operations"] != wantCompleted || values["browser_sessions"] != 2 || values["rpc_completed"] != 1 ||
+		values["watchdog_timeouts"] != 0 || values["residual_sessions"] != 0 || values["residual_streams"] != 0 {
+		return errors.New("browser smoke metrics do not prove the frozen operations and zero residuals")
+	}
+	events := []string{"browser_session_connected", "smoke_rpc_completed", "browser_session_closed"}
+	if evidence.ID == "BN-N5" {
+		events = []string{"browser_session_connected", "native_streams_opened", "native_stream_reset", "native_siblings_completed", "rpc_completed", "smoke_rpc_completed", "browser_session_closed"}
+	}
+	if _, err := requireOrderedTrace(trace, "", events); err != nil {
+		return fmt.Errorf("browser smoke trace: %w", err)
+	}
+	if evidence.ID != "BN-N5" {
+		return nil
+	}
+	qlogData, err := loadCaseArtifact(builder, context, evidence, "qlog", baseDir)
+	if err != nil {
+		return err
+	}
+	var attribution PacketAttributionArtifact
+	if decodeStrictJSON(qlogData, &attribution) != nil || attribution.SchemaVersion != 1 || attribution.Kind != "transport_qlog_attribution" ||
+		attribution.Context != context || len(attribution.Records) != 5 {
+		return errors.New("browser native isolation qlog attribution identity is invalid")
+	}
+	connectionID := attribution.Records[0].ConnectionGroupID
+	opened := make(map[uint64]struct{}, 4)
+	for index, record := range attribution.Records[:4] {
+		if record.Sequence != uint64(index+1) || record.Event != "transport:stream_opened" || record.NativeStreamID == nil || record.ConnectionGroupID != connectionID {
+			return errors.New("browser native isolation qlog does not prove four ordered STREAM_OPENED records")
+		}
+		opened[*record.NativeStreamID] = struct{}{}
+	}
+	reset := attribution.Records[4]
+	if len(opened) != 4 || reset.Sequence != 5 || reset.Event != "transport:reset_stream" || reset.NativeStreamID == nil || reset.ConnectionGroupID != connectionID {
+		return errors.New("browser native isolation qlog does not prove one connection-scoped RESET_STREAM")
+	}
+	if _, exists := opened[*reset.NativeStreamID]; !exists {
+		return errors.New("browser native isolation reset does not target one of the opened streams")
+	}
+	return nil
 }
 
 func validateSoakCase(builder *resultBuilder, contract SoakContract, context string, evidence CaseEvidence, baseDir string) error {
@@ -224,6 +310,7 @@ func validateSoakCase(builder *resultBuilder, contract SoakContract, context str
 	metricUnits := map[string]string{
 		"duration_ns": "nanoseconds", "fault_cycle_count": "count", "reconnect_count": "count", "migration_count": "count",
 		"rss_growth_bytes": "bytes", "goroutine_growth": "count", "open_fd_growth": "count", "task_growth": "count",
+		"rss_peak_bytes": "bytes", "goroutine_peak": "count", "open_fd_peak": "count", "task_peak": "count",
 		"residual_sessions": "count", "residual_goroutines": "count", "residual_open_fds": "count", "residual_tasks": "count", "watchdog_timeouts": "count",
 	}
 	values := make(map[string]float64, len(metricUnits))
@@ -248,17 +335,61 @@ func validateSoakCase(builder *resultBuilder, contract SoakContract, context str
 		values["residual_tasks"] != float64(contract.ResidualTasks) || values["watchdog_timeouts"] != 0 {
 		return errors.New("soak metrics do not prove the frozen duration, cycles, reconnect/migration counts, resource slopes, and zero residuals")
 	}
+	completionLimit := contract.DurationNS + (5 * time.Second).Nanoseconds()
 	if len(trace.Records) != contract.FaultCycleCount+2 || trace.Records[0].Event != "soak_started" || trace.Records[0].AtNS != 0 ||
-		trace.Records[0].ConnectionID != evidenceConnectionID || trace.Records[0].Digest != caseExecutionID(context) ||
-		trace.Records[len(trace.Records)-1].Event != "soak_completed" || trace.Records[len(trace.Records)-1].AtNS != contract.DurationNS ||
-		trace.Records[len(trace.Records)-1].ConnectionID != evidenceConnectionID || trace.Records[len(trace.Records)-1].Digest != caseExecutionID(context) {
+		trace.Records[0].ConnectionID != "" || trace.Records[0].Digest != caseExecutionID(context) ||
+		trace.Records[len(trace.Records)-1].Event != "soak_completed" || trace.Records[len(trace.Records)-1].AtNS < contract.DurationNS ||
+		trace.Records[len(trace.Records)-1].AtNS > completionLimit ||
+		trace.Records[len(trace.Records)-1].ConnectionID != "" || trace.Records[len(trace.Records)-1].Digest != caseExecutionID(context) {
 		return errors.New("soak trace does not contain the complete one-hour start/cycle/completion timeline")
 	}
+	qlogData, err := loadCaseArtifact(builder, context, evidence, "qlog", baseDir)
+	if err != nil {
+		return err
+	}
+	pcapData, err := loadCaseArtifact(builder, context, evidence, "pcap", baseDir)
+	if err != nil {
+		return err
+	}
+	var qlogAttribution, pcapAttribution PacketAttributionArtifact
+	if decodeStrictJSON(qlogData, &qlogAttribution) != nil || decodeStrictJSON(pcapData, &pcapAttribution) != nil ||
+		qlogAttribution.Kind != "transport_qlog_attribution" || pcapAttribution.Kind != "transport_pcap_attribution" ||
+		qlogAttribution.Context != context || pcapAttribution.Context != context ||
+		len(qlogAttribution.Records) != contract.FaultCycleCount || len(pcapAttribution.Records) != contract.FaultCycleCount {
+		return errors.New("soak typed attribution does not index one raw qlog and pcap source per cycle")
+	}
+	seenConnections := make(map[string]struct{}, contract.FaultCycleCount)
 	for index := 1; index <= contract.FaultCycleCount; index++ {
 		record := trace.Records[index]
-		if record.Event != "fault_cycle_completed" || record.AtNS != int64(index)*contract.FaultCyclePeriodNS ||
-			record.ConnectionID != evidenceConnectionID || record.Digest != caseExecutionID(context) {
+		lowerBound := int64(index) * contract.FaultCyclePeriodNS
+		upperBound := completionLimit
+		if index < contract.FaultCycleCount {
+			upperBound = int64(index+1) * contract.FaultCyclePeriodNS
+		}
+		if record.Event != "fault_cycle_completed" || record.AtNS < lowerBound || record.AtNS >= upperBound ||
+			record.ConnectionID == "" || record.Digest != caseExecutionID(context) || record.NativeStreamID == nil || *record.NativeStreamID < 0 ||
+			record.QLOGSourceID != fmt.Sprintf("qlog-%03d", index) || record.PCAPSourceID != fmt.Sprintf("pcap-%03d", index) {
 			return errors.New("soak trace cycle schedule or execution identity is invalid")
+		}
+		local, localErr := netip.ParseAddrPort(record.LocalAddress)
+		remote, remoteErr := netip.ParseAddrPort(record.RemoteAddress)
+		if localErr != nil || remoteErr != nil || !local.IsValid() || !remote.IsValid() || local == remote {
+			return errors.New("soak trace cycle path tuple is invalid")
+		}
+		if _, duplicate := seenConnections[record.ConnectionID]; duplicate {
+			return errors.New("soak trace reuses a connection ID")
+		}
+		seenConnections[record.ConnectionID] = struct{}{}
+		qlogRecord, pcapRecord := qlogAttribution.Records[index-1], pcapAttribution.Records[index-1]
+		if qlogRecord.Sequence != uint64(index) || qlogRecord.SourceID != record.QLOGSourceID || qlogRecord.ConnectionGroupID != record.ConnectionID ||
+			qlogRecord.Event != "transport:packet_sent" || qlogRecord.ByteOffset < 0 || qlogRecord.ByteLength <= 0 || qlogRecord.UnixNanoseconds <= 0 ||
+			len(qlogRecord.SourceSHA256) != 64 || qlogRecord.PacketNumber == nil || qlogRecord.PacketNumberSpace == "" {
+			return errors.New("soak qlog attribution is not bound to its cycle trace")
+		}
+		if pcapRecord.Sequence != uint64(index) || pcapRecord.SourceID != record.PCAPSourceID || pcapRecord.ByteOffset < 24 ||
+			pcapRecord.ByteLength <= 16 || pcapRecord.UnixNanoseconds <= 0 || len(pcapRecord.SourceSHA256) != 64 ||
+			pcapRecord.Event != "" || pcapRecord.ConnectionGroupID != "" || pcapRecord.PacketNumber != nil || pcapRecord.PacketNumberSpace != "" {
+			return errors.New("soak pcap attribution is not bound to its cycle trace")
 		}
 	}
 	resourceData, err := loadCaseArtifact(builder, context, evidence, "resource", baseDir)
@@ -269,13 +400,26 @@ func validateSoakCase(builder *resultBuilder, contract SoakContract, context str
 	if err := decodeStrictJSON(resourceData, &resource); err != nil {
 		return err
 	}
-	if len(resource.Records) != 2 || resource.Records[0].Phase != "soak_start" || resource.Records[1].Phase != "soak_end" ||
-		resource.Records[0].AtNS != 0 || resource.Records[1].AtNS != contract.DurationNS ||
-		resource.Records[0].ActiveSessions != 0 || resource.Records[1].ActiveSessions != 0 ||
-		resource.Records[0].UniqueActiveSessions != 0 || resource.Records[1].UniqueActiveSessions != 0 {
-		return errors.New("soak resource timeline must contain zero-session start/end samples for the full duration")
+	if len(resource.Records) != contract.FaultCycleCount+2 || resource.Records[0].Phase != "soak_start" ||
+		resource.Records[len(resource.Records)-1].Phase != "soak_end" || resource.Records[0].AtNS != 0 ||
+		resource.Records[len(resource.Records)-1].AtNS < contract.DurationNS ||
+		resource.Records[len(resource.Records)-1].AtNS > completionLimit {
+		return errors.New("soak resource timeline must contain start, every cycle, and end samples")
 	}
-	start, finish := resource.Records[0], resource.Records[1]
+	for index := 1; index <= contract.FaultCycleCount; index++ {
+		lowerBound := int64(index) * contract.FaultCyclePeriodNS
+		upperBound := completionLimit
+		if index < contract.FaultCycleCount {
+			upperBound = int64(index+1) * contract.FaultCyclePeriodNS
+		}
+		if resource.Records[index].Phase != fmt.Sprintf("soak_cycle_%03d", index) ||
+			resource.Records[index].AtNS < lowerBound || resource.Records[index].AtNS >= upperBound ||
+			resource.Records[index].ResidualSessions != nil || resource.Records[index].ResidualGoroutines != nil ||
+			resource.Records[index].ResidualOpenFDs != nil || resource.Records[index].ResidualTasks != nil {
+			return errors.New("soak resource cycle series is incomplete or out of schedule")
+		}
+	}
+	start, finish := resource.Records[0], resource.Records[len(resource.Records)-1]
 	residuals := []struct {
 		name     string
 		observed *int
@@ -290,18 +434,42 @@ func validateSoakCase(builder *resultBuilder, contract SoakContract, context str
 			return fmt.Errorf("soak resource %s must be present and match the typed residual metric", residual.name)
 		}
 	}
-	if finish.RSSBytes < start.RSSBytes || finish.RSSBytes-start.RSSBytes > contract.MaxRSSGrowthBytesPerHour ||
-		finish.Goroutines < start.Goroutines || finish.Goroutines-start.Goroutines > contract.MaxGoroutineGrowthPerHour ||
-		finish.OpenFDs < start.OpenFDs || finish.OpenFDs-start.OpenFDs > contract.MaxOpenFDGrowthPerHour ||
-		finish.Tasks < start.Tasks || finish.Tasks-start.Tasks > contract.MaxTaskGrowthPerHour {
+	rssGrowth := positiveUint64EvidenceDelta(finish.RSSBytes, start.RSSBytes)
+	goroutineGrowth := positiveIntEvidenceDelta(finish.Goroutines, start.Goroutines)
+	openFDGrowth := positiveIntEvidenceDelta(finish.OpenFDs, start.OpenFDs)
+	taskGrowth := positiveIntEvidenceDelta(finish.Tasks, start.Tasks)
+	var rssPeak uint64
+	var goroutinePeak, openFDPeak, taskPeak int
+	for _, sample := range resource.Records {
+		rssPeak = max(rssPeak, sample.RSSBytes)
+		goroutinePeak = max(goroutinePeak, sample.Goroutines)
+		openFDPeak = max(openFDPeak, sample.OpenFDs)
+		taskPeak = max(taskPeak, sample.Tasks)
+	}
+	if rssGrowth > contract.MaxRSSGrowthBytesPerHour || goroutineGrowth > contract.MaxGoroutineGrowthPerHour ||
+		openFDGrowth > contract.MaxOpenFDGrowthPerHour || taskGrowth > contract.MaxTaskGrowthPerHour {
 		return errors.New("soak resource slope exceeds the frozen RSS/goroutine/fd/task limits")
 	}
-	if finish.Goroutines-start.Goroutines != int(values["goroutine_growth"]) ||
-		finish.OpenFDs-start.OpenFDs != int(values["open_fd_growth"]) || finish.Tasks-start.Tasks != int(values["task_growth"]) ||
-		finish.RSSBytes-start.RSSBytes != uint64(values["rss_growth_bytes"]) {
-		return errors.New("soak resource slope counters do not bind the typed resource timeline")
+	if goroutineGrowth != int(values["goroutine_growth"]) || openFDGrowth != int(values["open_fd_growth"]) ||
+		taskGrowth != int(values["task_growth"]) || rssGrowth != uint64(values["rss_growth_bytes"]) ||
+		rssPeak != uint64(values["rss_peak_bytes"]) || goroutinePeak != int(values["goroutine_peak"]) ||
+		openFDPeak != int(values["open_fd_peak"]) || taskPeak != int(values["task_peak"]) {
+		return errors.New("soak resource slope and peak counters do not bind the typed resource series")
 	}
 	return nil
+}
+
+func positiveUint64EvidenceDelta(finish, start uint64) uint64 {
+	if finish <= start {
+		return 0
+	}
+	return finish - start
+}
+func positiveIntEvidenceDelta(finish, start int) int {
+	if finish <= start {
+		return 0
+	}
+	return finish - start
 }
 
 func validateRegisteredCaseIdentity(builder *resultBuilder, context string, evidence CaseEvidence, baseDir string) error {
@@ -351,11 +519,163 @@ func validateRegisteredCaseIdentity(builder *resultBuilder, context string, evid
 		}
 		required["metrics_sha256"] = metricsRef.SHA256
 	}
+	var nativeQLOG *rawNativeQLOGSummary
+	if qlogRef, exists := evidence.Evidence["qlog"]; exists {
+		qlogData, qlogErr := loadCaseArtifact(builder, context, evidence, "qlog", baseDir)
+		if qlogErr != nil {
+			return qlogErr
+		}
+		if strings.Contains(string(qlogData), string([]byte{0x1e})) {
+			summary, parseErr := parseRawNativeQLOGEvidence(qlogData)
+			if parseErr != nil {
+				return parseErr
+			}
+			nativeQLOG = &summary
+		} else if isTypedQLOGAttribution(qlogData) {
+			summary, parseErr := loadNativeQLOGAttribution(builder, context, evidence, qlogData, baseDir)
+			if parseErr != nil {
+				return parseErr
+			}
+			nativeQLOG = &summary
+		}
+		if nativeQLOG != nil {
+			required["qlog_sha256"] = qlogRef.SHA256
+			required["qlog_source"] = "quic-go-json-seq-v0.3"
+			required["qlog_connection_id"] = nativeQLOG.connectionID
+		}
+	}
 	if err := requireConfig(config, required); err != nil {
 		return fmt.Errorf("case identity binding: %w", err)
 	}
-	if len(trace.Records) != 1 || trace.Records[0].Event != "completed" || trace.Records[0].Digest != executionID {
+	if nativeQLOG != nil {
+		if err := validateNativeApplicationTrace(evidence.ID, trace, executionID, *nativeQLOG); err != nil {
+			return err
+		}
+	} else if len(trace.Records) != 1 || trace.Records[0].Event != "completed" || trace.Records[0].Digest != executionID {
 		return errors.New("case identity trace must contain one completed event with the deterministic test ID")
+	}
+	return nil
+}
+
+func loadNativeQLOGAttribution(builder *resultBuilder, context string, evidence CaseEvidence, data []byte, baseDir string) (rawNativeQLOGSummary, error) {
+	var attribution PacketAttributionArtifact
+	if err := decodeStrictJSON(data, &attribution); err != nil {
+		return rawNativeQLOGSummary{}, err
+	}
+	if attribution.SchemaVersion != 1 || attribution.Kind != "transport_qlog_attribution" || attribution.Context != context || len(attribution.Records) == 0 {
+		return rawNativeQLOGSummary{}, errors.New("native qlog attribution identity is incomplete")
+	}
+	sources := make(map[string]validatedRawSource)
+	qlogCount := 0
+	for _, raw := range evidence.RawSources {
+		if raw.Kind != "qlog" {
+			continue
+		}
+		qlogCount++
+		wantID := fmt.Sprintf("qlog-%03d", qlogCount)
+		if raw.ID != wantID {
+			return rawNativeQLOGSummary{}, fmt.Errorf("native raw qlog source ID = %q, want %q", raw.ID, wantID)
+		}
+		rawContext := context + " raw sources"
+		rawData, ok := readArtifact(builder, rawContext, "raw_qlog", raw.Artifact, baseDir)
+		if !ok {
+			return rawNativeQLOGSummary{}, fmt.Errorf("native raw qlog source %s is invalid", raw.ID)
+		}
+		if _, duplicate := sources[raw.ID]; duplicate {
+			return rawNativeQLOGSummary{}, fmt.Errorf("native raw qlog source %s is duplicated", raw.ID)
+		}
+		sources[raw.ID] = validatedRawSource{id: raw.ID, kind: "qlog", digest: raw.Artifact.SHA256, data: rawData}
+	}
+	if len(sources) != 1 {
+		return rawNativeQLOGSummary{}, fmt.Errorf("native qlog attribution requires exactly one immutable raw qlog source; got %d", len(sources))
+	}
+	seen := make(map[string]struct{}, len(sources))
+	for index, record := range attribution.Records {
+		source, exists := sources[record.SourceID]
+		if record.Sequence != uint64(index+1) || !exists || record.SourceSHA256 != source.digest {
+			return rawNativeQLOGSummary{}, fmt.Errorf("native qlog attribution record %d does not bind an indexed raw source", index+1)
+		}
+		if err := validateAttributedQLOGRecord(source, record); err != nil {
+			return rawNativeQLOGSummary{}, fmt.Errorf("native qlog attribution record %d does not match immutable source bytes: %w", index+1, err)
+		}
+		seen[source.id] = struct{}{}
+	}
+	for id, source := range sources {
+		if _, exists := seen[id]; !exists {
+			return rawNativeQLOGSummary{}, fmt.Errorf("native raw qlog source %s has no attribution record", id)
+		}
+		if err := validateRawNativeQLOGEvidence(context, source.data); err != nil {
+			return rawNativeQLOGSummary{}, err
+		}
+		return parseRawNativeQLOGEvidence(source.data)
+	}
+	return rawNativeQLOGSummary{}, errors.New("native raw qlog source is unavailable")
+}
+
+func validateNativeApplicationTrace(caseID string, trace TraceArtifact, executionID string, qlog rawNativeQLOGSummary) error {
+	if len(trace.Records) < 2 {
+		return errors.New("native application trace must contain observations and completion")
+	}
+	last := trace.Records[len(trace.Records)-1]
+	if last.Event != "completed" || last.Digest != executionID || last.ConnectionID != qlog.connectionID {
+		return errors.New("native application trace completion is not bound to the raw qlog connection")
+	}
+	observed := make(map[int64]string)
+	for _, record := range trace.Records[:len(trace.Records)-1] {
+		if record.Digest != executionID || record.ConnectionID != qlog.connectionID || record.NativeStreamID == nil || *record.NativeStreamID < 0 {
+			return errors.New("native application observation is not bound to the raw qlog connection and stream")
+		}
+		if _, exists := qlog.streamIDs[*record.NativeStreamID]; !exists {
+			return fmt.Errorf("native application stream %d is absent from raw qlog STREAM frames", *record.NativeStreamID)
+		}
+		observed[*record.NativeStreamID] = record.Event
+	}
+	switch caseID {
+	case "NS-N1":
+		if len(observed) < 8 {
+			return errors.New("native application trace does not bind eight distinct streams")
+		}
+	case "NS-N2", "NS-N4", "NP-FLOW-FULL":
+		var blocked, rpc *int64
+		for _, record := range trace.Records {
+			if record.NativeStreamID == nil {
+				continue
+			}
+			switch record.Event {
+			case "native_stream_blocked":
+				blocked = record.NativeStreamID
+			case "rpc_completed":
+				rpc = record.NativeStreamID
+			}
+		}
+		if blocked == nil || rpc == nil || *blocked == *rpc {
+			return errors.New("native flow trace does not bind blocked and sibling streams")
+		}
+		if _, exists := qlog.blockedIDs[*blocked]; !exists {
+			return errors.New("native blocked stream is absent from raw qlog STREAM_DATA_BLOCKED frames")
+		}
+	case "NS-N3", "NP-RESET-FIN":
+		var reset, rpc *int64
+		for _, record := range trace.Records {
+			if record.NativeStreamID == nil {
+				continue
+			}
+			switch record.Event {
+			case "native_stream_reset":
+				reset = record.NativeStreamID
+			case "rpc_completed":
+				rpc = record.NativeStreamID
+			}
+		}
+		if reset == nil || rpc == nil || *reset == *rpc {
+			return errors.New("native reset trace does not bind reset and sibling streams")
+		}
+		if _, resetSeen := qlog.resetIDs[*reset]; !resetSeen {
+			return errors.New("native reset stream is absent from raw qlog RESET_STREAM frames")
+		}
+		if _, stopSeen := qlog.stoppedIDs[*reset]; !stopSeen {
+			return errors.New("native reset stream is absent from raw qlog STOP_SENDING frames")
+		}
 	}
 	return nil
 }
@@ -375,26 +695,66 @@ func seededEvidenceRandomLoss(seed int64, ordinal uint64, basisPoints uint32) bo
 }
 
 func validateCapacityCase(builder *resultBuilder, contract CapacityContract, context string, evidence CaseEvidence, baseDir string) error {
+	caseID := strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ")
+	streamCapacity := strings.HasPrefix(caseID, "CAP-STREAM-WT-")
+	browserAggregate := caseID == "CAP-TUNNEL-WT-WSS-1000" || caseID == "CAP-TUNNEL-WT-QUIC-1000" || streamCapacity
+	if streamCapacity {
+		contract.Sessions = 100
+		contract.RampDurationNS = int64(60 * time.Second)
+		contract.WatchdogDurationNS = contract.RampDurationNS + contract.HoldDurationNS + contract.CleanupDurationNS
+	}
+	if browserAggregate {
+		contract.MaxRSSBytes = 3 << 30
+		contract.MaxOpenFDs = 12288
+	}
+	if streamCapacity {
+		contract.MaxCPUNanoseconds = uint64(240 * time.Second)
+		contract.MaxOpenFDs = 32768
+	}
 	metrics, config, trace, err := loadCaseCore(builder, context, evidence, baseDir)
 	if err != nil {
 		return err
 	}
-	if err := requireConfig(config, map[string]string{
-		"sessions":             strconv.Itoa(contract.Sessions),
-		"ramp_duration_ns":     strconv.FormatInt(contract.RampDurationNS, 10),
-		"hold_duration_ns":     strconv.FormatInt(contract.HoldDurationNS, 10),
-		"cleanup_duration_ns":  strconv.FormatInt(contract.CleanupDurationNS, 10),
-		"watchdog_duration_ns": strconv.FormatInt(contract.WatchdogDurationNS, 10),
-		"watchdog":             "completed",
-	}); err != nil {
+	requiredConfig := map[string]string{
+		"sessions":                 strconv.Itoa(contract.Sessions),
+		"ramp_duration_ns":         strconv.FormatInt(contract.RampDurationNS, 10),
+		"hold_duration_ns":         strconv.FormatInt(contract.HoldDurationNS, 10),
+		"liveness_sweep_count":     "4",
+		"liveness_sweep_period_ns": strconv.FormatInt(contract.HoldDurationNS/5, 10),
+		"cleanup_duration_ns":      strconv.FormatInt(contract.CleanupDurationNS, 10),
+		"watchdog_duration_ns":     strconv.FormatInt(contract.WatchdogDurationNS, 10),
+		"watchdog":                 "completed",
+		"resource_scope": func() string {
+			if browserAggregate {
+				return "go_runner_plus_chromium_process_tree"
+			}
+			return "go_runner"
+		}(),
+		"max_rss_bytes":  strconv.FormatUint(contract.MaxRSSBytes, 10),
+		"max_open_fds":   strconv.Itoa(contract.MaxOpenFDs),
+		"max_goroutines": strconv.Itoa(contract.MaxGoroutines),
+		"max_tasks":      strconv.Itoa(contract.MaxTasks),
+	}
+	if streamCapacity {
+		requiredConfig["connections_per_session"] = "1"
+		requiredConfig["streams_per_session"] = "128"
+	}
+	if err := requireConfig(config, requiredConfig); err != nil {
 		return fmt.Errorf("capacity effective config: %w", err)
 	}
 	values := make(map[string]float64)
-	for name, unit := range map[string]string{
+	requiredMetrics := map[string]string{
 		"attempted_sessions": "count", "succeeded_sessions": "count", "failed_sessions": "count",
 		"unique_active_peak": "count", "hold_duration_ns": "nanoseconds", "hold_disconnects": "count",
+		"liveness_sweeps": "count", "liveness_failures": "count",
 		"cleanup_disconnects": "count", "watchdog_timeouts": "count", "cleanup_residual_sessions": "count",
-	} {
+	}
+	if streamCapacity {
+		requiredMetrics["completed_streams"] = "count"
+		requiredMetrics["active_stream_peak"] = "count"
+		requiredMetrics["cleanup_residual_streams"] = "count"
+	}
+	for name, unit := range requiredMetrics {
 		value, valueErr := metricValueWithUnit(metrics, name, unit)
 		if valueErr != nil || value < 0 || mathTrunc(value) != value {
 			return fmt.Errorf("capacity metric %s is missing, has the wrong unit, or is not a nonnegative integer", name)
@@ -405,9 +765,12 @@ func validateCapacityCase(builder *resultBuilder, contract CapacityContract, con
 	if values["attempted_sessions"] != target || values["succeeded_sessions"] != target || values["failed_sessions"] != 0 ||
 		values["attempted_sessions"] != values["succeeded_sessions"]+values["failed_sessions"] ||
 		values["unique_active_peak"] != target || values["hold_duration_ns"] != float64(contract.HoldDurationNS) ||
-		values["hold_disconnects"] != 0 || values["cleanup_disconnects"] != target ||
+		values["hold_disconnects"] != 0 || values["liveness_sweeps"] != 4 || values["liveness_failures"] != 0 || values["cleanup_disconnects"] != target ||
 		values["watchdog_timeouts"] != 0 || values["cleanup_residual_sessions"] != 0 {
 		return errors.New("capacity counters do not prove 1000 unique held sessions with zero failures, watchdogs, hold disconnects, and cleanup residuals")
+	}
+	if streamCapacity && (values["completed_streams"] != 12800 || values["active_stream_peak"] != 12800 || values["cleanup_residual_streams"] != 0) {
+		return errors.New("stream capacity counters do not prove 100 live sessions, 12800 completed and peak streams, and zero cleanup residual streams")
 	}
 	ordered, err := requireOrderedTrace(trace, "", []string{"capacity_ramp_completed", "capacity_hold_completed", "capacity_cleanup_completed"})
 	if err != nil {
@@ -424,6 +787,10 @@ func validateCapacityCase(builder *resultBuilder, contract CapacityContract, con
 			record.UniqueActiveSessions != contract.Sessions {
 			return errors.New("capacity trace counters or phase timestamps do not match the frozen contract")
 		}
+		if streamCapacity && (record.CompletedStreams != 12800 || record.ResidualStreams != 0 ||
+			(index < 2 && record.ActiveStreams != 12800) || (index == 2 && record.ActiveStreams != 0)) {
+			return errors.New("stream capacity trace does not prove completed, peak-active, and zero-residual stream counters")
+		}
 	}
 	if ordered[0].ActiveSessions != contract.Sessions || ordered[0].Disconnects != 0 ||
 		ordered[1].ActiveSessions != contract.Sessions || ordered[1].Disconnects != 0 ||
@@ -438,13 +805,60 @@ func validateCapacityCase(builder *resultBuilder, contract CapacityContract, con
 	if err := decodeStrictJSON(resourceData, &resource); err != nil {
 		return err
 	}
-	if err := validateCapacityResourceTimeline(resource, contract, wantTimes); err != nil {
+	if err := validateCapacityResourceTimeline(resource, contract, wantTimes, streamCapacity); err != nil {
 		return err
+	}
+	if streamCapacity {
+		qlogData, err := loadCaseArtifact(builder, context, evidence, "qlog", baseDir)
+		if err != nil {
+			return err
+		}
+		var attribution PacketAttributionArtifact
+		if decodeStrictJSON(qlogData, &attribution) != nil || attribution.SchemaVersion != 1 || attribution.Kind != "transport_qlog_attribution" || attribution.Context != context {
+			return errors.New("stream capacity qlog attribution identity is invalid")
+		}
+		if err := validateCapacityStreamQLOGAttribution(attribution); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func validateCapacityResourceTimeline(artifact ResourceArtifact, contract CapacityContract, wantTimes []int64) error {
+func validateCapacityStreamQLOGAttribution(attribution PacketAttributionArtifact) error {
+	if len(attribution.Records) != 100*128 {
+		return fmt.Errorf("stream capacity qlog contains %d STREAM_OPENED records, want %d", len(attribution.Records), 100*128)
+	}
+	perConnection := make(map[string]map[uint64]struct{}, 100)
+	previousAt := int64(0)
+	for index, record := range attribution.Records {
+		if record.Sequence != uint64(index+1) || record.Event != "transport:stream_opened" || record.NativeStreamID == nil ||
+			*record.NativeStreamID < 12 || *record.NativeStreamID%4 != 0 || strings.TrimSpace(record.ConnectionGroupID) == "" ||
+			record.UnixNanoseconds < previousAt {
+			return errors.New("stream capacity qlog STREAM_OPENED sequence, timestamp, or identity is invalid")
+		}
+		previousAt = record.UnixNanoseconds
+		streams := perConnection[record.ConnectionGroupID]
+		if streams == nil {
+			streams = make(map[uint64]struct{}, 128)
+			perConnection[record.ConnectionGroupID] = streams
+		}
+		if _, duplicate := streams[*record.NativeStreamID]; duplicate {
+			return errors.New("stream capacity qlog reuses a connection-scoped native stream ID")
+		}
+		streams[*record.NativeStreamID] = struct{}{}
+	}
+	if len(perConnection) != 100 {
+		return fmt.Errorf("stream capacity qlog contains %d connection groups, want 100", len(perConnection))
+	}
+	for connectionID, streams := range perConnection {
+		if len(streams) != 128 {
+			return fmt.Errorf("stream capacity qlog connection %s contains %d streams, want 128", connectionID, len(streams))
+		}
+	}
+	return nil
+}
+
+func validateCapacityResourceTimeline(artifact ResourceArtifact, contract CapacityContract, wantTimes []int64, streamCapacity bool) error {
 	if len(artifact.Records) != 3 {
 		return errors.New("capacity resource timeline must contain ramp, hold, and cleanup samples")
 	}
@@ -460,7 +874,19 @@ func validateCapacityResourceTimeline(artifact ResourceArtifact, contract Capaci
 		if index < 2 && record.ActiveSessions != contract.Sessions || index == 2 && record.ActiveSessions != 0 {
 			return errors.New("capacity resource timeline active sessions do not match ramp/hold/cleanup state")
 		}
+		if streamCapacity && ((index < 2 && record.ActiveStreams != 12800) || (index == 2 && record.ActiveStreams != 0)) {
+			return errors.New("stream capacity resource timeline does not prove the 12800-stream peak and cleanup")
+		}
 		previousCPU = record.CPUNanoseconds
+	}
+	cleanup := artifact.Records[2]
+	if cleanup.ResidualSessions == nil || cleanup.ResidualGoroutines == nil || cleanup.ResidualOpenFDs == nil || cleanup.ResidualTasks == nil ||
+		*cleanup.ResidualSessions != 0 || *cleanup.ResidualGoroutines < 0 || *cleanup.ResidualGoroutines > 64 ||
+		*cleanup.ResidualOpenFDs < 0 || *cleanup.ResidualOpenFDs > 16 || *cleanup.ResidualTasks < 0 || *cleanup.ResidualTasks > 16 {
+		return errors.New("capacity cleanup resource residuals are missing or exceed the frozen small leak bounds")
+	}
+	if streamCapacity && (cleanup.ResidualStreams == nil || *cleanup.ResidualStreams != 0) {
+		return errors.New("stream capacity cleanup residual is missing or nonzero")
 	}
 	return nil
 }
@@ -475,6 +901,91 @@ func loadCaseArtifact(builder *resultBuilder, context string, evidence CaseEvide
 		return nil, fmt.Errorf("invalid %s", kind)
 	}
 	return data, nil
+}
+
+func loadCaseSemanticArtifact(builder *resultBuilder, context string, evidence CaseEvidence, kind, baseDir string) ([]byte, error) {
+	data, err := loadCaseArtifact(builder, context, evidence, kind, baseDir)
+	if err != nil || !isTypedPacketAttribution(data, kind) {
+		return data, err
+	}
+	sources, err := loadCaseAttributedRawSources(builder, context, evidence, kind, data, baseDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(sources) != 1 {
+		return nil, fmt.Errorf("%s semantic validation requires exactly one immutable raw source; got %d", kind, len(sources))
+	}
+	return sources[0].data, nil
+}
+
+func loadCaseAttributedRawSources(builder *resultBuilder, context string, evidence CaseEvidence, kind string, data []byte, baseDir string) ([]validatedRawSource, error) {
+	if kind != "pcap" && kind != "qlog" {
+		return nil, fmt.Errorf("unsupported attributed raw source kind %q", kind)
+	}
+	if err := validateTypedStructuredArtifact(context, kind+"_attribution", data); err != nil {
+		return nil, err
+	}
+	var attribution PacketAttributionArtifact
+	if err := decodeStrictJSON(data, &attribution); err != nil {
+		return nil, err
+	}
+	sources := make(map[string]validatedRawSource)
+	ordered := make([]validatedRawSource, 0)
+	count := 0
+	for _, raw := range evidence.RawSources {
+		if raw.Kind != kind {
+			continue
+		}
+		count++
+		wantID := fmt.Sprintf("%s-%03d", kind, count)
+		if raw.ID != wantID {
+			return nil, fmt.Errorf("%s raw source ID = %q, want %q", kind, raw.ID, wantID)
+		}
+		rawContext := context + " raw " + raw.ID
+		if isNativeQLOGCase(evidence.ID) {
+			rawContext = context + " raw sources"
+		}
+		rawData, ok := readArtifact(builder, rawContext, "raw_"+kind, raw.Artifact, baseDir)
+		if !ok {
+			return nil, fmt.Errorf("%s raw source %s is invalid", kind, raw.ID)
+		}
+		if _, duplicate := sources[raw.ID]; duplicate {
+			return nil, fmt.Errorf("%s raw source %s is duplicated", kind, raw.ID)
+		}
+		source := validatedRawSource{id: raw.ID, kind: kind, digest: raw.Artifact.SHA256, path: raw.Artifact.Path, data: rawData}
+		sources[raw.ID] = source
+		ordered = append(ordered, source)
+	}
+	if len(sources) == 0 {
+		return nil, fmt.Errorf("%s attribution has no immutable raw sources", kind)
+	}
+	seen := make(map[string]struct{}, len(sources))
+	qlogRecords := make(map[string][]PacketAttributionRecord)
+	for index, record := range attribution.Records {
+		source, exists := sources[record.SourceID]
+		if record.Sequence != uint64(index+1) || !exists || record.SourceSHA256 != source.digest {
+			return nil, fmt.Errorf("%s attribution record %d does not bind an indexed raw source", kind, index+1)
+		}
+		if kind == "pcap" {
+			if validateErr := validateAttributedPCAPRecord(source.data, record); validateErr != nil {
+				return nil, fmt.Errorf("%s attribution record %d does not match immutable source bytes: %w", kind, index+1, validateErr)
+			}
+		} else {
+			qlogRecords[source.id] = append(qlogRecords[source.id], record)
+		}
+		seen[source.id] = struct{}{}
+	}
+	for id, records := range qlogRecords {
+		if validateErr := validateAttributedQLOGRecords(sources[id], records); validateErr != nil {
+			return nil, fmt.Errorf("qlog attribution for source %s does not match immutable source bytes: %w", id, validateErr)
+		}
+	}
+	for id := range sources {
+		if _, exists := seen[id]; !exists {
+			return nil, fmt.Errorf("%s raw source %s has no attribution record", kind, id)
+		}
+	}
+	return ordered, nil
 }
 
 func validateRebindCase(builder *resultBuilder, context string, evidence CaseEvidence, baseDir string) error {
@@ -511,11 +1022,11 @@ func validateRebindCase(builder *resultBuilder, context string, evidence CaseEvi
 	if err != nil || ordered[1].AtNS != rebindAtNS {
 		return errors.New("rebind trace does not match its frozen schedule, event order, counters, or connection ID")
 	}
-	qlogData, err := loadCaseArtifact(builder, context, evidence, "qlog", baseDir)
+	qlogData, err := loadCaseSemanticArtifact(builder, context, evidence, "qlog", baseDir)
 	if err != nil {
 		return err
 	}
-	pcapData, err := loadCaseArtifact(builder, context, evidence, "pcap", baseDir)
+	pcapData, err := loadCaseSemanticArtifact(builder, context, evidence, "pcap", baseDir)
 	if err != nil {
 		return err
 	}
@@ -567,7 +1078,7 @@ func validateQUICPMTUDCase(builder *resultBuilder, context string, evidence Case
 	if err := requireTraceEventForConnection(trace, traceEvent, required["connection_id"]); err != nil {
 		return err
 	}
-	qlogData, err := loadCaseArtifact(builder, context, evidence, "qlog", baseDir)
+	qlogData, err := loadCaseSemanticArtifact(builder, context, evidence, "qlog", baseDir)
 	if err != nil {
 		return err
 	}
@@ -576,7 +1087,7 @@ func validateQUICPMTUDCase(builder *resultBuilder, context string, evidence Case
 	}); err != nil {
 		return fmt.Errorf("QUIC PMTUD qlog does not prove a same-connection post-recovery RPC: %w", err)
 	}
-	pcapData, err := loadCaseArtifact(builder, context, evidence, "pcap", baseDir)
+	pcapData, err := loadCaseSemanticArtifact(builder, context, evidence, "pcap", baseDir)
 	if err != nil {
 		return err
 	}
@@ -784,7 +1295,7 @@ func validateWSSPMTUDCase(builder *resultBuilder, context string, evidence CaseE
 	if !recovered && !(first.SendMSSBytes > 1280 && last.SendMSSBytes > 1280 && last.RetransmittedBytes > first.RetransmittedBytes) {
 		return errors.New("timeout evidence does not prove persistent oversized retransmission")
 	}
-	pcapData, err := loadCaseArtifact(builder, context, evidence, "pcap", baseDir)
+	pcapData, err := loadCaseSemanticArtifact(builder, context, evidence, "pcap", baseDir)
 	if err != nil {
 		return err
 	}

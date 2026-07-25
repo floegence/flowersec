@@ -40,7 +40,7 @@ var signedCapacityContract = CapacityContract{
 	MaxRSSBytes:        1024 * mib,
 	MaxCPUNanoseconds:  120 * 1e9,
 	MaxOpenFDs:         8192,
-	MaxGoroutines:      8192,
+	MaxGoroutines:      40960,
 	MaxTasks:           8192,
 }
 
@@ -177,7 +177,7 @@ var signedProfiles = []signedProfile{
 		id:                     "clean-v1",
 		cold:                   ColdWorkload{Operations: 2000, MaxInflight: 32, Retries: 0, StartRatePerSecond: 100, OperationDeadlineSeconds: 10, PhaseDeadlineSeconds: 30},
 		rpc:                    RPCWorkload{Operations: 2000, RequestBytes: 1024, ResponseBytes: 1024, Workers: 32, Retries: 0, OperationDeadlineSeconds: 2, PhaseDeadlineSeconds: 10},
-		bulk:                   BulkWorkload{WarmupBytesPerDirection: mib, ScoreBytesPerDirection: 64 * mib, PhaseDeadlineSeconds: 15},
+		bulk:                   BulkWorkload{WarmupBytesPerDirection: mib, ScoreBytesPerDirection: 256 * mib, PhaseDeadlineSeconds: 15},
 		cleanupDeadlineSeconds: 5,
 		cellWatchdogMinutes:    15,
 	},

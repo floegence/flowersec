@@ -15,7 +15,7 @@ import (
 
 const (
 	signedRunnerKernelRelease = "6.8.0-124-generic"
-	signedRunnerConfigDigest  = "7964604aaa2792fd470945d4f29b5559f44366bfdc5cace6da700b4881c55002"
+	signedRunnerConfigDigest  = "94984c52b0417583217a7974f50bf13f838913f948960caa0dc0725a0893ad71"
 	signedRunnerConfigPath    = "runner_effective_config.json"
 	signedRunnerExecutableSHA = "3333333333333333333333333333333333333333333333333333333333333333"
 	signedRunnerSourceSHA     = "4444444444444444444444444444444444444444444444444444444444444444"

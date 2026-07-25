@@ -5,15 +5,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const collectTestFinalSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const collectTestBaseSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 func TestCollectFlagFrontDoorRejectsIncompleteAndUnknownRequests(t *testing.T) {
 	for _, args := range [][]string{
@@ -31,7 +34,7 @@ func TestBuildCollectionPlanFailsClosedOnEveryCurrentReleaseTarget(t *testing.T)
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
 	for target := range collectTargets {
-		if target == "transport-conformance-smoke" {
+		if target == "transport-conformance-smoke" || target == "transport-conformance-full" || target == "weaknet-full" || target == "weaknet-system" || target == "quic-native-smoke" || target == "quic-native-proof" || target == "quic-native-race" || target == "bench-transport-ab" {
 			continue
 		}
 		plan, err := buildCollectionPlan(target, manifest, registry)
@@ -46,34 +49,168 @@ func TestBuildCollectionPlanFailsClosedOnEveryCurrentReleaseTarget(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(abPlan.Jobs) != 22 || len(abPlan.Missing) != 7 {
+	if len(abPlan.Jobs) != 30 || len(abPlan.Missing) != 0 {
 		t.Fatalf("A/B plan jobs=%d missing=%v", len(abPlan.Jobs), abPlan.Missing)
-	}
-	for _, want := range []string{
-		"cell adaptive-selection-01 (adaptive_native)",
-		"cell clean-01 (direct_wss_revision)",
-		"cell clean-04 (ww)",
-	} {
-		if !slices.Contains(abPlan.Missing, want) {
-			t.Fatalf("A/B plan does not report %q: %v", want, abPlan.Missing)
-		}
 	}
 	allPlan, err := buildCollectionPlan("all", manifest, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(allPlan.Jobs) != len(abPlan.Jobs)+1 || len(allPlan.Missing) != 55 {
+	if len(allPlan.Jobs) != len(abPlan.Jobs)+7 || len(allPlan.Missing) != 16 {
 		t.Fatalf("all plan does not include performance jobs plus case gaps: jobs=%d missing=%d", len(allPlan.Jobs), len(allPlan.Missing))
 	}
-	var caseJob *collectionJob
-	for index := range allPlan.Jobs {
-		if allPlan.Jobs[index].CaseOwner == "transport-conformance-smoke" {
-			caseJob = &allPlan.Jobs[index]
-			break
+	wantMissing := []string{
+		"case BS-C7 owned by transport-browser-smoke", "case BS-C8 owned by transport-browser-smoke", "case BN-N5 owned by transport-browser-smoke",
+		"case CAP-DIRECT-WSS-1000 owned by bench-transport-capacity", "case CAP-DIRECT-QUIC-1000 owned by bench-transport-capacity",
+		"case CAP-DIRECT-WT-1000 owned by bench-transport-capacity", "case CAP-TUNNEL-WT-WSS-1000 owned by bench-transport-capacity",
+		"case CAP-TUNNEL-WT-QUIC-1000 owned by bench-transport-capacity", "case CAP-STREAM-WT-DIRECT-100X128 owned by bench-transport-capacity",
+		"case CAP-STREAM-WT-WSS-100X128 owned by bench-transport-capacity", "case CAP-STREAM-WT-QUIC-100X128 owned by bench-transport-capacity",
+		"case CAP-WW-1000 owned by bench-transport-capacity", "case CAP-QQ-1000 owned by bench-transport-capacity",
+		"case CAP-WQ-1000 owned by bench-transport-capacity", "case CAP-QW-1000 owned by bench-transport-capacity",
+		"case CAP-SOAK-HOURLY owned by bench-transport-soak",
+	}
+	slices.Sort(wantMissing)
+	if !slices.Equal(allPlan.Missing, wantMissing) {
+		t.Fatalf("all plan missing set = %v, want %v", allPlan.Missing, wantMissing)
+	}
+	wantCaseCounts := map[string]int{
+		"transport-conformance-smoke": 6,
+		"transport-conformance-full":  8,
+		"weaknet-full":                4,
+		"weaknet-system":              8,
+		"quic-native-smoke":           4,
+		"quic-native-proof":           7,
+		"quic-native-race":            4,
+	}
+	for _, job := range allPlan.Jobs {
+		wantCount, exists := wantCaseCounts[job.CaseOwner]
+		if !exists {
+			continue
+		}
+		wantMode := "normal"
+		if job.CaseOwner == "quic-native-race" {
+			wantMode = "race"
+		}
+		if job.RunnerTarget != "release-case-suite" || job.CaseMode != wantMode || len(job.CaseIDs) != wantCount {
+			t.Fatalf("all plan contains an incomplete %s producer: %+v", job.CaseOwner, job)
+		}
+		delete(wantCaseCounts, job.CaseOwner)
+	}
+	if len(wantCaseCounts) != 0 {
+		t.Fatalf("all plan does not contain all registered case producers: %v", wantCaseCounts)
+	}
+	systemPlan, err := buildCollectionPlan("weaknet-system", manifest, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(systemPlan.Missing) != 0 || len(systemPlan.Jobs) != 1 || systemPlan.Jobs[0].CaseOwner != "weaknet-system" ||
+		!systemPlan.Jobs[0].NeedsBPF || len(systemPlan.Jobs[0].CaseIDs) != 8 {
+		t.Fatalf("weaknet-system plan does not bind its exact eight-case BPF producer: %+v", systemPlan)
+	}
+	for _, target := range []string{"quic-native-proof", "quic-native-race"} {
+		plan, err := buildCollectionPlan(target, manifest, registry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantMode, wantCount := "normal", 7
+		if target == "quic-native-race" {
+			wantMode, wantCount = "race", 4
+		}
+		if len(plan.Missing) != 0 || len(plan.Jobs) != 1 || plan.Jobs[0].CaseOwner != target ||
+			plan.Jobs[0].CaseMode != wantMode || !plan.Jobs[0].NeedsBPF || len(plan.Jobs[0].CaseIDs) != wantCount {
+			t.Fatalf("%s plan does not bind its exact BPF producer: %+v", target, plan)
 		}
 	}
-	if caseJob == nil || caseJob.RunnerTarget != "release-case-suite" || caseJob.CaseMode != "normal" || len(caseJob.CaseIDs) != 6 {
-		t.Fatalf("all plan does not contain the registered conformance-smoke producer: %+v", caseJob)
+}
+
+func TestCollectionPlanBindsCleanRevisionVariantsToIndependentSources(t *testing.T) {
+	jobs, missing := supportedPerformanceJobs(loadFixtureManifest(t))
+	if slices.Contains(missing, "cell clean-01 (direct_wss_revision)") {
+		t.Fatal("clean-01 still lacks a producer")
+	}
+	want := map[string]struct {
+		variant  string
+		revision string
+	}{
+		"clean-01-base":      {variant: "base", revision: collectionRevisionBase},
+		"clean-01-candidate": {variant: "candidate", revision: collectionRevisionFinal},
+	}
+	for _, job := range jobs {
+		expected, ok := want[job.ID]
+		if !ok {
+			continue
+		}
+		if job.VariantID != expected.variant || job.SourceRevision != expected.revision ||
+			job.RunnerTarget != "direct-clean-baseline" || !slices.Equal(job.CellIDs, []string{"clean-01"}) {
+			t.Fatalf("job %s = %+v", job.ID, job)
+		}
+		delete(want, job.ID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing clean-01 jobs: %v", want)
+	}
+}
+
+func TestFrozenCollectionLaneScheduleMatchesSixLane475MinuteContract(t *testing.T) {
+	manifest := loadFixtureManifest(t)
+	jobs := make([]collectionJob, 0, len(manifest.Cells))
+	for _, cell := range manifest.Cells {
+		if slices.Contains([]string{"clean-01", "clean-02", "clean-03"}, cell.ID) {
+			continue
+		}
+		jobs = append(jobs, collectionJob{ID: cell.ID, CellIDs: []string{cell.ID}})
+	}
+	jobs = append(jobs,
+		collectionJob{ID: "clean-01-base", CellIDs: []string{"clean-01"}},
+		collectionJob{ID: "clean-01-candidate", CellIDs: []string{"clean-01"}},
+		collectionJob{ID: "clean-direct-baseline", CellIDs: []string{"clean-02", "clean-03"}},
+	)
+	schedule, err := scheduleCollectionJobs(manifest, jobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := schedule.loads, []int{405, 405, 410, 415, 415, 415}; !slices.Equal(got, want) {
+		t.Fatalf("lane loads = %v, want %v", got, want)
+	}
+	if schedule.loads[len(schedule.loads)-1]+manifest.GlobalSetupMinutes != manifest.GlobalWatchdogMinutes {
+		t.Fatalf("schedule does not consume the exact frozen watchdog: loads=%v setup=%d watchdog=%d", schedule.loads, manifest.GlobalSetupMinutes, manifest.GlobalWatchdogMinutes)
+	}
+	cleanLanes := map[string]int{}
+	for lane, scheduledJobs := range schedule.lanes {
+		for _, scheduled := range scheduledJobs {
+			if scheduled.job.ID == "clean-01-base" || scheduled.job.ID == "clean-01-candidate" {
+				cleanLanes[scheduled.job.ID] = lane
+			}
+		}
+	}
+	if cleanLanes["clean-01-base"] != cleanLanes["clean-01-candidate"] {
+		t.Fatalf("clean revision variants may collide across lanes: %v", cleanLanes)
+	}
+}
+
+func TestOnlyCleanRevisionBaseJobCanSelectBaseExecution(t *testing.T) {
+	request := collectRequest{
+		ManifestPath: "/final/manifest", BaseManifestPath: "/base/manifest",
+		RepositoryPath: "/final", BaseRepositoryPath: "/base",
+		FinalSHA: collectTestFinalSHA, BaseSHA: collectTestBaseSHA,
+		RunnerExecutable: "/final/runner", BaseRunnerExecutable: "/base/runner",
+	}
+	baseJob := collectionJob{ID: "clean-01-base", CellIDs: []string{"clean-01"}, RunnerTarget: "direct-clean-baseline", VariantID: "base", SourceRevision: collectionRevisionBase}
+	execution, err := executionForCollectionJob(request, baseJob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.executable != request.BaseRunnerExecutable || execution.repository != request.BaseRepositoryPath || execution.sourceSHA != request.BaseSHA {
+		t.Fatalf("base execution = %+v", execution)
+	}
+	for _, mutation := range []collectionJob{
+		{ID: "other", CellIDs: baseJob.CellIDs, RunnerTarget: baseJob.RunnerTarget, VariantID: baseJob.VariantID, SourceRevision: collectionRevisionBase},
+		{ID: baseJob.ID, CellIDs: baseJob.CellIDs, RunnerTarget: baseJob.RunnerTarget, VariantID: "candidate", SourceRevision: collectionRevisionBase},
+		{ID: baseJob.ID, CellIDs: []string{"clean-02"}, RunnerTarget: baseJob.RunnerTarget, VariantID: baseJob.VariantID, SourceRevision: collectionRevisionBase},
+	} {
+		if _, err := executionForCollectionJob(request, mutation); err == nil {
+			t.Fatalf("accepted invalid base execution job: %+v", mutation)
+		}
 	}
 }
 
@@ -148,6 +285,153 @@ func TestRunCollectionJobsUsesRealExecutableAndEmptyPerCellArtifactDirectories(t
 	}
 }
 
+func TestRunCollectionJobsUsesParallelLanesAndStableRecordOrder(t *testing.T) {
+	root := canonicalCollectTestRoot(t)
+	runner := filepath.Join(root, "parallel-runner.sh")
+	script := `#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --report) report=$2; shift 2 ;;
+    --artifact-dir) artifacts=$2; shift 2 ;;
+    --source-sha) source_sha=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+job_dir=$(dirname "$report")
+jobs_root=$(dirname "$job_dir")
+touch "$job_dir.started"
+attempt=0
+while [ "$(find "$jobs_root" -maxdepth 1 -name '*.started' | wc -l | tr -d ' ')" -lt 2 ]; do
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 200 ] || exit 41
+  sleep 0.01
+done
+mkdir "$artifacts/run-1"
+printf packet >"$artifacts/run-1/traffic.pcap"
+printf '{"schema_version":1,"classification":"raw_parallel","source_sha":"%s","manifest_digest":"sha256:parallel"}\n' "$source_sha" >"$report"
+`
+	if err := os.WriteFile(runner, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	staging := filepath.Join(root, "staging")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := &PerformanceManifest{Digest: "sha256:parallel", EligibleLaneCount: 2, Cells: []PerformanceCell{
+		{ID: "short", DurationMinutes: 1}, {ID: "long", DurationMinutes: 2},
+	}}
+	request := collectRequest{ManifestPath: filepath.Join(root, "manifest.json"), RepositoryPath: root, FinalSHA: collectTestFinalSHA, RunnerExecutable: runner}
+	jobs := []collectionJob{
+		{ID: "short", CellIDs: []string{"short"}, RunnerTarget: "direct-clean-baseline"},
+		{ID: "long", CellIDs: []string{"long"}, RunnerTarget: "direct-clean-baseline"},
+	}
+	records, err := runCollectionJobs(context.Background(), request, manifest, nil, jobs, staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].ID != "short" || records[1].ID != "long" || records[0].Lane.Index == records[1].Lane.Index {
+		t.Fatalf("parallel records lost input order or lane identity: %+v", records)
+	}
+}
+
+func TestRunCollectionJobsCancelsSiblingLaneOnFailure(t *testing.T) {
+	root := canonicalCollectTestRoot(t)
+	runner := filepath.Join(root, "cancel-runner.sh")
+	script := `#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --report) report=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$report" in
+  */fail/*) exit 42 ;;
+  *) exec sleep 30 ;;
+esac
+`
+	if err := os.WriteFile(runner, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	staging := filepath.Join(root, "staging")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := &PerformanceManifest{Digest: "sha256:cancel", EligibleLaneCount: 2, Cells: []PerformanceCell{
+		{ID: "fail", DurationMinutes: 1}, {ID: "wait", DurationMinutes: 1},
+	}}
+	request := collectRequest{ManifestPath: filepath.Join(root, "manifest.json"), RepositoryPath: root, FinalSHA: collectTestFinalSHA, RunnerExecutable: runner}
+	started := time.Now()
+	_, err := runCollectionJobs(context.Background(), request, manifest, nil, []collectionJob{
+		{ID: "fail", CellIDs: []string{"fail"}, RunnerTarget: "direct-clean-baseline"},
+		{ID: "wait", CellIDs: []string{"wait"}, RunnerTarget: "direct-clean-baseline"},
+	}, staging)
+	if err == nil || time.Since(started) > 3*time.Second {
+		t.Fatalf("sibling lane cancellation error=%v elapsed=%s", err, time.Since(started))
+	}
+}
+
+func TestRunCollectionJobsUsesIndependentBaseAndCandidateBindings(t *testing.T) {
+	root := canonicalCollectTestRoot(t)
+	baseRoot := filepath.Join(root, "base")
+	finalRoot := filepath.Join(root, "final")
+	for _, directory := range []string{baseRoot, finalRoot} {
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	baseRunner := writeFakeCollectRunner(t, baseRoot, false)
+	finalRunner := writeFakeCollectRunner(t, finalRoot, false)
+	manifest := &PerformanceManifest{Digest: "sha256:collect-test-manifest"}
+	t.Setenv("FAKE_MANIFEST_DIGEST", manifest.Digest)
+	request := collectRequest{
+		ManifestPath: filepath.Join(finalRoot, "manifest.json"), BaseManifestPath: filepath.Join(baseRoot, "manifest.json"),
+		RepositoryPath: finalRoot, BaseRepositoryPath: baseRoot, FinalSHA: collectTestFinalSHA, BaseSHA: collectTestBaseSHA,
+		RunnerExecutable: finalRunner, BaseRunnerExecutable: baseRunner,
+	}
+	staging := filepath.Join(root, "staging")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jobs := []collectionJob{
+		{ID: "clean-01-base", CellIDs: []string{"clean-01"}, RunnerTarget: "direct-clean-baseline", VariantID: "base", SourceRevision: collectionRevisionBase},
+		{ID: "clean-01-candidate", CellIDs: []string{"clean-01"}, RunnerTarget: "direct-clean-baseline", VariantID: "candidate", SourceRevision: collectionRevisionFinal},
+	}
+	records, err := runCollectionJobs(context.Background(), request, manifest, nil, jobs, staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, expected := range []struct {
+		runner, repository, sourceSHA, variant string
+	}{{baseRunner, baseRoot, collectTestBaseSHA, "base"}, {finalRunner, finalRoot, collectTestFinalSHA, "candidate"}} {
+		record := records[index]
+		if record.SourceSHA != expected.sourceSHA || record.VariantID != expected.variant || len(record.CommandSHA256) != 64 || len(record.RunnerExecutableSHA256) != 64 {
+			t.Fatalf("record %d = %+v", index, record)
+		}
+		commandPath := filepath.Join(staging, record.Directory, "command.json")
+		data, err := os.ReadFile(commandPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(data)
+		if record.CommandSHA256 != hex.EncodeToString(digest[:]) {
+			t.Fatalf("record %d command digest does not bind command.json", index)
+		}
+		var command struct {
+			Executable string   `json:"executable"`
+			Args       []string `json:"args"`
+		}
+		if err := json.Unmarshal(data, &command); err != nil {
+			t.Fatal(err)
+		}
+		if command.Executable != expected.runner || !argumentHasPair(command.Args, "--source-root", expected.repository) ||
+			!argumentHasPair(command.Args, "--source-sha", expected.sourceSHA) {
+			t.Fatalf("record %d command = %+v", index, command)
+		}
+	}
+}
+
 func TestValidateRawCaseSuiteReportBindsExactRegistryAndArtifacts(t *testing.T) {
 	reportPath, artifactDirectory, manifest, registry, job := writeRawCaseSuiteFixture(t)
 	caseIDs, err := validateRawCaseSuiteReport(reportPath, artifactDirectory, collectTestFinalSHA, manifest.Digest, strings.Repeat("1", 64), job, registry)
@@ -156,6 +440,161 @@ func TestValidateRawCaseSuiteReportBindsExactRegistryAndArtifacts(t *testing.T) 
 	}
 	if !slices.Equal(caseIDs, job.CaseIDs) {
 		t.Fatalf("validated case IDs = %v, want %v", caseIDs, job.CaseIDs)
+	}
+}
+
+func TestValidateRawCaseArtifactsAcceptsMultipleImmutableSourcesAndRejectsAttributionTampering(t *testing.T) {
+	newFixture := func(t *testing.T) (string, string, rawCaseSuiteResult, PacketAttributionArtifact) {
+		t.Helper()
+		root := canonicalCollectTestRoot(t)
+		artifactDirectory := filepath.Join(root, "artifacts")
+		caseID := "CAP-DIRECT-QUIC-1000"
+		caseDirectory := filepath.Join(artifactDirectory, strings.ToLower(caseID))
+		rawDirectory := filepath.Join(caseDirectory, "raw")
+		if err := os.MkdirAll(rawDirectory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		result := rawCaseSuiteResult{ID: caseID, Profile: "capacity-direct-quic-1000", Status: "pass", CompletedOperations: 1000, ElapsedNanoseconds: 1}
+		attribution := PacketAttributionArtifact{SchemaVersion: 1, Kind: "transport_qlog_attribution", Context: "case " + caseID}
+		reference := time.Date(2026, 7, 25, 1, 2, 3, 0, time.UTC)
+		for index, groupID := range []string{"0102030405060708", "1112131415161718"} {
+			id := fmt.Sprintf("qlog-%03d", index+1)
+			data := encodeRawQLOGSequence(reference, groupID, nil, []map[string]any{{
+				"time": float64(index + 1), "name": "transport:packet_sent", "data": map[string]any{
+					"header": map[string]any{"packet_type": "1RTT", "packet_number": index + 1},
+					"frames": []any{map[string]any{"frame_type": "ping"}},
+				},
+			}})
+			path := filepath.Join(rawDirectory, id+".sqlog")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(data)
+			result.RawSources = append(result.RawSources, rawProducedSource{
+				ID: id, Kind: "qlog", Path: filepath.ToSlash(filepath.Join("artifacts", strings.ToLower(caseID), "raw", id+".sqlog")),
+				SHA256: hex.EncodeToString(digest[:]), SizeBytes: int64(len(data)),
+			})
+			events, err := parseQLOGSequenceSource(data, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			event := events[0]
+			packetNumber := uint64(index + 1)
+			attribution.Records = append(attribution.Records, PacketAttributionRecord{
+				Sequence: uint64(index + 1), SourceID: id, SourceSHA256: hex.EncodeToString(digest[:]), ByteOffset: event.recordOffset,
+				ByteLength: event.recordLength, UnixNanoseconds: event.at.UnixNano(), Event: event.name, ConnectionGroupID: groupID,
+				PacketNumberSpace: "1RTT", PacketNumber: &packetNumber,
+			})
+		}
+		netlog := []byte(`{"constants":{},"events":[{"time":"1","type":1}]}` + "\n")
+		netlogPath := filepath.Join(rawDirectory, "netlog-001.json")
+		if err := os.WriteFile(netlogPath, netlog, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		netlogDigest := sha256.Sum256(netlog)
+		result.RawSources = append(result.RawSources, rawProducedSource{
+			ID: "netlog-001", Kind: "netlog", Path: filepath.ToSlash(filepath.Join("artifacts", strings.ToLower(caseID), "raw", "netlog-001.json")),
+			SHA256: hex.EncodeToString(netlogDigest[:]), SizeBytes: int64(len(netlog)),
+		})
+		data, err := json.Marshal(attribution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = append(data, '\n')
+		path := filepath.Join(caseDirectory, "qlog.json")
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(data)
+		result.Artifacts = []rawProducedArtifact{{
+			Kind: "qlog", Path: filepath.ToSlash(filepath.Join("artifacts", strings.ToLower(caseID), "qlog.json")),
+			SHA256: hex.EncodeToString(digest[:]), SizeBytes: int64(len(data)),
+		}}
+		return root, artifactDirectory, result, attribution
+	}
+	rewriteAttribution := func(t *testing.T, root string, result *rawCaseSuiteResult, attribution PacketAttributionArtifact) {
+		t.Helper()
+		data, err := json.Marshal(attribution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = append(data, '\n')
+		path := filepath.Join(root, filepath.FromSlash(result.Artifacts[0].Path))
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(data)
+		result.Artifacts[0].SHA256 = hex.EncodeToString(digest[:])
+		result.Artifacts[0].SizeBytes = int64(len(data))
+	}
+
+	root, artifactDirectory, result, _ := newFixture(t)
+	if err := validateRawCaseArtifacts(root, artifactDirectory, "normal", result, []string{"qlog"}); err != nil {
+		t.Fatalf("valid multi-source attribution: %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*rawCaseSuiteResult, *PacketAttributionArtifact)
+	}{
+		{name: "source ID", mutate: func(_ *rawCaseSuiteResult, artifact *PacketAttributionArtifact) {
+			artifact.Records[0].SourceID = "qlog-002"
+		}},
+		{name: "source digest", mutate: func(_ *rawCaseSuiteResult, artifact *PacketAttributionArtifact) {
+			artifact.Records[0].SourceSHA256 = strings.Repeat("0", 64)
+		}},
+		{name: "byte offset", mutate: func(_ *rawCaseSuiteResult, artifact *PacketAttributionArtifact) { artifact.Records[0].ByteOffset++ }},
+		{name: "timestamp", mutate: func(_ *rawCaseSuiteResult, artifact *PacketAttributionArtifact) {
+			artifact.Records[0].UnixNanoseconds++
+		}},
+		{name: "connection", mutate: func(_ *rawCaseSuiteResult, artifact *PacketAttributionArtifact) {
+			artifact.Records[0].ConnectionGroupID = "ffffffffffffffff"
+		}},
+		{name: "packet number", mutate: func(_ *rawCaseSuiteResult, artifact *PacketAttributionArtifact) { *artifact.Records[0].PacketNumber++ }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root, artifactDirectory, result, attribution := newFixture(t)
+			test.mutate(&result, &attribution)
+			rewriteAttribution(t, root, &result, attribution)
+			if err := validateRawCaseArtifacts(root, artifactDirectory, "normal", result, []string{"qlog"}); err == nil {
+				t.Fatal("tampered attribution passed validation")
+			}
+		})
+	}
+}
+
+func TestValidateAttributedQLOGStreamOpenedRequiresFirstRawStreamFrame(t *testing.T) {
+	reference := time.Date(2026, 7, 25, 1, 2, 3, 0, time.UTC)
+	data := encodeRawQLOGSequence(reference, "0102030405060708", nil, []map[string]any{
+		{"time": 1.0, "name": "transport:packet_received", "data": map[string]any{
+			"header": map[string]any{"packet_type": "1RTT", "packet_number": 1},
+			"frames": []any{map[string]any{"frame_type": "stream", "stream_id": 12}},
+		}},
+		{"time": 2.0, "name": "transport:packet_received", "data": map[string]any{
+			"header": map[string]any{"packet_type": "1RTT", "packet_number": 2},
+			"frames": []any{map[string]any{"frame_type": "stream", "stream_id": 12}},
+		}},
+	})
+	events, err := parseQLOGSequenceSource(data, "qlog-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	source := validatedRawSource{id: "qlog-001", kind: "qlog", digest: hex.EncodeToString(digest[:]), data: data}
+	streamID := uint64(12)
+	packetNumber := uint64(1)
+	record := PacketAttributionRecord{
+		Sequence: 1, SourceID: source.id, SourceSHA256: source.digest,
+		ByteOffset: events[0].recordOffset, ByteLength: events[0].recordLength, UnixNanoseconds: events[0].at.UnixNano(),
+		Event: "transport:stream_opened", ConnectionGroupID: events[0].groupID,
+		PacketNumberSpace: "1RTT", PacketNumber: &packetNumber, NativeStreamID: &streamID,
+	}
+	if err := validateAttributedQLOGRecord(source, record); err != nil {
+		t.Fatal(err)
+	}
+	packetNumber = 2
+	record.ByteOffset, record.ByteLength, record.UnixNanoseconds = events[1].recordOffset, events[1].recordLength, events[1].at.UnixNano()
+	if err := validateAttributedQLOGRecord(source, record); err == nil {
+		t.Fatal("retransmitted STREAM frame was accepted as STREAM_OPENED")
 	}
 }
 
@@ -245,6 +684,7 @@ func TestExecuteCollectionPublishesIndexAfterStableJobArtifacts(t *testing.T) {
 	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "test inputs"}} {
 		runGitTestCommand(t, repository, args...)
 	}
+	sourceSHA := gitTestOutput(t, repository, "rev-parse", "HEAD")
 	reportPath := filepath.Join(artifactDirectory, "report.unsigned.json")
 	manifest := &PerformanceManifest{Digest: "sha256:collect-test-manifest"}
 	t.Setenv("FAKE_FINAL_SHA", collectTestFinalSHA)
@@ -259,16 +699,18 @@ func TestExecuteCollectionPublishesIndexAfterStableJobArtifacts(t *testing.T) {
 	}
 	environment := &collectEnvironment{
 		request: collectRequest{
-			ManifestPath: regularInput, RegistryPath: regularInput, RepositoryPath: repository,
-			FinalSHA: collectTestFinalSHA, RunnerExecutable: runner,
+			ManifestPath: regularInput, BaseManifestPath: regularInput, RegistryPath: regularInput,
+			RepositoryPath: repository, BaseRepositoryPath: repository,
+			BaseSHA: sourceSHA, FinalSHA: sourceSHA,
+			RunnerExecutable: runner, BaseRunnerExecutable: runner,
 			RunnerWrapper: runner, BPFObject: regularInput, HostBPFTool: runner,
 			TrustPolicyPath: regularInput, EffectiveConfigPath: regularInput,
 			ArtifactDirectory: artifactDirectory, ReportPath: reportPath,
 		},
 		manifest: manifest,
 		inputDigests: map[string]string{
-			"manifest": regularDigest, "registry": regularDigest,
-			"runner_executable": executableDigest, "runner_wrapper": executableDigest,
+			"manifest": regularDigest, "base_manifest": regularDigest, "registry": regularDigest,
+			"runner_executable": executableDigest, "base_runner_executable": executableDigest, "runner_wrapper": executableDigest,
 			"bpf_object": regularDigest, "host_bpftool": executableDigest,
 			"trust_policy": regularDigest, "effective_config": regularDigest,
 		},
@@ -357,6 +799,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --report) report=$2; shift 2 ;;
     --artifact-dir) artifacts=$2; shift 2 ;;
+    --source-sha) source_sha=$2; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -365,7 +808,7 @@ test -d "$artifacts"
 test -z "$(find "$artifacts" -mindepth 1 -maxdepth 1 -print -quit)"
 mkdir "$artifacts/run-1"
 printf 'real packet bytes' >"$artifacts/run-1/traffic.pcap"
-printf '{"schema_version":1,"classification":"raw_fake_runner_output","source_sha":"%s","manifest_digest":"%s"}\n' "$FAKE_FINAL_SHA" "$FAKE_MANIFEST_DIGEST" >"$report"
+printf '{"schema_version":1,"classification":"raw_fake_runner_output","source_sha":"%s","manifest_digest":"%s"}\n' "$source_sha" "$FAKE_MANIFEST_DIGEST" >"$report"
 printf 'fake runner stdout\n'
 printf 'fake runner stderr\n' >&2
 exit ` + exit + "\n"

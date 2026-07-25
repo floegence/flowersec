@@ -36,6 +36,9 @@ func (packet packetObservation) destinationEndpoint() netip.AddrPort {
 }
 
 func validatePCAPEvidence(context string, data []byte) error {
+	if strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ") == "CAP-SOAK-HOURLY" {
+		return validateSoakAttributionEnvelope(context, "transport_pcap_attribution", data)
+	}
 	packets, err := parseClassicPCAP(data)
 	if err != nil || len(packets) == 0 {
 		return errors.New("capture must be classic pcap with parseable raw-IP or Ethernet packets")
@@ -114,29 +117,16 @@ func validateCorrelatedPathTransition(qlogData, pcapData []byte, connectionID st
 	if err != nil {
 		return err
 	}
-	var document struct {
-		Traces []struct {
-			Events []json.RawMessage `json:"events"`
-		} `json:"traces"`
-	}
-	if err := decodeSingleJSON(qlogData, &document); err != nil || len(document.Traces) != 1 {
+	events, err := normalizedMigrationQLOGEvents(qlogData)
+	if err != nil {
 		return errors.New("path transition qlog is invalid")
 	}
 	matched := 0
 	updated := false
 	validated := false
 	rpcAfterValidation := false
-	for _, raw := range document.Traces[0].Events {
-		var fields []json.RawMessage
-		if json.Unmarshal(raw, &fields) != nil || len(fields) != 4 {
-			continue
-		}
-		var category, name string
-		var data map[string]any
-		if json.Unmarshal(fields[1], &category) != nil || json.Unmarshal(fields[2], &name) != nil || json.Unmarshal(fields[3], &data) != nil {
-			continue
-		}
-		qualified := category + ":" + name
+	for _, event := range events {
+		qualified, data := event.name, event.data
 		if qualified == "connectivity:path_validated" && fmt.Sprint(data["connection_id"]) == connectionID {
 			validatedLocal, localErr := netip.ParseAddrPort(fmt.Sprint(data["new_path"]))
 			validatedRemote, remoteErr := netip.ParseAddrPort(fmt.Sprint(data["remote_path"]))

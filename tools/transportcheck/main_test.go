@@ -96,6 +96,9 @@ func TestCheckedInEvidenceTrustPolicyPinsExactRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if policy.KeyID != "flowersec-release-linux-2026-01" || policy.PublicKeySHA256 != "56741b08f82a292b0fa9158a23c1f728111dfb6baa83ba605d3a20f3512e1afb" {
+		t.Fatalf("checked-in signer policy = %s/%s, want the reviewed production signer", policy.KeyID, policy.PublicKeySHA256)
+	}
 	if policy.Runner.KernelRelease != signedRunnerKernelRelease || policy.Runner.EffectiveConfigSHA256 != signedRunnerConfigDigest {
 		t.Fatalf("checked-in runner policy = %+v, want exact audited kernel/config", policy.Runner)
 	}
@@ -661,6 +664,70 @@ func TestEvidenceAcceptsCompleteSyntheticUnitEvidence(t *testing.T) {
 	}
 }
 
+func TestNativeTypedQLOGAttributionBindsExactRawSource(t *testing.T) {
+	tests := []struct {
+		name       string
+		mutate     func(*testing.T, *EvidenceReport, *CaseEvidence)
+		wantStatus checkStatus
+		wantIssue  string
+	}{
+		{name: "valid", wantStatus: statusPass},
+		{
+			name: "tampered source", wantStatus: statusFail, wantIssue: "does not bind an indexed raw source",
+			mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
+				source := &evidence.RawSources[0]
+				data, err := os.ReadFile(filepath.Join(report.baseDir, source.Artifact.Path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				data = append(data, '\n')
+				source.Artifact = rewriteEvidenceArtifact(t, report.baseDir, source.Artifact, data)
+			},
+		},
+		{
+			name: "wrong source ID", wantStatus: statusFail, wantIssue: "does not bind an indexed raw source",
+			mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
+				ref := evidence.Evidence["qlog"]
+				data, err := os.ReadFile(filepath.Join(report.baseDir, ref.Path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var attribution PacketAttributionArtifact
+				if err := decodeStrictJSON(data, &attribution); err != nil {
+					t.Fatal(err)
+				}
+				attribution.Records[0].SourceID = "qlog-002"
+				data, err = json.Marshal(attribution)
+				if err != nil {
+					t.Fatal(err)
+				}
+				evidence.Evidence["qlog"] = rewriteEvidenceArtifact(t, report.baseDir, ref, data)
+				updateFixtureCaseConfig(t, report.baseDir, evidence, map[string]string{"qlog_sha256": evidence.Evidence["qlog"].SHA256})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := loadFixtureManifest(t)
+			registry := loadFixtureRegistry(t)
+			report := completeReport(t, manifest, registry)
+			evidence := caseEvidenceByID(t, report, "NS-N2")
+			bindFixtureNativeTypedQLOG(t, report.baseDir, "case NS-N2", evidence)
+			if test.mutate != nil {
+				test.mutate(t, report, evidence)
+			}
+			result := checkEvidence(manifest, registry, report, report.baseDir)
+			if test.wantStatus == statusPass {
+				if result.Status != statusPass || len(result.Issues) != 0 {
+					t.Fatalf("result = %#v, want pass", result)
+				}
+				return
+			}
+			assertResult(t, result, test.wantStatus, test.wantIssue)
+		})
+	}
+}
+
 func TestPhaseFaultMetricUnitsAreSemantic(t *testing.T) {
 	if got := phaseFaultMetricUnit("fault_outage_duration_ns"); got != "nanoseconds" {
 		t.Fatalf("phaseFaultMetricUnit(fault_outage_duration_ns) = %q, want nanoseconds", got)
@@ -847,8 +914,8 @@ func TestEvidenceRejectsArtifactReuseAcrossContexts(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
 	report := completeReport(t, manifest, registry)
-	first := report.Cells[0].Runs[0].Phases[0].Artifacts["pcap"]
-	report.Cells[0].Runs[0].Phases[1].Artifacts["pcap"] = first
+	first := report.Cells[0].Runs[0].Phases[0].Artifacts["pcap_attribution"]
+	report.Cells[0].Runs[0].Phases[1].Artifacts["pcap_attribution"] = first
 	result := checkEvidence(manifest, registry, report, report.baseDir)
 	assertResult(t, result, statusFail, "reuses artifact path across report")
 }
@@ -859,14 +926,14 @@ func TestEvidenceRejectsArtifactDigestReuseAcrossContexts(t *testing.T) {
 	report := completeReport(t, manifest, registry)
 	cell := &report.Cells[0]
 	run := &cell.Runs[0]
-	first := run.Phases[0].Artifacts["pcap"]
+	first := run.Phases[0].Artifacts["pcap_attribution"]
 	data, err := os.ReadFile(filepath.Join(report.baseDir, first.Path))
 	if err != nil {
 		t.Fatal(err)
 	}
 	second := &run.Phases[1]
 	context := fmt.Sprintf("cell %s run %d phase %s/%s", cell.CellID, run.RunNumber, second.ProfileID, second.Phase)
-	second.Artifacts["pcap"] = writeEvidenceArtifact(t, report.baseDir, context, "pcap", ".pcap", data)
+	second.Artifacts["pcap_attribution"] = writeEvidenceArtifact(t, report.baseDir, context, "pcap_attribution", ".json", data)
 
 	result := checkEvidence(manifest, registry, report, report.baseDir)
 	assertResult(t, result, statusFail, "reuses artifact digest across report")
@@ -1435,8 +1502,19 @@ func TestSoakEvidenceRejectsEveryFrozenContractDrift(t *testing.T) {
 		{name: "cycle metric", mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
 			rewriteCaseMetricCounter(t, report, evidence, "fault_cycle_count", float64(signedSoakContract.FaultCycleCount-1))
 		}},
-		{name: "trace schedule", mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
-			rewriteCaseTrace(t, report, evidence, func(trace *TraceArtifact) { trace.Records[1].AtNS++ })
+		{name: "cycle timestamp outside measured window", mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
+			at := signedSoakContract.FaultCyclePeriodNS - 1
+			rewriteCaseTrace(t, report, evidence, func(trace *TraceArtifact) { trace.Records[1].AtNS = at })
+			rewriteCaseResource(t, report, evidence, func(resource *ResourceArtifact) { resource.Records[1].AtNS = at })
+			rewriteCaseConfigValue(t, report, evidence, "trace_sha256", evidence.Evidence["trace"].SHA256)
+			rewriteOrAddCaseConfigValue(t, report, evidence, "resource_sha256", evidence.Evidence["resource"].SHA256)
+		}},
+		{name: "completion timestamp outside measured window", mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
+			at := signedSoakContract.DurationNS + (5 * time.Second).Nanoseconds() + 1
+			rewriteCaseTrace(t, report, evidence, func(trace *TraceArtifact) { trace.Records[len(trace.Records)-1].AtNS = at })
+			rewriteCaseResource(t, report, evidence, func(resource *ResourceArtifact) { resource.Records[len(resource.Records)-1].AtNS = at })
+			rewriteCaseConfigValue(t, report, evidence, "trace_sha256", evidence.Evidence["trace"].SHA256)
+			rewriteOrAddCaseConfigValue(t, report, evidence, "resource_sha256", evidence.Evidence["resource"].SHA256)
 		}},
 		{name: "resource slope", mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
 			rewriteCaseResource(t, report, evidence, func(resource *ResourceArtifact) {
@@ -1462,7 +1540,9 @@ func TestSoakEvidenceRejectsEveryFrozenContractDrift(t *testing.T) {
 			rewriteCaseResource(t, report, evidence, func(resource *ResourceArtifact) { resource.Records[1].ResidualTasks = intPointer(1) })
 		}},
 		{name: "resource residual attestation missing", mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
-			rewriteCaseResource(t, report, evidence, func(resource *ResourceArtifact) { resource.Records[1].ResidualTasks = nil })
+			rewriteCaseResource(t, report, evidence, func(resource *ResourceArtifact) {
+				resource.Records[len(resource.Records)-1].ResidualTasks = nil
+			})
 		}},
 	}
 	for _, test := range tests {
@@ -1474,6 +1554,25 @@ func TestSoakEvidenceRejectsEveryFrozenContractDrift(t *testing.T) {
 			test.mutate(t, report, evidence)
 			assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "soak")
 		})
+	}
+}
+
+func TestSoakEvidenceAcceptsIndependentMeasuredTraceAndResourceTimestamps(t *testing.T) {
+	manifest := loadFixtureManifest(t)
+	registry := loadFixtureRegistry(t)
+	report := completeReport(t, manifest, registry)
+	evidence := caseEvidenceByID(t, report, "CAP-SOAK-HOURLY")
+	rewriteCaseTrace(t, report, evidence, func(trace *TraceArtifact) {
+		trace.Records[1].AtNS += time.Millisecond.Nanoseconds()
+	})
+	rewriteCaseResource(t, report, evidence, func(resource *ResourceArtifact) {
+		resource.Records[1].AtNS += 2 * time.Millisecond.Nanoseconds()
+	})
+	rewriteCaseConfigValue(t, report, evidence, "trace_sha256", evidence.Evidence["trace"].SHA256)
+	rewriteOrAddCaseConfigValue(t, report, evidence, "resource_sha256", evidence.Evidence["resource"].SHA256)
+	result := checkEvidence(manifest, registry, report, report.baseDir)
+	if result.Status != statusPass || len(result.Issues) != 0 {
+		t.Fatalf("result = %#v, want pass", result)
 	}
 }
 
@@ -1494,6 +1593,12 @@ func TestCapacityEvidenceRejectsCounterAndTraceDrift(t *testing.T) {
 		}},
 		{name: "hold disconnect", wantIssue: "capacity counters", mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
 			rewriteCaseMetricCounter(t, report, evidence, "hold_disconnects", 1)
+		}},
+		{name: "missing liveness sweep", wantIssue: "capacity counters", mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
+			rewriteCaseMetricCounter(t, report, evidence, "liveness_sweeps", 3)
+		}},
+		{name: "liveness failure", wantIssue: "capacity counters", mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
+			rewriteCaseMetricCounter(t, report, evidence, "liveness_failures", 1)
 		}},
 		{name: "watchdog", wantIssue: "capacity counters", mutate: func(t *testing.T, report *EvidenceReport, evidence *CaseEvidence) {
 			rewriteCaseMetricCounter(t, report, evidence, "watchdog_timeouts", 1)
@@ -1539,7 +1644,7 @@ func TestCapacityResourceTimelineRejectsEveryLimitAndPhaseDrift(t *testing.T) {
 			records := append([]ResourceRecord(nil), valid...)
 			test.mutate(&records)
 			artifact := ResourceArtifact{Records: records}
-			if err := validateCapacityResourceTimeline(artifact, contract, times); err == nil {
+			if err := validateCapacityResourceTimeline(artifact, contract, times, false); err == nil {
 				t.Fatal("validateCapacityResourceTimeline() succeeded for drifted evidence")
 			}
 		})
@@ -1813,12 +1918,12 @@ func TestEvidenceRejectsArtifactImpersonationAndTampering(t *testing.T) {
 		{
 			name: "empty pcap header impersonates capture",
 			mutate: func(report *EvidenceReport) {
-				phase := &report.Cells[0].Runs[0].Phases[0]
+				run := &report.Cells[0].Runs[0]
 				emptyCapture := make([]byte, 24)
 				copy(emptyCapture, []byte{0xa1, 0xb2, 0xc3, 0xd4, 0, 2, 0, 4})
-				phase.Artifacts["pcap"] = rewriteEvidenceArtifact(t, report.baseDir, phase.Artifacts["pcap"], emptyCapture)
+				run.RawSources[0].Artifact = rewriteEvidenceArtifact(t, report.baseDir, run.RawSources[0].Artifact, emptyCapture)
 			},
-			wantIssue: "no valid pcap/pcapng header and non-empty packet record",
+			wantIssue: "not a valid non-empty pcap",
 		},
 		{
 			name: "reported confidence interval differs",
@@ -2484,10 +2589,11 @@ func TestEvidenceRejectsIncompleteOrInvalidPerformanceEvidence(t *testing.T) {
 		{
 			name: "missing pcap",
 			mutate: func(report *EvidenceReport) {
-				delete(report.Cells[0].Runs[0].Phases[0].Artifacts, "pcap")
+				run := &report.Cells[0].Runs[0]
+				run.RawSources = slices.DeleteFunc(run.RawSources, func(source RawEvidenceSource) bool { return source.Kind == "pcap" })
 			},
-			wantStatus: statusInconclusive,
-			wantIssue:  "pcap artifact",
+			wantStatus: statusFail,
+			wantIssue:  "indexed raw source",
 		},
 		{
 			name: "missing config",
@@ -2529,10 +2635,10 @@ func TestEvidenceRequiresQlogOnlyForQUICFamilyTopologies(t *testing.T) {
 		wantIssue  string
 	}{
 		{name: "WSS only", cellID: "edge-01", wantStatus: statusPass},
-		{name: "QUIC only", cellID: "edge-02", wantStatus: statusInconclusive, wantIssue: "qlog artifact"},
-		{name: "mixed WSS QUIC", cellID: "edge-05", wantStatus: statusInconclusive, wantIssue: "qlog artifact"},
-		{name: "browser WebTransport", cellID: "clean-08", wantStatus: statusInconclusive, wantIssue: "qlog artifact"},
-		{name: "adaptive", cellID: "adaptive-selection-01", wantStatus: statusInconclusive, wantIssue: "qlog artifact"},
+		{name: "QUIC only", cellID: "edge-02", wantStatus: statusFail, wantIssue: "indexed raw source"},
+		{name: "mixed WSS QUIC", cellID: "edge-05", wantStatus: statusFail, wantIssue: "indexed raw source"},
+		{name: "browser WebTransport", cellID: "clean-08", wantStatus: statusFail, wantIssue: "indexed raw source"},
+		{name: "adaptive", cellID: "adaptive-selection-01", wantStatus: statusFail, wantIssue: "indexed raw source"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -2540,7 +2646,7 @@ func TestEvidenceRequiresQlogOnlyForQUICFamilyTopologies(t *testing.T) {
 			registry := loadFixtureRegistry(t)
 			report := completeReport(t, manifest, registry)
 			cell := evidenceCellByID(t, report, test.cellID)
-			delete(cell.Runs[0].Phases[0].Artifacts, "qlog")
+			cell.Runs[0].RawSources = slices.DeleteFunc(cell.Runs[0].RawSources, func(source RawEvidenceSource) bool { return source.Kind == "qlog" })
 			result := checkEvidence(manifest, registry, report, report.baseDir)
 			if test.wantStatus == statusPass {
 				if result.Status != statusPass || len(result.Issues) != 0 {
@@ -3034,58 +3140,101 @@ func rewritePerformanceFaultTrace(t *testing.T, report *EvidenceReport, cell *Ce
 func rewritePerformanceMigrationQlog(t *testing.T, report *EvidenceReport, cell *CellEvidence, runNumber int, mutate func([]any)) {
 	t.Helper()
 	run := &cell.Runs[runNumber-1]
-	phase := &run.Phases[slices.IndexFunc(run.Phases, func(phase PhaseEvidence) bool { return phase.Phase == "rpc" })]
-	old := phase.Artifacts["qlog"]
-	data, err := os.ReadFile(filepath.Join(report.baseDir, old.Path))
+	sourceIndex := slices.IndexFunc(run.RawSources, func(source RawEvidenceSource) bool { return source.Kind == "qlog" })
+	if sourceIndex < 0 {
+		t.Fatal("fixture run has no raw qlog source")
+	}
+	oldSource := run.RawSources[sourceIndex].Artifact
+	data, err := os.ReadFile(filepath.Join(report.baseDir, oldSource.Path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var document map[string]any
-	if err := json.Unmarshal(data, &document); err != nil {
+	records, err := rawQLOGSequenceRecords(data)
+	if err != nil {
 		t.Fatal(err)
 	}
-	traces := document["traces"].([]any)
-	events := traces[0].(map[string]any)["events"].([]any)
-	for _, raw := range events {
-		fields := raw.([]any)
-		if fields[1] == "application" && fields[2] == "rpc_completed" {
+	rewritten := make([]byte, 0, len(data))
+	for _, record := range records {
+		payload := record.payload
+		var event struct {
+			Time float64        `json:"time"`
+			Name string         `json:"name"`
+			Data map[string]any `json:"data"`
+		}
+		if json.Unmarshal(payload, &event) == nil && event.Name == "application:rpc_completed" {
+			category, name, _ := strings.Cut(event.Name, ":")
+			fields := []any{event.Time * 1e6, category, name, event.Data}
 			mutate(fields)
+			atNS, ok := fields[0].(float64)
+			if !ok || !finite(atNS) || atNS < 0 {
+				t.Fatal("mutated qlog timestamp is invalid")
+			}
+			event.Time = atNS / 1e6
+			payload, err = json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
+		rewritten = append(rewritten, 0x1e)
+		rewritten = append(rewritten, payload...)
+		rewritten = append(rewritten, '\n')
 	}
-	data, err = json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	phase.Artifacts["qlog"] = rewriteEvidenceArtifact(t, report.baseDir, old, data)
-	configRef := phase.Artifacts["config"]
-	configData, err := os.ReadFile(filepath.Join(report.baseDir, configRef.Path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config ConfigArtifact
-	if err := decodeStrictJSON(configData, &config); err != nil {
-		t.Fatal(err)
-	}
-	for index := range config.Records {
-		if config.Records[index].Key == "qlog_sha256" {
-			config.Records[index].Value = phase.Artifacts["qlog"].SHA256
-		}
-	}
-	configData, err = json.Marshal(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	phase.Artifacts["config"] = rewriteEvidenceArtifact(t, report.baseDir, configRef, configData)
-	for metricID := range cell.Metrics {
-		if !requiresMetricFaultBinding(metricID) {
+	run.RawSources[sourceIndex].Artifact = rewriteEvidenceArtifact(t, report.baseDir, oldSource, rewritten)
+	newSourceSHA := run.RawSources[sourceIndex].Artifact.SHA256
+	for phaseIndex := range run.Phases {
+		phase := &run.Phases[phaseIndex]
+		oldAttribution, exists := phase.Artifacts["qlog_attribution"]
+		if !exists {
 			continue
 		}
-		rewriteMetricSamplesArtifact(t, report, cell, metricID, func(samples *MetricSamplesArtifact) {
-			binding := samples.Runs[runNumber-1].FaultBinding
-			if binding != nil && binding.QlogSHA256 == old.SHA256 {
-				binding.QlogSHA256 = phase.Artifacts["qlog"].SHA256
+		attributionData, readErr := os.ReadFile(filepath.Join(report.baseDir, oldAttribution.Path))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var attribution PacketAttributionArtifact
+		if decodeStrictJSON(attributionData, &attribution) != nil {
+			t.Fatal("fixture qlog attribution is invalid")
+		}
+		for recordIndex := range attribution.Records {
+			if attribution.Records[recordIndex].SourceID == run.RawSources[sourceIndex].ID {
+				attribution.Records[recordIndex].SourceSHA256 = newSourceSHA
 			}
-		})
+		}
+		attributionData, err = json.Marshal(attribution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		phase.Artifacts["qlog_attribution"] = rewriteEvidenceArtifact(t, report.baseDir, oldAttribution, attributionData)
+		configRef := phase.Artifacts["config"]
+		configData, readErr := os.ReadFile(filepath.Join(report.baseDir, configRef.Path))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var config ConfigArtifact
+		if decodeStrictJSON(configData, &config) != nil {
+			t.Fatal("fixture phase config is invalid")
+		}
+		for index := range config.Records {
+			if config.Records[index].Key == "qlog_attribution_sha256" {
+				config.Records[index].Value = phase.Artifacts["qlog_attribution"].SHA256
+			}
+		}
+		configData, err = json.Marshal(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		phase.Artifacts["config"] = rewriteEvidenceArtifact(t, report.baseDir, configRef, configData)
+		for metricID := range cell.Metrics {
+			if !requiresMetricFaultBinding(metricID) {
+				continue
+			}
+			rewriteMetricSamplesArtifact(t, report, cell, metricID, func(samples *MetricSamplesArtifact) {
+				binding := samples.Runs[runNumber-1].FaultBinding
+				if binding != nil && binding.QlogSHA256 == oldAttribution.SHA256 {
+					binding.QlogSHA256 = phase.Artifacts["qlog_attribution"].SHA256
+				}
+			})
+		}
 	}
 }
 
@@ -3500,6 +3649,7 @@ func cloneRunEvidence(source []RunEvidence) []RunEvidence {
 	cloned := make([]RunEvidence, len(source))
 	for index, run := range source {
 		cloned[index] = run
+		cloned[index].RawSources = append([]RawEvidenceSource(nil), run.RawSources...)
 		cloned[index].Phases = clonePhaseEvidence(run.Phases)
 		cloned[index].Variants = cloneVariantEvidence(run.Variants)
 	}
@@ -3551,6 +3701,8 @@ func cloneCaseEvidence(source []CaseEvidence) []CaseEvidence {
 	cloned := make([]CaseEvidence, len(source))
 	for index, evidence := range source {
 		cloned[index] = evidence
+		cloned[index].RawSources = append([]RawEvidenceSource(nil), evidence.RawSources...)
+		cloned[index].Attachments = append([]EvidenceAttachment(nil), evidence.Attachments...)
 		if evidence.Evidence != nil {
 			cloned[index].Evidence = make(map[string]EvidenceArtifact, len(evidence.Evidence))
 			for kind, artifact := range evidence.Evidence {
@@ -3631,6 +3783,7 @@ func buildCompleteReport(t *testing.T, manifest *PerformanceManifest, registry *
 					Phases: completePhases(t, directory, manifest.Digest, profile, cell, runNumber, " variant "+variant),
 				})
 			}
+			bindFixtureRunRawSources(t, directory, cell, &run)
 			run.Resource = writeRunResourceArtifact(t, directory, cell, runNumber, contracts)
 			cellEvidence.Runs = append(cellEvidence.Runs, run)
 		}
@@ -3660,24 +3813,398 @@ func buildCompleteReport(t *testing.T, manifest *PerformanceManifest, registry *
 	for _, entry := range registry.Cases {
 		context := "case " + entry.ID
 		evidence := writeArtifactSet(t, directory, context, entry.EvidenceFields, entry.Profile)
-		report.Cases = append(report.Cases, CaseEvidence{
+		caseEvidence := CaseEvidence{
 			ID:       entry.ID,
 			Owner:    entry.Owner,
 			Mode:     entry.Mode,
 			Profile:  entry.Profile,
 			Status:   "pass",
 			Evidence: evidence,
-		})
+		}
+		bindFixtureCaseRawEvidence(t, directory, context, &caseEvidence)
+		report.Cases = append(report.Cases, caseEvidence)
 		if entry.RaceOwner != "" {
 			raceContext := "race case " + entry.ID
-			report.Cases = append(report.Cases, CaseEvidence{
+			raceEvidence := CaseEvidence{
 				ID: entry.ID, Owner: entry.RaceOwner, Mode: "race", Profile: entry.Profile, Status: "pass",
 				Evidence:  writeArtifactSet(t, directory, raceContext, entry.EvidenceFields, entry.Profile),
 				Execution: fixtureRaceExecution(t, directory, entry.ID),
-			})
+			}
+			bindFixtureCaseRawEvidence(t, directory, raceContext, &raceEvidence)
+			report.Cases = append(report.Cases, raceEvidence)
 		}
 	}
 	return report
+}
+
+func bindFixtureCaseRawEvidence(t *testing.T, directory, context string, evidence *CaseEvidence) {
+	t.Helper()
+	if evidence == nil {
+		t.Fatal("fixture case evidence is nil")
+	}
+	if evidence.ID == "BN-N5" || evidence.ID == "BS-C7" || evidence.ID == "BS-C8" {
+		bindFixtureBrowserSmokeEvidence(t, directory, context, evidence)
+	}
+	if strings.HasPrefix(evidence.ID, "CAP-STREAM-WT-") {
+		bindFixtureCapacityStreamQLOG(t, directory, context, evidence)
+	}
+}
+
+func bindFixtureNativeTypedQLOG(t *testing.T, directory, context string, evidence *CaseEvidence) {
+	t.Helper()
+	identity := sha256.Sum256([]byte(context + " native raw qlog"))
+	groupID := hex.EncodeToString(identity[:8])
+	reference := time.Date(2026, 7, 25, 3, 0, 0, 0, time.UTC)
+	qlogData := encodeRawQLOGSequence(reference, groupID, nil, []map[string]any{
+		fixtureRawQLOGPacketEvent(1, 1, map[string]any{"frame_type": "stream", "stream_id": uint64(12), "offset": 0, "length": 16384}),
+		fixtureRawQLOGPacketEvent(2, 2, map[string]any{"frame_type": "stream_data_blocked", "stream_id": uint64(12), "limit": 16384}),
+		fixtureRawQLOGPacketEvent(3, 3, map[string]any{"frame_type": "stream", "stream_id": uint64(16), "offset": 0, "length": 32}),
+	})
+	rawRef := writeEvidenceArtifact(t, directory, context+" raw sources", "raw_qlog", ".qlog", qlogData)
+	parsed, err := parseQLOGSequenceSource(qlogData, "qlog-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	packetNumber := uint64(1)
+	attribution := PacketAttributionArtifact{SchemaVersion: 1, Kind: "transport_qlog_attribution", Context: context, Records: []PacketAttributionRecord{{
+		Sequence: 1, SourceID: "qlog-001", SourceSHA256: rawRef.SHA256,
+		ByteOffset: parsed[0].recordOffset, ByteLength: parsed[0].recordLength, UnixNanoseconds: parsed[0].at.UnixNano(),
+		Event: parsed[0].name, ConnectionGroupID: groupID, PacketNumberSpace: "1RTT", PacketNumber: &packetNumber,
+	}}}
+	data, err := json.Marshal(attribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.Evidence["qlog"] = rewriteEvidenceArtifact(t, directory, evidence.Evidence["qlog"], data)
+	evidence.RawSources = []RawEvidenceSource{{ID: "qlog-001", Kind: "qlog", Artifact: rawRef}}
+
+	blocked, sibling := int64(12), int64(16)
+	trace := TraceArtifact{SchemaVersion: 1, Kind: "transport_trace", Context: context, Records: []TraceRecord{
+		{Sequence: 1, AtNS: 1, Event: "native_stream_blocked", Digest: caseExecutionID(context), ConnectionID: groupID, NativeStreamID: &blocked},
+		{Sequence: 2, AtNS: 2, Event: "rpc_completed", Digest: caseExecutionID(context), ConnectionID: groupID, NativeStreamID: &sibling, RequestID: "sibling", Status: "ok"},
+		{Sequence: 3, AtNS: 3, Event: "completed", Digest: caseExecutionID(context), ConnectionID: groupID},
+	}}
+	data, err = json.Marshal(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.Evidence["trace"] = rewriteEvidenceArtifact(t, directory, evidence.Evidence["trace"], data)
+	updateFixtureCaseConfig(t, directory, evidence, map[string]string{
+		"trace_sha256": evidence.Evidence["trace"].SHA256, "qlog_sha256": evidence.Evidence["qlog"].SHA256,
+		"qlog_source": "quic-go-json-seq-v0.3", "qlog_connection_id": groupID,
+	})
+}
+
+func bindFixtureBrowserSmokeEvidence(t *testing.T, directory, context string, evidence *CaseEvidence) {
+	t.Helper()
+	identity := sha256.Sum256([]byte(context + " browser smoke"))
+	reference := time.Date(2026, 7, 25, 1, 0, 0, 0, time.UTC).Add(time.Duration(binary.BigEndian.Uint16(identity[:2])) * time.Nanosecond)
+	groupID := hex.EncodeToString(identity[:8])
+	events := []map[string]any{fixtureRawQLOGPacketEvent(1, 1, nil)}
+	if evidence.ID == "BN-N5" {
+		events = make([]map[string]any, 0, 5)
+		for index, streamID := range []uint64{12, 16, 20, 24} {
+			events = append(events, fixtureRawQLOGPacketEvent(float64(index+1), uint64(index+1), map[string]any{
+				"frame_type": "stream", "stream_id": streamID,
+			}))
+		}
+		events = append(events, fixtureRawQLOGPacketEvent(5, 5, map[string]any{
+			"frame_type": "reset_stream", "stream_id": uint64(12),
+		}))
+	}
+	qlogData := encodeRawQLOGSequence(reference, groupID, nil, events)
+	qlogRef := writeEvidenceArtifact(t, directory, context+" raw qlog-001", "raw_qlog", ".qlog", qlogData)
+	parsed, err := parseQLOGSequenceSource(qlogData, "qlog-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := syntheticIPPacket(t, 4, 17, 96, 1)
+	copy(packet[len(packet)-len(identity):], identity[:])
+	pcapRef := writeEvidenceArtifact(t, directory, context+" raw pcap-001", "raw_pcap", ".pcap", encodeClassicPCAP([][]byte{packet}))
+	evidence.RawSources = []RawEvidenceSource{
+		{ID: "pcap-001", Kind: "pcap", Artifact: pcapRef},
+		{ID: "qlog-001", Kind: "qlog", Artifact: qlogRef},
+	}
+
+	finishedAt := reference.Add(10 * time.Second)
+	workload := map[string]any{
+		"schema_version": 1, "classification": "raw_browser_transport_workload", "status": "passed",
+		"topology": fixtureBrowserTopology(evidence.ID), "profile_id": evidence.Profile, "run_number": 1,
+		"started_at": reference, "finished_at": finishedAt,
+		"session_connected_at": reference.Add(time.Second), "session_closed_at": reference.Add(9 * time.Second),
+		"browser":     map[string]any{"engine": "chromium", "version": "fixture-chromium", "diagnostics": []string{}},
+		"spend_count": 1, "cleanup_duration_ns": int64(time.Second),
+		"cold": []any{map[string]any{"status": "ok"}},
+		"rpc":  []any{map[string]any{"started_at": reference.Add(2 * time.Second), "duration_ns": int64(time.Millisecond)}},
+		"bulk": map[string]any{"status": "ok"},
+	}
+	if evidence.ID == "BN-N5" {
+		workload["native_isolation"] = map[string]any{
+			"opened_streams": 4, "reset_streams": 1, "sibling_streams": 3, "completed_rpcs": 1,
+			"residual_streams": 0, "residual_sessions": 0,
+			"events": []any{
+				map[string]any{"event": "native_streams_opened", "at": reference.Add(3 * time.Second), "stream_count": 4},
+				map[string]any{"event": "native_stream_reset", "at": reference.Add(4 * time.Second), "stream_count": 1},
+				map[string]any{"event": "native_siblings_completed", "at": reference.Add(5 * time.Second), "stream_count": 3},
+				map[string]any{"event": "rpc_completed", "at": reference.Add(6 * time.Second), "request_id": "browser-smoke-rpc", "status": "ok"},
+			},
+		}
+	}
+	workloadData, err := json.Marshal(workload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment := writeEvidenceArtifact(t, directory, context+" browser result", "browser-controller-result", ".json", workloadData)
+	evidence.Attachments = []EvidenceAttachment{{ID: "browser-controller-result-001", Kind: "browser-controller-result", Artifact: attachment}}
+
+	updateFixtureCaseConfig(t, directory, evidence, map[string]string{
+		"topology": fixtureBrowserTopology(evidence.ID), "browser_engine": "chromium", "producer": "production-browser-worker",
+		"browser_result_sha256": attachment.SHA256, "raw_qlog_count": "1", "watchdog": "completed",
+	})
+	if evidence.ID != "BN-N5" {
+		return
+	}
+	attribution := PacketAttributionArtifact{SchemaVersion: 1, Kind: "transport_qlog_attribution", Context: context}
+	for index, event := range parsed {
+		streamID := uint64(12 + 4*index)
+		semantic := "transport:stream_opened"
+		if index == 4 {
+			streamID, semantic = 12, "transport:reset_stream"
+		}
+		packetNumber := uint64(index + 1)
+		attribution.Records = append(attribution.Records, PacketAttributionRecord{
+			Sequence: uint64(index + 1), SourceID: "qlog-001", SourceSHA256: qlogRef.SHA256,
+			ByteOffset: event.recordOffset, ByteLength: event.recordLength, UnixNanoseconds: event.at.UnixNano(),
+			Event: semantic, ConnectionGroupID: groupID, PacketNumberSpace: "1RTT", PacketNumber: &packetNumber, NativeStreamID: &streamID,
+		})
+	}
+	data, err := json.Marshal(attribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.Evidence["qlog"] = rewriteEvidenceArtifact(t, directory, evidence.Evidence["qlog"], data)
+	updateFixtureCaseConfig(t, directory, evidence, map[string]string{"qlog_sha256": evidence.Evidence["qlog"].SHA256})
+}
+
+func bindFixtureCapacityStreamQLOG(t *testing.T, directory, context string, evidence *CaseEvidence) {
+	t.Helper()
+	reference := time.Date(2026, 7, 25, 2, 0, 0, 0, time.UTC)
+	attribution := PacketAttributionArtifact{SchemaVersion: 1, Kind: "transport_qlog_attribution", Context: context}
+	for connectionIndex := 0; connectionIndex < 100; connectionIndex++ {
+		sourceID := fmt.Sprintf("qlog-%03d", connectionIndex+1)
+		identity := sha256.Sum256([]byte(fmt.Sprintf("%s/source/%03d", context, connectionIndex+1)))
+		groupID := "capacity-" + hex.EncodeToString(identity[:8])
+		events := make([]map[string]any, 0, 128)
+		for streamIndex := 0; streamIndex < 128; streamIndex++ {
+			sequence := connectionIndex*128 + streamIndex + 1
+			streamID := uint64(12 + 4*streamIndex)
+			events = append(events, fixtureRawQLOGPacketEvent(float64(sequence), uint64(streamIndex+1), map[string]any{
+				"frame_type": "stream", "stream_id": streamID,
+			}))
+		}
+		qlogData := encodeRawQLOGSequence(reference, groupID, nil, events)
+		qlogRef := writeEvidenceArtifact(t, directory, context+" raw "+sourceID, "raw_qlog", ".qlog", qlogData)
+		evidence.RawSources = append(evidence.RawSources, RawEvidenceSource{ID: sourceID, Kind: "qlog", Artifact: qlogRef})
+		parsed, err := parseQLOGSequenceSource(qlogData, sourceID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for streamIndex, event := range parsed {
+			streamID := uint64(12 + 4*streamIndex)
+			packetNumber := uint64(streamIndex + 1)
+			attribution.Records = append(attribution.Records, PacketAttributionRecord{
+				Sequence: uint64(len(attribution.Records) + 1), SourceID: sourceID, SourceSHA256: qlogRef.SHA256,
+				ByteOffset: event.recordOffset, ByteLength: event.recordLength, UnixNanoseconds: event.at.UnixNano(),
+				Event: "transport:stream_opened", ConnectionGroupID: groupID, PacketNumberSpace: "1RTT", PacketNumber: &packetNumber, NativeStreamID: &streamID,
+			})
+		}
+	}
+	data, err := json.Marshal(attribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.Evidence["qlog"] = rewriteEvidenceArtifact(t, directory, evidence.Evidence["qlog"], data)
+}
+
+func fixtureRawQLOGPacketEvent(atMS float64, packetNumber uint64, frame map[string]any) map[string]any {
+	frames := []any{map[string]any{"frame_type": "ping"}}
+	if frame != nil {
+		frames = []any{frame}
+	}
+	return map[string]any{
+		"time": atMS, "name": "transport:packet_sent", "data": map[string]any{
+			"header": map[string]any{"packet_type": "1RTT", "packet_number": packetNumber}, "frames": frames,
+		},
+	}
+}
+
+func fixtureBrowserTopology(caseID string) string {
+	if caseID == "BS-C8" {
+		return "browser_tunnel_wt_wss"
+	}
+	return "browser_webtransport"
+}
+
+func updateFixtureCaseConfig(t *testing.T, directory string, evidence *CaseEvidence, values map[string]string) {
+	t.Helper()
+	configRef := evidence.Evidence["config"]
+	data, err := os.ReadFile(filepath.Join(directory, configRef.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config ConfigArtifact
+	if err := decodeStrictJSON(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	byKey := make(map[string]string, len(config.Records)+len(values))
+	for _, record := range config.Records {
+		byKey[record.Key] = record.Value
+	}
+	for key, value := range values {
+		byKey[key] = value
+	}
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	config.Records = config.Records[:0]
+	for _, key := range keys {
+		config.Records = append(config.Records, ConfigRecord{Key: key, Value: byKey[key]})
+	}
+	data, err = json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.Evidence["config"] = rewriteEvidenceArtifact(t, directory, configRef, data)
+}
+
+func bindFixtureRunRawSources(t *testing.T, directory string, cell PerformanceCell, run *RunEvidence) {
+	t.Helper()
+	if run == nil {
+		t.Fatal("fixture run is nil")
+	}
+	phases := make([]*PhaseEvidence, 0, len(run.Phases)+2*len(run.Variants))
+	for index := range run.Phases {
+		phases = append(phases, &run.Phases[index])
+	}
+	for variantIndex := range run.Variants {
+		for phaseIndex := range run.Variants[variantIndex].Phases {
+			phases = append(phases, &run.Variants[variantIndex].Phases[phaseIndex])
+		}
+	}
+	if len(phases) == 0 {
+		t.Fatal("fixture run has no phases")
+	}
+	context := fmt.Sprintf("cell %s run %d raw sources", cell.ID, run.RunNumber)
+	packets := make([][]byte, len(phases))
+	for index := range packets {
+		packets[index] = syntheticIPPacket(t, 4, 17, 96, index+1)
+		digest := sha256.Sum256([]byte(fmt.Sprintf("%s/%d", context, index)))
+		copy(packets[index][len(packets[index])-8:], digest[:8])
+	}
+	pcapData := encodeClassicPCAP(packets)
+	pcapRef := writeEvidenceArtifact(t, directory, context, "raw_pcap", ".pcap", pcapData)
+	run.RawSources = append(run.RawSources, RawEvidenceSource{ID: "pcap-001", Kind: "pcap", Artifact: pcapRef})
+	pcapOffset := int64(24)
+	for index, phase := range phases {
+		length := int64(16 + len(packets[index]))
+		record := PacketAttributionRecord{
+			Sequence: 1, SourceID: "pcap-001", SourceSHA256: pcapRef.SHA256,
+			ByteOffset: pcapOffset, ByteLength: length, UnixNanoseconds: time.Unix(int64(index+1), 0).UnixNano(),
+		}
+		rewriteFixtureAttribution(t, directory, phase, "pcap_attribution", record)
+		pcapOffset += length
+	}
+	if _, needsQlog := qlogTopologies[cell.Topology]; !needsQlog {
+		return
+	}
+	reference := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+	identity := sha256.Sum256([]byte(context))
+	groupID := hex.EncodeToString(identity[:8])
+	events := make([]map[string]any, len(phases))
+	for index := range phases {
+		events[index] = map[string]any{
+			"time": float64(index + 1), "name": "transport:packet_sent", "data": map[string]any{
+				"header": map[string]any{"packet_type": "1RTT", "packet_number": index + 1},
+				"frames": []any{map[string]any{"frame_type": "ping"}},
+			},
+		}
+	}
+	if cell.Topology == "direct_quic" && (cell.ProfileID == "mobile-v1" || cell.ProfileID == "edge-v1") {
+		metricID := strings.TrimSuffix(cell.ProfileID, "-v1") + "_migration_first_rpc_ms"
+		rpcAtNS := int64(2500*1e6) + faultMetricFixtureDurationNS(t, cell, metricID)
+		pathData := map[string]any{
+			"connection_id": evidenceConnectionID, "old_path": "192.0.2.1:1001",
+			"new_path": "192.0.2.2:1002", "remote_path": "198.51.100.1:4433",
+		}
+		events = append(events,
+			map[string]any{"time": float64(2e9) / 1e6, "name": "connectivity:path_updated", "data": pathData},
+			map[string]any{"time": float64(2500*1e6) / 1e6, "name": "connectivity:path_validated", "data": pathData},
+			map[string]any{"time": float64(rpcAtNS) / 1e6, "name": "application:rpc_completed", "data": map[string]any{
+				"connection_id": evidenceConnectionID, "request_id": fixtureFaultRequestID(cell.ID, metricID, run.RunNumber),
+			}},
+		)
+	}
+	qlogData := encodeRawQLOGSequence(reference, groupID, nil, events)
+	qlogRef := writeEvidenceArtifact(t, directory, context, "raw_qlog", ".qlog", qlogData)
+	run.RawSources = append(run.RawSources, RawEvidenceSource{ID: "qlog-001", Kind: "qlog", Artifact: qlogRef})
+	parsed, err := parseQLOGSequenceSource(qlogData, "qlog-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, phase := range phases {
+		packetNumber := uint64(index + 1)
+		event := parsed[index]
+		rewriteFixtureAttribution(t, directory, phase, "qlog_attribution", PacketAttributionRecord{
+			Sequence: 1, SourceID: "qlog-001", SourceSHA256: qlogRef.SHA256,
+			ByteOffset: event.recordOffset, ByteLength: event.recordLength, UnixNanoseconds: event.at.UnixNano(),
+			Event: event.name, ConnectionGroupID: groupID, PacketNumberSpace: "1RTT", PacketNumber: &packetNumber,
+		})
+	}
+}
+
+func rewriteFixtureAttribution(t *testing.T, directory string, phase *PhaseEvidence, kind string, record PacketAttributionRecord) {
+	t.Helper()
+	ref, exists := phase.Artifacts[kind]
+	if !exists {
+		t.Fatalf("fixture phase has no %s", kind)
+	}
+	context := fmt.Sprintf("cell fixture phase %s/%s", phase.ProfileID, phase.Phase)
+	metadataData, err := os.ReadFile(filepath.Join(directory, ref.MetaPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata ArtifactMetadata
+	if err := decodeStrictJSON(metadataData, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	context = metadata.Context
+	data, err := json.Marshal(PacketAttributionArtifact{SchemaVersion: 1, Kind: "transport_" + kind, Context: context, Records: []PacketAttributionRecord{record}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase.Artifacts[kind] = rewriteEvidenceArtifact(t, directory, ref, data)
+	configRef := phase.Artifacts["config"]
+	configData, err := os.ReadFile(filepath.Join(directory, configRef.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config ConfigArtifact
+	if err := decodeStrictJSON(configData, &config); err != nil {
+		t.Fatal(err)
+	}
+	key := kind + "_sha256"
+	for index := range config.Records {
+		if config.Records[index].Key == key {
+			config.Records[index].Value = phase.Artifacts[kind].SHA256
+		}
+	}
+	configData, err = json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase.Artifacts["config"] = rewriteEvidenceArtifact(t, directory, configRef, configData)
 }
 
 func fixtureMetricValue(cell PerformanceCell, metricID string, contract MetricContract) float64 {
@@ -3700,7 +4227,7 @@ func fixtureMetricValue(cell PerformanceCell, metricID string, contract MetricCo
 	if strings.Contains(metricID, "goodput_mbps") {
 		switch cell.ProfileID {
 		case "clean-v1":
-			return 100
+			return 200
 		case "mobile-v1":
 			return 5
 		case "edge-v1":
@@ -3748,9 +4275,17 @@ func writeArtifactSet(t *testing.T, directory, context string, kinds []string, c
 		case "samples":
 			continue
 		case "pcap":
-			artifacts[kind] = writePCAPArtifact(t, directory, context)
+			if strings.HasSuffix(context, "CAP-SOAK-HOURLY") {
+				artifacts[kind] = writeSoakPCAPArtifact(t, directory, context)
+			} else {
+				artifacts[kind] = writePCAPArtifact(t, directory, context)
+			}
 		case "qlog":
-			artifacts[kind] = writeQlogArtifact(t, directory, context)
+			if strings.HasSuffix(context, "CAP-SOAK-HOURLY") {
+				artifacts[kind] = writeSoakQlogArtifact(t, directory, context)
+			} else {
+				artifacts[kind] = writeQlogArtifact(t, directory, context)
+			}
 		default:
 			artifacts[kind] = writeStructuredArtifact(t, directory, context, kind)
 		}
@@ -3838,6 +4373,18 @@ func writeStructuredArtifact(t *testing.T, directory, context, kind string) Evid
 		}
 		value = TCPInfoArtifact{SchemaVersion: 1, Kind: "transport_tcp_info", Context: context,
 			Records: records}
+	case "pcap_attribution", "qlog_attribution":
+		sourceKind := strings.TrimSuffix(kind, "_attribution")
+		packetNumber := uint64(1)
+		record := PacketAttributionRecord{
+			Sequence: 1, SourceID: sourceKind + "-001", SourceSHA256: hex.EncodeToString(digest[:]),
+			ByteOffset: 24, ByteLength: 64, UnixNanoseconds: 1,
+		}
+		if sourceKind == "qlog" {
+			record.Event, record.ConnectionGroupID = "transport:packet_sent", "8394c8f03e515708"
+			record.PacketNumberSpace, record.PacketNumber = "1RTT", &packetNumber
+		}
+		value = PacketAttributionArtifact{SchemaVersion: 1, Kind: "transport_" + kind, Context: context, Records: []PacketAttributionRecord{record}}
 	default:
 		t.Fatalf("unsupported structured artifact kind %q", kind)
 	}
@@ -3861,29 +4408,56 @@ func fixtureCaseTrace(context, digest string) []TraceRecord {
 	}
 	if caseID == "CAP-SOAK-HOURLY" {
 		result := make([]TraceRecord, 0, signedSoakContract.FaultCycleCount+2)
-		result = append(result, TraceRecord{Sequence: 1, AtNS: 0, Event: "soak_started", Digest: caseExecutionID(context), ConnectionID: evidenceConnectionID})
+		result = append(result, TraceRecord{Sequence: 1, AtNS: 0, Event: "soak_started", Digest: caseExecutionID(context)})
 		for index := 1; index <= signedSoakContract.FaultCycleCount; index++ {
-			result = append(result, TraceRecord{Sequence: uint64(index + 1), AtNS: int64(index) * signedSoakContract.FaultCyclePeriodNS, Event: "fault_cycle_completed", Digest: caseExecutionID(context), ConnectionID: evidenceConnectionID})
+			streamID := int64(4)
+			result = append(result, TraceRecord{Sequence: uint64(index + 1), AtNS: int64(index) * signedSoakContract.FaultCyclePeriodNS,
+				Event: "fault_cycle_completed", Digest: caseExecutionID(context), ConnectionID: soakFixtureCID(index), NativeStreamID: &streamID,
+				LocalAddress: fmt.Sprintf("192.0.2.1:%d", 10000+index), RemoteAddress: "198.51.100.1:4433",
+				QLOGSourceID: fmt.Sprintf("qlog-%03d", index), PCAPSourceID: fmt.Sprintf("pcap-%03d", index)})
 		}
-		result = append(result, TraceRecord{Sequence: uint64(len(result) + 1), AtNS: signedSoakContract.DurationNS, Event: "soak_completed", Digest: caseExecutionID(context), ConnectionID: evidenceConnectionID})
+		result = append(result, TraceRecord{Sequence: uint64(len(result) + 1), AtNS: signedSoakContract.DurationNS, Event: "soak_completed", Digest: caseExecutionID(context)})
 		return result
 	}
 	if strings.HasPrefix(caseID, "CAP-") {
+		sessions := 1000
+		rampAt := int64(30e9)
+		holdAt := int64(90e9)
+		cleanupAt := int64(120e9)
+		if strings.HasPrefix(caseID, "CAP-STREAM-WT-") {
+			sessions = 100
+			rampAt, holdAt, cleanupAt = 60e9, 120e9, 150e9
+		}
 		result := records(
 			[]string{"capacity_ramp_completed", "capacity_hold_completed", "capacity_cleanup_completed"},
-			[]int64{30e9, 90e9, 120e9}, "",
+			[]int64{rampAt, holdAt, cleanupAt}, "",
 		)
 		for index := range result {
-			result[index].AttemptedSessions = 1000
-			result[index].SucceededSessions = 1000
-			result[index].UniqueActiveSessions = 1000
-			result[index].ActiveSessions = 1000
+			result[index].AttemptedSessions = sessions
+			result[index].SucceededSessions = sessions
+			result[index].UniqueActiveSessions = sessions
+			result[index].ActiveSessions = sessions
+			if strings.HasPrefix(caseID, "CAP-STREAM-WT-") {
+				result[index].CompletedStreams = 12800
+				result[index].ActiveStreams = 12800
+			}
 		}
 		result[2].ActiveSessions = 0
-		result[2].Disconnects = 1000
+		result[2].Disconnects = sessions
+		result[2].ActiveStreams = 0
 		return result
 	}
 	switch caseID {
+	case "BS-C7", "BS-C8":
+		return records(
+			[]string{"browser_session_connected", "smoke_rpc_completed", "browser_session_closed"},
+			[]int64{1e9, 2e9, 3e9}, "",
+		)
+	case "BN-N5":
+		return records(
+			[]string{"browser_session_connected", "native_streams_opened", "native_stream_reset", "native_siblings_completed", "rpc_completed", "smoke_rpc_completed", "browser_session_closed"},
+			[]int64{1e9, 2e9, 3e9, 4e9, 5e9, 6e9, 7e9}, "",
+		)
 	case "SYS-COMMON-KERNEL":
 		return records([]string{"outage_started", "outage_ended", "kernel_fault_matrix_completed"}, []int64{1e9, 3e9, 4e9}, evidenceConnectionID)
 	case "NP-REBIND", "SYS-MIGRATION-REBIND":
@@ -3907,21 +4481,36 @@ func fixtureCaseTrace(context, digest string) []TraceRecord {
 func fixtureCaseResource(context string) []ResourceRecord {
 	caseID := strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ")
 	if caseID == "CAP-SOAK-HOURLY" {
-		return []ResourceRecord{
-			{Phase: "soak_start", AtNS: 0, RSSBytes: 256 * 1024 * 1024, OpenFDs: 128, Goroutines: 256, Tasks: 256},
-			{
-				Phase: "soak_end", AtNS: signedSoakContract.DurationNS, RSSBytes: 288 * 1024 * 1024, OpenFDs: 136, Goroutines: 288, Tasks: 288,
-				ResidualSessions: intPointer(0), ResidualGoroutines: intPointer(0), ResidualOpenFDs: intPointer(0), ResidualTasks: intPointer(0),
-			},
+		records := []ResourceRecord{{Phase: "soak_start", AtNS: 0, RSSBytes: 256 * 1024 * 1024, OpenFDs: 128, Goroutines: 256, Tasks: 256}}
+		for index := 1; index <= signedSoakContract.FaultCycleCount; index++ {
+			rss, goroutines, fds, tasks := uint64(288*1024*1024), 288, 136, 288
+			if index == 30 {
+				rss, goroutines, fds, tasks = 320*1024*1024, 320, 144, 320
+			}
+			records = append(records, ResourceRecord{Phase: fmt.Sprintf("soak_cycle_%03d", index), AtNS: int64(index) * signedSoakContract.FaultCyclePeriodNS,
+				RSSBytes: rss, OpenFDs: fds, Goroutines: goroutines, Tasks: tasks})
 		}
+		records = append(records, ResourceRecord{Phase: "soak_end", AtNS: signedSoakContract.DurationNS,
+			RSSBytes: 288 * 1024 * 1024, OpenFDs: 136, Goroutines: 288, Tasks: 288,
+			ResidualSessions: intPointer(0), ResidualGoroutines: intPointer(0), ResidualOpenFDs: intPointer(0), ResidualTasks: intPointer(0)})
+		return records
 	}
 	if !strings.HasPrefix(caseID, "CAP-") {
 		return []ResourceRecord{{AtNS: 1, RSSBytes: 1, Goroutines: 1}}
 	}
+	if strings.HasPrefix(caseID, "CAP-STREAM-WT-") {
+		return []ResourceRecord{
+			{Phase: "ramp", AtNS: 60e9, ActiveSessions: 100, UniqueActiveSessions: 100, ActiveStreams: 12800, RSSBytes: 2 * 1024 * 1024 * 1024, CPUNanoseconds: 20e9, OpenFDs: 10000, Goroutines: 4096, Tasks: 4096},
+			{Phase: "hold", AtNS: 120e9, ActiveSessions: 100, UniqueActiveSessions: 100, ActiveStreams: 12800, RSSBytes: 2 * 1024 * 1024 * 1024, CPUNanoseconds: 80e9, OpenFDs: 10000, Goroutines: 4096, Tasks: 4096},
+			{Phase: "cleanup", AtNS: 150e9, ActiveSessions: 0, UniqueActiveSessions: 100, RSSBytes: 256 * 1024 * 1024, CPUNanoseconds: 100e9, OpenFDs: 32, Goroutines: 32, Tasks: 32,
+				ResidualSessions: intPointer(0), ResidualGoroutines: intPointer(0), ResidualOpenFDs: intPointer(0), ResidualTasks: intPointer(0), ResidualStreams: intPointer(0)},
+		}
+	}
 	return []ResourceRecord{
 		{Phase: "ramp", AtNS: 30e9, ActiveSessions: 1000, UniqueActiveSessions: 1000, RSSBytes: 512 * 1024 * 1024, CPUNanoseconds: 20e9, OpenFDs: 4096, Goroutines: 4096, Tasks: 4096},
 		{Phase: "hold", AtNS: 90e9, ActiveSessions: 1000, UniqueActiveSessions: 1000, RSSBytes: 768 * 1024 * 1024, CPUNanoseconds: 80e9, OpenFDs: 4096, Goroutines: 4096, Tasks: 4096},
-		{Phase: "cleanup", AtNS: 120e9, ActiveSessions: 0, UniqueActiveSessions: 1000, RSSBytes: 256 * 1024 * 1024, CPUNanoseconds: 100e9, OpenFDs: 32, Goroutines: 32, Tasks: 32},
+		{Phase: "cleanup", AtNS: 120e9, ActiveSessions: 0, UniqueActiveSessions: 1000, RSSBytes: 256 * 1024 * 1024, CPUNanoseconds: 100e9, OpenFDs: 32, Goroutines: 32, Tasks: 32,
+			ResidualSessions: intPointer(0), ResidualGoroutines: intPointer(0), ResidualOpenFDs: intPointer(0), ResidualTasks: intPointer(0)},
 	}
 }
 
@@ -3975,6 +4564,19 @@ func fixtureCaseMetrics(context string) []MetricCounterRecord {
 		return records
 	}
 	switch caseID {
+	case "BS-C7", "BS-C8", "BN-N5":
+		completed := float64(3)
+		if caseID == "BN-N5" {
+			completed = 8
+		}
+		return []MetricCounterRecord{
+			{Name: "completed_operations", Value: completed, Unit: "count"},
+			{Name: "browser_sessions", Value: 2, Unit: "count"},
+			{Name: "rpc_completed", Value: 1, Unit: "count"},
+			{Name: "watchdog_timeouts", Value: 0, Unit: "count"},
+			{Name: "residual_sessions", Value: 0, Unit: "count"},
+			{Name: "residual_streams", Value: 0, Unit: "count"},
+		}
 	case "CAP-SOAK-HOURLY":
 		return []MetricCounterRecord{
 			{Name: "duration_ns", Value: float64(signedSoakContract.DurationNS), Unit: "nanoseconds"},
@@ -3985,6 +4587,10 @@ func fixtureCaseMetrics(context string) []MetricCounterRecord {
 			{Name: "goroutine_growth", Value: 32, Unit: "count"},
 			{Name: "open_fd_growth", Value: 8, Unit: "count"},
 			{Name: "task_growth", Value: 32, Unit: "count"},
+			{Name: "rss_peak_bytes", Value: 320 * 1024 * 1024, Unit: "bytes"},
+			{Name: "goroutine_peak", Value: 320, Unit: "count"},
+			{Name: "open_fd_peak", Value: 144, Unit: "count"},
+			{Name: "task_peak", Value: 320, Unit: "count"},
 			{Name: "residual_sessions", Value: 0, Unit: "count"},
 			{Name: "residual_goroutines", Value: 0, Unit: "count"},
 			{Name: "residual_open_fds", Value: 0, Unit: "count"},
@@ -4060,17 +4666,32 @@ func fixtureCaseMetrics(context string) []MetricCounterRecord {
 		}, evidenceConnectionID)
 	}
 	if strings.HasPrefix(caseID, "CAP-") {
-		return []MetricCounterRecord{
-			{Name: "attempted_sessions", Value: 1000, Unit: "count"},
-			{Name: "succeeded_sessions", Value: 1000, Unit: "count"},
+		sessions := float64(1000)
+		streamCapacity := strings.HasPrefix(caseID, "CAP-STREAM-WT-")
+		if streamCapacity {
+			sessions = 100
+		}
+		records := []MetricCounterRecord{
+			{Name: "attempted_sessions", Value: sessions, Unit: "count"},
+			{Name: "succeeded_sessions", Value: sessions, Unit: "count"},
 			{Name: "failed_sessions", Value: 0, Unit: "count"},
-			{Name: "unique_active_peak", Value: 1000, Unit: "count"},
+			{Name: "unique_active_peak", Value: sessions, Unit: "count"},
 			{Name: "hold_duration_ns", Value: 60e9, Unit: "nanoseconds"},
 			{Name: "hold_disconnects", Value: 0, Unit: "count"},
-			{Name: "cleanup_disconnects", Value: 1000, Unit: "count"},
+			{Name: "liveness_sweeps", Value: 4, Unit: "count"},
+			{Name: "liveness_failures", Value: 0, Unit: "count"},
+			{Name: "cleanup_disconnects", Value: sessions, Unit: "count"},
 			{Name: "watchdog_timeouts", Value: 0, Unit: "count"},
 			{Name: "cleanup_residual_sessions", Value: 0, Unit: "count"},
 		}
+		if streamCapacity {
+			records = append(records,
+				MetricCounterRecord{Name: "completed_streams", Value: 12800, Unit: "count"},
+				MetricCounterRecord{Name: "active_stream_peak", Value: 12800, Unit: "count"},
+				MetricCounterRecord{Name: "cleanup_residual_streams", Value: 0, Unit: "count"},
+			)
+		}
+		return records
 	}
 	if strings.Contains(caseID, "PMTUD-WSS-RECOVER") {
 		return []MetricCounterRecord{
@@ -4163,10 +4784,54 @@ func fixtureCaseConfig(context string) []ConfigRecord {
 		})
 	}
 	if strings.HasPrefix(caseID, "CAP-") {
-		return fromMap(map[string]string{
-			"sessions": "1000", "ramp_duration_ns": "30000000000", "hold_duration_ns": "60000000000",
-			"cleanup_duration_ns": "30000000000", "watchdog_duration_ns": "120000000000", "watchdog": "completed",
-		})
+		streamCapacity := strings.HasPrefix(caseID, "CAP-STREAM-WT-")
+		browserAggregate := caseID == "CAP-TUNNEL-WT-WSS-1000" || caseID == "CAP-TUNNEL-WT-QUIC-1000" || streamCapacity
+		values := map[string]string{
+			"sessions": func() string {
+				if streamCapacity {
+					return "100"
+				}
+				return "1000"
+			}(), "ramp_duration_ns": func() string {
+				if streamCapacity {
+					return "60000000000"
+				}
+				return "30000000000"
+			}(), "hold_duration_ns": "60000000000", "liveness_sweep_count": "4", "liveness_sweep_period_ns": "12000000000",
+			"cleanup_duration_ns": "30000000000", "watchdog_duration_ns": func() string {
+				if streamCapacity {
+					return "150000000000"
+				}
+				return "120000000000"
+			}(), "watchdog": "completed",
+			"resource_scope": func() string {
+				if browserAggregate {
+					return "go_runner_plus_chromium_process_tree"
+				}
+				return "go_runner"
+			}(),
+			"max_rss_bytes": func() string {
+				if browserAggregate {
+					return "3221225472"
+				}
+				return "1073741824"
+			}(),
+			"max_open_fds": func() string {
+				if streamCapacity {
+					return "32768"
+				}
+				if browserAggregate {
+					return "12288"
+				}
+				return "8192"
+			}(),
+			"max_goroutines": "40960", "max_tasks": "8192",
+		}
+		if streamCapacity {
+			values["connections_per_session"] = "1"
+			values["streams_per_session"] = "128"
+		}
+		return fromMap(values)
 	}
 	if strings.Contains(caseID, "PMTUD-WSS-") {
 		recovered := strings.Contains(caseID, "RECOVER")
@@ -4215,18 +4880,37 @@ func writeQlogArtifact(t *testing.T, directory, context string) EvidenceArtifact
 	return writeQlogArtifactWithEvents(t, directory, context, required, streams)
 }
 
+func soakFixtureCID(index int) string { return fmt.Sprintf("%016x", 0x100000+index) }
+
+func writeSoakQlogArtifact(t *testing.T, directory, context string) EvidenceArtifact {
+	t.Helper()
+	records := make([]PacketAttributionRecord, 0, signedSoakContract.FaultCycleCount)
+	for index := 1; index <= signedSoakContract.FaultCycleCount; index++ {
+		packetNumber := uint64(index)
+		digest := sha256.Sum256([]byte(fmt.Sprintf("qlog-source-%03d", index)))
+		records = append(records, PacketAttributionRecord{Sequence: uint64(index), SourceID: fmt.Sprintf("qlog-%03d", index),
+			SourceSHA256: hex.EncodeToString(digest[:]), ByteOffset: 100, ByteLength: 100, UnixNanoseconds: int64(index),
+			Event: "transport:packet_sent", ConnectionGroupID: soakFixtureCID(index), PacketNumberSpace: "1RTT", PacketNumber: &packetNumber})
+	}
+	data, err := json.Marshal(PacketAttributionArtifact{SchemaVersion: 1, Kind: "transport_qlog_attribution", Context: context, Records: records})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writeEvidenceArtifact(t, directory, context, "qlog", ".qlog", data)
+}
+
 func writeQlogArtifactWithEvents(t *testing.T, directory, context string, names []string, streamCount int) EvidenceArtifact {
 	t.Helper()
 	events := make([]any, 0, len(names)+streamCount)
-	for streamID := 0; streamID < streamCount; streamID++ {
-		events = append(events, []any{len(events), "transport", "stream_opened", qlogTestEventData(context, "transport:stream_opened", streamID*4)})
-	}
 	for _, qualified := range names {
 		parts := strings.SplitN(qualified, ":", 2)
 		if len(parts) != 2 {
 			t.Fatalf("invalid qlog event name %q", qualified)
 		}
 		if qualified == "transport:stream_opened" && streamCount > 0 {
+			for streamID := 0; streamID < streamCount; streamID++ {
+				events = append(events, []any{len(events), "transport", "stream_opened", qlogTestEventData(context, "transport:stream_opened", streamID*4)})
+			}
 			continue
 		}
 		events = append(events, []any{len(events), parts[0], parts[1], qlogTestEventData(context, qualified, 4)})
@@ -4247,7 +4931,11 @@ func writeQlogArtifactWithEvents(t *testing.T, directory, context string, names 
 func qlogTestEventData(context, name string, streamID int) map[string]any {
 	switch name {
 	case "transport:stream_opened":
-		return map[string]any{"stream_id": streamID, "stream_type": "bidirectional", "connection_id": "8394c8f03e515708"}
+		connectionID := "8394c8f03e515708"
+		if strings.Contains(context, "CAP-STREAM-WT-") {
+			connectionID = "connection-1"
+		}
+		return map[string]any{"stream_id": streamID, "stream_type": "bidirectional", "connection_id": connectionID}
 	case "transport:stream_data_blocked":
 		return map[string]any{"stream_id": streamID, "limit": 65536, "connection_id": "8394c8f03e515708"}
 	case "application:rpc_completed":
@@ -4312,6 +5000,21 @@ func writePCAPArtifact(t *testing.T, directory, context string) EvidenceArtifact
 	contextDigest := sha256.Sum256([]byte(context))
 	copy(packets[0][len(packets[0])-8:], contextDigest[:8])
 	data := encodeClassicPCAP(packets)
+	return writeEvidenceArtifact(t, directory, context, "pcap", ".pcap", data)
+}
+
+func writeSoakPCAPArtifact(t *testing.T, directory, context string) EvidenceArtifact {
+	t.Helper()
+	records := make([]PacketAttributionRecord, 0, signedSoakContract.FaultCycleCount)
+	for index := 1; index <= signedSoakContract.FaultCycleCount; index++ {
+		digest := sha256.Sum256([]byte(fmt.Sprintf("pcap-source-%03d", index)))
+		records = append(records, PacketAttributionRecord{Sequence: uint64(index), SourceID: fmt.Sprintf("pcap-%03d", index),
+			SourceSHA256: hex.EncodeToString(digest[:]), ByteOffset: 24, ByteLength: 100, UnixNanoseconds: int64(index)})
+	}
+	data, err := json.Marshal(PacketAttributionArtifact{SchemaVersion: 1, Kind: "transport_pcap_attribution", Context: context, Records: records})
+	if err != nil {
+		t.Fatal(err)
+	}
 	return writeEvidenceArtifact(t, directory, context, "pcap", ".pcap", data)
 }
 
@@ -4608,7 +5311,7 @@ func fixtureMetricFaultBinding(t *testing.T, cell *CellEvidence, run *RunEvidenc
 		t.Fatalf("rpc phase missing for fault metric %s", metricID)
 	}
 	binding := &MetricFaultBinding{
-		Phase: "rpc", ProfileID: strings.TrimSuffix(strings.TrimPrefix(cell.CellID, "mobile-"), "-01"), TraceSHA256: rpc.Artifacts["trace"].SHA256, PCAPSHA256: rpc.Artifacts["pcap"].SHA256,
+		Phase: "rpc", ProfileID: strings.TrimSuffix(strings.TrimPrefix(cell.CellID, "mobile-"), "-01"), TraceSHA256: rpc.Artifacts["trace"].SHA256, PCAPSHA256: rpc.Artifacts["pcap_attribution"].SHA256,
 		ConnectionID: evidenceConnectionID, RequestID: fixtureFaultRequestID(cell.CellID, metricID, run.RunNumber), StartAtNS: 1e9, RecoveryAtNS: 3e9,
 		Event: "outage_started", RecoveryEvent: "outage_recovered",
 	}
@@ -4630,7 +5333,7 @@ func fixtureMetricFaultBinding(t *testing.T, cell *CellEvidence, run *RunEvidenc
 	} else {
 		binding.ReorderPercent, binding.DuplicatePercent = 2, 2
 	}
-	if qlog, exists := rpc.Artifacts["qlog"]; exists {
+	if qlog, exists := rpc.Artifacts["qlog_attribution"]; exists {
 		binding.QlogSHA256 = qlog.SHA256
 	}
 	if strings.Contains(metricID, "migration_first_rpc") {
@@ -4744,8 +5447,23 @@ func fixtureFormulaInputs(t *testing.T, report *EvidenceReport, run MetricRunSam
 func setMetricSamples(t *testing.T, manifest *PerformanceManifest, report *EvidenceReport, cell *CellEvidence, metricID string, value float64) {
 	t.Helper()
 	if metricID == "clean_revision_throughput_ratio" {
+		targetGoodput := 0.0
 		for runIndex := range cell.Runs {
 			run := &cell.Runs[runIndex]
+			base := &run.Variants[slices.IndexFunc(run.Variants, func(variant VariantEvidence) bool { return variant.ID == "base" })]
+			basePhase := &base.Phases[slices.IndexFunc(base.Phases, func(phase PhaseEvidence) bool { return phase.Phase == "bulk" })]
+			baseData, err := os.ReadFile(filepath.Join(report.baseDir, basePhase.Artifacts["samples"].Path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var baseArtifact OperationSeriesArtifact
+			if err := decodeStrictJSON(baseData, &baseArtifact); err != nil || len(baseArtifact.Records) != 1 {
+				t.Fatal("base bulk fixture is invalid")
+			}
+			baseGoodput, err := reduceOperationOperand(baseArtifact.Records[0], "goodput_mbps")
+			if err != nil {
+				t.Fatal(err)
+			}
 			candidate := &run.Variants[slices.IndexFunc(run.Variants, func(variant VariantEvidence) bool { return variant.ID == "candidate" })]
 			phase := &candidate.Phases[slices.IndexFunc(candidate.Phases, func(phase PhaseEvidence) bool { return phase.Phase == "bulk" })]
 			old := phase.Artifacts["samples"]
@@ -4757,7 +5475,8 @@ func setMetricSamples(t *testing.T, manifest *PerformanceManifest, report *Evide
 			if err := decodeStrictJSON(data, &artifact); err != nil {
 				t.Fatal(err)
 			}
-			goodput := value * 100
+			goodput := value * baseGoodput
+			targetGoodput = goodput
 			record := &artifact.Records[0]
 			scored, err := expandIntRuns(record.ScoredBytes, record.OperationCount, true)
 			if err != nil {
@@ -4773,7 +5492,7 @@ func setMetricSamples(t *testing.T, manifest *PerformanceManifest, report *Evide
 			phase.Artifacts["samples"] = rewriteEvidenceArtifact(t, report.baseDir, old, data)
 			rebindMetricArtifactDigest(t, report, old.SHA256, phase.Artifacts["samples"].SHA256)
 		}
-		updateMetricEvidence(t, manifest, report, cell, "bulk_goodput_mbps", value*100)
+		updateMetricEvidence(t, manifest, report, cell, "bulk_goodput_mbps", targetGoodput)
 		updateMetricEvidence(t, manifest, report, cell, metricID, value)
 		return
 	}
@@ -4909,10 +5628,6 @@ func completePhase(t *testing.T, directory, manifestDigest, profileID, phase str
 	artifacts := writeArtifactSet(t, directory, context, requiredArtifactsForCell(cell))
 	if profileID == "mobile-v1" || profileID == "edge-v1" {
 		artifacts["trace"] = writePerformanceFaultTrace(t, directory, context, profileID, phase, cell, runNumber)
-		if phase == "rpc" && cell.Topology == "direct_quic" {
-			artifacts["qlog"] = writePerformanceMigrationQlog(t, directory, context, profileID, cell, runNumber)
-			artifacts["pcap"] = writePerformanceMigrationPCAP(t, directory, context)
-		}
 	}
 	metricRecords := phaseFaultMetricRecords(profileID)
 	metricsData, err := json.Marshal(MetricsArtifact{
@@ -4927,11 +5642,11 @@ func completePhase(t *testing.T, directory, manifestDigest, profileID, phase str
 		t.Fatal(err)
 	}
 	records = append(records,
-		ConfigRecord{Key: "pcap_sha256", Value: artifacts["pcap"].SHA256},
+		ConfigRecord{Key: "pcap_attribution_sha256", Value: artifacts["pcap_attribution"].SHA256},
 		ConfigRecord{Key: "ebpf_metrics_sha256", Value: artifacts["metrics"].SHA256},
 	)
-	if qlog, exists := artifacts["qlog"]; exists {
-		records = append(records, ConfigRecord{Key: "qlog_sha256", Value: qlog.SHA256})
+	if qlog, exists := artifacts["qlog_attribution"]; exists {
+		records = append(records, ConfigRecord{Key: "qlog_attribution_sha256", Value: qlog.SHA256})
 	}
 	configData, err := json.Marshal(ConfigArtifact{SchemaVersion: 1, Kind: "transport_config", Context: context, Records: records})
 	if err != nil {
@@ -5063,7 +5778,7 @@ func writeOperationSeriesArtifact(t *testing.T, directory, context string, runNu
 	duration := int64(time.Millisecond)
 	maximum := 1
 	if phase == "bulk" {
-		goodput := map[string]float64{"clean-v1": 100, "mobile-v1": 5, "edge-v1": 1}[profileID]
+		goodput := map[string]float64{"clean-v1": 200, "mobile-v1": 5, "edge-v1": 1}[profileID]
 		scoreDuration := int64(math.Round(float64(contract.scoredBytes) * 8 * 1e3 / goodput))
 		duration = scoreDuration + int64(time.Millisecond)
 		maximum = 2

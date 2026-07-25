@@ -105,7 +105,7 @@ func ratioFormulaContract(cellID, metricID string) (ratioContract, error) {
 	case "clean_quic_rpc_p99_ratio":
 		return direct(
 			samples("numerator", cellID, "", "clean-v1", "rpc", "p99", "duration_ns"),
-			 samples("denominator", "clean-02", "", "clean-v1", "rpc", "p99", "duration_ns")), nil
+			samples("denominator", "clean-02", "", "clean-v1", "rpc", "p99", "duration_ns")), nil
 	case "clean_webtransport_cold_p99_ratio":
 		return direct(
 			samples("numerator", cellID, "", "clean-v1", "cold", "p99", "duration_ns"),

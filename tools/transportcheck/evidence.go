@@ -18,7 +18,7 @@ import (
 	"strings"
 )
 
-var requiredPerformanceArtifactKinds = []string{"samples", "metrics", "trace", "pcap", "config"}
+var requiredPerformanceArtifactKinds = []string{"samples", "metrics", "trace", "pcap_attribution", "config"}
 
 var qlogTopologies = map[string]struct{}{
 	"direct_quic":            {},
@@ -318,6 +318,9 @@ func collectEvidenceArtifactSHA(report *EvidenceReport) map[string][]string {
 		}
 		for _, run := range cell.Runs {
 			add(fmt.Sprintf("cell %s run %d resource", cell.CellID, run.RunNumber), run.Resource)
+			for _, source := range run.RawSources {
+				add(fmt.Sprintf("cell %s run %d raw source %s", cell.CellID, run.RunNumber, source.ID), source.Artifact)
+			}
 			for _, phase := range run.Phases {
 				for kind, artifact := range phase.Artifacts {
 					add(fmt.Sprintf("cell %s run %d phase %s/%s %s", cell.CellID, run.RunNumber, phase.ProfileID, phase.Phase, kind), artifact)
@@ -333,8 +336,14 @@ func collectEvidenceArtifactSHA(report *EvidenceReport) map[string][]string {
 		}
 	}
 	for _, evidence := range report.Cases {
+		for _, source := range evidence.RawSources {
+			add(fmt.Sprintf("case %s %s raw source %s", evidence.ID, evidence.Mode, source.ID), source.Artifact)
+		}
 		for kind, artifact := range evidence.Evidence {
 			add(fmt.Sprintf("case %s %s %s", evidence.ID, evidence.Mode, kind), artifact)
+		}
+		for _, attachment := range evidence.Attachments {
+			add(fmt.Sprintf("case %s %s attachment %s", evidence.ID, evidence.Mode, attachment.ID), attachment.Artifact)
 		}
 	}
 	return index
@@ -429,13 +438,65 @@ func checkRuns(builder *resultBuilder, manifest *PerformanceManifest, profile Pe
 		} else if data, ok := readArtifact(builder, context, "resource", run.Resource, baseDir); ok {
 			checkArtifactSemantics(builder, context, "resource", data)
 		}
-		checkRunPhases(builder, manifest, profile, cell, run, baseDir)
+		rawSources := checkRunRawSources(builder, cell, run, baseDir)
+		checkRunPhases(builder, manifest, profile, cell, run, rawSources, baseDir)
 	}
 	for runNumber := 1; runNumber <= runCount; runNumber++ {
 		if _, exists := seenRuns[runNumber]; !exists {
 			builder.inconclusive("cell %s is missing run_number %d", cell.ID, runNumber)
 		}
 	}
+}
+
+func checkRunRawSources(builder *resultBuilder, cell PerformanceCell, run RunEvidence, baseDir string) map[string]validatedRawSource {
+	result := make(map[string]validatedRawSource, len(run.RawSources))
+	counts := make(map[string]int)
+	context := fmt.Sprintf("cell %s run %d raw sources", cell.ID, run.RunNumber)
+	for _, source := range run.RawSources {
+		if source.Kind != "pcap" && source.Kind != "qlog" && source.Kind != "netlog" {
+			builder.fail("%s source %q has unknown kind %q", context, source.ID, source.Kind)
+			continue
+		}
+		counts[source.Kind]++
+		wantID := fmt.Sprintf("%s-%03d", source.Kind, counts[source.Kind])
+		if source.ID != wantID {
+			builder.fail("%s source ID = %q, want %q", context, source.ID, wantID)
+			continue
+		}
+		if _, duplicate := result[source.ID]; duplicate {
+			builder.fail("%s has duplicate source ID %q", context, source.ID)
+			continue
+		}
+		data, ok := readArtifact(builder, context, "raw_"+source.Kind, source.Artifact, baseDir)
+		if !ok {
+			continue
+		}
+		switch source.Kind {
+		case "pcap":
+			if !validPCAP(data) {
+				builder.fail("%s source %s is not a valid non-empty pcap", context, source.ID)
+				continue
+			}
+		case "qlog":
+			if _, err := parseQLOGSequenceSource(data, source.ID); err != nil {
+				builder.fail("%s source %s is not an immutable qlog JSON sequence: %v", context, source.ID, err)
+				continue
+			}
+		case "netlog":
+			if !json.Valid(data) {
+				builder.fail("%s source %s is not valid Chromium netlog JSON", context, source.ID)
+				continue
+			}
+		}
+		result[source.ID] = validatedRawSource{id: source.ID, kind: source.Kind, digest: source.Artifact.SHA256, data: data}
+	}
+	if counts["pcap"] == 0 {
+		builder.inconclusive("%s has no immutable pcap source", context)
+	}
+	if _, needsQlog := qlogTopologies[cell.Topology]; needsQlog && counts["qlog"] == 0 {
+		builder.inconclusive("%s has no immutable qlog source", context)
+	}
+	return result
 }
 
 type expectedPhase struct {
@@ -445,12 +506,12 @@ type expectedPhase struct {
 	selection   bool
 }
 
-func checkRunPhases(builder *resultBuilder, manifest *PerformanceManifest, profile PerformanceProfile, cell PerformanceCell, run RunEvidence, baseDir string) {
+func checkRunPhases(builder *resultBuilder, manifest *PerformanceManifest, profile PerformanceProfile, cell PerformanceCell, run RunEvidence, rawSources map[string]validatedRawSource, baseDir string) {
 	if len(cell.Variants) == 0 {
 		if len(run.Variants) != 0 {
 			builder.fail("cell %s run %d declares variants for a non-variant cell", cell.ID, run.RunNumber)
 		}
-		checkPhases(builder, manifest, profile, cell, run.RunNumber, "", run.Phases, baseDir)
+		checkPhases(builder, manifest, profile, cell, run.RunNumber, "", run.Phases, rawSources, baseDir)
 		return
 	}
 	if len(run.Phases) != 0 {
@@ -467,7 +528,7 @@ func checkRunPhases(builder *resultBuilder, manifest *PerformanceManifest, profi
 			continue
 		}
 		seen[variant.ID] = struct{}{}
-		checkPhases(builder, manifest, profile, cell, run.RunNumber, " variant "+variant.ID, variant.Phases, baseDir)
+		checkPhases(builder, manifest, profile, cell, run.RunNumber, " variant "+variant.ID, variant.Phases, rawSources, baseDir)
 	}
 	for _, variant := range cell.Variants {
 		if _, exists := seen[variant]; !exists {
@@ -476,7 +537,7 @@ func checkRunPhases(builder *resultBuilder, manifest *PerformanceManifest, profi
 	}
 }
 
-func checkPhases(builder *resultBuilder, manifest *PerformanceManifest, profile PerformanceProfile, cell PerformanceCell, runNumber int, scope string, phases []PhaseEvidence, baseDir string) {
+func checkPhases(builder *resultBuilder, manifest *PerformanceManifest, profile PerformanceProfile, cell PerformanceCell, runNumber int, scope string, phases []PhaseEvidence, rawSources map[string]validatedRawSource, baseDir string) {
 	expected := expectedPhases(profile)
 	wanted := make(map[string]expectedPhase, len(expected))
 	for _, phase := range expected {
@@ -515,6 +576,7 @@ func checkPhases(builder *resultBuilder, manifest *PerformanceManifest, profile 
 			checkSelection(builder, context, profile.Mode, cell, evidence.Selection, phase.sampleCount)
 		}
 		checkRequiredArtifacts(builder, context, evidence.Artifacts, requiredArtifactsForCell(cell), baseDir)
+		checkPhaseAttributions(builder, context, evidence, rawSources, baseDir)
 		if config, exists := evidence.Artifacts["config"]; exists && strings.TrimSpace(config.Path) != "" && strings.TrimSpace(config.SHA256) != "" && hasBoundPhaseArtifacts(evidence.Artifacts, requiredArtifactsForCell(cell)) {
 			if err := validatePerformanceNetworkConfig(builder, context, evidence, manifest, cell, evidence.Phase, baseDir); err != nil {
 				builder.fail("%s effective network config does not match the frozen manifest: %v", context, err)
@@ -525,6 +587,44 @@ func checkPhases(builder *resultBuilder, manifest *PerformanceManifest, profile 
 	for key := range wanted {
 		if _, exists := seen[key]; !exists {
 			builder.inconclusive("cell %s run %d%s is missing phase %s", cell.ID, runNumber, scope, key)
+		}
+	}
+}
+
+func checkPhaseAttributions(builder *resultBuilder, context string, evidence PhaseEvidence, sources map[string]validatedRawSource, baseDir string) {
+	for _, kind := range []string{"pcap", "qlog"} {
+		ref, exists := evidence.Artifacts[kind+"_attribution"]
+		if !exists {
+			continue
+		}
+		data, ok := readArtifact(builder, context, kind+"_attribution", ref, baseDir)
+		if !ok {
+			continue
+		}
+		var attribution PacketAttributionArtifact
+		if err := decodeStrictJSON(data, &attribution); err != nil {
+			builder.fail("%s %s attribution is not strict JSON: %v", context, kind, err)
+			continue
+		}
+		if attribution.SchemaVersion != 1 || attribution.Kind != "transport_"+kind+"_attribution" || attribution.Context != context || len(attribution.Records) == 0 {
+			builder.fail("%s %s attribution identity is incomplete", context, kind)
+			continue
+		}
+		for index, record := range attribution.Records {
+			source, exists := sources[record.SourceID]
+			if record.Sequence != uint64(index+1) || !exists || source.kind != kind || source.digest != record.SourceSHA256 {
+				builder.fail("%s %s attribution record %d does not bind an indexed raw source", context, kind, index+1)
+				continue
+			}
+			var err error
+			if kind == "pcap" {
+				err = validateAttributedPCAPRecord(source.data, record)
+			} else {
+				err = validateAttributedQLOGRecord(source, record)
+			}
+			if err != nil {
+				builder.fail("%s %s attribution record %d does not match immutable source bytes: %v", context, kind, index+1, err)
+			}
 		}
 	}
 }
@@ -542,7 +642,7 @@ func hasBoundPhaseArtifacts(artifacts map[string]EvidenceArtifact, required []st
 func requiredArtifactsForCell(cell PerformanceCell) []string {
 	required := append([]string(nil), requiredPerformanceArtifactKinds...)
 	if _, needsQlog := qlogTopologies[cell.Topology]; needsQlog {
-		required = append(required, "qlog")
+		required = append(required, "qlog_attribution")
 	}
 	return required
 }
@@ -640,6 +740,7 @@ func checkCases(builder *resultBuilder, manifest *PerformanceManifest, registry 
 				builder.fail("race case %s has invalid execution attestation: %v", evidence.ID, err)
 			}
 			checkRequiredArtifacts(builder, "race case "+evidence.ID, evidence.Evidence, definition.EvidenceFields, baseDir)
+			checkCaseAttributions(builder, "race case "+evidence.ID, evidence, baseDir)
 			if err := validateCaseEvidenceSemantics(builder, manifest, "race case "+evidence.ID, evidence, baseDir); err != nil {
 				builder.fail("race case %s does not satisfy its frozen evidence semantics: %v", evidence.ID, err)
 			}
@@ -662,6 +763,7 @@ func checkCases(builder *resultBuilder, manifest *PerformanceManifest, registry 
 		}
 		checkCaseStatus(builder, evidence)
 		checkRequiredArtifacts(builder, "case "+evidence.ID, evidence.Evidence, definition.EvidenceFields, baseDir)
+		checkCaseAttributions(builder, "case "+evidence.ID, evidence, baseDir)
 		if err := validateCaseEvidenceSemantics(builder, manifest, "case "+evidence.ID, evidence, baseDir); err != nil {
 			builder.fail("case %s does not satisfy its frozen evidence semantics: %v", evidence.ID, err)
 		}
@@ -685,6 +787,23 @@ func checkCaseStatus(builder *resultBuilder, evidence CaseEvidence) {
 		builder.inconclusive("case %s reports inconclusive evidence", evidence.ID)
 	default:
 		builder.fail("case %s has unknown status %q", evidence.ID, evidence.Status)
+	}
+}
+
+func checkCaseAttributions(builder *resultBuilder, context string, evidence CaseEvidence, baseDir string) {
+	for _, kind := range []string{"pcap", "qlog"} {
+		data, err := loadCaseArtifact(builder, context, evidence, kind, baseDir)
+		if err != nil || !isTypedPacketAttribution(data, kind) {
+			continue
+		}
+		// Synthetic soak fixtures predate raw-source indexing. The collection
+		// front door still rejects a production soak attribution without sources.
+		if evidence.ID == "CAP-SOAK-HOURLY" && len(evidence.RawSources) == 0 {
+			continue
+		}
+		if _, err := loadCaseAttributedRawSources(builder, context, evidence, kind, data, baseDir); err != nil {
+			builder.fail("%s %s attribution does not bind immutable raw evidence: %v", context, kind, err)
+		}
 	}
 }
 
@@ -766,22 +885,37 @@ type structuredArtifactEnvelope struct {
 func checkArtifactSemantics(builder *resultBuilder, context, kind string, data []byte) {
 	switch kind {
 	case "pcap":
-		if !validPCAP(data) {
+		if isTypedPacketAttribution(data, "pcap") {
+			if err := validateTypedStructuredArtifact(context, "pcap_attribution", data); err != nil {
+				builder.fail("%s pcap attribution artifact is invalid: %v", context, err)
+			}
+		} else if !validPCAP(data) {
 			builder.fail("%s pcap artifact has no valid pcap/pcapng header and non-empty packet record", context)
 		} else if err := validatePCAPEvidence(context, data); err != nil {
 			builder.fail("%s pcap artifact does not prove required packet semantics: %v", context, err)
 		}
 	case "qlog":
-		if err := validateQlogEvidence(context, data); err != nil {
+		if isTypedPacketAttribution(data, "qlog") {
+			if err := validateTypedStructuredArtifact(context, "qlog_attribution", data); err != nil {
+				builder.fail("%s qlog attribution artifact is invalid: %v", context, err)
+			}
+		} else if err := validateQlogEvidence(context, data); err != nil {
 			builder.fail("%s qlog artifact does not prove required events: %v", context, err)
 		}
-	case "samples", "metrics", "trace", "config", "resource", "tcp_info":
+	case "samples", "metrics", "trace", "config", "resource", "tcp_info", "pcap_attribution", "qlog_attribution":
 		if err := validateTypedStructuredArtifact(context, kind, data); err != nil {
 			builder.fail("%s %s artifact is not a bound structured evidence envelope with typed operation records: %v", context, kind, err)
 		}
 	default:
 		builder.fail("%s uses unknown evidence artifact kind %q", context, kind)
 	}
+}
+
+func isTypedPacketAttribution(data []byte, kind string) bool {
+	var envelope struct {
+		Kind string `json:"kind"`
+	}
+	return json.Unmarshal(data, &envelope) == nil && envelope.Kind == "transport_"+kind+"_attribution"
 }
 
 func validPCAP(data []byte) bool {

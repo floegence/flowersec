@@ -15,35 +15,55 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
 var collectTargets = map[string]struct{}{
 	"all": {}, "transport-conformance-full": {}, "weaknet-full": {}, "weaknet-system": {},
-	"quic-native-proof": {}, "quic-native-race": {}, "bench-transport-capacity": {},
+	"quic-native-smoke": {}, "quic-native-proof": {}, "quic-native-race": {}, "bench-transport-capacity": {},
 	"bench-transport-soak": {}, "bench-transport-ab": {}, "transport-conformance-smoke": {},
 }
 
 var normalCaseProducerOwners = map[string]struct{}{
 	"transport-conformance-smoke": {},
+	"transport-conformance-full":  {},
+	"weaknet-full":                {},
+	"weaknet-system":              {},
+	"quic-native-smoke":           {},
+	"quic-native-proof":           {},
 }
 
+var raceCaseProducerOwners = map[string]struct{}{
+	"quic-native-race": {},
+}
+
+const (
+	collectionRevisionBase  = "base"
+	collectionRevisionFinal = "final"
+)
+
 type collectRequest struct {
-	ManifestPath        string
-	RegistryPath        string
-	RepositoryPath      string
-	BaseSHA             string
-	FinalSHA            string
-	Target              string
-	ReportPath          string
-	ArtifactDirectory   string
-	RunnerExecutable    string
-	RunnerWrapper       string
-	BPFObject           string
-	HostBPFTool         string
-	TrustPolicyPath     string
-	EffectiveConfigPath string
-	KernelRelease       string
+	ManifestPath         string
+	BaseManifestPath     string
+	RegistryPath         string
+	RepositoryPath       string
+	BaseRepositoryPath   string
+	BaseSHA              string
+	FinalSHA             string
+	Target               string
+	ReportPath           string
+	ArtifactDirectory    string
+	RunnerExecutable     string
+	RaceRunnerExecutable string
+	BaseRunnerExecutable string
+	RunnerWrapper        string
+	BPFObject            string
+	HostBPFTool          string
+	TrustPolicyPath      string
+	EffectiveConfigPath  string
+	KernelRelease        string
 }
 
 type collectEnvironment struct {
@@ -116,24 +136,31 @@ type collectionPlan struct {
 }
 
 type collectionJob struct {
-	ID           string
-	CellIDs      []string
-	RunnerTarget string
-	Profile      string
-	Carrier      string
-	Topology     string
-	NeedsBPF     bool
-	CaseOwner    string
-	CaseMode     string
-	CaseIDs      []string
+	ID             string
+	CellIDs        []string
+	RunnerTarget   string
+	Profile        string
+	Carrier        string
+	Topology       string
+	NeedsBPF       bool
+	CaseOwner      string
+	CaseMode       string
+	CaseIDs        []string
+	VariantID      string
+	SourceRevision string
 }
 
 type rawJobRecord struct {
-	ID        string   `json:"id"`
-	CellIDs   []string `json:"cell_ids"`
-	CaseIDs   []string `json:"case_ids,omitempty"`
-	Directory string   `json:"directory"`
-	ReportSHA string   `json:"report_sha256"`
+	ID                     string                 `json:"id"`
+	CellIDs                []string               `json:"cell_ids"`
+	CaseIDs                []string               `json:"case_ids,omitempty"`
+	VariantID              string                 `json:"variant_id,omitempty"`
+	SourceSHA              string                 `json:"source_sha"`
+	RunnerExecutableSHA256 string                 `json:"runner_executable_sha256"`
+	CommandSHA256          string                 `json:"command_sha256"`
+	Lane                   collectionLaneIdentity `json:"lane"`
+	Directory              string                 `json:"directory"`
+	ReportSHA              string                 `json:"report_sha256"`
 }
 
 type rawCaseSuiteReport struct {
@@ -156,7 +183,17 @@ type rawCaseSuiteResult struct {
 	Status              string                `json:"status"`
 	CompletedOperations int                   `json:"completed_operations"`
 	ElapsedNanoseconds  int64                 `json:"elapsed_nanoseconds"`
+	RawSources          []rawProducedSource   `json:"raw_sources,omitempty"`
+	Attachments         []rawProducedSource   `json:"attachments,omitempty"`
 	Artifacts           []rawProducedArtifact `json:"artifacts"`
+}
+
+type rawProducedSource struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Path      string `json:"path"`
+	SHA256    string `json:"sha256"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 type rawProducedArtifact struct {
@@ -207,34 +244,36 @@ func validateCollectRequest(request collectRequest) (*collectEnvironment, error)
 		return nil, fmt.Errorf("repository: %w", err)
 	}
 	request.RepositoryPath = repository
+	baseRepository, err := canonicalDirectory(request.BaseRepositoryPath, false)
+	if err != nil {
+		return nil, fmt.Errorf("base repository: %w", err)
+	}
+	request.BaseRepositoryPath = baseRepository
+	if baseRepository == repository {
+		return nil, errors.New("collect base and final repositories must be independent checkouts")
+	}
 	if !gitSHAPattern.MatchString(request.BaseSHA) || !gitSHAPattern.MatchString(request.FinalSHA) {
 		return nil, errors.New("collect requires full lowercase base and final Git SHAs")
 	}
 	if request.BaseSHA == request.FinalSHA {
 		return nil, errors.New("collect base and final SHAs must differ")
 	}
-	top, err := collectGitOutput(repository, "rev-parse", "--show-toplevel")
-	if err != nil || top != repository {
-		return nil, errors.New("collect repository is not its canonical Git root")
+	if err := validateCollectCheckout(repository, request.FinalSHA, "final"); err != nil {
+		return nil, err
 	}
-	head, err := collectGitOutput(repository, "rev-parse", "HEAD")
-	if err != nil || head != request.FinalSHA {
-		return nil, errors.New("collect final SHA does not match repository HEAD")
+	if err := validateCollectCheckout(baseRepository, request.BaseSHA, "base"); err != nil {
+		return nil, err
 	}
 	if err := exec.Command("git", "-C", repository, "merge-base", "--is-ancestor", request.BaseSHA, request.FinalSHA).Run(); err != nil {
 		return nil, errors.New("collect base SHA is not an ancestor of final SHA")
 	}
-	status, err := collectGitOutput(repository, "status", "--porcelain", "--untracked-files=all")
-	if err != nil || status != "" {
-		return nil, errors.New("collect repository must be clean with no untracked files")
-	}
-
 	fixedPaths := map[string]*string{
 		"manifest":         &request.ManifestPath,
 		"registry":         &request.RegistryPath,
 		"trust_policy":     &request.TrustPolicyPath,
 		"effective_config": &request.EffectiveConfigPath,
 	}
+	request.BaseManifestPath = filepath.Join(baseRepository, "testdata", "transport_v2", "performance_manifest.json")
 	wants := map[string]string{
 		"manifest":         filepath.Join(repository, "testdata", "transport_v2", "performance_manifest.json"),
 		"registry":         filepath.Join(repository, "testdata", "transport_v2", "case_registry.json"),
@@ -263,10 +302,16 @@ func validateCollectRequest(request collectRequest) (*collectEnvironment, error)
 		path       *string
 		executable bool
 	}{
-		{"manifest", &request.ManifestPath, false}, {"registry", &request.RegistryPath, false},
-		{"runner_executable", &request.RunnerExecutable, true}, {"runner_wrapper", &request.RunnerWrapper, true},
+		{"manifest", &request.ManifestPath, false}, {"base_manifest", &request.BaseManifestPath, false}, {"registry", &request.RegistryPath, false},
+		{"runner_executable", &request.RunnerExecutable, true}, {"race_runner_executable", &request.RaceRunnerExecutable, true}, {"base_runner_executable", &request.BaseRunnerExecutable, true}, {"runner_wrapper", &request.RunnerWrapper, true},
 		{"bpf_object", &request.BPFObject, false}, {"host_bpftool", &request.HostBPFTool, true},
 		{"trust_policy", &request.TrustPolicyPath, false}, {"effective_config", &request.EffectiveConfigPath, false},
+	}
+	if request.BaseRunnerExecutable == request.RunnerExecutable {
+		return nil, errors.New("collect base and final runner executables must be independent files")
+	}
+	if request.RaceRunnerExecutable == request.RunnerExecutable || request.RaceRunnerExecutable == request.BaseRunnerExecutable {
+		return nil, errors.New("collect race runner executable must be an independent file")
 	}
 	digests := make(map[string]string, len(inputSpecs))
 	for _, spec := range inputSpecs {
@@ -283,8 +328,8 @@ func validateCollectRequest(request collectRequest) (*collectEnvironment, error)
 		return nil, errors.New("installed runner wrapper does not match the clean source checkout")
 	}
 	digests["runner_wrapper_source"] = wrapperSourceDigest
-	if err := verifyCleanGoVCSStamp(request.RunnerExecutable, request.FinalSHA); err != nil {
-		return nil, err
+	if digests["base_manifest"] != digests["manifest"] {
+		return nil, errors.New("collect base and final manifests must be byte-identical for paired revision evidence")
 	}
 
 	manifest, err := loadPerformanceManifest(request.ManifestPath)
@@ -300,6 +345,27 @@ func validateCollectRequest(request collectRequest) (*collectEnvironment, error)
 	}
 	if err := validateCaseRegistry(registry); err != nil {
 		return nil, err
+	}
+	if err := verifyDeterministicRunnerExecutable(repository, request.RunnerExecutable, false); err != nil {
+		return nil, fmt.Errorf("final runner identity: %w", err)
+	}
+	if err := verifyDeterministicRunnerExecutable(repository, request.RaceRunnerExecutable, true); err != nil {
+		return nil, fmt.Errorf("race runner identity: %w", err)
+	}
+	if err := verifyDeterministicRunnerExecutable(baseRepository, request.BaseRunnerExecutable, false); err != nil {
+		return nil, fmt.Errorf("base runner identity: %w", err)
+	}
+	digests["runner_source"], err = runnerSourceSHA256(repository)
+	if err != nil {
+		return nil, fmt.Errorf("final runner source identity: %w", err)
+	}
+	digests["base_runner_source"], err = runnerSourceSHA256(baseRepository)
+	if err != nil {
+		return nil, fmt.Errorf("base runner source identity: %w", err)
+	}
+	digests["runner_argv"], err = canonicalAllTargetArgvSHA256(manifest, registry)
+	if err != nil {
+		return nil, fmt.Errorf("canonical runner argv identity: %w", err)
 	}
 	policy, err := loadEvidenceTrustPolicy(request.TrustPolicyPath)
 	if err != nil {
@@ -325,23 +391,18 @@ func validateCollectRequest(request collectRequest) (*collectEnvironment, error)
 	return &collectEnvironment{request: request, manifest: manifest, registry: registry, inputDigests: digests, output: output}, nil
 }
 
-func verifyCleanGoVCSStamp(executable, finalSHA string) error {
-	output, err := exec.Command("go", "version", "-m", executable).Output()
-	if err != nil {
-		return fmt.Errorf("inspect low-level runner VCS stamp: %w", err)
+func validateCollectCheckout(repository, sourceSHA, label string) error {
+	top, err := collectGitOutput(repository, "rev-parse", "--show-toplevel")
+	if err != nil || top != repository {
+		return fmt.Errorf("collect %s repository is not its canonical Git root", label)
 	}
-	var revision, modified string
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "build\tvcs.revision=") {
-			revision = strings.TrimPrefix(line, "build\tvcs.revision=")
-		}
-		if strings.HasPrefix(line, "build\tvcs.modified=") {
-			modified = strings.TrimPrefix(line, "build\tvcs.modified=")
-		}
+	head, err := collectGitOutput(repository, "rev-parse", "HEAD")
+	if err != nil || head != sourceSHA {
+		return fmt.Errorf("collect %s SHA does not match repository HEAD", label)
 	}
-	if revision != finalSHA || modified != "false" {
-		return errors.New("low-level runner must carry the clean final-SHA VCS stamp")
+	status, err := collectGitOutput(repository, "status", "--porcelain", "--untracked-files=all")
+	if err != nil || status != "" {
+		return fmt.Errorf("collect %s repository must be clean with no untracked files", label)
 	}
 	return nil
 }
@@ -442,7 +503,8 @@ func buildCollectionPlan(target string, manifest *PerformanceManifest, registry 
 				key := "normal:" + entry.Owner
 				job := caseJobs[key]
 				if job == nil {
-					job = &collectionJob{ID: "case-normal-" + entry.Owner, RunnerTarget: "release-case-suite", CaseOwner: entry.Owner, CaseMode: "normal"}
+					needsBPF := entry.Owner == "weaknet-system" || entry.Owner == "quic-native-proof"
+					job = &collectionJob{ID: "case-normal-" + entry.Owner, RunnerTarget: "release-case-suite", CaseOwner: entry.Owner, CaseMode: "normal", NeedsBPF: needsBPF}
 					caseJobs[key] = job
 				}
 				job.CaseIDs = append(job.CaseIDs, entry.ID)
@@ -451,7 +513,17 @@ func buildCollectionPlan(target string, manifest *PerformanceManifest, registry 
 			}
 		}
 		if entry.RaceOwner != "" && (target == "all" || target == entry.RaceOwner) {
-			plan.Missing = append(plan.Missing, fmt.Sprintf("race case %s owned by %s", entry.ID, entry.RaceOwner))
+			if _, supported := raceCaseProducerOwners[entry.RaceOwner]; supported {
+				key := "race:" + entry.RaceOwner
+				job := caseJobs[key]
+				if job == nil {
+					job = &collectionJob{ID: "case-race-" + entry.RaceOwner, RunnerTarget: "release-case-suite", CaseOwner: entry.RaceOwner, CaseMode: "race", NeedsBPF: entry.RaceOwner == "quic-native-race"}
+					caseJobs[key] = job
+				}
+				job.CaseIDs = append(job.CaseIDs, entry.ID)
+			} else {
+				plan.Missing = append(plan.Missing, fmt.Sprintf("race case %s owned by %s", entry.ID, entry.RaceOwner))
+			}
 		}
 	}
 	for _, job := range caseJobs {
@@ -468,6 +540,13 @@ func supportedPerformanceJobs(manifest *PerformanceManifest) ([]collectionJob, [
 	var missing []string
 	var baselineCells []string
 	for _, cell := range manifest.Cells {
+		if cell.ID == "clean-01" && cell.ProfileID == "clean-v1" && cell.Topology == "direct_wss_revision" {
+			jobs = append(jobs,
+				collectionJob{ID: "clean-01-base", CellIDs: []string{cell.ID}, RunnerTarget: "direct-clean-baseline", VariantID: "base", SourceRevision: collectionRevisionBase, NeedsBPF: true},
+				collectionJob{ID: "clean-01-candidate", CellIDs: []string{cell.ID}, RunnerTarget: "direct-clean-baseline", VariantID: "candidate", SourceRevision: collectionRevisionFinal, NeedsBPF: true},
+			)
+			continue
+		}
 		job, supported := performanceJob(cell)
 		if !supported {
 			missing = append(missing, fmt.Sprintf("cell %s (%s)", cell.ID, cell.Topology))
@@ -481,7 +560,7 @@ func supportedPerformanceJobs(manifest *PerformanceManifest) ([]collectionJob, [
 	}
 	if len(baselineCells) != 0 {
 		slices.Sort(baselineCells)
-		jobs = append(jobs, collectionJob{ID: "clean-direct-baseline", CellIDs: baselineCells, RunnerTarget: "direct-clean-baseline"})
+		jobs = append(jobs, collectionJob{ID: "clean-direct-baseline", CellIDs: baselineCells, RunnerTarget: "direct-clean-baseline", NeedsBPF: true})
 	}
 	return jobs, missing
 }
@@ -491,7 +570,11 @@ func performanceJob(cell PerformanceCell) (collectionJob, bool) {
 	if cell.ProfileID == "clean-v1" {
 		switch cell.Topology {
 		case "direct_wss", "direct_quic":
+			job.NeedsBPF = true
 			job.RunnerTarget = "direct-clean-baseline"
+			return job, true
+		case "ww", "qq", "wq", "qw":
+			job.RunnerTarget, job.Topology = "tunnel-network-profile-cell", strings.ToUpper(cell.Topology)
 			return job, true
 		case "browser_webtransport", "browser_tunnel_wt_wss", "browser_tunnel_wt_quic":
 			job.RunnerTarget, job.Topology = "browser-webtransport-cell", cell.Topology
@@ -499,6 +582,10 @@ func performanceJob(cell PerformanceCell) (collectionJob, bool) {
 		default:
 			return collectionJob{}, false
 		}
+	}
+	if cell.ProfileID == "adaptive-selection-v1" && (cell.Topology == "adaptive_native" || cell.Topology == "adaptive_web") {
+		job.RunnerTarget, job.Topology, job.NeedsBPF = "adaptive-selection-cell", cell.Topology, true
+		return job, true
 	}
 	if cell.ProfileID != "mobile-v1" && cell.ProfileID != "edge-v1" {
 		return collectionJob{}, false
@@ -563,7 +650,46 @@ func executeCollection(ctx context.Context, environment *collectEnvironment, pla
 	return nil
 }
 
-func runCollectionJobs(ctx context.Context, request collectRequest, manifest *PerformanceManifest, registry *CaseRegistry, jobs []collectionJob, staging string, identities ...*collectionDirectoryIdentity) ([]rawJobRecord, error) {
+type collectionJobExecution struct {
+	executable   string
+	repository   string
+	manifestPath string
+	sourceSHA    string
+}
+
+func executionForCollectionJob(request collectRequest, job collectionJob) (collectionJobExecution, error) {
+	if job.CaseMode == "race" {
+		if job.SourceRevision != "" || job.CaseOwner == "" || job.RunnerTarget != "release-case-suite" {
+			return collectionJobExecution{}, errors.New("race execution is reserved for registered final case-suite jobs")
+		}
+		return collectionJobExecution{
+			executable: request.RaceRunnerExecutable, repository: request.RepositoryPath,
+			manifestPath: request.ManifestPath, sourceSHA: request.FinalSHA,
+		}, nil
+	}
+	switch job.SourceRevision {
+	case collectionRevisionBase:
+		if job.ID != "clean-01-base" || job.VariantID != "base" || !slices.Equal(job.CellIDs, []string{"clean-01"}) || job.RunnerTarget != "direct-clean-baseline" {
+			return collectionJobExecution{}, errors.New("only clean-01/base may use the base runner")
+		}
+		return collectionJobExecution{
+			executable: request.BaseRunnerExecutable, repository: request.BaseRepositoryPath,
+			manifestPath: request.BaseManifestPath, sourceSHA: request.BaseSHA,
+		}, nil
+	case "", collectionRevisionFinal:
+		if job.SourceRevision == collectionRevisionFinal && (job.ID != "clean-01-candidate" || job.VariantID != "candidate" || !slices.Equal(job.CellIDs, []string{"clean-01"}) || job.RunnerTarget != "direct-clean-baseline") {
+			return collectionJobExecution{}, errors.New("explicit final revision is reserved for clean-01/candidate")
+		}
+		return collectionJobExecution{
+			executable: request.RunnerExecutable, repository: request.RepositoryPath,
+			manifestPath: request.ManifestPath, sourceSHA: request.FinalSHA,
+		}, nil
+	default:
+		return collectionJobExecution{}, fmt.Errorf("collection job %s has unknown source revision %q", job.ID, job.SourceRevision)
+	}
+}
+
+func runCollectionJobs(ctx context.Context, request collectRequest, manifest *PerformanceManifest, registry *CaseRegistry, jobs []collectionJob, staging string, identities ...*collectionDirectoryIdentity) (records []rawJobRecord, resultErr error) {
 	var identity *collectionDirectoryIdentity
 	if len(identities) > 1 {
 		return nil, errors.New("collection jobs accept at most one output identity")
@@ -578,104 +704,214 @@ func runCollectionJobs(ctx context.Context, request collectRequest, manifest *Pe
 	if err := os.Mkdir(jobsRoot, 0o700); err != nil {
 		return nil, err
 	}
-	records := make([]rawJobRecord, 0, len(jobs))
-	for _, job := range jobs {
-		if identity != nil {
-			if err := identity.Verify(); err != nil {
-				return nil, err
-			}
-		}
-		jobDirectory := filepath.Join(jobsRoot, job.ID)
-		artifactDirectory := filepath.Join(jobDirectory, "artifacts")
-		if err := os.MkdirAll(artifactDirectory, 0o700); err != nil {
+	schedule, err := scheduleCollectionJobs(manifest, jobs)
+	if err != nil {
+		return nil, err
+	}
+	records = make([]rawJobRecord, len(jobs))
+	globalWatchdog := time.Duration(0)
+	if manifest.GlobalWatchdogMinutes > 0 {
+		globalWatchdog = time.Duration(manifest.GlobalWatchdogMinutes) * time.Minute
+	}
+	if err := executeCollectionLaneStage(ctx, request, manifest, registry, schedule.lanes, staging, identity, records, false, globalWatchdog, 0); err != nil {
+		return nil, err
+	}
+	if len(schedule.caseSuite) != 0 {
+		const caseSuiteWatchdog = 90 * time.Minute
+		outerWatchdog := time.Duration(len(schedule.caseSuite)) * caseSuiteWatchdog
+		if err := executeCollectionLaneStage(ctx, request, manifest, registry, [][]scheduledCollectionJob{schedule.caseSuite}, staging, identity, records, true, outerWatchdog, caseSuiteWatchdog); err != nil {
 			return nil, err
 		}
-		reportPath := filepath.Join(jobDirectory, "cell.json")
-		args := []string{
-			"--target", job.RunnerTarget,
-			"--manifest", request.ManifestPath,
-			"--report", reportPath,
-			"--artifact-dir", artifactDirectory,
-			"--source-sha", request.FinalSHA,
-			"--source-root", request.RepositoryPath,
-		}
-		if job.Profile != "" {
-			args = append(args, "--profile", job.Profile)
-		}
-		if job.Carrier != "" {
-			args = append(args, "--carrier", job.Carrier)
-		}
-		if job.Topology != "" {
-			args = append(args, "--topology", job.Topology)
-		}
-		if job.NeedsBPF {
-			args = append(args, "--bpf-object", request.BPFObject)
-		}
-		if job.CaseOwner != "" {
-			args = append(args, "--case-owner", job.CaseOwner, "--case-mode", job.CaseMode)
-		}
-		commandRecord, err := json.MarshalIndent(struct {
-			Executable string   `json:"executable"`
-			Args       []string `json:"args"`
-		}{request.RunnerExecutable, args}, "", "  ")
-		if err != nil {
-			return nil, err
-		}
-		commandRecord = append(commandRecord, '\n')
-		if err := os.WriteFile(filepath.Join(jobDirectory, "command.json"), commandRecord, 0o600); err != nil {
-			return nil, err
-		}
-		stdout, err := os.OpenFile(filepath.Join(jobDirectory, "stdout.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err != nil {
-			return nil, err
-		}
-		stderr, err := os.OpenFile(filepath.Join(jobDirectory, "stderr.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err != nil {
-			_ = stdout.Close()
-			return nil, err
-		}
-		command := exec.CommandContext(ctx, request.RunnerExecutable, args...)
-		command.Dir = request.RepositoryPath
-		command.Env = slices.DeleteFunc(os.Environ(), func(value string) bool { return strings.HasPrefix(value, "GIT_") })
-		command.Stdout, command.Stderr = stdout, stderr
-		runErr := command.Run()
-		outputErr := errors.Join(stdout.Sync(), stderr.Sync(), stdout.Close(), stderr.Close())
-		if outputErr != nil {
-			return nil, outputErr
-		}
-		if runErr != nil {
-			return nil, fmt.Errorf("low-level runner job %s failed: %w", job.ID, runErr)
-		}
-		_, reportDigest, err := snapshotRegularFile(reportPath, false)
-		if err != nil {
-			return nil, fmt.Errorf("low-level runner job %s report: %w", job.ID, err)
-		}
-		if err := validateRawCellReport(reportPath, request.FinalSHA, manifest.Digest); err != nil {
-			return nil, fmt.Errorf("low-level runner job %s report: %w", job.ID, err)
-		}
-		recordCaseIDs := job.CaseIDs
-		if job.CaseOwner != "" {
-			_, manifestFileSHA256, err := snapshotRegularFile(request.ManifestPath, false)
-			if err != nil {
-				return nil, fmt.Errorf("low-level runner job %s manifest: %w", job.ID, err)
-			}
-			actualCaseIDs, err := validateRawCaseSuiteReport(reportPath, artifactDirectory, request.FinalSHA, manifest.Digest, manifestFileSHA256, job, registry)
-			if err != nil {
-				return nil, fmt.Errorf("low-level runner job %s case report: %w", job.ID, err)
-			}
-			recordCaseIDs = actualCaseIDs
-		}
-		if err := validateProducedArtifacts(artifactDirectory); err != nil {
-			return nil, fmt.Errorf("low-level runner job %s artifacts: %w", job.ID, err)
-		}
-		if identity != nil {
-			if err := identity.Verify(); err != nil {
-				return nil, err
-			}
-		}
-		records = append(records, rawJobRecord{ID: job.ID, CellIDs: job.CellIDs, CaseIDs: recordCaseIDs, Directory: filepath.ToSlash(filepath.Join("jobs", job.ID)), ReportSHA: reportDigest})
 	}
 	return records, nil
+}
+
+func executeCollectionLaneStage(ctx context.Context, request collectRequest, manifest *PerformanceManifest, registry *CaseRegistry, lanes [][]scheduledCollectionJob, staging string, identity *collectionDirectoryIdentity, records []rawJobRecord, caseSuite bool, stageWatchdog, jobWatchdog time.Duration) (resultErr error) {
+	if len(lanes) == 0 {
+		return nil
+	}
+	laneSet, err := openCollectionLaneSet(len(lanes), requiresProductionLaneIsolation(manifest), caseSuite)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, laneSet.Close()) }()
+	if stageWatchdog > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, stageWatchdog)
+		defer cancel()
+	}
+	workerContext, cancelWorkers := context.WithCancel(ctx)
+	defer cancelWorkers()
+	var workers sync.WaitGroup
+	errorsByLane := make([]error, len(lanes))
+	browserSlots := make(chan struct{}, collectionBrowserParallelism)
+	for laneIndex, laneJobs := range lanes {
+		laneIndex, laneJobs := laneIndex, laneJobs
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			lane := laneSet.Lane(laneIndex)
+			for _, scheduled := range laneJobs {
+				jobContext := workerContext
+				cancelJob := func() {}
+				if jobWatchdog > 0 {
+					jobContext, cancelJob = context.WithTimeout(workerContext, jobWatchdog)
+				}
+				if scheduled.browser {
+					select {
+					case browserSlots <- struct{}{}:
+					case <-jobContext.Done():
+						cancelJob()
+						errorsByLane[laneIndex] = fmt.Errorf("collection job %s browser slot: %w", scheduled.job.ID, jobContext.Err())
+						cancelWorkers()
+						return
+					}
+				}
+				record, err := runCollectionJob(jobContext, request, manifest, registry, scheduled.job, staging, identity, lane)
+				if scheduled.browser {
+					<-browserSlots
+				}
+				watchdogErr := jobContext.Err()
+				cancelJob()
+				if err != nil {
+					if watchdogErr != nil {
+						err = errors.Join(err, fmt.Errorf("collection job %s watchdog: %w", scheduled.job.ID, watchdogErr))
+					}
+					errorsByLane[laneIndex] = err
+					cancelWorkers()
+					return
+				}
+				records[scheduled.index] = record
+			}
+		}()
+	}
+	workers.Wait()
+	if err := errors.Join(errorsByLane...); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("collection stage watchdog: %w", err)
+	}
+	return nil
+}
+
+func runCollectionJob(ctx context.Context, request collectRequest, manifest *PerformanceManifest, registry *CaseRegistry, job collectionJob, staging string, identity *collectionDirectoryIdentity, lane collectionLaneRuntime) (rawJobRecord, error) {
+	if lane == nil {
+		return rawJobRecord{}, errors.New("collection job requires an isolated execution lane")
+	}
+	jobsRoot := filepath.Join(staging, "jobs")
+	if identity != nil {
+		if err := identity.Verify(); err != nil {
+			return rawJobRecord{}, err
+		}
+	}
+	jobDirectory := filepath.Join(jobsRoot, job.ID)
+	artifactDirectory := filepath.Join(jobDirectory, "artifacts")
+	if err := os.MkdirAll(artifactDirectory, 0o700); err != nil {
+		return rawJobRecord{}, err
+	}
+	reportPath := filepath.Join(jobDirectory, "cell.json")
+	execution, err := executionForCollectionJob(request, job)
+	if err != nil {
+		return rawJobRecord{}, err
+	}
+	args := collectionJobArgs(job, execution.manifestPath, reportPath, artifactDirectory, execution.sourceSHA, execution.repository, request.BPFObject)
+	commandRecord, err := json.MarshalIndent(struct {
+		Executable string   `json:"executable"`
+		Args       []string `json:"args"`
+	}{execution.executable, args}, "", "  ")
+	if err != nil {
+		return rawJobRecord{}, err
+	}
+	commandRecord = append(commandRecord, '\n')
+	commandDigest := sha256.Sum256(commandRecord)
+	_, runnerDigest, err := snapshotRegularFile(execution.executable, true)
+	if err != nil {
+		return rawJobRecord{}, fmt.Errorf("low-level runner job %s executable: %w", job.ID, err)
+	}
+	if err := os.WriteFile(filepath.Join(jobDirectory, "command.json"), commandRecord, 0o600); err != nil {
+		return rawJobRecord{}, err
+	}
+	stdout, err := os.OpenFile(filepath.Join(jobDirectory, "stdout.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return rawJobRecord{}, err
+	}
+	stderr, err := os.OpenFile(filepath.Join(jobDirectory, "stderr.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		_ = stdout.Close()
+		return rawJobRecord{}, err
+	}
+	command := lane.Command(ctx, execution.executable, args...)
+	command.Dir = execution.repository
+	command.Env = slices.DeleteFunc(command.Env, func(value string) bool { return strings.HasPrefix(value, "GIT_") })
+	command.Stdout, command.Stderr = stdout, stderr
+	runErr := command.Run()
+	outputErr := errors.Join(stdout.Sync(), stderr.Sync(), stdout.Close(), stderr.Close())
+	if outputErr != nil {
+		return rawJobRecord{}, outputErr
+	}
+	if runErr != nil {
+		return rawJobRecord{}, fmt.Errorf("low-level runner job %s failed: %w", job.ID, runErr)
+	}
+	_, recordedCommandDigest, err := snapshotRegularFile(filepath.Join(jobDirectory, "command.json"), false)
+	if err != nil || recordedCommandDigest != hex.EncodeToString(commandDigest[:]) {
+		return rawJobRecord{}, fmt.Errorf("low-level runner job %s command record changed during execution", job.ID)
+	}
+	_, reportDigest, err := snapshotRegularFile(reportPath, false)
+	if err != nil {
+		return rawJobRecord{}, fmt.Errorf("low-level runner job %s report: %w", job.ID, err)
+	}
+	if err := validateRawCellReport(reportPath, execution.sourceSHA, manifest.Digest); err != nil {
+		return rawJobRecord{}, fmt.Errorf("low-level runner job %s report: %w", job.ID, err)
+	}
+	recordCaseIDs := job.CaseIDs
+	if job.CaseOwner != "" {
+		_, manifestFileSHA256, err := snapshotRegularFile(execution.manifestPath, false)
+		if err != nil {
+			return rawJobRecord{}, fmt.Errorf("low-level runner job %s manifest: %w", job.ID, err)
+		}
+		actualCaseIDs, err := validateRawCaseSuiteReport(reportPath, artifactDirectory, execution.sourceSHA, manifest.Digest, manifestFileSHA256, job, registry)
+		if err != nil {
+			return rawJobRecord{}, fmt.Errorf("low-level runner job %s case report: %w", job.ID, err)
+		}
+		recordCaseIDs = actualCaseIDs
+	}
+	if err := validateProducedArtifacts(artifactDirectory); err != nil {
+		return rawJobRecord{}, fmt.Errorf("low-level runner job %s artifacts: %w", job.ID, err)
+	}
+	if identity != nil {
+		if err := identity.Verify(); err != nil {
+			return rawJobRecord{}, err
+		}
+	}
+	return rawJobRecord{
+		ID: job.ID, CellIDs: job.CellIDs, CaseIDs: recordCaseIDs, VariantID: job.VariantID, SourceSHA: execution.sourceSHA,
+		RunnerExecutableSHA256: runnerDigest, CommandSHA256: hex.EncodeToString(commandDigest[:]),
+		Lane: lane.Identity(), Directory: filepath.ToSlash(filepath.Join("jobs", job.ID)), ReportSHA: reportDigest,
+	}, nil
+}
+
+func collectionJobArgs(job collectionJob, manifestPath, reportPath, artifactDirectory, sourceSHA, repository, bpfObject string) []string {
+	args := []string{
+		"--target", job.RunnerTarget, "--manifest", manifestPath, "--report", reportPath,
+		"--artifact-dir", artifactDirectory, "--source-sha", sourceSHA, "--source-root", repository,
+	}
+	if job.Profile != "" {
+		args = append(args, "--profile", job.Profile)
+	}
+	if job.Carrier != "" {
+		args = append(args, "--carrier", job.Carrier)
+	}
+	if job.Topology != "" {
+		args = append(args, "--topology", job.Topology)
+	}
+	if job.NeedsBPF {
+		args = append(args, "--bpf-object", bpfObject)
+	}
+	if job.CaseOwner != "" {
+		args = append(args, "--case-owner", job.CaseOwner, "--case-mode", job.CaseMode)
+	}
+	return args
 }
 
 func validateProducedArtifacts(root string) error {
@@ -760,13 +996,15 @@ func validateRawCaseSuiteReport(path, artifactDirectory, finalSHA, manifestDiges
 		}
 		seen[result.ID] = struct{}{}
 		definition, exists := definitions[result.ID]
-		if !exists || definition.Owner != job.CaseOwner || definition.Mode != job.CaseMode || result.Profile != definition.Profile {
+		ownerMatches := job.CaseMode == "normal" && definition.Owner == job.CaseOwner && definition.Mode == "normal" ||
+			job.CaseMode == "race" && definition.RaceOwner == job.CaseOwner && definition.Mode == "normal"
+		if !exists || !ownerMatches || result.Profile != definition.Profile {
 			return nil, fmt.Errorf("case %s does not match its registered owner, mode, and profile", result.ID)
 		}
 		if result.Status != "pass" || result.CompletedOperations < 1 || result.ElapsedNanoseconds <= 0 {
 			return nil, fmt.Errorf("case %s does not prove a successful measured workload", result.ID)
 		}
-		if err := validateRawCaseArtifacts(filepath.Dir(path), artifactDirectory, result, definition.EvidenceFields); err != nil {
+		if err := validateRawCaseArtifacts(filepath.Dir(path), artifactDirectory, job.CaseMode, result, definition.EvidenceFields); err != nil {
 			return nil, fmt.Errorf("case %s artifacts: %w", result.ID, err)
 		}
 		actualIDs = append(actualIDs, result.ID)
@@ -774,13 +1012,17 @@ func validateRawCaseSuiteReport(path, artifactDirectory, finalSHA, manifestDiges
 	return actualIDs, nil
 }
 
-func validateRawCaseArtifacts(reportDirectory, artifactDirectory string, result rawCaseSuiteResult, requiredKinds []string) error {
+func validateRawCaseArtifacts(reportDirectory, artifactDirectory, mode string, result rawCaseSuiteResult, requiredKinds []string) error {
 	if len(result.Artifacts) != len(requiredKinds) {
 		return fmt.Errorf("artifact count = %d, want %d", len(result.Artifacts), len(requiredKinds))
 	}
 	wants := make(map[string]struct{}, len(requiredKinds))
 	for _, kind := range requiredKinds {
 		wants[kind] = struct{}{}
+	}
+	sources, sourcePaths, sourceDigests, err := validateRawCaseSources(reportDirectory, artifactDirectory, result)
+	if err != nil {
+		return err
 	}
 	seen := make(map[string]struct{}, len(result.Artifacts))
 	for _, artifact := range result.Artifacts {
@@ -791,7 +1033,8 @@ func validateRawCaseArtifacts(reportDirectory, artifactDirectory string, result 
 			return fmt.Errorf("duplicate artifact kind %q", artifact.Kind)
 		}
 		seen[artifact.Kind] = struct{}{}
-		wantPath := filepath.ToSlash(filepath.Join("artifacts", strings.ToLower(result.ID), artifact.Kind+".json"))
+		extension := ".json"
+		wantPath := filepath.ToSlash(filepath.Join("artifacts", strings.ToLower(result.ID), artifact.Kind+extension))
 		if artifact.Path != wantPath || filepath.IsAbs(filepath.FromSlash(artifact.Path)) {
 			return fmt.Errorf("%s path = %q, want %q", artifact.Kind, artifact.Path, wantPath)
 		}
@@ -811,26 +1054,350 @@ func validateRawCaseArtifacts(reportDirectory, artifactDirectory string, result 
 		if digest != artifact.SHA256 || info.Size() != artifact.SizeBytes {
 			return fmt.Errorf("%s size or digest mismatch", artifact.Kind)
 		}
+		if _, duplicate := sourcePaths[canonical]; duplicate {
+			return fmt.Errorf("%s typed artifact reuses a raw source path", artifact.Kind)
+		}
+		if _, duplicate := sourceDigests[digest]; duplicate {
+			return fmt.Errorf("%s typed artifact reuses a raw source digest", artifact.Kind)
+		}
+		if artifact.Kind == "pcap" || artifact.Kind == "qlog" {
+			context := "case " + result.ID
+			if mode == "race" {
+				context = "race case " + result.ID
+			}
+			if err := validateRawCaseAttribution(artifact.Kind, context, canonical, sources); err != nil {
+				return fmt.Errorf("%s attribution: %w", artifact.Kind, err)
+			}
+		}
 	}
 	return nil
 }
 
+type validatedRawSource struct {
+	id, kind, digest, path string
+	data                   []byte
+}
+
+func validateRawCaseSources(reportDirectory, artifactDirectory string, result rawCaseSuiteResult) (map[string]validatedRawSource, map[string]struct{}, map[string]struct{}, error) {
+	sources := make(map[string]validatedRawSource, len(result.RawSources))
+	paths := make(map[string]struct{}, len(result.RawSources))
+	digests := make(map[string]struct{}, len(result.RawSources))
+	counts := make(map[string]int)
+	caseRoot := filepath.Clean(filepath.Join(artifactDirectory, strings.ToLower(result.ID)))
+	for _, source := range result.RawSources {
+		if source.Kind != "pcap" && source.Kind != "qlog" && source.Kind != "netlog" {
+			return nil, nil, nil, fmt.Errorf("raw source %q has unknown kind %q", source.ID, source.Kind)
+		}
+		counts[source.Kind]++
+		wantID := fmt.Sprintf("%s-%03d", source.Kind, counts[source.Kind])
+		if source.ID != wantID {
+			return nil, nil, nil, fmt.Errorf("raw source ID = %q, want %q", source.ID, wantID)
+		}
+		if _, duplicate := sources[source.ID]; duplicate {
+			return nil, nil, nil, fmt.Errorf("duplicate raw source ID %q", source.ID)
+		}
+		if filepath.IsAbs(filepath.FromSlash(source.Path)) {
+			return nil, nil, nil, fmt.Errorf("raw source %s path must be relative", source.ID)
+		}
+		absolute := filepath.Clean(filepath.Join(reportDirectory, filepath.FromSlash(source.Path)))
+		relative, err := filepath.Rel(caseRoot, absolute)
+		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, nil, nil, fmt.Errorf("raw source %s path escapes its case artifact directory", source.ID)
+		}
+		canonical, digest, err := snapshotRegularFile(absolute, false)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		info, err := os.Stat(canonical)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if digest != source.SHA256 || info.Size() != source.SizeBytes || source.SizeBytes <= 0 {
+			return nil, nil, nil, fmt.Errorf("raw source %s size or digest mismatch", source.ID)
+		}
+		if _, duplicate := paths[canonical]; duplicate {
+			return nil, nil, nil, fmt.Errorf("raw source %s reuses a source path", source.ID)
+		}
+		if _, duplicate := digests[digest]; duplicate {
+			return nil, nil, nil, fmt.Errorf("raw source %s reuses a source digest", source.ID)
+		}
+		data, err := os.ReadFile(canonical)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		sources[source.ID] = validatedRawSource{id: source.ID, kind: source.Kind, digest: digest, path: canonical, data: data}
+		paths[canonical] = struct{}{}
+		digests[digest] = struct{}{}
+	}
+	attachmentKinds := map[string]struct{}{
+		"playwright-trace": {}, "browser-controller-result": {}, "browser-controller-config": {},
+		"producer-resource": {}, "browser-controller-stderr": {},
+	}
+	attachmentCounts := make(map[string]int)
+	for _, attachment := range result.Attachments {
+		if _, exists := attachmentKinds[attachment.Kind]; !exists {
+			return nil, nil, nil, fmt.Errorf("attachment %q has unknown kind %q", attachment.ID, attachment.Kind)
+		}
+		attachmentCounts[attachment.Kind]++
+		wantID := fmt.Sprintf("%s-%03d", attachment.Kind, attachmentCounts[attachment.Kind])
+		if attachment.ID != wantID {
+			return nil, nil, nil, fmt.Errorf("attachment ID = %q, want %q", attachment.ID, wantID)
+		}
+		if filepath.IsAbs(filepath.FromSlash(attachment.Path)) {
+			return nil, nil, nil, fmt.Errorf("attachment %s path must be relative", attachment.ID)
+		}
+		absolute := filepath.Clean(filepath.Join(reportDirectory, filepath.FromSlash(attachment.Path)))
+		relative, err := filepath.Rel(caseRoot, absolute)
+		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, nil, nil, fmt.Errorf("attachment %s path escapes its case artifact directory", attachment.ID)
+		}
+		canonical, digest, err := snapshotRegularFile(absolute, false)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		info, err := os.Stat(canonical)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if digest != attachment.SHA256 || info.Size() != attachment.SizeBytes || attachment.SizeBytes <= 0 {
+			return nil, nil, nil, fmt.Errorf("attachment %s size or digest mismatch", attachment.ID)
+		}
+		if _, duplicate := paths[canonical]; duplicate {
+			return nil, nil, nil, fmt.Errorf("attachment %s reuses an indexed path", attachment.ID)
+		}
+		if _, duplicate := digests[digest]; duplicate {
+			return nil, nil, nil, fmt.Errorf("attachment %s reuses an indexed digest", attachment.ID)
+		}
+		paths[canonical] = struct{}{}
+		digests[digest] = struct{}{}
+	}
+	return sources, paths, digests, nil
+}
+
+func validateRawCaseAttribution(kind, context, path string, sources map[string]validatedRawSource) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var attribution PacketAttributionArtifact
+	if err := decodeStrictJSON(data, &attribution); err != nil {
+		return err
+	}
+	if attribution.SchemaVersion != 1 || attribution.Kind != "transport_"+kind+"_attribution" || attribution.Context != context || len(attribution.Records) == 0 {
+		return errors.New("typed attribution identity or records are incomplete")
+	}
+	seenSources := make(map[string]struct{})
+	for index, record := range attribution.Records {
+		source, exists := sources[record.SourceID]
+		if record.Sequence != uint64(index+1) || !exists || source.kind != kind || record.SourceSHA256 != source.digest ||
+			record.ByteOffset < 0 || record.ByteLength <= 0 || record.ByteOffset > int64(len(source.data))-record.ByteLength || record.UnixNanoseconds <= 0 {
+			return fmt.Errorf("record %d does not bind a valid indexed %s source range", index+1, kind)
+		}
+		if kind == "pcap" {
+			if err := validateAttributedPCAPRecord(source.data, record); err != nil {
+				return fmt.Errorf("record %d: %w", index+1, err)
+			}
+		} else if err := validateAttributedQLOGRecord(source, record); err != nil {
+			return fmt.Errorf("record %d: %w", index+1, err)
+		}
+		seenSources[source.id] = struct{}{}
+	}
+	for id, source := range sources {
+		if source.kind == kind {
+			if _, exists := seenSources[id]; !exists {
+				return fmt.Errorf("indexed %s source %s has no attribution record", kind, id)
+			}
+		}
+	}
+	return nil
+}
+
+func validateAttributedPCAPRecord(data []byte, record PacketAttributionRecord) error {
+	if len(data) < 24 {
+		return errors.New("indexed pcap source is truncated")
+	}
+	format, err := parsePCAPFormat(data[:4])
+	if err != nil {
+		return err
+	}
+	for offset := 24; offset < len(data); {
+		if len(data)-offset < 16 {
+			return errors.New("indexed pcap source has a truncated record header")
+		}
+		included := int(format.order.Uint32(data[offset+8 : offset+12]))
+		if included <= 0 || included > len(data)-offset-16 {
+			return errors.New("indexed pcap source has an invalid record length")
+		}
+		length := 16 + included
+		if int64(offset) == record.ByteOffset && int64(length) == record.ByteLength {
+			fraction := int64(format.order.Uint32(data[offset+4 : offset+8]))
+			if !format.nanosecond {
+				fraction *= 1000
+			}
+			at := time.Unix(int64(format.order.Uint32(data[offset:offset+4])), fraction).UTC()
+			if fraction < 0 || fraction >= int64(time.Second) || at.UnixNano() != record.UnixNanoseconds ||
+				record.Event != "" || record.ConnectionGroupID != "" || record.PacketNumberSpace != "" || record.PacketNumber != nil {
+				return errors.New("pcap attribution timestamp or pcap-only identity does not match source bytes")
+			}
+			return nil
+		}
+		offset += length
+	}
+	return errors.New("pcap attribution range is not an exact source record")
+}
+
+func validateAttributedQLOGRecord(source validatedRawSource, record PacketAttributionRecord) error {
+	return validateAttributedQLOGRecords(source, []PacketAttributionRecord{record})
+}
+
+func validateAttributedQLOGRecords(source validatedRawSource, records []PacketAttributionRecord) error {
+	events, err := parseQLOGSequenceSource(source.data, source.id)
+	if err != nil {
+		return err
+	}
+	type eventRange struct {
+		offset int64
+		length int64
+	}
+	byRange := make(map[eventRange]rawQLOGEvent, len(events))
+	firstStreams := make(map[uint64]eventRange)
+	firstResets := make(map[uint64]eventRange)
+	for _, event := range events {
+		key := eventRange{offset: event.recordOffset, length: event.recordLength}
+		if _, duplicate := byRange[key]; duplicate {
+			return errors.New("qlog source reuses an event byte range")
+		}
+		byRange[key] = event
+		collectFirstAttributedQLOGFrameRanges(event, key, firstStreams, firstResets)
+	}
+	for _, record := range records {
+		key := eventRange{offset: record.ByteOffset, length: record.ByteLength}
+		event, exists := byRange[key]
+		if !exists {
+			return errors.New("qlog attribution range is not an exact source event record")
+		}
+		if event.at.UnixNano() != record.UnixNanoseconds || event.groupID != record.ConnectionGroupID {
+			return errors.New("qlog attribution time, event, or connection identity does not match source bytes")
+		}
+		if record.NativeStreamID == nil {
+			if event.name != record.Event {
+				return errors.New("qlog attribution event does not match source bytes")
+			}
+		} else if event.name != "transport:packet_sent" && event.name != "transport:packet_received" {
+			return errors.New("qlog stream attribution is not bound to a packet event")
+		} else if record.Event == "transport:stream_opened" {
+			if firstStreams[*record.NativeStreamID] != key || !qlogEventContainsFrameID(event, "stream", *record.NativeStreamID) {
+				return errors.New("qlog STREAM_OPENED attribution is not the first matching raw STREAM frame")
+			}
+		} else if record.Event == "transport:reset_stream" {
+			if firstResets[*record.NativeStreamID] != key || !qlogEventContainsFrameID(event, "reset_stream", *record.NativeStreamID) {
+				return errors.New("qlog RESET_STREAM attribution is not the first matching raw RESET_STREAM frame")
+			}
+		} else {
+			return errors.New("qlog stream attribution semantic is unsupported")
+		}
+		packetNumber, hasPacketNumber := uint64(0), false
+		packetSpace := ""
+		if header, ok := event.data["header"].(map[string]any); ok {
+			packetNumber, hasPacketNumber = qlogUint(header["packet_number"])
+			packetSpace, _ = header["packet_type"].(string)
+			hasPacketNumber = hasPacketNumber && strings.TrimSpace(packetSpace) != ""
+		}
+		if hasPacketNumber != (record.PacketNumber != nil) || hasPacketNumber && (*record.PacketNumber != packetNumber || record.PacketNumberSpace != packetSpace) ||
+			!hasPacketNumber && record.PacketNumberSpace != "" {
+			return errors.New("qlog attribution packet number or PN space does not match source bytes")
+		}
+	}
+	return nil
+}
+
+func collectFirstAttributedQLOGFrameRanges[T comparable](event rawQLOGEvent, key T, streams, resets map[uint64]T) {
+	frames, ok := event.data["frames"].([]any)
+	if !ok {
+		return
+	}
+	for _, rawFrame := range frames {
+		frame, ok := rawFrame.(map[string]any)
+		streamID, idOK := qlogUint(frame["stream_id"])
+		if !ok || !idOK {
+			continue
+		}
+		switch frame["frame_type"] {
+		case "stream":
+			if _, exists := streams[streamID]; !exists {
+				streams[streamID] = key
+			}
+		case "reset_stream":
+			if _, exists := resets[streamID]; !exists {
+				resets[streamID] = key
+			}
+		}
+	}
+}
+
+func qlogEventContainsFrameID(event rawQLOGEvent, frameType string, want uint64) bool {
+	frames, ok := event.data["frames"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawFrame := range frames {
+		frame, ok := rawFrame.(map[string]any)
+		streamID, idOK := qlogUint(frame["stream_id"])
+		if ok && idOK && frame["frame_type"] == frameType && streamID == want {
+			return true
+		}
+	}
+	return false
+}
+
 func verifyInputDigests(request collectRequest, want map[string]string) error {
 	paths := map[string]string{
-		"manifest": request.ManifestPath, "registry": request.RegistryPath,
-		"runner_executable": request.RunnerExecutable, "runner_wrapper": request.RunnerWrapper,
+		"manifest": request.ManifestPath, "base_manifest": request.BaseManifestPath, "registry": request.RegistryPath,
+		"runner_executable": request.RunnerExecutable, "base_runner_executable": request.BaseRunnerExecutable, "runner_wrapper": request.RunnerWrapper,
 		"bpf_object": request.BPFObject, "host_bpftool": request.HostBPFTool,
 		"trust_policy": request.TrustPolicyPath, "effective_config": request.EffectiveConfigPath,
 	}
+	if request.RaceRunnerExecutable != "" {
+		paths["race_runner_executable"] = request.RaceRunnerExecutable
+	}
 	for name, path := range paths {
-		_, got, err := snapshotRegularFile(path, name == "runner_executable" || name == "runner_wrapper" || name == "host_bpftool")
+		executable := name == "runner_executable" || name == "race_runner_executable" || name == "base_runner_executable" || name == "runner_wrapper" || name == "host_bpftool"
+		_, got, err := snapshotRegularFile(path, executable)
 		if err != nil || got != want[name] {
 			return fmt.Errorf("collection input %s changed during execution", name)
 		}
 	}
-	status, err := collectGitOutput(request.RepositoryPath, "status", "--porcelain", "--untracked-files=all")
-	if err != nil || status != "" {
-		return errors.New("source checkout changed during collection")
+	if err := validateCollectCheckout(request.RepositoryPath, request.FinalSHA, "final"); err != nil {
+		return errors.New("final source checkout changed during collection")
+	}
+	if err := validateCollectCheckout(request.BaseRepositoryPath, request.BaseSHA, "base"); err != nil {
+		return errors.New("base source checkout changed during collection")
+	}
+	if want["runner_source"] != "" {
+		finalSource, err := runnerSourceSHA256(request.RepositoryPath)
+		if err != nil || finalSource != want["runner_source"] {
+			return errors.New("final runner source graph changed during collection")
+		}
+	}
+	if want["base_runner_source"] != "" {
+		baseSource, err := runnerSourceSHA256(request.BaseRepositoryPath)
+		if err != nil || baseSource != want["base_runner_source"] {
+			return errors.New("base runner source graph changed during collection")
+		}
+	}
+	if want["runner_argv"] != "" {
+		manifest, err := loadPerformanceManifest(request.ManifestPath)
+		if err != nil {
+			return errors.New("reload manifest for canonical runner argv verification")
+		}
+		registry, err := loadCaseRegistry(request.RegistryPath)
+		if err != nil {
+			return errors.New("reload registry for canonical runner argv verification")
+		}
+		argv, err := canonicalAllTargetArgvSHA256(manifest, registry)
+		if err != nil || argv != want["runner_argv"] {
+			return errors.New("canonical runner argv changed during collection")
+		}
 	}
 	return nil
 }

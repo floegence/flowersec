@@ -418,7 +418,13 @@ type TraceRecord struct {
 	Event                string `json:"event"`
 	Digest               string `json:"digest"`
 	ConnectionID         string `json:"connection_id,omitempty"`
+	NativeStreamID       *int64 `json:"native_stream_id,omitempty"`
 	RequestID            string `json:"request_id,omitempty"`
+	Status               string `json:"status,omitempty"`
+	LocalAddress         string `json:"local_address,omitempty"`
+	RemoteAddress        string `json:"remote_address,omitempty"`
+	QLOGSourceID         string `json:"qlog_source_id,omitempty"`
+	PCAPSourceID         string `json:"pcap_source_id,omitempty"`
 	MetricID             string `json:"metric_id,omitempty"`
 	AttemptedSessions    int    `json:"attempted_sessions,omitempty"`
 	SucceededSessions    int    `json:"succeeded_sessions,omitempty"`
@@ -426,6 +432,9 @@ type TraceRecord struct {
 	ActiveSessions       int    `json:"active_sessions,omitempty"`
 	UniqueActiveSessions int    `json:"unique_active_sessions,omitempty"`
 	Disconnects          int    `json:"disconnects,omitempty"`
+	CompletedStreams     int    `json:"completed_streams,omitempty"`
+	ActiveStreams        int    `json:"active_streams,omitempty"`
+	ResidualStreams      int    `json:"residual_streams,omitempty"`
 }
 
 type ExecutionLogArtifact struct {
@@ -498,6 +507,8 @@ type ResourceRecord struct {
 	ResidualGoroutines   *int   `json:"residual_goroutines,omitempty"`
 	ResidualOpenFDs      *int   `json:"residual_open_fds,omitempty"`
 	ResidualTasks        *int   `json:"residual_tasks,omitempty"`
+	ActiveStreams        int    `json:"active_streams,omitempty"`
+	ResidualStreams      *int   `json:"residual_streams,omitempty"`
 }
 
 type TCPInfoArtifact struct {
@@ -527,10 +538,44 @@ type ArtifactMetadata struct {
 }
 
 type RunEvidence struct {
-	RunNumber int               `json:"run_number"`
-	Resource  EvidenceArtifact  `json:"resource"`
-	Phases    []PhaseEvidence   `json:"phases"`
-	Variants  []VariantEvidence `json:"variants,omitempty"`
+	RunNumber  int                 `json:"run_number"`
+	Resource   EvidenceArtifact    `json:"resource"`
+	RawSources []RawEvidenceSource `json:"raw_sources,omitempty"`
+	Phases     []PhaseEvidence     `json:"phases"`
+	Variants   []VariantEvidence   `json:"variants,omitempty"`
+}
+
+type RawEvidenceSource struct {
+	ID       string           `json:"id"`
+	Kind     string           `json:"kind"`
+	Artifact EvidenceArtifact `json:"artifact"`
+}
+
+type EvidenceAttachment struct {
+	ID       string           `json:"id"`
+	Kind     string           `json:"kind"`
+	Artifact EvidenceArtifact `json:"artifact"`
+}
+
+type PacketAttributionArtifact struct {
+	SchemaVersion int                       `json:"schema_version"`
+	Kind          string                    `json:"kind"`
+	Context       string                    `json:"context"`
+	Records       []PacketAttributionRecord `json:"records"`
+}
+
+type PacketAttributionRecord struct {
+	Sequence          uint64  `json:"sequence"`
+	SourceID          string  `json:"source_id"`
+	SourceSHA256      string  `json:"source_sha256"`
+	ByteOffset        int64   `json:"byte_offset"`
+	ByteLength        int64   `json:"byte_length"`
+	UnixNanoseconds   int64   `json:"unix_nanoseconds"`
+	Event             string  `json:"event,omitempty"`
+	ConnectionGroupID string  `json:"connection_group_id,omitempty"`
+	PacketNumberSpace string  `json:"packet_number_space,omitempty"`
+	PacketNumber      *uint64 `json:"packet_number,omitempty"`
+	NativeStreamID    *uint64 `json:"native_stream_id,omitempty"`
 }
 
 type VariantEvidence struct {
@@ -565,13 +610,15 @@ type EvidenceArtifact struct {
 }
 
 type CaseEvidence struct {
-	ID        string                      `json:"id"`
-	Owner     string                      `json:"owner"`
-	Mode      string                      `json:"mode"`
-	Profile   string                      `json:"profile"`
-	Status    string                      `json:"status"`
-	Evidence  map[string]EvidenceArtifact `json:"evidence"`
-	Execution *CaseExecutionEvidence      `json:"execution,omitempty"`
+	ID          string                      `json:"id"`
+	Owner       string                      `json:"owner"`
+	Mode        string                      `json:"mode"`
+	Profile     string                      `json:"profile"`
+	Status      string                      `json:"status"`
+	Evidence    map[string]EvidenceArtifact `json:"evidence"`
+	RawSources  []RawEvidenceSource         `json:"raw_sources,omitempty"`
+	Attachments []EvidenceAttachment        `json:"attachments,omitempty"`
+	Execution   *CaseExecutionEvidence      `json:"execution,omitempty"`
 }
 
 type CaseExecutionEvidence struct {
