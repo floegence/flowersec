@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -43,6 +45,98 @@ type capacityEvidenceInventory struct {
 	Artifacts   []releaseArtifact
 	RawSources  []releaseRawSource
 	Attachments []releaseRawSource
+}
+
+const capacityQLOGDrainPollInterval = 10 * time.Millisecond
+
+func waitForCapacityQLOGDrain(ctx context.Context, directory string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !filepath.IsAbs(directory) {
+		return errors.New("capacity qlog drain requires an absolute directory")
+	}
+	ticker := time.NewTicker(capacityQLOGDrainPollInterval)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		ready, err := capacityQLOGFilesReady(directory)
+		if ready && err == nil {
+			return nil
+		}
+		if err != nil {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("capacity qlog drain: %w", errors.Join(context.Cause(ctx), lastErr))
+		case <-ticker.C:
+		}
+	}
+}
+
+func capacityQLOGFilesReady(directory string) (bool, error) {
+	open, err := capacityQLOGDirectoryHasOpenFiles(directory)
+	if err != nil || open {
+		return false, err
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return false, err
+	}
+	count := 0
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) != ".sqlog" {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return false, err
+		}
+		if !info.Mode().IsRegular() {
+			return false, fmt.Errorf("capacity qlog %s is not a regular file", entry.Name())
+		}
+		data, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+		if err != nil {
+			return false, err
+		}
+		records, err := capacityQLOGRecords(data)
+		if err != nil {
+			return false, fmt.Errorf("capacity qlog %s is incomplete: %w", entry.Name(), err)
+		}
+		for _, record := range records {
+			if !json.Valid(record.payload) {
+				return false, fmt.Errorf("capacity qlog %s contains an incomplete JSON record", entry.Name())
+			}
+		}
+		count++
+	}
+	if count == 0 {
+		return false, errors.New("capacity qlog directory contains no qlog files")
+	}
+	return true, nil
+}
+
+func capacityQLOGDirectoryHasOpenFiles(directory string) (bool, error) {
+	if runtime.GOOS != "linux" {
+		return false, nil
+	}
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		target, err := os.Readlink(filepath.Join("/proc/self/fd", entry.Name()))
+		if err != nil {
+			continue
+		}
+		target = strings.TrimSuffix(target, " (deleted)")
+		relative, err := filepath.Rel(directory, target)
+		if err == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && filepath.Ext(relative) == ".sqlog" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func finalizeCapacityEvidence(destination *artifactDestination, directory string, definition capacityCaseDefinition, summarized []releaseArtifact) (capacityEvidenceInventory, error) {

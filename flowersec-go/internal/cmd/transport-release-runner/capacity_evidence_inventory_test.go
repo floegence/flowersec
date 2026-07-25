@@ -2,13 +2,58 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestCapacityQLOGDrainWaitsForCompleteJSONSequence(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "connection_client.sqlog")
+	header := `{"trace":{"common_fields":{"group_id":"connection-a","reference_time":{"wall_clock_time":"2026-07-25T03:00:00Z"}}}}`
+	event := `{"time":1,"name":"transport:packet_sent","data":{"frames":[]}}`
+	if err := os.WriteFile(path, []byte("\x1e"+header+"\n\x1e"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	completed := make(chan error, 1)
+	go func() {
+		time.Sleep(3 * capacityQLOGDrainPollInterval)
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+		if err == nil {
+			_, err = file.WriteString(event + "\n")
+		}
+		if file != nil {
+			err = errors.Join(err, file.Close())
+		}
+		completed <- err
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := waitForCapacityQLOGDrain(ctx, directory); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-completed; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCapacityQLOGFilesReadyRejectsTruncatedRecord(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "connection_server.sqlog")
+	if err := os.WriteFile(path, []byte("\x1e{}\n\x1e{\"time\":"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := capacityQLOGFilesReady(directory); ready || err == nil {
+		t.Fatalf("truncated qlog ready=%t err=%v", ready, err)
+	}
+}
 
 func TestCapacityQLOGAttributionBindsExactRawSourceRecord(t *testing.T) {
 	reference := time.Date(2026, 7, 25, 3, 0, 0, 0, time.UTC)

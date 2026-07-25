@@ -59,6 +59,14 @@ func runRegisteredGoCapacityCase(ctx context.Context, destination *artifactDesti
 	if err != nil {
 		return result, err
 	}
+	if capacityRequiresQLOG(definition) {
+		drainCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err = waitForCapacityQLOGDrain(drainCtx, evidence.qlogDir)
+		cancel()
+		if err != nil {
+			return result, err
+		}
+	}
 	if err := writeCapacityCoreArtifacts(destination, evidence.directory, capacityResult); err != nil {
 		return result, err
 	}
