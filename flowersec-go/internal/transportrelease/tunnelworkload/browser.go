@@ -25,6 +25,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
 )
@@ -109,7 +110,7 @@ func OpenBrowserEndpointAt(ctx context.Context, topology BrowserTopology, listen
 	}
 	endpointCtx, cancel := context.WithCancelCause(ctx)
 	endpoint := &Endpoint{
-		listenHost: listenHost, ctx: endpointCtx, cancel: cancel,
+		listenHost: listenHost, suite: protocolv2.SuiteChaCha20Poly1305, ctx: endpointCtx, cancel: cancel,
 		expectations: make(map[[sha256.Size]byte]*admissionExpectation), closeDone: make(chan struct{}),
 	}
 	coordinator, err := tunnelv2.NewCoordinator(tunnelv2.Config{}, endpoint.authorize)
@@ -222,7 +223,7 @@ func (endpoint *BrowserEndpoint) IssueBrowserArtifact() (*BrowserArtifact, error
 	if err := context.Cause(owner.ctx); err != nil {
 		return nil, err
 	}
-	contract, suffix, err := releaseContract()
+	contract, suffix, err := releaseContract(owner.suite)
 	if err != nil {
 		return nil, err
 	}

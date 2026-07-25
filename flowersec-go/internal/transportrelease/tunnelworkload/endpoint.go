@@ -27,6 +27,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
@@ -87,6 +88,7 @@ type listenerOwner struct {
 // the client namespace so both physical legs cross the configured link.
 type Endpoint struct {
 	topology    Topology
+	suite       protocolv2.Suite
 	listenHost  string
 	candidates  []artifactv2.Candidate
 	factory     *connectv2.AdmissionFactory
@@ -112,6 +114,7 @@ type Endpoint struct {
 type Pair struct {
 	Client flowersession.SessionV2
 	Server flowersession.SessionV2
+	Suite  protocolv2.Suite
 
 	closeOnce sync.Once
 	closeErr  error
@@ -119,6 +122,12 @@ type Pair struct {
 
 // OpenEndpointAt binds both tunnel listeners to one concrete unicast address.
 func OpenEndpointAt(ctx context.Context, topology Topology, listenHost string) (*Endpoint, error) {
+	return OpenEndpointAtWithSuite(ctx, topology, listenHost, protocolv2.SuiteChaCha20Poly1305)
+}
+
+// OpenEndpointAtWithSuite binds both tunnel legs to the exact frozen E2EE
+// suite required by a release case.
+func OpenEndpointAtWithSuite(ctx context.Context, topology Topology, listenHost string, suite protocolv2.Suite) (*Endpoint, error) {
 	clientKind, serverKind, err := topology.Carriers()
 	if err != nil {
 		return nil, err
@@ -126,6 +135,9 @@ func OpenEndpointAt(ctx context.Context, topology Topology, listenHost string) (
 	address := net.ParseIP(listenHost)
 	if address == nil || address.IsUnspecified() || address.IsMulticast() {
 		return nil, errors.New("production tunnel endpoint requires a concrete unicast IP address")
+	}
+	if suite != protocolv2.SuiteChaCha20Poly1305 && suite != protocolv2.SuiteAES256GCM {
+		return nil, protocolv2.ErrInvalidSuite
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -136,7 +148,7 @@ func OpenEndpointAt(ctx context.Context, topology Topology, listenHost string) (
 	}
 	endpointCtx, cancel := context.WithCancelCause(ctx)
 	endpoint := &Endpoint{
-		topology: topology, listenHost: listenHost, ctx: endpointCtx, cancel: cancel,
+		topology: topology, suite: suite, listenHost: listenHost, ctx: endpointCtx, cancel: cancel,
 		expectations: make(map[[sha256.Size]byte]*admissionExpectation), closeDone: make(chan struct{}),
 	}
 	coordinator, err := tunnelv2.NewCoordinator(tunnelv2.Config{}, endpoint.authorize)
@@ -315,7 +327,7 @@ func (endpoint *Endpoint) Connect(ctx context.Context) (*Pair, error) {
 	if err := endpoint.ctx.Err(); err != nil {
 		return nil, errors.Join(errEndpointClosed, context.Cause(endpoint.ctx))
 	}
-	contract, suffix, err := releaseContract()
+	contract, suffix, err := releaseContract(endpoint.suite)
 	if err != nil {
 		return nil, err
 	}
@@ -375,7 +387,7 @@ func (endpoint *Endpoint) Connect(ctx context.Context) (*Pair, error) {
 	}
 	go connectOne(1, clientArtifact, "client-leg")
 	go connectOne(2, serverArtifact, "server-leg")
-	var pair Pair
+	pair := Pair{Suite: protocolv2.Suite(contract.DefaultSuite)}
 	var joined error
 	for range 2 {
 		result := <-results
@@ -591,7 +603,7 @@ func (endpoint *Endpoint) closeListeners(ctx context.Context) error {
 	return joined
 }
 
-func releaseContract() (artifactv2.SessionContract, string, error) {
+func releaseContract(suite protocolv2.Suite) (artifactv2.SessionContract, string, error) {
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return artifactv2.SessionContract{}, "", err
@@ -601,7 +613,7 @@ func releaseContract() (artifactv2.SessionContract, string, error) {
 		ChannelID: "tunnel-" + suffix, InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(),
 		IdleTimeoutSeconds: 60, EstablishTimeoutSeconds: 30,
 		RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
-		MaxInboundStreams: maxInboundStreams, AllowedSuites: []uint16{1}, DefaultSuite: 1,
+		MaxInboundStreams: maxInboundStreams, AllowedSuites: []uint16{uint16(suite)}, DefaultSuite: uint16(suite),
 	}
 	if _, err := rand.Read(contract.E2EEPSK[:]); err != nil {
 		return artifactv2.SessionContract{}, "", err

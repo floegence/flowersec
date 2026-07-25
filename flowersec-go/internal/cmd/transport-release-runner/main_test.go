@@ -15,6 +15,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/linuxnetlab"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/tunnelworkload"
@@ -623,5 +624,110 @@ func TestNetworkWorkerProcess(t *testing.T) {
 	}
 	if err := runNetworkWorker(os.Stdin, os.Stdout); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConformanceSmokeCaseDefinitionsStayBoundToRegistryProfiles(t *testing.T) {
+	want := []struct{ id, profile string }{
+		{"CS-C1", "direct-wss-x25519"},
+		{"CS-C2", "direct-raw-quic-p256"},
+		{"CS-C3", "tunnel-wss-wss-p256"},
+		{"CS-C4", "tunnel-quic-quic-x25519"},
+		{"CS-C5", "tunnel-wss-quic-x25519"},
+		{"CS-C6", "tunnel-quic-wss-p256"},
+	}
+	if len(conformanceSmokeCases) != len(want) {
+		t.Fatalf("case definitions = %d, want %d", len(conformanceSmokeCases), len(want))
+	}
+	for index, definition := range conformanceSmokeCases {
+		if definition.ID != want[index].id || definition.Profile != want[index].profile {
+			t.Fatalf("case %d = %+v, want %+v", index, definition, want[index])
+		}
+		if (definition.Carrier == "") == (definition.Topology == "") || (definition.Suite != protocolv2.SuiteChaCha20Poly1305 && definition.Suite != protocolv2.SuiteAES256GCM) {
+			t.Fatalf("case %s must select exactly one production path: %+v", definition.ID, definition)
+		}
+	}
+}
+
+func TestConformanceSmokeCaseWritesArtifactsAfterRealProductRoundTrip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	completed, err := runConformanceSmokeCase(ctx, conformanceSmokeCases[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.CompletedOperations != 1 || completed.NegotiatedSuite != conformanceSmokeCases[0].Suite {
+		t.Fatalf("completed workload = %+v", completed)
+	}
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := filepath.Join(root, "artifacts")
+	if err := os.Mkdir(artifacts, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	destination, err := newArtifactDestination(artifacts, filepath.Join(root, "case-suite.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	references, err := writeCaseIdentityArtifacts(destination, conformanceSmokeCases[0], completed, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(references) != 3 || references[0].Kind != "trace" || references[1].Kind != "metrics" || references[2].Kind != "config" {
+		t.Fatalf("case artifacts = %+v", references)
+	}
+	for _, reference := range references {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(reference.Path)))
+		if err != nil || len(data) == 0 {
+			t.Fatalf("read %s: %v", reference.Path, err)
+		}
+	}
+	traceData, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(references[0].Path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trace rawTraceArtifact
+	if err := json.Unmarshal(traceData, &trace); err != nil {
+		t.Fatal(err)
+	}
+	wantExecutionID := releaseCaseExecutionID("case " + conformanceSmokeCases[0].ID)
+	if len(trace.Records) != 1 || trace.Records[0].Digest != wantExecutionID {
+		t.Fatalf("trace execution identity = %+v, want %s", trace.Records, wantExecutionID)
+	}
+	configData, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(references[2].Path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config rawConfigArtifact
+	if err := json.Unmarshal(configData, &config); err != nil {
+		t.Fatal(err)
+	}
+	values := make(map[string]string, len(config.Records))
+	for _, record := range config.Records {
+		values[record.Key] = record.Value
+	}
+	if values["test_id"] != wantExecutionID || values["suite"] != "1" {
+		t.Fatalf("config identity = %+v", values)
+	}
+}
+
+func TestAllConformanceSmokeCasesCompleteTheirProductionPaths(t *testing.T) {
+	for _, definition := range conformanceSmokeCases {
+		definition := definition
+		t.Run(definition.ID, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			completed, err := runConformanceSmokeCase(ctx, definition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if completed.CompletedOperations != 1 || completed.NegotiatedSuite != definition.Suite {
+				t.Fatalf("completed workload = %+v", completed)
+			}
+		})
 	}
 }

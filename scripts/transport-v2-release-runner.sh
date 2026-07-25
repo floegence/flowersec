@@ -41,7 +41,7 @@ done
 [[ -n $target && -n $report ]] || usage
 
 case "$target" in
-  all | transport-conformance-full | weaknet-full | weaknet-system | quic-native-proof | quic-native-race | bench-transport-capacity | bench-transport-soak | bench-transport-ab) ;;
+  all | transport-conformance-smoke | transport-conformance-full | weaknet-full | weaknet-system | quic-native-proof | quic-native-race | bench-transport-capacity | bench-transport-soak | bench-transport-ab) ;;
   *) fail "unsupported target: $target" ;;
 esac
 

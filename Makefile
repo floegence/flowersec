@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check stability-check transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check stability-check transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
 
 CHECK_INTEROP ?= 1
 
@@ -359,6 +359,17 @@ endef
 
 transport-conformance-full weaknet-full weaknet-system quic-native-proof quic-native-race bench-transport-capacity bench-transport-soak bench-transport-ab:
 	$(run_transport_v2_release_target)
+
+transport-v2-release-collect-conformance-smoke:
+	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \
+		echo "$@: requires TRANSPORT_V2_RELEASE_RUNNER, TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT, and TRANSPORT_V2_BASE_SHA" >&2; \
+		exit 2; \
+	fi
+	@if [ ! -x "$(TRANSPORT_V2_RELEASE_RUNNER)" ]; then \
+		echo "$@: release runner is not executable: $(TRANSPORT_V2_RELEASE_RUNNER)" >&2; \
+		exit 2; \
+	fi
+	"$(TRANSPORT_V2_RELEASE_RUNNER)" --target "transport-conformance-smoke" --report "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)"
 
 transport-v2-release-evidence:
 	@if [ -z "$(TRANSPORT_V2_RELEASE_RUNNER)" ] || [ -z "$(TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT)" ] || [ -z "$(TRANSPORT_V2_BASE_SHA)" ]; then \

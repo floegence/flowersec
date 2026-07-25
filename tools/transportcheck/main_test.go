@@ -2310,6 +2310,7 @@ func TestMakeTargetsUseEvidenceClassificationGate(t *testing.T) {
 	}
 	for _, target := range []string{
 		"transport-conformance-smoke",
+		"transport-v2-release-collect-conformance-smoke",
 		"transport-browser-smoke",
 		"transport-interop-smoke",
 		"transport-conformance-full",
@@ -2331,6 +2332,7 @@ func TestMakeTargetsUseEvidenceClassificationGate(t *testing.T) {
 
 func TestExternalReleaseEvidenceTargetsFailClosedWithoutRunner(t *testing.T) {
 	for _, target := range []string{
+		"transport-v2-release-collect-conformance-smoke",
 		"transport-conformance-full",
 		"quic-native-proof",
 		"quic-native-race",

@@ -30,6 +30,7 @@ const (
 	networkCellTarget = "direct-network-profile-cell"
 	tunnelCellTarget  = "tunnel-network-profile-cell"
 	browserCellTarget = "browser-webtransport-cell"
+	caseSuiteTarget   = "release-case-suite"
 	networkWorkerArg  = "--network-cell-worker"
 	browserWorkerArg  = "--browser-cell-worker"
 	networkModeDirect = "direct"
@@ -191,10 +192,12 @@ func run(args []string) (resultErr error) {
 	topologyName := flags.String("topology", "", "tunnel carrier topology")
 	bpfObject := flags.String("bpf-object", "", "compiled packet-fault eBPF object")
 	artifactDir := flags.String("artifact-dir", "", "existing empty release artifact directory")
+	caseOwner := flags.String("case-owner", "", "registered case owner")
+	caseMode := flags.String("case-mode", "", "normal or race case execution mode")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget && *target != browserCellTarget) || *manifestPath == "" || *reportPath == "" || *artifactDir == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
+	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget && *target != browserCellTarget && *target != caseSuiteTarget) || *manifestPath == "" || *reportPath == "" || *artifactDir == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
 		return errors.New("runner requires a supported --target, --manifest, --report, --artifact-dir, --source-root, and a full --source-sha")
 	}
 	destination, err := newArtifactDestination(*artifactDir, *reportPath)
@@ -218,6 +221,15 @@ func run(args []string) (resultErr error) {
 	plan, manifest, err := transportrelease.LoadReleasePlan(*manifestPath)
 	if err != nil {
 		return err
+	}
+	if *target == caseSuiteTarget {
+		if *profileID != "" || *carrierName != "" || *topologyName != "" || *bpfObject != "" {
+			return errors.New("release case suite does not accept performance or network profile flags")
+		}
+		return runCaseSuite(*reportPath, destination, *sourceSHA, *caseOwner, *caseMode, plan, manifest)
+	}
+	if *caseOwner != "" || *caseMode != "" {
+		return errors.New("performance cell targets do not accept case owner or mode")
 	}
 	if *target == networkCellTarget {
 		if *topologyName != "" {

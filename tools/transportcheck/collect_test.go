@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -29,6 +31,9 @@ func TestBuildCollectionPlanFailsClosedOnEveryCurrentReleaseTarget(t *testing.T)
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
 	for target := range collectTargets {
+		if target == "transport-conformance-smoke" {
+			continue
+		}
 		plan, err := buildCollectionPlan(target, manifest, registry)
 		if err != nil {
 			t.Fatalf("%s: %v", target, err)
@@ -57,8 +62,34 @@ func TestBuildCollectionPlanFailsClosedOnEveryCurrentReleaseTarget(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(allPlan.Jobs) != len(abPlan.Jobs) || len(allPlan.Missing) <= len(abPlan.Missing) {
+	if len(allPlan.Jobs) != len(abPlan.Jobs)+1 || len(allPlan.Missing) != 55 {
 		t.Fatalf("all plan does not include performance jobs plus case gaps: jobs=%d missing=%d", len(allPlan.Jobs), len(allPlan.Missing))
+	}
+	var caseJob *collectionJob
+	for index := range allPlan.Jobs {
+		if allPlan.Jobs[index].CaseOwner == "transport-conformance-smoke" {
+			caseJob = &allPlan.Jobs[index]
+			break
+		}
+	}
+	if caseJob == nil || caseJob.RunnerTarget != "release-case-suite" || caseJob.CaseMode != "normal" || len(caseJob.CaseIDs) != 6 {
+		t.Fatalf("all plan does not contain the registered conformance-smoke producer: %+v", caseJob)
+	}
+}
+
+func TestBuildCollectionPlanRunsConformanceSmokeProducerIndependently(t *testing.T) {
+	manifest := loadFixtureManifest(t)
+	registry := loadFixtureRegistry(t)
+	plan, err := buildCollectionPlan("transport-conformance-smoke", manifest, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Missing) != 0 || len(plan.Jobs) != 1 {
+		t.Fatalf("conformance smoke plan = %d jobs, %d gaps", len(plan.Jobs), len(plan.Missing))
+	}
+	job := plan.Jobs[0]
+	if job.RunnerTarget != "release-case-suite" || job.CaseOwner != "transport-conformance-smoke" || job.CaseMode != "normal" || len(job.CaseIDs) != 6 {
+		t.Fatalf("conformance smoke job is incomplete: %+v", job)
 	}
 }
 
@@ -81,7 +112,7 @@ func TestRunCollectionJobsUsesRealExecutableAndEmptyPerCellArtifactDirectories(t
 	if err := os.Mkdir(staging, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	records, err := runCollectionJobs(context.Background(), request, manifest, jobs, staging)
+	records, err := runCollectionJobs(context.Background(), request, manifest, nil, jobs, staging)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +145,54 @@ func TestRunCollectionJobsUsesRealExecutableAndEmptyPerCellArtifactDirectories(t
 		if gotBPF != job.NeedsBPF {
 			t.Fatalf("%s BPF argv=%t, want %t: %v", job.ID, gotBPF, job.NeedsBPF, command.Args)
 		}
+	}
+}
+
+func TestValidateRawCaseSuiteReportBindsExactRegistryAndArtifacts(t *testing.T) {
+	reportPath, artifactDirectory, manifest, registry, job := writeRawCaseSuiteFixture(t)
+	caseIDs, err := validateRawCaseSuiteReport(reportPath, artifactDirectory, collectTestFinalSHA, manifest.Digest, strings.Repeat("1", 64), job, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(caseIDs, job.CaseIDs) {
+		t.Fatalf("validated case IDs = %v, want %v", caseIDs, job.CaseIDs)
+	}
+}
+
+func TestValidateRawCaseSuiteReportRejectsMissingExtraAndMismatchedClaims(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*rawCaseSuiteReport)
+	}{
+		{name: "missing", mutate: func(report *rawCaseSuiteReport) { report.Results = report.Results[:1] }},
+		{name: "extra", mutate: func(report *rawCaseSuiteReport) { report.Results = append(report.Results, report.Results[0]) }},
+		{name: "owner", mutate: func(report *rawCaseSuiteReport) { report.Owner = "wrong-owner" }},
+		{name: "profile", mutate: func(report *rawCaseSuiteReport) { report.Results[0].Profile = "wrong-profile" }},
+		{name: "digest", mutate: func(report *rawCaseSuiteReport) { report.Results[0].Artifacts[0].SHA256 = strings.Repeat("0", 64) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reportPath, artifactDirectory, manifest, registry, job := writeRawCaseSuiteFixture(t)
+			data, err := os.ReadFile(reportPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var report rawCaseSuiteReport
+			if err := json.Unmarshal(data, &report); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(&report)
+			data, err = json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(reportPath, append(data, '\n'), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := validateRawCaseSuiteReport(reportPath, artifactDirectory, collectTestFinalSHA, manifest.Digest, strings.Repeat("1", 64), job, registry); err == nil {
+				t.Fatal("accepted mismatched case suite report")
+			}
+		})
 	}
 }
 
@@ -303,6 +382,60 @@ func argumentHasPair(args []string, name, value string) bool {
 		}
 	}
 	return false
+}
+
+func writeRawCaseSuiteFixture(t *testing.T) (string, string, *PerformanceManifest, *CaseRegistry, collectionJob) {
+	t.Helper()
+	root := canonicalCollectTestRoot(t)
+	artifactDirectory := filepath.Join(root, "artifacts")
+	if err := os.Mkdir(artifactDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := &PerformanceManifest{Digest: "sha256:collect-test-manifest"}
+	registry := loadFixtureRegistry(t)
+	job := collectionJob{
+		ID: "case-normal-transport-conformance-smoke", RunnerTarget: "release-case-suite",
+		CaseOwner: "transport-conformance-smoke", CaseMode: "normal", CaseIDs: []string{"CS-C1", "CS-C2"},
+	}
+	definitions := make(map[string]CaseDefinition, len(registry.Cases))
+	for _, definition := range registry.Cases {
+		definitions[definition.ID] = definition
+	}
+	report := rawCaseSuiteReport{
+		SchemaVersion: 1, Classification: "linux_transport_case_suite", SourceSHA: collectTestFinalSHA,
+		ManifestDigest: manifest.Digest, ManifestSHA256: strings.Repeat("1", 64), Runner: map[string]any{"os": "linux"},
+		Owner: job.CaseOwner, Mode: job.CaseMode, StartedAt: "2026-07-25T00:00:00Z", FinishedAt: "2026-07-25T00:00:01Z",
+	}
+	for _, id := range job.CaseIDs {
+		definition := definitions[id]
+		result := rawCaseSuiteResult{ID: id, Profile: definition.Profile, Status: "pass", CompletedOperations: 1, ElapsedNanoseconds: 1}
+		caseDirectory := filepath.Join(artifactDirectory, strings.ToLower(id))
+		if err := os.Mkdir(caseDirectory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, kind := range definition.EvidenceFields {
+			data := []byte(`{"schema_version":1,"kind":"` + kind + `"}` + "\n")
+			path := filepath.Join(caseDirectory, kind+".json")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(data)
+			result.Artifacts = append(result.Artifacts, rawProducedArtifact{
+				Kind: kind, Path: filepath.ToSlash(filepath.Join("artifacts", strings.ToLower(id), kind+".json")),
+				SHA256: hex.EncodeToString(digest[:]), SizeBytes: int64(len(data)),
+			})
+		}
+		report.Results = append(report.Results, result)
+	}
+	reportPath := filepath.Join(root, "cell.json")
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reportPath, append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return reportPath, artifactDirectory, manifest, registry, job
 }
 
 func canonicalCollectTestRoot(t *testing.T) string {

@@ -43,6 +43,7 @@ var errProductDirectEndpointClosed = errors.New("product direct endpoint closed"
 // excludes certificate and listener provisioning without weakening admission.
 type ProductDirectEndpoint struct {
 	kind            carrier.Kind
+	suite           protocolv2.Suite
 	listenHost      string
 	candidateURL    string
 	trustRoots      *x509.CertPool
@@ -77,6 +78,7 @@ type ProductDirectBrowserArtifact struct {
 type ProductDirectPair struct {
 	Client flowersec.Session
 	Server flowersession.SessionV2
+	Suite  protocolv2.Suite
 
 	spendCount *atomic.Int32
 	closeOnce  sync.Once
@@ -103,13 +105,25 @@ func OpenProductDirect(ctx context.Context, kind carrier.Kind) (*ProductDirectPa
 
 // OpenProductDirectEndpoint provisions one reusable production endpoint.
 func OpenProductDirectEndpoint(ctx context.Context, kind carrier.Kind) (*ProductDirectEndpoint, error) {
-	return OpenProductDirectEndpointAt(ctx, kind, "127.0.0.1")
+	return OpenProductDirectEndpointWithSuite(ctx, kind, protocolv2.SuiteChaCha20Poly1305)
+}
+
+// OpenProductDirectEndpointWithSuite provisions a reusable endpoint with the
+// exact frozen E2EE suite required by a release case.
+func OpenProductDirectEndpointWithSuite(ctx context.Context, kind carrier.Kind, suite protocolv2.Suite) (*ProductDirectEndpoint, error) {
+	return OpenProductDirectEndpointAtWithSuite(ctx, kind, "127.0.0.1", suite)
 }
 
 // OpenProductDirectEndpointAt provisions a production endpoint on one explicit
 // IP address. Release workloads use this inside an isolated network namespace.
 func OpenProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenHost string) (*ProductDirectEndpoint, error) {
-	return openProductDirectEndpointAt(ctx, kind, listenHost, releaseRunnerOrigin)
+	return OpenProductDirectEndpointAtWithSuite(ctx, kind, listenHost, protocolv2.SuiteChaCha20Poly1305)
+}
+
+// OpenProductDirectEndpointAtWithSuite binds the endpoint and its issued
+// session contracts to one explicit E2EE suite.
+func OpenProductDirectEndpointAtWithSuite(ctx context.Context, kind carrier.Kind, listenHost string, suite protocolv2.Suite) (*ProductDirectEndpoint, error) {
+	return openProductDirectEndpointAt(ctx, kind, listenHost, releaseRunnerOrigin, suite)
 }
 
 // OpenProductDirectBrowserEndpointAt provisions a WebTransport endpoint that
@@ -118,16 +132,19 @@ func OpenProductDirectBrowserEndpointAt(ctx context.Context, listenHost, browser
 	if err := validateBrowserOrigin(browserOrigin); err != nil {
 		return nil, err
 	}
-	return openProductDirectEndpointAt(ctx, carrier.KindWebTransport, listenHost, browserOrigin)
+	return openProductDirectEndpointAt(ctx, carrier.KindWebTransport, listenHost, browserOrigin, protocolv2.SuiteChaCha20Poly1305)
 }
 
-func openProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenHost, allowedOrigin string) (*ProductDirectEndpoint, error) {
+func openProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenHost, allowedOrigin string, suite protocolv2.Suite) (*ProductDirectEndpoint, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	address := net.ParseIP(listenHost)
 	if address == nil || address.IsUnspecified() || address.IsMulticast() {
 		return nil, errors.New("product direct endpoint requires a concrete unicast IP address")
+	}
+	if suite != protocolv2.SuiteChaCha20Poly1305 && suite != protocolv2.SuiteAES256GCM {
+		return nil, protocolv2.ErrInvalidSuite
 	}
 	serverTLS, clientTLS, err := localTLSForHost(kind, listenHost)
 	if err != nil {
@@ -136,7 +153,7 @@ func openProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenH
 	endpointCtx, cancel := context.WithCancelCause(ctx)
 	certificateHash := sha256.Sum256(serverTLS.Certificates[0].Certificate[0])
 	endpoint := &ProductDirectEndpoint{
-		kind: kind, listenHost: listenHost, trustRoots: clientTLS.RootCAs, ctx: endpointCtx, cancel: cancel,
+		kind: kind, suite: suite, listenHost: listenHost, trustRoots: clientTLS.RootCAs, ctx: endpointCtx, cancel: cancel,
 		certificateHash: certificateHash, allowedOrigin: allowedOrigin,
 		pending: make(map[[sha256.Size]byte]*admissionExpectation),
 	}
@@ -165,7 +182,7 @@ func (endpoint *ProductDirectEndpoint) IssueBrowserArtifact() (*ProductDirectBro
 	if err := context.Cause(endpoint.ctx); err != nil {
 		return nil, err
 	}
-	contract, err := releaseSessionContract()
+	contract, err := releaseSessionContract(endpoint.suite)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +269,7 @@ func (endpoint *ProductDirectEndpoint) Connect(ctx context.Context) (*ProductDir
 	if err := context.Cause(endpoint.ctx); err != nil {
 		return nil, err
 	}
-	contract, err := releaseSessionContract()
+	contract, err := releaseSessionContract(endpoint.suite)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +342,7 @@ func (endpoint *ProductDirectEndpoint) Connect(ctx context.Context) (*ProductDir
 	}
 	established = true
 	return &ProductDirectPair{
-		Client: client, Server: server.session, spendCount: spendCount,
+		Client: client, Server: server.session, Suite: protocolv2.Suite(contract.DefaultSuite), spendCount: spendCount,
 	}, nil
 }
 
@@ -780,7 +797,7 @@ func directArtifact(kind carrier.Kind, candidateURL string, contract artifactv2.
 	}
 }
 
-func releaseSessionContract() (artifactv2.SessionContract, error) {
+func releaseSessionContract(suite protocolv2.Suite) (artifactv2.SessionContract, error) {
 	var channelNonce [16]byte
 	if _, err := rand.Read(channelNonce[:]); err != nil {
 		return artifactv2.SessionContract{}, fmt.Errorf("generate release channel ID: %w", err)
@@ -789,7 +806,7 @@ func releaseSessionContract() (artifactv2.SessionContract, error) {
 		ChannelID: "transport-release-" + hex.EncodeToString(channelNonce[:]), InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(),
 		IdleTimeoutSeconds: 60, EstablishTimeoutSeconds: 30,
 		RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
-		MaxInboundStreams: defaultMaxInboundStreams, AllowedSuites: []uint16{1}, DefaultSuite: 1,
+		MaxInboundStreams: defaultMaxInboundStreams, AllowedSuites: []uint16{uint16(suite)}, DefaultSuite: uint16(suite),
 	}
 	if _, err := rand.Read(contract.E2EEPSK[:]); err != nil {
 		return artifactv2.SessionContract{}, fmt.Errorf("generate release session PSK: %w", err)

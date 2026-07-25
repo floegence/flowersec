@@ -21,7 +21,11 @@ import (
 var collectTargets = map[string]struct{}{
 	"all": {}, "transport-conformance-full": {}, "weaknet-full": {}, "weaknet-system": {},
 	"quic-native-proof": {}, "quic-native-race": {}, "bench-transport-capacity": {},
-	"bench-transport-soak": {}, "bench-transport-ab": {},
+	"bench-transport-soak": {}, "bench-transport-ab": {}, "transport-conformance-smoke": {},
+}
+
+var normalCaseProducerOwners = map[string]struct{}{
+	"transport-conformance-smoke": {},
 }
 
 type collectRequest struct {
@@ -119,13 +123,47 @@ type collectionJob struct {
 	Carrier      string
 	Topology     string
 	NeedsBPF     bool
+	CaseOwner    string
+	CaseMode     string
+	CaseIDs      []string
 }
 
 type rawJobRecord struct {
 	ID        string   `json:"id"`
 	CellIDs   []string `json:"cell_ids"`
+	CaseIDs   []string `json:"case_ids,omitempty"`
 	Directory string   `json:"directory"`
 	ReportSHA string   `json:"report_sha256"`
+}
+
+type rawCaseSuiteReport struct {
+	SchemaVersion  int                  `json:"schema_version"`
+	Classification string               `json:"classification"`
+	SourceSHA      string               `json:"source_sha"`
+	ManifestDigest string               `json:"manifest_digest"`
+	ManifestSHA256 string               `json:"manifest_file_sha256"`
+	Runner         map[string]any       `json:"runner"`
+	Owner          string               `json:"owner"`
+	Mode           string               `json:"mode"`
+	StartedAt      string               `json:"started_at"`
+	FinishedAt     string               `json:"finished_at"`
+	Results        []rawCaseSuiteResult `json:"results"`
+}
+
+type rawCaseSuiteResult struct {
+	ID                  string                `json:"id"`
+	Profile             string                `json:"profile"`
+	Status              string                `json:"status"`
+	CompletedOperations int                   `json:"completed_operations"`
+	ElapsedNanoseconds  int64                 `json:"elapsed_nanoseconds"`
+	Artifacts           []rawProducedArtifact `json:"artifacts"`
+}
+
+type rawProducedArtifact struct {
+	Kind      string `json:"kind"`
+	Path      string `json:"path"`
+	SHA256    string `json:"sha256"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 type rawCollectionIndex struct {
@@ -397,13 +435,28 @@ func buildCollectionPlan(target string, manifest *PerformanceManifest, registry 
 		plan.Jobs = append(plan.Jobs, jobs...)
 		plan.Missing = append(plan.Missing, missing...)
 	}
+	caseJobs := make(map[string]*collectionJob)
 	for _, entry := range registry.Cases {
 		if (target == "all" || target == entry.Owner) && entry.Required {
-			plan.Missing = append(plan.Missing, fmt.Sprintf("case %s owned by %s", entry.ID, entry.Owner))
+			if _, supported := normalCaseProducerOwners[entry.Owner]; supported {
+				key := "normal:" + entry.Owner
+				job := caseJobs[key]
+				if job == nil {
+					job = &collectionJob{ID: "case-normal-" + entry.Owner, RunnerTarget: "release-case-suite", CaseOwner: entry.Owner, CaseMode: "normal"}
+					caseJobs[key] = job
+				}
+				job.CaseIDs = append(job.CaseIDs, entry.ID)
+			} else {
+				plan.Missing = append(plan.Missing, fmt.Sprintf("case %s owned by %s", entry.ID, entry.Owner))
+			}
 		}
 		if entry.RaceOwner != "" && (target == "all" || target == entry.RaceOwner) {
 			plan.Missing = append(plan.Missing, fmt.Sprintf("race case %s owned by %s", entry.ID, entry.RaceOwner))
 		}
+	}
+	for _, job := range caseJobs {
+		sort.Strings(job.CaseIDs)
+		plan.Jobs = append(plan.Jobs, *job)
 	}
 	sort.Strings(plan.Missing)
 	sort.Slice(plan.Jobs, func(left, right int) bool { return plan.Jobs[left].ID < plan.Jobs[right].ID })
@@ -488,7 +541,7 @@ func executeCollection(ctx context.Context, environment *collectEnvironment, pla
 			_ = os.RemoveAll(jobsRoot)
 		}
 	}()
-	records, err := runCollectionJobs(ctx, environment.request, environment.manifest, plan.Jobs, environment.request.ArtifactDirectory, environment.output)
+	records, err := runCollectionJobs(ctx, environment.request, environment.manifest, environment.registry, plan.Jobs, environment.request.ArtifactDirectory, environment.output)
 	if err != nil {
 		return err
 	}
@@ -510,7 +563,7 @@ func executeCollection(ctx context.Context, environment *collectEnvironment, pla
 	return nil
 }
 
-func runCollectionJobs(ctx context.Context, request collectRequest, manifest *PerformanceManifest, jobs []collectionJob, staging string, identities ...*collectionDirectoryIdentity) ([]rawJobRecord, error) {
+func runCollectionJobs(ctx context.Context, request collectRequest, manifest *PerformanceManifest, registry *CaseRegistry, jobs []collectionJob, staging string, identities ...*collectionDirectoryIdentity) ([]rawJobRecord, error) {
 	var identity *collectionDirectoryIdentity
 	if len(identities) > 1 {
 		return nil, errors.New("collection jobs accept at most one output identity")
@@ -558,6 +611,9 @@ func runCollectionJobs(ctx context.Context, request collectRequest, manifest *Pe
 		if job.NeedsBPF {
 			args = append(args, "--bpf-object", request.BPFObject)
 		}
+		if job.CaseOwner != "" {
+			args = append(args, "--case-owner", job.CaseOwner, "--case-mode", job.CaseMode)
+		}
 		commandRecord, err := json.MarshalIndent(struct {
 			Executable string   `json:"executable"`
 			Args       []string `json:"args"`
@@ -597,6 +653,18 @@ func runCollectionJobs(ctx context.Context, request collectRequest, manifest *Pe
 		if err := validateRawCellReport(reportPath, request.FinalSHA, manifest.Digest); err != nil {
 			return nil, fmt.Errorf("low-level runner job %s report: %w", job.ID, err)
 		}
+		recordCaseIDs := job.CaseIDs
+		if job.CaseOwner != "" {
+			_, manifestFileSHA256, err := snapshotRegularFile(request.ManifestPath, false)
+			if err != nil {
+				return nil, fmt.Errorf("low-level runner job %s manifest: %w", job.ID, err)
+			}
+			actualCaseIDs, err := validateRawCaseSuiteReport(reportPath, artifactDirectory, request.FinalSHA, manifest.Digest, manifestFileSHA256, job, registry)
+			if err != nil {
+				return nil, fmt.Errorf("low-level runner job %s case report: %w", job.ID, err)
+			}
+			recordCaseIDs = actualCaseIDs
+		}
 		if err := validateProducedArtifacts(artifactDirectory); err != nil {
 			return nil, fmt.Errorf("low-level runner job %s artifacts: %w", job.ID, err)
 		}
@@ -605,7 +673,7 @@ func runCollectionJobs(ctx context.Context, request collectRequest, manifest *Pe
 				return nil, err
 			}
 		}
-		records = append(records, rawJobRecord{ID: job.ID, CellIDs: job.CellIDs, Directory: filepath.ToSlash(filepath.Join("jobs", job.ID)), ReportSHA: reportDigest})
+		records = append(records, rawJobRecord{ID: job.ID, CellIDs: job.CellIDs, CaseIDs: recordCaseIDs, Directory: filepath.ToSlash(filepath.Join("jobs", job.ID)), ReportSHA: reportDigest})
 	}
 	return records, nil
 }
@@ -653,6 +721,96 @@ func validateRawCellReport(path, finalSHA, manifestDigest string) error {
 	if envelope["schema_version"] != float64(1) || strings.TrimSpace(fmt.Sprint(envelope["classification"])) == "" ||
 		envelope["source_sha"] != finalSHA || envelope["manifest_digest"] != manifestDigest {
 		return errors.New("raw cell report does not bind schema, classification, final SHA, and manifest digest")
+	}
+	return nil
+}
+
+func validateRawCaseSuiteReport(path, artifactDirectory, finalSHA, manifestDigest, manifestFileSHA256 string, job collectionJob, registry *CaseRegistry) ([]string, error) {
+	if registry == nil || job.CaseOwner == "" || job.CaseMode == "" || len(job.CaseIDs) == 0 {
+		return nil, errors.New("case suite validation requires a registry and a complete case job")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var report rawCaseSuiteReport
+	if err := decodeStrictJSON(data, &report); err != nil {
+		return nil, err
+	}
+	if report.SchemaVersion != 1 || report.Classification != "linux_transport_case_suite" || report.SourceSHA != finalSHA ||
+		report.ManifestDigest != manifestDigest || report.ManifestSHA256 != manifestFileSHA256 || report.Owner != job.CaseOwner || report.Mode != job.CaseMode ||
+		strings.TrimSpace(report.StartedAt) == "" || strings.TrimSpace(report.FinishedAt) == "" {
+		return nil, errors.New("case suite report does not bind its schema, classification, source, manifest, owner, mode, and timestamps")
+	}
+	definitions := make(map[string]CaseDefinition, len(registry.Cases))
+	for _, definition := range registry.Cases {
+		definitions[definition.ID] = definition
+	}
+	if len(report.Results) != len(job.CaseIDs) {
+		return nil, fmt.Errorf("case suite result count = %d, want %d", len(report.Results), len(job.CaseIDs))
+	}
+	actualIDs := make([]string, 0, len(report.Results))
+	seen := make(map[string]struct{}, len(report.Results))
+	for index, result := range report.Results {
+		if result.ID != job.CaseIDs[index] {
+			return nil, fmt.Errorf("case result %d ID = %q, want %q", index, result.ID, job.CaseIDs[index])
+		}
+		if _, duplicate := seen[result.ID]; duplicate {
+			return nil, fmt.Errorf("duplicate case result %s", result.ID)
+		}
+		seen[result.ID] = struct{}{}
+		definition, exists := definitions[result.ID]
+		if !exists || definition.Owner != job.CaseOwner || definition.Mode != job.CaseMode || result.Profile != definition.Profile {
+			return nil, fmt.Errorf("case %s does not match its registered owner, mode, and profile", result.ID)
+		}
+		if result.Status != "pass" || result.CompletedOperations < 1 || result.ElapsedNanoseconds <= 0 {
+			return nil, fmt.Errorf("case %s does not prove a successful measured workload", result.ID)
+		}
+		if err := validateRawCaseArtifacts(filepath.Dir(path), artifactDirectory, result, definition.EvidenceFields); err != nil {
+			return nil, fmt.Errorf("case %s artifacts: %w", result.ID, err)
+		}
+		actualIDs = append(actualIDs, result.ID)
+	}
+	return actualIDs, nil
+}
+
+func validateRawCaseArtifacts(reportDirectory, artifactDirectory string, result rawCaseSuiteResult, requiredKinds []string) error {
+	if len(result.Artifacts) != len(requiredKinds) {
+		return fmt.Errorf("artifact count = %d, want %d", len(result.Artifacts), len(requiredKinds))
+	}
+	wants := make(map[string]struct{}, len(requiredKinds))
+	for _, kind := range requiredKinds {
+		wants[kind] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(result.Artifacts))
+	for _, artifact := range result.Artifacts {
+		if _, exists := wants[artifact.Kind]; !exists {
+			return fmt.Errorf("unexpected artifact kind %q", artifact.Kind)
+		}
+		if _, duplicate := seen[artifact.Kind]; duplicate {
+			return fmt.Errorf("duplicate artifact kind %q", artifact.Kind)
+		}
+		seen[artifact.Kind] = struct{}{}
+		wantPath := filepath.ToSlash(filepath.Join("artifacts", strings.ToLower(result.ID), artifact.Kind+".json"))
+		if artifact.Path != wantPath || filepath.IsAbs(filepath.FromSlash(artifact.Path)) {
+			return fmt.Errorf("%s path = %q, want %q", artifact.Kind, artifact.Path, wantPath)
+		}
+		absolute := filepath.Clean(filepath.Join(reportDirectory, filepath.FromSlash(artifact.Path)))
+		relative, err := filepath.Rel(artifactDirectory, absolute)
+		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("%s path escapes the case artifact directory", artifact.Kind)
+		}
+		canonical, digest, err := snapshotRegularFile(absolute, false)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(canonical)
+		if err != nil {
+			return err
+		}
+		if digest != artifact.SHA256 || info.Size() != artifact.SizeBytes {
+			return fmt.Errorf("%s size or digest mismatch", artifact.Kind)
+		}
 	}
 	return nil
 }

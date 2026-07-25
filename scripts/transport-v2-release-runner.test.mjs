@@ -35,7 +35,7 @@ test("release wrapper rejects calls outside the two-flag Make contract", () => {
 
 test("release wrapper accepts every Make release target before path validation", () => {
   for (const target of [
-    "all", "transport-conformance-full", "weaknet-full", "weaknet-system",
+    "all", "transport-conformance-smoke", "transport-conformance-full", "weaknet-full", "weaknet-system",
     "quic-native-proof", "quic-native-race", "bench-transport-capacity",
     "bench-transport-soak", "bench-transport-ab",
   ]) {
