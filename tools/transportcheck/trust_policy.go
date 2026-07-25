@@ -17,9 +17,9 @@ const (
 	signedRunnerKernelRelease = "6.8.0-124-generic"
 	signedRunnerConfigDigest  = "94984c52b0417583217a7974f50bf13f838913f948960caa0dc0725a0893ad71"
 	signedRunnerConfigPath    = "runner_effective_config.json"
-	signedRunnerExecutableSHA = "3333333333333333333333333333333333333333333333333333333333333333"
-	signedRunnerSourceSHA     = "4444444444444444444444444444444444444444444444444444444444444444"
-	signedRunnerArgvSHA       = "5555555555555555555555555555555555555555555555555555555555555555"
+	signedRunnerExecutableSHA = "bd3bed77ab9cb64e015dcef47d717c455d1debf97270037fef1c0dc6262ced8b"
+	signedRunnerSourceSHA     = "4074897dfedd52614ee1d80fd8c534e54d400b32b600a023a385f596771b80d0"
+	signedRunnerArgvSHA       = "b635e0df659b0b985453a08a0586598b855f6536c0fe8c0c3a03657e26a10603"
 )
 
 func loadEvidenceTrustPolicy(path string) (*EvidenceTrustPolicy, error) {
