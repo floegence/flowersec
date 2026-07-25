@@ -319,8 +319,8 @@ func rawColdSeries(operations []rawConnectOperation, cellID string, runNumber in
 	if err != nil {
 		return OperationSeriesRecord{}, SelectionEvidence{}, err
 	}
-	if len(operations) != 2000 {
-		return OperationSeriesRecord{}, SelectionEvidence{}, fmt.Errorf("operation count = %d, want 2000", len(operations))
+	if len(operations) != contract.operationCount {
+		return OperationSeriesRecord{}, SelectionEvidence{}, fmt.Errorf("operation count = %d, want %d", len(operations), contract.operationCount)
 	}
 	candidate := map[string]string{"clean-02": "direct-wss", "clean-03": "direct-raw-quic"}[cellID]
 	if candidate == "" {
@@ -371,8 +371,8 @@ func rawRPCSeries(operations []rawRPCOperation, runNumber int) (OperationSeriesR
 	if err != nil {
 		return OperationSeriesRecord{}, err
 	}
-	if len(operations) != 2000 {
-		return OperationSeriesRecord{}, fmt.Errorf("operation count = %d, want 2000", len(operations))
+	if len(operations) != contract.operationCount {
+		return OperationSeriesRecord{}, fmt.Errorf("operation count = %d, want %d", len(operations), contract.operationCount)
 	}
 	origin := operations[0].ScheduledAt
 	starts := make([]int64, len(operations))

@@ -798,7 +798,7 @@ func checkCaseAttributions(builder *resultBuilder, context string, evidence Case
 		}
 		// Synthetic soak fixtures predate raw-source indexing. The collection
 		// front door still rejects a production soak attribution without sources.
-		if evidence.ID == "CAP-SOAK-HOURLY" && len(evidence.RawSources) == 0 {
+		if evidence.ID == "CAP-SOAK-5M" && len(evidence.RawSources) == 0 {
 			continue
 		}
 		if _, err := loadCaseAttributedRawSources(builder, context, evidence, kind, data, baseDir); err != nil {

@@ -14,8 +14,8 @@ import (
 
 func TestProductionSoakContractIsFrozen(t *testing.T) {
 	contract := productionSoakContract()
-	if contract.Duration != time.Hour || contract.CyclePeriod != time.Minute || contract.Cycles != 60 ||
-		contract.Reconnects != 60 || contract.Migrations != 60 {
+	if contract.Duration != 5*time.Minute || contract.CyclePeriod != time.Minute || contract.Cycles != 5 ||
+		contract.Reconnects != 5 || contract.Migrations != 5 {
 		t.Fatalf("production soak contract = %+v", contract)
 	}
 }
@@ -159,11 +159,11 @@ func TestSoakRawSourceAttributionBindsExactQLOGAndPCAPBytes(t *testing.T) {
 	qlog := testSoakQLOG(t, "0123456789abcdef")
 	pcap := testSoakPCAP()
 	sources := []soakCycleSource{{Ordinal: 1, ConnectionID: "0123456789abcdef", QLOG: qlog, PCAP: pcap}}
-	qlogAttribution, err := buildSoakQLOGAttribution("case CAP-SOAK-HOURLY", sources)
+	qlogAttribution, err := buildSoakQLOGAttribution("case CAP-SOAK-5M", sources)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pcapAttribution, err := buildSoakPCAPAttribution("case CAP-SOAK-HOURLY", sources)
+	pcapAttribution, err := buildSoakPCAPAttribution("case CAP-SOAK-5M", sources)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestSoakRawSourceAttributionBindsExactQLOGAndPCAPBytes(t *testing.T) {
 		t.Fatalf("qlog/pcap attribution = %+v / %+v", qlogAttribution, pcapAttribution)
 	}
 	sources[0].ConnectionID = "fedcba9876543210"
-	if _, err := buildSoakQLOGAttribution("case CAP-SOAK-HOURLY", sources); err == nil {
+	if _, err := buildSoakQLOGAttribution("case CAP-SOAK-5M", sources); err == nil {
 		t.Fatal("qlog connection ID mismatch was accepted")
 	}
 }

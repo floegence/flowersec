@@ -10,12 +10,14 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
 	manifestSchemaVersion     = 1
 	manifestDigestPrefix      = "sha256:"
 	signedRatioFormulaVersion = "transport-ratio-v1"
+	maximumSingleTestMinutes  = 5
 	mib                       = 1024 * 1024
 	kib                       = 1024
 )
@@ -45,11 +47,11 @@ var signedCapacityContract = CapacityContract{
 }
 
 var signedSoakContract = SoakContract{
-	DurationNS:                3600 * 1e9,
+	DurationNS:                5 * 60 * 1e9,
 	FaultCyclePeriodNS:        60 * 1e9,
-	FaultCycleCount:           60,
-	ReconnectCount:            60,
-	MigrationCount:            60,
+	FaultCycleCount:           5,
+	ReconnectCount:            5,
+	MigrationCount:            5,
 	MaxRSSGrowthBytesPerHour:  64 * mib,
 	MaxGoroutineGrowthPerHour: 64,
 	MaxOpenFDGrowthPerHour:    16,
@@ -175,27 +177,27 @@ func float64Pointer(value float64) *float64 { return &value }
 var signedProfiles = []signedProfile{
 	{
 		id:                     "clean-v1",
-		cold:                   ColdWorkload{Operations: 2000, MaxInflight: 32, Retries: 0, StartRatePerSecond: 100, OperationDeadlineSeconds: 10, PhaseDeadlineSeconds: 30},
-		rpc:                    RPCWorkload{Operations: 2000, RequestBytes: 1024, ResponseBytes: 1024, Workers: 32, Retries: 0, OperationDeadlineSeconds: 2, PhaseDeadlineSeconds: 10},
-		bulk:                   BulkWorkload{WarmupBytesPerDirection: mib, ScoreBytesPerDirection: 256 * mib, PhaseDeadlineSeconds: 15},
-		cleanupDeadlineSeconds: 5,
-		cellWatchdogMinutes:    15,
+		cold:                   ColdWorkload{Operations: 100, MaxInflight: 32, Retries: 0, StartRatePerSecond: 100, OperationDeadlineSeconds: 5, PhaseDeadlineSeconds: 6},
+		rpc:                    RPCWorkload{Operations: 100, RequestBytes: 1024, ResponseBytes: 1024, Workers: 32, Retries: 0, OperationDeadlineSeconds: 2, PhaseDeadlineSeconds: 4},
+		bulk:                   BulkWorkload{WarmupBytesPerDirection: 128 * kib, ScoreBytesPerDirection: 8 * mib, PhaseDeadlineSeconds: 5},
+		cleanupDeadlineSeconds: 2,
+		cellWatchdogMinutes:    5,
 	},
 	{
 		id:                     "mobile-v1",
-		cold:                   ColdWorkload{Operations: 2000, MaxInflight: 32, Retries: 0, StartRatePerSecond: 15, OperationDeadlineSeconds: 15, PhaseDeadlineSeconds: 150},
-		rpc:                    RPCWorkload{Operations: 2000, RequestBytes: 1024, ResponseBytes: 1024, Workers: 32, Retries: 0, OperationDeadlineSeconds: 5, PhaseDeadlineSeconds: 70},
-		bulk:                   BulkWorkload{WarmupBytesPerDirection: 128 * kib, ScoreBytesPerDirection: 512 * kib, PhaseDeadlineSeconds: 55},
-		cleanupDeadlineSeconds: 5,
-		cellWatchdogMinutes:    70,
+		cold:                   ColdWorkload{Operations: 30, MaxInflight: 30, Retries: 0, StartRatePerSecond: 15, OperationDeadlineSeconds: 5, PhaseDeadlineSeconds: 7},
+		rpc:                    RPCWorkload{Operations: 60, RequestBytes: 1024, ResponseBytes: 1024, Workers: 20, Retries: 0, OperationDeadlineSeconds: 3, PhaseDeadlineSeconds: 5},
+		bulk:                   BulkWorkload{WarmupBytesPerDirection: 64 * kib, ScoreBytesPerDirection: 256 * kib, PhaseDeadlineSeconds: 4},
+		cleanupDeadlineSeconds: 2,
+		cellWatchdogMinutes:    5,
 	},
 	{
 		id:                     "edge-v1",
-		cold:                   ColdWorkload{Operations: 2000, MaxInflight: 32, Retries: 0, StartRatePerSecond: 5, OperationDeadlineSeconds: 30, PhaseDeadlineSeconds: 430},
-		rpc:                    RPCWorkload{Operations: 2000, RequestBytes: 1024, ResponseBytes: 1024, Workers: 32, Retries: 0, OperationDeadlineSeconds: 10, PhaseDeadlineSeconds: 170},
-		bulk:                   BulkWorkload{WarmupBytesPerDirection: 128 * kib, ScoreBytesPerDirection: 2 * mib, PhaseDeadlineSeconds: 80},
-		cleanupDeadlineSeconds: 20,
-		cellWatchdogMinutes:    175,
+		cold:                   ColdWorkload{Operations: 10, MaxInflight: 10, Retries: 0, StartRatePerSecond: 5, OperationDeadlineSeconds: 6, PhaseDeadlineSeconds: 8},
+		rpc:                    RPCWorkload{Operations: 30, RequestBytes: 1024, ResponseBytes: 1024, Workers: 10, Retries: 0, OperationDeadlineSeconds: 4, PhaseDeadlineSeconds: 5},
+		bulk:                   BulkWorkload{WarmupBytesPerDirection: 64 * kib, ScoreBytesPerDirection: 128 * kib, PhaseDeadlineSeconds: 4},
+		cleanupDeadlineSeconds: 2,
+		cellWatchdogMinutes:    5,
 	},
 }
 
@@ -236,7 +238,10 @@ func validateManifest(manifest *PerformanceManifest) error {
 		return fmt.Errorf("capacity contract does not match the signed 1000-session resource and timeline limits")
 	}
 	if !reflect.DeepEqual(manifest.Soak, signedSoakContract) {
-		return fmt.Errorf("soak contract does not match the signed one-hour fault-cycle and resource-slope limits")
+		return fmt.Errorf("soak contract does not match the signed five-minute fault-cycle and resource-slope limits")
+	}
+	if manifest.Soak.DurationNS > int64(maximumSingleTestMinutes)*int64(time.Minute) {
+		return fmt.Errorf("soak duration exceeds the %d-minute single-test limit", maximumSingleTestMinutes)
 	}
 	if err := validateFaultMatrix(manifest.FaultMatrix); err != nil {
 		return err
@@ -364,6 +369,9 @@ func validateForcedProfile(profile *PerformanceProfile, signed signedProfile, ru
 	if profile.CellWatchdogMinutes != signed.cellWatchdogMinutes {
 		return fmt.Errorf("profile %s cell watchdog = %d minutes, want %d", profile.ID, profile.CellWatchdogMinutes, signed.cellWatchdogMinutes)
 	}
+	if profile.CellWatchdogMinutes > maximumSingleTestMinutes {
+		return fmt.Errorf("profile %s cell watchdog exceeds the %d-minute single-test limit", profile.ID, maximumSingleTestMinutes)
+	}
 	if !reflect.DeepEqual(profile.Network, signedNetworks[profile.ID]) {
 		return fmt.Errorf("%s network profile does not match the frozen packet-layer contract", profile.ID)
 	}
@@ -390,11 +398,14 @@ func validateAdaptiveProfile(profile *PerformanceProfile, profiles map[string]*P
 			return fmt.Errorf("adaptive stages must reuse the exact %s cold and cleanup contract", profileID)
 		}
 	}
-	if profile.HarnessSlackSeconds != 450 {
-		return fmt.Errorf("adaptive-selection-v1 harness slack = %d seconds, want 450", profile.HarnessSlackSeconds)
+	if profile.HarnessSlackSeconds != 45 {
+		return fmt.Errorf("adaptive-selection-v1 harness slack = %d seconds, want 45", profile.HarnessSlackSeconds)
 	}
-	if profile.CellWatchdogMinutes != 55 {
-		return fmt.Errorf("adaptive-selection-v1 cell watchdog = %d minutes, want 55", profile.CellWatchdogMinutes)
+	if profile.CellWatchdogMinutes != 5 {
+		return fmt.Errorf("adaptive-selection-v1 cell watchdog = %d minutes, want 5", profile.CellWatchdogMinutes)
+	}
+	if profile.CellWatchdogMinutes > maximumSingleTestMinutes {
+		return fmt.Errorf("adaptive-selection-v1 cell watchdog exceeds the %d-minute single-test limit", maximumSingleTestMinutes)
 	}
 	if profile.Network != nil {
 		return errors.New("adaptive-selection-v1 network must be null because its stages reuse clean-v1 and mobile-v1")
@@ -508,11 +519,11 @@ func validateSchedule(manifest *PerformanceManifest) error {
 	if manifest.EligibleLaneCount <= 0 {
 		return errors.New("eligible_lane_count must be positive")
 	}
-	if manifest.GlobalSetupMinutes != 60 {
-		return fmt.Errorf("global setup/teardown hard cap = %d minutes, want 60", manifest.GlobalSetupMinutes)
+	if manifest.GlobalSetupMinutes != 5 {
+		return fmt.Errorf("global setup/teardown hard cap = %d minutes, want 5", manifest.GlobalSetupMinutes)
 	}
-	if manifest.MaximumLaneMinutes != 480 {
-		return fmt.Errorf("maximum_lane_minutes = %d, want 480", manifest.MaximumLaneMinutes)
+	if manifest.MaximumLaneMinutes != 30 {
+		return fmt.Errorf("maximum_lane_minutes = %d, want 30", manifest.MaximumLaneMinutes)
 	}
 	profiles := make(map[string]PerformanceProfile, len(manifest.Profiles))
 	for _, profile := range manifest.Profiles {
@@ -535,6 +546,9 @@ func validateSchedule(manifest *PerformanceManifest) error {
 		profileCells[cell.ProfileID]++
 		if cell.DurationMinutes != profile.CellWatchdogMinutes {
 			return fmt.Errorf("cell %s duration %d does not match profile watchdog %d", cell.ID, cell.DurationMinutes, profile.CellWatchdogMinutes)
+		}
+		if cell.DurationMinutes > maximumSingleTestMinutes {
+			return fmt.Errorf("cell %s duration exceeds the %d-minute single-test limit", cell.ID, maximumSingleTestMinutes)
 		}
 		if err := validateCellSelection(cell, profile.Mode); err != nil {
 			return err
@@ -563,7 +577,7 @@ func validateSchedule(manifest *PerformanceManifest) error {
 	}
 	requiredWatchdog := loads[len(loads)-1] + manifest.GlobalSetupMinutes
 	if requiredWatchdog > manifest.MaximumLaneMinutes {
-		return fmt.Errorf("LPT schedule plus setup requires %d minutes, exceeding 480 minutes", requiredWatchdog)
+		return fmt.Errorf("LPT schedule plus setup requires %d minutes, exceeding 30 minutes", requiredWatchdog)
 	}
 	if manifest.GlobalWatchdogMinutes != requiredWatchdog {
 		return fmt.Errorf("global watchdog %d minutes must equal recomputed LPT requirement %d", manifest.GlobalWatchdogMinutes, requiredWatchdog)

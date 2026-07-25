@@ -40,18 +40,18 @@ gen-examples:
 test: go-test ts-test
 
 go-test:
-	cd flowersec-go && go test ./...
-	cd tools/idlgen && go test ./...
-	cd tools/releasenotes && go test ./...
-	cd tools/stabilitycheck && go test ./...
-	cd tools/transportcheck && go test -count=1 ./...
+	cd flowersec-go && go test -timeout=5m ./...
+	cd tools/idlgen && go test -timeout=5m ./...
+	cd tools/releasenotes && go test -timeout=5m ./...
+	cd tools/stabilitycheck && go test -timeout=5m ./...
+	cd tools/transportcheck && go test -timeout=5m -count=1 ./...
 
 go-test-race:
-	cd flowersec-go && go test -race ./...
-	cd tools/idlgen && go test -race ./...
-	cd tools/releasenotes && go test -race ./...
-	cd tools/stabilitycheck && go test -race ./...
-	./scripts/run-go-test-race-shards.sh tools/transportcheck 4 10m
+	cd flowersec-go && go test -race -timeout=5m ./...
+	cd tools/idlgen && go test -race -timeout=5m ./...
+	cd tools/releasenotes && go test -race -timeout=5m ./...
+	cd tools/stabilitycheck && go test -race -timeout=5m ./...
+	./scripts/run-go-test-race-shards.sh tools/transportcheck 12 5m 6
 
 go-vet:
 	cd flowersec-go && go vet ./...
@@ -290,13 +290,13 @@ stability-check:
 	cd tools/stabilitycheck && go run . report
 
 transport-v2-unit:
-	cd tools/transportcheck && go test -count=1 ./...
+	cd tools/transportcheck && go test -timeout=5m -count=1 ./...
 	cd tools/transportcheck && go run . manifest -manifest ../../testdata/transport_v2/performance_manifest.json -registry ../../testdata/transport_v2/case_registry.json -makefile ../../Makefile
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-v2-unit -classification contract_only
 
 transport-conformance-smoke:
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-conformance-smoke -classification local_smoke
-	cd flowersec-go && go test -count=1 ./internal/protocolv2 ./internal/artifactv2 ./internal/admissionv2 ./internal/session
+	cd flowersec-go && go test -timeout=5m -count=1 ./internal/protocolv2 ./internal/artifactv2 ./internal/admissionv2 ./internal/session
 	cd flowersec-ts && npx vitest run src/v2
 	cd flowersec-rust && cargo test --all-features --lib --test transport_v2_contract
 	swift test --filter 'TransportV2|IDNAHostV2'
@@ -319,7 +319,7 @@ WEAKNET_SMOKE_REPORT ?= /tmp/flowersec-weaknet-smoke.json
 WEAKNET_SMOKE_REPORT_ABS = $(abspath $(WEAKNET_SMOKE_REPORT))
 
 weaknet-smoke:
-	cd flowersec-go && FLOWERSEC_RUN_WEAKNET_SMOKE=1 WEAKNET_SMOKE_REPORT="$(WEAKNET_SMOKE_REPORT_ABS)" go test -count=1 -run '^TestWeaknetSmoke$$' ./internal/weaknetsmoke
+	cd flowersec-go && FLOWERSEC_RUN_WEAKNET_SMOKE=1 WEAKNET_SMOKE_REPORT="$(WEAKNET_SMOKE_REPORT_ABS)" go test -timeout=5m -count=1 -run '^TestWeaknetSmoke$$' ./internal/weaknetsmoke
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target weaknet-smoke -classification local_smoke -report "$(WEAKNET_SMOKE_REPORT_ABS)"
 
 quic-native-smoke:
@@ -328,14 +328,14 @@ quic-native-smoke:
 		exit 1; \
 	fi
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target quic-native-smoke -classification local_smoke
-	cd flowersec-go && go test -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesExclusivelyToNewPacketConn)$$' ./internal/carrier/rawquic
-	cd flowersec-go && go test -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./internal/tunnelv2
+	cd flowersec-go && go test -timeout=5m -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesExclusivelyToNewPacketConn)$$' ./internal/carrier/rawquic
+	cd flowersec-go && go test -timeout=5m -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./internal/tunnelv2
 	@echo "classification=local_smoke; qlog/system performance evidence is not claimed"
 
 quic-native-race-smoke:
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target quic-native-race-smoke -classification local_smoke
-	cd flowersec-go && go test -race -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesExclusivelyToNewPacketConn)$$' ./internal/carrier/rawquic
-	cd flowersec-go && go test -race -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./internal/tunnelv2
+	cd flowersec-go && go test -race -timeout=5m -count=1 -run '^(TestEightCarrierStreamsUseEightDistinctNativeBidiStreamIDs|TestNativeResetIsIsolatedFromSiblingStream|TestNativeStreamFlowControlStallDoesNotBlockSibling|TestClientMigrationValidatesAndSwitchesExclusivelyToNewPacketConn)$$' ./internal/carrier/rawquic
+	cd flowersec-go && go test -race -timeout=5m -count=1 -run '^TestBrokerBridgesControlAndBidirectionalStreamsAcrossMixedCarriers$$' ./internal/tunnelv2
 	@echo "classification=local_smoke; qlog-backed race evidence is not claimed"
 
 TRANSPORT_V2_EVIDENCE_REPORT ?=

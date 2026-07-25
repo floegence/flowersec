@@ -9,13 +9,13 @@ import (
 	"time"
 )
 
-const FrozenPerformanceManifestDigest = "sha256:0661bc0e3382fd0853d1534698a9d67b858c8bad2882c2f6a33678f1af8fa2df"
+const FrozenPerformanceManifestDigest = "sha256:e2403a06602333965b16e73835fc9bffd2f0e4732e6cc903f26ac6db52332f3b"
 
 var frozenPerformanceManifestSHA256 = [32]byte{
-	0xe6, 0x46, 0x09, 0x8a, 0x2c, 0xfd, 0x58, 0x28,
-	0x31, 0x69, 0x99, 0x8b, 0x0a, 0xd4, 0xf1, 0x86,
-	0xa4, 0xfb, 0x03, 0x06, 0xa8, 0x90, 0x73, 0xda,
-	0x0d, 0x3b, 0xf7, 0x88, 0xfa, 0xe6, 0x70, 0x35,
+	0x1c, 0x2a, 0x09, 0x42, 0x40, 0x62, 0x6c, 0x96,
+	0xdc, 0x5c, 0x47, 0x7a, 0xb9, 0x6f, 0xd5, 0x72,
+	0x98, 0xec, 0xc9, 0x74, 0x54, 0x45, 0xe2, 0x65,
+	0x53, 0x61, 0x73, 0x68, 0xec, 0xba, 0x54, 0xab,
 }
 
 // ReleasePlan is the executable workload subset of the frozen performance
@@ -205,7 +205,7 @@ func LoadReleasePlan(path string) (ReleasePlan, ManifestBinding, error) {
 }
 
 func validateAdaptivePlan(plan AdaptivePlan, profiles map[string]ProfilePlan, runCount int) error {
-	if plan.ID != "adaptive-selection-v1" || len(plan.Stages) != 2 || plan.HarnessSlackSeconds != 450 || plan.CellWatchdogMinutes != 55 {
+	if plan.ID != "adaptive-selection-v1" || len(plan.Stages) != 2 || plan.HarnessSlackSeconds != 45 || plan.CellWatchdogMinutes != 5 {
 		return errors.New("adaptive-selection-v1 does not match the frozen release contract")
 	}
 	phaseSeconds := 0

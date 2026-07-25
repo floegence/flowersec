@@ -41,7 +41,7 @@ func TestCheckedInManifestAndRegistryAreValid(t *testing.T) {
 		t.Fatalf("validate manifest: %v", err)
 	}
 	mobile := profileByID(t, manifest, "mobile-v1")
-	if mobile.Bulk.WarmupBytesPerDirection != 128*kib || mobile.Bulk.ScoreBytesPerDirection != 512*kib || mobile.Bulk.PhaseDeadlineSeconds != 55 {
+	if mobile.Bulk.WarmupBytesPerDirection != 64*kib || mobile.Bulk.ScoreBytesPerDirection != 256*kib || mobile.Bulk.PhaseDeadlineSeconds != 4 {
 		t.Fatalf("mobile bulk contract = %+v", mobile.Bulk)
 	}
 	goodput := metricContractByID(t, manifest, "mobile_bulk_goodput_mbps")
@@ -51,6 +51,18 @@ func TestCheckedInManifestAndRegistryAreValid(t *testing.T) {
 	registry := loadFixtureRegistry(t)
 	if err := validateCaseRegistry(registry); err != nil {
 		t.Fatalf("validate registry: %v", err)
+	}
+}
+
+func TestFrozenSingleTestTargetsDoNotExceedFiveMinutes(t *testing.T) {
+	const maximumMinutes = 5
+	if signedSoakContract.DurationNS > int64(maximumMinutes)*int64(time.Minute) {
+		t.Fatalf("soak duration = %s, want at most %s", time.Duration(signedSoakContract.DurationNS), maximumMinutes*time.Minute)
+	}
+	for _, profile := range signedProfiles {
+		if profile.cellWatchdogMinutes > maximumMinutes {
+			t.Fatalf("profile %s watchdog = %d minutes, want at most %d", profile.id, profile.cellWatchdogMinutes, maximumMinutes)
+		}
 	}
 }
 
@@ -65,7 +77,7 @@ func TestCheckedInRegistryOwnersHaveMakeRecipes(t *testing.T) {
 func TestCaseOwnerRecipeValidationRejectsAllowlistedTargetWithoutRecipe(t *testing.T) {
 	registry := &CaseRegistry{
 		SchemaVersion: 1,
-		Cases:         []CaseDefinition{{ID: "CAP-SOAK-HOURLY", Owner: "bench-transport-soak", Mode: "normal", Required: true, Profile: "soak", EvidenceFields: []string{"trace"}}},
+		Cases:         []CaseDefinition{{ID: "CAP-SOAK-5M", Owner: "bench-transport-soak", Mode: "normal", Required: true, Profile: "soak", EvidenceFields: []string{"trace"}}},
 	}
 	makefile := filepath.Join(t.TempDir(), "Makefile")
 	if err := os.WriteFile(makefile, []byte(".PHONY: bench-transport-soak\n"), 0o644); err != nil {
@@ -79,7 +91,7 @@ func TestCaseOwnerRecipeValidationRejectsAllowlistedTargetWithoutRecipe(t *testi
 func TestCaseOwnerRecipeValidationAcceptsMultiTargetRecipeAndRaceOwner(t *testing.T) {
 	registry := &CaseRegistry{
 		SchemaVersion: 1,
-		Cases:         []CaseDefinition{{ID: "CAP-SOAK-HOURLY", Owner: "bench-transport-soak", RaceOwner: "quic-native-race", Mode: "normal", Required: true, Profile: "soak", EvidenceFields: []string{"trace"}}},
+		Cases:         []CaseDefinition{{ID: "CAP-SOAK-5M", Owner: "bench-transport-soak", RaceOwner: "quic-native-race", Mode: "normal", Required: true, Profile: "soak", EvidenceFields: []string{"trace"}}},
 	}
 	makefile := filepath.Join(t.TempDir(), "Makefile")
 	contents := "bench-transport-soak quic-native-race:\n\t@true\n"
@@ -339,7 +351,7 @@ func TestManifestRejectsInconsistentBudgetsAndLPTOverflow(t *testing.T) {
 		{
 			name: "cold cap cannot cover schedule tail",
 			mutate: func(manifest *PerformanceManifest) {
-				profileByID(t, manifest, "clean-v1").Cold.PhaseDeadlineSeconds = 29
+				profileByID(t, manifest, "clean-v1").Cold.PhaseDeadlineSeconds = 5
 			},
 			wantErr: "cold phase cannot cover",
 		},
@@ -391,7 +403,7 @@ func TestManifestRejectsInconsistentBudgetsAndLPTOverflow(t *testing.T) {
 				manifest.EligibleLaneCount = 3
 				manifest.GlobalWatchdogMinutes = manifest.MaximumLaneMinutes
 			},
-			wantErr: "480 minutes",
+			wantErr: "30 minutes",
 		},
 	}
 
@@ -414,7 +426,7 @@ func TestReferenceManifestRecomputesSignedLPTLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []int{405, 405, 410, 415, 415, 415}
+	want := []int{25, 25, 25, 25, 25, 25}
 	if !equalInts(loads, want) {
 		t.Fatalf("LPT loads = %v, want %v", loads, want)
 	}
@@ -1151,7 +1163,7 @@ func TestRatioFormulaRejectsEveryScopeAndFormulaDrift(t *testing.T) {
 			rewriteMetricSamplesArtifact(t, report, cell, test.metricID, func(samples *MetricSamplesArtifact) {
 				test.mutate(&samples.Runs[0])
 			})
-			result := checkEvidence(manifest, registry, report, report.baseDir)
+			result := checkPerformanceCellForTest(t, manifest, report, test.cellID)
 			assertResult(t, result, statusFail, test.issue)
 		})
 	}
@@ -1550,9 +1562,9 @@ func TestSoakEvidenceRejectsEveryFrozenContractDrift(t *testing.T) {
 			manifest := loadFixtureManifest(t)
 			registry := loadFixtureRegistry(t)
 			report := completeReport(t, manifest, registry)
-			evidence := caseEvidenceByID(t, report, "CAP-SOAK-HOURLY")
+			evidence := caseEvidenceByID(t, report, "CAP-SOAK-5M")
 			test.mutate(t, report, evidence)
-			assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "soak")
+			assertResult(t, checkCaseEvidenceForTest(t, manifest, registry, report, "CAP-SOAK-5M"), statusFail, "soak")
 		})
 	}
 }
@@ -1561,7 +1573,7 @@ func TestSoakEvidenceAcceptsIndependentMeasuredTraceAndResourceTimestamps(t *tes
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
 	report := completeReport(t, manifest, registry)
-	evidence := caseEvidenceByID(t, report, "CAP-SOAK-HOURLY")
+	evidence := caseEvidenceByID(t, report, "CAP-SOAK-5M")
 	rewriteCaseTrace(t, report, evidence, func(trace *TraceArtifact) {
 		trace.Records[1].AtNS += time.Millisecond.Nanoseconds()
 	})
@@ -1617,7 +1629,7 @@ func TestCapacityEvidenceRejectsCounterAndTraceDrift(t *testing.T) {
 			report := completeReport(t, manifest, registry)
 			evidence := caseEvidenceByID(t, report, "CAP-DIRECT-WSS-1000")
 			test.mutate(t, report, evidence)
-			assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, test.wantIssue)
+			assertResult(t, checkCaseEvidenceForTest(t, manifest, registry, report, "CAP-DIRECT-WSS-1000"), statusFail, test.wantIssue)
 		})
 	}
 }
@@ -1691,7 +1703,7 @@ func TestOutageAndRebindEvidenceRejectsScheduleIdentityOrderAndCounterDrift(t *t
 			report := completeReport(t, manifest, registry)
 			evidence := caseEvidenceByID(t, report, test.caseID)
 			test.mutate(t, report, evidence)
-			assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, test.wantIssue)
+			assertResult(t, checkCaseEvidenceForTest(t, manifest, registry, report, test.caseID), statusFail, test.wantIssue)
 		})
 	}
 }
@@ -2621,7 +2633,7 @@ func TestEvidenceRejectsIncompleteOrInvalidPerformanceEvidence(t *testing.T) {
 			registry := loadFixtureRegistry(t)
 			report := completeReport(t, manifest, registry)
 			test.mutate(report)
-			result := checkEvidence(manifest, registry, report, report.baseDir)
+			result := checkPerformanceCellForTest(t, manifest, report, report.Cells[0].CellID)
 			assertResult(t, result, test.wantStatus, test.wantIssue)
 		})
 	}
@@ -3609,6 +3621,85 @@ func completeReport(t *testing.T, manifest *PerformanceManifest, registry *CaseR
 	return cloneEvidenceReport(cachedCompleteReport.report)
 }
 
+func checkPerformanceCellForTest(t *testing.T, manifest *PerformanceManifest, report *EvidenceReport, cellID string) CheckResult {
+	t.Helper()
+	builder, closeRoot := focusedEvidenceBuilder(t, report)
+	defer closeRoot()
+
+	var cell PerformanceCell
+	found := false
+	for _, candidate := range manifest.Cells {
+		if candidate.ID == cellID {
+			cell = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("manifest cell %q not found", cellID)
+	}
+	evidence := evidenceCellByID(t, report, cellID)
+	profiles := make(map[string]PerformanceProfile, len(manifest.Profiles))
+	for _, profile := range manifest.Profiles {
+		profiles[profile.ID] = profile
+	}
+	contracts := make(map[string]MetricContract, len(manifest.MetricContracts))
+	for _, contract := range manifest.MetricContracts {
+		contracts[contract.ID] = contract
+	}
+	checkRuns(builder, manifest, profiles[cell.ProfileID], cell, *evidence, report.baseDir)
+	checkMetrics(builder, manifest, report, cell, evidence.Metrics, contracts, report.baseDir)
+	return builder.result()
+}
+
+func checkCaseEvidenceForTest(t *testing.T, manifest *PerformanceManifest, registry *CaseRegistry, report *EvidenceReport, caseID string) CheckResult {
+	t.Helper()
+	builder, closeRoot := focusedEvidenceBuilder(t, report)
+	defer closeRoot()
+
+	evidence := caseEvidenceByID(t, report, caseID)
+	var definition CaseDefinition
+	found := false
+	for _, candidate := range registry.Cases {
+		if candidate.ID == caseID {
+			definition = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("registry case %q not found", caseID)
+	}
+	context := "case " + caseID
+	checkCaseStatus(builder, *evidence)
+	checkRequiredArtifacts(builder, context, evidence.Evidence, definition.EvidenceFields, report.baseDir)
+	checkCaseAttributions(builder, context, *evidence, report.baseDir)
+	if err := validateCaseEvidenceSemantics(builder, manifest, context, *evidence, report.baseDir); err != nil {
+		builder.fail("case %s does not satisfy its frozen evidence semantics: %v", caseID, err)
+	}
+	return builder.result()
+}
+
+func focusedEvidenceBuilder(t *testing.T, report *EvidenceReport) (*resultBuilder, func()) {
+	t.Helper()
+	root, err := os.OpenRoot(report.baseDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := &resultBuilder{
+		status:        statusPass,
+		artifactPaths: make(map[string]string),
+		artifactSHA:   collectEvidenceArtifactSHA(report),
+		artifactRoot:  root,
+	}
+	checkArtifactDigestClaims(builder)
+	return builder, func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close focused evidence root: %v", err)
+		}
+	}
+}
+
 // cloneEvidenceReport keeps the large synthetic evidence fixture shared while
 // giving each mutation test an isolated object graph. Reflection is used here
 // only in tests so production evidence validation never pays this cost.
@@ -4275,13 +4366,13 @@ func writeArtifactSet(t *testing.T, directory, context string, kinds []string, c
 		case "samples":
 			continue
 		case "pcap":
-			if strings.HasSuffix(context, "CAP-SOAK-HOURLY") {
+			if strings.HasSuffix(context, "CAP-SOAK-5M") {
 				artifacts[kind] = writeSoakPCAPArtifact(t, directory, context)
 			} else {
 				artifacts[kind] = writePCAPArtifact(t, directory, context)
 			}
 		case "qlog":
-			if strings.HasSuffix(context, "CAP-SOAK-HOURLY") {
+			if strings.HasSuffix(context, "CAP-SOAK-5M") {
 				artifacts[kind] = writeSoakQlogArtifact(t, directory, context)
 			} else {
 				artifacts[kind] = writeQlogArtifact(t, directory, context)
@@ -4406,7 +4497,7 @@ func fixtureCaseTrace(context, digest string) []TraceRecord {
 		}
 		return result
 	}
-	if caseID == "CAP-SOAK-HOURLY" {
+	if caseID == "CAP-SOAK-5M" {
 		result := make([]TraceRecord, 0, signedSoakContract.FaultCycleCount+2)
 		result = append(result, TraceRecord{Sequence: 1, AtNS: 0, Event: "soak_started", Digest: caseExecutionID(context)})
 		for index := 1; index <= signedSoakContract.FaultCycleCount; index++ {
@@ -4480,11 +4571,11 @@ func fixtureCaseTrace(context, digest string) []TraceRecord {
 
 func fixtureCaseResource(context string) []ResourceRecord {
 	caseID := strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ")
-	if caseID == "CAP-SOAK-HOURLY" {
+	if caseID == "CAP-SOAK-5M" {
 		records := []ResourceRecord{{Phase: "soak_start", AtNS: 0, RSSBytes: 256 * 1024 * 1024, OpenFDs: 128, Goroutines: 256, Tasks: 256}}
 		for index := 1; index <= signedSoakContract.FaultCycleCount; index++ {
 			rss, goroutines, fds, tasks := uint64(288*1024*1024), 288, 136, 288
-			if index == 30 {
+			if index == (signedSoakContract.FaultCycleCount+1)/2 {
 				rss, goroutines, fds, tasks = 320*1024*1024, 320, 144, 320
 			}
 			records = append(records, ResourceRecord{Phase: fmt.Sprintf("soak_cycle_%03d", index), AtNS: int64(index) * signedSoakContract.FaultCyclePeriodNS,
@@ -4577,7 +4668,7 @@ func fixtureCaseMetrics(context string) []MetricCounterRecord {
 			{Name: "residual_sessions", Value: 0, Unit: "count"},
 			{Name: "residual_streams", Value: 0, Unit: "count"},
 		}
-	case "CAP-SOAK-HOURLY":
+	case "CAP-SOAK-5M":
 		return []MetricCounterRecord{
 			{Name: "duration_ns", Value: float64(signedSoakContract.DurationNS), Unit: "nanoseconds"},
 			{Name: "fault_cycle_count", Value: float64(signedSoakContract.FaultCycleCount), Unit: "count"},
@@ -4732,9 +4823,9 @@ func fixtureCaseConfig(context string) []ConfigRecord {
 		return records
 	}
 	switch caseID {
-	case "CAP-SOAK-HOURLY":
+	case "CAP-SOAK-5M":
 		return fromMap(map[string]string{
-			"profile": "hourly-weaknet-soak-v1", "duration_ns": strconv.FormatInt(signedSoakContract.DurationNS, 10),
+			"profile": "five-minute-weaknet-soak-v1", "duration_ns": strconv.FormatInt(signedSoakContract.DurationNS, 10),
 			"fault_cycle_period_ns": strconv.FormatInt(signedSoakContract.FaultCyclePeriodNS, 10),
 			"fault_cycle_count":     strconv.Itoa(signedSoakContract.FaultCycleCount),
 			"reconnect_count":       strconv.Itoa(signedSoakContract.ReconnectCount),
@@ -5257,10 +5348,7 @@ func writeMetricSamples(t *testing.T, report *EvidenceReport, cell *CellEvidence
 		case "p50", "p95", "p99", "max", "mean":
 			count := 1
 			if run.Derivation == "p50" || run.Derivation == "p95" || run.Derivation == "p99" {
-				count = 2000
-				if strings.HasPrefix(cell.CellID, "adaptive-") {
-					count = 4000
-				}
+				count = fixturePercentileObservationCount(t, cell.CellID, metricID)
 			}
 			run.Observations = []FloatRunLength{{Count: count, Value: value}}
 		case "ratio":
@@ -5296,6 +5384,33 @@ func writeMetricSamples(t *testing.T, report *EvidenceReport, cell *CellEvidence
 	}
 	context := fmt.Sprintf("cell %s metric %s raw samples", cell.CellID, metricID)
 	return writeEvidenceArtifact(t, report.baseDir, context, "metric_samples", ".json", data)
+}
+
+func fixturePercentileObservationCount(t *testing.T, cellID, metricID string) int {
+	t.Helper()
+	if strings.HasPrefix(cellID, "adaptive-") {
+		count := 0
+		for _, profileID := range []string{"clean-v1", "mobile-v1"} {
+			for _, profile := range signedProfiles {
+				if profile.id == profileID {
+					count += profile.cold.Operations
+				}
+			}
+		}
+		return count
+	}
+	profileID := strings.SplitN(cellID, "-", 2)[0] + "-v1"
+	for _, profile := range signedProfiles {
+		if profile.id != profileID {
+			continue
+		}
+		if strings.Contains(metricID, "rpc_") {
+			return profile.rpc.Operations
+		}
+		return profile.cold.Operations
+	}
+	t.Fatalf("missing profile for percentile samples in cell %s", cellID)
+	return 0
 }
 
 func fixtureMetricFaultBinding(t *testing.T, cell *CellEvidence, run *RunEvidence, metricID string, durationNS int64) *MetricFaultBinding {

@@ -20,7 +20,7 @@ type qlogEvent struct {
 
 func validateQlogEvidence(context string, data []byte) error {
 	caseID := strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ")
-	if caseID == "CAP-SOAK-HOURLY" {
+	if caseID == "CAP-SOAK-5M" {
 		return validateSoakAttributionEnvelope(context, "transport_qlog_attribution", data)
 	}
 	if caseID == "BN-N5" || strings.HasPrefix(caseID, "CAP-STREAM-WT-") || isNativeQLOGCase(caseID) && isTypedQLOGAttribution(data) {
@@ -122,7 +122,7 @@ func isTypedQLOGAttribution(data []byte) bool {
 
 func validateSoakAttributionEnvelope(context, kind string, data []byte) error {
 	var artifact PacketAttributionArtifact
-	if decodeStrictJSON(data, &artifact) != nil || artifact.SchemaVersion != 1 || artifact.Kind != kind || artifact.Context != context || len(artifact.Records) != 60 {
+	if decodeStrictJSON(data, &artifact) != nil || artifact.SchemaVersion != 1 || artifact.Kind != kind || artifact.Context != context || len(artifact.Records) != signedSoakContract.FaultCycleCount {
 		return errors.New("soak typed attribution identity or record count is invalid")
 	}
 	return nil
@@ -140,13 +140,13 @@ type rawNativeQLOGSummary struct {
 }
 
 func validateRawNativeQLOGEvidence(context string, data []byte) error {
-	if strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ") == "CAP-SOAK-HOURLY" {
+	if strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ") == "CAP-SOAK-5M" {
 		summaries, err := parseRawNativeQLOGSeries(data)
 		if err != nil {
 			return err
 		}
-		if len(summaries) != 60 {
-			return fmt.Errorf("soak raw qlog contains %d connection traces, want 60", len(summaries))
+		if len(summaries) != signedSoakContract.FaultCycleCount {
+			return fmt.Errorf("soak raw qlog contains %d connection traces, want %d", len(summaries), signedSoakContract.FaultCycleCount)
 		}
 		return nil
 	}
@@ -663,6 +663,7 @@ func checkPhaseOperationSeries(builder *resultBuilder, context string, runNumber
 }
 
 type rawOperationContract struct {
+	operationCount      int
 	operationDeadlineNS int64
 	phaseDeadlineNS     int64
 	maxInflight         int
@@ -680,6 +681,7 @@ func signedOperationContract(profileID, phase string) (rawOperationContract, err
 		switch phase {
 		case "cold":
 			return rawOperationContract{
+				operationCount:      profile.cold.Operations,
 				operationDeadlineNS: int64(profile.cold.OperationDeadlineSeconds) * 1e9,
 				phaseDeadlineNS:     int64(profile.cold.PhaseDeadlineSeconds) * 1e9,
 				maxInflight:         profile.cold.MaxInflight,
@@ -687,6 +689,7 @@ func signedOperationContract(profileID, phase string) (rawOperationContract, err
 			}, nil
 		case "rpc":
 			return rawOperationContract{
+				operationCount:      profile.rpc.Operations,
 				operationDeadlineNS: int64(profile.rpc.OperationDeadlineSeconds) * 1e9,
 				phaseDeadlineNS:     int64(profile.rpc.PhaseDeadlineSeconds) * 1e9,
 				maxInflight:         profile.rpc.Workers,
@@ -810,12 +813,16 @@ func validateMetricRunContract(manifest *PerformanceManifest, cellID, metricID s
 		if err != nil {
 			return err
 		}
-		want := 2000
+		want := 0
 		if profile != nil && profile.Mode == "adaptive" {
 			want = 0
 			for _, stage := range profile.AdaptiveStages {
 				want += stage.Cold.Operations
 			}
+		} else if profile != nil && strings.Contains(metricID, "rpc_") && profile.RPC != nil {
+			want = profile.RPC.Operations
+		} else if profile != nil && profile.Cold != nil {
+			want = profile.Cold.Operations
 		}
 		if len(values) != want {
 			return fmt.Errorf("percentile has %d raw operation observations, want %d", len(values), want)

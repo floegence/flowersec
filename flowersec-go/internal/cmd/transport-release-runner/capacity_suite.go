@@ -33,7 +33,7 @@ func runRegisteredCapacityCase(ctx context.Context, destination *artifactDestina
 func runRegisteredGoCapacityCase(ctx context.Context, destination *artifactDestination, definition capacityCaseDefinition) (result releaseCaseResult, resultErr error) {
 	// Capacity cases model independent deployments. Return unreachable heap from
 	// the previous case before enforcing this case's absolute RSS contract; the
-	// hourly soak separately owns cross-cycle growth and residual detection.
+	// The five-minute soak separately owns cross-cycle growth and residual detection.
 	debug.FreeOSMemory()
 	evidence, err := startRunEvidence(ctx, destination, releaseCaseDefinition{ID: definition.ID}.artifactLabel(), "", "lo")
 	if err != nil {

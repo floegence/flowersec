@@ -36,7 +36,7 @@ func (packet packetObservation) destinationEndpoint() netip.AddrPort {
 }
 
 func validatePCAPEvidence(context string, data []byte) error {
-	if strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ") == "CAP-SOAK-HOURLY" {
+	if strings.TrimPrefix(strings.TrimPrefix(context, "race case "), "case ") == "CAP-SOAK-5M" {
 		return validateSoakAttributionEnvelope(context, "transport_pcap_attribution", data)
 	}
 	packets, err := parseClassicPCAP(data)

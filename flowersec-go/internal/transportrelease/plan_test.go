@@ -15,12 +15,12 @@ func TestLoadReleasePlanUsesFrozenCleanWorkloads(t *testing.T) {
 	if binding.Digest != FrozenPerformanceManifestDigest || binding.SHA256Sum == [32]byte{} {
 		t.Fatalf("manifest binding = %+v", binding)
 	}
-	if plan.RunCount != 15 || plan.Clean.ID != "clean-v1" || plan.Clean.CellWatchdogMinutes != 15 {
+	if plan.RunCount != 15 || plan.Clean.ID != "clean-v1" || plan.Clean.CellWatchdogMinutes != 5 {
 		t.Fatalf("plan header = %+v", plan)
 	}
-	if plan.Clean.Cold.Operations != 2000 || plan.Clean.Cold.MaxInflight != 32 || plan.Clean.Cold.Retries != 0 ||
-		plan.Clean.RPC.Operations != 2000 || plan.Clean.RPC.Workers != 32 || plan.Clean.RPC.RequestBytes != 1024 || plan.Clean.RPC.Retries != 0 ||
-		plan.Clean.Bulk.WarmupBytesPerDirection != 1<<20 || plan.Clean.Bulk.ScoreBytesPerDirection != 256<<20 {
+	if plan.Clean.Cold.Operations != 100 || plan.Clean.Cold.MaxInflight != 32 || plan.Clean.Cold.Retries != 0 ||
+		plan.Clean.RPC.Operations != 100 || plan.Clean.RPC.Workers != 32 || plan.Clean.RPC.RequestBytes != 1024 || plan.Clean.RPC.Retries != 0 ||
+		plan.Clean.Bulk.WarmupBytesPerDirection != 128<<10 || plan.Clean.Bulk.ScoreBytesPerDirection != 8<<20 {
 		t.Fatalf("clean workload = %+v", plan.Clean)
 	}
 }
@@ -30,17 +30,17 @@ func TestLoadReleasePlanUsesFrozenWeakNetworkWorkloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Mobile.ID != "mobile-v1" || plan.Mobile.CellWatchdogMinutes != 70 ||
-		plan.Mobile.Cold.StartRatePerSecond != 15 || plan.Mobile.Cold.PhaseDeadlineSeconds != 150 ||
-		plan.Mobile.RPC.PhaseDeadlineSeconds != 70 ||
-		plan.Mobile.Bulk.WarmupBytesPerDirection != 128<<10 ||
-		plan.Mobile.Bulk.ScoreBytesPerDirection != 512<<10 ||
-		plan.Mobile.Bulk.PhaseDeadlineSeconds != 55 {
+	if plan.Mobile.ID != "mobile-v1" || plan.Mobile.CellWatchdogMinutes != 5 ||
+		plan.Mobile.Cold.Operations != 30 || plan.Mobile.Cold.StartRatePerSecond != 15 || plan.Mobile.Cold.PhaseDeadlineSeconds != 7 ||
+		plan.Mobile.RPC.Operations != 60 || plan.Mobile.RPC.PhaseDeadlineSeconds != 5 ||
+		plan.Mobile.Bulk.WarmupBytesPerDirection != 64<<10 ||
+		plan.Mobile.Bulk.ScoreBytesPerDirection != 256<<10 ||
+		plan.Mobile.Bulk.PhaseDeadlineSeconds != 4 {
 		t.Fatalf("mobile workload = %+v", plan.Mobile)
 	}
-	if plan.Edge.ID != "edge-v1" || plan.Edge.CellWatchdogMinutes != 175 ||
-		plan.Edge.Cold.StartRatePerSecond != 5 || plan.Edge.Cold.PhaseDeadlineSeconds != 430 ||
-		plan.Edge.RPC.PhaseDeadlineSeconds != 170 || plan.Edge.Bulk.ScoreBytesPerDirection != 2<<20 {
+	if plan.Edge.ID != "edge-v1" || plan.Edge.CellWatchdogMinutes != 5 ||
+		plan.Edge.Cold.Operations != 10 || plan.Edge.Cold.StartRatePerSecond != 5 || plan.Edge.Cold.PhaseDeadlineSeconds != 8 ||
+		plan.Edge.RPC.Operations != 30 || plan.Edge.RPC.PhaseDeadlineSeconds != 5 || plan.Edge.Bulk.ScoreBytesPerDirection != 128<<10 {
 		t.Fatalf("edge workload = %+v", plan.Edge)
 	}
 	if plan.Mobile.Fault.ReorderPercent != 1 || plan.Mobile.Fault.DuplicatePercent != 1 ||
@@ -77,8 +77,8 @@ func TestLoadReleasePlanUsesFrozenAdaptiveSelectionStages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Adaptive.ID != "adaptive-selection-v1" || plan.Adaptive.CellWatchdogMinutes != 55 ||
-		plan.Adaptive.HarnessSlackSeconds != 450 || len(plan.Adaptive.Stages) != 2 {
+	if plan.Adaptive.ID != "adaptive-selection-v1" || plan.Adaptive.CellWatchdogMinutes != 5 ||
+		plan.Adaptive.HarnessSlackSeconds != 45 || len(plan.Adaptive.Stages) != 2 {
 		t.Fatalf("adaptive plan = %+v", plan.Adaptive)
 	}
 	for index, profile := range []ProfilePlan{plan.Clean, plan.Mobile} {

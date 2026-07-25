@@ -137,7 +137,7 @@ func TestCollectionPlanBindsCleanRevisionVariantsToIndependentSources(t *testing
 	}
 }
 
-func TestFrozenCollectionLaneScheduleMatchesSixLane475MinuteContract(t *testing.T) {
+func TestFrozenCollectionLaneScheduleMatchesSixLane30MinuteContract(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	jobs := make([]collectionJob, 0, len(manifest.Cells))
 	for _, cell := range manifest.Cells {
@@ -155,7 +155,7 @@ func TestFrozenCollectionLaneScheduleMatchesSixLane475MinuteContract(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := schedule.loads, []int{405, 405, 410, 415, 415, 415}; !slices.Equal(got, want) {
+	if got, want := schedule.loads, []int{25, 25, 25, 25, 25, 25}; !slices.Equal(got, want) {
 		t.Fatalf("lane loads = %v, want %v", got, want)
 	}
 	if schedule.loads[len(schedule.loads)-1]+manifest.GlobalSetupMinutes != manifest.GlobalWatchdogMinutes {

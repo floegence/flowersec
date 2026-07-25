@@ -36,7 +36,7 @@ var registeredCaseIdentityFallback = map[string]struct{}{
 }
 
 func validateCaseEvidenceSemantics(builder *resultBuilder, manifest *PerformanceManifest, context string, evidence CaseEvidence, baseDir string) error {
-	if evidence.ID == "CAP-SOAK-HOURLY" {
+	if evidence.ID == "CAP-SOAK-5M" {
 		return validateSoakCase(builder, manifest.Soak, context, evidence, baseDir)
 	}
 	if strings.HasPrefix(evidence.ID, "CAP-") {
@@ -297,7 +297,7 @@ func validateSoakCase(builder *resultBuilder, contract SoakContract, context str
 		return err
 	}
 	if err := requireConfig(config, map[string]string{
-		"profile":               "hourly-weaknet-soak-v1",
+		"profile":               "five-minute-weaknet-soak-v1",
 		"duration_ns":           strconv.FormatInt(contract.DurationNS, 10),
 		"fault_cycle_period_ns": strconv.FormatInt(contract.FaultCyclePeriodNS, 10),
 		"fault_cycle_count":     strconv.Itoa(contract.FaultCycleCount),
@@ -341,7 +341,7 @@ func validateSoakCase(builder *resultBuilder, contract SoakContract, context str
 		trace.Records[len(trace.Records)-1].Event != "soak_completed" || trace.Records[len(trace.Records)-1].AtNS < contract.DurationNS ||
 		trace.Records[len(trace.Records)-1].AtNS > completionLimit ||
 		trace.Records[len(trace.Records)-1].ConnectionID != "" || trace.Records[len(trace.Records)-1].Digest != caseExecutionID(context) {
-		return errors.New("soak trace does not contain the complete one-hour start/cycle/completion timeline")
+		return errors.New("soak trace does not contain the complete five-minute start/cycle/completion timeline")
 	}
 	qlogData, err := loadCaseArtifact(builder, context, evidence, "qlog", baseDir)
 	if err != nil {

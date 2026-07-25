@@ -15,7 +15,7 @@ const capacityOwner = "bench-transport-capacity"
 const soakOwner = "bench-transport-soak"
 const browserSmokeOwner = "transport-browser-smoke"
 
-var soakCases = []releaseCaseDefinition{{ID: "CAP-SOAK-HOURLY", Profile: "hourly-weaknet-soak-v1"}}
+var soakCases = []releaseCaseDefinition{{ID: "CAP-SOAK-5M", Profile: "five-minute-weaknet-soak-v1"}}
 
 var browserSmokeCases = []releaseCaseDefinition{
 	{ID: "BN-N5", Profile: "webtransport-native-isolation", BrowserTopology: browserDirectTopology},

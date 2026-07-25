@@ -2,10 +2,10 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <package-directory> [shard-count] [timeout]" >&2
+  echo "usage: $0 <package-directory> [shard-count] [timeout] [parallelism]" >&2
 }
 
-if [[ $# -lt 1 || $# -gt 3 ]]; then
+if [[ $# -lt 1 || $# -gt 4 ]]; then
   usage
   exit 2
 fi
@@ -13,7 +13,8 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 package_dir="$1"
 shard_count="${2:-4}"
-timeout="${3:-10m}"
+timeout="${3:-5m}"
+parallelism="${4:-4}"
 
 if [[ "$package_dir" != /* ]]; then
   package_dir="$repo_root/$package_dir"
@@ -26,10 +27,17 @@ if [[ ! "$shard_count" =~ ^[1-9][0-9]*$ ]]; then
   echo "race shard count must be a positive integer: $shard_count" >&2
   exit 2
 fi
-if [[ -z "$timeout" ]]; then
-  echo "race shard timeout must not be empty" >&2
+if [[ ! "$parallelism" =~ ^[1-9][0-9]*$ ]]; then
+  echo "race shard parallelism must be a positive integer: $parallelism" >&2
   exit 2
 fi
+case "$timeout" in
+	1m | 2m | 3m | 4m | 5m) ;;
+	*)
+		echo "race shard timeout must be between 1m and 5m: $timeout" >&2
+		exit 2
+		;;
+esac
 
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/flowersec-race-shards.XXXXXX")"
 trap 'rm -rf "$temp_dir"' EXIT
@@ -60,8 +68,25 @@ awk -v directory="$temp_dir" -v count="$shard_count" '
 ' "$tests_file"
 
 test_count="$(wc -l < "$tests_file" | tr -d ' ')"
-echo "race shard runner discovered $test_count tests across $shard_count shards"
+echo "race shard runner discovered $test_count tests across $shard_count shards with parallelism $parallelism"
 
+run_batch() {
+  local failed=0
+  local index
+  for index in "${!batch_pids[@]}"; do
+    if ! wait "${batch_pids[$index]}"; then
+      failed=1
+    fi
+    cat "${batch_logs[$index]}"
+  done
+  batch_pids=()
+  batch_logs=()
+  return "$failed"
+}
+
+batch_pids=()
+batch_logs=()
+batch_failed=0
 for ((shard = 0; shard < shard_count; shard++)); do
   shard_file="$temp_dir/shard-$shard"
   if [[ ! -s "$shard_file" ]]; then
@@ -69,9 +94,23 @@ for ((shard = 0; shard < shard_count; shard++)); do
   fi
   pattern="$(paste -sd'|' "$shard_file")"
   shard_tests="$(wc -l < "$shard_file" | tr -d ' ')"
-  echo "running race shard $((shard + 1))/$shard_count with $shard_tests tests"
+  log_file="$temp_dir/shard-$shard.log"
   (
+    echo "running race shard $((shard + 1))/$shard_count with $shard_tests tests"
     cd "$package_dir"
     go test -race -count=1 -timeout="$timeout" -run "^(${pattern})$" .
-  )
+  ) >"$log_file" 2>&1 &
+  batch_pids+=("$!")
+  batch_logs+=("$log_file")
+  if (( ${#batch_pids[@]} >= parallelism )); then
+    if ! run_batch; then
+      batch_failed=1
+    fi
+  fi
 done
+if (( ${#batch_pids[@]} > 0 )); then
+  if ! run_batch; then
+    batch_failed=1
+  fi
+fi
+exit "$batch_failed"

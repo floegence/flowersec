@@ -19,7 +19,7 @@ func TestRaceShardRunnerCoversEveryTopLevelTestExactlyOnce(t *testing.T) {
 		logPath := filepath.Join(tempDir, "race-invocations.log")
 		installFakeGo(t, tempDir, strings.Join(testNames, "\n")+"\n", logPath)
 
-		cmd := exec.Command("bash", runner, tempDir, "3", "10m")
+		cmd := exec.Command("bash", runner, tempDir, "3", "5m", "2")
 		cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("run race shard runner: %v\n%s", err, output)
@@ -37,7 +37,7 @@ func TestRaceShardRunnerCoversEveryTopLevelTestExactlyOnce(t *testing.T) {
 		patterns := make([]*regexp.Regexp, 0, len(invocations))
 		for _, invocation := range invocations {
 			fields := strings.Fields(invocation)
-			if !contains(fields, "-race") || !contains(fields, "-count=1") || !contains(fields, "-timeout=10m") {
+			if !contains(fields, "-race") || !contains(fields, "-count=1") || !contains(fields, "-timeout=5m") {
 				t.Fatalf("race invocation is missing required flags: %q", invocation)
 			}
 			pattern := flagValue(fields, "-run")
@@ -66,15 +66,41 @@ func TestRaceShardRunnerCoversEveryTopLevelTestExactlyOnce(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects invalid parallelism", func(t *testing.T) {
+		tempDir := t.TempDir()
+		logPath := filepath.Join(tempDir, "race-invocations.log")
+		installFakeGo(t, tempDir, strings.Join(testNames, "\n")+"\n", logPath)
+
+		cmd := exec.Command("bash", runner, tempDir, "3", "5m", "0")
+		cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath)
+		output, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(output), "parallelism must be a positive integer") {
+			t.Fatalf("runner parallelism validation = %v\n%s", err, output)
+		}
+	})
+
 	t.Run("fails closed when no tests are discovered", func(t *testing.T) {
 		tempDir := t.TempDir()
 		logPath := filepath.Join(tempDir, "race-invocations.log")
 		installFakeGo(t, tempDir, "", logPath)
 
-		cmd := exec.Command("bash", runner, tempDir, "3", "10m")
+		cmd := exec.Command("bash", runner, tempDir, "3", "5m")
 		cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath)
 		if output, err := cmd.CombinedOutput(); err == nil {
 			t.Fatalf("runner succeeded without discovered tests:\n%s", output)
+		}
+	})
+
+	t.Run("rejects a timeout above five minutes", func(t *testing.T) {
+		tempDir := t.TempDir()
+		logPath := filepath.Join(tempDir, "race-invocations.log")
+		installFakeGo(t, tempDir, strings.Join(testNames, "\n")+"\n", logPath)
+
+		cmd := exec.Command("bash", runner, tempDir, "3", "6m")
+		cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath)
+		output, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(output), "between 1m and 5m") {
+			t.Fatalf("runner timeout validation = %v\n%s", err, output)
 		}
 	})
 }

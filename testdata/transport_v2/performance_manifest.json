@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "digest": "sha256:0661bc0e3382fd0853d1534698a9d67b858c8bad2882c2f6a33678f1af8fa2df",
+  "digest": "sha256:e2403a06602333965b16e73835fc9bffd2f0e4732e6cc903f26ac6db52332f3b",
   "ratio_formula_version": "transport-ratio-v1",
   "run_count": 15,
   "bootstrap": {
@@ -23,11 +23,11 @@
     "max_tasks": 8192
   },
   "soak": {
-    "duration_ns": 3600000000000,
+    "duration_ns": 300000000000,
     "fault_cycle_period_ns": 60000000000,
-    "fault_cycle_count": 60,
-    "reconnect_count": 60,
-    "migration_count": 60,
+    "fault_cycle_count": 5,
+    "reconnect_count": 5,
+    "migration_count": 5,
     "max_rss_growth_bytes_per_hour": 67108864,
     "max_goroutine_growth_per_hour": 64,
     "max_open_fd_growth_per_hour": 16,
@@ -42,30 +42,30 @@
       "id": "clean-v1",
       "mode": "forced",
       "cold": {
-        "operations": 2000,
+        "operations": 100,
         "max_inflight": 32,
         "retries": 0,
         "start_rate_per_second": 100,
-        "operation_deadline_seconds": 10,
-        "phase_deadline_seconds": 30
+        "operation_deadline_seconds": 5,
+        "phase_deadline_seconds": 6
       },
       "rpc": {
-        "operations": 2000,
+        "operations": 100,
         "request_bytes": 1024,
         "response_bytes": 1024,
         "workers": 32,
         "retries": 0,
         "operation_deadline_seconds": 2,
-        "phase_deadline_seconds": 10
+        "phase_deadline_seconds": 4
       },
       "bulk": {
-        "warmup_bytes_per_direction": 1048576,
-        "score_bytes_per_direction": 268435456,
-        "phase_deadline_seconds": 15
+        "warmup_bytes_per_direction": 131072,
+        "score_bytes_per_direction": 8388608,
+        "phase_deadline_seconds": 5
       },
-      "cleanup_deadline_seconds": 5,
+      "cleanup_deadline_seconds": 2,
       "harness_slack_seconds": 0,
-      "cell_watchdog_minutes": 15,
+      "cell_watchdog_minutes": 5,
       "network": {
         "evidence_layer": "kernel_packet",
         "one_way_delay_milliseconds": 0,
@@ -82,30 +82,30 @@
       "id": "mobile-v1",
       "mode": "forced",
       "cold": {
-        "operations": 2000,
-        "max_inflight": 32,
+        "operations": 30,
+        "max_inflight": 30,
         "retries": 0,
         "start_rate_per_second": 15,
-        "operation_deadline_seconds": 15,
-        "phase_deadline_seconds": 150
+        "operation_deadline_seconds": 5,
+        "phase_deadline_seconds": 7
       },
       "rpc": {
-        "operations": 2000,
+        "operations": 60,
         "request_bytes": 1024,
         "response_bytes": 1024,
-        "workers": 32,
+        "workers": 20,
         "retries": 0,
-        "operation_deadline_seconds": 5,
-        "phase_deadline_seconds": 70
+        "operation_deadline_seconds": 3,
+        "phase_deadline_seconds": 5
       },
       "bulk": {
-        "warmup_bytes_per_direction": 131072,
-        "score_bytes_per_direction": 524288,
-        "phase_deadline_seconds": 55
+        "warmup_bytes_per_direction": 65536,
+        "score_bytes_per_direction": 262144,
+        "phase_deadline_seconds": 4
       },
-      "cleanup_deadline_seconds": 5,
+      "cleanup_deadline_seconds": 2,
       "harness_slack_seconds": 0,
-      "cell_watchdog_minutes": 70,
+      "cell_watchdog_minutes": 5,
       "network": {
         "evidence_layer": "kernel_packet",
         "one_way_delay_milliseconds": 60,
@@ -122,30 +122,30 @@
       "id": "edge-v1",
       "mode": "forced",
       "cold": {
-        "operations": 2000,
-        "max_inflight": 32,
+        "operations": 10,
+        "max_inflight": 10,
         "retries": 0,
         "start_rate_per_second": 5,
-        "operation_deadline_seconds": 30,
-        "phase_deadline_seconds": 430
+        "operation_deadline_seconds": 6,
+        "phase_deadline_seconds": 8
       },
       "rpc": {
-        "operations": 2000,
+        "operations": 30,
         "request_bytes": 1024,
         "response_bytes": 1024,
-        "workers": 32,
+        "workers": 10,
         "retries": 0,
-        "operation_deadline_seconds": 10,
-        "phase_deadline_seconds": 170
+        "operation_deadline_seconds": 4,
+        "phase_deadline_seconds": 5
       },
       "bulk": {
-        "warmup_bytes_per_direction": 131072,
-        "score_bytes_per_direction": 2097152,
-        "phase_deadline_seconds": 80
+        "warmup_bytes_per_direction": 65536,
+        "score_bytes_per_direction": 131072,
+        "phase_deadline_seconds": 4
       },
-      "cleanup_deadline_seconds": 20,
+      "cleanup_deadline_seconds": 2,
       "harness_slack_seconds": 0,
-      "cell_watchdog_minutes": 175,
+      "cell_watchdog_minutes": 5,
       "network": {
         "evidence_layer": "kernel_packet",
         "one_way_delay_milliseconds": 150,
@@ -165,30 +165,30 @@
         {
           "profile_id": "clean-v1",
           "cold": {
-            "operations": 2000,
+            "operations": 100,
             "max_inflight": 32,
             "retries": 0,
             "start_rate_per_second": 100,
-            "operation_deadline_seconds": 10,
-            "phase_deadline_seconds": 30
+            "operation_deadline_seconds": 5,
+            "phase_deadline_seconds": 6
           },
-          "cleanup_deadline_seconds": 5
+          "cleanup_deadline_seconds": 2
         },
         {
           "profile_id": "mobile-v1",
           "cold": {
-            "operations": 2000,
-            "max_inflight": 32,
+            "operations": 30,
+            "max_inflight": 30,
             "retries": 0,
             "start_rate_per_second": 15,
-            "operation_deadline_seconds": 15,
-            "phase_deadline_seconds": 150
+            "operation_deadline_seconds": 5,
+            "phase_deadline_seconds": 7
           },
-          "cleanup_deadline_seconds": 5
+          "cleanup_deadline_seconds": 2
         }
       ],
-      "harness_slack_seconds": 450,
-      "cell_watchdog_minutes": 55,
+      "harness_slack_seconds": 45,
+      "cell_watchdog_minutes": 5,
       "network": null
     }
   ],
@@ -241,40 +241,40 @@
     {"id":"adaptive_web_cold_formula_ratio","decision":"upper","threshold":1,"unit":"ratio"}
   ],
   "eligible_lane_count": 6,
-  "global_setup_teardown_minutes": 60,
-  "global_watchdog_minutes": 475,
-  "maximum_lane_minutes": 480,
+  "global_setup_teardown_minutes": 5,
+  "global_watchdog_minutes": 30,
+  "maximum_lane_minutes": 30,
   "cells": [
-    {"id":"edge-01","profile_id":"edge-v1","policy":"RequireWebSocket","supported_candidates":["direct-wss"],"duration_minutes":175,"topology":"direct_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms"]},
-    {"id":"edge-02","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["direct-raw-quic"],"duration_minutes":175,"topology":"direct_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms","edge_migration_first_rpc_ms"]},
-    {"id":"edge-03","profile_id":"edge-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-ww"],"duration_minutes":175,"topology":"ww","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms"]},
-    {"id":"edge-04","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qq"],"duration_minutes":175,"topology":"qq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms"]},
-    {"id":"edge-05","profile_id":"edge-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-wq"],"duration_minutes":175,"topology":"wq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms"]},
-    {"id":"edge-06","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qw"],"duration_minutes":175,"topology":"qw","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms"]},
-    {"id":"edge-07","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["browser-webtransport"],"duration_minutes":175,"topology":"browser_webtransport","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_outage_recovery_overhead_ms"]},
-    {"id":"edge-08","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-wss"],"duration_minutes":175,"topology":"browser_tunnel_wt_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_outage_recovery_overhead_ms"]},
-    {"id":"edge-09","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-quic"],"duration_minutes":175,"topology":"browser_tunnel_wt_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_outage_recovery_overhead_ms"]},
-    {"id":"mobile-01","profile_id":"mobile-v1","policy":"RequireWebSocket","supported_candidates":["direct-wss"],"duration_minutes":70,"topology":"direct_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms"]},
-    {"id":"mobile-02","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["direct-raw-quic"],"duration_minutes":70,"topology":"direct_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms","mobile_migration_first_rpc_ms","mobile_native_interactive_rpc_p99_ms","mobile_native_interactive_vs_idle_ratio"]},
-    {"id":"mobile-03","profile_id":"mobile-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-ww"],"duration_minutes":70,"topology":"ww","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms"]},
-    {"id":"mobile-04","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qq"],"duration_minutes":70,"topology":"qq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms"]},
-    {"id":"mobile-05","profile_id":"mobile-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-wq"],"duration_minutes":70,"topology":"wq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms"]},
-    {"id":"mobile-06","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qw"],"duration_minutes":70,"topology":"qw","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms"]},
-    {"id":"mobile-07","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["browser-webtransport"],"duration_minutes":70,"topology":"browser_webtransport","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_outage_recovery_overhead_ms"]},
-    {"id":"mobile-08","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-wss"],"duration_minutes":70,"topology":"browser_tunnel_wt_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_outage_recovery_overhead_ms"]},
-    {"id":"mobile-09","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-quic"],"duration_minutes":70,"topology":"browser_tunnel_wt_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_outage_recovery_overhead_ms"]},
-    {"id":"adaptive-selection-01","profile_id":"adaptive-selection-v1","policy":"Adaptive","supported_candidates":["runtime-wss","runtime-raw-quic"],"duration_minutes":55,"topology":"adaptive_native","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","cpu_ns_per_delivered_byte","active_streams","cleanup_latency_ms","adaptive_cold_formula_ratio","adaptive_cpu_connect_formula_ratio"]},
-    {"id":"adaptive-selection-02","profile_id":"adaptive-selection-v1","policy":"Adaptive","supported_candidates":["runtime-wss","runtime-webtransport"],"duration_minutes":55,"topology":"adaptive_web","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","active_streams","cleanup_latency_ms","adaptive_web_cold_formula_ratio"]},
-    {"id":"clean-01","profile_id":"clean-v1","policy":"RequireWebSocket","supported_candidates":["candidate-wss"],"duration_minutes":15,"topology":"direct_wss_revision","variants":["base","candidate"],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","clean_revision_cpu_per_byte_ratio","clean_revision_cold_p95_ratio","clean_revision_cold_p99_ratio","clean_revision_rpc_p99_ratio","clean_revision_throughput_ratio"]},
-    {"id":"clean-02","profile_id":"clean-v1","policy":"RequireWebSocket","supported_candidates":["direct-wss"],"duration_minutes":15,"topology":"direct_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms"]},
-    {"id":"clean-03","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["direct-raw-quic"],"duration_minutes":15,"topology":"direct_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","clean_quic_cpu_per_byte_ratio","clean_quic_bulk_throughput_ratio","clean_quic_cold_p95_ratio","clean_quic_cold_p99_ratio","clean_quic_rpc_p99_ratio"]},
-    {"id":"clean-04","profile_id":"clean-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-ww"],"duration_minutes":15,"topology":"ww","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms"]},
-    {"id":"clean-05","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qq"],"duration_minutes":15,"topology":"qq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms"]},
-    {"id":"clean-06","profile_id":"clean-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-wq"],"duration_minutes":15,"topology":"wq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms"]},
-    {"id":"clean-07","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qw"],"duration_minutes":15,"topology":"qw","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms"]},
-    {"id":"clean-08","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["browser-webtransport"],"duration_minutes":15,"topology":"browser_webtransport","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","clean_webtransport_cold_p99_ratio","clean_webtransport_rpc_p99_ratio","clean_webtransport_throughput_ratio"]},
-    {"id":"clean-09","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-wss"],"duration_minutes":15,"topology":"browser_tunnel_wt_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms"]},
-    {"id":"clean-10","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-quic"],"duration_minutes":15,"topology":"browser_tunnel_wt_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms"]}
+    {"id":"edge-01","profile_id":"edge-v1","policy":"RequireWebSocket","supported_candidates":["direct-wss"],"duration_minutes":5,"topology":"direct_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms"]},
+    {"id":"edge-02","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["direct-raw-quic"],"duration_minutes":5,"topology":"direct_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms","edge_migration_first_rpc_ms"]},
+    {"id":"edge-03","profile_id":"edge-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-ww"],"duration_minutes":5,"topology":"ww","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms"]},
+    {"id":"edge-04","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qq"],"duration_minutes":5,"topology":"qq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms"]},
+    {"id":"edge-05","profile_id":"edge-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-wq"],"duration_minutes":5,"topology":"wq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms"]},
+    {"id":"edge-06","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qw"],"duration_minutes":5,"topology":"qw","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_cpu_per_delivered_byte_vs_clean_ratio","edge_retransmit_amplification_ratio","edge_outage_recovery_overhead_ms"]},
+    {"id":"edge-07","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["browser-webtransport"],"duration_minutes":5,"topology":"browser_webtransport","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_outage_recovery_overhead_ms"]},
+    {"id":"edge-08","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-wss"],"duration_minutes":5,"topology":"browser_tunnel_wt_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_outage_recovery_overhead_ms"]},
+    {"id":"edge-09","profile_id":"edge-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-quic"],"duration_minutes":5,"topology":"browser_tunnel_wt_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","edge_cold_p99_ms","edge_rpc_p99_ms","edge_bulk_goodput_mbps","edge_outage_recovery_overhead_ms"]},
+    {"id":"mobile-01","profile_id":"mobile-v1","policy":"RequireWebSocket","supported_candidates":["direct-wss"],"duration_minutes":5,"topology":"direct_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms"]},
+    {"id":"mobile-02","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["direct-raw-quic"],"duration_minutes":5,"topology":"direct_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms","mobile_migration_first_rpc_ms","mobile_native_interactive_rpc_p99_ms","mobile_native_interactive_vs_idle_ratio"]},
+    {"id":"mobile-03","profile_id":"mobile-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-ww"],"duration_minutes":5,"topology":"ww","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms"]},
+    {"id":"mobile-04","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qq"],"duration_minutes":5,"topology":"qq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms"]},
+    {"id":"mobile-05","profile_id":"mobile-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-wq"],"duration_minutes":5,"topology":"wq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms"]},
+    {"id":"mobile-06","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qw"],"duration_minutes":5,"topology":"qw","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_cpu_per_delivered_byte_vs_clean_ratio","mobile_retransmit_amplification_ratio","mobile_outage_recovery_overhead_ms"]},
+    {"id":"mobile-07","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["browser-webtransport"],"duration_minutes":5,"topology":"browser_webtransport","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_outage_recovery_overhead_ms"]},
+    {"id":"mobile-08","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-wss"],"duration_minutes":5,"topology":"browser_tunnel_wt_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_outage_recovery_overhead_ms"]},
+    {"id":"mobile-09","profile_id":"mobile-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-quic"],"duration_minutes":5,"topology":"browser_tunnel_wt_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","mobile_cold_p99_ms","mobile_rpc_p99_ms","mobile_bulk_goodput_mbps","mobile_outage_recovery_overhead_ms"]},
+    {"id":"adaptive-selection-01","profile_id":"adaptive-selection-v1","policy":"Adaptive","supported_candidates":["runtime-wss","runtime-raw-quic"],"duration_minutes":5,"topology":"adaptive_native","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","cpu_ns_per_delivered_byte","active_streams","cleanup_latency_ms","adaptive_cold_formula_ratio","adaptive_cpu_connect_formula_ratio"]},
+    {"id":"adaptive-selection-02","profile_id":"adaptive-selection-v1","policy":"Adaptive","supported_candidates":["runtime-wss","runtime-webtransport"],"duration_minutes":5,"topology":"adaptive_web","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","active_streams","cleanup_latency_ms","adaptive_web_cold_formula_ratio"]},
+    {"id":"clean-01","profile_id":"clean-v1","policy":"RequireWebSocket","supported_candidates":["candidate-wss"],"duration_minutes":5,"topology":"direct_wss_revision","variants":["base","candidate"],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","clean_revision_cpu_per_byte_ratio","clean_revision_cold_p95_ratio","clean_revision_cold_p99_ratio","clean_revision_rpc_p99_ratio","clean_revision_throughput_ratio"]},
+    {"id":"clean-02","profile_id":"clean-v1","policy":"RequireWebSocket","supported_candidates":["direct-wss"],"duration_minutes":5,"topology":"direct_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms"]},
+    {"id":"clean-03","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["direct-raw-quic"],"duration_minutes":5,"topology":"direct_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms","clean_quic_cpu_per_byte_ratio","clean_quic_bulk_throughput_ratio","clean_quic_cold_p95_ratio","clean_quic_cold_p99_ratio","clean_quic_rpc_p99_ratio"]},
+    {"id":"clean-04","profile_id":"clean-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-ww"],"duration_minutes":5,"topology":"ww","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms"]},
+    {"id":"clean-05","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qq"],"duration_minutes":5,"topology":"qq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms"]},
+    {"id":"clean-06","profile_id":"clean-v1","policy":"RequireWebSocket","supported_candidates":["tunnel-wq"],"duration_minutes":5,"topology":"wq","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms"]},
+    {"id":"clean-07","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-qw"],"duration_minutes":5,"topology":"qw","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","cpu_ns_per_delivered_byte","rss_bytes","alloc_bytes","retransmit_amplification_ratio","loss_recovery_ms","active_streams","cleanup_latency_ms"]},
+    {"id":"clean-08","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["browser-webtransport"],"duration_minutes":5,"topology":"browser_webtransport","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms","clean_webtransport_cold_p99_ratio","clean_webtransport_rpc_p99_ratio","clean_webtransport_throughput_ratio"]},
+    {"id":"clean-09","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-wss"],"duration_minutes":5,"topology":"browser_tunnel_wt_wss","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms"]},
+    {"id":"clean-10","profile_id":"clean-v1","policy":"RequireQUICFamily","supported_candidates":["tunnel-wt-quic"],"duration_minutes":5,"topology":"browser_tunnel_wt_quic","variants":[],"required_metrics":["connect_p50_ms","connect_p95_ms","connect_p99_ms","rpc_p50_ms","rpc_p95_ms","rpc_p99_ms","bulk_goodput_mbps","active_streams","cleanup_latency_ms"]}
   ],
   "fault_matrix": [
     {"profile_id":"clean-v1","carrier":"wss","reorder_percent":0,"duplicate_percent":0,"outage_start_ns":0,"outage_duration_ns":0},

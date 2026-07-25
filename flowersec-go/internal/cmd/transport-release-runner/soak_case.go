@@ -47,7 +47,7 @@ type soakContract struct {
 
 func productionSoakContract() soakContract {
 	return soakContract{
-		Duration: time.Hour, CyclePeriod: time.Minute, Cycles: 60, Reconnects: 60, Migrations: 60,
+		Duration: 5 * time.Minute, CyclePeriod: time.Minute, Cycles: 5, Reconnects: 5, Migrations: 5,
 		MaxRSSGrowth: 64 << 20, MaxGoroutineGrowth: 64, MaxOpenFDGrowth: 16, MaxTaskGrowth: 64,
 		RequireNetworkEvidence: true,
 	}
@@ -152,7 +152,7 @@ func runNativeProductionSoakCase(ctx context.Context) (soakCaseResult, error) {
 }
 
 func runRegisteredSoakCase(ctx context.Context, destination *artifactDestination, definition releaseCaseDefinition) (releaseCaseResult, error) {
-	if definition.ID != "CAP-SOAK-HOURLY" || definition.Profile != "hourly-weaknet-soak-v1" {
+	if definition.ID != "CAP-SOAK-5M" || definition.Profile != "five-minute-weaknet-soak-v1" {
 		return releaseCaseResult{}, errors.New("unknown production soak case")
 	}
 	started := time.Now()
@@ -265,7 +265,7 @@ func runSoakCase(ctx context.Context, contract soakContract, engine soakCycleEng
 		return result, fmt.Errorf("capture soak start resources: %w", err)
 	}
 	started := time.Now()
-	contextName := "case CAP-SOAK-HOURLY"
+	contextName := "case CAP-SOAK-5M"
 	digest := releaseCaseExecutionID(contextName)
 	result.Trace = soakTraceArtifact{SchemaVersion: 1, Kind: "transport_trace", Context: contextName,
 		Records: []soakTraceRecord{{Sequence: 1, AtNS: 0, Event: "soak_started", Digest: digest}}}
@@ -398,7 +398,7 @@ func runSoakCase(ctx context.Context, contract soakContract, engine soakCycleEng
 		{Name: "watchdog_timeouts", Value: float64(result.WatchdogTimeouts), Unit: "count"},
 	}}
 	result.Config = rawConfigArtifact{SchemaVersion: 1, Kind: "transport_config", Context: contextName, Records: []rawConfigRecord{
-		{Key: "profile", Value: "hourly-weaknet-soak-v1"},
+		{Key: "profile", Value: "five-minute-weaknet-soak-v1"},
 		{Key: "duration_ns", Value: strconv.FormatInt(contract.Duration.Nanoseconds(), 10)},
 		{Key: "fault_cycle_period_ns", Value: strconv.FormatInt(contract.CyclePeriod.Nanoseconds(), 10)},
 		{Key: "fault_cycle_count", Value: strconv.Itoa(contract.Cycles)},

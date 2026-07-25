@@ -53,6 +53,6 @@
     {"id":"CAP-QQ-1000","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-tunnel-qq-1000","evidence_fields":["trace","qlog","metrics","resource","config"]},
     {"id":"CAP-WQ-1000","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-tunnel-wq-1000","evidence_fields":["trace","qlog","metrics","resource","config"]},
     {"id":"CAP-QW-1000","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-tunnel-qw-1000","evidence_fields":["trace","qlog","metrics","resource","config"]},
-    {"id":"CAP-SOAK-HOURLY","owner":"bench-transport-soak","mode":"normal","required":true,"profile":"hourly-weaknet-soak-v1","evidence_fields":["trace","qlog","pcap","metrics","resource","config"]}
+    {"id":"CAP-SOAK-5M","owner":"bench-transport-soak","mode":"normal","required":true,"profile":"five-minute-weaknet-soak-v1","evidence_fields":["trace","qlog","pcap","metrics","resource","config"]}
   ]
 }

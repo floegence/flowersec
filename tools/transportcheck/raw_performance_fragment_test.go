@@ -133,7 +133,8 @@ func TestAssembleRawCleanDirectFragmentConvertsMeasuredFields(t *testing.T) {
 
 func TestAssembleRawCleanDirectFragmentRejectsScheduleMutation(t *testing.T) {
 	report := validRawBaselineReport(t, "websocket")
-	report.Results[0].Cold[517].ScheduledAt = report.Results[0].Cold[517].ScheduledAt.Add(time.Nanosecond)
+	mutationIndex := len(report.Results[0].Cold) / 2
+	report.Results[0].Cold[mutationIndex].ScheduledAt = report.Results[0].Cold[mutationIndex].ScheduledAt.Add(time.Nanosecond)
 	reportPath := writeRawBaselineReport(t, report)
 	directory := canonicalTestDirectory(t)
 	writer, err := newTypedArtifactWriter(directory)
@@ -187,12 +188,16 @@ func TestAssembleRawCleanDirectFragmentRejectsMissingProducerData(t *testing.T) 
 
 func validRawBaselineReport(t *testing.T, carrier string) rawBaselineReport {
 	t.Helper()
+	profile := signedProfiles[0]
+	if profile.id != "clean-v1" {
+		t.Fatalf("first signed profile = %s, want clean-v1", profile.id)
+	}
 	contract, err := signedOperationContract("clean-v1", "cold")
 	if err != nil {
 		t.Fatal(err)
 	}
 	origin := time.Date(2026, time.July, 25, 1, 2, 3, 0, time.UTC)
-	cold := make([]rawConnectOperation, 2000)
+	cold := make([]rawConnectOperation, profile.cold.Operations)
 	candidate := map[string]string{"websocket": "direct-wss", "raw_quic": "direct-raw-quic"}[carrier]
 	for index := range cold {
 		scheduled := origin.Add(time.Duration(index) * time.Duration(contract.scheduledIntervalNS))
@@ -202,21 +207,21 @@ func validRawBaselineReport(t *testing.T, carrier string) rawBaselineReport {
 			StartedCandidate: candidate, WinnerCandidate: candidate, CommitCount: 1, CredentialWrites: 1,
 		}
 	}
-	rpcOrigin := origin.Add(20 * time.Second)
+	rpcOrigin := origin.Add(1200 * time.Millisecond)
 	rpcPayload := append(append([]byte{'"'}, make([]byte, 1022)...), '"')
 	for index := 1; index < len(rpcPayload)-1; index++ {
 		rpcPayload[index] = 'x'
 	}
 	rpcDigest := sha256.Sum256(rpcPayload)
-	rpc := make([]rawRPCOperation, 2000)
+	rpc := make([]rawRPCOperation, profile.rpc.Operations)
 	for index := range rpc {
 		scheduled := rpcOrigin.Add(time.Duration(index) * time.Millisecond)
 		rpc[index] = rawRPCOperation{Ordinal: index + 1, ScheduledAt: scheduled, StartedAt: scheduled.Add(100 * time.Microsecond),
 			Duration: int64(500 * time.Microsecond), InputBytes: 1024, OutputBytes: 1024, PayloadSHA256: rpcDigest}
 	}
-	warmupBytes := int64(1 << 20)
-	scoreBytes := int64(256 << 20)
-	scoreOrigin := origin.Add(23 * time.Second)
+	warmupBytes := int64(profile.bulk.WarmupBytesPerDirection)
+	scoreBytes := int64(profile.bulk.ScoreBytesPerDirection)
+	scoreOrigin := origin.Add(1650 * time.Millisecond)
 	bulkDirections := make([]rawBulkDirection, 2)
 	for index, direction := range []struct {
 		name string
@@ -224,14 +229,14 @@ func validRawBaselineReport(t *testing.T, carrier string) rawBaselineReport {
 	}{{"client-to-server", 0xa5}, {"server-to-client", 0x5a}} {
 		bulkDirections[index] = rawBulkDirection{
 			Direction: direction.name,
-			Warmup: rawBulkPhaseDirection{Direction: direction.name, ScheduledAt: origin.Add(22*time.Second + time.Duration(index)*time.Millisecond),
-				StartedAt: origin.Add(22*time.Second + time.Duration(index)*time.Millisecond), Duration: int64(100 * time.Millisecond), Bytes: warmupBytes, PayloadSHA256: repeatedByteSHA256(direction.fill, warmupBytes)},
+			Warmup: rawBulkPhaseDirection{Direction: direction.name, ScheduledAt: origin.Add(1500*time.Millisecond + time.Duration(index)*time.Millisecond),
+				StartedAt: origin.Add(1500*time.Millisecond + time.Duration(index)*time.Millisecond), Duration: int64(20 * time.Millisecond), Bytes: warmupBytes, PayloadSHA256: repeatedByteSHA256(direction.fill, warmupBytes)},
 			Score: rawBulkPhaseDirection{Direction: direction.name, ScheduledAt: scoreOrigin.Add(time.Duration(index) * time.Millisecond),
-				StartedAt: scoreOrigin.Add(time.Duration(index) * time.Millisecond), Duration: int64(time.Second), Bytes: scoreBytes, PayloadSHA256: repeatedByteSHA256(direction.fill, scoreBytes)},
+				StartedAt: scoreOrigin.Add(time.Duration(index) * time.Millisecond), Duration: int64(100 * time.Millisecond), Bytes: scoreBytes, PayloadSHA256: repeatedByteSHA256(direction.fill, scoreBytes)},
 		}
 	}
 	resourceStart := origin.Add(-time.Second)
-	resourceFinish := origin.Add(25 * time.Second)
+	resourceFinish := origin.Add(2 * time.Second)
 	kernelPackets := uint64(10)
 	phaseMeasurement := func(phase string, start, finish time.Time, active int) rawPhaseMeasurement {
 		startKernel := &rawKernelEvidence{Client: rawKernelFaultStats{Packets: kernelPackets, Bytes: kernelPackets * 100, DeliveredPackets: kernelPackets}, Server: rawKernelFaultStats{Packets: kernelPackets, Bytes: kernelPackets * 100, DeliveredPackets: kernelPackets}}
@@ -251,7 +256,7 @@ func validRawBaselineReport(t *testing.T, carrier string) rawBaselineReport {
 		StartedAt: resourceStart.Add(-time.Second), FinishedAt: resourceFinish.Add(time.Second),
 		Results: []rawBaselineCarrierResult{{
 			Run: 1, Carrier: carrier, Cold: cold, RPC: rpc,
-			Bulk: rawBulkResult{StartedAt: scoreOrigin, Duration: int64(time.Second), BytesPerDirection: scoreBytes,
+			Bulk: rawBulkResult{StartedAt: scoreOrigin, Duration: int64(100 * time.Millisecond), BytesPerDirection: scoreBytes,
 				ActiveStreams: 2, Directions: bulkDirections},
 			CleanupDuration: 10 * int64(time.Millisecond),
 			Resource: rawResourceMeasurement{
@@ -260,10 +265,10 @@ func validRawBaselineReport(t *testing.T, carrier string) rawBaselineReport {
 				Finish: rawResourceSnapshot{At: resourceFinish, RSSBytes: 8192, CPUNanoseconds: 300, AllocatedBytes: 1500, OpenFDs: 9, Goroutines: 4, Tasks: 4},
 			},
 			Phases: []rawPhaseMeasurement{
-				phaseMeasurement("cold", origin.Add(-100*time.Millisecond), origin.Add(19999*time.Millisecond), 0),
-				phaseMeasurement("rpc", rpcOrigin, origin.Add(22*time.Second+100*time.Millisecond), 0),
-				phaseMeasurement("bulk", origin.Add(22*time.Second+200*time.Millisecond), origin.Add(24*time.Second+100*time.Millisecond), 2),
-				phaseMeasurement("cleanup", origin.Add(24*time.Second+200*time.Millisecond), origin.Add(24*time.Second+300*time.Millisecond), 0),
+				phaseMeasurement("cold", origin.Add(-100*time.Millisecond), origin.Add(1100*time.Millisecond), 0),
+				phaseMeasurement("rpc", rpcOrigin, origin.Add(1400*time.Millisecond), 0),
+				phaseMeasurement("bulk", origin.Add(1500*time.Millisecond), origin.Add(1800*time.Millisecond), 2),
+				phaseMeasurement("cleanup", origin.Add(1850*time.Millisecond), origin.Add(1900*time.Millisecond), 0),
 			},
 		}},
 	}
