@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 const repoGoToolchain = "go1.26.5"
@@ -722,22 +723,50 @@ func verifyGo(repoRoot string, m *manifest) error {
 		return err
 	}
 
-	cmd := exec.Command("go", "test", "-mod=mod", "./...")
-	cmd.Dir = tmpDir
-	cmd.Env = append(withRepoGoToolchain(),
+	commandEnvironment := append(withRepoGoToolchain(),
 		"GOWORK=off",
 		"GOMODCACHE="+filepath.Join(tmpDir, "modcache"),
 		"GONOSUMDB="+m.Go.ModulePath,
 		"GOPROXY=file://"+filepath.ToSlash(proxyRoot)+",https://proxy.golang.org,direct",
 	)
 	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("verify-go failed:\n%s", out.String())
+	for attempt := 1; attempt <= 3; attempt++ {
+		out.Reset()
+		cmd := exec.Command("go", "test", "-mod=mod", "./...")
+		cmd.Dir = tmpDir
+		cmd.Env = commandEnvironment
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			if attempt == 3 || !isTransientGoDownloadFailure(out.String()) {
+				return fmt.Errorf("verify-go failed:\n%s", out.String())
+			}
+			fmt.Fprintf(os.Stderr, "verify-go dependency download failed transiently; retrying (%d/3)\n", attempt)
+			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+			continue
+		}
+		fmt.Printf("go symbols OK: %d targets verified\n", len(m.Go.CompileTargets))
+		return nil
 	}
-	fmt.Printf("go symbols OK: %d targets verified\n", len(m.Go.CompileTargets))
-	return nil
+	return errors.New("verify-go exhausted its retry contract")
+}
+
+func isTransientGoDownloadFailure(output string) bool {
+	lower := strings.ToLower(output)
+	if !strings.Contains(lower, "go: downloading") &&
+		!strings.Contains(lower, "verifying module") &&
+		!strings.Contains(lower, "initializing sumdb.client") {
+		return false
+	}
+	for _, marker := range []string{
+		" eof", "unexpected eof", "connection reset by peer", "tls handshake timeout",
+		"i/o timeout", "temporary failure", "502 bad gateway", "503 service unavailable",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func goVerifierModuleVersion(modulePath string) string {

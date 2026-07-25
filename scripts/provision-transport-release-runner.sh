@@ -91,6 +91,7 @@ docker exec "$container_name" bash -euo pipefail -c '
 docker exec "$container_name" bash -euo pipefail -c '
   cd /workspace/flowersec/flowersec-ts
   npm ci --audit=false
+  npm run build
   npx playwright install chromium
   npx playwright --version
 '

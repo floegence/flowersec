@@ -1252,5 +1252,6 @@ test("transport release runner is pinned and scoped to its dedicated container",
   assert.match(provision, /docker rm --force "\$container_name"/);
   assert.doesNotMatch(provision, /docker (?:rm|system prune)[^\n]*(?:--all|-a|\*)/);
   assert.match(provision, /npm ci --audit=false/);
+  assert.match(provision, /npm run build/);
   assert.match(provision, /npx playwright install chromium/);
 });

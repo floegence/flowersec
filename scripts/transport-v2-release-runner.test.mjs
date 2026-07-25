@@ -93,4 +93,12 @@ test("provision installs the source-matched wrapper at one stable container path
   assert.match(provision, /sudo install -d -o root -g root -m 0755 "\$runner_root\/evidence"/);
   assert.match(provision, /FLOWERSEC_RELEASE_OWNER_UID=\$release_owner_uid/);
   assert.match(provision, /FLOWERSEC_RELEASE_OWNER_GID=\$release_owner_gid/);
+  const dependencyInstall = provision.indexOf("npm ci --audit=false");
+  const browserBuild = provision.indexOf("npm run build");
+  const browserInstall = provision.indexOf("npx playwright install chromium");
+  assert.notEqual(dependencyInstall, -1, "provision must install the frozen TypeScript dependencies");
+  assert.notEqual(browserBuild, -1, "provision must build the browser bundle from the clean checkout");
+  assert.notEqual(browserInstall, -1, "provision must install the pinned Chromium runtime");
+  assert.ok(dependencyInstall < browserBuild, "dependencies must be installed before the browser bundle is built");
+  assert.ok(browserBuild < browserInstall, "the browser bundle must be built before Chromium is installed");
 });

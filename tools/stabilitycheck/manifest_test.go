@@ -440,3 +440,24 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 		}
 	}
 }
+
+func TestTransientGoDownloadFailureClassification(t *testing.T) {
+	for _, output := range []string{
+		"go: downloading golang.org/x/net v0.56.0\nGet \"https://proxy.golang.org/x\": EOF",
+		"verifying module: initializing sumdb.Client: TLS handshake timeout",
+		"go: downloading example.invalid/module v1.0.0\n503 Service Unavailable",
+	} {
+		if !isTransientGoDownloadFailure(output) {
+			t.Fatalf("expected transient download failure: %q", output)
+		}
+	}
+	for _, output := range []string{
+		"api_contract_test.go:17: undefined: removedSymbol",
+		"unexpected EOF while parsing api_contract_test.go",
+		"go: downloading example.invalid/module v1.0.0\nmodule declares its path as another.invalid/module",
+	} {
+		if isTransientGoDownloadFailure(output) {
+			t.Fatalf("deterministic verifier failure must not retry: %q", output)
+		}
+	}
+}
