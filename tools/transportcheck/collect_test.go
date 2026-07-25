@@ -30,19 +30,16 @@ func TestCollectFlagFrontDoorRejectsIncompleteAndUnknownRequests(t *testing.T) {
 	}
 }
 
-func TestBuildCollectionPlanFailsClosedOnEveryCurrentReleaseTarget(t *testing.T) {
+func TestBuildCollectionPlanHasProducerCoverageForEveryCurrentReleaseTarget(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
 	for target := range collectTargets {
-		if target == "transport-conformance-smoke" || target == "transport-conformance-full" || target == "weaknet-full" || target == "weaknet-system" || target == "quic-native-smoke" || target == "quic-native-proof" || target == "quic-native-race" || target == "bench-transport-ab" {
-			continue
-		}
 		plan, err := buildCollectionPlan(target, manifest, registry)
 		if err != nil {
 			t.Fatalf("%s: %v", target, err)
 		}
-		if len(plan.Missing) == 0 {
-			t.Fatalf("%s unexpectedly has complete producer coverage", target)
+		if len(plan.Missing) != 0 {
+			t.Fatalf("%s has incomplete producer coverage: %v", target, plan.Missing)
 		}
 	}
 	abPlan, err := buildCollectionPlan("bench-transport-ab", manifest, registry)
@@ -56,24 +53,13 @@ func TestBuildCollectionPlanFailsClosedOnEveryCurrentReleaseTarget(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(allPlan.Jobs) != len(abPlan.Jobs)+7 || len(allPlan.Missing) != 16 {
+	if len(allPlan.Jobs) != len(abPlan.Jobs)+10 || len(allPlan.Missing) != 0 {
 		t.Fatalf("all plan does not include performance jobs plus case gaps: jobs=%d missing=%d", len(allPlan.Jobs), len(allPlan.Missing))
 	}
-	wantMissing := []string{
-		"case BS-C7 owned by transport-browser-smoke", "case BS-C8 owned by transport-browser-smoke", "case BN-N5 owned by transport-browser-smoke",
-		"case CAP-DIRECT-WSS-1000 owned by bench-transport-capacity", "case CAP-DIRECT-QUIC-1000 owned by bench-transport-capacity",
-		"case CAP-DIRECT-WT-1000 owned by bench-transport-capacity", "case CAP-TUNNEL-WT-WSS-1000 owned by bench-transport-capacity",
-		"case CAP-TUNNEL-WT-QUIC-1000 owned by bench-transport-capacity", "case CAP-STREAM-WT-DIRECT-100X128 owned by bench-transport-capacity",
-		"case CAP-STREAM-WT-WSS-100X128 owned by bench-transport-capacity", "case CAP-STREAM-WT-QUIC-100X128 owned by bench-transport-capacity",
-		"case CAP-WW-1000 owned by bench-transport-capacity", "case CAP-QQ-1000 owned by bench-transport-capacity",
-		"case CAP-WQ-1000 owned by bench-transport-capacity", "case CAP-QW-1000 owned by bench-transport-capacity",
-		"case CAP-SOAK-HOURLY owned by bench-transport-soak",
-	}
-	slices.Sort(wantMissing)
-	if !slices.Equal(allPlan.Missing, wantMissing) {
-		t.Fatalf("all plan missing set = %v, want %v", allPlan.Missing, wantMissing)
-	}
 	wantCaseCounts := map[string]int{
+		"bench-transport-capacity":    12,
+		"bench-transport-soak":        1,
+		"transport-browser-smoke":     3,
 		"transport-conformance-smoke": 6,
 		"transport-conformance-full":  8,
 		"weaknet-full":                4,

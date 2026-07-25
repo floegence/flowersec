@@ -27,8 +27,11 @@ var collectTargets = map[string]struct{}{
 }
 
 var normalCaseProducerOwners = map[string]struct{}{
+	"bench-transport-capacity":    {},
+	"bench-transport-soak":        {},
 	"transport-conformance-smoke": {},
 	"transport-conformance-full":  {},
+	"transport-browser-smoke":     {},
 	"weaknet-full":                {},
 	"weaknet-system":              {},
 	"quic-native-smoke":           {},
