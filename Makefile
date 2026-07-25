@@ -137,6 +137,8 @@ swift-build:
 	swift build
 
 swift-test:
+	# Xcode 26.4 can retain a stale test-bundle resource seal after swift-build.
+	@if [ "$$(uname -s)" = "Darwin" ]; then swift package clean; fi
 	swift test --enable-code-coverage
 
 swift-cover-check:
