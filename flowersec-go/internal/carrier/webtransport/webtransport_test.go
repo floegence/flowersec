@@ -1,12 +1,14 @@
 package webtransport_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -296,8 +298,101 @@ func TestAdapterSourceDoesNotExposeDatagramsOrReferenceYamux(t *testing.T) {
 	if strings.Contains(source, "strings.Contains(rawURL, PathTunnel)") {
 		t.Fatal("WebTransport path binding must use the parsed exact CONNECT path")
 	}
-	if !regexp.MustCompile(`DialAddr:\s+quic\.DialAddr`).MatchString(source) {
+	if !regexp.MustCompile(`DialAddr:\s+dialer\.dialQUIC`).MatchString(source) {
 		t.Fatal("WebTransport adapter no longer overrides the dependency's early dial default")
+	}
+}
+
+func TestDialerCloseFlushesReleaseQLOG(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("QLOGDIR", directory)
+	t.Setenv("FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE", "1")
+	serverTLS, clientTLS := testTLSConfigs(t)
+	server, err := webtransport.NewServer(serverTLS, webtransport.DefaultLimits(), func(*http.Request) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverSession := make(chan carrier.Session, 1)
+	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		session, upgradeErr := server.Upgrade(writer, request)
+		if upgradeErr == nil {
+			serverSession <- session
+		}
+	}))
+	packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(packetConn) }()
+	dialer, err := webtransport.NewDialer(clientTLS, webtransport.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := (&url.URL{Scheme: "https", Host: net.JoinHostPort("localhost", fmt.Sprint(packetConn.LocalAddr().(*net.UDPAddr).Port)), Path: webtransport.PathDirect}).String()
+	client, err := dialer.Dial(context.Background(), target, "https://client.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var serverPeer carrier.Session
+	select {
+	case serverPeer = <-serverSession:
+	case <-time.After(5 * time.Second):
+		t.Fatal("WebTransport server session timed out")
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := serverPeer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := dialer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_ = packetConn.Close()
+	select {
+	case <-serveDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("WebTransport server did not stop")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) < 2 {
+		t.Fatalf("qlog entries = %d, err=%v", len(entries), err)
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for index, record := range bytes.Split(data, []byte{0x1e}) {
+			payload := bytes.TrimSpace(record)
+			if index == 0 && len(payload) == 0 {
+				continue
+			}
+			if len(payload) == 0 || !json.Valid(payload) {
+				t.Fatalf("qlog %s contains an incomplete record", entry.Name())
+			}
+		}
+	}
+}
+
+func TestDialerCloseBeforeDialIsIdempotent(t *testing.T) {
+	_, clientTLS := testTLSConfigs(t)
+	dialer, err := webtransport.NewDialer(clientTLS, webtransport.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dialer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := dialer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dialer.Dial(context.Background(), "https://localhost/after-close", ""); !errors.Is(err, webtransport.ErrInvalidSession) {
+		t.Fatalf("Dial after Close error = %v, want ErrInvalidSession", err)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
@@ -96,9 +97,25 @@ func newServerQUICConfig(limits Limits) (*quic.Config, error) {
 }
 
 type Dialer struct {
-	inner    *wt.Dialer
-	capacity uint16
+	inner       *wt.Dialer
+	capacity    uint16
+	ctx         context.Context
+	cancel      context.CancelCauseFunc
+	dialWG      sync.WaitGroup
+	mu          sync.Mutex
+	connections map[*quic.Conn]*dialConnection
+	started     bool
+	closed      bool
+	closeOnce   sync.Once
+	closeErr    error
 }
+
+type dialConnection struct {
+	connection *quic.Conn
+	done       chan error
+}
+
+const webTransportConnectionDrainTimeout = 5 * time.Second
 
 func NewDialer(tlsConfig *tls.Config, limits Limits) (*Dialer, error) {
 	preparedTLS, err := prepareTLS(tlsConfig, false)
@@ -109,11 +126,17 @@ func NewDialer(tlsConfig *tls.Config, limits Limits) (*Dialer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Dialer{inner: &wt.Dialer{
+	ctx, cancel := context.WithCancelCause(context.Background())
+	dialer := &Dialer{
+		capacity: uint16(limits.MaxInboundStreams), ctx: ctx, cancel: cancel,
+		connections: make(map[*quic.Conn]*dialConnection),
+	}
+	dialer.inner = &wt.Dialer{
 		TLSClientConfig: preparedTLS,
 		QUICConfig:      config,
-		DialAddr:        quic.DialAddr,
-	}, capacity: uint16(limits.MaxInboundStreams)}, nil
+		DialAddr:        dialer.dialQUIC,
+	}
+	return dialer, nil
 }
 
 // Dial establishes one confirmed WebTransport session. Origin is the only
@@ -123,6 +146,23 @@ func (dialer *Dialer) Dial(ctx context.Context, rawURL, origin string) (*Session
 	if dialer == nil || dialer.inner == nil {
 		return nil, ErrInvalidSession
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dialer.mu.Lock()
+	if dialer.closed {
+		dialer.mu.Unlock()
+		return nil, ErrInvalidSession
+	}
+	dialer.dialWG.Add(1)
+	dialer.mu.Unlock()
+	defer dialer.dialWG.Done()
+	dialCtx, cancel := context.WithCancelCause(ctx)
+	stop := context.AfterFunc(dialer.ctx, func() { cancel(ErrInvalidSession) })
+	defer func() {
+		stop()
+		cancel(context.Canceled)
+	}()
 	parsed, err := parseURL(rawURL)
 	if err != nil {
 		return nil, err
@@ -138,7 +178,14 @@ func (dialer *Dialer) Dial(ctx context.Context, rawURL, origin string) (*Session
 		}
 		header.Set("Origin", origin)
 	}
-	response, inner, err := dialer.inner.Dial(ctx, rawURL, header)
+	dialer.mu.Lock()
+	if dialer.closed {
+		dialer.mu.Unlock()
+		return nil, ErrInvalidSession
+	}
+	dialer.started = true
+	dialer.mu.Unlock()
+	response, inner, err := dialer.inner.Dial(dialCtx, rawURL, header)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +200,91 @@ func (dialer *Dialer) Close() error {
 	if dialer == nil || dialer.inner == nil {
 		return nil
 	}
-	return dialer.inner.Close()
+	dialer.closeOnce.Do(func() {
+		dialer.mu.Lock()
+		dialer.closed = true
+		dialer.cancel(ErrInvalidSession)
+		dialer.mu.Unlock()
+		dialer.dialWG.Wait()
+
+		dialer.mu.Lock()
+		started := dialer.started
+		connections := make([]*dialConnection, 0, len(dialer.connections))
+		for _, connection := range dialer.connections {
+			connections = append(connections, connection)
+		}
+		dialer.mu.Unlock()
+		if started {
+			dialer.closeErr = dialer.inner.Close()
+		}
+		for _, tracked := range connections {
+			dialer.closeErr = errors.Join(dialer.closeErr, tracked.connection.CloseWithError(0, ""))
+		}
+		deadline := time.NewTimer(webTransportConnectionDrainTimeout)
+		defer deadline.Stop()
+		for _, tracked := range connections {
+			select {
+			case err := <-tracked.done:
+				dialer.closeErr = errors.Join(dialer.closeErr, err)
+			case <-deadline.C:
+				dialer.closeErr = errors.Join(dialer.closeErr, errors.New("WebTransport QUIC connection did not drain"))
+				return
+			}
+		}
+	})
+	return dialer.closeErr
+}
+
+func (dialer *Dialer) dialQUIC(ctx context.Context, address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Conn, error) {
+	connection, err := quic.DialAddr(ctx, address, tlsConfig, config)
+	if err != nil {
+		return nil, err
+	}
+	tracked := &dialConnection{connection: connection, done: make(chan error, 1)}
+	dialer.mu.Lock()
+	closed := dialer.closed
+	dialer.connections[connection] = tracked
+	dialer.mu.Unlock()
+	go dialer.observeQUICConnection(tracked)
+	if closed {
+		_ = connection.CloseWithError(0, "")
+		return nil, ErrInvalidSession
+	}
+	return connection, nil
+}
+
+func (dialer *Dialer) observeQUICConnection(tracked *dialConnection) {
+	<-tracked.connection.Context().Done()
+	ctx, cancel := context.WithTimeout(context.Background(), webTransportConnectionDrainTimeout)
+	err := waitForQLOGTraceClose(ctx, tracked.connection.QlogTrace())
+	cancel()
+	tracked.done <- err
+	close(tracked.done)
+	dialer.mu.Lock()
+	delete(dialer.connections, tracked.connection)
+	dialer.mu.Unlock()
+}
+
+func waitForQLOGTraceClose(ctx context.Context, trace qlogwriter.Trace) error {
+	if trace == nil {
+		return nil
+	}
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		producer := trace.AddProducer()
+		if producer == nil {
+			return nil
+		}
+		if err := producer.Close(); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("WebTransport qlog trace did not close: %w", context.Cause(ctx))
+		case <-ticker.C:
+		}
+	}
 }
 
 type Server struct {
