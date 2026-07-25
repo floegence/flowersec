@@ -34,6 +34,17 @@ func TestFocusedProductionCapacityCase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if os.Getenv("FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE") == "1" && capacityRequiresQLOG(definition) {
+		qlogDirectory := os.Getenv("QLOGDIR")
+		if qlogDirectory == "" {
+			t.Fatal("release-evidence capacity test requires QLOGDIR")
+		}
+		drainCtx, cancelDrain := context.WithTimeout(ctx, 5*time.Second)
+		defer cancelDrain()
+		if err := waitForCapacityQLOGDrain(drainCtx, qlogDirectory); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestProductionCapacityContractAndRegistryAreFrozen(t *testing.T) {

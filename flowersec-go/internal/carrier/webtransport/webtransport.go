@@ -82,7 +82,101 @@ func releaseEvidenceTracer(ctx context.Context, isClient bool, connID quic.Conne
 	if os.Getenv("FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE") != "1" {
 		return nil
 	}
-	return http3qlog.DefaultConnectionTracer(ctx, isClient, connID)
+	trace := http3qlog.DefaultConnectionTracer(ctx, isClient, connID)
+	if trace == nil {
+		return nil
+	}
+	return newDrainAwareQLOGTrace(trace)
+}
+
+type drainAwareQLOGTrace struct {
+	qlogwriter.Trace
+	mu        sync.Mutex
+	recorders map[*drainAwareQLOGRecorder]struct{}
+	closeErr  error
+}
+
+type drainAwareQLOGRecorder struct {
+	qlogwriter.Recorder
+	trace  *drainAwareQLOGTrace
+	once   sync.Once
+	mu     sync.Mutex
+	closed bool
+	err    error
+}
+
+func newDrainAwareQLOGTrace(trace qlogwriter.Trace) *drainAwareQLOGTrace {
+	return &drainAwareQLOGTrace{Trace: trace, recorders: make(map[*drainAwareQLOGRecorder]struct{})}
+}
+
+func (trace *drainAwareQLOGTrace) AddProducer() qlogwriter.Recorder {
+	recorder := trace.Trace.AddProducer()
+	if recorder == nil {
+		return nil
+	}
+	tracked := &drainAwareQLOGRecorder{Recorder: recorder, trace: trace}
+	trace.mu.Lock()
+	trace.recorders[tracked] = struct{}{}
+	trace.mu.Unlock()
+	return tracked
+}
+
+func (trace *drainAwareQLOGTrace) producerClosed(recorder *drainAwareQLOGRecorder, err error) {
+	trace.mu.Lock()
+	trace.closeErr = errors.Join(trace.closeErr, err)
+	delete(trace.recorders, recorder)
+	trace.mu.Unlock()
+}
+
+func (trace *drainAwareQLOGTrace) drain(ctx context.Context) error {
+	// webtransport-go does not close the producer created by NewRawClientConn.
+	// The caller reaches this boundary only after the owning QUIC connection ends.
+	trace.mu.Lock()
+	recorders := make([]*drainAwareQLOGRecorder, 0, len(trace.recorders))
+	for recorder := range trace.recorders {
+		recorders = append(recorders, recorder)
+	}
+	trace.mu.Unlock()
+	completed := make(chan error, 1)
+	go func() {
+		var result error
+		for _, recorder := range recorders {
+			result = errors.Join(result, recorder.Close())
+		}
+		trace.mu.Lock()
+		result = errors.Join(result, trace.closeErr)
+		remaining := len(trace.recorders)
+		trace.mu.Unlock()
+		if remaining != 0 {
+			result = errors.Join(result, fmt.Errorf("WebTransport qlog trace retained %d producers", remaining))
+		}
+		completed <- result
+	}()
+	select {
+	case err := <-completed:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("WebTransport qlog trace did not close: %w", context.Cause(ctx))
+	}
+}
+
+func (recorder *drainAwareQLOGRecorder) RecordEvent(event qlogwriter.Event) {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if !recorder.closed {
+		recorder.Recorder.RecordEvent(event)
+	}
+}
+
+func (recorder *drainAwareQLOGRecorder) Close() error {
+	recorder.once.Do(func() {
+		recorder.mu.Lock()
+		recorder.closed = true
+		recorder.err = recorder.Recorder.Close()
+		recorder.mu.Unlock()
+		recorder.trace.producerClosed(recorder, recorder.err)
+	})
+	return recorder.err
 }
 
 // newServerQUICConfig reserves the long-lived HTTP/3 CONNECT request stream in
@@ -269,22 +363,11 @@ func waitForQLOGTraceClose(ctx context.Context, trace qlogwriter.Trace) error {
 	if trace == nil {
 		return nil
 	}
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
-	for {
-		producer := trace.AddProducer()
-		if producer == nil {
-			return nil
-		}
-		if err := producer.Close(); err != nil {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("WebTransport qlog trace did not close: %w", context.Cause(ctx))
-		case <-ticker.C:
-		}
+	tracked, ok := trace.(*drainAwareQLOGTrace)
+	if !ok {
+		return errors.New("WebTransport qlog trace does not expose a drain boundary")
 	}
+	return tracked.drain(ctx)
 }
 
 type Server struct {
