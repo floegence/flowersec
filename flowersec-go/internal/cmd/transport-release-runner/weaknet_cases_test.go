@@ -77,6 +77,29 @@ func TestRegisteredCaseDefinitionsAreExactAndOrdered(t *testing.T) {
 	}
 }
 
+func TestRegisteredCaseSelectorBindsExactOwnerAndMode(t *testing.T) {
+	definitions, err := registeredCasesForOwnerAndID(capacityOwner, "normal", "CAP-DIRECT-WSS-1000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(definitions) != 1 || definitions[0].ID != "CAP-DIRECT-WSS-1000" {
+		t.Fatalf("selected definitions = %+v", definitions)
+	}
+	for _, test := range []struct {
+		owner  string
+		mode   string
+		caseID string
+	}{
+		{owner: capacityOwner, mode: "normal", caseID: "CS-C1"},
+		{owner: quicNativeRaceOwner, mode: "race", caseID: "CAP-DIRECT-WSS-1000"},
+		{owner: capacityOwner, mode: "normal", caseID: "missing"},
+	} {
+		if _, err := registeredCasesForOwnerAndID(test.owner, test.mode, test.caseID); err == nil {
+			t.Fatalf("accepted case %q for owner %q mode %q", test.caseID, test.owner, test.mode)
+		}
+	}
+}
+
 func TestNativeSmokeCasesExerciseProductionQUICAndTunnel(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -254,7 +277,7 @@ func TestCaseSuitePublishesExactWeaknetAndConformanceFullResults(t *testing.T) {
 			}
 			defer destination.Close()
 			manifest := transportrelease.ManifestBinding{Digest: transportrelease.FrozenPerformanceManifestDigest}
-			if err := runCaseSuite(reportPath, destination, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", owner, "normal", "", transportrelease.ReleasePlan{}, manifest); err != nil {
+			if err := runCaseSuite(reportPath, destination, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", owner, "normal", "", "", transportrelease.ReleasePlan{}, manifest); err != nil {
 				t.Fatal(err)
 			}
 			data, err := os.ReadFile(reportPath)

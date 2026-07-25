@@ -53,7 +53,7 @@ func TestBuildCollectionPlanHasProducerCoverageForEveryCurrentReleaseTarget(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(allPlan.Jobs) != len(abPlan.Jobs)+10 || len(allPlan.Missing) != 0 {
+	if len(allPlan.Jobs) != len(abPlan.Jobs)+21 || len(allPlan.Missing) != 0 {
 		t.Fatalf("all plan does not include performance jobs plus case gaps: jobs=%d missing=%d", len(allPlan.Jobs), len(allPlan.Missing))
 	}
 	wantCaseCounts := map[string]int{
@@ -68,6 +68,8 @@ func TestBuildCollectionPlanHasProducerCoverageForEveryCurrentReleaseTarget(t *t
 		"quic-native-proof":           7,
 		"quic-native-race":            4,
 	}
+	seenCaseCounts := make(map[string]int, len(wantCaseCounts))
+	seenJobCounts := make(map[string]int, len(wantCaseCounts))
 	for _, job := range allPlan.Jobs {
 		wantCount, exists := wantCaseCounts[job.CaseOwner]
 		if !exists {
@@ -77,13 +79,27 @@ func TestBuildCollectionPlanHasProducerCoverageForEveryCurrentReleaseTarget(t *t
 		if job.CaseOwner == "quic-native-race" {
 			wantMode = "race"
 		}
-		if job.RunnerTarget != "release-case-suite" || job.CaseMode != wantMode || len(job.CaseIDs) != wantCount {
+		if job.RunnerTarget != "release-case-suite" || job.CaseMode != wantMode {
 			t.Fatalf("all plan contains an incomplete %s producer: %+v", job.CaseOwner, job)
 		}
-		delete(wantCaseCounts, job.CaseOwner)
+		if job.CaseOwner == "bench-transport-capacity" {
+			if job.CaseID == "" || !slices.Equal(job.CaseIDs, []string{job.CaseID}) {
+				t.Fatalf("capacity producer is not bound to one exact case: %+v", job)
+			}
+		} else if job.CaseID != "" || len(job.CaseIDs) != wantCount {
+			t.Fatalf("owner suite producer changed shape: %+v", job)
+		}
+		seenCaseCounts[job.CaseOwner] += len(job.CaseIDs)
+		seenJobCounts[job.CaseOwner]++
 	}
-	if len(wantCaseCounts) != 0 {
-		t.Fatalf("all plan does not contain all registered case producers: %v", wantCaseCounts)
+	for owner, wantCount := range wantCaseCounts {
+		wantJobs := 1
+		if owner == "bench-transport-capacity" {
+			wantJobs = wantCount
+		}
+		if seenCaseCounts[owner] != wantCount || seenJobCounts[owner] != wantJobs {
+			t.Fatalf("owner %s producer coverage = %d cases/%d jobs, want %d/%d", owner, seenCaseCounts[owner], seenJobCounts[owner], wantCount, wantJobs)
+		}
 	}
 	systemPlan, err := buildCollectionPlan("weaknet-system", manifest, registry)
 	if err != nil {
@@ -106,6 +122,62 @@ func TestBuildCollectionPlanHasProducerCoverageForEveryCurrentReleaseTarget(t *t
 			plan.Jobs[0].CaseMode != wantMode || !plan.Jobs[0].NeedsBPF || len(plan.Jobs[0].CaseIDs) != wantCount {
 			t.Fatalf("%s plan does not bind its exact BPF producer: %+v", target, plan)
 		}
+	}
+}
+
+func TestBuildCollectionPlanSplitsCapacityIntoExactCaseJobs(t *testing.T) {
+	plan, err := buildCollectionPlan("bench-transport-capacity", loadFixtureManifest(t), loadFixtureRegistry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Missing) != 0 || len(plan.Jobs) != 12 {
+		t.Fatalf("capacity plan = %d jobs, %d gaps", len(plan.Jobs), len(plan.Missing))
+	}
+	seen := make(map[string]struct{}, len(plan.Jobs))
+	for _, job := range plan.Jobs {
+		if job.CaseOwner != "bench-transport-capacity" || job.CaseMode != "normal" || job.CaseID == "" ||
+			!slices.Equal(job.CaseIDs, []string{job.CaseID}) {
+			t.Fatalf("capacity job is not exact-case scoped: %+v", job)
+		}
+		if _, duplicate := seen[job.CaseID]; duplicate {
+			t.Fatalf("capacity case %s is scheduled more than once", job.CaseID)
+		}
+		seen[job.CaseID] = struct{}{}
+		args := collectionJobArgs(job, "/manifest", "/report", "/artifacts", collectTestFinalSHA, "/repository", "/bpf.o")
+		if !argumentHasPair(args, "--case-id", job.CaseID) {
+			t.Fatalf("capacity job command does not bind case %s: %v", job.CaseID, args)
+		}
+	}
+}
+
+func TestCapacityCaseJobsUseThreeBoundedBalancedLanes(t *testing.T) {
+	plan, err := buildCollectionPlan("bench-transport-capacity", loadFixtureManifest(t), loadFixtureRegistry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduled := make([]scheduledCollectionJob, len(plan.Jobs))
+	for index, job := range plan.Jobs {
+		scheduled[index] = scheduledCollectionJob{index: index, job: job}
+	}
+	lanes := scheduleCapacityCaseLanes(scheduled)
+	if len(lanes) != 3 || capacityJobWatchdog != 5*time.Minute || capacityStageWatchdog != 10*time.Minute ||
+		caseSuiteJobHardStop != 10*time.Minute || caseSuiteStageHardStop != 10*time.Minute {
+		t.Fatalf("capacity execution bounds = %d lanes, %s/job, %s/stage", len(lanes), capacityJobWatchdog, capacityStageWatchdog)
+	}
+	seen := make(map[string]struct{}, len(plan.Jobs))
+	for laneIndex, lane := range lanes {
+		if len(lane) != 4 {
+			t.Fatalf("capacity lane %d has %d jobs, want 4", laneIndex, len(lane))
+		}
+		for _, scheduled := range lane {
+			if _, duplicate := seen[scheduled.job.CaseID]; duplicate {
+				t.Fatalf("capacity case %s is assigned more than once", scheduled.job.CaseID)
+			}
+			seen[scheduled.job.CaseID] = struct{}{}
+		}
+	}
+	if len(seen) != 12 {
+		t.Fatalf("capacity lane schedule covers %d cases, want 12", len(seen))
 	}
 }
 

@@ -77,6 +77,19 @@ func registeredCasesForOwner(owner, mode string) ([]releaseCaseDefinition, error
 	}
 }
 
+func registeredCasesForOwnerAndID(owner, mode, caseID string) ([]releaseCaseDefinition, error) {
+	definitions, err := registeredCasesForOwner(owner, mode)
+	if err != nil || caseID == "" {
+		return definitions, err
+	}
+	for _, definition := range definitions {
+		if definition.ID == caseID {
+			return []releaseCaseDefinition{definition}, nil
+		}
+	}
+	return nil, fmt.Errorf("case %q is not registered for owner %q mode %q", caseID, owner, mode)
+}
+
 func validateReleaseCaseDefinitions(definitions []releaseCaseDefinition) error {
 	if len(definitions) == 0 {
 		return errors.New("release case suite has no definitions")

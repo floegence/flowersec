@@ -30,7 +30,7 @@ func openCollectionLaneSet(count int, isolated, caseSuite bool) (_ collectionLan
 	if !isolated {
 		return newLocalCollectionLaneSet(count), nil
 	}
-	if caseSuite && count != 1 || !caseSuite && count != 6 {
+	if caseSuite && count != 1 && count != collectionCaseParallelism || !caseSuite && count != 6 {
 		return nil, fmt.Errorf("production collection lane count is invalid: count=%d case_suite=%t", count, caseSuite)
 	}
 	cpusPerLane, memoryMax, pidsMax := collectionLaneCPUs, int64(collectionLaneMemoryMaxBytes), collectionLanePIDsMax

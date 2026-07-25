@@ -91,6 +91,29 @@ func TestRaceShardRunnerCoversEveryTopLevelTestExactlyOnce(t *testing.T) {
 		}
 	})
 
+	t.Run("retains shard logs on failure", func(t *testing.T) {
+		tempDir := t.TempDir()
+		logPath := filepath.Join(tempDir, "race-invocations.log")
+		installFakeGo(t, tempDir, strings.Join(testNames, "\n")+"\n", logPath)
+
+		cmd := exec.Command("bash", runner, tempDir, "3", "5m", "2")
+		cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "FAKE_GO_TEST_FAIL=1")
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("race shard runner succeeded despite a shard failure:\n%s", output)
+		}
+		const marker = "race shard logs retained at "
+		markerIndex := strings.LastIndex(string(output), marker)
+		if markerIndex < 0 {
+			t.Fatalf("race shard runner did not report retained logs:\n%s", output)
+		}
+		artifactDir := strings.TrimSpace(string(output)[markerIndex+len(marker):])
+		t.Cleanup(func() { _ = os.RemoveAll(artifactDir) })
+		if info, statErr := os.Stat(filepath.Join(artifactDir, "shard-0.log")); statErr != nil || info.Size() == 0 {
+			t.Fatalf("retained shard log is unavailable: %v", statErr)
+		}
+	})
+
 	t.Run("rejects a timeout above five minutes", func(t *testing.T) {
 		tempDir := t.TempDir()
 		logPath := filepath.Join(tempDir, "race-invocations.log")
@@ -114,6 +137,9 @@ if [[ "${1:-}" == "test" && "${2:-}" == "-list" ]]; then
   exit 0
 fi
 printf '%s\n' "$*" >> "${RACE_SHARD_LOG:?}"
+if [[ "${FAKE_GO_TEST_FAIL:-}" == "1" ]]; then
+  exit 1
+fi
 `
 	goPath := filepath.Join(dir, "go")
 	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {

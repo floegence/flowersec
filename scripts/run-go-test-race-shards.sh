@@ -40,7 +40,15 @@ case "$timeout" in
 esac
 
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/flowersec-race-shards.XXXXXX")"
-trap 'rm -rf "$temp_dir"' EXIT
+cleanup() {
+  local status="$?"
+  if (( status == 0 )); then
+    rm -rf "$temp_dir"
+  else
+    echo "race shard logs retained at $temp_dir" >&2
+  fi
+}
+trap cleanup EXIT
 tests_file="$temp_dir/tests"
 
 (

@@ -120,11 +120,11 @@ type rawConfigRecord struct {
 	Value string `json:"value"`
 }
 
-func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA, sourceRoot, owner, mode, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) error {
+func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA, sourceRoot, owner, mode, caseID, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) error {
 	if mode == "race" && !raceDetectorEnabled() {
 		return errors.New("race case suite requires a runner built with Go race instrumentation")
 	}
-	definitions, err := registeredCasesForOwner(owner, mode)
+	definitions, err := registeredCasesForOwnerAndID(owner, mode, caseID)
 	if err != nil {
 		return err
 	}

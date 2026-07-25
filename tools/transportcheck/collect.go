@@ -45,6 +45,10 @@ var raceCaseProducerOwners = map[string]struct{}{
 const (
 	collectionRevisionBase  = "base"
 	collectionRevisionFinal = "final"
+	capacityJobWatchdog     = 5 * time.Minute
+	capacityStageWatchdog   = 10 * time.Minute
+	caseSuiteJobHardStop    = 10 * time.Minute
+	caseSuiteStageHardStop  = 10 * time.Minute
 )
 
 type collectRequest struct {
@@ -148,6 +152,7 @@ type collectionJob struct {
 	NeedsBPF       bool
 	CaseOwner      string
 	CaseMode       string
+	CaseID         string
 	CaseIDs        []string
 	VariantID      string
 	SourceRevision string
@@ -504,10 +509,19 @@ func buildCollectionPlan(target string, manifest *PerformanceManifest, registry 
 		if (target == "all" || target == entry.Owner) && entry.Required {
 			if _, supported := normalCaseProducerOwners[entry.Owner]; supported {
 				key := "normal:" + entry.Owner
+				if entry.Owner == "bench-transport-capacity" {
+					key += ":" + entry.ID
+				}
 				job := caseJobs[key]
 				if job == nil {
 					needsBPF := entry.Owner == "weaknet-system" || entry.Owner == "quic-native-proof"
-					job = &collectionJob{ID: "case-normal-" + entry.Owner, RunnerTarget: "release-case-suite", CaseOwner: entry.Owner, CaseMode: "normal", NeedsBPF: needsBPF}
+					jobID := "case-normal-" + entry.Owner
+					caseID := ""
+					if entry.Owner == "bench-transport-capacity" {
+						jobID += "-" + strings.ToLower(entry.ID)
+						caseID = entry.ID
+					}
+					job = &collectionJob{ID: jobID, RunnerTarget: "release-case-suite", CaseOwner: entry.Owner, CaseMode: "normal", CaseID: caseID, NeedsBPF: needsBPF}
 					caseJobs[key] = job
 				}
 				job.CaseIDs = append(job.CaseIDs, entry.ID)
@@ -719,14 +733,35 @@ func runCollectionJobs(ctx context.Context, request collectRequest, manifest *Pe
 	if err := executeCollectionLaneStage(ctx, request, manifest, registry, schedule.lanes, staging, identity, records, false, globalWatchdog, 0); err != nil {
 		return nil, err
 	}
-	if len(schedule.caseSuite) != 0 {
-		const caseSuiteWatchdog = 90 * time.Minute
-		outerWatchdog := time.Duration(len(schedule.caseSuite)) * caseSuiteWatchdog
-		if err := executeCollectionLaneStage(ctx, request, manifest, registry, [][]scheduledCollectionJob{schedule.caseSuite}, staging, identity, records, true, outerWatchdog, caseSuiteWatchdog); err != nil {
+	var capacityCases []scheduledCollectionJob
+	var ownerSuites []scheduledCollectionJob
+	for _, scheduled := range schedule.caseSuite {
+		if scheduled.job.CaseOwner == "bench-transport-capacity" && scheduled.job.CaseID != "" {
+			capacityCases = append(capacityCases, scheduled)
+		} else {
+			ownerSuites = append(ownerSuites, scheduled)
+		}
+	}
+	if len(ownerSuites) != 0 {
+		if err := executeCollectionLaneStage(ctx, request, manifest, registry, [][]scheduledCollectionJob{ownerSuites}, staging, identity, records, true, caseSuiteStageHardStop, caseSuiteJobHardStop); err != nil {
+			return nil, err
+		}
+	}
+	if len(capacityCases) != 0 {
+		lanes := scheduleCapacityCaseLanes(capacityCases)
+		if err := executeCollectionLaneStage(ctx, request, manifest, registry, lanes, staging, identity, records, true, capacityStageWatchdog, capacityJobWatchdog); err != nil {
 			return nil, err
 		}
 	}
 	return records, nil
+}
+
+func scheduleCapacityCaseLanes(cases []scheduledCollectionJob) [][]scheduledCollectionJob {
+	lanes := make([][]scheduledCollectionJob, collectionCaseParallelism)
+	for index, scheduled := range cases {
+		lanes[index%len(lanes)] = append(lanes[index%len(lanes)], scheduled)
+	}
+	return lanes
 }
 
 func executeCollectionLaneStage(ctx context.Context, request collectRequest, manifest *PerformanceManifest, registry *CaseRegistry, lanes [][]scheduledCollectionJob, staging string, identity *collectionDirectoryIdentity, records []rawJobRecord, caseSuite bool, stageWatchdog, jobWatchdog time.Duration) (resultErr error) {
@@ -914,6 +949,9 @@ func collectionJobArgs(job collectionJob, manifestPath, reportPath, artifactDire
 	if job.CaseOwner != "" {
 		args = append(args, "--case-owner", job.CaseOwner, "--case-mode", job.CaseMode)
 	}
+	if job.CaseID != "" {
+		args = append(args, "--case-id", job.CaseID)
+	}
 	return args
 }
 
@@ -965,7 +1003,8 @@ func validateRawCellReport(path, finalSHA, manifestDigest string) error {
 }
 
 func validateRawCaseSuiteReport(path, artifactDirectory, finalSHA, manifestDigest, manifestFileSHA256 string, job collectionJob, registry *CaseRegistry) ([]string, error) {
-	if registry == nil || job.CaseOwner == "" || job.CaseMode == "" || len(job.CaseIDs) == 0 {
+	if registry == nil || job.CaseOwner == "" || job.CaseMode == "" || len(job.CaseIDs) == 0 ||
+		(job.CaseID != "" && (len(job.CaseIDs) != 1 || job.CaseIDs[0] != job.CaseID)) {
 		return nil, errors.New("case suite validation requires a registry and a complete case job")
 	}
 	data, err := os.ReadFile(path)

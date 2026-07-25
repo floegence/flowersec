@@ -213,6 +213,7 @@ func run(args []string) (resultErr error) {
 	artifactDir := flags.String("artifact-dir", "", "existing empty release artifact directory")
 	caseOwner := flags.String("case-owner", "", "registered case owner")
 	caseMode := flags.String("case-mode", "", "normal or race case execution mode")
+	caseID := flags.String("case-id", "", "exact registered case")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -242,10 +243,10 @@ func run(args []string) (resultErr error) {
 		if needsBPF != (*bpfObject != "") {
 			return errors.New("release case suite BPF object does not match its owner")
 		}
-		return runCaseSuite(*reportPath, destination, *sourceSHA, *sourceRoot, *caseOwner, *caseMode, *bpfObject, plan, manifest)
+		return runCaseSuite(*reportPath, destination, *sourceSHA, *sourceRoot, *caseOwner, *caseMode, *caseID, *bpfObject, plan, manifest)
 	}
-	if *caseOwner != "" || *caseMode != "" {
-		return errors.New("performance cell targets do not accept case owner or mode")
+	if *caseOwner != "" || *caseMode != "" || *caseID != "" {
+		return errors.New("performance cell targets do not accept case owner, mode, or ID")
 	}
 	if *target == networkCellTarget {
 		if *topologyName != "" {
