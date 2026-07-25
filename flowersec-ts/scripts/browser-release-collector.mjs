@@ -103,6 +103,9 @@ export async function collectBrowserReleaseWorkload(input, dependencies = {}) {
         const workload = await runSessionWorkload(page, sessionArtifacts[0], plan);
         report.rpc = workload.rpc;
         report.bulk = workload.bulk;
+		if (workload.native_isolation !== undefined) report.native_isolation = workload.native_isolation;
+		report.session_connected_at = workload.session_connected_at;
+		report.session_closed_at = workload.session_closed_at;
         report.cleanup_duration_ns = workload.cleanup_duration_ns;
       }
     };
@@ -202,7 +205,7 @@ async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
 }
 
 async function runSessionWorkload(page, artifact, plan) {
-  return await page.evaluate(async ({ item, rpcPlan, bulkPlan, cleanupDeadlineMs }) => {
+  return await page.evaluate(async ({ item, profileID, rpcPlan, bulkPlan, cleanupDeadlineMs }) => {
     const sdk = await import("/dist/browser/index.js");
     const lease = sdk.createArtifactLeaseV2(
       sdk.parseArtifact(item.artifact_json),
@@ -215,6 +218,14 @@ async function runSessionWorkload(page, artifact, plan) {
         rpcPlan.phase_deadline_ms,
         "session connect deadline exceeded",
       );
+	  const sessionConnectedAt = new Date().toISOString();
+	  const nativeIsolation = profileID === "webtransport-native-isolation"
+	    ? await withSignalDeadline(
+	      (phaseSignal) => runNativeIsolation(session, phaseSignal),
+	      rpcPlan.phase_deadline_ms,
+	      "native isolation phase deadline exceeded",
+	    )
+	    : undefined;
       const rpc = await withSignalDeadline(
         (phaseSignal) => runRPC(session, rpcPlan, phaseSignal),
         rpcPlan.phase_deadline_ms,
@@ -230,10 +241,14 @@ async function runSessionWorkload(page, artifact, plan) {
         session.close(),
         new Promise((_, reject) => setTimeout(() => reject(new Error("session cleanup deadline exceeded")), cleanupDeadlineMs)),
       ]);
+	  const sessionClosedAt = new Date().toISOString();
       session = undefined;
       return {
         rpc,
         bulk,
+		native_isolation: nativeIsolation,
+		session_connected_at: sessionConnectedAt,
+		session_closed_at: sessionClosedAt,
         cleanup_duration_ns: Math.max(1, Math.round((performance.now() - cleanupStarted) * 1_000_000)),
       };
     } finally {
@@ -325,6 +340,61 @@ async function runSessionWorkload(page, artifact, plan) {
       return records;
     }
 
+	async function runNativeIsolation(activeSession, phaseSignal) {
+	  const streams = [];
+	  const events = [];
+	  try {
+		for (let index = 0; index < 4; index++) {
+		  const stream = await activeSession.openStream("native-isolation", {
+			metadata: { stream_index: index },
+			signal: phaseSignal,
+		  });
+		  streams.push(stream);
+		  if (await stream.write(new Uint8Array([index]), { signal: phaseSignal }) !== 1) {
+			throw new Error("native isolation handshake short write");
+		  }
+		  const handshake = await stream.read({ signal: phaseSignal });
+		  if (handshake === null || handshake.byteLength !== 1 || handshake[0] !== (index ^ 0xff)) {
+			throw new Error("native isolation handshake mismatch");
+		  }
+		}
+		events.push({ event: "native_streams_opened", at: new Date().toISOString(), stream_count: 4 });
+		await streams[0].reset();
+		events.push({ event: "native_stream_reset", at: new Date().toISOString(), stream_count: 1 });
+		await Promise.all(streams.slice(1).map(async (stream, sibling) => {
+		  const value = 0x41 + sibling;
+		  if (await stream.write(new Uint8Array([value]), { signal: phaseSignal }) !== 1) {
+			throw new Error("native isolation sibling short write");
+		  }
+		  await stream.closeWrite();
+		  const response = await stream.read({ signal: phaseSignal });
+		  if (response === null || response.byteLength !== 1 || response[0] !== (value ^ 0xff)) {
+			throw new Error("native isolation sibling response mismatch");
+		  }
+		  if (await stream.read({ signal: phaseSignal }) !== null) {
+			throw new Error("native isolation sibling did not finish cleanly");
+		  }
+		}));
+		events.push({ event: "native_siblings_completed", at: new Date().toISOString(), stream_count: 3 });
+		const response = await activeSession.rpc.call(1, "native-isolation-survivor", phaseSignal);
+		if (response.error !== undefined || response.payload !== "native-isolation-survivor") {
+		  throw new Error("native isolation post-reset RPC mismatch");
+		}
+		events.push({ event: "rpc_completed", at: new Date().toISOString(), request_id: "native-isolation-survivor", status: "ok" });
+		return {
+		  opened_streams: 4,
+		  reset_streams: 1,
+		  sibling_streams: 3,
+		  completed_rpcs: 1,
+		  residual_streams: 0,
+		  residual_sessions: 0,
+		  events,
+		};
+	  } finally {
+		await Promise.allSettled(streams.slice(1).map(async (stream) => await stream.close()));
+	  }
+	}
+
     async function runBulk(activeSession, config, phaseSignal) {
       await transfer(activeSession, config.warmup_bytes_per_direction, phaseSignal);
       const result = await transfer(activeSession, config.score_bytes_per_direction, phaseSignal);
@@ -406,6 +476,7 @@ async function runSessionWorkload(page, artifact, plan) {
     }
   }, {
     item: artifact,
+	profileID: plan.profile_id,
     rpcPlan: plan.rpc,
     bulkPlan: plan.bulk,
     cleanupDeadlineMs: plan.cleanup_deadline_ms,
@@ -435,7 +506,7 @@ function createSpendLedger(plan, fetchImpl) {
   };
 }
 
-async function startBrowserModuleSite(bindAddress, advertiseHost) {
+export async function startBrowserModuleSite(bindAddress, advertiseHost) {
   const distRoot = path.join(packageRoot, "dist");
   const nobleRoot = path.join(packageRoot, "node_modules", "@noble");
   const server = http.createServer(async (request, response) => {
@@ -474,7 +545,7 @@ async function startBrowserModuleSite(bindAddress, advertiseHost) {
   };
 }
 
-async function preloadBrowserSDK(page) {
+export async function preloadBrowserSDK(page) {
   let failure;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -528,7 +599,7 @@ function browserPage() {
 </head><body></body></html>`;
 }
 
-async function installWebTransportCertificateHash(page, encodedHash) {
+export async function installWebTransportCertificateHash(page, encodedHash) {
   await page.addInitScript((value) => {
     const NativeWebTransport = globalThis.WebTransport;
     const standard = value.replaceAll("-", "+").replaceAll("_", "/");

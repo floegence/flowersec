@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	LossNone     = "none"
 	LossPeriodic = "periodic"
 	LossBurst    = "burst"
 
@@ -115,6 +116,21 @@ func (lab *Lab) applyDirection(ctx context.Context, labDirectory, object string,
 	)); err != nil {
 		return err
 	}
+	if profile.LossMode == LossNone {
+		encoded, err := encodeFaultConfig(profile, 0)
+		if err != nil {
+			return err
+		}
+		updateArgs := []string{"map", "update", "pinned", configMap, "key", "hex", "00", "00", "00", "00", "value", "hex"}
+		if err := lab.run(ctx, command{bpfTool, append(updateArgs, byteArguments(encoded)...)}); err != nil {
+			return err
+		}
+		clsactDelete := networkCommand("tc", "qdisc", "del", "dev", device, "clsact")
+		if err := lab.managed(ctx, networkCommand("tc", "qdisc", "add", "dev", device, "clsact"), clsactDelete); err != nil {
+			return err
+		}
+		return lab.run(ctx, networkCommand("tc", "filter", "add", "dev", device, "ingress", "pref", "10", "protocol", "all", "bpf", "direct-action", "object-pinned", program))
+	}
 	rate := strconv.Itoa(profile.RateBitsPerSecond) + "bit"
 	burst := strconv.Itoa(profile.TokenBurstBytes) + "b"
 	limit := strconv.Itoa(profile.QueueBytes) + "b"
@@ -194,8 +210,20 @@ type interfaceIndexResolver interface {
 }
 
 func validateFaultProfile(profile FaultProfile) error {
+	if profile.LinkMTU < 1280 || profile.LinkMTU > 9000 {
+		return errors.New("fault profile is outside the frozen network bounds")
+	}
+	if profile.LossMode == LossNone {
+		if profile.BaseDelay != 0 || len(profile.Jitter) != 1 || profile.Jitter[0] != 0 || profile.RateBitsPerSecond != 0 ||
+			profile.TokenBurstBytes != 0 || profile.QueueBytes != 0 || profile.EveryNth != 0 || profile.BlockSize != 0 ||
+			profile.BurstFirst != 0 || profile.BurstLast != 0 || profile.ReorderPercent != 0 || profile.DuplicatePercent != 0 ||
+			profile.OutageStart != 0 || profile.OutageDuration != 0 || profile.ReorderDelay != 0 {
+			return errors.New("counter-only profile must not inject or shape traffic")
+		}
+		return nil
+	}
 	if profile.BaseDelay <= 0 || len(profile.Jitter) != 8 || profile.RateBitsPerSecond < 1 ||
-		profile.TokenBurstBytes < 1 || profile.QueueBytes < profile.TokenBurstBytes || profile.LinkMTU < 1280 || profile.LinkMTU > 9000 {
+		profile.TokenBurstBytes < 1 || profile.QueueBytes < profile.TokenBurstBytes {
 		return errors.New("fault profile is outside the frozen network bounds")
 	}
 	for _, jitter := range profile.Jitter {
@@ -241,8 +269,10 @@ func encodeFaultConfig(profile FaultProfile, duplicateIfIndex int) ([]byte, erro
 	if profile.DuplicatePercent > 0 && duplicateIfIndex <= 0 || profile.DuplicatePercent == 0 && duplicateIfIndex != 0 {
 		return nil, errors.New("duplicate IFB index does not match the frozen matrix")
 	}
-	lossMode := uint32(1)
-	if profile.LossMode == LossBurst {
+	lossMode := uint32(0)
+	if profile.LossMode == LossPeriodic {
+		lossMode = 1
+	} else if profile.LossMode == LossBurst {
 		lossMode = 2
 	}
 	encoded := make([]byte, 144)

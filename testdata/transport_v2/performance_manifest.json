@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "digest": "sha256:05db41d545b66c9d5d05089d3c33d51161b1960e2d8cc90aa0e8c0378098623e",
+  "digest": "sha256:0661bc0e3382fd0853d1534698a9d67b858c8bad2882c2f6a33678f1af8fa2df",
   "ratio_formula_version": "transport-ratio-v1",
   "run_count": 15,
   "bootstrap": {
@@ -19,7 +19,7 @@
     "max_rss_bytes": 1073741824,
     "max_cpu_nanoseconds": 120000000000,
     "max_open_fds": 8192,
-    "max_goroutines": 8192,
+    "max_goroutines": 40960,
     "max_tasks": 8192
   },
   "soak": {
@@ -60,7 +60,7 @@
       },
       "bulk": {
         "warmup_bytes_per_direction": 1048576,
-        "score_bytes_per_direction": 67108864,
+        "score_bytes_per_direction": 268435456,
         "phase_deadline_seconds": 15
       },
       "cleanup_deadline_seconds": 5,

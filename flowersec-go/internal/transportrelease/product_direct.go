@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -42,15 +43,17 @@ var errProductDirectEndpointClosed = errors.New("product direct endpoint closed"
 // still issues and durably spends a distinct artifact, so cold-connect timing
 // excludes certificate and listener provisioning without weakening admission.
 type ProductDirectEndpoint struct {
-	kind            carrier.Kind
-	suite           protocolv2.Suite
-	listenHost      string
-	candidateURL    string
-	trustRoots      *x509.CertPool
-	certificateHash [sha256.Size]byte
-	allowedOrigin   string
-	ctx             context.Context
-	cancel          context.CancelCauseFunc
+	kind              carrier.Kind
+	suite             protocolv2.Suite
+	listenHost        string
+	candidateURL      string
+	trustRoots        *x509.CertPool
+	certificateDER    []byte
+	certificateHash   [sha256.Size]byte
+	allowedOrigin     string
+	maxInboundStreams uint16
+	ctx               context.Context
+	cancel            context.CancelCauseFunc
 
 	pendingMu sync.Mutex
 	pending   map[[sha256.Size]byte]*admissionExpectation
@@ -123,7 +126,7 @@ func OpenProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenH
 // OpenProductDirectEndpointAtWithSuite binds the endpoint and its issued
 // session contracts to one explicit E2EE suite.
 func OpenProductDirectEndpointAtWithSuite(ctx context.Context, kind carrier.Kind, listenHost string, suite protocolv2.Suite) (*ProductDirectEndpoint, error) {
-	return openProductDirectEndpointAt(ctx, kind, listenHost, releaseRunnerOrigin, suite)
+	return openProductDirectEndpointAt(ctx, kind, listenHost, releaseRunnerOrigin, suite, defaultMaxInboundStreams)
 }
 
 // OpenProductDirectBrowserEndpointAt provisions a WebTransport endpoint that
@@ -132,10 +135,19 @@ func OpenProductDirectBrowserEndpointAt(ctx context.Context, listenHost, browser
 	if err := validateBrowserOrigin(browserOrigin); err != nil {
 		return nil, err
 	}
-	return openProductDirectEndpointAt(ctx, carrier.KindWebTransport, listenHost, browserOrigin, protocolv2.SuiteChaCha20Poly1305)
+	return openProductDirectEndpointAt(ctx, carrier.KindWebTransport, listenHost, browserOrigin, protocolv2.SuiteChaCha20Poly1305, defaultMaxInboundStreams)
 }
 
-func openProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenHost, allowedOrigin string, suite protocolv2.Suite) (*ProductDirectEndpoint, error) {
+// OpenProductDirectBrowserStreamCapacityEndpointAt provisions the frozen
+// 128-stream browser capacity contract without changing ordinary defaults.
+func OpenProductDirectBrowserStreamCapacityEndpointAt(ctx context.Context, listenHost, browserOrigin string) (*ProductDirectEndpoint, error) {
+	if err := validateBrowserOrigin(browserOrigin); err != nil {
+		return nil, err
+	}
+	return openProductDirectEndpointAt(ctx, carrier.KindWebTransport, listenHost, browserOrigin, protocolv2.SuiteChaCha20Poly1305, 128)
+}
+
+func openProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenHost, allowedOrigin string, suite protocolv2.Suite, maxStreams uint16) (*ProductDirectEndpoint, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -146,6 +158,9 @@ func openProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenH
 	if suite != protocolv2.SuiteChaCha20Poly1305 && suite != protocolv2.SuiteAES256GCM {
 		return nil, protocolv2.ErrInvalidSuite
 	}
+	if maxStreams == 0 || maxStreams > 128 {
+		return nil, errors.New("product direct endpoint stream capacity is invalid")
+	}
 	serverTLS, clientTLS, err := localTLSForHost(kind, listenHost)
 	if err != nil {
 		return nil, err
@@ -154,8 +169,9 @@ func openProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenH
 	certificateHash := sha256.Sum256(serverTLS.Certificates[0].Certificate[0])
 	endpoint := &ProductDirectEndpoint{
 		kind: kind, suite: suite, listenHost: listenHost, trustRoots: clientTLS.RootCAs, ctx: endpointCtx, cancel: cancel,
-		certificateHash: certificateHash, allowedOrigin: allowedOrigin,
-		pending: make(map[[sha256.Size]byte]*admissionExpectation),
+		certificateHash: certificateHash, certificateDER: append([]byte(nil), serverTLS.Certificates[0].Certificate[0]...), allowedOrigin: allowedOrigin,
+		maxInboundStreams: maxStreams,
+		pending:           make(map[[sha256.Size]byte]*admissionExpectation),
 	}
 	if err := endpoint.start(serverTLS); err != nil {
 		cancel(err)
@@ -182,7 +198,7 @@ func (endpoint *ProductDirectEndpoint) IssueBrowserArtifact() (*ProductDirectBro
 	if err := context.Cause(endpoint.ctx); err != nil {
 		return nil, err
 	}
-	contract, err := releaseSessionContract(endpoint.suite)
+	contract, err := releaseSessionContractWithStreams(endpoint.suite, endpoint.maxInboundStreams)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +285,7 @@ func (endpoint *ProductDirectEndpoint) Connect(ctx context.Context) (*ProductDir
 	if err := context.Cause(endpoint.ctx); err != nil {
 		return nil, err
 	}
-	contract, err := releaseSessionContract(endpoint.suite)
+	contract, err := releaseSessionContractWithStreams(endpoint.suite, endpoint.maxInboundStreams)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +392,12 @@ func (pair *ProductDirectPair) RoundTrip(ctx context.Context, request, response 
 		return err
 	}
 	defer opened.Close()
-	peer := <-accepted
+	var peer acceptResult
+	select {
+	case peer = <-accepted:
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
 	if peer.err != nil {
 		return peer.err
 	}
@@ -385,28 +406,59 @@ func (pair *ProductDirectPair) RoundTrip(ctx context.Context, request, response 
 		return errors.New("public encrypted stream metadata mismatch")
 	}
 	requestRead := readAll(peer.incoming.Stream)
-	if _, err := opened.Write(request); err != nil {
+	if err := writeProductStream(ctx, opened, request); err != nil {
 		return err
 	}
 	if err := opened.CloseWrite(); err != nil {
 		return err
 	}
-	gotRequest := <-requestRead
+	var gotRequest readResult
+	select {
+	case gotRequest = <-requestRead:
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
 	if gotRequest.err != nil || !bytes.Equal(gotRequest.payload, request) {
 		return errors.Join(errors.New("public request payload mismatch"), gotRequest.err)
 	}
 	responseRead := readAll(opened)
-	if _, err := peer.incoming.Stream.Write(response); err != nil {
+	if err := writeProductStream(ctx, peer.incoming.Stream, response); err != nil {
 		return err
 	}
 	if err := peer.incoming.Stream.CloseWrite(); err != nil {
 		return err
 	}
-	gotResponse := <-responseRead
+	var gotResponse readResult
+	select {
+	case gotResponse = <-responseRead:
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
 	if gotResponse.err != nil || !bytes.Equal(gotResponse.payload, response) {
 		return errors.Join(errors.New("public response payload mismatch"), gotResponse.err)
 	}
 	return nil
+}
+
+func writeProductStream(ctx context.Context, stream interface {
+	io.Writer
+	Reset() error
+}, payload []byte) error {
+	result := make(chan error, 1)
+	go func() {
+		written, err := stream.Write(payload)
+		if err == nil && written != len(payload) {
+			err = io.ErrShortWrite
+		}
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		_ = stream.Reset()
+		return context.Cause(ctx)
+	}
 }
 
 // Close concurrently shuts down both sessions, then their endpoint owners.
@@ -476,7 +528,7 @@ func (endpoint *ProductDirectEndpoint) start(serverTLS *tls.Config) error {
 }
 
 func (endpoint *ProductDirectEndpoint) startRawQUIC(serverTLS *tls.Config) error {
-	limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), defaultMaxInboundStreams)
+	limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), endpoint.maxInboundStreams)
 	if err != nil {
 		return err
 	}
@@ -503,7 +555,7 @@ func (endpoint *ProductDirectEndpoint) startRawQUIC(serverTLS *tls.Config) error
 }
 
 func (endpoint *ProductDirectEndpoint) startWebSocket(serverTLS *tls.Config) error {
-	listener, err := tls.Listen("tcp4", net.JoinHostPort(endpoint.listenHost, "0"), serverTLS)
+	listener, err := tls.Listen("tcp", net.JoinHostPort(endpoint.listenHost, "0"), serverTLS)
 	if err != nil {
 		return err
 	}
@@ -532,7 +584,7 @@ func (endpoint *ProductDirectEndpoint) startWebSocket(serverTLS *tls.Config) err
 }
 
 func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) error {
-	limits, err := carrierwt.BindSessionLimits(carrierwt.DefaultLimits(), defaultMaxInboundStreams)
+	limits, err := carrierwt.BindSessionLimits(carrierwt.DefaultLimits(), endpoint.maxInboundStreams)
 	if err != nil {
 		return err
 	}
@@ -550,7 +602,7 @@ func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) 
 		}
 		endpoint.serveNative(carrierSession)
 	}))
-	packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(endpoint.listenHost)})
+	packetConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP(endpoint.listenHost)})
 	if err != nil {
 		_ = server.Close()
 		return err
@@ -628,7 +680,7 @@ func (endpoint *ProductDirectEndpoint) serveWebSocket(conn *gorillaws.Conn) {
 		_ = conn.Close()
 		return
 	}
-	resources, err := carrierws.BindSessionResourcePolicy(carrierws.DefaultResourcePolicy(), defaultMaxInboundStreams)
+	resources, err := carrierws.BindSessionResourcePolicy(carrierws.DefaultResourcePolicy(), endpoint.maxInboundStreams)
 	if err != nil {
 		endpoint.complete(expected, productServerResult{err: err})
 		_ = conn.Close()
@@ -798,6 +850,10 @@ func directArtifact(kind carrier.Kind, candidateURL string, contract artifactv2.
 }
 
 func releaseSessionContract(suite protocolv2.Suite) (artifactv2.SessionContract, error) {
+	return releaseSessionContractWithStreams(suite, defaultMaxInboundStreams)
+}
+
+func releaseSessionContractWithStreams(suite protocolv2.Suite, maxStreams uint16) (artifactv2.SessionContract, error) {
 	var channelNonce [16]byte
 	if _, err := rand.Read(channelNonce[:]); err != nil {
 		return artifactv2.SessionContract{}, fmt.Errorf("generate release channel ID: %w", err)
@@ -806,7 +862,7 @@ func releaseSessionContract(suite protocolv2.Suite) (artifactv2.SessionContract,
 		ChannelID: "transport-release-" + hex.EncodeToString(channelNonce[:]), InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(),
 		IdleTimeoutSeconds: 60, EstablishTimeoutSeconds: 30,
 		RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
-		MaxInboundStreams: defaultMaxInboundStreams, AllowedSuites: []uint16{uint16(suite)}, DefaultSuite: uint16(suite),
+		MaxInboundStreams: maxStreams, AllowedSuites: []uint16{uint16(suite)}, DefaultSuite: uint16(suite),
 	}
 	if _, err := rand.Read(contract.E2EEPSK[:]); err != nil {
 		return artifactv2.SessionContract{}, fmt.Errorf("generate release session PSK: %w", err)

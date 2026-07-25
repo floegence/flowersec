@@ -6,7 +6,7 @@ The implementation is test-driven and split by explicit runtime capability tuple
 
 Local unit and smoke gates prove deterministic contract behavior but do not count as release evidence. A release additionally requires a clean-final-SHA signed evidence report covering the registered real-browser, qlog, common-kernel weak-network, migration, capacity, and 15-run performance cases. `make release-check` fails closed when that report or its audited base SHA is absent.
 
-The operational trust bootstrap, required environment, audited runner responsibilities, and exact release sequence are documented in `docs/TRANSPORT_V2_RELEASE_EVIDENCE.md`. The checked-in bootstrap-disabled signer and placeholder runner hashes intentionally prevent publication until a production runner policy is installed by a reviewed change.
+The operational trust bootstrap, required environment, audited runner responsibilities, and exact release sequence are documented in `docs/TRANSPORT_V2_RELEASE_EVIDENCE.md`. The checked-in production signer public key does not authorize collection by itself; placeholder runner hashes intentionally prevent publication until the exact final runner policy is installed by a reviewed change.
 
 ## Boundaries
 
@@ -105,6 +105,14 @@ RSS, CPU, file-descriptor, goroutine, and task ceilings. Each capacity case
 must report attempted, succeeded, and failed sessions; prove a unique active
 peak of exactly 1,000 with no hold disconnect; record ramp/hold/cleanup
 resource samples; and finish with zero watchdogs and zero residual sessions.
+The three browser stream-capacity cases additionally prove 100 production
+sessions with 128 simultaneously live bidirectional streams per session. They
+use a 60-second ramp and a dedicated 32,768 aggregate process-tree descriptor
+ceiling plus a 240 CPU-second aggregate ceiling. Those ceilings preserve
+measured headroom over the Ubuntu 24 Chromium calibration of 26,554
+descriptors and 165.25 CPU-seconds through the complete hold; the 1,000-session
+browser cases remain at 12,288 descriptors and non-browser capacity cases
+remain at 8,192.
 Linux system evidence includes netns/tc,
 eBPF counters, common-kernel behavior, real path migration, and IPv4/IPv6 PMTUD.
 Every performance phase records the exact profile ID, phase, manifest digest,
@@ -135,11 +143,11 @@ WSS recovery cases apply the same quoted-tuple rule to TCP and bind the PTB
 between monotonically increasing TCP_INFO observations for one socket tuple and
 socket cookie. Runner trust is pinned to an exact kernel release and exact
 effective tc/eBPF config digest, not a kernel-family prefix.
-The checked-in `flowersec-release-linux-bootstrap-disabled` entry is a valid,
-non-low-order Ed25519 public key whose private key was not retained. It keeps
-verification fail-closed during bootstrap; enabling release evidence requires
-an audited repository change that installs the production signer public key
-and matching fixed runner policy.
+The checked-in `flowersec-release-linux-2026-01` entry is the production
+Ed25519 public key for this release evidence authority. Its PKCS#8 private key
+is retained only in the repository-external release key directory with owner-only
+permissions. Evidence remains fail-closed until an audited repository change
+also installs the matching exact final runner executable, source, and argv hashes.
 
 ## Signed Go Slice 0
 

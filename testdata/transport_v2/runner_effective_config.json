@@ -4,7 +4,7 @@
   "context": "flowersec-linux-release-v1",
   "records": [
     {"key":"architecture","value":"amd64"},
-    {"key":"capacity_contract","value":"{\"sessions\":1000,\"ramp_duration_ns\":30000000000,\"hold_duration_ns\":60000000000,\"cleanup_duration_ns\":30000000000,\"watchdog_duration_ns\":120000000000,\"max_rss_bytes\":1073741824,\"max_cpu_nanoseconds\":120000000000,\"max_open_fds\":8192,\"max_goroutines\":8192,\"max_tasks\":8192}"},
+    {"key":"capacity_contract","value":"{\"sessions\":1000,\"ramp_duration_ns\":30000000000,\"hold_duration_ns\":60000000000,\"cleanup_duration_ns\":30000000000,\"watchdog_duration_ns\":120000000000,\"max_rss_bytes\":1073741824,\"max_cpu_nanoseconds\":120000000000,\"max_open_fds\":8192,\"max_goroutines\":40960,\"max_tasks\":8192}"},
     {"key":"ebpf_counter_schema","value":"phase-profile-artifact-v1"},
     {"key":"ebpf_program","value":"ebpf-v1"},
     {"key":"firewall","value":"allow-test-tcp-udp-return-icmp-ptb-only-v1"},

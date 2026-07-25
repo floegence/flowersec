@@ -42,6 +42,66 @@ func TestWorkloadScheduleContainsEveryIndependentRun(t *testing.T) {
 	}
 }
 
+func TestTunnelProfileAllowsOnlyCleanWithoutBPF(t *testing.T) {
+	plan := transportrelease.ReleasePlan{
+		Clean:  transportrelease.ProfilePlan{ID: "clean-v1"},
+		Mobile: transportrelease.ProfilePlan{ID: "mobile-v1"},
+		Edge:   transportrelease.ProfilePlan{ID: "edge-v1"},
+	}
+	tests := []struct {
+		name      string
+		profileID string
+		bpfObject string
+		wantID    string
+		wantError bool
+	}{
+		{name: "clean", profileID: "clean-v1", wantID: "clean-v1"},
+		{name: "clean rejects BPF", profileID: "clean-v1", bpfObject: "/fault.o", wantError: true},
+		{name: "mobile requires BPF", profileID: "mobile-v1", wantError: true},
+		{name: "mobile", profileID: "mobile-v1", bpfObject: "/fault.o", wantID: "mobile-v1"},
+		{name: "edge requires BPF", profileID: "edge-v1", wantError: true},
+		{name: "edge", profileID: "edge-v1", bpfObject: "/fault.o", wantID: "edge-v1"},
+		{name: "unknown", profileID: "other", wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			profile, err := tunnelProfile(plan, test.profileID, test.bpfObject)
+			if (err != nil) != test.wantError {
+				t.Fatalf("error = %v, want error %t", err, test.wantError)
+			}
+			if err == nil && profile.ID != test.wantID {
+				t.Fatalf("profile = %q, want %q", profile.ID, test.wantID)
+			}
+		})
+	}
+}
+
+func TestAdaptiveCandidatesForTopologyMatchesFrozenManifest(t *testing.T) {
+	for _, test := range []struct {
+		topology string
+		want     []transportrelease.AdaptiveCandidate
+	}{
+		{topology: adaptiveNativeTopology, want: []transportrelease.AdaptiveCandidate{{ID: "runtime-wss", Kind: carrier.KindWebSocket}, {ID: "runtime-raw-quic", Kind: carrier.KindQUIC}}},
+		{topology: adaptiveWebTopology, want: []transportrelease.AdaptiveCandidate{{ID: "runtime-wss", Kind: carrier.KindWebSocket}, {ID: "runtime-webtransport", Kind: carrier.KindWebTransport}}},
+	} {
+		got, err := adaptiveCandidatesForTopology(test.topology)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != len(test.want) {
+			t.Fatalf("%s candidates = %+v", test.topology, got)
+		}
+		for index := range got {
+			if got[index] != test.want[index] {
+				t.Fatalf("%s candidate %d = %+v, want %+v", test.topology, index, got[index], test.want[index])
+			}
+		}
+	}
+	if candidates, err := adaptiveCandidatesForTopology("other"); err == nil || candidates != nil {
+		t.Fatal("accepted an unknown adaptive topology")
+	}
+}
+
 func TestVerifySourceCheckoutBindsCleanHeadAndManifest(t *testing.T) {
 	root := t.TempDir()
 	runGit(t, root, "init", "-q")

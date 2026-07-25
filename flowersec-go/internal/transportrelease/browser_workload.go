@@ -43,6 +43,85 @@ func ServeBrowserBulk(ctx context.Context, session flowersession.SessionV2, byte
 	return nil
 }
 
+// ServeBrowserNativeIsolation proves that one reset WebTransport stream does
+// not interrupt its three sibling streams or the session RPC router.
+func ServeBrowserNativeIsolation(ctx context.Context, session flowersession.SessionV2) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if session == nil {
+		return errors.New("browser native isolation session is unavailable")
+	}
+	results := make(chan error, 4)
+	for index := range 4 {
+		incoming, err := session.AcceptStream(ctx)
+		if err != nil {
+			return fmt.Errorf("accept browser native isolation stream %d: %w", index, err)
+		}
+		if incoming.Kind != "native-isolation" || fmt.Sprint(incoming.Metadata["stream_index"]) != fmt.Sprint(index) {
+			_ = incoming.Stream.Reset()
+			return errors.New("browser native isolation stream metadata mismatch")
+		}
+		go func() {
+			finished := false
+			defer func() {
+				if !finished {
+					_ = incoming.Stream.Reset()
+				}
+			}()
+			handshake := make([]byte, 1)
+			if _, readErr := io.ReadFull(incoming.Stream, handshake); readErr != nil || handshake[0] != byte(index) {
+				results <- errors.Join(readErr, errors.New("browser native isolation handshake mismatch"))
+				return
+			}
+			if count, writeErr := incoming.Stream.Write([]byte{handshake[0] ^ 0xff}); writeErr != nil || count != 1 {
+				results <- errors.Join(writeErr, io.ErrShortWrite)
+				return
+			}
+			if index == 0 {
+				buffer := make([]byte, 1)
+				for {
+					_, resetErr := incoming.Stream.Read(buffer)
+					if resetErr == nil {
+						continue
+					}
+					if errors.Is(resetErr, io.EOF) {
+						results <- errors.New("browser native isolation reset stream ended with FIN")
+						return
+					}
+					finished = true
+					results <- nil
+					return
+				}
+			}
+			payload := make([]byte, 1)
+			if _, readErr := io.ReadFull(incoming.Stream, payload); readErr != nil || payload[0] != byte(0x40+index) {
+				results <- errors.Join(readErr, errors.New("browser native isolation sibling payload mismatch"))
+				return
+			}
+			if count, readErr := incoming.Stream.Read(handshake); count != 0 || !errors.Is(readErr, io.EOF) {
+				results <- errors.Join(readErr, errors.New("browser native isolation sibling did not finish with FIN"))
+				return
+			}
+			if count, writeErr := incoming.Stream.Write([]byte{payload[0] ^ 0xff}); writeErr != nil || count != 1 {
+				results <- errors.Join(writeErr, io.ErrShortWrite)
+				return
+			}
+			if closeErr := incoming.Stream.CloseWrite(); closeErr != nil {
+				results <- closeErr
+				return
+			}
+			finished = true
+			results <- nil
+		}()
+	}
+	var result error
+	for range 4 {
+		result = errors.Join(result, <-results)
+	}
+	return result
+}
+
 func serveBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteStream, byteCount int64) error {
 	defer incoming.Close()
 	stopCancellation := context.AfterFunc(ctx, func() {

@@ -41,7 +41,7 @@ done
 [[ -n $target && -n $report ]] || usage
 
 case "$target" in
-  all | transport-conformance-smoke | transport-conformance-full | weaknet-full | weaknet-system | quic-native-proof | quic-native-race | bench-transport-capacity | bench-transport-soak | bench-transport-ab) ;;
+  all | transport-conformance-smoke | transport-conformance-full | weaknet-full | weaknet-system | quic-native-smoke | quic-native-proof | quic-native-race | bench-transport-capacity | bench-transport-soak | bench-transport-ab) ;;
   *) fail "unsupported target: $target" ;;
 esac
 
@@ -93,6 +93,21 @@ for path in "$manifest_path" "$registry_path" "$trust_policy_path" "$effective_c
 done
 [[ -x $host_bpftool ]] || fail "exact-host-kernel bpftool is unavailable"
 [[ -w /sys/fs/bpf ]] || fail "the privileged container cannot write the host BPF filesystem"
+[[ -w /sys/fs/cgroup && -r /sys/fs/cgroup/cgroup.controllers ]] || fail "writable cgroup v2 delegation is unavailable"
+
+readonly cgroup_supervisor=/sys/fs/cgroup/flowersec-release-supervisor
+mkdir -p "$cgroup_supervisor"
+while read -r cgroup_pid; do
+  [[ -n $cgroup_pid ]] || continue
+  if ! echo "$cgroup_pid" > "$cgroup_supervisor/cgroup.procs"; then
+    [[ ! -d /proc/$cgroup_pid ]] || fail "failed to move live process $cgroup_pid into the release supervisor cgroup"
+  fi
+done < /sys/fs/cgroup/cgroup.procs
+[[ ! -s /sys/fs/cgroup/cgroup.procs ]] || fail "release cgroup root still contains processes"
+echo "+cpuset +cpu +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control
+for controller in cpuset cpu memory pids; do
+  grep -qw "$controller" /sys/fs/cgroup/cgroup.subtree_control || fail "cgroup controller $controller was not delegated"
+done
 
 actual_wrapper=$(realpath -- "$0")
 cmp -s -- "$actual_wrapper" "$wrapper_source_path" || fail "installed wrapper does not match the clean source checkout"
@@ -112,6 +127,7 @@ actual_kernel=$(uname -r)
 
 umask 077
 build_directory=$(mktemp -d /tmp/flowersec-transport-release-build.XXXXXX)
+base_source_root=$build_directory/base-source
 probe_namespace=flowersec-release-probe-$$
 
 ip netns add "$probe_namespace"
@@ -121,12 +137,31 @@ ip netns del "$probe_namespace"
 probe_created=0
 
 low_level_runner=$build_directory/transport-release-runner
+race_low_level_runner=$build_directory/transport-release-runner-race
+base_low_level_runner=$build_directory/base-transport-release-runner
 transportcheck=$build_directory/transportcheck
 bpf_object=$build_directory/packet_fault.o
 
+git clone --quiet --no-local --no-checkout "$source_root" "$base_source_root"
+git -C "$base_source_root" checkout --quiet --detach "$base_sha"
+[[ $(git -C "$base_source_root" rev-parse --show-toplevel) == "$base_source_root" ]] || fail "base source root is not an independent Git checkout"
+[[ $(git -C "$base_source_root" rev-parse HEAD) == "$base_sha" ]] || fail "base source checkout does not match TRANSPORT_V2_BASE_SHA"
+[[ -z $(git -C "$base_source_root" status --porcelain --untracked-files=all) ]] || fail "base source checkout must be clean"
+base_manifest_path=$base_source_root/testdata/transport_v2/performance_manifest.json
+[[ -f $base_manifest_path && ! -L $base_manifest_path ]] || fail "base performance manifest is unavailable"
+cmp -s -- "$manifest_path" "$base_manifest_path" || fail "base and final performance manifests must be byte-identical"
+
 (
   cd "$source_root/flowersec-go"
-  go build -trimpath -buildvcs=true -o "$low_level_runner" ./internal/cmd/transport-release-runner
+  go build -trimpath -buildvcs=false -o "$low_level_runner" ./internal/cmd/transport-release-runner
+)
+(
+  cd "$source_root/flowersec-go"
+  go build -race -trimpath -buildvcs=false -o "$race_low_level_runner" ./internal/cmd/transport-release-runner
+)
+(
+  cd "$base_source_root/flowersec-go"
+  go build -trimpath -buildvcs=false -o "$base_low_level_runner" ./internal/cmd/transport-release-runner
 )
 (
   cd "$source_root/tools/transportcheck"
@@ -135,31 +170,35 @@ bpf_object=$build_directory/packet_fault.o
 
 verify_clean_vcs_stamp() {
   local executable=$1
+  local expected_sha=$2
   local metadata revision modified
   metadata=$(go version -m "$executable")
   revision=$(sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.revision=//p' <<<"$metadata")
   modified=$(sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.modified=//p' <<<"$metadata")
-  [[ $revision == "$final_sha" && $modified == false ]] || fail "Go executable lacks the clean final-SHA VCS stamp: $executable"
+  [[ $revision == "$expected_sha" && $modified == false ]] || fail "Go executable lacks the clean expected-SHA VCS stamp: $executable"
 }
-verify_clean_vcs_stamp "$low_level_runner"
-verify_clean_vcs_stamp "$transportcheck"
+verify_clean_vcs_stamp "$transportcheck" "$final_sha"
 
 clang -O2 -g -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
   -I/usr/include/x86_64-linux-gnu \
   -c "$bpf_source_path" -o "$bpf_object"
 [[ -s $bpf_object ]] || fail "packet-fault BPF compilation produced no object"
 [[ -z $(git -C "$source_root" status --porcelain --untracked-files=all) ]] || fail "runner build changed the source checkout"
+[[ -z $(git -C "$base_source_root" status --porcelain --untracked-files=all) ]] || fail "runner build changed the base source checkout"
 
 "$transportcheck" collect \
   -manifest "$manifest_path" \
   -registry "$registry_path" \
   -repo "$source_root" \
+  -base-repo "$base_source_root" \
   -base-sha "$base_sha" \
   -final-sha "$final_sha" \
   -target "$target" \
   -report "$report" \
   -artifact-dir "$report_directory" \
   -runner-executable "$low_level_runner" \
+  -race-runner-executable "$race_low_level_runner" \
+  -base-runner-executable "$base_low_level_runner" \
   -runner-wrapper "$actual_wrapper" \
   -bpf-object "$bpf_object" \
   -host-bpftool "$host_bpftool" \

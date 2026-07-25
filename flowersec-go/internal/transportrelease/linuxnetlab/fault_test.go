@@ -194,7 +194,7 @@ func TestApplyFaultProfileRollsBackPartialBPFLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &recordingRunner{failAt: 30}
+	runner := &recordingRunner{failAt: 32}
 	lab, err := Open(context.Background(), runner, config)
 	if err != nil {
 		t.Fatal(err)

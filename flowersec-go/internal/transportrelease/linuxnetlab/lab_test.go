@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"reflect"
 	"testing"
 	"time"
@@ -65,6 +66,28 @@ func TestConfigForCellIsStableAndIsolated(t *testing.T) {
 	}
 }
 
+func TestConfigForSystemCaseSupportsIsolatedIPv6(t *testing.T) {
+	config, err := ConfigForSystemCase("sys-pmtud-quic-ipv6", 1, 1280, FrozenFirewall, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.ClientAddress.Addr().Is6() || !config.ServerAddress.Addr().Is6() || config.ClientAddress.Bits() != 126 || config.ClientAddress.Masked() != config.ServerAddress.Masked() {
+		t.Fatalf("IPv6 system lab = %+v", config)
+	}
+	if err := validateConfig(config); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIPv6LabAddressesSkipAsynchronousDAD(t *testing.T) {
+	address := netip.MustParsePrefix("2001:db8:1::1/126")
+	got := addressAddArguments("client", address, "eth0")
+	want := []string{"-n", "client", "addr", "add", address.String(), "dev", "eth0", "nodad"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("IPv6 address arguments = %v, want %v", got, want)
+	}
+}
+
 func TestOpenBuildsKernelTopologyAndCloseIsIdempotent(t *testing.T) {
 	config, err := ConfigForCell("edge-02", 15, 1280, FrozenFirewall)
 	if err != nil {
@@ -75,7 +98,7 @@ func TestOpenBuildsKernelTopologyAndCloseIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.commands) != 25 {
+	if len(runner.commands) != 27 {
 		t.Fatalf("setup commands = %d\n%s", len(runner.commands), runner.commands)
 	}
 	if err := lab.Close(context.Background()); err != nil {
@@ -135,7 +158,7 @@ func TestCloseRetriesOnlyFailedCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &recordingRunner{failAt: 26}
+	runner := &recordingRunner{failAt: 28}
 	lab, err := Open(context.Background(), runner, config)
 	if err != nil {
 		t.Fatal(err)

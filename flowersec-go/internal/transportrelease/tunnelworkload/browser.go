@@ -90,6 +90,35 @@ type BrowserArtifact struct {
 // Call IssueBrowserArtifact from a process whose default namespace is the
 // client namespace so the Go server-role leg and Chromium leg cross the link.
 func OpenBrowserEndpointAt(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string) (*BrowserEndpoint, error) {
+	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, tunnelv2.Config{}, defaultMaxInboundStreams)
+}
+
+// OpenBrowserCapacityEndpointAt creates a browser tunnel endpoint that can
+// hold the exact release-capacity session count instead of relying on the
+// larger ordinary product default.
+func OpenBrowserCapacityEndpointAt(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string, sessions int) (*BrowserEndpoint, error) {
+	config, err := capacityCoordinatorConfig(sessions)
+	if err != nil {
+		return nil, err
+	}
+	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, config, defaultMaxInboundStreams)
+}
+
+// OpenBrowserStreamCapacityEndpointAt provisions exactly 100 sessions with
+// 128 simultaneous logical streams per session for the release-only workload.
+func OpenBrowserStreamCapacityEndpointAt(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string) (*BrowserEndpoint, error) {
+	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, browserStreamCapacityCoordinatorConfig(), 128)
+}
+
+func browserStreamCapacityCoordinatorConfig() tunnelv2.Config {
+	config := tunnelv2.DefaultConfig()
+	config.MaxPendingLegs = 200
+	config.MaxActivePairs = 100
+	config.BridgeLimits.CopyBufferBytes = 4 * 1024
+	return config
+}
+
+func openBrowserEndpointAtWithCoordinator(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string, coordinatorConfig tunnelv2.Config, maxStreams uint16) (*BrowserEndpoint, error) {
 	serverCarrier, err := topology.serverCarrier()
 	if err != nil {
 		return nil, err
@@ -111,9 +140,10 @@ func OpenBrowserEndpointAt(ctx context.Context, topology BrowserTopology, listen
 	endpointCtx, cancel := context.WithCancelCause(ctx)
 	endpoint := &Endpoint{
 		listenHost: listenHost, suite: protocolv2.SuiteChaCha20Poly1305, ctx: endpointCtx, cancel: cancel,
-		expectations: make(map[[sha256.Size]byte]*admissionExpectation), closeDone: make(chan struct{}),
+		maxInboundStreams: maxStreams,
+		expectations:      make(map[[sha256.Size]byte]*admissionExpectation), closeDone: make(chan struct{}),
 	}
-	coordinator, err := tunnelv2.NewCoordinator(tunnelv2.Config{}, endpoint.authorize)
+	coordinator, err := tunnelv2.NewCoordinator(coordinatorConfig, endpoint.authorize)
 	if err != nil {
 		cancel(err)
 		return nil, err
@@ -150,7 +180,7 @@ func OpenBrowserEndpointAt(ctx context.Context, topology BrowserTopology, listen
 }
 
 func (endpoint *Endpoint) startWebTransportListener(id string, serverTLS *tls.Config, allowedOrigin string) (artifactv2.Candidate, error) {
-	limits, err := carrierwt.BindSessionLimits(carrierwt.DefaultLimits(), maxInboundStreams)
+	limits, err := carrierwt.BindSessionLimits(carrierwt.DefaultLimits(), endpoint.maxInboundStreams)
 	if err != nil {
 		return artifactv2.Candidate{}, err
 	}
@@ -223,7 +253,7 @@ func (endpoint *BrowserEndpoint) IssueBrowserArtifact() (*BrowserArtifact, error
 	if err := context.Cause(owner.ctx); err != nil {
 		return nil, err
 	}
-	contract, suffix, err := releaseContract(owner.suite)
+	contract, suffix, err := releaseContractWithStreams(owner.suite, owner.maxInboundStreams)
 	if err != nil {
 		return nil, err
 	}

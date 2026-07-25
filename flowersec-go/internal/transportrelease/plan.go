@@ -9,13 +9,13 @@ import (
 	"time"
 )
 
-const FrozenPerformanceManifestDigest = "sha256:05db41d545b66c9d5d05089d3c33d51161b1960e2d8cc90aa0e8c0378098623e"
+const FrozenPerformanceManifestDigest = "sha256:0661bc0e3382fd0853d1534698a9d67b858c8bad2882c2f6a33678f1af8fa2df"
 
 var frozenPerformanceManifestSHA256 = [32]byte{
-	0x8e, 0x6e, 0xb9, 0xf6, 0xb8, 0xaf, 0x2e, 0xb4,
-	0xeb, 0xb7, 0x40, 0xc8, 0x14, 0x13, 0x17, 0x6d,
-	0x3b, 0x26, 0xe8, 0xac, 0xa1, 0x8b, 0xf9, 0xbb,
-	0x03, 0x11, 0x17, 0xe6, 0xad, 0x34, 0x91, 0x1a,
+	0xe6, 0x46, 0x09, 0x8a, 0x2c, 0xfd, 0x58, 0x28,
+	0x31, 0x69, 0x99, 0x8b, 0x0a, 0xd4, 0xf1, 0x86,
+	0xa4, 0xfb, 0x03, 0x06, 0xa8, 0x90, 0x73, 0xda,
+	0x0d, 0x3b, 0xf7, 0x88, 0xfa, 0xe6, 0x70, 0x35,
 }
 
 // ReleasePlan is the executable workload subset of the frozen performance
@@ -25,6 +25,20 @@ type ReleasePlan struct {
 	Clean    ProfilePlan
 	Mobile   ProfilePlan
 	Edge     ProfilePlan
+	Adaptive AdaptivePlan
+}
+
+type AdaptivePlan struct {
+	ID                  string
+	Stages              []AdaptiveStagePlan
+	HarnessSlackSeconds int
+	CellWatchdogMinutes int
+}
+
+type AdaptiveStagePlan struct {
+	ProfileID              string   `json:"profile_id"`
+	Cold                   ColdPlan `json:"cold"`
+	CleanupDeadlineSeconds int      `json:"cleanup_deadline_seconds"`
 }
 
 type ManifestBinding struct {
@@ -106,14 +120,16 @@ type manifestPlan struct {
 	Digest        string `json:"digest"`
 	RunCount      int    `json:"run_count"`
 	Profiles      []struct {
-		ID                     string       `json:"id"`
-		Mode                   string       `json:"mode"`
-		Cold                   *ColdPlan    `json:"cold"`
-		RPC                    *RPCPlan     `json:"rpc"`
-		Bulk                   *BulkPlan    `json:"bulk"`
-		Network                *NetworkPlan `json:"network"`
-		CleanupDeadlineSeconds int          `json:"cleanup_deadline_seconds"`
-		CellWatchdogMinutes    int          `json:"cell_watchdog_minutes"`
+		ID                     string              `json:"id"`
+		Mode                   string              `json:"mode"`
+		Cold                   *ColdPlan           `json:"cold"`
+		RPC                    *RPCPlan            `json:"rpc"`
+		Bulk                   *BulkPlan           `json:"bulk"`
+		Network                *NetworkPlan        `json:"network"`
+		AdaptiveStages         []AdaptiveStagePlan `json:"adaptive_stages"`
+		HarnessSlackSeconds    int                 `json:"harness_slack_seconds"`
+		CleanupDeadlineSeconds int                 `json:"cleanup_deadline_seconds"`
+		CellWatchdogMinutes    int                 `json:"cell_watchdog_minutes"`
 	} `json:"profiles"`
 	FaultMatrix []struct {
 		ProfileID        string `json:"profile_id"`
@@ -146,7 +162,19 @@ func LoadReleasePlan(path string) (ReleasePlan, ManifestBinding, error) {
 		return ReleasePlan{}, ManifestBinding{}, err
 	}
 	profiles := make(map[string]ProfilePlan, 3)
+	var adaptive AdaptivePlan
 	for _, profile := range manifest.Profiles {
+		if profile.ID == "adaptive-selection-v1" {
+			if profile.Mode != "adaptive" || profile.Cold != nil || profile.RPC != nil || profile.Bulk != nil || profile.Network != nil ||
+				profile.CleanupDeadlineSeconds != 0 || len(profile.AdaptiveStages) != 2 {
+				return ReleasePlan{}, ManifestBinding{}, errors.New("adaptive-selection-v1 workload is incomplete")
+			}
+			adaptive = AdaptivePlan{
+				ID: profile.ID, Stages: append([]AdaptiveStagePlan(nil), profile.AdaptiveStages...),
+				HarnessSlackSeconds: profile.HarnessSlackSeconds, CellWatchdogMinutes: profile.CellWatchdogMinutes,
+			}
+			continue
+		}
 		if profile.ID != "clean-v1" && profile.ID != "mobile-v1" && profile.ID != "edge-v1" {
 			continue
 		}
@@ -166,10 +194,33 @@ func LoadReleasePlan(path string) (ReleasePlan, ManifestBinding, error) {
 	if len(profiles) != 3 {
 		return ReleasePlan{}, ManifestBinding{}, errors.New("performance manifest must contain clean-v1, mobile-v1, and edge-v1 profiles")
 	}
+	if err := validateAdaptivePlan(adaptive, profiles, manifest.RunCount); err != nil {
+		return ReleasePlan{}, ManifestBinding{}, err
+	}
 	return ReleasePlan{
 		RunCount: manifest.RunCount,
 		Clean:    profiles["clean-v1"], Mobile: profiles["mobile-v1"], Edge: profiles["edge-v1"],
+		Adaptive: adaptive,
 	}, binding, nil
+}
+
+func validateAdaptivePlan(plan AdaptivePlan, profiles map[string]ProfilePlan, runCount int) error {
+	if plan.ID != "adaptive-selection-v1" || len(plan.Stages) != 2 || plan.HarnessSlackSeconds != 450 || plan.CellWatchdogMinutes != 55 {
+		return errors.New("adaptive-selection-v1 does not match the frozen release contract")
+	}
+	phaseSeconds := 0
+	for index, profileID := range []string{"clean-v1", "mobile-v1"} {
+		stage := plan.Stages[index]
+		profile, ok := profiles[profileID]
+		if !ok || stage.ProfileID != profileID || stage.Cold != profile.Cold || stage.CleanupDeadlineSeconds != profile.CleanupDeadlineSeconds {
+			return fmt.Errorf("adaptive stage %d must reuse the exact %s cold and cleanup workload", index+1, profileID)
+		}
+		phaseSeconds += stage.Cold.PhaseDeadlineSeconds + stage.CleanupDeadlineSeconds
+	}
+	if runCount*phaseSeconds+plan.HarnessSlackSeconds > plan.CellWatchdogMinutes*60 {
+		return errors.New("adaptive-selection-v1 watchdog cannot cover every real stage run")
+	}
+	return nil
 }
 
 func loadFaultPlans(rows []struct {

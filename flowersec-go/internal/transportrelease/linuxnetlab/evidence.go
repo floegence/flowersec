@@ -22,8 +22,20 @@ type KernelFaultStats struct {
 }
 
 type KernelFaultEvidence struct {
-	Client KernelFaultStats `json:"client"`
-	Server KernelFaultStats `json:"server"`
+	Client      KernelFaultStats         `json:"client"`
+	Server      KernelFaultStats         `json:"server"`
+	ClientQdisc TrafficControlFaultStats `json:"client_qdisc"`
+	ServerQdisc TrafficControlFaultStats `json:"server_qdisc"`
+}
+
+type TrafficControlFaultStats struct {
+	Packets    uint64 `json:"packets"`
+	Bytes      uint64 `json:"bytes"`
+	Drops      uint64 `json:"drops"`
+	Overlimits uint64 `json:"overlimits"`
+	Requeues   uint64 `json:"requeues"`
+	Backlog    uint64 `json:"backlog_bytes"`
+	QueueLen   uint64 `json:"queue_length"`
 }
 
 func validateKernelFaultStats(direction string, stats KernelFaultStats) error {

@@ -21,11 +21,12 @@ import (
 const conformanceSmokeOwner = "transport-conformance-smoke"
 
 type releaseCaseDefinition struct {
-	ID       string
-	Profile  string
-	Carrier  carrier.Kind
-	Topology tunnelworkload.Topology
-	Suite    protocolv2.Suite
+	ID              string
+	Profile         string
+	Carrier         carrier.Kind
+	Topology        tunnelworkload.Topology
+	BrowserTopology string
+	Suite           protocolv2.Suite
 }
 
 var conformanceSmokeCases = []releaseCaseDefinition{
@@ -57,12 +58,22 @@ type caseSuiteReport struct {
 }
 
 type releaseCaseResult struct {
-	ID                  string            `json:"id"`
-	Profile             string            `json:"profile"`
-	Status              string            `json:"status"`
-	CompletedOperations int               `json:"completed_operations"`
-	ElapsedNanoseconds  int64             `json:"elapsed_nanoseconds"`
-	Artifacts           []releaseArtifact `json:"artifacts"`
+	ID                  string             `json:"id"`
+	Profile             string             `json:"profile"`
+	Status              string             `json:"status"`
+	CompletedOperations int                `json:"completed_operations"`
+	ElapsedNanoseconds  int64              `json:"elapsed_nanoseconds"`
+	Artifacts           []releaseArtifact  `json:"artifacts"`
+	RawSources          []releaseRawSource `json:"raw_sources,omitempty"`
+	Attachments         []releaseRawSource `json:"attachments,omitempty"`
+}
+
+type releaseRawSource struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Path      string `json:"path"`
+	SHA256    string `json:"sha256"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 type rawTraceArtifact struct {
@@ -73,10 +84,14 @@ type rawTraceArtifact struct {
 }
 
 type rawTraceRecord struct {
-	Sequence uint64 `json:"sequence"`
-	AtNS     int64  `json:"at_ns"`
-	Event    string `json:"event"`
-	Digest   string `json:"digest"`
+	Sequence       uint64 `json:"sequence"`
+	AtNS           int64  `json:"at_ns"`
+	Event          string `json:"event"`
+	Digest         string `json:"digest"`
+	ConnectionID   string `json:"connection_id,omitempty"`
+	NativeStreamID *int64 `json:"native_stream_id,omitempty"`
+	RequestID      string `json:"request_id,omitempty"`
+	Status         string `json:"status,omitempty"`
 }
 
 type rawMetricsArtifact struct {
@@ -87,9 +102,10 @@ type rawMetricsArtifact struct {
 }
 
 type rawMetricRecord struct {
-	Name  string  `json:"name"`
-	Value float64 `json:"value"`
-	Unit  string  `json:"unit"`
+	Name         string  `json:"name"`
+	Value        float64 `json:"value"`
+	Unit         string  `json:"unit"`
+	ConnectionID string  `json:"connection_id,omitempty"`
 }
 
 type rawConfigArtifact struct {
@@ -104,9 +120,16 @@ type rawConfigRecord struct {
 	Value string `json:"value"`
 }
 
-func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA, owner, mode string, _ transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) error {
-	if owner != conformanceSmokeOwner || mode != "normal" {
-		return fmt.Errorf("release case producer is unavailable for owner %q mode %q", owner, mode)
+func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA, sourceRoot, owner, mode, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) error {
+	if mode == "race" && !raceDetectorEnabled() {
+		return errors.New("race case suite requires a runner built with Go race instrumentation")
+	}
+	definitions, err := registeredCasesForOwner(owner, mode)
+	if err != nil {
+		return err
+	}
+	if err := validateReleaseCaseDefinitions(definitions); err != nil {
+		return err
 	}
 	kernel, err := kernelRelease()
 	if err != nil {
@@ -118,7 +141,87 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 		Runner: baselineRunner{OS: "linux", Architecture: "amd64", KernelRelease: kernel},
 		Owner:  owner, Mode: mode, StartedAt: time.Now().UTC(),
 	}
-	for _, definition := range conformanceSmokeCases {
+	for _, definition := range definitions {
+		if owner == browserSmokeOwner {
+			caseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			result, runErr := runBrowserSmokeCase(caseCtx, destination, definition, mode, sourceRoot, plan)
+			cancel()
+			if runErr != nil {
+				return fmt.Errorf("case %s: %w", definition.ID, runErr)
+			}
+			report.Results = append(report.Results, result)
+			continue
+		}
+		if owner == weaknetSystemOwner {
+			caseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			result, runErr := runWeaknetSystemCase(caseCtx, destination, definition, bpfObject)
+			cancel()
+			if runErr != nil {
+				return fmt.Errorf("case %s: %w", definition.ID, runErr)
+			}
+			report.Results = append(report.Results, result)
+			continue
+		}
+		if owner == soakOwner {
+			caseCtx, cancel := context.WithTimeout(context.Background(), productionSoakContract().Duration+2*time.Minute)
+			result, runErr := runRegisteredSoakCase(caseCtx, destination, definition)
+			cancel()
+			if runErr != nil {
+				return fmt.Errorf("case %s: %w", definition.ID, runErr)
+			}
+			report.Results = append(report.Results, result)
+			continue
+		}
+		if owner == capacityOwner {
+			caseCtx, cancel := context.WithTimeout(context.Background(), productionCapacityContract().Watchdog+30*time.Second)
+			result, runErr := runRegisteredCapacityCase(caseCtx, destination, definition, sourceRoot, plan)
+			cancel()
+			if runErr != nil {
+				return fmt.Errorf("case %s: %w", definition.ID, runErr)
+			}
+			report.Results = append(report.Results, result)
+			continue
+		}
+		if owner == weaknetFullOwner {
+			caseCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			result, runErr := runWeaknetFullCase(caseCtx, destination, definition, mode)
+			cancel()
+			if runErr != nil {
+				return fmt.Errorf("case %s: %w", definition.ID, runErr)
+			}
+			report.Results = append(report.Results, result)
+			continue
+		}
+		if owner == quicNativeSmokeOwner {
+			caseCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			result, runErr := runNativeSmokeCase(caseCtx, destination, definition, mode)
+			cancel()
+			if runErr != nil {
+				return fmt.Errorf("case %s: %w", definition.ID, runErr)
+			}
+			report.Results = append(report.Results, result)
+			continue
+		}
+		if owner == quicNativeProofOwner {
+			caseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			result, runErr := runNativeProofCase(caseCtx, destination, definition, mode, bpfObject)
+			cancel()
+			if runErr != nil {
+				return fmt.Errorf("case %s: %w", definition.ID, runErr)
+			}
+			report.Results = append(report.Results, result)
+			continue
+		}
+		if owner == quicNativeRaceOwner {
+			caseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			result, runErr := runNativeRaceCase(caseCtx, destination, definition, mode, sourceRoot, bpfObject, plan)
+			cancel()
+			if runErr != nil {
+				return fmt.Errorf("case %s: %w", definition.ID, runErr)
+			}
+			report.Results = append(report.Results, result)
+			continue
+		}
 		started := time.Now()
 		caseCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		completed, runErr := runConformanceSmokeCase(caseCtx, definition)
@@ -127,7 +230,7 @@ func runCaseSuite(reportPath string, destination *artifactDestination, sourceSHA
 			return fmt.Errorf("case %s: %w", definition.ID, runErr)
 		}
 		elapsed := time.Since(started)
-		artifacts, err := writeCaseIdentityArtifacts(destination, definition, completed, elapsed)
+		artifacts, err := writeCaseIdentityArtifactsForMode(destination, definition, mode, completed, elapsed)
 		if err != nil {
 			return fmt.Errorf("case %s artifacts: %w", definition.ID, err)
 		}
@@ -192,12 +295,16 @@ func runConformanceSmokeCase(ctx context.Context, definition releaseCaseDefiniti
 }
 
 func writeCaseIdentityArtifacts(destination *artifactDestination, definition releaseCaseDefinition, completed releaseCaseRun, elapsed time.Duration) ([]releaseArtifact, error) {
+	return writeCaseIdentityArtifactsForMode(destination, definition, "normal", completed, elapsed)
+}
+
+func writeCaseIdentityArtifactsForMode(destination *artifactDestination, definition releaseCaseDefinition, mode string, completed releaseCaseRun, elapsed time.Duration) ([]releaseArtifact, error) {
 	if destination == nil || completed.CompletedOperations < 1 || completed.NegotiatedSuite != definition.Suite || elapsed <= 0 {
 		return nil, errors.New("case artifacts require a destination and a successful measured workload")
 	}
-	contextName := "case " + definition.ID
+	contextName := releaseCaseContext(mode, definition.ID)
 	executionID := releaseCaseExecutionID(contextName)
-	directory := filepath.Join(destination.root.path, strings.ToLower(definition.ID))
+	directory := filepath.Join(destination.root.path, definition.artifactLabel())
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		return nil, err
 	}
@@ -250,6 +357,35 @@ func writeRawCaseArtifact(destination *artifactDestination, path, kind string, v
 		return releaseArtifact{}, err
 	}
 	data = append(data, '\n')
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return releaseArtifact{}, err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return releaseArtifact{}, err
+	}
+	if err := errors.Join(file.Sync(), file.Close()); err != nil {
+		return releaseArtifact{}, err
+	}
+	if err := destination.Verify(); err != nil {
+		return releaseArtifact{}, err
+	}
+	relative, err := filepath.Rel(destination.reportParent.path, path)
+	if err != nil || relative == "." || strings.HasPrefix(relative, "..") {
+		return releaseArtifact{}, errors.New("case artifact is outside the report directory")
+	}
+	digest := sha256.Sum256(data)
+	return releaseArtifact{Kind: kind, Path: filepath.ToSlash(relative), SHA256: hex.EncodeToString(digest[:]), SizeBytes: int64(len(data))}, nil
+}
+
+func writeRawCaseArtifactBytes(destination *artifactDestination, path, kind string, data []byte) (releaseArtifact, error) {
+	if err := destination.Verify(); err != nil {
+		return releaseArtifact{}, err
+	}
+	if len(data) == 0 {
+		return releaseArtifact{}, errors.New("case artifact must not be empty")
+	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return releaseArtifact{}, err

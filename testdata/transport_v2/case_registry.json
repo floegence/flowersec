@@ -46,10 +46,13 @@
     {"id":"CAP-DIRECT-WT-1000","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-direct-webtransport-1000","evidence_fields":["trace","qlog","metrics","resource","config"]},
     {"id":"CAP-TUNNEL-WT-WSS-1000","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-tunnel-webtransport-wss-1000","evidence_fields":["trace","qlog","metrics","resource","config"]},
     {"id":"CAP-TUNNEL-WT-QUIC-1000","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-tunnel-webtransport-quic-1000","evidence_fields":["trace","qlog","metrics","resource","config"]},
+    {"id":"CAP-STREAM-WT-DIRECT-100X128","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-streams-webtransport-direct-100x128","evidence_fields":["trace","qlog","metrics","resource","config"]},
+    {"id":"CAP-STREAM-WT-WSS-100X128","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-streams-webtransport-wss-100x128","evidence_fields":["trace","qlog","metrics","resource","config"]},
+    {"id":"CAP-STREAM-WT-QUIC-100X128","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-streams-webtransport-quic-100x128","evidence_fields":["trace","qlog","metrics","resource","config"]},
     {"id":"CAP-WW-1000","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-tunnel-ww-1000","evidence_fields":["trace","metrics","resource","config"]},
     {"id":"CAP-QQ-1000","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-tunnel-qq-1000","evidence_fields":["trace","qlog","metrics","resource","config"]},
     {"id":"CAP-WQ-1000","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-tunnel-wq-1000","evidence_fields":["trace","qlog","metrics","resource","config"]},
     {"id":"CAP-QW-1000","owner":"bench-transport-capacity","mode":"normal","required":true,"profile":"capacity-tunnel-qw-1000","evidence_fields":["trace","qlog","metrics","resource","config"]},
-    {"id":"CAP-SOAK-HOURLY","owner":"bench-transport-soak","mode":"normal","required":true,"profile":"hourly-weaknet-soak-v1","evidence_fields":["trace","metrics","resource","config"]}
+    {"id":"CAP-SOAK-HOURLY","owner":"bench-transport-soak","mode":"normal","required":true,"profile":"hourly-weaknet-soak-v1","evidence_fields":["trace","qlog","pcap","metrics","resource","config"]}
   ]
 }

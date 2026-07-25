@@ -21,14 +21,19 @@ type CommandRunner interface {
 }
 
 type Config struct {
-	ClientNamespace string
-	ServerNamespace string
-	ClientInterface string
-	ServerInterface string
-	ClientAddress   netip.Prefix
-	ServerAddress   netip.Prefix
-	LinkMTU         int
-	Firewall        string
+	ClientNamespace       string
+	ServerNamespace       string
+	RouterNamespace       string
+	ClientInterface       string
+	ServerInterface       string
+	RouterClientInterface string
+	RouterServerInterface string
+	ClientAddress         netip.Prefix
+	ServerAddress         netip.Prefix
+	RouterClientAddress   netip.Prefix
+	RouterServerAddress   netip.Prefix
+	LinkMTU               int
+	Firewall              string
 }
 
 type Lab struct {
@@ -50,6 +55,44 @@ type step struct {
 }
 
 func ConfigForCell(cellID string, run int, linkMTU int, firewall string) (Config, error) {
+	return configForCellFamily(cellID, run, linkMTU, firewall, false)
+}
+
+// ConfigForSystemCase derives an isolated IPv4 or IPv6 lab for one frozen
+// system-evidence case.
+func ConfigForSystemCase(caseID string, run int, linkMTU int, firewall string, ipv6 bool) (Config, error) {
+	return configForCellFamily(caseID, run, linkMTU, firewall, ipv6)
+}
+
+// ConfigForRoutedSystemCase derives a three-namespace path whose router
+// egress MTU can change without changing either endpoint's local route MTU.
+func ConfigForRoutedSystemCase(caseID string, run int, linkMTU int, firewall string, ipv6 bool) (Config, error) {
+	config, err := configForCellFamily(caseID, run, linkMTU, firewall, ipv6)
+	if err != nil {
+		return Config{}, err
+	}
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(caseID + ":" + strconv.Itoa(run)))
+	slot := int(hash.Sum32() % 16384)
+	third := slot / 64
+	fourth := (slot % 64) * 4
+	client, routerClient := netip.MustParsePrefix(fmt.Sprintf("198.18.%d.%d/30", third, fourth+1)), netip.MustParsePrefix(fmt.Sprintf("198.18.%d.%d/30", third, fourth+2))
+	routerServer, server := netip.MustParsePrefix(fmt.Sprintf("198.19.%d.%d/30", third, fourth+1)), netip.MustParsePrefix(fmt.Sprintf("198.19.%d.%d/30", third, fourth+2))
+	if ipv6 {
+		client = netip.MustParsePrefix(fmt.Sprintf("2001:db8:%x:1::1/126", slot))
+		routerClient = netip.MustParsePrefix(fmt.Sprintf("2001:db8:%x:1::2/126", slot))
+		routerServer = netip.MustParsePrefix(fmt.Sprintf("2001:db8:%x:2::1/126", slot))
+		server = netip.MustParsePrefix(fmt.Sprintf("2001:db8:%x:2::2/126", slot))
+	}
+	stem := fmt.Sprintf("fs%08x", hash.Sum32())
+	config.ClientAddress, config.ServerAddress = client, server
+	config.RouterNamespace = "fr-" + stem[2:10]
+	config.RouterClientInterface, config.RouterServerInterface = stem[:10]+"rc", stem[:10]+"rs"
+	config.RouterClientAddress, config.RouterServerAddress = routerClient, routerServer
+	return config, nil
+}
+
+func configForCellFamily(cellID string, run int, linkMTU int, firewall string, ipv6 bool) (Config, error) {
 	if run < 1 || run > 9999 || !regexp.MustCompile(`^[a-z0-9-]+$`).MatchString(cellID) {
 		return Config{}, errors.New("cell id and run must identify one release workload")
 	}
@@ -60,6 +103,10 @@ func ConfigForCell(cellID string, run int, linkMTU int, firewall string) (Config
 	fourth := (slot % 64) * 4
 	clientPrefix := netip.MustParsePrefix(fmt.Sprintf("198.18.%d.%d/30", third, fourth+1))
 	serverPrefix := netip.MustParsePrefix(fmt.Sprintf("198.18.%d.%d/30", third, fourth+2))
+	if ipv6 {
+		clientPrefix = netip.MustParsePrefix(fmt.Sprintf("2001:db8:%x::1/126", slot))
+		serverPrefix = netip.MustParsePrefix(fmt.Sprintf("2001:db8:%x::2/126", slot))
+	}
 	stem := fmt.Sprintf("fs%08x", hash.Sum32())
 	return Config{
 		ClientNamespace: "fc-" + stem[2:10], ServerNamespace: "fs-" + stem[2:10],
@@ -86,18 +133,60 @@ func open(ctx context.Context, runner CommandRunner, config Config, rollbackTime
 	steps := []step{
 		{command{"ip", []string{"netns", "add", config.ClientNamespace}}, &command{"ip", []string{"netns", "del", config.ClientNamespace}}},
 		{command{"ip", []string{"netns", "add", config.ServerNamespace}}, &command{"ip", []string{"netns", "del", config.ServerNamespace}}},
-		{command{"ip", []string{"link", "add", "name", config.ClientInterface, "netns", config.ClientNamespace, "type", "veth", "peer", "name", config.ServerInterface, "netns", config.ServerNamespace}}, nil},
-		{command{"ip", []string{"-n", config.ClientNamespace, "link", "set", "dev", config.ClientInterface, "mtu", strconv.Itoa(config.LinkMTU)}}, nil},
-		{command{"ip", []string{"-n", config.ServerNamespace, "link", "set", "dev", config.ServerInterface, "mtu", strconv.Itoa(config.LinkMTU)}}, nil},
-		{command{"ip", []string{"-n", config.ClientNamespace, "addr", "add", config.ClientAddress.String(), "dev", config.ClientInterface}}, nil},
-		{command{"ip", []string{"-n", config.ServerNamespace, "addr", "add", config.ServerAddress.String(), "dev", config.ServerInterface}}, nil},
-		{command{"ip", []string{"-n", config.ClientNamespace, "link", "set", "dev", "lo", "up"}}, nil},
-		{command{"ip", []string{"-n", config.ServerNamespace, "link", "set", "dev", "lo", "up"}}, nil},
-		{command{"ip", []string{"-n", config.ClientNamespace, "link", "set", "dev", config.ClientInterface, "up"}}, nil},
-		{command{"ip", []string{"-n", config.ServerNamespace, "link", "set", "dev", config.ServerInterface, "up"}}, nil},
+	}
+	if config.RouterNamespace == "" {
+		steps = append(steps,
+			step{command{"ip", []string{"link", "add", "name", config.ClientInterface, "netns", config.ClientNamespace, "type", "veth", "peer", "name", config.ServerInterface, "netns", config.ServerNamespace}}, nil},
+			step{command{"ip", []string{"-n", config.ClientNamespace, "link", "set", "dev", config.ClientInterface, "mtu", strconv.Itoa(config.LinkMTU)}}, nil},
+			step{command{"ip", []string{"-n", config.ServerNamespace, "link", "set", "dev", config.ServerInterface, "mtu", strconv.Itoa(config.LinkMTU)}}, nil},
+			step{command{"ip", addressAddArguments(config.ClientNamespace, config.ClientAddress, config.ClientInterface)}, nil},
+			step{command{"ip", addressAddArguments(config.ServerNamespace, config.ServerAddress, config.ServerInterface)}, nil},
+		)
+	} else {
+		steps = append(steps,
+			step{command{"ip", []string{"netns", "add", config.RouterNamespace}}, &command{"ip", []string{"netns", "del", config.RouterNamespace}}},
+			step{command{"ip", []string{"link", "add", "name", config.ClientInterface, "netns", config.ClientNamespace, "type", "veth", "peer", "name", config.RouterClientInterface, "netns", config.RouterNamespace}}, nil},
+			step{command{"ip", []string{"link", "add", "name", config.RouterServerInterface, "netns", config.RouterNamespace, "type", "veth", "peer", "name", config.ServerInterface, "netns", config.ServerNamespace}}, nil},
+		)
+		for _, item := range []struct{ namespace, device string }{
+			{config.ClientNamespace, config.ClientInterface}, {config.RouterNamespace, config.RouterClientInterface},
+			{config.RouterNamespace, config.RouterServerInterface}, {config.ServerNamespace, config.ServerInterface},
+		} {
+			steps = append(steps, step{command{"ip", []string{"-n", item.namespace, "link", "set", "dev", item.device, "mtu", strconv.Itoa(config.LinkMTU)}}, nil})
+		}
+		for _, item := range []struct{ namespace, device, address string }{
+			{config.ClientNamespace, config.ClientInterface, config.ClientAddress.String()},
+			{config.RouterNamespace, config.RouterClientInterface, config.RouterClientAddress.String()},
+			{config.RouterNamespace, config.RouterServerInterface, config.RouterServerAddress.String()},
+			{config.ServerNamespace, config.ServerInterface, config.ServerAddress.String()},
+		} {
+			address := netip.MustParsePrefix(item.address)
+			steps = append(steps, step{command{"ip", addressAddArguments(item.namespace, address, item.device)}, nil})
+		}
+	}
+	for _, item := range []struct{ namespace, device string }{{config.ClientNamespace, config.ClientInterface}, {config.ServerNamespace, config.ServerInterface}} {
+		steps = append(steps, step{command{"ip", []string{"-n", item.namespace, "link", "set", "dev", "lo", "up"}}, nil},
+			step{command{"ip", []string{"-n", item.namespace, "link", "set", "dev", item.device, "up"}}, nil})
+	}
+	if config.RouterNamespace != "" {
+		steps = append(steps,
+			step{command{"ip", []string{"-n", config.RouterNamespace, "link", "set", "dev", "lo", "up"}}, nil},
+			step{command{"ip", []string{"-n", config.RouterNamespace, "link", "set", "dev", config.RouterClientInterface, "up"}}, nil},
+			step{command{"ip", []string{"-n", config.RouterNamespace, "link", "set", "dev", config.RouterServerInterface, "up"}}, nil},
+			step{command{"ip", []string{"-n", config.ClientNamespace, "route", "add", config.ServerAddress.Masked().String(), "via", config.RouterClientAddress.Addr().String()}}, nil},
+			step{command{"ip", []string{"-n", config.ServerNamespace, "route", "add", config.ClientAddress.Masked().String(), "via", config.RouterServerAddress.Addr().String()}}, nil},
+		)
+		forwardKey := "net.ipv4.ip_forward=1"
+		if config.ClientAddress.Addr().Is6() {
+			forwardKey = "net.ipv6.conf.all.forwarding=1"
+		}
+		steps = append(steps, step{command{"ip", []string{"netns", "exec", config.RouterNamespace, "sysctl", "-q", "-w", forwardKey}}, nil})
 	}
 	steps = append(steps, firewallSteps(config.ClientNamespace)...)
 	steps = append(steps, firewallSteps(config.ServerNamespace)...)
+	if config.RouterNamespace != "" {
+		steps = append(steps, routerFirewallSteps(config.RouterNamespace)...)
+	}
 	for _, step := range steps {
 		if err := lab.run(ctx, step.do); err != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
@@ -113,6 +202,14 @@ func open(ctx context.Context, runner CommandRunner, config Config, rollbackTime
 		}
 	}
 	return lab, nil
+}
+
+func addressAddArguments(namespace string, address netip.Prefix, device string) []string {
+	arguments := []string{"-n", namespace, "addr", "add", address.String(), "dev", device}
+	if address.Addr().Is6() {
+		arguments = append(arguments, "nodad")
+	}
+	return arguments
 }
 
 func (lab *Lab) rollback(ctx context.Context) error {
@@ -144,7 +241,21 @@ func firewallSteps(namespace string) []step {
 		{"ip", []string{"netns", "exec", namespace, "nft", "add", "rule", "inet", "flowersec", "input", "ct", "state", "established,related", "accept"}},
 		{"ip", []string{"netns", "exec", namespace, "nft", "add", "rule", "inet", "flowersec", "input", "meta", "l4proto", "{", "tcp", ",", "udp", "}", "accept"}},
 		{"ip", []string{"netns", "exec", namespace, "nft", "add", "rule", "inet", "flowersec", "input", "ip", "protocol", "icmp", "icmp", "type", "destination-unreachable", "accept"}},
+		{"ip", []string{"netns", "exec", namespace, "nft", "add", "rule", "inet", "flowersec", "input", "ip6", "nexthdr", "ipv6-icmp", "icmpv6", "type", "{", "133", ",", "134", ",", "135", ",", "136", "}", "accept"}},
 		{"ip", []string{"netns", "exec", namespace, "nft", "add", "rule", "inet", "flowersec", "input", "ip6", "nexthdr", "ipv6-icmp", "icmpv6", "type", "packet-too-big", "accept"}},
+	}
+	steps := make([]step, 0, len(commands))
+	for _, value := range commands {
+		steps = append(steps, step{do: value})
+	}
+	return steps
+}
+
+func routerFirewallSteps(namespace string) []step {
+	commands := []command{
+		{"ip", []string{"netns", "exec", namespace, "nft", "add", "table", "inet", "flowersec"}},
+		{"ip", []string{"netns", "exec", namespace, "nft", "add", "chain", "inet", "flowersec", "forward", "{", "type", "filter", "hook", "forward", "priority", "0", ";", "policy", "drop", ";", "}"}},
+		{"ip", []string{"netns", "exec", namespace, "nft", "add", "rule", "inet", "flowersec", "forward", "meta", "l4proto", "{", "tcp", ",", "udp", ",", "icmp", ",", "ipv6-icmp", "}", "accept"}},
 	}
 	steps := make([]step, 0, len(commands))
 	for _, value := range commands {
@@ -188,9 +299,27 @@ func validateConfig(config Config) error {
 		!identifierPattern.MatchString(config.ClientInterface) || !identifierPattern.MatchString(config.ServerInterface) ||
 		config.ClientNamespace == config.ServerNamespace || config.ClientInterface == config.ServerInterface ||
 		!config.ClientAddress.IsValid() || !config.ServerAddress.IsValid() ||
-		config.ClientAddress.Bits() != 30 || config.ServerAddress.Bits() != 30 || config.ClientAddress.Masked() != config.ServerAddress.Masked() ||
+		config.ClientAddress.Addr().Is4() != config.ServerAddress.Addr().Is4() ||
+		config.ClientAddress.Bits() != config.ServerAddress.Bits() ||
+		config.ClientAddress.Addr().Is4() && config.ClientAddress.Bits() != 30 ||
+		config.ClientAddress.Addr().Is6() && config.ClientAddress.Bits() != 126 ||
 		config.ClientAddress.Addr() == config.ServerAddress.Addr() || config.LinkMTU < 1280 || config.LinkMTU > 9000 || config.Firewall != FrozenFirewall {
 		return errors.New("linux netlab configuration is outside the frozen release contract")
+	}
+	if config.RouterNamespace == "" {
+		if config.ClientAddress.Masked() != config.ServerAddress.Masked() || config.RouterClientInterface != "" || config.RouterServerInterface != "" ||
+			config.RouterClientAddress.IsValid() || config.RouterServerAddress.IsValid() {
+			return errors.New("direct linux netlab routing configuration is invalid")
+		}
+		return nil
+	}
+	if !identifierPattern.MatchString(config.RouterNamespace) || !identifierPattern.MatchString(config.RouterClientInterface) ||
+		!identifierPattern.MatchString(config.RouterServerInterface) || config.RouterNamespace == config.ClientNamespace || config.RouterNamespace == config.ServerNamespace ||
+		config.RouterClientInterface == config.RouterServerInterface || !config.RouterClientAddress.IsValid() || !config.RouterServerAddress.IsValid() ||
+		config.RouterClientAddress.Addr().Is4() != config.ClientAddress.Addr().Is4() || config.RouterServerAddress.Addr().Is4() != config.ServerAddress.Addr().Is4() ||
+		config.RouterClientAddress.Masked() != config.ClientAddress.Masked() || config.RouterServerAddress.Masked() != config.ServerAddress.Masked() ||
+		config.ClientAddress.Masked() == config.ServerAddress.Masked() {
+		return errors.New("routed linux netlab configuration is invalid")
 	}
 	return nil
 }

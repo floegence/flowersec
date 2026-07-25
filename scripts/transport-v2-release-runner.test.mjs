@@ -36,7 +36,7 @@ test("release wrapper rejects calls outside the two-flag Make contract", () => {
 test("release wrapper accepts every Make release target before path validation", () => {
   for (const target of [
     "all", "transport-conformance-smoke", "transport-conformance-full", "weaknet-full", "weaknet-system",
-    "quic-native-proof", "quic-native-race", "bench-transport-capacity",
+    "quic-native-smoke", "quic-native-proof", "quic-native-race", "bench-transport-capacity",
     "bench-transport-soak", "bench-transport-ab",
   ]) {
     const result = runRunner(["--target", target, "--report", "relative-report.json"]);
@@ -56,19 +56,24 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
   assert.match(runner, /readonly source_root=\/workspace\/flowersec/);
   assert.match(runner, /git -C "\$source_root" status --porcelain --untracked-files=all/);
   assert.match(runner, /merge-base --is-ancestor "\$base_sha" "\$final_sha"/);
+	assert.match(runner, /git clone --quiet --no-local --no-checkout "\$source_root" "\$base_source_root"/);
+	assert.match(runner, /checkout --quiet --detach "\$base_sha"/);
+	assert.match(runner, /base and final performance manifests must be byte-identical/);
   assert.match(runner, /ID:-} == ubuntu && \$\{VERSION_ID:-} == 24\.04/);
   assert.match(runner, /actual_kernel=\$\(uname -r\)/);
   assert.match(runner, /host kernel \$actual_kernel does not match frozen policy \$expected_kernel/);
   assert.match(runner, /ip netns add "\$probe_namespace"/);
-  assert.match(runner, /go build -trimpath -buildvcs=true -o "\$low_level_runner"/);
+  assert.match(runner, /go build -trimpath -buildvcs=false -o "\$low_level_runner"/);
+	assert.match(runner, /go build -race -trimpath -buildvcs=false -o "\$race_low_level_runner"/);
+	assert.match(runner, /go build -trimpath -buildvcs=false -o "\$base_low_level_runner"/);
   assert.match(runner, /vcs\\\.revision=/);
   assert.match(runner, /vcs\\\.modified=/);
   assert.match(runner, /clang -O2 -g -Wall -Werror -target bpf -D__TARGET_ARCH_x86/);
   assert.match(runner, /runner build changed the source checkout/);
   assert.match(runner, /"\$transportcheck" collect \\/);
   for (const flag of [
-    "manifest", "registry", "repo", "base-sha", "final-sha", "target", "report", "artifact-dir",
-    "runner-executable", "runner-wrapper", "bpf-object", "host-bpftool",
+    "manifest", "registry", "repo", "base-repo", "base-sha", "final-sha", "target", "report", "artifact-dir",
+    "runner-executable", "race-runner-executable", "base-runner-executable", "runner-wrapper", "bpf-object", "host-bpftool",
     "trust-policy", "effective-config", "kernel-release",
   ]) {
     assert.match(runner, new RegExp(`-${flag} `), `collect argv omits -${flag}`);
@@ -83,6 +88,7 @@ test("provision installs the source-matched wrapper at one stable container path
   assert.match(provision, /\/usr\/local\/bin\/flowersec-transport-v2-release-runner/);
   assert.match(provision, /test -x \/usr\/local\/bin\/flowersec-transport-v2-release-runner/);
   assert.match(provision, /git config --global --add safe\.directory \/workspace\/flowersec/);
+  assert.match(provision, /git config --global --add safe\.directory \/workspace\/flowersec\/\.git/);
   assert.match(provision, /git -C \/workspace\/flowersec rev-parse --show-toplevel/);
   assert.match(provision, /sudo install -d -o root -g root -m 0755 "\$runner_root\/evidence"/);
   assert.match(provision, /FLOWERSEC_RELEASE_OWNER_UID=\$release_owner_uid/);

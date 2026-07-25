@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"runtime/debug"
 	"strings"
 	"time"
 
@@ -26,31 +25,33 @@ import (
 )
 
 const (
-	baselineTarget    = "direct-clean-baseline"
-	networkCellTarget = "direct-network-profile-cell"
-	tunnelCellTarget  = "tunnel-network-profile-cell"
-	browserCellTarget = "browser-webtransport-cell"
-	caseSuiteTarget   = "release-case-suite"
-	networkWorkerArg  = "--network-cell-worker"
-	browserWorkerArg  = "--browser-cell-worker"
-	networkModeDirect = "direct"
-	networkModeTunnel = "tunnel"
+	baselineTarget      = "direct-clean-baseline"
+	networkCellTarget   = "direct-network-profile-cell"
+	tunnelCellTarget    = "tunnel-network-profile-cell"
+	browserCellTarget   = "browser-webtransport-cell"
+	adaptiveCellTarget  = "adaptive-selection-cell"
+	caseSuiteTarget     = "release-case-suite"
+	networkWorkerArg    = "--network-cell-worker"
+	systemWorkerArg     = "--weaknet-system-worker"
+	browserWorkerArg    = "--browser-cell-worker"
+	networkModeDirect   = "direct"
+	networkModeTunnel   = "tunnel"
+	networkModeAdaptive = "adaptive"
 )
 
 var gitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-var buildSourceSHA string
-
 type baselineReport struct {
-	SchemaVersion  int                     `json:"schema_version"`
-	Classification string                  `json:"classification"`
-	SourceSHA      string                  `json:"source_sha"`
-	ManifestDigest string                  `json:"manifest_digest"`
-	ManifestSHA256 string                  `json:"manifest_file_sha256"`
-	Runner         baselineRunner          `json:"runner"`
-	StartedAt      time.Time               `json:"started_at"`
-	FinishedAt     time.Time               `json:"finished_at"`
-	Results        []baselineCarrierResult `json:"results"`
+	SchemaVersion   int                     `json:"schema_version"`
+	Classification  string                  `json:"classification"`
+	SourceSHA       string                  `json:"source_sha"`
+	ManifestDigest  string                  `json:"manifest_digest"`
+	ManifestSHA256  string                  `json:"manifest_file_sha256"`
+	BPFObjectSHA256 string                  `json:"bpf_object_sha256"`
+	Runner          baselineRunner          `json:"runner"`
+	StartedAt       time.Time               `json:"started_at"`
+	FinishedAt      time.Time               `json:"finished_at"`
+	Results         []baselineCarrierResult `json:"results"`
 }
 
 type networkCellReport struct {
@@ -124,8 +125,17 @@ type baselineCarrierResult struct {
 	Bulk            transportrelease.BulkResult          `json:"bulk"`
 	CleanupDuration time.Duration                        `json:"cleanup_duration_ns"`
 	Resource        transportrelease.ResourceMeasurement `json:"resource"`
+	Phases          []baselinePhaseMeasurement           `json:"phases"`
 	Kernel          *networkKernelResult                 `json:"kernel,omitempty"`
 	Artifacts       []releaseArtifact                    `json:"artifacts"`
+}
+
+type baselinePhaseMeasurement struct {
+	Phase         string                               `json:"phase"`
+	Resource      transportrelease.ResourceMeasurement `json:"resource"`
+	ActiveStreams int                                  `json:"active_streams"`
+	KernelStart   *linuxnetlab.KernelFaultEvidence     `json:"kernel_start,omitempty"`
+	KernelFinish  *linuxnetlab.KernelFaultEvidence     `json:"kernel_finish,omitempty"`
 }
 
 type networkKernelResult struct {
@@ -139,13 +149,15 @@ type networkKernelResult struct {
 }
 
 type networkWorkerRequest struct {
-	Mode            string                       `json:"mode"`
-	Kind            carrier.Kind                 `json:"kind"`
-	Topology        tunnelworkload.Topology      `json:"topology"`
-	Plan            transportrelease.ProfilePlan `json:"plan"`
-	ClientNamespace string                       `json:"client_namespace"`
-	ServerNamespace string                       `json:"server_namespace"`
-	ServerAddress   string                       `json:"server_address"`
+	Mode               string                               `json:"mode"`
+	Kind               carrier.Kind                         `json:"kind"`
+	Topology           tunnelworkload.Topology              `json:"topology"`
+	AdaptiveCandidates []transportrelease.AdaptiveCandidate `json:"adaptive_candidates,omitempty"`
+	Plan               transportrelease.ProfilePlan         `json:"plan"`
+	ClientNamespace    string                               `json:"client_namespace"`
+	ServerNamespace    string                               `json:"server_namespace"`
+	ServerAddress      string                               `json:"server_address"`
+	KernelCounters     bool                                 `json:"kernel_counters,omitempty"`
 }
 
 type tunnelCarrierResult struct {
@@ -168,6 +180,13 @@ func main() {
 	}
 	if len(os.Args) == 2 && os.Args[1] == networkWorkerArg {
 		if err := runNetworkWorker(os.Stdin, os.Stdout); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == systemWorkerArg {
+		if err := runWeaknetSystemWorker(os.Stdin, os.Stdout); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -197,7 +216,7 @@ func run(args []string) (resultErr error) {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget && *target != browserCellTarget && *target != caseSuiteTarget) || *manifestPath == "" || *reportPath == "" || *artifactDir == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
+	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget && *target != browserCellTarget && *target != adaptiveCellTarget && *target != caseSuiteTarget) || *manifestPath == "" || *reportPath == "" || *artifactDir == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
 		return errors.New("runner requires a supported --target, --manifest, --report, --artifact-dir, --source-root, and a full --source-sha")
 	}
 	destination, err := newArtifactDestination(*artifactDir, *reportPath)
@@ -208,13 +227,6 @@ func run(args []string) (resultErr error) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return errors.New("direct clean baseline requires Linux amd64")
 	}
-	actualSourceSHA, err := executableSourceSHA()
-	if err != nil {
-		return err
-	}
-	if actualSourceSHA != *sourceSHA {
-		return fmt.Errorf("source SHA %s does not match executable revision %s", *sourceSHA, actualSourceSHA)
-	}
 	if err := verifySourceCheckout(*sourceRoot, *manifestPath, *sourceSHA); err != nil {
 		return err
 	}
@@ -223,10 +235,14 @@ func run(args []string) (resultErr error) {
 		return err
 	}
 	if *target == caseSuiteTarget {
-		if *profileID != "" || *carrierName != "" || *topologyName != "" || *bpfObject != "" {
-			return errors.New("release case suite does not accept performance or network profile flags")
+		if *profileID != "" || *carrierName != "" || *topologyName != "" {
+			return errors.New("release case suite does not accept performance profile or topology flags")
 		}
-		return runCaseSuite(*reportPath, destination, *sourceSHA, *caseOwner, *caseMode, plan, manifest)
+		needsBPF := *caseOwner == quicNativeProofOwner || *caseOwner == "weaknet-system" || *caseOwner == "quic-native-race"
+		if needsBPF != (*bpfObject != "") {
+			return errors.New("release case suite BPF object does not match its owner")
+		}
+		return runCaseSuite(*reportPath, destination, *sourceSHA, *sourceRoot, *caseOwner, *caseMode, *bpfObject, plan, manifest)
 	}
 	if *caseOwner != "" || *caseMode != "" {
 		return errors.New("performance cell targets do not accept case owner or mode")
@@ -249,9 +265,25 @@ func run(args []string) (resultErr error) {
 		}
 		return runBrowserCell(*reportPath, destination, *sourceSHA, *sourceRoot, *profileID, *topologyName, *bpfObject, plan, manifest)
 	}
-	if *profileID != "" || *carrierName != "" || *topologyName != "" || *bpfObject != "" {
-		return errors.New("direct clean baseline does not accept network profile flags")
+	if *target == adaptiveCellTarget {
+		if *carrierName != "" {
+			return errors.New("adaptive selection cell does not accept --carrier")
+		}
+		return runAdaptiveCell(*reportPath, destination, *sourceSHA, *profileID, *topologyName, *bpfObject, plan, manifest)
 	}
+	if *profileID != "" || *carrierName != "" || *topologyName != "" || *bpfObject == "" {
+		return errors.New("direct clean baseline requires --bpf-object and does not accept network profile flags")
+	}
+	bpfBytes, err := linuxnetlab.ReadVerifiedBPFObject(*bpfObject)
+	if err != nil {
+		return err
+	}
+	frozenBPFObject, cleanupBPFObject, err := freezeBPFObject(bpfBytes)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, cleanupBPFObject()) }()
+	bpfDigest := sha256.Sum256(bpfBytes)
 	kernel, err := kernelRelease()
 	if err != nil {
 		return err
@@ -259,9 +291,9 @@ func run(args []string) (resultErr error) {
 	report := baselineReport{
 		SchemaVersion: 1, Classification: "linux_transport_workload_baseline",
 		SourceSHA: *sourceSHA, ManifestDigest: manifest.Digest,
-		ManifestSHA256: hex.EncodeToString(manifest.SHA256Sum[:]),
-		Runner:         baselineRunner{OS: runtime.GOOS, Architecture: runtime.GOARCH, KernelRelease: kernel},
-		StartedAt:      time.Now().UTC(),
+		ManifestSHA256: hex.EncodeToString(manifest.SHA256Sum[:]), BPFObjectSHA256: hex.EncodeToString(bpfDigest[:]),
+		Runner:    baselineRunner{OS: runtime.GOOS, Architecture: runtime.GOARCH, KernelRelease: kernel},
+		StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(plan.Clean.CellWatchdogMinutes) * time.Minute
 	globalCtx, cancel := context.WithTimeout(context.Background(), 3*cellDeadline)
@@ -270,7 +302,7 @@ func run(args []string) (resultErr error) {
 		cellCtx, cancelCell := context.WithTimeout(globalCtx, cellDeadline)
 		cellStarted := time.Now()
 		for _, runNumber := range cell.Runs {
-			result, err := runNetworkCarrier(cellCtx, cell.Carrier, plan.Clean, runNumber, "", destination)
+			result, err := runNetworkCarrier(cellCtx, cell.Carrier, plan.Clean, runNumber, frozenBPFObject, destination)
 			if err != nil {
 				cancelCell()
 				return fmt.Errorf("%s run %d baseline: %w", cell.Carrier, runNumber, err)
@@ -314,10 +346,12 @@ func runCarrier(ctx context.Context, kind carrier.Kind, plan transportrelease.Pr
 	if err != nil {
 		return baselineCarrierResult{}, err
 	}
-	return runEndpointCarrier(ctx, endpoint, kind, plan)
+	return runEndpointCarrier(ctx, endpoint, kind, plan, nil)
 }
 
-func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductDirectEndpoint, kind carrier.Kind, plan transportrelease.ProfilePlan) (baselineCarrierResult, error) {
+type kernelEvidenceSampler func(context.Context) (linuxnetlab.KernelFaultEvidence, error)
+
+func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductDirectEndpoint, kind carrier.Kind, plan transportrelease.ProfilePlan, sampleKernel kernelEvidenceSampler) (baselineCarrierResult, error) {
 	resourceStart, err := transportrelease.CaptureResourceSnapshot()
 	if err != nil {
 		return baselineCarrierResult{}, err
@@ -330,6 +364,47 @@ func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductD
 			cancel()
 		}
 	}()
+	phases := make([]baselinePhaseMeasurement, 0, 4)
+	var phaseKernelStart *linuxnetlab.KernelFaultEvidence
+	startPhase := func() error {
+		phaseKernelStart = nil
+		if sampleKernel == nil {
+			return nil
+		}
+		snapshot, err := sampleKernel(ctx)
+		if err != nil {
+			return err
+		}
+		phaseKernelStart = &snapshot
+		return nil
+	}
+	finishPhase := func(name string, start transportrelease.ResourceSnapshot, activeStreams int) error {
+		finish, err := transportrelease.CaptureResourceSnapshot()
+		if err != nil {
+			return err
+		}
+		measurement, err := transportrelease.CompleteResourceMeasurement(start, finish)
+		if err != nil {
+			return err
+		}
+		var kernelFinish *linuxnetlab.KernelFaultEvidence
+		if sampleKernel != nil {
+			snapshot, err := sampleKernel(ctx)
+			if err != nil {
+				return err
+			}
+			kernelFinish = &snapshot
+		}
+		phases = append(phases, baselinePhaseMeasurement{Phase: name, Resource: measurement, ActiveStreams: activeStreams, KernelStart: phaseKernelStart, KernelFinish: kernelFinish})
+		return nil
+	}
+	if err := startPhase(); err != nil {
+		return baselineCarrierResult{}, err
+	}
+	coldResourceStart, err := transportrelease.CaptureResourceSnapshot()
+	if err != nil {
+		return baselineCarrierResult{}, err
+	}
 	coldLimit := time.Duration(plan.Cold.PhaseDeadlineSeconds) * time.Second
 	coldCtx, cancelCold := context.WithTimeout(ctx, coldLimit)
 	coldStarted := time.Now()
@@ -341,6 +416,16 @@ func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductD
 	cancelCold()
 	if err != nil || deadlineErr != nil {
 		return baselineCarrierResult{}, errors.Join(err, deadlineErr)
+	}
+	if err := finishPhase("cold", coldResourceStart, 0); err != nil {
+		return baselineCarrierResult{}, err
+	}
+	if err := startPhase(); err != nil {
+		return baselineCarrierResult{}, err
+	}
+	rpcResourceStart, err := transportrelease.CaptureResourceSnapshot()
+	if err != nil {
+		return baselineCarrierResult{}, err
 	}
 	rpcLimit := time.Duration(plan.RPC.PhaseDeadlineSeconds) * time.Second
 	rpcCtx, cancelRPC := context.WithTimeout(ctx, rpcLimit)
@@ -367,6 +452,16 @@ func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductD
 	if err != nil || deadlineErr != nil {
 		return baselineCarrierResult{}, errors.Join(err, deadlineErr)
 	}
+	if err := finishPhase("rpc", rpcResourceStart, 0); err != nil {
+		return baselineCarrierResult{}, err
+	}
+	if err := startPhase(); err != nil {
+		return baselineCarrierResult{}, err
+	}
+	bulkResourceStart, err := transportrelease.CaptureResourceSnapshot()
+	if err != nil {
+		return baselineCarrierResult{}, err
+	}
 	bulkLimit := time.Duration(plan.Bulk.PhaseDeadlineSeconds) * time.Second
 	bulkCtx, cancelBulk := context.WithTimeout(ctx, bulkLimit)
 	bulkStarted := time.Now()
@@ -375,6 +470,16 @@ func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductD
 	cancelBulk()
 	if err != nil || deadlineErr != nil {
 		return baselineCarrierResult{}, errors.Join(err, deadlineErr)
+	}
+	if err := finishPhase("bulk", bulkResourceStart, bulk.ActiveStreams); err != nil {
+		return baselineCarrierResult{}, err
+	}
+	if err := startPhase(); err != nil {
+		return baselineCarrierResult{}, err
+	}
+	cleanupResourceStart, err := transportrelease.CaptureResourceSnapshot()
+	if err != nil {
+		return baselineCarrierResult{}, err
 	}
 	cleanupStarted := time.Now()
 	cleanupLimit := time.Duration(plan.CleanupDeadlineSeconds) * time.Second
@@ -387,6 +492,9 @@ func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductD
 	if err != nil || deadlineErr != nil {
 		return baselineCarrierResult{}, errors.Join(err, deadlineErr)
 	}
+	if err := finishPhase("cleanup", cleanupResourceStart, 0); err != nil {
+		return baselineCarrierResult{}, err
+	}
 	resourceFinish, err := transportrelease.CaptureResourceSnapshot()
 	if err != nil {
 		return baselineCarrierResult{}, err
@@ -397,7 +505,7 @@ func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductD
 	}
 	return baselineCarrierResult{
 		Carrier: string(kind), Cold: cold, RPC: rpc, Bulk: bulk,
-		CleanupDuration: time.Since(cleanupStarted), Resource: resource,
+		CleanupDuration: time.Since(cleanupStarted), Resource: resource, Phases: phases,
 	}, nil
 }
 
@@ -541,7 +649,7 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 	}
 	request := networkWorkerRequest{
 		Mode: networkModeDirect, Kind: kind, Plan: plan, ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
-		ServerAddress: config.ServerAddress.Addr().String(),
+		ServerAddress: config.ServerAddress.Addr().String(), KernelCounters: bpfObject != "",
 	}
 	requestJSON, err := json.Marshal(request)
 	if err != nil {
@@ -592,25 +700,28 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 }
 
 func runTunnelCell(reportPath string, destination *artifactDestination, sourceSHA, profileID string, topology tunnelworkload.Topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
-	if profileID != "mobile-v1" && profileID != "edge-v1" {
-		return errors.New("tunnel network profile cell requires mobile-v1 or edge-v1")
-	}
 	if _, _, err := topology.Carriers(); err != nil {
 		return err
 	}
-	bpfBytes, err := linuxnetlab.ReadVerifiedBPFObject(bpfObject)
+	profile, err := tunnelProfile(plan, profileID, bpfObject)
 	if err != nil {
 		return err
 	}
-	frozenBPFObject, cleanupBPFObject, err := freezeBPFObject(bpfBytes)
-	if err != nil {
-		return err
-	}
-	defer func() { resultErr = errors.Join(resultErr, cleanupBPFObject()) }()
-	bpfDigest := sha256.Sum256(bpfBytes)
-	profile := plan.Mobile
-	if profileID == "edge-v1" {
-		profile = plan.Edge
+	frozenBPFObject := ""
+	bpfDigest := ""
+	if bpfObject != "" {
+		bpfBytes, err := linuxnetlab.ReadVerifiedBPFObject(bpfObject)
+		if err != nil {
+			return err
+		}
+		var cleanupBPFObject func() error
+		frozenBPFObject, cleanupBPFObject, err = freezeBPFObject(bpfBytes)
+		if err != nil {
+			return err
+		}
+		defer func() { resultErr = errors.Join(resultErr, cleanupBPFObject()) }()
+		digest := sha256.Sum256(bpfBytes)
+		bpfDigest = hex.EncodeToString(digest[:])
 	}
 	kernel, err := kernelRelease()
 	if err != nil {
@@ -622,7 +733,7 @@ func runTunnelCell(reportPath string, destination *artifactDestination, sourceSH
 		ManifestSHA256: hex.EncodeToString(manifest.SHA256Sum[:]),
 		Runner:         baselineRunner{OS: runtime.GOOS, Architecture: runtime.GOARCH, KernelRelease: kernel},
 		ProfileID:      profile.ID, Network: profile.Network, Fault: profile.Fault, Topology: topology,
-		BPFObjectSHA256: hex.EncodeToString(bpfDigest[:]), StartedAt: time.Now().UTC(),
+		BPFObjectSHA256: bpfDigest, StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
 	cellCtx, cancelCell := context.WithTimeout(context.Background(), cellDeadline)
@@ -646,6 +757,28 @@ func runTunnelCell(reportPath string, destination *artifactDestination, sourceSH
 	return writeNewReport(reportPath, report)
 }
 
+func tunnelProfile(plan transportrelease.ReleasePlan, profileID, bpfObject string) (transportrelease.ProfilePlan, error) {
+	switch profileID {
+	case "clean-v1":
+		if bpfObject != "" {
+			return transportrelease.ProfilePlan{}, errors.New("clean tunnel cell does not accept a BPF object")
+		}
+		return plan.Clean, nil
+	case "mobile-v1":
+		if bpfObject == "" {
+			return transportrelease.ProfilePlan{}, errors.New("mobile tunnel cell requires a BPF object")
+		}
+		return plan.Mobile, nil
+	case "edge-v1":
+		if bpfObject == "" {
+			return transportrelease.ProfilePlan{}, errors.New("edge tunnel cell requires a BPF object")
+		}
+		return plan.Edge, nil
+	default:
+		return transportrelease.ProfilePlan{}, errors.New("tunnel cell requires clean-v1, mobile-v1, or edge-v1")
+	}
+}
+
 func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, plan transportrelease.ProfilePlan, runNumber int, bpfObject string, destination *artifactDestination) (result tunnelCarrierResult, resultErr error) {
 	cellID := strings.ToLower(plan.ID + "-tunnel-" + string(topology))
 	config, err := linuxnetlab.ConfigForCell(cellID, runNumber, plan.Network.LinkMTU, plan.Network.Firewall)
@@ -661,12 +794,16 @@ func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, pla
 		resultErr = errors.Join(resultErr, lab.Close(cleanupCtx))
 		cancel()
 	}()
-	profile, err := faultProfileFromPlan(plan, bpfObject)
-	if err != nil {
-		return result, err
-	}
-	if err := lab.ApplyFaultProfile(ctx, profile); err != nil {
-		return result, err
+	if bpfObject != "" {
+		profile, err := faultProfileFromPlan(plan, bpfObject)
+		if err != nil {
+			return result, err
+		}
+		if err := lab.ApplyFaultProfile(ctx, profile); err != nil {
+			return result, err
+		}
+	} else if plan.ID != "clean-v1" {
+		return result, errors.New("only the clean tunnel profile may run without a BPF object")
 	}
 	var runArtifacts *runEvidence
 	if destination != nil {
@@ -703,6 +840,9 @@ func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, pla
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
+		if bpfObject == "" {
+			return result, fmt.Errorf("tunnel network worker: %w: stdout=%s stderr=%s", err, strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()))
+		}
 		evidenceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		evidence, evidenceErr := lab.FaultEvidence(evidenceCtx)
 		cancel()
@@ -714,14 +854,17 @@ func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, pla
 	if result.Workload.Topology != topology {
 		return result, errors.New("network worker returned the wrong tunnel topology")
 	}
-	evidenceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	evidence, err := lab.FaultEvidence(evidenceCtx)
-	cancel()
-	if err != nil {
-		return result, err
-	}
-	if err := validateKernelEvidence(plan, evidence); err != nil {
-		return result, err
+	var evidence linuxnetlab.KernelFaultEvidence
+	if bpfObject != "" {
+		evidenceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		evidence, err = lab.FaultEvidence(evidenceCtx)
+		cancel()
+		if err != nil {
+			return result, err
+		}
+		if err := validateKernelEvidence(plan, evidence); err != nil {
+			return result, err
+		}
 	}
 	result.Kernel = &networkKernelResult{
 		ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
@@ -733,7 +876,12 @@ func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, pla
 
 func validateKernelEvidence(plan transportrelease.ProfilePlan, evidence linuxnetlab.KernelFaultEvidence) error {
 	network := plan.Network
-	if len(network.JitterMilliseconds) != 8 {
+	counterOnly := plan.ID == "clean-v1"
+	if counterOnly {
+		if len(network.JitterMilliseconds) != 1 || network.JitterMilliseconds[0] != 0 || network.Loss.Mode != "none" || plan.Fault != (transportrelease.FaultPlan{}) {
+			return errors.New("clean kernel evidence requires the counter-only network profile")
+		}
+	} else if len(network.JitterMilliseconds) != 8 {
 		return errors.New("kernel evidence requires the frozen eight-slot jitter schedule")
 	}
 	for direction, stats := range map[string]linuxnetlab.KernelFaultStats{"client": evidence.Client, "server": evidence.Server} {
@@ -742,6 +890,14 @@ func validateKernelEvidence(plan transportrelease.ProfilePlan, evidence linuxnet
 			return fmt.Errorf("%s kernel fault counters are incomplete: %+v", direction, stats)
 		}
 		accounted := stats.DeliveredPackets + stats.OutageDropPackets + stats.PeriodicLossPackets + stats.BurstLossPackets
+		if counterOnly {
+			if accounted != stats.Packets || stats.DeliveredPackets != stats.Packets || stats.DelayPackets != 0 || stats.JitterPackets != 0 ||
+				stats.PeriodicLossPackets != 0 || stats.BurstLossPackets != 0 || stats.ReorderPackets != 0 || stats.DuplicatePackets != 0 ||
+				stats.OutageDropPackets != 0 || stats.JitterSlotPackets != ([8]uint64{}) {
+				return fmt.Errorf("%s counter-only kernel packet conservation failed: %+v", direction, stats)
+			}
+			continue
+		}
 		if accounted != stats.Packets || stats.DelayPackets != stats.DeliveredPackets {
 			return fmt.Errorf("%s kernel packet conservation failed: %+v", direction, stats)
 		}
@@ -853,7 +1009,13 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 		}); err != nil {
 			return err
 		}
-		result, err := runEndpointCarrier(ctx, endpoint, request.Kind, request.Plan)
+		var sampleKernel kernelEvidenceSampler
+		if request.KernelCounters {
+			sampleKernel = func(sampleCtx context.Context) (linuxnetlab.KernelFaultEvidence, error) {
+				return linuxnetlab.ReadFaultEvidence(sampleCtx, request.ClientNamespace, request.ServerNamespace)
+			}
+		}
+		result, err := runEndpointCarrier(ctx, endpoint, request.Kind, request.Plan, sampleKernel)
 		if err != nil {
 			return err
 		}
@@ -887,6 +1049,8 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 			return err
 		}
 		return json.NewEncoder(output).Encode(tunnelCarrierResult{Workload: workload, Resource: resource})
+	case networkModeAdaptive:
+		return runAdaptiveNetworkWorker(ctx, output, request)
 	default:
 		return errors.New("network worker mode is outside the frozen release matrix")
 	}
@@ -894,6 +1058,13 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 
 func faultProfileFromPlan(plan transportrelease.ProfilePlan, bpfObject string) (linuxnetlab.FaultProfile, error) {
 	network := plan.Network
+	if plan.ID == "clean-v1" {
+		if network.Shape != nil || network.OneWayDelayMilliseconds != 0 || len(network.JitterMilliseconds) != 1 || network.JitterMilliseconds[0] != 0 ||
+			network.Loss.Mode != "none" || plan.Fault != (transportrelease.FaultPlan{}) {
+			return linuxnetlab.FaultProfile{}, errors.New("clean profile differs from the counter-only network contract")
+		}
+		return linuxnetlab.FaultProfile{BPFObject: bpfObject, LossMode: linuxnetlab.LossNone, Jitter: []time.Duration{0}, LinkMTU: network.LinkMTU}, nil
+	}
 	if network.Shape == nil {
 		return linuxnetlab.FaultProfile{}, errors.New("network profile requires a frozen traffic shape")
 	}
@@ -950,35 +1121,6 @@ func closeWithin(ctx context.Context, closeFunc func() error) error {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 	}
-}
-
-func executableSourceSHA() (string, error) {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "", errors.New("executable has no Go build information")
-	}
-	var revision, modified string
-	for _, setting := range info.Settings {
-		switch setting.Key {
-		case "vcs.revision":
-			revision = setting.Value
-		case "vcs.modified":
-			modified = setting.Value
-		}
-	}
-	if revision != "" {
-		if !gitSHAPattern.MatchString(revision) || modified != "false" {
-			return "", errors.New("executable VCS stamp is not a clean full Git revision")
-		}
-		if buildSourceSHA != "" && buildSourceSHA != revision {
-			return "", errors.New("executable VCS and linked source revisions disagree")
-		}
-		return revision, nil
-	}
-	if !gitSHAPattern.MatchString(buildSourceSHA) {
-		return "", errors.New("executable requires a full linked buildSourceSHA when automatic VCS stamping is unavailable")
-	}
-	return buildSourceSHA, nil
 }
 
 func verifySourceCheckout(root, manifestPath, sourceSHA string) error {

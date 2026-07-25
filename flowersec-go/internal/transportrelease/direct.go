@@ -493,7 +493,7 @@ func normalizeCloseError(err error) error {
 		}
 		return filtered
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, net.ErrClosed) ||
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, net.ErrClosed) ||
 		errors.Is(err, io.EOF) || errors.Is(err, gorillaws.ErrCloseSent) || errors.Is(err, syscall.EPIPE) {
 		return nil
 	}

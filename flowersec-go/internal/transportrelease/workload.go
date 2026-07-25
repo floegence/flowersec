@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 )
 
@@ -20,6 +22,7 @@ import (
 // timing or byte evidence.
 type Operation struct {
 	Ordinal       int           `json:"ordinal"`
+	ScheduledAt   time.Time     `json:"scheduled_at"`
 	StartedAt     time.Time     `json:"started_at"`
 	Duration      time.Duration `json:"duration_ns"`
 	InputBytes    int           `json:"input_bytes"`
@@ -30,18 +33,40 @@ type Operation struct {
 // ConnectOperation records one distinct artifact-to-READY connection and its
 // bounded cleanup. ScheduledAt is the frozen rate schedule, not a reconstruction.
 type ConnectOperation struct {
-	Ordinal         int           `json:"ordinal"`
-	ScheduledAt     time.Time     `json:"scheduled_at"`
-	StartedAt       time.Time     `json:"started_at"`
-	Duration        time.Duration `json:"duration_ns"`
-	CleanupDuration time.Duration `json:"cleanup_duration_ns"`
+	Ordinal          int           `json:"ordinal"`
+	ScheduledAt      time.Time     `json:"scheduled_at"`
+	StartedAt        time.Time     `json:"started_at"`
+	Duration         time.Duration `json:"duration_ns"`
+	CleanupDuration  time.Duration `json:"cleanup_duration_ns"`
+	StartedCandidate string        `json:"started_candidate"`
+	WinnerCandidate  string        `json:"winner_candidate"`
+	CommitCount      int           `json:"commit_count"`
+	CredentialWrites int           `json:"credential_write_count"`
 }
 
-// BulkResult records the scored simultaneous transfer in both directions.
+type BulkPhaseDirection struct {
+	Direction     string        `json:"direction"`
+	ScheduledAt   time.Time     `json:"scheduled_at"`
+	StartedAt     time.Time     `json:"started_at"`
+	Duration      time.Duration `json:"duration_ns"`
+	Bytes         int64         `json:"bytes"`
+	PayloadSHA256 [32]byte      `json:"payload_sha256"`
+}
+
+type BulkDirection struct {
+	Direction string             `json:"direction"`
+	Warmup    BulkPhaseDirection `json:"warmup"`
+	Score     BulkPhaseDirection `json:"score"`
+}
+
+// BulkResult records both measured directions and preserves the slower scored
+// duration used by the release metric contract.
 type BulkResult struct {
-	StartedAt         time.Time     `json:"started_at"`
-	Duration          time.Duration `json:"duration_ns"`
-	BytesPerDirection int64         `json:"bytes_per_direction"`
+	StartedAt         time.Time       `json:"started_at"`
+	Duration          time.Duration   `json:"duration_ns"`
+	BytesPerDirection int64           `json:"bytes_per_direction"`
+	ActiveStreams     int             `json:"active_streams"`
+	Directions        []BulkDirection `json:"directions"`
 }
 
 // RunCold connects an exact number of independently issued artifacts at the
@@ -92,9 +117,13 @@ func RunCold(ctx context.Context, endpoint *ProductDirectEndpoint, operations, m
 				workErrors <- fmt.Errorf("cold connection %d cleanup: %w", ordinal, closeErr)
 				return
 			}
+			candidate := directCandidateID(endpoint.kind)
+			spends := pair.SpendCount()
 			results[ordinal-1] = ConnectOperation{
 				Ordinal: ordinal, ScheduledAt: scheduled, StartedAt: started,
 				Duration: duration, CleanupDuration: cleanupDuration,
+				StartedCandidate: candidate, WinnerCandidate: candidate,
+				CommitCount: int(spends), CredentialWrites: int(spends),
 			}
 		}(ordinal, scheduled)
 	}
@@ -111,11 +140,25 @@ func RunCold(ctx context.Context, endpoint *ProductDirectEndpoint, operations, m
 		return nil, joined
 	}
 	for index, result := range results {
-		if result.Ordinal != index+1 || result.Duration <= 0 || result.CleanupDuration <= 0 || result.StartedAt.Before(result.ScheduledAt) {
+		if result.Ordinal != index+1 || result.Duration <= 0 || result.CleanupDuration <= 0 || result.StartedAt.Before(result.ScheduledAt) ||
+			result.StartedCandidate == "" || result.WinnerCandidate != result.StartedCandidate || result.CommitCount != 1 || result.CredentialWrites != 1 {
 			return nil, fmt.Errorf("cold connection %d is incomplete", index+1)
 		}
 	}
 	return results, nil
+}
+
+func directCandidateID(kind carrier.Kind) string {
+	switch kind {
+	case carrier.KindWebSocket:
+		return "direct-wss"
+	case carrier.KindQUIC:
+		return "direct-raw-quic"
+	case carrier.KindWebTransport:
+		return "direct-webtransport"
+	default:
+		return ""
+	}
 }
 
 // RunRPC executes an exact-count concurrent echo workload over the public
@@ -130,42 +173,47 @@ func RunRPC(ctx context.Context, pair *ProductDirectPair, operations, workers, p
 	payload := json.RawMessage(append(append([]byte{'"'}, bytes.Repeat([]byte{'x'}, payloadBytes-2)...), '"'))
 	wantHash := sha256.Sum256(payload)
 	results := make([]Operation, operations)
-	var next atomic.Int64
+	phaseStart := time.Now()
+	const interval = time.Millisecond
+	semaphore := make(chan struct{}, workers)
 	var group sync.WaitGroup
-	workErrors := make(chan error, workers)
-	group.Add(workers)
-	for range workers {
-		go func() {
+	workErrors := make(chan error, operations)
+	for ordinal := 1; ordinal <= operations; ordinal++ {
+		scheduled := phaseStart.Add(time.Duration(ordinal-1) * interval)
+		if err := waitUntil(ctx, scheduled); err != nil {
+			workErrors <- err
+			break
+		}
+		select {
+		case semaphore <- struct{}{}:
+		case <-ctx.Done():
+			workErrors <- context.Cause(ctx)
+			ordinal = operations
+			continue
+		}
+		group.Add(1)
+		go func(ordinal int, scheduled time.Time) {
 			defer group.Done()
-			for {
-				ordinal := int(next.Add(1))
-				if ordinal > operations {
-					return
-				}
-				if err := ctx.Err(); err != nil {
-					workErrors <- err
-					return
-				}
-				started := time.Now()
-				var response json.RawMessage
-				operationCtx, cancel := context.WithTimeout(ctx, operationDeadline)
-				err := pair.Client.RPC().Call(operationCtx, 1, payload, &response)
-				cancel()
-				if err != nil {
-					workErrors <- fmt.Errorf("RPC operation %d: %w", ordinal, err)
-					return
-				}
-				duration := time.Since(started)
-				if !bytes.Equal(response, payload) {
-					workErrors <- fmt.Errorf("RPC operation %d payload mismatch", ordinal)
-					return
-				}
-				results[ordinal-1] = Operation{
-					Ordinal: ordinal, StartedAt: started, Duration: duration,
-					InputBytes: len(payload), OutputBytes: len(response), PayloadSHA256: wantHash,
-				}
+			defer func() { <-semaphore }()
+			started := time.Now()
+			var response json.RawMessage
+			operationCtx, cancel := context.WithTimeout(ctx, operationDeadline)
+			err := pair.Client.RPC().Call(operationCtx, 1, payload, &response)
+			cancel()
+			if err != nil {
+				workErrors <- fmt.Errorf("RPC operation %d: %w", ordinal, err)
+				return
 			}
-		}()
+			duration := time.Since(started)
+			if !bytes.Equal(response, payload) {
+				workErrors <- fmt.Errorf("RPC operation %d payload mismatch", ordinal)
+				return
+			}
+			results[ordinal-1] = Operation{
+				Ordinal: ordinal, ScheduledAt: scheduled, StartedAt: started, Duration: duration,
+				InputBytes: len(payload), OutputBytes: len(response), PayloadSHA256: wantHash,
+			}
+		}(ordinal, scheduled)
 	}
 	done := make(chan struct{})
 	go func() {
@@ -190,7 +238,8 @@ func RunRPC(ctx context.Context, pair *ProductDirectPair, operations, workers, p
 		return nil, joined
 	}
 	for index, result := range results {
-		if result.Ordinal != index+1 || result.Duration <= 0 || result.InputBytes != payloadBytes || result.OutputBytes != payloadBytes || result.PayloadSHA256 != wantHash {
+		if result.Ordinal != index+1 || !result.ScheduledAt.Equal(phaseStart.Add(time.Duration(index)*interval)) || result.StartedAt.Before(result.ScheduledAt) ||
+			result.Duration <= 0 || result.InputBytes != payloadBytes || result.OutputBytes != payloadBytes || result.PayloadSHA256 != wantHash {
 			return nil, fmt.Errorf("RPC operation %d is incomplete", index+1)
 		}
 	}
@@ -216,15 +265,30 @@ func RunBulk(ctx context.Context, pair *ProductDirectPair, warmupBytesPerDirecti
 	if pair == nil || pair.Client == nil || pair.Server == nil || warmupBytesPerDirection < 1 || scoreBytesPerDirection < 1 {
 		return BulkResult{}, errors.New("invalid bulk workload")
 	}
-	if _, err := runBulkPhase(ctx, pair, warmupBytesPerDirection); err != nil {
+	warmup, _, err := runBulkPhase(ctx, pair, warmupBytesPerDirection)
+	if err != nil {
 		return BulkResult{}, fmt.Errorf("bulk warmup: %w", err)
 	}
-	started := time.Now()
-	duration, err := runBulkPhase(ctx, pair, scoreBytesPerDirection)
+	score, activeStreams, err := runBulkPhase(ctx, pair, scoreBytesPerDirection)
 	if err != nil {
 		return BulkResult{}, fmt.Errorf("bulk score: %w", err)
 	}
-	return BulkResult{StartedAt: started, Duration: duration, BytesPerDirection: scoreBytesPerDirection}, nil
+	if len(warmup) != 2 || len(score) != 2 {
+		return BulkResult{}, errors.New("bulk direction evidence is incomplete")
+	}
+	directions := make([]BulkDirection, 2)
+	for index, direction := range []string{"client-to-server", "server-to-client"} {
+		if warmup[index].Direction != direction || score[index].Direction != direction {
+			return BulkResult{}, errors.New("bulk direction evidence order is invalid")
+		}
+		directions[index] = BulkDirection{Direction: direction, Warmup: warmup[index], Score: score[index]}
+	}
+	duration := max(score[0].Duration, score[1].Duration)
+	started := score[0].StartedAt
+	if score[1].StartedAt.Before(started) {
+		started = score[1].StartedAt
+	}
+	return BulkResult{StartedAt: started, Duration: duration, BytesPerDirection: scoreBytesPerDirection, ActiveStreams: activeStreams, Directions: directions}, nil
 }
 
 type releaseByteStream interface {
@@ -242,7 +306,7 @@ type acceptedReleaseStream struct {
 	err       error
 }
 
-func runBulkPhase(ctx context.Context, pair *ProductDirectPair, bytesPerDirection int64) (time.Duration, error) {
+func runBulkPhase(ctx context.Context, pair *ProductDirectPair, bytesPerDirection int64) ([]BulkPhaseDirection, int, error) {
 	phaseCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	clientAccepted := make(chan acceptedReleaseStream, 1)
@@ -257,19 +321,19 @@ func runBulkPhase(ctx context.Context, pair *ProductDirectPair, bytesPerDirectio
 	}()
 	clientOpened, err := pair.Client.OpenStream(phaseCtx, "release-bulk", flowersec.Metadata{"direction": "client-to-server"})
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	serverOpened, err := pair.Server.OpenStream(phaseCtx, "release-bulk", flowersession.Metadata{"direction": "server-to-client"})
 	if err != nil {
 		_ = clientOpened.Reset()
-		return 0, err
+		return nil, 0, err
 	}
 	fromClient := <-serverAccepted
 	fromServer := <-clientAccepted
 	if fromClient.err != nil || fromServer.err != nil {
 		_ = clientOpened.Reset()
 		_ = serverOpened.Reset()
-		return 0, errors.Join(fromClient.err, fromServer.err)
+		return nil, 0, errors.Join(fromClient.err, fromServer.err)
 	}
 	streams := []releaseByteStream{clientOpened, serverOpened, fromClient.stream, fromServer.stream}
 	defer func() {
@@ -279,22 +343,42 @@ func runBulkPhase(ctx context.Context, pair *ProductDirectPair, bytesPerDirectio
 	}()
 	if fromClient.kind != "release-bulk" || fromClient.direction != "client-to-server" ||
 		fromServer.kind != "release-bulk" || fromServer.direction != "server-to-client" {
-		return 0, errors.New("bulk stream metadata mismatch")
+		return nil, 0, errors.New("bulk stream metadata mismatch")
 	}
-	started := time.Now()
+	activeStreams := 2
+	phaseStart := time.Now()
+	resultsByDirection := make(chan BulkPhaseDirection, 2)
 	errorsByDirection := make(chan error, 2)
 	go func() {
-		directionErr := transferExact(phaseCtx, clientOpened, fromClient.stream, bytesPerDirection, 0xa5)
+		scheduled := phaseStart
+		if waitErr := waitUntil(phaseCtx, scheduled); waitErr != nil {
+			resultsByDirection <- BulkPhaseDirection{Direction: "client-to-server", ScheduledAt: scheduled}
+			errorsByDirection <- waitErr
+			return
+		}
+		measurement, directionErr := transferExactMeasured(phaseCtx, clientOpened, fromClient.stream, bytesPerDirection, 0xa5)
+		measurement.Direction = "client-to-server"
+		measurement.ScheduledAt = scheduled
 		if directionErr != nil {
 			cancel(directionErr)
 		}
+		resultsByDirection <- measurement
 		errorsByDirection <- directionErr
 	}()
 	go func() {
-		directionErr := transferExact(phaseCtx, serverOpened, fromServer.stream, bytesPerDirection, 0x5a)
+		scheduled := phaseStart.Add(time.Millisecond)
+		if waitErr := waitUntil(phaseCtx, scheduled); waitErr != nil {
+			resultsByDirection <- BulkPhaseDirection{Direction: "server-to-client", ScheduledAt: scheduled}
+			errorsByDirection <- waitErr
+			return
+		}
+		measurement, directionErr := transferExactMeasured(phaseCtx, serverOpened, fromServer.stream, bytesPerDirection, 0x5a)
+		measurement.Direction = "server-to-client"
+		measurement.ScheduledAt = scheduled
 		if directionErr != nil {
 			cancel(directionErr)
 		}
+		resultsByDirection <- measurement
 		errorsByDirection <- directionErr
 	}()
 	phaseDone := phaseCtx.Done()
@@ -311,7 +395,9 @@ func runBulkPhase(ctx context.Context, pair *ProductDirectPair, bytesPerDirectio
 			phaseDone = nil
 		}
 	}
-	return time.Since(started), err
+	measurements := []BulkPhaseDirection{<-resultsByDirection, <-resultsByDirection}
+	slices.SortFunc(measurements, func(left, right BulkPhaseDirection) int { return strings.Compare(left.Direction, right.Direction) })
+	return measurements, activeStreams, err
 }
 
 func normalizePublicIncoming(incoming flowersec.IncomingStream, err error) acceptedReleaseStream {
@@ -327,6 +413,11 @@ func normalizeInternalIncoming(incoming flowersession.IncomingStream, err error)
 }
 
 func transferExact(ctx context.Context, writer, reader releaseByteStream, total int64, fill byte) error {
+	_, err := transferExactMeasured(ctx, writer, reader, total, fill)
+	return err
+}
+
+func transferExactMeasured(ctx context.Context, writer, reader releaseByteStream, total int64, fill byte) (BulkPhaseDirection, error) {
 	type transferResult struct{ err error }
 	results := make(chan transferResult, 2)
 	var resetOnce sync.Once
@@ -338,6 +429,9 @@ func transferExact(ctx context.Context, writer, reader releaseByteStream, total 
 	}
 	stopCancellation := context.AfterFunc(ctx, reset)
 	defer stopCancellation()
+	started := time.Now()
+	writtenHash := sha256.New()
+	readHash := sha256.New()
 	go func() {
 		chunk := bytes.Repeat([]byte{fill}, 64*1024)
 		remaining := total
@@ -348,7 +442,7 @@ func transferExact(ctx context.Context, writer, reader releaseByteStream, total 
 				current = remaining
 			}
 			var count int
-			count, err = writer.Write(chunk[:current])
+			count, err = io.MultiWriter(writer, writtenHash).Write(chunk[:current])
 			remaining -= int64(count)
 			if err != nil {
 				break
@@ -364,7 +458,7 @@ func transferExact(ctx context.Context, writer, reader releaseByteStream, total 
 		results <- transferResult{err: err}
 	}()
 	go func() {
-		readBytes, readErr := io.CopyN(io.Discard, reader, total)
+		readBytes, readErr := io.CopyN(readHash, reader, total)
 		if readErr == nil {
 			var trailing [1]byte
 			if count, err := reader.Read(trailing[:]); count != 0 || !errors.Is(err, io.EOF) {
@@ -389,7 +483,12 @@ func transferExact(ctx context.Context, writer, reader releaseByteStream, total 
 			ctxDone = nil
 		}
 	}
-	return joined
+	measurement := BulkPhaseDirection{StartedAt: started, Duration: time.Since(started), Bytes: total}
+	copy(measurement.PayloadSHA256[:], readHash.Sum(nil))
+	if !bytes.Equal(writtenHash.Sum(nil), readHash.Sum(nil)) {
+		joined = errors.Join(joined, errors.New("bulk payload digest mismatch"))
+	}
+	return measurement, joined
 }
 
 func exactByteCount(label string, got, want int64) error {

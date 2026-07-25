@@ -20,7 +20,7 @@ func TestLoadReleasePlanUsesFrozenCleanWorkloads(t *testing.T) {
 	}
 	if plan.Clean.Cold.Operations != 2000 || plan.Clean.Cold.MaxInflight != 32 || plan.Clean.Cold.Retries != 0 ||
 		plan.Clean.RPC.Operations != 2000 || plan.Clean.RPC.Workers != 32 || plan.Clean.RPC.RequestBytes != 1024 || plan.Clean.RPC.Retries != 0 ||
-		plan.Clean.Bulk.WarmupBytesPerDirection != 1<<20 || plan.Clean.Bulk.ScoreBytesPerDirection != 64<<20 {
+		plan.Clean.Bulk.WarmupBytesPerDirection != 1<<20 || plan.Clean.Bulk.ScoreBytesPerDirection != 256<<20 {
 		t.Fatalf("clean workload = %+v", plan.Clean)
 	}
 }
@@ -69,6 +69,23 @@ func TestLoadReleasePlanUsesFrozenWeakNetworkWorkloads(t *testing.T) {
 		edgeNetwork.Shape.TokenBurstBytes != 16_384 || edgeNetwork.Shape.QueueBytes != 65_536 ||
 		edgeNetwork.LinkMTU != 1280 || len(edgeNetwork.JitterMilliseconds) != 8 {
 		t.Fatalf("edge network = %+v", edgeNetwork)
+	}
+}
+
+func TestLoadReleasePlanUsesFrozenAdaptiveSelectionStages(t *testing.T) {
+	plan, _, err := LoadReleasePlan("../../../testdata/transport_v2/performance_manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Adaptive.ID != "adaptive-selection-v1" || plan.Adaptive.CellWatchdogMinutes != 55 ||
+		plan.Adaptive.HarnessSlackSeconds != 450 || len(plan.Adaptive.Stages) != 2 {
+		t.Fatalf("adaptive plan = %+v", plan.Adaptive)
+	}
+	for index, profile := range []ProfilePlan{plan.Clean, plan.Mobile} {
+		stage := plan.Adaptive.Stages[index]
+		if stage.ProfileID != profile.ID || stage.Cold != profile.Cold || stage.CleanupDeadlineSeconds != profile.CleanupDeadlineSeconds {
+			t.Fatalf("adaptive stage %d = %+v, want cold/cleanup from %+v", index, stage, profile)
+		}
 	}
 }
 

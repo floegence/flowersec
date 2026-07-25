@@ -1,0 +1,434 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/tunnelworkload"
+)
+
+func TestFocusedProductionCapacityCase(t *testing.T) {
+	id := os.Getenv("FLOWERSEC_TEST_CAPACITY_CASE")
+	if id == "" {
+		t.Skip("set FLOWERSEC_TEST_CAPACITY_CASE to run one production capacity case")
+	}
+	definition, ok := lookupCapacityCase(id)
+	if !ok || definition.Kind == capacityBrowserTunnel || definition.Kind == capacityBrowserStream {
+		t.Fatalf("focused production capacity case %q is unavailable in a Go test process", id)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), productionCapacityContract().Watchdog+30*time.Second)
+	defer cancel()
+	endpoint, err := openProductionCapacityEndpoint(ctx, definition, productionCapacityContract().Sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runCapacityCase(ctx, definition, productionCapacityContract(), endpoint, nil)
+	t.Logf("capacity result: %+v", result)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProductionCapacityContractAndRegistryAreFrozen(t *testing.T) {
+	contract := productionCapacityContract()
+	if contract.Sessions != 1000 || contract.Ramp != 30*time.Second || contract.Hold != 60*time.Second ||
+		contract.Cleanup != 30*time.Second || contract.Watchdog != 120*time.Second || contract.MaxGoroutines != 40960 {
+		t.Fatalf("production capacity contract = %+v", contract)
+	}
+	cases := capacityCaseRegistry()
+	want := []struct{ id, profile string }{
+		{"CAP-DIRECT-WSS-1000", "capacity-direct-wss-1000"},
+		{"CAP-DIRECT-QUIC-1000", "capacity-direct-quic-1000"},
+		{"CAP-DIRECT-WT-1000", "capacity-direct-webtransport-1000"},
+		{"CAP-TUNNEL-WT-WSS-1000", "capacity-tunnel-webtransport-wss-1000"},
+		{"CAP-TUNNEL-WT-QUIC-1000", "capacity-tunnel-webtransport-quic-1000"},
+		{"CAP-STREAM-WT-DIRECT-100X128", "capacity-streams-webtransport-direct-100x128"},
+		{"CAP-STREAM-WT-WSS-100X128", "capacity-streams-webtransport-wss-100x128"},
+		{"CAP-STREAM-WT-QUIC-100X128", "capacity-streams-webtransport-quic-100x128"},
+		{"CAP-WW-1000", "capacity-tunnel-ww-1000"},
+		{"CAP-QQ-1000", "capacity-tunnel-qq-1000"},
+		{"CAP-WQ-1000", "capacity-tunnel-wq-1000"},
+		{"CAP-QW-1000", "capacity-tunnel-qw-1000"},
+	}
+	if len(cases) != len(want) {
+		t.Fatalf("capacity registry length = %d, want %d", len(cases), len(want))
+	}
+	for index, definition := range cases {
+		if definition.ID != want[index].id || definition.Profile != want[index].profile {
+			t.Fatalf("capacity definition[%d] = %+v, want %+v", index, definition, want[index])
+		}
+	}
+}
+
+func TestBrowserCapacityContractUsesFullProcessTreeCalibration(t *testing.T) {
+	contract := productionBrowserCapacityContract()
+	if contract.MaxRSS != 3<<30 || contract.MaxOpenFDs != 12288 || contract.MaxGoroutines != 40960 || contract.MaxTasks != 8192 ||
+		contract.ResourceScope != "go_runner_plus_chromium_process_tree" || contract.CalibrationRSS != 2162716672 || contract.CalibrationOpenFDs != 9350 {
+		t.Fatalf("browser capacity contract = %+v", contract)
+	}
+}
+
+func TestBrowserStreamCapacityContractIsFrozen(t *testing.T) {
+	contract := productionBrowserStreamCapacityContract()
+	if contract.Sessions != 100 || contract.StreamsPerSession != 128 || contract.MaxRSS != 3<<30 || contract.MaxCPU != 240*time.Second || contract.MaxOpenFDs != 32768 ||
+		contract.CalibrationRSS != 0 || contract.CalibrationOpenFDs != 0 || capacitySessionRamp(contract) != 15*time.Second {
+		t.Fatalf("browser stream capacity contract = %+v", contract)
+	}
+}
+
+func TestBrowserWSSStreamCapacityRecordsTightYamuxResources(t *testing.T) {
+	definition, ok := lookupCapacityCase("CAP-STREAM-WT-WSS-100X128")
+	if !ok {
+		t.Fatal("WSS stream capacity case is missing")
+	}
+	contract := capacityContractForDefinition(definition)
+	if contract.YamuxMaxFrameBytes != 256*1024 || contract.YamuxMaxStreamReceiveBytes != 256*1024 ||
+		contract.YamuxMaxSessionReceiveBytes != 130*256*1024 || contract.TunnelCopyBufferBytes != 4*1024 {
+		t.Fatalf("WSS stream capacity Yamux resources = %+v", contract)
+	}
+}
+
+func TestCapacityCleanupReservesResourceConvergenceWindow(t *testing.T) {
+	if got := capacityCleanupCloseWindow(30 * time.Second); got != 20*time.Second {
+		t.Fatalf("cleanup close window = %s, want 20s", got)
+	}
+}
+
+func TestDirectCapacityWrappersHoldDistinctProductionSessions(t *testing.T) {
+	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
+		t.Run(string(kind), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			production, err := transportrelease.OpenProductDirectEndpoint(ctx, kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			endpoint := &directCapacityEndpoint{endpoint: production}
+			first, err := endpoint.Connect(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := endpoint.Connect(ctx)
+			if err != nil {
+				_ = first.Close(ctx)
+				t.Fatal(err)
+			}
+			if first.ID() == second.ID() {
+				t.Fatalf("production session IDs are not unique: %q", first.ID())
+			}
+			for _, session := range []capacitySession{first, second} {
+				select {
+				case <-session.Termination():
+					t.Fatal("production session terminated before cleanup")
+				default:
+				}
+				if err := session.Close(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := endpoint.Close(ctx); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRawQUICCapacityPathsCleanEveryShortSampleSession(t *testing.T) {
+	tests := []struct {
+		name string
+		open func(context.Context) (capacityEndpoint, error)
+	}{
+		{name: "direct", open: func(ctx context.Context) (capacityEndpoint, error) {
+			endpoint, err := transportrelease.OpenProductDirectEndpoint(ctx, carrier.KindQUIC)
+			if err != nil {
+				return nil, err
+			}
+			return &directCapacityEndpoint{endpoint: endpoint}, nil
+		}},
+		{name: "tunnel-qq", open: func(ctx context.Context) (capacityEndpoint, error) {
+			endpoint, err := tunnelworkload.OpenEndpointAt(ctx, tunnelworkload.TopologyQQ, "127.0.0.1")
+			if err != nil {
+				return nil, err
+			}
+			return &tunnelCapacityEndpoint{endpoint: endpoint}, nil
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			endpoint, err := test.open(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			contract := capacityContract{
+				Sessions: 4, Ramp: 400 * time.Millisecond, Hold: 100 * time.Millisecond, Cleanup: 400 * time.Millisecond, Watchdog: 900 * time.Millisecond,
+				MaxRSS: 1 << 30, MaxCPU: 10 * time.Second, MaxOpenFDs: 4096, MaxGoroutines: 4096, MaxTasks: 4096,
+			}
+			result, err := runCapacityCase(ctx, capacityCaseDefinition{ID: "raw-quic-short", Profile: "raw-quic-short"}, contract, endpoint, monotonicSnapshots())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Succeeded != 4 || result.UniqueActivePeak != 4 || result.HoldDisconnects != 0 || result.ResidualSessions != 0 {
+				t.Fatalf("raw QUIC short capacity result = %+v", result)
+			}
+		})
+	}
+}
+
+func TestRunCapacityCaseHoldsUniqueLiveSessionsAndCleansUp(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 4, Ramp: 20 * time.Millisecond, Hold: 20 * time.Millisecond,
+		Cleanup: 20 * time.Millisecond, Watchdog: 60 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+	}
+	endpoint := &fakeCapacityEndpoint{}
+	result, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "test", Profile: "test"}, contract, endpoint, monotonicSnapshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.connects != contract.Sessions || endpoint.closes != 1 {
+		t.Fatalf("endpoint connects/closes = %d/%d", endpoint.connects, endpoint.closes)
+	}
+	if result.Attempted != 4 || result.Succeeded != 4 || result.Failed != 0 || result.UniqueActivePeak != 4 ||
+		result.HoldDisconnects != 0 || result.LivenessSweeps != 4 || result.LivenessFailures != 0 ||
+		result.CleanupDisconnects != 4 || result.ResidualSessions != 0 || result.WatchdogTimeouts != 0 {
+		t.Fatalf("capacity result counters = %+v", result)
+	}
+	wantEvents := []string{"capacity_ramp_completed", "capacity_hold_completed", "capacity_cleanup_completed"}
+	wantAt := []int64{contract.Ramp.Nanoseconds(), (contract.Ramp + contract.Hold).Nanoseconds(), contract.Watchdog.Nanoseconds()}
+	for index, record := range result.Trace.Records {
+		if record.Event != wantEvents[index] || record.AtNS != wantAt[index] {
+			t.Fatalf("trace[%d] = %+v", index, record)
+		}
+	}
+	if len(result.Resource.Records) != 3 || result.Resource.Records[0].ActiveSessions != 4 ||
+		result.Resource.Records[1].ActiveSessions != 4 || result.Resource.Records[2].ActiveSessions != 0 ||
+		result.Resource.Records[2].ResidualSessions == nil || result.Resource.Records[2].ResidualGoroutines == nil ||
+		result.Resource.Records[2].ResidualOpenFDs == nil || result.Resource.Records[2].ResidualTasks == nil {
+		t.Fatalf("resource timeline = %+v", result.Resource.Records)
+	}
+}
+
+func TestRunCapacityCaseClosesEndpointBeforeCleanupResourceSnapshot(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 2, Ramp: 20 * time.Millisecond, Hold: 20 * time.Millisecond,
+		Cleanup: 20 * time.Millisecond, Watchdog: 60 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+	}
+	endpoint := &fakeCapacityEndpoint{}
+	snapshots := monotonicSnapshots()
+	var captures int
+	capture := func() (transportrelease.ResourceSnapshot, error) {
+		captures++
+		if captures == 4 {
+			endpoint.mu.Lock()
+			closed := endpoint.closed
+			endpoint.mu.Unlock()
+			if !closed {
+				return transportrelease.ResourceSnapshot{}, errors.New("cleanup snapshot preceded endpoint teardown")
+			}
+		}
+		return snapshots()
+	}
+	if _, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "teardown-order", Profile: "teardown-order"}, contract, endpoint, capture); err != nil {
+		t.Fatal(err)
+	}
+	if captures != 4 || endpoint.closes != 1 {
+		t.Fatalf("captures/closes = %d/%d", captures, endpoint.closes)
+	}
+}
+
+func TestRunCapacityCaseSnapshotsQuiescedBrowserBeforeFinalClose(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 2, Ramp: 20 * time.Millisecond, Hold: 20 * time.Millisecond,
+		Cleanup: 20 * time.Millisecond, Watchdog: 60 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+	}
+	endpoint := &fakeQuiescingCapacityEndpoint{fakeCapacityEndpoint: &fakeCapacityEndpoint{}}
+	snapshots := monotonicSnapshots()
+	var captures int
+	capture := func() (transportrelease.ResourceSnapshot, error) {
+		captures++
+		if captures == 4 {
+			endpoint.mu.Lock()
+			quiesced, finalized := endpoint.quiesced, endpoint.closed
+			endpoint.mu.Unlock()
+			if !quiesced || finalized {
+				return transportrelease.ResourceSnapshot{}, fmt.Errorf("cleanup snapshot lifecycle = quiesced:%t finalized:%t", quiesced, finalized)
+			}
+		}
+		return snapshots()
+	}
+	if _, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "quiesce-order", Profile: "quiesce-order"}, contract, endpoint, capture); err != nil {
+		t.Fatal(err)
+	}
+	if captures != 4 || endpoint.closes != 1 {
+		t.Fatalf("captures/closes = %d/%d", captures, endpoint.closes)
+	}
+}
+
+func TestRunCapacityCaseProvesStreamPeakAndZeroResidual(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 2, StreamsPerSession: 3, Ramp: 20 * time.Millisecond, Hold: 20 * time.Millisecond,
+		Cleanup: 20 * time.Millisecond, Watchdog: 60 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+	}
+	endpoint := &fakeCapacityEndpoint{}
+	result, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "stream", Profile: "stream"}, contract, endpoint, monotonicSnapshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CompletedStreams != 6 || result.ActiveStreamPeak != 6 || result.ResidualStreams != 0 || endpoint.openedStreams != 6 {
+		t.Fatalf("stream capacity result = %+v endpoint=%+v", result, endpoint)
+	}
+	if result.Resource.Records[0].ActiveStreams != 6 || result.Resource.Records[1].ActiveStreams != 6 ||
+		result.Resource.Records[2].ResidualStreams == nil || *result.Resource.Records[2].ResidualStreams != 0 {
+		t.Fatalf("stream resource timeline = %+v", result.Resource.Records)
+	}
+}
+
+func TestRunCapacityCaseFailsOnDuplicateOrEarlyTermination(t *testing.T) {
+	contract := capacityContract{Sessions: 2, Ramp: 10 * time.Millisecond, Hold: 10 * time.Millisecond, Cleanup: 10 * time.Millisecond, Watchdog: 30 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100}
+	duplicate := &fakeCapacityEndpoint{duplicateID: true}
+	if _, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "duplicate"}, contract, duplicate, monotonicSnapshots()); !errors.Is(err, errCapacityDuplicateSession) {
+		t.Fatalf("duplicate session error = %v", err)
+	}
+	if duplicate.closeWhileConnecting {
+		t.Fatal("capacity endpoint quiesced while scheduled connects were still running")
+	}
+	early := &fakeCapacityEndpoint{terminateFirst: true}
+	if _, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "early"}, contract, early, monotonicSnapshots()); !errors.Is(err, errCapacityHoldDisconnect) {
+		t.Fatalf("early termination error = %v", err)
+	}
+}
+
+func TestBrowserCapacityProfilesFailClosed(t *testing.T) {
+	for _, id := range []string{"CAP-TUNNEL-WT-WSS-1000", "CAP-TUNNEL-WT-QUIC-1000"} {
+		definition, ok := lookupCapacityCase(id)
+		if !ok {
+			t.Fatalf("missing %s", id)
+		}
+		endpoint, err := openProductionCapacityEndpoint(context.Background(), definition, 1000)
+		if endpoint != nil || !errors.Is(err, errBrowserCapacityWorkerUnavailable) {
+			t.Fatalf("%s endpoint/error = %v/%v", id, endpoint, err)
+		}
+	}
+}
+
+type fakeCapacitySession struct {
+	id        string
+	done      chan struct{}
+	closeOnce sync.Once
+	onClose   func()
+}
+
+func (session *fakeCapacitySession) ID() string                   { return session.id }
+func (session *fakeCapacitySession) Termination() <-chan struct{} { return session.done }
+func (*fakeCapacitySession) ProbeLiveness(context.Context) error  { return nil }
+func (session *fakeCapacitySession) Close(context.Context) error {
+	session.closeOnce.Do(func() {
+		close(session.done)
+		if session.onClose != nil {
+			session.onClose()
+		}
+	})
+	return nil
+}
+
+type fakeCapacityEndpoint struct {
+	mu                   sync.Mutex
+	connects             int
+	disconnects          int
+	closes               int
+	duplicateID          bool
+	terminateFirst       bool
+	openedStreams        int
+	closed               bool
+	inflightConnects     int
+	closeWhileConnecting bool
+}
+
+type fakeQuiescingCapacityEndpoint struct {
+	*fakeCapacityEndpoint
+	quiesced bool
+}
+
+func (endpoint *fakeQuiescingCapacityEndpoint) Quiesce(context.Context) error {
+	endpoint.mu.Lock()
+	defer endpoint.mu.Unlock()
+	endpoint.quiesced = true
+	return nil
+}
+
+func (endpoint *fakeCapacityEndpoint) OpenStreamCapacity(ctx context.Context, streamsPerSession int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	endpoint.mu.Lock()
+	endpoint.openedStreams = endpoint.connects * streamsPerSession
+	endpoint.mu.Unlock()
+	return nil
+}
+
+func (*fakeCapacityEndpoint) ResidualStreamCount() int { return 0 }
+
+func (endpoint *fakeCapacityEndpoint) Connect(context.Context) (capacitySession, error) {
+	endpoint.mu.Lock()
+	endpoint.inflightConnects++
+	endpoint.connects++
+	ordinal := endpoint.connects
+	endpoint.mu.Unlock()
+	defer func() {
+		endpoint.mu.Lock()
+		endpoint.inflightConnects--
+		endpoint.mu.Unlock()
+	}()
+	id := fmt.Sprintf("session-%d", ordinal)
+	if endpoint.duplicateID {
+		id = "duplicate"
+	}
+	session := &fakeCapacitySession{id: id, done: make(chan struct{}), onClose: func() {
+		endpoint.mu.Lock()
+		endpoint.disconnects++
+		endpoint.mu.Unlock()
+	}}
+	if endpoint.terminateFirst && ordinal == 1 {
+		go func() {
+			time.Sleep(12 * time.Millisecond)
+			session.closeOnce.Do(func() { close(session.done) })
+		}()
+	}
+	return session, nil
+}
+
+func (endpoint *fakeCapacityEndpoint) Close(context.Context) error {
+	endpoint.mu.Lock()
+	defer endpoint.mu.Unlock()
+	if endpoint.closed {
+		return nil
+	}
+	endpoint.closeWhileConnecting = endpoint.inflightConnects != 0
+	endpoint.closed = true
+	endpoint.closes++
+	return nil
+}
+
+func monotonicSnapshots() resourceSnapshotFunc {
+	var mu sync.Mutex
+	var cpu uint64
+	return func() (transportrelease.ResourceSnapshot, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		cpu += uint64(time.Millisecond)
+		return transportrelease.ResourceSnapshot{At: time.Now(), RSSBytes: 1024, CPUNanoseconds: cpu, OpenFDs: 4, Goroutines: 4, Tasks: 4}, nil
+	}
+}

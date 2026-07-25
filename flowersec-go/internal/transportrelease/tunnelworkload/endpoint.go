@@ -36,8 +36,8 @@ import (
 )
 
 const (
-	maxInboundStreams uint16 = 32
-	listenerAudience         = "transport-release-listener"
+	defaultMaxInboundStreams uint16 = 32
+	listenerAudience                = "transport-release-listener"
 )
 
 var errEndpointClosed = errors.New("production tunnel workload endpoint closed")
@@ -87,12 +87,13 @@ type listenerOwner struct {
 // coordinator. Construct it in the server namespace, then call Connect from
 // the client namespace so both physical legs cross the configured link.
 type Endpoint struct {
-	topology    Topology
-	suite       protocolv2.Suite
-	listenHost  string
-	candidates  []artifactv2.Candidate
-	factory     *connectv2.AdmissionFactory
-	coordinator *tunnelv2.Coordinator
+	topology          Topology
+	suite             protocolv2.Suite
+	listenHost        string
+	candidates        []artifactv2.Candidate
+	factory           *connectv2.AdmissionFactory
+	coordinator       *tunnelv2.Coordinator
+	maxInboundStreams uint16
 
 	ctx    context.Context
 	cancel context.CancelCauseFunc
@@ -128,6 +129,21 @@ func OpenEndpointAt(ctx context.Context, topology Topology, listenHost string) (
 // OpenEndpointAtWithSuite binds both tunnel legs to the exact frozen E2EE
 // suite required by a release case.
 func OpenEndpointAtWithSuite(ctx context.Context, topology Topology, listenHost string, suite protocolv2.Suite) (*Endpoint, error) {
+	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, suite, tunnelv2.Config{})
+}
+
+// OpenCapacityEndpointAt creates a production tunnel endpoint whose internal
+// coordinator is frozen to the exact release-capacity session count instead
+// of relying on the larger ordinary product default.
+func OpenCapacityEndpointAt(ctx context.Context, topology Topology, listenHost string, sessions int) (*Endpoint, error) {
+	config, err := capacityCoordinatorConfig(sessions)
+	if err != nil {
+		return nil, err
+	}
+	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, protocolv2.SuiteChaCha20Poly1305, config)
+}
+
+func openEndpointAtWithSuiteAndCoordinator(ctx context.Context, topology Topology, listenHost string, suite protocolv2.Suite, coordinatorConfig tunnelv2.Config) (*Endpoint, error) {
 	clientKind, serverKind, err := topology.Carriers()
 	if err != nil {
 		return nil, err
@@ -149,9 +165,10 @@ func OpenEndpointAtWithSuite(ctx context.Context, topology Topology, listenHost 
 	endpointCtx, cancel := context.WithCancelCause(ctx)
 	endpoint := &Endpoint{
 		topology: topology, suite: suite, listenHost: listenHost, ctx: endpointCtx, cancel: cancel,
-		expectations: make(map[[sha256.Size]byte]*admissionExpectation), closeDone: make(chan struct{}),
+		maxInboundStreams: defaultMaxInboundStreams,
+		expectations:      make(map[[sha256.Size]byte]*admissionExpectation), closeDone: make(chan struct{}),
 	}
-	coordinator, err := tunnelv2.NewCoordinator(tunnelv2.Config{}, endpoint.authorize)
+	coordinator, err := tunnelv2.NewCoordinator(coordinatorConfig, endpoint.authorize)
 	if err != nil {
 		cancel(err)
 		return nil, err
@@ -183,6 +200,16 @@ func OpenEndpointAtWithSuite(ctx context.Context, topology Topology, listenHost 
 	return endpoint, nil
 }
 
+func capacityCoordinatorConfig(sessions int) (tunnelv2.Config, error) {
+	if sessions != 1000 {
+		return tunnelv2.Config{}, errors.New("release tunnel capacity requires exactly 1000 sessions")
+	}
+	config := tunnelv2.DefaultConfig()
+	config.MaxPendingLegs = sessions * 2
+	config.MaxActivePairs = sessions
+	return config, nil
+}
+
 func (endpoint *Endpoint) startListener(id string, kind carrier.Kind, baseTLS *tls.Config) (artifactv2.Candidate, error) {
 	switch kind {
 	case carrier.KindWebSocket:
@@ -206,7 +233,7 @@ func (endpoint *Endpoint) startWebSocketListener(id string, serverTLS *tls.Confi
 		if upgradeErr != nil {
 			return
 		}
-		resources, resourceErr := carrierws.BindSessionResourcePolicy(carrierws.DefaultResourcePolicy(), maxInboundStreams)
+		resources, resourceErr := webSocketResourcesForSession(endpoint.maxInboundStreams)
 		if resourceErr != nil {
 			_ = connection.Close()
 			return
@@ -249,7 +276,7 @@ func (endpoint *Endpoint) startWebSocketListener(id string, serverTLS *tls.Confi
 
 func (endpoint *Endpoint) startRawQUICListener(id string, serverTLS *tls.Config) (artifactv2.Candidate, error) {
 	serverTLS.NextProtos = []string{rawquic.ALPNTunnel}
-	limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), maxInboundStreams)
+	limits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), endpoint.maxInboundStreams)
 	if err != nil {
 		return artifactv2.Candidate{}, err
 	}
@@ -297,14 +324,22 @@ func (endpoint *Endpoint) serveNative(session carrier.Session) {
 
 func (endpoint *Endpoint) newAdmissionFactory(roots *x509.CertPool) (*connectv2.AdmissionFactory, error) {
 	clientTLS := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: endpoint.listenHost}
+	webSocketResources, err := webSocketResourcesForSession(endpoint.maxInboundStreams)
+	if err != nil {
+		return nil, err
+	}
 	webSocketDial, err := connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
-		Dialer: &gorillaws.Dialer{TLSClientConfig: clientTLS}, Resources: carrierws.DefaultResourcePolicy(),
+		Dialer: &gorillaws.Dialer{TLSClientConfig: clientTLS}, Resources: webSocketResources,
 	})
 	if err != nil {
 		return nil, err
 	}
+	rawQUICLimits, err := rawquic.BindSessionLimits(rawquic.DefaultLimits(), endpoint.maxInboundStreams)
+	if err != nil {
+		return nil, err
+	}
 	rawQUICDial, err := connectv2.NewRawQUICCarrierDial(connectv2.RawQUICDialConfig{
-		TLSConfig: clientTLS, Limits: rawquic.DefaultLimits(),
+		TLSConfig: clientTLS, Limits: rawQUICLimits,
 	})
 	if err != nil {
 		return nil, err
@@ -313,6 +348,19 @@ func (endpoint *Endpoint) newAdmissionFactory(roots *x509.CertPool) (*connectv2.
 		artifactv2.CarrierWebSocket: webSocketDial,
 		artifactv2.CarrierRawQUIC:   rawQUICDial,
 	}, tunnelv2.DefaultReasonRegistry())
+}
+
+func webSocketResourcesForSession(maxLogical uint16) (carrierws.ResourcePolicy, error) {
+	physical, err := carrier.RequiredIncomingStreams(maxLogical)
+	if err != nil {
+		return carrierws.ResourcePolicy{}, err
+	}
+	resources := carrierws.DefaultResourcePolicy()
+	requiredSessionBytes := int(physical) * resources.MaxStreamReceiveBytes
+	if resources.MaxSessionReceiveBytes < requiredSessionBytes {
+		resources.MaxSessionReceiveBytes = requiredSessionBytes
+	}
+	return carrierws.BindSessionResourcePolicy(resources, maxLogical)
 }
 
 // Connect issues two mirrored, single-use tunnel artifacts and establishes
@@ -327,7 +375,7 @@ func (endpoint *Endpoint) Connect(ctx context.Context) (*Pair, error) {
 	if err := endpoint.ctx.Err(); err != nil {
 		return nil, errors.Join(errEndpointClosed, context.Cause(endpoint.ctx))
 	}
-	contract, suffix, err := releaseContract(endpoint.suite)
+	contract, suffix, err := releaseContractWithStreams(endpoint.suite, endpoint.maxInboundStreams)
 	if err != nil {
 		return nil, err
 	}
@@ -604,6 +652,10 @@ func (endpoint *Endpoint) closeListeners(ctx context.Context) error {
 }
 
 func releaseContract(suite protocolv2.Suite) (artifactv2.SessionContract, string, error) {
+	return releaseContractWithStreams(suite, defaultMaxInboundStreams)
+}
+
+func releaseContractWithStreams(suite protocolv2.Suite, maxStreams uint16) (artifactv2.SessionContract, string, error) {
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return artifactv2.SessionContract{}, "", err
@@ -613,7 +665,7 @@ func releaseContract(suite protocolv2.Suite) (artifactv2.SessionContract, string
 		ChannelID: "tunnel-" + suffix, InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(),
 		IdleTimeoutSeconds: 60, EstablishTimeoutSeconds: 30,
 		RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
-		MaxInboundStreams: maxInboundStreams, AllowedSuites: []uint16{uint16(suite)}, DefaultSuite: uint16(suite),
+		MaxInboundStreams: maxStreams, AllowedSuites: []uint16{uint16(suite)}, DefaultSuite: uint16(suite),
 	}
 	if _, err := rand.Read(contract.E2EEPSK[:]); err != nil {
 		return artifactv2.SessionContract{}, "", err

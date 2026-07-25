@@ -4,8 +4,11 @@ import test from "node:test";
 
 import {
   acquireArtifactBatch,
+  capacityStreamAssignments,
+  chromiumCapacityLaunchOptions,
   chromiumLaunchOptions,
   commitArtifactSpend,
+  normalizeBrowserCapacityPlan,
   normalizeCollectorPlan,
   runOpenLoop,
 } from "./browser-release-collector-core.mjs";
@@ -102,6 +105,63 @@ test("launches the actual Chromium process inside the named client netns", () =>
 	  () => chromiumLaunchOptions(normalizeCollectorPlan(forcedPlan), "/chrome", launcher, "http://192.0.2.2:38123"),
 	  /advertised IP/,
 	);
+});
+
+test("freezes Chromium tunnel capacity at exactly 1000 live sessions", () => {
+  const evidenceDirectory = path.resolve("capacity-evidence");
+  const capacity = {
+    schema_version: 1,
+    topology: "browser_tunnel_wt_quic",
+    profile_id: "capacity-tunnel-webtransport-quic-1000",
+    sessions: 1000,
+    certificate_hash: forcedPlan.certificate_hash,
+    client_netns: forcedPlan.client_netns,
+    module_bind_address: forcedPlan.module_bind_address,
+    module_advertise_host: forcedPlan.module_advertise_host,
+    control_bind_address: forcedPlan.module_bind_address,
+    event_sink_url: "http://192.0.2.1:32123/events",
+    evidence_directory: evidenceDirectory,
+    operation_deadline_ms: 30_000,
+  };
+  const normalized = normalizeBrowserCapacityPlan(capacity);
+  assert.equal(normalized.sessions, 1000);
+  assert.throws(() => normalizeBrowserCapacityPlan({ ...capacity, sessions: 999 }), /1000/);
+  assert.throws(() => normalizeBrowserCapacityPlan({ ...capacity, topology: "browser_webtransport" }), /capacity topology/);
+
+  const options = chromiumCapacityLaunchOptions(
+    normalized,
+    "/cache/playwright/chromium/chrome",
+    path.resolve("scripts/chromium-netns-launcher.sh"),
+    "http://192.0.2.1:38123",
+  );
+  assert.equal(options.env.FLOWERSEC_CLIENT_NETNS, forcedPlan.client_netns);
+  assert.ok(options.args.includes(`--log-net-log=${path.join(evidenceDirectory, "chromium-netlog.json")}`));
+  assert.ok(options.args.includes("--net-log-capture-mode=IncludeSensitive"));
+});
+
+test("freezes Chromium stream capacity at 100 sessions and 128 streams each", () => {
+  const plan = {
+    schema_version: 1, workload: "stream_capacity", topology: "browser_webtransport",
+    profile_id: "capacity-streams-webtransport-100x128", sessions: 100,
+    connections_per_session: 1, streams_per_session: 128,
+    certificate_hash: forcedPlan.certificate_hash, client_netns: forcedPlan.client_netns,
+    module_bind_address: forcedPlan.module_bind_address, module_advertise_host: forcedPlan.module_advertise_host,
+    control_bind_address: forcedPlan.module_bind_address, event_sink_url: "http://192.0.2.1:32123/events",
+    evidence_directory: path.resolve("stream-capacity-evidence"), operation_deadline_ms: 60_000,
+  };
+  const normalized = normalizeBrowserCapacityPlan(plan);
+  assert.equal(normalized.sessions * normalized.connections_per_session * normalized.streams_per_session, 12_800);
+  assert.equal(normalized.stream_workers_per_session, 4);
+  assert.throws(() => normalizeBrowserCapacityPlan({ ...plan, sessions: 101 }), /100/);
+  assert.throws(() => normalizeBrowserCapacityPlan({ ...plan, streams_per_session: 127 }), /128/);
+});
+
+test("partitions all 128 capacity stream indexes across four bounded workers", () => {
+  const assignments = capacityStreamAssignments(128, 4);
+  assert.deepEqual(assignments.map((indexes) => indexes.length), [32, 32, 32, 32]);
+  assert.deepEqual(assignments.flat().toSorted((left, right) => left - right), Array.from({ length: 128 }, (_, index) => index));
+  assert.throws(() => capacityStreamAssignments(128, 0), /workers/);
+  assert.throws(() => capacityStreamAssignments(3, 4), /workers/);
 });
 
 test("open-loop scheduler preserves ordinals, rate schedule, and inflight cap", async () => {

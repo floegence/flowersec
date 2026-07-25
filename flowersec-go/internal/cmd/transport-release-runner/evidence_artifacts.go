@@ -166,10 +166,24 @@ func (destination *artifactDestination) Close() error {
 type packetCapture struct {
 	command *exec.Cmd
 	path    string
-	stderr  strings.Builder
+	stderr  captureStderr
 	done    chan error
 	stop    sync.Once
 	err     error
+}
+
+type captureStderr struct {
+	strings.Builder
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (stderr *captureStderr) Write(payload []byte) (int, error) {
+	written, err := stderr.Builder.Write(payload)
+	if strings.Contains(stderr.Builder.String(), "listening on") {
+		stderr.once.Do(func() { close(stderr.ready) })
+	}
+	return written, err
 }
 
 var packetCaptureCommand = func(ctx context.Context, namespace, networkInterface, outputPath string) *exec.Cmd {
@@ -184,7 +198,7 @@ func startPacketCapture(ctx context.Context, namespace, networkInterface, output
 	if networkInterface == "" || !filepath.IsAbs(outputPath) {
 		return nil, errors.New("packet capture requires an interface and absolute output path")
 	}
-	capture := &packetCapture{path: outputPath, done: make(chan error, 1)}
+	capture := &packetCapture{path: outputPath, done: make(chan error, 1), stderr: captureStderr{ready: make(chan struct{})}}
 	capture.command = packetCaptureCommand(ctx, namespace, networkInterface, outputPath)
 	capture.command.Stderr = &capture.stderr
 	if err := capture.command.Start(); err != nil {
@@ -195,8 +209,11 @@ func startPacketCapture(ctx context.Context, namespace, networkInterface, output
 	defer readyDeadline.Stop()
 	readyPoll := time.NewTicker(10 * time.Millisecond)
 	defer readyPoll.Stop()
+	requireDiagnostic := filepath.Base(capture.command.Path) == "ip" || filepath.Base(capture.command.Path) == "tcpdump"
 	for {
 		select {
+		case <-capture.stderr.ready:
+			return capture, nil
 		case err := <-capture.done:
 			return nil, fmt.Errorf("tcpdump exited before capture became ready: %w: %s", err, strings.TrimSpace(capture.stderr.String()))
 		case <-readyDeadline.C:
@@ -204,7 +221,7 @@ func startPacketCapture(ctx context.Context, namespace, networkInterface, output
 			<-capture.done
 			return nil, errors.New("tcpdump did not initialize its pcap within 5 seconds")
 		case <-readyPoll.C:
-			if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() && info.Size() >= 24 {
+			if info, err := os.Stat(outputPath); !requireDiagnostic && err == nil && info.Mode().IsRegular() && info.Size() >= 24 {
 				return capture, nil
 			}
 		}
@@ -230,10 +247,31 @@ func (capture *packetCapture) Stop() error {
 		}
 		value, err := os.ReadFile(capture.path)
 		if err != nil || !validClassicPCAP(value) {
-			capture.err = errors.Join(capture.err, errors.New("tcpdump did not produce a non-empty classic pcap"), err)
+			capture.err = errors.Join(capture.err, fmt.Errorf("tcpdump did not produce a non-empty classic pcap: %s", strings.TrimSpace(capture.stderr.String())), err)
 		}
 	})
 	return capture.err
+}
+
+func (capture *packetCapture) WaitForPacket(ctx context.Context) error {
+	if capture == nil {
+		return errors.New("packet capture is required")
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-capture.done:
+			capture.done <- err
+			return fmt.Errorf("tcpdump exited before recording a packet: %w: %s", err, strings.TrimSpace(capture.stderr.String()))
+		case <-ctx.Done():
+			return errors.Join(errors.New("tcpdump did not record workload traffic"), context.Cause(ctx))
+		case <-ticker.C:
+			if info, err := os.Stat(capture.path); err == nil && info.Mode().IsRegular() && info.Size() > 24 {
+				return nil
+			}
+		}
+	}
 }
 
 func validClassicPCAP(value []byte) bool {
@@ -328,6 +366,26 @@ func summarizeArtifacts(reportParent, directory string) ([]releaseArtifact, erro
 			kind = "classic-pcap"
 		case filepath.Ext(path) == ".sqlog" && len(value) != 0:
 			kind = "qlog-json-seq"
+		case filepath.Base(path) == "trace.json" && len(value) != 0:
+			kind = "trace"
+		case filepath.Base(path) == "metrics.json" && len(value) != 0:
+			kind = "metrics"
+		case filepath.Base(path) == "resource.json" && len(value) != 0:
+			kind = "resource"
+		case filepath.Base(path) == "config.json" && len(value) != 0:
+			kind = "config"
+		case filepath.Base(path) == "chromium-netlog.json" && len(value) != 0:
+			kind = "chromium-netlog"
+		case filepath.Base(path) == "controller-result.json" && len(value) != 0:
+			kind = "browser-controller-result"
+		case filepath.Base(path) == "controller-config.json" && len(value) != 0:
+			kind = "browser-controller-config"
+		case filepath.Base(path) == "producer-resource.json" && len(value) != 0:
+			kind = "producer-resource"
+		case filepath.Base(path) == "chromium-trace.zip" && len(value) > 4 && string(value[:4]) == "PK\x03\x04":
+			kind = "playwright-trace"
+		case filepath.Base(path) == "controller-stderr.log" && len(value) != 0:
+			kind = "browser-controller-stderr"
 		default:
 			return fmt.Errorf("release artifact %s is not a recognized non-empty pcap or qlog", path)
 		}

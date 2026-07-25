@@ -60,6 +60,7 @@ docker run --detach \
   "$image_name" >/dev/null
 
 docker exec "$container_name" git config --global --add safe.directory /workspace/flowersec
+docker exec "$container_name" git config --global --add safe.directory /workspace/flowersec/.git
 
 docker exec "$container_name" install -m 0555 \
   /workspace/flowersec/scripts/transport-v2-release-runner.sh \
@@ -68,6 +69,7 @@ docker exec "$container_name" install -m 0555 \
 docker exec "$container_name" bash -euo pipefail -c '
   test -x /usr/local/bin/flowersec-transport-v2-release-runner
   git config --global --get-all safe.directory | grep -Fx /workspace/flowersec
+  git config --global --get-all safe.directory | grep -Fx /workspace/flowersec/.git
   git -C /workspace/flowersec rev-parse --show-toplevel
   test "$(uname -m)" = x86_64
   test -w /sys/fs/bpf

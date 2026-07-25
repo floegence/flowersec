@@ -14,14 +14,32 @@ func (lab *Lab) FaultEvidence(ctx context.Context) (KernelFaultEvidence, error) 
 	if lab == nil {
 		return KernelFaultEvidence{}, fmt.Errorf("linux network lab is required")
 	}
-	client, err := lab.readFaultStats(ctx, "client")
+	evidence, err := ReadFaultEvidence(ctx, lab.config.ClientNamespace, lab.config.ServerNamespace)
+	if err != nil {
+		return KernelFaultEvidence{}, err
+	}
+	evidence.ClientQdisc, err = readTrafficControlFaultStats(ctx, lab.config.ClientNamespace, lab.config.ClientInterface)
+	if err != nil {
+		return KernelFaultEvidence{}, err
+	}
+	evidence.ServerQdisc, err = readTrafficControlFaultStats(ctx, lab.config.ServerNamespace, lab.config.ServerInterface)
+	if err != nil {
+		return KernelFaultEvidence{}, err
+	}
+	return evidence, nil
+}
+
+// ReadFaultEvidence snapshots the pinned counters for a live lab. It is used
+// by the namespaced workload process to bind counters to exact phase bounds.
+func ReadFaultEvidence(ctx context.Context, clientNamespace, serverNamespace string) (KernelFaultEvidence, error) {
+	client, err := readFaultStats(ctx, clientNamespace, serverNamespace, "client")
 	if err != nil {
 		return KernelFaultEvidence{}, err
 	}
 	if err := validateKernelFaultStats("client", client); err != nil {
 		return KernelFaultEvidence{}, err
 	}
-	server, err := lab.readFaultStats(ctx, "server")
+	server, err := readFaultStats(ctx, clientNamespace, serverNamespace, "server")
 	if err != nil {
 		return KernelFaultEvidence{}, err
 	}
@@ -31,10 +49,10 @@ func (lab *Lab) FaultEvidence(ctx context.Context) (KernelFaultEvidence, error) 
 	return KernelFaultEvidence{Client: client, Server: server}, nil
 }
 
-func (lab *Lab) readFaultStats(ctx context.Context, direction string) (KernelFaultStats, error) {
+func readFaultStats(ctx context.Context, clientNamespace, serverNamespace, direction string) (KernelFaultStats, error) {
 	path := filepath.Join(
 		bpfPinRoot,
-		"flowersec-"+lab.config.ClientNamespace+"-"+lab.config.ServerNamespace,
+		"flowersec-"+clientNamespace+"-"+serverNamespace,
 		direction, "maps", "flowersec_fault_stats",
 	)
 	output, err := exec.CommandContext(ctx, bpfTool, "-j", "map", "dump", "pinned", path).CombinedOutput()
@@ -53,4 +71,32 @@ func (lab *Lab) readFaultStats(ctx context.Context, direction string) (KernelFau
 		return KernelFaultStats{}, fmt.Errorf("decode %s fault stats: got %d records", direction, len(records))
 	}
 	return records[0].Formatted.Value, nil
+}
+
+func readTrafficControlFaultStats(ctx context.Context, namespace, device string) (TrafficControlFaultStats, error) {
+	output, err := exec.CommandContext(ctx, "ip", "netns", "exec", namespace, "tc", "-j", "-s", "qdisc", "show", "dev", device).CombinedOutput()
+	if err != nil {
+		return TrafficControlFaultStats{}, fmt.Errorf("dump %s traffic-control stats: %w: %s", namespace, err, output)
+	}
+	var records []struct {
+		Kind       string `json:"kind"`
+		Bytes      uint64 `json:"bytes"`
+		Packets    uint64 `json:"packets"`
+		Drops      uint64 `json:"drops"`
+		Overlimits uint64 `json:"overlimits"`
+		Requeues   uint64 `json:"requeues"`
+		Backlog    uint64 `json:"backlog"`
+		QueueLen   uint64 `json:"qlen"`
+	}
+	if err := json.Unmarshal(output, &records); err != nil {
+		return TrafficControlFaultStats{}, fmt.Errorf("decode %s traffic-control stats: %w", namespace, err)
+	}
+	for _, record := range records {
+		if record.Kind != "tbf" {
+			continue
+		}
+		return TrafficControlFaultStats{Packets: record.Packets, Bytes: record.Bytes, Drops: record.Drops,
+			Overlimits: record.Overlimits, Requeues: record.Requeues, Backlog: record.Backlog, QueueLen: record.QueueLen}, nil
+	}
+	return TrafficControlFaultStats{}, nil
 }

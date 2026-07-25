@@ -209,6 +209,11 @@ func (source *browserArtifactSource) serve(record *browserArtifactRecord) {
 	defer cancel()
 	session, err := record.artifact.AwaitServer(ctx)
 	if err == nil && record.phase == "session" {
+		if source.profile.ID == "webtransport-native-isolation" {
+			err = transportrelease.ServeBrowserNativeIsolation(ctx, session)
+		}
+	}
+	if err == nil && record.phase == "session" {
 		err = transportrelease.ServeBrowserBulk(ctx, session, []int64{
 			source.profile.Bulk.WarmupBytesPerDirection,
 			source.profile.Bulk.ScoreBytesPerDirection,

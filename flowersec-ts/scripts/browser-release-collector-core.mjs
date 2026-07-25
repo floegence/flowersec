@@ -75,6 +75,69 @@ export function chromiumLaunchOptions(plan, chromiumExecutable, launcherPath, mo
   };
 }
 
+export function normalizeBrowserCapacityPlan(input) {
+  const plan = object(input, "browser capacity plan");
+  const topology = string(plan.topology, "topology");
+  const workload = plan.workload === undefined ? "held_sessions" : string(plan.workload, "workload");
+  const heldSessions = workload === "held_sessions";
+  const streamCapacity = workload === "stream_capacity";
+  if (!heldSessions && !streamCapacity) throw new TypeError("browser capacity workload is invalid");
+  if (heldSessions && topology !== "browser_tunnel_wt_wss" && topology !== "browser_tunnel_wt_quic") {
+    throw new TypeError("browser held-session capacity topology must be browser_tunnel_wt_wss or browser_tunnel_wt_quic");
+  }
+  if (streamCapacity && topology !== "browser_webtransport" && topology !== "browser_tunnel_wt_wss" && topology !== "browser_tunnel_wt_quic") {
+    throw new TypeError("browser stream capacity topology is invalid");
+  }
+  return Object.freeze({
+    schema_version: exactInteger(plan.schema_version, "schema_version", 1, 1),
+    topology,
+	workload,
+    profile_id: string(plan.profile_id, "profile_id"),
+	sessions: exactInteger(plan.sessions, "sessions", heldSessions ? 1000 : 100, heldSessions ? 1000 : 100),
+	connections_per_session: exactInteger(plan.connections_per_session ?? 1, "connections_per_session", 1, 1),
+	streams_per_session: exactInteger(plan.streams_per_session ?? (heldSessions ? 0 : 128), "streams_per_session", heldSessions ? 0 : 128, heldSessions ? 0 : 128),
+	stream_workers_per_session: streamCapacity ? 4 : 0,
+    certificate_hash: certificateHash(plan.certificate_hash),
+    client_netns: namespace(plan.client_netns),
+    module_bind_address: ipAddress(plan.module_bind_address, "module_bind_address"),
+    module_advertise_host: ipAddress(plan.module_advertise_host, "module_advertise_host"),
+    control_bind_address: ipAddress(plan.control_bind_address, "control_bind_address"),
+    event_sink_url: httpURL(plan.event_sink_url, "event_sink_url"),
+    evidence_directory: absolutePath(plan.evidence_directory, "evidence_directory"),
+    operation_deadline_ms: exactInteger(plan.operation_deadline_ms, "operation_deadline_ms", streamCapacity ? 60_000 : 30_000, streamCapacity ? 60_000 : 30_000),
+  });
+}
+
+export function capacityStreamAssignments(streams, workers) {
+  positiveInteger(streams, "streams");
+  exactInteger(workers, "workers", 1, streams);
+  const assignments = Array.from({ length: workers }, () => []);
+  for (let index = 0; index < streams; index++) assignments[index % workers].push(index);
+  return assignments.map((indexes) => Object.freeze(indexes));
+}
+
+export function chromiumCapacityLaunchOptions(plan, chromiumExecutable, launcherPath, moduleOrigin) {
+  const normalized = normalizeBrowserCapacityPlan(plan);
+  const executable = absolutePath(chromiumExecutable, "Chromium executable");
+  const launcher = absolutePath(launcherPath, "Chromium netns launcher");
+  const secureOrigin = browserModuleOrigin(moduleOrigin, normalized.module_advertise_host);
+  return {
+    headless: true,
+    executablePath: launcher,
+    args: [
+      `--unsafely-treat-insecure-origin-as-secure=${secureOrigin}`,
+      "--quic-client-connection-options=TBBR",
+      `--log-net-log=${path.join(normalized.evidence_directory, "chromium-netlog.json")}`,
+      "--net-log-capture-mode=IncludeSensitive",
+    ],
+    env: {
+      ...process.env,
+      FLOWERSEC_CLIENT_NETNS: normalized.client_netns,
+      FLOWERSEC_CHROMIUM_EXECUTABLE: executable,
+    },
+  };
+}
+
 function browserModuleOrigin(value, advertiseHost) {
   let origin;
   try {

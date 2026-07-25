@@ -175,6 +175,74 @@ func TestBrowserBulkServerUsesNativeBidirectionalStreams(t *testing.T) {
 	}
 }
 
+func TestBrowserNativeIsolationPreservesSiblingFIN(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	pair, err := OpenProductDirect(ctx, carrier.KindWebTransport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pair.Close()
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- ServeBrowserNativeIsolation(ctx, pair.Server) }()
+
+	streams := make([]releaseByteStream, 0, 4)
+	for index := range 4 {
+		stream, openErr := pair.Client.OpenStream(ctx, "native-isolation", map[string]any{"stream_index": index})
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		streams = append(streams, stream)
+		if count, writeErr := stream.Write([]byte{byte(index)}); writeErr != nil || count != 1 {
+			t.Fatalf("stream %d handshake write = %d, %v", index, count, writeErr)
+		}
+		handshake := make([]byte, 1)
+		if _, readErr := io.ReadFull(stream, handshake); readErr != nil || handshake[0] != byte(index)^0xff {
+			t.Fatalf("stream %d handshake read = %x, %v", index, handshake, readErr)
+		}
+	}
+	if err := streams[0].Reset(); err != nil {
+		t.Fatal(err)
+	}
+
+	results := make(chan error, 3)
+	for index := 1; index < len(streams); index++ {
+		index := index
+		go func() {
+			stream := streams[index]
+			value := byte(0x40 + index)
+			if count, writeErr := stream.Write([]byte{value}); writeErr != nil || count != 1 {
+				results <- errors.Join(writeErr, io.ErrShortWrite)
+				return
+			}
+			if closeErr := stream.CloseWrite(); closeErr != nil {
+				results <- closeErr
+				return
+			}
+			response := make([]byte, 1)
+			if _, readErr := io.ReadFull(stream, response); readErr != nil || response[0] != value^0xff {
+				results <- errors.Join(readErr, errors.New("sibling response mismatch"))
+				return
+			}
+			if count, readErr := stream.Read(response); count != 0 || !errors.Is(readErr, io.EOF) {
+				results <- errors.Join(readErr, errors.New("sibling did not finish with FIN"))
+				return
+			}
+			results <- nil
+		}()
+	}
+	if err := errors.Join(<-results, <-results, <-results); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+	var response string
+	if err := pair.Client.RPC().Call(ctx, 1, "native-isolation-survivor", &response); err != nil || response != "native-isolation-survivor" {
+		t.Fatalf("post-reset RPC = %q, %v", response, err)
+	}
+}
+
 func TestBrowserBulkServerReadsAndWritesConcurrently(t *testing.T) {
 	started := make(chan struct{})
 	incoming := &coordinatedBrowserReadStream{writeStarted: started, stopped: make(chan struct{})}
@@ -477,4 +545,10 @@ func (stream *blockingReleaseStream) Close() error      { return stream.Reset() 
 func (stream *blockingReleaseStream) Reset() error {
 	stream.once.Do(func() { close(stream.stopped) })
 	return nil
+}
+
+func TestNormalizeCloseErrorAcceptsTerminalDeadline(t *testing.T) {
+	if err := normalizeCloseError(context.DeadlineExceeded); err != nil {
+		t.Fatalf("normalize terminal deadline = %v", err)
+	}
 }

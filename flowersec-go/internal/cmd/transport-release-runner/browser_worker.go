@@ -94,6 +94,11 @@ func runBrowserCell(reportPath string, destination *artifactDestination, sourceS
 }
 
 func runBrowserNetworkCarrier(ctx context.Context, topology string, plan transportrelease.ProfilePlan, runNumber int, bpfObject, sourceRoot string, destination *artifactDestination) (result browserCellResult, resultErr error) {
+	label := fmt.Sprintf("%s-%s-run-%03d", plan.ID, strings.ReplaceAll(topology, "_", "-"), runNumber)
+	return runBrowserNetworkCarrierWithLabel(ctx, topology, plan, runNumber, bpfObject, sourceRoot, destination, label)
+}
+
+func runBrowserNetworkCarrierWithLabel(ctx context.Context, topology string, plan transportrelease.ProfilePlan, runNumber int, bpfObject, sourceRoot string, destination *artifactDestination, label string) (result browserCellResult, resultErr error) {
 	cellID := strings.ReplaceAll(plan.ID+"-"+topology, "_", "-")
 	config, err := linuxnetlab.ConfigForCell(cellID, runNumber, plan.Network.LinkMTU, plan.Network.Firewall)
 	if err != nil {
@@ -117,7 +122,6 @@ func runBrowserNetworkCarrier(ctx context.Context, topology string, plan transpo
 			return result, err
 		}
 	}
-	label := fmt.Sprintf("%s-%s-run-%03d", plan.ID, strings.ReplaceAll(topology, "_", "-"), runNumber)
 	evidence, err := startRunEvidence(ctx, destination, label, config.ClientNamespace, config.ClientInterface)
 	if err != nil {
 		return result, err
@@ -181,6 +185,7 @@ func runBrowserNetworkCarrier(ctx context.Context, topology string, plan transpo
 }
 
 type browserWorkerRequest struct {
+	Mode            string                       `json:"mode,omitempty"`
 	Plan            transportrelease.ProfilePlan `json:"plan"`
 	Topology        string                       `json:"topology"`
 	RunNumber       int                          `json:"run_number"`
@@ -188,6 +193,7 @@ type browserWorkerRequest struct {
 	ServerNamespace string                       `json:"server_namespace"`
 	ServerAddress   string                       `json:"server_address"`
 	SourceRoot      string                       `json:"source_root"`
+	Capacity        *browserCapacityWorkerPlan   `json:"capacity,omitempty"`
 }
 
 type browserCollectorPlan struct {
@@ -243,6 +249,9 @@ func runBrowserWorker(input io.Reader, output io.Writer) (resultErr error) {
 	}
 	if err := linuxnetlab.RequireCurrentNamespace(request.ClientNamespace); err != nil {
 		return err
+	}
+	if request.Mode == "capacity" {
+		return runBrowserCapacityWorker(request, output)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(request.Plan.CellWatchdogMinutes)*time.Minute)
 	defer cancel()
@@ -318,10 +327,19 @@ func validateBrowserWorkerRequest(request browserWorkerRequest) error {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return errors.New("browser release worker requires Linux amd64")
 	}
-	if !supportedBrowserTopology(request.Topology) || request.RunNumber < 1 ||
+	if !supportedBrowserTopology(request.Topology) ||
 		request.ClientNamespace == "" || request.ServerNamespace == "" || request.ClientNamespace == request.ServerNamespace ||
 		net.ParseIP(request.ServerAddress) == nil || !filepath.IsAbs(request.SourceRoot) {
 		return errors.New("browser release worker request is outside the supported topology")
+	}
+	if request.Mode == "capacity" {
+		if request.Capacity == nil || request.RunNumber != 0 || request.Plan.ID != "" {
+			return errors.New("browser capacity worker request is outside the frozen capacity matrix")
+		}
+		return validateBrowserCapacityWorkerPlan(*request.Capacity, request.SourceRoot)
+	}
+	if request.Mode != "" || request.Capacity != nil || request.RunNumber < 1 {
+		return errors.New("browser release worker mode is invalid")
 	}
 	plan := request.Plan
 	if plan.ID == "" || plan.Cold.Operations < 1 || plan.Cold.MaxInflight < 1 || plan.Cold.MaxInflight > plan.Cold.Operations ||
