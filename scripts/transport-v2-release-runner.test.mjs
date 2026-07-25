@@ -81,6 +81,21 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
   assert.doesNotMatch(runner, /PRIVATE KEY|key-file|transportcheck" sign/);
 });
 
+test("release wrapper rebuilds the final browser bundle before collection", () => {
+  const runner = fs.readFileSync(runnerPath, "utf8");
+  const finalCheckoutClean = runner.indexOf('git -C "$source_root" status --porcelain --untracked-files=all');
+  const browserDirectory = runner.indexOf('cd "$source_root/flowersec-ts"');
+  const browserBuild = runner.indexOf("npm run build", browserDirectory);
+  const collection = runner.indexOf('"$transportcheck" collect');
+
+  assert.notEqual(finalCheckoutClean, -1, "wrapper must verify the final checkout is clean");
+  assert.notEqual(browserDirectory, -1, "wrapper must build from the final TypeScript checkout");
+  assert.notEqual(browserBuild, -1, "wrapper must run the clean browser build");
+  assert.notEqual(collection, -1, "wrapper must invoke the evidence collector");
+  assert.ok(finalCheckoutClean < browserDirectory, "the final checkout must be clean before building browser dist");
+  assert.ok(browserBuild < collection, "browser dist must be rebuilt before evidence collection");
+});
+
 test("provision installs the source-matched wrapper at one stable container path", () => {
   const provision = fs.readFileSync(path.join(scriptsDirectory, "provision-transport-release-runner.sh"), "utf8");
   assert.match(provision, /docker exec "\$container_name" install -m 0555/);

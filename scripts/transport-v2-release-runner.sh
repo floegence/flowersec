@@ -166,6 +166,10 @@ base_manifest_path=$base_source_root/testdata/transport_v2/performance_manifest.
 cmp -s -- "$manifest_path" "$base_manifest_path" || fail "base and final performance manifests must be byte-identical"
 
 (
+  cd "$source_root/flowersec-ts"
+  npm run build
+)
+(
   cd "$source_root/flowersec-go"
   go build -trimpath -buildvcs=false -o "$low_level_runner" ./internal/cmd/transport-release-runner
 )
