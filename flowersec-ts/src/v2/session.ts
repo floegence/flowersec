@@ -11,7 +11,7 @@ import type {
   StreamOpenOptionsV2,
   UnreliableMessageChannelV2,
 } from "./contract.js";
-import type { CarrierSessionV2, CarrierStreamV2 } from "./carrier.js";
+import { CarrierV2Error, type CarrierSessionV2, type CarrierStreamV2 } from "./carrier.js";
 import type { SessionContractV2 } from "./artifact.js";
 import {
   computeClientConfirmV2,
@@ -221,6 +221,9 @@ export class SessionV2 implements SessionV2Contract {
   private sentGoAwayLastAccepted = 0n;
   private sentGoAwayReason = 0;
   private closePromise: Promise<void> | undefined;
+  private closing = false;
+  private sentSessionClose = false;
+  private readonly peerSessionClose = deferred<void>();
   private readonly streams = new Map<bigint, EncryptedStreamV2>();
   private readonly peerLedger: StreamLifetimeLedgerV2;
   private readonly outboundLedger: StreamLifetimeLedgerV2;
@@ -347,7 +350,10 @@ export class SessionV2 implements SessionV2Contract {
   }
 
   close(): Promise<void> {
-    this.closePromise ??= this.closeOnce();
+    if (this.closePromise === undefined) {
+      this.closing = true;
+      this.closePromise = this.closeOnce();
+    }
     return this.closePromise;
   }
 
@@ -807,6 +813,8 @@ export class SessionV2 implements SessionV2Contract {
             if (record.payload.length !== 2 || readU16(record.payload, 0) === 0) {
               throw protocolError("invalid SESSION_CLOSE");
             }
+            this.peerSessionClose.resolve();
+            await this.close();
             throw new SessionV2Error("closed", "Flowersec v2 session closed by peer");
           default:
             throw protocolError(`unexpected control type ${record.type}`);
@@ -823,15 +831,24 @@ export class SessionV2 implements SessionV2Contract {
     const work = (async () => {
       try {
         await this.sendGoAway(1);
-        await this.sendControl(InnerTypeV2.SessionClose, Uint8Array.of(0, 1));
+      } catch {
+        // A prior GOAWAY boundary must not suppress the close response.
+      }
+      try {
+        if (!this.sentSessionClose) {
+          this.sentSessionClose = true;
+          await this.sendControl(InnerTypeV2.SessionClose, Uint8Array.of(0, 1));
+        }
       } catch {
         // Closing is best-effort once the bounded shutdown has started.
       }
+      await this.peerSessionClose.promise;
       this.fail(closed, false);
       await this.carrier.close({ code: 1, reason: "session closed" }).catch(() => undefined);
     })();
     if (!await settleWithin(work, sessionCloseTimeoutMs(this.config))) {
       this.carrier.abort({ code: 1, reason: "session close deadline exceeded" });
+      this.peerSessionClose.resolve();
       await work.catch(() => undefined);
     }
     this.fail(closed, false);
@@ -1150,6 +1167,8 @@ export class SessionV2 implements SessionV2Contract {
 
   private fail(error: Error, abortCarrier = true): void {
     if (this.terminalError !== undefined) return;
+    const normalPeerCarrierClose = this.closing && this.sentSessionClose && error instanceof CarrierV2Error && error.code === "closed";
+    if (normalPeerCarrierClose) this.peerSessionClose.resolve();
     this.terminalError = error;
     this.terminationState.resolve({ error });
     if (this.idleTimer !== undefined) {
@@ -1166,10 +1185,11 @@ export class SessionV2 implements SessionV2Contract {
     for (const stream of [...this.streams.values()]) stream.peerReset(error);
     this.wipeAllRoots();
     this.h3.fill(0);
-    if (abortCarrier) this.carrier.abort({ code: 6, reason: "session terminated" });
+    if (abortCarrier && !normalPeerCarrierClose) this.carrier.abort({ code: 6, reason: "session terminated" });
   }
 
   private assertOpen(): void {
+    if (this.closing) throw new SessionV2Error("closed", "Flowersec v2 session closed");
     if (this.terminalError !== undefined) throw this.terminalError;
   }
 }
