@@ -1251,6 +1251,8 @@ test("transport release runner is pinned and scoped to its dedicated container",
   assert.match(provision, /^container_name=flowersec-release-ubuntu24$/m);
   assert.match(provision, /docker rm --force "\$container_name"/);
   assert.doesNotMatch(provision, /docker (?:rm|system prune)[^\n]*(?:--all|-a|\*)/);
+  assert.match(provision, /--cgroupns host/);
+  assert.match(provision, /--pid host/);
   assert.match(provision, /npm ci --audit=false/);
   assert.match(provision, /npm run build/);
   assert.match(provision, /npx playwright install chromium/);
