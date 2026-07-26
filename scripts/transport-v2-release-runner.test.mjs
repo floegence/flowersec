@@ -100,7 +100,7 @@ test("release wrapper collects bounded capacity parts before strict merge", () =
   const runner = fs.readFileSync(runnerPath, "utf8");
   assert.match(
     runner,
-    /readonly capacity_batches="stream-wss stream-quic stream-direct direct-carriers tunnel-matrix webtransport-tunnels"/,
+    /readonly capacity_batches="stream-wss stream-quic stream-direct direct-carriers tunnel-matrix webtransport-quic webtransport-wss"/,
   );
   assert.match(runner, /collect_part "\$target" "\$part_report" "\$part_directory" -capacity-batch "\$batch"/);
   assert.match(runner, /"\$transportcheck" merge-capacity \\/);

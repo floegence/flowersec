@@ -88,6 +88,17 @@ func TestCapacityCollectionBatchesExactlyCoverFrozenPlan(t *testing.T) {
 	}
 }
 
+func TestBrowserWebTransportTunnelCasesUseIndependentBatches(t *testing.T) {
+	quic := capacityCollectionBatches["webtransport-quic"]
+	wss := capacityCollectionBatches["webtransport-wss"]
+	if len(quic) != 1 || len(quic[0]) != 1 || quic[0][0] != "CAP-TUNNEL-WT-QUIC-1000" {
+		t.Fatalf("WebTransport QUIC batch = %v", quic)
+	}
+	if len(wss) != 1 || len(wss[0]) != 1 || wss[0][0] != "CAP-TUNNEL-WT-WSS-1000" {
+		t.Fatalf("WebTransport WSS batch = %v", wss)
+	}
+}
+
 func TestMergeRawCapacityIndexesRequiresOneConsistentCompleteMatrix(t *testing.T) {
 	plan, err := buildCollectionPlan("bench-transport-capacity", loadFixtureManifest(t), loadFixtureRegistry(t))
 	if err != nil {

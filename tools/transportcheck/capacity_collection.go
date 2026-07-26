@@ -23,10 +23,8 @@ var capacityCollectionBatches = map[string][][]string{
 		"CAP-WQ-1000",
 		"CAP-WW-1000",
 	}},
-	"webtransport-tunnels": {{
-		"CAP-TUNNEL-WT-QUIC-1000",
-		"CAP-TUNNEL-WT-WSS-1000",
-	}},
+	"webtransport-quic": {{"CAP-TUNNEL-WT-QUIC-1000"}},
+	"webtransport-wss":  {{"CAP-TUNNEL-WT-WSS-1000"}},
 }
 
 var capacityCollectionBatchOrder = []string{
@@ -35,7 +33,8 @@ var capacityCollectionBatchOrder = []string{
 	"stream-direct",
 	"direct-carriers",
 	"tunnel-matrix",
-	"webtransport-tunnels",
+	"webtransport-quic",
+	"webtransport-wss",
 }
 
 func selectCapacityCollectionBatch(plan collectionPlan, batch string) (collectionPlan, error) {

@@ -232,7 +232,7 @@ collect_part() {
 }
 
 if [[ $target == bench-transport-capacity ]]; then
-  readonly capacity_batches="stream-wss stream-quic stream-direct direct-carriers tunnel-matrix webtransport-tunnels"
+  readonly capacity_batches="stream-wss stream-quic stream-direct direct-carriers tunnel-matrix webtransport-quic webtransport-wss"
   install -d -o root -g root -m 0700 "$report_directory/parts"
   part_report_args=()
   for batch in $capacity_batches; do
