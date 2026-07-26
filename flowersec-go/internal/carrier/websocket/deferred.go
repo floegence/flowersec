@@ -72,6 +72,8 @@ type DeferredTunnelServer struct {
 	closeOnce          sync.Once
 	closeErr           error
 	activationCount    atomic.Int32
+
+	afterAdmissionCommit func()
 }
 
 // NewDeferredTunnelServer validates one TLS 1.3 tunnel WebSocket and starts
@@ -145,26 +147,30 @@ func (server *DeferredTunnelServer) SendAdmission(ctx context.Context, response 
 	server.responseStarted = true
 	server.state = deferredResponding
 	server.stateMu.Unlock()
-	if err := server.writer.writeMessage(ctx, gorillaws.BinaryMessage, raw); err != nil {
+	commitResponse := func() error {
+		server.stateMu.Lock()
+		defer server.stateMu.Unlock()
+		if server.state != deferredResponding {
+			if cause := context.Cause(server.ctx); cause != nil {
+				return cause
+			}
+			return ErrDeferredAdmissionState
+		}
+		server.responseSent = true
+		if response.Status == artifactv2.AdmissionSuccess {
+			server.state = deferredActivating
+		} else {
+			server.state = deferredRejected
+		}
+		return nil
+	}
+	if err := server.writer.writeMessage(ctx, gorillaws.BinaryMessage, raw, commitResponse); err != nil {
 		server.fail(err)
 		return err
 	}
-	server.stateMu.Lock()
-	if server.state != deferredResponding {
-		cause := context.Cause(server.ctx)
-		server.stateMu.Unlock()
-		if cause == nil {
-			cause = ErrDeferredAdmissionState
-		}
-		return cause
+	if server.afterAdmissionCommit != nil {
+		server.afterAdmissionCommit()
 	}
-	server.responseSent = true
-	if response.Status == artifactv2.AdmissionSuccess {
-		server.state = deferredActivating
-	} else {
-		server.state = deferredRejected
-	}
-	server.stateMu.Unlock()
 	return nil
 }
 
@@ -422,7 +428,12 @@ type serializedWebSocketWriter struct {
 	permit chan struct{}
 }
 
-func (writer *serializedWebSocketWriter) writeMessage(ctx context.Context, messageType int, payload []byte) error {
+func (writer *serializedWebSocketWriter) writeMessage(
+	ctx context.Context,
+	messageType int,
+	payload []byte,
+	beforeCommit func() error,
+) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -441,8 +452,15 @@ func (writer *serializedWebSocketWriter) writeMessage(ctx context.Context, messa
 	if err != nil {
 		return err
 	}
-	_, writeErr := messageWriter.Write(payload)
-	return errors.Join(writeErr, messageWriter.Close())
+	if _, err := messageWriter.Write(payload); err != nil {
+		return errors.Join(err, messageWriter.Close())
+	}
+	var commitErr error
+	if beforeCommit != nil {
+		commitErr = beforeCommit()
+	}
+	closeErr := messageWriter.Close()
+	return errors.Join(commitErr, closeErr)
 }
 
 func (writer *serializedWebSocketWriter) writeControl(messageType int, payload []byte, deadline time.Time) error {
@@ -465,7 +483,7 @@ func (conn *pumpedByteConn) Write(payload []byte) (int, error) {
 	if len(payload) == 0 {
 		return 0, nil
 	}
-	err := conn.owner.writer.writeMessage(context.Background(), gorillaws.BinaryMessage, payload)
+	err := conn.owner.writer.writeMessage(context.Background(), gorillaws.BinaryMessage, payload, nil)
 	if err != nil {
 		return 0, err
 	}

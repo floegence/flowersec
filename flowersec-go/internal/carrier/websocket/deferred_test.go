@@ -219,6 +219,108 @@ func TestDeferredTunnelServerActivatesYamuxOnlyAfterSuccess(t *testing.T) {
 	assertCarrierRoundTrip(t, clientSession, serverSession)
 }
 
+func TestDeferredTunnelServerSuccessLinearizesBeforeFirstCarrierMessage(t *testing.T) {
+	clientConn, serverConn := newUpgradedPair(t, SubprotocolTunnel)
+	resources := DefaultResourcePolicy()
+	deferred, err := NewDeferredTunnelServer(serverConn, resources, LivenessPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageCommitted := make(chan struct{})
+	allowSendReturn := make(chan struct{})
+	deferred.afterAdmissionCommit = func() {
+		close(messageCommitted)
+		<-allowSendReturn
+	}
+	clientAttempted := make(chan struct{})
+	clientDone := make(chan error, 1)
+	serverRead := make(chan struct{}, 1)
+	go func() {
+		if _, commitErr := CommitAdmission(
+			context.Background(), clientConn,
+			validWebSocketFSB2(t, artifactv2.PathTunnel), nil,
+		); commitErr != nil {
+			close(clientAttempted)
+			clientDone <- commitErr
+			return
+		}
+		clientSession, sessionErr := NewAfterAdmission(
+			clientConn, ClientRole, SubprotocolTunnel, resources, LivenessPolicy{},
+		)
+		if sessionErr != nil {
+			close(clientAttempted)
+			clientDone <- sessionErr
+			return
+		}
+		defer clientSession.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		stream, openErr := clientSession.OpenStream(ctx)
+		if openErr == nil {
+			_, openErr = stream.Write([]byte("first-carrier-message"))
+		}
+		if openErr == nil {
+			openErr = stream.CloseWrite()
+		}
+		close(clientAttempted)
+		if openErr == nil {
+			select {
+			case <-serverRead:
+			case <-time.After(time.Second):
+				openErr = context.DeadlineExceeded
+			}
+		}
+		clientDone <- openErr
+	}()
+	if _, err := deferred.ReceiveAdmission(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sendDone := make(chan error, 1)
+	go func() {
+		sendDone <- deferred.SendAdmission(
+			context.Background(), artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil,
+		)
+	}()
+	<-messageCommitted
+	<-clientAttempted
+	deadline := time.Now().Add(time.Second)
+	for {
+		deferred.stateMu.Lock()
+		state := deferred.state
+		deferred.stateMu.Unlock()
+		if state != deferredResponding {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("reader pump did not observe the first carrier message")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(allowSendReturn)
+	if err := <-sendDone; err != nil {
+		t.Fatalf("SendAdmission: %v", err)
+	}
+	serverSession, err := deferred.Activate(context.Background())
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	defer serverSession.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	stream, err := serverSession.AcceptStream(ctx)
+	if err != nil {
+		t.Fatalf("AcceptStream: %v", err)
+	}
+	payload, err := io.ReadAll(io.LimitReader(stream, 64))
+	if err != nil || string(payload) != "first-carrier-message" {
+		t.Fatalf("first payload = %q, err = %v", payload, err)
+	}
+	serverRead <- struct{}{}
+	if err := <-clientDone; err != nil {
+		t.Fatalf("client: %v", err)
+	}
+}
+
 func TestDeferredCloseUsesCallerCleanupDeadline(t *testing.T) {
 	clientConn, serverConn := newUpgradedPair(t, SubprotocolTunnel)
 	t.Cleanup(func() { _ = clientConn.Close() })
