@@ -11,6 +11,7 @@ import { chromium } from "playwright";
 import {
   capacityStreamAssignments,
   chromiumCapacityLaunchOptions,
+  createBrowserCapacityCloseBatcher,
   normalizeBrowserCapacityPlan,
 } from "./browser-release-collector-core.mjs";
 import {
@@ -127,6 +128,22 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
     cdp = await context.newCDPSession(page);
     await cdp.send("Performance.enable");
 
+    const closeSession = createBrowserCapacityCloseBatcher(async (batch) => {
+      await withTimeout(page.evaluate(async (entries) => {
+        const sessions = globalThis.__flowersecCapacitySessions;
+        const results = await Promise.allSettled(entries.map(async ({ id, spendToken }) => {
+          const entry = sessions?.get(id);
+          if (entry === undefined || entry.token !== spendToken) throw new Error("browser capacity session is unavailable");
+          await Promise.allSettled((entry.streams ?? []).map(async (stream) => await stream.close()));
+          await entry.session.close();
+          await entry.session.termination;
+          sessions.delete(id);
+        }));
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed !== undefined) throw failed.reason;
+      }, batch), plan.operation_deadline_ms, "browser session cleanup batch");
+    });
+
     server = http.createServer(async (request, response) => {
       try {
         if (request.method === "POST" && request.url === "/v1/connect") {
@@ -238,14 +255,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
           const token = stringValue(body.token, "session token");
           const record = records.get(sessionID);
           if (record === undefined || record.token !== token) return respondJSON(response, 404, { error: "unknown session" });
-          await withTimeout(page.evaluate(async ({ id, spendToken }) => {
-            const entry = globalThis.__flowersecCapacitySessions?.get(id);
-            if (entry === undefined || entry.token !== spendToken) throw new Error("browser capacity session is unavailable");
-            await Promise.allSettled((entry.streams ?? []).map(async (stream) => await stream.close()));
-            await entry.session.close();
-            await entry.session.termination;
-            globalThis.__flowersecCapacitySessions.delete(id);
-          }, { id: sessionID, spendToken: token }), plan.operation_deadline_ms, "browser session cleanup");
+          await closeSession({ id: sessionID, spendToken: token });
           if (record.status !== "closed") {
 			closedStreams += record.activeStreams;
 			record.activeStreams = 0;

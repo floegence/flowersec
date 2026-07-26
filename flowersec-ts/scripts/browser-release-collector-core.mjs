@@ -116,6 +116,47 @@ export function capacityStreamAssignments(streams, workers) {
   return assignments.map((indexes) => Object.freeze(indexes));
 }
 
+export function createBrowserCapacityCloseBatcher(executeBatch, options = {}) {
+  if (typeof executeBatch !== "function") throw new TypeError("browser capacity close batch callback is required");
+  const delayMs = options.delayMs ?? 250;
+  finiteNumber(delayMs, "browser capacity close batch delay", 0);
+  const schedule = options.schedule ?? ((flush) => setTimeout(flush, delayMs));
+  if (typeof schedule !== "function") throw new TypeError("browser capacity close batch scheduler is required");
+
+  let pending = [];
+  let scheduled = false;
+  let running = false;
+
+  const scheduleFlush = () => {
+    if (scheduled || running || pending.length === 0) return;
+    scheduled = true;
+    schedule(() => {
+      scheduled = false;
+      void flush();
+    });
+  };
+  const flush = async () => {
+    if (running || pending.length === 0) return;
+    const batch = pending;
+    pending = [];
+    running = true;
+    try {
+      await executeBatch(batch.map((entry) => entry.value));
+      for (const entry of batch) entry.resolve();
+    } catch (error) {
+      for (const entry of batch) entry.reject(error);
+    } finally {
+      running = false;
+      scheduleFlush();
+    }
+  };
+
+  return (value) => new Promise((resolve, reject) => {
+    pending.push({ value, resolve, reject });
+    scheduleFlush();
+  });
+}
+
 export function chromiumCapacityLaunchOptions(plan, chromiumExecutable, launcherPath, moduleOrigin) {
   const normalized = normalizeBrowserCapacityPlan(plan);
   const executable = absolutePath(chromiumExecutable, "Chromium executable");

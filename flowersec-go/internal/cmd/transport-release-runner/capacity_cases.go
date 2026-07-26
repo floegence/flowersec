@@ -411,7 +411,7 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 	}
 
 	cleanupEnd := holdEnd.Add(contract.Cleanup)
-	cleanupCloseWindow := capacityCleanupCloseWindow(contract)
+	cleanupCloseWindow := capacityCleanupCloseWindow(definition, contract)
 	closed := make(chan error, len(sessions))
 	for ordinal, session := range sessions {
 		due := holdEnd.Add(time.Duration(int64(cleanupCloseWindow) * int64(ordinal) / int64(contract.Sessions)))
@@ -586,8 +586,8 @@ func writeCapacityDebugStack() error {
 	return os.WriteFile(path, buffer[:count], 0o600)
 }
 
-func capacityCleanupCloseWindow(contract capacityContract) time.Duration {
-	if contract.StreamsPerSession > 0 {
+func capacityCleanupCloseWindow(definition capacityCaseDefinition, contract capacityContract) time.Duration {
+	if definition.Kind == capacityBrowserTunnel || contract.StreamsPerSession > 0 {
 		return contract.Cleanup / 6
 	}
 	return contract.Cleanup * 2 / 3

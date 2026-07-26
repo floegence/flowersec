@@ -8,6 +8,7 @@ import {
   chromiumCapacityLaunchOptions,
   chromiumLaunchOptions,
   commitArtifactSpend,
+  createBrowserCapacityCloseBatcher,
   normalizeBrowserCapacityPlan,
   normalizeCollectorPlan,
   runOpenLoop,
@@ -162,6 +163,26 @@ test("partitions all 128 capacity stream indexes across four bounded workers", (
   assert.deepEqual(assignments.flat().toSorted((left, right) => left - right), Array.from({ length: 128 }, (_, index) => index));
   assert.throws(() => capacityStreamAssignments(128, 0), /workers/);
   assert.throws(() => capacityStreamAssignments(3, 4), /workers/);
+});
+
+test("batches browser capacity closes into one browser-context operation", async () => {
+  const scheduled = [];
+  const batches = [];
+  const closeSession = createBrowserCapacityCloseBatcher(async (batch) => {
+    batches.push(batch);
+  }, {
+    schedule: (flush) => scheduled.push(flush),
+  });
+  const closes = Array.from({ length: 1000 }, (_, index) => closeSession({
+    id: `session-${index + 1}`,
+    token: `token-${index + 1}`,
+  }));
+  assert.equal(scheduled.length, 1);
+  scheduled.shift()();
+  await Promise.all(closes);
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].length, 1000);
+  assert.equal(batches[0][999].id, "session-1000");
 });
 
 test("open-loop scheduler preserves ordinals, rate schedule, and inflight cap", async () => {

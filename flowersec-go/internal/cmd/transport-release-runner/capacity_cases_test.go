@@ -125,12 +125,15 @@ func TestBrowserWSSStreamCapacityRecordsTightYamuxResources(t *testing.T) {
 
 func TestCapacityCleanupReservesResourceConvergenceWindow(t *testing.T) {
 	regular := capacityContract{Cleanup: 30 * time.Second}
-	if got := capacityCleanupCloseWindow(regular); got != 20*time.Second {
+	if got := capacityCleanupCloseWindow(capacityCaseDefinition{Kind: capacityDirect}, regular); got != 20*time.Second {
 		t.Fatalf("regular cleanup close window = %s, want 20s", got)
 	}
 	stream := capacityContract{Cleanup: 30 * time.Second, StreamsPerSession: 128}
-	if got := capacityCleanupCloseWindow(stream); got != 5*time.Second {
+	if got := capacityCleanupCloseWindow(capacityCaseDefinition{Kind: capacityBrowserStream}, stream); got != 5*time.Second {
 		t.Fatalf("stream cleanup close window = %s, want 5s", got)
+	}
+	if got := capacityCleanupCloseWindow(capacityCaseDefinition{Kind: capacityBrowserTunnel}, regular); got != 5*time.Second {
+		t.Fatalf("browser tunnel cleanup close window = %s, want 5s", got)
 	}
 }
 
@@ -147,6 +150,24 @@ func TestRunBrowserStreamCapacityCleanupConvergesOneHundredReliableSessions(t *t
 	}
 	if result.CleanupDisconnects != contract.Sessions || result.ResidualSessions != 0 || result.WatchdogTimeouts != 0 {
 		t.Fatalf("browser stream cleanup result = %+v", result)
+	}
+}
+
+func TestRunBrowserTunnelCapacityCleanupConvergesOneThousandReliableSessions(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 1000,
+		Ramp:     3 * time.Second, Hold: 100 * time.Millisecond, Cleanup: 600 * time.Millisecond, Watchdog: 3700 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: 4 * time.Second, MaxOpenFDs: 2000, MaxGoroutines: 2000, MaxTasks: 2000,
+	}
+	endpoint := &fakeCapacityEndpoint{sessionCloseDelay: 360 * time.Millisecond}
+	result, err := runCapacityCase(context.Background(), capacityCaseDefinition{
+		ID: "browser-tunnel-cleanup", Profile: "browser-tunnel-cleanup", Kind: capacityBrowserTunnel,
+	}, contract, endpoint, monotonicSnapshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CleanupDisconnects != contract.Sessions || result.ResidualSessions != 0 || result.WatchdogTimeouts != 0 {
+		t.Fatalf("browser tunnel cleanup result = %+v", result)
 	}
 }
 
