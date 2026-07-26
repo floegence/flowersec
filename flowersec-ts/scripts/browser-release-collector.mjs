@@ -607,7 +607,7 @@ export async function installWebTransportCertificateHash(page, encodedHash) {
     const hash = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
     globalThis.WebTransport = class extends NativeWebTransport {
       constructor(url, options) {
-        super(url, { ...options, serverCertificateHashes: [{ algorithm: "sha-256", value: hash }] });
+        super(url, { ...options, serverCertificateHashes: [{ algorithm: "sha-256", value: hash.slice() }] });
       }
     };
   }, encodedHash);

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 
+import { installWebTransportCertificateHash } from "./browser-release-collector.mjs";
+
 import {
   acquireArtifactBatch,
   capacityStreamAssignments,
@@ -138,6 +140,39 @@ test("freezes Chromium tunnel capacity at exactly 1000 live sessions", () => {
   assert.equal(options.env.FLOWERSEC_CLIENT_NETNS, forcedPlan.client_netns);
   assert.ok(options.args.includes(`--log-net-log=${path.join(evidenceDirectory, "chromium-netlog.json")}`));
   assert.ok(options.args.includes("--net-log-capture-mode=IncludeSensitive"));
+});
+
+test("gives every WebTransport constructor an independent certificate hash buffer", async () => {
+  let initScript;
+  let initValue;
+  await installWebTransportCertificateHash({
+    addInitScript: async (script, value) => {
+      initScript = script;
+      initValue = value;
+    },
+  }, forcedPlan.certificate_hash);
+
+  const original = globalThis.WebTransport;
+  const instances = [];
+  class NativeWebTransport {
+    constructor(_url, options) {
+      instances.push(options.serverCertificateHashes[0].value);
+    }
+  }
+  try {
+    globalThis.WebTransport = NativeWebTransport;
+    initScript(initValue);
+    const WrappedWebTransport = globalThis.WebTransport;
+    new WrappedWebTransport("https://192.0.2.1:443");
+    new WrappedWebTransport("https://192.0.2.1:443");
+    assert.equal(instances.length, 2);
+    assert.notStrictEqual(instances[0], instances[1]);
+    instances[0][0] ^= 0xff;
+    assert.notEqual(instances[0][0], instances[1][0]);
+  } finally {
+    if (original === undefined) delete globalThis.WebTransport;
+    else globalThis.WebTransport = original;
+  }
 });
 
 test("freezes Chromium stream capacity at 100 sessions and 128 streams each", () => {
