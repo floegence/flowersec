@@ -394,6 +394,7 @@ func (s *engineSession) AcceptStream(ctx context.Context) (IncomingStream, error
 	}
 	s.openMu.Lock()
 	closing := s.closing
+	closingCh := s.closingCh
 	s.openMu.Unlock()
 	if closing {
 		return IncomingStream{}, ErrSessionClosed
@@ -403,7 +404,7 @@ func (s *engineSession) AcceptStream(ctx context.Context) (IncomingStream, error
 		return IncomingStream{}, ctx.Err()
 	case <-s.ctx.Done():
 		return IncomingStream{}, s.sessionError()
-	case <-s.closingCh:
+	case <-closingCh:
 		return IncomingStream{}, ErrSessionClosed
 	case incoming := <-s.acceptCh:
 		s.openMu.Lock()
@@ -444,6 +445,7 @@ func (s *engineSession) markClosing() {
 		s.closing = true
 		s.goingAway = true
 		close(s.closingCh)
+		s.closingCh = nil
 	}
 	s.openMu.Unlock()
 }

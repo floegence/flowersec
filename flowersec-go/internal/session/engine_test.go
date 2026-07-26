@@ -1307,6 +1307,13 @@ func TestCloseUnblocksAcceptBeforeControlFlushCompletes(t *testing.T) {
 
 	writeBlocked := make(chan struct{})
 	releaseWrite := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseWrite:
+		default:
+			close(releaseWrite)
+		}
+	}()
 	var once sync.Once
 	client.control.(*memoryStream).setWriteHook(func(payload []byte) {
 		if len(payload) >= 4 && string(payload[:4]) == "FSR2" {
@@ -1333,6 +1340,22 @@ func TestCloseUnblocksAcceptBeforeControlFlushCompletes(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("blocked AcceptStream waited for control flush")
 	}
+	client.openMu.Lock()
+	closingNotification := client.closingCh
+	client.openMu.Unlock()
+	if closingNotification != nil {
+		t.Fatal("Close retained its one-shot accept notification after entering the closing state")
+	}
+	select {
+	case <-client.Termination():
+		t.Fatal("Termination closed before the authoritative close boundary")
+	default:
+	}
+	waitContext, cancelWait := context.WithCancel(context.Background())
+	cancelWait()
+	if err := client.WaitClosed(waitContext); !errors.Is(err, context.Canceled) {
+		t.Fatalf("WaitClosed during control flush = %v, want context cancellation", err)
+	}
 	select {
 	case err := <-closed:
 		t.Fatalf("Close returned before control flush release: %v", err)
@@ -1341,6 +1364,9 @@ func TestCloseUnblocksAcceptBeforeControlFlushCompletes(t *testing.T) {
 	close(releaseWrite)
 	if err := <-closed; err != nil {
 		t.Fatal(err)
+	}
+	if err := client.WaitClosed(context.Background()); !errors.Is(err, ErrSessionClosed) {
+		t.Fatalf("WaitClosed after Close = %v, want ErrSessionClosed", err)
 	}
 }
 
