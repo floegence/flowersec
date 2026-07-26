@@ -124,8 +124,29 @@ func TestBrowserWSSStreamCapacityRecordsTightYamuxResources(t *testing.T) {
 }
 
 func TestCapacityCleanupReservesResourceConvergenceWindow(t *testing.T) {
-	if got := capacityCleanupCloseWindow(30 * time.Second); got != 20*time.Second {
-		t.Fatalf("cleanup close window = %s, want 20s", got)
+	regular := capacityContract{Cleanup: 30 * time.Second}
+	if got := capacityCleanupCloseWindow(regular); got != 20*time.Second {
+		t.Fatalf("regular cleanup close window = %s, want 20s", got)
+	}
+	stream := capacityContract{Cleanup: 30 * time.Second, StreamsPerSession: 128}
+	if got := capacityCleanupCloseWindow(stream); got != 5*time.Second {
+		t.Fatalf("stream cleanup close window = %s, want 5s", got)
+	}
+}
+
+func TestRunBrowserStreamCapacityCleanupConvergesOneHundredReliableSessions(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 100, StreamsPerSession: 1,
+		Ramp: time.Second, Hold: 100 * time.Millisecond, Cleanup: 600 * time.Millisecond, Watchdog: 1700 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: 2 * time.Second, MaxOpenFDs: 1000, MaxGoroutines: 1000, MaxTasks: 1000,
+	}
+	endpoint := &fakeCapacityEndpoint{sessionCloseDelay: 360 * time.Millisecond}
+	result, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "browser-stream-cleanup", Profile: "browser-stream-cleanup"}, contract, endpoint, monotonicSnapshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CleanupDisconnects != contract.Sessions || result.ResidualSessions != 0 || result.WatchdogTimeouts != 0 {
+		t.Fatalf("browser stream cleanup result = %+v", result)
 	}
 }
 
@@ -389,16 +410,26 @@ func TestBrowserCapacityProfilesFailClosed(t *testing.T) {
 }
 
 type fakeCapacitySession struct {
-	id        string
-	done      chan struct{}
-	closeOnce sync.Once
-	onClose   func()
+	id         string
+	done       chan struct{}
+	closeOnce  sync.Once
+	onClose    func()
+	closeDelay time.Duration
 }
 
 func (session *fakeCapacitySession) ID() string                   { return session.id }
 func (session *fakeCapacitySession) Termination() <-chan struct{} { return session.done }
 func (*fakeCapacitySession) ProbeLiveness(context.Context) error  { return nil }
-func (session *fakeCapacitySession) Close(context.Context) error {
+func (session *fakeCapacitySession) Close(ctx context.Context) error {
+	if session.closeDelay > 0 {
+		timer := time.NewTimer(session.closeDelay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+	}
 	session.closeOnce.Do(func() {
 		close(session.done)
 		if session.onClose != nil {
@@ -422,6 +453,7 @@ type fakeCapacityEndpoint struct {
 	connected            chan struct{}
 	connectedOnce        sync.Once
 	closeOrder           []string
+	sessionCloseDelay    time.Duration
 }
 
 type fakeQuiescingCapacityEndpoint struct {
@@ -463,7 +495,7 @@ func (endpoint *fakeCapacityEndpoint) Connect(context.Context) (capacitySession,
 	if endpoint.duplicateID {
 		id = "duplicate"
 	}
-	session := &fakeCapacitySession{id: id, done: make(chan struct{}), onClose: func() {
+	session := &fakeCapacitySession{id: id, done: make(chan struct{}), closeDelay: endpoint.sessionCloseDelay, onClose: func() {
 		endpoint.mu.Lock()
 		endpoint.disconnects++
 		endpoint.closeOrder = append(endpoint.closeOrder, "session")
