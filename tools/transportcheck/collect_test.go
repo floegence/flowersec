@@ -150,37 +150,6 @@ func TestBuildCollectionPlanSplitsCapacityIntoExactCaseJobs(t *testing.T) {
 	}
 }
 
-func TestCapacityCaseJobsUseThreeBoundedBalancedLanes(t *testing.T) {
-	plan, err := buildCollectionPlan("bench-transport-capacity", loadFixtureManifest(t), loadFixtureRegistry(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	scheduled := make([]scheduledCollectionJob, len(plan.Jobs))
-	for index, job := range plan.Jobs {
-		scheduled[index] = scheduledCollectionJob{index: index, job: job}
-	}
-	lanes := scheduleCapacityCaseLanes(scheduled)
-	if len(lanes) != 3 || capacityJobWatchdog != 5*time.Minute || capacityStageWatchdog != 10*time.Minute ||
-		caseSuiteJobHardStop != 10*time.Minute || caseSuiteStageHardStop != 10*time.Minute {
-		t.Fatalf("capacity execution bounds = %d lanes, %s/job, %s/stage", len(lanes), capacityJobWatchdog, capacityStageWatchdog)
-	}
-	seen := make(map[string]struct{}, len(plan.Jobs))
-	for laneIndex, lane := range lanes {
-		if len(lane) != 4 {
-			t.Fatalf("capacity lane %d has %d jobs, want 4", laneIndex, len(lane))
-		}
-		for _, scheduled := range lane {
-			if _, duplicate := seen[scheduled.job.CaseID]; duplicate {
-				t.Fatalf("capacity case %s is assigned more than once", scheduled.job.CaseID)
-			}
-			seen[scheduled.job.CaseID] = struct{}{}
-		}
-	}
-	if len(seen) != 12 {
-		t.Fatalf("capacity lane schedule covers %d cases, want 12", len(seen))
-	}
-}
-
 func TestCollectionPlanBindsCleanRevisionVariantsToIndependentSources(t *testing.T) {
 	jobs, missing := supportedPerformanceJobs(loadFixtureManifest(t))
 	if slices.Contains(missing, "cell clean-01 (direct_wss_revision)") {

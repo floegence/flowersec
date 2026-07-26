@@ -204,22 +204,50 @@ clang -O2 -g -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
 [[ -z $(git -C "$source_root" status --porcelain --untracked-files=all) ]] || fail "runner build changed the source checkout"
 [[ -z $(git -C "$base_source_root" status --porcelain --untracked-files=all) ]] || fail "runner build changed the base source checkout"
 
-"$transportcheck" collect \
-  -manifest "$manifest_path" \
-  -registry "$registry_path" \
-  -repo "$source_root" \
-  -base-repo "$base_source_root" \
-  -base-sha "$base_sha" \
-  -final-sha "$final_sha" \
-  -target "$target" \
-  -report "$report" \
-  -artifact-dir "$report_directory" \
-  -runner-executable "$low_level_runner" \
-  -race-runner-executable "$race_low_level_runner" \
-  -base-runner-executable "$base_low_level_runner" \
-  -runner-wrapper "$actual_wrapper" \
-  -bpf-object "$bpf_object" \
-  -host-bpftool "$host_bpftool" \
-  -trust-policy "$trust_policy_path" \
-  -effective-config "$effective_config_path" \
-  -kernel-release "$actual_kernel"
+collect_part() {
+  local collect_target=$1
+  local collect_report=$2
+  local collect_directory=$3
+  shift 3
+  "$transportcheck" collect \
+    -manifest "$manifest_path" \
+    -registry "$registry_path" \
+    -repo "$source_root" \
+    -base-repo "$base_source_root" \
+    -base-sha "$base_sha" \
+    -final-sha "$final_sha" \
+    -target "$collect_target" \
+    -report "$collect_report" \
+    -artifact-dir "$collect_directory" \
+    -runner-executable "$low_level_runner" \
+    -race-runner-executable "$race_low_level_runner" \
+    -base-runner-executable "$base_low_level_runner" \
+    -runner-wrapper "$actual_wrapper" \
+    -bpf-object "$bpf_object" \
+    -host-bpftool "$host_bpftool" \
+    -trust-policy "$trust_policy_path" \
+    -effective-config "$effective_config_path" \
+    -kernel-release "$actual_kernel" \
+    "$@"
+}
+
+if [[ $target == bench-transport-capacity ]]; then
+  readonly capacity_batches="stream-wss stream-quic stream-direct direct-carriers tunnel-matrix webtransport-tunnels"
+  install -d -o root -g root -m 0700 "$report_directory/parts"
+  part_report_args=()
+  for batch in $capacity_batches; do
+    part_directory=$report_directory/parts/$batch
+    part_report=$part_directory/report.partial.json
+    install -d -o root -g root -m 0700 "$part_directory"
+    collect_part "$target" "$part_report" "$part_directory" -capacity-batch "$batch"
+    part_report_args+=(-part-report "$part_report")
+  done
+  "$transportcheck" merge-capacity \
+    -manifest "$manifest_path" \
+    -registry "$registry_path" \
+    -report "$report" \
+    -artifact-dir "$report_directory" \
+    "${part_report_args[@]}"
+else
+  collect_part "$target" "$report" "$report_directory"
+fi

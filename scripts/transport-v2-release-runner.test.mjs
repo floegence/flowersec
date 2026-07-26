@@ -96,6 +96,21 @@ test("release wrapper rebuilds the final browser bundle before collection", () =
   assert.ok(browserBuild < collection, "browser dist must be rebuilt before evidence collection");
 });
 
+test("release wrapper collects bounded capacity parts before strict merge", () => {
+  const runner = fs.readFileSync(runnerPath, "utf8");
+  assert.match(
+    runner,
+    /readonly capacity_batches="stream-wss stream-quic stream-direct direct-carriers tunnel-matrix webtransport-tunnels"/,
+  );
+  assert.match(runner, /collect_part "\$target" "\$part_report" "\$part_directory" -capacity-batch "\$batch"/);
+  assert.match(runner, /"\$transportcheck" merge-capacity \\/);
+  assert.match(runner, /"\$\{part_report_args\[@\]\}"/);
+  assert.ok(
+    runner.indexOf('collect_part "$target" "$part_report"') < runner.indexOf('"$transportcheck" merge-capacity'),
+    "capacity merge must happen only after every partial collector returns",
+  );
+});
+
 test("provision installs the source-matched wrapper at one stable container path", () => {
   const provision = fs.readFileSync(path.join(scriptsDirectory, "provision-transport-release-runner.sh"), "utf8");
   assert.match(provision, /docker exec "\$container_name" install -m 0555/);

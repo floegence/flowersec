@@ -6,14 +6,24 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
-const collectionCommandCleanupGrace = 35 * time.Second
+const collectionCommandCleanupGrace = 45 * time.Second
+const collectionCommandCgroupKillDelay = collectionCommandCleanupGrace - 5*time.Second
 
 func configureCollectionCommand(command *exec.Cmd) {
 	if command == nil {
 		return
+	}
+	laneCgroup := ""
+	for _, value := range command.Env {
+		if path, ok := strings.CutPrefix(value, "FLOWERSEC_LANE_CGROUP="); ok {
+			laneCgroup = path
+			break
+		}
 	}
 	command.Cancel = func() error {
 		if command.Process == nil {
@@ -25,7 +35,16 @@ func configureCollectionCommand(command *exec.Cmd) {
 			}
 			return err
 		}
+		if laneCgroup != "" {
+			scheduleCollectionCgroupKill(laneCgroup, collectionCommandCgroupKillDelay)
+		}
 		return nil
 	}
 	command.WaitDelay = collectionCommandCleanupGrace
+}
+
+func scheduleCollectionCgroupKill(cgroup string, delay time.Duration) {
+	time.AfterFunc(delay, func() {
+		_ = os.WriteFile(filepath.Join(cgroup, "cgroup.kill"), []byte("1"), 0o600)
+	})
 }

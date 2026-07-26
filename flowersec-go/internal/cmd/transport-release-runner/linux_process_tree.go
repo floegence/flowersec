@@ -303,6 +303,18 @@ func (sampler *linuxProcessTreeSampler) Kill() error {
 	if sampler == nil {
 		return nil
 	}
+	if sampler.cgroupPath != "" {
+		var result error
+		if err := os.WriteFile(filepath.Join(sampler.cgroupPath, "cgroup.kill"), []byte("1"), 0o600); err != nil {
+			result = fmt.Errorf("kill private cgroup: %w", err)
+		}
+		if sampler.pgid > 0 {
+			if err := syscall.Kill(-sampler.pgid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				result = errors.Join(result, fmt.Errorf("kill private process group: %w", err))
+			}
+		}
+		return result
+	}
 	sampler.sampleMu.Lock()
 	defer sampler.sampleMu.Unlock()
 	entries, err := os.ReadDir(sampler.procRoot)

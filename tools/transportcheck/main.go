@@ -17,7 +17,7 @@ func main() {
 
 func run(args []string, output io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: transportcheck <manifest|collect|evidence|sign> [flags]")
+		return errors.New("usage: transportcheck <manifest|collect|merge-capacity|evidence|sign> [flags]")
 	}
 	switch args[0] {
 	case "manifest":
@@ -79,6 +79,7 @@ func run(args []string, output io.Writer) error {
 		flags.StringVar(&request.TrustPolicyPath, "trust-policy", "", "repository trust policy")
 		flags.StringVar(&request.EffectiveConfigPath, "effective-config", "", "runner effective config")
 		flags.StringVar(&request.KernelRelease, "kernel-release", "", "actual host kernel release")
+		flags.StringVar(&request.CapacityBatch, "capacity-batch", "", "frozen capacity collection batch")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -86,6 +87,23 @@ func run(args []string, output io.Writer) error {
 			return errors.New("collect does not accept positional arguments")
 		}
 		return collect(request)
+	case "merge-capacity":
+		flags := flag.NewFlagSet("merge-capacity", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		request := mergeCapacityRequest{}
+		flags.StringVar(&request.ManifestPath, "manifest", "", "performance manifest path")
+		flags.StringVar(&request.RegistryPath, "registry", "", "case registry path")
+		flags.StringVar(&request.ReportPath, "report", "", "fresh merged raw collection report path")
+		flags.StringVar(&request.ArtifactDirectory, "artifact-dir", "", "capacity collection artifact directory")
+		flags.Var((*stringListFlag)(&request.PartReports), "part-report", "partial capacity report path; repeat for every frozen batch")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if request.ManifestPath == "" || request.RegistryPath == "" || request.ReportPath == "" ||
+			request.ArtifactDirectory == "" || len(request.PartReports) == 0 || flags.NArg() != 0 {
+			return errors.New("merge-capacity requires -manifest, -registry, -report, -artifact-dir, and repeated -part-report")
+		}
+		return mergeCapacityCollections(request)
 	case "evidence":
 		flags := flag.NewFlagSet("evidence", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)

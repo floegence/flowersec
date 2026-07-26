@@ -71,6 +71,7 @@ type collectRequest struct {
 	TrustPolicyPath      string
 	EffectiveConfigPath  string
 	KernelRelease        string
+	CapacityBatch        string
 }
 
 type collectEnvironment struct {
@@ -215,6 +216,7 @@ type rawCollectionIndex struct {
 	SchemaVersion  int               `json:"schema_version"`
 	Classification string            `json:"classification"`
 	Target         string            `json:"target"`
+	Batch          string            `json:"batch,omitempty"`
 	BaseSHA        string            `json:"base_sha"`
 	FinalSHA       string            `json:"final_sha"`
 	InputSHA256    map[string]string `json:"input_sha256"`
@@ -234,12 +236,29 @@ func collect(request collectRequest) error {
 	if len(plan.Missing) != 0 {
 		return fmt.Errorf("collection target %s has no production producer for: %s", request.Target, strings.Join(plan.Missing, "; "))
 	}
+	if request.CapacityBatch != "" {
+		plan, err = selectCapacityCollectionBatch(plan, request.CapacityBatch)
+		if err != nil {
+			return err
+		}
+	}
 	return executeCollection(context.Background(), environment, plan)
 }
 
 func validateCollectRequest(request collectRequest) (*collectEnvironment, error) {
 	if _, ok := collectTargets[request.Target]; !ok {
 		return nil, fmt.Errorf("collect target %q is outside the frozen release target set", request.Target)
+	}
+	if request.CapacityBatch != "" {
+		if request.Target != "bench-transport-capacity" {
+			return nil, errors.New("capacity batches are reserved for bench-transport-capacity")
+		}
+		if _, ok := capacityCollectionBatches[request.CapacityBatch]; !ok {
+			return nil, fmt.Errorf("unknown frozen capacity batch %q", request.CapacityBatch)
+		}
+	}
+	if request.Target == "bench-transport-capacity" && request.CapacityBatch == "" {
+		return nil, errors.New("bench-transport-capacity requires one frozen capacity batch")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return nil, errors.New("collect requires Linux amd64")
@@ -649,9 +668,12 @@ func executeCollection(ctx context.Context, environment *collectEnvironment, pla
 		return err
 	}
 	index := rawCollectionIndex{
-		SchemaVersion: 1, Classification: "raw_transport_collection", Target: plan.Target,
+		SchemaVersion: 1, Classification: "raw_transport_collection", Target: plan.Target, Batch: environment.request.CapacityBatch,
 		BaseSHA: environment.request.BaseSHA, FinalSHA: environment.request.FinalSHA,
 		InputSHA256: environment.inputDigests, Jobs: records,
+	}
+	if index.Batch != "" {
+		index.Classification = "raw_transport_collection_part"
 	}
 	if err := publishRawCollection(environment.output, environment.request.ReportPath, index); err != nil {
 		return err
@@ -740,20 +762,19 @@ func runCollectionJobs(ctx context.Context, request collectRequest, manifest *Pe
 		}
 	}
 	if len(capacityCases) != 0 {
-		lanes := scheduleCapacityCaseLanes(capacityCases)
-		if err := executeCollectionLaneStage(ctx, request, manifest, registry, lanes, staging, identity, records, true, capacityStageWatchdog, capacityJobWatchdog); err != nil {
+		stages, err := scheduleCapacityCollectionBatch(request.CapacityBatch, capacityCases)
+		if err != nil {
 			return nil, err
+		}
+		capacityContext, cancelCapacity := context.WithTimeout(ctx, capacityStageWatchdog)
+		defer cancelCapacity()
+		for _, lanes := range stages {
+			if err := executeCollectionLaneStage(capacityContext, request, manifest, registry, lanes, staging, identity, records, true, 0, capacityJobWatchdog); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return records, nil
-}
-
-func scheduleCapacityCaseLanes(cases []scheduledCollectionJob) [][]scheduledCollectionJob {
-	lanes := make([][]scheduledCollectionJob, collectionCaseParallelism)
-	for index, scheduled := range cases {
-		lanes[index%len(lanes)] = append(lanes[index%len(lanes)], scheduled)
-	}
-	return lanes
 }
 
 func executeCollectionLaneStage(ctx context.Context, request collectRequest, manifest *PerformanceManifest, registry *CaseRegistry, lanes [][]scheduledCollectionJob, staging string, identity *collectionDirectoryIdentity, records []rawJobRecord, caseSuite bool, stageWatchdog, jobWatchdog time.Duration) (resultErr error) {
