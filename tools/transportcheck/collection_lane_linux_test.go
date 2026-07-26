@@ -39,6 +39,20 @@ func TestProductionCollectionLanesEnterDistinctCgroups(t *testing.T) {
 			seen := make(map[string]struct{}, test.count)
 			for index := 0; index < test.count; index++ {
 				lane := set.Lane(index)
+				productionLane := lane.(*linuxCollectionLane)
+				controllers, err := os.ReadFile(filepath.Join(productionLane.path, "cgroup.subtree_control"))
+				if err != nil {
+					t.Fatalf("lane %d subtree controllers: %v", index, err)
+				}
+				delegated := " " + strings.Join(strings.Fields(string(controllers)), " ") + " "
+				for _, controller := range []string{"cpuset", "cpu", "memory", "pids"} {
+					if !strings.Contains(delegated, " "+controller+" ") {
+						t.Fatalf("lane %d did not delegate %s: %q", index, controller, controllers)
+					}
+				}
+				if info, err := os.Stat(filepath.Join(productionLane.path, "workload")); err != nil || !info.IsDir() {
+					t.Fatalf("lane %d workload leaf: info=%v err=%v", index, info, err)
+				}
 				output, err := lane.Command(context.Background(), "/bin/sh", "-c", "cat /proc/self/cgroup").Output()
 				if err != nil {
 					t.Fatalf("lane %d command: %v", index, err)
@@ -49,7 +63,7 @@ func TestProductionCollectionLanesEnterDistinctCgroups(t *testing.T) {
 					t.Fatalf("lane %d identity = %+v", index, identity)
 				}
 				cgroup := strings.TrimSpace(string(output))
-				if !strings.HasSuffix(cgroup, "/lane-"+string(rune('0'+index))) {
+				if !strings.HasSuffix(cgroup, "/lane-"+string(rune('0'+index))+"/workload") {
 					t.Fatalf("lane %d entered unexpected cgroup %q", index, cgroup)
 				}
 				if _, exists := seen[cgroup]; exists {

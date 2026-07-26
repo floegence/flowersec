@@ -23,6 +23,7 @@ type linuxCollectionLaneSet struct {
 
 type linuxCollectionLane struct {
 	path     string
+	workload string
 	identity collectionLaneIdentity
 }
 
@@ -98,7 +99,14 @@ func openCollectionLaneSet(count int, isolated, caseSuite bool) (_ collectionLan
 				return nil, fmt.Errorf("configure collection lane %d: %w", index, err)
 			}
 		}
-		set.lanes[index] = linuxCollectionLane{path: path, identity: collectionLaneIdentity{
+		if err := writeCgroupValue(path, "cgroup.subtree_control", "+cpuset +cpu +memory +pids"); err != nil {
+			return nil, fmt.Errorf("delegate collection lane %d controllers: %w", index, err)
+		}
+		workload := filepath.Join(path, "workload")
+		if err := os.Mkdir(workload, 0o755); err != nil {
+			return nil, fmt.Errorf("create collection lane %d workload: %w", index, err)
+		}
+		set.lanes[index] = linuxCollectionLane{path: path, workload: workload, identity: collectionLaneIdentity{
 			Index: index, CPUSet: cpus, MemoryMaxBytes: memoryMax, PIDsMax: pidsMax,
 		}}
 	}
@@ -174,7 +182,7 @@ func removeCollectionCgroupTree(path string) error {
 func (lane *linuxCollectionLane) Identity() collectionLaneIdentity { return lane.identity }
 
 func (lane *linuxCollectionLane) Command(ctx context.Context, executable string, args ...string) *exec.Cmd {
-	arguments := []string{"-c", `printf '%s\n' "$$" > "$FLOWERSEC_LANE_CGROUP/cgroup.procs" && exec "$@"`, "flowersec-lane", executable}
+	arguments := []string{"-c", `printf '%s\n' "$$" > "$FLOWERSEC_LANE_CGROUP/workload/cgroup.procs" && exec "$@"`, "flowersec-lane", executable}
 	arguments = append(arguments, args...)
 	command := exec.CommandContext(ctx, "/bin/sh", arguments...)
 	command.Env = append(os.Environ(), "FLOWERSEC_LANE_CGROUP="+lane.path, "GOMAXPROCS="+strconv.Itoa(len(strings.Split(lane.identity.CPUSet, ","))))

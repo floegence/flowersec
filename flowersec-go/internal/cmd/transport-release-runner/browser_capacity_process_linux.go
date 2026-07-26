@@ -30,6 +30,12 @@ func prepareBrowserCapacityCommand(command *exec.Cmd) (preparedBrowserCapacityCg
 		}
 		_ = os.Remove(directory)
 	}
+	if os.Getenv("FLOWERSEC_LANE_CGROUP") != "" {
+		if err == nil {
+			err = errors.New("private cgroup v2 directory could not be opened")
+		}
+		return prepared, fmt.Errorf("prepare delegated browser capacity cgroup: %w", err)
+	}
 	if err != nil {
 		prepared.fallbackReason = fmt.Sprintf("private cgroup v2 resource accounting unavailable: %v", err)
 	} else {
@@ -52,6 +58,12 @@ func createLinuxProcessCgroup() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if delegated := os.Getenv("FLOWERSEC_LANE_CGROUP"); delegated != "" {
+		parent, err = resolveLinuxDelegatedProcessCgroupParent(root, selfCgroup, delegated)
+		if err != nil {
+			return "", err
+		}
+	}
 	directory, err := os.MkdirTemp(parent, "flowersec-browser-capacity-")
 	if err != nil {
 		return "", err
@@ -63,6 +75,40 @@ func createLinuxProcessCgroup() (string, error) {
 		}
 	}
 	return directory, nil
+}
+
+func resolveLinuxDelegatedProcessCgroupParent(root string, selfCgroup []byte, delegated string) (string, error) {
+	current, err := resolveLinuxProcessCgroupParent(root, selfCgroup)
+	if err != nil {
+		return "", err
+	}
+	cleanRoot := filepath.Clean(root)
+	cleanDelegated := filepath.Clean(delegated)
+	if delegated != cleanDelegated || !filepath.IsAbs(cleanDelegated) || cleanDelegated == cleanRoot ||
+		filepath.Dir(cleanDelegated) == cleanRoot {
+		return "", errors.New("delegated lane cgroup path is invalid")
+	}
+	relative, err := filepath.Rel(cleanRoot, cleanDelegated)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", errors.New("delegated lane cgroup escapes the cgroup root")
+	}
+	if current != filepath.Join(cleanDelegated, "workload") {
+		return "", errors.New("process is outside the delegated lane workload")
+	}
+	controllers, err := os.ReadFile(filepath.Join(cleanDelegated, "cgroup.subtree_control"))
+	if err != nil {
+		return "", err
+	}
+	delegatedControllers := make(map[string]struct{})
+	for _, controller := range strings.Fields(string(controllers)) {
+		delegatedControllers[controller] = struct{}{}
+	}
+	for _, controller := range []string{"cpuset", "cpu", "memory", "pids"} {
+		if _, ok := delegatedControllers[controller]; !ok {
+			return "", fmt.Errorf("delegated lane cgroup is missing controller %s", controller)
+		}
+	}
+	return cleanDelegated, nil
 }
 
 func resolveLinuxProcessCgroupParent(root string, selfCgroup []byte) (string, error) {

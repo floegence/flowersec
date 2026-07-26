@@ -26,6 +26,15 @@ attachment must also bind the effective `RLIMIT_NOFILE` and kernel
 stream-specific ceiling does not change the 12,288 browser-session ceiling or
 the 8,192 Go-only ceiling.
 
+Production collection requires delegated cgroup v2 controllers. Each bounded
+lane is a process-free controller cgroup with a `workload` leaf for the Go
+runner and a private sibling cgroup for the Node/Chromium process tree. The
+browser worker enters only the selected network namespace so the cgroup mount
+remains available for cumulative CPU, memory, and task accounting. A missing
+controller, mismatched lane membership, unavailable private cgroup, or process
+outside these descendants fails the case instead of falling back to unbounded
+collection.
+
 ## Trust bootstrap
 
 The checked-in `flowersec-release-linux-2026-01` production public key is enabled for this release evidence authority, while the placeholder runner hashes deliberately continue to authorize no release. A reviewed final-runner change must install the exact executable, source, and argv hashes before collection. Never commit the private key, evidence credentials, or unredacted infrastructure secrets.

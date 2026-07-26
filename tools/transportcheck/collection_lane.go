@@ -68,7 +68,9 @@ type scheduledCollectionJob struct {
 }
 
 func requiresProductionLaneIsolation(manifest *PerformanceManifest) bool {
-	return manifest != nil && manifest.EligibleLaneCount == 6 && manifest.GlobalWatchdogMinutes == 475 && manifest.MaximumLaneMinutes == 480
+	// Unit fixtures omit the global schedule. A validated production manifest
+	// always carries all three bounds, regardless of later watchdog tightening.
+	return manifest != nil && manifest.GlobalSetupMinutes > 0 && manifest.GlobalWatchdogMinutes > 0 && manifest.MaximumLaneMinutes > 0
 }
 
 type collectionLaneSchedule struct {

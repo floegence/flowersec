@@ -15,6 +15,14 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/tunnelworkload"
 )
 
+func TestBrowserCapacityWorkerCommandPreservesCgroupMountNamespace(t *testing.T) {
+	command := browserCapacityWorkerCommand(context.Background(), "fc-1234", "/release/runner")
+	want := []string{"/usr/bin/nsenter", "--net=/var/run/netns/fc-1234", "--", "/release/runner", browserWorkerArg}
+	if command.Path != want[0] || !slices.Equal(command.Args, want) {
+		t.Fatalf("browser capacity worker command = path %q args %v, want %v", command.Path, command.Args, want)
+	}
+}
+
 func TestFocusedProductionCapacityCase(t *testing.T) {
 	id := os.Getenv("FLOWERSEC_TEST_CAPACITY_CASE")
 	if id == "" {

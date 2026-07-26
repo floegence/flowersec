@@ -180,6 +180,12 @@ func TestCollectionPlanBindsCleanRevisionVariantsToIndependentSources(t *testing
 
 func TestFrozenCollectionLaneScheduleMatchesSixLane30MinuteContract(t *testing.T) {
 	manifest := loadFixtureManifest(t)
+	if !requiresProductionLaneIsolation(manifest) {
+		t.Fatal("frozen production manifest did not require cgroup lane isolation")
+	}
+	if requiresProductionLaneIsolation(&PerformanceManifest{EligibleLaneCount: 2}) {
+		t.Fatal("schedule-free unit manifest required production cgroup lane isolation")
+	}
 	jobs := make([]collectionJob, 0, len(manifest.Cells))
 	for _, cell := range manifest.Cells {
 		if slices.Contains([]string{"clean-01", "clean-02", "clean-03"}, cell.ID) {

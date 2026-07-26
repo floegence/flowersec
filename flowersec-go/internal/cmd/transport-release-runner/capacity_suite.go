@@ -122,7 +122,7 @@ func runRegisteredBrowserCapacityCase(ctx context.Context, destination *artifact
 	if err != nil {
 		return result, err
 	}
-	command := exec.CommandContext(ctx, "ip", "netns", "exec", config.ClientNamespace, executable, browserWorkerArg)
+	command := browserCapacityWorkerCommand(ctx, config.ClientNamespace, executable)
 	configureBrowserWorkerCommand(command)
 	command.Env = commandEnvironmentWithQLOG(evidence.qlogDir)
 	command.Stdin = bytes.NewReader(requestJSON)
@@ -161,6 +161,10 @@ func runRegisteredBrowserCapacityCase(ctx context.Context, destination *artifact
 		}(),
 		ElapsedNanoseconds: time.Since(started).Nanoseconds(),
 	}, nil
+}
+
+func browserCapacityWorkerCommand(ctx context.Context, namespace, executable string) *exec.Cmd {
+	return exec.CommandContext(ctx, "/usr/bin/nsenter", "--net=/var/run/netns/"+namespace, "--", executable, browserWorkerArg)
 }
 
 func browserCapacityTopology(definition capacityCaseDefinition) string {
