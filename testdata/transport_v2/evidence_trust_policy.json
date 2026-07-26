@@ -13,8 +13,8 @@
     "packet_counters": "ebpf-v1",
     "effective_config_sha256": "94984c52b0417583217a7974f50bf13f838913f948960caa0dc0725a0893ad71",
     "effective_config_path": "runner_effective_config.json",
-    "executable_sha256": "16c5c1176432fe39fdfd4c89cc4fa99fa198b1f6faa7c10de9e567fbe422c425",
-    "source_sha256": "f53e15bb11850b63bdd53b062281e849cbb7ebeac7c09c90f594436d799e46c5",
+    "executable_sha256": "1fce5d7c5cc1ee956cc66803406d78b40eba6bcbeca528bcf3e026c96f9db8e1",
+    "source_sha256": "39a9c939b9ba773b3ba342f378529e7036ec8b93d746c3c07835fb7b618ef555",
     "argv_sha256": "dfceb6794effe54c68265bdbb24e2cac6dbfdf4b2b2c1db2858f8a818babb595"
   }
 }
