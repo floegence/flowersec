@@ -852,7 +852,7 @@ export class SessionV2 implements SessionV2Contract {
     if (!await settleWithin(work, sessionCloseTimeoutMs(this.config))) {
       this.carrier.abort({ code: 1, reason: "session close deadline exceeded" });
       this.peerSessionClose.resolve();
-      await work.catch(() => undefined);
+      void work.catch(() => undefined);
     }
     this.fail(closed, false);
   }

@@ -73,6 +73,23 @@ describe("SessionV2 lifecycle bounds", () => {
     expect(clientCarrier.aborts).toBe(1);
   });
 
+  test("returns after abort even when an earlier graceful carrier close never settles", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const clientCarrier = new UnsettledCloseAfterAbortCarrier(rawClient);
+    const [client] = await Promise.all([
+      establishSessionV2(clientCarrier, config("client", { idleTimeoutMs: 0, closeTimeoutMs: 25 })),
+      establishSessionV2(serverCarrier, config("server", { idleTimeoutMs: 0, closeTimeoutMs: 25 })),
+    ]);
+
+    const result = await Promise.race([
+      client.close().then(() => "closed"),
+      new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 100)),
+    ]);
+    expect(result).toBe("closed");
+    expect(client.terminalError).toMatchObject({ code: "closed" });
+    expect(clientCarrier.aborts).toBe(1);
+  });
+
   test("completes reciprocal close before carrier teardown when peer reads are delayed", async () => {
     const [clientCarrier, rawServerCarrier] = createMemoryCarrierPairV2({
       kind: "webtransport",
@@ -174,6 +191,36 @@ class HangingCloseCarrier implements CarrierSessionV2 {
   abort(error?: Readonly<{ code: number; reason: string }>): void {
     this.aborts++;
     this.closeRelease.resolve();
+    this.inner.abort(error);
+  }
+}
+
+class UnsettledCloseAfterAbortCarrier implements CarrierSessionV2 {
+  readonly kind: CarrierSessionV2["kind"];
+  readonly path: CarrierSessionV2["path"];
+  readonly inboundBidirectionalStreamCapacity: number;
+  aborts = 0;
+
+  constructor(private readonly inner: CarrierSessionV2) {
+    this.kind = inner.kind;
+    this.path = inner.path;
+    this.inboundBidirectionalStreamCapacity = inner.inboundBidirectionalStreamCapacity;
+  }
+
+  async openStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
+    return await this.inner.openStream(options);
+  }
+
+  async acceptStream(options: OperationOptionsV2 = {}): Promise<CarrierStreamV2> {
+    return await this.inner.acceptStream(options);
+  }
+
+  async close(): Promise<void> {
+    await new Promise<void>(() => undefined);
+  }
+
+  abort(error?: Readonly<{ code: number; reason: string }>): void {
+    this.aborts++;
     this.inner.abort(error);
   }
 }
