@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 
-import { installWebTransportCertificateHash } from "./browser-release-collector.mjs";
+import { installWebTransportCertificateHash, navigateBrowserModule } from "./browser-release-collector.mjs";
 
 import {
   acquireArtifactBatch,
@@ -173,6 +173,31 @@ test("gives every WebTransport constructor an independent certificate hash buffe
     if (original === undefined) delete globalThis.WebTransport;
     else globalThis.WebTransport = original;
   }
+});
+
+test("retries only transient initial module navigation failures", async () => {
+  let attempts = 0;
+  const waits = [];
+  await navigateBrowserModule({
+    goto: async () => {
+      attempts++;
+      if (attempts === 1) throw new Error("net::ERR_NETWORK_CHANGED");
+    },
+  }, "http://192.0.2.1:38123", async (milliseconds) => waits.push(milliseconds));
+  assert.equal(attempts, 2);
+  assert.deepEqual(waits, [250]);
+
+  attempts = 0;
+  await assert.rejects(
+    navigateBrowserModule({
+      goto: async () => {
+        attempts++;
+        throw new Error("net::ERR_CONNECTION_REFUSED");
+      },
+    }, "http://192.0.2.1:38123", async () => undefined),
+    /ERR_CONNECTION_REFUSED/,
+  );
+  assert.equal(attempts, 1);
 });
 
 test("freezes Chromium stream capacity at 100 sessions and 128 streams each", () => {

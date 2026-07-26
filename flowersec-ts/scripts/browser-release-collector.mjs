@@ -64,7 +64,7 @@ export async function collectBrowserReleaseWorkload(input, dependencies = {}) {
       await ledger.commit(token);
     });
     await installWebTransportCertificateHash(page, plan.certificate_hash);
-    await page.goto(site.origin, { waitUntil: "networkidle" });
+    await navigateBrowserModule(page, site.origin);
     await preloadBrowserSDK(page);
 
     const execute = async () => {
@@ -556,6 +556,21 @@ export async function preloadBrowserSDK(page) {
       if (!/ERR_NETWORK_CHANGED|Failed to fetch dynamically imported module/.test(String(error)) || attempt === 3) break;
       await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
       await page.reload({ waitUntil: "networkidle" });
+    }
+  }
+  throw failure;
+}
+
+export async function navigateBrowserModule(page, origin, wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))) {
+  let failure;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await page.goto(origin, { waitUntil: "networkidle" });
+      return;
+    } catch (error) {
+      failure = error;
+      if (!/ERR_NETWORK_CHANGED/.test(String(error)) || attempt === 3) break;
+      await wait(250 * attempt);
     }
   }
   throw failure;
