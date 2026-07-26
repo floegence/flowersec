@@ -284,6 +284,60 @@ test("open-loop scheduler captures an early operation rejection", async () => {
   );
 });
 
+test("open-loop scheduler aborts sibling operations after the first failure", async () => {
+  let siblingStarted;
+  const siblingReady = new Promise((resolve) => { siblingStarted = resolve; });
+  let siblingSignal;
+  const loop = runOpenLoop({
+    operations: 2,
+    maxInflight: 2,
+    intervalMs: 0,
+    waitUntil: async () => undefined,
+    operation: async (ordinal, _scheduledAtMs, signal) => {
+      if (ordinal === 1) {
+        await siblingReady;
+        throw new Error("first operation failed");
+      }
+      siblingStarted();
+      if (signal === undefined) return await new Promise(() => undefined);
+      siblingSignal = signal;
+      await new Promise((_, reject) => {
+        const abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      });
+    },
+  });
+  await assert.rejects(
+    Promise.race([
+      loop,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("open-loop siblings were not aborted")), 100)),
+    ]),
+    /first operation failed/,
+  );
+  assert.equal(siblingSignal?.aborted, true);
+});
+
+test("open-loop scheduler preserves the parent phase abort reason", async () => {
+  const phase = new AbortController();
+  const loop = runOpenLoop({
+    operations: 1,
+    maxInflight: 1,
+    intervalMs: 0,
+    signal: phase.signal,
+    waitUntil: async () => undefined,
+    operation: async (_ordinal, _scheduledAtMs, signal) => {
+      await new Promise((_, reject) => {
+        const abort = () => reject(new Error("page closed after abort"));
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      });
+    },
+  });
+  phase.abort(new Error("cold phase deadline exceeded"));
+  await assert.rejects(loop, /cold phase deadline exceeded/);
+});
+
 test("acquires an exact fresh artifact batch from the runner-owned endpoint", async () => {
   let request;
   const artifacts = await acquireArtifactBatch(forcedPlan, {

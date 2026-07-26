@@ -199,6 +199,7 @@ export async function runOpenLoop({
   maxInflight,
   intervalMs,
   operation,
+  signal,
   now = () => performance.now(),
   waitUntil = defaultWaitUntil,
 }) {
@@ -208,27 +209,79 @@ export async function runOpenLoop({
   if (typeof operation !== "function" || typeof now !== "function" || typeof waitUntil !== "function") {
     throw new TypeError("open-loop callbacks are required");
   }
+  if (signal !== undefined && (typeof signal !== "object" || typeof signal.aborted !== "boolean" ||
+      typeof signal.addEventListener !== "function" || typeof signal.removeEventListener !== "function")) {
+    throw new TypeError("open-loop signal must be an AbortSignal");
+  }
+  const controller = new AbortController();
+  const abortFromParent = () => {
+    if (!controller.signal.aborted) controller.abort(abortSignalReason(signal, "open-loop phase aborted"));
+  };
+  signal?.addEventListener("abort", abortFromParent, { once: true });
+  if (signal?.aborted === true) abortFromParent();
   const phaseStart = now();
   const pending = new Set();
   const results = new Array(operations);
   let firstFailure;
-  for (let ordinal = 1; ordinal <= operations; ordinal++) {
-    const scheduledAtMs = phaseStart + ((ordinal - 1) * intervalMs);
-    await waitUntil(scheduledAtMs, now);
-    while (pending.size >= maxInflight) await Promise.race(pending);
-    let task;
-    task = Promise.resolve()
-      .then(() => operation(ordinal, scheduledAtMs))
-      .then(
-        (result) => { results[ordinal - 1] = result; },
-        (error) => { firstFailure ??= error; },
-      )
-      .finally(() => pending.delete(task));
-    pending.add(task);
+  try {
+    for (let ordinal = 1; ordinal <= operations; ordinal++) {
+      throwIfOpenLoopAborted(controller.signal);
+      const scheduledAtMs = phaseStart + ((ordinal - 1) * intervalMs);
+      await raceOpenLoopAbort(waitUntil(scheduledAtMs, now), controller.signal);
+      while (pending.size >= maxInflight) {
+        await raceOpenLoopAbort(Promise.race(pending), controller.signal);
+      }
+      throwIfOpenLoopAborted(controller.signal);
+      let task;
+      task = Promise.resolve()
+        .then(() => operation(ordinal, scheduledAtMs, controller.signal))
+        .then(
+          (result) => { results[ordinal - 1] = result; },
+          (error) => {
+            firstFailure ??= error;
+            if (!controller.signal.aborted) controller.abort(error);
+          },
+        )
+        .finally(() => pending.delete(task));
+      pending.add(task);
+    }
+    await raceOpenLoopAbort(Promise.all(pending), controller.signal);
+    if (firstFailure !== undefined) throw firstFailure;
+    throwIfOpenLoopAborted(controller.signal);
+    return results;
+  } catch (error) {
+    if (!controller.signal.aborted) controller.abort(error);
+    await Promise.allSettled(pending);
+    throw signal?.aborted === true
+      ? abortSignalReason(signal, "open-loop phase aborted")
+      : firstFailure ?? error;
+  } finally {
+    signal?.removeEventListener("abort", abortFromParent);
   }
-  await Promise.all(pending);
-  if (firstFailure !== undefined) throw firstFailure;
-  return results;
+}
+
+function throwIfOpenLoopAborted(signal) {
+  if (signal.aborted) throw abortSignalReason(signal, "open-loop phase aborted");
+}
+
+function abortSignalReason(signal, fallback) {
+  return signal?.reason instanceof Error ? signal.reason : new Error(fallback);
+}
+
+async function raceOpenLoopAbort(promise, signal) {
+  throwIfOpenLoopAborted(signal);
+  let abort;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        abort = () => reject(abortSignalReason(signal, "open-loop phase aborted"));
+        signal.addEventListener("abort", abort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (abort !== undefined) signal.removeEventListener("abort", abort);
+  }
 }
 
 export async function acquireArtifactBatch(plan, request, fetchImpl = globalThis.fetch) {

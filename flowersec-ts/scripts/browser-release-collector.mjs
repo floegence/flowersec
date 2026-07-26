@@ -143,65 +143,81 @@ export async function collectBrowserReleaseWorkload(input, dependencies = {}) {
 }
 
 async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
-  return await withTimeout(runOpenLoop({
-    operations: cold.operations,
-    maxInflight: cold.max_inflight,
-    intervalMs: 1_000 / cold.start_rate_per_second,
-    operation: async (ordinal, scheduledAtMs) => {
-      const scheduledAt = new Date(Date.now() - (performance.now() - scheduledAtMs)).toISOString();
-      return await page.evaluate(async ({ item, ordinalValue, scheduledAtValue, operationDeadlineMs, cleanupMs }) => {
-        const sdk = await import("/dist/browser/index.js");
-        const lease = sdk.createArtifactLeaseV2(
-          sdk.parseArtifact(item.artifact_json),
-          async () => await globalThis.__flowersecCommitArtifactSpend(item.spend_token),
-        );
-        const startedAt = new Date().toISOString();
-        const started = performance.now();
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(new Error("cold operation deadline exceeded")), operationDeadlineMs);
-        let session;
+  const phaseController = new AbortController();
+  const phaseTimer = setTimeout(
+    () => phaseController.abort(new Error("cold phase deadline exceeded")),
+    cold.phase_deadline_ms,
+  );
+  try {
+    return await runOpenLoop({
+      operations: cold.operations,
+      maxInflight: cold.max_inflight,
+      intervalMs: 1_000 / cold.start_rate_per_second,
+      signal: phaseController.signal,
+      operation: async (ordinal, scheduledAtMs, phaseSignal) => {
+        const closePage = () => { void page.close({ runBeforeUnload: false }).catch(() => undefined); };
+        phaseSignal.addEventListener("abort", closePage, { once: true });
+        const scheduledAt = new Date(Date.now() - (performance.now() - scheduledAtMs)).toISOString();
         try {
-          session = await sdk.connectBrowserSessionV2(lease, { signal: controller.signal });
+          return await page.evaluate(async ({ item, ordinalValue, scheduledAtValue, operationDeadlineMs, cleanupMs }) => {
+            const sdk = await import("/dist/browser/index.js");
+            const lease = sdk.createArtifactLeaseV2(
+              sdk.parseArtifact(item.artifact_json),
+              async () => await globalThis.__flowersecCommitArtifactSpend(item.spend_token),
+            );
+            const startedAt = new Date().toISOString();
+            const started = performance.now();
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(new Error("cold operation deadline exceeded")), operationDeadlineMs);
+            let session;
+            try {
+              session = await sdk.connectBrowserSessionV2(lease, { signal: controller.signal });
+            } finally {
+              clearTimeout(timer);
+            }
+            const durationNs = Math.max(1, Math.round((performance.now() - started) * 1_000_000));
+            let cleanupDurationNs;
+            try {
+              const readinessController = new AbortController();
+              const readinessTimer = setTimeout(
+                () => readinessController.abort(new Error("cold readiness confirmation deadline exceeded")),
+                operationDeadlineMs,
+              );
+              try {
+                await session.probeLiveness({ signal: readinessController.signal });
+              } finally {
+                clearTimeout(readinessTimer);
+              }
+            } finally {
+              const cleanupStarted = performance.now();
+              await Promise.race([
+                session.close(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("cold cleanup deadline exceeded")), cleanupMs)),
+              ]);
+              cleanupDurationNs = Math.max(1, Math.round((performance.now() - cleanupStarted) * 1_000_000));
+            }
+            return {
+              ordinal: ordinalValue,
+              scheduled_at: scheduledAtValue,
+              started_at: startedAt,
+              duration_ns: durationNs,
+              cleanup_duration_ns: cleanupDurationNs,
+            };
+          }, {
+            item: artifacts[ordinal - 1],
+            ordinalValue: ordinal,
+            scheduledAtValue: scheduledAt,
+            operationDeadlineMs: cold.operation_deadline_ms,
+            cleanupMs: cleanupDeadlineMs,
+          });
         } finally {
-          clearTimeout(timer);
+          phaseSignal.removeEventListener("abort", closePage);
         }
-        const durationNs = Math.max(1, Math.round((performance.now() - started) * 1_000_000));
-        let cleanupDurationNs;
-        try {
-          const readinessController = new AbortController();
-          const readinessTimer = setTimeout(
-            () => readinessController.abort(new Error("cold readiness confirmation deadline exceeded")),
-            operationDeadlineMs,
-          );
-          try {
-            await session.probeLiveness({ signal: readinessController.signal });
-          } finally {
-            clearTimeout(readinessTimer);
-          }
-        } finally {
-          const cleanupStarted = performance.now();
-          await Promise.race([
-            session.close(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("cold cleanup deadline exceeded")), cleanupMs)),
-          ]);
-          cleanupDurationNs = Math.max(1, Math.round((performance.now() - cleanupStarted) * 1_000_000));
-        }
-        return {
-          ordinal: ordinalValue,
-          scheduled_at: scheduledAtValue,
-          started_at: startedAt,
-          duration_ns: durationNs,
-          cleanup_duration_ns: cleanupDurationNs,
-        };
-      }, {
-        item: artifacts[ordinal - 1],
-        ordinalValue: ordinal,
-        scheduledAtValue: scheduledAt,
-        operationDeadlineMs: cold.operation_deadline_ms,
-        cleanupMs: cleanupDeadlineMs,
-      });
-    },
-  }), cold.phase_deadline_ms, "cold phase deadline");
+      },
+    });
+  } finally {
+    clearTimeout(phaseTimer);
+  }
 }
 
 async function runSessionWorkload(page, artifact, plan) {
