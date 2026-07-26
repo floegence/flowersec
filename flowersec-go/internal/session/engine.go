@@ -444,7 +444,6 @@ func (s *engineSession) markClosing() {
 		s.closing = true
 		s.goingAway = true
 		close(s.closingCh)
-		s.closingCh = nil
 	}
 	s.openMu.Unlock()
 }
