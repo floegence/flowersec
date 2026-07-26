@@ -119,6 +119,23 @@ func TestBrowserStreamCapacityQLOGAttributionBindsFirstApplicationBidiFrame(t *t
 	}
 }
 
+func TestBrowserStreamCapacityQLOGAttributionBindsNonStreamSource(t *testing.T) {
+	reference := time.Date(2026, 7, 25, 3, 0, 0, 0, time.UTC)
+	header := fmt.Sprintf(`{"trace":{"common_fields":{"group_id":"connection-control","reference_time":{"wall_clock_time":%q}}}}`, reference.Format(time.RFC3339Nano))
+	event := `{"time":1,"name":"transport:packet_sent","data":{"header":{"packet_number":9,"packet_type":"1RTT"},"frames":[]}}`
+	data := []byte("\x1e" + header + "\n\x1e" + event + "\n")
+	digest := sha256.Sum256(data)
+	source := releaseRawSource{ID: "qlog-210", Kind: "qlog", SHA256: hex.EncodeToString(digest[:]), SizeBytes: int64(len(data))}
+	records, err := browserStreamCapacityQLOGAttributions(data, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].SourceID != source.ID || records[0].NativeStreamID != nil ||
+		records[0].Event != "transport:packet_sent" || records[0].PacketNumber == nil || *records[0].PacketNumber != 9 {
+		t.Fatalf("non-stream attribution = %+v", records)
+	}
+}
+
 func TestValidateBrowserStreamCapacityAttributionsUsesConnectionScopedStreamIDs(t *testing.T) {
 	records := make([]capacityAttributionRecord, 0, 100*128)
 	for connection := range 100 {
@@ -132,9 +149,13 @@ func TestValidateBrowserStreamCapacityAttributionsUsesConnectionScopedStreamIDs(
 	if err := validateBrowserStreamCapacityAttributions(records); err != nil {
 		t.Fatal(err)
 	}
-	duplicate := *records[len(records)-1].NativeStreamID
-	records[len(records)-1].NativeStreamID = &duplicate
-	records[len(records)-1].ConnectionGroupID = records[0].ConnectionGroupID
+	records = append(records, capacityAttributionRecord{Event: "transport:packet_sent", ConnectionGroupID: "connection-control"})
+	if err := validateBrowserStreamCapacityAttributions(records); err != nil {
+		t.Fatalf("non-stream source binding was rejected: %v", err)
+	}
+	duplicate := *records[len(records)-2].NativeStreamID
+	records[len(records)-2].NativeStreamID = &duplicate
+	records[len(records)-2].ConnectionGroupID = records[0].ConnectionGroupID
 	if err := validateBrowserStreamCapacityAttributions(records); err == nil {
 		t.Fatal("duplicate connection-scoped stream identity was accepted")
 	}

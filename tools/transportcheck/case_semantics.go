@@ -825,18 +825,25 @@ func validateCapacityCase(builder *resultBuilder, contract CapacityContract, con
 }
 
 func validateCapacityStreamQLOGAttribution(attribution PacketAttributionArtifact) error {
-	if len(attribution.Records) != 100*128 {
-		return fmt.Errorf("stream capacity qlog contains %d STREAM_OPENED records, want %d", len(attribution.Records), 100*128)
-	}
 	perConnection := make(map[string]map[uint64]struct{}, 100)
 	previousAt := int64(0)
+	streamRecords := 0
 	for index, record := range attribution.Records {
-		if record.Sequence != uint64(index+1) || record.Event != "transport:stream_opened" || record.NativeStreamID == nil ||
-			*record.NativeStreamID < 12 || *record.NativeStreamID%4 != 0 || strings.TrimSpace(record.ConnectionGroupID) == "" ||
+		if record.Sequence != uint64(index+1) || strings.TrimSpace(record.Event) == "" || strings.TrimSpace(record.ConnectionGroupID) == "" ||
 			record.UnixNanoseconds < previousAt {
-			return errors.New("stream capacity qlog STREAM_OPENED sequence, timestamp, or identity is invalid")
+			return errors.New("stream capacity qlog sequence, timestamp, or source identity is invalid")
 		}
 		previousAt = record.UnixNanoseconds
+		if record.NativeStreamID == nil {
+			if record.Event == "transport:stream_opened" {
+				return errors.New("stream capacity qlog generic source binding is invalid")
+			}
+			continue
+		}
+		if record.Event != "transport:stream_opened" || *record.NativeStreamID < 12 || *record.NativeStreamID%4 != 0 {
+			return errors.New("stream capacity qlog STREAM_OPENED identity is invalid")
+		}
+		streamRecords++
 		streams := perConnection[record.ConnectionGroupID]
 		if streams == nil {
 			streams = make(map[uint64]struct{}, 128)
@@ -846,6 +853,9 @@ func validateCapacityStreamQLOGAttribution(attribution PacketAttributionArtifact
 			return errors.New("stream capacity qlog reuses a connection-scoped native stream ID")
 		}
 		streams[*record.NativeStreamID] = struct{}{}
+	}
+	if streamRecords != 100*128 {
+		return fmt.Errorf("stream capacity qlog contains %d STREAM_OPENED records, want %d", streamRecords, 100*128)
 	}
 	if len(perConnection) != 100 {
 		return fmt.Errorf("stream capacity qlog contains %d connection groups, want 100", len(perConnection))

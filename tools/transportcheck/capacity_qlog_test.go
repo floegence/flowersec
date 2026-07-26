@@ -21,9 +21,16 @@ func TestValidateCapacityStreamQLOGAttributionUsesConnectionScopedStreamIDs(t *t
 	if err := validateCapacityStreamQLOGAttribution(artifact); err != nil {
 		t.Fatal(err)
 	}
-	duplicate := *artifact.Records[len(artifact.Records)-1].NativeStreamID
-	artifact.Records[len(artifact.Records)-1].ConnectionGroupID = artifact.Records[0].ConnectionGroupID
-	artifact.Records[len(artifact.Records)-1].NativeStreamID = &duplicate
+	artifact.Records = append(artifact.Records, PacketAttributionRecord{
+		Sequence: uint64(len(artifact.Records) + 1), UnixNanoseconds: int64(len(artifact.Records) + 1),
+		Event: "transport:packet_sent", ConnectionGroupID: "connection-control",
+	})
+	if err := validateCapacityStreamQLOGAttribution(artifact); err != nil {
+		t.Fatalf("non-stream source binding was rejected: %v", err)
+	}
+	duplicate := *artifact.Records[len(artifact.Records)-2].NativeStreamID
+	artifact.Records[len(artifact.Records)-2].ConnectionGroupID = artifact.Records[0].ConnectionGroupID
+	artifact.Records[len(artifact.Records)-2].NativeStreamID = &duplicate
 	if err := validateCapacityStreamQLOGAttribution(artifact); err == nil {
 		t.Fatal("duplicate connection-scoped native stream ID was accepted")
 	}

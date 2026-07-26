@@ -239,6 +239,12 @@ func capacityQLOGAttribution(destination *artifactDestination, definition capaci
 			if attribution.Records[left].SourceID != attribution.Records[right].SourceID {
 				return attribution.Records[left].SourceID < attribution.Records[right].SourceID
 			}
+			if attribution.Records[left].NativeStreamID == nil {
+				return attribution.Records[right].NativeStreamID != nil
+			}
+			if attribution.Records[right].NativeStreamID == nil {
+				return false
+			}
 			return *attribution.Records[left].NativeStreamID < *attribution.Records[right].NativeStreamID
 		})
 	}
@@ -320,6 +326,13 @@ func browserStreamCapacityQLOGAttributions(data []byte, source releaseRawSource)
 			result = append(result, record)
 		}
 	}
+	if len(result) == 0 {
+		record, err := firstCapacityQLOGAttribution(data, source)
+		if err != nil {
+			return nil, err
+		}
+		return []capacityAttributionRecord{record}, nil
+	}
 	return result, nil
 }
 
@@ -334,15 +347,22 @@ func capacityQLOGPacketIdentity(data map[string]any) (uint64, string, bool) {
 }
 
 func validateBrowserStreamCapacityAttributions(records []capacityAttributionRecord) error {
-	if len(records) != 100*128 {
-		return fmt.Errorf("browser stream capacity qlog proves %d opened streams, want %d", len(records), 100*128)
-	}
 	perConnection := make(map[string]map[uint64]struct{}, 100)
+	streamRecords := 0
 	for _, record := range records {
-		if record.Event != "transport:stream_opened" || record.NativeStreamID == nil || *record.NativeStreamID < 12 || *record.NativeStreamID%4 != 0 ||
-			strings.TrimSpace(record.ConnectionGroupID) == "" {
+		if strings.TrimSpace(record.ConnectionGroupID) == "" || strings.TrimSpace(record.Event) == "" {
+			return errors.New("browser stream capacity qlog attribution has an invalid source binding")
+		}
+		if record.NativeStreamID == nil {
+			if record.Event == "transport:stream_opened" {
+				return errors.New("browser stream capacity qlog attribution has an invalid generic source binding")
+			}
+			continue
+		}
+		if record.Event != "transport:stream_opened" || *record.NativeStreamID < 12 || *record.NativeStreamID%4 != 0 {
 			return errors.New("browser stream capacity qlog attribution has an invalid STREAM_OPENED identity")
 		}
+		streamRecords++
 		streams := perConnection[record.ConnectionGroupID]
 		if streams == nil {
 			streams = make(map[uint64]struct{}, 128)
@@ -352,6 +372,9 @@ func validateBrowserStreamCapacityAttributions(records []capacityAttributionReco
 			return errors.New("browser stream capacity qlog attribution reuses a connection stream ID")
 		}
 		streams[*record.NativeStreamID] = struct{}{}
+	}
+	if streamRecords != 100*128 {
+		return fmt.Errorf("browser stream capacity qlog proves %d opened streams, want %d", streamRecords, 100*128)
 	}
 	if len(perConnection) != 100 {
 		return fmt.Errorf("browser stream capacity qlog proves %d connections, want 100", len(perConnection))
