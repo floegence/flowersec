@@ -497,5 +497,9 @@ func normalizeCloseError(err error) error {
 		errors.Is(err, io.EOF) || errors.Is(err, gorillaws.ErrCloseSent) || errors.Is(err, syscall.EPIPE) {
 		return nil
 	}
+	var websocketClose *gorillaws.CloseError
+	if errors.As(err, &websocketClose) && websocketClose.Code == 4000 && websocketClose.Text == "session closed" {
+		return nil
+	}
 	return err
 }

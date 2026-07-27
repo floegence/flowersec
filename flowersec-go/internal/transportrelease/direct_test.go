@@ -18,6 +18,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	gorillaws "github.com/gorilla/websocket"
 )
 
 func TestDirectProductionCarriersCarryEncryptedRoundTrip(t *testing.T) {
@@ -742,5 +743,21 @@ func (stream *blockingReleaseStream) Reset() error {
 func TestNormalizeCloseErrorAcceptsTerminalDeadline(t *testing.T) {
 	if err := normalizeCloseError(context.DeadlineExceeded); err != nil {
 		t.Fatalf("normalize terminal deadline = %v", err)
+	}
+}
+
+func TestNormalizeCloseErrorAcceptsPeerSessionClose(t *testing.T) {
+	err := &gorillaws.CloseError{Code: 4000, Text: "session closed"}
+	if normalized := normalizeCloseError(err); normalized != nil {
+		t.Fatalf("normalize peer session close = %v", normalized)
+	}
+
+	for _, unexpected := range []*gorillaws.CloseError{
+		{Code: 4000, Text: "session protocol failure"},
+		{Code: gorillaws.CloseProtocolError, Text: "protocol error"},
+	} {
+		if normalized := normalizeCloseError(unexpected); normalized == nil {
+			t.Fatalf("normalized unexpected close %#v", unexpected)
+		}
 	}
 }
