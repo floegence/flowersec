@@ -260,8 +260,8 @@ func validateCollectRequest(request collectRequest) (*collectEnvironment, error)
 	if request.Target == "bench-transport-capacity" && request.CapacityBatch == "" {
 		return nil, errors.New("bench-transport-capacity requires one frozen capacity batch")
 	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		return nil, errors.New("collect requires Linux amd64")
+	if !supportedCollectPlatform(runtime.GOOS, runtime.GOARCH) {
+		return nil, errors.New("collect requires Linux amd64 or arm64")
 	}
 	if os.Geteuid() != 0 {
 		return nil, errors.New("collect requires the dedicated privileged runner")
@@ -416,6 +416,10 @@ func validateCollectRequest(request collectRequest) (*collectEnvironment, error)
 		return nil, err
 	}
 	return &collectEnvironment{request: request, manifest: manifest, registry: registry, inputDigests: digests, output: output}, nil
+}
+
+func supportedCollectPlatform(goos, goarch string) bool {
+	return goos == "linux" && (goarch == "amd64" || goarch == "arm64")
 }
 
 func validateCollectCheckout(repository, sourceSHA, label string) error {

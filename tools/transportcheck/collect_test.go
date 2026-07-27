@@ -18,6 +18,27 @@ import (
 const collectTestFinalSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 const collectTestBaseSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
+func TestSupportedCollectPlatform(t *testing.T) {
+	tests := []struct {
+		name   string
+		goos   string
+		goarch string
+		want   bool
+	}{
+		{name: "amd64", goos: "linux", goarch: "amd64", want: true},
+		{name: "arm64", goos: "linux", goarch: "arm64", want: true},
+		{name: "unsupported Linux architecture", goos: "linux", goarch: "386"},
+		{name: "non-Linux", goos: "darwin", goarch: "arm64"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := supportedCollectPlatform(test.goos, test.goarch); got != test.want {
+				t.Fatalf("supportedCollectPlatform(%q, %q) = %t, want %t", test.goos, test.goarch, got, test.want)
+			}
+		})
+	}
+}
+
 func TestCollectFlagFrontDoorRejectsIncompleteAndUnknownRequests(t *testing.T) {
 	for _, args := range [][]string{
 		{"collect"},
