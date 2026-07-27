@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createMemoryCarrierPairV2, type CarrierSessionV2, type CarrierStreamV2 } from "./carrier.js";
 import type { OperationOptionsV2 } from "./contract.js";
@@ -7,7 +7,7 @@ import { establishSessionV2, type SessionConfigV2, type SessionV2 } from "./sess
 
 function config(
   role: "client" | "server",
-  options: Readonly<{ idleTimeoutMs: number; closeTimeoutMs: number }>,
+  options: Readonly<{ idleTimeoutMs: number; closeTimeoutMs?: number }>,
 ): SessionConfigV2 {
   return {
     role,
@@ -22,7 +22,7 @@ function config(
     localEndpointInstanceID: "",
     expectedPeerEndpointInstanceID: "",
     idleTimeoutMs: options.idleTimeoutMs,
-    closeTimeoutMs: options.closeTimeoutMs,
+    ...(options.closeTimeoutMs === undefined ? {} : { closeTimeoutMs: options.closeTimeoutMs }),
   };
 }
 
@@ -88,6 +88,30 @@ describe("SessionV2 lifecycle bounds", () => {
     expect(result).toBe("closed");
     expect(client.terminalError).toMatchObject({ code: "closed" });
     expect(clientCarrier.aborts).toBe(1);
+  });
+
+  test("uses the portable two-second default close deadline", async () => {
+    const [rawClient, serverCarrier] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const clientCarrier = new UnsettledCloseAfterAbortCarrier(rawClient);
+    const [client] = await Promise.all([
+      establishSessionV2(clientCarrier, config("client", { idleTimeoutMs: 0 })),
+      establishSessionV2(serverCarrier, config("server", { idleTimeoutMs: 0 })),
+    ]);
+
+    vi.useFakeTimers();
+    let closed = false;
+    const closing = client.close().then(() => { closed = true; });
+    try {
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(closed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(closed).toBe(true);
+      expect(clientCarrier.aborts).toBe(1);
+    } finally {
+      await vi.advanceTimersByTimeAsync(60_000);
+      await closing;
+      vi.useRealTimers();
+    }
   });
 
   test("completes reciprocal close before carrier teardown when peer reads are delayed", async () => {

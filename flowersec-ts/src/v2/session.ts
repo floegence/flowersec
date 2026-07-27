@@ -88,7 +88,7 @@ const MAX_DATA_BYTES = 16_384;
 const MAX_BUFFERED_STREAM_BYTES = 4 * 1024 * 1024;
 const RESERVED_RPC_KIND = "flowersec.rpc.v2";
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
-const DEFAULT_CLOSE_TIMEOUT_MS = 5_000;
+const DEFAULT_CLOSE_TIMEOUT_MS = 2_000;
 
 type SessionTerminationV2 = Readonly<{ error: Error }>;
 
