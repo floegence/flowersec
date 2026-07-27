@@ -15,8 +15,8 @@ import (
 
 const (
 	signedRunnerArchitecture  = "arm64"
-	signedRunnerKernelRelease = "6.8.0-136-generic"
-	signedRunnerConfigDigest  = "0ec469e96abcd36c22f85bd4ba4d79232b1253bb29bec3496fc74df507c3e4d0"
+	signedRunnerKernelRelease = "6.12.54-linuxkit"
+	signedRunnerConfigDigest  = "cdd76a5c3467ba7bd8e9059b2fc4c762be4d336ad41da62acc5c5760caceca3e"
 	signedRunnerConfigPath    = "runner_effective_config.json"
 	signedRunnerExecutableSHA = "bd1700c42ac13208a35e816df8dd3232622a7fbe7d7100bcac98076449e6f4a7"
 	signedRunnerSourceSHA     = "e6c5b8123908facf2f892ee509bb456e937b32e762c709e56e78e13fde04b202"
