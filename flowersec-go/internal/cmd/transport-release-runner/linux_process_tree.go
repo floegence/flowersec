@@ -453,7 +453,7 @@ func parseLinuxProcStatRecord(pid int, record string) (linuxProcStat, error) {
 		return linuxProcStat{}, err
 	}
 	startTicks, err := strconv.ParseUint(fields[19], 10, 64)
-	if err != nil || startTicks == 0 {
+	if err != nil {
 		return linuxProcStat{}, errors.New("invalid /proc process start time")
 	}
 	return linuxProcStat{pid: pid, ppid: ppid, pgid: pgid, state: fields[0][0], userTicks: userTicks, systemTicks: systemTicks, startTicks: startTicks}, nil

@@ -68,7 +68,12 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
 	assert.match(runner, /go build -trimpath -buildvcs=false -o "\$base_low_level_runner"/);
   assert.match(runner, /vcs\\\.revision=/);
   assert.match(runner, /vcs\\\.modified=/);
-  assert.match(runner, /clang -O2 -g -Wall -Werror -target bpf -D__TARGET_ARCH_x86/);
+  assert.match(runner, /case \$\(uname -m\) in/);
+  assert.match(runner, /x86_64\)[\s\S]*bpf_target_arch=x86[\s\S]*bpf_system_include=\/usr\/include\/x86_64-linux-gnu/);
+  assert.match(runner, /aarch64\)[\s\S]*bpf_target_arch=arm64[\s\S]*bpf_system_include=\/usr\/include\/aarch64-linux-gnu/);
+  assert.match(runner, /clang -O2 -g -Wall -Werror -target bpf/);
+  assert.match(runner, /-D"__TARGET_ARCH_\$\{bpf_target_arch\}"/);
+  assert.match(runner, /-I"\$bpf_system_include"/);
   assert.match(runner, /runner build changed the source checkout/);
   assert.match(runner, /"\$transportcheck" collect \\/);
   for (const flag of [

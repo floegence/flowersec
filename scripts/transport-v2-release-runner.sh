@@ -81,7 +81,20 @@ readonly bpf_source_path=$source_root/flowersec-go/internal/transportrelease/lin
 readonly wrapper_source_path=$source_root/scripts/transport-v2-release-runner.sh
 readonly host_bpftool=/opt/host-linux-tools/bpftool
 
-[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || fail "runner requires native Linux amd64"
+[[ $(uname -s) == Linux ]] || fail "runner requires native Linux"
+case $(uname -m) in
+  x86_64)
+    readonly bpf_target_arch=x86
+    readonly bpf_system_include=/usr/include/x86_64-linux-gnu
+    ;;
+  aarch64)
+    readonly bpf_target_arch=arm64
+    readonly bpf_system_include=/usr/include/aarch64-linux-gnu
+    ;;
+  *)
+    fail "unsupported Linux runner architecture: $(uname -m)"
+    ;;
+esac
 [[ $(id -u) == 0 ]] || fail "runner requires root inside the dedicated privileged container"
 [[ -r /etc/os-release ]] || fail "Ubuntu userspace identity is unavailable"
 # shellcheck disable=SC1091
@@ -197,8 +210,9 @@ verify_clean_vcs_stamp() {
 }
 verify_clean_vcs_stamp "$transportcheck" "$final_sha"
 
-clang -O2 -g -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
-  -I/usr/include/x86_64-linux-gnu \
+clang -O2 -g -Wall -Werror -target bpf \
+  -D"__TARGET_ARCH_${bpf_target_arch}" \
+  -I"$bpf_system_include" \
   -c "$bpf_source_path" -o "$bpf_object"
 [[ -s $bpf_object ]] || fail "packet-fault BPF compilation produced no object"
 [[ -z $(git -C "$source_root" status --porcelain --untracked-files=all) ]] || fail "runner build changed the source checkout"
