@@ -52,6 +52,7 @@ fi
 docker run --detach \
   --name "$container_name" \
   --hostname flowersec-linux-release-v1 \
+  --init \
   --privileged \
   --cgroup-parent flowersec-release.slice \
   --network host \

@@ -128,6 +128,7 @@ test("provision installs the source-matched wrapper at one stable container path
   assert.match(provision, /sudo install -d -o root -g root -m 0755 "\$runner_root\/evidence"/);
   assert.match(provision, /FLOWERSEC_RELEASE_OWNER_UID=\$release_owner_uid/);
   assert.match(provision, /FLOWERSEC_RELEASE_OWNER_GID=\$release_owner_gid/);
+  assert.match(provision, /--init/);
   assert.match(provision, /--privileged \\\n  --cgroup-parent flowersec-release\.slice \\\n  --network host/);
   assert.doesNotMatch(provision, /--(?:cgroupns|pid) host/);
   const dependencyInstall = provision.indexOf("npm ci --audit=false");
