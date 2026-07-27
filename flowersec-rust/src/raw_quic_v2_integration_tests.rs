@@ -31,6 +31,115 @@ use tokio_util::sync::CancellationToken;
 const TEST_CERT_DER_B64: &str = "MIIBjzCCAUGgAwIBAgIUW8hQEpQsUJN9a6qqF2g6hsNpSm8wBQYDK2VwMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAeFw0yNjA3MjAxOTAxMjFaFw0zNjA3MTcxOTAxMjFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAqMAUGAytlcAMhAAihki/Jec+1EaC6E6PsSxjMYFAazrgkNiUIlbj/+A/0o4GkMIGhMB0GA1UdDgQWBBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAfBgNVHSMEGDAWgBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEwBQYDK2VwA0EArZng3XitiH2E1pW/NTxQvEOBXJYpYE8coQmLV4yTjfI43CWHMG6lIrwk/so67oe6Z2R4iHGjUm3Tuy50Fl8hBw==";
 const TEST_KEY_DER_B64: &str = "MC4CAQAwBQYDK2VwBCIEICxYUWHqGoh0CBBohsaNg/NThm1n3UeWCzYuq6jS+Qi6";
 
+const EDGE_BULK_DEADLINE: Duration = Duration::from_secs(4);
+const EDGE_BULK_PHASE_BYTES: [usize; 2] = [64 * 1024, 128 * 1024];
+const PROBE_COMPLETION_DEADLINE: Duration = Duration::from_secs(5);
+const PROBE_CLIENT_DRAIN_GRACE: Duration = Duration::from_secs(1);
+
+#[tokio::test]
+#[ignore = "requires two externally managed Linux network namespaces"]
+async fn bbr_edge_exact_bulk_probe() {
+    let mode = std::env::var("FLOWERSEC_BBR_PROBE_MODE").expect("probe mode");
+    let local: SocketAddr = std::env::var("FLOWERSEC_BBR_PROBE_LOCAL")
+        .expect("probe local address")
+        .parse()
+        .expect("parse probe local address");
+    let limits = default_limits();
+
+    match mode.as_str() {
+        "server" => {
+            let ready = std::env::var("FLOWERSEC_BBR_PROBE_READY").expect("probe ready path");
+            let listener =
+                RawQuicListener::bind(local, server_config(RawQuicPathProfile::Direct, limits))
+                    .expect("bind BBR probe server");
+            fs::write(
+                ready,
+                listener
+                    .local_addr()
+                    .expect("probe server address")
+                    .to_string(),
+            )
+            .expect("publish probe server address");
+            let session = listener.accept().await.expect("accept BBR probe client");
+            tokio::time::timeout(EDGE_BULK_DEADLINE, async {
+                for bytes in EDGE_BULK_PHASE_BYTES {
+                    let stream = session.accept_stream().await.expect("accept probe stream");
+                    exact_bulk_direction(&stream, bytes, 0x5a, 0xa5).await;
+                }
+            })
+            .await
+            .expect("BBR server bulk deadline");
+            tokio::time::timeout(PROBE_COMPLETION_DEADLINE, async {
+                let completion = session.open_stream().await.expect("open completion stream");
+                completion
+                    .write_all(b"bulk-complete")
+                    .await
+                    .expect("write completion marker");
+                completion
+                    .close_write()
+                    .await
+                    .expect("finish completion marker");
+                assert_eq!(read_to_end(&completion).await, b"bulk-ack");
+            })
+            .await
+            .expect("BBR server completion deadline");
+        }
+        "client" => {
+            let remote: SocketAddr = std::env::var("FLOWERSEC_BBR_PROBE_REMOTE")
+                .expect("probe remote address")
+                .parse()
+                .expect("parse probe remote address");
+            let session = RawQuicSession::dial(
+                local,
+                remote,
+                "localhost",
+                client_config(RawQuicPathProfile::Direct, limits),
+            )
+            .await
+            .expect("dial BBR probe server");
+            tokio::time::timeout(EDGE_BULK_DEADLINE, async {
+                for bytes in EDGE_BULK_PHASE_BYTES {
+                    let stream = session.open_stream().await.expect("open probe stream");
+                    exact_bulk_direction(&stream, bytes, 0xa5, 0x5a).await;
+                }
+            })
+            .await
+            .expect("BBR client bulk deadline");
+            let completion = session
+                .accept_stream()
+                .await
+                .expect("accept completion stream");
+            assert_eq!(read_to_end(&completion).await, b"bulk-complete");
+            completion
+                .write_all(b"bulk-ack")
+                .await
+                .expect("write completion acknowledgement");
+            completion
+                .close_write()
+                .await
+                .expect("finish completion acknowledgement");
+            tokio::time::sleep(PROBE_CLIENT_DRAIN_GRACE).await;
+        }
+        _ => panic!("unsupported BBR probe mode {mode}"),
+    }
+}
+
+async fn exact_bulk_direction(stream: &RawQuicStream, bytes: usize, send: u8, receive: u8) {
+    let write = async {
+        stream
+            .write_all(&vec![send; bytes])
+            .await
+            .expect("write exact probe payload");
+        stream.close_write().await.expect("finish probe payload");
+    };
+    let read = async {
+        let payload = read_to_end(stream).await;
+        assert_eq!(payload.len(), bytes, "probe receive byte count");
+        assert!(payload.iter().all(|byte| *byte == receive), "probe payload");
+    };
+    tokio::join!(write, read);
+}
+
 #[tokio::test]
 async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end() {
     for (profile, tunnel_role) in [

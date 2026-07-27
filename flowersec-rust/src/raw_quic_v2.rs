@@ -1430,6 +1430,7 @@ fn transport_config(limits: RawQuicLimits) -> Result<quinn::TransportConfig, Raw
     limits.validate()?;
     let mut transport = quinn::TransportConfig::default();
     transport
+        .congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()))
         .max_concurrent_bidi_streams(VarInt::from_u32(limits.max_inbound_bidirectional_streams))
         .max_concurrent_uni_streams(0_u32.into())
         .stream_receive_window(
