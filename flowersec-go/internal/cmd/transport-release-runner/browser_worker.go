@@ -25,7 +25,7 @@ import (
 
 const browserDirectTopology = "browser_webtransport"
 
-func runBrowserCell(reportPath string, destination *artifactDestination, sourceSHA, sourceRoot, profileID, topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+func runBrowserCell(parent context.Context, reportPath string, destination *artifactDestination, sourceSHA, sourceRoot, profileID, topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
 	if topology == "" {
 		topology = browserDirectTopology
 	}
@@ -74,7 +74,7 @@ func runBrowserCell(reportPath string, destination *artifactDestination, sourceS
 		StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
-	ctx, cancel := context.WithTimeout(context.Background(), cellDeadline)
+	ctx, cancel := newCellContext(parent, cellDeadline)
 	defer cancel()
 	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
 		result, err := runBrowserNetworkCarrier(ctx, topology, profile, runNumber, frozenBPFObject, sourceRoot, destination)

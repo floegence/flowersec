@@ -276,25 +276,25 @@ func runWithContext(runnerContext context.Context, args []string) (resultErr err
 		if *topologyName != "" {
 			return errors.New("direct network profile cell does not accept --topology")
 		}
-		return runNetworkCell(*reportPath, destination, *sourceSHA, *profileID, carrier.Kind(*carrierName), *bpfObject, plan, manifest)
+		return runNetworkCell(runnerContext, *reportPath, destination, *sourceSHA, *profileID, carrier.Kind(*carrierName), *bpfObject, plan, manifest)
 	}
 	if *target == tunnelCellTarget {
 		if *carrierName != "" {
 			return errors.New("tunnel network profile cell does not accept --carrier")
 		}
-		return runTunnelCell(*reportPath, destination, *sourceSHA, *profileID, tunnelworkload.Topology(*topologyName), *bpfObject, plan, manifest)
+		return runTunnelCell(runnerContext, *reportPath, destination, *sourceSHA, *profileID, tunnelworkload.Topology(*topologyName), *bpfObject, plan, manifest)
 	}
 	if *target == browserCellTarget {
 		if *carrierName != "" {
 			return errors.New("browser WebTransport cell does not accept --carrier")
 		}
-		return runBrowserCell(*reportPath, destination, *sourceSHA, *sourceRoot, *profileID, *topologyName, *bpfObject, plan, manifest)
+		return runBrowserCell(runnerContext, *reportPath, destination, *sourceSHA, *sourceRoot, *profileID, *topologyName, *bpfObject, plan, manifest)
 	}
 	if *target == adaptiveCellTarget {
 		if *carrierName != "" {
 			return errors.New("adaptive selection cell does not accept --carrier")
 		}
-		return runAdaptiveCell(*reportPath, destination, *sourceSHA, *profileID, *topologyName, *bpfObject, plan, manifest)
+		return runAdaptiveCell(runnerContext, *reportPath, destination, *sourceSHA, *profileID, *topologyName, *bpfObject, plan, manifest)
 	}
 	if *profileID != "" || *carrierName != "" || *topologyName != "" || *bpfObject == "" {
 		return errors.New("direct clean baseline requires --bpf-object and does not accept network profile flags")
@@ -534,7 +534,7 @@ func runEndpointCarrier(ctx context.Context, endpoint *transportrelease.ProductD
 	}, nil
 }
 
-func runNetworkCell(reportPath string, destination *artifactDestination, sourceSHA, profileID string, kind carrier.Kind, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+func runNetworkCell(parent context.Context, reportPath string, destination *artifactDestination, sourceSHA, profileID string, kind carrier.Kind, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
 	if profileID != "mobile-v1" && profileID != "edge-v1" {
 		return errors.New("network profile cell requires mobile-v1 or edge-v1")
 	}
@@ -571,7 +571,7 @@ func runNetworkCell(reportPath string, destination *artifactDestination, sourceS
 		BPFObjectSHA256: hex.EncodeToString(bpfDigest[:]), StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
-	cellCtx, cancelCell := context.WithTimeout(context.Background(), cellDeadline)
+	cellCtx, cancelCell := newCellContext(parent, cellDeadline)
 	defer cancelCell()
 	cellStarted := time.Now()
 	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
@@ -724,7 +724,7 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 	return result, nil
 }
 
-func runTunnelCell(reportPath string, destination *artifactDestination, sourceSHA, profileID string, topology tunnelworkload.Topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+func runTunnelCell(parent context.Context, reportPath string, destination *artifactDestination, sourceSHA, profileID string, topology tunnelworkload.Topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
 	if _, _, err := topology.Carriers(); err != nil {
 		return err
 	}
@@ -761,7 +761,7 @@ func runTunnelCell(reportPath string, destination *artifactDestination, sourceSH
 		BPFObjectSHA256: bpfDigest, StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
-	cellCtx, cancelCell := context.WithTimeout(context.Background(), cellDeadline)
+	cellCtx, cancelCell := newCellContext(parent, cellDeadline)
 	defer cancelCell()
 	cellStarted := time.Now()
 	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {

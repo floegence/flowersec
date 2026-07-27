@@ -255,6 +255,10 @@ func newCaseContext(parent context.Context, timeout time.Duration) (context.Cont
 	return context.WithTimeout(parent, timeout)
 }
 
+func newCellContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, timeout)
+}
+
 func runConformanceSmokeCase(ctx context.Context, definition releaseCaseDefinition) (releaseCaseRun, error) {
 	request := []byte("flowersec-release-case-request")
 	response := []byte("flowersec-release-case-response")

@@ -68,7 +68,7 @@ func adaptiveCandidatesForTopology(topology string) ([]transportrelease.Adaptive
 	}
 }
 
-func runAdaptiveCell(reportPath string, destination *artifactDestination, sourceSHA, profileID, topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+func runAdaptiveCell(parent context.Context, reportPath string, destination *artifactDestination, sourceSHA, profileID, topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
 	if profileID != plan.Adaptive.ID || profileID != "adaptive-selection-v1" {
 		return errors.New("adaptive selection cell requires adaptive-selection-v1")
 	}
@@ -102,7 +102,7 @@ func runAdaptiveCell(reportPath string, destination *artifactDestination, source
 		BPFObjectSHA256: hex.EncodeToString(bpfDigest[:]), StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(plan.Adaptive.CellWatchdogMinutes) * time.Minute
-	cellCtx, cancelCell := context.WithTimeout(context.Background(), cellDeadline)
+	cellCtx, cancelCell := newCellContext(parent, cellDeadline)
 	defer cancelCell()
 	cellStarted := time.Now()
 	for _, stage := range []struct {
