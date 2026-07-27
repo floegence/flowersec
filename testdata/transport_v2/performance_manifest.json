@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "digest": "sha256:e2403a06602333965b16e73835fc9bffd2f0e4732e6cc903f26ac6db52332f3b",
+  "digest": "sha256:b05e57f4e554186c8c302eb2d50e46140e20a5b27aa74823eaf044cd314c08d4",
   "ratio_formula_version": "transport-ratio-v1",
   "run_count": 15,
   "bootstrap": {
@@ -133,7 +133,7 @@
         "operations": 30,
         "request_bytes": 1024,
         "response_bytes": 1024,
-        "workers": 10,
+        "workers": 30,
         "retries": 0,
         "operation_deadline_seconds": 4,
         "phase_deadline_seconds": 5
