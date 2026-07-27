@@ -270,7 +270,7 @@ func TestBrowserBulkServerReadsAndWritesConcurrently(t *testing.T) {
 	}
 }
 
-func TestBrowserBulkServerStartsOutgoingWriteBeforePeerStreamAcceptance(t *testing.T) {
+func TestBrowserBulkServerBoundsOutgoingWriteBeforePeerStreamAcceptance(t *testing.T) {
 	started := make(chan struct{})
 	session := &acceptAfterWriteSession{
 		incoming:    &coordinatedBrowserReadStream{writeStarted: started, stopped: make(chan struct{})},
@@ -280,8 +280,11 @@ func TestBrowserBulkServerStartsOutgoingWriteBeforePeerStreamAcceptance(t *testi
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	if err := ServeBrowserBulk(ctx, session, []int64{1024}); err != nil {
+	if err := ServeBrowserBulk(ctx, session, []int64{32 * 1024}); err != nil {
 		t.Fatal(err)
+	}
+	if got := session.outgoing.FirstWriteBytes(); got != 16*1024 {
+		t.Fatalf("outgoing first write bytes = %d, want one 16 KiB network burst", got)
 	}
 	if got := session.outgoing.CloseWriteCount(); got != 1 {
 		t.Fatalf("outgoing CloseWrite count = %d, want 1", got)
@@ -564,13 +567,17 @@ type coordinatedBrowserWriteStream struct {
 	stopped      chan struct{}
 	startOnce    sync.Once
 	stopOnce     sync.Once
+	firstWrite   atomic.Int64
 	closeWrites  atomic.Int32
 	resets       atomic.Int32
 }
 
 func (stream *coordinatedBrowserWriteStream) Read([]byte) (int, error) { return 0, io.ErrClosedPipe }
 func (stream *coordinatedBrowserWriteStream) Write(buffer []byte) (int, error) {
-	stream.startOnce.Do(func() { close(stream.writeStarted) })
+	stream.startOnce.Do(func() {
+		stream.firstWrite.Store(int64(len(buffer)))
+		close(stream.writeStarted)
+	})
 	for _, value := range buffer {
 		if value != 0x5a {
 			return 0, errors.New("unexpected server bulk payload")
@@ -591,7 +598,8 @@ func (stream *coordinatedBrowserWriteStream) Reset() error {
 func (stream *coordinatedBrowserWriteStream) CloseWriteCount() int32 {
 	return stream.closeWrites.Load()
 }
-func (stream *coordinatedBrowserWriteStream) ResetCount() int32 { return stream.resets.Load() }
+func (stream *coordinatedBrowserWriteStream) FirstWriteBytes() int64 { return stream.firstWrite.Load() }
+func (stream *coordinatedBrowserWriteStream) ResetCount() int32      { return stream.resets.Load() }
 
 type acceptAfterWriteSession struct {
 	incoming    *coordinatedBrowserReadStream

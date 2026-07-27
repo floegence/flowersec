@@ -9,6 +9,8 @@ import (
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 )
 
+const browserBulkPreacceptBytes int64 = 16 * 1024
+
 // ServeBrowserBulk serves the fixed bidirectional bulk phases used by the
 // Chromium release collector. RPC echo is already owned by the session router.
 func ServeBrowserBulk(ctx context.Context, session flowersession.SessionV2, bytesPerPhase []int64) error {
@@ -82,20 +84,31 @@ func serveBrowserBulkSessionPhase(ctx context.Context, session flowersession.Ses
 }
 
 func serveBrowserBulkSessionPhaseWithOutgoing(ctx context.Context, session flowersession.SessionV2, outgoing releaseByteStream, byteCount int64) error {
-	writeDone := make(chan error, 1)
-	go func() { writeDone <- writeExactFill(ctx, outgoing, byteCount, 0x5a) }()
+	stopCancellation := context.AfterFunc(ctx, func() { _ = outgoing.Reset() })
+	defer stopCancellation()
+	preacceptBytes := min(byteCount, browserBulkPreacceptBytes)
+	if err := writeExactFillData(ctx, outgoing, preacceptBytes, 0x5a); err != nil {
+		_ = outgoing.Reset()
+		return fmt.Errorf("prime outgoing stream: %w", err)
+	}
 	incoming, err := session.AcceptStream(ctx)
 	if err != nil {
 		_ = outgoing.Reset()
-		<-writeDone
 		return fmt.Errorf("accept: %w", err)
 	}
 	if incoming.Kind != "release-bulk" || incoming.Metadata["direction"] != "client-to-server" {
 		_ = incoming.Stream.Reset()
 		_ = outgoing.Reset()
-		<-writeDone
 		return errors.New("metadata mismatch")
 	}
+	writeDone := make(chan error, 1)
+	go func() {
+		writeErr := writeExactFillData(ctx, outgoing, byteCount-preacceptBytes, 0x5a)
+		if writeErr == nil {
+			writeErr = outgoing.CloseWrite()
+		}
+		writeDone <- writeErr
+	}()
 	return finishBrowserBulkPhase(ctx, incoming.Stream, outgoing, writeDone, byteCount)
 }
 
