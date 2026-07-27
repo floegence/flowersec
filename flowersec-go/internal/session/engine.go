@@ -176,8 +176,8 @@ type queuedControlRecord struct {
 	critical bool
 }
 
-// Establish completes FSC2/FSH2 and the encrypted READY boundary before it
-// returns a SessionV2 to the application.
+// Establish completes FSC2/FSH2 and the encrypted final READY confirmation
+// before it returns a SessionV2 to the application.
 func Establish(ctx context.Context, carrierSession carrier.Session, config Config) (SessionV2, error) {
 	if ctx == nil {
 		ctx = context.Background()

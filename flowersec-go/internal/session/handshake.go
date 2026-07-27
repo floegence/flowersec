@@ -278,38 +278,12 @@ func carrierFeatures(carrierSession carrier.Session) uint32 {
 
 func (s *engineSession) finishReadyBoundary(ctx context.Context) error {
 	if s.config.Role == RoleServer {
-		if err := s.sendControl(protocolv2.InnerSessionReady, nil); err != nil {
-			return err
-		}
-		if err := s.flushControl(ctx); err != nil {
-			return err
-		}
-		typ, _, err := s.readControl()
-		if err != nil {
-			return err
-		}
-		if typ != protocolv2.InnerSessionReadyACK {
-			return ErrSessionProtocol
-		}
 		if err := s.sendControl(protocolv2.InnerSessionReadyConfirm, nil); err != nil {
 			return err
 		}
 		return s.flushControl(ctx)
 	}
 	typ, _, err := s.readControl()
-	if err != nil {
-		return err
-	}
-	if typ != protocolv2.InnerSessionReady {
-		return ErrSessionProtocol
-	}
-	if err := s.sendControl(protocolv2.InnerSessionReadyACK, nil); err != nil {
-		return err
-	}
-	if err := s.flushControl(ctx); err != nil {
-		return err
-	}
-	typ, _, err = s.readControl()
 	if err != nil {
 		return err
 	}

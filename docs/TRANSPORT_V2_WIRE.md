@@ -20,10 +20,13 @@ FSH2 feature are negotiated; it is never carried on a reliable stream.
 The initiator first sends exactly one FSB2 admission request and receives one
 FSA2 response. No FSC2, FSH2, FSS2, or FSR2 byte may be sent before a successful
 FSA2. On success, the client opens the lifetime control stream, writes FSC2,
-and performs the FSH2 handshake. The authenticated `SESSION_READY` /
-`SESSION_READY_ACK` / `SESSION_READY_CONFIRM` exchange is the final
-establishment barrier. Application
-streams begin with FSS2 followed by authenticated FSR2 records.
+and performs the FSH2 handshake. An authenticated `SERVER_FINISHED` proves that
+the server is ready, and an authenticated `CLIENT_FINISHED` proves that the
+client is ready. After validating `CLIENT_FINISHED`, the server sends and
+physically flushes one encrypted `SESSION_READY_CONFIRM`. The server may expose
+the session only after that flush completes; the client may expose it only after
+receiving and authenticating the confirmation. Application streams begin with
+FSS2 followed by authenticated FSR2 records.
 
 The carrier adapter preserves these boundaries. In the QUIC family, admission,
 control, reserved RPC, and application streams are separate native
@@ -136,7 +139,7 @@ is constant-time. Application 0-RTT is forbidden. Feature bit `0x00000001` is
 `unreliable_messages_v1`: the client offers it only when the selected carrier
 has native DATAGRAM support, and the server echoes the intersection. Unknown
 bits are rejected. The channel remains unavailable until the authenticated
-`SESSION_READY` / `SESSION_READY_ACK` / `SESSION_READY_CONFIRM` barrier completes.
+FSH2 Finished proofs and final `SESSION_READY_CONFIRM` barrier complete.
 
 ## Epoch and Record Keys
 
@@ -279,14 +282,14 @@ three zero bytes, a four-byte payload length, then exactly that payload.
 | 4 | DATA | `1..16384` bytes |
 | 5 | FIN | empty |
 | 6 | STREAM_KEY_UPDATE | transition ID (8) + next epoch (4) |
-| 16 | SESSION_READY | empty |
+| 16 | SESSION_READY (reserved; not sent) | empty |
 | 17 | PING | nonce (8) |
 | 18 | PONG | echoed nonce (8) |
 | 19 | SESSION_KEY_UPDATE | transition ID (8) + next epoch (4) + resolved watermark (8) |
 | 20 | STREAM_RESET | logical ID (8) + non-zero reason (2) |
 | 21 | GO_AWAY | last accepted logical ID (8) + non-zero reason (2) |
 | 22 | SESSION_CLOSE | non-zero reason (2) |
-| 23 | SESSION_READY_ACK | empty |
+| 23 | SESSION_READY_ACK (reserved; not sent) | empty |
 | 24 | SESSION_KEY_UPDATE_ACK | exact 20-byte SESSION_KEY_UPDATE echo |
 | 25 | STREAM_KEY_UPDATE_ACK | logical ID (8) + transition ID (8) + next epoch (4) |
 | 26 | SESSION_READY_CONFIRM | empty |

@@ -1377,7 +1377,7 @@ func establishMemoryPair(t *testing.T, kind carrier.Kind, maxInbound uint16) (*e
 	return establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 }
 
-func TestClientEstablishWaitsUntilReadyACKIsWritten(t *testing.T) {
+func TestEstablishUsesHandshakeFinishedAsReadyProof(t *testing.T) {
 	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindWebTransport)
 	clientConfig, serverConfig := testEngineConfigs(1)
 	bindMemoryCarrierCapacity(clientCarrier, clientConfig.MaxInboundStreams)
@@ -1385,58 +1385,32 @@ func TestClientEstablishWaitsUntilReadyACKIsWritten(t *testing.T) {
 	bindMemoryCarrierPath(clientCarrier, clientConfig.Path)
 	bindMemoryCarrierPath(serverCarrier, serverConfig.Path)
 
-	ackWriteStarted := make(chan struct{})
-	releaseACKWrite := make(chan struct{})
-	var ackOnce sync.Once
+	var clientRecords atomic.Int32
+	var serverRecords atomic.Int32
 	clientCarrier.setWriteHook(func(payload []byte) {
 		if bytes.HasPrefix(payload, []byte("FSR2")) {
-			ackOnce.Do(func() { close(ackWriteStarted) })
-			<-releaseACKWrite
+			clientRecords.Add(1)
+		}
+	})
+	serverCarrier.setWriteHook(func(payload []byte) {
+		if bytes.HasPrefix(payload, []byte("FSR2")) {
+			serverRecords.Add(1)
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	type result struct {
-		session SessionV2
-		err     error
-	}
-	serverResult := make(chan result, 1)
-	clientResult := make(chan result, 1)
-	go func() {
-		session, err := Establish(ctx, serverCarrier, serverConfig)
-		serverResult <- result{session: session, err: err}
-	}()
-	go func() {
-		session, err := Establish(ctx, clientCarrier, clientConfig)
-		clientResult <- result{session: session, err: err}
-	}()
+	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
+	defer client.Close()
+	defer server.Close()
 
-	select {
-	case <-ackWriteStarted:
-	case <-ctx.Done():
-		t.Fatal("READY_ACK write did not start")
+	if got := clientRecords.Load(); got != 0 {
+		t.Fatalf("client encrypted readiness records = %d, want 0", got)
 	}
-	select {
-	case result := <-clientResult:
-		close(releaseACKWrite)
-		if result.session != nil {
-			_ = result.session.Close()
-		}
-		t.Fatalf("client Establish returned before READY_ACK write completed: %v", result.err)
-	default:
+	if got := serverRecords.Load(); got != 1 {
+		t.Fatalf("server encrypted readiness records = %d, want final confirm only", got)
 	}
-	close(releaseACKWrite)
-	client := <-clientResult
-	server := <-serverResult
-	if client.err != nil || server.err != nil {
-		t.Fatalf("Establish errors: client=%v server=%v", client.err, server.err)
-	}
-	defer client.session.Close()
-	defer server.session.Close()
 }
 
-func TestClientEstablishWaitsForServerReadyConfirm(t *testing.T) {
+func TestEstablishWaitsForServerReadyConfirmWrite(t *testing.T) {
 	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindWebTransport)
 	clientConfig, serverConfig := testEngineConfigs(1)
 	bindMemoryCarrierCapacity(clientCarrier, clientConfig.MaxInboundStreams)
@@ -1446,16 +1420,15 @@ func TestClientEstablishWaitsForServerReadyConfirm(t *testing.T) {
 
 	confirmWriteStarted := make(chan struct{})
 	releaseConfirmWrite := make(chan struct{})
-	serverRecords := 0
+	var confirmOnce sync.Once
 	serverCarrier.setWriteHook(func(payload []byte) {
 		if !bytes.HasPrefix(payload, []byte("FSR2")) {
 			return
 		}
-		serverRecords++
-		if serverRecords == 2 {
+		confirmOnce.Do(func() {
 			close(confirmWriteStarted)
 			<-releaseConfirmWrite
-		}
+		})
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1487,6 +1460,15 @@ func TestClientEstablishWaitsForServerReadyConfirm(t *testing.T) {
 			_ = result.session.Close()
 		}
 		t.Fatalf("client Establish returned before SESSION_READY_CONFIRM: %v", result.err)
+	default:
+	}
+	select {
+	case result := <-serverResult:
+		close(releaseConfirmWrite)
+		if result.session != nil {
+			_ = result.session.Close()
+		}
+		t.Fatalf("server Establish returned before SESSION_READY_CONFIRM write completed: %v", result.err)
 	default:
 	}
 	close(releaseConfirmWrite)
