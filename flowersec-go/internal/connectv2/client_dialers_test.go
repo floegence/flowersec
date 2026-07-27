@@ -1,6 +1,7 @@
 package connectv2_test
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -143,6 +144,71 @@ func TestWebSocketCarrierDialRejectsTLSAuthenticationBypass(t *testing.T) {
 	})
 	if !errors.Is(err, connectv2.ErrInvalidCarrierDialConfig) {
 		t.Fatalf("constructor error = %v, want ErrInvalidCarrierDialConfig", err)
+	}
+}
+
+func TestWebSocketCarrierDialCancellationClosesInflightUpgrade(t *testing.T) {
+	serverTLS, clientTLS := carrierDialTLSConfigs(t)
+	clientConn, serverConn := net.Pipe()
+	requestRead := make(chan struct{})
+	releaseServer := make(chan struct{})
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		connection := tls.Server(serverConn, serverTLS)
+		if err := connection.Handshake(); err != nil {
+			return
+		}
+		request, err := http.ReadRequest(bufio.NewReader(connection))
+		if err != nil {
+			return
+		}
+		_ = request.Body.Close()
+		close(requestRead)
+		<-releaseServer
+	}()
+	t.Cleanup(func() {
+		close(releaseServer)
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+		<-serverDone
+	})
+
+	dial, err := connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
+		Dialer: &gorillaws.Dialer{
+			TLSClientConfig: clientTLS,
+			NetDialContext: func(context.Context, string, string) (net.Conn, error) {
+				return clientConn, nil
+			},
+		},
+		Resources: carrierws.DefaultResourcePolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := validArtifact(t)
+	candidate := artifact.Path.Candidates[0]
+	candidate.URL = "wss://127.0.0.1:443/flowersec/v2/direct"
+	candidate.NormalizedURL = ""
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, dialErr := dial(ctx, candidate, artifact.Session)
+		result <- dialErr
+	}()
+	select {
+	case <-requestRead:
+	case <-time.After(time.Second):
+		t.Fatal("WebSocket upgrade request was not read")
+	}
+	cancel()
+	select {
+	case dialErr := <-result:
+		if !errors.Is(dialErr, context.Canceled) {
+			t.Fatalf("dial error = %v, want context.Canceled", dialErr)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("canceled WebSocket upgrade kept the underlying connection open")
 	}
 }
 

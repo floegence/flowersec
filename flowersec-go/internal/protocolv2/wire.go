@@ -146,6 +146,7 @@ const (
 	InnerSessionReadyACK     InnerType = 23
 	InnerSessionKeyUpdateACK InnerType = 24
 	InnerStreamKeyUpdateACK  InnerType = 25
+	InnerSessionReadyConfirm InnerType = 26
 )
 
 func MarshalInnerRecord(typ InnerType, payload []byte) ([]byte, error) {
@@ -184,7 +185,7 @@ func validateInner(typ InnerType, payloadLen int) error {
 		if payloadLen == 0 || payloadLen > MaxDataBytes {
 			return ErrInvalidInnerRecord
 		}
-	case InnerFIN, InnerSessionReady, InnerSessionReadyACK:
+	case InnerFIN, InnerSessionReady, InnerSessionReadyACK, InnerSessionReadyConfirm:
 		if payloadLen != 0 {
 			return ErrInvalidInnerRecord
 		}

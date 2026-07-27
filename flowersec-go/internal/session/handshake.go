@@ -276,9 +276,12 @@ func carrierFeatures(carrierSession carrier.Session) uint32 {
 	return 0
 }
 
-func (s *engineSession) finishReadyBoundary() error {
+func (s *engineSession) finishReadyBoundary(ctx context.Context) error {
 	if s.config.Role == RoleServer {
 		if err := s.sendControl(protocolv2.InnerSessionReady, nil); err != nil {
+			return err
+		}
+		if err := s.flushControl(ctx); err != nil {
 			return err
 		}
 		typ, _, err := s.readControl()
@@ -288,7 +291,10 @@ func (s *engineSession) finishReadyBoundary() error {
 		if typ != protocolv2.InnerSessionReadyACK {
 			return ErrSessionProtocol
 		}
-		return nil
+		if err := s.sendControl(protocolv2.InnerSessionReadyConfirm, nil); err != nil {
+			return err
+		}
+		return s.flushControl(ctx)
 	}
 	typ, _, err := s.readControl()
 	if err != nil {
@@ -297,7 +303,20 @@ func (s *engineSession) finishReadyBoundary() error {
 	if typ != protocolv2.InnerSessionReady {
 		return ErrSessionProtocol
 	}
-	return s.sendControl(protocolv2.InnerSessionReadyACK, nil)
+	if err := s.sendControl(protocolv2.InnerSessionReadyACK, nil); err != nil {
+		return err
+	}
+	if err := s.flushControl(ctx); err != nil {
+		return err
+	}
+	typ, _, err = s.readControl()
+	if err != nil {
+		return err
+	}
+	if typ != protocolv2.InnerSessionReadyConfirm {
+		return ErrSessionProtocol
+	}
+	return nil
 }
 
 func writeAll(writer io.Writer, payload []byte) error {

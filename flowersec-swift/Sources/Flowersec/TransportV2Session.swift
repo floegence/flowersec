@@ -614,10 +614,13 @@ actor TransportV2Session {
       try await sendControl(.sessionReady, payload: Data())
       let (type, _) = try await readControl()
       guard type == .sessionReadyACK else { throw TransportV2SessionError.protocolViolation }
+      try await sendControl(.sessionReadyConfirm, payload: Data())
     case .client:
       let (type, _) = try await readControl()
       guard type == .sessionReady else { throw TransportV2SessionError.protocolViolation }
       try await sendControl(.sessionReadyACK, payload: Data())
+      let (confirm, _) = try await readControl()
+      guard confirm == .sessionReadyConfirm else { throw TransportV2SessionError.protocolViolation }
     }
   }
 

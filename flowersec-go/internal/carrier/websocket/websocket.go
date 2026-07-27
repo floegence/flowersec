@@ -24,10 +24,11 @@ const (
 	SubprotocolDirect = "flowersec.direct.v2"
 	SubprotocolTunnel = "flowersec.tunnel.v2"
 
-	closeStatusCode      = 4000
-	maxCloseReasonBytes  = 123
-	yamuxHeaderSizeBytes = 12
-	closeControlTimeout  = 500 * time.Millisecond
+	closeStatusCode           = 4000
+	maxCloseReasonBytes       = 123
+	yamuxHeaderSizeBytes      = 12
+	closeControlTimeout       = 500 * time.Millisecond
+	establishmentProbeTimeout = 100 * time.Millisecond
 )
 
 // ResourcePolicy is the Flowersec-owned resource contract for a WebSocket
@@ -197,6 +198,16 @@ type Session struct {
 func (*Session) Kind() carrier.Kind                 { return carrier.KindWebSocket }
 func (session *Session) Path() carrier.Path         { return session.path }
 func (session *Session) MaxIncomingStreams() uint16 { return session.capacity }
+
+func (session *Session) ProbeEstablishment() error {
+	return ProbeEstablishment(session.raw)
+}
+
+// ProbeEstablishment sends one acknowledgement-eliciting control frame without
+// entering the application data stream.
+func ProbeEstablishment(conn *gorillaws.Conn) error {
+	return conn.WriteControl(gorillaws.PingMessage, nil, time.Now().Add(establishmentProbeTimeout))
+}
 
 func pathForSubprotocol(subprotocol string) carrier.Path {
 	if subprotocol == SubprotocolTunnel {
@@ -450,5 +461,6 @@ func validSubprotocol(value string) bool {
 }
 
 var _ carrier.Session = (*Session)(nil)
+var _ carrier.EstablishmentProber = (*Session)(nil)
 var _ carrier.Stream = (*Stream)(nil)
 var _ net.Conn = (*binaryByteConn)(nil)

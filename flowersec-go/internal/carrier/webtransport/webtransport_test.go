@@ -396,6 +396,26 @@ func TestDialerCloseBeforeDialIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestDialerCloseLocalRejectsNewDialsAndRemainsFullyClosable(t *testing.T) {
+	_, clientTLS := testTLSConfigs(t)
+	dialer, err := webtransport.NewDialer(clientTLS, webtransport.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dialer.CloseLocal(); err != nil {
+		t.Fatal(err)
+	}
+	if err := dialer.CloseLocal(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dialer.Dial(context.Background(), "https://localhost/after-local-close", ""); !errors.Is(err, webtransport.ErrInvalidSession) {
+		t.Fatalf("Dial after CloseLocal error = %v, want ErrInvalidSession", err)
+	}
+	if err := dialer.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newSessionPair(t *testing.T, path string) (carrier.Session, carrier.Session) {
 	t.Helper()
 	serverTLS, clientTLS := testTLSConfigs(t)

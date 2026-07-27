@@ -164,6 +164,7 @@ export enum InnerTypeV2 {
   SessionReadyACK = 23,
   SessionKeyUpdateACK = 24,
   StreamKeyUpdateACK = 25,
+  SessionReadyConfirm = 26,
 }
 
 export type InnerRecordV2 = Readonly<{
@@ -639,6 +640,7 @@ function validateInnerPayload(type: InnerTypeV2, length: number): void {
     case InnerTypeV2.FIN:
     case InnerTypeV2.SessionReady:
     case InnerTypeV2.SessionReadyACK:
+    case InnerTypeV2.SessionReadyConfirm:
       if (length === 0) return;
       break;
     case InnerTypeV2.OpenACK:

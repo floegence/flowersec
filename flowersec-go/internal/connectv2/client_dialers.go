@@ -65,13 +65,23 @@ func NewWebTransportCarrierDial(config WebTransportDialConfig) (CarrierDial, err
 			return nil, err
 		}
 		bindQUICIdleTimeout(&limits, contract)
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		dialer, err := carrierwt.NewDialer(baseTLS, limits)
 		if err != nil {
 			return nil, err
 		}
+		stopLocalClose := context.AfterFunc(ctx, func() { _ = dialer.CloseLocal() })
 		session, err := dialer.Dial(ctx, dialURL, config.Origin)
+		if !stopLocalClose() {
+			_ = dialer.CloseLocal()
+			go func() { _ = dialer.Close() }()
+			return nil, context.Cause(ctx)
+		}
 		if err != nil {
-			_ = dialer.Close()
+			_ = dialer.CloseLocal()
+			go func() { _ = dialer.Close() }()
 			return nil, err
 		}
 		owned := &ownedCarrierSession{Session: session, owner: dialer}
@@ -80,7 +90,11 @@ func NewWebTransportCarrierDial(config WebTransportDialConfig) (CarrierDial, err
 			_ = owned.Close()
 			return nil, err
 		}
-		return &streamAdmissionHandle{session: owned, stream: stream}, nil
+		return &streamAdmissionHandle{
+			session:    owned,
+			stream:     stream,
+			stopProbes: carrier.StartEstablishmentProbes(ctx, owned, carrier.EstablishmentProbeInterval),
+		}, nil
 	}, nil
 }
 
@@ -119,7 +133,11 @@ func NewRawQUICCarrierDial(config RawQUICDialConfig) (CarrierDial, error) {
 			_ = session.Close()
 			return nil, err
 		}
-		return &streamAdmissionHandle{session: session, stream: stream}, nil
+		return &streamAdmissionHandle{
+			session:    session,
+			stream:     stream,
+			stopProbes: carrier.StartEstablishmentProbes(ctx, session, carrier.EstablishmentProbeInterval),
+		}, nil
 	}, nil
 }
 
@@ -170,7 +188,21 @@ func NewWebSocketCarrierDial(config WebSocketDialConfig) (CarrierDial, error) {
 		}
 		attemptDialer := dialer
 		attemptDialer.Subprotocols = []string{subprotocol}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		guard := &inflightConnectionGuard{}
+		bindInflightWebSocketConnection(&attemptDialer, guard)
+		stopLocalClose := context.AfterFunc(ctx, guard.close)
 		conn, _, err := attemptDialer.DialContext(ctx, dialURL, nil)
+		if !stopLocalClose() {
+			guard.close()
+			if conn != nil {
+				_ = conn.Close()
+			}
+			return nil, context.Cause(ctx)
+		}
+		guard.release()
 		if err != nil {
 			return nil, err
 		}
@@ -189,11 +221,91 @@ func NewWebSocketCarrierDial(config WebSocketDialConfig) (CarrierDial, error) {
 	}, nil
 }
 
+type inflightConnectionGuard struct {
+	mu     sync.Mutex
+	conn   net.Conn
+	closed bool
+}
+
+func (guard *inflightConnectionGuard) bind(conn net.Conn) net.Conn {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	if guard.closed {
+		_ = conn.Close()
+		return conn
+	}
+	guard.conn = conn
+	return conn
+}
+
+func (guard *inflightConnectionGuard) release() {
+	guard.mu.Lock()
+	guard.conn = nil
+	guard.mu.Unlock()
+}
+
+func (guard *inflightConnectionGuard) close() {
+	guard.mu.Lock()
+	guard.closed = true
+	conn := guard.conn
+	guard.conn = nil
+	guard.mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func bindInflightWebSocketConnection(dialer *gorillaws.Dialer, guard *inflightConnectionGuard) {
+	if dialer.NetDialTLSContext != nil {
+		base := dialer.NetDialTLSContext
+		dialer.NetDialTLSContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, err := base(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+			return guard.bind(conn), nil
+		}
+		return
+	}
+	baseContext := dialer.NetDialContext
+	base := dialer.NetDial
+	dialer.NetDial = nil
+	dialer.NetDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		var conn net.Conn
+		var err error
+		switch {
+		case baseContext != nil:
+			conn, err = baseContext(ctx, network, address)
+		case base != nil:
+			conn, err = base(network, address)
+		default:
+			conn, err = (&net.Dialer{}).DialContext(ctx, network, address)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return guard.bind(conn), nil
+	}
+}
+
 type ownedCarrierSession struct {
 	carrier.Session
-	owner interface{ Close() error }
-	once  sync.Once
-	err   error
+	owner interface {
+		CloseLocal() error
+		Close() error
+	}
+	localOnce sync.Once
+	localErr  error
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (session *ownedCarrierSession) ProbeEstablishment() error {
+	prober, ok := session.Session.(carrier.EstablishmentProber)
+	if !ok {
+		return nil
+	}
+	return prober.ProbeEstablishment()
 }
 
 func (session *ownedCarrierSession) Path() carrier.Path { return session.Session.Path() }
@@ -206,14 +318,25 @@ func (session *ownedCarrierSession) CloseWithErrorContext(ctx context.Context, a
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	session.once.Do(func() {
-		session.err = errors.Join(session.Session.CloseWithErrorContext(ctx, applicationError), session.owner.Close())
+	session.closeOnce.Do(func() {
+		session.closeErr = errors.Join(session.closeLocalWithErrorContext(ctx, applicationError), session.owner.Close())
 	})
-	return errors.Join(session.err, context.Cause(ctx))
+	return errors.Join(session.closeErr, context.Cause(ctx))
 }
 
 func (session *ownedCarrierSession) Close() error {
 	return session.CloseWithError(carrier.ApplicationError{})
+}
+
+func (session *ownedCarrierSession) closeLocal() error {
+	return session.closeLocalWithErrorContext(context.Background(), carrier.ApplicationError{})
+}
+
+func (session *ownedCarrierSession) closeLocalWithErrorContext(ctx context.Context, applicationError carrier.ApplicationError) error {
+	session.localOnce.Do(func() {
+		session.localErr = errors.Join(session.Session.CloseWithErrorContext(ctx, applicationError), session.owner.CloseLocal())
+	})
+	return errors.Join(session.localErr, context.Cause(ctx))
 }
 
 type webSocketAdmissionHandle struct {
@@ -221,6 +344,7 @@ type webSocketAdmissionHandle struct {
 	subprotocol string
 	resources   carrierws.ResourcePolicy
 	liveness    carrierws.LivenessPolicy
+	stopProbes  func()
 	used        atomic.Bool
 
 	mu      sync.Mutex
@@ -234,6 +358,7 @@ func (handle *webSocketAdmissionHandle) CommitAdmission(ctx context.Context, fsb
 	if handle == nil || handle.conn == nil || !handle.used.CompareAndSwap(false, true) {
 		return nil, ErrCommitAlreadyUsed
 	}
+	defer handle.stopEstablishmentProbes()
 	if _, err := carrierws.CommitAdmission(ctx, handle.conn, fsb2, reasons); err != nil {
 		return nil, err
 	}
@@ -253,6 +378,7 @@ func (handle *webSocketAdmissionHandle) Close(context.Context) error {
 		return nil
 	}
 	handle.closeOnce.Do(func() {
+		handle.stopEstablishmentProbes()
 		handle.mu.Lock()
 		session := handle.session
 		handle.mu.Unlock()
@@ -267,6 +393,12 @@ func (handle *webSocketAdmissionHandle) Close(context.Context) error {
 	return handle.closeErr
 }
 
+func (handle *webSocketAdmissionHandle) stopEstablishmentProbes() {
+	if handle.stopProbes != nil {
+		handle.stopProbes()
+	}
+}
+
 func validateWebSocketCandidate(candidate artifactv2.Candidate) (subprotocol, dialURL string, err error) {
 	kind, canonical, err := canonicalDialCandidate(candidate, artifactv2.CarrierWebSocket)
 	if err != nil {
@@ -279,9 +411,10 @@ func validateWebSocketCandidate(candidate artifactv2.Candidate) (subprotocol, di
 }
 
 type streamAdmissionHandle struct {
-	session carrier.Session
-	stream  carrier.Stream
-	used    atomic.Bool
+	session    carrier.Session
+	stream     carrier.Stream
+	stopProbes func()
+	used       atomic.Bool
 
 	closeOnce sync.Once
 	closeErr  error
@@ -291,6 +424,7 @@ func (handle *streamAdmissionHandle) CommitAdmission(ctx context.Context, fsb2 [
 	if handle == nil || handle.session == nil || handle.stream == nil || !handle.used.CompareAndSwap(false, true) {
 		return nil, ErrCommitAlreadyUsed
 	}
+	defer handle.stopEstablishmentProbes()
 	decoded, err := artifactv2.ParseRequest(fsb2)
 	if err != nil || !carrierPathMatchesArtifact(handle.session.Path(), decoded.Request.PathKind) {
 		_ = handle.Close(ctx)
@@ -313,16 +447,28 @@ func (handle *streamAdmissionHandle) Close(context.Context) error {
 		return nil
 	}
 	handle.closeOnce.Do(func() {
+		handle.stopEstablishmentProbes()
 		var streamErr, sessionErr error
 		if handle.stream != nil {
 			streamErr = handle.stream.Reset()
 		}
 		if handle.session != nil {
-			sessionErr = handle.session.Close()
+			if session, ok := handle.session.(interface{ closeLocal() error }); ok {
+				sessionErr = session.closeLocal()
+				go func() { _ = handle.session.Close() }()
+			} else {
+				sessionErr = handle.session.Close()
+			}
 		}
 		handle.closeErr = errors.Join(streamErr, sessionErr)
 	})
 	return handle.closeErr
+}
+
+func (handle *streamAdmissionHandle) stopEstablishmentProbes() {
+	if handle.stopProbes != nil {
+		handle.stopProbes()
+	}
 }
 
 func validateRawQUICCandidate(candidate artifactv2.Candidate) (address, alpn string, err error) {

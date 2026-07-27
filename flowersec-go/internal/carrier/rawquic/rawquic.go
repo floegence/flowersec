@@ -325,6 +325,10 @@ func (session *Session) RemoteAddr() net.Addr { return session.conn.RemoteAddr()
 
 func (*Session) UnreliableAvailable() bool { return true }
 
+func (session *Session) ProbeEstablishment() error {
+	return session.SendUnreliable([]byte{0})
+}
+
 func (session *Session) SendUnreliable(payload []byte) error {
 	if len(payload) == 0 || len(payload) > carrier.MaxUnreliableWireBytes {
 		return carrier.ErrUnreliableTooLarge
@@ -551,5 +555,6 @@ func validALPN(value string) bool { return value == ALPNDirect || value == ALPNT
 
 var _ carrier.Session = (*Session)(nil)
 var _ carrier.UnreliableTransport = (*Session)(nil)
+var _ carrier.EstablishmentProber = (*Session)(nil)
 var _ carrier.PathMigrator = (*Session)(nil)
 var _ carrier.Stream = (*Stream)(nil)

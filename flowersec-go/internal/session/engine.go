@@ -194,6 +194,8 @@ func Establish(ctx context.Context, carrierSession carrier.Session, config Confi
 	if err := validateEngineConfig(carrierSession, &config); err != nil {
 		return nil, err
 	}
+	stopProbes := carrier.StartEstablishmentProbes(ctx, carrierSession, carrier.EstablishmentProbeInterval)
+	defer stopProbes()
 	establishContext, cancelEstablish := context.WithTimeout(ctx, config.EstablishTimeout)
 	defer cancelEstablish()
 	control, material, err := performHandshake(establishContext, carrierSession, config)
@@ -211,7 +213,7 @@ func Establish(ctx context.Context, carrierSession carrier.Session, config Confi
 	}
 	session.startControlWriter()
 	stopWatch := watchStreamContext(establishContext, control)
-	if err := session.finishReadyBoundary(); err != nil {
+	if err := session.finishReadyBoundary(establishContext); err != nil {
 		stopWatch()
 		if contextErr := establishContext.Err(); contextErr != nil {
 			err = contextErr

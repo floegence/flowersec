@@ -1377,6 +1377,155 @@ func establishMemoryPair(t *testing.T, kind carrier.Kind, maxInbound uint16) (*e
 	return establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 }
 
+func TestClientEstablishWaitsUntilReadyACKIsWritten(t *testing.T) {
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindWebTransport)
+	clientConfig, serverConfig := testEngineConfigs(1)
+	bindMemoryCarrierCapacity(clientCarrier, clientConfig.MaxInboundStreams)
+	bindMemoryCarrierCapacity(serverCarrier, serverConfig.MaxInboundStreams)
+	bindMemoryCarrierPath(clientCarrier, clientConfig.Path)
+	bindMemoryCarrierPath(serverCarrier, serverConfig.Path)
+
+	ackWriteStarted := make(chan struct{})
+	releaseACKWrite := make(chan struct{})
+	var ackOnce sync.Once
+	clientCarrier.setWriteHook(func(payload []byte) {
+		if bytes.HasPrefix(payload, []byte("FSR2")) {
+			ackOnce.Do(func() { close(ackWriteStarted) })
+			<-releaseACKWrite
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	type result struct {
+		session SessionV2
+		err     error
+	}
+	serverResult := make(chan result, 1)
+	clientResult := make(chan result, 1)
+	go func() {
+		session, err := Establish(ctx, serverCarrier, serverConfig)
+		serverResult <- result{session: session, err: err}
+	}()
+	go func() {
+		session, err := Establish(ctx, clientCarrier, clientConfig)
+		clientResult <- result{session: session, err: err}
+	}()
+
+	select {
+	case <-ackWriteStarted:
+	case <-ctx.Done():
+		t.Fatal("READY_ACK write did not start")
+	}
+	select {
+	case result := <-clientResult:
+		close(releaseACKWrite)
+		if result.session != nil {
+			_ = result.session.Close()
+		}
+		t.Fatalf("client Establish returned before READY_ACK write completed: %v", result.err)
+	default:
+	}
+	close(releaseACKWrite)
+	client := <-clientResult
+	server := <-serverResult
+	if client.err != nil || server.err != nil {
+		t.Fatalf("Establish errors: client=%v server=%v", client.err, server.err)
+	}
+	defer client.session.Close()
+	defer server.session.Close()
+}
+
+func TestClientEstablishWaitsForServerReadyConfirm(t *testing.T) {
+	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindWebTransport)
+	clientConfig, serverConfig := testEngineConfigs(1)
+	bindMemoryCarrierCapacity(clientCarrier, clientConfig.MaxInboundStreams)
+	bindMemoryCarrierCapacity(serverCarrier, serverConfig.MaxInboundStreams)
+	bindMemoryCarrierPath(clientCarrier, clientConfig.Path)
+	bindMemoryCarrierPath(serverCarrier, serverConfig.Path)
+
+	confirmWriteStarted := make(chan struct{})
+	releaseConfirmWrite := make(chan struct{})
+	serverRecords := 0
+	serverCarrier.setWriteHook(func(payload []byte) {
+		if !bytes.HasPrefix(payload, []byte("FSR2")) {
+			return
+		}
+		serverRecords++
+		if serverRecords == 2 {
+			close(confirmWriteStarted)
+			<-releaseConfirmWrite
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	type result struct {
+		session SessionV2
+		err     error
+	}
+	serverResult := make(chan result, 1)
+	clientResult := make(chan result, 1)
+	go func() {
+		session, err := Establish(ctx, serverCarrier, serverConfig)
+		serverResult <- result{session: session, err: err}
+	}()
+	go func() {
+		session, err := Establish(ctx, clientCarrier, clientConfig)
+		clientResult <- result{session: session, err: err}
+	}()
+
+	select {
+	case <-confirmWriteStarted:
+	case <-ctx.Done():
+		t.Fatal("SESSION_READY_CONFIRM write did not start")
+	}
+	select {
+	case result := <-clientResult:
+		close(releaseConfirmWrite)
+		if result.session != nil {
+			_ = result.session.Close()
+		}
+		t.Fatalf("client Establish returned before SESSION_READY_CONFIRM: %v", result.err)
+	default:
+	}
+	close(releaseConfirmWrite)
+	client := <-clientResult
+	server := <-serverResult
+	if client.err != nil || server.err != nil {
+		t.Fatalf("Establish errors: client=%v server=%v", client.err, server.err)
+	}
+	defer client.session.Close()
+	defer server.session.Close()
+}
+
+func TestEstablishmentRecoveryProbesStopAtBoundary(t *testing.T) {
+	prober := &countingEstablishmentProber{}
+	stop := carrier.StartEstablishmentProbes(context.Background(), prober, 5*time.Millisecond)
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for prober.calls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if prober.calls.Load() < 2 {
+		stop()
+		t.Fatal("establishment probes did not run")
+	}
+	stop()
+	stop()
+	stoppedAt := prober.calls.Load()
+	time.Sleep(20 * time.Millisecond)
+	if got := prober.calls.Load(); got != stoppedAt {
+		t.Fatalf("establishment probes continued after stop: before=%d after=%d", stoppedAt, got)
+	}
+}
+
+type countingEstablishmentProber struct{ calls atomic.Int32 }
+
+func (prober *countingEstablishmentProber) ProbeEstablishment() error {
+	prober.calls.Add(1)
+	return nil
+}
+
 func establishWithCarriers(t *testing.T, clientCarrier, serverCarrier carrier.Session, clientConfig, serverConfig Config) (*engineSession, *engineSession) {
 	t.Helper()
 	bindMemoryCarrierCapacity(clientCarrier, clientConfig.MaxInboundStreams)

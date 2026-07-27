@@ -21,7 +21,8 @@ The initiator first sends exactly one FSB2 admission request and receives one
 FSA2 response. No FSC2, FSH2, FSS2, or FSR2 byte may be sent before a successful
 FSA2. On success, the client opens the lifetime control stream, writes FSC2,
 and performs the FSH2 handshake. The authenticated `SESSION_READY` /
-`SESSION_READY_ACK` exchange is the final establishment barrier. Application
+`SESSION_READY_ACK` / `SESSION_READY_CONFIRM` exchange is the final
+establishment barrier. Application
 streams begin with FSS2 followed by authenticated FSR2 records.
 
 The carrier adapter preserves these boundaries. In the QUIC family, admission,
@@ -135,7 +136,7 @@ is constant-time. Application 0-RTT is forbidden. Feature bit `0x00000001` is
 `unreliable_messages_v1`: the client offers it only when the selected carrier
 has native DATAGRAM support, and the server echoes the intersection. Unknown
 bits are rejected. The channel remains unavailable until the authenticated
-`SESSION_READY` / `SESSION_READY_ACK` barrier completes.
+`SESSION_READY` / `SESSION_READY_ACK` / `SESSION_READY_CONFIRM` barrier completes.
 
 ## Epoch and Record Keys
 
@@ -288,6 +289,7 @@ three zero bytes, a four-byte payload length, then exactly that payload.
 | 23 | SESSION_READY_ACK | empty |
 | 24 | SESSION_KEY_UPDATE_ACK | exact 20-byte SESSION_KEY_UPDATE echo |
 | 25 | STREAM_KEY_UPDATE_ACK | logical ID (8) + transition ID (8) + next epoch (4) |
+| 26 | SESSION_READY_CONFIRM | empty |
 
 Unknown types and incorrect fixed sizes are rejected. Transition IDs are
 non-zero, monotonic, and never wrap. Epochs advance by exactly one. A session

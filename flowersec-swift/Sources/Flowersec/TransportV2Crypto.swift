@@ -43,6 +43,7 @@ enum InnerRecordTypeV2: UInt8, Codable, Equatable, Sendable {
   case sessionReadyACK = 23
   case sessionKeyUpdateACK = 24
   case streamKeyUpdateACK = 25
+  case sessionReadyConfirm = 26
 }
 
 struct EpochRootsV2: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
@@ -665,7 +666,7 @@ enum TransportV2Crypto {
       valid = payloadCount > 0 && payloadCount <= 8_192
     case .data:
       valid = payloadCount > 0 && payloadCount <= maxDataBytes
-    case .fin, .sessionReady, .sessionReadyACK:
+    case .fin, .sessionReady, .sessionReadyACK, .sessionReadyConfirm:
       valid = payloadCount == 0
     case .openACK:
       valid = payloadCount == 32

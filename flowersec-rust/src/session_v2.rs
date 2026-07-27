@@ -497,7 +497,7 @@ impl std::fmt::Debug for EncryptedSessionV2 {
 }
 
 /// Establishes FSC2/FSH2, verifies all authenticated bindings, and completes
-/// SESSION_READY/SESSION_READY_ACK before returning the public session.
+/// SESSION_READY/SESSION_READY_ACK/SESSION_READY_CONFIRM before returning the public session.
 pub async fn establish_session_v2(
     carrier: Arc<dyn CarrierSessionV2>,
     config: SessionConfigV2,
@@ -1430,6 +1430,7 @@ async fn finish_ready_v2(session: &EncryptedSessionV2) -> io::Result<()> {
             if kind != InnerRecordTypeV2::SessionReadyAck {
                 return Err(invalid("expected SESSION_READY_ACK"));
             }
+            send_control_v2(session, InnerRecordTypeV2::SessionReadyConfirm, &[]).await?;
         }
         SessionRole::Client => {
             let (kind, _) = read_control_v2(session).await?;
@@ -1437,6 +1438,10 @@ async fn finish_ready_v2(session: &EncryptedSessionV2) -> io::Result<()> {
                 return Err(invalid("expected SESSION_READY"));
             }
             send_control_v2(session, InnerRecordTypeV2::SessionReadyAck, &[]).await?;
+            let (kind, _) = read_control_v2(session).await?;
+            if kind != InnerRecordTypeV2::SessionReadyConfirm {
+                return Err(invalid("expected SESSION_READY_CONFIRM"));
+            }
         }
     }
     session.ready.notify_waiters();

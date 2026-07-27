@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
+	"time"
 )
 
 // Kind identifies a v2 carrier without exposing its implementation type.
@@ -36,9 +38,10 @@ var (
 )
 
 const (
-	MaxLogicalIncomingStreams = 128
-	ReservedSessionStreams    = 2
-	MaxUnreliableWireBytes    = 1_024
+	MaxLogicalIncomingStreams  = 128
+	ReservedSessionStreams     = 2
+	MaxUnreliableWireBytes     = 1_024
+	EstablishmentProbeInterval = 250 * time.Millisecond
 )
 
 // RequiredIncomingStreams returns the physical bidirectional stream budget for
@@ -115,6 +118,47 @@ type UnreliableTransport interface {
 	UnreliableAvailable() bool
 	SendUnreliable([]byte) error
 	ReceiveUnreliable(context.Context) ([]byte, error)
+}
+
+// EstablishmentProber emits one transport-native, credential-free,
+// acknowledgement-eliciting probe while a session is still establishing.
+type EstablishmentProber interface {
+	ProbeEstablishment() error
+}
+
+// StartEstablishmentProbes emits bounded recovery traffic until stop is
+// called or ctx ends. The returned stop function is idempotent and waits for
+// the active probe to finish.
+func StartEstablishmentProbes(ctx context.Context, candidate any, interval time.Duration) func() {
+	prober, ok := candidate.(EstablishmentProber)
+	if !ok || interval <= 0 {
+		return func() {}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	probeCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			_ = prober.ProbeEstablishment()
+			select {
+			case <-probeCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			cancel()
+			<-done
+		})
+	}
 }
 
 // PathMigrator is an optional production-internal capability for transports

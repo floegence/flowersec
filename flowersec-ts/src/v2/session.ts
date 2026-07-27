@@ -363,11 +363,14 @@ export class SessionV2 implements SessionV2Contract {
       await this.sendControl(InnerTypeV2.SessionReady, new Uint8Array());
       const ready = await this.readControl();
       if (ready.type !== InnerTypeV2.SessionReadyACK) throw protocolError("expected SESSION_READY_ACK");
+      await this.sendControl(InnerTypeV2.SessionReadyConfirm, new Uint8Array());
       return;
     }
     const ready = await this.readControl();
     if (ready.type !== InnerTypeV2.SessionReady) throw protocolError("expected SESSION_READY");
     await this.sendControl(InnerTypeV2.SessionReadyACK, new Uint8Array());
+    const confirm = await this.readControl();
+    if (confirm.type !== InnerTypeV2.SessionReadyConfirm) throw protocolError("expected SESSION_READY_CONFIRM");
   }
 
   start(): void {

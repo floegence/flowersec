@@ -82,7 +82,7 @@ describe("transport v2 session wire", () => {
       expect(decodeInnerRecordV2(raw)).toEqual({ type, payload });
       expect(() => encodeInnerRecordV2(type, new Uint8Array(size + 1))).toThrow();
     }
-    for (const type of [InnerTypeV2.FIN, InnerTypeV2.SessionReady, InnerTypeV2.SessionReadyACK]) {
+    for (const type of [InnerTypeV2.FIN, InnerTypeV2.SessionReady, InnerTypeV2.SessionReadyACK, InnerTypeV2.SessionReadyConfirm]) {
       expect(decodeInnerRecordV2(encodeInnerRecordV2(type, new Uint8Array()))).toEqual({
         type,
         payload: new Uint8Array(),

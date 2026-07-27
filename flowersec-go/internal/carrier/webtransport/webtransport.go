@@ -200,6 +200,8 @@ type Dialer struct {
 	connections map[*quic.Conn]*dialConnection
 	started     bool
 	closed      bool
+	localClose  sync.Once
+	localErr    error
 	closeOnce   sync.Once
 	closeErr    error
 }
@@ -295,10 +297,7 @@ func (dialer *Dialer) Close() error {
 		return nil
 	}
 	dialer.closeOnce.Do(func() {
-		dialer.mu.Lock()
-		dialer.closed = true
-		dialer.cancel(ErrInvalidSession)
-		dialer.mu.Unlock()
+		dialer.closeErr = dialer.CloseLocal()
 		dialer.dialWG.Wait()
 
 		dialer.mu.Lock()
@@ -327,6 +326,28 @@ func (dialer *Dialer) Close() error {
 		}
 	})
 	return dialer.closeErr
+}
+
+// CloseLocal synchronously makes this dialer and every connection it already
+// owns locally unusable. Close still owns bounded qlog and connection drain.
+func (dialer *Dialer) CloseLocal() error {
+	if dialer == nil || dialer.inner == nil {
+		return nil
+	}
+	dialer.localClose.Do(func() {
+		dialer.mu.Lock()
+		dialer.closed = true
+		dialer.cancel(ErrInvalidSession)
+		connections := make([]*dialConnection, 0, len(dialer.connections))
+		for _, connection := range dialer.connections {
+			connections = append(connections, connection)
+		}
+		dialer.mu.Unlock()
+		for _, tracked := range connections {
+			dialer.localErr = errors.Join(dialer.localErr, tracked.connection.CloseWithError(0, ""))
+		}
+	})
+	return dialer.localErr
 }
 
 func (dialer *Dialer) dialQUIC(ctx context.Context, address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Conn, error) {
@@ -597,6 +618,10 @@ func (session *Session) MaxIncomingStreams() uint16 { return session.capacity }
 
 func (*Session) UnreliableAvailable() bool { return true }
 
+func (session *Session) ProbeEstablishment() error {
+	return session.SendUnreliable([]byte{0})
+}
+
 func (session *Session) SendUnreliable(payload []byte) error {
 	if len(payload) == 0 || len(payload) > carrier.MaxUnreliableWireBytes {
 		return carrier.ErrUnreliableTooLarge
@@ -830,4 +855,5 @@ func validateApplicationError(applicationError carrier.ApplicationError) error {
 
 var _ carrier.Session = (*Session)(nil)
 var _ carrier.UnreliableTransport = (*Session)(nil)
+var _ carrier.EstablishmentProber = (*Session)(nil)
 var _ carrier.Stream = (*Stream)(nil)

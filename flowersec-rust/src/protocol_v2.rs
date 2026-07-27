@@ -518,6 +518,7 @@ pub enum InnerRecordTypeV2 {
     SessionReadyAck = 23,
     SessionKeyUpdateAck = 24,
     StreamKeyUpdateAck = 25,
+    SessionReadyConfirm = 26,
 }
 
 impl TryFrom<u8> for InnerRecordTypeV2 {
@@ -541,6 +542,7 @@ impl TryFrom<u8> for InnerRecordTypeV2 {
             23 => Ok(Self::SessionReadyAck),
             24 => Ok(Self::SessionKeyUpdateAck),
             25 => Ok(Self::StreamKeyUpdateAck),
+            26 => Ok(Self::SessionReadyConfirm),
             _ => Err(ProtocolV2Error::InvalidInnerRecord),
         }
     }
@@ -812,7 +814,8 @@ fn validate_inner_payload(
         InnerRecordTypeV2::Data => (1..=MAX_DATA_V2_BYTES).contains(&payload_length),
         InnerRecordTypeV2::Fin
         | InnerRecordTypeV2::SessionReady
-        | InnerRecordTypeV2::SessionReadyAck => payload_length == 0,
+        | InnerRecordTypeV2::SessionReadyAck
+        | InnerRecordTypeV2::SessionReadyConfirm => payload_length == 0,
         InnerRecordTypeV2::OpenAck => payload_length == 32,
         InnerRecordTypeV2::OpenReject => payload_length == 34,
         InnerRecordTypeV2::StreamKeyUpdate => payload_length == 12,
