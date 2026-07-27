@@ -2,11 +2,47 @@ package webtransport
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	quic "github.com/quic-go/quic-go"
 )
+
+func TestClientTLSConfigBindsVerifiedServerName(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		address    string
+		serverName string
+		want       string
+	}{
+		{name: "hostname", address: "gateway.example:443", want: "gateway.example"},
+		{name: "IPv4", address: "127.0.0.1:443", want: "127.0.0.1"},
+		{name: "IPv6", address: "[::1]:443", want: "::1"},
+		{name: "explicit", address: "127.0.0.1:443", serverName: "gateway.example", want: "gateway.example"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			base := &tls.Config{MinVersion: tls.VersionTLS13, ServerName: testCase.serverName}
+			prepared, err := clientTLSConfigForAddress(base, testCase.address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prepared == base {
+				t.Fatal("client TLS preparation mutated the caller-owned config")
+			}
+			if prepared.ServerName != testCase.want {
+				t.Fatalf("ServerName = %q, want %q", prepared.ServerName, testCase.want)
+			}
+			if base.ServerName != testCase.serverName {
+				t.Fatalf("caller ServerName changed to %q", base.ServerName)
+			}
+		})
+	}
+	if _, err := clientTLSConfigForAddress(&tls.Config{MinVersion: tls.VersionTLS13}, ""); !errors.Is(err, ErrInvalidTLS) {
+		t.Fatalf("empty address error = %v, want ErrInvalidTLS", err)
+	}
+}
 
 func TestConfigUsesRequiredH3TransportWithoutApplicationEarlyData(t *testing.T) {
 	config, err := newQUICConfig(DefaultLimits())

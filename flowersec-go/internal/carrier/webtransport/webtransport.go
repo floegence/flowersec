@@ -330,7 +330,11 @@ func (dialer *Dialer) Close() error {
 }
 
 func (dialer *Dialer) dialQUIC(ctx context.Context, address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Conn, error) {
-	connection, err := quic.DialAddr(ctx, address, tlsConfig, config)
+	preparedTLS, err := clientTLSConfigForAddress(tlsConfig, address)
+	if err != nil {
+		return nil, err
+	}
+	connection, err := quic.DialAddr(ctx, address, preparedTLS, config)
 	if err != nil {
 		return nil, err
 	}
@@ -345,6 +349,23 @@ func (dialer *Dialer) dialQUIC(ctx context.Context, address string, tlsConfig *t
 		return nil, ErrInvalidSession
 	}
 	return connection, nil
+}
+
+func clientTLSConfigForAddress(config *tls.Config, address string) (*tls.Config, error) {
+	if config == nil {
+		return nil, ErrInvalidTLS
+	}
+	prepared := config.Clone()
+	if prepared.ServerName != "" {
+		return prepared, nil
+	}
+	parsed, err := url.Parse("//" + address)
+	if err != nil || parsed.Host != address || parsed.User != nil || parsed.Hostname() == "" ||
+		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, ErrInvalidTLS
+	}
+	prepared.ServerName = parsed.Hostname()
+	return prepared, nil
 }
 
 func (dialer *Dialer) observeQUICConnection(tracked *dialConnection) {
