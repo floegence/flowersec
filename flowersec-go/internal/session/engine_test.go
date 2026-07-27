@@ -1377,7 +1377,7 @@ func establishMemoryPair(t *testing.T, kind carrier.Kind, maxInbound uint16) (*e
 	return establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
 }
 
-func TestEstablishUsesHandshakeFinishedAsReadyProof(t *testing.T) {
+func TestEstablishUsesOnlyHandshakeFinishedAsReadyProof(t *testing.T) {
 	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindWebTransport)
 	clientConfig, serverConfig := testEngineConfigs(1)
 	bindMemoryCarrierCapacity(clientCarrier, clientConfig.MaxInboundStreams)
@@ -1405,12 +1405,12 @@ func TestEstablishUsesHandshakeFinishedAsReadyProof(t *testing.T) {
 	if got := clientRecords.Load(); got != 0 {
 		t.Fatalf("client encrypted readiness records = %d, want 0", got)
 	}
-	if got := serverRecords.Load(); got != 1 {
-		t.Fatalf("server encrypted readiness records = %d, want final confirm only", got)
+	if got := serverRecords.Load(); got != 0 {
+		t.Fatalf("server encrypted readiness records = %d, want 0", got)
 	}
 }
 
-func TestEstablishWaitsForServerReadyConfirmWrite(t *testing.T) {
+func TestEstablishWaitsForClientFinishedWrite(t *testing.T) {
 	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindWebTransport)
 	clientConfig, serverConfig := testEngineConfigs(1)
 	bindMemoryCarrierCapacity(clientCarrier, clientConfig.MaxInboundStreams)
@@ -1418,16 +1418,17 @@ func TestEstablishWaitsForServerReadyConfirmWrite(t *testing.T) {
 	bindMemoryCarrierPath(clientCarrier, clientConfig.Path)
 	bindMemoryCarrierPath(serverCarrier, serverConfig.Path)
 
-	confirmWriteStarted := make(chan struct{})
-	releaseConfirmWrite := make(chan struct{})
-	var confirmOnce sync.Once
-	serverCarrier.setWriteHook(func(payload []byte) {
-		if !bytes.HasPrefix(payload, []byte("FSR2")) {
+	finishedWriteStarted := make(chan struct{})
+	releaseFinishedWrite := make(chan struct{})
+	var finishedOnce sync.Once
+	clientCarrier.setWriteHook(func(payload []byte) {
+		if len(payload) < protocolv2.HandshakeHeaderSize || !bytes.HasPrefix(payload, []byte("FSH2")) ||
+			protocolv2.HandshakeMessageType(payload[5]) != protocolv2.HandshakeClientFinished {
 			return
 		}
-		confirmOnce.Do(func() {
-			close(confirmWriteStarted)
-			<-releaseConfirmWrite
+		finishedOnce.Do(func() {
+			close(finishedWriteStarted)
+			<-releaseFinishedWrite
 		})
 	})
 
@@ -1449,29 +1450,29 @@ func TestEstablishWaitsForServerReadyConfirmWrite(t *testing.T) {
 	}()
 
 	select {
-	case <-confirmWriteStarted:
+	case <-finishedWriteStarted:
 	case <-ctx.Done():
-		t.Fatal("SESSION_READY_CONFIRM write did not start")
+		t.Fatal("ClientFinished write did not start")
 	}
 	select {
 	case result := <-clientResult:
-		close(releaseConfirmWrite)
+		close(releaseFinishedWrite)
 		if result.session != nil {
 			_ = result.session.Close()
 		}
-		t.Fatalf("client Establish returned before SESSION_READY_CONFIRM: %v", result.err)
+		t.Fatalf("client Establish returned before ClientFinished write completed: %v", result.err)
 	default:
 	}
 	select {
 	case result := <-serverResult:
-		close(releaseConfirmWrite)
+		close(releaseFinishedWrite)
 		if result.session != nil {
 			_ = result.session.Close()
 		}
-		t.Fatalf("server Establish returned before SESSION_READY_CONFIRM write completed: %v", result.err)
+		t.Fatalf("server Establish returned before ClientFinished verification: %v", result.err)
 	default:
 	}
-	close(releaseConfirmWrite)
+	close(releaseFinishedWrite)
 	client := <-clientResult
 	server := <-serverResult
 	if client.err != nil || server.err != nil {

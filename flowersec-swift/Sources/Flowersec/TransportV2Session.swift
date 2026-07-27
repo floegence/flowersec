@@ -160,14 +160,8 @@ actor TransportV2Session {
       rpc: rpcReference
     )
     rpcReference.bind(session)
-    do {
-      try await session.finishReadyBoundary()
-      await session.startLoops()
-      return session
-    } catch {
-      carrier.abort(code: 6, reason: "session ready failed")
-      throw TransportV2SessionError.protocolViolation
-    }
+    await session.startLoops()
+    return session
   }
 
   func openStream(
@@ -606,16 +600,6 @@ actor TransportV2Session {
 
   private var peerOpenerRole: StreamOpenerRoleV2 {
     config.role == .client ? .server : .client
-  }
-
-  private func finishReadyBoundary() async throws {
-    switch config.role {
-    case .server:
-      try await sendControl(.sessionReadyConfirm, payload: Data())
-    case .client:
-      let (confirm, _) = try await readControl()
-      guard confirm == .sessionReadyConfirm else { throw TransportV2SessionError.protocolViolation }
-    }
   }
 
   private func startLoops() {

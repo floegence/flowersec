@@ -212,16 +212,6 @@ func Establish(ctx context.Context, carrierSession carrier.Session, config Confi
 		return nil, err
 	}
 	session.startControlWriter()
-	stopWatch := watchStreamContext(establishContext, control)
-	if err := session.finishReadyBoundary(establishContext); err != nil {
-		stopWatch()
-		if contextErr := establishContext.Err(); contextErr != nil {
-			err = contextErr
-		}
-		session.fail(err)
-		return nil, fmt.Errorf("%w: READY boundary: %w", ErrHandshake, err)
-	}
-	stopWatch()
 	session.start()
 	return session, nil
 }

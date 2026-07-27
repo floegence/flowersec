@@ -178,7 +178,6 @@ export async function establishSessionV2(
       ? await clientHandshake(control, reader, config, localFeatures, establishSignal.signal)
       : await serverHandshake(control, reader, config, localFeatures, establishSignal.signal);
     const session = new SessionV2(carrier, control, reader, config, material);
-    await session.finishReadyBoundary();
     session.start();
     return session;
   } catch (error) {
@@ -356,15 +355,6 @@ export class SessionV2 implements SessionV2Contract {
       this.closePromise = this.closeOnce();
     }
     return this.closePromise;
-  }
-
-  async finishReadyBoundary(): Promise<void> {
-    if (this.config.role === "server") {
-      await this.sendControl(InnerTypeV2.SessionReadyConfirm, new Uint8Array());
-      return;
-    }
-    const confirm = await this.readControl();
-    if (confirm.type !== InnerTypeV2.SessionReadyConfirm) throw protocolError("expected SESSION_READY_CONFIRM");
   }
 
   start(): void {

@@ -486,7 +486,6 @@ pub struct EncryptedSessionV2 {
     unreliable_send_budget: Semaphore,
     unreliable_receive_lock: Mutex<()>,
     unreliable_replay: StdMutex<HashMap<u32, ReplayWindowV2>>,
-    ready: Notify,
     self_weak: OnceLock<Weak<SelfSession>>,
 }
 
@@ -496,8 +495,8 @@ impl std::fmt::Debug for EncryptedSessionV2 {
     }
 }
 
-/// Establishes FSC2/FSH2, verifies all authenticated bindings, and receives the
-/// final SESSION_READY_CONFIRM before returning a client session.
+/// Establishes FSC2/FSH2 and verifies all authenticated bindings before
+/// returning a session.
 pub async fn establish_session_v2(
     carrier: Arc<dyn CarrierSessionV2>,
     config: SessionConfigV2,
@@ -633,7 +632,6 @@ async fn establish_session_v2_inner(
         unreliable_send_budget: Semaphore::new(UNRELIABLE_SEND_BUDGET),
         unreliable_receive_lock: Mutex::new(()),
         unreliable_replay: StdMutex::new(HashMap::new()),
-        ready: Notify::new(),
         self_weak: OnceLock::new(),
     }));
     session
@@ -650,7 +648,6 @@ async fn establish_session_v2_inner(
         .session
         .set(Arc::downgrade(&session))
         .expect("unreliable message session reference is initialized once");
-    finish_ready_v2(&session.0).await?;
     let accept_session = session.clone();
     tokio::spawn(async move { accept_carrier_loop_v2(accept_session).await });
     let control_session = session.clone();
@@ -1420,22 +1417,6 @@ fn confirm_v2(prk: &[u8; 32], label: &[u8], transcript: &[u8; 32]) -> io::Result
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&key).map_err(proto)?;
     mac.update(transcript);
     Ok(mac.finalize().into_bytes().into())
-}
-
-async fn finish_ready_v2(session: &EncryptedSessionV2) -> io::Result<()> {
-    match session.config.role {
-        SessionRole::Server => {
-            send_control_v2(session, InnerRecordTypeV2::SessionReadyConfirm, &[]).await?;
-        }
-        SessionRole::Client => {
-            let (kind, _) = read_control_v2(session).await?;
-            if kind != InnerRecordTypeV2::SessionReadyConfirm {
-                return Err(invalid("expected SESSION_READY_CONFIRM"));
-            }
-        }
-    }
-    session.ready.notify_waiters();
-    Ok(())
 }
 
 async fn send_control_v2(

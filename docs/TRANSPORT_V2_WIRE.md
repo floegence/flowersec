@@ -22,11 +22,10 @@ FSA2 response. No FSC2, FSH2, FSS2, or FSR2 byte may be sent before a successful
 FSA2. On success, the client opens the lifetime control stream, writes FSC2,
 and performs the FSH2 handshake. An authenticated `SERVER_FINISHED` proves that
 the server is ready, and an authenticated `CLIENT_FINISHED` proves that the
-client is ready. After validating `CLIENT_FINISHED`, the server sends and
-physically flushes one encrypted `SESSION_READY_CONFIRM`. The server may expose
-the session only after that flush completes; the client may expose it only after
-receiving and authenticating the confirmation. Application streams begin with
-FSS2 followed by authenticated FSR2 records.
+client is ready. The client may expose the session only after its complete
+`CLIENT_FINISHED` write returns; the server may expose it only after receiving
+and authenticating that message. Application streams begin with FSS2 followed
+by authenticated FSR2 records.
 
 The carrier adapter preserves these boundaries. In the QUIC family, admission,
 control, reserved RPC, and application streams are separate native
@@ -139,7 +138,7 @@ is constant-time. Application 0-RTT is forbidden. Feature bit `0x00000001` is
 `unreliable_messages_v1`: the client offers it only when the selected carrier
 has native DATAGRAM support, and the server echoes the intersection. Unknown
 bits are rejected. The channel remains unavailable until the authenticated
-FSH2 Finished proofs and final `SESSION_READY_CONFIRM` barrier complete.
+FSH2 Finished proof for the local role completes.
 
 ## Epoch and Record Keys
 
@@ -292,7 +291,7 @@ three zero bytes, a four-byte payload length, then exactly that payload.
 | 23 | SESSION_READY_ACK (reserved; not sent) | empty |
 | 24 | SESSION_KEY_UPDATE_ACK | exact 20-byte SESSION_KEY_UPDATE echo |
 | 25 | STREAM_KEY_UPDATE_ACK | logical ID (8) + transition ID (8) + next epoch (4) |
-| 26 | SESSION_READY_CONFIRM | empty |
+| 26 | SESSION_READY_CONFIRM (reserved; not sent) | empty |
 
 Unknown types and incorrect fixed sizes are rejected. Transition IDs are
 non-zero, monotonic, and never wrap. Epochs advance by exactly one. A session

@@ -276,23 +276,6 @@ func carrierFeatures(carrierSession carrier.Session) uint32 {
 	return 0
 }
 
-func (s *engineSession) finishReadyBoundary(ctx context.Context) error {
-	if s.config.Role == RoleServer {
-		if err := s.sendControl(protocolv2.InnerSessionReadyConfirm, nil); err != nil {
-			return err
-		}
-		return s.flushControl(ctx)
-	}
-	typ, _, err := s.readControl()
-	if err != nil {
-		return err
-	}
-	if typ != protocolv2.InnerSessionReadyConfirm {
-		return ErrSessionProtocol
-	}
-	return nil
-}
-
 func writeAll(writer io.Writer, payload []byte) error {
 	for len(payload) != 0 {
 		n, err := writer.Write(payload)

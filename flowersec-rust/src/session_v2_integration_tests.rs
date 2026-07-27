@@ -103,8 +103,8 @@ async fn client_datagram_offer_with_unsupported_server_reaches_ready_without_unr
         establish_session_v2(client_carrier, client),
         establish_session_v2(server_carrier, server),
     );
-    let client = client_result.expect("client reaches SESSION_READY_CONFIRM");
-    let server = server_result.expect("server sends SESSION_READY_CONFIRM");
+    let client = client_result.expect("client completes authenticated Finished");
+    let server = server_result.expect("server verifies authenticated Finished");
     assert_eq!(
         client.unreliable_messages().unwrap_err(),
         UnreliableMessageError::Unavailable
