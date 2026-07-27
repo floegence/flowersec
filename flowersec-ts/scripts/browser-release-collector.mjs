@@ -441,27 +441,21 @@ export async function runSessionWorkload(page, artifact, plan) {
     }
 
     async function transfer(activeSession, outgoing, byteCount, signal) {
-      const accepting = activeSession.acceptStream({ signal });
-      let incoming;
       const startedAt = new Date().toISOString();
       const started = performance.now();
       const outgoingWrite = writeExact(outgoing, byteCount, 0xa5, signal);
       void outgoingWrite.catch(() => undefined);
       try {
-        incoming = await accepting;
-        if (incoming.kind !== "release-bulk" || incoming.metadata.direction !== "server-to-client") {
-          throw new Error("bulk stream metadata mismatch");
-        }
         await Promise.all([
           outgoingWrite,
-          readExact(incoming.stream, byteCount, 0x5a, signal).then(async () => await incoming.stream.closeWrite()),
+          readExact(outgoing, byteCount, 0x5a, signal),
         ]);
         return {
           started_at: startedAt,
           duration_ns: Math.max(1, Math.round((performance.now() - started) * 1_000_000)),
         };
       } catch (error) {
-        await Promise.allSettled([outgoingWrite, outgoing.reset(), incoming?.stream.reset()]);
+        await Promise.allSettled([outgoingWrite, outgoing.reset()]);
         throw error;
       }
     }

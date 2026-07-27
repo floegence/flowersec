@@ -9,8 +9,6 @@ import (
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 )
 
-const browserBulkPreacceptBytes int64 = 16 * 1024
-
 // ServeBrowserBulk serves the fixed bidirectional bulk phases used by the
 // Chromium release collector. RPC echo is already owned by the session router.
 func ServeBrowserBulk(ctx context.Context, session flowersession.SessionV2, bytesPerPhase []int64) error {
@@ -20,96 +18,29 @@ func ServeBrowserBulk(ctx context.Context, session flowersession.SessionV2, byte
 	if session == nil || len(bytesPerPhase) == 0 {
 		return errors.New("browser bulk workload is not initialized")
 	}
-	var outgoing releaseByteStream
 	for phase, byteCount := range bytesPerPhase {
 		if byteCount < 1 {
 			return fmt.Errorf("browser bulk phase %d has an invalid byte count", phase+1)
 		}
-		if outgoing == nil {
-			opened, err := session.OpenStream(ctx, "release-bulk", flowersession.Metadata{"direction": "server-to-client"})
-			if err != nil {
-				return fmt.Errorf("browser bulk phase %d: open: %w", phase+1, err)
-			}
-			outgoing = opened
-		}
-
-		var next <-chan preparedBrowserBulkStream
-		var cancelNext context.CancelFunc
-		if phase+1 < len(bytesPerPhase) {
-			prepareCtx, cancel := context.WithCancel(ctx)
-			cancelNext = cancel
-			prepared := make(chan preparedBrowserBulkStream, 1)
-			next = prepared
-			go func() {
-				stream, err := session.OpenStream(prepareCtx, "release-bulk", flowersession.Metadata{"direction": "server-to-client"})
-				prepared <- preparedBrowserBulkStream{stream: stream, err: err, cancel: cancel}
-			}()
-		}
-
-		if err := serveBrowserBulkSessionPhaseWithOutgoing(ctx, session, outgoing, byteCount); err != nil {
-			if next != nil {
-				cancelNext()
-				prepared := <-next
-				prepared.cancel()
-				if prepared.stream != nil {
-					_ = prepared.stream.Reset()
-				}
-			}
+		if err := serveBrowserBulkSessionPhase(ctx, session, byteCount); err != nil {
 			return fmt.Errorf("browser bulk phase %d: %w", phase+1, err)
-		}
-		if next != nil {
-			prepared := <-next
-			prepared.cancel()
-			if prepared.err != nil {
-				return fmt.Errorf("browser bulk phase %d: open next phase: %w", phase+2, prepared.err)
-			}
-			outgoing = prepared.stream
 		}
 	}
 	return nil
 }
 
-type preparedBrowserBulkStream struct {
-	stream releaseByteStream
-	err    error
-	cancel context.CancelFunc
-}
-
 func serveBrowserBulkSessionPhase(ctx context.Context, session flowersession.SessionV2, byteCount int64) error {
-	outgoing, err := session.OpenStream(ctx, "release-bulk", flowersession.Metadata{"direction": "server-to-client"})
-	if err != nil {
-		return fmt.Errorf("open: %w", err)
-	}
-	return serveBrowserBulkSessionPhaseWithOutgoing(ctx, session, outgoing, byteCount)
-}
-
-func serveBrowserBulkSessionPhaseWithOutgoing(ctx context.Context, session flowersession.SessionV2, outgoing releaseByteStream, byteCount int64) error {
-	stopCancellation := context.AfterFunc(ctx, func() { _ = outgoing.Reset() })
-	defer stopCancellation()
-	preacceptBytes := min(byteCount, browserBulkPreacceptBytes)
-	if err := writeExactFillData(ctx, outgoing, preacceptBytes, 0x5a); err != nil {
-		_ = outgoing.Reset()
-		return fmt.Errorf("prime outgoing stream: %w", err)
-	}
 	incoming, err := session.AcceptStream(ctx)
 	if err != nil {
-		_ = outgoing.Reset()
 		return fmt.Errorf("accept: %w", err)
 	}
 	if incoming.Kind != "release-bulk" || incoming.Metadata["direction"] != "client-to-server" {
 		_ = incoming.Stream.Reset()
-		_ = outgoing.Reset()
 		return errors.New("metadata mismatch")
 	}
 	writeDone := make(chan error, 1)
-	go func() {
-		writeErr := writeExactFillData(ctx, outgoing, byteCount-preacceptBytes, 0x5a)
-		if writeErr == nil {
-			writeErr = outgoing.CloseWrite()
-		}
-		writeDone <- writeErr
-	}()
-	return finishBrowserBulkPhase(ctx, incoming.Stream, outgoing, writeDone, byteCount)
+	go func() { writeDone <- writeExactFill(ctx, incoming.Stream, byteCount, 0x5a) }()
+	return finishBrowserBulkPhase(ctx, incoming.Stream, incoming.Stream, writeDone, byteCount, false)
 }
 
 // ServeBrowserNativeIsolation proves that one reset WebTransport stream does
@@ -194,10 +125,10 @@ func ServeBrowserNativeIsolation(ctx context.Context, session flowersession.Sess
 func serveBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteStream, byteCount int64) error {
 	writeDone := make(chan error, 1)
 	go func() { writeDone <- writeExactFill(ctx, outgoing, byteCount, 0x5a) }()
-	return finishBrowserBulkPhase(ctx, incoming, outgoing, writeDone, byteCount)
+	return finishBrowserBulkPhase(ctx, incoming, outgoing, writeDone, byteCount, true)
 }
 
-func finishBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteStream, writeDone <-chan error, byteCount int64) error {
+func finishBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteStream, writeDone <-chan error, byteCount int64, closeIncomingWrite bool) error {
 	stopCancellation := context.AfterFunc(ctx, func() {
 		_ = incoming.Reset()
 		_ = outgoing.Reset()
@@ -210,7 +141,11 @@ func finishBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteS
 			results <- err
 			return
 		}
-		results <- incoming.CloseWrite()
+		if closeIncomingWrite {
+			results <- incoming.CloseWrite()
+			return
+		}
+		results <- nil
 	}()
 	first := <-results
 	if first != nil {

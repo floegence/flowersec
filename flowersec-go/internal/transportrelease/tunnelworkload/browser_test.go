@@ -106,16 +106,6 @@ func connectBrowserWebTransport(t *testing.T, ctx context.Context, endpoint *Bro
 }
 
 func runBrowserBulkClient(ctx context.Context, session flowersession.SessionV2, byteCount int64) error {
-	accepted := make(chan flowersession.IncomingStream, 1)
-	acceptErrors := make(chan error, 1)
-	go func() {
-		incoming, err := session.AcceptStream(ctx)
-		if err != nil {
-			acceptErrors <- err
-			return
-		}
-		accepted <- incoming
-	}()
 	outgoing, err := session.OpenStream(ctx, "release-bulk", flowersession.Metadata{"direction": "client-to-server"})
 	if err != nil {
 		return err
@@ -126,39 +116,17 @@ func runBrowserBulkClient(ctx context.Context, session flowersession.SessionV2, 
 			_ = outgoing.Reset()
 		}
 	}()
-	var incoming flowersession.IncomingStream
-	select {
-	case incoming = <-accepted:
-	case err = <-acceptErrors:
-		return err
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	}
-	defer func() {
-		if !completed {
-			_ = incoming.Stream.Reset()
-		}
-	}()
-	if incoming.Kind != "release-bulk" || incoming.Metadata["direction"] != "server-to-client" {
-		return errors.New("browser bulk incoming metadata mismatch")
-	}
 	writeDone := make(chan error, 1)
 	go func() {
 		_, writeErr := io.CopyN(outgoing, bytes.NewReader(bytes.Repeat([]byte{0xa5}, int(byteCount))), byteCount)
 		writeDone <- errors.Join(writeErr, outgoing.CloseWrite())
 	}()
-	response, err := io.ReadAll(incoming.Stream)
-	if err != nil {
-		return err
-	}
-	if err := <-writeDone; err != nil {
+	response, readErr := io.ReadAll(outgoing)
+	if err := errors.Join(readErr, <-writeDone); err != nil {
 		return err
 	}
 	if int64(len(response)) != byteCount || !bytes.Equal(response, bytes.Repeat([]byte{0x5a}, int(byteCount))) {
 		return errors.New("browser bulk response mismatch")
-	}
-	if err := incoming.Stream.CloseWrite(); err != nil {
-		return err
 	}
 	completed = true
 	return nil

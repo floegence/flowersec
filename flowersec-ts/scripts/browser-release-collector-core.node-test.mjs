@@ -85,7 +85,7 @@ test("binds held-session establishment to the cold phase deadline", async () => 
   assert.equal(payload.connectDeadlineMs, 30_000);
 });
 
-test("closes both successful bulk stream send sides without reset cleanup", async () => {
+test("uses one native bidirectional stream for both bulk directions", async () => {
   let evaluatorSource = "";
   const page = {
     evaluate: async (operation) => {
@@ -97,12 +97,13 @@ test("closes both successful bulk stream send sides without reset cleanup", asyn
   await runSessionWorkload(page, {}, normalizeCollectorPlan(forcedPlan));
   assert.match(
     evaluatorSource,
-    /Promise\.all\(\[[\s\S]*outgoingWrite,[\s\S]*readExact\(incoming\.stream,[\s\S]*\.then\(async \(\) => await incoming\.stream\.closeWrite\(\)\)/,
+    /const outgoingWrite = writeExact\(outgoing,[\s\S]*Promise\.all\(\[[\s\S]*outgoingWrite,[\s\S]*readExact\(outgoing,/,
   );
+  assert.doesNotMatch(evaluatorSource, /activeSession\.acceptStream|incoming\.stream/);
   assert.doesNotMatch(evaluatorSource, /finally\s*{[\s\S]*outgoing\.close\(\)/);
 });
 
-test("starts the browser bulk write before waiting for the peer stream", async () => {
+test("resets the same bidirectional stream after a bulk failure", async () => {
   let evaluatorSource = "";
   const page = {
     evaluate: async (operation) => {
@@ -114,7 +115,7 @@ test("starts the browser bulk write before waiting for the peer stream", async (
   await runSessionWorkload(page, {}, normalizeCollectorPlan(forcedPlan));
   assert.match(
     evaluatorSource,
-    /const outgoingWrite = writeExact\(outgoing,[\s\S]*incoming = await accepting;[\s\S]*Promise\.all\(\[[\s\S]*outgoingWrite,/,
+    /catch \(error\) \{[\s\S]*Promise\.allSettled\(\[outgoingWrite, outgoing\.reset\(\)\]\)/,
   );
 });
 
