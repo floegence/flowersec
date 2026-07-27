@@ -11,10 +11,17 @@ host_linux_tools=$(dirname "$(readlink -f "$host_bpftool")")
 release_owner_uid=$(id -u)
 release_owner_gid=$(id -g)
 
-if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
-  echo "transport release runner requires a native Linux x86_64 host" >&2
+if [[ $(uname -s) != Linux ]]; then
+  echo "transport release runner requires a native Linux host" >&2
   exit 1
 fi
+case $(uname -m) in
+  x86_64 | aarch64) ;;
+  *)
+    echo "transport release runner requires an x86_64 or aarch64 host" >&2
+    exit 1
+    ;;
+esac
 if [[ ! -d $repository_root/.git ]]; then
   echo "Flowersec checkout not found: $repository_root" >&2
   exit 1
@@ -72,7 +79,10 @@ docker exec "$container_name" bash -euo pipefail -c '
   git config --global --get-all safe.directory | grep -Fx /workspace/flowersec
   git config --global --get-all safe.directory | grep -Fx /workspace/flowersec/.git
   git -C /workspace/flowersec rev-parse --show-toplevel
-  test "$(uname -m)" = x86_64
+  case $(uname -m) in
+    x86_64 | aarch64) ;;
+    *) exit 1 ;;
+  esac
   test -w /sys/fs/bpf
   namespace=flowersec-provision-probe
   ip netns add "$namespace"

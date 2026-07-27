@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	signedRunnerKernelRelease = "6.8.0-124-generic"
-	signedRunnerConfigDigest  = "94984c52b0417583217a7974f50bf13f838913f948960caa0dc0725a0893ad71"
+	signedRunnerArchitecture  = "arm64"
+	signedRunnerKernelRelease = "6.8.0-136-generic"
+	signedRunnerConfigDigest  = "0ec469e96abcd36c22f85bd4ba4d79232b1253bb29bec3496fc74df507c3e4d0"
 	signedRunnerConfigPath    = "runner_effective_config.json"
-	signedRunnerExecutableSHA = "2c877a56810bdf60180c88c90aa4155e2d39a5773c00c3d0cd1ba324284f0a35"
-	signedRunnerSourceSHA     = "5c3d06364fb4636068a2ef840b9720920e36c1d9fa2528d4b886646da22d2304"
+	signedRunnerExecutableSHA = "bd1700c42ac13208a35e816df8dd3232622a7fbe7d7100bcac98076449e6f4a7"
+	signedRunnerSourceSHA     = "e6c5b8123908facf2f892ee509bb456e937b32e762c709e56e78e13fde04b202"
 	signedRunnerArgvSHA       = "dfceb6794effe54c68265bdbb24e2cac6dbfdf4b2b2c1db2858f8a818babb595"
 )
 
@@ -48,7 +49,7 @@ func validateEvidenceTrustPolicy(policy *EvidenceTrustPolicy) error {
 		!validSHA256(runner.ExecutableSHA256) || !validSHA256(runner.SourceSHA256) || !validSHA256(runner.ArgvSHA256) {
 		return errors.New("evidence trust policy must freeze the Linux runner, kernel, namespace, traffic control, and packet counters")
 	}
-	if runner.KernelRelease != signedRunnerKernelRelease || runner.EffectiveConfigSHA256 != signedRunnerConfigDigest ||
+	if runner.Architecture != signedRunnerArchitecture || runner.KernelRelease != signedRunnerKernelRelease || runner.EffectiveConfigSHA256 != signedRunnerConfigDigest ||
 		runner.ExecutableSHA256 != signedRunnerExecutableSHA || runner.SourceSHA256 != signedRunnerSourceSHA || runner.ArgvSHA256 != signedRunnerArgvSHA {
 		return errors.New("evidence trust policy does not match the repository-audited exact kernel and effective tc/eBPF config digest")
 	}
@@ -90,7 +91,7 @@ func validateRunnerEffectiveConfigFile(baseDir string, policy *EvidenceTrustPoli
 
 func runnerEffectiveConfigRecords() ([]ConfigRecord, error) {
 	records := []ConfigRecord{
-		{Key: "architecture", Value: "amd64"},
+		{Key: "architecture", Value: signedRunnerArchitecture},
 		{Key: "ebpf_counter_schema", Value: "phase-profile-artifact-v1"},
 		{Key: "ebpf_program", Value: "ebpf-v1"},
 		{Key: "firewall", Value: signedFirewallPolicy},

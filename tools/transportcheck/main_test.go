@@ -111,7 +111,7 @@ func TestCheckedInEvidenceTrustPolicyPinsExactRunner(t *testing.T) {
 	if policy.KeyID != "flowersec-release-linux-2026-01" || policy.PublicKeySHA256 != "56741b08f82a292b0fa9158a23c1f728111dfb6baa83ba605d3a20f3512e1afb" {
 		t.Fatalf("checked-in signer policy = %s/%s, want the reviewed production signer", policy.KeyID, policy.PublicKeySHA256)
 	}
-	if policy.Runner.KernelRelease != signedRunnerKernelRelease || policy.Runner.EffectiveConfigSHA256 != signedRunnerConfigDigest {
+	if policy.Runner.Architecture != signedRunnerArchitecture || policy.Runner.KernelRelease != signedRunnerKernelRelease || policy.Runner.EffectiveConfigSHA256 != signedRunnerConfigDigest {
 		t.Fatalf("checked-in runner policy = %+v, want exact audited kernel/config", policy.Runner)
 	}
 	storePath := fixturePath(t, "evidence_trust_store.json")
@@ -2188,7 +2188,7 @@ func TestRepositoryTrustPolicyRejectsSignerReplacement(t *testing.T) {
 		SchemaVersion: 1, TrustStoreSHA256: hex.EncodeToString(storeDigest[:]),
 		KeyID: "release-lab-2026", PublicKeySHA256: hex.EncodeToString(publicDigest[:]),
 		Runner: EvidenceRunnerPolicy{
-			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: "amd64", KernelRelease: "6.8.0-124-generic",
+			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
 			Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
 			ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
 			EffectiveConfigPath: signedRunnerConfigPath,
@@ -2248,14 +2248,14 @@ func TestRepositoryTrustPolicyRejectsRunnerIdentityTampering(t *testing.T) {
 		SchemaVersion: 1, TrustStoreSHA256: strings.Repeat("1", 64),
 		KeyID: "release-lab-2026", PublicKeySHA256: strings.Repeat("2", 64),
 		Runner: EvidenceRunnerPolicy{
-			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: "amd64", KernelRelease: "6.8.0-124-generic",
+			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
 			Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
 			ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
 			EffectiveConfigPath: signedRunnerConfigPath,
 		},
 	}
 	valid := EvidenceRunner{
-		ID: "flowersec-linux-release-v1", OS: "linux", Architecture: "amd64", KernelRelease: "6.8.0-124-generic",
+		ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
 		Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
 		ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
 	}
@@ -2265,7 +2265,7 @@ func TestRepositoryTrustPolicyRejectsRunnerIdentityTampering(t *testing.T) {
 	}{
 		{name: "runner ID", mutate: func(runner *EvidenceRunner) { runner.ID = "other-runner" }},
 		{name: "OS", mutate: func(runner *EvidenceRunner) { runner.OS = "darwin" }},
-		{name: "architecture", mutate: func(runner *EvidenceRunner) { runner.Architecture = "arm64" }},
+		{name: "architecture", mutate: func(runner *EvidenceRunner) { runner.Architecture = "amd64" }},
 		{name: "exact kernel", mutate: func(runner *EvidenceRunner) { runner.KernelRelease = "6.12.2" }},
 		{name: "namespace", mutate: func(runner *EvidenceRunner) { runner.Namespace = "host" }},
 		{name: "traffic control", mutate: func(runner *EvidenceRunner) { runner.TrafficControl = "disabled" }},
@@ -2883,7 +2883,7 @@ func TestEvidenceCLIUsesNonzeroErrorForFailAndInconclusive(t *testing.T) {
 		SchemaVersion: 1, TrustStoreSHA256: hex.EncodeToString(trustStoreDigest[:]),
 		KeyID: "release-cli-test", PublicKeySHA256: hex.EncodeToString(publicKeyDigest[:]),
 		Runner: EvidenceRunnerPolicy{
-			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: "amd64", KernelRelease: "6.8.0-124-generic",
+			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
 			Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
 			ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
 			EffectiveConfigPath: signedRunnerConfigPath,
@@ -3844,7 +3844,7 @@ func buildCompleteReport(t *testing.T, manifest *PerformanceManifest, registry *
 			Dirty: boolPointer(false), UntrackedFileCount: intPointer(0),
 		},
 		Runner: EvidenceRunner{
-			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: "amd64", KernelRelease: "6.8.0-124-generic",
+			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
 			Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
 			ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
 		},
