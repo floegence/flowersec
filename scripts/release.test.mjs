@@ -1243,6 +1243,11 @@ test("transport release runner is pinned and scoped to its dedicated container",
   assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/node@sha256:[0-9a-f]{64} AS node_toolchain$/m);
   assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/rust@sha256:[0-9a-f]{64} AS rust_toolchain$/m);
   assert.match(containerfile, /^FROM public\.ecr\.aws\/ubuntu\/ubuntu@sha256:[0-9a-f]{64}$/m);
+  assert.match(containerfile, /https:\/\/mirrors\.aliyun\.com\/ubuntu-ports\//);
+  assert.match(containerfile, /install --yes --no-install-recommends ca-certificates/);
+  assert.equal((containerfile.match(/Acquire::Retries=3/g) ?? []).length, 4);
+  assert.equal((containerfile.match(/Acquire::http::Timeout=10/g) ?? []).length, 2);
+  assert.equal((containerfile.match(/Acquire::https::Timeout=10/g) ?? []).length, 2);
   for (const dependency of ["libnss3", "libgbm1", "fonts-noto-color-emoji"]) {
     assert.match(containerfile, new RegExp(`^\\s+${dependency} \\\\$`, "m"));
   }

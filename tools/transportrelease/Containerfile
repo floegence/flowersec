@@ -1,15 +1,20 @@
-FROM public.ecr.aws/docker/library/golang@sha256:3f6236bd765f898a2a3c2946112b04097814c4529d44534674700cd07b9c6b4c AS go_toolchain
-FROM public.ecr.aws/docker/library/node@sha256:1c0c30ea9d4e20052cdc6e9e0d36b9006edd890bd1ebc4f826991f7587a389d1 AS node_toolchain
-FROM public.ecr.aws/docker/library/rust@sha256:16a7f242108de02f10fe4a392991679bafa7694e59f5b40a54d5af1be9b40d03 AS rust_toolchain
+FROM public.ecr.aws/docker/library/golang@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS go_toolchain
+FROM public.ecr.aws/docker/library/node@sha256:80fc934952c8f1b2b4d39907af7211f8a9fff1a4c2cf673fb49099292c251cec AS node_toolchain
+FROM public.ecr.aws/docker/library/rust@sha256:0ff31c9ffa641a62e48d543fb00b4960955ea375f40776f40f585b89e654cc5e AS rust_toolchain
 
-FROM public.ecr.aws/ubuntu/ubuntu@sha256:52df9b1ee71626e0088f7d400d5c6b5f7bb916f8f0c82b474289a4ece6cf3faf
+FROM public.ecr.aws/ubuntu/ubuntu@sha256:22a8228e1e48cbe7e0e0f2056e752ffb8a35950cda150a4e5e16417200bec648
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends \
+RUN sed -i 's|http://ports.ubuntu.com/ubuntu-ports/|http://mirrors.aliyun.com/ubuntu-ports/|g' \
+        /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=10 update \
+    && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=10 install --yes --no-install-recommends ca-certificates \
+    && sed -i 's|http://mirrors.aliyun.com/ubuntu-ports/|https://mirrors.aliyun.com/ubuntu-ports/|g' \
+        /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 update \
+    && apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 install --yes --no-install-recommends \
         build-essential \
-        ca-certificates \
         clang \
         conntrack \
         curl \
