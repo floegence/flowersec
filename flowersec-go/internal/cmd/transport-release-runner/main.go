@@ -171,6 +171,12 @@ type tunnelCarrierResult struct {
 
 var networkWorkerArguments = func() []string { return []string{networkWorkerArg} }
 
+func networkWorkerCommand(ctx context.Context, namespace, executable string) *exec.Cmd {
+	arguments := []string{"--net=/var/run/netns/" + namespace, "--", executable}
+	arguments = append(arguments, networkWorkerArguments()...)
+	return exec.CommandContext(ctx, "/usr/bin/nsenter", arguments...)
+}
+
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == browserWorkerArg {
 		workerContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -680,8 +686,7 @@ func runNetworkCarrier(ctx context.Context, kind carrier.Kind, plan transportrel
 	if err != nil {
 		return result, err
 	}
-	arguments := append([]string{"netns", "exec", config.ClientNamespace, executable}, networkWorkerArguments()...)
-	command := exec.CommandContext(ctx, "ip", arguments...)
+	command := networkWorkerCommand(ctx, config.ClientNamespace, executable)
 	if runArtifacts != nil {
 		command.Env = commandEnvironmentWithQLOG(runArtifacts.qlogDir)
 	}
@@ -856,8 +861,7 @@ func runNetworkTunnel(ctx context.Context, topology tunnelworkload.Topology, pla
 	if err != nil {
 		return result, err
 	}
-	arguments := append([]string{"netns", "exec", config.ClientNamespace, executable}, networkWorkerArguments()...)
-	command := exec.CommandContext(ctx, "ip", arguments...)
+	command := networkWorkerCommand(ctx, config.ClientNamespace, executable)
 	if runArtifacts != nil {
 		command.Env = commandEnvironmentWithQLOG(runArtifacts.qlogDir)
 	}

@@ -46,6 +46,14 @@ func TestWorkloadScheduleContainsEveryIndependentRun(t *testing.T) {
 	}
 }
 
+func TestNetworkWorkerCommandPreservesBPFMountNamespace(t *testing.T) {
+	command := networkWorkerCommand(context.Background(), "fc-1234", "/release/runner")
+	want := []string{"/usr/bin/nsenter", "--net=/var/run/netns/fc-1234", "--", "/release/runner", networkWorkerArg}
+	if command.Path != want[0] || strings.Join(command.Args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("network worker command = path %q args %v, want %v", command.Path, command.Args, want)
+	}
+}
+
 func TestSupportedLinuxRunnerArchitecture(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -186,8 +185,7 @@ func runNetworkAdaptive(ctx context.Context, topology string, candidates []trans
 	if err != nil {
 		return result, err
 	}
-	arguments := append([]string{"netns", "exec", config.ClientNamespace, executable}, networkWorkerArguments()...)
-	command := exec.CommandContext(ctx, "ip", arguments...)
+	command := networkWorkerCommand(ctx, config.ClientNamespace, executable)
 	if runArtifacts != nil {
 		command.Env = commandEnvironmentWithQLOG(runArtifacts.qlogDir)
 	}
