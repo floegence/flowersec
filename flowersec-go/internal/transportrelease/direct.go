@@ -28,6 +28,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
+	carrieryamux "github.com/floegence/flowersec/flowersec-go/v2/internal/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	gorillaws "github.com/gorilla/websocket"
@@ -494,7 +495,8 @@ func normalizeCloseError(err error) error {
 		return filtered
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, net.ErrClosed) ||
-		errors.Is(err, io.EOF) || errors.Is(err, gorillaws.ErrCloseSent) || errors.Is(err, syscall.EPIPE) {
+		errors.Is(err, io.EOF) || errors.Is(err, gorillaws.ErrCloseSent) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, carrieryamux.ErrStreamReset) {
 		return nil
 	}
 	var websocketClose *gorillaws.CloseError

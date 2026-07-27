@@ -17,6 +17,8 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	carrieryamux "github.com/floegence/flowersec/flowersec-go/v2/internal/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	gorillaws "github.com/gorilla/websocket"
 )
@@ -758,6 +760,22 @@ func TestNormalizeCloseErrorAcceptsPeerSessionClose(t *testing.T) {
 	} {
 		if normalized := normalizeCloseError(unexpected); normalized == nil {
 			t.Fatalf("normalized unexpected close %#v", unexpected)
+		}
+	}
+}
+
+func TestNormalizeCloseErrorAcceptsPeerYamuxResetOnly(t *testing.T) {
+	if normalized := normalizeCloseError(carrieryamux.ErrStreamReset); normalized != nil {
+		t.Fatalf("normalize peer Yamux reset = %v", normalized)
+	}
+
+	for _, unexpected := range []error{
+		carrier.ErrStreamReset,
+		protocolv2.ErrStreamReset,
+		errors.New("stream reset"),
+	} {
+		if normalized := normalizeCloseError(unexpected); normalized == nil {
+			t.Fatalf("normalized unexpected reset %T: %v", unexpected, unexpected)
 		}
 	}
 }
