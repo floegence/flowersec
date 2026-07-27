@@ -220,8 +220,8 @@ async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
   }
 }
 
-async function runSessionWorkload(page, artifact, plan) {
-  return await page.evaluate(async ({ item, profileID, rpcPlan, bulkPlan, cleanupDeadlineMs }) => {
+export async function runSessionWorkload(page, artifact, plan) {
+  return await page.evaluate(async ({ item, profileID, connectDeadlineMs, rpcPlan, bulkPlan, cleanupDeadlineMs }) => {
     const sdk = await import("/dist/browser/index.js");
     const lease = sdk.createArtifactLeaseV2(
       sdk.parseArtifact(item.artifact_json),
@@ -231,7 +231,7 @@ async function runSessionWorkload(page, artifact, plan) {
     try {
       session = await withSignalDeadline(
         (signal) => sdk.connectBrowserSessionV2(lease, { signal }),
-        rpcPlan.phase_deadline_ms,
+        connectDeadlineMs,
         "session connect deadline exceeded",
       );
 	  const sessionConnectedAt = new Date().toISOString();
@@ -412,42 +412,57 @@ async function runSessionWorkload(page, artifact, plan) {
 	}
 
     async function runBulk(activeSession, config, phaseSignal) {
-      await transfer(activeSession, config.warmup_bytes_per_direction, phaseSignal);
-      const result = await transfer(activeSession, config.score_bytes_per_direction, phaseSignal);
-      return {
-        started_at: result.started_at,
-        duration_ns: result.duration_ns,
-        bytes_per_direction: config.score_bytes_per_direction,
-      };
+      const warmupOutgoing = await prepareTransfer(activeSession, phaseSignal);
+      const scorePrepareController = new AbortController();
+      const scorePrepareSignal = AbortSignal.any([phaseSignal, scorePrepareController.signal]);
+      const scoreOutgoingPromise = prepareTransfer(activeSession, scorePrepareSignal);
+      void scoreOutgoingPromise.catch(() => undefined);
+      try {
+        await transfer(activeSession, warmupOutgoing, config.warmup_bytes_per_direction, phaseSignal);
+        const scoreOutgoing = await scoreOutgoingPromise;
+        const result = await transfer(activeSession, scoreOutgoing, config.score_bytes_per_direction, phaseSignal);
+        return {
+          started_at: result.started_at,
+          duration_ns: result.duration_ns,
+          bytes_per_direction: config.score_bytes_per_direction,
+        };
+      } catch (error) {
+        scorePrepareController.abort(error);
+        await Promise.allSettled([scoreOutgoingPromise.then((stream) => stream.reset())]);
+        throw error;
+      }
     }
 
-    async function transfer(activeSession, byteCount, signal) {
-      const accepting = activeSession.acceptStream({ signal });
-      const outgoing = await activeSession.openStream("release-bulk", {
+    async function prepareTransfer(activeSession, signal) {
+      return await activeSession.openStream("release-bulk", {
         metadata: { direction: "client-to-server" },
         signal,
       });
+    }
+
+    async function transfer(activeSession, outgoing, byteCount, signal) {
+      const accepting = activeSession.acceptStream({ signal });
       let incoming;
+      const startedAt = new Date().toISOString();
+      const started = performance.now();
+      const outgoingWrite = writeExact(outgoing, byteCount, 0xa5, signal);
+      void outgoingWrite.catch(() => undefined);
       try {
         incoming = await accepting;
         if (incoming.kind !== "release-bulk" || incoming.metadata.direction !== "server-to-client") {
           throw new Error("bulk stream metadata mismatch");
         }
-        const startedAt = new Date().toISOString();
-        const started = performance.now();
         await Promise.all([
-          writeExact(outgoing, byteCount, 0xa5, signal),
-          readExact(incoming.stream, byteCount, 0x5a, signal),
+          outgoingWrite,
+          readExact(incoming.stream, byteCount, 0x5a, signal).then(async () => await incoming.stream.closeWrite()),
         ]);
         return {
           started_at: startedAt,
           duration_ns: Math.max(1, Math.round((performance.now() - started) * 1_000_000)),
         };
       } catch (error) {
-        await Promise.allSettled([outgoing.reset(), incoming?.stream.reset()]);
+        await Promise.allSettled([outgoingWrite, outgoing.reset(), incoming?.stream.reset()]);
         throw error;
-      } finally {
-        await Promise.allSettled([outgoing.close(), incoming?.stream.close()]);
       }
     }
 
@@ -493,6 +508,7 @@ async function runSessionWorkload(page, artifact, plan) {
   }, {
     item: artifact,
 	profileID: plan.profile_id,
+	connectDeadlineMs: plan.cold.phase_deadline_ms,
     rpcPlan: plan.rpc,
     bulkPlan: plan.bulk,
     cleanupDeadlineMs: plan.cleanup_deadline_ms,

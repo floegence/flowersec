@@ -120,7 +120,12 @@ func runBrowserBulkClient(ctx context.Context, session flowersession.SessionV2, 
 	if err != nil {
 		return err
 	}
-	defer outgoing.Close()
+	completed := false
+	defer func() {
+		if !completed {
+			_ = outgoing.Reset()
+		}
+	}()
 	var incoming flowersession.IncomingStream
 	select {
 	case incoming = <-accepted:
@@ -129,7 +134,11 @@ func runBrowserBulkClient(ctx context.Context, session flowersession.SessionV2, 
 	case <-ctx.Done():
 		return context.Cause(ctx)
 	}
-	defer incoming.Stream.Close()
+	defer func() {
+		if !completed {
+			_ = incoming.Stream.Reset()
+		}
+	}()
 	if incoming.Kind != "release-bulk" || incoming.Metadata["direction"] != "server-to-client" {
 		return errors.New("browser bulk incoming metadata mismatch")
 	}
@@ -148,6 +157,10 @@ func runBrowserBulkClient(ctx context.Context, session flowersession.SessionV2, 
 	if int64(len(response)) != byteCount || !bytes.Equal(response, bytes.Repeat([]byte{0x5a}, int(byteCount))) {
 		return errors.New("browser bulk response mismatch")
 	}
+	if err := incoming.Stream.CloseWrite(); err != nil {
+		return err
+	}
+	completed = true
 	return nil
 }
 

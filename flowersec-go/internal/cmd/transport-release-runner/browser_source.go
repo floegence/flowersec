@@ -220,11 +220,19 @@ func (source *browserArtifactSource) serve(record *browserArtifactRecord) {
 		})
 	}
 	if err == nil {
-		err = closeBrowserServerSession(session, time.Duration(source.profile.CleanupDeadlineSeconds)*time.Second)
+		err = closeBrowserServerSession(session, browserServerSessionCloseDeadline(source.profile, record.phase))
 	}
 	if err != nil {
 		source.errors <- fmt.Errorf("browser %s session: %w", record.phase, err)
 	}
+}
+
+func browserServerSessionCloseDeadline(profile transportrelease.ProfilePlan, phase string) time.Duration {
+	deadline := time.Duration(profile.CleanupDeadlineSeconds) * time.Second
+	if phase == "cold" {
+		deadline += time.Duration(profile.Cold.OperationDeadlineSeconds) * time.Second
+	}
+	return deadline
 }
 
 func closeBrowserServerSession(session flowersession.SessionV2, deadline time.Duration) error {

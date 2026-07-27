@@ -4,18 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/linuxnetlab"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/tunnelworkload"
@@ -39,6 +43,27 @@ func TestWorkloadScheduleContainsEveryIndependentRun(t *testing.T) {
 		if counts[kind] != 15 {
 			t.Fatalf("%s run count = %d, want 15", kind, counts[kind])
 		}
+	}
+}
+
+func TestSupportedLinuxRunnerArchitecture(t *testing.T) {
+	tests := []struct {
+		name   string
+		goos   string
+		goarch string
+		want   bool
+	}{
+		{name: "amd64", goos: "linux", goarch: "amd64", want: true},
+		{name: "arm64", goos: "linux", goarch: "arm64", want: true},
+		{name: "unsupported Linux architecture", goos: "linux", goarch: "386"},
+		{name: "non-Linux", goos: "darwin", goarch: "arm64"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := supportedLinuxRunnerArchitecture(test.goos, test.goarch); got != test.want {
+				t.Fatalf("supportedLinuxRunnerArchitecture(%q, %q) = %t, want %t", test.goos, test.goarch, got, test.want)
+			}
+		})
 	}
 }
 
@@ -258,6 +283,46 @@ func TestCompletedWithinRejectsElapsedLimit(t *testing.T) {
 	}
 }
 
+func TestBrowserCollectorPlanKeepsModuleSiteOnClientSide(t *testing.T) {
+	var request browserWorkerRequest
+	if err := json.Unmarshal([]byte(`{
+		"client_namespace":"client-netns",
+		"client_address":"198.18.13.41",
+		"server_namespace":"server-netns",
+		"server_address":"198.18.13.42"
+	}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	plan := newBrowserCollectorPlan(request, "http://198.18.13.42:443/artifacts", "certificate-hash")
+	if plan.ModuleBindAddress != "198.18.13.41" || plan.ModuleAdvertiseHost != "198.18.13.41" {
+		t.Fatalf("module site = %s/%s, want client address", plan.ModuleBindAddress, plan.ModuleAdvertiseHost)
+	}
+	if plan.ArtifactSourceURL != "http://198.18.13.42:443/artifacts" {
+		t.Fatalf("artifact source URL = %q, want server-side weak-network endpoint", plan.ArtifactSourceURL)
+	}
+}
+
+func TestBrowserWorkerRequestUsesUnprefixedClientAddressAndOrigin(t *testing.T) {
+	request := newBrowserWorkerRequest(
+		transportrelease.ProfilePlan{ID: "edge-v1"},
+		browserDirectTopology,
+		3,
+		linuxnetlab.Config{
+			ClientNamespace: "client-netns",
+			ServerNamespace: "server-netns",
+			ClientAddress:   netip.MustParsePrefix("198.18.13.41/30"),
+			ServerAddress:   netip.MustParsePrefix("198.18.13.42/30"),
+		},
+		"/source",
+	)
+	if request.ClientAddress != "198.18.13.41" || request.ServerAddress != "198.18.13.42" {
+		t.Fatalf("worker addresses = %q/%q, want unprefixed client/server IPs", request.ClientAddress, request.ServerAddress)
+	}
+	if got := browserWorkerAllowedOrigin(request); got != "http://198.18.13.41" {
+		t.Fatalf("allowed origin = %q, want client module-site origin", got)
+	}
+}
+
 func TestBrowserArtifactSourceIssuesAndSpendsEveryArtifactOnce(t *testing.T) {
 	endpoint, err := transportrelease.OpenProductDirectBrowserEndpointAt(context.Background(), "127.0.0.1", "http://127.0.0.1")
 	if err != nil {
@@ -307,6 +372,67 @@ func TestBrowserArtifactSourceIssuesAndSpendsEveryArtifactOnce(t *testing.T) {
 	if err := source.Finalize(finalizeCtx, true); err == nil {
 		t.Fatal("aborted incomplete browser source finalized successfully")
 	}
+}
+
+func TestBrowserArtifactSourceKeepsColdSessionAliveForOperationDeadline(t *testing.T) {
+	termination := make(chan struct{})
+	session := &browserSourceDeadlineSession{termination: termination}
+	profile := transportrelease.ProfilePlan{
+		ID: "edge-v1",
+		Cold: transportrelease.ColdPlan{
+			Operations: 1, OperationDeadlineSeconds: 3,
+		},
+		CleanupDeadlineSeconds: 1,
+		CellWatchdogMinutes:    1,
+	}
+	source, err := newBrowserArtifactSourceWithIssuer(func() (browserServerArtifact, error) {
+		return nil, errors.New("unused")
+	}, profile, "browser_webtransport", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		source.serve(&browserArtifactRecord{
+			artifact: browserSourceDeadlineArtifact{session: session},
+			phase:    "cold",
+		})
+		close(done)
+	}()
+	time.AfterFunc(1250*time.Millisecond, func() { close(termination) })
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cold browser server did not observe natural termination")
+	}
+	if got := session.closeCalls.Load(); got != 0 {
+		t.Fatalf("forced session close calls = %d, want 0 before the cold operation deadline", got)
+	}
+}
+
+type browserSourceDeadlineArtifact struct {
+	session flowersession.SessionV2
+}
+
+func (artifact browserSourceDeadlineArtifact) ArtifactJSON() string { return "{}" }
+func (artifact browserSourceDeadlineArtifact) AwaitServer(context.Context) (flowersession.SessionV2, error) {
+	return artifact.session, nil
+}
+func (browserSourceDeadlineArtifact) Cancel() {}
+
+type browserSourceDeadlineSession struct {
+	flowersession.SessionV2
+	termination <-chan struct{}
+	closeCalls  atomic.Int32
+}
+
+func (session *browserSourceDeadlineSession) Termination() <-chan struct{} {
+	return session.termination
+}
+func (session *browserSourceDeadlineSession) Close() error {
+	session.closeCalls.Add(1)
+	return nil
 }
 
 func TestBrowserTunnelArtifactSourceIssuesChromiumWebTransportLeg(t *testing.T) {

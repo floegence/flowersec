@@ -207,6 +207,18 @@ func run(args []string) (resultErr error) {
 	return runWithContext(context.Background(), args)
 }
 
+func supportedLinuxRunnerArchitecture(goos, goarch string) bool {
+	if goos != "linux" {
+		return false
+	}
+	switch goarch {
+	case "amd64", "arm64":
+		return true
+	default:
+		return false
+	}
+}
+
 func runWithContext(runnerContext context.Context, args []string) (resultErr error) {
 	if runnerContext == nil {
 		return errors.New("runner context is required")
@@ -237,8 +249,8 @@ func runWithContext(runnerContext context.Context, args []string) (resultErr err
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, destination.Close()) }()
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		return errors.New("direct clean baseline requires Linux amd64")
+	if !supportedLinuxRunnerArchitecture(runtime.GOOS, runtime.GOARCH) {
+		return errors.New("direct clean baseline requires Linux amd64 or arm64")
 	}
 	if err := verifySourceCheckout(*sourceRoot, *manifestPath, *sourceSHA); err != nil {
 		return err

@@ -135,11 +135,7 @@ func runBrowserNetworkCarrierWithLabel(ctx context.Context, topology string, pla
 	if err != nil {
 		return result, err
 	}
-	request := browserWorkerRequest{
-		Plan: plan, Topology: topology, RunNumber: runNumber,
-		ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
-		ServerAddress: config.ServerAddress.Addr().String(), SourceRoot: sourceRoot,
-	}
+	request := newBrowserWorkerRequest(plan, topology, runNumber, config, sourceRoot)
 	requestJSON, err := json.Marshal(request)
 	if err != nil {
 		return result, err
@@ -192,9 +188,22 @@ type browserWorkerRequest struct {
 	RunNumber       int                          `json:"run_number"`
 	ClientNamespace string                       `json:"client_namespace"`
 	ServerNamespace string                       `json:"server_namespace"`
+	ClientAddress   string                       `json:"client_address,omitempty"`
 	ServerAddress   string                       `json:"server_address"`
 	SourceRoot      string                       `json:"source_root"`
 	Capacity        *browserCapacityWorkerPlan   `json:"capacity,omitempty"`
+}
+
+func newBrowserWorkerRequest(plan transportrelease.ProfilePlan, topology string, runNumber int, config linuxnetlab.Config, sourceRoot string) browserWorkerRequest {
+	return browserWorkerRequest{
+		Plan: plan, Topology: topology, RunNumber: runNumber,
+		ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
+		ClientAddress: config.ClientAddress.Addr().String(), ServerAddress: config.ServerAddress.Addr().String(), SourceRoot: sourceRoot,
+	}
+}
+
+func browserWorkerAllowedOrigin(request browserWorkerRequest) string {
+	return "http://" + request.ClientAddress
 }
 
 type browserCollectorPlan struct {
@@ -264,7 +273,7 @@ func runBrowserWorkerWithContext(parent context.Context, input io.Reader, output
 	ctx, cancel := context.WithTimeout(parent, time.Duration(request.Plan.CellWatchdogMinutes)*time.Minute)
 	defer cancel()
 
-	allowedOrigin := "http://" + request.ServerAddress
+	allowedOrigin := browserWorkerAllowedOrigin(request)
 	var certificateHash string
 	var source *browserArtifactSource
 	var closeEndpoint func() error
@@ -318,7 +327,7 @@ func runBrowserWorkerWithContext(parent context.Context, input io.Reader, output
 	}()
 
 	collectorPlan := newBrowserCollectorPlan(request, sourceURL, certificateHash)
-	collectorResult, err := executeBrowserCollector(ctx, request.SourceRoot, request.ServerNamespace, collectorPlan)
+	collectorResult, err := executeBrowserCollector(ctx, request.SourceRoot, request.ClientNamespace, collectorPlan)
 	serverClosed = true
 	closeErr := closeBrowserArtifactHTTPServer(server, listener)
 	finalizeErr := source.Finalize(ctx, err != nil)
@@ -332,12 +341,12 @@ func runBrowserWorkerWithContext(parent context.Context, input io.Reader, output
 }
 
 func validateBrowserWorkerRequest(request browserWorkerRequest) error {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		return errors.New("browser release worker requires Linux amd64")
+	if !supportedLinuxRunnerArchitecture(runtime.GOOS, runtime.GOARCH) {
+		return errors.New("browser release worker requires Linux amd64 or arm64")
 	}
 	if !supportedBrowserTopology(request.Topology) ||
 		request.ClientNamespace == "" || request.ServerNamespace == "" || request.ClientNamespace == request.ServerNamespace ||
-		net.ParseIP(request.ServerAddress) == nil || !filepath.IsAbs(request.SourceRoot) {
+		net.ParseIP(request.ServerAddress) == nil || (request.Mode != "capacity" && net.ParseIP(request.ClientAddress) == nil) || !filepath.IsAbs(request.SourceRoot) {
 		return errors.New("browser release worker request is outside the supported topology")
 	}
 	if request.Mode == "capacity" {
@@ -413,7 +422,7 @@ func newBrowserCollectorPlan(request browserWorkerRequest, sourceURL, certificat
 	return browserCollectorPlan{
 		SchemaVersion: 1, Topology: request.Topology, ProfileID: request.Plan.ID, RunNumber: request.RunNumber, Mode: "forced",
 		ArtifactSourceURL: sourceURL, CertificateHash: certificateHash, ClientNamespace: request.ClientNamespace,
-		ModuleBindAddress: request.ServerAddress, ModuleAdvertiseHost: request.ServerAddress,
+		ModuleBindAddress: request.ClientAddress, ModuleAdvertiseHost: request.ClientAddress,
 		CellDeadlineMS: seconds(request.Plan.CellWatchdogMinutes * 60), CleanupDeadlineMS: seconds(request.Plan.CleanupDeadlineSeconds),
 		Cold: browserCollectorColdPlan{
 			Operations: request.Plan.Cold.Operations, MaxInflight: request.Plan.Cold.MaxInflight,

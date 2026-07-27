@@ -44,6 +44,8 @@ import {
 } from "./webTransportCarrierInternalStage.js";
 import { projectSessionV2 } from "../v2/publicSession.js";
 
+const BROWSER_SESSION_CLOSE_TIMEOUT_MS = 1_000;
+
 export type BrowserConnectorStateV2 =
   | "validated"
   | "preconnecting"
@@ -803,6 +805,7 @@ function sessionConfig(
     maxInboundStreams: artifact.session.max_inbound_streams,
     sessionContract: artifact.session,
     idleTimeoutMs: artifact.session.idle_timeout_seconds * 1_000,
+    closeTimeoutMs: BROWSER_SESSION_CLOSE_TIMEOUT_MS,
     localAdmissionBinding: localBinding,
     peerAdmissionBinding: tunnel === undefined ? localBinding : new Uint8Array(32),
     localEndpointInstanceID: tunnel?.local_endpoint_instance_id ?? "",

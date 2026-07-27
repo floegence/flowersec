@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 
-import { installWebTransportCertificateHash, navigateBrowserModule } from "./browser-release-collector.mjs";
+import {
+  installWebTransportCertificateHash,
+  navigateBrowserModule,
+  runSessionWorkload,
+} from "./browser-release-collector.mjs";
 
 import {
   acquireArtifactBatch,
@@ -61,6 +65,73 @@ test("normalizes only frozen Chromium WebTransport topologies", () => {
       /topology/,
     );
   }
+});
+
+test("binds held-session establishment to the cold phase deadline", async () => {
+  const plan = normalizeCollectorPlan({
+    ...forcedPlan,
+    cold: { ...forcedPlan.cold, operation_deadline_ms: 6_000 },
+    rpc: { ...forcedPlan.rpc, phase_deadline_ms: 5_000 },
+  });
+  let payload;
+  const page = {
+    evaluate: async (_operation, value) => {
+      payload = value;
+      return {};
+    },
+  };
+
+  await runSessionWorkload(page, {}, plan);
+  assert.equal(payload.connectDeadlineMs, 30_000);
+});
+
+test("closes both successful bulk stream send sides without reset cleanup", async () => {
+  let evaluatorSource = "";
+  const page = {
+    evaluate: async (operation) => {
+      evaluatorSource = operation.toString();
+      return {};
+    },
+  };
+
+  await runSessionWorkload(page, {}, normalizeCollectorPlan(forcedPlan));
+  assert.match(
+    evaluatorSource,
+    /Promise\.all\(\[[\s\S]*outgoingWrite,[\s\S]*readExact\(incoming\.stream,[\s\S]*\.then\(async \(\) => await incoming\.stream\.closeWrite\(\)\)/,
+  );
+  assert.doesNotMatch(evaluatorSource, /finally\s*{[\s\S]*outgoing\.close\(\)/);
+});
+
+test("starts the browser bulk write before waiting for the peer stream", async () => {
+  let evaluatorSource = "";
+  const page = {
+    evaluate: async (operation) => {
+      evaluatorSource = operation.toString();
+      return {};
+    },
+  };
+
+  await runSessionWorkload(page, {}, normalizeCollectorPlan(forcedPlan));
+  assert.match(
+    evaluatorSource,
+    /const outgoingWrite = writeExact\(outgoing,[\s\S]*incoming = await accepting;[\s\S]*Promise\.all\(\[[\s\S]*outgoingWrite,/,
+  );
+});
+
+test("prepares the next browser bulk stream during warmup", async () => {
+  let evaluatorSource = "";
+  const page = {
+    evaluate: async (operation) => {
+      evaluatorSource = operation.toString();
+      return {};
+    },
+  };
+
+  await runSessionWorkload(page, {}, normalizeCollectorPlan(forcedPlan));
+  assert.match(
+    evaluatorSource,
+    /const warmupOutgoing = await prepareTransfer[\s\S]*const scoreOutgoingPromise = prepareTransfer[\s\S]*await transfer\(activeSession, warmupOutgoing,[\s\S]*await transfer\(activeSession, scoreOutgoing,/,
+  );
 });
 
 test("adaptive_web accepts cold-only stages and rejects forced payload phases", () => {

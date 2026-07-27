@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:b3578441-f655-5c30-82f6-25e8f1a14039",
+  "serialNumber": "urn:uuid:c4b2aed4-e1ef-503f-8ebb-8fd338cb4b32",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "7728708024ad1e4c26a019cca59ed2873f66350b31dba2d875eaf66f0675c3b4"
+        "value": "22ac68342204244e7042a90af59d1c5370306e6a8b02d7794b8f4e9535e49fa4"
       }
     ]
   },
@@ -7722,9 +7722,9 @@
     {
       "type": "library",
       "name": "@playwright/test",
-      "version": "1.58.2",
-      "purl": "pkg:npm/%40playwright/test@1.58.2",
-      "bom-ref": "pkg:npm/%40playwright/test@1.58.2",
+      "version": "1.62.0",
+      "purl": "pkg:npm/%40playwright/test@1.62.0",
+      "bom-ref": "pkg:npm/%40playwright/test@1.62.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -7733,7 +7733,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@playwright/test/-/test-1.58.2.tgz"
+          "url": "https://registry.npmjs.org/@playwright/test/-/test-1.62.0.tgz"
         }
       ],
       "properties": [
@@ -11922,9 +11922,9 @@
     {
       "type": "library",
       "name": "playwright",
-      "version": "1.58.2",
-      "purl": "pkg:npm/playwright@1.58.2",
-      "bom-ref": "pkg:npm/playwright@1.58.2",
+      "version": "1.62.0",
+      "purl": "pkg:npm/playwright@1.62.0",
+      "bom-ref": "pkg:npm/playwright@1.62.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -11933,7 +11933,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/playwright/-/playwright-1.58.2.tgz"
+          "url": "https://registry.npmjs.org/playwright/-/playwright-1.62.0.tgz"
         }
       ],
       "properties": [
@@ -11950,9 +11950,9 @@
     {
       "type": "library",
       "name": "playwright-core",
-      "version": "1.58.2",
-      "purl": "pkg:npm/playwright-core@1.58.2",
-      "bom-ref": "pkg:npm/playwright-core@1.58.2",
+      "version": "1.62.0",
+      "purl": "pkg:npm/playwright-core@1.62.0",
+      "bom-ref": "pkg:npm/playwright-core@1.62.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -11961,7 +11961,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.58.2.tgz"
+          "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.0.tgz"
         }
       ],
       "properties": [
@@ -13712,7 +13712,7 @@
         "pkg:npm/%40noble/ciphers@0.6.0",
         "pkg:npm/%40noble/curves@1.9.7",
         "pkg:npm/%40noble/hashes@1.8.0",
-        "pkg:npm/%40playwright/test@1.58.2",
+        "pkg:npm/%40playwright/test@1.62.0",
         "pkg:npm/%40types/node@24.12.2",
         "pkg:npm/%40types/ws@8.18.1",
         "pkg:npm/%40typescript-eslint/eslint-plugin@8.53.0",
@@ -15621,9 +15621,9 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40playwright/test@1.58.2",
+      "ref": "pkg:npm/%40playwright/test@1.62.0",
       "dependsOn": [
-        "pkg:npm/playwright@1.58.2"
+        "pkg:npm/playwright@1.62.0"
       ]
     },
     {
@@ -16499,14 +16499,14 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/playwright@1.58.2",
+      "ref": "pkg:npm/playwright@1.62.0",
       "dependsOn": [
         "pkg:npm/fsevents@2.3.2",
-        "pkg:npm/playwright-core@1.58.2"
+        "pkg:npm/playwright-core@1.62.0"
       ]
     },
     {
-      "ref": "pkg:npm/playwright-core@1.58.2",
+      "ref": "pkg:npm/playwright-core@1.62.0",
       "dependsOn": []
     },
     {

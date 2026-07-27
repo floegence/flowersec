@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-source",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/7728708024ad1e4c26a019cca59ed2873f66350b31dba2d875eaf66f0675c3b4",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/22ac68342204244e7042a90af59d1c5370306e6a8b02d7794b8f4e9535e49fa4",
   "creationInfo": {
     "created": "1970-01-01T00:00:00Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 7728708024ad1e4c26a019cca59ed2873f66350b31dba2d875eaf66f0675c3b4",
+      "comment": "Flowersec source inventory SHA-256: 22ac68342204244e7042a90af59d1c5370306e6a8b02d7794b8f4e9535e49fa4",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -4706,9 +4706,9 @@
     },
     {
       "name": "@playwright/test",
-      "SPDXID": "SPDXRef-Package-a206450ef86ee610c9ea",
-      "versionInfo": "1.58.2",
-      "downloadLocation": "https://registry.npmjs.org/@playwright/test/-/test-1.58.2.tgz",
+      "SPDXID": "SPDXRef-Package-c801c58d14bfd7006d73",
+      "versionInfo": "1.62.0",
+      "downloadLocation": "https://registry.npmjs.org/@playwright/test/-/test-1.62.0.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
@@ -4717,7 +4717,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40playwright/test@1.58.2"
+          "referenceLocator": "pkg:npm/%40playwright/test@1.62.0"
         }
       ]
     },
@@ -7256,9 +7256,9 @@
     },
     {
       "name": "playwright",
-      "SPDXID": "SPDXRef-Package-7fcdc5ada48bbaec1d3d",
-      "versionInfo": "1.58.2",
-      "downloadLocation": "https://registry.npmjs.org/playwright/-/playwright-1.58.2.tgz",
+      "SPDXID": "SPDXRef-Package-ea4c4e1d4e3184f462c3",
+      "versionInfo": "1.62.0",
+      "downloadLocation": "https://registry.npmjs.org/playwright/-/playwright-1.62.0.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
@@ -7267,15 +7267,15 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/playwright@1.58.2"
+          "referenceLocator": "pkg:npm/playwright@1.62.0"
         }
       ]
     },
     {
       "name": "playwright-core",
-      "SPDXID": "SPDXRef-Package-8fd685bc92b8350d9308",
-      "versionInfo": "1.58.2",
-      "downloadLocation": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.58.2.tgz",
+      "SPDXID": "SPDXRef-Package-914566566e06822995dc",
+      "versionInfo": "1.62.0",
+      "downloadLocation": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.0.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
@@ -7284,7 +7284,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/playwright-core@1.58.2"
+          "referenceLocator": "pkg:npm/playwright-core@1.62.0"
         }
       ]
     },
@@ -11363,7 +11363,7 @@
     {
       "spdxElementId": "SPDXRef-Package-76c42e73b1fd85c34226",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-a206450ef86ee610c9ea"
+      "relatedSpdxElement": "SPDXRef-Package-c801c58d14bfd7006d73"
     },
     {
       "spdxElementId": "SPDXRef-Package-76c42e73b1fd85c34226",
@@ -11721,9 +11721,9 @@
       "relatedSpdxElement": "SPDXRef-Package-d976986d5d79eddc7789"
     },
     {
-      "spdxElementId": "SPDXRef-Package-a206450ef86ee610c9ea",
+      "spdxElementId": "SPDXRef-Package-c801c58d14bfd7006d73",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-7fcdc5ada48bbaec1d3d"
+      "relatedSpdxElement": "SPDXRef-Package-ea4c4e1d4e3184f462c3"
     },
     {
       "spdxElementId": "SPDXRef-Package-8ad3d1783cc647191c53",
@@ -12786,14 +12786,14 @@
       "relatedSpdxElement": "SPDXRef-Package-8f4a53040c15f0d76f0d"
     },
     {
-      "spdxElementId": "SPDXRef-Package-7fcdc5ada48bbaec1d3d",
+      "spdxElementId": "SPDXRef-Package-ea4c4e1d4e3184f462c3",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-89940281c30ce16fb772"
     },
     {
-      "spdxElementId": "SPDXRef-Package-7fcdc5ada48bbaec1d3d",
+      "spdxElementId": "SPDXRef-Package-ea4c4e1d4e3184f462c3",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-8fd685bc92b8350d9308"
+      "relatedSpdxElement": "SPDXRef-Package-914566566e06822995dc"
     },
     {
       "spdxElementId": "SPDXRef-Package-e0500813aa09c9528346",

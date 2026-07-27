@@ -112,6 +112,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
     expect(committedConfig).toMatchObject({
       maxInboundStreams: 64,
       idleTimeoutMs: 60_000,
+      closeTimeoutMs: 1_000,
     });
     await expect(connector.connect()).rejects.toMatchObject({
       code: "invalid_input",

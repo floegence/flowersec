@@ -18,29 +18,85 @@ func ServeBrowserBulk(ctx context.Context, session flowersession.SessionV2, byte
 	if session == nil || len(bytesPerPhase) == 0 {
 		return errors.New("browser bulk workload is not initialized")
 	}
+	var outgoing releaseByteStream
 	for phase, byteCount := range bytesPerPhase {
 		if byteCount < 1 {
 			return fmt.Errorf("browser bulk phase %d has an invalid byte count", phase+1)
 		}
-		outgoing, err := session.OpenStream(ctx, "release-bulk", flowersession.Metadata{"direction": "server-to-client"})
-		if err != nil {
-			return fmt.Errorf("browser bulk phase %d open: %w", phase+1, err)
+		if outgoing == nil {
+			opened, err := session.OpenStream(ctx, "release-bulk", flowersession.Metadata{"direction": "server-to-client"})
+			if err != nil {
+				return fmt.Errorf("browser bulk phase %d: open: %w", phase+1, err)
+			}
+			outgoing = opened
 		}
-		incoming, err := session.AcceptStream(ctx)
-		if err != nil {
-			_ = outgoing.Reset()
-			return fmt.Errorf("browser bulk phase %d accept: %w", phase+1, err)
+
+		var next <-chan preparedBrowserBulkStream
+		var cancelNext context.CancelFunc
+		if phase+1 < len(bytesPerPhase) {
+			prepareCtx, cancel := context.WithCancel(ctx)
+			cancelNext = cancel
+			prepared := make(chan preparedBrowserBulkStream, 1)
+			next = prepared
+			go func() {
+				stream, err := session.OpenStream(prepareCtx, "release-bulk", flowersession.Metadata{"direction": "server-to-client"})
+				prepared <- preparedBrowserBulkStream{stream: stream, err: err, cancel: cancel}
+			}()
 		}
-		if incoming.Kind != "release-bulk" || incoming.Metadata["direction"] != "client-to-server" {
-			_ = incoming.Stream.Reset()
-			_ = outgoing.Reset()
-			return fmt.Errorf("browser bulk phase %d metadata mismatch", phase+1)
-		}
-		if err := serveBrowserBulkPhase(ctx, incoming.Stream, outgoing, byteCount); err != nil {
+
+		if err := serveBrowserBulkSessionPhaseWithOutgoing(ctx, session, outgoing, byteCount); err != nil {
+			if next != nil {
+				cancelNext()
+				prepared := <-next
+				prepared.cancel()
+				if prepared.stream != nil {
+					_ = prepared.stream.Reset()
+				}
+			}
 			return fmt.Errorf("browser bulk phase %d: %w", phase+1, err)
+		}
+		if next != nil {
+			prepared := <-next
+			prepared.cancel()
+			if prepared.err != nil {
+				return fmt.Errorf("browser bulk phase %d: open next phase: %w", phase+2, prepared.err)
+			}
+			outgoing = prepared.stream
 		}
 	}
 	return nil
+}
+
+type preparedBrowserBulkStream struct {
+	stream releaseByteStream
+	err    error
+	cancel context.CancelFunc
+}
+
+func serveBrowserBulkSessionPhase(ctx context.Context, session flowersession.SessionV2, byteCount int64) error {
+	outgoing, err := session.OpenStream(ctx, "release-bulk", flowersession.Metadata{"direction": "server-to-client"})
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	return serveBrowserBulkSessionPhaseWithOutgoing(ctx, session, outgoing, byteCount)
+}
+
+func serveBrowserBulkSessionPhaseWithOutgoing(ctx context.Context, session flowersession.SessionV2, outgoing releaseByteStream, byteCount int64) error {
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- writeExactFill(ctx, outgoing, byteCount, 0x5a) }()
+	incoming, err := session.AcceptStream(ctx)
+	if err != nil {
+		_ = outgoing.Reset()
+		<-writeDone
+		return fmt.Errorf("accept: %w", err)
+	}
+	if incoming.Kind != "release-bulk" || incoming.Metadata["direction"] != "client-to-server" {
+		_ = incoming.Stream.Reset()
+		_ = outgoing.Reset()
+		<-writeDone
+		return errors.New("metadata mismatch")
+	}
+	return finishBrowserBulkPhase(ctx, incoming.Stream, outgoing, writeDone, byteCount)
 }
 
 // ServeBrowserNativeIsolation proves that one reset WebTransport stream does
@@ -123,15 +179,26 @@ func ServeBrowserNativeIsolation(ctx context.Context, session flowersession.Sess
 }
 
 func serveBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteStream, byteCount int64) error {
-	defer incoming.Close()
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- writeExactFill(ctx, outgoing, byteCount, 0x5a) }()
+	return finishBrowserBulkPhase(ctx, incoming, outgoing, writeDone, byteCount)
+}
+
+func finishBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteStream, writeDone <-chan error, byteCount int64) error {
 	stopCancellation := context.AfterFunc(ctx, func() {
 		_ = incoming.Reset()
 		_ = outgoing.Reset()
 	})
 	defer stopCancellation()
 	results := make(chan error, 2)
-	go func() { results <- readExactFill(ctx, incoming, byteCount, 0xa5) }()
-	go func() { results <- writeExactFillData(ctx, outgoing, byteCount, 0x5a) }()
+	go func() { results <- <-writeDone }()
+	go func() {
+		if err := readExactFill(ctx, incoming, byteCount, 0xa5); err != nil {
+			results <- err
+			return
+		}
+		results <- incoming.CloseWrite()
+	}()
 	first := <-results
 	if first != nil {
 		_ = incoming.Reset()
@@ -141,7 +208,7 @@ func serveBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteSt
 	if err := errors.Join(first, second); err != nil {
 		return fmt.Errorf("bidirectional transfer: %w", err)
 	}
-	return outgoing.CloseWrite()
+	return nil
 }
 
 func readExactFill(ctx context.Context, stream io.Reader, total int64, fill byte) error {

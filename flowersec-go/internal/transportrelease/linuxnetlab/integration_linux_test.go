@@ -263,7 +263,7 @@ for sequence in range(1,401):
 	if !duplicated || !outOfOrder {
 		t.Fatalf("kernel matrix did not produce duplicate and out-of-order delivery: %v", values)
 	}
-	stats := readFaultStats(t, config, "server")
+	stats := readTestFaultStats(t, config, "server")
 	if stats.ReorderPackets == 0 || stats.DuplicatePackets == 0 || stats.OutageDropPackets == 0 ||
 		stats.FirstPacketNS == 0 || stats.DuplicateErrors != 0 {
 		t.Fatalf("kernel matrix counters are incomplete: %+v", stats)
@@ -331,10 +331,10 @@ func expectedLossesBetween(profile FaultProfile, firstOrdinal, packets int) int 
 
 func stableFaultStats(t *testing.T, config Config, direction string) faultStats {
 	t.Helper()
-	previous := readFaultStats(t, config, direction)
+	previous := readTestFaultStats(t, config, direction)
 	for range 20 {
 		time.Sleep(50 * time.Millisecond)
-		current := readFaultStats(t, config, direction)
+		current := readTestFaultStats(t, config, direction)
 		if current == previous {
 			return current
 		}
@@ -388,7 +388,7 @@ type faultStats struct {
 
 func assertFaultStats(t *testing.T, config Config, direction string, profile FaultProfile, exactPackets int) {
 	t.Helper()
-	stats := readFaultStats(t, config, direction)
+	stats := readTestFaultStats(t, config, direction)
 	if exactPackets > 0 && stats.Packets != uint64(exactPackets) {
 		t.Fatalf("%s packets = %d, want %d", direction, stats.Packets, exactPackets)
 	}
@@ -426,7 +426,7 @@ func assertFaultStats(t *testing.T, config Config, direction string, profile Fau
 	}
 }
 
-func readFaultStats(t *testing.T, config Config, direction string) faultStats {
+func readTestFaultStats(t *testing.T, config Config, direction string) faultStats {
 	t.Helper()
 	path := filepath.Join(bpfPinRoot, "flowersec-"+config.ClientNamespace+"-"+config.ServerNamespace, direction, "maps", "flowersec_fault_stats")
 	output, err := exec.Command(bpfTool, "-j", "map", "dump", "pinned", path).CombinedOutput()

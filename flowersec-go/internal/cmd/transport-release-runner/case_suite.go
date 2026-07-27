@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -138,7 +139,7 @@ func runCaseSuite(parent context.Context, reportPath string, destination *artifa
 	report := caseSuiteReport{
 		SchemaVersion: 1, Classification: "linux_transport_case_suite", SourceSHA: sourceSHA,
 		ManifestDigest: manifest.Digest, ManifestSHA256: hex.EncodeToString(manifest.SHA256Sum[:]),
-		Runner: baselineRunner{OS: "linux", Architecture: "amd64", KernelRelease: kernel},
+		Runner: baselineRunner{OS: runtime.GOOS, Architecture: runtime.GOARCH, KernelRelease: kernel},
 		Owner:  owner, Mode: mode, StartedAt: time.Now().UTC(),
 	}
 	for _, definition := range definitions {

@@ -129,8 +129,8 @@ func (*directBrowserCapacityArtifact) Start() {}
 // release cells. The caller must run in the client namespace so every browser
 // session traverses the veth link instead of a loopback shortcut.
 func openProductionBrowserCapacityEndpoint(ctx context.Context, config browserCapacityEndpointConfig) (*browserCapacityEndpoint, error) {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		return nil, errors.New("browser capacity endpoint requires Linux amd64")
+	if !supportedLinuxRunnerArchitecture(runtime.GOOS, runtime.GOARCH) {
+		return nil, errors.New("browser capacity endpoint requires Linux amd64 or arm64")
 	}
 	heldSessions := config.Sessions == 1000 && config.StreamsPerSession == 0 &&
 		(config.Topology == tunnelworkload.BrowserTunnelWTWSS || config.Topology == tunnelworkload.BrowserTunnelWTQUIC)

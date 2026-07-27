@@ -1632,11 +1632,11 @@
         {
           "ecosystem": "npm",
           "name": "@playwright/test",
-          "version": "1.58.2",
+          "version": "1.62.0",
           "declaredLicense": "Apache-2.0",
           "concludedLicense": "Apache-2.0",
-          "source": "https://registry.npmjs.org/@playwright/test/-/test-1.58.2.tgz",
-          "purl": "pkg:npm/%40playwright/test@1.58.2",
+          "source": "https://registry.npmjs.org/@playwright/test/-/test-1.62.0.tgz",
+          "purl": "pkg:npm/%40playwright/test@1.62.0",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -1646,9 +1646,9 @@
             "reviewedAt": "2026-07-22",
             "policyRevision": "source-license-policy-v2",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-akea+6bHYBBfA9uQqSYmlJXn61cTa+jbO87xVLCWbTqbWadRVmhxlXATaOjOgcBaWU4ePo0wB41KMFv3o35IXA==",
-            "sourceEvidenceSha256": "ff4a799734e4c0e7e680bec7369d0587a22470177c52e989ce8eda1a506cf2ed",
-            "expressionEvidenceSha256": "67370c8bb7cc5b6f79b1eb8344a83cbf4f538d4b10c590ad902a79d147e0db3e",
+            "sourceEvidenceValue": "sha512-9zOJ6ZQRAena31MpOH9VSzIz8Ou3YJ/wtY/eQm5T2uhfhG7/U3COrMS8xOtUrZrp9OgdmzEnIYODye3nY1VqzA==",
+            "sourceEvidenceSha256": "8cb667173db119220957770bd637a6731ea405480ab7173d762175b7d8d91cbe",
+            "expressionEvidenceSha256": "c6e7a442b18da8bbd74701b8ac62341b578dee01d6fe79146803df6c915b560c",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -6732,11 +6732,11 @@
         {
           "ecosystem": "npm",
           "name": "playwright",
-          "version": "1.58.2",
+          "version": "1.62.0",
           "declaredLicense": "Apache-2.0",
           "concludedLicense": "Apache-2.0",
-          "source": "https://registry.npmjs.org/playwright/-/playwright-1.58.2.tgz",
-          "purl": "pkg:npm/playwright@1.58.2",
+          "source": "https://registry.npmjs.org/playwright/-/playwright-1.62.0.tgz",
+          "purl": "pkg:npm/playwright@1.62.0",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -6746,9 +6746,9 @@
             "reviewedAt": "2026-07-22",
             "policyRevision": "source-license-policy-v2",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-vA30H8Nvkq/cPBnNw4Q8TWz1EJyqgpuinBcHET0YVJVFldr8JDNiU9LaWAE1KqSkRYazuaBhTpB5ZzShOezQ6A==",
-            "sourceEvidenceSha256": "de60beb61b404197a85e0de903e5eaf4cc6b97ee4a089a50bc376c1e300e09bb",
-            "expressionEvidenceSha256": "3430fc615ffd3aba7d1e40a5831bb4a74a2e71fd6862e127ba9dde626e5f9a85",
+            "sourceEvidenceValue": "sha512-Z14dG305dgaLu6foB1TXQagFiW8JfSUIUaUuPaKQ6NtBPKF1P/qXcqfh6c6K/icPqdy37JmjbiBXf6JNg6Sylw==",
+            "sourceEvidenceSha256": "6e3f2d7ccdf91a81d6fd99540227639a9941a3b566fc8eafe7107d84eac7c954",
+            "expressionEvidenceSha256": "6d8f3981425d94c563445291ad2e429a036d8a9037c99a0525f8bb1e3756f3b6",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -6766,11 +6766,11 @@
         {
           "ecosystem": "npm",
           "name": "playwright-core",
-          "version": "1.58.2",
+          "version": "1.62.0",
           "declaredLicense": "Apache-2.0",
           "concludedLicense": "Apache-2.0",
-          "source": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.58.2.tgz",
-          "purl": "pkg:npm/playwright-core@1.58.2",
+          "source": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.0.tgz",
+          "purl": "pkg:npm/playwright-core@1.62.0",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -6780,9 +6780,9 @@
             "reviewedAt": "2026-07-22",
             "policyRevision": "source-license-policy-v2",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==",
-            "sourceEvidenceSha256": "9d3ac697865bb58f2361f7f86c5087a1ce79149abe495d0d5151108b59351bcf",
-            "expressionEvidenceSha256": "33e2a07744689a06e22e9b65cccce1c50fe490d04c689418c7bff4f24b1f8b88",
+            "sourceEvidenceValue": "sha512-nsNRyq0r2zsG8AcRHWknc9QRA5XCueC7gWMrs+Gx2tlZn9hcl8zudfh00lhJPY1DE7NmZ6bDsT9g2yey8mXljA==",
+            "sourceEvidenceSha256": "91840fe7ba9e33159710b90e1041800529f7595b0eccb43d00e53c85eeb7ad48",
+            "expressionEvidenceSha256": "64ab5d0482ceb7817013c1995f752f93e5cf0c1b175765fac70786c2ccb341d3",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -8245,7 +8245,7 @@
         },
         {
           "from": "pkg:npm/%40floegence/flowersec-core@2.0.0",
-          "to": "pkg:npm/%40playwright/test@1.58.2",
+          "to": "pkg:npm/%40playwright/test@1.62.0",
           "kind": "dev"
         },
         {
@@ -8359,8 +8359,8 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40playwright/test@1.58.2",
-          "to": "pkg:npm/playwright@1.58.2",
+          "from": "pkg:npm/%40playwright/test@1.62.0",
+          "to": "pkg:npm/playwright@1.62.0",
           "kind": "runtime"
         },
         {
@@ -9429,13 +9429,13 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/playwright@1.58.2",
+          "from": "pkg:npm/playwright@1.62.0",
           "to": "pkg:npm/fsevents@2.3.2",
           "kind": "optional"
         },
         {
-          "from": "pkg:npm/playwright@1.58.2",
-          "to": "pkg:npm/playwright-core@1.58.2",
+          "from": "pkg:npm/playwright@1.62.0",
+          "to": "pkg:npm/playwright-core@1.62.0",
           "kind": "runtime"
         },
         {
@@ -51530,11 +51530,11 @@
     {
       "ecosystem": "npm",
       "name": "@playwright/test",
-      "version": "1.58.2",
+      "version": "1.62.0",
       "declaredLicense": "Apache-2.0",
       "concludedLicense": "Apache-2.0",
-      "source": "https://registry.npmjs.org/@playwright/test/-/test-1.58.2.tgz",
-      "purl": "pkg:npm/%40playwright/test@1.58.2",
+      "source": "https://registry.npmjs.org/@playwright/test/-/test-1.62.0.tgz",
+      "purl": "pkg:npm/%40playwright/test@1.62.0",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -51544,9 +51544,9 @@
         "reviewedAt": "2026-07-22",
         "policyRevision": "source-license-policy-v2",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-akea+6bHYBBfA9uQqSYmlJXn61cTa+jbO87xVLCWbTqbWadRVmhxlXATaOjOgcBaWU4ePo0wB41KMFv3o35IXA==",
-        "sourceEvidenceSha256": "ff4a799734e4c0e7e680bec7369d0587a22470177c52e989ce8eda1a506cf2ed",
-        "expressionEvidenceSha256": "67370c8bb7cc5b6f79b1eb8344a83cbf4f538d4b10c590ad902a79d147e0db3e",
+        "sourceEvidenceValue": "sha512-9zOJ6ZQRAena31MpOH9VSzIz8Ou3YJ/wtY/eQm5T2uhfhG7/U3COrMS8xOtUrZrp9OgdmzEnIYODye3nY1VqzA==",
+        "sourceEvidenceSha256": "8cb667173db119220957770bd637a6731ea405480ab7173d762175b7d8d91cbe",
+        "expressionEvidenceSha256": "c6e7a442b18da8bbd74701b8ac62341b578dee01d6fe79146803df6c915b560c",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -56630,11 +56630,11 @@
     {
       "ecosystem": "npm",
       "name": "playwright",
-      "version": "1.58.2",
+      "version": "1.62.0",
       "declaredLicense": "Apache-2.0",
       "concludedLicense": "Apache-2.0",
-      "source": "https://registry.npmjs.org/playwright/-/playwright-1.58.2.tgz",
-      "purl": "pkg:npm/playwright@1.58.2",
+      "source": "https://registry.npmjs.org/playwright/-/playwright-1.62.0.tgz",
+      "purl": "pkg:npm/playwright@1.62.0",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -56644,9 +56644,9 @@
         "reviewedAt": "2026-07-22",
         "policyRevision": "source-license-policy-v2",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-vA30H8Nvkq/cPBnNw4Q8TWz1EJyqgpuinBcHET0YVJVFldr8JDNiU9LaWAE1KqSkRYazuaBhTpB5ZzShOezQ6A==",
-        "sourceEvidenceSha256": "de60beb61b404197a85e0de903e5eaf4cc6b97ee4a089a50bc376c1e300e09bb",
-        "expressionEvidenceSha256": "3430fc615ffd3aba7d1e40a5831bb4a74a2e71fd6862e127ba9dde626e5f9a85",
+        "sourceEvidenceValue": "sha512-Z14dG305dgaLu6foB1TXQagFiW8JfSUIUaUuPaKQ6NtBPKF1P/qXcqfh6c6K/icPqdy37JmjbiBXf6JNg6Sylw==",
+        "sourceEvidenceSha256": "6e3f2d7ccdf91a81d6fd99540227639a9941a3b566fc8eafe7107d84eac7c954",
+        "expressionEvidenceSha256": "6d8f3981425d94c563445291ad2e429a036d8a9037c99a0525f8bb1e3756f3b6",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -56664,11 +56664,11 @@
     {
       "ecosystem": "npm",
       "name": "playwright-core",
-      "version": "1.58.2",
+      "version": "1.62.0",
       "declaredLicense": "Apache-2.0",
       "concludedLicense": "Apache-2.0",
-      "source": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.58.2.tgz",
-      "purl": "pkg:npm/playwright-core@1.58.2",
+      "source": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.62.0.tgz",
+      "purl": "pkg:npm/playwright-core@1.62.0",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -56678,9 +56678,9 @@
         "reviewedAt": "2026-07-22",
         "policyRevision": "source-license-policy-v2",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==",
-        "sourceEvidenceSha256": "9d3ac697865bb58f2361f7f86c5087a1ce79149abe495d0d5151108b59351bcf",
-        "expressionEvidenceSha256": "33e2a07744689a06e22e9b65cccce1c50fe490d04c689418c7bff4f24b1f8b88",
+        "sourceEvidenceValue": "sha512-nsNRyq0r2zsG8AcRHWknc9QRA5XCueC7gWMrs+Gx2tlZn9hcl8zudfh00lhJPY1DE7NmZ6bDsT9g2yey8mXljA==",
+        "sourceEvidenceSha256": "91840fe7ba9e33159710b90e1041800529f7595b0eccb43d00e53c85eeb7ad48",
+        "expressionEvidenceSha256": "64ab5d0482ceb7817013c1995f752f93e5cf0c1b175765fac70786c2ccb341d3",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -61801,7 +61801,7 @@
     },
     {
       "from": "pkg:generic/flowersec-source@2.0.0",
-      "to": "pkg:npm/%40playwright/test@1.58.2",
+      "to": "pkg:npm/%40playwright/test@1.62.0",
       "kind": "dev"
     },
     {
@@ -62160,8 +62160,8 @@
       "kind": "runtime"
     },
     {
-      "from": "pkg:npm/%40playwright/test@1.58.2",
-      "to": "pkg:npm/playwright@1.58.2",
+      "from": "pkg:npm/%40playwright/test@1.62.0",
+      "to": "pkg:npm/playwright@1.62.0",
       "kind": "runtime"
     },
     {
@@ -63230,13 +63230,13 @@
       "kind": "runtime"
     },
     {
-      "from": "pkg:npm/playwright@1.58.2",
+      "from": "pkg:npm/playwright@1.62.0",
       "to": "pkg:npm/fsevents@2.3.2",
       "kind": "optional"
     },
     {
-      "from": "pkg:npm/playwright@1.58.2",
-      "to": "pkg:npm/playwright-core@1.58.2",
+      "from": "pkg:npm/playwright@1.62.0",
+      "to": "pkg:npm/playwright-core@1.62.0",
       "kind": "runtime"
     },
     {
