@@ -21,13 +21,7 @@ struct TransportV2ContractTests {
   }
 
   @Test func appleCapabilitiesMatchSharedStrictCodecVectors() throws {
-    let workingDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    let relativePath = "testdata/transport_v2/capability_vectors.json"
-    let candidates = [
-      workingDirectory.appendingPathComponent(relativePath),
-      workingDirectory.deletingLastPathComponent().appendingPathComponent(relativePath),
-    ]
-    let url = try #require(candidates.first { FileManager.default.fileExists(atPath: $0.path) })
+    let url = packageRoot().appendingPathComponent("testdata/transport_v2/capability_vectors.json")
     let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
     let vectors = try #require(fixture?["vectors"] as? [[String: Any]])
     for (name, descriptor) in [

@@ -455,9 +455,8 @@ final class FlowersecRPCTests: XCTestCase {
   }
 
   func testEnvelopeRejectsNonPortableJSONIDs() throws {
-    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let fixtureData = try Data(
-      contentsOf: root.appendingPathComponent("testdata/runtime_contract_vectors.json")
+      contentsOf: packageRoot().appendingPathComponent("testdata/runtime_contract_vectors.json")
     )
     let fixture = try XCTUnwrap(
       JSONSerialization.jsonObject(with: fixtureData) as? [String: Any]
@@ -499,9 +498,8 @@ final class FlowersecRPCTests: XCTestCase {
   }
 
   func testClientRequestIDStopsAtPortableMaximum() async throws {
-    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let fixtureData = try Data(
-      contentsOf: root.appendingPathComponent("testdata/runtime_contract_vectors.json")
+      contentsOf: packageRoot().appendingPathComponent("testdata/runtime_contract_vectors.json")
     )
     let fixture = try XCTUnwrap(
       JSONSerialization.jsonObject(with: fixtureData) as? [String: Any]

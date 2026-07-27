@@ -1229,13 +1229,7 @@ final class TransportV2SessionTests: XCTestCase {
   }
 
   private func readSessionWireVectors() throws -> SessionWireVectors {
-    let workingDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    let relativePath = "testdata/transport_v2/session_wire_vectors.json"
-    let candidates = [
-      workingDirectory.appendingPathComponent(relativePath),
-      workingDirectory.deletingLastPathComponent().appendingPathComponent(relativePath),
-    ]
-    let url = try XCTUnwrap(candidates.first { FileManager.default.fileExists(atPath: $0.path) })
+    let url = packageRoot().appendingPathComponent("testdata/transport_v2/session_wire_vectors.json")
     return try JSONDecoder().decode(
       SessionWireVectors.self,
       from: Data(contentsOf: url)
