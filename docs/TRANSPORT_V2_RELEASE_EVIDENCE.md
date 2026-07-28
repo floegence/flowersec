@@ -24,15 +24,19 @@ approximately 50.779 seconds. Fifty-three seconds covers that probe, the
 measured 0.583-second recovery round trip, and one second of application and
 scheduler margin. The cold phase is fifty-five seconds so all ten operations
 retain that allowance across the unchanged five-per-second open-loop schedule.
-The edge RPC operation deadline is ten seconds and its phase deadline is eleven
-seconds. A frozen 30-stream release run at the former eight-second boundary
-matched 103 client-to-server and 99 server-to-client qlog packets. Their median
-clock-adjusted one-way delay was 0.160 seconds. The last server response packet
-was already sent but had an estimated 0.153 seconds left before client delivery,
-placing the measured lower bound at approximately 8.153 seconds. Ten seconds
-retains about 1.85 seconds of recovery and scheduler margin. The extra phase
-second covers the unchanged one-millisecond open-loop schedule without changing
-payload or operation count.
+The edge RPC operation deadline is twelve seconds and its phase deadline is
+thirteen seconds. A frozen 30-stream Ubuntu 24 release run at the former
+ten-second boundary matched 109 client-to-server and 100 server-to-client qlog
+packets with a 0.170-second median clock-adjusted one-way delay. When the client
+timed out, the server still had 2,455 bytes in four packets in flight. The last
+response data was sent at approximately 11.613 seconds on the client clock and
+fell into the frozen loss pattern. The server's 0.313-second smoothed RTT,
+0.016-second RTT variance, and 0.025-second acknowledgement delay place the
+earliest PTO recovery delivery at approximately 12.185 seconds, or 10.205
+seconds after the RPC operation began. Twelve seconds retains about 1.795
+seconds of recovery and scheduler margin. The extra phase second covers the
+unchanged one-millisecond open-loop schedule without changing payload or
+operation count.
 
 Each performance cell is fail-fast and has an independent five-minute
 wall-clock context. Static validation requires one complete run's phase limits
