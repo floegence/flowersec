@@ -333,8 +333,8 @@ func TestManifestDigestIsCanonicalAndTamperEvident(t *testing.T) {
 func TestManifestAcceptsMeasuredEdgeRecoveryBudgetWithinFiveMinuteCell(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	edge := profileByID(t, manifest, "edge-v1")
-	edge.Cold.OperationDeadlineSeconds = 27
-	edge.Cold.PhaseDeadlineSeconds = 29
+	edge.Cold.OperationDeadlineSeconds = 53
+	edge.Cold.PhaseDeadlineSeconds = 55
 	refreshManifestDigest(t, manifest)
 	if err := validateManifest(manifest); err != nil {
 		t.Fatalf("validate fail-fast edge budget: %v", err)

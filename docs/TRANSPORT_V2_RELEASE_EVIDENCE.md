@@ -16,15 +16,15 @@ The offline signing host requires the complete unsigned artifact directory, the 
 
 The runner owns real measurements. It must execute every owner in `case_registry.json`, every 15-run cell in `performance_manifest.json`, real-browser WebTransport, qlog/pcap semantics, common-kernel weak-network cases, migration/rebinding, PMTUD, capacity, soak, resource cleanup, and race. For `clean-01`, the base variant must run the base executable from the base checkout and the candidate variant must run the final executable from the final checkout; both manifests must be byte-identical. The raw index binds each variant's source SHA, executable digest, command digest, and report digest. It must not synthesize artifacts, run both variants from the final executable, or convert local smoke output into signed evidence.
 
-The `edge-v1` cold operation deadline is twenty-seven seconds. Under the frozen
+The `edge-v1` cold operation deadline is fifty-three seconds. Under the frozen
 outage and burst-loss schedule, release qlog captured 1-RTT recovery probes at
-2.157, 5.400, and 11.884 seconds without an acknowledgement. Doubling the last
-6.484-second PTO interval places the next recovery probe at approximately
-24.851 seconds. Twenty-seven seconds covers that probe, the measured
-0.583-second recovery round trip, and one second of application and scheduler
-margin. The cold phase is twenty-nine seconds so all ten operations retain that
-allowance across the unchanged five-per-second open-loop schedule. The RPC phase
-remains four seconds, equal to its operation deadline.
+2.156, 5.398, 11.882, and 24.847 seconds without an acknowledgement. Doubling
+the last 12.966-second PTO interval places the next recovery probe at
+approximately 50.779 seconds. Fifty-three seconds covers that probe, the
+measured 0.583-second recovery round trip, and one second of application and
+scheduler margin. The cold phase is fifty-five seconds so all ten operations
+retain that allowance across the unchanged five-per-second open-loop schedule.
+The RPC phase remains four seconds, equal to its operation deadline.
 
 Each performance cell is fail-fast and has an independent five-minute
 wall-clock context. Static validation requires one complete run's phase limits
