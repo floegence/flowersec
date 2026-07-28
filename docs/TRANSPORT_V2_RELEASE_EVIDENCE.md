@@ -24,19 +24,19 @@ approximately 50.779 seconds. Fifty-three seconds covers that probe, the
 measured 0.583-second recovery round trip, and one second of application and
 scheduler margin. The cold phase is fifty-five seconds so all ten operations
 retain that allowance across the unchanged five-per-second open-loop schedule.
-The edge RPC operation deadline is twelve seconds and its phase deadline is
-thirteen seconds. A frozen 30-stream Ubuntu 24 release run at the former
-ten-second boundary matched 109 client-to-server and 100 server-to-client qlog
-packets with a 0.170-second median clock-adjusted one-way delay. When the client
-timed out, the server still had 2,455 bytes in four packets in flight. The last
-response data was sent at approximately 11.613 seconds on the client clock and
-fell into the frozen loss pattern. The server's 0.313-second smoothed RTT,
-0.016-second RTT variance, and 0.025-second acknowledgement delay place the
-earliest PTO recovery delivery at approximately 12.185 seconds, or 10.205
-seconds after the RPC operation began. Twelve seconds retains about 1.795
-seconds of recovery and scheduler margin. The extra phase second covers the
-unchanged one-millisecond open-loop schedule without changing payload or
-operation count.
+The edge RPC operation deadline is fourteen seconds and its phase deadline is
+fifteen seconds. A frozen 30-stream Ubuntu 24 release run at the former
+twelve-second boundary matched 117 client-to-server and 118 server-to-client
+qlog packets with a 0.168-second median clock-adjusted one-way delay. The last
+1,153-byte client request was sent at approximately 13.013 seconds on the
+client qlog clock but remained in flight when the client ended at 13.686
+seconds. Its first PTO probes were sent at 13.520 seconds, placing their
+earliest server delivery at approximately 13.688 seconds before the response
+could traverse the return path. Relative to the approximately 1.686-second RPC
+operation start, the measured completion lower bound is approximately 12.34
+seconds. Fourteen seconds retains about 1.66 seconds of recovery and scheduler
+margin. The extra phase second covers the unchanged one-millisecond open-loop
+schedule without changing payload or operation count.
 
 Each performance cell is fail-fast and has an independent five-minute
 wall-clock context. Static validation requires one complete run's phase limits

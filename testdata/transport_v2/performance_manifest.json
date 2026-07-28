@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "digest": "sha256:a8d0b88c0b8ae9877ccbedf3a5aaafaf7a424302b50fb2819d3afff6f82cc751",
+  "digest": "sha256:50371c208d5cb69b3f38377857ec2670a3813a058ad501739f6511e28fe92406",
   "ratio_formula_version": "transport-ratio-v1",
   "run_count": 15,
   "bootstrap": {
@@ -135,8 +135,8 @@
         "response_bytes": 1024,
         "workers": 30,
         "retries": 0,
-        "operation_deadline_seconds": 12,
-        "phase_deadline_seconds": 13
+        "operation_deadline_seconds": 14,
+        "phase_deadline_seconds": 15
       },
       "bulk": {
         "warmup_bytes_per_direction": 65536,
