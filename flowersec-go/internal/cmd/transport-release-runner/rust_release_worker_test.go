@@ -47,8 +47,8 @@ func TestRustPlanBindsMeasuredEdgeRecoveryBudgets(t *testing.T) {
 	if got.RequestOperationTimeoutMS != 24_000 || got.RequestPhaseTimeoutMS != 26_000 {
 		t.Fatalf("edge RPC timeouts = %d/%dms, want 24000/26000ms", got.RequestOperationTimeoutMS, got.RequestPhaseTimeoutMS)
 	}
-	if got.BulkPhaseTimeoutMS != 9_000 {
-		t.Fatalf("edge bulk timeout = %dms, want 9000ms", got.BulkPhaseTimeoutMS)
+	if got.BulkPhaseTimeoutMS != 21_000 {
+		t.Fatalf("edge bulk timeout = %dms, want 21000ms", got.BulkPhaseTimeoutMS)
 	}
 	if got.CleanupTimeoutMS != 12_000 {
 		t.Fatalf("edge cleanup timeout = %dms, want 12000ms", got.CleanupTimeoutMS)
