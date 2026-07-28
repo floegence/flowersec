@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check stability-check transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check stability-check transportcheck-fast transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
 
 CHECK_INTEROP ?= 1
 
@@ -44,7 +44,7 @@ go-test:
 	cd tools/idlgen && go test -timeout=5m ./...
 	cd tools/releasenotes && go test -timeout=5m ./...
 	cd tools/stabilitycheck && go test -timeout=5m ./...
-	cd tools/transportcheck && go test -timeout=5m -count=1 ./...
+	$(MAKE) transportcheck-fast
 
 go-test-race:
 	cd flowersec-go && go test -race -timeout=5m ./...
@@ -288,6 +288,9 @@ stability-check:
 	cd tools/stabilitycheck && go run . verify-swift
 	cd tools/stabilitycheck && go run . verify-rust
 	cd tools/stabilitycheck && go run . report
+
+transportcheck-fast:
+	cd tools/transportcheck && go test -timeout=5m -count=1 -run '^(TestCheckedInManifestAndRegistryAreValid|TestFrozenSingleTestTargetsDoNotExceedFiveMinutes|TestCheckedInRegistryOwnersHaveMakeRecipes|TestCheckedInEvidenceTrustPolicyPinsExactRunner|TestManifestRejectsInvalidFrozenContract|TestManifestDigestIsCanonicalAndTamperEvident|TestManifestAcceptsMeasuredEdgeRecoveryBudgetWithinFiveMinuteCell|TestCaseRegistryRejectsInvalidOwnership|TestStrictJSONRejectsUnknownFields|TestEvidenceMetaSchemaAndGateClassifications|TestMakeTargetsUseEvidenceClassificationGate)$$' .
 
 transport-v2-unit:
 	cd tools/transportcheck && go test -timeout=5m -count=1 ./...

@@ -63,7 +63,8 @@ After every rebase, do all of the following before you continue:
 
 ```bash
 git diff origin/main...HEAD
-make check
+# Run focused checks for the affected behavior. The exact main candidate owns
+# the one complete pre-push gate described below.
 ```
 
 Merge and cleanup:
@@ -148,8 +149,8 @@ git config --global merge.conflictstyle zdiff3
 
 ## 3. Local quality gate (required)
 
-- Local gates are the source of truth. Run `make check` from the repository root before merge.
-- GitHub Actions deliberately does not repeat the full language, coverage, race, vulnerability, interoperability, or Swift matrix. The push/PR workflow is limited to changed-line and shell-syntax checks so hosted runner time is reserved for actual publication work.
+- Local gates are the source of truth. The exact synchronized `main` candidate runs `make check` once through the pre-push hook; do not run it on intermediate feature tips.
+- GitHub push and pull-request CI is intentionally limited to formatting, syntax, short unit tests, static contracts, generated-file consistency, and repository-boundary checks. It must not install browsers, build product packages, or run Docker, integration, renderer, terminal, stress, performance, weak-network, soak, or full-race jobs.
 - Every development worktree must run `make install-hooks` once after it is created.
 - The `pre-commit` hook automatically runs `make precommit` and blocks the commit on failure.
 - `make precommit` covers the fast high-value local gate:
@@ -159,12 +160,25 @@ git config --global merge.conflictstyle zdiff3
   - TypeScript: auto `npm ci --audit=false` when dependencies are missing or incomplete, then `lint`, `build`, `test`, `ts-cover-check`, and `verify:package`
   - Swift: package description, source guard, build, and tests
   - Rust: formatting, clippy, tests, docs, MSRV, package, and fuzz-target build checks
-- `pre-commit` does not replace the pre-merge gate: run `make check` explicitly before integration.
+- `pre-commit` does not replace final integration validation. Feature work runs focused and affected checks; after integration, the exact `main` push owns the single complete `make check` run through `pre-push`.
 - `make check` covers:
   - Go: fmt, lint, test, race, and vulncheck
   - TypeScript: `npm ci`, lint, test, build, and audit
   - IDL codegen consistency: `gen-check`
   - Swift and Rust release checks, coverage, package validation, examples, and interoperability smoke
+
+### 3.1 Mandatory validation layers
+
+- Daily RED/GREEN work runs only the exact test and the genuinely affected package, test file, or named test group.
+- After a failure, rerun the smallest failing case first. Expand only to the affected boundary after it passes; never restart a complete suite as the first diagnostic step.
+- Default package tests must remain fast. Real browsers, network namespaces, Docker, remote runners, child-process systems, large fixtures, stress, performance, weak-network, soak, resource-cleanup evidence, full-package race, and repository-wide integration checks belong to explicit final-integration targets, independent packages, or named selectors, not the daily default path.
+- Full-package race, complete `transportcheck`, browser, integration, stress, performance, weak-network, and resource-cleanup gates may run only after implementation is complete, the feature is synchronized, and the candidate SHA is frozen. Run them once for the exact `main` SHA through the pre-push gate.
+- `go test -parallel N` changes concurrency only for tests that explicitly call `t.Parallel()`; it is never a substitute for test ownership and layering.
+- Independent focused test groups may run in parallel only when they do not share ports, directories, process-global environment, browser state, containers, or a remote runner. Environment-mutating or shared-runner tests must remain serial.
+- A single test case should normally finish within five minutes. Terminate it at ten minutes and retain its output and artifacts.
+- Keep the final acceptance strength unchanged. Do not gain speed by deleting coverage, reducing workloads, weakening thresholds, skipping the final gate, or relabeling evidence; move tests to the correct layer instead.
+- Do not repeat the same expensive complete gate when neither code nor an acceptance contract changed.
+- Before starting an expensive command, classify it as focused, affected, or final pre-push. If it cannot be classified, do not default to the complete suite.
 
 ## 4. Release / tag policy
 

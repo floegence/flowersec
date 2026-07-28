@@ -36,7 +36,14 @@ measured completion lower bound is approximately 16.26 seconds. Eighteen
 seconds retains about 1.74 seconds of recovery and scheduler margin. The two
 additional phase seconds cover the persistent connection establishment and
 the unchanged one-millisecond open-loop schedule without changing payload or
-operation count.
+operation count. The edge bulk phase deadline is six seconds. At the former
+four-second boundary, the frozen Ubuntu 24 qlog still recorded 21,626 bytes in
+flight with an approximately 0.480-second smoothed RTT. Even without another
+loss, serializing that tail at the unchanged 1 Mbps limit and completing its
+delivery acknowledgement places the measured lower bound beyond 4.02 seconds.
+Six seconds retains approximately 1.98 seconds for burst-loss recovery and
+scheduler variation without changing the 64 KiB warmup, 128 KiB scored
+payload, bidirectional stream, network, certificate, or evidence contracts.
 
 Each performance cell is fail-fast and has an independent five-minute
 wall-clock context. Static validation requires one complete run's phase limits

@@ -37,7 +37,7 @@ func TestRustReleaseWorkerOwnsOnlyEdgeDirectRawQUIC(t *testing.T) {
 	}
 }
 
-func TestRustPlanBindsMeasuredEdgeRPCRecoveryBudget(t *testing.T) {
+func TestRustPlanBindsMeasuredEdgeRecoveryBudgets(t *testing.T) {
 	t.Parallel()
 	plan, _, err := transportrelease.LoadReleasePlan("../../../../testdata/transport_v2/performance_manifest.json")
 	if err != nil {
@@ -46,6 +46,9 @@ func TestRustPlanBindsMeasuredEdgeRPCRecoveryBudget(t *testing.T) {
 	got := rustPlan(plan.Edge)
 	if got.RequestOperationTimeoutMS != 18_000 || got.RequestPhaseTimeoutMS != 20_000 {
 		t.Fatalf("edge RPC timeouts = %d/%dms, want 18000/20000ms", got.RequestOperationTimeoutMS, got.RequestPhaseTimeoutMS)
+	}
+	if got.BulkPhaseTimeoutMS != 6_000 {
+		t.Fatalf("edge bulk timeout = %dms, want 6000ms", got.BulkPhaseTimeoutMS)
 	}
 }
 

@@ -322,6 +322,17 @@ test("release gates stay wired into local checks and publication workflows", () 
   assert.match(ciWorkflow, /^\s+run: scripts\/check-release-workflow-policy\.sh$/m);
 });
 
+test("daily Go tests select fast transport contracts while final check owns the complete suite", () => {
+  const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
+  const goTest = makefile.match(/^go-test:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const fast = makefile.match(/^transportcheck-fast:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const complete = makefile.match(/^transport-v2-unit:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(goTest, /^\t\$\(MAKE\) transportcheck-fast$/m);
+  assert.doesNotMatch(goTest, /tools\/transportcheck.*go test.*\.\/\.\.\./);
+  assert.match(fast, /go test -timeout=5m -count=1 -run/);
+  assert.match(complete, /tools\/transportcheck && go test -timeout=5m -count=1 \.\/\.\.\./);
+});
+
 test("release workflows pin actions and pass expressions through fields, not shell source", () => {
   const workflows = [
     ".github/workflows/ci.yml",
@@ -1217,6 +1228,29 @@ test("pre-push accepts only the complete release tag set for the gated commit", 
       }
     });
   }
+});
+
+test("pre-push runs the complete gate once for the exact main HEAD", (t) => {
+  const hook = path.join(sourceRoot, ".githooks/pre-push");
+  const head = run("git", ["-C", sourceRoot, "rev-parse", "HEAD"]);
+  const deleted = "0".repeat(40);
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-pre-push-bin-"));
+  const marker = path.join(bin, "make.args");
+  const make = path.join(bin, "make");
+  fs.writeFileSync(make, "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$FLOWERSEC_TEST_MAKE_MARKER\"\n", { mode: 0o755 });
+  t.after(() => fs.rmSync(bin, { recursive: true, force: true }));
+  const result = spawnSync("sh", [hook], {
+    cwd: sourceRoot,
+    encoding: "utf8",
+    env: isolatedEnvironment({
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      FLOWERSEC_TEST_MAKE_MARKER: marker,
+    }),
+    input: `refs/heads/main ${head} refs/heads/main ${deleted}\n`,
+  });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  assert.equal(fs.readFileSync(marker, "utf8").trim(), `-C ${sourceRoot} check`);
 });
 
 test("transport browser smoke builds a clean TypeScript checkout before bundle tests", () => {

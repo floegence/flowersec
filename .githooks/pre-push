@@ -2,16 +2,33 @@
 
 set -eu
 
+push_lines=$(mktemp)
 release_lines=$(mktemp)
-trap 'rm -f "$release_lines"' EXIT HUP INT TERM
+trap 'rm -f "$push_lines" "$release_lines"' EXIT HUP INT TERM
 
 while read -r local_ref local_sha remote_ref remote_sha; do
+  printf '%s %s %s %s\n' "$local_ref" "$local_sha" "$remote_ref" "$remote_sha" >> "$push_lines"
   case "$remote_ref" in
     refs/tags/flowersec-go/v*|refs/tags/flowersec-rust/v*|refs/tags/[0-9]*.[0-9]*.[0-9]*)
       printf '%s %s\n' "$remote_ref" "$local_sha" >> "$release_lines"
       ;;
   esac
 done
+
+main_line=$(awk '$3 == "refs/heads/main" && $2 !~ /^0+$/ { print; exit }' "$push_lines")
+if [ -n "$main_line" ]; then
+  main_sha=$(printf '%s\n' "$main_line" | awk '{ print $2 }')
+  repo_root=$(git rev-parse --show-toplevel)
+  head_sha=$(git -C "$repo_root" rev-parse HEAD)
+  if [ "$main_sha" != "$head_sha" ]; then
+    printf '%s\n' '[flowersec] main pre-push gate must verify the exact checked-out HEAD.' >&2
+    exit 1
+  fi
+  if [ "${FLOWERSEC_RELEASE_GATE_COMMIT:-}" != "$main_sha" ]; then
+    printf '%s\n' '[flowersec] running final main pre-push gate (make check)'
+    make -C "$repo_root" check
+  fi
+fi
 
 if [ ! -s "$release_lines" ]; then
   exit 0
