@@ -24,13 +24,15 @@ approximately 50.779 seconds. Fifty-three seconds covers that probe, the
 measured 0.583-second recovery round trip, and one second of application and
 scheduler margin. The cold phase is fifty-five seconds so all ten operations
 retain that allowance across the unchanged five-per-second open-loop schedule.
-The edge RPC operation deadline is eight seconds and its phase deadline is nine
-seconds. A frozen 30-stream release run reached the former four-second boundary
-with 1,260 bytes in two packets still in flight after a fresh PTO. Its measured
-0.334-second smoothed RTT and 0.076-second RTT variance imply a 0.662-second base
-PTO; eight seconds covers one exponential retry, the measured 0.371-second
-latest RTT, and application margin. The extra phase second covers the unchanged
-one-millisecond open-loop schedule without changing payload or operation count.
+The edge RPC operation deadline is ten seconds and its phase deadline is eleven
+seconds. A frozen 30-stream release run at the former eight-second boundary
+matched 103 client-to-server and 99 server-to-client qlog packets. Their median
+clock-adjusted one-way delay was 0.160 seconds. The last server response packet
+was already sent but had an estimated 0.153 seconds left before client delivery,
+placing the measured lower bound at approximately 8.153 seconds. Ten seconds
+retains about 1.85 seconds of recovery and scheduler margin. The extra phase
+second covers the unchanged one-millisecond open-loop schedule without changing
+payload or operation count.
 
 Each performance cell is fail-fast and has an independent five-minute
 wall-clock context. Static validation requires one complete run's phase limits
