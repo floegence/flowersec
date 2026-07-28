@@ -53,23 +53,34 @@ observed recovery RTT, requires about 2.3 seconds beyond that boundary. Nine
 seconds preserves roughly 0.7 seconds of scheduler margin without changing
 the 64 KiB warmup, 128 KiB scored payload, bidirectional stream, network,
 certificate, resource, zero-residual, or evidence contracts.
-The edge cleanup deadline is seven seconds. A frozen Ubuntu 24 run measured a
-13,138.9-millisecond server/client clock offset and 180.15-millisecond median
-one-way delay. Its final bulk payload reached the client at approximately
-22.238 seconds. After the initial completion response was lost, two PTOs put
+The edge outer cleanup deadline is twelve seconds. A frozen Ubuntu 24 run
+measured a 13,138.9-millisecond server/client clock offset and
+180.15-millisecond median one-way delay. Its final bulk payload reached the
+client at approximately 22.238 seconds. After the initial completion response
+was lost, two PTOs put
 the earliest retransmitted response arrival at approximately 26.109 seconds,
 so completion alone required approximately 3.872 seconds. A successful run's
 worst measured orderly-close tail after its final bulk payload was another
-1.809 seconds. Seven seconds covers that approximately 5.681-second lower
-bound with about 1.319 seconds of recovery and scheduler margin. A later
-clean-SHA run then failed during a cold public-session close: its client sent
-the close/control packet at approximately 6.314 seconds and was still sending
-at the former four-second internal boundary near 10.315 seconds, while the
-server remained active near 10.094 seconds. The Rust public session therefore
-uses the same seven-second close-flush upper bound as the frozen outer cleanup
-deadline, retaining about three seconds beyond that observed lower bound.
-This changes no completion handshake, network, workload, certificate, retry,
-zero-residual, or evidence semantics.
+1.809 seconds. A later clean-SHA run then failed during a cold public-session
+close: its client sent the close/control packet at approximately 6.314 seconds
+and was still sending at the former four-second internal boundary near 10.315
+seconds, while the server remained active near 10.094 seconds. The Rust public
+session therefore uses a seven-second close-flush upper bound.
+
+Another clean-SHA run proved that the outer cleanup cannot share that same
+seven-second bound. The outer phase first performs the release-complete
+exchange and then awaits the independently bounded session close. Its failed
+persistent connection had a 14,467.263-millisecond server/client clock offset
+and 183.290-millisecond median one-way delay. The final server bulk packet
+reached the client at approximately 20.956 seconds; after 21.428 seconds the
+client received no more packets, but three PTOs kept close/control traffic
+active through approximately 25.703 seconds before the outer seven-second
+timeout fired. Twelve seconds composes the measured completion allowance,
+rounded up to four seconds, the seven-second internal close bound, and one
+second of scheduler margin. One run's total phase limit remains ninety-nine
+seconds, below the unchanged five-minute cell watchdog. This changes no
+completion handshake, internal close bound, network, workload, certificate,
+retry, zero-residual, or evidence semantics.
 
 Each forced performance report preserves all fifteen independent runs and
 executes them as five sequential three-run shards. Every shard is fail-fast and
