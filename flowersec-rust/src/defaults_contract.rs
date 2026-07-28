@@ -26,5 +26,5 @@ fn v2_defaults_match_shared_stability_contract() {
     assert_eq!(deadlines.establish, Duration::from_secs(30));
     assert_eq!(deadlines.rekey_prepare, Duration::from_secs(10));
     assert_eq!(deadlines.rekey_completion, Duration::from_secs(30));
-    assert_eq!(deadlines.close_flush, Duration::from_secs(2));
+    assert_eq!(deadlines.close_flush, Duration::from_secs(4));
 }

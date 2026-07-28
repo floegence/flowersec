@@ -124,7 +124,7 @@ impl Default for SessionDeadlinesV2 {
             establish: Duration::from_secs(30),
             rekey_prepare: Duration::from_secs(10),
             rekey_completion: Duration::from_secs(30),
-            close_flush: Duration::from_secs(2),
+            close_flush: Duration::from_secs(4),
         }
     }
 }

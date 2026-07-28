@@ -61,7 +61,12 @@ cleanup budget. The subsequent orderly QUIC close still required an observed
 PTO already present in that trace. Four seconds covers that measured lower
 bound plus approximately 1.1 seconds of recovery and scheduler margin without
 changing the completion handshake, network, workload, zero-residual, or
-evidence semantics.
+evidence semantics. The Rust public session's internal close-flush deadline is
+also four seconds: a later clean-SHA edge run still had a client PTO at about
+2.15 seconds while the corresponding server connection remained active until
+about 2.78 seconds. Keeping the internal deadline equal to the frozen cleanup
+deadline prevents it from failing before the runner can enforce and measure
+that unchanged outer budget.
 
 Each forced performance report preserves all fifteen independent runs and
 executes them as five sequential three-run shards. Every shard is fail-fast and
