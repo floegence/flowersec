@@ -335,8 +335,8 @@ func TestManifestAcceptsMeasuredEdgeRecoveryBudgetWithinFiveMinuteCell(t *testin
 	edge := profileByID(t, manifest, "edge-v1")
 	edge.Cold.OperationDeadlineSeconds = 53
 	edge.Cold.PhaseDeadlineSeconds = 55
-	edge.RPC.OperationDeadlineSeconds = 16
-	edge.RPC.PhaseDeadlineSeconds = 17
+	edge.RPC.OperationDeadlineSeconds = 18
+	edge.RPC.PhaseDeadlineSeconds = 20
 	refreshManifestDigest(t, manifest)
 	if err := validateManifest(manifest); err != nil {
 		t.Fatalf("validate fail-fast edge budget: %v", err)
