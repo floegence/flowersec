@@ -44,6 +44,15 @@ delivery acknowledgement places the measured lower bound beyond 4.02 seconds.
 Six seconds retains approximately 1.98 seconds for burst-loss recovery and
 scheduler variation without changing the 64 KiB warmup, 128 KiB scored
 payload, bidirectional stream, network, certificate, or evidence contracts.
+The edge cleanup deadline is four seconds. In the frozen Ubuntu 24 run, burst
+loss discarded server packets 621 through 625, so the final completion
+acknowledgement consumed approximately 1.60 seconds of the former two-second
+cleanup budget. The subsequent orderly QUIC close still required an observed
+0.37-to-0.56-second round trip and could enter the approximately 0.7-second
+PTO already present in that trace. Four seconds covers that measured lower
+bound plus approximately 1.1 seconds of recovery and scheduler margin without
+changing the completion handshake, network, workload, zero-residual, or
+evidence semantics.
 
 Each performance cell is fail-fast and has an independent five-minute
 wall-clock context. Static validation requires one complete run's phase limits
@@ -52,7 +61,7 @@ elapsed time above five minutes. It does not reserve every phase failure limit
 for every successful run because the runner stops on the first failed phase.
 Launch rates, operation counts, payloads, and the zero-retry contract remain
 frozen; these phase budgets do not change the network, certificate, resource,
-cleanup, or evidence contracts.
+zero-residual, or evidence contracts.
 
 The three `CAP-STREAM-WT-*-100X128` cases freeze a 32,768 aggregate
 Go-runner-plus-Chromium process-tree file-descriptor ceiling and a 240
