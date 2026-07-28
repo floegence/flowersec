@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "digest": "sha256:b24a8c8650e0bda81b90929404081da4a72fa62c265412567121e332d21a1cd5",
+  "digest": "sha256:73729f58975074133b2532584e811b2cab7b87e123390182405ed9078c958173",
   "ratio_formula_version": "transport-ratio-v1",
   "run_count": 15,
   "bootstrap": {
@@ -126,8 +126,8 @@
         "max_inflight": 10,
         "retries": 0,
         "start_rate_per_second": 5,
-        "operation_deadline_seconds": 13,
-        "phase_deadline_seconds": 15
+        "operation_deadline_seconds": 27,
+        "phase_deadline_seconds": 29
       },
       "rpc": {
         "operations": 30,

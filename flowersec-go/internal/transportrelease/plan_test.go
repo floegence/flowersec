@@ -40,7 +40,7 @@ func TestLoadReleasePlanUsesFrozenWeakNetworkWorkloads(t *testing.T) {
 	}
 	if plan.Edge.ID != "edge-v1" || plan.Edge.CellWatchdogMinutes != 5 ||
 		plan.Edge.Cold.Operations != 10 || plan.Edge.Cold.StartRatePerSecond != 5 || plan.Edge.Cold.Retries != 0 ||
-		plan.Edge.Cold.OperationDeadlineSeconds != 13 || plan.Edge.Cold.PhaseDeadlineSeconds != 15 ||
+		plan.Edge.Cold.OperationDeadlineSeconds != 27 || plan.Edge.Cold.PhaseDeadlineSeconds != 29 ||
 		plan.Edge.RPC.Operations != 30 || plan.Edge.RPC.Workers != 30 || plan.Edge.RPC.OperationDeadlineSeconds != 4 || plan.Edge.RPC.PhaseDeadlineSeconds != 4 ||
 		plan.Edge.Bulk.ScoreBytesPerDirection != 128<<10 {
 		t.Fatalf("edge workload = %+v", plan.Edge)
