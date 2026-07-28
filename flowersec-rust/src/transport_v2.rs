@@ -25,6 +25,10 @@ pub trait CarrierStreamV2: fmt::Debug + Send + Sync + 'static {
     async fn write(&self, payload: &[u8]) -> io::Result<usize>;
     /// Finishes the local send direction while preserving receive progress.
     async fn close_write(&self) -> io::Result<()>;
+    /// Finishes an internal protocol stream after its bytes reach the peer transport.
+    async fn close_write_delivered(&self) -> io::Result<()> {
+        self.close_write().await
+    }
     /// Aborts both directions with the carrier's stable generic reset code.
     async fn reset(&self) -> io::Result<()>;
     /// Releases local resources after bounded shutdown.

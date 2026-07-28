@@ -382,6 +382,79 @@ struct BlockingApplicationReadCarrierStream {
     release: Arc<Notify>,
 }
 
+#[derive(Debug)]
+struct ControlFlushOrderCarrierSession {
+    inner: Arc<dyn CarrierSessionV2>,
+    next_order: Arc<AtomicU64>,
+    control_finish_order: Arc<AtomicU64>,
+    carrier_close_order: Arc<AtomicU64>,
+}
+
+#[derive(Debug)]
+struct ControlFlushOrderCarrierStream {
+    inner: Arc<dyn CarrierStreamV2>,
+    next_order: Arc<AtomicU64>,
+    control_finish_order: Arc<AtomicU64>,
+}
+
+#[async_trait::async_trait]
+impl CarrierSessionV2 for ControlFlushOrderCarrierSession {
+    fn kind(&self) -> CarrierKind {
+        self.inner.kind()
+    }
+
+    fn inbound_bidirectional_stream_capacity(&self) -> u32 {
+        self.inner.inbound_bidirectional_stream_capacity()
+    }
+
+    async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+        Ok(Arc::new(ControlFlushOrderCarrierStream {
+            inner: self.inner.open_stream().await?,
+            next_order: self.next_order.clone(),
+            control_finish_order: self.control_finish_order.clone(),
+        }))
+    }
+
+    async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
+        self.inner.accept_stream().await
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.carrier_close_order.store(
+            self.next_order.fetch_add(1, Ordering::AcqRel) + 1,
+            Ordering::Release,
+        );
+        self.inner.close().await
+    }
+}
+
+#[async_trait::async_trait]
+impl CarrierStreamV2 for ControlFlushOrderCarrierStream {
+    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(payload).await
+    }
+
+    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
+        self.inner.write(payload).await
+    }
+
+    async fn close_write(&self) -> io::Result<()> {
+        self.control_finish_order.store(
+            self.next_order.fetch_add(1, Ordering::AcqRel) + 1,
+            Ordering::Release,
+        );
+        self.inner.close_write().await
+    }
+
+    async fn reset(&self) -> io::Result<()> {
+        self.inner.reset().await
+    }
+
+    async fn close(&self) -> io::Result<()> {
+        self.inner.close().await
+    }
+}
+
 #[async_trait::async_trait]
 impl CarrierSessionV2 for BlockingApplicationReadCarrierSession {
     fn kind(&self) -> CarrierKind {
@@ -1415,6 +1488,38 @@ async fn close_flush_is_bounded_when_the_control_stream_stalls() {
         .expect_err("stalled close flush must report timeout");
     assert_eq!(error, SessionError::TimedOut);
     gate.store(false, Ordering::Release);
+    let _ = server.close().await;
+}
+
+#[tokio::test]
+async fn close_finishes_control_stream_before_carrier_shutdown() {
+    let (client_inner, server_carrier) = memory_carrier_pair_for_logical(1);
+    let next_order = Arc::new(AtomicU64::new(0));
+    let control_finish_order = Arc::new(AtomicU64::new(0));
+    let carrier_close_order = Arc::new(AtomicU64::new(0));
+    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(ControlFlushOrderCarrierSession {
+        inner: client_inner,
+        next_order,
+        control_finish_order: control_finish_order.clone(),
+        carrier_close_order: carrier_close_order.clone(),
+    });
+    let client_config = regression_config(SessionRole::Client, "ordered-control-flush", 1, None);
+    let server_config = regression_config(SessionRole::Server, "ordered-control-flush", 1, None);
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("client SessionV2");
+    let server = server.expect("server SessionV2");
+
+    client.close().await.expect("close client");
+    let finish_order = control_finish_order.load(Ordering::Acquire);
+    let close_order = carrier_close_order.load(Ordering::Acquire);
+    assert_ne!(finish_order, 0, "close must finish the control stream");
+    assert!(
+        finish_order < close_order,
+        "control FIN order {finish_order} must precede carrier close order {close_order}"
+    );
     let _ = server.close().await;
 }
 

@@ -1437,6 +1437,28 @@ impl RawQuicStream {
         }
     }
 
+    async fn wait_write_delivered(&self) -> io::Result<()> {
+        let send = self.send.lock().await;
+        let stopped = send.stopped();
+        drop(send);
+        tokio::select! {
+            biased;
+            _ = self.canceled.cancelled() => Err(local_reset_error()),
+            result = stopped => match result {
+                Ok(None) => Ok(()),
+                Ok(Some(code)) => Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!("raw QUIC send direction stopped with code {code}"),
+                )),
+                Err(quinn::StoppedError::ConnectionLost(
+                    quinn::ConnectionError::ApplicationClosed(close),
+                )) if close.error_code == VarInt::from_u32(SESSION_CLOSE_CODE)
+                    && close.reason.is_empty() => Ok(()),
+                Err(error) => Err(io::Error::new(io::ErrorKind::BrokenPipe, error)),
+            },
+        }
+    }
+
     /// Sends both RESET_STREAM and STOP_SENDING using Flowersec's stable reset code.
     pub async fn reset(&self) -> io::Result<()> {
         if self.reset.swap(true, Ordering::AcqRel) {
@@ -1476,6 +1498,11 @@ impl crate::transport_v2::CarrierStreamV2 for RawQuicStream {
 
     async fn close_write(&self) -> io::Result<()> {
         RawQuicStream::close_write(self).await
+    }
+
+    async fn close_write_delivered(&self) -> io::Result<()> {
+        RawQuicStream::close_write(self).await?;
+        self.wait_write_delivered().await
     }
 
     async fn reset(&self) -> io::Result<()> {

@@ -2071,7 +2071,8 @@ async fn close_session_v2(session: &EncryptedSessionV2) -> io::Result<()> {
                 InnerRecordTypeV2::SessionClose,
                 &NORMAL_CLOSE_REASON_V2.to_be_bytes(),
             )
-            .await
+            .await?;
+            session.control.close_write_delivered().await
         })
         .await
         {
