@@ -175,9 +175,9 @@ impl Connector {
         let mut config = plan.session_config;
         config.local_endpoint_instance_id = plan.local_endpoint_instance_id;
         config.expected_peer_endpoint_instance_id = plan.expected_peer_endpoint_instance_id;
-        let limits = RawQuicLimits::default()
-            .with_session_v2_logical_stream_limit(config.max_inbound_streams)
-            .map_err(|_| error(path, ConnectErrorCode::InvalidInput))?;
+        let limits =
+            RawQuicLimits::for_session_v2(config.max_inbound_streams, self.options.connect_timeout)
+                .map_err(|_| error(path, ConnectErrorCode::InvalidInput))?;
         let profile = if path == PathKind::Direct {
             RawQuicPathProfile::Direct
         } else {

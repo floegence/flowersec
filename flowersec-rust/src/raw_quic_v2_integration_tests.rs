@@ -616,6 +616,16 @@ fn limits_are_bounded_and_validate_relationships() {
 }
 
 #[test]
+fn production_session_limits_preserve_the_public_handshake_deadline() {
+    for timeout in [Duration::from_secs(13), Duration::from_secs(300)] {
+        let limits = RawQuicLimits::for_session_v2(128, timeout).expect("production limits");
+        assert_eq!(limits.max_inbound_bidirectional_streams, 130);
+        assert_eq!(limits.handshake_idle_timeout, timeout);
+        limits.validate().expect("deadline-bound production limits");
+    }
+}
+
+#[test]
 fn initial_pto_avoids_the_default_seven_second_fourth_probe() {
     assert_eq!(RAW_QUIC_INITIAL_RTT, Duration::from_millis(250));
     let initial_pto = RAW_QUIC_INITIAL_RTT * 3;

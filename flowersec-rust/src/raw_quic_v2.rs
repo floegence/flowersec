@@ -185,6 +185,17 @@ pub struct RawQuicLimits {
 }
 
 impl RawQuicLimits {
+    pub(crate) fn for_session_v2(
+        logical_max: u16,
+        handshake_idle_timeout: Duration,
+    ) -> Result<Self, RawQuicError> {
+        Self {
+            handshake_idle_timeout,
+            ..Self::default()
+        }
+        .with_session_v2_logical_stream_limit(logical_max)
+    }
+
     /// Applies the exact SessionV2 carrier stream limit while preserving the
     /// remaining QUIC transport policy.
     pub fn with_session_v2_logical_stream_limit(

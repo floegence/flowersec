@@ -79,9 +79,9 @@ impl Acceptor {
         if options.accept_timeout.is_zero() {
             return Err(error(AcceptErrorCode::InvalidInput));
         }
-        let limits = RawQuicLimits::default()
-            .with_session_v2_logical_stream_limit(options.max_inbound_streams)
-            .map_err(|_| error(AcceptErrorCode::InvalidInput))?;
+        let limits =
+            RawQuicLimits::for_session_v2(options.max_inbound_streams, options.accept_timeout)
+                .map_err(|_| error(AcceptErrorCode::InvalidInput))?;
         let config = RawQuicServerConfig::new(
             RawQuicPathProfile::Direct,
             options.certificate_chain_der,
