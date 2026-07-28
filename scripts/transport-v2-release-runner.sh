@@ -58,10 +58,40 @@ install -d -o root -g root -m 0700 "$report_directory"
 build_directory=
 probe_namespace=
 probe_created=0
+readonly bpf_pin_parent=/sys/fs/bpf
+
+network_lab_namespaces() {
+  local namespace
+  while read -r namespace _; do
+    [[ $namespace =~ ^f[csr]-[0-9a-f]{8}$ ]] && printf '%s\n' "$namespace"
+  done < <(ip netns list)
+}
+
+network_lab_bpf_pins() {
+  local path name
+  while IFS= read -r path; do
+    name=${path##*/}
+    [[ $name =~ ^flowersec-fc-[0-9a-f]{8}-fs-[0-9a-f]{8}$ ]] && printf '%s\n' "$path"
+  done < <(find "$bpf_pin_parent" -xdev -mindepth 1 -maxdepth 1 -type d -name 'flowersec-fc-????????-fs-????????' -print)
+}
+
+cleanup_network_labs() {
+  local namespace path
+  while IFS= read -r namespace; do
+    [[ -n $namespace ]] && ip netns del "$namespace" >/dev/null 2>&1 || true
+  done < <(network_lab_namespaces)
+  while IFS= read -r path; do
+    [[ -d $path && ! -L $path ]] || continue
+    find "$path" -xdev -type f -delete >/dev/null 2>&1 || true
+    find "$path" -xdev -depth -type d -exec rmdir {} \; >/dev/null 2>&1 || true
+  done < <(network_lab_bpf_pins)
+}
+
 cleanup() {
   if ((probe_created)); then
     ip netns del "$probe_namespace" >/dev/null 2>&1 || true
   fi
+  cleanup_network_labs
   if [[ $build_directory == /tmp/flowersec-transport-release-build.* && -d $build_directory ]]; then
     rm -rf -- "$build_directory"
   fi
@@ -109,6 +139,8 @@ done
 [[ -x $host_bpftool ]] || fail "exact-host-kernel bpftool is unavailable"
 [[ -w /sys/fs/bpf ]] || fail "the privileged container cannot write the host BPF filesystem"
 [[ -w /sys/fs/cgroup && -r /sys/fs/cgroup/cgroup.controllers ]] || fail "writable cgroup v2 delegation is unavailable"
+[[ -z $(network_lab_namespaces) ]] || fail "runner network namespace state is not fresh"
+[[ -z $(network_lab_bpf_pins) ]] || fail "runner BPF pin state is not fresh"
 
 readonly cgroup_supervisor=/sys/fs/cgroup/flowersec-release-supervisor
 mkdir -p "$cgroup_supervisor"
@@ -275,3 +307,6 @@ if [[ $target == bench-transport-capacity ]]; then
 else
   collect_part "$target" "$report" "$report_directory"
 fi
+
+[[ -z $(network_lab_namespaces) ]] || fail "runner left network namespaces"
+[[ -z $(network_lab_bpf_pins) ]] || fail "runner left BPF pins"

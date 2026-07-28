@@ -155,3 +155,16 @@ test("release wrapper delegates cgroup controllers with a bounded live-process r
   assert.match(runner, /sleep 0\.05/);
   assert.match(runner, /within 5 seconds/);
 });
+
+test("release wrapper owns and cleans only exact network-lab kernel state", () => {
+  const runner = fs.readFileSync(runnerPath, "utf8");
+  assert.match(runner, /readonly bpf_pin_parent=\/sys\/fs\/bpf/);
+  assert.match(runner, /\^f\[csr\]-\[0-9a-f\]\{8\}\$/);
+  assert.match(runner, /\^flowersec-fc-\[0-9a-f\]\{8\}-fs-\[0-9a-f\]\{8\}\$/);
+  assert.match(runner, /find "\$bpf_pin_parent" -xdev -mindepth 1 -maxdepth 1 -type d -name 'flowersec-fc-\?\?\?\?\?\?\?\?-fs-\?\?\?\?\?\?\?\?'/);
+  assert.match(runner, /ip netns del "\$namespace"/);
+  assert.match(runner, /find "\$path" -xdev -type f -delete/);
+  assert.match(runner, /find "\$path" -xdev -depth -type d -exec rmdir \{\} \\;/);
+  assert.match(runner, /runner left network namespaces/);
+  assert.match(runner, /runner left BPF pins/);
+});
