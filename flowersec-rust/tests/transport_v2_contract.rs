@@ -225,6 +225,46 @@ fn release_runner_waits_for_client_cold_cleanup_before_server_teardown() {
 }
 
 #[test]
+fn release_runner_reconciles_final_bulk_delivery_before_session_teardown() {
+    let source = include_str!("../examples/transport_release_runner.rs");
+    for required in [
+        "finish_release_client(session.clone())",
+        "finish_release_server(session.clone())",
+        "session.wait_closed().await",
+        "release-complete",
+    ] {
+        assert!(
+            source.contains(required),
+            "release runner misses final delivery reconciliation: {required}"
+        );
+    }
+
+    let client_cleanup = source
+        .find("finish_release_client(session.clone())")
+        .expect("client completion handshake");
+    let client_close = source[client_cleanup..]
+        .find("session.close().await")
+        .map(|offset| client_cleanup + offset)
+        .expect("client authoritative close");
+    assert!(
+        client_cleanup < client_close,
+        "client must receive the server completion acknowledgement before closing"
+    );
+
+    let server_cleanup = source
+        .find("finish_release_server(session.clone())")
+        .expect("server completion handshake");
+    let server_wait = source[server_cleanup..]
+        .find("session.wait_closed().await")
+        .map(|offset| server_cleanup + offset)
+        .expect("server peer-close wait");
+    assert!(
+        server_cleanup < server_wait,
+        "server must acknowledge completion before accepting the client close"
+    );
+}
+
+#[test]
 fn stream_terminal_errors_are_typed_and_redacted() {
     let snapshots = [
         (

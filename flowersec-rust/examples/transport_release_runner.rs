@@ -290,7 +290,11 @@ async fn run_server(request: ServerRequest) -> Result<RoleResult, AnyError> {
     let cleanup_start = capture_resource_snapshot()?;
     tokio::time::timeout(
         Duration::from_millis(request.plan.cleanup_timeout_ms),
-        async { accept_orderly_session_close(session.close().await) },
+        async {
+            finish_release_server(session.clone()).await?;
+            accept_orderly_session_close(session.wait_closed().await)?;
+            Ok::<(), AnyError>(())
+        },
     )
     .await
     .map_err(|_| "server cleanup timed out")??;
@@ -366,7 +370,11 @@ async fn run_client(request: ClientRequest) -> Result<RoleResult, AnyError> {
     let cleanup_started = Instant::now();
     tokio::time::timeout(
         Duration::from_millis(request.plan.cleanup_timeout_ms),
-        async { accept_orderly_session_close(session.close().await) },
+        async {
+            finish_release_client(session.clone()).await?;
+            accept_orderly_session_close(session.close().await)?;
+            Ok::<(), AnyError>(())
+        },
     )
     .await
     .map_err(|_| "client cleanup timed out")??;
@@ -626,6 +634,32 @@ async fn run_bulk_client(
     )
     .await?;
     Ok(vec![warmup, score])
+}
+
+async fn finish_release_server(session: Arc<dyn Session>) -> Result<(), AnyError> {
+    let incoming = session.accept_stream().await?;
+    if incoming.kind() != "release-complete" {
+        return Err("unexpected release completion stream kind".into());
+    }
+    let stream = incoming.into_stream();
+    if read_to_end(stream.as_ref()).await? != b"done" {
+        return Err("release completion payload is invalid".into());
+    }
+    write_all(stream.as_ref(), b"ok").await?;
+    stream.close_write().await?;
+    Ok(())
+}
+
+async fn finish_release_client(session: Arc<dyn Session>) -> Result<(), AnyError> {
+    let stream = session
+        .open_stream("release-complete", JsonObject::new())
+        .await?;
+    write_all(stream.as_ref(), b"done").await?;
+    stream.close_write().await?;
+    if read_to_end(stream.as_ref()).await? != b"ok" {
+        return Err("release completion acknowledgement is invalid".into());
+    }
+    Ok(())
 }
 
 async fn bulk_role_phase(
