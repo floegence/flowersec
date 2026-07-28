@@ -36,14 +36,17 @@ measured completion lower bound is approximately 16.26 seconds. Eighteen
 seconds retains about 1.74 seconds of recovery and scheduler margin. The two
 additional phase seconds cover the persistent connection establishment and
 the unchanged one-millisecond open-loop schedule without changing payload or
-operation count. The edge bulk phase deadline is six seconds. At the former
+operation count. The edge bulk phase deadline is nine seconds. At the former
 four-second boundary, the frozen Ubuntu 24 qlog still recorded 21,626 bytes in
-flight with an approximately 0.480-second smoothed RTT. Even without another
-loss, serializing that tail at the unchanged 1 Mbps limit and completing its
-delivery acknowledgement places the measured lower bound beyond 4.02 seconds.
-Six seconds retains approximately 1.98 seconds for burst-loss recovery and
-scheduler variation without changing the 64 KiB warmup, 128 KiB scored
-payload, bidirectional stream, network, certificate, or evidence contracts.
+flight with an approximately 0.480-second smoothed RTT. That first lower bound
+required six seconds. A later clean-SHA Ubuntu 24 run reached the six-second
+boundary with 34,320 client bytes and 7,200 server bytes still in flight and
+recent 1.52-to-1.57-second PTO intervals. Serializing the remaining 41,520
+bytes at the unchanged 1 Mbps rate, then allowing one further PTO and the
+observed recovery RTT, requires about 2.3 seconds beyond that boundary. Nine
+seconds preserves roughly 0.7 seconds of scheduler margin without changing
+the 64 KiB warmup, 128 KiB scored payload, bidirectional stream, network,
+certificate, resource, zero-residual, or evidence contracts.
 The edge cleanup deadline is four seconds. In the frozen Ubuntu 24 run, burst
 loss discarded server packets 621 through 625, so the final completion
 acknowledgement consumed approximately 1.60 seconds of the former two-second
