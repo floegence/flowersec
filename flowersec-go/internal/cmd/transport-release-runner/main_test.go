@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,43 @@ func TestWorkloadScheduleContainsEveryIndependentRun(t *testing.T) {
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		if counts[kind] != 15 {
 			t.Fatalf("%s run count = %d, want 15", kind, counts[kind])
+		}
+	}
+}
+
+func TestForcedProfileRunShardsPreserveFifteenIndependentRuns(t *testing.T) {
+	want := [][]int{
+		{1, 2, 3},
+		{4, 5, 6},
+		{7, 8, 9},
+		{10, 11, 12},
+		{13, 14, 15},
+	}
+	if got := forcedProfileRunShards(15); !reflect.DeepEqual(got, want) {
+		t.Fatalf("forced profile run shards = %v, want %v", got, want)
+	}
+}
+
+func TestRunForcedProfileShardsUsesFiveSequentialWatchdogContexts(t *testing.T) {
+	var runs []int
+	var contexts []context.Context
+	err := runForcedProfileShards(context.Background(), 15, 5*time.Minute, func(ctx context.Context, run int) error {
+		runs = append(runs, run)
+		contexts = append(contexts, ctx)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, run := range runs {
+		if run != index+1 {
+			t.Fatalf("run order = %v, want 1..15", runs)
+		}
+		if index%forcedProfileRunsPerShard != 0 && contexts[index] != contexts[index-1] {
+			t.Fatalf("run %d unexpectedly changed shard context", run)
+		}
+		if index >= forcedProfileRunsPerShard && index%forcedProfileRunsPerShard == 0 && contexts[index] == contexts[index-1] {
+			t.Fatalf("run %d reused the preceding shard context", run)
 		}
 	}
 }

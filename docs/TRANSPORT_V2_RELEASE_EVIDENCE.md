@@ -63,11 +63,15 @@ bound plus approximately 1.1 seconds of recovery and scheduler margin without
 changing the completion handshake, network, workload, zero-residual, or
 evidence semantics.
 
-Each performance cell is fail-fast and has an independent five-minute
-wall-clock context. Static validation requires one complete run's phase limits
-to fit that context; the signed report separately rejects actual 15-run cell
-elapsed time above five minutes. It does not reserve every phase failure limit
-for every successful run because the runner stops on the first failed phase.
+Each forced performance report preserves all fifteen independent runs and
+executes them as five sequential three-run shards. Every shard is fail-fast and
+has a fresh five-minute wall-clock context; runs inside a shard remain
+sequential because they share the privileged network runner. Static validation
+requires one complete run's phase limits to fit that context. Release
+orchestration must also apply the 595-second stage hard stop, preserve partial
+artifacts on failure, and reject a report that does not contain runs 1 through
+15 exactly once. Sharding changes only watchdog ownership: it does not reduce
+the run count, operations, payload, network faults, thresholds, or evidence.
 Launch rates, operation counts, payloads, and the zero-retry contract remain
 frozen; these phase budgets do not change the network, certificate, resource,
 zero-residual, or evidence contracts.

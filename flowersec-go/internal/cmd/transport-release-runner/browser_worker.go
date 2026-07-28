@@ -74,17 +74,16 @@ func runBrowserCell(parent context.Context, reportPath string, destination *arti
 		StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
-	ctx, cancel := newCellContext(parent, cellDeadline)
-	defer cancel()
-	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
-		result, err := runBrowserNetworkCarrier(ctx, topology, profile, runNumber, frozenBPFObject, sourceRoot, destination)
+	err = runForcedProfileShards(parent, plan.RunCount, cellDeadline, func(shardCtx context.Context, runNumber int) error {
+		result, err := runBrowserNetworkCarrier(shardCtx, topology, profile, runNumber, frozenBPFObject, sourceRoot, destination)
 		if err != nil {
-			return fmt.Errorf("%s browser WebTransport run %d: %w", profile.ID, runNumber, err)
+			return fmt.Errorf("run %d: %w", runNumber, err)
 		}
 		report.Results = append(report.Results, result)
-	}
-	if err := context.Cause(ctx); err != nil {
-		return err
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("%s browser WebTransport: %w", profile.ID, err)
 	}
 	report.FinishedAt = time.Now().UTC()
 	if err := destination.Verify(); err != nil {

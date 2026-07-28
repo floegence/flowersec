@@ -360,6 +360,46 @@ type scheduledCell struct {
 	Runs    []int
 }
 
+const forcedProfileRunsPerShard = 3
+
+func forcedProfileRunShards(runCount int) [][]int {
+	if runCount <= 0 {
+		return nil
+	}
+	shards := make([][]int, 0, (runCount+forcedProfileRunsPerShard-1)/forcedProfileRunsPerShard)
+	for first := 1; first <= runCount; first += forcedProfileRunsPerShard {
+		last := min(first+forcedProfileRunsPerShard-1, runCount)
+		runs := make([]int, 0, last-first+1)
+		for run := first; run <= last; run++ {
+			runs = append(runs, run)
+		}
+		shards = append(shards, runs)
+	}
+	return shards
+}
+
+func runForcedProfileShards(parent context.Context, runCount int, shardDeadline time.Duration, run func(context.Context, int) error) error {
+	if parent == nil || runCount <= 0 || shardDeadline <= 0 || run == nil {
+		return errors.New("forced profile shard contract is invalid")
+	}
+	for _, shard := range forcedProfileRunShards(runCount) {
+		shardCtx, cancelShard := newCellContext(parent, shardDeadline)
+		shardStarted := time.Now()
+		for _, runNumber := range shard {
+			if err := run(shardCtx, runNumber); err != nil {
+				cancelShard()
+				return err
+			}
+		}
+		deadlineErr := completedWithin(shardCtx, shardStarted, shardDeadline)
+		cancelShard()
+		if deadlineErr != nil {
+			return fmt.Errorf("runs %d-%d shard watchdog: %w", shard[0], shard[len(shard)-1], deadlineErr)
+		}
+	}
+	return nil
+}
+
 func workloadSchedule(runCount int) []scheduledCell {
 	carriers := []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport}
 	schedule := make([]scheduledCell, 0, len(carriers))
@@ -578,19 +618,17 @@ func runNetworkCell(parent context.Context, reportPath string, destination *arti
 		BPFObjectSHA256: hex.EncodeToString(bpfDigest[:]), StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
-	cellCtx, cancelCell := newCellContext(parent, cellDeadline)
-	defer cancelCell()
-	cellStarted := time.Now()
-	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
-		result, err := runNetworkCarrier(cellCtx, kind, profile, runNumber, frozenBPFObject, destination)
+	err = runForcedProfileShards(parent, plan.RunCount, cellDeadline, func(shardCtx context.Context, runNumber int) error {
+		result, err := runNetworkCarrier(shardCtx, kind, profile, runNumber, frozenBPFObject, destination)
 		if err != nil {
-			return fmt.Errorf("%s %s run %d: %w", profile.ID, kind, runNumber, err)
+			return fmt.Errorf("run %d: %w", runNumber, err)
 		}
 		result.Run = runNumber
 		report.Results = append(report.Results, result)
-	}
-	if err := completedWithin(cellCtx, cellStarted, cellDeadline); err != nil {
-		return fmt.Errorf("%s %s cell watchdog: %w", profile.ID, kind, err)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", profile.ID, kind, err)
 	}
 	report.FinishedAt = time.Now().UTC()
 	if err := destination.Verify(); err != nil {
@@ -767,19 +805,17 @@ func runTunnelCell(parent context.Context, reportPath string, destination *artif
 		BPFObjectSHA256: bpfDigest, StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
-	cellCtx, cancelCell := newCellContext(parent, cellDeadline)
-	defer cancelCell()
-	cellStarted := time.Now()
-	for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
-		result, err := runNetworkTunnel(cellCtx, topology, profile, runNumber, frozenBPFObject, destination)
+	err = runForcedProfileShards(parent, plan.RunCount, cellDeadline, func(shardCtx context.Context, runNumber int) error {
+		result, err := runNetworkTunnel(shardCtx, topology, profile, runNumber, frozenBPFObject, destination)
 		if err != nil {
-			return fmt.Errorf("%s %s run %d: %w", profile.ID, topology, runNumber, err)
+			return fmt.Errorf("run %d: %w", runNumber, err)
 		}
 		result.Run = runNumber
 		report.Results = append(report.Results, result)
-	}
-	if err := completedWithin(cellCtx, cellStarted, cellDeadline); err != nil {
-		return fmt.Errorf("%s %s cell watchdog: %w", profile.ID, topology, err)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", profile.ID, topology, err)
 	}
 	report.FinishedAt = time.Now().UTC()
 	if err := destination.Verify(); err != nil {
