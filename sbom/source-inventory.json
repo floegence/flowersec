@@ -11030,6 +11030,108 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "darling",
+          "version": "0.21.3",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/darling",
+          "purl": "pkg:cargo/darling@0.21.3",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0",
+            "sourceEvidenceSha256": "5b1eb87ba8cea8ccccb6a50ba04fd8a61acd7de2e87c290f1a62bb5c70a8533c",
+            "expressionEvidenceSha256": "5bc97b902bae60e4f11ec76ee9cc4eaf11fedf52a1de38098a5d81371eeb5937",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "darling_core",
+          "version": "0.21.3",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/darling",
+          "purl": "pkg:cargo/darling_core@0.21.3",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4",
+            "sourceEvidenceSha256": "b655a282aab6122f375871335877ab1868bdb3f15e4c99ecc6d9ca44e1d06ef6",
+            "expressionEvidenceSha256": "a31505e3f73666758d054aaa319b224438302ce0718c75fe69d45bc577939279",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "darling_macro",
+          "version": "0.21.3",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/darling",
+          "purl": "pkg:cargo/darling_macro@0.21.3",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81",
+            "sourceEvidenceSha256": "c5e6d3973c27f738b542afbcf0d5c6a4a5e59f7c5bb489b04b2f8f0200d0bf47",
+            "expressionEvidenceSha256": "449589f1d51548d63e2f854fbe783ca2c89359138f34312c4b7276edaed62261",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "data-encoding",
           "version": "2.11.0",
           "declaredLicense": "MIT",
@@ -11320,6 +11422,40 @@
             "sourceEvidenceValue": "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47",
             "sourceEvidenceSha256": "29294610a6956d6d55f8cdd21bb58d70f029a9ecce9e5c812a1f8ae90efdc8bf",
             "expressionEvidenceSha256": "e70ab377fda82aad3e6832d5b8628eaa849da087fa31d1f8998cb9ecb0dde7e3",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "equivalent",
+          "version": "1.0.2",
+          "declaredLicense": "Apache-2.0 OR MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/indexmap-rs/equivalent",
+          "purl": "pkg:cargo/equivalent@1.0.2",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "Apache-2.0 OR MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f",
+            "sourceEvidenceSha256": "b362e83310b8f5b031bcd047b245c6be8c6b92969b5a63d3711fce580fe1be93",
+            "expressionEvidenceSha256": "a68d6191a0d2eb5cd988c6ee813159aad37ca8bdb810ef9c59c9dc89a2c06e21",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -12050,6 +12186,40 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "hashbrown",
+          "version": "0.17.1",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/rust-lang/hashbrown",
+          "purl": "pkg:cargo/hashbrown@0.17.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a",
+            "sourceEvidenceSha256": "d509a45c38ffd21644aca7d81b493b6fd06aaaa4bd93e02faa4831df1a770655",
+            "expressionEvidenceSha256": "382d4a0115b270ec20b809566ad457d432db1296e27d4d77fa5c8519abc71c63",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "hkdf",
           "version": "0.12.4",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -12390,6 +12560,40 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "ident_case",
+          "version": "1.0.1",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/ident_case",
+          "purl": "pkg:cargo/ident_case@1.0.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39",
+            "sourceEvidenceSha256": "cd778f8dad4d22024b196ff2bbae51e7b222a1c91c4b68b543fe3526e5244119",
+            "expressionEvidenceSha256": "8d17096d9da34c16efef6a6c23aa33f7b58c945688b2b8d88caec270afe5c716",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "idna",
           "version": "1.1.0",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -12476,6 +12680,40 @@
             "sourceEvidenceValue": "d5422cc5bc64289a77dbb45e970b86b5e9a04cb500abc7240505aedc1bf40f38",
             "sourceEvidenceSha256": "bc7f6318a0eb36f2fd156d840626dc0df2198c50beee43beb7dc32e73218359c",
             "expressionEvidenceSha256": "560b9c39afdf25a72c1a8aaded2031ae8d70c9eddd08d80df32ee6f736ed775d",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "indexmap",
+          "version": "2.14.0",
+          "declaredLicense": "Apache-2.0 OR MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/indexmap-rs/indexmap",
+          "purl": "pkg:cargo/indexmap@2.14.0",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "Apache-2.0 OR MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9",
+            "sourceEvidenceSha256": "10d6b14d0cbb829756f1cc822ef465cc46de5f4c32825fe276ffe93035660795",
+            "expressionEvidenceSha256": "03981a2cfeded1c6d111a26880113dc15e014378257d96c9a4bc18470bea4056",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -13496,6 +13734,40 @@
             "sourceEvidenceValue": "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744",
             "sourceEvidenceSha256": "eb0db3487ac39d890cf7a23e577818af3a82b4203fdcde2c6cb801d1a2cb142f",
             "expressionEvidenceSha256": "1206570c5189744af66e3315bb2a8ea2ae30d7f90e80d37ec330e26d5d161aa4",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "qlog",
+          "version": "0.15.2",
+          "declaredLicense": "BSD-2-Clause",
+          "concludedLicense": "BSD-2-Clause",
+          "source": "https://github.com/cloudflare/quiche",
+          "purl": "pkg:cargo/qlog@0.15.2",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "BSD-2-Clause",
+            "concludedExpression": "BSD-2-Clause",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "0f15b83c59e6b945f2261c95a1dd9faf239187f32ff0a96af1d1d28c4557f919",
+            "sourceEvidenceSha256": "573ba3f9cf05dd09dec7a341e253565754b6de3579be3f84d75c217ecb701e3c",
+            "expressionEvidenceSha256": "cb4f655fde1a8bd920750aa22c9b4d8276cae264dd47f97505dec067c2223036",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -14974,6 +15246,74 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "serde_with",
+          "version": "3.17.0",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/jonasbb/serde_with/",
+          "purl": "pkg:cargo/serde_with@3.17.0",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "381b283ce7bc6b476d903296fb59d0d36633652b633b27f64db4fb46dcbfc3b9",
+            "sourceEvidenceSha256": "2efbcf755da5ee1c995b3ea0fbf84cf39b048e586e4a8a6dc4f00af15b664cf7",
+            "expressionEvidenceSha256": "236533a86c8d586251f87ad7b1c94cbe5a570c6cd6007b6d61e3865135638d52",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "serde_with_macros",
+          "version": "3.17.0",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/jonasbb/serde_with/",
+          "purl": "pkg:cargo/serde_with_macros@3.17.0",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "a6d4e30573c8cb306ed6ab1dca8423eec9a463ea0e155f45399455e0368b27e0",
+            "sourceEvidenceSha256": "58cb500e679167f880ad0fb2cc564eeb0e0b2b2a681f511949be5c18b5d19edc",
+            "expressionEvidenceSha256": "0f5d612e521e61e150f3d70ff1038856cbaa4ad22f35a3faa267825015273f70",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "sha1",
           "version": "0.11.0",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -15298,6 +15638,74 @@
             "sourceEvidenceValue": "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d",
             "sourceEvidenceSha256": "ef1cf405c0f8f00501f69bae40c84679a9ea074e725fbaf18a6a746f6d8b5c54",
             "expressionEvidenceSha256": "3a239b8a455e496430e821011d7c5090b7652e3d4d2acd976987b69d66bade53",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "stats_alloc",
+          "version": "0.1.10",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/neoeinstein/stats_alloc",
+          "purl": "pkg:cargo/stats_alloc@0.1.10",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "5c0e04424e733e69714ca1bbb9204c1a57f09f5493439520f9f68c132ad25eec",
+            "sourceEvidenceSha256": "198c77043e5b31da7a23dfff3a6c071b63ba8d8a0a176f24fb506462a6ccaaf3",
+            "expressionEvidenceSha256": "297b60057c6332978270d27eaf98a98c4bbbf2c252b3a3c0e2fe8b866d46edf1",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "strsim",
+          "version": "0.11.1",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/rapidfuzz/strsim-rs",
+          "purl": "pkg:cargo/strsim@0.11.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f",
+            "sourceEvidenceSha256": "d2ba0026d8ec533b69f1b740ec01fab3cf2e1b80374c151bf53413c6d87652bd",
+            "expressionEvidenceSha256": "8732043259a2f9568b956c15a89de58a7cb637e58e56bd7f72a59dd52396c5ef",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -17961,6 +18369,61 @@
           "kind": "runtime"
         },
         {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/fnv@1.0.7",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/ident_case@1.0.1",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/proc-macro2@1.0.106",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/quote@1.0.46",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/strsim@0.11.1",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_macro@0.21.3",
+          "to": "pkg:cargo/darling_core@0.21.3",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_macro@0.21.3",
+          "to": "pkg:cargo/quote@1.0.46",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_macro@0.21.3",
+          "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling@0.21.3",
+          "to": "pkg:cargo/darling_core@0.21.3",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling@0.21.3",
+          "to": "pkg:cargo/darling_macro@0.21.3",
+          "kind": "runtime"
+        },
+        {
           "from": "pkg:cargo/der@0.7.10",
           "to": "pkg:cargo/const-oid@0.9.6",
           "kind": "runtime"
@@ -18289,6 +18752,11 @@
           "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/sha2@0.10.9",
           "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/flowersec@2.0.0",
+          "to": "pkg:cargo/stats_alloc@0.1.10",
+          "kind": "dev"
         },
         {
           "from": "pkg:cargo/flowersec@2.0.0",
@@ -18796,6 +19264,16 @@
           "kind": "runtime"
         },
         {
+          "from": "pkg:cargo/indexmap@2.14.0",
+          "to": "pkg:cargo/equivalent@1.0.2",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/indexmap@2.14.0",
+          "to": "pkg:cargo/hashbrown@0.17.1",
+          "kind": "runtime"
+        },
+        {
           "from": "pkg:cargo/inout@0.1.4",
           "to": "pkg:cargo/generic-array@0.14.9",
           "kind": "runtime"
@@ -19056,6 +19534,26 @@
           "kind": "runtime"
         },
         {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/serde_json@1.0.150",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/serde_with@3.17.0",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/serde@1.0.228",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/smallvec@1.15.2",
+          "kind": "runtime"
+        },
+        {
           "from": "pkg:cargo/quinn-proto@0.11.16",
           "to": "pkg:cargo/aws-lc-rs@1.17.1",
           "kind": "runtime"
@@ -19073,6 +19571,11 @@
         {
           "from": "pkg:cargo/quinn-proto@0.11.16",
           "to": "pkg:cargo/lru-slab@0.1.2",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/quinn-proto@0.11.16",
+          "to": "pkg:cargo/qlog@0.15.2",
           "kind": "runtime"
         },
         {
@@ -19802,6 +20305,11 @@
         },
         {
           "from": "pkg:cargo/serde_json@1.0.150",
+          "to": "pkg:cargo/indexmap@2.14.0",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_json@1.0.150",
           "to": "pkg:cargo/itoa@1.0.18",
           "kind": "runtime"
         },
@@ -19838,6 +20346,36 @@
         {
           "from": "pkg:cargo/serde_repr@0.1.20",
           "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/darling@0.21.3",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/proc-macro2@1.0.106",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/quote@1.0.46",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with@3.17.0",
+          "to": "pkg:cargo/serde_core@1.0.228",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with@3.17.0",
+          "to": "pkg:cargo/serde_with_macros@3.17.0",
           "kind": "runtime"
         },
         {
@@ -19898,6 +20436,11 @@
         {
           "from": "pkg:cargo/simd_cesu8@1.2.0",
           "to": "pkg:cargo/simdutf8@0.1.5",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/smallvec@1.15.2",
+          "to": "pkg:cargo/serde@1.0.228",
           "kind": "runtime"
         },
         {
@@ -21819,6 +22362,108 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "darling",
+          "version": "0.21.3",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/darling",
+          "purl": "pkg:cargo/darling@0.21.3",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0",
+            "sourceEvidenceSha256": "5b1eb87ba8cea8ccccb6a50ba04fd8a61acd7de2e87c290f1a62bb5c70a8533c",
+            "expressionEvidenceSha256": "5bc97b902bae60e4f11ec76ee9cc4eaf11fedf52a1de38098a5d81371eeb5937",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "darling_core",
+          "version": "0.21.3",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/darling",
+          "purl": "pkg:cargo/darling_core@0.21.3",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4",
+            "sourceEvidenceSha256": "b655a282aab6122f375871335877ab1868bdb3f15e4c99ecc6d9ca44e1d06ef6",
+            "expressionEvidenceSha256": "a31505e3f73666758d054aaa319b224438302ce0718c75fe69d45bc577939279",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "darling_macro",
+          "version": "0.21.3",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/darling",
+          "purl": "pkg:cargo/darling_macro@0.21.3",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81",
+            "sourceEvidenceSha256": "c5e6d3973c27f738b542afbcf0d5c6a4a5e59f7c5bb489b04b2f8f0200d0bf47",
+            "expressionEvidenceSha256": "449589f1d51548d63e2f854fbe783ca2c89359138f34312c4b7276edaed62261",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "data-encoding",
           "version": "2.11.0",
           "declaredLicense": "MIT",
@@ -22125,6 +22770,40 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "equivalent",
+          "version": "1.0.2",
+          "declaredLicense": "Apache-2.0 OR MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/indexmap-rs/equivalent",
+          "purl": "pkg:cargo/equivalent@1.0.2",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "Apache-2.0 OR MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f",
+            "sourceEvidenceSha256": "b362e83310b8f5b031bcd047b245c6be8c6b92969b5a63d3711fce580fe1be93",
+            "expressionEvidenceSha256": "a68d6191a0d2eb5cd988c6ee813159aad37ca8bdb810ef9c59c9dc89a2c06e21",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "ff",
           "version": "0.13.1",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -22211,6 +22890,40 @@
             "sourceEvidenceValue": "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582",
             "sourceEvidenceSha256": "95be6487f8c0c16d3de47fae33dad254f8b4b8c00b7d622946d62b5425c49481",
             "expressionEvidenceSha256": "3d79c01f373a3d55ddec560e4eddd479f7dd9475d54f425bf01fc58655a81883",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "fnv",
+          "version": "1.0.7",
+          "declaredLicense": "Apache-2.0 OR MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/servo/rust-fnv",
+          "purl": "pkg:cargo/fnv@1.0.7",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "Apache-2.0 OR MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1",
+            "sourceEvidenceSha256": "af438c35ca6ea1ba2ef6dc11ab5ac45129950df68f26fbf597c23dd011ef1346",
+            "expressionEvidenceSha256": "3dc5d909d55a54242380de2faf5cd8fa37dd4b90f236edaf8bb806b5017808b9",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -22703,6 +23416,40 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "hashbrown",
+          "version": "0.17.1",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/rust-lang/hashbrown",
+          "purl": "pkg:cargo/hashbrown@0.17.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a",
+            "sourceEvidenceSha256": "d509a45c38ffd21644aca7d81b493b6fd06aaaa4bd93e02faa4831df1a770655",
+            "expressionEvidenceSha256": "382d4a0115b270ec20b809566ad457d432db1296e27d4d77fa5c8519abc71c63",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "hkdf",
           "version": "0.12.4",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -23043,6 +23790,40 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "ident_case",
+          "version": "1.0.1",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/ident_case",
+          "purl": "pkg:cargo/ident_case@1.0.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39",
+            "sourceEvidenceSha256": "cd778f8dad4d22024b196ff2bbae51e7b222a1c91c4b68b543fe3526e5244119",
+            "expressionEvidenceSha256": "8d17096d9da34c16efef6a6c23aa33f7b58c945688b2b8d88caec270afe5c716",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "idna",
           "version": "1.1.0",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -23129,6 +23910,40 @@
             "sourceEvidenceValue": "d5422cc5bc64289a77dbb45e970b86b5e9a04cb500abc7240505aedc1bf40f38",
             "sourceEvidenceSha256": "bc7f6318a0eb36f2fd156d840626dc0df2198c50beee43beb7dc32e73218359c",
             "expressionEvidenceSha256": "560b9c39afdf25a72c1a8aaded2031ae8d70c9eddd08d80df32ee6f736ed775d",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "indexmap",
+          "version": "2.14.0",
+          "declaredLicense": "Apache-2.0 OR MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/indexmap-rs/indexmap",
+          "purl": "pkg:cargo/indexmap@2.14.0",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "Apache-2.0 OR MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9",
+            "sourceEvidenceSha256": "10d6b14d0cbb829756f1cc822ef465cc46de5f4c32825fe276ffe93035660795",
+            "expressionEvidenceSha256": "03981a2cfeded1c6d111a26880113dc15e014378257d96c9a4bc18470bea4056",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -24081,6 +24896,40 @@
             "sourceEvidenceValue": "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934",
             "sourceEvidenceSha256": "cd2261ebe0be9c2cb7c4081e7f8f329c932f78f9add69cba5e88b4e564ca3bfd",
             "expressionEvidenceSha256": "0b9e6a3ea0da0e3a2b158dcd1cf77b898fcb855e00c53c3b40e4fba08378d77f",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "qlog",
+          "version": "0.15.2",
+          "declaredLicense": "BSD-2-Clause",
+          "concludedLicense": "BSD-2-Clause",
+          "source": "https://github.com/cloudflare/quiche",
+          "purl": "pkg:cargo/qlog@0.15.2",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "BSD-2-Clause",
+            "concludedExpression": "BSD-2-Clause",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "0f15b83c59e6b945f2261c95a1dd9faf239187f32ff0a96af1d1d28c4557f919",
+            "sourceEvidenceSha256": "573ba3f9cf05dd09dec7a341e253565754b6de3579be3f84d75c217ecb701e3c",
+            "expressionEvidenceSha256": "cb4f655fde1a8bd920750aa22c9b4d8276cae264dd47f97505dec067c2223036",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -25253,6 +26102,74 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "serde_with",
+          "version": "3.17.0",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/jonasbb/serde_with/",
+          "purl": "pkg:cargo/serde_with@3.17.0",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "381b283ce7bc6b476d903296fb59d0d36633652b633b27f64db4fb46dcbfc3b9",
+            "sourceEvidenceSha256": "2efbcf755da5ee1c995b3ea0fbf84cf39b048e586e4a8a6dc4f00af15b664cf7",
+            "expressionEvidenceSha256": "236533a86c8d586251f87ad7b1c94cbe5a570c6cd6007b6d61e3865135638d52",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "serde_with_macros",
+          "version": "3.17.0",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/jonasbb/serde_with/",
+          "purl": "pkg:cargo/serde_with_macros@3.17.0",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "a6d4e30573c8cb306ed6ab1dca8423eec9a463ea0e155f45399455e0368b27e0",
+            "sourceEvidenceSha256": "58cb500e679167f880ad0fb2cc564eeb0e0b2b2a681f511949be5c18b5d19edc",
+            "expressionEvidenceSha256": "0f5d612e521e61e150f3d70ff1038856cbaa4ad22f35a3faa267825015273f70",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "sha1",
           "version": "0.11.0",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -25577,6 +26494,40 @@
             "sourceEvidenceValue": "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d",
             "sourceEvidenceSha256": "ef1cf405c0f8f00501f69bae40c84679a9ea074e725fbaf18a6a746f6d8b5c54",
             "expressionEvidenceSha256": "3a239b8a455e496430e821011d7c5090b7652e3d4d2acd976987b69d66bade53",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "strsim",
+          "version": "0.11.1",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/rapidfuzz/strsim-rs",
+          "purl": "pkg:cargo/strsim@0.11.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f",
+            "sourceEvidenceSha256": "d2ba0026d8ec533b69f1b740ec01fab3cf2e1b80374c151bf53413c6d87652bd",
+            "expressionEvidenceSha256": "8732043259a2f9568b956c15a89de58a7cb637e58e56bd7f72a59dd52396c5ef",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -27997,6 +28948,61 @@
           "kind": "runtime"
         },
         {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/fnv@1.0.7",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/ident_case@1.0.1",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/proc-macro2@1.0.106",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/quote@1.0.46",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/strsim@0.11.1",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_macro@0.21.3",
+          "to": "pkg:cargo/darling_core@0.21.3",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_macro@0.21.3",
+          "to": "pkg:cargo/quote@1.0.46",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_macro@0.21.3",
+          "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling@0.21.3",
+          "to": "pkg:cargo/darling_core@0.21.3",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling@0.21.3",
+          "to": "pkg:cargo/darling_macro@0.21.3",
+          "kind": "runtime"
+        },
+        {
           "from": "pkg:cargo/der@0.7.10",
           "to": "pkg:cargo/const-oid@0.9.6",
           "kind": "runtime"
@@ -28797,6 +29803,16 @@
           "kind": "runtime"
         },
         {
+          "from": "pkg:cargo/indexmap@2.14.0",
+          "to": "pkg:cargo/equivalent@1.0.2",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/indexmap@2.14.0",
+          "to": "pkg:cargo/hashbrown@0.17.1",
+          "kind": "runtime"
+        },
+        {
           "from": "pkg:cargo/inout@0.1.4",
           "to": "pkg:cargo/generic-array@0.14.9",
           "kind": "runtime"
@@ -29007,6 +30023,26 @@
           "kind": "runtime"
         },
         {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/serde_json@1.0.150",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/serde_with@3.17.0",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/serde@1.0.228",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/smallvec@1.15.2",
+          "kind": "runtime"
+        },
+        {
           "from": "pkg:cargo/quinn-proto@0.11.16",
           "to": "pkg:cargo/aws-lc-rs@1.17.1",
           "kind": "runtime"
@@ -29024,6 +30060,11 @@
         {
           "from": "pkg:cargo/quinn-proto@0.11.16",
           "to": "pkg:cargo/lru-slab@0.1.2",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/quinn-proto@0.11.16",
+          "to": "pkg:cargo/qlog@0.15.2",
           "kind": "runtime"
         },
         {
@@ -29678,6 +30719,11 @@
         },
         {
           "from": "pkg:cargo/serde_json@1.0.150",
+          "to": "pkg:cargo/indexmap@2.14.0",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_json@1.0.150",
           "to": "pkg:cargo/itoa@1.0.18",
           "kind": "runtime"
         },
@@ -29714,6 +30760,36 @@
         {
           "from": "pkg:cargo/serde_repr@0.1.20",
           "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/darling@0.21.3",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/proc-macro2@1.0.106",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/quote@1.0.46",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with@3.17.0",
+          "to": "pkg:cargo/serde_core@1.0.228",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with@3.17.0",
+          "to": "pkg:cargo/serde_with_macros@3.17.0",
           "kind": "runtime"
         },
         {
@@ -29774,6 +30850,11 @@
         {
           "from": "pkg:cargo/simd_cesu8@1.2.0",
           "to": "pkg:cargo/simdutf8@0.1.5",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/smallvec@1.15.2",
+          "to": "pkg:cargo/serde@1.0.228",
           "kind": "runtime"
         },
         {
@@ -31611,6 +32692,108 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "darling",
+          "version": "0.21.3",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/darling",
+          "purl": "pkg:cargo/darling@0.21.3",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0",
+            "sourceEvidenceSha256": "5b1eb87ba8cea8ccccb6a50ba04fd8a61acd7de2e87c290f1a62bb5c70a8533c",
+            "expressionEvidenceSha256": "5bc97b902bae60e4f11ec76ee9cc4eaf11fedf52a1de38098a5d81371eeb5937",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "darling_core",
+          "version": "0.21.3",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/darling",
+          "purl": "pkg:cargo/darling_core@0.21.3",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4",
+            "sourceEvidenceSha256": "b655a282aab6122f375871335877ab1868bdb3f15e4c99ecc6d9ca44e1d06ef6",
+            "expressionEvidenceSha256": "a31505e3f73666758d054aaa319b224438302ce0718c75fe69d45bc577939279",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "darling_macro",
+          "version": "0.21.3",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/darling",
+          "purl": "pkg:cargo/darling_macro@0.21.3",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81",
+            "sourceEvidenceSha256": "c5e6d3973c27f738b542afbcf0d5c6a4a5e59f7c5bb489b04b2f8f0200d0bf47",
+            "expressionEvidenceSha256": "449589f1d51548d63e2f854fbe783ca2c89359138f34312c4b7276edaed62261",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "data-encoding",
           "version": "2.11.0",
           "declaredLicense": "MIT",
@@ -31917,6 +33100,40 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "equivalent",
+          "version": "1.0.2",
+          "declaredLicense": "Apache-2.0 OR MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/indexmap-rs/equivalent",
+          "purl": "pkg:cargo/equivalent@1.0.2",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "Apache-2.0 OR MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f",
+            "sourceEvidenceSha256": "b362e83310b8f5b031bcd047b245c6be8c6b92969b5a63d3711fce580fe1be93",
+            "expressionEvidenceSha256": "a68d6191a0d2eb5cd988c6ee813159aad37ca8bdb810ef9c59c9dc89a2c06e21",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "ff",
           "version": "0.13.1",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -32003,6 +33220,40 @@
             "sourceEvidenceValue": "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582",
             "sourceEvidenceSha256": "95be6487f8c0c16d3de47fae33dad254f8b4b8c00b7d622946d62b5425c49481",
             "expressionEvidenceSha256": "3d79c01f373a3d55ddec560e4eddd479f7dd9475d54f425bf01fc58655a81883",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "fnv",
+          "version": "1.0.7",
+          "declaredLicense": "Apache-2.0 OR MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/servo/rust-fnv",
+          "purl": "pkg:cargo/fnv@1.0.7",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "Apache-2.0 OR MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1",
+            "sourceEvidenceSha256": "af438c35ca6ea1ba2ef6dc11ab5ac45129950df68f26fbf597c23dd011ef1346",
+            "expressionEvidenceSha256": "3dc5d909d55a54242380de2faf5cd8fa37dd4b90f236edaf8bb806b5017808b9",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -32495,6 +33746,40 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "hashbrown",
+          "version": "0.17.1",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/rust-lang/hashbrown",
+          "purl": "pkg:cargo/hashbrown@0.17.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a",
+            "sourceEvidenceSha256": "d509a45c38ffd21644aca7d81b493b6fd06aaaa4bd93e02faa4831df1a770655",
+            "expressionEvidenceSha256": "382d4a0115b270ec20b809566ad457d432db1296e27d4d77fa5c8519abc71c63",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "hkdf",
           "version": "0.12.4",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -32835,6 +34120,40 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "ident_case",
+          "version": "1.0.1",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/TedDriggs/ident_case",
+          "purl": "pkg:cargo/ident_case@1.0.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39",
+            "sourceEvidenceSha256": "cd778f8dad4d22024b196ff2bbae51e7b222a1c91c4b68b543fe3526e5244119",
+            "expressionEvidenceSha256": "8d17096d9da34c16efef6a6c23aa33f7b58c945688b2b8d88caec270afe5c716",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "idna",
           "version": "1.1.0",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -32921,6 +34240,40 @@
             "sourceEvidenceValue": "d5422cc5bc64289a77dbb45e970b86b5e9a04cb500abc7240505aedc1bf40f38",
             "sourceEvidenceSha256": "bc7f6318a0eb36f2fd156d840626dc0df2198c50beee43beb7dc32e73218359c",
             "expressionEvidenceSha256": "560b9c39afdf25a72c1a8aaded2031ae8d70c9eddd08d80df32ee6f736ed775d",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "indexmap",
+          "version": "2.14.0",
+          "declaredLicense": "Apache-2.0 OR MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/indexmap-rs/indexmap",
+          "purl": "pkg:cargo/indexmap@2.14.0",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "Apache-2.0 OR MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9",
+            "sourceEvidenceSha256": "10d6b14d0cbb829756f1cc822ef465cc46de5f4c32825fe276ffe93035660795",
+            "expressionEvidenceSha256": "03981a2cfeded1c6d111a26880113dc15e014378257d96c9a4bc18470bea4056",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -33839,6 +35192,40 @@
             "sourceEvidenceValue": "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934",
             "sourceEvidenceSha256": "cd2261ebe0be9c2cb7c4081e7f8f329c932f78f9add69cba5e88b4e564ca3bfd",
             "expressionEvidenceSha256": "0b9e6a3ea0da0e3a2b158dcd1cf77b898fcb855e00c53c3b40e4fba08378d77f",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "qlog",
+          "version": "0.15.2",
+          "declaredLicense": "BSD-2-Clause",
+          "concludedLicense": "BSD-2-Clause",
+          "source": "https://github.com/cloudflare/quiche",
+          "purl": "pkg:cargo/qlog@0.15.2",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "BSD-2-Clause",
+            "concludedExpression": "BSD-2-Clause",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "0f15b83c59e6b945f2261c95a1dd9faf239187f32ff0a96af1d1d28c4557f919",
+            "sourceEvidenceSha256": "573ba3f9cf05dd09dec7a341e253565754b6de3579be3f84d75c217ecb701e3c",
+            "expressionEvidenceSha256": "cb4f655fde1a8bd920750aa22c9b4d8276cae264dd47f97505dec067c2223036",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -35011,6 +36398,74 @@
         },
         {
           "ecosystem": "cargo",
+          "name": "serde_with",
+          "version": "3.17.0",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/jonasbb/serde_with/",
+          "purl": "pkg:cargo/serde_with@3.17.0",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "381b283ce7bc6b476d903296fb59d0d36633652b633b27f64db4fb46dcbfc3b9",
+            "sourceEvidenceSha256": "2efbcf755da5ee1c995b3ea0fbf84cf39b048e586e4a8a6dc4f00af15b664cf7",
+            "expressionEvidenceSha256": "236533a86c8d586251f87ad7b1c94cbe5a570c6cd6007b6d61e3865135638d52",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "serde_with_macros",
+          "version": "3.17.0",
+          "declaredLicense": "MIT OR Apache-2.0",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/jonasbb/serde_with/",
+          "purl": "pkg:cargo/serde_with_macros@3.17.0",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT OR Apache-2.0",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "a6d4e30573c8cb306ed6ab1dca8423eec9a463ea0e155f45399455e0368b27e0",
+            "sourceEvidenceSha256": "58cb500e679167f880ad0fb2cc564eeb0e0b2b2a681f511949be5c18b5d19edc",
+            "expressionEvidenceSha256": "0f5d612e521e61e150f3d70ff1038856cbaa4ad22f35a3faa267825015273f70",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
           "name": "sha1",
           "version": "0.11.0",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -35335,6 +36790,40 @@
             "sourceEvidenceValue": "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d",
             "sourceEvidenceSha256": "ef1cf405c0f8f00501f69bae40c84679a9ea074e725fbaf18a6a746f6d8b5c54",
             "expressionEvidenceSha256": "3a239b8a455e496430e821011d7c5090b7652e3d4d2acd976987b69d66bade53",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "cargo",
+          "name": "strsim",
+          "version": "0.11.1",
+          "declaredLicense": "MIT",
+          "concludedLicense": "MIT",
+          "source": "https://github.com/rapidfuzz/strsim-rs",
+          "purl": "pkg:cargo/strsim@0.11.1",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "MIT",
+            "concludedExpression": "MIT",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-07-22",
+            "policyRevision": "source-license-policy-v2",
+            "sourceEvidenceKind": "cargo-lock-checksum",
+            "sourceEvidenceValue": "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f",
+            "sourceEvidenceSha256": "d2ba0026d8ec533b69f1b740ec01fab3cf2e1b80374c151bf53413c6d87652bd",
+            "expressionEvidenceSha256": "8732043259a2f9568b956c15a89de58a7cb637e58e56bd7f72a59dd52396c5ef",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -37755,6 +39244,61 @@
           "kind": "runtime"
         },
         {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/fnv@1.0.7",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/ident_case@1.0.1",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/proc-macro2@1.0.106",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/quote@1.0.46",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/strsim@0.11.1",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_core@0.21.3",
+          "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_macro@0.21.3",
+          "to": "pkg:cargo/darling_core@0.21.3",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_macro@0.21.3",
+          "to": "pkg:cargo/quote@1.0.46",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling_macro@0.21.3",
+          "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling@0.21.3",
+          "to": "pkg:cargo/darling_core@0.21.3",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/darling@0.21.3",
+          "to": "pkg:cargo/darling_macro@0.21.3",
+          "kind": "runtime"
+        },
+        {
           "from": "pkg:cargo/der@0.7.10",
           "to": "pkg:cargo/const-oid@0.9.6",
           "kind": "runtime"
@@ -38555,6 +40099,16 @@
           "kind": "runtime"
         },
         {
+          "from": "pkg:cargo/indexmap@2.14.0",
+          "to": "pkg:cargo/equivalent@1.0.2",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/indexmap@2.14.0",
+          "to": "pkg:cargo/hashbrown@0.17.1",
+          "kind": "runtime"
+        },
+        {
           "from": "pkg:cargo/inout@0.1.4",
           "to": "pkg:cargo/generic-array@0.14.9",
           "kind": "runtime"
@@ -38755,6 +40309,26 @@
           "kind": "runtime"
         },
         {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/serde_json@1.0.150",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/serde_with@3.17.0",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/serde@1.0.228",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/qlog@0.15.2",
+          "to": "pkg:cargo/smallvec@1.15.2",
+          "kind": "runtime"
+        },
+        {
           "from": "pkg:cargo/quinn-proto@0.11.16",
           "to": "pkg:cargo/aws-lc-rs@1.17.1",
           "kind": "runtime"
@@ -38772,6 +40346,11 @@
         {
           "from": "pkg:cargo/quinn-proto@0.11.16",
           "to": "pkg:cargo/lru-slab@0.1.2",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/quinn-proto@0.11.16",
+          "to": "pkg:cargo/qlog@0.15.2",
           "kind": "runtime"
         },
         {
@@ -39426,6 +41005,11 @@
         },
         {
           "from": "pkg:cargo/serde_json@1.0.150",
+          "to": "pkg:cargo/indexmap@2.14.0",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_json@1.0.150",
           "to": "pkg:cargo/itoa@1.0.18",
           "kind": "runtime"
         },
@@ -39462,6 +41046,36 @@
         {
           "from": "pkg:cargo/serde_repr@0.1.20",
           "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/darling@0.21.3",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/proc-macro2@1.0.106",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/quote@1.0.46",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with_macros@3.17.0",
+          "to": "pkg:cargo/syn@2.0.119",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with@3.17.0",
+          "to": "pkg:cargo/serde_core@1.0.228",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/serde_with@3.17.0",
+          "to": "pkg:cargo/serde_with_macros@3.17.0",
           "kind": "runtime"
         },
         {
@@ -39522,6 +41136,11 @@
         {
           "from": "pkg:cargo/simd_cesu8@1.2.0",
           "to": "pkg:cargo/simdutf8@0.1.5",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/smallvec@1.15.2",
+          "to": "pkg:cargo/serde@1.0.228",
           "kind": "runtime"
         },
         {
@@ -43471,6 +45090,108 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "darling",
+      "version": "0.21.3",
+      "declaredLicense": "MIT",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/TedDriggs/darling",
+      "purl": "pkg:cargo/darling@0.21.3",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0",
+        "sourceEvidenceSha256": "5b1eb87ba8cea8ccccb6a50ba04fd8a61acd7de2e87c290f1a62bb5c70a8533c",
+        "expressionEvidenceSha256": "5bc97b902bae60e4f11ec76ee9cc4eaf11fedf52a1de38098a5d81371eeb5937",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "darling_core",
+      "version": "0.21.3",
+      "declaredLicense": "MIT",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/TedDriggs/darling",
+      "purl": "pkg:cargo/darling_core@0.21.3",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4",
+        "sourceEvidenceSha256": "b655a282aab6122f375871335877ab1868bdb3f15e4c99ecc6d9ca44e1d06ef6",
+        "expressionEvidenceSha256": "a31505e3f73666758d054aaa319b224438302ce0718c75fe69d45bc577939279",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "darling_macro",
+      "version": "0.21.3",
+      "declaredLicense": "MIT",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/TedDriggs/darling",
+      "purl": "pkg:cargo/darling_macro@0.21.3",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81",
+        "sourceEvidenceSha256": "c5e6d3973c27f738b542afbcf0d5c6a4a5e59f7c5bb489b04b2f8f0200d0bf47",
+        "expressionEvidenceSha256": "449589f1d51548d63e2f854fbe783ca2c89359138f34312c4b7276edaed62261",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
       "name": "data-encoding",
       "version": "2.11.0",
       "declaredLicense": "MIT",
@@ -43761,6 +45482,40 @@
         "sourceEvidenceValue": "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47",
         "sourceEvidenceSha256": "29294610a6956d6d55f8cdd21bb58d70f029a9ecce9e5c812a1f8ae90efdc8bf",
         "expressionEvidenceSha256": "e70ab377fda82aad3e6832d5b8628eaa849da087fa31d1f8998cb9ecb0dde7e3",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "equivalent",
+      "version": "1.0.2",
+      "declaredLicense": "Apache-2.0 OR MIT",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/indexmap-rs/equivalent",
+      "purl": "pkg:cargo/equivalent@1.0.2",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "Apache-2.0 OR MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f",
+        "sourceEvidenceSha256": "b362e83310b8f5b031bcd047b245c6be8c6b92969b5a63d3711fce580fe1be93",
+        "expressionEvidenceSha256": "a68d6191a0d2eb5cd988c6ee813159aad37ca8bdb810ef9c59c9dc89a2c06e21",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -44491,6 +46246,40 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "hashbrown",
+      "version": "0.17.1",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/rust-lang/hashbrown",
+      "purl": "pkg:cargo/hashbrown@0.17.1",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT OR Apache-2.0",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a",
+        "sourceEvidenceSha256": "d509a45c38ffd21644aca7d81b493b6fd06aaaa4bd93e02faa4831df1a770655",
+        "expressionEvidenceSha256": "382d4a0115b270ec20b809566ad457d432db1296e27d4d77fa5c8519abc71c63",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
       "name": "hkdf",
       "version": "0.12.4",
       "declaredLicense": "MIT OR Apache-2.0",
@@ -44831,6 +46620,40 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "ident_case",
+      "version": "1.0.1",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/TedDriggs/ident_case",
+      "purl": "pkg:cargo/ident_case@1.0.1",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT OR Apache-2.0",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39",
+        "sourceEvidenceSha256": "cd778f8dad4d22024b196ff2bbae51e7b222a1c91c4b68b543fe3526e5244119",
+        "expressionEvidenceSha256": "8d17096d9da34c16efef6a6c23aa33f7b58c945688b2b8d88caec270afe5c716",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
       "name": "idna",
       "version": "1.1.0",
       "declaredLicense": "MIT OR Apache-2.0",
@@ -44917,6 +46740,40 @@
         "sourceEvidenceValue": "d5422cc5bc64289a77dbb45e970b86b5e9a04cb500abc7240505aedc1bf40f38",
         "sourceEvidenceSha256": "bc7f6318a0eb36f2fd156d840626dc0df2198c50beee43beb7dc32e73218359c",
         "expressionEvidenceSha256": "560b9c39afdf25a72c1a8aaded2031ae8d70c9eddd08d80df32ee6f736ed775d",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "indexmap",
+      "version": "2.14.0",
+      "declaredLicense": "Apache-2.0 OR MIT",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/indexmap-rs/indexmap",
+      "purl": "pkg:cargo/indexmap@2.14.0",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "Apache-2.0 OR MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9",
+        "sourceEvidenceSha256": "10d6b14d0cbb829756f1cc822ef465cc46de5f4c32825fe276ffe93035660795",
+        "expressionEvidenceSha256": "03981a2cfeded1c6d111a26880113dc15e014378257d96c9a4bc18470bea4056",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -45971,6 +47828,40 @@
         "sourceEvidenceValue": "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744",
         "sourceEvidenceSha256": "eb0db3487ac39d890cf7a23e577818af3a82b4203fdcde2c6cb801d1a2cb142f",
         "expressionEvidenceSha256": "1206570c5189744af66e3315bb2a8ea2ae30d7f90e80d37ec330e26d5d161aa4",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qlog",
+      "version": "0.15.2",
+      "declaredLicense": "BSD-2-Clause",
+      "concludedLicense": "BSD-2-Clause",
+      "source": "https://github.com/cloudflare/quiche",
+      "purl": "pkg:cargo/qlog@0.15.2",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "BSD-2-Clause",
+        "concludedExpression": "BSD-2-Clause",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "0f15b83c59e6b945f2261c95a1dd9faf239187f32ff0a96af1d1d28c4557f919",
+        "sourceEvidenceSha256": "573ba3f9cf05dd09dec7a341e253565754b6de3579be3f84d75c217ecb701e3c",
+        "expressionEvidenceSha256": "cb4f655fde1a8bd920750aa22c9b4d8276cae264dd47f97505dec067c2223036",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -47449,6 +49340,74 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "serde_with",
+      "version": "3.17.0",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/jonasbb/serde_with/",
+      "purl": "pkg:cargo/serde_with@3.17.0",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT OR Apache-2.0",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "381b283ce7bc6b476d903296fb59d0d36633652b633b27f64db4fb46dcbfc3b9",
+        "sourceEvidenceSha256": "2efbcf755da5ee1c995b3ea0fbf84cf39b048e586e4a8a6dc4f00af15b664cf7",
+        "expressionEvidenceSha256": "236533a86c8d586251f87ad7b1c94cbe5a570c6cd6007b6d61e3865135638d52",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "serde_with_macros",
+      "version": "3.17.0",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/jonasbb/serde_with/",
+      "purl": "pkg:cargo/serde_with_macros@3.17.0",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT OR Apache-2.0",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "a6d4e30573c8cb306ed6ab1dca8423eec9a463ea0e155f45399455e0368b27e0",
+        "sourceEvidenceSha256": "58cb500e679167f880ad0fb2cc564eeb0e0b2b2a681f511949be5c18b5d19edc",
+        "expressionEvidenceSha256": "0f5d612e521e61e150f3d70ff1038856cbaa4ad22f35a3faa267825015273f70",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
       "name": "sha1",
       "version": "0.11.0",
       "declaredLicense": "MIT OR Apache-2.0",
@@ -47773,6 +49732,74 @@
         "sourceEvidenceValue": "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d",
         "sourceEvidenceSha256": "ef1cf405c0f8f00501f69bae40c84679a9ea074e725fbaf18a6a746f6d8b5c54",
         "expressionEvidenceSha256": "3a239b8a455e496430e821011d7c5090b7652e3d4d2acd976987b69d66bade53",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "stats_alloc",
+      "version": "0.1.10",
+      "declaredLicense": "MIT",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/neoeinstein/stats_alloc",
+      "purl": "pkg:cargo/stats_alloc@0.1.10",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "5c0e04424e733e69714ca1bbb9204c1a57f09f5493439520f9f68c132ad25eec",
+        "sourceEvidenceSha256": "198c77043e5b31da7a23dfff3a6c071b63ba8d8a0a176f24fb506462a6ccaaf3",
+        "expressionEvidenceSha256": "297b60057c6332978270d27eaf98a98c4bbbf2c252b3a3c0e2fe8b866d46edf1",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "strsim",
+      "version": "0.11.1",
+      "declaredLicense": "MIT",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/rapidfuzz/strsim-rs",
+      "purl": "pkg:cargo/strsim@0.11.1",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-07-22",
+        "policyRevision": "source-license-policy-v2",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f",
+        "sourceEvidenceSha256": "d2ba0026d8ec533b69f1b740ec01fab3cf2e1b80374c151bf53413c6d87652bd",
+        "expressionEvidenceSha256": "8732043259a2f9568b956c15a89de58a7cb637e58e56bd7f72a59dd52396c5ef",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -59050,6 +61077,61 @@
       "kind": "runtime"
     },
     {
+      "from": "pkg:cargo/darling_core@0.21.3",
+      "to": "pkg:cargo/fnv@1.0.7",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/darling_core@0.21.3",
+      "to": "pkg:cargo/ident_case@1.0.1",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/darling_core@0.21.3",
+      "to": "pkg:cargo/proc-macro2@1.0.106",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/darling_core@0.21.3",
+      "to": "pkg:cargo/quote@1.0.46",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/darling_core@0.21.3",
+      "to": "pkg:cargo/strsim@0.11.1",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/darling_core@0.21.3",
+      "to": "pkg:cargo/syn@2.0.119",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/darling_macro@0.21.3",
+      "to": "pkg:cargo/darling_core@0.21.3",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/darling_macro@0.21.3",
+      "to": "pkg:cargo/quote@1.0.46",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/darling_macro@0.21.3",
+      "to": "pkg:cargo/syn@2.0.119",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/darling@0.21.3",
+      "to": "pkg:cargo/darling_core@0.21.3",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/darling@0.21.3",
+      "to": "pkg:cargo/darling_macro@0.21.3",
+      "kind": "runtime"
+    },
+    {
       "from": "pkg:cargo/der@0.7.10",
       "to": "pkg:cargo/const-oid@0.9.6",
       "kind": "runtime"
@@ -59705,6 +61787,16 @@
       "kind": "runtime"
     },
     {
+      "from": "pkg:cargo/indexmap@2.14.0",
+      "to": "pkg:cargo/equivalent@1.0.2",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/indexmap@2.14.0",
+      "to": "pkg:cargo/hashbrown@0.17.1",
+      "kind": "runtime"
+    },
+    {
       "from": "pkg:cargo/inout@0.1.4",
       "to": "pkg:cargo/generic-array@0.14.9",
       "kind": "runtime"
@@ -59975,6 +62067,26 @@
       "kind": "runtime"
     },
     {
+      "from": "pkg:cargo/qlog@0.15.2",
+      "to": "pkg:cargo/serde_json@1.0.150",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/qlog@0.15.2",
+      "to": "pkg:cargo/serde_with@3.17.0",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/qlog@0.15.2",
+      "to": "pkg:cargo/serde@1.0.228",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/qlog@0.15.2",
+      "to": "pkg:cargo/smallvec@1.15.2",
+      "kind": "runtime"
+    },
+    {
       "from": "pkg:cargo/quinn-proto@0.11.16",
       "to": "pkg:cargo/aws-lc-rs@1.17.1",
       "kind": "runtime"
@@ -59992,6 +62104,11 @@
     {
       "from": "pkg:cargo/quinn-proto@0.11.16",
       "to": "pkg:cargo/lru-slab@0.1.2",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/quinn-proto@0.11.16",
+      "to": "pkg:cargo/qlog@0.15.2",
       "kind": "runtime"
     },
     {
@@ -60721,6 +62838,11 @@
     },
     {
       "from": "pkg:cargo/serde_json@1.0.150",
+      "to": "pkg:cargo/indexmap@2.14.0",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/serde_json@1.0.150",
       "to": "pkg:cargo/itoa@1.0.18",
       "kind": "runtime"
     },
@@ -60757,6 +62879,36 @@
     {
       "from": "pkg:cargo/serde_repr@0.1.20",
       "to": "pkg:cargo/syn@2.0.119",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/serde_with_macros@3.17.0",
+      "to": "pkg:cargo/darling@0.21.3",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/serde_with_macros@3.17.0",
+      "to": "pkg:cargo/proc-macro2@1.0.106",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/serde_with_macros@3.17.0",
+      "to": "pkg:cargo/quote@1.0.46",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/serde_with_macros@3.17.0",
+      "to": "pkg:cargo/syn@2.0.119",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/serde_with@3.17.0",
+      "to": "pkg:cargo/serde_core@1.0.228",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/serde_with@3.17.0",
+      "to": "pkg:cargo/serde_with_macros@3.17.0",
       "kind": "runtime"
     },
     {
@@ -60817,6 +62969,11 @@
     {
       "from": "pkg:cargo/simd_cesu8@1.2.0",
       "to": "pkg:cargo/simdutf8@0.1.5",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/smallvec@1.15.2",
+      "to": "pkg:cargo/serde@1.0.228",
       "kind": "runtime"
     },
     {
@@ -61663,6 +63820,11 @@
       "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/sha2@0.10.9",
       "kind": "runtime"
+    },
+    {
+      "from": "pkg:generic/flowersec-source@2.0.0",
+      "to": "pkg:cargo/stats_alloc@0.1.10",
+      "kind": "dev"
     },
     {
       "from": "pkg:generic/flowersec-source@2.0.0",

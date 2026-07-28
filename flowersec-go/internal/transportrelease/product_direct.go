@@ -849,6 +849,20 @@ func directArtifact(kind carrier.Kind, candidateURL string, contract artifactv2.
 	}
 }
 
+// NewRawQUICReleaseArtifactJSON issues one opaque direct artifact for an
+// externally supervised production Acceptor. It is internal release-harness
+// glue and does not expose candidate or wire state through the public SDK.
+func NewRawQUICReleaseArtifactJSON(candidateURL string, maxStreams uint16) ([]byte, error) {
+	if candidateURL == "" {
+		return nil, errors.New("raw QUIC release candidate URL is empty")
+	}
+	contract, err := releaseSessionContractWithStreams(protocolv2.SuiteChaCha20Poly1305, maxStreams)
+	if err != nil {
+		return nil, err
+	}
+	return artifactv2.MarshalArtifactJSON(directArtifact(carrier.KindQUIC, candidateURL, contract))
+}
+
 func releaseSessionContract(suite protocolv2.Suite) (artifactv2.SessionContract, error) {
 	return releaseSessionContractWithStreams(suite, defaultMaxInboundStreams)
 }

@@ -129,6 +129,7 @@ type baselineCarrierResult struct {
 	Phases          []baselinePhaseMeasurement           `json:"phases"`
 	Kernel          *networkKernelResult                 `json:"kernel,omitempty"`
 	Artifacts       []releaseArtifact                    `json:"artifacts"`
+	RustRoles       *rustRoleEvidence                    `json:"rust_roles,omitempty"`
 }
 
 type baselinePhaseMeasurement struct {
@@ -1030,6 +1031,19 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 		if err := request.Kind.Validate(); err != nil {
 			return err
 		}
+		var sampleKernel kernelEvidenceSampler
+		if request.KernelCounters {
+			sampleKernel = func(sampleCtx context.Context) (linuxnetlab.KernelFaultEvidence, error) {
+				return linuxnetlab.ReadFaultEvidence(sampleCtx, request.ClientNamespace, request.ServerNamespace)
+			}
+		}
+		if useRustReleaseWorker(request) {
+			result, err := runRustEndpointCarrier(ctx, request, sampleKernel)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(output).Encode(result)
+		}
 		var endpoint *transportrelease.ProductDirectEndpoint
 		if err := linuxnetlab.InNamespace(request.ServerNamespace, func() error {
 			var openErr error
@@ -1037,12 +1051,6 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 			return openErr
 		}); err != nil {
 			return err
-		}
-		var sampleKernel kernelEvidenceSampler
-		if request.KernelCounters {
-			sampleKernel = func(sampleCtx context.Context) (linuxnetlab.KernelFaultEvidence, error) {
-				return linuxnetlab.ReadFaultEvidence(sampleCtx, request.ClientNamespace, request.ServerNamespace)
-			}
 		}
 		result, err := runEndpointCarrier(ctx, endpoint, request.Kind, request.Plan, sampleKernel)
 		if err != nil {
@@ -1083,6 +1091,10 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 	default:
 		return errors.New("network worker mode is outside the frozen release matrix")
 	}
+}
+
+func useRustReleaseWorker(request networkWorkerRequest) bool {
+	return request.Plan.ID == "edge-v1" && request.Mode == networkModeDirect && request.Kind == carrier.KindQUIC
 }
 
 func faultProfileFromPlan(plan transportrelease.ProfilePlan, bpfObject string) (linuxnetlab.FaultProfile, error) {

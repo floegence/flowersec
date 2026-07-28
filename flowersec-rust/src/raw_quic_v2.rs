@@ -2,11 +2,15 @@
 
 use std::{
     collections::HashSet,
-    fmt, io,
+    ffi::OsStr,
+    fmt,
+    fs::OpenOptions,
+    io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    path::Path,
     sync::{
         Arc, Mutex as StdMutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -130,6 +134,9 @@ const DATAGRAM_RECEIVE_BUFFER_BYTES: usize = 256 * 1024;
 const DATAGRAM_SEND_BUDGET: usize = 64;
 const DATAGRAM_SEND_BUFFER_BYTES: usize =
     DATAGRAM_SEND_BUDGET * crate::protocol_v2::MAX_UNRELIABLE_WIRE_V2_BYTES;
+const RELEASE_EVIDENCE_ENV: &str = "FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE";
+const QLOG_DIRECTORY_ENV: &str = "QLOGDIR";
+static QLOG_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Identifies the only two registered raw QUIC wire profiles.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -337,7 +344,7 @@ impl RawQuicClientConfig {
         let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls)
             .map_err(|error| RawQuicError::InvalidTls(error.to_string()))?;
         let mut inner = quinn::ClientConfig::new(Arc::new(crypto));
-        inner.transport_config(Arc::new(transport_config(limits)?));
+        inner.transport_config(Arc::new(transport_config(limits, "client")?));
         Ok(Self {
             profile,
             limits,
@@ -350,7 +357,7 @@ impl RawQuicClientConfig {
         mut self,
         bytes: usize,
     ) -> Result<Self, RawQuicError> {
-        let mut transport = transport_config(self.limits)?;
+        let mut transport = transport_config(self.limits, "client-test")?;
         transport.datagram_send_buffer_size(bytes);
         self.inner.transport_config(Arc::new(transport));
         Ok(self)
@@ -407,7 +414,7 @@ impl RawQuicServerConfig {
         let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
             .map_err(|error| RawQuicError::InvalidTls(error.to_string()))?;
         let mut inner = quinn::ServerConfig::with_crypto(Arc::new(crypto));
-        inner.transport_config(Arc::new(transport_config(limits)?));
+        inner.transport_config(Arc::new(transport_config(limits, "server")?));
         Ok(Self {
             profile,
             limits,
@@ -1510,7 +1517,10 @@ impl crate::transport_v2::CarrierSessionV2 for RawQuicSession {
     }
 }
 
-fn transport_config(limits: RawQuicLimits) -> Result<quinn::TransportConfig, RawQuicError> {
+fn transport_config(
+    limits: RawQuicLimits,
+    qlog_role: &'static str,
+) -> Result<quinn::TransportConfig, RawQuicError> {
     limits.validate()?;
     let mut transport = quinn::TransportConfig::default();
     transport
@@ -1532,9 +1542,154 @@ fn transport_config(limits: RawQuicLimits) -> Result<quinn::TransportConfig, Raw
         .keep_alive_interval(Some(limits.keep_alive_interval))
         .datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER_BYTES))
         .datagram_send_buffer_size(DATAGRAM_SEND_BUFFER_BYTES);
+    if let Some(stream) = release_evidence_qlog(qlog_role)? {
+        transport.qlog_stream(Some(stream));
+    }
     Ok(transport)
+}
+
+fn release_evidence_qlog(role: &'static str) -> Result<Option<quinn::QlogStream>, RawQuicError> {
+    build_release_evidence_qlog(
+        std::env::var_os(RELEASE_EVIDENCE_ENV).as_deref(),
+        std::env::var_os(QLOG_DIRECTORY_ENV).as_deref(),
+        role,
+    )
+}
+
+fn build_release_evidence_qlog(
+    enabled: Option<&OsStr>,
+    directory: Option<&OsStr>,
+    role: &'static str,
+) -> Result<Option<quinn::QlogStream>, RawQuicError> {
+    let directory = match (enabled, directory) {
+        (None, None) => return Ok(None),
+        (Some(value), None) if value == "1" => {
+            return Err(RawQuicError::InvalidLimits(
+                "release evidence requires a qlog directory",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(RawQuicError::InvalidLimits(
+                "qlog directory requires release evidence mode",
+            ));
+        }
+        (Some(value), _) if value != "1" => {
+            return Err(RawQuicError::InvalidLimits(
+                "release evidence mode must equal 1",
+            ));
+        }
+        (Some(_), Some(directory)) => Path::new(directory),
+        (Some(_), None) => unreachable!("handled missing qlog directory"),
+    };
+    let metadata = std::fs::symlink_metadata(directory).map_err(|_| {
+        RawQuicError::InvalidLimits("release evidence qlog directory is unavailable")
+    })?;
+    if !directory.is_absolute() || !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(RawQuicError::InvalidLimits(
+            "release evidence qlog directory is invalid",
+        ));
+    }
+    let sequence = QLOG_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let path = directory.join(format!(
+        "flowersec-rust-{}-{sequence:016x}-{role}.sqlog",
+        std::process::id()
+    ));
+    let writer = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|_| RawQuicError::InvalidLimits("release evidence qlog file cannot be created"))?;
+    let mut config = quinn::QlogConfig::default();
+    config
+        .writer(Box::new(writer))
+        .title(Some(format!("Flowersec v2 {role}")))
+        .description(Some("audited transport release evidence".into()));
+    config
+        .into_stream()
+        .map(Some)
+        .ok_or(RawQuicError::InvalidLimits(
+            "release evidence qlog stream cannot be initialized",
+        ))
 }
 
 fn local_reset_error() -> io::Error {
     io::Error::new(io::ErrorKind::ConnectionReset, "raw QUIC stream was reset")
+}
+
+#[cfg(test)]
+mod release_evidence_qlog_tests {
+    use super::build_release_evidence_qlog;
+    use std::{ffi::OsStr, fs};
+
+    #[test]
+    fn qlog_is_disabled_only_when_both_environment_values_are_absent() {
+        assert!(
+            build_release_evidence_qlog(None, None, "disabled")
+                .expect("disabled qlog")
+                .is_none()
+        );
+        assert!(build_release_evidence_qlog(Some(OsStr::new("1")), None, "missing").is_err());
+        assert!(build_release_evidence_qlog(None, Some(OsStr::new("/tmp")), "orphan").is_err());
+        assert!(
+            build_release_evidence_qlog(
+                Some(OsStr::new("true")),
+                Some(OsStr::new("/tmp")),
+                "invalid",
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn qlog_rejects_relative_and_non_directory_paths() {
+        assert!(
+            build_release_evidence_qlog(Some(OsStr::new("1")), Some(OsStr::new(".")), "relative",)
+                .is_err()
+        );
+        let directory = tempfile::tempdir().expect("temporary qlog parent");
+        let file = directory.path().join("not-a-directory");
+        fs::write(&file, b"not a directory").expect("write qlog path fixture");
+        assert!(
+            build_release_evidence_qlog(Some(OsStr::new("1")), Some(file.as_os_str()), "file",)
+                .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn qlog_rejects_a_symlinked_directory() {
+        use std::os::unix::fs::symlink;
+
+        let parent = tempfile::tempdir().expect("temporary qlog parent");
+        let target = parent.path().join("target");
+        let link = parent.path().join("link");
+        fs::create_dir(&target).expect("create qlog target");
+        symlink(&target, &link).expect("create qlog symlink fixture");
+        assert!(
+            build_release_evidence_qlog(Some(OsStr::new("1")), Some(link.as_os_str()), "symlink",)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn qlog_creates_an_exclusive_json_sequence_file() {
+        let directory = tempfile::tempdir().expect("temporary qlog directory");
+        let stream = build_release_evidence_qlog(
+            Some(OsStr::new("1")),
+            Some(directory.path().as_os_str()),
+            "valid",
+        )
+        .expect("create qlog stream")
+        .expect("enabled qlog stream");
+        drop(stream);
+
+        let files = fs::read_dir(directory.path())
+            .expect("read qlog directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read qlog entries");
+        assert_eq!(files.len(), 1);
+        let file = &files[0];
+        assert_eq!(file.path().extension(), Some(OsStr::new("sqlog")));
+        assert!(file.metadata().expect("qlog metadata").len() > 0);
+    }
 }

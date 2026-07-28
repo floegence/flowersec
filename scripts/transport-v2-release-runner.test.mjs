@@ -64,6 +64,9 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
   assert.match(runner, /host kernel \$actual_kernel does not match frozen policy \$expected_kernel/);
   assert.match(runner, /ip netns add "\$probe_namespace"/);
   assert.match(runner, /go build -trimpath -buildvcs=false -o "\$low_level_runner"/);
+	assert.match(runner, /cargo build --locked --release --example transport_release_runner/);
+	assert.match(runner, /CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="\$rust_target_directory"/);
+	assert.match(runner, /Rust release runner build is unavailable/);
 	assert.match(runner, /go build -race -trimpath -buildvcs=false -o "\$race_low_level_runner"/);
 	assert.match(runner, /go build -trimpath -buildvcs=false -o "\$base_low_level_runner"/);
   assert.match(runner, /vcs\\\.revision=/);
@@ -76,6 +79,7 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
   assert.match(runner, /-I"\$bpf_system_include"/);
   assert.match(runner, /runner build changed the source checkout/);
   assert.match(runner, /"\$transportcheck" collect \\/);
+	assert.match(runner, /FLOWERSEC_RUST_RELEASE_RUNNER="\$rust_release_runner" "\$transportcheck" collect/);
   for (const flag of [
     "manifest", "registry", "repo", "base-repo", "base-sha", "final-sha", "target", "report", "artifact-dir",
     "runner-executable", "race-runner-executable", "base-runner-executable", "runner-wrapper", "bpf-object", "host-bpftool",

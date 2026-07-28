@@ -172,6 +172,38 @@ fn runtime_acceptor_is_carrier_neutral_and_opaque() {
 }
 
 #[test]
+fn release_runner_uses_only_the_opaque_flowersec_surface() {
+    let source = include_str!("../examples/transport_release_runner.rs");
+    for forbidden in [
+        "flowersec::raw_",
+        "quinn::",
+        "Candidate",
+        "Wire",
+        "Yamux",
+        "artifact_v2",
+        "session_v2",
+        "transport_v2",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "release runner exposes forbidden implementation surface: {forbidden}"
+        );
+    }
+    for required in [
+        "Artifact::parse",
+        "ArtifactLease::new",
+        "Connector::new",
+        "Acceptor::bind",
+        "Arc<dyn Session>",
+    ] {
+        assert!(
+            source.contains(required),
+            "release runner misses {required}"
+        );
+    }
+}
+
+#[test]
 fn stream_terminal_errors_are_typed_and_redacted() {
     let snapshots = [
         (

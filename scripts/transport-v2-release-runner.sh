@@ -78,6 +78,8 @@ readonly registry_path=$source_root/testdata/transport_v2/case_registry.json
 readonly trust_policy_path=$source_root/testdata/transport_v2/evidence_trust_policy.json
 readonly effective_config_path=$source_root/testdata/transport_v2/runner_effective_config.json
 readonly bpf_source_path=$source_root/flowersec-go/internal/transportrelease/linuxnetlab/bpf/packet_fault.c
+readonly rust_runner_source_path=$source_root/flowersec-rust/examples/transport_release_runner.rs
+readonly rust_lock_path=$source_root/flowersec-rust/Cargo.lock
 readonly wrapper_source_path=$source_root/scripts/transport-v2-release-runner.sh
 readonly host_bpftool=/opt/host-linux-tools/bpftool
 
@@ -101,7 +103,7 @@ esac
 source /etc/os-release
 [[ ${ID:-} == ubuntu && ${VERSION_ID:-} == 24.04 ]] || fail "runner requires the pinned Ubuntu 24.04 userspace"
 
-for path in "$manifest_path" "$registry_path" "$trust_policy_path" "$effective_config_path" "$bpf_source_path" "$wrapper_source_path"; do
+for path in "$manifest_path" "$registry_path" "$trust_policy_path" "$effective_config_path" "$bpf_source_path" "$rust_runner_source_path" "$rust_lock_path" "$wrapper_source_path"; do
   [[ -f $path && ! -L $path ]] || fail "required source file is missing or is a symlink: $path"
 done
 [[ -x $host_bpftool ]] || fail "exact-host-kernel bpftool is unavailable"
@@ -168,6 +170,8 @@ race_low_level_runner=$build_directory/transport-release-runner-race
 base_low_level_runner=$build_directory/base-transport-release-runner
 transportcheck=$build_directory/transportcheck
 bpf_object=$build_directory/packet_fault.o
+rust_target_directory=$build_directory/rust-target
+rust_release_runner=$rust_target_directory/release/examples/transport_release_runner
 
 git clone --quiet --no-local --no-checkout "$source_root" "$base_source_root"
 git -C "$base_source_root" checkout --quiet --detach "$base_sha"
@@ -186,6 +190,12 @@ cmp -s -- "$manifest_path" "$base_manifest_path" || fail "base and final perform
   cd "$source_root/flowersec-go"
   go build -trimpath -buildvcs=false -o "$low_level_runner" ./internal/cmd/transport-release-runner
 )
+(
+  cd "$source_root/flowersec-rust"
+  CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$rust_target_directory" \
+    cargo build --locked --release --example transport_release_runner
+)
+[[ -f $rust_release_runner && ! -L $rust_release_runner && -x $rust_release_runner ]] || fail "Rust release runner build is unavailable"
 (
   cd "$source_root/flowersec-go"
   go build -race -trimpath -buildvcs=false -o "$race_low_level_runner" ./internal/cmd/transport-release-runner
@@ -223,7 +233,7 @@ collect_part() {
   local collect_report=$2
   local collect_directory=$3
   shift 3
-  "$transportcheck" collect \
+  FLOWERSEC_RUST_RELEASE_RUNNER="$rust_release_runner" "$transportcheck" collect \
     -manifest "$manifest_path" \
     -registry "$registry_path" \
     -repo "$source_root" \
