@@ -289,6 +289,36 @@ impl Artifact {
             },
         })
     }
+
+    pub(crate) fn raw_quic_accept_plan(&self) -> Result<RawQuicAcceptPlan, ArtifactError> {
+        let mut dial = self.raw_quic_dial_plan()?;
+        if dial.path != crate::transport_v2::PathKind::Direct {
+            return Err(ArtifactError::Invalid);
+        }
+        let expected_fsb2 = dial
+            .candidates
+            .iter()
+            .map(|candidate| self.encode_fsb2(&candidate.id).map(|encoded| encoded.raw))
+            .collect::<Result<Vec<_>, ArtifactError>>()?;
+        let registration_id = hash_acceptor_admissions(&expected_fsb2);
+        dial.session_config.role = crate::transport_v2::SessionRole::Server;
+        Ok(RawQuicAcceptPlan {
+            expected_fsb2,
+            expires_at_unix_seconds: dial.expires_at_unix_seconds,
+            session_config: dial.session_config,
+            session_contract: dial.session_contract,
+            registration_id,
+        })
+    }
+}
+
+fn hash_acceptor_admissions(admissions: &[Vec<u8>]) -> [u8; 32] {
+    let mut preimage = b"flowersec-v2-acceptor-admissions\0".to_vec();
+    for admission in admissions {
+        preimage.extend_from_slice(&(admission.len() as u32).to_be_bytes());
+        preimage.extend_from_slice(admission);
+    }
+    Sha256::digest(preimage).into()
 }
 
 pub(crate) struct RawQuicDialPlan {
@@ -299,6 +329,14 @@ pub(crate) struct RawQuicDialPlan {
     pub(crate) expires_at_unix_seconds: i64,
     pub(crate) session_config: crate::session_v2::SessionConfigV2,
     pub(crate) session_contract: crate::raw_quic_v2::SessionContractV2,
+}
+
+pub(crate) struct RawQuicAcceptPlan {
+    pub(crate) expected_fsb2: Vec<Vec<u8>>,
+    pub(crate) expires_at_unix_seconds: i64,
+    pub(crate) session_config: crate::session_v2::SessionConfigV2,
+    pub(crate) session_contract: crate::raw_quic_v2::SessionContractV2,
+    pub(crate) registration_id: [u8; 32],
 }
 
 #[derive(Clone, Debug)]

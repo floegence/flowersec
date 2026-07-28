@@ -47,20 +47,29 @@ The crate root exports only these public categories:
   `ArtifactSpendError`;
 - connection lifecycle: `ConnectorOptions`, `Connector`, `ConnectError`, and
   `ConnectErrorCode`;
+- runtime-owned direct acceptance: `AcceptorOptions`, `Acceptor`,
+  `AcceptError`, and `AcceptErrorCode`;
 - carrier-neutral session behavior: `Session`, `RpcPeer`, `ByteStream`,
   `IncomingStream`, and `JsonObject`;
 - closed operation failures: `SessionError` and `StreamTerminalError`.
 
 Parse an opaque artifact with `Artifact::parse`, bind its durable single-use
 callback with `ArtifactLease`, and establish a session through `Connector`.
+Native server runtimes bind `Acceptor` with explicit TLS and resource policy,
+then pass an opaque `Artifact` to `accept`; successful acceptance returns the
+same carrier-neutral `Session` interface. Duplicate concurrent registration of
+one artifact fails closed, and cancellation and artifact expiry bound the
+complete accept operation. One `Acceptor` admits one pending artifact at a
+time; runtimes use independent acceptors when sessions must wait concurrently.
 `Session` exposes RPC, logical streams, rekey, liveness, termination waiting,
 and bounded close. It does not expose route or carrier selection, endpoint
 identity, stream identifiers, candidates, wire data, keys, or transport
 diagnostics.
 
-`ConnectErrorCode`, `SessionError`, and `StreamTerminalError` are closed,
-redacted failure sets. Public errors do not retain peer payloads, carrier
-diagnostics, credentials, or cryptographic material.
+`ConnectErrorCode`, `AcceptErrorCode`, `SessionError`, and
+`StreamTerminalError` are closed, redacted failure sets. Public errors do not
+retain peer payloads, carrier diagnostics, credentials, or cryptographic
+material.
 
 ## Runtime Boundaries
 

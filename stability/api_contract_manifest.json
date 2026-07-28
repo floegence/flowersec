@@ -1164,12 +1164,18 @@
     "crate_path": "flowersec-rust",
     "doc_tokens": [
       "`flowersec`",
+      "`Acceptor`",
+      "`AcceptorOptions`",
       "`Connector`",
       "`ConnectorOptions`",
       "`Session`",
       "`UnreliableMessageChannel`"
     ],
     "compile_entries": [
+      "let _ = std::mem::size_of::<flowersec::AcceptError>()",
+      "let _ = std::mem::size_of::<flowersec::AcceptErrorCode>()",
+      "let _ = std::mem::size_of::<flowersec::Acceptor>()",
+      "let _ = std::mem::size_of::<flowersec::AcceptorOptions>()",
       "let _ = std::mem::size_of::<flowersec::Artifact>()",
       "let _ = std::mem::size_of::<flowersec::ArtifactError>()",
       "let _ = std::mem::size_of::<flowersec::ArtifactLease>()",

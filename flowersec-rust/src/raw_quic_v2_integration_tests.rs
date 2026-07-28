@@ -13,7 +13,7 @@ use crate::raw_quic_v2::{
     RawQuicPathProfile, RawQuicServerConfig, RawQuicSession, RawQuicStream, SessionContractV2,
 };
 use crate::{
-    Connector, ConnectorOptions,
+    Acceptor, AcceptorOptions, Connector, ConnectorOptions,
     artifact_v2::{Artifact, ArtifactLease},
     protocol_v2::CipherSuiteV2,
     session_v2::{RpcHandlerV2, SessionConfigV2, establish_session_v2},
@@ -349,6 +349,146 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
         session.close().await.expect("close facade client");
         server.close().await.expect("close facade server");
     }
+}
+
+#[tokio::test]
+async fn public_acceptor_establishes_opaque_direct_session() {
+    let port = UdpSocket::bind(loopback_ephemeral())
+        .expect("reserve acceptor port")
+        .local_addr()
+        .expect("reserved acceptor address")
+        .port();
+    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let artifact = Artifact::parse(public_connector_artifact(
+        address,
+        RawQuicPathProfile::Direct,
+        1,
+    ))
+    .expect("parse acceptor artifact");
+    let options = AcceptorOptions {
+        bind_address: address,
+        certificate_chain_der: vec![test_cert_der()],
+        private_key_der: test_key_der(),
+        max_inbound_streams: 1,
+        accept_timeout: Duration::from_secs(10),
+    };
+    let debug = format!("{options:?}");
+    assert!(!debug.contains(TEST_CERT_DER_B64));
+    assert!(!debug.contains(TEST_KEY_DER_B64));
+    let acceptor = Acceptor::bind(options).expect("bind public acceptor");
+    assert!(!format!("{acceptor:?}").contains(&port.to_string()));
+
+    let server_artifact = artifact.clone();
+    let server = tokio::spawn(async move {
+        acceptor
+            .accept(&server_artifact, CancellationToken::new())
+            .await
+            .expect("accept opaque direct session")
+    });
+    let mut lease = ArtifactLease::new(artifact, || async { Ok(()) });
+    let connector = Connector::new(ConnectorOptions {
+        trust_roots_der: vec![test_cert_der()],
+        connect_timeout: Duration::from_secs(10),
+    })
+    .expect("create public connector");
+    let client = connector
+        .connect(&mut lease, CancellationToken::new())
+        .await
+        .expect("connect public client");
+    let server = server.await.expect("join public acceptor");
+
+    let outbound = client
+        .open_stream("acceptor-e2e", serde_json::Map::new())
+        .await
+        .expect("open public stream");
+    outbound
+        .write(Bytes::from_static(b"opaque"))
+        .await
+        .expect("write public stream");
+    outbound.close_write().await.expect("finish public stream");
+    let incoming = server.accept_stream().await.expect("accept public stream");
+    assert_eq!(incoming.kind(), "acceptor-e2e");
+    assert_eq!(
+        incoming.stream().read().await.expect("read public stream"),
+        Some(Bytes::from_static(b"opaque"))
+    );
+    assert_eq!(
+        incoming.stream().read().await.expect("read public FIN"),
+        None
+    );
+    client.close().await.expect("close public client");
+    server.close().await.expect("close public server");
+}
+
+#[tokio::test]
+async fn public_acceptor_rejects_duplicate_registration_and_cancels_cleanly() {
+    let port = UdpSocket::bind(loopback_ephemeral())
+        .expect("reserve cancellation port")
+        .local_addr()
+        .expect("reserved cancellation address")
+        .port();
+    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let artifact_json = public_connector_artifact(address, RawQuicPathProfile::Direct, 1);
+    let artifact = Artifact::parse(&artifact_json).expect("parse cancellation artifact");
+    let mut correlated_json: serde_json::Value =
+        serde_json::from_slice(&artifact_json).expect("decode correlation variant");
+    correlated_json["correlation"]["tags"] =
+        serde_json::json!([{"key":"trace","value":"same-admission"}]);
+    let correlated =
+        Artifact::parse(serde_json::to_vec(&correlated_json).expect("encode correlation variant"))
+            .expect("parse correlation variant");
+    let mut distinct_json: serde_json::Value =
+        serde_json::from_slice(&artifact_json).expect("decode distinct variant");
+    distinct_json["path"]["candidates"][0]["id"] = serde_json::json!("q2");
+    let distinct =
+        Artifact::parse(serde_json::to_vec(&distinct_json).expect("encode distinct variant"))
+            .expect("parse distinct variant");
+    let acceptor = Arc::new(
+        Acceptor::bind(AcceptorOptions {
+            bind_address: address,
+            certificate_chain_der: vec![test_cert_der()],
+            private_key_der: test_key_der(),
+            max_inbound_streams: 1,
+            accept_timeout: Duration::from_secs(2),
+        })
+        .expect("bind cancellation acceptor"),
+    );
+    let cancellation = CancellationToken::new();
+    let waiting_acceptor = acceptor.clone();
+    let waiting_artifact = artifact.clone();
+    let waiting_cancellation = cancellation.clone();
+    let waiting = tokio::spawn(async move {
+        waiting_acceptor
+            .accept(&waiting_artifact, waiting_cancellation)
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert_eq!(
+        acceptor
+            .accept(&correlated, CancellationToken::new())
+            .await
+            .expect_err("same admission with new correlation must fail")
+            .code(),
+        crate::AcceptErrorCode::AlreadyRegistered
+    );
+    assert_eq!(
+        acceptor
+            .accept(&distinct, CancellationToken::new())
+            .await
+            .expect_err("second pending admission must fail")
+            .code(),
+        crate::AcceptErrorCode::Busy
+    );
+    cancellation.cancel();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_millis(250), waiting)
+            .await
+            .expect("cancellation must be bounded")
+            .expect("join canceled accept")
+            .expect_err("canceled accept must fail")
+            .code(),
+        crate::AcceptErrorCode::Canceled
+    );
 }
 
 fn public_connector_artifact(

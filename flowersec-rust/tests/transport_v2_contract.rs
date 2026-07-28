@@ -153,6 +153,25 @@ fn crate_root_does_not_export_transport_topology() {
 }
 
 #[test]
+fn runtime_acceptor_is_carrier_neutral_and_opaque() {
+    let facade = include_str!("../src/lib.rs");
+    for required in [
+        "Acceptor",
+        "AcceptorOptions",
+        "AcceptError",
+        "AcceptErrorCode",
+    ] {
+        assert!(facade.contains(required), "root facade omitted {required}");
+    }
+    for forbidden in ["pub use raw_quic_v2", "pub mod raw_quic_v2", "quinn::"] {
+        assert!(
+            !facade.contains(forbidden),
+            "root facade exposed {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn stream_terminal_errors_are_typed_and_redacted() {
     let snapshots = [
         (

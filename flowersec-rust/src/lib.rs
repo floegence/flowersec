@@ -4,8 +4,10 @@
 //! Native Rust support for Flowersec v2 secure direct and tunneled sessions.
 //!
 //! Maintained callers use the opaque [`Artifact`], [`Connector`], and
-//! carrier-neutral [`Session`] contracts. Carrier configuration, candidates,
-//! wire formats, and cryptographic state are crate-private.
+//! carrier-neutral [`Session`] contracts. Native runtimes accept direct
+//! sessions through [`Acceptor`] without receiving carrier or wire objects.
+//! Carrier configuration, candidates, wire formats, and cryptographic state
+//! are crate-private.
 //!
 //! ```compile_fail
 //! use flowersec::framing;
@@ -33,6 +35,7 @@
 //! use flowersec::artifact_v2::Artifact;
 //! ```
 
+mod acceptor_v2;
 mod artifact_v2;
 mod connector_v2;
 mod crypto_v2;
@@ -45,6 +48,7 @@ mod transport_v2;
 #[cfg(test)]
 mod defaults_contract;
 
+pub use acceptor_v2::{AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions};
 pub use artifact_v2::{Artifact, ArtifactError, ArtifactLease, ArtifactSpendError};
 pub use connector_v2::{ConnectError, ConnectErrorCode, Connector, ConnectorOptions};
 pub use transport_v2::{

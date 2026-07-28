@@ -14,9 +14,7 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use quinn::{Endpoint, VarInt};
-use rustls::pki_types::CertificateDer;
-#[cfg(test)]
-use rustls::pki_types::PrivateKeyDer;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 use tokio::sync::Mutex;
@@ -262,11 +260,9 @@ pub enum RawQuicError {
     #[error("invalid raw QUIC trust configuration: {0}")]
     InvalidTrust(String),
     /// The supplied server certificate chain is empty or invalid.
-    #[cfg(test)]
     #[error("invalid raw QUIC certificate chain: {0}")]
     InvalidCertificate(String),
     /// The supplied private key is invalid or is not usable with the certificate.
-    #[cfg(test)]
     #[error("invalid raw QUIC private key: {0}")]
     InvalidPrivateKey(String),
     /// The TLS 1.3 configuration could not be constructed.
@@ -276,7 +272,6 @@ pub enum RawQuicError {
     #[error("raw QUIC endpoint failed: {0}")]
     Endpoint(#[source] io::Error),
     /// The local listener has stopped accepting connections.
-    #[cfg(test)]
     #[error("raw QUIC listener is closed")]
     ListenerClosed,
     /// A connection could not be started.
@@ -373,18 +368,15 @@ impl fmt::Debug for RawQuicClientConfig {
 }
 
 /// Server policy built from a caller-owned certificate chain and private key.
-#[cfg(test)]
-#[derive(Clone)]
-pub struct RawQuicServerConfig {
+pub(crate) struct RawQuicServerConfig {
     profile: RawQuicPathProfile,
     limits: RawQuicLimits,
     inner: quinn::ServerConfig,
 }
 
-#[cfg(test)]
 impl RawQuicServerConfig {
     /// Builds a TLS 1.3-only server configuration from owned DER material.
-    pub fn new(
+    pub(crate) fn new(
         profile: RawQuicPathProfile,
         certificate_chain_der: Vec<Vec<u8>>,
         private_key_der: Vec<u8>,
@@ -424,7 +416,6 @@ impl RawQuicServerConfig {
     }
 }
 
-#[cfg(test)]
 impl fmt::Debug for RawQuicServerConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -436,18 +427,19 @@ impl fmt::Debug for RawQuicServerConfig {
 }
 
 /// A bound raw QUIC server endpoint.
-#[cfg(test)]
-pub struct RawQuicListener {
+pub(crate) struct RawQuicListener {
     endpoint: Endpoint,
     profile: RawQuicPathProfile,
     handshake_idle_timeout: Duration,
     max_inbound_bidirectional_streams: u32,
 }
 
-#[cfg(test)]
 impl RawQuicListener {
     /// Binds a UDP endpoint after all TLS and resource policy has been validated.
-    pub fn bind(address: SocketAddr, config: RawQuicServerConfig) -> Result<Self, RawQuicError> {
+    pub(crate) fn bind(
+        address: SocketAddr,
+        config: RawQuicServerConfig,
+    ) -> Result<Self, RawQuicError> {
         let endpoint = Endpoint::server(config.inner, address).map_err(RawQuicError::Endpoint)?;
         Ok(Self {
             endpoint,
@@ -458,12 +450,12 @@ impl RawQuicListener {
     }
 
     /// Returns the effective local UDP address.
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+    pub(crate) fn local_addr(&self) -> io::Result<SocketAddr> {
         self.endpoint.local_addr()
     }
 
     /// Accepts one fully established, non-early raw QUIC session.
-    pub async fn accept(&self) -> Result<RawQuicSession, RawQuicError> {
+    pub(crate) async fn accept(&self) -> Result<RawQuicSession, RawQuicError> {
         let incoming = self
             .endpoint
             .accept()
@@ -484,7 +476,6 @@ impl RawQuicListener {
     }
 }
 
-#[cfg(test)]
 impl fmt::Debug for RawQuicListener {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -793,6 +784,77 @@ impl RawQuicSession {
         })?
     }
 
+    pub(crate) async fn accept_admission_and_establish_v2(
+        self,
+        expected_fsb2: &[Vec<u8>],
+        mut session_config: crate::session_v2::SessionConfigV2,
+        session_contract: SessionContractV2,
+    ) -> io::Result<Option<Arc<dyn crate::transport_v2::SessionV2>>> {
+        let establish_deadline = session_config.deadlines.establish;
+        tokio::time::timeout(establish_deadline, async move {
+            let expected_carrier_limit = crate::transport_v2::carrier_inbound_stream_limit_v2(
+                session_config.max_inbound_streams,
+            )
+            .map_err(io::Error::other)?;
+            if self.max_inbound_bidirectional_streams != expected_carrier_limit
+                || self.profile != RawQuicPathProfile::Direct
+                || session_config.path != crate::transport_v2::PathKind::Direct
+                || session_config.role != crate::transport_v2::SessionRole::Server
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "raw QUIC listener policy does not match the server session",
+                ));
+            }
+            session_contract.validate_against_config(&session_config)?;
+            let admission = match self.accept_stream().await {
+                Ok(stream) => stream,
+                Err(_) => {
+                    self.close();
+                    return Ok(None);
+                }
+            };
+            let raw_fsb2 = match read_bounded_fsb2(&admission).await {
+                Ok(raw) => raw,
+                Err(_) => {
+                    let _ = admission.reset().await;
+                    self.close();
+                    return Ok(None);
+                }
+            };
+            let matches = expected_fsb2.iter().any(|expected| {
+                expected.len() == raw_fsb2.len()
+                    && bool::from(subtle::ConstantTimeEq::ct_eq(
+                        expected.as_slice(),
+                        raw_fsb2.as_slice(),
+                    ))
+            });
+            if !matches {
+                let _ = admission.reset().await;
+                self.close();
+                return Ok(None);
+            }
+            let mut validation_config = session_config.clone();
+            validation_config.role = crate::transport_v2::SessionRole::Client;
+            let binding =
+                validate_raw_fsb2(&raw_fsb2, RawQuicPathProfile::Direct, &validation_config)?;
+            admission.write_all(b"FSA2\x02\x00\x00\x00").await?;
+            admission.close_write().await?;
+            session_config.local_admission_binding = binding;
+            session_config.peer_admission_binding = Some(binding);
+            let session =
+                crate::session_v2::establish_session_v2(Arc::new(self), session_config).await?;
+            Ok(Some(session))
+        })
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                "raw QUIC admission and session establish timeout",
+            )
+        })?
+    }
+
     /// Closes the session with a bounded application diagnostic.
     #[cfg(test)]
     pub fn close_with_error(
@@ -816,6 +878,28 @@ impl RawQuicSession {
         self.connection
             .close(VarInt::from_u32(SESSION_CLOSE_CODE), &[]);
     }
+}
+
+async fn read_bounded_fsb2(stream: &RawQuicStream) -> io::Result<Vec<u8>> {
+    let mut header = [0_u8; FSB2_HEADER_BYTES];
+    read_exact_raw_quic(stream, &mut header).await?;
+    if &header[..4] != b"FSB2" || header[4] != 2 || header[6..8] != [0, 0] {
+        return Err(invalid_fsb2("invalid FSB2 header"));
+    }
+    let payload_length =
+        u32::from_be_bytes(header[8..12].try_into().expect("header length")) as usize;
+    if payload_length == 0 || payload_length > MAX_FSB2_PAYLOAD_BYTES {
+        return Err(invalid_fsb2("invalid FSB2 payload length"));
+    }
+    let mut raw = Vec::with_capacity(FSB2_HEADER_BYTES + payload_length);
+    raw.extend_from_slice(&header);
+    raw.resize(FSB2_HEADER_BYTES + payload_length, 0);
+    read_exact_raw_quic(stream, &mut raw[FSB2_HEADER_BYTES..]).await?;
+    let mut trailing = [0_u8; 1];
+    if stream.read(&mut trailing).await? != 0 {
+        return Err(invalid_fsb2("trailing FSB2 bytes"));
+    }
+    Ok(raw)
 }
 
 fn preferred_route_local_address(remote: SocketAddr) -> io::Result<SocketAddr> {
