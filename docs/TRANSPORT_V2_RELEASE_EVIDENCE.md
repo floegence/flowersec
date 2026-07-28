@@ -61,11 +61,15 @@ the earliest retransmitted response arrival at approximately 26.109 seconds,
 so completion alone required approximately 3.872 seconds. A successful run's
 worst measured orderly-close tail after its final bulk payload was another
 1.809 seconds. Seven seconds covers that approximately 5.681-second lower
-bound with about 1.319 seconds of recovery and scheduler margin. The Rust
-public session keeps its independent four-second internal close-flush bound;
-the outer cleanup deadline covers both completion reconciliation and that
-bounded orderly close. This changes no completion handshake, network,
-workload, certificate, retry, zero-residual, or evidence semantics.
+bound with about 1.319 seconds of recovery and scheduler margin. A later
+clean-SHA run then failed during a cold public-session close: its client sent
+the close/control packet at approximately 6.314 seconds and was still sending
+at the former four-second internal boundary near 10.315 seconds, while the
+server remained active near 10.094 seconds. The Rust public session therefore
+uses the same seven-second close-flush upper bound as the frozen outer cleanup
+deadline, retaining about three seconds beyond that observed lower bound.
+This changes no completion handshake, network, workload, certificate, retry,
+zero-residual, or evidence semantics.
 
 Each forced performance report preserves all fifteen independent runs and
 executes them as five sequential three-run shards. Every shard is fail-fast and
