@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "digest": "sha256:3b4229e960795b134d7135c48d825322a201612884d1321f3a933dace87219af",
+  "digest": "sha256:328c680ff4f843435ac5574b494e57ba6c21e7161bb9020e678ec0d76ab7ca10",
   "ratio_formula_version": "transport-ratio-v1",
   "run_count": 15,
   "bootstrap": {
@@ -143,7 +143,7 @@
         "score_bytes_per_direction": 131072,
         "phase_deadline_seconds": 9
       },
-      "cleanup_deadline_seconds": 4,
+      "cleanup_deadline_seconds": 7,
       "harness_slack_seconds": 0,
       "cell_watchdog_minutes": 5,
       "network": {

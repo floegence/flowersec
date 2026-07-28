@@ -53,20 +53,19 @@ observed recovery RTT, requires about 2.3 seconds beyond that boundary. Nine
 seconds preserves roughly 0.7 seconds of scheduler margin without changing
 the 64 KiB warmup, 128 KiB scored payload, bidirectional stream, network,
 certificate, resource, zero-residual, or evidence contracts.
-The edge cleanup deadline is four seconds. In the frozen Ubuntu 24 run, burst
-loss discarded server packets 621 through 625, so the final completion
-acknowledgement consumed approximately 1.60 seconds of the former two-second
-cleanup budget. The subsequent orderly QUIC close still required an observed
-0.37-to-0.56-second round trip and could enter the approximately 0.7-second
-PTO already present in that trace. Four seconds covers that measured lower
-bound plus approximately 1.1 seconds of recovery and scheduler margin without
-changing the completion handshake, network, workload, zero-residual, or
-evidence semantics. The Rust public session's internal close-flush deadline is
-also four seconds: a later clean-SHA edge run still had a client PTO at about
-2.15 seconds while the corresponding server connection remained active until
-about 2.78 seconds. Keeping the internal deadline equal to the frozen cleanup
-deadline prevents it from failing before the runner can enforce and measure
-that unchanged outer budget.
+The edge cleanup deadline is seven seconds. A frozen Ubuntu 24 run measured a
+13,138.9-millisecond server/client clock offset and 180.15-millisecond median
+one-way delay. Its final bulk payload reached the client at approximately
+22.238 seconds. After the initial completion response was lost, two PTOs put
+the earliest retransmitted response arrival at approximately 26.109 seconds,
+so completion alone required approximately 3.872 seconds. A successful run's
+worst measured orderly-close tail after its final bulk payload was another
+1.809 seconds. Seven seconds covers that approximately 5.681-second lower
+bound with about 1.319 seconds of recovery and scheduler margin. The Rust
+public session keeps its independent four-second internal close-flush bound;
+the outer cleanup deadline covers both completion reconciliation and that
+bounded orderly close. This changes no completion handshake, network,
+workload, certificate, retry, zero-residual, or evidence semantics.
 
 Each forced performance report preserves all fifteen independent runs and
 executes them as five sequential three-run shards. Every shard is fail-fast and
