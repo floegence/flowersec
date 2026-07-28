@@ -25,7 +25,7 @@ import (
 
 const browserDirectTopology = "browser_webtransport"
 
-func runBrowserCell(parent context.Context, reportPath string, destination *artifactDestination, sourceSHA, sourceRoot, profileID, topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
+func runBrowserCell(parent context.Context, reportPath string, destination *artifactDestination, sourceSHA, sourceRoot, profileID, topology, bpfObject string, runShard int, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
 	if topology == "" {
 		topology = browserDirectTopology
 	}
@@ -74,14 +74,21 @@ func runBrowserCell(parent context.Context, reportPath string, destination *arti
 		StartedAt: time.Now().UTC(),
 	}
 	cellDeadline := time.Duration(profile.CellWatchdogMinutes) * time.Minute
-	err = runForcedProfileShards(parent, plan.RunCount, cellDeadline, func(shardCtx context.Context, runNumber int) error {
+	runOne := func(shardCtx context.Context, runNumber int) error {
 		result, err := runBrowserNetworkCarrier(shardCtx, topology, profile, runNumber, frozenBPFObject, sourceRoot, destination)
 		if err != nil {
 			return fmt.Errorf("run %d: %w", runNumber, err)
 		}
 		report.Results = append(report.Results, result)
 		return nil
-	})
+	}
+	if runShard == 0 {
+		err = runForcedProfileShards(parent, plan.RunCount, cellDeadline, runOne)
+	} else {
+		report.ShardIndex = runShard
+		report.ShardCount = len(forcedProfileRunShards(plan.RunCount))
+		err = runSelectedForcedProfileShard(parent, plan.RunCount, runShard, cellDeadline, runOne)
+	}
 	if err != nil {
 		return fmt.Errorf("%s browser WebTransport: %w", profile.ID, err)
 	}

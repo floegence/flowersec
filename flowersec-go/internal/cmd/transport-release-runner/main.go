@@ -30,6 +30,7 @@ const (
 	networkCellTarget   = "direct-network-profile-cell"
 	tunnelCellTarget    = "tunnel-network-profile-cell"
 	browserCellTarget   = "browser-webtransport-cell"
+	browserMergeTarget  = "merge-browser-webtransport-shards"
 	adaptiveCellTarget  = "adaptive-selection-cell"
 	caseSuiteTarget     = "release-case-suite"
 	networkWorkerArg    = "--network-cell-worker"
@@ -102,6 +103,8 @@ type browserCellReport struct {
 	BPFObjectSHA256 string                       `json:"bpf_object_sha256,omitempty"`
 	StartedAt       time.Time                    `json:"started_at"`
 	FinishedAt      time.Time                    `json:"finished_at"`
+	ShardIndex      int                          `json:"shard_index,omitempty"`
+	ShardCount      int                          `json:"shard_count,omitempty"`
 	Results         []browserCellResult          `json:"results"`
 }
 
@@ -245,11 +248,30 @@ func runWithContext(runnerContext context.Context, args []string) (resultErr err
 	caseOwner := flags.String("case-owner", "", "registered case owner")
 	caseMode := flags.String("case-mode", "", "normal or race case execution mode")
 	caseID := flags.String("case-id", "", "exact registered case")
+	runShard := flags.Int("run-shard", 0, "one-based forced profile run shard")
+	var shardReports stringFlagValues
+	flags.Var(&shardReports, "shard-report", "browser shard report path; repeat exactly five times for merge")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget && *target != browserCellTarget && *target != adaptiveCellTarget && *target != caseSuiteTarget) || *manifestPath == "" || *reportPath == "" || *artifactDir == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
+	if (*target != baselineTarget && *target != networkCellTarget && *target != tunnelCellTarget && *target != browserCellTarget && *target != browserMergeTarget && *target != adaptiveCellTarget && *target != caseSuiteTarget) || *manifestPath == "" || *reportPath == "" || *artifactDir == "" || !gitSHAPattern.MatchString(*sourceSHA) || *sourceRoot == "" || flags.NArg() != 0 {
 		return errors.New("runner requires a supported --target, --manifest, --report, --artifact-dir, --source-root, and a full --source-sha")
+	}
+	if *target == browserMergeTarget {
+		if *carrierName != "" || *bpfObject != "" || *caseOwner != "" || *caseMode != "" || *caseID != "" || *runShard != 0 {
+			return errors.New("browser shard merge accepts only profile, topology, and shard report flags")
+		}
+		if err := verifySourceCheckout(*sourceRoot, *manifestPath, *sourceSHA); err != nil {
+			return err
+		}
+		plan, manifest, err := transportrelease.LoadReleasePlan(*manifestPath)
+		if err != nil {
+			return err
+		}
+		return mergeBrowserCellShardReportFiles(*artifactDir, *reportPath, shardReports, *sourceSHA, *profileID, *topologyName, plan, manifest)
+	}
+	if len(shardReports) != 0 || (*runShard != 0 && *target != browserCellTarget) {
+		return errors.New("performance run sharding is supported only by browser WebTransport cells")
 	}
 	destination, err := newArtifactDestination(*artifactDir, *reportPath)
 	if err != nil {
@@ -265,6 +287,11 @@ func runWithContext(runnerContext context.Context, args []string) (resultErr err
 	plan, manifest, err := transportrelease.LoadReleasePlan(*manifestPath)
 	if err != nil {
 		return err
+	}
+	if *runShard != 0 {
+		if _, err := forcedProfileRunShard(plan.RunCount, *runShard); err != nil {
+			return err
+		}
 	}
 	if *target == caseSuiteTarget {
 		if *profileID != "" || *carrierName != "" || *topologyName != "" {
@@ -295,7 +322,7 @@ func runWithContext(runnerContext context.Context, args []string) (resultErr err
 		if *carrierName != "" {
 			return errors.New("browser WebTransport cell does not accept --carrier")
 		}
-		return runBrowserCell(runnerContext, *reportPath, destination, *sourceSHA, *sourceRoot, *profileID, *topologyName, *bpfObject, plan, manifest)
+		return runBrowserCell(runnerContext, *reportPath, destination, *sourceSHA, *sourceRoot, *profileID, *topologyName, *bpfObject, *runShard, plan, manifest)
 	}
 	if *target == adaptiveCellTarget {
 		if *carrierName != "" {
@@ -376,6 +403,14 @@ func forcedProfileRunShards(runCount int) [][]int {
 		shards = append(shards, runs)
 	}
 	return shards
+}
+
+func forcedProfileRunShard(runCount, shardIndex int) ([]int, error) {
+	shards := forcedProfileRunShards(runCount)
+	if shardIndex < 1 || shardIndex > len(shards) {
+		return nil, errors.New("forced profile shard index is out of range")
+	}
+	return shards[shardIndex-1], nil
 }
 
 func runForcedProfileShards(parent context.Context, runCount int, shardDeadline time.Duration, run func(context.Context, int) error) error {

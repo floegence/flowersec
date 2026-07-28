@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -57,6 +60,137 @@ func TestForcedProfileRunShardsPreserveFifteenIndependentRuns(t *testing.T) {
 	}
 	if got := forcedProfileRunShards(15); !reflect.DeepEqual(got, want) {
 		t.Fatalf("forced profile run shards = %v, want %v", got, want)
+	}
+}
+
+func TestForcedProfileRunShardSelectsOneBoundedInvocation(t *testing.T) {
+	want := [][]int{
+		{1, 2, 3},
+		{4, 5, 6},
+		{7, 8, 9},
+		{10, 11, 12},
+		{13, 14, 15},
+	}
+	for index, expected := range want {
+		got, err := forcedProfileRunShard(15, index+1)
+		if err != nil {
+			t.Fatalf("shard %d: %v", index+1, err)
+		}
+		if !reflect.DeepEqual(got, expected) {
+			t.Fatalf("shard %d runs = %v, want %v", index+1, got, expected)
+		}
+	}
+	for _, index := range []int{0, 6} {
+		if _, err := forcedProfileRunShard(15, index); err == nil {
+			t.Fatalf("shard %d unexpectedly accepted", index)
+		}
+	}
+	var ran []int
+	if err := runSelectedForcedProfileShard(context.Background(), 15, 3, time.Second, func(_ context.Context, run int) error {
+		ran = append(ran, run)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ran, []int{7, 8, 9}) {
+		t.Fatalf("selected shard runs = %v, want [7 8 9]", ran)
+	}
+}
+
+func TestMergeBrowserCellShardReportsRequiresCompleteArtifactBoundRunSet(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reports := make([]browserCellReport, 0, 5)
+	for shardIndex, runs := range forcedProfileRunShards(15) {
+		report := browserCellReport{
+			SchemaVersion: 1, Classification: "linux_chromium_webtransport_profile",
+			SourceSHA: strings.Repeat("a", 40), ManifestDigest: "sha256:manifest", ManifestSHA256: strings.Repeat("b", 64),
+			Runner:    baselineRunner{OS: "linux", Architecture: "amd64", KernelRelease: "test"},
+			ProfileID: "edge-v1", Topology: "browser_webtransport", BPFObjectSHA256: strings.Repeat("c", 64),
+			StartedAt: time.Unix(int64(100+shardIndex), 0).UTC(), FinishedAt: time.Unix(int64(200+shardIndex), 0).UTC(),
+			ShardIndex: shardIndex + 1, ShardCount: 5,
+		}
+		for _, run := range runs {
+			path := filepath.Join("artifacts", fmt.Sprintf("run-%03d.pcap", run))
+			value := append([]byte{0xd4, 0xc3, 0xb2, 0xa1}, make([]byte, 21)...)
+			value = append(value, []byte(fmt.Sprintf("run-%03d", run))...)
+			if err := os.MkdirAll(filepath.Join(root, "artifacts"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, path), value, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(value)
+			report.Results = append(report.Results, browserCellResult{
+				Run: run, Workload: json.RawMessage(fmt.Sprintf(`{"schema_version":1,"topology":"browser_webtransport","profile_id":"edge-v1","run_number":%d,"status":"passed"}`, run)),
+				Artifacts: []releaseArtifact{{Kind: "classic-pcap", Path: filepath.ToSlash(path), SHA256: hex.EncodeToString(digest[:]), SizeBytes: int64(len(value))}},
+			})
+		}
+		reports = append(reports, report)
+	}
+
+	merged, err := mergeBrowserCellShardReports(reports, 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.ShardIndex != 0 || merged.ShardCount != 0 || len(merged.Results) != 15 {
+		t.Fatalf("merged report = shard %d/%d results=%d", merged.ShardIndex, merged.ShardCount, len(merged.Results))
+	}
+	for index, result := range merged.Results {
+		if result.Run != index+1 {
+			t.Fatalf("merged run order = %+v", merged.Results)
+		}
+	}
+	if err := verifyBrowserCellReportArtifacts(root, merged); err != nil {
+		t.Fatal(err)
+	}
+	for _, report := range reports {
+		value, err := json.Marshal(report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, fmt.Sprintf("shard-%02d.json", report.ShardIndex))
+		if err := os.WriteFile(path, value, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var manifestSum [32]byte
+	for index := range manifestSum {
+		manifestSum[index] = 0xbb
+	}
+	shardPaths := make([]string, 0, len(reports))
+	for index := 1; index <= len(reports); index++ {
+		shardPaths = append(shardPaths, filepath.Join(root, fmt.Sprintf("shard-%02d.json", index)))
+	}
+	if err := mergeBrowserCellShardReportFiles(
+		root, filepath.Join(root, "cell.json"), shardPaths,
+		strings.Repeat("a", 40), "edge-v1", "browser_webtransport",
+		transportrelease.ReleasePlan{RunCount: 15, Edge: transportrelease.ProfilePlan{ID: "edge-v1"}},
+		transportrelease.ManifestBinding{Digest: "sha256:manifest", SHA256Sum: manifestSum},
+	); err != nil {
+		t.Fatal(err)
+	}
+	finalValue, err := os.ReadFile(filepath.Join(root, "cell.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var finalReport browserCellReport
+	if err := json.Unmarshal(finalValue, &finalReport); err != nil || len(finalReport.Results) != 15 || finalReport.ShardIndex != 0 || finalReport.ShardCount != 0 {
+		t.Fatalf("final report contract is invalid: results=%d shard=%d/%d err=%v", len(finalReport.Results), finalReport.ShardIndex, finalReport.ShardCount, err)
+	}
+
+	incomplete := append([]browserCellReport(nil), reports...)
+	incomplete[4].Results = incomplete[4].Results[:2]
+	if _, err := mergeBrowserCellShardReports(incomplete, 15); err == nil {
+		t.Fatal("merge accepted a missing run")
+	}
+	if err := os.WriteFile(filepath.Join(root, "artifacts", "run-015.pcap"), []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyBrowserCellReportArtifacts(root, merged); err == nil {
+		t.Fatal("artifact verification accepted tampering")
 	}
 }
 

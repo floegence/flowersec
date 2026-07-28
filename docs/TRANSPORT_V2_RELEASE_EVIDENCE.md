@@ -97,15 +97,30 @@ seconds, below the unchanged five-minute cell watchdog. This changes no
 completion handshake, internal close bound, network, workload, certificate,
 retry, zero-residual, or evidence semantics.
 
-Each forced performance report preserves all fifteen independent runs and
-executes them as five sequential three-run shards. Every shard is fail-fast and
-has a fresh five-minute wall-clock context; runs inside a shard remain
-sequential because they share the privileged network runner. Static validation
-requires one complete run's phase limits to fit that context. Release
-orchestration must also apply the 595-second stage hard stop, preserve partial
-artifacts on failure, and reject a report that does not contain runs 1 through
-15 exactly once. Sharding changes only watchdog ownership: it does not reduce
-the run count, operations, payload, network faults, thresholds, or evidence.
+Each forced performance report preserves all fifteen independent runs as five
+sequential three-run shards. Every shard is a separate fail-fast runner
+invocation and collection stage with a fresh five-minute wall-clock context;
+runs inside a shard remain sequential because they share the privileged
+network runner. An exact clean-SHA Ubuntu 24 Chromium 151 run proved that five
+child contexts inside one process are insufficient: the first thirteen runs
+completed, but the enclosing 575-second workload timeout interrupted run 14
+and the 595-second launcher contract rejected the incomplete report. No parent
+workload context may therefore wrap all five shards. The 595-second hard stop
+applies independently to each shard stage, so no single test can run longer
+than ten minutes.
+
+Every shard report binds its one-based shard index, the fixed shard count,
+source, manifest, profile, topology, runner, BPF object, and exactly three
+canonical run numbers. A separate workload-free merge stage strictly decodes
+all five reports, re-hashes every referenced artifact from one pinned report
+root, rejects metadata drift, duplicate or missing runs, unsafe paths,
+symlinks, and size or digest changes, and atomically writes the final report
+only when runs 1 through 15 are present exactly once. Static validation still
+requires one complete run's phase limits to fit the five-minute shard context.
+Release orchestration preserves partial artifacts on failure and rejects every
+partial or unmerged report. Sharding changes only watchdog ownership: it does
+not reduce the run count, operations, payload, network faults, thresholds, or
+evidence.
 Launch rates, operation counts, payloads, and the zero-retry contract remain
 frozen; these phase budgets do not change the network, certificate, resource,
 zero-residual, or evidence contracts.
