@@ -9,15 +9,18 @@ use std::{
 };
 
 use crate::raw_quic_v2::{
-    RawQuicApplicationError, RawQuicClientConfig, RawQuicLimits, RawQuicListener,
-    RawQuicPathProfile, RawQuicServerConfig, RawQuicSession, RawQuicStream, SessionContractV2,
+    RAW_QUIC_INITIAL_RTT, RawQuicApplicationError, RawQuicClientConfig, RawQuicLimits,
+    RawQuicListener, RawQuicPathProfile, RawQuicServerConfig, RawQuicSession, RawQuicStream,
+    SessionContractV2,
 };
 use crate::{
     Acceptor, AcceptorOptions, Connector, ConnectorOptions,
     artifact_v2::{Artifact, ArtifactLease},
     protocol_v2::CipherSuiteV2,
     session_v2::{RpcHandlerV2, SessionConfigV2, establish_session_v2},
-    transport_v2::{CarrierSessionV2, CarrierUnreliableMessageErrorV2, PathKind, SessionRole},
+    transport_v2::{
+        CarrierSessionV2, CarrierUnreliableMessageErrorV2, PathKind, SessionError, SessionRole,
+    },
 };
 use base64::{
     Engine as _,
@@ -416,7 +419,15 @@ async fn public_acceptor_establishes_opaque_direct_session() {
         incoming.stream().read().await.expect("read public FIN"),
         None
     );
+    let observing_server = server.clone();
+    let server_closed = tokio::spawn(async move { observing_server.wait_closed().await });
     client.close().await.expect("close public client");
+    let error = tokio::time::timeout(Duration::from_secs(1), server_closed)
+        .await
+        .expect("public server did not observe peer close")
+        .expect("join public server close observer")
+        .expect_err("public peer close unexpectedly reported success");
+    assert_eq!(error, SessionError::Closed);
     server.close().await.expect("close public server");
 }
 
@@ -602,6 +613,15 @@ fn limits_are_bounded_and_validate_relationships() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn initial_pto_avoids_the_default_seven_second_fourth_probe() {
+    assert_eq!(RAW_QUIC_INITIAL_RTT, Duration::from_millis(250));
+    let initial_pto = RAW_QUIC_INITIAL_RTT * 3;
+    let third_probe_at = initial_pto * 7;
+    assert_eq!(third_probe_at, Duration::from_millis(5_250));
+    assert!(third_probe_at + Duration::from_millis(390) < Duration::from_secs(13));
 }
 
 #[tokio::test]
@@ -1072,6 +1092,48 @@ async fn application_close_diagnostics_are_bounded_before_transport_use() {
             .is_err()
     );
     native_round_trip(&client, &server).await;
+}
+
+#[tokio::test]
+async fn carrier_preserves_only_flowersec_peer_close_as_orderly() {
+    let (_listener, client, server) = new_pair(
+        RawQuicPathProfile::Direct,
+        default_limits(),
+        default_limits(),
+    )
+    .await;
+    let server: Arc<dyn CarrierSessionV2> = Arc::new(server);
+    let accepting = tokio::spawn(async move { server.accept_stream().await });
+    tokio::task::yield_now().await;
+    client.close();
+    let error = tokio::time::timeout(Duration::from_secs(1), accepting)
+        .await
+        .expect("peer close did not wake pending carrier accept")
+        .expect("join pending carrier accept")
+        .expect_err("peer close unexpectedly opened a carrier stream");
+    assert_eq!(error.kind(), std::io::ErrorKind::ConnectionAborted);
+
+    let (_listener, client, server) = new_pair(
+        RawQuicPathProfile::Direct,
+        default_limits(),
+        default_limits(),
+    )
+    .await;
+    let server: Arc<dyn CarrierSessionV2> = Arc::new(server);
+    let accepting = tokio::spawn(async move { server.accept_stream().await });
+    tokio::task::yield_now().await;
+    client
+        .close_with_error(RawQuicApplicationError {
+            code: 7,
+            reason: "not an orderly Flowersec close".into(),
+        })
+        .expect("send unknown application close");
+    let error = tokio::time::timeout(Duration::from_secs(1), accepting)
+        .await
+        .expect("unknown peer close did not wake pending carrier accept")
+        .expect("join pending carrier accept")
+        .expect_err("unknown peer close unexpectedly opened a carrier stream");
+    assert_eq!(error.kind(), std::io::ErrorKind::Other);
 }
 
 #[tokio::test]

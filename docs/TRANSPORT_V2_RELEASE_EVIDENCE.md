@@ -16,6 +16,23 @@ The offline signing host requires the complete unsigned artifact directory, the 
 
 The runner owns real measurements. It must execute every owner in `case_registry.json`, every 15-run cell in `performance_manifest.json`, real-browser WebTransport, qlog/pcap semantics, common-kernel weak-network cases, migration/rebinding, PMTUD, capacity, soak, resource cleanup, and race. For `clean-01`, the base variant must run the base executable from the base checkout and the candidate variant must run the final executable from the final checkout; both manifests must be byte-identical. The raw index binds each variant's source SHA, executable digest, command digest, and report digest. It must not synthesize artifacts, run both variants from the final executable, or convert local smoke output into signed evidence.
 
+The `edge-v1` cold operation deadline is thirteen seconds. Under the frozen
+outage and burst-loss schedule, release qlog captured 1-RTT recovery probes at
+2.157 and 5.400 seconds; the next exponential PTO window is approximately
+11.886 seconds. Thirteen seconds covers that probe, the measured 0.583-second
+round trip, and processing margin. The cold phase is fifteen seconds so all ten
+operations retain that allowance across the unchanged five-per-second open-loop
+schedule. The RPC phase remains four seconds, equal to its operation deadline.
+
+Each performance cell is fail-fast and has an independent five-minute
+wall-clock context. Static validation requires one complete run's phase limits
+to fit that context; the signed report separately rejects actual 15-run cell
+elapsed time above five minutes. It does not reserve every phase failure limit
+for every successful run because the runner stops on the first failed phase.
+Launch rates, operation counts, payloads, and the zero-retry contract remain
+frozen; these phase budgets do not change the network, certificate, resource,
+cleanup, or evidence contracts.
+
 The three `CAP-STREAM-WT-*-100X128` cases freeze a 32,768 aggregate
 Go-runner-plus-Chromium process-tree file-descriptor ceiling and a 240
 CPU-second aggregate ceiling. The audited Ubuntu 24 calibration observed

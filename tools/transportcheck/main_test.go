@@ -330,6 +330,17 @@ func TestManifestDigestIsCanonicalAndTamperEvident(t *testing.T) {
 	}
 }
 
+func TestManifestAcceptsFailFastEdgeBudgetWithinFiveMinuteCell(t *testing.T) {
+	manifest := loadFixtureManifest(t)
+	edge := profileByID(t, manifest, "edge-v1")
+	edge.Cold.OperationDeadlineSeconds = 13
+	edge.Cold.PhaseDeadlineSeconds = 15
+	refreshManifestDigest(t, manifest)
+	if err := validateManifest(manifest); err != nil {
+		t.Fatalf("validate fail-fast edge budget: %v", err)
+	}
+}
+
 func TestBootstrapMeanConstantDistributionIsExact(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	values := make([]float64, manifest.RunCount)
@@ -365,14 +376,14 @@ func TestManifestRejectsInconsistentBudgetsAndLPTOverflow(t *testing.T) {
 		{
 			name: "cell watchdog cannot cover phases",
 			mutate: func(manifest *PerformanceManifest) {
-				profileByID(t, manifest, "mobile-v1").CellWatchdogMinutes--
+				profileByID(t, manifest, "mobile-v1").CellWatchdogMinutes = 0
 				for index := range manifest.Cells {
 					if manifest.Cells[index].ProfileID == "mobile-v1" {
-						manifest.Cells[index].DurationMinutes--
+						manifest.Cells[index].DurationMinutes = 0
 					}
 				}
 			},
-			wantErr: "cannot cover phase deadlines",
+			wantErr: "cannot cover one fail-fast run",
 		},
 		{
 			name: "insufficient global watchdog",

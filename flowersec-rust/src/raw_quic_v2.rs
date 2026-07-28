@@ -134,6 +134,8 @@ const DATAGRAM_RECEIVE_BUFFER_BYTES: usize = 256 * 1024;
 const DATAGRAM_SEND_BUDGET: usize = 64;
 const DATAGRAM_SEND_BUFFER_BYTES: usize =
     DATAGRAM_SEND_BUDGET * crate::protocol_v2::MAX_UNRELIABLE_WIRE_V2_BYTES;
+// Avoid a seven-second fourth Initial probe after a short outage and burst loss.
+pub(crate) const RAW_QUIC_INITIAL_RTT: Duration = Duration::from_millis(250);
 const RELEASE_EVIDENCE_ENV: &str = "FLOWERSEC_TRANSPORT_RELEASE_EVIDENCE";
 const QLOG_DIRECTORY_ENV: &str = "QLOGDIR";
 static QLOG_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -659,23 +661,27 @@ impl RawQuicSession {
 
     /// Opens one native bidirectional QUIC stream.
     pub async fn open_stream(&self) -> Result<RawQuicStream, RawQuicError> {
-        self.reconcile_active_path();
-        let (send, receive) = self
-            .connection
-            .open_bi()
+        self.open_stream_inner()
             .await
-            .map_err(|error| RawQuicError::Stream(error.to_string()))?;
+            .map_err(|error| RawQuicError::Stream(error.to_string()))
+    }
+
+    async fn open_stream_inner(&self) -> Result<RawQuicStream, quinn::ConnectionError> {
+        self.reconcile_active_path();
+        let (send, receive) = self.connection.open_bi().await?;
         Ok(RawQuicStream::new(send, receive))
     }
 
     /// Accepts one native bidirectional QUIC stream.
     pub async fn accept_stream(&self) -> Result<RawQuicStream, RawQuicError> {
-        self.reconcile_active_path();
-        let (send, receive) = self
-            .connection
-            .accept_bi()
+        self.accept_stream_inner()
             .await
-            .map_err(|error| RawQuicError::Stream(error.to_string()))?;
+            .map_err(|error| RawQuicError::Stream(error.to_string()))
+    }
+
+    async fn accept_stream_inner(&self) -> Result<RawQuicStream, quinn::ConnectionError> {
+        self.reconcile_active_path();
+        let (send, receive) = self.connection.accept_bi().await?;
         Ok(RawQuicStream::new(send, receive))
     }
 
@@ -1481,17 +1487,17 @@ impl crate::transport_v2::CarrierSessionV2 for RawQuicSession {
     }
 
     async fn open_stream(&self) -> io::Result<Arc<dyn crate::transport_v2::CarrierStreamV2>> {
-        RawQuicSession::open_stream(self)
+        self.open_stream_inner()
             .await
             .map(|stream| Arc::new(stream) as Arc<dyn crate::transport_v2::CarrierStreamV2>)
-            .map_err(io::Error::other)
+            .map_err(raw_quic_carrier_connection_error)
     }
 
     async fn accept_stream(&self) -> io::Result<Arc<dyn crate::transport_v2::CarrierStreamV2>> {
-        RawQuicSession::accept_stream(self)
+        self.accept_stream_inner()
             .await
             .map(|stream| Arc::new(stream) as Arc<dyn crate::transport_v2::CarrierStreamV2>)
-            .map_err(io::Error::other)
+            .map_err(raw_quic_carrier_connection_error)
     }
 
     fn unreliable_message_max_size(&self) -> Option<usize> {
@@ -1517,6 +1523,21 @@ impl crate::transport_v2::CarrierSessionV2 for RawQuicSession {
     }
 }
 
+fn raw_quic_carrier_connection_error(error: quinn::ConnectionError) -> io::Error {
+    let kind = match &error {
+        quinn::ConnectionError::ApplicationClosed(close)
+            if close.error_code == VarInt::from_u32(SESSION_CLOSE_CODE)
+                && close.reason.is_empty() =>
+        {
+            io::ErrorKind::ConnectionAborted
+        }
+        quinn::ConnectionError::Reset => io::ErrorKind::ConnectionReset,
+        quinn::ConnectionError::TimedOut => io::ErrorKind::TimedOut,
+        _ => io::ErrorKind::Other,
+    };
+    io::Error::new(kind, error)
+}
+
 fn transport_config(
     limits: RawQuicLimits,
     qlog_role: &'static str,
@@ -1524,6 +1545,7 @@ fn transport_config(
     limits.validate()?;
     let mut transport = quinn::TransportConfig::default();
     transport
+        .initial_rtt(RAW_QUIC_INITIAL_RTT)
         .congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()))
         .max_concurrent_bidi_streams(VarInt::from_u32(limits.max_inbound_bidirectional_streams))
         .max_concurrent_uni_streams(0_u32.into())

@@ -248,7 +248,7 @@ async fn run_server(request: ServerRequest) -> Result<RoleResult, AnyError> {
     for (acceptor, artifact) in registrations {
         cold_tasks.spawn(async move {
             let session = acceptor.accept(&artifact, CancellationToken::new()).await?;
-            accept_orderly_session_close(session.close().await)?;
+            accept_orderly_session_close(session.wait_closed().await)?;
             Ok::<(), AnyError>(())
         });
     }

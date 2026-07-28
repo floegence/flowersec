@@ -193,8 +193,8 @@ var signedProfiles = []signedProfile{
 	},
 	{
 		id:                     "edge-v1",
-		cold:                   ColdWorkload{Operations: 10, MaxInflight: 10, Retries: 0, StartRatePerSecond: 5, OperationDeadlineSeconds: 6, PhaseDeadlineSeconds: 8},
-		rpc:                    RPCWorkload{Operations: 30, RequestBytes: 1024, ResponseBytes: 1024, Workers: 30, Retries: 0, OperationDeadlineSeconds: 4, PhaseDeadlineSeconds: 5},
+		cold:                   ColdWorkload{Operations: 10, MaxInflight: 10, Retries: 0, StartRatePerSecond: 5, OperationDeadlineSeconds: 13, PhaseDeadlineSeconds: 15},
+		rpc:                    RPCWorkload{Operations: 30, RequestBytes: 1024, ResponseBytes: 1024, Workers: 30, Retries: 0, OperationDeadlineSeconds: 4, PhaseDeadlineSeconds: 4},
 		bulk:                   BulkWorkload{WarmupBytesPerDirection: 64 * kib, ScoreBytesPerDirection: 128 * kib, PhaseDeadlineSeconds: 4},
 		cleanupDeadlineSeconds: 2,
 		cellWatchdogMinutes:    5,
@@ -317,7 +317,7 @@ func validateProfiles(manifest *PerformanceManifest) error {
 		if !exists {
 			return fmt.Errorf("missing profile %q", signed.id)
 		}
-		if err := validateForcedProfile(profile, signed, manifest.RunCount); err != nil {
+		if err := validateForcedProfile(profile, signed); err != nil {
 			return err
 		}
 	}
@@ -328,7 +328,7 @@ func validateProfiles(manifest *PerformanceManifest) error {
 	return validateAdaptiveProfile(adaptive, profiles, manifest.RunCount)
 }
 
-func validateForcedProfile(profile *PerformanceProfile, signed signedProfile, runs int) error {
+func validateForcedProfile(profile *PerformanceProfile, signed signedProfile) error {
 	if !profile.networkPresent || profile.Network == nil || !profile.Network.shapePresent {
 		return fmt.Errorf("%s network profile must explicitly include network and shape, including JSON null for unshaped clean-v1", profile.ID)
 	}
@@ -363,8 +363,8 @@ func validateForcedProfile(profile *PerformanceProfile, signed signedProfile, ru
 		return fmt.Errorf("forced profile %s harness slack must be zero", profile.ID)
 	}
 	phaseSeconds := profile.Cold.PhaseDeadlineSeconds + profile.RPC.PhaseDeadlineSeconds + profile.Bulk.PhaseDeadlineSeconds + profile.CleanupDeadlineSeconds
-	if runs*phaseSeconds+profile.HarnessSlackSeconds > profile.CellWatchdogMinutes*60 {
-		return fmt.Errorf("profile %s cell watchdog cannot cover phase deadlines for all runs", profile.ID)
+	if phaseSeconds+profile.HarnessSlackSeconds > profile.CellWatchdogMinutes*60 {
+		return fmt.Errorf("profile %s cell watchdog cannot cover one fail-fast run", profile.ID)
 	}
 	if profile.CellWatchdogMinutes != signed.cellWatchdogMinutes {
 		return fmt.Errorf("profile %s cell watchdog = %d minutes, want %d", profile.ID, profile.CellWatchdogMinutes, signed.cellWatchdogMinutes)

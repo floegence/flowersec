@@ -204,6 +204,27 @@ fn release_runner_uses_only_the_opaque_flowersec_surface() {
 }
 
 #[test]
+fn release_runner_waits_for_client_cold_cleanup_before_server_teardown() {
+    let source = include_str!("../examples/transport_release_runner.rs");
+    let cold_start = source
+        .find("for (acceptor, artifact) in registrations")
+        .expect("server cold task loop");
+    let cold_end = source[cold_start..]
+        .find("server cold phase timed out")
+        .map(|offset| cold_start + offset)
+        .expect("server cold phase boundary");
+    let cold = &source[cold_start..cold_end];
+    assert!(
+        cold.contains("session.wait_closed().await"),
+        "server must wait until the client finishes READY and owns cold cleanup"
+    );
+    assert!(
+        !cold.contains("session.close().await"),
+        "server must not preempt a client whose connect is still committing"
+    );
+}
+
+#[test]
 fn stream_terminal_errors_are_typed_and_redacted() {
     let snapshots = [
         (
