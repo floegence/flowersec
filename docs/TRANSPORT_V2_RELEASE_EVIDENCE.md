@@ -24,16 +24,22 @@ approximately 50.779 seconds. Fifty-three seconds covers that probe, the
 measured 0.583-second recovery round trip, and one second of application and
 scheduler margin. The cold phase is fifty-five seconds so all ten operations
 retain that allowance across the unchanged five-per-second open-loop schedule.
-The edge RPC operation deadline is eighteen seconds and its phase deadline is
-twenty seconds. A frozen 30-stream Ubuntu 24 release run at the former
+The edge RPC operation deadline is twenty-one seconds and its phase deadline is
+twenty-three seconds. A frozen 30-stream Ubuntu 24 release run at the former
 sixteen-second boundary matched 169 client-to-server and 166 server-to-client
 qlog packets with a 0.168-second median clock-adjusted one-way delay. The last
 1,153-byte client request was sent at approximately 18.109 seconds on the
 client qlog clock. Its earliest delivery and complete response place the lower
 bound at approximately 18.444 seconds, after the client ended at 18.185
 seconds. Relative to the approximately 2.185-second RPC operation start, the
-measured completion lower bound is approximately 16.26 seconds. Eighteen
-seconds retains about 1.74 seconds of recovery and scheduler margin. The two
+measured completion lower bound is approximately 16.26 seconds. A later
+clean-SHA run at the eighteen-second boundary had a 12.973-second server/client
+clock offset and 0.175-second median one-way delay. The client sent the last
+1,153-byte request packet at approximately 19.557 seconds, and the server sent
+the matching 1,157-byte response at an aligned 19.735 seconds. Its earliest
+return was approximately 19.910 seconds, after the client canceled at 19.826
+seconds; a lost response would require the observed approximately 0.75-second
+PTO. Twenty-one seconds covers that recovery with scheduler margin. The two
 additional phase seconds cover the persistent connection establishment and
 the unchanged one-millisecond open-loop schedule without changing payload or
 operation count. The edge bulk phase deadline is nine seconds. At the former
