@@ -335,8 +335,8 @@ func TestManifestAcceptsMeasuredEdgeRecoveryBudgetWithinFiveMinuteCell(t *testin
 	edge := profileByID(t, manifest, "edge-v1")
 	edge.Cold.OperationDeadlineSeconds = 53
 	edge.Cold.PhaseDeadlineSeconds = 55
-	edge.RPC.OperationDeadlineSeconds = 21
-	edge.RPC.PhaseDeadlineSeconds = 23
+	edge.RPC.OperationDeadlineSeconds = 24
+	edge.RPC.PhaseDeadlineSeconds = 26
 	edge.Bulk.PhaseDeadlineSeconds = 9
 	edge.CleanupDeadlineSeconds = 12
 	refreshManifestDigest(t, manifest)

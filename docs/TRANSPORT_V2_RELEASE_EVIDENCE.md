@@ -24,8 +24,8 @@ approximately 50.779 seconds. Fifty-three seconds covers that probe, the
 measured 0.583-second recovery round trip, and one second of application and
 scheduler margin. The cold phase is fifty-five seconds so all ten operations
 retain that allowance across the unchanged five-per-second open-loop schedule.
-The edge RPC operation deadline is twenty-one seconds and its phase deadline is
-twenty-three seconds. A frozen 30-stream Ubuntu 24 release run at the former
+The edge RPC operation deadline is twenty-four seconds and its phase deadline is
+twenty-six seconds. A frozen 30-stream Ubuntu 24 release run at the former
 sixteen-second boundary matched 169 client-to-server and 166 server-to-client
 qlog packets with a 0.168-second median clock-adjusted one-way delay. The last
 1,153-byte client request was sent at approximately 18.109 seconds on the
@@ -39,10 +39,20 @@ clock offset and 0.175-second median one-way delay. The client sent the last
 the matching 1,157-byte response at an aligned 19.735 seconds. Its earliest
 return was approximately 19.910 seconds, after the client canceled at 19.826
 seconds; a lost response would require the observed approximately 0.75-second
-PTO. Twenty-one seconds covers that recovery with scheduler margin. The two
-additional phase seconds cover the persistent connection establishment and
-the unchanged one-millisecond open-loop schedule without changing payload or
-operation count. The edge bulk phase deadline is nine seconds. At the former
+PTO. That evidence supported the former twenty-one-second bound. A later exact
+clean-SHA run at that boundary matched 728 packets in each direction with a
+12,400.9-millisecond server/client clock offset and 187.6-millisecond median
+one-way delay. Persistent RPC traffic began at approximately 0.924 seconds,
+but the last response tail did not reach the client until approximately
+21.893 seconds. The resulting approximately 20.969-second completion lower
+bound left only about 31 milliseconds for decrypt, scheduling, and future
+completion. The server's final 0.408-second smoothed RTT and 0.153-second RTT
+variance put one further PTO at approximately 1.02 seconds. Twenty-four
+seconds covers the measured lower bound, that PTO, and approximately two
+seconds of application and scheduler margin. The two additional phase seconds
+cover the persistent connection establishment and the unchanged
+one-millisecond open-loop schedule without changing payload or operation
+count. The edge bulk phase deadline is nine seconds. At the former
 four-second boundary, the frozen Ubuntu 24 qlog still recorded 21,626 bytes in
 flight with an approximately 0.480-second smoothed RTT. That first lower bound
 required six seconds. A later clean-SHA Ubuntu 24 run reached the six-second
