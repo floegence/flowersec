@@ -24,7 +24,13 @@ approximately 50.779 seconds. Fifty-three seconds covers that probe, the
 measured 0.583-second recovery round trip, and one second of application and
 scheduler margin. The cold phase is fifty-five seconds so all ten operations
 retain that allowance across the unchanged five-per-second open-loop schedule.
-The RPC phase remains four seconds, equal to its operation deadline.
+The edge RPC operation deadline is eight seconds and its phase deadline is nine
+seconds. A frozen 30-stream release run reached the former four-second boundary
+with 1,260 bytes in two packets still in flight after a fresh PTO. Its measured
+0.334-second smoothed RTT and 0.076-second RTT variance imply a 0.662-second base
+PTO; eight seconds covers one exponential retry, the measured 0.371-second
+latest RTT, and application margin. The extra phase second covers the unchanged
+one-millisecond open-loop schedule without changing payload or operation count.
 
 Each performance cell is fail-fast and has an independent five-minute
 wall-clock context. Static validation requires one complete run's phase limits

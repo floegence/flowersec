@@ -37,6 +37,18 @@ func TestRustReleaseWorkerOwnsOnlyEdgeDirectRawQUIC(t *testing.T) {
 	}
 }
 
+func TestRustPlanBindsMeasuredEdgeRPCRecoveryBudget(t *testing.T) {
+	t.Parallel()
+	plan, _, err := transportrelease.LoadReleasePlan("../../../../testdata/transport_v2/performance_manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := rustPlan(plan.Edge)
+	if got.RequestOperationTimeoutMS != 8_000 || got.RequestPhaseTimeoutMS != 9_000 {
+		t.Fatalf("edge RPC timeouts = %d/%dms, want 8000/9000ms", got.RequestOperationTimeoutMS, got.RequestPhaseTimeoutMS)
+	}
+}
+
 func TestRustReleaseCertificateUsesExactIPSANAndPKCS8(t *testing.T) {
 	t.Parallel()
 	address := netip.MustParseAddr("192.0.2.44")
