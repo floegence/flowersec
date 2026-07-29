@@ -1,6 +1,6 @@
 # Flowersec for TypeScript
 
-`@floegence/flowersec-core` is the ESM-only Flowersec v2 SDK for browsers and Node.js. Its public package surface is limited to the root, `/browser`, and `/node` entrypoints.
+`@floegence/flowersec-core` is the ESM-only Flowersec v2 SDK for browsers and Node.js. Its public package surface is limited to the root, `/browser`, `/node`, and `/proxy` entrypoints.
 
 ## Install
 
@@ -13,6 +13,7 @@ npm install @floegence/flowersec-core
 - `@floegence/flowersec-core` exports `Artifact`, `parseArtifact(...)`, `TRANSPORT_V2_VERSION_POLICY`, `createArtifactAcquireContextV2(...)`, `createArtifactLeaseV2(...)`, `createArtifactV2Resolver(...)`, `createSessionReconnectManagerV2(...)`, `ConnectError`, and `SessionError` at runtime.
 - `@floegence/flowersec-core/browser` adds `connectBrowserSessionV2(...)` and `BrowserSessionConnectorV2Options`.
 - `@floegence/flowersec-core/node` adds `connectNodeSessionV2(...)`, `NodeSessionConnectorV2Options`, and `NodeSessionTLSOptionsV2`.
+- `@floegence/flowersec-core/proxy` adds the `SessionV2`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowserV2(...)` composition.
 
 The root type exports are:
 
@@ -31,6 +32,8 @@ The root type exports are:
 `ConnectError` and `SessionError` expose only a closed `code`. They do not retain raw causes, credentials, URLs, candidate diagnostics, transport objects, peer details, or internal routing and handshake state.
 
 Candidate lists, runtime capability descriptors, transport factories, admission policy, Yamux, wire messages, cryptographic state, keys, and spend-ledger internals are not package exports.
+
+The proxy entrypoint accepts an opaque `ArtifactLeaseV2` or an already connected `SessionV2`. Its public runtime never exposes the selected carrier, a Yamux stream, raw artifact fields, or proxy wire frames. Cross-window bridges require an exact allowed origin and may require a bounded capability nonce; runtime failures are mapped to closed status/code values before reaching Service Worker or Window messages.
 
 ## Transport v2 Support
 

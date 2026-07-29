@@ -18,7 +18,7 @@ The API manifest drives Go compile probes, packed TypeScript exports, Swift symb
 
 ## Public Boundary
 
-Applications receive only opaque artifacts and leases, connectors, carrier-neutral sessions, bounded session-handler registries, RPC peers, byte streams, metadata, and stable redacted errors. Go session handlers snapshot inbound RPC registrations before connection and dispatch application streams with bounded metadata without exposing the carrier. Go server control planes additionally receive opaque endpoint sets, issued artifacts, authorization records, runtime requests, and runtime responses through the dedicated v2 control-plane package. Candidate selection, carrier adapters, Yamux, wire messages, FSB2 payloads, cryptographic state, keys, and durable spend-ledger details are implementation boundaries.
+Applications receive only opaque artifacts and leases, connectors, carrier-neutral sessions, bounded session-handler registries, RPC peers, byte streams, metadata, and stable redacted errors. Go session handlers snapshot inbound RPC registrations before connection and dispatch application streams with bounded metadata without exposing the carrier. Go server control planes additionally receive opaque endpoint sets, issued artifacts, authorization records, runtime requests, and runtime responses through the dedicated v2 control-plane package. The TypeScript proxy entrypoint may compose an opaque lease into a `SessionV2` runtime and browser bridge, but must not expose transport objects, raw artifact scopes, proxy wire frames, or `proxy.runtime@1`. Candidate selection, carrier adapters, Yamux, wire messages, FSB2 payloads, cryptographic state, keys, and durable spend-ledger details are implementation boundaries.
 
 Every public API change requires:
 

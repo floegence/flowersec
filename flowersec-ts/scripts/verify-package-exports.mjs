@@ -17,7 +17,11 @@ const artifactFixture = JSON.parse(
   fs.readFileSync(path.join(repoRoot, 'testdata', 'transport_v2', 'artifact_vectors.json'), 'utf8')
 ).positive[0].artifact_json;
 const forbiddenRuntimeExportsBySubpath = new Map([
-  ['@floegence/flowersec-core/proxy', ['resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST']],
+  ['@floegence/flowersec-core/proxy', [
+    'resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST',
+    'assertProxyRuntimeScopeV1', 'connectArtifactProxyBrowser', 'connectArtifactProxyControllerBrowser',
+    'Client', 'YamuxSession',
+  ]],
 ]);
 const removedLegacyRuntimeExports = new Set([
   'connect', 'connectTunnel', 'connectDirect',
@@ -53,6 +57,7 @@ const v2OnlyEntrypoints = new Set([
   '@floegence/flowersec-core',
   '@floegence/flowersec-core/browser',
   '@floegence/flowersec-core/node',
+  '@floegence/flowersec-core/proxy',
 ]);
 const removedImplementationSubpaths = [
   'framing',

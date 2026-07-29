@@ -63,7 +63,7 @@ Para obtener evidencia específica de cada carrier, ejecuta `make transport-conf
 | Lenguaje | Paquete | Entrada pública |
 | --- | --- | --- |
 | Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
-| TypeScript | `@floegence/flowersec-core` | puntos de entrada opacos v2 en la raíz, `/browser` y `/node` |
+| TypeScript | `@floegence/flowersec-core` | puntos de entrada opacos v2 en la raíz, `/browser`, `/node` y `/proxy` |
 | Swift | Producto SwiftPM `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
 | Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
 

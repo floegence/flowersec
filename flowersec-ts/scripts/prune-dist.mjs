@@ -13,6 +13,8 @@ const entrypoints = [
   "browser/index.d.ts",
   "node/index.js",
   "node/index.d.ts",
+  "proxy/index.js",
+  "proxy/index.d.ts",
 ].map((file) => path.join(distRoot, file));
 const retained = new Set();
 const pending = [...entrypoints];

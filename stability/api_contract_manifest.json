@@ -743,6 +743,66 @@
           "UnreliableMessageSendResultV2",
           "UnreliableMessageV2"
         ]
+      },
+      {
+        "specifier": "@floegence/flowersec-core/proxy",
+        "package_json_export": "./proxy",
+        "doc_tokens": [
+          "`@floegence/flowersec-core/proxy`",
+          "`connectProxyBrowserV2(...)`",
+          "`createProxyRuntime(...)`",
+          "`PROXY_RUNTIME_SCOPE_V2`"
+        ],
+        "runtime_exports": [
+          "PROXY_RUNTIME_SCOPE_V2",
+          "assertProxyRuntimeScopeV2",
+          "connectProxyBrowserV2",
+          "connectProxyControllerBrowserV2",
+          "createProxyRuntime",
+          "createProxyServiceWorkerScript",
+          "createServiceWorkerControllerGuard",
+          "disableUpstreamServiceWorkerRegister",
+          "ensureServiceWorkerRuntimeRegistered",
+          "installWebSocketPatch",
+          "registerProxyAppWindow",
+          "registerProxyAppWindowWithServiceWorkerControl",
+          "registerProxyControllerWindow",
+          "registerServiceWorkerAndEnsureControl"
+        ],
+        "type_exports": [
+          "EnsureServiceWorkerRuntimeRegisteredOptions",
+          "ProxyAppServiceWorkerControlOptions",
+          "ProxyAppWindowHandle",
+          "ProxyBrowserConnectV2Options",
+          "ProxyBrowserHandleV2",
+          "ProxyControllerBrowserConnectV2Options",
+          "ProxyControllerBrowserHandleV2",
+          "ProxyControllerWindowHandle",
+          "ProxyFetchRequestV2",
+          "ProxyHeader",
+          "ProxyRuntime",
+          "ProxyRuntimeControllerBridgeScopeV2",
+          "ProxyRuntimeLimits",
+          "ProxyRuntimeOptions",
+          "ProxyRuntimePathPolicy",
+          "ProxyRuntimeScopeLimitsV2",
+          "ProxyRuntimeScopeV2",
+          "ProxyRuntimeServiceWorkerScopeV2",
+          "ProxyServiceWorkerInjectHTMLOptions",
+          "ProxyServiceWorkerPassthroughOptions",
+          "ProxyServiceWorkerScriptOptions",
+          "RegisterProxyAppWindowOptions",
+          "RegisterProxyAppWindowWithServiceWorkerControlOptions",
+          "RegisterProxyControllerWindowOptions",
+          "RegisterServiceWorkerOptions",
+          "ServiceWorkerControllerGuardConflictPolicy",
+          "ServiceWorkerControllerGuardHandle",
+          "ServiceWorkerControllerGuardMismatchContext",
+          "ServiceWorkerControllerGuardMonitorOptions",
+          "ServiceWorkerControllerGuardOptions",
+          "ServiceWorkerControllerGuardRepairOptions",
+          "WebSocketPatchOptions"
+        ]
       }
     ]
   },

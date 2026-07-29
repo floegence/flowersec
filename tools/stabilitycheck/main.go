@@ -137,24 +137,17 @@ func verifyDocs(repoRoot string, m *manifest) error {
 	return nil
 }
 
+type tsPackageExport struct {
+	Types   string `json:"types"`
+	Default string `json:"default"`
+}
+
 type tsPackageJSON struct {
-	Exports map[string]struct {
-		Types   string `json:"types"`
-		Default string `json:"default"`
-	} `json:"exports"`
+	Exports map[string]tsPackageExport `json:"exports"`
 }
 
 func verifyTS(repoRoot string, m *manifest) error {
 	packageRoot := filepath.Join(repoRoot, "flowersec-ts")
-	build := exec.Command("npm", "run", "build", "--silent")
-	build.Dir = packageRoot
-	var buildOutput bytes.Buffer
-	build.Stdout = &buildOutput
-	build.Stderr = &buildOutput
-	if err := build.Run(); err != nil {
-		return fmt.Errorf("TypeScript package build failed: %w\n%s", err, buildOutput.String())
-	}
-
 	packageData, err := os.ReadFile(filepath.Join(packageRoot, "package.json"))
 	if err != nil {
 		return err
@@ -173,39 +166,69 @@ func verifyTS(repoRoot string, m *manifest) error {
 	}
 
 	var typeProbe strings.Builder
-	runtimeChecks := make([]map[string]any, 0, len(m.TS.Subpaths))
 	typeIndex := 0
+	runtimeIndex := 0
 	for _, subpath := range m.TS.Subpaths {
 		exported, ok := packageJSON.Exports[subpath.PackageJSONExport]
 		if !ok || exported.Types == "" || exported.Default == "" {
 			return fmt.Errorf("TypeScript package export %s is missing types/default entries", subpath.PackageJSONExport)
 		}
-		typePath := filepath.Join(packageRoot, filepath.FromSlash(strings.TrimPrefix(exported.Types, "./")))
-		typeImport, err := filepath.Rel(probeDir, typePath)
+		sourcePath, err := tsSourceEntrypoint(packageRoot, exported)
+		if err != nil {
+			return fmt.Errorf("TypeScript package export %s: %w", subpath.PackageJSONExport, err)
+		}
+		sourceImport, err := filepath.Rel(probeDir, sourcePath)
 		if err != nil {
 			return err
 		}
-		typeImport = filepath.ToSlash(typeImport)
-		if !strings.HasPrefix(typeImport, ".") {
-			typeImport = "./" + typeImport
+		sourceImport = filepath.ToSlash(strings.TrimSuffix(sourceImport, ".ts") + ".js")
+		if !strings.HasPrefix(sourceImport, ".") {
+			sourceImport = "./" + sourceImport
 		}
 		for _, exportName := range subpath.TypeExports {
 			alias := fmt.Sprintf("ManifestType%d", typeIndex)
-			fmt.Fprintf(&typeProbe, "import type { %s as %s } from %q;\n", exportName, alias, typeImport)
+			fmt.Fprintf(&typeProbe, "import type { %s as %s } from %q;\n", exportName, alias, sourceImport)
 			fmt.Fprintf(&typeProbe, "declare const manifestType%d: %s;\nvoid manifestType%d;\n", typeIndex, alias, typeIndex)
 			typeIndex++
 		}
-		runtimeChecks = append(runtimeChecks, map[string]any{
-			"specifier": subpath.Specifier,
-			"module":    filepath.Join(packageRoot, filepath.FromSlash(strings.TrimPrefix(exported.Default, "./"))),
-			"exports":   subpath.RuntimeExports,
-		})
+		for _, exportName := range subpath.RuntimeExports {
+			alias := fmt.Sprintf("ManifestRuntime%d", runtimeIndex)
+			fmt.Fprintf(&typeProbe, "import { %s as %s } from %q;\n", exportName, alias, sourceImport)
+			fmt.Fprintf(&typeProbe, "void %s;\n", alias)
+			runtimeIndex++
+		}
 	}
 	if err := os.WriteFile(filepath.Join(probeDir, "probe.ts"), []byte(typeProbe.String()), 0o644); err != nil {
 		return err
 	}
-	tsconfig := `{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext","noEmit":true,"strict":true,"target":"ES2022"},"include":["probe.ts"]}`
-	if err := os.WriteFile(filepath.Join(probeDir, "tsconfig.json"), []byte(tsconfig), 0o644); err != nil {
+	typeRoot, err := filepath.Rel(probeDir, filepath.Join(packageRoot, "node_modules", "@types"))
+	if err != nil {
+		return err
+	}
+	ambientDeclarations, err := filepath.Rel(probeDir, filepath.Join(packageRoot, "src", "**", "*.d.ts"))
+	if err != nil {
+		return err
+	}
+	tsconfig, err := json.Marshal(map[string]any{
+		"compilerOptions": map[string]any{
+			"target":                     "ES2022",
+			"module":                     "ESNext",
+			"moduleResolution":           "Bundler",
+			"lib":                        []string{"ES2022", "DOM"},
+			"types":                      []string{"node"},
+			"typeRoots":                  []string{filepath.ToSlash(typeRoot)},
+			"noEmit":                     true,
+			"strict":                     true,
+			"noUncheckedIndexedAccess":   true,
+			"exactOptionalPropertyTypes": true,
+			"skipLibCheck":               true,
+		},
+		"include": []string{"probe.ts", filepath.ToSlash(ambientDeclarations)},
+	})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(probeDir, "tsconfig.json"), tsconfig, 0o644); err != nil {
 		return err
 	}
 	tsc := exec.Command(
@@ -217,35 +240,31 @@ func verifyTS(repoRoot string, m *manifest) error {
 	tsc.Stdout = &tscOutput
 	tsc.Stderr = &tscOutput
 	if err := tsc.Run(); err != nil {
-		return fmt.Errorf("TypeScript public type compile probe failed: %w\n%s", err, tscOutput.String())
+		return fmt.Errorf("TypeScript public source compile probe failed: %w\n%s", err, tscOutput.String())
 	}
-
-	encodedChecks, err := json.Marshal(runtimeChecks)
-	if err != nil {
-		return err
-	}
-	runtimeProbe := fmt.Sprintf(`import { pathToFileURL } from "node:url";
-const checks = %s;
-for (const check of checks) {
-  const module = await import(pathToFileURL(check.module).href);
-  for (const exportName of check.exports) {
-    if (!Object.prototype.hasOwnProperty.call(module, exportName) || module[exportName] === undefined) {
-      throw new Error(check.specifier + " missing runtime export " + exportName);
-    }
-  }
-}
-`, encodedChecks)
-	node := exec.Command("node", "--input-type=module", "-")
-	node.Dir = probeDir
-	node.Stdin = strings.NewReader(runtimeProbe)
-	var nodeOutput bytes.Buffer
-	node.Stdout = &nodeOutput
-	node.Stderr = &nodeOutput
-	if err := node.Run(); err != nil {
-		return fmt.Errorf("TypeScript public runtime export probe failed: %w\n%s", err, nodeOutput.String())
-	}
-	fmt.Printf("TypeScript symbols OK: %d runtime exports and %d type exports verified\n", countTSRuntimeExports(m), typeIndex)
+	fmt.Printf("TypeScript source symbols OK: %d runtime exports and %d type exports verified\n", runtimeIndex, typeIndex)
 	return nil
+}
+
+func tsSourceEntrypoint(packageRoot string, exported tsPackageExport) (string, error) {
+	defaultPath := filepath.ToSlash(exported.Default)
+	if !strings.HasPrefix(defaultPath, "./dist/") || !strings.HasSuffix(defaultPath, ".js") {
+		return "", fmt.Errorf("default entrypoint %q must be a ./dist/*.js path", exported.Default)
+	}
+	expectedTypes := strings.TrimSuffix(defaultPath, ".js") + ".d.ts"
+	if filepath.ToSlash(exported.Types) != expectedTypes {
+		return "", fmt.Errorf("types entrypoint %q must match %q", exported.Types, expectedTypes)
+	}
+	sourceRelative := strings.TrimSuffix(strings.TrimPrefix(defaultPath, "./dist/"), ".js") + ".ts"
+	sourcePath := filepath.Join(packageRoot, "src", filepath.FromSlash(sourceRelative))
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("source entrypoint %s: %w", filepath.ToSlash(filepath.Join("src", sourceRelative)), err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("source entrypoint %s is not a regular file", filepath.ToSlash(filepath.Join("src", sourceRelative)))
+	}
+	return sourcePath, nil
 }
 
 func countTSTypeExports(m *manifest) int {

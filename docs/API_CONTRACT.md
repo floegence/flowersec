@@ -38,9 +38,11 @@ This package owns only transport-neutral issuance and authorization mechanics. T
 
 ## TypeScript
 
-The supported package entrypoints are `@floegence/flowersec-core`, `@floegence/flowersec-core/browser`, and `@floegence/flowersec-core/node`.
+The supported package entrypoints are `@floegence/flowersec-core`, `@floegence/flowersec-core/browser`, `@floegence/flowersec-core/node`, and `@floegence/flowersec-core/proxy`.
 
 The root exposes `Artifact`, `ArtifactLeaseV2`, the carrier-neutral `SessionV2`, `RPCPeerV2`, `ByteStreamV2`, reconnect orchestration, `ConnectError`, and `SessionError`. A negotiated session may expose `UnreliableMessageChannelV2`; applications construct its opaque payload with `createUnreliableMessageV2(...)` and receive redacted `UnreliableMessageError` values. Browser applications add `connectBrowserSessionV2(...)`; Node.js applications add `connectNodeSessionV2(...)` with carrier-neutral TLS options. Low-level carrier factories, capability descriptors, candidate diagnostics, wire contracts, and cryptographic state are not package exports.
+
+The proxy entrypoint exposes `PROXY_RUNTIME_SCOPE_V2`, `assertProxyRuntimeScopeV2(...)`, `connectProxyBrowserV2(...)`, `connectProxyControllerBrowserV2(...)`, `createProxyRuntime(...)`, bounded Service Worker generation and registration, exact-origin controller/app-window bridges, and `installWebSocketPatch(...)`. Composition accepts only an opaque `ArtifactLeaseV2`; the runtime accepts only `SessionV2` and returns only `ByteStreamV2`. `Client`, Yamux, candidate selection, raw artifact scopes, proxy wire frames, `proxy.runtime@1`, and the removed artifact-first v1 proxy helpers are not exports. Window bridges fail closed on origin, source, capability, frame-size, queue, or response-contract mismatch; messages expose only closed proxy status/code values.
 
 ## Swift
 
