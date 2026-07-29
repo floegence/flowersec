@@ -115,8 +115,8 @@ test("final Go race gate runs all shards with an explicit CPU budget", () => {
   const raceTarget = canonical.match(/^go-test-race:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(
     raceTarget,
-    /run-go-test-race-shards\.sh tools\/transportcheck 18 5m 9 race 1/,
-    "all 18 isolated process shards must run in two bounded batches with one Go scheduler slot per worker",
+    /run-go-test-race-shards\.sh tools\/transportcheck 18 5m 18 race 1/,
+    "all 18 isolated process shards must start together with one Go scheduler slot per worker",
   );
 });
 
