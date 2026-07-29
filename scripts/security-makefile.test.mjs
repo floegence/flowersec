@@ -60,6 +60,7 @@ test("precommit stays source-only while final integration retains heavy validati
   assert.equal(finalIntegration.status, 0, finalIntegration.stderr);
 
   const heavyCommands = [
+    "cd flowersec-go && go test -timeout=5m ./...",
     "npm run test:coverage",
     "npm run verify:package",
     "swift build",
@@ -79,6 +80,17 @@ test("precommit stays source-only while final integration retains heavy validati
       `final integration must retain command: ${command}`,
     );
   }
+});
+
+test("precommit uses the short Go group while final integration retains the complete Go suite", () => {
+  const precommit = dryRun("precommit");
+  assert.equal(precommit.status, 0, precommit.stderr);
+  const finalIntegration = dryRun("check");
+  assert.equal(finalIntegration.status, 0, finalIntegration.stderr);
+
+  assert.match(precommit.stdout, /go test -short -timeout=5m/);
+  assert.doesNotMatch(precommit.stdout, /cd flowersec-go && go test -timeout=5m \.\/\.\.\./);
+  assert.match(finalIntegration.stdout, /cd flowersec-go && go test -timeout=5m \.\/\.\.\./);
 });
 
 test("effective Make recipe parsing supports GNU Make 4.4", { skip: gmake === undefined }, () => {

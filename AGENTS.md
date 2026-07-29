@@ -156,7 +156,7 @@ git config --global merge.conflictstyle zdiff3
 - `make precommit` covers the fast high-value local gate:
   - IDL/codegen consistency: `gen-check`
   - stability manifest, API docs, and Go API guard: `stability-check`
-  - Go: `fmt-check`, `go vet`, `go test`, and `go-cover-check`
+  - Go: `fmt-check`, `go vet`, `go test -short`, and `go-cover-check`; real carrier, endpoint, process, and network integration tests stay final-only
   - TypeScript: auto `npm ci --audit=false` when dependencies are missing or incomplete, then lint and the short Vitest group; integration, Go interop, browser-bundle, coverage, build, and package validation stay final-only
   - Swift: package description, dependency-security validation, and the source guard; build, test, and coverage stay final-only
   - Rust: formatting, clippy, and library unit tests; docs, MSRV, package, publish dry-run, coverage, semver, and fuzz-target builds stay final-only

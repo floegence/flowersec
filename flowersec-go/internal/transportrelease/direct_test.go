@@ -23,7 +23,15 @@ import (
 	gorillaws "github.com/gorilla/websocket"
 )
 
+func requireTransportIntegration(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("real carrier and endpoint integration is owned by the final gate")
+	}
+}
+
 func TestDirectProductionCarriersCarryEncryptedRoundTrip(t *testing.T) {
+	requireTransportIntegration(t)
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -97,6 +105,7 @@ func TestProductDirectWebTransportUpgradeFailurePreservesSiblingArtifact(t *test
 }
 
 func TestProductDirectCarriersUsePublicConnectorAndAdmission(t *testing.T) {
+	requireTransportIntegration(t)
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -122,6 +131,7 @@ func TestProductDirectCarriersUsePublicConnectorAndAdmission(t *testing.T) {
 }
 
 func TestProductDirectRPCPreservesExactPayload(t *testing.T) {
+	requireTransportIntegration(t)
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -145,6 +155,7 @@ func TestProductDirectRPCPreservesExactPayload(t *testing.T) {
 }
 
 func TestBrowserBulkServerUsesNativeBidirectionalStreams(t *testing.T) {
+	requireTransportIntegration(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	pair, err := OpenProductDirect(ctx, carrier.KindWebTransport)
@@ -185,6 +196,7 @@ func TestBrowserBulkServerUsesNativeBidirectionalStreams(t *testing.T) {
 }
 
 func TestBrowserNativeIsolationPreservesSiblingFIN(t *testing.T) {
+	requireTransportIntegration(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	pair, err := OpenProductDirect(ctx, carrier.KindWebTransport)
@@ -308,6 +320,7 @@ func TestBrowserBulkServerFINAcknowledgesPeerReadCompletion(t *testing.T) {
 }
 
 func TestProductDirectEndpointReusesListenerForConcurrentArtifacts(t *testing.T) {
+	requireTransportIntegration(t)
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -362,6 +375,7 @@ func TestProductDirectEndpointRejectsNonConcreteListenAddress(t *testing.T) {
 }
 
 func TestProductDirectBrowserEndpointRequiresConcreteOriginAndExposesCertificateHash(t *testing.T) {
+	requireTransportIntegration(t)
 	for _, origin := range []string{"", "https://example.test", "file:///tmp/site", "http://0.0.0.0:9000", "http://224.0.0.1"} {
 		if _, err := OpenProductDirectBrowserEndpointAt(context.Background(), "127.0.0.1", origin); err == nil {
 			t.Fatalf("accepted browser origin %q", origin)
@@ -418,6 +432,7 @@ func TestBrowserOriginAuthorizationPinsSchemeAndExplicitIPAddress(t *testing.T) 
 }
 
 func TestProductDirectBrowserArtifactsAreFreshAndCancelable(t *testing.T) {
+	requireTransportIntegration(t)
 	endpoint, err := OpenProductDirectBrowserEndpointAt(context.Background(), "127.0.0.1", "http://127.0.0.1:9000")
 	if err != nil {
 		t.Fatal(err)
@@ -458,6 +473,7 @@ func TestProductDirectBrowserArtifactsAreFreshAndCancelable(t *testing.T) {
 }
 
 func TestProductDirectWorkloadsUsePersistentEndpoint(t *testing.T) {
+	requireTransportIntegration(t)
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

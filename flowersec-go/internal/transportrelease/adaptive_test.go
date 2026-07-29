@@ -30,6 +30,7 @@ func TestOpenAdaptiveEndpointRejectsInvalidCandidates(t *testing.T) {
 }
 
 func TestAdaptiveEndpointRacesProductionCarriers(t *testing.T) {
+	requireTransportIntegration(t)
 	for _, test := range []struct {
 		name       string
 		candidates []AdaptiveCandidate
@@ -65,6 +66,7 @@ func TestAdaptiveEndpointRacesProductionCarriers(t *testing.T) {
 }
 
 func TestRunAdaptiveColdRecordsEveryRealSelection(t *testing.T) {
+	requireTransportIntegration(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	endpoint, err := OpenAdaptiveEndpointAt(ctx, "127.0.0.1", []AdaptiveCandidate{

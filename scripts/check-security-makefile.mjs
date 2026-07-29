@@ -328,7 +328,7 @@ export function verifySecurityMakefile(makefile) {
     ["precommit-go", [
       "\t$(MAKE) fmt-check",
       "\t$(MAKE) go-vet",
-      "\t$(MAKE) go-test",
+      "\t$(MAKE) go-test-short",
       "\t$(MAKE) go-cover-check",
     ]],
     ["precommit-ts", [
@@ -375,6 +375,7 @@ export function verifySecurityMakefile(makefile) {
     }
   }
   const finalOnlyCommands = [
+    "cd flowersec-go && go test -timeout=5m ./...",
     "npm run test:coverage",
     "npm run verify:package",
     "swift build",
