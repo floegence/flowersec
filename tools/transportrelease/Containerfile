@@ -6,6 +6,68 @@ FROM public.ecr.aws/ubuntu/ubuntu@sha256:22a8228e1e48cbe7e0e0f2056e752ffb8a35950
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+ARG FLOWERSEC_RELEASE_APT_PACKAGES="\
+    build-essential \
+    clang \
+    conntrack \
+    curl \
+    ethtool \
+    git \
+    iproute2 \
+    iptables \
+    jq \
+    libasound2t64 \
+    libatk-bridge2.0-0t64 \
+    libatk1.0-0t64 \
+    libatspi2.0-0t64 \
+    libbpf-dev \
+    libcap2-bin \
+    libcairo2 \
+    libcups2t64 \
+    libdbus-1-3 \
+    libdrm2 \
+    libfontconfig1 \
+    libfreetype6 \
+    libgbm1 \
+    libglib2.0-0t64 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libssl-dev \
+    libx11-6 \
+    libxcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    linux-tools-common \
+    llvm \
+    lsof \
+    make \
+    nftables \
+    openssl \
+    pkg-config \
+    procps \
+    python3 \
+    socat \
+    tcpdump \
+    time \
+    unzip \
+    util-linux \
+    xz-utils \
+    xvfb \
+    fonts-freefont-ttf \
+    fonts-ipafont-gothic \
+    fonts-liberation \
+    fonts-noto-color-emoji \
+    fonts-tlwg-loma-otf \
+    fonts-unifont \
+    fonts-wqy-zenhei \
+    xfonts-cyrillic \
+    xfonts-scalable"
+
 RUN --mount=type=cache,id=flowersec-release-apt-lists,target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,id=flowersec-release-apt-archives,target=/var/cache/apt/archives,sharing=locked \
     sed -i \
@@ -19,68 +81,19 @@ RUN --mount=type=cache,id=flowersec-release-apt-lists,target=/var/lib/apt/lists,
         -e 's|http://mirrors.aliyun.com/ubuntu-ports/|https://mirrors.aliyun.com/ubuntu-ports/|g' \
         -e 's|http://mirrors.aliyun.com/ubuntu/|https://mirrors.aliyun.com/ubuntu/|g' \
         /etc/apt/sources.list.d/ubuntu.sources \
-    && apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 update \
-    && apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 install --yes --no-install-recommends \
-        build-essential \
-        clang \
-        conntrack \
-        curl \
-        ethtool \
-        git \
-        iproute2 \
-        iptables \
-        jq \
-        libasound2t64 \
-        libatk-bridge2.0-0t64 \
-        libatk1.0-0t64 \
-        libatspi2.0-0t64 \
-        libbpf-dev \
-        libcap2-bin \
-        libcairo2 \
-        libcups2t64 \
-        libdbus-1-3 \
-        libdrm2 \
-        libfontconfig1 \
-        libfreetype6 \
-        libgbm1 \
-        libglib2.0-0t64 \
-        libnspr4 \
-        libnss3 \
-        libpango-1.0-0 \
-        libssl-dev \
-        libx11-6 \
-        libxcb1 \
-        libxcomposite1 \
-        libxdamage1 \
-        libxext6 \
-        libxfixes3 \
-        libxkbcommon0 \
-        libxrandr2 \
-        linux-tools-common \
-        llvm \
-        lsof \
-        make \
-        nftables \
-        openssl \
-        pkg-config \
-        procps \
-        python3 \
-        socat \
-        tcpdump \
-        time \
-        unzip \
-        util-linux \
-        xz-utils \
-        xvfb \
-        fonts-freefont-ttf \
-        fonts-ipafont-gothic \
-        fonts-liberation \
-        fonts-noto-color-emoji \
-        fonts-tlwg-loma-otf \
-        fonts-unifont \
-        fonts-wqy-zenhei \
-        xfonts-cyrillic \
-        xfonts-scalable \
+    && apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 update
+
+RUN --mount=type=cache,id=flowersec-release-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=flowersec-release-apt-archives,target=/var/cache/apt/archives,sharing=locked \
+    apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 install \
+        --yes --no-install-recommends --download-only \
+        ${FLOWERSEC_RELEASE_APT_PACKAGES}
+
+RUN --mount=type=cache,id=flowersec-release-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=flowersec-release-apt-archives,target=/var/cache/apt/archives,sharing=locked \
+    apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 install \
+        --yes --no-install-recommends --no-download \
+        ${FLOWERSEC_RELEASE_APT_PACKAGES} \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=go_toolchain /usr/local/go /usr/local/go

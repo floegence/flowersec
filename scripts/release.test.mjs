@@ -1299,17 +1299,21 @@ test("transport release runner preserves apt downloads across bounded rebuilds",
     path.join(sourceRoot, "tools/transportrelease/Containerfile"),
     "utf8",
   );
-  const firstAptUpdate = containerfile.indexOf("apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=10 update");
-  assert.notEqual(firstAptUpdate, -1, "the bootstrap apt update is missing");
+  const runInstructions = containerfile
+    .split(/(?=^RUN )/m)
+    .filter((instruction) => instruction.startsWith("RUN "));
+  const downloadLayer = runInstructions.find((instruction) => instruction.includes("--download-only"));
+  const installLayer = runInstructions.find((instruction) => instruction.includes("--no-download"));
+  assert.ok(downloadLayer, "apt dependencies must be downloaded in a completed cacheable layer");
+  assert.ok(installLayer, "apt dependencies must be installed from the completed download cache");
+  assert.notEqual(downloadLayer, installLayer, "apt download and install must use separate layers");
 
   for (const mount of [
     "--mount=type=cache,id=flowersec-release-apt-lists,target=/var/lib/apt/lists,sharing=locked",
     "--mount=type=cache,id=flowersec-release-apt-archives,target=/var/cache/apt/archives,sharing=locked",
   ]) {
-    const declaration = containerfile.indexOf(mount);
-    assert.notEqual(declaration, -1, `missing bounded-rebuild cache: ${mount}`);
-    assert.ok(declaration < firstAptUpdate, `${mount} must apply to the apt install layer`);
-    assert.equal(containerfile.indexOf(mount, declaration + 1), -1, `${mount} must have one owner`);
+    assert.ok(downloadLayer.includes(mount), `${mount} must apply to the apt download layer`);
+    assert.ok(installLayer.includes(mount), `${mount} must apply to the apt install layer`);
   }
 });
 
@@ -1329,9 +1333,9 @@ test("transport release runner is pinned and scoped to its dedicated container",
   assert.match(containerfile, /^FROM public\.ecr\.aws\/ubuntu\/ubuntu@sha256:[0-9a-f]{64}$/m);
   assert.match(containerfile, /https:\/\/mirrors\.aliyun\.com\/ubuntu-ports\//);
   assert.match(containerfile, /install --yes --no-install-recommends ca-certificates/);
-  assert.equal((containerfile.match(/Acquire::Retries=3/g) ?? []).length, 4);
+  assert.equal((containerfile.match(/Acquire::Retries=3/g) ?? []).length, 5);
   assert.equal((containerfile.match(/Acquire::http::Timeout=10/g) ?? []).length, 2);
-  assert.equal((containerfile.match(/Acquire::https::Timeout=10/g) ?? []).length, 2);
+  assert.equal((containerfile.match(/Acquire::https::Timeout=10/g) ?? []).length, 3);
   for (const dependency of ["libnss3", "libgbm1", "fonts-noto-color-emoji"]) {
     assert.match(containerfile, new RegExp(`^\\s+${dependency} \\\\$`, "m"));
   }
