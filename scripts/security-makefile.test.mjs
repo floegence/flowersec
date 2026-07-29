@@ -129,6 +129,33 @@ test("final race validation starts in its own isolated lane", () => {
   assert.match(raceTarget, /^\t\$\(MAKE\) go-test-race$/m);
 });
 
+test("Swift final checks stay serial without globally serializing Make", () => {
+  const recipe = [
+    "swift-check:",
+    "\t$(MAKE) swift-package-check",
+    "\t$(MAKE) swift-security-check",
+    "\t$(MAKE) swift-source-guard",
+    "\t$(MAKE) swift-build",
+    "\t$(MAKE) swift-test",
+    "\t$(MAKE) swift-cover-check",
+  ].join("\n");
+  assert.match(canonical, new RegExp(`^${recipe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
+  assert.doesNotMatch(canonical, /^\.NOTPARALLEL(?::|\s)/m);
+
+  for (const weakened of [
+    recipe.replace("\n\t$(MAKE) swift-security-check", ""),
+    recipe.replace("\t$(MAKE) swift-test", "\t-$(MAKE) swift-test"),
+    recipe.replace(
+      "\t$(MAKE) swift-test\n\t$(MAKE) swift-cover-check",
+      "\t$(MAKE) swift-cover-check\n\t$(MAKE) swift-test",
+    ),
+  ]) {
+    const result = check(canonical.replace(recipe, weakened));
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /swift-check.*recipe|exact/i);
+  }
+});
+
 test("effective Make recipe parsing supports GNU Make 4.4", { skip: gmake === undefined }, () => {
   const result = check(canonical, {}, gmake);
   assert.equal(result.status, 0, result.stderr);

@@ -350,6 +350,14 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) ts-package-check",
       "\t$(MAKE) ts-audit",
     ]],
+    ["swift-check", [
+      "\t$(MAKE) swift-package-check",
+      "\t$(MAKE) swift-security-check",
+      "\t$(MAKE) swift-source-guard",
+      "\t$(MAKE) swift-build",
+      "\t$(MAKE) swift-test",
+      "\t$(MAKE) swift-cover-check",
+    ]],
     ["final-swift-check", ["\t$(MAKE) swift-check"]],
     ["final-rust-check", ["\t$(MAKE) rust-release-check"]],
     ["rust-test-short", ["\tcd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib"]],
@@ -420,11 +428,7 @@ export function verifySecurityMakefile(makefile) {
     }
   }
 
-  for (const [target, requiredPrerequisite] of [
-    ["swift-check", "swift-security-check"],
-    ["swift-check", "swift-source-guard"],
-    ["rust-release-check", "rust-audit"],
-  ]) {
+  for (const [target, requiredPrerequisite] of [["rust-release-check", "rust-audit"]]) {
     if (!effectivePrerequisites(database.stdout, target).includes(requiredPrerequisite)) {
       throw new Error(`${target} effective graph is missing ${requiredPrerequisite}`);
     }
