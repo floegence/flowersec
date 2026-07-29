@@ -9,7 +9,6 @@ const requiredSecurityTests = [
   "scripts/go-security.test.mjs",
   "scripts/rust-security.test.mjs",
   "scripts/swift-security.test.mjs",
-  "scripts/source-inventory.test.mjs",
   "scripts/security-makefile.test.mjs",
 ];
 
@@ -214,8 +213,10 @@ export function verifySecurityMakefile(makefile) {
   const protectedTargets = [
     "security-makefile-check",
     "security-dependency-check",
+    "security-package-check",
     "ts-ensure-deps",
     "ts-build",
+    "ts-test-short",
     "go-vulncheck",
     "ts-audit",
     "swift-security-check",
@@ -223,6 +224,7 @@ export function verifySecurityMakefile(makefile) {
     "swift-check",
     "rust-audit",
     "rust-release-check",
+    "rust-test-short",
     "release-policy-check",
     "release-version-check",
     "release-test",
@@ -286,8 +288,11 @@ export function verifySecurityMakefile(makefile) {
       }
     }
   }
-  if (!effectivePrerequisites(database.stdout, "security-dependency-check").includes("ts-build")) {
-    throw new Error("security-dependency-check effective graph is missing ts-build");
+  if (!effectivePrerequisites(database.stdout, "security-dependency-check").includes("ts-ensure-deps")) {
+    throw new Error("security-dependency-check effective graph is missing ts-ensure-deps");
+  }
+  if (!effectivePrerequisites(database.stdout, "security-package-check").includes("ts-build")) {
+    throw new Error("security-package-check effective graph is missing ts-build");
   }
   if (!effectivePrerequisites(database.stdout, "ts-build").includes("ts-ensure-deps")) {
     throw new Error("ts-build effective graph is missing ts-ensure-deps");
@@ -300,7 +305,9 @@ export function verifySecurityMakefile(makefile) {
       exactTestCommand,
       "\tnode scripts/generate-source-inventory.mjs --check",
     ]],
+    ["security-package-check", ["\tnode --test scripts/source-inventory.test.mjs"]],
     ["ts-build", ["\tcd flowersec-ts && rm -rf dist && npm run build"]],
+    ["ts-test-short", ["\tcd flowersec-ts && npx vitest run --exclude 'src/**/*.integration.test.ts' --exclude 'src/v2/session_go_interop.test.ts' --exclude 'src/v2/browserBundle.test.ts'"]],
     ["go-vulncheck", ["\tnode scripts/check-go-security.mjs"]],
     ["ts-audit", ["\tcd flowersec-ts && npm audit --audit-level=info --include=prod --include=dev --include=optional --include=peer"]],
     ["swift-security-check", ["\tnode scripts/check-swift-security.mjs"]],
@@ -317,6 +324,28 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) check",
       "\t$(MAKE) transport-v2-signed-evidence-check",
     ]],
+    ["rust-test-short", ["\tcd flowersec-rust && cargo test --all-features --lib"]],
+    ["precommit-go", [
+      "\t$(MAKE) fmt-check",
+      "\t$(MAKE) go-vet",
+      "\t$(MAKE) go-test",
+      "\t$(MAKE) go-cover-check",
+    ]],
+    ["precommit-ts", [
+      "\t$(MAKE) ts-ensure-deps",
+      "\t$(MAKE) ts-lint",
+      "\t$(MAKE) ts-test-short",
+    ]],
+    ["precommit-swift", [
+      "\t$(MAKE) swift-package-check",
+      "\t$(MAKE) swift-security-check",
+      "\t$(MAKE) swift-source-guard",
+    ]],
+    ["precommit-rust", [
+      "\t$(MAKE) rust-fmt-check",
+      "\t$(MAKE) rust-clippy",
+      "\t$(MAKE) rust-test-short",
+    ]],
   ]);
   for (const [target, expected] of expectedRecipes) {
     const actual = effectiveRecipe(database.stdout, target);
@@ -326,7 +355,7 @@ export function verifySecurityMakefile(makefile) {
   }
 
   for (const [target, requiredCalls] of [
-    ["check", ["release-policy-check", "transport-v2-unit", "weaknet-smoke", "quic-native-smoke", "go-vulncheck", "ts-audit", "swift-check", "rust-release-check"]],
+    ["check", ["release-policy-check", "security-package-check", "transport-v2-unit", "weaknet-smoke", "quic-native-smoke", "go-vulncheck", "ts-audit", "ts-package-check", "swift-check", "rust-release-check"]],
     ["precommit", ["release-policy-check", "precommit-go", "precommit-ts", "precommit-swift", "precommit-rust"]],
   ]) {
     const recipe = effectiveRecipe(database.stdout, target);
@@ -335,6 +364,30 @@ export function verifySecurityMakefile(makefile) {
       if (recipe.filter((line) => line === exactCall).length !== 1) {
         throw new Error(`${target} must call ${required} with one exact, unsuppressed recipe line`);
       }
+    }
+  }
+
+  const precommitDryRun = runMake(makefile, ["-n", "precommit"]);
+  const finalDryRun = runMake(makefile, ["-n", "check"]);
+  for (const [label, result] of [["precommit", precommitDryRun], ["check", finalDryRun]]) {
+    if (result.status !== 0 || result.error || result.stderr.trim() !== "") {
+      throw new Error(`cannot inspect ${label} Make graph: ${result.error?.message ?? result.stderr}`);
+    }
+  }
+  const finalOnlyCommands = [
+    "npm run test:coverage",
+    "npm run verify:package",
+    "swift build",
+    "swift test --enable-code-coverage",
+    "cargo package --allow-dirty",
+    "cargo publish --dry-run --allow-dirty",
+  ];
+  for (const command of finalOnlyCommands) {
+    if (precommitDryRun.stdout.includes(command)) {
+      throw new Error(`precommit must not reach final-only command: ${command}`);
+    }
+    if (!finalDryRun.stdout.includes(command)) {
+      throw new Error(`check must retain final-only command: ${command}`);
     }
   }
 

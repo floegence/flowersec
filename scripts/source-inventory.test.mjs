@@ -955,6 +955,10 @@ test("source inventory generation and freshness are wired into local gates", asy
   assert.match(makefile, /^source-inventory:\n\tnode scripts\/generate-source-inventory\.mjs$/m);
   assert.match(
     makefile,
-    /^security-dependency-check: ts-build\n\tnode --test scripts\/security-dependencies\.test\.mjs scripts\/go-security\.test\.mjs scripts\/rust-security\.test\.mjs scripts\/swift-security\.test\.mjs scripts\/source-inventory\.test\.mjs scripts\/security-makefile\.test\.mjs\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
+    /^security-dependency-check: ts-ensure-deps\n\tnode --test scripts\/security-dependencies\.test\.mjs scripts\/go-security\.test\.mjs scripts\/rust-security\.test\.mjs scripts\/swift-security\.test\.mjs scripts\/security-makefile\.test\.mjs\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
+  );
+  assert.match(
+    makefile,
+    /^security-package-check: ts-build\n\tnode --test scripts\/source-inventory\.test\.mjs$/m,
   );
 });

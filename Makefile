@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check stability-check transportcheck-fast transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check stability-check transportcheck-fast transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
 
 CHECK_INTEROP ?= 1
 
@@ -70,6 +70,9 @@ ts-test:
 		YAMUX_INTEROP_CLIENT_RST=$(YAMUX_INTEROP_CLIENT_RST) \
 		YAMUX_INTEROP_DEBUG=$(YAMUX_INTEROP_DEBUG) \
 		npm test
+
+ts-test-short: ts-ensure-deps
+	cd flowersec-ts && npx vitest run --exclude 'src/**/*.integration.test.ts' --exclude 'src/v2/session_go_interop.test.ts' --exclude 'src/v2/browserBundle.test.ts'
 
 ts-browser-ensure:
 	cd flowersec-ts && npm run ensure:browser
@@ -157,6 +160,9 @@ rust-clippy:
 rust-test:
 	cd flowersec-rust && cargo test --all-features
 
+rust-test-short:
+	cd flowersec-rust && cargo test --all-features --lib
+
 rust-doc:
 	cd flowersec-rust && RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
 
@@ -237,9 +243,12 @@ release-test:
 security-makefile-check:
 	node scripts/check-security-makefile.mjs Makefile
 
-security-dependency-check: ts-build
-	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/source-inventory.test.mjs scripts/security-makefile.test.mjs
+security-dependency-check: ts-ensure-deps
+	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/security-makefile.test.mjs
 	node scripts/generate-source-inventory.mjs --check
+
+security-package-check: ts-build
+	node --test scripts/source-inventory.test.mjs
 
 source-inventory:
 	node scripts/generate-source-inventory.mjs
@@ -257,16 +266,17 @@ precommit-go:
 precommit-ts:
 	$(MAKE) ts-ensure-deps
 	$(MAKE) ts-lint
-	$(MAKE) ts-build
-	$(MAKE) ts-test
-	$(MAKE) ts-cover-check
-	$(MAKE) ts-package-check
+	$(MAKE) ts-test-short
 
 precommit-swift:
-	$(MAKE) swift-check
+	$(MAKE) swift-package-check
+	$(MAKE) swift-security-check
+	$(MAKE) swift-source-guard
 
 precommit-rust:
-	$(MAKE) rust-check
+	$(MAKE) rust-fmt-check
+	$(MAKE) rust-clippy
+	$(MAKE) rust-test-short
 
 precommit: security-makefile-check security-dependency-check
 	$(MAKE) release-policy-check
@@ -404,6 +414,7 @@ nightly-check:
 check: security-makefile-check security-dependency-check
 	$(MAKE) release-policy-check
 	$(MAKE) ts-ci
+	$(MAKE) security-package-check
 	$(MAKE) readme-localization-check
 	$(MAKE) gen-check
 	$(MAKE) stability-check
@@ -420,6 +431,7 @@ check: security-makefile-check security-dependency-check
 	$(MAKE) test
 	$(MAKE) go-cover-check
 	$(MAKE) ts-cover-check
+	$(MAKE) ts-package-check
 	$(MAKE) go-test-race
 	$(MAKE) go-vulncheck
 	$(MAKE) ts-audit

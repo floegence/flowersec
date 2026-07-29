@@ -157,15 +157,17 @@ git config --global merge.conflictstyle zdiff3
   - IDL/codegen consistency: `gen-check`
   - stability manifest, API docs, and Go API guard: `stability-check`
   - Go: `fmt-check`, `go vet`, `go test`, and `go-cover-check`
-  - TypeScript: auto `npm ci --audit=false` when dependencies are missing or incomplete, then `lint`, `build`, `test`, `ts-cover-check`, and `verify:package`
-  - Swift: package description, source guard, build, and tests
-  - Rust: formatting, clippy, tests, docs, MSRV, package, and fuzz-target build checks
+  - TypeScript: auto `npm ci --audit=false` when dependencies are missing or incomplete, then lint and the short Vitest group; integration, Go interop, browser-bundle, coverage, build, and package validation stay final-only
+  - Swift: package description, dependency-security validation, and the source guard; build, test, and coverage stay final-only
+  - Rust: formatting, clippy, and library unit tests; docs, MSRV, package, publish dry-run, coverage, semver, and fuzz-target builds stay final-only
+  - repository security: lock/source policy, generated inventory freshness, and other static boundary contracts; distribution archive assembly and package-closure tests stay final-only
+- `make precommit` must not reach Swift build/test/coverage, TypeScript coverage or package validation, Cargo package or publish dry-run, complete race suites, browsers, Docker, remote runners, weak-network, performance, soak, or integration workloads. Keep those checks reachable from `make check` instead.
 - `pre-commit` does not replace final integration validation. Feature work runs focused and affected checks; after integration, the exact `main` push owns the single complete `make check` run through `pre-push`.
 - `make check` covers:
   - Go: fmt, lint, test, race, and vulncheck
   - TypeScript: `npm ci`, lint, test, build, and audit
   - IDL codegen consistency: `gen-check`
-  - Swift and Rust release checks, coverage, package validation, examples, and interoperability smoke
+  - Swift and Rust release checks, coverage, package and publish validation, distribution archive closure, examples, and interoperability smoke
 
 ### 3.1 Mandatory validation layers
 

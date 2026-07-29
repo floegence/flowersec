@@ -30,6 +30,14 @@ function check(makefile, extraEnv = {}, makeBinary) {
   return result;
 }
 
+function dryRun(target) {
+  return spawnSync("make", ["--no-print-directory", "-n", target], {
+    cwd: sourceRoot,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+}
+
 function replaceTargetRecipeLine(makefile, target, line, replacement) {
   const expression = new RegExp(`^${target}:[^\\n]*\\n(?:\\t.*\\n)*`, "m");
   const match = expression.exec(makefile);
@@ -43,6 +51,34 @@ test("effective Make graph keeps the security gate complete and reachable", () =
   assert.equal(fs.existsSync(checker), true, "security Make graph checker must exist");
   const result = check(canonical);
   assert.equal(result.status, 0, result.stderr);
+});
+
+test("precommit stays source-only while final integration retains heavy validation", () => {
+  const precommit = dryRun("precommit");
+  assert.equal(precommit.status, 0, precommit.stderr);
+  const finalIntegration = dryRun("check");
+  assert.equal(finalIntegration.status, 0, finalIntegration.stderr);
+
+  const heavyCommands = [
+    "npm run test:coverage",
+    "npm run verify:package",
+    "swift build",
+    "swift test --enable-code-coverage",
+    "cargo package --allow-dirty",
+    "cargo publish --dry-run --allow-dirty",
+  ];
+  for (const command of heavyCommands) {
+    assert.doesNotMatch(
+      precommit.stdout,
+      new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      `precommit must not reach final-only command: ${command}`,
+    );
+    assert.match(
+      finalIntegration.stdout,
+      new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      `final integration must retain command: ${command}`,
+    );
+  }
 });
 
 test("effective Make recipe parsing supports GNU Make 4.4", { skip: gmake === undefined }, () => {
@@ -161,16 +197,25 @@ test("Swift source guard recipe cannot be replaced with a no-op", () => {
   assert.match(result.stderr, /swift-source-guard.*recipe|exact audited command/i);
 });
 
-test("security dependency gate requires its pinned Node validators and a fresh npm build", () => {
+test("security source checks stay fast while package closure keeps a fresh npm build", () => {
   assert.match(canonical, /^ts-build: ts-ensure-deps$/m);
-  assert.match(canonical, /^security-dependency-check: ts-build$/m);
+  assert.match(canonical, /^security-dependency-check: ts-ensure-deps$/m);
+  assert.match(canonical, /^security-package-check: ts-build$/m);
   const disconnected = canonical.replace(
-    /^security-dependency-check: ts-build$/m,
+    /^security-dependency-check: ts-ensure-deps$/m,
     "security-dependency-check:",
   );
   const result = check(disconnected);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /security-dependency-check.*ts-build/i);
+  assert.match(result.stderr, /security-dependency-check.*ts-ensure-deps/i);
+
+  const packageDisconnected = canonical.replace(
+    /^security-package-check: ts-build$/m,
+    "security-package-check:",
+  );
+  const packageResult = check(packageDisconnected);
+  assert.notEqual(packageResult.status, 0);
+  assert.match(packageResult.stderr, /security-package-check.*ts-build/i);
 
   const dependenciesDisconnected = canonical.replace(/^ts-build: ts-ensure-deps$/m, "ts-build:");
   const dependenciesResult = check(dependenciesDisconnected);
@@ -263,7 +308,7 @@ test("effective Make graph rejects security gate removal from precommit and chec
 });
 
 test("check cannot suppress or disconnect any ecosystem security scanner", () => {
-  for (const scanner of ["go-vulncheck", "ts-audit", "swift-check", "rust-release-check"]) {
+  for (const scanner of ["security-package-check", "go-vulncheck", "ts-audit", "ts-package-check", "swift-check", "rust-release-check"]) {
     const exactLine = `\t$(MAKE) ${scanner}`;
     for (const replacement of ["", `\t-$(MAKE) ${scanner}`, `${exactLine} || true`]) {
       const mutated = replaceTargetRecipeLine(canonical, "check", exactLine, replacement);

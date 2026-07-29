@@ -154,7 +154,7 @@ test("security dependency checks stay wired into local gates", () => {
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   assert.match(
     makefile,
-    /^security-dependency-check: ts-build\n\tnode --test .*scripts\/security-makefile\.test\.mjs.*\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
+    /^security-dependency-check: ts-ensure-deps\n\tnode --test .*scripts\/security-makefile\.test\.mjs.*\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
   );
   assert.match(
     makefile,
