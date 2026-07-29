@@ -145,6 +145,30 @@ test("provision installs the source-matched wrapper at one stable container path
   assert.ok(browserBuild < browserInstall, "the browser bundle must be built before Chromium is installed");
 });
 
+test("failed provision stops its task-owned container and preserves the failure status", () => {
+  const provision = fs.readFileSync(path.join(scriptsDirectory, "provision-transport-release-runner.sh"), "utf8");
+  const oldContainerRemoval = provision.indexOf('docker rm --force "$container_name"');
+  const failureTrap = provision.indexOf("trap 'cleanup_failed_provision $?' EXIT");
+  const containerStart = provision.indexOf("docker run --detach");
+  const successMarker = provision.indexOf("provision_complete=1");
+
+  assert.notEqual(oldContainerRemoval, -1, "provision must remove only its exact stale container");
+  assert.notEqual(failureTrap, -1, "provision must install a failure cleanup trap");
+  assert.notEqual(containerStart, -1, "provision must start its dedicated container");
+  assert.notEqual(successMarker, -1, "provision must explicitly mark successful completion");
+  assert.ok(oldContainerRemoval < failureTrap, "failure cleanup must not affect the previous container");
+  assert.ok(failureTrap < containerStart, "failure cleanup must cover container creation");
+  assert.ok(containerStart < successMarker, "provision cannot mark completion before setup finishes");
+  assert.match(provision, /trap 'cleanup_failed_provision 129' HUP/);
+  assert.match(provision, /trap 'cleanup_failed_provision 130' INT/);
+  assert.match(provision, /trap 'cleanup_failed_provision 143' TERM/);
+  const cleanup = provision.match(/cleanup_failed_provision\(\) \{\n([\s\S]*?)\n\}/)?.[1] ?? "";
+  assert.match(cleanup, /trap - EXIT HUP INT TERM/);
+  assert.match(cleanup, /docker stop --time 10 "\$container_name"/);
+  assert.match(cleanup, /exit "\$status"/);
+  assert.match(provision, /provision_complete=1\ntrap - EXIT HUP INT TERM\n?$/);
+});
+
 test("release wrapper delegates cgroup controllers with a bounded live-process retry", () => {
   const runner = fs.readFileSync(runnerPath, "utf8");
   assert.match(runner, /readonly required_cgroup_controllers="cpuset cpu memory pids"/);

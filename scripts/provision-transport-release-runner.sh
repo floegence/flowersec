@@ -49,6 +49,20 @@ if docker container inspect "$container_name" >/dev/null 2>&1; then
   docker rm --force "$container_name" >/dev/null
 fi
 
+provision_complete=0
+cleanup_failed_provision() {
+  local status=${1:-$?}
+  trap - EXIT HUP INT TERM
+  if [[ $provision_complete != 1 ]] && docker container inspect "$container_name" >/dev/null 2>&1; then
+    docker stop --time 10 "$container_name" >/dev/null || true
+  fi
+  exit "$status"
+}
+trap 'cleanup_failed_provision $?' EXIT
+trap 'cleanup_failed_provision 129' HUP
+trap 'cleanup_failed_provision 130' INT
+trap 'cleanup_failed_provision 143' TERM
+
 docker run --detach \
   --name "$container_name" \
   --hostname flowersec-linux-release-v1 \
@@ -107,3 +121,6 @@ docker exec "$container_name" bash -euo pipefail -c '
   npx playwright install chromium
   npx playwright --version
 '
+
+provision_complete=1
+trap - EXIT HUP INT TERM
