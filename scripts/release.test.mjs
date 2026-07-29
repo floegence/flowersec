@@ -1294,6 +1294,25 @@ test("transport release runner rewrites every Ubuntu HTTP endpoint before apt up
   }
 });
 
+test("transport release runner preserves apt downloads across bounded rebuilds", () => {
+  const containerfile = fs.readFileSync(
+    path.join(sourceRoot, "tools/transportrelease/Containerfile"),
+    "utf8",
+  );
+  const firstAptUpdate = containerfile.indexOf("apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=10 update");
+  assert.notEqual(firstAptUpdate, -1, "the bootstrap apt update is missing");
+
+  for (const mount of [
+    "--mount=type=cache,id=flowersec-release-apt-lists,target=/var/lib/apt/lists,sharing=locked",
+    "--mount=type=cache,id=flowersec-release-apt-archives,target=/var/cache/apt/archives,sharing=locked",
+  ]) {
+    const declaration = containerfile.indexOf(mount);
+    assert.notEqual(declaration, -1, `missing bounded-rebuild cache: ${mount}`);
+    assert.ok(declaration < firstAptUpdate, `${mount} must apply to the apt install layer`);
+    assert.equal(containerfile.indexOf(mount, declaration + 1), -1, `${mount} must have one owner`);
+  }
+});
+
 test("transport release runner is pinned and scoped to its dedicated container", () => {
   const containerfile = fs.readFileSync(
     path.join(sourceRoot, "tools/transportrelease/Containerfile"),

@@ -6,7 +6,9 @@ FROM public.ecr.aws/ubuntu/ubuntu@sha256:22a8228e1e48cbe7e0e0f2056e752ffb8a35950
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN sed -i \
+RUN --mount=type=cache,id=flowersec-release-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=flowersec-release-apt-archives,target=/var/cache/apt/archives,sharing=locked \
+    sed -i \
         -e 's|http://ports.ubuntu.com/ubuntu-ports/|http://mirrors.aliyun.com/ubuntu-ports/|g' \
         -e 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.aliyun.com/ubuntu/|g' \
         -e 's|http://security.ubuntu.com/ubuntu/|http://mirrors.aliyun.com/ubuntu/|g' \
