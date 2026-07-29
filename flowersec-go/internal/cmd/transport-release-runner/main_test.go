@@ -482,6 +482,18 @@ func TestBrowserCollectorPlanKeepsModuleSiteOnClientSide(t *testing.T) {
 	}
 }
 
+func TestBrowserCollectorPlanBindsMeasuredEdgeRecoveryBudget(t *testing.T) {
+	plan, _, err := transportrelease.LoadReleasePlan("../../../../testdata/transport_v2/performance_manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := browserWorkerRequest{Plan: plan.Edge}
+	got := newBrowserCollectorPlan(request, "http://198.18.13.42:443/artifacts", "certificate-hash")
+	if got.Bulk.PhaseDeadlineMS != 27_000 {
+		t.Fatalf("edge browser bulk timeout = %dms, want 27000ms", got.Bulk.PhaseDeadlineMS)
+	}
+}
+
 func TestBrowserWorkerRequestUsesUnprefixedClientAddressAndOrigin(t *testing.T) {
 	request := newBrowserWorkerRequest(
 		transportrelease.ProfilePlan{ID: "edge-v1"},

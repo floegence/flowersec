@@ -195,7 +195,7 @@ var signedProfiles = []signedProfile{
 		id:                     "edge-v1",
 		cold:                   ColdWorkload{Operations: 10, MaxInflight: 10, Retries: 0, StartRatePerSecond: 5, OperationDeadlineSeconds: 53, PhaseDeadlineSeconds: 55},
 		rpc:                    RPCWorkload{Operations: 30, RequestBytes: 1024, ResponseBytes: 1024, Workers: 30, Retries: 0, OperationDeadlineSeconds: 24, PhaseDeadlineSeconds: 26},
-		bulk:                   BulkWorkload{WarmupBytesPerDirection: 64 * kib, ScoreBytesPerDirection: 128 * kib, PhaseDeadlineSeconds: 25},
+		bulk:                   BulkWorkload{WarmupBytesPerDirection: 64 * kib, ScoreBytesPerDirection: 128 * kib, PhaseDeadlineSeconds: 27},
 		cleanupDeadlineSeconds: 12,
 		cellWatchdogMinutes:    5,
 	},
