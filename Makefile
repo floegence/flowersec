@@ -174,7 +174,7 @@ rust-doc:
 	cd flowersec-rust && RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
 
 rust-msrv-check:
-	cd flowersec-rust && rustup run 1.85.0 cargo check --all-targets --all-features
+	cd flowersec-rust && rustup run 1.88.0 cargo check --all-targets --all-features
 
 rust-package-check:
 	cd flowersec-rust && cargo package --allow-dirty

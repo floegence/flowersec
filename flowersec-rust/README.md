@@ -5,7 +5,7 @@ encrypted sessions. Its maintained public entrypoints use opaque artifacts, the
 carrier-neutral `Connector`, and `Session`; the legacy v1 facade has been
 removed.
 
-The crate targets Rust 1.85 or newer on Linux, macOS, and Windows, uses rustls
+The crate targets Rust 1.88 or newer on Linux, macOS, and Windows, uses rustls
 by default, and contains no Flowersec-authored `unsafe`.
 
 ## Install

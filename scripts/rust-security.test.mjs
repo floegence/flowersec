@@ -85,3 +85,24 @@ test("non-published Rust roots remain licensed and version their local Flowersec
   const policy = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/deny.toml"), "utf8");
   assert.match(policy, /^  "NCSA",$/m);
 });
+
+test("GHSA-7gcf-g7xr-8hxj is patched without drifting the published MSRV", async () => {
+  const { rustSecurityContexts } = await loadChecker();
+  for (const { lockfile } of rustSecurityContexts(sourceRoot)) {
+    const lock = fs.readFileSync(lockfile, "utf8");
+    const match = lock.match(/\[\[package\]\]\nname = "serde_with"\nversion = "(\d+)\.(\d+)\.(\d+)"/u);
+    assert.ok(match, `${path.relative(sourceRoot, lockfile)} must lock serde_with`);
+    const version = match.slice(1).map(Number);
+    assert.ok(
+      version[0] > 3 || (version[0] === 3 && (version[1] > 21 || (version[1] === 21 && version[2] >= 0))),
+      `${path.relative(sourceRoot, lockfile)} must use serde_with 3.21.0 or newer`,
+    );
+  }
+
+  const manifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/Cargo.toml"), "utf8");
+  const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
+  const readme = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/README.md"), "utf8");
+  assert.match(manifest, /^rust-version = "1\.88"$/m);
+  assert.match(makefile, /^\tcd flowersec-rust && rustup run 1\.88\.0 cargo check --all-targets --all-features$/m);
+  assert.match(readme, /targets Rust 1\.88 or newer/);
+});

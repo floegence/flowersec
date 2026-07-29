@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:9e08ef9c-8893-586f-82d9-960ed2d5dfc7",
+  "serialNumber": "urn:uuid:c25a616a-bf7f-5c9c-8c19-01719cda6bb9",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "9c3ed7e01da9496ef55c803d97b87af500a3a1425c350ff0ed82fd7193d43eaa"
+        "value": "ea12580891d2a1c42aafbbd9e689aef9cf7b090f35e8f2769c50f143f7effe89"
       }
     ]
   },
@@ -1086,9 +1086,9 @@
     {
       "type": "library",
       "name": "darling",
-      "version": "0.21.3",
-      "purl": "pkg:cargo/darling@0.21.3",
-      "bom-ref": "pkg:cargo/darling@0.21.3",
+      "version": "0.23.0",
+      "purl": "pkg:cargo/darling@0.23.0",
+      "bom-ref": "pkg:cargo/darling@0.23.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1114,9 +1114,9 @@
     {
       "type": "library",
       "name": "darling_core",
-      "version": "0.21.3",
-      "purl": "pkg:cargo/darling_core@0.21.3",
-      "bom-ref": "pkg:cargo/darling_core@0.21.3",
+      "version": "0.23.0",
+      "purl": "pkg:cargo/darling_core@0.23.0",
+      "bom-ref": "pkg:cargo/darling_core@0.23.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1142,9 +1142,9 @@
     {
       "type": "library",
       "name": "darling_macro",
-      "version": "0.21.3",
-      "purl": "pkg:cargo/darling_macro@0.21.3",
-      "bom-ref": "pkg:cargo/darling_macro@0.21.3",
+      "version": "0.23.0",
+      "purl": "pkg:cargo/darling_macro@0.23.0",
+      "bom-ref": "pkg:cargo/darling_macro@0.23.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -4586,9 +4586,9 @@
     {
       "type": "library",
       "name": "serde_with",
-      "version": "3.17.0",
-      "purl": "pkg:cargo/serde_with@3.17.0",
-      "bom-ref": "pkg:cargo/serde_with@3.17.0",
+      "version": "3.21.0",
+      "purl": "pkg:cargo/serde_with@3.21.0",
+      "bom-ref": "pkg:cargo/serde_with@3.21.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -4614,9 +4614,9 @@
     {
       "type": "library",
       "name": "serde_with_macros",
-      "version": "3.17.0",
-      "purl": "pkg:cargo/serde_with_macros@3.17.0",
-      "bom-ref": "pkg:cargo/serde_with_macros@3.17.0",
+      "version": "3.21.0",
+      "purl": "pkg:cargo/serde_with_macros@3.21.0",
+      "bom-ref": "pkg:cargo/serde_with_macros@3.21.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -13830,16 +13830,15 @@
       ]
     },
     {
-      "ref": "pkg:cargo/darling@0.21.3",
+      "ref": "pkg:cargo/darling@0.23.0",
       "dependsOn": [
-        "pkg:cargo/darling_core@0.21.3",
-        "pkg:cargo/darling_macro@0.21.3"
+        "pkg:cargo/darling_core@0.23.0",
+        "pkg:cargo/darling_macro@0.23.0"
       ]
     },
     {
-      "ref": "pkg:cargo/darling_core@0.21.3",
+      "ref": "pkg:cargo/darling_core@0.23.0",
       "dependsOn": [
-        "pkg:cargo/fnv@1.0.7",
         "pkg:cargo/ident_case@1.0.1",
         "pkg:cargo/proc-macro2@1.0.106",
         "pkg:cargo/quote@1.0.46",
@@ -13848,9 +13847,9 @@
       ]
     },
     {
-      "ref": "pkg:cargo/darling_macro@0.21.3",
+      "ref": "pkg:cargo/darling_macro@0.23.0",
       "dependsOn": [
-        "pkg:cargo/darling_core@0.21.3",
+        "pkg:cargo/darling_core@0.23.0",
         "pkg:cargo/quote@1.0.46",
         "pkg:cargo/syn@2.0.119"
       ]
@@ -14409,7 +14408,7 @@
       "dependsOn": [
         "pkg:cargo/serde@1.0.228",
         "pkg:cargo/serde_json@1.0.150",
-        "pkg:cargo/serde_with@3.17.0",
+        "pkg:cargo/serde_with@3.21.0",
         "pkg:cargo/smallvec@1.15.2"
       ]
     },
@@ -14781,16 +14780,16 @@
       ]
     },
     {
-      "ref": "pkg:cargo/serde_with@3.17.0",
+      "ref": "pkg:cargo/serde_with@3.21.0",
       "dependsOn": [
         "pkg:cargo/serde_core@1.0.228",
-        "pkg:cargo/serde_with_macros@3.17.0"
+        "pkg:cargo/serde_with_macros@3.21.0"
       ]
     },
     {
-      "ref": "pkg:cargo/serde_with_macros@3.17.0",
+      "ref": "pkg:cargo/serde_with_macros@3.21.0",
       "dependsOn": [
-        "pkg:cargo/darling@0.21.3",
+        "pkg:cargo/darling@0.23.0",
         "pkg:cargo/proc-macro2@1.0.106",
         "pkg:cargo/quote@1.0.46",
         "pkg:cargo/syn@2.0.119"
