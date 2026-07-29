@@ -91,23 +91,35 @@ awk -v directory="$temp_dir" -v count="$shard_count" '
 test_count="$(wc -l < "$tests_file" | tr -d ' ')"
 echo "$mode shard runner discovered $test_count tests across $shard_count shards with parallelism $parallelism and worker GOMAXPROCS ${worker_gomaxprocs:-inherited}"
 
-run_batch() {
-  local failed=0
+reap_finished_shards() {
   local index
-  for index in "${!batch_pids[@]}"; do
-    if ! wait "${batch_pids[$index]}"; then
-      failed=1
-    fi
-    cat "${batch_logs[$index]}"
+  local shift_index
+  while true; do
+    for ((index = 0; index < active_count; index++)); do
+      if [[ -e "${active_done[$index]}" ]] || ! kill -0 "${active_pids[$index]}" 2>/dev/null; then
+        if ! wait "${active_pids[$index]}"; then
+          shard_failed=1
+        fi
+        cat "${active_logs[$index]}"
+        for ((shift_index = index; shift_index + 1 < active_count; shift_index++)); do
+          active_pids[$shift_index]="${active_pids[$((shift_index + 1))]}"
+          active_logs[$shift_index]="${active_logs[$((shift_index + 1))]}"
+          active_done[$shift_index]="${active_done[$((shift_index + 1))]}"
+        done
+        unset 'active_pids[active_count - 1]' 'active_logs[active_count - 1]' 'active_done[active_count - 1]'
+        active_count=$((active_count - 1))
+        return
+      fi
+    done
+    sleep 0.05
   done
-  batch_pids=()
-  batch_logs=()
-  return "$failed"
 }
 
-batch_pids=()
-batch_logs=()
-batch_failed=0
+active_pids=()
+active_logs=()
+active_done=()
+active_count=0
+shard_failed=0
 for ((shard = 0; shard < shard_count; shard++)); do
   shard_file="$temp_dir/shard-$shard"
   if [[ ! -s "$shard_file" ]]; then
@@ -116,7 +128,9 @@ for ((shard = 0; shard < shard_count; shard++)); do
   pattern="$(paste -sd'|' "$shard_file")"
   shard_tests="$(wc -l < "$shard_file" | tr -d ' ')"
   log_file="$temp_dir/shard-$shard.log"
+  done_file="$temp_dir/shard-$shard.done"
   (
+    trap 'printf "done\n" > "$done_file"' EXIT
     echo "running $mode shard $((shard + 1))/$shard_count with $shard_tests tests"
     cd "$package_dir"
     if [[ -n "$worker_gomaxprocs" ]]; then
@@ -128,17 +142,15 @@ for ((shard = 0; shard < shard_count; shard++)); do
       go test -count=1 -timeout="$timeout" -run "^(${pattern})$" .
     fi
   ) >"$log_file" 2>&1 &
-  batch_pids+=("$!")
-  batch_logs+=("$log_file")
-  if (( ${#batch_pids[@]} >= parallelism )); then
-    if ! run_batch; then
-      batch_failed=1
-    fi
+  active_pids[$active_count]="$!"
+  active_logs[$active_count]="$log_file"
+  active_done[$active_count]="$done_file"
+  active_count=$((active_count + 1))
+  if (( active_count >= parallelism )); then
+    reap_finished_shards
   fi
 done
-if (( ${#batch_pids[@]} > 0 )); then
-  if ! run_batch; then
-    batch_failed=1
-  fi
-fi
-exit "$batch_failed"
+while (( active_count > 0 )); do
+  reap_finished_shards
+done
+exit "$shard_failed"

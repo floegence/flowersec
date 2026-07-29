@@ -319,7 +319,7 @@ export function verifySecurityMakefile(makefile) {
       "\tcd tools/idlgen && go test -race -timeout=5m ./...",
       "\tcd tools/releasenotes && go test -race -timeout=5m ./...",
       "\tcd tools/stabilitycheck && go test -race -timeout=5m ./...",
-      "\t./scripts/run-go-test-race-shards.sh tools/transportcheck 18 5m 18 race 1",
+      "\t./scripts/run-go-test-race-shards.sh tools/transportcheck 18 5m 9 race 1",
     ]],
     ["go-vulncheck", ["\tnode scripts/check-go-security.mjs"]],
     ["ts-audit", ["\tcd flowersec-ts && npm audit --audit-level=info --include=prod --include=dev --include=optional --include=peer"]],

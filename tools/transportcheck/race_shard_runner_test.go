@@ -155,6 +155,62 @@ func TestRaceShardRunnerCoversEveryTopLevelTestExactlyOnce(t *testing.T) {
 	})
 }
 
+func TestRaceShardRunnerRefillsAvailableSlotsWithoutBatchBarrier(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "timeline.log")
+	goPath := filepath.Join(tempDir, "go")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "test" && "${2:-}" == "-list" ]]; then
+  printf 'TestSlow\nTestFastOne\nTestFastTwo\n'
+  exit 0
+fi
+pattern=""
+while (( $# > 0 )); do
+  if [[ "$1" == "-run" ]]; then
+    pattern="${2:-}"
+    break
+  fi
+  shift
+done
+printf 'start %s\n' "$pattern" >> "${RACE_SHARD_LOG:?}"
+if [[ "$pattern" == *TestSlow* ]]; then
+  sleep 0.6
+else
+  sleep 0.05
+fi
+printf 'end %s\n' "$pattern" >> "${RACE_SHARD_LOG:?}"
+`
+	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write timed fake go: %v", err)
+	}
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatalf("initialize timeline log: %v", err)
+	}
+
+	cmd := exec.Command("bash", runner, tempDir, "3", "1m", "2", "race", "1")
+	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run timed race shard runner: %v\n%s", err, output)
+	}
+
+	eventsBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read timeline log: %v", err)
+	}
+	events := strings.Split(strings.TrimSpace(string(eventsBytes)), "\n")
+	fastTwoStart := eventIndex(events, "start ^(TestFastTwo)$")
+	slowEnd := eventIndex(events, "end ^(TestSlow)$")
+	if fastTwoStart < 0 || slowEnd < 0 {
+		t.Fatalf("timeline is missing required events: %q", events)
+	}
+	if fastTwoStart > slowEnd {
+		t.Fatalf("next shard started only after the whole batch completed: %q", events)
+	}
+}
+
 func installFakeGo(t *testing.T, dir, listedTests, logPath string) {
 	t.Helper()
 	script := `#!/usr/bin/env bash
@@ -185,6 +241,15 @@ func contains(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func eventIndex(events []string, want string) int {
+	for index, event := range events {
+		if event == want {
+			return index
+		}
+	}
+	return -1
 }
 
 func flagValue(fields []string, flag string) string {
