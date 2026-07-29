@@ -329,7 +329,7 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) check",
       "\t$(MAKE) transport-v2-signed-evidence-check",
     ]],
-    ["final-integration-lanes", ["\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check"]],
+    ["final-integration-lanes", ["\t$(MAKE) -j5 final-go-check final-race-check final-ts-check final-swift-check final-rust-check"]],
     ["final-go-check", [
       "\t$(MAKE) transport-v2-unit",
       "\t$(MAKE) weaknet-smoke",
@@ -337,9 +337,9 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) go-vet",
       "\t$(MAKE) go-test",
       "\t$(MAKE) go-cover-check",
-      "\t$(MAKE) go-test-race",
       "\t$(MAKE) go-vulncheck",
     ]],
+    ["final-race-check", ["\t$(MAKE) go-test-race"]],
     ["final-ts-check", [
       "\t$(MAKE) ts-lint",
       "\t$(MAKE) ts-build",

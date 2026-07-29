@@ -94,17 +94,17 @@ test("precommit uses the short Go group while final integration retains the comp
 });
 
 test("final integration runs only isolated ecosystem lanes in bounded parallel", () => {
-  const laneCall = "\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check";
+  const laneCall = "\t$(MAKE) -j5 final-go-check final-race-check final-ts-check final-swift-check final-rust-check";
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const checkTarget = canonical.match(/^check: security-makefile-check security-dependency-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.equal(laneTarget.trim(), laneCall.trim());
   assert.match(checkTarget, /^\t\$\(MAKE\) final-integration-lanes$/m);
 
-  for (const target of ["final-go-check", "final-ts-check", "final-swift-check", "final-rust-check"]) {
+  for (const target of ["final-go-check", "final-race-check", "final-ts-check", "final-swift-check", "final-rust-check"]) {
     assert.match(canonical, new RegExp("^" + target + ":", "m"), target + " must remain an explicit final lane");
   }
 
-  const weakened = canonical.replace(laneCall, "\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check");
+  const weakened = canonical.replace(laneCall, "\t$(MAKE) -j5 final-go-check final-race-check final-ts-check final-swift-check");
   assert.notEqual(weakened, canonical);
   const result = check(weakened);
   assert.notEqual(result.status, 0);
@@ -118,6 +118,15 @@ test("final Go race gate runs all isolated transportcheck shards concurrently", 
     /run-go-test-race-shards\.sh tools\/transportcheck 18 5m 18/,
     "the 18 isolated process shards must not be serialized into multiple final-gate batches",
   );
+});
+
+test("final race validation starts in its own isolated lane", () => {
+  const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const goTarget = canonical.match(/^final-go-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const raceTarget = canonical.match(/^final-race-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(laneTarget, /\$\(MAKE\) -j5 .*final-race-check/);
+  assert.doesNotMatch(goTarget, /go-test-race/);
+  assert.match(raceTarget, /^\t\$\(MAKE\) go-test-race$/m);
 });
 
 test("effective Make recipe parsing supports GNU Make 4.4", { skip: gmake === undefined }, () => {
