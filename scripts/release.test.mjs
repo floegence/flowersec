@@ -38,14 +38,22 @@ test("release test helpers use literal executables", () => {
   assert.doesNotMatch(source, /spawnSync\(\s*command\s*,/);
 });
 
-test("release policy assertions use exact mirror URL matching", () => {
+test("release policy assertions use anchored mirror URL matching", () => {
   const source = fs.readFileSync(import.meta.filename, "utf8");
   const unsafeMirrorAssertion = [
     "assert.match(containerfile, /https:",
     String.raw`\/\/mirrors\.aliyun\.com\/ubuntu-ports\//);`,
   ].join("");
+  const unsafeMirrorSubstringAssertion = [
+    "assert.ok(containerfile.",
+    'includes("https://mirrors.aliyun.com/ubuntu-ports/"));',
+  ].join("");
   assert.equal(
     source.includes(unsafeMirrorAssertion),
+    false,
+  );
+  assert.equal(
+    source.includes(unsafeMirrorSubstringAssertion),
     false,
   );
 });
@@ -1359,7 +1367,10 @@ test("transport release runner is pinned and scoped to its dedicated container",
   assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/node@sha256:[0-9a-f]{64} AS node_toolchain$/m);
   assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/rust@sha256:[0-9a-f]{64} AS rust_toolchain$/m);
   assert.match(containerfile, /^FROM public\.ecr\.aws\/ubuntu\/ubuntu@sha256:[0-9a-f]{64}$/m);
-  assert.ok(containerfile.includes("https://mirrors.aliyun.com/ubuntu-ports/"));
+  assert.match(
+    containerfile,
+    /^\s+-e 's\|http:\/\/mirrors\.aliyun\.com\/ubuntu-ports\/\|https:\/\/mirrors\.aliyun\.com\/ubuntu-ports\/\|g' \\$/m,
+  );
   assert.match(containerfile, /install --yes --no-install-recommends ca-certificates/);
   assert.equal((containerfile.match(/Acquire::Retries=3/g) ?? []).length, 5);
   assert.equal((containerfile.match(/Acquire::http::Timeout=10/g) ?? []).length, 2);
