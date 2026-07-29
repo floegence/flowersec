@@ -52,7 +52,7 @@ seconds covers the measured lower bound, that PTO, and approximately two
 seconds of application and scheduler margin. The two additional phase seconds
 cover the persistent connection establishment and the unchanged
 one-millisecond open-loop schedule without changing payload or operation
-count. The edge bulk phase deadline is twenty-one seconds. A clean-SHA Ubuntu
+count. The edge bulk phase deadline is twenty-three seconds. A clean-SHA Ubuntu
 24 Chromium 151 browser WebTransport run completed RPC before approximately
 4.15 seconds on its persistent connection. Its 64 KiB bidirectional warmup
 then ran from approximately 4.908 through 11.206 seconds before both
@@ -63,11 +63,21 @@ aborted it. Even serialization at the unchanged ideal 1 Mbps rate required at
 least another 0.84 seconds before RTT, FIN, and application scheduling, which
 made the old deadline physically unreachable. Extrapolating the measured
 scored-stream delivery rate put the complete phase near 18.2 seconds. The
-twenty-one-second bound covers that measured duration, the latest
+former twenty-one-second bound covered that measured duration, the latest
 approximately 0.54-second PTO, and about two seconds of application and FIN
 margin without changing the 64 KiB warmup, 128 KiB scored payload,
 bidirectional stream, network, certificate, resource, zero-residual, or
-evidence contracts.
+evidence contracts. A later exact-SHA Chromium 151 run completed six
+independent browser WebTransport workloads, then reached the score-stream tail
+of run seven with only 130,538 of the successful 131,584 wire bytes sent and
+without FIN. The client's deadline-driven STOP_SENDING arrived with the ACK
+that released the final congestion window, so at least 1,046 bytes and FIN
+still had to cross the unchanged network. Its minimum 115-millisecond one-way
+delay alone put completion beyond twenty-one seconds. The tail smoothed RTT
+was approximately 0.322 seconds, RTT variance approximately 0.062 seconds,
+and the recorded PTO approximately 0.597 seconds. Twenty-three seconds covers
+that measured lower bound, one complete tail PTO, and approximately one second
+of scheduler margin without changing workload or evidence semantics.
 The edge outer cleanup deadline is twelve seconds. A frozen Ubuntu 24 run
 measured a 13,138.9-millisecond server/client clock offset and
 180.15-millisecond median one-way delay. Its final bulk payload reached the
@@ -92,7 +102,7 @@ client received no more packets, but three PTOs kept close/control traffic
 active through approximately 25.703 seconds before the outer seven-second
 timeout fired. Twelve seconds composes the measured completion allowance,
 rounded up to four seconds, the seven-second internal close bound, and one
-second of scheduler margin. One run's total phase limit is 114
+second of scheduler margin. One run's total phase limit is 116
 seconds, below the unchanged five-minute cell watchdog. This changes no
 completion handshake, internal close bound, network, workload, certificate,
 retry, zero-residual, or evidence semantics.
