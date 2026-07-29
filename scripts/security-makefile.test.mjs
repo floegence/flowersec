@@ -111,6 +111,15 @@ test("final integration runs only isolated ecosystem lanes in bounded parallel",
   assert.match(result.stderr, /final-integration-lanes|final-rust-check|exact/i);
 });
 
+test("final Go race gate runs all isolated transportcheck shards concurrently", () => {
+  const raceTarget = canonical.match(/^go-test-race:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(
+    raceTarget,
+    /run-go-test-race-shards\.sh tools\/transportcheck 18 5m 18/,
+    "the 18 isolated process shards must not be serialized into multiple final-gate batches",
+  );
+});
+
 test("effective Make recipe parsing supports GNU Make 4.4", { skip: gmake === undefined }, () => {
   const result = check(canonical, {}, gmake);
   assert.equal(result.status, 0, result.stderr);
