@@ -2,10 +2,10 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <package-directory> [shard-count] [timeout] [parallelism] [race|normal]" >&2
+  echo "usage: $0 <package-directory> [shard-count] [timeout] [parallelism] [race|normal] [worker-gomaxprocs]" >&2
 }
 
-if [[ $# -lt 1 || $# -gt 5 ]]; then
+if [[ $# -lt 1 || $# -gt 6 ]]; then
   usage
   exit 2
 fi
@@ -16,6 +16,7 @@ shard_count="${2:-4}"
 timeout="${3:-5m}"
 parallelism="${4:-4}"
 mode="${5:-race}"
+worker_gomaxprocs="${6:-}"
 
 if [[ "$package_dir" != /* ]]; then
   package_dir="$repo_root/$package_dir"
@@ -30,6 +31,10 @@ if [[ ! "$shard_count" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if [[ ! "$parallelism" =~ ^[1-9][0-9]*$ ]]; then
   echo "race shard parallelism must be a positive integer: $parallelism" >&2
+  exit 2
+fi
+if [[ -n "$worker_gomaxprocs" && ! "$worker_gomaxprocs" =~ ^[1-9][0-9]*$ ]]; then
+  echo "race shard worker GOMAXPROCS must be a positive integer: $worker_gomaxprocs" >&2
   exit 2
 fi
 case "$mode" in
@@ -84,7 +89,7 @@ awk -v directory="$temp_dir" -v count="$shard_count" '
 ' "$tests_file"
 
 test_count="$(wc -l < "$tests_file" | tr -d ' ')"
-echo "$mode shard runner discovered $test_count tests across $shard_count shards with parallelism $parallelism"
+echo "$mode shard runner discovered $test_count tests across $shard_count shards with parallelism $parallelism and worker GOMAXPROCS ${worker_gomaxprocs:-inherited}"
 
 run_batch() {
   local failed=0
@@ -114,6 +119,9 @@ for ((shard = 0; shard < shard_count; shard++)); do
   (
     echo "running $mode shard $((shard + 1))/$shard_count with $shard_tests tests"
     cd "$package_dir"
+    if [[ -n "$worker_gomaxprocs" ]]; then
+      export GOMAXPROCS="$worker_gomaxprocs"
+    fi
     if [[ "$mode" == "race" ]]; then
       go test -race -count=1 -timeout="$timeout" -run "^(${pattern})$" .
     else
