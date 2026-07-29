@@ -231,6 +231,11 @@ export function verifySecurityMakefile(makefile) {
     "release-check",
     "precommit",
     "check",
+    "final-integration-lanes",
+    "final-go-check",
+    "final-ts-check",
+    "final-swift-check",
+    "final-rust-check",
   ];
   validateMakefileSource(source, protectedTargets);
   for (const target of protectedTargets) {
@@ -324,6 +329,29 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) check",
       "\t$(MAKE) transport-v2-signed-evidence-check",
     ]],
+    ["final-integration-lanes", ["\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check"]],
+    ["final-go-check", [
+      "\t$(MAKE) transport-v2-unit",
+      "\t$(MAKE) weaknet-smoke",
+      "\t$(MAKE) quic-native-smoke",
+      "\t$(MAKE) go-vet",
+      "\t$(MAKE) go-test",
+      "\t$(MAKE) go-cover-check",
+      "\t$(MAKE) go-test-race",
+      "\t$(MAKE) go-vulncheck",
+    ]],
+    ["final-ts-check", [
+      "\t$(MAKE) ts-lint",
+      "\t$(MAKE) ts-build",
+      "\t$(MAKE) ts-browser-ensure",
+      "\t$(MAKE) ts-browser-e2e",
+      "\t$(MAKE) ts-test",
+      "\t$(MAKE) ts-cover-check",
+      "\t$(MAKE) ts-package-check",
+      "\t$(MAKE) ts-audit",
+    ]],
+    ["final-swift-check", ["\t$(MAKE) swift-check"]],
+    ["final-rust-check", ["\t$(MAKE) rust-release-check"]],
     ["rust-test-short", ["\tcd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib"]],
     ["precommit-go", [
       "\t$(MAKE) fmt-check",
@@ -355,7 +383,7 @@ export function verifySecurityMakefile(makefile) {
   }
 
   for (const [target, requiredCalls] of [
-    ["check", ["release-policy-check", "security-package-check", "transport-v2-unit", "weaknet-smoke", "quic-native-smoke", "go-vulncheck", "ts-audit", "ts-package-check", "swift-check", "rust-release-check"]],
+    ["check", ["release-policy-check", "security-package-check", "final-integration-lanes"]],
     ["precommit", ["release-policy-check", "precommit-go", "precommit-ts", "precommit-swift", "precommit-rust"]],
   ]) {
     const recipe = effectiveRecipe(database.stdout, target);

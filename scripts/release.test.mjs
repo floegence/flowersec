@@ -324,15 +324,8 @@ test("release gates stay wired into local checks and publication workflows", () 
     makefile,
     /^check: security-makefile-check security-dependency-check\n\t\$\(MAKE\) release-policy-check$/m,
   );
-  for (const target of ["transport-v2-unit", "weaknet-smoke", "quic-native-smoke"]) {
-    assert.match(
-      makefile,
-      new RegExp(
-        `^check: security-makefile-check security-dependency-check\\n(?:\\t.*\\n)*\\t\\$\\(MAKE\\) ${target}$`,
-        "m",
-      ),
-    );
-  }
+  assert.match(makefile, /^check: security-makefile-check security-dependency-check\n(?:\t.*\n)*\t\$\(MAKE\) final-integration-lanes$/m);
+  assert.match(makefile, /^final-integration-lanes:\n\t\$\(MAKE\) -j4 final-go-check final-ts-check final-swift-check final-rust-check$/m);
   assert.match(makefile, /^release-check:\n(?:\t.*\n)*\t\$\(MAKE\) transport-v2-signed-evidence-check$/m);
   assert.doesNotMatch(makefile, /^release-check:\n(?:\t.*\n)*\t\$\(MAKE\) transport-v2-release-evidence$/m);
   assert.match(

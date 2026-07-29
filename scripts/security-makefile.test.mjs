@@ -93,6 +93,24 @@ test("precommit uses the short Go group while final integration retains the comp
   assert.match(finalIntegration.stdout, /cd flowersec-go && go test -timeout=5m \.\/\.\.\./);
 });
 
+test("final integration runs only isolated ecosystem lanes in bounded parallel", () => {
+  const laneCall = "\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check";
+  const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const checkTarget = canonical.match(/^check: security-makefile-check security-dependency-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.equal(laneTarget.trim(), laneCall.trim());
+  assert.match(checkTarget, /^\t\$\(MAKE\) final-integration-lanes$/m);
+
+  for (const target of ["final-go-check", "final-ts-check", "final-swift-check", "final-rust-check"]) {
+    assert.match(canonical, new RegExp("^" + target + ":", "m"), target + " must remain an explicit final lane");
+  }
+
+  const weakened = canonical.replace(laneCall, "\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check");
+  assert.notEqual(weakened, canonical);
+  const result = check(weakened);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /final-integration-lanes|final-rust-check|exact/i);
+});
+
 test("effective Make recipe parsing supports GNU Make 4.4", { skip: gmake === undefined }, () => {
   const result = check(canonical, {}, gmake);
   assert.equal(result.status, 0, result.stderr);
@@ -319,8 +337,8 @@ test("effective Make graph rejects security gate removal from precommit and chec
   }
 });
 
-test("check cannot suppress or disconnect any ecosystem security scanner", () => {
-  for (const scanner of ["security-package-check", "go-vulncheck", "ts-audit", "ts-package-check", "swift-check", "rust-release-check"]) {
+test("check cannot suppress or disconnect final integration lanes", () => {
+  for (const scanner of ["security-package-check", "final-integration-lanes"]) {
     const exactLine = `\t$(MAKE) ${scanner}`;
     for (const replacement of ["", `\t-$(MAKE) ${scanner}`, `${exactLine} || true`]) {
       const mutated = replaceTargetRecipeLine(canonical, "check", exactLine, replacement);
