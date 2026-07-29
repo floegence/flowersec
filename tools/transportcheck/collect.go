@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -49,6 +50,8 @@ const (
 	capacityStageWatchdog   = 10 * time.Minute
 	caseSuiteJobHardStop    = 10 * time.Minute
 	caseSuiteStageHardStop  = 10 * time.Minute
+	profileShardWatchdog    = 5 * time.Minute
+	profileShardCount       = 5
 )
 
 type collectRequest struct {
@@ -157,6 +160,12 @@ type collectionJob struct {
 	CaseIDs        []string
 	VariantID      string
 	SourceRevision string
+}
+
+type collectionJobCommand struct {
+	ID       string   `json:"id"`
+	Args     []string `json:"args"`
+	Workload bool     `json:"workload"`
 }
 
 type rawJobRecord struct {
@@ -870,48 +879,20 @@ func runCollectionJob(ctx context.Context, request collectRequest, manifest *Per
 	if err != nil {
 		return rawJobRecord{}, err
 	}
-	args := collectionJobArgs(job, execution.manifestPath, reportPath, artifactDirectory, execution.sourceSHA, execution.repository, request.BPFObject)
-	commandRecord, err := json.MarshalIndent(struct {
-		Executable string   `json:"executable"`
-		Args       []string `json:"args"`
-	}{execution.executable, args}, "", "  ")
-	if err != nil {
-		return rawJobRecord{}, err
-	}
-	commandRecord = append(commandRecord, '\n')
-	commandDigest := sha256.Sum256(commandRecord)
 	_, runnerDigest, err := snapshotRegularFile(execution.executable, true)
 	if err != nil {
 		return rawJobRecord{}, fmt.Errorf("low-level runner job %s executable: %w", job.ID, err)
 	}
-	if err := os.WriteFile(filepath.Join(jobDirectory, "command.json"), commandRecord, 0o600); err != nil {
-		return rawJobRecord{}, err
+	commands := collectionJobCommands(job, execution.manifestPath, jobDirectory, execution.sourceSHA, execution.repository, request.BPFObject)
+	var commandDigest string
+	if len(commands) == 1 {
+		commandDigest, err = runRecordedCollectionCommand(ctx, lane, execution, job.ID, commands[0].Args,
+			filepath.Join(jobDirectory, "command.json"), filepath.Join(jobDirectory, "stdout.log"), filepath.Join(jobDirectory, "stderr.log"))
+	} else {
+		commandDigest, err = runShardedCollectionCommands(ctx, lane, execution, job.ID, jobDirectory, manifest.Digest, commands)
 	}
-	stdout, err := os.OpenFile(filepath.Join(jobDirectory, "stdout.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return rawJobRecord{}, err
-	}
-	stderr, err := os.OpenFile(filepath.Join(jobDirectory, "stderr.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		_ = stdout.Close()
-		return rawJobRecord{}, err
-	}
-	command := lane.Command(ctx, execution.executable, args...)
-	configureCollectionCommand(command)
-	command.Dir = execution.repository
-	command.Env = slices.DeleteFunc(command.Env, func(value string) bool { return strings.HasPrefix(value, "GIT_") })
-	command.Stdout, command.Stderr = stdout, stderr
-	runErr := command.Run()
-	outputErr := errors.Join(stdout.Sync(), stderr.Sync(), stdout.Close(), stderr.Close())
-	if outputErr != nil {
-		return rawJobRecord{}, outputErr
-	}
-	if runErr != nil {
-		return rawJobRecord{}, fmt.Errorf("low-level runner job %s failed: %w", job.ID, runErr)
-	}
-	_, recordedCommandDigest, err := snapshotRegularFile(filepath.Join(jobDirectory, "command.json"), false)
-	if err != nil || recordedCommandDigest != hex.EncodeToString(commandDigest[:]) {
-		return rawJobRecord{}, fmt.Errorf("low-level runner job %s command record changed during execution", job.ID)
 	}
 	_, reportDigest, err := snapshotRegularFile(reportPath, false)
 	if err != nil {
@@ -942,9 +923,129 @@ func runCollectionJob(ctx context.Context, request collectRequest, manifest *Per
 	}
 	return rawJobRecord{
 		ID: job.ID, CellIDs: job.CellIDs, CaseIDs: recordCaseIDs, VariantID: job.VariantID, SourceSHA: execution.sourceSHA,
-		RunnerExecutableSHA256: runnerDigest, CommandSHA256: hex.EncodeToString(commandDigest[:]),
+		RunnerExecutableSHA256: runnerDigest, CommandSHA256: commandDigest,
 		Lane: lane.Identity(), Directory: filepath.ToSlash(filepath.Join("jobs", job.ID)), ReportSHA: reportDigest,
 	}, nil
+}
+
+func runShardedCollectionCommands(ctx context.Context, lane collectionLaneRuntime, execution collectionJobExecution, jobID, jobDirectory, manifestDigest string, commands []collectionJobCommand) (string, error) {
+	if len(commands) != profileShardCount+1 || commands[len(commands)-1].ID != "merge" || commands[len(commands)-1].Workload {
+		return "", errors.New("forced profile collection command plan is invalid")
+	}
+	planRecord, err := json.MarshalIndent(struct {
+		Executable string                 `json:"executable"`
+		Commands   []collectionJobCommand `json:"commands"`
+	}{execution.executable, commands}, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	planRecord = append(planRecord, '\n')
+	planPath := filepath.Join(jobDirectory, "command.json")
+	if err := os.WriteFile(planPath, planRecord, 0o600); err != nil {
+		return "", err
+	}
+	planDigest := sha256.Sum256(planRecord)
+	for _, planned := range commands {
+		if planned.Workload {
+			artifactDirectory, err := collectionCommandArgument(planned.Args, "--artifact-dir")
+			if err != nil {
+				return "", err
+			}
+			if err := os.Mkdir(artifactDirectory, 0o700); err != nil {
+				return "", err
+			}
+		}
+		commandContext, cancelCommand := context.WithTimeout(ctx, profileShardWatchdog)
+		_, runErr := runRecordedCollectionCommand(commandContext, lane, execution, jobID+"/"+planned.ID, planned.Args,
+			filepath.Join(jobDirectory, "command-"+planned.ID+".json"),
+			filepath.Join(jobDirectory, "stdout-"+planned.ID+".log"),
+			filepath.Join(jobDirectory, "stderr-"+planned.ID+".log"))
+		watchdogErr := commandContext.Err()
+		cancelCommand()
+		if runErr != nil {
+			if watchdogErr != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("collection command %s watchdog: %w", planned.ID, watchdogErr))
+			}
+			return "", runErr
+		}
+		reportPath, err := collectionCommandArgument(planned.Args, "--report")
+		if err != nil {
+			return "", err
+		}
+		if err := validateRawCellReport(reportPath, execution.sourceSHA, manifestDigest); err != nil {
+			return "", fmt.Errorf("low-level runner job %s/%s report: %w", jobID, planned.ID, err)
+		}
+		if planned.Workload {
+			artifactDirectory, _ := collectionCommandArgument(planned.Args, "--artifact-dir")
+			if err := validateProducedArtifacts(artifactDirectory); err != nil {
+				return "", fmt.Errorf("low-level runner job %s/%s artifacts: %w", jobID, planned.ID, err)
+			}
+		}
+	}
+	_, recordedDigest, err := snapshotRegularFile(planPath, false)
+	if err != nil || recordedDigest != hex.EncodeToString(planDigest[:]) {
+		return "", fmt.Errorf("low-level runner job %s command plan changed during execution", jobID)
+	}
+	return recordedDigest, nil
+}
+
+func runRecordedCollectionCommand(ctx context.Context, lane collectionLaneRuntime, execution collectionJobExecution, jobID string, args []string, commandPath, stdoutPath, stderrPath string) (string, error) {
+	commandRecord, err := json.MarshalIndent(struct {
+		Executable string   `json:"executable"`
+		Args       []string `json:"args"`
+	}{execution.executable, args}, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	commandRecord = append(commandRecord, '\n')
+	commandDigest := sha256.Sum256(commandRecord)
+	if err := os.WriteFile(commandPath, commandRecord, 0o600); err != nil {
+		return "", err
+	}
+	stdout, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	stderr, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		_ = stdout.Close()
+		return "", err
+	}
+	command := lane.Command(ctx, execution.executable, args...)
+	configureCollectionCommand(command)
+	command.Dir = execution.repository
+	command.Env = slices.DeleteFunc(command.Env, func(value string) bool { return strings.HasPrefix(value, "GIT_") })
+	command.Stdout, command.Stderr = stdout, stderr
+	runErr := command.Run()
+	outputErr := errors.Join(stdout.Sync(), stderr.Sync(), stdout.Close(), stderr.Close())
+	if outputErr != nil {
+		return "", outputErr
+	}
+	if runErr != nil {
+		return "", fmt.Errorf("low-level runner job %s failed: %w", jobID, runErr)
+	}
+	_, recordedDigest, err := snapshotRegularFile(commandPath, false)
+	if err != nil || recordedDigest != hex.EncodeToString(commandDigest[:]) {
+		return "", fmt.Errorf("low-level runner job %s command record changed during execution", jobID)
+	}
+	return recordedDigest, nil
+}
+
+func collectionCommandArgument(args []string, name string) (string, error) {
+	value := ""
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] != name {
+			continue
+		}
+		if value != "" {
+			return "", fmt.Errorf("collection command repeats %s", name)
+		}
+		value = args[index+1]
+	}
+	if value == "" {
+		return "", fmt.Errorf("collection command omits %s", name)
+	}
+	return value, nil
 }
 
 func collectionJobArgs(job collectionJob, manifestPath, reportPath, artifactDirectory, sourceSHA, repository, bpfObject string) []string {
@@ -971,6 +1072,50 @@ func collectionJobArgs(job collectionJob, manifestPath, reportPath, artifactDire
 		args = append(args, "--case-id", job.CaseID)
 	}
 	return args
+}
+
+func collectionJobCommands(job collectionJob, manifestPath, jobDirectory, sourceSHA, repository, bpfObject string) []collectionJobCommand {
+	reportPath := filepath.Join(jobDirectory, "cell.json")
+	artifactDirectory := filepath.Join(jobDirectory, "artifacts")
+	if !isForcedProfileCollectionJob(job) {
+		return []collectionJobCommand{{ID: "main", Args: collectionJobArgs(job, manifestPath, reportPath, artifactDirectory, sourceSHA, repository, bpfObject), Workload: true}}
+	}
+	commands := make([]collectionJobCommand, 0, profileShardCount+1)
+	shardReports := make([]string, 0, profileShardCount)
+	for shard := 1; shard <= profileShardCount; shard++ {
+		label := fmt.Sprintf("%02d", shard)
+		shardReport := filepath.Join(artifactDirectory, "shard-"+label+".json")
+		shardArtifacts := filepath.Join(artifactDirectory, "artifacts-shard-"+label)
+		args := collectionJobArgs(job, manifestPath, shardReport, shardArtifacts, sourceSHA, repository, bpfObject)
+		args = append(args, "--run-shard", strconv.Itoa(shard))
+		commands = append(commands, collectionJobCommand{ID: "shard-" + label, Args: args, Workload: true})
+		shardReports = append(shardReports, shardReport)
+	}
+	mergeJob := job
+	mergeJob.NeedsBPF = false
+	if job.RunnerTarget == "browser-webtransport-cell" {
+		mergeJob.RunnerTarget = "merge-browser-webtransport-shards"
+	} else {
+		mergeJob.RunnerTarget = "merge-network-profile-shards"
+	}
+	mergeArgs := collectionJobArgs(mergeJob, manifestPath, reportPath, artifactDirectory, sourceSHA, repository, bpfObject)
+	for _, shardReport := range shardReports {
+		mergeArgs = append(mergeArgs, "--shard-report", shardReport)
+	}
+	commands = append(commands, collectionJobCommand{ID: "merge", Args: mergeArgs})
+	return commands
+}
+
+func isForcedProfileCollectionJob(job collectionJob) bool {
+	if job.Profile != "mobile-v1" && job.Profile != "edge-v1" {
+		return false
+	}
+	switch job.RunnerTarget {
+	case "direct-network-profile-cell", "tunnel-network-profile-cell", "browser-webtransport-cell":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateProducedArtifacts(root string) error {

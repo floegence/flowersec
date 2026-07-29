@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -171,6 +173,74 @@ func TestBuildCollectionPlanSplitsCapacityIntoExactCaseJobs(t *testing.T) {
 	}
 }
 
+func TestForcedProfileCollectionCommandsShardWorkloadBeforeMerge(t *testing.T) {
+	if profileShardWatchdog != 5*time.Minute {
+		t.Fatalf("profile shard watchdog = %s, want exactly 5m", profileShardWatchdog)
+	}
+	tests := []struct {
+		name        string
+		job         collectionJob
+		mergeTarget string
+	}{
+		{
+			name: "direct",
+			job: collectionJob{
+				ID: "edge-01", CellIDs: []string{"edge-01"}, RunnerTarget: "direct-network-profile-cell",
+				Profile: "edge-v1", Carrier: "websocket", NeedsBPF: true,
+			},
+			mergeTarget: "merge-network-profile-shards",
+		},
+		{
+			name: "tunnel",
+			job: collectionJob{
+				ID: "edge-03", CellIDs: []string{"edge-03"}, RunnerTarget: "tunnel-network-profile-cell",
+				Profile: "edge-v1", Topology: "WW", NeedsBPF: true,
+			},
+			mergeTarget: "merge-network-profile-shards",
+		},
+		{
+			name: "browser",
+			job: collectionJob{
+				ID: "edge-08", CellIDs: []string{"edge-08"}, RunnerTarget: "browser-webtransport-cell",
+				Profile: "edge-v1", Topology: "browser_tunnel_wt_wss", NeedsBPF: true,
+			},
+			mergeTarget: "merge-browser-webtransport-shards",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			commands := collectionJobCommands(test.job, "/manifest", "/job", collectTestFinalSHA, "/repository", "/bpf.o")
+			if len(commands) != 6 {
+				t.Fatalf("command count = %d, want five workload shards plus merge", len(commands))
+			}
+			for index, command := range commands[:5] {
+				label := fmt.Sprintf("%02d", index+1)
+				if command.ID != "shard-"+label || !command.Workload ||
+					!argumentHasPair(command.Args, "--target", test.job.RunnerTarget) ||
+					!argumentHasPair(command.Args, "--run-shard", strconv.Itoa(index+1)) ||
+					!argumentHasPair(command.Args, "--bpf-object", "/bpf.o") ||
+					!argumentHasPair(command.Args, "--report", filepath.Join("/job/artifacts", "shard-"+label+".json")) ||
+					!argumentHasPair(command.Args, "--artifact-dir", filepath.Join("/job/artifacts", "artifacts-shard-"+label)) {
+					t.Fatalf("shard %d command is not isolated and bound: %+v", index+1, command)
+				}
+			}
+			merge := commands[5]
+			if merge.ID != "merge" || merge.Workload || !argumentHasPair(merge.Args, "--target", test.mergeTarget) ||
+				argumentHasName(merge.Args, "--run-shard") || argumentHasName(merge.Args, "--bpf-object") ||
+				!argumentHasPair(merge.Args, "--report", "/job/cell.json") ||
+				!argumentHasPair(merge.Args, "--artifact-dir", "/job/artifacts") {
+				t.Fatalf("merge command is not workload-free: %+v", merge)
+			}
+			if got := argumentValues(merge.Args, "--shard-report"); !slices.Equal(got, []string{
+				"/job/artifacts/shard-01.json", "/job/artifacts/shard-02.json", "/job/artifacts/shard-03.json",
+				"/job/artifacts/shard-04.json", "/job/artifacts/shard-05.json",
+			}) {
+				t.Fatalf("merge shard reports = %v", got)
+			}
+		})
+	}
+}
+
 func TestCollectionPlanBindsCleanRevisionVariantsToIndependentSources(t *testing.T) {
 	jobs, missing := supportedPerformanceJobs(loadFixtureManifest(t))
 	if slices.Contains(missing, "cell clean-01 (direct_wss_revision)") {
@@ -296,7 +366,7 @@ func TestRunCollectionJobsUsesRealExecutableAndEmptyPerCellArtifactDirectories(t
 		BPFObject: filepath.Join(root, "packet_fault.o"),
 	}
 	jobs := []collectionJob{
-		{ID: "mobile-01", CellIDs: []string{"mobile-01"}, RunnerTarget: "direct-network-profile-cell", Profile: "mobile-v1", Carrier: "websocket", NeedsBPF: true},
+		{ID: "clean-01", CellIDs: []string{"clean-01"}, RunnerTarget: "direct-network-profile-cell", Profile: "clean-v1", Carrier: "websocket", NeedsBPF: true},
 		{ID: "clean-08", CellIDs: []string{"clean-08"}, RunnerTarget: "browser-webtransport-cell", Profile: "clean-v1", Topology: "browser_webtransport"},
 	}
 	staging := filepath.Join(root, "staging")
@@ -336,6 +406,108 @@ func TestRunCollectionJobsUsesRealExecutableAndEmptyPerCellArtifactDirectories(t
 		if gotBPF != job.NeedsBPF {
 			t.Fatalf("%s BPF argv=%t, want %t: %v", job.ID, gotBPF, job.NeedsBPF, command.Args)
 		}
+	}
+}
+
+func TestRunCollectionJobsExecutesForcedProfilesAsFiveShardsAndMerge(t *testing.T) {
+	root := canonicalCollectTestRoot(t)
+	runner := writeFakeShardedCollectRunner(t, root)
+	manifest := &PerformanceManifest{Digest: "sha256:sharded-collection", Cells: []PerformanceCell{
+		{ID: "edge-01", DurationMinutes: 1}, {ID: "edge-03", DurationMinutes: 1}, {ID: "edge-08", DurationMinutes: 1},
+	}}
+	calls := filepath.Join(root, "calls.log")
+	t.Setenv("FAKE_CALLS", calls)
+	t.Setenv("FAKE_MANIFEST_DIGEST", manifest.Digest)
+	request := collectRequest{
+		ManifestPath: filepath.Join(root, "manifest.json"), RepositoryPath: root,
+		FinalSHA: collectTestFinalSHA, RunnerExecutable: runner, BPFObject: filepath.Join(root, "packet_fault.o"),
+	}
+	jobs := []collectionJob{
+		{ID: "edge-01", CellIDs: []string{"edge-01"}, RunnerTarget: "direct-network-profile-cell", Profile: "edge-v1", Carrier: "websocket", NeedsBPF: true},
+		{ID: "edge-03", CellIDs: []string{"edge-03"}, RunnerTarget: "tunnel-network-profile-cell", Profile: "edge-v1", Topology: "WW", NeedsBPF: true},
+		{ID: "edge-08", CellIDs: []string{"edge-08"}, RunnerTarget: "browser-webtransport-cell", Profile: "edge-v1", Topology: "browser_tunnel_wt_wss", NeedsBPF: true},
+	}
+	staging := filepath.Join(root, "staging")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	records, err := runCollectionJobs(context.Background(), request, manifest, nil, jobs, staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != len(jobs) {
+		t.Fatalf("records = %d, want %d", len(records), len(jobs))
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Fields(string(data))
+	if len(lines) != len(jobs)*6 {
+		t.Fatalf("runner calls = %d, want %d: %v", len(lines), len(jobs)*6, lines)
+	}
+	for _, job := range jobs {
+		jobRoot := filepath.Join(staging, "jobs", job.ID)
+		for shard := 1; shard <= 5; shard++ {
+			label := fmt.Sprintf("%02d", shard)
+			for _, name := range []string{"command-shard-" + label + ".json", "stdout-shard-" + label + ".log", "stderr-shard-" + label + ".log"} {
+				if _, err := os.Stat(filepath.Join(jobRoot, name)); err != nil {
+					t.Fatalf("%s missing preserved %s: %v", job.ID, name, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(jobRoot, "artifacts", "artifacts-shard-"+label, "run-"+strconv.Itoa(shard), "traffic.pcap")); err != nil {
+				t.Fatalf("%s shard %d artifact missing: %v", job.ID, shard, err)
+			}
+		}
+		for _, name := range []string{"command.json", "command-merge.json", "stdout-merge.log", "stderr-merge.log", "cell.json"} {
+			if _, err := os.Stat(filepath.Join(jobRoot, name)); err != nil {
+				t.Fatalf("%s missing preserved %s: %v", job.ID, name, err)
+			}
+		}
+	}
+}
+
+func TestRunCollectionJobsRetainsCompletedShardsWhenLaterShardFails(t *testing.T) {
+	root := canonicalCollectTestRoot(t)
+	runner := writeFakeShardedCollectRunner(t, root)
+	manifest := &PerformanceManifest{Digest: "sha256:sharded-partial", Cells: []PerformanceCell{{ID: "edge-01", DurationMinutes: 1}}}
+	t.Setenv("FAKE_CALLS", filepath.Join(root, "calls.log"))
+	t.Setenv("FAKE_MANIFEST_DIGEST", manifest.Digest)
+	t.Setenv("FAKE_FAIL_SHARD", "3")
+	request := collectRequest{
+		ManifestPath: filepath.Join(root, "manifest.json"), RepositoryPath: root,
+		FinalSHA: collectTestFinalSHA, RunnerExecutable: runner, BPFObject: filepath.Join(root, "packet_fault.o"),
+	}
+	job := collectionJob{ID: "edge-01", CellIDs: []string{"edge-01"}, RunnerTarget: "direct-network-profile-cell", Profile: "edge-v1", Carrier: "websocket", NeedsBPF: true}
+	staging := filepath.Join(root, "staging")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runCollectionJobs(context.Background(), request, manifest, nil, []collectionJob{job}, staging); err == nil {
+		t.Fatal("forced profile collection unexpectedly ignored shard failure")
+	}
+	jobRoot := filepath.Join(staging, "jobs", job.ID)
+	for shard := 1; shard <= 2; shard++ {
+		label := fmt.Sprintf("%02d", shard)
+		for _, path := range []string{
+			filepath.Join(jobRoot, "artifacts", "shard-"+label+".json"),
+			filepath.Join(jobRoot, "artifacts", "artifacts-shard-"+label, "run-"+strconv.Itoa(shard), "traffic.pcap"),
+			filepath.Join(jobRoot, "command-shard-"+label+".json"),
+		} {
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("completed shard %d evidence was not retained at %s: %v", shard, path, err)
+			}
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(jobRoot, "command-shard-03.json"), filepath.Join(jobRoot, "stdout-shard-03.log"), filepath.Join(jobRoot, "stderr-shard-03.log"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("failing shard diagnostics were not retained at %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(jobRoot, "command-merge.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("merge ran after a shard failure: %v", err)
 	}
 }
 
@@ -880,6 +1052,49 @@ exit ` + exit + "\n"
 	return path
 }
 
+func writeFakeShardedCollectRunner(t *testing.T, root string) string {
+	t.Helper()
+	path := filepath.Join(root, "sharded-runner.sh")
+	script := `#!/bin/sh
+set -eu
+target= report= artifacts= source_sha= shard= bpf= shard_reports=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --target) target=$2; shift 2 ;;
+    --report) report=$2; shift 2 ;;
+    --artifact-dir) artifacts=$2; shift 2 ;;
+    --source-sha) source_sha=$2; shift 2 ;;
+    --run-shard) shard=$2; shift 2 ;;
+    --bpf-object) bpf=$2; shift 2 ;;
+    --shard-report) test -s "$2"; shard_reports=$((shard_reports + 1)); shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$target" in
+  direct-network-profile-cell|tunnel-network-profile-cell|browser-webtransport-cell)
+    test -n "$shard" && test -n "$bpf" && test "$shard_reports" -eq 0
+    test -d "$artifacts" && test -z "$(find "$artifacts" -mindepth 1 -print -quit)"
+    mkdir "$artifacts/run-$shard"
+    printf 'packet-%s' "$shard" >"$artifacts/run-$shard/traffic.pcap"
+    if test "${FAKE_FAIL_SHARD:-}" = "$shard"; then
+      printf 'forced shard failure\n' >&2
+      exit 42
+    fi
+    ;;
+  merge-network-profile-shards|merge-browser-webtransport-shards)
+    test -z "$shard" && test -z "$bpf" && test "$shard_reports" -eq 5
+    ;;
+  *) exit 40 ;;
+esac
+printf '%s:%s\n' "$target" "${shard:-merge}" >>"$FAKE_CALLS"
+printf '{"schema_version":1,"classification":"raw_sharded_fake","source_sha":"%s","manifest_digest":"%s"}\n' "$source_sha" "$FAKE_MANIFEST_DIGEST" >"$report"
+`
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func argumentHasPair(args []string, name, value string) bool {
 	for index := 0; index+1 < len(args); index++ {
 		if args[index] == name && args[index+1] == value {
@@ -887,6 +1102,20 @@ func argumentHasPair(args []string, name, value string) bool {
 		}
 	}
 	return false
+}
+
+func argumentHasName(args []string, name string) bool {
+	return slices.Contains(args, name)
+}
+
+func argumentValues(args []string, name string) []string {
+	var values []string
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == name {
+			values = append(values, args[index+1])
+		}
+	}
+	return values
 }
 
 func writeRawCaseSuiteFixture(t *testing.T) (string, string, *PerformanceManifest, *CaseRegistry, collectionJob) {

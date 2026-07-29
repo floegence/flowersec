@@ -170,12 +170,25 @@ type canonicalArgvRecord struct {
 }
 
 func canonicalAllTargetArgvSHA256(manifest *PerformanceManifest, registry *CaseRegistry) (string, error) {
-	plan, err := buildCollectionPlan("all", manifest, registry)
+	records, err := canonicalAllTargetArgvRecords(manifest, registry)
 	if err != nil {
 		return "", err
 	}
+	encoded, err := json.Marshal(records)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func canonicalAllTargetArgvRecords(manifest *PerformanceManifest, registry *CaseRegistry) ([]canonicalArgvRecord, error) {
+	plan, err := buildCollectionPlan("all", manifest, registry)
+	if err != nil {
+		return nil, err
+	}
 	if len(plan.Missing) != 0 {
-		return "", fmt.Errorf("canonical all-target argv requires complete producers: %s", strings.Join(plan.Missing, "; "))
+		return nil, fmt.Errorf("canonical all-target argv requires complete producers: %s", strings.Join(plan.Missing, "; "))
 	}
 	jobs := append([]collectionJob(nil), plan.Jobs...)
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].ID < jobs[j].ID })
@@ -189,15 +202,21 @@ func canonicalAllTargetArgvSHA256(manifest *PerformanceManifest, registry *CaseR
 			executable = "$RACE_RUNNER"
 		}
 		output := "$OUTPUT/jobs/" + job.ID
-		args := collectionJobArgs(job, manifestPath, output+"/cell.json", output+"/artifacts", sourceSHA, root, "$BUILD_DIR/packet_fault.o")
-		records = append(records, canonicalArgvRecord{Scope: "low-level", JobID: job.ID, Executable: executable, Args: args})
+		commands := collectionJobCommands(job, manifestPath, output, sourceSHA, root, "$BUILD_DIR/packet_fault.o")
+		for _, command := range commands {
+			scope := "low-level"
+			jobID := job.ID
+			if len(commands) > 1 {
+				scope = "low-level-shard"
+				if !command.Workload {
+					scope = "low-level-merge"
+				}
+				jobID += "/" + command.ID
+			}
+			records = append(records, canonicalArgvRecord{Scope: scope, JobID: jobID, Executable: executable, Args: command.Args})
+		}
 	}
-	encoded, err := json.Marshal(records)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(encoded)
-	return hex.EncodeToString(digest[:]), nil
+	return records, nil
 }
 
 func writeDigestFrame(destination hash.Hash, value []byte) {
