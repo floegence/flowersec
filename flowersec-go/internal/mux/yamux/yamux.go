@@ -32,6 +32,7 @@ const (
 	DefaultMaxStreamReceiveBytes       = defaults.YamuxMaxStreamReceiveBytes
 	DefaultMaxSessionReceiveBytes      = defaults.YamuxMaxSessionReceiveBytes
 	disabledRTTMeasureInterval         = time.Duration(1<<63 - 1)
+	defaultConnectionWriteTimeout      = time.Minute
 )
 
 // YamuxLimits bounds multiplexing concurrency, frame sizes, and buffered memory.
@@ -331,6 +332,7 @@ func newSession(conn net.Conn, limits YamuxLimits, liveness LivenessOptions, cli
 	cfg.MaxMessageSize = uint32(limits.PreferredOutboundFrameBytes)
 	cfg.EnableKeepAlive = false
 	cfg.MeasureRTTInterval = disabledRTTMeasureInterval
+	cfg.ConnectionWriteTimeout = defaultConnectionWriteTimeout
 	if liveness.Interval > 0 {
 		cfg.ConnectionWriteTimeout = liveness.Timeout
 	}

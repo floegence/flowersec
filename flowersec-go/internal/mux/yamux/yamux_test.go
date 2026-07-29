@@ -100,6 +100,19 @@ type shortWriteConn struct {
 	limit int
 }
 
+type writeDeadlineRecordingConn struct {
+	net.Conn
+	deadlines chan time.Time
+}
+
+func (c *writeDeadlineRecordingConn) SetWriteDeadline(deadline time.Time) error {
+	select {
+	case c.deadlines <- deadline:
+	default:
+	}
+	return c.Conn.SetWriteDeadline(deadline)
+}
+
 func (c *shortWriteConn) Write(p []byte) (int, error) {
 	if c.limit > 0 && len(p) > c.limit {
 		return c.limit, nil
@@ -114,6 +127,54 @@ func TestDefaultLimits(t *testing.T) {
 		got.MaxStreamReceiveBytes != 256*1024 ||
 		got.MaxSessionReceiveBytes != 16*1024*1024 {
 		t.Fatalf("unexpected defaults: %+v", got)
+	}
+}
+
+func TestZeroLivenessWriteDeadlineDoesNotPreemptSessionIdleRecovery(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	recorded := &writeDeadlineRecordingConn{Conn: clientConn, deadlines: make(chan time.Time, 8)}
+	server, err := NewServer(serverConn, YamuxLimits{}, LivenessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	client, err := NewClient(recorded, YamuxLimits{}, LivenessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	accepted := make(chan *Stream, 1)
+	acceptErrors := make(chan error, 1)
+	go func() {
+		stream, acceptErr := server.AcceptStream()
+		if acceptErr != nil {
+			acceptErrors <- acceptErr
+			return
+		}
+		accepted <- stream
+	}()
+	stream, err := client.OpenStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	select {
+	case peer := <-accepted:
+		defer peer.Close()
+	case err := <-acceptErrors:
+		t.Fatal(err)
+	case <-time.After(time.Second):
+		t.Fatal("server did not accept stream")
+	}
+
+	select {
+	case deadline := <-recorded.deadlines:
+		if remaining := time.Until(deadline); remaining < 55*time.Second {
+			t.Fatalf("zero-liveness write deadline = %s, want at least 55s", remaining)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("yamux did not set a connection write deadline")
 	}
 }
 
