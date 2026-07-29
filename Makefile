@@ -155,6 +155,7 @@ swift-cover-check:
 	@coverage_path=$$(swift test --show-codecov-path); \
 		node scripts/check-swift-coverage.mjs "$$coverage_path" 79 80
 
+.NOTPARALLEL: swift-check
 swift-check: swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check
 
 rust-fmt-check:

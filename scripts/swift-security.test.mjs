@@ -859,6 +859,7 @@ test("Swift security checker is wired into the Swift gate", async () => {
   await loadChecker();
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   assert.match(makefile, /^swift-security-check:\n\tnode scripts\/check-swift-security\.mjs$/m);
+  assert.match(makefile, /^\.NOTPARALLEL: swift-check$/m);
   assert.match(
     makefile,
     /^swift-check: swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check$/m,
