@@ -43,6 +43,7 @@ type ConnectorOptions struct {
 	TrustRoots     *x509.CertPool
 	Origin         string
 	ConnectTimeout time.Duration
+	Handlers       *SessionHandlers
 }
 
 // Connector establishes a Flowersec v2 session without exposing the selected
@@ -226,6 +227,9 @@ func NewConnector(lease ArtifactLease, options ConnectorOptions) (*Connector, er
 		len(options.TrustRoots.Subjects()) == 0 || options.ConnectTimeout < 0 || !validOrigin(options.Origin) {
 		return nil, ErrInvalidConnectorOptions
 	}
+	if options.Handlers != nil && !options.Handlers.valid() {
+		return nil, ErrInvalidConnectorOptions
+	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: options.TrustRoots.Clone()}
 	webSocketClient := *gorillaws.DefaultDialer
 	webSocketClient.TLSClientConfig = tlsConfig.Clone()
@@ -256,9 +260,13 @@ func NewConnector(lease ArtifactLease, options ConnectorOptions) (*Connector, er
 	if err != nil {
 		return nil, ErrInvalidConnectorOptions
 	}
+	connectorOptions := make([]connectv2.ConnectorOption, 0, 1)
+	if options.Handlers != nil {
+		connectorOptions = append(connectorOptions, connectv2.WithRPCRouter(options.Handlers.rpcRouter()))
+	}
 	inner := connectv2.NewConnector(connectv2.ArtifactLease{
 		Artifact: *lease.artifact.value, CommitSpend: lease.commitSpend,
-	}, session.GoCapabilities(), connectv2.Adaptive, factory)
+	}, session.GoCapabilities(), connectv2.Adaptive, factory, connectorOptions...)
 	return &Connector{inner: inner, timeout: options.ConnectTimeout}, nil
 }
 

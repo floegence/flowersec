@@ -62,7 +62,7 @@ Pour obtenir des preuves propres à chaque transport, exécutez `make transport-
 
 | Langage | Paquet | Point d'entrée public |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | points d'entrée v2 opaques à la racine, sous `/browser` et sous `/node` |
 | Swift | Produit SwiftPM `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
 | Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |

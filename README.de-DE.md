@@ -62,7 +62,7 @@ Carrier-spezifische Nachweise liefern `make transport-conformance-smoke`, `make 
 
 | Sprache | Paket | Öffentlicher Einstieg |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | opake v2-Einstiege im Root sowie unter `/browser` und `/node` |
 | Swift | SwiftPM-Produkt `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
 | Rust | Crate `flowersec` | `Artifact`, `Connector`, `Session` |

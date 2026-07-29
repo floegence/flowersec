@@ -62,7 +62,7 @@ make transport-v2-unit
 
 | Язык | Пакет | Публичная точка входа |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | непрозрачные точки входа v2 в корне пакета, `/browser` и `/node` |
 | Swift | Продукт SwiftPM `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
 | Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |

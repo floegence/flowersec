@@ -62,7 +62,7 @@ For carrier-specific evidence, run `make transport-conformance-smoke`, `make tra
 
 | Language | Package | Public entry |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | root, `/browser`, and `/node` opaque v2 entrypoints |
 | Swift | SwiftPM product `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
 | Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |

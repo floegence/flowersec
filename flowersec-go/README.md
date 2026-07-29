@@ -15,11 +15,16 @@ Repository tags for this module use the `flowersec-go/v2.x.y` prefix.
 ```go
 artifact, err := flowersec.ParseArtifact(encoded)
 lease, err := flowersec.NewArtifactLease(artifact, commitSpend)
+handlers, err := flowersec.NewSessionHandlers(flowersec.SessionHandlerOptions{})
+err = handlers.HandleRPC(typeID, rpcHandler)
+err = handlers.HandleStream(streamKind, streamHandler)
+options.Handlers = handlers
 connector, err := flowersec.NewConnector(lease, options)
 session, err := connector.Connect(ctx)
+err = handlers.Serve(ctx, session)
 ```
 
-The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
+Register inbound RPC handlers before constructing the connector; the connector snapshots them for session establishment. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, and resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
 
 ## Server Control Plane
 

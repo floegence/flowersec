@@ -140,6 +140,26 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.SessionHandlers",
+            "doc_token": "`flowersec.SessionHandlers`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.SessionHandlerOptions",
+            "doc_token": "`flowersec.SessionHandlerOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.StreamHandler",
+            "doc_token": "`flowersec.StreamHandler`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.RPCHandler",
+            "doc_token": "`flowersec.RPCHandler`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.UnreliableMessageChannel",
             "doc_token": "`flowersec.UnreliableMessageChannel`"
           },
@@ -283,6 +303,41 @@
             "kind": "func",
             "expr": "flowersec.NewConnector",
             "doc_token": "`flowersec.NewConnector(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewSessionHandlers",
+            "doc_token": "`flowersec.NewSessionHandlers(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionHandlers).HandleStream",
+            "doc_token": "`flowersec.SessionHandlers.HandleStream(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionHandlers).HandleRPC",
+            "doc_token": "`flowersec.SessionHandlers.HandleRPC(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionHandlers).Serve",
+            "doc_token": "`flowersec.SessionHandlers.Serve(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionHandlers).String",
+            "doc_token": "`flowersec.SessionHandlers.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionHandlers).GoString",
+            "doc_token": "`flowersec.SessionHandlers.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.SessionHandlers).MarshalJSON",
+            "doc_token": "`flowersec.SessionHandlers.MarshalJSON()`"
           },
           {
             "kind": "method",
@@ -453,6 +508,16 @@
             "kind": "var",
             "expr": "flowersec.ErrConnectionFailed",
             "doc_token": "`flowersec.ErrConnectionFailed`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidSessionHandlers",
+            "doc_token": "`flowersec.ErrInvalidSessionHandlers`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrHandlerAlreadyExists",
+            "doc_token": "`flowersec.ErrHandlerAlreadyExists`"
           }
         ]
       },
@@ -466,6 +531,8 @@
           { "kind": "var", "expr": "controlplane.ErrIssuanceFailed", "doc_token": "`controlplane.ErrIssuanceFailed`" },
           { "kind": "type", "expr": "controlplane.EndpointSet", "doc_token": "`controlplane.EndpointSet`" },
           { "kind": "func", "expr": "controlplane.NewEndpointSet", "doc_token": "`controlplane.NewEndpointSet(...)`" },
+          { "kind": "method", "expr": "controlplane.EndpointSet.String", "doc_token": "`controlplane.EndpointSet.String()`" },
+          { "kind": "method", "expr": "controlplane.EndpointSet.GoString", "doc_token": "`controlplane.EndpointSet.GoString()`" },
           { "kind": "type", "expr": "controlplane.Issuer", "doc_token": "`controlplane.Issuer`" },
           { "kind": "func", "expr": "controlplane.NewIssuer", "doc_token": "`controlplane.NewIssuer()`" },
           { "kind": "type", "expr": "controlplane.SessionOptions", "doc_token": "`controlplane.SessionOptions`" },
@@ -480,17 +547,29 @@
           { "kind": "method", "expr": "controlplane.IssuedArtifact.ArtifactJSON", "doc_token": "`controlplane.IssuedArtifact.ArtifactJSON()`" },
           { "kind": "method", "expr": "controlplane.IssuedArtifact.AuthorizationRecord", "doc_token": "`controlplane.IssuedArtifact.AuthorizationRecord()`" },
           { "kind": "method", "expr": "controlplane.IssuedArtifact.LookupKey", "doc_token": "`controlplane.IssuedArtifact.LookupKey()`" },
+          { "kind": "method", "expr": "controlplane.IssuedArtifact.String", "doc_token": "`controlplane.IssuedArtifact.String()`" },
+          { "kind": "method", "expr": "controlplane.IssuedArtifact.GoString", "doc_token": "`controlplane.IssuedArtifact.GoString()`" },
+          { "kind": "method", "expr": "controlplane.IssuedArtifact.MarshalJSON", "doc_token": "`controlplane.IssuedArtifact.MarshalJSON()`" },
           { "kind": "type", "expr": "controlplane.AuthorizationRecord", "doc_token": "`controlplane.AuthorizationRecord`" },
           { "kind": "func", "expr": "controlplane.ParseAuthorizationRecord", "doc_token": "`controlplane.ParseAuthorizationRecord(...)`" },
           { "kind": "method", "expr": "controlplane.AuthorizationRecord.Encode", "doc_token": "`controlplane.AuthorizationRecord.Encode()`" },
           { "kind": "method", "expr": "controlplane.AuthorizationRecord.LookupKey", "doc_token": "`controlplane.AuthorizationRecord.LookupKey()`" },
+          { "kind": "method", "expr": "controlplane.AuthorizationRecord.String", "doc_token": "`controlplane.AuthorizationRecord.String()`" },
+          { "kind": "method", "expr": "controlplane.AuthorizationRecord.GoString", "doc_token": "`controlplane.AuthorizationRecord.GoString()`" },
+          { "kind": "method", "expr": "controlplane.AuthorizationRecord.MarshalJSON", "doc_token": "`controlplane.AuthorizationRecord.MarshalJSON()`" },
           { "kind": "type", "expr": "controlplane.RuntimeAuthorizationRequest", "doc_token": "`controlplane.RuntimeAuthorizationRequest`" },
           { "kind": "func", "expr": "controlplane.ParseRuntimeAuthorizationRequest", "doc_token": "`controlplane.ParseRuntimeAuthorizationRequest(...)`" },
           { "kind": "method", "expr": "controlplane.RuntimeAuthorizationRequest.LookupKey", "doc_token": "`controlplane.RuntimeAuthorizationRequest.LookupKey()`" },
+          { "kind": "method", "expr": "controlplane.RuntimeAuthorizationRequest.String", "doc_token": "`controlplane.RuntimeAuthorizationRequest.String()`" },
+          { "kind": "method", "expr": "controlplane.RuntimeAuthorizationRequest.GoString", "doc_token": "`controlplane.RuntimeAuthorizationRequest.GoString()`" },
+          { "kind": "method", "expr": "controlplane.RuntimeAuthorizationRequest.MarshalJSON", "doc_token": "`controlplane.RuntimeAuthorizationRequest.MarshalJSON()`" },
           { "kind": "type", "expr": "controlplane.AuthorizationResponse", "doc_token": "`controlplane.AuthorizationResponse`" },
           { "kind": "func", "expr": "controlplane.AuthorizeRuntime", "doc_token": "`controlplane.AuthorizeRuntime(...)`" },
           { "kind": "func", "expr": "controlplane.RejectRuntime", "doc_token": "`controlplane.RejectRuntime(...)`" },
-          { "kind": "method", "expr": "controlplane.AuthorizationResponse.JSON", "doc_token": "`controlplane.AuthorizationResponse.JSON()`" }
+          { "kind": "method", "expr": "controlplane.AuthorizationResponse.JSON", "doc_token": "`controlplane.AuthorizationResponse.JSON()`" },
+          { "kind": "method", "expr": "controlplane.AuthorizationResponse.String", "doc_token": "`controlplane.AuthorizationResponse.String()`" },
+          { "kind": "method", "expr": "controlplane.AuthorizationResponse.GoString", "doc_token": "`controlplane.AuthorizationResponse.GoString()`" },
+          { "kind": "method", "expr": "controlplane.AuthorizationResponse.MarshalJSON", "doc_token": "`controlplane.AuthorizationResponse.MarshalJSON()`" }
         ]
       }
     ]

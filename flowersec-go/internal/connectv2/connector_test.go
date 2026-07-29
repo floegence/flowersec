@@ -13,6 +13,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 )
 
@@ -248,6 +249,7 @@ func TestArtifactExpiryWhileCandidateIsBlockedReportsExpiry(t *testing.T) {
 
 func TestConnectEstablishesAndReturnsCarrierNeutralSessionV2(t *testing.T) {
 	artifact := validArtifact(t)
+	rpcRouter := internalrpc.NewRouter()
 	events := &eventLog{}
 	attempt := &fakeAttempt{id: "q1", events: events}
 	var establishedConfig session.Config
@@ -262,6 +264,7 @@ func TestConnectEstablishesAndReturnsCarrierNeutralSessionV2(t *testing.T) {
 		allCapabilities(),
 		connectv2.RequireQUICFamily,
 		factory,
+		connectv2.WithRPCRouter(rpcRouter),
 	).Connect(context.Background())
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
@@ -285,6 +288,7 @@ func TestConnectEstablishesAndReturnsCarrierNeutralSessionV2(t *testing.T) {
 		config.EstablishTimeout != time.Duration(artifact.Session.EstablishTimeoutSeconds)*time.Second ||
 		config.RekeyPrepareTimeout != time.Duration(artifact.Session.RekeyPrepareTimeoutSeconds)*time.Second ||
 		config.RekeyCompletionTimeout != time.Duration(artifact.Session.RekeyCompletionTimeoutSeconds)*time.Second ||
+		config.RPCRouter != rpcRouter ||
 		config.LocalAdmissionBinding == ([32]byte{}) ||
 		config.PeerAdmissionBinding != config.LocalAdmissionBinding {
 		t.Fatalf("unexpected session config: %+v", config)

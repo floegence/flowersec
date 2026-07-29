@@ -62,7 +62,7 @@ make transport-v2-unit
 
 | 언어 | 패키지 | 공개 진입점 |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | root, `/browser`, `/node`의 불투명 v2 진입점 |
 | Swift | SwiftPM 제품 `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
 | Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |

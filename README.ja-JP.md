@@ -62,7 +62,7 @@ Carrier ごとの検証には、`make transport-conformance-smoke`、`make trans
 
 | 言語 | パッケージ | 公開エントリ |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | ルート、`/browser`、`/node` の不透明な v2 エントリポイント |
 | Swift | SwiftPM プロダクト `Flowersec` | `ArtifactV2`、`ConnectorV2`、`SessionV2` |
 | Rust | crate `flowersec` | `Artifact`、`Connector`、`Session` |

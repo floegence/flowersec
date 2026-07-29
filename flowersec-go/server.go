@@ -1,0 +1,233 @@
+package flowersec
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sync"
+	"unicode/utf8"
+
+	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v2/internal/framing/jsonframe"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
+	rpcwire "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
+)
+
+const (
+	defaultConcurrentStreams = 64
+	maxConcurrentStreams     = 128
+	maxRPCErrorMessageBytes  = 1024
+)
+
+var (
+	ErrInvalidSessionHandlers = errors.New("invalid Flowersec session handlers")
+	ErrHandlerAlreadyExists   = errors.New("Flowersec session handler already exists")
+)
+
+// StreamHandler processes one accepted application stream. The stream is
+// closed after the handler returns.
+type StreamHandler func(context.Context, IncomingStream)
+
+// RPCHandler processes one bounded JSON RPC payload. Returning RPCError sends
+// an application-level rejection without exposing transport or session state.
+type RPCHandler func(context.Context, json.RawMessage) (any, *RPCError)
+
+// SessionHandlerOptions bounds application stream dispatch and exposes only
+// sanitized asynchronous failures.
+type SessionHandlerOptions struct {
+	MaxConcurrentStreams int
+	OnError              func(error)
+}
+
+// SessionHandlers owns the inbound application stream and RPC registrations
+// used by a carrier-neutral Flowersec session.
+type SessionHandlers struct {
+	maxConcurrent int
+	onError       func(error)
+
+	mu             sync.RWMutex
+	streamHandlers map[string]StreamHandler
+	rpcHandlers    map[uint32]RPCHandler
+}
+
+// String deliberately reveals no handler registration state.
+func (*SessionHandlers) String() string { return "Flowersec.SessionHandlers" }
+
+// GoString deliberately reveals no handler registration state.
+func (*SessionHandlers) GoString() string { return "flowersec.SessionHandlers" }
+
+// MarshalJSON prevents generic serialization from exposing registrations.
+func (*SessionHandlers) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
+
+// NewSessionHandlers creates an empty, bounded handler registry.
+func NewSessionHandlers(options SessionHandlerOptions) (*SessionHandlers, error) {
+	concurrent := options.MaxConcurrentStreams
+	if concurrent == 0 {
+		concurrent = defaultConcurrentStreams
+	}
+	if concurrent < 1 || concurrent > maxConcurrentStreams {
+		return nil, ErrInvalidSessionHandlers
+	}
+	return &SessionHandlers{
+		maxConcurrent:  concurrent,
+		onError:        options.OnError,
+		streamHandlers: make(map[string]StreamHandler),
+		rpcHandlers:    make(map[uint32]RPCHandler),
+	}, nil
+}
+
+func (handlers *SessionHandlers) valid() bool {
+	return handlers != nil && handlers.maxConcurrent >= 1 && handlers.maxConcurrent <= maxConcurrentStreams &&
+		handlers.streamHandlers != nil && handlers.rpcHandlers != nil
+}
+
+// HandleStream registers one application stream kind. Registrations are
+// immutable by name so an accidental duplicate cannot replace live policy.
+func (handlers *SessionHandlers) HandleStream(kind string, handler StreamHandler) error {
+	if handlers == nil || kind == "" || handler == nil {
+		return ErrInvalidSessionHandlers
+	}
+	handlers.mu.Lock()
+	defer handlers.mu.Unlock()
+	if _, exists := handlers.streamHandlers[kind]; exists {
+		return ErrHandlerAlreadyExists
+	}
+	handlers.streamHandlers[kind] = handler
+	return nil
+}
+
+// HandleRPC registers one nonzero RPC type ID. Connector snapshots these
+// registrations before session establishment.
+func (handlers *SessionHandlers) HandleRPC(typeID uint32, handler RPCHandler) error {
+	if handlers == nil || typeID == 0 || handler == nil {
+		return ErrInvalidSessionHandlers
+	}
+	handlers.mu.Lock()
+	defer handlers.mu.Unlock()
+	if _, exists := handlers.rpcHandlers[typeID]; exists {
+		return ErrHandlerAlreadyExists
+	}
+	handlers.rpcHandlers[typeID] = handler
+	return nil
+}
+
+func (handlers *SessionHandlers) rpcRouter() *internalrpc.Router {
+	router := internalrpc.NewRouter()
+	if handlers == nil {
+		return router
+	}
+	handlers.mu.RLock()
+	registrations := make(map[uint32]RPCHandler, len(handlers.rpcHandlers))
+	for typeID, handler := range handlers.rpcHandlers {
+		registrations[typeID] = handler
+	}
+	handlers.mu.RUnlock()
+	for typeID, handler := range registrations {
+		handler := handler
+		router.Register(typeID, func(ctx context.Context, request json.RawMessage) (json.RawMessage, *rpcwire.RpcError) {
+			response, rpcErr := handler(ctx, append(json.RawMessage(nil), request...))
+			if rpcErr != nil {
+				return nil, validRPCWireError(rpcErr)
+			}
+			payload, err := json.Marshal(response)
+			if err != nil || len(payload) > internaljsonframe.DefaultMaxJSONFrameBytes {
+				return nil, internalRPCError()
+			}
+			return payload, nil
+		})
+	}
+	return router
+}
+
+var _ json.Marshaler = (*SessionHandlers)(nil)
+
+func validRPCWireError(rpcErr *RPCError) *rpcwire.RpcError {
+	if rpcErr == nil || rpcErr.Code == 0 || len(rpcErr.Message) > maxRPCErrorMessageBytes || !utf8.ValidString(rpcErr.Message) {
+		return internalRPCError()
+	}
+	message := rpcErr.Message
+	return &rpcwire.RpcError{Code: rpcErr.Code, Message: &message}
+}
+
+func internalRPCError() *rpcwire.RpcError {
+	message := "handler failed"
+	return &rpcwire.RpcError{Code: 500, Message: &message}
+}
+
+// Serve accepts and dispatches application streams until the context ends or
+// the session closes. It owns the session lifecycle and waits for active
+// handlers before returning.
+func (handlers *SessionHandlers) Serve(ctx context.Context, current Session) error {
+	if handlers == nil || current == nil || handlers.maxConcurrent < 1 {
+		return ErrInvalidSessionHandlers
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	serveCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopClose := context.AfterFunc(serveCtx, func() { _ = current.Close() })
+	defer stopClose()
+	semaphore := make(chan struct{}, handlers.maxConcurrent)
+	var active sync.WaitGroup
+	defer active.Wait()
+	for {
+		incoming, err := current.AcceptStream(serveCtx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+		if incoming.Stream == nil {
+			handlers.reportError(&SessionError{code: SessionOperationFailed})
+			continue
+		}
+		handler := handlers.streamHandler(incoming.Kind)
+		if handler == nil {
+			rejectIncoming(incoming)
+			handlers.reportError(&SessionError{code: SessionStreamRejected})
+			continue
+		}
+		select {
+		case semaphore <- struct{}{}:
+			active.Add(1)
+			go func() {
+				defer active.Done()
+				defer func() { <-semaphore }()
+				defer incoming.Stream.Close()
+				defer func() {
+					if recover() != nil {
+						handlers.reportError(&SessionError{code: SessionOperationFailed})
+					}
+				}()
+				handler(serveCtx, incoming)
+			}()
+		default:
+			rejectIncoming(incoming)
+			handlers.reportError(&SessionError{code: SessionResourceExhausted})
+		}
+	}
+}
+
+func (handlers *SessionHandlers) streamHandler(kind string) StreamHandler {
+	handlers.mu.RLock()
+	handler := handlers.streamHandlers[kind]
+	handlers.mu.RUnlock()
+	return handler
+}
+
+func rejectIncoming(incoming IncomingStream) {
+	if incoming.Stream == nil {
+		return
+	}
+	_ = incoming.Stream.Reset()
+	_ = incoming.Stream.Close()
+}
+
+func (handlers *SessionHandlers) reportError(err error) {
+	if handlers == nil || handlers.onError == nil || err == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	handlers.onError(err)
+}

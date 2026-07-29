@@ -3,6 +3,7 @@ package flowersec_test
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -14,9 +15,12 @@ import (
 
 func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 	optionsType := reflect.TypeOf(flowersec.ConnectorOptions{})
-	wantFields := []string{"TrustRoots", "Origin", "ConnectTimeout"}
+	wantFields := []string{"TrustRoots", "Origin", "ConnectTimeout", "Handlers"}
 	if optionsType.NumField() != len(wantFields) {
 		t.Fatalf("ConnectorOptions has %d fields, want %d", optionsType.NumField(), len(wantFields))
+	}
+	if got, want := optionsType.Field(3).Type, reflect.TypeOf((*flowersec.SessionHandlers)(nil)); got != want {
+		t.Fatalf("ConnectorOptions.Handlers type = %v, want %v", got, want)
 	}
 	for index, want := range wantFields {
 		if got := optionsType.Field(index).Name; got != want {
@@ -37,6 +41,38 @@ func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 	_ = connect
 	if got, want := fmt.Sprintf("%v %#v", connector, connector), "Flowersec.Connector flowersec.Connector"; got != want {
 		t.Fatalf("connector formatting = %q, want %q", got, want)
+	}
+}
+
+func TestSessionHandlersPublicSurfaceIsCarrierNeutralAndOpaque(t *testing.T) {
+	optionsType := reflect.TypeOf(flowersec.SessionHandlerOptions{})
+	wantFields := []string{"MaxConcurrentStreams", "OnError"}
+	if optionsType.NumField() != len(wantFields) {
+		t.Fatalf("SessionHandlerOptions fields = %d, want %d", optionsType.NumField(), len(wantFields))
+	}
+	for index, want := range wantFields {
+		if got := optionsType.Field(index).Name; got != want {
+			t.Fatalf("SessionHandlerOptions field %d = %q, want %q", index, got, want)
+		}
+	}
+	handlers, err := flowersec.NewSessionHandlers(flowersec.SessionHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := fmt.Sprintf("%v %#v", handlers, handlers), "Flowersec.SessionHandlers flowersec.SessionHandlers"; got != want {
+		t.Fatalf("handlers formatting = %q, want %q", got, want)
+	}
+	encoded, err := json.Marshal(handlers)
+	if err != nil || string(encoded) != "{}" {
+		t.Fatalf("handlers JSON = %s, %v", encoded, err)
+	}
+	for index := range reflect.TypeOf(handlers).NumMethod() {
+		signature := reflect.TypeOf(handlers).Method(index).Type.String()
+		for _, forbidden := range []string{"Artifact", "Credential", "Admission", "Handshake", "Carrier", "QUIC", "WebTransport", "Yamux", "Wire"} {
+			if strings.Contains(signature, forbidden) {
+				t.Fatalf("public handler signature %q exposes %q", signature, forbidden)
+			}
+		}
 	}
 }
 
@@ -126,6 +162,11 @@ func TestConnectorRejectsInvalidCarrierNeutralOptions(t *testing.T) {
 		}); err != flowersec.ErrInvalidConnectorOptions {
 			t.Fatalf("NewConnector origin %q error = %v, want ErrInvalidConnectorOptions", origin, err)
 		}
+	}
+	if _, err := flowersec.NewConnector(lease, flowersec.ConnectorOptions{
+		TrustRoots: fixtureTrustRoots(t), Origin: "https://client.example", Handlers: &flowersec.SessionHandlers{},
+	}); err != flowersec.ErrInvalidConnectorOptions {
+		t.Fatalf("NewConnector zero handlers error = %v, want ErrInvalidConnectorOptions", err)
 	}
 }
 

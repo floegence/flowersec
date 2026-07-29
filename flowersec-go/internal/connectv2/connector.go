@@ -14,6 +14,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 )
 
@@ -121,6 +122,7 @@ type Connector struct {
 	state             atomic.Uint32
 	loserCloseTimeout time.Duration
 	now               func() time.Time
+	rpcRouter         *internalrpc.Router
 }
 
 type ConnectorOption func(*Connector)
@@ -133,6 +135,14 @@ func WithConnectorClock(now func() time.Time) ConnectorOption {
 		if now != nil {
 			connector.now = now
 		}
+	}
+}
+
+// WithRPCRouter supplies the immutable inbound RPC registration snapshot used
+// by the established session.
+func WithRPCRouter(router *internalrpc.Router) ConnectorOption {
+	return func(connector *Connector) {
+		connector.rpcRouter = router
 	}
 }
 
@@ -405,6 +415,7 @@ func (connector *Connector) sessionConfig(rawFSB2 []byte) session.Config {
 		PeerAdmissionBinding:           peerBinding,
 		LocalEndpointInstanceID:        artifact.Path.LocalEndpointInstanceID,
 		ExpectedPeerEndpointInstanceID: artifact.Path.ExpectedPeerEndpointInstanceID,
+		RPCRouter:                      connector.rpcRouter,
 	}
 }
 
