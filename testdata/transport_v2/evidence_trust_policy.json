@@ -6,15 +6,15 @@
   "runner": {
     "id": "flowersec-linux-release-v1",
     "os": "linux",
-    "architecture": "arm64",
-    "kernel_release": "6.8.0-136-generic",
+    "architecture": "amd64",
+    "kernel_release": "6.8.0-124-generic",
     "namespace": "isolated",
     "traffic_control": "tc-netem-v1",
     "packet_counters": "ebpf-v1",
-    "effective_config_sha256": "0ec469e96abcd36c22f85bd4ba4d79232b1253bb29bec3496fc74df507c3e4d0",
+    "effective_config_sha256": "94984c52b0417583217a7974f50bf13f838913f948960caa0dc0725a0893ad71",
     "effective_config_path": "runner_effective_config.json",
-    "executable_sha256": "bd1700c42ac13208a35e816df8dd3232622a7fbe7d7100bcac98076449e6f4a7",
-    "source_sha256": "e6c5b8123908facf2f892ee509bb456e937b32e762c709e56e78e13fde04b202",
-    "argv_sha256": "dfceb6794effe54c68265bdbb24e2cac6dbfdf4b2b2c1db2858f8a818babb595"
+    "executable_sha256": "9aa66877dec93d9bd2eb799fa7bf2bd2e169630a1f1abca69485c6a929b67078",
+    "source_sha256": "b5af8c9ddd40c959bd00b96dd10bf2acc39b39b155d9bdf0a7499132acb75e3e",
+    "argv_sha256": "828afd3776a174af61610a56dfd958a4bd5197037f4771526ab74b974da01145"
   }
 }

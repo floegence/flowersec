@@ -14,13 +14,13 @@ import (
 )
 
 const (
-	signedRunnerArchitecture  = "arm64"
-	signedRunnerKernelRelease = "6.8.0-136-generic"
-	signedRunnerConfigDigest  = "0ec469e96abcd36c22f85bd4ba4d79232b1253bb29bec3496fc74df507c3e4d0"
+	signedRunnerArchitecture  = "amd64"
+	signedRunnerKernelRelease = "6.8.0-124-generic"
+	signedRunnerConfigDigest  = "94984c52b0417583217a7974f50bf13f838913f948960caa0dc0725a0893ad71"
 	signedRunnerConfigPath    = "runner_effective_config.json"
-	signedRunnerExecutableSHA = "bd1700c42ac13208a35e816df8dd3232622a7fbe7d7100bcac98076449e6f4a7"
-	signedRunnerSourceSHA     = "e6c5b8123908facf2f892ee509bb456e937b32e762c709e56e78e13fde04b202"
-	signedRunnerArgvSHA       = "dfceb6794effe54c68265bdbb24e2cac6dbfdf4b2b2c1db2858f8a818babb595"
+	signedRunnerExecutableSHA = "9aa66877dec93d9bd2eb799fa7bf2bd2e169630a1f1abca69485c6a929b67078"
+	signedRunnerSourceSHA     = "b5af8c9ddd40c959bd00b96dd10bf2acc39b39b155d9bdf0a7499132acb75e3e"
+	signedRunnerArgvSHA       = "828afd3776a174af61610a56dfd958a4bd5197037f4771526ab74b974da01145"
 )
 
 func loadEvidenceTrustPolicy(path string) (*EvidenceTrustPolicy, error) {

@@ -2280,7 +2280,7 @@ func TestRepositoryTrustPolicyRejectsRunnerIdentityTampering(t *testing.T) {
 	}{
 		{name: "runner ID", mutate: func(runner *EvidenceRunner) { runner.ID = "other-runner" }},
 		{name: "OS", mutate: func(runner *EvidenceRunner) { runner.OS = "darwin" }},
-		{name: "architecture", mutate: func(runner *EvidenceRunner) { runner.Architecture = "amd64" }},
+		{name: "architecture", mutate: func(runner *EvidenceRunner) { runner.Architecture = "arm64" }},
 		{name: "exact kernel", mutate: func(runner *EvidenceRunner) { runner.KernelRelease = "6.12.2" }},
 		{name: "namespace", mutate: func(runner *EvidenceRunner) { runner.Namespace = "host" }},
 		{name: "traffic control", mutate: func(runner *EvidenceRunner) { runner.TrafficControl = "disabled" }},
