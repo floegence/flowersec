@@ -862,9 +862,25 @@ async fn production_stream_operation_reconciles_route_and_releases_the_old_udp_s
     assert_ne!(rebound, previous);
     assert_eq!(server.peer_address(), rebound);
 
-    let old_socket = UdpSocket::bind(previous).expect("old UDP socket was released");
+    let old_socket = bind_released_udp_socket(previous).await;
     native_round_trip(&client, &server).await;
     drop(old_socket);
+}
+
+async fn bind_released_udp_socket(address: SocketAddr) -> UdpSocket {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        match UdpSocket::bind(address) {
+            Ok(socket) => return socket,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AddrInUse
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Err(error) => panic!("old UDP socket was not released within one second: {error}"),
+        }
+    }
 }
 
 #[tokio::test]
