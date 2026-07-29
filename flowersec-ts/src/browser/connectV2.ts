@@ -44,7 +44,7 @@ import {
 } from "./webTransportCarrierInternalStage.js";
 import { projectSessionV2 } from "../v2/publicSession.js";
 
-const BROWSER_SESSION_CLOSE_TIMEOUT_MS = 1_000;
+const BROWSER_SESSION_CLOSE_TIMEOUT_MS = 5_000;
 
 export type BrowserConnectorStateV2 =
   | "validated"
