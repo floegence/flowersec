@@ -1170,7 +1170,7 @@ func runNetworkWorker(input io.Reader, output io.Writer) error {
 		var endpoint *tunnelworkload.Endpoint
 		if err := linuxnetlab.InNamespace(request.ServerNamespace, func() error {
 			var openErr error
-			endpoint, openErr = tunnelworkload.OpenEndpointAt(ctx, request.Topology, request.ServerAddress)
+			endpoint, openErr = tunnelworkload.OpenReleaseEndpointAt(ctx, request.Topology, request.ServerAddress, request.Plan)
 			return openErr
 		}); err != nil {
 			return err

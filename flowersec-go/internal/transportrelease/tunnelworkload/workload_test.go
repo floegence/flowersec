@@ -17,6 +17,22 @@ func TestRunColdRequiresIndependentCleanupDeadline(t *testing.T) {
 	}
 }
 
+func TestReleaseCoordinatorPairTimeoutCoversColdPhase(t *testing.T) {
+	plan := transportrelease.ProfilePlan{
+		Cold: transportrelease.ColdPlan{
+			OperationDeadlineSeconds: 53,
+			PhaseDeadlineSeconds:     55,
+		},
+	}
+	config, err := releaseCoordinatorConfig(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.PairTimeout != 55*time.Second {
+		t.Fatalf("release pair timeout = %s, want cold phase deadline", config.PairTimeout)
+	}
+}
+
 func TestTopologiesNameEveryWebSocketRawQUICPair(t *testing.T) {
 	want := map[Topology][2]carrier.Kind{
 		TopologyWW: {carrier.KindWebSocket, carrier.KindWebSocket},

@@ -31,6 +31,7 @@ import (
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
 	rpcv1 "github.com/floegence/flowersec/flowersec-go/v2/internal/rpcwire"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
 	gorillaws "github.com/gorilla/websocket"
 )
@@ -130,6 +131,25 @@ func OpenEndpointAt(ctx context.Context, topology Topology, listenHost string) (
 // suite required by a release case.
 func OpenEndpointAtWithSuite(ctx context.Context, topology Topology, listenHost string, suite protocolv2.Suite) (*Endpoint, error) {
 	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, suite, tunnelv2.Config{})
+}
+
+// OpenReleaseEndpointAt binds the coordinator pairing deadline to the
+// frozen release profile instead of the shorter interactive product default.
+func OpenReleaseEndpointAt(ctx context.Context, topology Topology, listenHost string, plan transportrelease.ProfilePlan) (*Endpoint, error) {
+	config, err := releaseCoordinatorConfig(plan)
+	if err != nil {
+		return nil, err
+	}
+	return openEndpointAtWithSuiteAndCoordinator(ctx, topology, listenHost, protocolv2.SuiteChaCha20Poly1305, config)
+}
+
+func releaseCoordinatorConfig(plan transportrelease.ProfilePlan) (tunnelv2.Config, error) {
+	if plan.Cold.OperationDeadlineSeconds < 1 || plan.Cold.PhaseDeadlineSeconds < plan.Cold.OperationDeadlineSeconds {
+		return tunnelv2.Config{}, errors.New("release tunnel profile has invalid cold deadlines")
+	}
+	config := tunnelv2.DefaultConfig()
+	config.PairTimeout = time.Duration(plan.Cold.PhaseDeadlineSeconds) * time.Second
+	return config, nil
 }
 
 // OpenCapacityEndpointAt creates a production tunnel endpoint whose internal
