@@ -23,6 +23,9 @@ func WriteJSONFrame(w io.Writer, v any) error {
 	if err != nil {
 		return err
 	}
+	if len(b) > DefaultMaxJSONFrameBytes {
+		return ErrFrameTooLarge
+	}
 	frame := make([]byte, 4+len(b))
 	bin.PutU32BE(frame[:4], uint32(len(b)))
 	copy(frame[4:], b)

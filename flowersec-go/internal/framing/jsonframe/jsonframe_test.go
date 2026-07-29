@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -22,6 +23,17 @@ func TestReadJSONFrameTooLarge(t *testing.T) {
 func TestWriteJSONFrameWriterError(t *testing.T) {
 	if err := WriteJSONFrame(errWriter{}, map[string]any{"ok": true}); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestWriteJSONFrameRejectsOversizedPayloadBeforeWriting(t *testing.T) {
+	writer := &countingWriter{}
+	err := WriteJSONFrame(writer, strings.Repeat("x", DefaultMaxJSONFrameBytes))
+	if !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("expected ErrFrameTooLarge, got %v", err)
+	}
+	if writer.writes != 0 {
+		t.Fatalf("writes = %d, want zero", writer.writes)
 	}
 }
 

@@ -33,17 +33,45 @@ function isolatedEnvironment(overrides = {}) {
   return env;
 }
 
-function run(command, args, options = {}) {
+test("release test helpers use literal executables", () => {
+  const source = fs.readFileSync(import.meta.filename, "utf8");
+  assert.doesNotMatch(source, /spawnSync\(\s*command\s*,/);
+});
+
+test("release policy assertions use exact mirror URL matching", () => {
+  const source = fs.readFileSync(import.meta.filename, "utf8");
+  const unsafeMirrorAssertion = [
+    "assert.match(containerfile, /https:",
+    String.raw`\/\/mirrors\.aliyun\.com\/ubuntu-ports\//);`,
+  ].join("");
+  assert.equal(
+    source.includes(unsafeMirrorAssertion),
+    false,
+  );
+});
+
+function runGit(args, options = {}) {
   const { env, ...spawnOptions } = options;
-  const result = spawnSync(command, args, {
+  const result = spawnSync("git", args, {
     encoding: "utf8",
     ...spawnOptions,
     env: isolatedEnvironment(env),
   });
   if (result.status !== 0) {
     throw new Error(
-      `${command} ${args.join(" ")} failed:\n${result.stdout}${result.stderr}`,
+      `git ${args.join(" ")} failed:\n${result.stdout}${result.stderr}`,
     );
+  }
+  return result.stdout.trim();
+}
+
+function executablePath(name) {
+  const result = spawnSync("which", [name], {
+    encoding: "utf8",
+    env: isolatedEnvironment(),
+  });
+  if (result.status !== 0) {
+    throw new Error(`could not locate ${name}:\n${result.stdout}${result.stderr}`);
   }
   return result.stdout.trim();
 }
@@ -55,8 +83,8 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   const origin = path.join(root, "origin.git");
   const bin = path.join(root, "bin");
   const gitLog = path.join(root, "git.log");
-  const realGit = run("sh", ["-c", "command -v git"]);
-  const realMake = run("sh", ["-c", "command -v make"]);
+  const realGit = executablePath("git");
+  const realMake = executablePath("make");
   fs.mkdirSync(path.join(repo, "scripts"), { recursive: true });
   fs.mkdirSync(path.join(repo, "evidence"), { recursive: true });
   fs.mkdirSync(path.join(repo, "flowersec-ts"), { recursive: true });
@@ -120,14 +148,14 @@ function createReleaseScriptFixture(t, makeScript = "#!/bin/sh\nexit 0\n") {
   );
   fs.chmodSync(path.join(bin, "git"), 0o755);
 
-  run("git", ["init", "--bare", origin]);
-  run("git", ["init", "-b", "main", repo]);
-  run("git", ["-C", repo, "config", "user.name", "Release Test"]);
-  run("git", ["-C", repo, "config", "user.email", "release-test@example.com"]);
-  run("git", ["-C", repo, "add", "."]);
-  run("git", ["-C", repo, "commit", "-m", "test: release fixture"]);
-  run("git", ["-C", repo, "remote", "add", "origin", origin]);
-  run("git", ["-C", repo, "push", "-u", "origin", "main"]);
+  runGit(["init", "--bare", origin]);
+  runGit(["init", "-b", "main", repo]);
+  runGit(["-C", repo, "config", "user.name", "Release Test"]);
+  runGit(["-C", repo, "config", "user.email", "release-test@example.com"]);
+  runGit(["-C", repo, "add", "."]);
+  runGit(["-C", repo, "commit", "-m", "test: release fixture"]);
+  runGit(["-C", repo, "remote", "add", "origin", origin]);
+  runGit(["-C", repo, "push", "-u", "origin", "main"]);
 
   return { bin, evidenceReport, gitLog, origin, realGit, realMake, repo };
 }
@@ -153,8 +181,8 @@ function gitCommands(fixture) {
 }
 
 function assertNoReleaseTags(fixture) {
-  assert.equal(run("git", ["-C", fixture.repo, "tag", "--list"]), "");
-  assert.equal(run("git", ["--git-dir", fixture.origin, "tag", "--list"]), "");
+  assert.equal(runGit(["-C", fixture.repo, "tag", "--list"]), "");
+  assert.equal(runGit(["--git-dir", fixture.origin, "tag", "--list"]), "");
 }
 
 function assertReleaseDidNotStartPublication(fixture) {
@@ -208,7 +236,7 @@ function runReleasePolicy(root) {
 test("release fixtures cannot modify an inherited hook repository", (t) => {
   const sentinel = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-sentinel-"));
   t.after(() => fs.rmSync(sentinel, { recursive: true, force: true }));
-  run("git", ["init", "-b", "main", sentinel]);
+  runGit(["init", "-b", "main", sentinel]);
   const sentinelConfig = path.join(sentinel, ".git/config");
   const before = fs.readFileSync(sentinelConfig, "utf8");
   const canonical = spawnSync("git", ["rev-parse", "--local-env-vars"], {
@@ -231,7 +259,7 @@ test("release fixtures cannot modify an inherited hook repository", (t) => {
     process.env.GIT_WORK_TREE = sentinel;
     process.env.GIT_INDEX_FILE = path.join(sentinel, ".git/index");
     const fixture = createReleaseScriptFixture(t);
-    assert.equal(run("git", ["-C", fixture.repo, "status", "--short"]), "");
+    assert.equal(runGit(["-C", fixture.repo, "status", "--short"]), "");
   } finally {
     for (const variable of repositoryLocalEnvironmentVariables) {
       if (original[variable] === undefined) {
@@ -1030,9 +1058,9 @@ test("release validates maintained versions before publication", (t) => {
     path.join(fixture.repo, "flowersec-ts/package.json"),
     JSON.stringify({ version: "0.25.0" }),
   );
-  run("git", ["-C", fixture.repo, "add", "flowersec-ts/package.json"]);
-  run("git", ["-C", fixture.repo, "commit", "-m", "test: stale release version"]);
-  run("git", ["-C", fixture.repo, "push", "origin", "main"]);
+  runGit(["-C", fixture.repo, "add", "flowersec-ts/package.json"]);
+  runGit(["-C", fixture.repo, "commit", "-m", "test: stale release version"]);
+  runGit(["-C", fixture.repo, "push", "origin", "main"]);
 
   const result = runReleaseScript(fixture);
   assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
@@ -1116,9 +1144,9 @@ test("release make gate ignores hostile inherited make control variables", (t) =
     `#!/bin/sh\nexec ${JSON.stringify(fixture.realMake)} \"$@\"\n`,
   );
   fs.chmodSync(path.join(fixture.bin, "make"), 0o755);
-  run("git", ["-C", fixture.repo, "add", "Makefile", "attacker.mk"]);
-  run("git", ["-C", fixture.repo, "commit", "-m", "test: add failing release gate"]);
-  run("git", ["-C", fixture.repo, "push", "origin", "main"]);
+  runGit(["-C", fixture.repo, "add", "Makefile", "attacker.mk"]);
+  runGit(["-C", fixture.repo, "commit", "-m", "test: add failing release gate"]);
+  runGit(["-C", fixture.repo, "push", "origin", "main"]);
 
   const result = runReleaseScript(fixture, {
     MAKE: "true",
@@ -1139,7 +1167,7 @@ test("release removes all local tags when tag creation fails partway", (t) => {
   assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
   assertNoReleaseTags(fixture);
   const commands = gitCommands(fixture);
-  assert.ok(commands.includes("tag flowersec-go/v0.26.0 " + run("git", ["-C", fixture.repo, "rev-parse", "HEAD"])), commands.join("\n"));
+  assert.ok(commands.includes("tag flowersec-go/v0.26.0 " + runGit(["-C", fixture.repo, "rev-parse", "HEAD"])), commands.join("\n"));
   assert.equal(commands.some((command) => command.startsWith("push ")), false, commands.join("\n"));
 });
 
@@ -1159,11 +1187,11 @@ test("release publishes main and all ecosystem tags atomically", (t) => {
 
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   const expectedTags = ["0.26.0", "flowersec-go/v0.26.0", "flowersec-rust/v0.26.0"];
-  assert.deepEqual(run("git", ["-C", fixture.repo, "tag", "--list"]).split("\n"), expectedTags);
-  assert.deepEqual(run("git", ["--git-dir", fixture.origin, "tag", "--list"]).split("\n"), expectedTags);
+  assert.deepEqual(runGit(["-C", fixture.repo, "tag", "--list"]).split("\n"), expectedTags);
+  assert.deepEqual(runGit(["--git-dir", fixture.origin, "tag", "--list"]).split("\n"), expectedTags);
   assert.equal(
-    run("git", ["-C", fixture.repo, "rev-parse", "HEAD"]),
-    run("git", ["--git-dir", fixture.origin, "rev-parse", "refs/heads/main"]),
+    runGit(["-C", fixture.repo, "rev-parse", "HEAD"]),
+    runGit(["--git-dir", fixture.origin, "rev-parse", "refs/heads/main"]),
   );
   const commands = gitCommands(fixture);
   assert.ok(commands.some((command) => command.startsWith("push --atomic origin ")), commands.join("\n"));
@@ -1232,7 +1260,7 @@ test("pre-push accepts only the complete release tag set for the gated commit", 
 
 test("pre-push runs the complete gate once for the exact main HEAD", (t) => {
   const hook = path.join(sourceRoot, ".githooks/pre-push");
-  const head = run("git", ["-C", sourceRoot, "rev-parse", "HEAD"]);
+  const head = runGit(["-C", sourceRoot, "rev-parse", "HEAD"]);
   const deleted = "0".repeat(40);
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-pre-push-bin-"));
   const marker = path.join(bin, "make.args");
@@ -1331,7 +1359,7 @@ test("transport release runner is pinned and scoped to its dedicated container",
   assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/node@sha256:[0-9a-f]{64} AS node_toolchain$/m);
   assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/rust@sha256:[0-9a-f]{64} AS rust_toolchain$/m);
   assert.match(containerfile, /^FROM public\.ecr\.aws\/ubuntu\/ubuntu@sha256:[0-9a-f]{64}$/m);
-  assert.match(containerfile, /https:\/\/mirrors\.aliyun\.com\/ubuntu-ports\//);
+  assert.ok(containerfile.includes("https://mirrors.aliyun.com/ubuntu-ports/"));
   assert.match(containerfile, /install --yes --no-install-recommends ca-certificates/);
   assert.equal((containerfile.match(/Acquire::Retries=3/g) ?? []).length, 5);
   assert.equal((containerfile.match(/Acquire::http::Timeout=10/g) ?? []).length, 2);
