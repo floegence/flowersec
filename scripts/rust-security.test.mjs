@@ -105,4 +105,16 @@ test("GHSA-7gcf-g7xr-8hxj is patched without drifting the published MSRV", async
   assert.match(manifest, /^rust-version = "1\.88"$/m);
   assert.match(makefile, /^\tcd flowersec-rust && rustup run 1\.88\.0 cargo check --all-targets --all-features$/m);
   assert.match(readme, /targets Rust 1\.88 or newer/);
+
+  const releaseCargoRecipes = makefile
+    .split("\n")
+    .filter((line) => /\bcargo (?:fmt|clippy|test|doc|check|package|publish|llvm-cov)\b/u.test(line));
+  assert.ok(releaseCargoRecipes.length > 0, "Makefile must retain Rust release cargo recipes");
+  for (const line of releaseCargoRecipes) {
+    assert.match(
+      line,
+      /\brustup run 1\.88\.0 cargo\b/u,
+      `Rust release recipe must use the published MSRV toolchain: ${line}`,
+    );
+  }
 });

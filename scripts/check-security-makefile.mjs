@@ -324,7 +324,7 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) check",
       "\t$(MAKE) transport-v2-signed-evidence-check",
     ]],
-    ["rust-test-short", ["\tcd flowersec-rust && cargo test --all-features --lib"]],
+    ["rust-test-short", ["\tcd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib"]],
     ["precommit-go", [
       "\t$(MAKE) fmt-check",
       "\t$(MAKE) go-vet",

@@ -28,7 +28,7 @@ gen-check: gen
 gen-core:
 	cd tools/idlgen && go run . -in ../../idl -manifest ../../idl/manifest.core.txt -go-out ../../flowersec-go/gen -ts-out ../../flowersec-ts/src/gen
 	cd flowersec-go && gofmt -w gen
-	cd flowersec-rust && cargo fmt --all
+	cd flowersec-rust && rustup run 1.88.0 cargo fmt --all
 
 gen-examples:
 	# Demo IDL is for examples/integration tests only; do not ship it as a public API surface.
@@ -158,27 +158,27 @@ swift-cover-check:
 swift-check: swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check
 
 rust-fmt-check:
-	cd flowersec-rust && cargo fmt --all --check
-	cd flowersec-rust && cargo fmt --manifest-path fuzz/Cargo.toml --check
+	cd flowersec-rust && rustup run 1.88.0 cargo fmt --all --check
+	cd flowersec-rust && rustup run 1.88.0 cargo fmt --manifest-path fuzz/Cargo.toml --check
 
 rust-clippy:
-	cd flowersec-rust && cargo clippy --all-targets --all-features -- -D warnings
+	cd flowersec-rust && rustup run 1.88.0 cargo clippy --all-targets --all-features -- -D warnings
 
 rust-test:
-	cd flowersec-rust && cargo test --all-features
+	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features
 
 rust-test-short:
-	cd flowersec-rust && cargo test --all-features --lib
+	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib
 
 rust-doc:
-	cd flowersec-rust && RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
+	cd flowersec-rust && RUSTDOCFLAGS="-D warnings" rustup run 1.88.0 cargo doc --all-features --no-deps
 
 rust-msrv-check:
 	cd flowersec-rust && rustup run 1.88.0 cargo check --all-targets --all-features
 
 rust-package-check:
-	cd flowersec-rust && cargo package --allow-dirty
-	cd flowersec-rust && cargo publish --dry-run --allow-dirty
+	cd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty
+	cd flowersec-rust && rustup run 1.88.0 cargo publish --dry-run --allow-dirty
 
 rust-audit:
 	node scripts/check-rust-security.mjs
@@ -186,10 +186,10 @@ rust-audit:
 rust-deny: rust-audit
 
 rust-cover-check:
-	cd flowersec-rust && cargo llvm-cov --all-features --fail-under-lines 85
+	cd flowersec-rust && rustup run 1.88.0 cargo llvm-cov --all-features --fail-under-lines 85
 
 rust-fuzz-build:
-	cd flowersec-rust && cargo check --manifest-path fuzz/Cargo.toml --bins
+	cd flowersec-rust && rustup run 1.88.0 cargo check --manifest-path fuzz/Cargo.toml --bins
 
 rust-fuzz-check:
 	cd flowersec-rust && cargo +nightly fuzz run artifact -- -max_total_time=10
@@ -214,7 +214,7 @@ release-check:
 
 example-check:
 	find examples/ts -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
-	cargo check --locked --manifest-path examples/rust/Cargo.toml
+	rustup run 1.88.0 cargo check --locked --manifest-path examples/rust/Cargo.toml
 	swift build --package-path examples/swift
 
 example-install-check: example-check
@@ -318,7 +318,7 @@ transport-conformance-smoke:
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-conformance-smoke -classification local_smoke
 	cd flowersec-go && go test -timeout=5m -count=1 ./internal/protocolv2 ./internal/artifactv2 ./internal/admissionv2 ./internal/session
 	cd flowersec-ts && npx vitest run src/v2
-	cd flowersec-rust && cargo test --all-features --lib --test transport_v2_contract
+	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib --test transport_v2_contract
 	swift test --filter 'TransportV2|IDNAHostV2'
 	@echo "classification=local_smoke; no signed release evidence is claimed"
 
@@ -332,7 +332,7 @@ transport-browser-smoke:
 transport-interop-smoke:
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-interop-smoke -classification local_smoke
 	cd flowersec-ts && npx vitest run src/v2/session_go_interop.test.ts
-	cd flowersec-rust && cargo test --all-features --lib rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel
+	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel
 	@echo "classification=local_smoke; the full cross-language release matrix is not claimed"
 
 WEAKNET_SMOKE_REPORT ?= /tmp/flowersec-weaknet-smoke.json
