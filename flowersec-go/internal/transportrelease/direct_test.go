@@ -72,6 +72,29 @@ func TestEndpointAdmissionClaimsIssuedRequestExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestProductDirectWebTransportUpgradeFailurePreservesSiblingArtifact(t *testing.T) {
+	endpoint := &ProductDirectEndpoint{
+		ctx: context.Background(), pending: make(map[[32]byte]*admissionExpectation),
+	}
+	expected := &admissionExpectation{raw: []byte("pending-sibling"), result: make(chan productServerResult, 1)}
+	digest, err := endpoint.register(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	endpoint.serveWebTransportUpgrade(nil, errors.New("request upgrade failed"))
+
+	select {
+	case result := <-expected.result:
+		t.Fatalf("request-level upgrade failure completed sibling artifact: %v", result.err)
+	default:
+	}
+	if got := endpoint.lookup(expected.raw); got != expected {
+		t.Fatal("request-level upgrade failure removed sibling artifact")
+	}
+	endpoint.unregister(digest, expected)
+}
+
 func TestProductDirectCarriersUsePublicConnectorAndAdmission(t *testing.T) {
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {

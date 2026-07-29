@@ -595,12 +595,7 @@ func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) 
 		return err
 	}
 	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		carrierSession, upgradeErr := server.Upgrade(writer, request)
-		if upgradeErr != nil {
-			endpoint.failPending(fmt.Errorf("WebTransport upgrade: %w", upgradeErr))
-			return
-		}
-		endpoint.serveNative(carrierSession)
+		endpoint.serveWebTransportUpgrade(server.Upgrade(writer, request))
 	}))
 	packetConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP(endpoint.listenHost)})
 	if err != nil {
@@ -623,6 +618,18 @@ func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) 
 		return errors.Join(serverErr, packetErr, serveErr)
 	}
 	return nil
+}
+
+func (endpoint *ProductDirectEndpoint) serveWebTransportUpgrade(carrierSession carrier.Session, upgradeErr error) {
+	if upgradeErr != nil {
+		if carrierSession != nil {
+			_ = carrierSession.Close()
+		}
+		return
+	}
+	if carrierSession != nil {
+		endpoint.serveNative(carrierSession)
+	}
 }
 
 func validateBrowserOrigin(raw string) error {
