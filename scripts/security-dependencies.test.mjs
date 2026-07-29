@@ -57,12 +57,8 @@ function readGoModuleVersion(moduleDir, modulePath, label, extraEnvironment = {}
 
 function assertPatchedBraceExpansion(actual, label) {
   const major = Number(actual.split(".")[0]);
-  if (major === 1) {
-    assertVersionAtLeast(actual, "1.1.16", label);
-    return;
-  }
-  if (major === 2) {
-    assertVersionAtLeast(actual, "2.1.2", label);
+  if (major === 5) {
+    assertVersionAtLeast(actual, "5.0.8", label);
     return;
   }
   assert.fail(`${label} has an unreviewed major version ${actual}`);
@@ -112,7 +108,6 @@ test("npm lock contains no vulnerable brace-expansion or js-yaml selection", () 
     fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package-lock.json"), "utf8"),
   );
   let braceExpansionCount = 0;
-  let jsYamlCount = 0;
 
   for (const [packagePath, metadata] of Object.entries(packageLock.packages)) {
     if (packagePath.endsWith("/brace-expansion")) {
@@ -120,13 +115,11 @@ test("npm lock contains no vulnerable brace-expansion or js-yaml selection", () 
       assertPatchedBraceExpansion(metadata.version, packagePath);
     }
     if (packagePath.endsWith("/js-yaml")) {
-      jsYamlCount += 1;
       assertPatchedJsYaml(metadata.version, packagePath);
     }
   }
 
   assert.ok(braceExpansionCount > 0, "package lock must contain brace-expansion");
-  assert.ok(jsYamlCount > 0, "package lock must contain js-yaml");
 });
 
 test("npm audit includes build-time dependencies and fails on every severity", () => {

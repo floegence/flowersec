@@ -13,6 +13,7 @@
     "Zlib"
   ],
   "review": [
+    "BlueOak-1.0.0",
     "CDLA-Permissive-2.0",
     "LGPL-2.1-or-later",
     "MPL-2.0",
@@ -133,6 +134,10 @@
     "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT": {
       "decision": "approved",
       "concludedExpression": "MIT"
+    },
+    "BlueOak-1.0.0": {
+      "decision": "approved",
+      "concludedExpression": "BlueOak-1.0.0"
     },
     "BSD-2-Clause": {
       "decision": "approved",
