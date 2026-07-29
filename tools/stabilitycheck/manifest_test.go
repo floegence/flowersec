@@ -441,6 +441,33 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 	}
 }
 
+func TestRustToolchainVersionUsesDeclaredMSRV(t *testing.T) {
+	root := t.TempDir()
+	cratePath := "flowersec-rust"
+	manifestPath := filepath.Join(root, cratePath, "Cargo.toml")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("[package]\nname = \"probe\"\nrust-version = \"1.88\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	toolchain, err := rustToolchainVersion(root, cratePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toolchain != "1.88.0" {
+		t.Fatalf("expected exact Rust 1.88.0 toolchain, got %q", toolchain)
+	}
+
+	if err := os.WriteFile(manifestPath, []byte("[package]\nname = \"probe\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rustToolchainVersion(root, cratePath); err == nil {
+		t.Fatal("missing rust-version must fail closed")
+	}
+}
+
 func TestTransientGoDownloadFailureClassification(t *testing.T) {
 	for _, output := range []string{
 		"go: downloading golang.org/x/net v0.56.0\nGet \"https://proxy.golang.org/x\": EOF",

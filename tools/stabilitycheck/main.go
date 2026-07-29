@@ -284,6 +284,10 @@ func countTSRuntimeExports(m *manifest) int {
 }
 
 func verifyRust(repoRoot string, m *manifest) error {
+	toolchain, err := rustToolchainVersion(repoRoot, m.Rust.CratePath)
+	if err != nil {
+		return err
+	}
 	probeDir := filepath.Join(repoRoot, ".build", "stability-rust-probe")
 	if err := os.RemoveAll(probeDir); err != nil {
 		return err
@@ -310,7 +314,7 @@ func verifyRust(repoRoot string, m *manifest) error {
 	if err := os.WriteFile(filepath.Join(probeDir, "src", "main.rs"), []byte(source.String()), 0o644); err != nil {
 		return err
 	}
-	cmd := exec.Command("cargo", "check", "--quiet")
+	cmd := exec.Command("rustup", "run", toolchain, "cargo", "check", "--quiet")
 	cmd.Dir = probeDir
 	cmd.Env = append(os.Environ(), "CARGO_TERM_COLOR=never")
 	var output bytes.Buffer
@@ -321,6 +325,23 @@ func verifyRust(repoRoot string, m *manifest) error {
 	}
 	fmt.Printf("rust symbols OK: %d compile entries verified\n", len(m.Rust.CompileEntries))
 	return nil
+}
+
+func rustToolchainVersion(repoRoot, cratePath string) (string, error) {
+	manifestPath := filepath.Join(repoRoot, cratePath, "Cargo.toml")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", fmt.Errorf("read Rust crate manifest: %w", err)
+	}
+	match := regexp.MustCompile(`(?m)^rust-version = "([0-9]+)\.([0-9]+)(?:\.([0-9]+))?"$`).FindSubmatch(data)
+	if match == nil {
+		return "", fmt.Errorf("Rust crate manifest %s must declare a canonical rust-version", filepath.ToSlash(manifestPath))
+	}
+	patch := "0"
+	if len(match[3]) > 0 {
+		patch = string(match[3])
+	}
+	return fmt.Sprintf("%s.%s.%s", match[1], match[2], patch), nil
 }
 
 func verifySwift(repoRoot string, m *manifest) error {
