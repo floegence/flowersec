@@ -19,6 +19,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrieryamux "github.com/floegence/flowersec/flowersec-go/v2/internal/mux/yamux"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -270,6 +271,39 @@ func TestBrowserBulkServerReadsAndWritesConcurrently(t *testing.T) {
 		if got := stream.ResetCount(); got != 0 {
 			t.Fatalf("%s Reset count = %d, want 0", label, got)
 		}
+	}
+}
+
+func TestBrowserBulkServerFINAcknowledgesPeerReadCompletion(t *testing.T) {
+	readAllowed := make(chan struct{})
+	stream := &gatedBrowserBidiStream{
+		readAllowed: readAllowed,
+		closeWrite:  make(chan struct{}),
+		stopped:     make(chan struct{}),
+	}
+	session := singleBrowserBulkSession{stream: stream}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- serveBrowserBulkSessionPhase(ctx, session, 1024) }()
+
+	prematureFIN := false
+	select {
+	case <-stream.closeWrite:
+		prematureFIN = true
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(readAllowed)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if prematureFIN {
+		t.Fatal("server sent FIN before consuming the peer bulk direction")
+	}
+	select {
+	case <-stream.closeWrite:
+	case <-time.After(time.Second):
+		t.Fatal("server did not send FIN after consuming the peer bulk direction")
 	}
 }
 
@@ -537,6 +571,64 @@ type coordinatedBrowserWriteStream struct {
 	closeWrites  atomic.Int32
 	resets       atomic.Int32
 }
+
+type singleBrowserBulkSession struct {
+	flowersession.SessionV2
+	stream *gatedBrowserBidiStream
+}
+
+func (session singleBrowserBulkSession) AcceptStream(context.Context) (flowersession.IncomingStream, error) {
+	return flowersession.IncomingStream{
+		Kind: "release-bulk", Metadata: flowersession.Metadata{"direction": "client-to-server"}, Stream: session.stream,
+	}, nil
+}
+
+type gatedBrowserBidiStream struct {
+	readAllowed <-chan struct{}
+	closeWrite  chan struct{}
+	stopped     chan struct{}
+	closeOnce   sync.Once
+	stopOnce    sync.Once
+	read        bool
+}
+
+func (stream *gatedBrowserBidiStream) Read(buffer []byte) (int, error) {
+	if stream.read {
+		return 0, io.EOF
+	}
+	select {
+	case <-stream.readAllowed:
+	case <-stream.stopped:
+		return 0, io.ErrClosedPipe
+	}
+	stream.read = true
+	for index := range buffer {
+		buffer[index] = 0xa5
+	}
+	return len(buffer), nil
+}
+
+func (*gatedBrowserBidiStream) Write(buffer []byte) (int, error) {
+	for _, value := range buffer {
+		if value != 0x5a {
+			return 0, errors.New("unexpected server bulk payload")
+		}
+	}
+	return len(buffer), nil
+}
+
+func (stream *gatedBrowserBidiStream) CloseWrite() error {
+	stream.closeOnce.Do(func() { close(stream.closeWrite) })
+	return nil
+}
+func (stream *gatedBrowserBidiStream) Close() error { return stream.Reset() }
+func (stream *gatedBrowserBidiStream) Reset() error {
+	stream.stopOnce.Do(func() { close(stream.stopped) })
+	return nil
+}
+func (*gatedBrowserBidiStream) ID() uint64           { return 3 }
+func (*gatedBrowserBidiStream) Kind() string         { return "release-bulk" }
+func (*gatedBrowserBidiStream) TerminalError() error { return nil }
 
 func (stream *coordinatedBrowserWriteStream) Read([]byte) (int, error) { return 0, io.ErrClosedPipe }
 func (stream *coordinatedBrowserWriteStream) Write(buffer []byte) (int, error) {

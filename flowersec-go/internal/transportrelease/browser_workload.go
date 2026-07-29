@@ -39,8 +39,8 @@ func serveBrowserBulkSessionPhase(ctx context.Context, session flowersession.Ses
 		return errors.New("metadata mismatch")
 	}
 	writeDone := make(chan error, 1)
-	go func() { writeDone <- writeExactFill(ctx, incoming.Stream, byteCount, 0x5a) }()
-	return finishBrowserBulkPhase(ctx, incoming.Stream, incoming.Stream, writeDone, byteCount, false)
+	go func() { writeDone <- writeExactFillData(ctx, incoming.Stream, byteCount, 0x5a) }()
+	return finishBrowserBulkPhase(ctx, incoming.Stream, incoming.Stream, writeDone, byteCount, true)
 }
 
 // ServeBrowserNativeIsolation proves that one reset WebTransport stream does
