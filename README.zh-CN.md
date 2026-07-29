@@ -67,6 +67,8 @@ make transport-v2-unit
 | Swift | SwiftPM 产品 `Flowersec` | `ArtifactV2`、`ConnectorV2`、`SessionV2` |
 | Rust | crate `flowersec` | `Artifact`、`Connector`、`Session` |
 
+Go 服务控制面使用独立的 `github.com/floegence/flowersec/flowersec-go/v2/controlplane` 包签发 opaque artifact，并响应 `flowersec-runtime` 的授权回调。该入口不会恢复任何 v1 issuer、token、channel-init 或 generated DTO 产品面。
+
 [Cookbook 索引](examples/README.md)仅包含 v2 示例和验证命令。
 
 <!-- readme-section:portable-contract -->

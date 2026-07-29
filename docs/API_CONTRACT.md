@@ -21,6 +21,19 @@ The only supported application import is `github.com/floegence/flowersec/flowers
 
 Opaque values have fixed redacted string and JSON behavior. Zero-value or deserialized handles cannot create a valid connector or spend lease.
 
+### Go server-side control plane
+
+The Go-only server import `github.com/floegence/flowersec/flowersec-go/v2/controlplane`, conventionally named `controlplane`, issues v2 artifacts and answers the `flowersec-runtime` authorization callback without exposing carrier, candidate, FSB2, PSK, or session-contract objects.
+
+- Endpoint policy: `controlplane.EndpointSet` is created by `controlplane.NewEndpointSet(...)`; URL schemes are converted to internal carrier candidates only during issuance.
+- Issuance: `controlplane.Issuer` from `controlplane.NewIssuer()` accepts carrier-neutral `controlplane.SessionOptions`, bounded `controlplane.Scope` and `controlplane.ArtifactMetadata`, plus either `controlplane.DirectIssueOptions` or `controlplane.TunnelIssueOptions`. `controlplane.Issuer.IssueDirect(...)` returns one `controlplane.IssuedArtifact`; `controlplane.Issuer.IssueTunnelPair(...)` returns one opaque `controlplane.IssuedTunnelPair`.
+- Explicit delivery: `controlplane.IssuedArtifact.ArtifactJSON()` is the only client artifact serialization boundary. `controlplane.IssuedArtifact.LookupKey()` is a non-secret credential hash, and `controlplane.IssuedArtifact.AuthorizationRecord()` returns the matching opaque `controlplane.AuthorizationRecord`.
+- Durable authorization: `controlplane.AuthorizationRecord.Encode()` and `controlplane.ParseAuthorizationRecord(...)` are the explicit secret-storage boundary. The caller must atomically reserve the one-time record before allowing a request; `controlplane.AuthorizationRecord.LookupKey()` never returns the bearer credential.
+- Runtime callback: `controlplane.ParseRuntimeAuthorizationRequest(...)` returns a redacted `controlplane.RuntimeAuthorizationRequest`. Its `controlplane.RuntimeAuthorizationRequest.LookupKey()` locates the record; `controlplane.AuthorizeRuntime(...)` verifies the complete FSB2 and observed carrier binding and returns `controlplane.AuthorizationResponse`. `controlplane.RejectRuntime(...)` creates only validated reject or retry decisions. `controlplane.AuthorizationResponse.JSON()` is the only response serialization boundary.
+- Invalid issuance, record, request, lease, expiry, or binding inputs return only `controlplane.ErrInvalidControlPlaneInput` at the public boundary. An unavailable cryptographic random source returns the stable redacted `controlplane.ErrIssuanceFailed` value.
+
+This package owns only transport-neutral issuance and authorization mechanics. Tenant selection, endpoint placement, permissions, billing, durable lease state, and upstream routing decisions remain application control-plane responsibilities. It is not a compatibility surface for removed v1 issuer, token, channel-init, generated DTO, or HTTP helper packages.
+
 ## TypeScript
 
 The supported package entrypoints are `@floegence/flowersec-core`, `@floegence/flowersec-core/browser`, and `@floegence/flowersec-core/node`.

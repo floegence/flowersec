@@ -21,6 +21,12 @@ session, err := connector.Connect(ctx)
 
 The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
 
+## Server Control Plane
+
+Go service control planes use `github.com/floegence/flowersec/flowersec-go/v2/controlplane` to issue direct artifacts or complementary tunnel pairs and to validate `flowersec-runtime` authorization callbacks. Endpoint sets, issued artifacts, authorization records, runtime requests, and responses are opaque. Artifact and record bytes cross only explicit serialization methods; the caller owns permissions, placement, durable one-time lease state, and upstream selection.
+
+See the executable `controlplane.ExampleIssuer_IssueTunnelPair` example for artifact delivery and authorization-record persistence. The package is v2-only and does not restore removed issuer keys, signed grants, generated DTOs, or channel-init APIs.
+
 ## Transport v2 Support
 
 WebSocket, raw QUIC, and WebTransport are equal carrier candidates.

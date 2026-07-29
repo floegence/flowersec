@@ -67,6 +67,8 @@ Carrier ごとの検証には、`make transport-conformance-smoke`、`make trans
 | Swift | SwiftPM プロダクト `Flowersec` | `ArtifactV2`、`ConnectorV2`、`SessionV2` |
 | Rust | crate `flowersec` | `Artifact`、`Connector`、`Session` |
 
+Go サービスのコントロールプレーンは、opaque artifact の発行と `flowersec-runtime` の認可コールバックへの応答に、独立した `github.com/floegence/flowersec/flowersec-go/v2/controlplane` パッケージを使用します。v1 の issuer、token、channel-init、生成 DTO のサーフェスは復元されません。
+
 [Cookbook インデックス](examples/README.md)には、v2 の例と検証コマンドだけが含まれます。
 
 <!-- readme-section:portable-contract -->

@@ -67,6 +67,8 @@ Para obter evidências específicas de cada carrier, execute `make transport-con
 | Swift | Produto SwiftPM `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
 | Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
 
+Os control planes de serviços Go usam o pacote separado `github.com/floegence/flowersec/flowersec-go/v2/controlplane` para emitir artifacts opacos e responder aos callbacks de autorização do `flowersec-runtime`. Isso não restaura nenhuma superfície v1 de issuer, token, channel-init ou DTOs gerados.
+
 O [índice de Cookbooks](examples/README.md) contém somente exemplos v2 e comandos de verificação.
 
 <!-- readme-section:portable-contract -->

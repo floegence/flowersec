@@ -67,6 +67,8 @@ For carrier-specific evidence, run `make transport-conformance-smoke`, `make tra
 | Swift | SwiftPM product `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
 | Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
 
+Go service control planes use the separate `github.com/floegence/flowersec/flowersec-go/v2/controlplane` package to issue opaque artifacts and answer `flowersec-runtime` authorization callbacks. It does not restore any v1 issuer, token, channel-init, or generated DTO surface.
+
 The [cookbook index](examples/README.md) contains only v2 examples and verification commands.
 
 <!-- readme-section:portable-contract -->

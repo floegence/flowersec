@@ -67,6 +67,8 @@ make transport-v2-unit
 | Swift | Продукт SwiftPM `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
 | Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
 
+Сервисные control plane на Go используют отдельный пакет `github.com/floegence/flowersec/flowersec-go/v2/controlplane` для выпуска непрозрачных artifacts и обработки authorization callback от `flowersec-runtime`. Это не восстанавливает v1-поверхности issuer, token, channel-init или сгенерированных DTO.
+
 [Указатель практических примеров](examples/README.md) содержит только примеры v2 и команды проверки.
 
 <!-- readme-section:portable-contract -->

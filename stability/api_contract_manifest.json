@@ -455,6 +455,43 @@
             "doc_token": "`flowersec.ErrConnectionFailed`"
           }
         ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane",
+        "alias": "controlplane",
+        "stability_group": "transport_v2",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v2/controlplane`",
+        "entries": [
+          { "kind": "var", "expr": "controlplane.ErrInvalidControlPlaneInput", "doc_token": "`controlplane.ErrInvalidControlPlaneInput`" },
+          { "kind": "var", "expr": "controlplane.ErrIssuanceFailed", "doc_token": "`controlplane.ErrIssuanceFailed`" },
+          { "kind": "type", "expr": "controlplane.EndpointSet", "doc_token": "`controlplane.EndpointSet`" },
+          { "kind": "func", "expr": "controlplane.NewEndpointSet", "doc_token": "`controlplane.NewEndpointSet(...)`" },
+          { "kind": "type", "expr": "controlplane.Issuer", "doc_token": "`controlplane.Issuer`" },
+          { "kind": "func", "expr": "controlplane.NewIssuer", "doc_token": "`controlplane.NewIssuer()`" },
+          { "kind": "type", "expr": "controlplane.SessionOptions", "doc_token": "`controlplane.SessionOptions`" },
+          { "kind": "type", "expr": "controlplane.Scope", "doc_token": "`controlplane.Scope`" },
+          { "kind": "type", "expr": "controlplane.ArtifactMetadata", "doc_token": "`controlplane.ArtifactMetadata`" },
+          { "kind": "type", "expr": "controlplane.DirectIssueOptions", "doc_token": "`controlplane.DirectIssueOptions`" },
+          { "kind": "type", "expr": "controlplane.TunnelIssueOptions", "doc_token": "`controlplane.TunnelIssueOptions`" },
+          { "kind": "method", "expr": "(*controlplane.Issuer).IssueDirect", "doc_token": "`controlplane.Issuer.IssueDirect(...)`" },
+          { "kind": "method", "expr": "(*controlplane.Issuer).IssueTunnelPair", "doc_token": "`controlplane.Issuer.IssueTunnelPair(...)`" },
+          { "kind": "type", "expr": "controlplane.IssuedArtifact", "doc_token": "`controlplane.IssuedArtifact`" },
+          { "kind": "type", "expr": "controlplane.IssuedTunnelPair", "doc_token": "`controlplane.IssuedTunnelPair`" },
+          { "kind": "method", "expr": "controlplane.IssuedArtifact.ArtifactJSON", "doc_token": "`controlplane.IssuedArtifact.ArtifactJSON()`" },
+          { "kind": "method", "expr": "controlplane.IssuedArtifact.AuthorizationRecord", "doc_token": "`controlplane.IssuedArtifact.AuthorizationRecord()`" },
+          { "kind": "method", "expr": "controlplane.IssuedArtifact.LookupKey", "doc_token": "`controlplane.IssuedArtifact.LookupKey()`" },
+          { "kind": "type", "expr": "controlplane.AuthorizationRecord", "doc_token": "`controlplane.AuthorizationRecord`" },
+          { "kind": "func", "expr": "controlplane.ParseAuthorizationRecord", "doc_token": "`controlplane.ParseAuthorizationRecord(...)`" },
+          { "kind": "method", "expr": "controlplane.AuthorizationRecord.Encode", "doc_token": "`controlplane.AuthorizationRecord.Encode()`" },
+          { "kind": "method", "expr": "controlplane.AuthorizationRecord.LookupKey", "doc_token": "`controlplane.AuthorizationRecord.LookupKey()`" },
+          { "kind": "type", "expr": "controlplane.RuntimeAuthorizationRequest", "doc_token": "`controlplane.RuntimeAuthorizationRequest`" },
+          { "kind": "func", "expr": "controlplane.ParseRuntimeAuthorizationRequest", "doc_token": "`controlplane.ParseRuntimeAuthorizationRequest(...)`" },
+          { "kind": "method", "expr": "controlplane.RuntimeAuthorizationRequest.LookupKey", "doc_token": "`controlplane.RuntimeAuthorizationRequest.LookupKey()`" },
+          { "kind": "type", "expr": "controlplane.AuthorizationResponse", "doc_token": "`controlplane.AuthorizationResponse`" },
+          { "kind": "func", "expr": "controlplane.AuthorizeRuntime", "doc_token": "`controlplane.AuthorizeRuntime(...)`" },
+          { "kind": "func", "expr": "controlplane.RejectRuntime", "doc_token": "`controlplane.RejectRuntime(...)`" },
+          { "kind": "method", "expr": "controlplane.AuthorizationResponse.JSON", "doc_token": "`controlplane.AuthorizationResponse.JSON()`" }
+        ]
       }
     ]
   },
@@ -1201,6 +1238,10 @@
       {
         "package": "github.com/floegence/flowersec/flowersec-go/v2",
         "min_statements_pct": 25
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/v2/controlplane",
+        "min_statements_pct": 75
       }
     ],
     "ts": {
