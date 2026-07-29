@@ -6,11 +6,16 @@ FROM public.ecr.aws/ubuntu/ubuntu@sha256:22a8228e1e48cbe7e0e0f2056e752ffb8a35950
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN sed -i 's|http://ports.ubuntu.com/ubuntu-ports/|http://mirrors.aliyun.com/ubuntu-ports/|g' \
+RUN sed -i \
+        -e 's|http://ports.ubuntu.com/ubuntu-ports/|http://mirrors.aliyun.com/ubuntu-ports/|g' \
+        -e 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.aliyun.com/ubuntu/|g' \
+        -e 's|http://security.ubuntu.com/ubuntu/|http://mirrors.aliyun.com/ubuntu/|g' \
         /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=10 update \
     && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=10 install --yes --no-install-recommends ca-certificates \
-    && sed -i 's|http://mirrors.aliyun.com/ubuntu-ports/|https://mirrors.aliyun.com/ubuntu-ports/|g' \
+    && sed -i \
+        -e 's|http://mirrors.aliyun.com/ubuntu-ports/|https://mirrors.aliyun.com/ubuntu-ports/|g' \
+        -e 's|http://mirrors.aliyun.com/ubuntu/|https://mirrors.aliyun.com/ubuntu/|g' \
         /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 update \
     && apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 install --yes --no-install-recommends \

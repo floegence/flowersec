@@ -1263,6 +1263,37 @@ test("transport browser smoke builds a clean TypeScript checkout before bundle t
   assert.ok(build < bundleTest, "the browser package must be built before bundle tests");
 });
 
+test("transport release runner rewrites every Ubuntu HTTP endpoint before apt update", () => {
+  const containerfile = fs.readFileSync(
+    path.join(sourceRoot, "tools/transportrelease/Containerfile"),
+    "utf8",
+  );
+  const firstAptUpdate = containerfile.indexOf("apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=10 update");
+  assert.notEqual(firstAptUpdate, -1, "the bootstrap apt update is missing");
+
+  for (const endpoint of [
+    "http://ports.ubuntu.com/ubuntu-ports/",
+    "http://archive.ubuntu.com/ubuntu/",
+    "http://security.ubuntu.com/ubuntu/",
+  ]) {
+    const rewrite = containerfile.indexOf(`s|${endpoint}|http://mirrors.aliyun.com/`);
+    assert.notEqual(rewrite, -1, `missing mirror rewrite for ${endpoint}`);
+    assert.ok(rewrite < firstAptUpdate, `${endpoint} must be rewritten before the first apt update`);
+  }
+
+  const caCertificates = containerfile.indexOf("install --yes --no-install-recommends ca-certificates");
+  const httpsUpdate = containerfile.indexOf("apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=10 update");
+  assert.ok(caCertificates > firstAptUpdate, "CA certificates must be installed after the HTTP bootstrap update");
+  assert.ok(httpsUpdate > caCertificates, "the HTTPS apt update must follow CA certificate installation");
+  for (const mirrorPath of ["ubuntu-ports/", "ubuntu/"]) {
+    const rewrite = containerfile.indexOf(
+      `s|http://mirrors.aliyun.com/${mirrorPath}|https://mirrors.aliyun.com/${mirrorPath}|g`,
+    );
+    assert.ok(rewrite > caCertificates, `${mirrorPath} must switch to HTTPS after CA certificate installation`);
+    assert.ok(rewrite < httpsUpdate, `${mirrorPath} must switch to HTTPS before the HTTPS apt update`);
+  }
+});
+
 test("transport release runner is pinned and scoped to its dedicated container", () => {
   const containerfile = fs.readFileSync(
     path.join(sourceRoot, "tools/transportrelease/Containerfile"),
