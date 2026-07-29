@@ -330,7 +330,7 @@ test("daily Go tests select fast transport contracts while final check owns the 
   assert.match(goTest, /^\t\$\(MAKE\) transportcheck-fast$/m);
   assert.doesNotMatch(goTest, /tools\/transportcheck.*go test.*\.\/\.\.\./);
   assert.match(fast, /go test -timeout=5m -count=1 -run/);
-  assert.match(complete, /tools\/transportcheck && go test -timeout=5m -count=1 \.\/\.\.\./);
+  assert.match(complete, /run-go-test-race-shards\.sh tools\/transportcheck 6 5m 3 normal/);
 });
 
 test("release workflows pin actions and pass expressions through fields, not shell source", () => {

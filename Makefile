@@ -310,7 +310,7 @@ transportcheck-fast:
 	cd tools/transportcheck && go test -timeout=5m -count=1 -run '^(TestCheckedInManifestAndRegistryAreValid|TestFrozenSingleTestTargetsDoNotExceedFiveMinutes|TestCheckedInRegistryOwnersHaveMakeRecipes|TestCheckedInEvidenceTrustPolicyPinsExactRunner|TestManifestRejectsInvalidFrozenContract|TestManifestDigestIsCanonicalAndTamperEvident|TestManifestAcceptsMeasuredEdgeRecoveryBudgetWithinFiveMinuteCell|TestCaseRegistryRejectsInvalidOwnership|TestStrictJSONRejectsUnknownFields|TestEvidenceMetaSchemaAndGateClassifications|TestMakeTargetsUseEvidenceClassificationGate)$$' .
 
 transport-v2-unit:
-	cd tools/transportcheck && go test -timeout=5m -count=1 ./...
+	./scripts/run-go-test-race-shards.sh tools/transportcheck 6 5m 3 normal
 	cd tools/transportcheck && go run . manifest -manifest ../../testdata/transport_v2/performance_manifest.json -registry ../../testdata/transport_v2/case_registry.json -makefile ../../Makefile
 	cd tools/transportcheck && go run . gate -meta ../../testdata/transport_v2/evidence_meta_schema.json -target transport-v2-unit -classification contract_only
 

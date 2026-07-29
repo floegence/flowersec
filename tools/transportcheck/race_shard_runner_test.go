@@ -66,6 +66,33 @@ func TestRaceShardRunnerCoversEveryTopLevelTestExactlyOnce(t *testing.T) {
 		}
 	})
 
+	t.Run("partitions normal tests without race instrumentation", func(t *testing.T) {
+		tempDir := t.TempDir()
+		logPath := filepath.Join(tempDir, "normal-invocations.log")
+		installFakeGo(t, tempDir, strings.Join(testNames, "\n")+"\n", logPath)
+
+		cmd := exec.Command("bash", runner, tempDir, "3", "5m", "2", "normal")
+		cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("run normal shard runner: %v\n%s", err, output)
+		}
+
+		logBytes, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("read fake go log: %v", err)
+		}
+		invocations := strings.Split(strings.TrimSpace(string(logBytes)), "\n")
+		if len(invocations) != 3 {
+			t.Fatalf("normal invocations = %d, want 3: %q", len(invocations), invocations)
+		}
+		for _, invocation := range invocations {
+			fields := strings.Fields(invocation)
+			if contains(fields, "-race") || !contains(fields, "-count=1") || !contains(fields, "-timeout=5m") {
+				t.Fatalf("normal invocation has incorrect flags: %q", invocation)
+			}
+		}
+	})
+
 	t.Run("rejects invalid parallelism", func(t *testing.T) {
 		tempDir := t.TempDir()
 		logPath := filepath.Join(tempDir, "race-invocations.log")
