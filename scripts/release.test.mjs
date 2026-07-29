@@ -212,6 +212,7 @@ function createReleasePolicyFixture(t) {
     ".github/dependabot.yml",
     ".githooks/pre-push",
     ".github/workflows/ci.yml",
+    ".github/workflows/codeql.yml",
     ".github/workflows/release.yml",
     ".github/workflows/rust-release.yml",
     "docker/flowersec-runtime/Dockerfile",
@@ -372,6 +373,7 @@ test("daily Go tests select fast transport contracts while final check owns the 
 test("release workflows pin actions and pass expressions through fields, not shell source", () => {
   const workflows = [
     ".github/workflows/ci.yml",
+    ".github/workflows/codeql.yml",
     ".github/workflows/release.yml",
     ".github/workflows/rust-release.yml",
   ].map((file) => ({ file, source: fs.readFileSync(path.join(sourceRoot, file), "utf8") }));
@@ -401,6 +403,23 @@ test("release workflows pin actions and pass expressions through fields, not she
   const dependabot = fs.readFileSync(path.join(sourceRoot, ".github/dependabot.yml"), "utf8");
   assert.match(dependabot, /^\s+- package-ecosystem: github-actions$/m);
   assert.match(dependabot, /^\s+interval: weekly$/m);
+});
+
+test("CodeQL retains every language with bounded jobs outside ordinary push CI", () => {
+  const workflowPath = path.join(sourceRoot, ".github/workflows/codeql.yml");
+  assert.equal(fs.existsSync(workflowPath), true, "the bounded CodeQL workflow must exist");
+  const workflow = fs.readFileSync(workflowPath, "utf8");
+  assert.match(workflow, /^name: codeql$/m);
+  assert.match(workflow, /^on:\n  workflow_dispatch: \{\}\n  schedule:\n    - cron: "17 3 \* \* 3"$/m);
+  assert.doesNotMatch(workflow, /^  (?:push|pull_request):/m);
+  assert.match(workflow, /^    timeout-minutes: 5$/m);
+  for (const language of ["actions", "c-cpp", "go", "javascript-typescript", "ruby", "rust", "swift"]) {
+    assert.match(workflow, new RegExp("^          - language: " + language + "$", "m"));
+  }
+  assert.match(workflow, /^        uses: github\/codeql-action\/init@[0-9a-f]{40} # v4$/m);
+  assert.match(workflow, /^          languages: \$\{\{ matrix\.language \}\}\n          build-mode: \$\{\{ matrix\.build-mode \}\}\n          queries: security-extended$/m);
+  assert.match(workflow, /^        run: swift build --target Flowersec$/m);
+  assert.match(workflow, /^        uses: github\/codeql-action\/analyze@[0-9a-f]{40} # v4$/m);
 });
 
 test("release workflow parser passes filenames compatibly across Psych versions", () => {

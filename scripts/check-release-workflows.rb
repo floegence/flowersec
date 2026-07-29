@@ -174,6 +174,7 @@ dependabot = load_workflow(".github/dependabot.yml")
 release_workflow = load_workflow(".github/workflows/release.yml")
 rust_workflow = load_workflow(".github/workflows/rust-release.yml")
 ci_workflow = load_workflow(".github/workflows/ci.yml")
+codeql_workflow = load_workflow(".github/workflows/codeql.yml")
 
 require_exact_keys(dependabot, ["version", "updates"], "Dependabot configuration")
 require_exact_value(dependabot, {
@@ -185,7 +186,7 @@ require_exact_value(dependabot, {
   }],
 }, "Dependabot configuration")
 
-[release_workflow, rust_workflow, ci_workflow].each do |workflow|
+[release_workflow, rust_workflow, ci_workflow, codeql_workflow].each do |workflow|
   require_exact_keys(workflow, ["name", true, "env", "permissions", "jobs"], "workflow #{workflow["name"].inspect}")
   require_exact_value(workflow["env"], { "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" => "true" }, "workflow #{workflow["name"].inspect} environment")
 end
@@ -193,7 +194,15 @@ require_exact_value(ci_workflow[true], {
   "push" => { "branches" => ["main"] },
   "pull_request" => { "branches" => ["main"] },
 }, "hosted CI triggers")
+require_exact_value(codeql_workflow[true], {
+  "workflow_dispatch" => {},
+  "schedule" => [{ "cron" => "17 3 * * 3" }],
+}, "CodeQL triggers")
 require_exact_value(ci_workflow["permissions"], { "contents" => "read" }, "hosted CI permissions")
+require_exact_value(codeql_workflow["permissions"], {
+  "contents" => "read",
+  "security-events" => "write",
+}, "CodeQL permissions")
 require_exact_value(release_workflow[true], { "push" => { "tags" => ["flowersec-go/v*"] } }, "unified release triggers")
 require_exact_value(release_workflow["permissions"], {
   "contents" => "write",
@@ -217,21 +226,40 @@ require_exact_value(rust_workflow["permissions"], { "contents" => "read", "id-to
 release_jobs = require_hash(release_workflow["jobs"], "the unified release workflow jobs")
 rust_jobs = require_hash(rust_workflow["jobs"], "the Rust recovery workflow jobs")
 ci_jobs = require_hash(ci_workflow["jobs"], "the hosted CI workflow jobs")
+codeql_jobs = require_hash(codeql_workflow["jobs"], "the CodeQL workflow jobs")
 require_exact_keys(release_jobs, ["prepare", "rust-publish", "release"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
 require_exact_keys(ci_jobs, ["repository"], "the hosted CI workflow jobs")
+require_exact_keys(codeql_jobs, ["analyze"], "the CodeQL workflow jobs")
 
 prepare_job = require_job(release_workflow, "prepare", "the unified release workflow")
 release_job = require_job(release_workflow, "release", "the unified release workflow")
 rust_reuse_job = require_job(release_workflow, "rust-publish", "the unified release workflow")
 rust_publish_job = require_job(rust_workflow, "publish", "the Rust recovery workflow")
 repository_job = require_job(ci_workflow, "repository", "the hosted CI workflow")
+codeql_job = require_job(codeql_workflow, "analyze", "the CodeQL workflow")
 
 require_exact_keys(prepare_job, ["runs-on", "outputs", "steps"], "the unified release workflow prepare job")
 require_exact_keys(release_job, ["needs", "runs-on", "steps"], "the unified release workflow release job")
 require_exact_keys(rust_reuse_job, ["needs", "uses", "with"], "the unified release workflow rust-publish job")
 require_exact_keys(rust_publish_job, ["runs-on", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
+require_exact_keys(codeql_job, ["name", "runs-on", "timeout-minutes", "strategy", "steps"], "the CodeQL analyze job")
+require_exact_value(codeql_job["name"], "Analyze (${{ matrix.language }})", "the CodeQL job name")
+require_exact_value(codeql_job["runs-on"], "${{ matrix.runner }}", "the CodeQL runner selector")
+require_exact_value(codeql_job["timeout-minutes"], 5, "the CodeQL timeout")
+require_exact_value(codeql_job["strategy"], {
+  "fail-fast" => false,
+  "matrix" => { "include" => [
+    { "language" => "actions", "build-mode" => "none", "runner" => "ubuntu-latest" },
+    { "language" => "c-cpp", "build-mode" => "autobuild", "runner" => "ubuntu-latest" },
+    { "language" => "go", "build-mode" => "autobuild", "runner" => "ubuntu-latest" },
+    { "language" => "javascript-typescript", "build-mode" => "none", "runner" => "ubuntu-latest" },
+    { "language" => "ruby", "build-mode" => "none", "runner" => "ubuntu-latest" },
+    { "language" => "rust", "build-mode" => "autobuild", "runner" => "ubuntu-latest" },
+    { "language" => "swift", "build-mode" => "manual", "runner" => "macos-15" },
+  ] },
+}, "the CodeQL matrix")
 require_exact_value(prepare_job["outputs"], { "version" => "${{ steps.version.outputs.version }}" }, "the prepare job outputs")
 require_exact_value(rust_reuse_job["needs"], "prepare", "the rust-publish job dependency")
 require_exact_value(rust_reuse_job["with"], { "version" => "${{ needs.prepare.outputs.version }}" }, "the rust-publish job inputs")
@@ -243,6 +271,7 @@ require_exact_value(release_job["needs"], "prepare", "the release job dependency
   [rust_reuse_job, "the unified release workflow rust-publish job"],
   [rust_publish_job, "the Rust recovery workflow publish job"],
   [repository_job, "the hosted CI repository job"],
+  [codeql_job, "the CodeQL analyze job"],
 ].each { |job, context| require_unconditional(job, context) }
 
 require_condition(prepare_job["runs-on"] == "ubuntu-latest", "the unified release workflow prepare job must run on ubuntu-latest")
@@ -253,6 +282,7 @@ require_condition(rust_publish_job["runs-on"] == "ubuntu-latest", "the Rust reco
 release_steps = require_steps(release_job, "the unified release workflow release job")
 rust_steps = require_steps(rust_publish_job, "the Rust recovery workflow publish job")
 ci_steps = require_steps(repository_job, "the hosted CI repository job")
+codeql_steps = require_steps(codeql_job, "the CodeQL analyze job")
 prepare_steps = require_steps(prepare_job, "the unified release workflow prepare job")
 
 checkout = { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "with" => { "fetch-depth" => 0 } }
@@ -265,6 +295,13 @@ validate_step_contracts(ci_steps, [
   { name: "Check shell syntax", keys: ["name", "run"], run_sha256: "37f031d1ced8b2c2554b688709bc5a7faecfee38d494f87d9f4da00284209b0a" },
   { name: "Check release workflow policy", keys: ["name", "run"], run_sha256: "ca5a81f1c6229ace59783918c84158923cedda3a99d4135a5e95fd812242a47d" },
 ], "the hosted CI repository job")
+validate_step_contracts(codeql_steps, [
+  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
+  { name: "Build Swift library", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "swift build --target Flowersec" } },
+  { name: "Autobuild compiled language", keys: ["name", "if", "uses"], values: { "if" => "matrix.build-mode == 'autobuild'", "uses" => "github/codeql-action/autobuild@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81" } },
+], "the CodeQL analyze job")
 validate_step_contracts(release_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Compute version vars", keys: ["name", "id", "run"], values: { "id" => "vars" }, run_sha256: "308142f97577687f8076c19a3f65c4de19c48196c1d9ab76349c9a2d7f3a08bd" },
