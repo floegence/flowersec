@@ -108,8 +108,8 @@ docker exec "$container_name" bash -euo pipefail -c '
   go version
   node --version
   npm --version
-  rustc --version
-  cargo --version
+  rustc --version | grep -Fx "rustc 1.88.0 (6b00bc388 2025-06-23)"
+  cargo --version | grep -Fx "cargo 1.88.0 (873a06493 2025-05-10)"
   /opt/host-linux-tools/bpftool version
   tc -V
 '

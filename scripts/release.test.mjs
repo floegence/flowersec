@@ -1366,6 +1366,7 @@ test("transport release runner is pinned and scoped to its dedicated container",
   assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/golang@sha256:[0-9a-f]{64} AS go_toolchain$/m);
   assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/node@sha256:[0-9a-f]{64} AS node_toolchain$/m);
   assert.match(containerfile, /^FROM public\.ecr\.aws\/docker\/library\/rust@sha256:[0-9a-f]{64} AS rust_toolchain$/m);
+  assert.match(containerfile, /^# rust_toolchain: rustc 1\.88\.0, cargo 1\.88\.0$/m);
   assert.match(containerfile, /^FROM public\.ecr\.aws\/ubuntu\/ubuntu@sha256:[0-9a-f]{64}$/m);
   assert.match(
     containerfile,
@@ -1388,4 +1389,12 @@ test("transport release runner is pinned and scoped to its dedicated container",
   assert.match(provision, /npm ci --audit=false/);
   assert.match(provision, /npm run build/);
   assert.match(provision, /npx playwright install chromium/);
+  assert.match(
+    provision,
+    /rustc --version \| grep -Fx "rustc 1\.88\.0 \(6b00bc388 2025-06-23\)"/,
+  );
+  assert.match(
+    provision,
+    /cargo --version \| grep -Fx "cargo 1\.88\.0 \(873a06493 2025-05-10\)"/,
+  );
 });

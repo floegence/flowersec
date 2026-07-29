@@ -1,6 +1,7 @@
 FROM public.ecr.aws/docker/library/golang@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS go_toolchain
 FROM public.ecr.aws/docker/library/node@sha256:80fc934952c8f1b2b4d39907af7211f8a9fff1a4c2cf673fb49099292c251cec AS node_toolchain
-FROM public.ecr.aws/docker/library/rust@sha256:0ff31c9ffa641a62e48d543fb00b4960955ea375f40776f40f585b89e654cc5e AS rust_toolchain
+# rust_toolchain: rustc 1.88.0, cargo 1.88.0
+FROM public.ecr.aws/docker/library/rust@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 AS rust_toolchain
 
 FROM public.ecr.aws/ubuntu/ubuntu@sha256:22a8228e1e48cbe7e0e0f2056e752ffb8a35950cda150a4e5e16417200bec648
 
