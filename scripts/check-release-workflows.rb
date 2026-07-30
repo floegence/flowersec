@@ -297,10 +297,10 @@ validate_step_contracts(ci_steps, [
 ], "the hosted CI repository job")
 validate_step_contracts(codeql_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
-  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
   { name: "Build Swift library", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "swift build --target Flowersec" } },
-  { name: "Autobuild compiled language", keys: ["name", "if", "uses"], values: { "if" => "matrix.build-mode == 'autobuild'", "uses" => "github/codeql-action/autobuild@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81" } },
-  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81" } },
+  { name: "Autobuild compiled language", keys: ["name", "if", "uses"], values: { "if" => "matrix.build-mode == 'autobuild'", "uses" => "github/codeql-action/autobuild@f205ea1c3313d32999d8d6a48b4f6530d4437b38" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38" } },
 ], "the CodeQL analyze job")
 validate_step_contracts(release_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
@@ -313,9 +313,9 @@ validate_step_contracts(release_steps, [
   { name: "Verify all language tags point to this commit", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "2e0b0a8195cac9968212ce6f5ad6aca14b46ecfb40ac4b6fad1e09cba78b4e60" },
   { name: "Build release artifacts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_DATE" => "${{ steps.vars.outputs.date }}", "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "6cc25228e0df686a9aca9d2cc231a4a41d08b96be6d4c3f7e27d60a1c86dd15e" },
   { name: "Generate release notes", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}" } }, run_sha256: "4def773734f95ee6a5f05876f4355923b9a3604bee521b26ce04ac77108086ad" },
-  { name: "Publish GitHub Release", keys: ["name", "uses", "with"], values: { "uses" => "softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65", "with" => { "files" => "dist/*\n", "body_path" => "release-notes.md" } } },
-  { name: "Setup Docker Buildx", keys: ["name", "uses", "with"], values: { "uses" => "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f", "with" => { "driver-opts" => "image=moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec" } } },
-  { name: "Login to GHCR", keys: ["name", "uses", "with"], values: { "uses" => "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9", "with" => { "registry" => "ghcr.io", "username" => "${{ github.actor }}", "password" => "${{ secrets.GITHUB_TOKEN }}" } } },
+  { name: "Publish GitHub Release", keys: ["name", "uses", "with"], values: { "uses" => "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228", "with" => { "files" => "dist/*\n", "body_path" => "release-notes.md" } } },
+  { name: "Setup Docker Buildx", keys: ["name", "uses", "with"], values: { "uses" => "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c", "with" => { "driver-opts" => "image=moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec" } } },
+  { name: "Login to GHCR", keys: ["name", "uses", "with"], values: { "uses" => "docker/login-action@dbcb813823bdd20940b903addbd779551569679f", "with" => { "registry" => "ghcr.io", "username" => "${{ github.actor }}", "password" => "${{ secrets.GITHUB_TOKEN }}" } } },
   { name: "Build and push runtime image", keys: ["name", "uses", "with"], values: { "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8", "with" => {
     "context" => ".",
     "file" => "docker/flowersec-runtime/Dockerfile",
