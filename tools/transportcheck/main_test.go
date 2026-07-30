@@ -2298,6 +2298,20 @@ func TestRepositoryTrustPolicyRejectsRunnerIdentityTampering(t *testing.T) {
 }
 
 func TestEvidenceRequiresSignedSource(t *testing.T) {
+	valid := func() *EvidenceReport {
+		return &EvidenceReport{
+			Classification: "signed_transport_evidence",
+			Source: EvidenceSource{
+				BaseSHA: strings.Repeat("b", 40), FinalSHA: strings.Repeat("a", 40),
+				Dirty: boolPointer(false), UntrackedFileCount: intPointer(0),
+			},
+			Runner: EvidenceRunner{
+				ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
+				Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
+				ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
+			},
+		}
+	}
 	tests := []struct {
 		name       string
 		mutate     func(*EvidenceReport)
@@ -2313,11 +2327,11 @@ func TestEvidenceRequiresSignedSource(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			manifest := loadFixtureManifest(t)
-			registry := loadFixtureRegistry(t)
-			report := completeReport(t, manifest, registry)
+			report := valid()
 			test.mutate(report)
-			result := checkEvidence(manifest, registry, report, report.baseDir)
+			builder := resultBuilder{status: statusPass}
+			checkEvidenceMetadata(&builder, report, "", nil)
+			result := builder.result()
 			assertResult(t, result, test.wantStatus, test.wantIssue)
 		})
 	}
