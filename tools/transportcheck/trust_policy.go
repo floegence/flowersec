@@ -18,8 +18,8 @@ const (
 	signedRunnerKernelRelease = "6.8.0-124-generic"
 	signedRunnerConfigDigest  = "94984c52b0417583217a7974f50bf13f838913f948960caa0dc0725a0893ad71"
 	signedRunnerConfigPath    = "runner_effective_config.json"
-	signedRunnerExecutableSHA = "30cfbaf78b8a915ff2b93cadc9634c04891d2b1061304fd2138b536fc895022f"
-	signedRunnerSourceSHA     = "c806cce6c35ae325534ff08b913483835a94d54320b5c75fc32ce41aad51653b"
+	signedRunnerExecutableSHA = "1d6fb69997fdb777fbab58b0007e96ff19e9b67de1b0b35bbb64e7336161fc6e"
+	signedRunnerSourceSHA     = "c8295fa32c2fa679198b1c40e1b97826ff5b37d9a629f47c8d01b015ba54e24c"
 	signedRunnerArgvSHA       = "828afd3776a174af61610a56dfd958a4bd5197037f4771526ab74b974da01145"
 )
 
