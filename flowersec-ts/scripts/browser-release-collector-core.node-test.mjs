@@ -119,7 +119,7 @@ test("resets the same bidirectional stream after a bulk failure", async () => {
   );
 });
 
-test("prepares the next browser bulk stream during warmup", async () => {
+test("opens each browser bulk phase only after the previous phase completes", async () => {
   let evaluatorSource = "";
   const page = {
     evaluate: async (operation) => {
@@ -131,8 +131,9 @@ test("prepares the next browser bulk stream during warmup", async () => {
   await runSessionWorkload(page, {}, normalizeCollectorPlan(forcedPlan));
   assert.match(
     evaluatorSource,
-    /const warmupOutgoing = await prepareTransfer[\s\S]*const scoreOutgoingPromise = prepareTransfer[\s\S]*await transfer\(activeSession, warmupOutgoing,[\s\S]*await transfer\(activeSession, scoreOutgoing,/,
+    /const warmupOutgoing = await prepareTransfer[\s\S]*await transfer\(activeSession, warmupOutgoing,[\s\S]*const scoreOutgoing = await prepareTransfer[\s\S]*await transfer\(activeSession, scoreOutgoing,/,
   );
+  assert.doesNotMatch(evaluatorSource, /scoreOutgoingPromise|scorePrepareController/);
 });
 
 test("adaptive_web accepts cold-only stages and rejects forced payload phases", () => {

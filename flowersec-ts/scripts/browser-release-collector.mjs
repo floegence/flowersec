@@ -413,24 +413,14 @@ export async function runSessionWorkload(page, artifact, plan) {
 
     async function runBulk(activeSession, config, phaseSignal) {
       const warmupOutgoing = await prepareTransfer(activeSession, phaseSignal);
-      const scorePrepareController = new AbortController();
-      const scorePrepareSignal = AbortSignal.any([phaseSignal, scorePrepareController.signal]);
-      const scoreOutgoingPromise = prepareTransfer(activeSession, scorePrepareSignal);
-      void scoreOutgoingPromise.catch(() => undefined);
-      try {
-        await transfer(activeSession, warmupOutgoing, config.warmup_bytes_per_direction, phaseSignal);
-        const scoreOutgoing = await scoreOutgoingPromise;
-        const result = await transfer(activeSession, scoreOutgoing, config.score_bytes_per_direction, phaseSignal);
-        return {
-          started_at: result.started_at,
-          duration_ns: result.duration_ns,
-          bytes_per_direction: config.score_bytes_per_direction,
-        };
-      } catch (error) {
-        scorePrepareController.abort(error);
-        await Promise.allSettled([scoreOutgoingPromise.then((stream) => stream.reset())]);
-        throw error;
-      }
+      await transfer(activeSession, warmupOutgoing, config.warmup_bytes_per_direction, phaseSignal);
+      const scoreOutgoing = await prepareTransfer(activeSession, phaseSignal);
+      const result = await transfer(activeSession, scoreOutgoing, config.score_bytes_per_direction, phaseSignal);
+      return {
+        started_at: result.started_at,
+        duration_ns: result.duration_ns,
+        bytes_per_direction: config.score_bytes_per_direction,
+      };
     }
 
     async function prepareTransfer(activeSession, signal) {
