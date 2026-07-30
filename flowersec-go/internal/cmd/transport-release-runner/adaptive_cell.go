@@ -78,6 +78,7 @@ func adaptiveStageExecutionPlan(plan transportrelease.ReleasePlan, stage transpo
 	if perRunSlack < 3 {
 		return transportrelease.ProfilePlan{}, errors.New("adaptive mobile execution requires at least three seconds of harness slack per run")
 	}
+	stage.Cold.OperationDeadlineSeconds += perRunSlack
 	stage.Cold.PhaseDeadlineSeconds += perRunSlack
 	return stage, nil
 }

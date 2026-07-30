@@ -336,10 +336,17 @@ func TestAdaptiveStageExecutionPlanAllocatesOnlyMobileHarnessSlack(t *testing.T)
 	if mobileExecution.Cold.PhaseDeadlineSeconds != 10 {
 		t.Fatalf("mobile phase deadline = %d, want 10", mobileExecution.Cold.PhaseDeadlineSeconds)
 	}
+	if mobileExecution.Cold.OperationDeadlineSeconds != 8 {
+		t.Fatalf("mobile operation deadline = %d, want 8", mobileExecution.Cold.OperationDeadlineSeconds)
+	}
 	if mobileExecution.Cold.Operations != mobile.Cold.Operations ||
 		mobileExecution.Cold.StartRatePerSecond != mobile.Cold.StartRatePerSecond ||
-		mobileExecution.Cold.OperationDeadlineSeconds != mobile.Cold.OperationDeadlineSeconds {
+		mobileExecution.Cold.Retries != mobile.Cold.Retries {
 		t.Fatalf("mobile workload changed: got %+v, want %+v", mobileExecution.Cold, mobile.Cold)
+	}
+	lastStartOffset := time.Duration(mobileExecution.Cold.Operations-1) * time.Second / time.Duration(mobileExecution.Cold.StartRatePerSecond)
+	if lastStartOffset+time.Duration(mobileExecution.Cold.OperationDeadlineSeconds)*time.Second >= time.Duration(mobileExecution.Cold.PhaseDeadlineSeconds)*time.Second {
+		t.Fatalf("mobile nested deadline envelope = %s + %ds, must fit strictly inside %ds phase", lastStartOffset, mobileExecution.Cold.OperationDeadlineSeconds, mobileExecution.Cold.PhaseDeadlineSeconds)
 	}
 	allocated := plan.RunCount * (mobileExecution.Cold.PhaseDeadlineSeconds - mobile.Cold.PhaseDeadlineSeconds)
 	if allocated != 45 || plan.Adaptive.HarnessSlackSeconds-allocated != 0 {
