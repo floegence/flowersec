@@ -18,8 +18,8 @@ const (
 	signedRunnerKernelRelease = "5.10.0-1012-rockchip"
 	signedRunnerConfigDigest  = "19008cdade35472d04a6dc09c98fe6ed9ed86139e0315fe58faea2fdeb8b02fd"
 	signedRunnerConfigPath    = "runner_effective_config.json"
-	signedRunnerExecutableSHA = "784f0b818054cb93db834abd30d3fb1a0911b0660618bb923adf6a1332ea8034"
-	signedRunnerSourceSHA     = "0d6a2e1f4e1e5d4728be089b4b8ef6561453615260ae4ded614d1d935fb4bc74"
+	signedRunnerExecutableSHA = "9171db06114c08e46153572a2d10b75c40db1c7e9de3efff644453cad5119185"
+	signedRunnerSourceSHA     = "6757d6702b7ad44622619ea51f8a66a973078e7944d69280709828e9b976422b"
 	signedRunnerArgvSHA       = "828afd3776a174af61610a56dfd958a4bd5197037f4771526ab74b974da01145"
 )
 
