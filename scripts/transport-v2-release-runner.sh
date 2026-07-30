@@ -188,6 +188,7 @@ actual_kernel=$(uname -r)
 
 umask 077
 build_directory=$(mktemp -d /tmp/flowersec-transport-release-build.XXXXXX)
+export TMPDIR="$build_directory"
 base_source_root=$build_directory/base-source
 probe_namespace=flowersec-release-probe-$$
 

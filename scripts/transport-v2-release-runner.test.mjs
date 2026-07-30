@@ -90,6 +90,18 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
   assert.doesNotMatch(runner, /PRIVATE KEY|key-file|transportcheck" sign/);
 });
 
+test("release wrapper contains low-level temporary files in its private build root", () => {
+  const runner = fs.readFileSync(runnerPath, "utf8");
+  const buildRoot = runner.indexOf("build_directory=$(mktemp -d /tmp/flowersec-transport-release-build.XXXXXX)");
+  const tempExport = runner.indexOf('export TMPDIR="$build_directory"');
+  const firstBuild = runner.indexOf("go build -trimpath");
+  assert.notEqual(buildRoot, -1, "wrapper must create one private build root");
+  assert.notEqual(tempExport, -1, "wrapper must bind child temporary files to the private build root");
+  assert.notEqual(firstBuild, -1, "wrapper must build the low-level runner");
+  assert.ok(buildRoot < tempExport && tempExport < firstBuild, "TMPDIR must be bound before any child build or workload");
+  assert.match(runner, /rm -rf -- "\$build_directory"/);
+});
+
 test("release wrapper rebuilds the final browser bundle before collection", () => {
   const runner = fs.readFileSync(runnerPath, "utf8");
   const finalCheckoutClean = runner.indexOf('git -C "$source_root" status --porcelain --untracked-files=all');
