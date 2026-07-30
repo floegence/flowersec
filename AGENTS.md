@@ -151,6 +151,8 @@ git config --global merge.conflictstyle zdiff3
 
 - Local gates are the source of truth. The exact synchronized `main` candidate runs `make check` once through the pre-push hook; do not run it on intermediate feature tips.
 - GitHub push and pull-request CI is intentionally limited to formatting, syntax, short unit tests, static contracts, generated-file consistency, and repository-boundary checks. It must not install browsers, build product packages, or run Docker, integration, renderer, terminal, stress, performance, weak-network, soak, or full-race jobs.
+- GitHub CodeQL Default Setup must remain disabled because it implicitly runs the full multi-language analysis on every push. The checked-in CodeQL workflow is the sole CodeQL authority and may run only by explicit manual dispatch or its reviewed weekly schedule; it must not declare push or pull-request triggers. Ordinary push/PR security coverage stays in the fast source-only repository workflow, while compiled-language and full multi-language CodeQL analysis remains outside the ordinary push path.
+- Do not move expensive validation into hosted push/PR CI merely to make it visible in Actions. Complete language builds, coverage, package/publish checks, browsers, integration, race, weak-network, performance, soak, and evidence collection belong to the frozen exact-main local pre-push gate. Release-tag workflows may retain only ref-dependent publication, signing, attestation, and registry readback work.
 - Every development worktree must run `make install-hooks` once after it is created.
 - The `pre-commit` hook automatically runs `make precommit` and blocks the commit on failure.
 - `make precommit` covers the fast high-value local gate:
