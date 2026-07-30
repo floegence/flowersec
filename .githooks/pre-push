@@ -24,7 +24,8 @@ if [ -n "$main_line" ]; then
     printf '%s\n' '[flowersec] main pre-push gate must verify the exact checked-out HEAD.' >&2
     exit 1
   fi
-  if [ "${FLOWERSEC_RELEASE_GATE_COMMIT:-}" != "$main_sha" ]; then
+  verified_main_sha=${FLOWERSEC_MAIN_GATE_COMMIT:-${FLOWERSEC_RELEASE_GATE_COMMIT:-}}
+  if [ "$verified_main_sha" != "$main_sha" ]; then
     printf '%s\n' '[flowersec] running final main pre-push gate (make check)'
     make -C "$repo_root" check
   fi

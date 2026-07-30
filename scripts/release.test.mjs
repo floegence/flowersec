@@ -226,6 +226,7 @@ function createReleasePolicyFixture(t) {
     "scripts/run-final-stage.test.mjs",
     "scripts/check-transport-v2-evidence.sh",
     "scripts/release.sh",
+    "scripts/push-main.sh",
     "scripts/release.test.mjs",
   ];
   for (const file of files) {
@@ -1346,6 +1347,84 @@ test("pre-push runs the complete gate once for the exact main HEAD", (t) => {
   });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   assert.equal(fs.readFileSync(marker, "utf8").trim(), `-C ${sourceRoot} check`);
+
+  fs.rmSync(marker);
+  const verified = spawnSync("sh", [hook], {
+    cwd: sourceRoot,
+    encoding: "utf8",
+    env: isolatedEnvironment({
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      FLOWERSEC_MAIN_GATE_COMMIT: head,
+      FLOWERSEC_TEST_MAKE_MARKER: marker,
+    }),
+    input: `refs/heads/main ${head} refs/heads/main ${deleted}\n`,
+  });
+  assert.equal(verified.status, 0, `${verified.stdout}${verified.stderr}`);
+  assert.equal(fs.existsSync(marker), false, "the exact prevalidated SHA must not rerun make check");
+});
+
+test("main push gates the exact SHA before opening the remote transport", () => {
+  const script = path.join(sourceRoot, "scripts/push-main.sh");
+  assert.equal(fs.existsSync(script), true, "scripts/push-main.sh is missing");
+  const source = fs.readFileSync(script, "utf8");
+  const gate = source.indexOf("make check");
+  const push = source.indexOf("git push origin");
+  assert.notEqual(gate, -1, "main push must run the complete gate");
+  assert.notEqual(push, -1, "main push must use normal git push");
+  assert.ok(gate < push, "the gate must finish before git opens the push transport");
+  assert.match(source, /FLOWERSEC_MAIN_GATE_COMMIT=/);
+  assert.doesNotMatch(source, /--no-verify/);
+});
+
+test("main push passes only the checked HEAD after the gate completes", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-main-push-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bin = path.join(root, "bin");
+  const log = path.join(root, "commands.log");
+  const head = "a".repeat(40);
+  const origin = "b".repeat(40);
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, "git"),
+    [
+      "#!/bin/sh",
+      "printf 'git %s gate=%s\\n' \"$*\" \"${FLOWERSEC_MAIN_GATE_COMMIT:-}\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"",
+      "case \"$*\" in",
+      "  'status --short') exit 0 ;;",
+      "  'symbolic-ref --short -q HEAD') printf 'main\\n' ; exit 0 ;;",
+      `  'rev-parse HEAD') printf '${head}\\n' ; exit 0 ;;`,
+      `  'rev-parse origin/main') printf '${origin}\\n' ; exit 0 ;;`,
+      "  'fetch origin main') exit 0 ;;",
+      "  'merge-base --is-ancestor '*) exit 0 ;;",
+      "  'push origin refs/heads/main:refs/heads/main') exit 0 ;;",
+      "esac",
+      "exit 90",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(bin, "make"),
+    "#!/bin/sh\nprintf 'make %s\\n' \"$*\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"\n",
+    { mode: 0o755 },
+  );
+
+  const result = spawnSync("bash", [path.join(sourceRoot, "scripts/push-main.sh")], {
+    cwd: sourceRoot,
+    encoding: "utf8",
+    env: isolatedEnvironment({
+      ...process.env,
+      FLOWERSEC_TEST_COMMAND_LOG: log,
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+    }),
+  });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  const commands = fs.readFileSync(log, "utf8").trim().split("\n");
+  const gate = commands.indexOf("make check");
+  const push = commands.findIndex((command) => command.startsWith("git push origin "));
+  assert.ok(gate >= 0 && push > gate, commands.join("\n"));
+  assert.match(commands[push], new RegExp(` gate=${head}$`));
 });
 
 test("transport browser smoke builds a clean TypeScript checkout before bundle tests", () => {

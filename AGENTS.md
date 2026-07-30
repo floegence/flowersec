@@ -98,7 +98,7 @@ git commit -m "<type>(<scope>): <summary>"
 # exception: preserve the original feature commits only when they are already clean
 # git merge --ff-only "$BR"
 
-git push origin main
+./scripts/push-main.sh
 
 git worktree remove "$WT"
 
@@ -171,6 +171,12 @@ git config --global merge.conflictstyle zdiff3
 ## 3. Local quality gate (required)
 
 - Local gates are the source of truth. The exact synchronized `main` candidate runs `make check` once through the pre-push hook; do not run it on intermediate feature tips.
+- Push local `main` with `./scripts/push-main.sh`. It completes `make check`
+  before opening the remote push transport, revalidates the clean exact SHA and
+  unchanged `origin/main`, then invokes normal `git push`; the pre-push hook
+  verifies the same SHA. Direct `git push` remains protected and runs the
+  complete gate inside the hook, but should not be used for the normal main
+  workflow because a long gate can outlive the already-open remote connection.
 - GitHub push and pull-request CI is intentionally limited to formatting, syntax, short unit tests, static contracts, generated-file consistency, and repository-boundary checks. It must not install browsers, build product packages, or run Docker, integration, renderer, terminal, stress, performance, weak-network, soak, or full-race jobs.
 - GitHub CodeQL Default Setup must remain disabled because it implicitly runs the full multi-language analysis on every push. The checked-in CodeQL workflow is the sole CodeQL authority and may run only by explicit manual dispatch or its reviewed weekly schedule; it must not declare push or pull-request triggers. Ordinary push/PR security coverage stays in the fast source-only repository workflow, while compiled-language and full multi-language CodeQL analysis remains outside the ordinary push path.
 - Do not move expensive validation into hosted push/PR CI merely to make it visible in Actions. Complete language builds, coverage, package/publish checks, browsers, integration, race, weak-network, performance, soak, and evidence collection belong to the frozen exact-main local pre-push gate. Release-tag workflows may retain only ref-dependent publication, signing, attestation, and registry readback work.
