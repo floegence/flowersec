@@ -363,6 +363,36 @@ test("daily Go tests select fast transport contracts while final check owns the 
   assert.match(complete, /run-go-test-race-shards\.sh tools\/transportcheck 6 5m 3 normal/);
 });
 
+test("local transport evidence mutations use focused validators", () => {
+  const source = fs.readFileSync(
+    path.join(sourceRoot, "tools/transportcheck/main_test.go"),
+    "utf8",
+  );
+  const testBody = (name) => {
+    const start = source.indexOf(`func ${name}(`);
+    assert.notEqual(start, -1, `${name} must exist`);
+    const next = source.indexOf("\nfunc ", start + 1);
+    return source.slice(start, next === -1 ? source.length : next);
+  };
+
+  const caseMutations = testBody("TestTypedRebindAndQUICPMTUDCasesRejectFalseEvidence");
+  assert.doesNotMatch(caseMutations, /checkEvidence\(/);
+  assert.equal(
+    [...caseMutations.matchAll(/checkCaseEvidenceForTest\(/g)].length,
+    4,
+    "each typed case mutation must validate only its affected case",
+  );
+
+  for (const name of [
+    "TestEvidenceRequiresQlogOnlyForQUICFamilyTopologies",
+    "TestEvidenceEnforcesForcedAndAdaptiveSelection",
+  ]) {
+    const body = testBody(name);
+    assert.doesNotMatch(body, /checkEvidence\(/, `${name} must not rescan the full report`);
+    assert.match(body, /checkPerformanceCellForTest\(/, `${name} must validate its affected cell`);
+  }
+});
+
 test("release workflows pin actions and pass expressions through fields, not shell source", () => {
   const workflows = [
     ".github/workflows/ci.yml",

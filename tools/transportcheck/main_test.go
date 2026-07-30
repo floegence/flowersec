@@ -1239,7 +1239,7 @@ func TestTypedRebindAndQUICPMTUDCasesRejectFalseEvidence(t *testing.T) {
 			syntheticIPPacketWithTuple(t, 4, 17, 1200, 2, 2001, 8443),
 		})
 		evidence.Evidence["pcap"] = rewriteEvidenceArtifact(t, report.baseDir, evidence.Evidence["pcap"], pcap)
-		assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "ordered local AddrPort change")
+		assertResult(t, checkCaseEvidenceForTest(t, manifest, registry, report, "NP-REBIND"), statusFail, "ordered local AddrPort change")
 	})
 
 	t.Run("PMTUD reverse order", func(t *testing.T) {
@@ -1252,7 +1252,7 @@ func TestTypedRebindAndQUICPMTUDCasesRejectFalseEvidence(t *testing.T) {
 			syntheticIPPacketWithTuple(t, 4, 17, 1301, 1, 1001, 4433),
 		})
 		evidence.Evidence["pcap"] = rewriteEvidenceArtifact(t, report.baseDir, evidence.Evidence["pcap"], pcap)
-		assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "oversized UDP")
+		assertResult(t, checkCaseEvidenceForTest(t, manifest, registry, report, "NP-PMTUD-STATE"), statusFail, "oversized UDP")
 	})
 
 	t.Run("IPv6 PMTUD cannot use IPv4 capture", func(t *testing.T) {
@@ -1265,7 +1265,7 @@ func TestTypedRebindAndQUICPMTUDCasesRejectFalseEvidence(t *testing.T) {
 			syntheticIPPacketWithTuple(t, 4, 17, 1200, 1, 1001, 4433),
 		})
 		evidence.Evidence["pcap"] = rewriteEvidenceArtifact(t, report.baseDir, evidence.Evidence["pcap"], pcap)
-		assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "missing IPv6 UDP packet")
+		assertResult(t, checkCaseEvidenceForTest(t, manifest, registry, report, "SYS-PMTUD-QUIC-IPV6"), statusFail, "missing IPv6 UDP packet")
 	})
 
 	t.Run("kernel PMTUD requires PTB counter", func(t *testing.T) {
@@ -1291,7 +1291,7 @@ func TestTypedRebindAndQUICPMTUDCasesRejectFalseEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		evidence.Evidence["metrics"] = rewriteEvidenceArtifact(t, report.baseDir, evidence.Evidence["metrics"], data)
-		assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "ICMP PTB reception")
+		assertResult(t, checkCaseEvidenceForTest(t, manifest, registry, report, "SYS-PMTUD-QUIC-IPV4"), statusFail, "ICMP PTB reception")
 	})
 }
 
@@ -2674,7 +2674,7 @@ func TestEvidenceRequiresQlogOnlyForQUICFamilyTopologies(t *testing.T) {
 			report := completeReport(t, manifest, registry)
 			cell := evidenceCellByID(t, report, test.cellID)
 			cell.Runs[0].RawSources = slices.DeleteFunc(cell.Runs[0].RawSources, func(source RawEvidenceSource) bool { return source.Kind == "qlog" })
-			result := checkEvidence(manifest, registry, report, report.baseDir)
+			result := checkPerformanceCellForTest(t, manifest, report, test.cellID)
 			if test.wantStatus == statusPass {
 				if result.Status != statusPass || len(result.Issues) != 0 {
 					t.Fatalf("result = %#v, want pass", result)
@@ -2776,7 +2776,7 @@ func TestEvidenceEnforcesForcedAndAdaptiveSelection(t *testing.T) {
 				phases = cell.Runs[0].Variants[0].Phases
 			}
 			test.mutate(&phases[0].Selection)
-			result := checkEvidence(manifest, registry, report, report.baseDir)
+			result := checkPerformanceCellForTest(t, manifest, report, test.cell)
 			assertResult(t, result, test.wantStatus, test.wantIssue)
 		})
 	}
