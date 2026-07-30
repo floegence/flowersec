@@ -141,10 +141,6 @@ func finishBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteS
 			results <- err
 			return
 		}
-		if closeIncomingWrite {
-			results <- incoming.CloseWrite()
-			return
-		}
 		results <- nil
 	}()
 	first := <-results
@@ -155,6 +151,13 @@ func finishBrowserBulkPhase(ctx context.Context, incoming, outgoing releaseByteS
 	second := <-results
 	if err := errors.Join(first, second); err != nil {
 		return fmt.Errorf("bidirectional transfer: %w", err)
+	}
+	if closeIncomingWrite {
+		if err := incoming.CloseWrite(); err != nil {
+			_ = incoming.Reset()
+			_ = outgoing.Reset()
+			return fmt.Errorf("bidirectional transfer: close write: %w", err)
+		}
 	}
 	return nil
 }

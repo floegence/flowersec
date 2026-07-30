@@ -319,6 +319,44 @@ func TestBrowserBulkServerFINAcknowledgesPeerReadCompletion(t *testing.T) {
 	}
 }
 
+func TestBrowserBulkServerWaitsForResponseBeforeFIN(t *testing.T) {
+	stream := newOrderedBrowserBidiStream(64 * 1024)
+	session := singleBrowserBulkSession{stream: stream}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- serveBrowserBulkSessionPhase(ctx, session, 64*1024) }()
+
+	select {
+	case <-stream.firstWrite:
+	case <-ctx.Done():
+		t.Fatal("server response write did not start")
+	}
+	select {
+	case <-stream.readComplete:
+	case <-ctx.Done():
+		t.Fatal("peer request read did not complete")
+	}
+	prematureFIN := false
+	select {
+	case <-stream.closeWrite:
+		prematureFIN = true
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(stream.writeAllowed)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if prematureFIN {
+		t.Fatal("server sent FIN before its bulk response finished")
+	}
+	select {
+	case <-stream.closeWrite:
+	case <-ctx.Done():
+		t.Fatal("server did not send FIN after both bulk directions completed")
+	}
+}
+
 func TestProductDirectEndpointReusesListenerForConcurrentArtifacts(t *testing.T) {
 	requireTransportIntegration(t)
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
@@ -590,7 +628,7 @@ type coordinatedBrowserWriteStream struct {
 
 type singleBrowserBulkSession struct {
 	flowersession.SessionV2
-	stream *gatedBrowserBidiStream
+	stream flowersession.ByteStream
 }
 
 func (session singleBrowserBulkSession) AcceptStream(context.Context) (flowersession.IncomingStream, error) {
@@ -607,6 +645,72 @@ type gatedBrowserBidiStream struct {
 	stopOnce    sync.Once
 	read        bool
 }
+
+type orderedBrowserBidiStream struct {
+	remainingRead int
+	readComplete  chan struct{}
+	readDone      sync.Once
+	firstWrite    chan struct{}
+	writeStarted  sync.Once
+	writeAllowed  chan struct{}
+	closeWrite    chan struct{}
+	closeOnce     sync.Once
+	closed        atomic.Bool
+}
+
+func newOrderedBrowserBidiStream(byteCount int) *orderedBrowserBidiStream {
+	return &orderedBrowserBidiStream{
+		remainingRead: byteCount,
+		readComplete:  make(chan struct{}),
+		firstWrite:    make(chan struct{}),
+		writeAllowed:  make(chan struct{}),
+		closeWrite:    make(chan struct{}),
+	}
+}
+
+func (stream *orderedBrowserBidiStream) Read(buffer []byte) (int, error) {
+	if stream.remainingRead == 0 {
+		stream.readDone.Do(func() { close(stream.readComplete) })
+		return 0, io.EOF
+	}
+	count := min(len(buffer), stream.remainingRead)
+	for index := range count {
+		buffer[index] = 0xa5
+	}
+	stream.remainingRead -= count
+	return count, nil
+}
+
+func (stream *orderedBrowserBidiStream) Write(buffer []byte) (int, error) {
+	for _, value := range buffer {
+		if value != 0x5a {
+			return 0, errors.New("unexpected server bulk payload")
+		}
+	}
+	first := false
+	stream.writeStarted.Do(func() {
+		first = true
+		close(stream.firstWrite)
+	})
+	if first {
+		<-stream.writeAllowed
+	}
+	if stream.closed.Load() {
+		return 0, protocolv2.ErrStreamClosed
+	}
+	return len(buffer), nil
+}
+
+func (stream *orderedBrowserBidiStream) CloseWrite() error {
+	stream.closed.Store(true)
+	stream.closeOnce.Do(func() { close(stream.closeWrite) })
+	return nil
+}
+func (*orderedBrowserBidiStream) Close() error         { return nil }
+func (*orderedBrowserBidiStream) Reset() error         { return nil }
+func (*orderedBrowserBidiStream) ID() uint64           { return 5 }
+func (*orderedBrowserBidiStream) Kind() string         { return "release-bulk" }
+func (*orderedBrowserBidiStream) TerminalError() error { return nil }
 
 func (stream *gatedBrowserBidiStream) Read(buffer []byte) (int, error) {
 	if stream.read {
