@@ -10,6 +10,7 @@ const requiredSecurityTests = [
   "scripts/rust-security.test.mjs",
   "scripts/swift-security.test.mjs",
   "scripts/security-makefile.test.mjs",
+  "scripts/run-final-stage.test.mjs",
 ];
 
 const protectedMakeControlVariables = new Set([
@@ -338,8 +339,8 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) transport-v2-signed-evidence-check",
     ]],
     ["final-integration-lanes", [
-      "\t$(MAKE) final-race-check",
-      "\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check",
+      "\tnode scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
+      "\tnode scripts/run-final-stage.mjs 595 languages $(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check",
     ]],
     ["final-go-check", [
       "\t$(MAKE) transport-v2-unit",

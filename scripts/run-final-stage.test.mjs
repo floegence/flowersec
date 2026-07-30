@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import test from "node:test";
+
+const runner = path.join(import.meta.dirname, "run-final-stage.mjs");
+
+function run(args) {
+  return spawnSync(process.execPath, [runner, ...args], { encoding: "utf8" });
+}
+
+test("final stage wrapper validates its closed command contract", () => {
+  for (const args of [
+    [],
+    ["0", "race", "true"],
+    ["596", "race", "true"],
+    ["1", "unknown", "true"],
+    ["1", "race"],
+  ]) {
+    assert.notEqual(run(args).status, 0, args.join(" "));
+  }
+});
+
+test("final stage wrapper preserves success and failure status", () => {
+  assert.equal(run(["1", "race", process.execPath, "-e", "process.exit(0)"]).status, 0);
+  assert.equal(run(["1", "languages", process.execPath, "-e", "process.exit(23)"]).status, 23);
+});
+
+test("final stage wrapper terminates the complete child process group", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-final-stage-"));
+  const marker = path.join(root, "child-finished");
+  try {
+    const source = `
+      const { spawn } = require("node:child_process");
+      spawn(process.execPath, ["-e", ${JSON.stringify(`setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "late"), 2500)`) }], { stdio: "ignore" });
+      setInterval(() => {}, 1000);
+    `;
+    const result = run(["1", "race", process.execPath, "-e", source]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /race stage exceeded 1 seconds/);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1800);
+    assert.equal(fs.existsSync(marker), false, "timed-out descendants must not survive the stage");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("final stage wrapper forwards external termination to descendants", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-final-signal-"));
+  const marker = path.join(root, "child-finished");
+  try {
+    const descendant = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "late"), 2500)`;
+    const source = `
+      const { spawn } = require("node:child_process");
+      spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "ignore" });
+      setInterval(() => {}, 1000);
+    `;
+    const child = spawn(process.execPath, [runner, "5", "languages", process.execPath, "-e", source], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    child.kill("SIGTERM");
+    const result = await new Promise((resolve) => {
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("exit", (code, signal) => resolve({ code, signal, stderr }));
+    });
+    assert.equal(result.signal, null);
+    assert.equal(result.code, 143, result.stderr);
+    await new Promise((resolve) => setTimeout(resolve, 2_800));
+    assert.equal(fs.existsSync(marker), false, "externally terminated descendants must not survive the stage");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

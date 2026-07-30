@@ -16,6 +16,11 @@ const gmake = (process.env.PATH ?? "")
 function check(makefile, extraEnv = {}, makeBinary) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-make-security-"));
   fs.writeFileSync(path.join(root, "Makefile"), makefile);
+  fs.mkdirSync(path.join(root, "scripts"));
+  fs.copyFileSync(
+    path.join(sourceRoot, "scripts/run-final-stage.mjs"),
+    path.join(root, "scripts/run-final-stage.mjs"),
+  );
   const env = { ...process.env, ...extraEnv };
   if (makeBinary !== undefined) {
     fs.symlinkSync(makeBinary, path.join(root, "make"));
@@ -95,8 +100,8 @@ test("precommit uses the short Go group while final integration retains the comp
 
 test("final integration isolates race from the bounded language build lanes", () => {
   const laneCall = [
-    "\t$(MAKE) final-race-check",
-    "\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check",
+    "\tnode scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
+    "\tnode scripts/run-final-stage.mjs 595 languages $(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check",
   ].join("\n");
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const checkTarget = canonical.match(/^check: security-makefile-check security-dependency-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
@@ -107,7 +112,7 @@ test("final integration isolates race from the bounded language build lanes", ()
     assert.match(canonical, new RegExp("^" + target + ":", "m"), target + " must remain an explicit final lane");
   }
 
-  const weakened = canonical.replace(laneCall, "\t$(MAKE) final-race-check\n\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check");
+  const weakened = canonical.replace(laneCall, "\tnode scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check\n\tnode scripts/run-final-stage.mjs 595 languages $(MAKE) -j4 final-go-check final-ts-check final-swift-check");
   assert.notEqual(weakened, canonical);
   const result = check(weakened);
   assert.notEqual(result.status, 0);
@@ -174,7 +179,7 @@ test("final race validation completes before bounded language build lanes start"
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const goTarget = canonical.match(/^final-go-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const raceTarget = canonical.match(/^final-race-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  assert.match(laneTarget, /^\t\$\(MAKE\) final-race-check\n\t\$\(MAKE\) -j4 final-go-check final-ts-check final-swift-check final-rust-check\n$/);
+  assert.match(laneTarget, /^\tnode scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tnode scripts\/run-final-stage\.mjs 595 languages \$\(MAKE\) -j4 final-go-check final-ts-check final-swift-check final-rust-check\n$/);
   assert.doesNotMatch(goTarget, /go-test-race/);
   assert.match(raceTarget, /^\t\$\(MAKE\) go-test-race$/m);
 });
@@ -378,8 +383,8 @@ test("effective Make graph rejects recipe override and missing inventory freshne
   assert.match(ignoredResult.stderr, /exact|ignore|recipe/i);
 
   const swallowedFailure = canonical.replace(
-    "scripts/security-makefile.test.mjs\n\tnode scripts/generate-source-inventory.mjs --check",
-    "scripts/security-makefile.test.mjs || true\n\tnode scripts/generate-source-inventory.mjs --check",
+    "scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs\n\tnode scripts/generate-source-inventory.mjs --check",
+    "scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs || true\n\tnode scripts/generate-source-inventory.mjs --check",
   );
   assert.notEqual(swallowedFailure, canonical);
   const swallowedResult = check(swallowedFailure);

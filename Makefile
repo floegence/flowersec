@@ -257,7 +257,7 @@ security-makefile-check:
 	node scripts/check-security-makefile.mjs Makefile
 
 security-dependency-check: ts-ensure-deps
-	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/security-makefile.test.mjs
+	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs
 	node scripts/generate-source-inventory.mjs --check
 
 security-package-check: ts-build
@@ -436,8 +436,8 @@ check: security-makefile-check security-dependency-check
 	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) transport-interop-smoke; fi
 
 final-integration-lanes:
-	$(MAKE) final-race-check
-	$(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check
+	node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check
+	node scripts/run-final-stage.mjs 595 languages $(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check
 
 final-go-check:
 	$(MAKE) transport-v2-unit
