@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -171,6 +171,116 @@ printf 'worker GOMAXPROCS=%s\\n' "\${GOMAXPROCS:-unset}"
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.match(/worker GOMAXPROCS=1/g)?.length, 3, result.stdout);
   } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("race shard runner starts sparse tail shards before full shards", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-race-order-"));
+  try {
+    const packageDirectory = path.join(root, "package");
+    const binDirectory = path.join(root, "bin");
+    fs.mkdirSync(packageDirectory);
+    fs.mkdirSync(binDirectory);
+    const fakeGo = path.join(binDirectory, "go");
+    fs.writeFileSync(fakeGo, `#!/bin/sh
+if [ "$2" = "-list" ]; then
+  i=1
+  while [ "$i" -le 10 ]; do
+    printf 'Test%s\n' "$i"
+    i=$((i + 1))
+  done
+  exit 0
+fi
+exit 0
+`);
+    fs.chmodSync(fakeGo, 0o755);
+
+    const result = spawnSync(
+      path.join(sourceRoot, "scripts/run-go-test-race-shards.sh"),
+      [packageDirectory, "4", "1m", "1", "normal"],
+      {
+        cwd: sourceRoot,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}` },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const starts = [...result.stdout.matchAll(/running normal shard (\d+)\/4/g)]
+      .map((match) => Number(match[1]));
+    assert.deepEqual(starts, [3, 4, 1, 2]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("race shard runner retains diagnostics after SIGTERM", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-race-signal-"));
+  const packageDirectory = path.join(root, "package");
+  const binDirectory = path.join(root, "bin");
+  const tempDirectory = path.join(root, "tmp");
+  fs.mkdirSync(packageDirectory);
+  fs.mkdirSync(binDirectory);
+  fs.mkdirSync(tempDirectory);
+  const fakeGo = path.join(binDirectory, "go");
+  fs.writeFileSync(fakeGo, `#!/bin/sh
+if [ "$2" = "-list" ]; then
+  printf 'TestOne\n'
+  exit 0
+fi
+sleep 30
+`);
+  fs.chmodSync(fakeGo, 0o755);
+
+  const child = spawn(
+    path.join(sourceRoot, "scripts/run-go-test-race-shards.sh"),
+    [packageDirectory, "1", "1m", "1", "normal"],
+    {
+      cwd: sourceRoot,
+      env: {
+        ...process.env,
+        PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
+        TMPDIR: tempDirectory,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  try {
+    await new Promise((resolve, reject) => {
+      const deadline = Date.now() + 5_000;
+      const inspect = () => {
+        const directories = fs.readdirSync(tempDirectory)
+          .filter((entry) => entry.startsWith("flowersec-race-shards."));
+        const started = directories.some((entry) =>
+          fs.existsSync(path.join(tempDirectory, entry, "shard-0.log")));
+        if (started) {
+          resolve();
+        } else if (Date.now() >= deadline) {
+          reject(new Error(`runner did not start a shard: ${stdout}${stderr}`));
+        } else {
+          setTimeout(inspect, 20);
+        }
+      };
+      inspect();
+    });
+    assert.equal(child.kill("SIGTERM"), true);
+    const result = await new Promise((resolve) => {
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+    });
+    assert.notEqual(result.code, 0);
+    const retained = /race shard logs retained at (.+)/.exec(stderr)?.[1]?.trim();
+    assert.ok(retained, stderr);
+    assert.equal(fs.existsSync(retained), true, retained);
+    assert.equal(fs.existsSync(path.join(retained, "tests")), true);
+    assert.equal(fs.existsSync(path.join(retained, "shard-0.log")), true);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

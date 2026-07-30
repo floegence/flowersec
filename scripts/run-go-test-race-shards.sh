@@ -53,15 +53,41 @@ case "$timeout" in
 esac
 
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/flowersec-race-shards.XXXXXX")"
+interrupted=0
+active_pids=()
+active_logs=()
+active_done=()
+active_count=0
 cleanup() {
   local status="$?"
-  if (( status == 0 )); then
+  if (( status == 0 && interrupted == 0 )); then
     rm -rf "$temp_dir"
   else
     echo "race shard logs retained at $temp_dir" >&2
   fi
 }
+handle_signal() {
+  local signal="$1"
+  local status=143
+  local pid
+  interrupted=1
+  trap - INT TERM HUP
+  case "$signal" in
+    INT) status=130 ;;
+    HUP) status=129 ;;
+  esac
+  for pid in "${active_pids[@]}"; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  for pid in "${active_pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  exit "$status"
+}
 trap cleanup EXIT
+trap 'handle_signal INT' INT
+trap 'handle_signal TERM' TERM
+trap 'handle_signal HUP' HUP
 tests_file="$temp_dir/tests"
 
 (
@@ -115,16 +141,20 @@ reap_finished_shards() {
   done
 }
 
-active_pids=()
-active_logs=()
-active_done=()
-active_count=0
 shard_failed=0
-for ((shard = 0; shard < shard_count; shard++)); do
+shard_order=()
+while read -r _shard_tests shard; do
+  shard_order+=("$shard")
+done < <(
+  for ((shard = 0; shard < shard_count; shard++)); do
+    shard_file="$temp_dir/shard-$shard"
+    if [[ -s "$shard_file" ]]; then
+      printf '%s %s\n' "$(wc -l < "$shard_file" | tr -d ' ')" "$shard"
+    fi
+  done | sort -n -k1,1 -k2,2
+)
+for shard in "${shard_order[@]}"; do
   shard_file="$temp_dir/shard-$shard"
-  if [[ ! -s "$shard_file" ]]; then
-    continue
-  fi
   pattern="$(paste -sd'|' "$shard_file")"
   shard_tests="$(wc -l < "$shard_file" | tr -d ' ')"
   log_file="$temp_dir/shard-$shard.log"
