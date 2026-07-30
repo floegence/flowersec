@@ -40,6 +40,27 @@ type goListPackage struct {
 	}
 }
 
+type boundedOutputBuffer struct {
+	data  []byte
+	limit int
+}
+
+func newBoundedOutputBuffer(limit int) boundedOutputBuffer {
+	return boundedOutputBuffer{limit: limit}
+}
+
+func (buffer *boundedOutputBuffer) Write(data []byte) (int, error) {
+	written := len(data)
+	if remaining := buffer.limit - len(buffer.data); remaining > 0 {
+		buffer.data = append(buffer.data, data[:min(remaining, len(data))]...)
+	}
+	return written, nil
+}
+
+func (buffer *boundedOutputBuffer) String() string {
+	return string(buffer.data)
+}
+
 func runnerSourceSHA256(repository string) (string, error) {
 	moduleRoot := filepath.Join(repository, "flowersec-go")
 	command := exec.Command("go", "list", "-deps", "-json", lowLevelRunnerPackage)
@@ -49,22 +70,11 @@ func runnerSourceSHA256(repository string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	stderr, err := command.StderrPipe()
-	if err != nil {
-		return "", err
-	}
+	stderr := newBoundedOutputBuffer(1 << 20)
+	command.Stderr = &stderr
 	if err := command.Start(); err != nil {
 		return "", err
 	}
-	type stderrResult struct {
-		data []byte
-		err  error
-	}
-	stderrResults := make(chan stderrResult, 1)
-	go func() {
-		data, readErr := io.ReadAll(io.LimitReader(stderr, 1<<20))
-		stderrResults <- stderrResult{data: data, err: readErr}
-	}()
 	decoder := json.NewDecoder(bufio.NewReader(stdout))
 	paths := map[string]struct{}{
 		filepath.Join(moduleRoot, "go.mod"): {},
@@ -79,8 +89,7 @@ func runnerSourceSHA256(repository string) (string, error) {
 		if err != nil {
 			_ = command.Process.Kill()
 			waitErr := command.Wait()
-			stderr := <-stderrResults
-			return "", fmt.Errorf("decode runner dependency graph: %w: %s", errors.Join(err, waitErr, stderr.err), strings.TrimSpace(string(stderr.data)))
+			return "", fmt.Errorf("decode runner dependency graph: %w: %s", errors.Join(err, waitErr), strings.TrimSpace(stderr.String()))
 		}
 		if pkg.Module == nil || !pkg.Module.Main || filepath.Clean(pkg.Module.Dir) != moduleRoot {
 			continue
@@ -93,9 +102,8 @@ func runnerSourceSHA256(repository string) (string, error) {
 		}
 	}
 	waitErr := command.Wait()
-	stderrRead := <-stderrResults
-	if stderrRead.err != nil || waitErr != nil {
-		return "", fmt.Errorf("enumerate runner dependency graph: %w: %s", errors.Join(stderrRead.err, waitErr), strings.TrimSpace(string(stderrRead.data)))
+	if waitErr != nil {
+		return "", fmt.Errorf("enumerate runner dependency graph: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
 	}
 	relativePaths := make([]string, 0, len(paths))
 	pathByRelative := make(map[string]string, len(paths))

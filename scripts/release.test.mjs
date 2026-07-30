@@ -393,6 +393,21 @@ test("local transport evidence mutations use focused validators", () => {
   }
 });
 
+test("runner source graph keeps stderr draining under exec.Cmd ownership", () => {
+  const source = fs.readFileSync(
+    path.join(sourceRoot, "tools/transportcheck/runner_identity.go"),
+    "utf8",
+  );
+  const start = source.indexOf("func runnerSourceSHA256(");
+  const next = source.indexOf("\nfunc ", start + 1);
+  assert.notEqual(start, -1, "runnerSourceSHA256 must exist");
+  const body = source.slice(start, next === -1 ? source.length : next);
+
+  assert.doesNotMatch(body, /StderrPipe\(/, "Wait must not close stderr while a reader is draining it");
+  assert.match(body, /command\.Stderr = &stderr/, "exec.Cmd must own stderr copying through Wait");
+  assert.match(body, /newBoundedOutputBuffer\(1 << 20\)/, "stderr diagnostics must remain bounded");
+});
+
 test("release workflows pin actions and pass expressions through fields, not shell source", () => {
   const workflows = [
     ".github/workflows/ci.yml",

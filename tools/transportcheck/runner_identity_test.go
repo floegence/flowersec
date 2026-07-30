@@ -1,11 +1,27 @@
 package main
 
 import (
+	"bytes"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestBoundedOutputBufferRetainsOnlyTheDiagnosticLimit(t *testing.T) {
+	buffer := newBoundedOutputBuffer(4)
+	input := []byte("abcdef")
+	written, err := buffer.Write(input)
+	if err != nil || written != len(input) {
+		t.Fatalf("Write() = %d, %v, want %d, nil", written, err, len(input))
+	}
+	if got := []byte(buffer.String()); !bytes.Equal(got, input[:4]) {
+		t.Fatalf("bounded output = %q, want %q", got, input[:4])
+	}
+	if written, err := buffer.Write([]byte("ignored")); err != nil || written != len("ignored") || buffer.String() != "abcd" {
+		t.Fatalf("full buffer Write() = %d, %v, %q", written, err, buffer.String())
+	}
+}
 
 func TestRunnerSourceSHA256DrainsDependencyGraphWhileGoListRuns(t *testing.T) {
 	repository, err := filepath.Abs(filepath.Join("..", ".."))
