@@ -572,7 +572,7 @@ func TestBrowserArtifactSourceKeepsColdSessionAliveForOperationDeadline(t *testi
 	profile := transportrelease.ProfilePlan{
 		ID: "edge-v1",
 		Cold: transportrelease.ColdPlan{
-			Operations: 1, OperationDeadlineSeconds: 3,
+			Operations: 1, OperationDeadlineSeconds: 3, PhaseDeadlineSeconds: 3,
 		},
 		CleanupDeadlineSeconds: 1,
 		CellWatchdogMinutes:    1,
@@ -600,6 +600,22 @@ func TestBrowserArtifactSourceKeepsColdSessionAliveForOperationDeadline(t *testi
 	}
 	if got := session.closeCalls.Load(); got != 0 {
 		t.Fatalf("forced session close calls = %d, want 0 before the cold operation deadline", got)
+	}
+}
+
+func TestBrowserServerSessionCloseDeadlineCoversColdPhaseAndCleanup(t *testing.T) {
+	profile := transportrelease.ProfilePlan{
+		Cold: transportrelease.ColdPlan{
+			OperationDeadlineSeconds: 10,
+			PhaseDeadlineSeconds:     15,
+		},
+		CleanupDeadlineSeconds: 5,
+	}
+	if got, want := browserServerSessionCloseDeadline(profile, "cold"), 20*time.Second; got != want {
+		t.Fatalf("cold server session close deadline = %s, want phase plus cleanup %s", got, want)
+	}
+	if got, want := browserServerSessionCloseDeadline(profile, "rpc"), 5*time.Second; got != want {
+		t.Fatalf("rpc server session close deadline = %s, want cleanup %s", got, want)
 	}
 }
 

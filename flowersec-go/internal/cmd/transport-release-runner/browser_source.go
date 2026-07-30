@@ -230,7 +230,7 @@ func (source *browserArtifactSource) serve(record *browserArtifactRecord) {
 func browserServerSessionCloseDeadline(profile transportrelease.ProfilePlan, phase string) time.Duration {
 	deadline := time.Duration(profile.CleanupDeadlineSeconds) * time.Second
 	if phase == "cold" {
-		deadline += time.Duration(profile.Cold.OperationDeadlineSeconds) * time.Second
+		deadline += time.Duration(profile.Cold.PhaseDeadlineSeconds) * time.Second
 	}
 	return deadline
 }
