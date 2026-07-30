@@ -8,6 +8,14 @@ import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
 const runner = path.join(import.meta.dirname, "run-final-stage.mjs");
+const helperMode = process.argv[2];
+
+if (helperMode === "descendant") {
+  setTimeout(() => fs.writeFileSync(process.argv[3], "late"), 2_500);
+} else if (helperMode === "parent") {
+  spawn(process.execPath, [import.meta.filename, "descendant", process.argv[3]], { stdio: "ignore" });
+  setInterval(() => {}, 1_000);
+} else {
 
 function run(args) {
   return spawnSync(process.execPath, [runner, ...args], { encoding: "utf8" });
@@ -34,12 +42,7 @@ test("final stage wrapper terminates the complete child process group", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-final-stage-"));
   const marker = path.join(root, "child-finished");
   try {
-    const source = `
-      const { spawn } = require("node:child_process");
-      spawn(process.execPath, ["-e", ${JSON.stringify(`setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "late"), 2500)`) }], { stdio: "ignore" });
-      setInterval(() => {}, 1000);
-    `;
-    const result = run(["1", "race", process.execPath, "-e", source]);
+    const result = run(["1", "race", process.execPath, import.meta.filename, "parent", marker]);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /race stage exceeded 1 seconds/);
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1800);
@@ -53,13 +56,7 @@ test("final stage wrapper forwards external termination to descendants", async (
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-final-signal-"));
   const marker = path.join(root, "child-finished");
   try {
-    const descendant = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "late"), 2500)`;
-    const source = `
-      const { spawn } = require("node:child_process");
-      spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: "ignore" });
-      setInterval(() => {}, 1000);
-    `;
-    const child = spawn(process.execPath, [runner, "5", "languages", process.execPath, "-e", source], {
+    const child = spawn(process.execPath, [runner, "5", "languages", process.execPath, import.meta.filename, "parent", marker], {
       stdio: ["ignore", "ignore", "pipe"],
     });
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -78,3 +75,4 @@ test("final stage wrapper forwards external termination to descendants", async (
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+}
