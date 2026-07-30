@@ -6,15 +6,15 @@
   "runner": {
     "id": "flowersec-linux-release-v1",
     "os": "linux",
-    "architecture": "amd64",
-    "kernel_release": "6.8.0-124-generic",
+    "architecture": "arm64",
+    "kernel_release": "5.10.0-1012-rockchip",
     "namespace": "isolated",
     "traffic_control": "tc-netem-v1",
     "packet_counters": "ebpf-v1",
-    "effective_config_sha256": "94984c52b0417583217a7974f50bf13f838913f948960caa0dc0725a0893ad71",
+    "effective_config_sha256": "19008cdade35472d04a6dc09c98fe6ed9ed86139e0315fe58faea2fdeb8b02fd",
     "effective_config_path": "runner_effective_config.json",
-    "executable_sha256": "4be5b440d40e69be138097b7f50f4e8154a0cd0c7f20b136fe2d2198fed5a44a",
-    "source_sha256": "72d284178a519173f802ec7329fbac04c84669398d16dc715d77aa1117aec83e",
+    "executable_sha256": "784f0b818054cb93db834abd30d3fb1a0911b0660618bb923adf6a1332ea8034",
+    "source_sha256": "0d6a2e1f4e1e5d4728be089b4b8ef6561453615260ae4ded614d1d935fb4bc74",
     "argv_sha256": "828afd3776a174af61610a56dfd958a4bd5197037f4771526ab74b974da01145"
   }
 }
