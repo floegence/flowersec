@@ -9,6 +9,28 @@ import (
 	"strings"
 )
 
+func allocateCollectionLaneCPUs(allowed []int, laneCount, maximumPerLane int) ([][]int, error) {
+	if laneCount <= 0 || maximumPerLane <= 0 {
+		return nil, errors.New("collection CPU allocation requires positive lane and per-lane limits")
+	}
+	if len(allowed) < laneCount {
+		return nil, fmt.Errorf("release runner requires at least %d delegated CPUs, got %d", laneCount, len(allowed))
+	}
+	usable := min(len(allowed), laneCount*maximumPerLane)
+	base, extra := usable/laneCount, usable%laneCount
+	result := make([][]int, laneCount)
+	offset := 0
+	for lane := range result {
+		count := base
+		if lane < extra {
+			count++
+		}
+		result[lane] = append([]int(nil), allowed[offset:offset+count]...)
+		offset += count
+	}
+	return result, nil
+}
+
 const (
 	collectionLaneCPUs           = 2
 	collectionLaneMemoryMaxBytes = 3 * 1024 * 1024 * 1024

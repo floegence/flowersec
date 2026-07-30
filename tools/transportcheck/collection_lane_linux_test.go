@@ -18,14 +18,26 @@ func TestProductionCollectionLanesEnterDistinctCgroups(t *testing.T) {
 		name      string
 		count     int
 		caseSuite bool
-		cpus      int
+		maxCPUs   int
 		memoryMax int64
 		pidsMax   int
 	}{
-		{name: "performance", count: 6, cpus: collectionLaneCPUs, memoryMax: collectionLaneMemoryMaxBytes, pidsMax: collectionLanePIDsMax},
-		{name: "capacity", count: collectionCaseParallelism, caseSuite: true, cpus: collectionCaseLaneCPUs, memoryMax: collectionCaseMemoryMaxBytes, pidsMax: collectionCasePIDsMax},
+		{name: "performance", count: 6, maxCPUs: collectionLaneCPUs, memoryMax: collectionLaneMemoryMaxBytes, pidsMax: collectionLanePIDsMax},
+		{name: "capacity", count: collectionCaseParallelism, caseSuite: true, maxCPUs: collectionCaseLaneCPUs, memoryMax: collectionCaseMemoryMaxBytes, pidsMax: collectionCasePIDsMax},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			allowedData, err := os.ReadFile(filepath.Join(collectionCgroupRoot, "cpuset.cpus.effective"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			allowed, err := parseCPUSet(strings.TrimSpace(string(allowedData)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCPUs, err := allocateCollectionLaneCPUs(allowed, test.count, test.maxCPUs)
+			if err != nil {
+				t.Fatal(err)
+			}
 			set, err := openCollectionLaneSet(test.count, true, test.caseSuite)
 			if err != nil {
 				t.Fatal(err)
@@ -58,7 +70,7 @@ func TestProductionCollectionLanesEnterDistinctCgroups(t *testing.T) {
 					t.Fatalf("lane %d command: %v", index, err)
 				}
 				identity := lane.Identity()
-				if identity.Index != index || len(strings.Split(identity.CPUSet, ",")) != test.cpus ||
+				if identity.Index != index || identity.CPUSet != formatCPUSet(wantCPUs[index]) ||
 					identity.MemoryMaxBytes != test.memoryMax || identity.PIDsMax != test.pidsMax {
 					t.Fatalf("lane %d identity = %+v", index, identity)
 				}

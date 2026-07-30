@@ -56,8 +56,12 @@ func openCollectionLaneSet(count int, isolated, caseSuite bool) (_ collectionLan
 		return nil, fmt.Errorf("read effective release CPU set: %w", err)
 	}
 	allowed, err := parseCPUSet(strings.TrimSpace(string(allowedData)))
-	if err != nil || len(allowed) < count*cpusPerLane {
-		return nil, fmt.Errorf("release runner requires at least %d delegated CPUs: %w", count*cpusPerLane, err)
+	if err != nil {
+		return nil, fmt.Errorf("parse effective release CPU set: %w", err)
+	}
+	laneCPUs, err := allocateCollectionLaneCPUs(allowed, count, cpusPerLane)
+	if err != nil {
+		return nil, err
 	}
 	memoryNodes, err := os.ReadFile(filepath.Join(collectionCgroupRoot, "cpuset.mems.effective"))
 	if err != nil || strings.TrimSpace(string(memoryNodes)) == "" {
@@ -73,7 +77,10 @@ func openCollectionLaneSet(count int, isolated, caseSuite bool) (_ collectionLan
 			resultErr = errors.Join(resultErr, set.Close())
 		}
 	}()
-	selected := allowed[:count*cpusPerLane]
+	selected := make([]int, 0, len(allowed))
+	for _, cpus := range laneCPUs {
+		selected = append(selected, cpus...)
+	}
 	if err := writeCgroupValue(root, "cpuset.cpus", formatCPUSet(selected)); err != nil {
 		return nil, err
 	}
@@ -88,10 +95,11 @@ func openCollectionLaneSet(count int, isolated, caseSuite bool) (_ collectionLan
 		if err := os.Mkdir(path, 0o755); err != nil {
 			return nil, err
 		}
-		cpus := formatCPUSet(selected[index*cpusPerLane : (index+1)*cpusPerLane])
+		cpus := formatCPUSet(laneCPUs[index])
+		laneCPUCount := len(laneCPUs[index])
 		for name, value := range map[string]string{
 			"cpuset.cpus": cpus, "cpuset.mems": strings.TrimSpace(string(memoryNodes)),
-			"cpu.max": strconv.Itoa(cpusPerLane*100000) + " 100000", "memory.high": strconv.FormatInt(memoryMax, 10),
+			"cpu.max": strconv.Itoa(laneCPUCount*100000) + " 100000", "memory.high": strconv.FormatInt(memoryMax, 10),
 			"memory.max": strconv.FormatInt(memoryMax, 10), "memory.swap.max": "0",
 			"memory.oom.group": "1", "pids.max": strconv.Itoa(pidsMax),
 		} {
