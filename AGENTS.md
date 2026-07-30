@@ -15,6 +15,19 @@
   - If local `main` is going to be pushed, push the full current local `main` tip together with all of its latest commits.
   - Do not push only a subset of local `main` commits, and do not update remote `main` through another branch while leaving newer local `main` commits unpublished.
 - One feature = one dedicated worktree + one local private branch.
+- Keep at most one active non-main Flowersec worktree for the current task.
+  Before creating or switching to another feature or diagnostic worktree,
+  finish or preserve the current work, remove its worktree, and verify with
+  `git worktree list` that no superseded Flowersec worktree remains. The main
+  worktree may coexist only as the clean integration worktree described in
+  this guide; do not perform feature edits there.
+- Do not leave disposable Flowersec worktrees or clones under `/tmp`,
+  `/private/tmp`, or the platform temporary directory. When a failed
+  diagnostic contains evidence worth retaining, move a checksummed archive,
+  patch, or log into the repository-external task artifact directory, verify
+  it, and then remove the temporary worktree or clone. Never delete unknown
+  dirty work blindly; preserve its tracked diff, untracked files, and
+  unreachable commit first.
 - Default assumption: keep feature branches private until they are merged into `main`. This is what makes repeated history cleanup safe and predictable.
 - Default sync strategy for clean graphs: rebase the feature branch onto `origin/main`. Do not merge `origin/main` into the feature branch in the default flow.
 - Default integration strategy for clean graphs: use `git merge --squash "$BR"` on `main`.
@@ -146,6 +159,14 @@ git config --global merge.conflictstyle zdiff3
   - Prefer storing them outside the repository.
   - If they must live inside the repository during development, keep them under paths covered by `.gitignore`, and make sure `git status` is clean before merging.
 - Delete temporary working docs after the feature is merged so they do not accumulate as misleading historical drafts.
+- Test and diagnostic temporary directories follow the same lifecycle. Remove
+  successful scratch directories immediately after their result is recorded.
+  For a failed run, retain only the checksummed logs or artifacts required for
+  diagnosis in the repository-external task artifact directory, then remove
+  the scratch directory. At every commit, integration, push, stage transition,
+  and task recovery, audit `git worktree list` plus Flowersec-named entries in
+  the system temporary roots; do not proceed while a superseded worktree or
+  unused test directory remains.
 
 ## 3. Local quality gate (required)
 
