@@ -436,7 +436,8 @@ check: security-makefile-check security-dependency-check
 	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) transport-interop-smoke; fi
 
 final-integration-lanes:
-	$(MAKE) -j5 final-go-check final-race-check final-ts-check final-swift-check final-rust-check
+	$(MAKE) final-race-check
+	$(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check
 
 final-go-check:
 	$(MAKE) transport-v2-unit

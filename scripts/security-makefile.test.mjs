@@ -93,8 +93,11 @@ test("precommit uses the short Go group while final integration retains the comp
   assert.match(finalIntegration.stdout, /cd flowersec-go && go test -timeout=5m \.\/\.\.\./);
 });
 
-test("final integration runs only isolated ecosystem lanes in bounded parallel", () => {
-  const laneCall = "\t$(MAKE) -j5 final-go-check final-race-check final-ts-check final-swift-check final-rust-check";
+test("final integration isolates race from the bounded language build lanes", () => {
+  const laneCall = [
+    "\t$(MAKE) final-race-check",
+    "\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check",
+  ].join("\n");
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const checkTarget = canonical.match(/^check: security-makefile-check security-dependency-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.equal(laneTarget.trim(), laneCall.trim());
@@ -104,7 +107,7 @@ test("final integration runs only isolated ecosystem lanes in bounded parallel",
     assert.match(canonical, new RegExp("^" + target + ":", "m"), target + " must remain an explicit final lane");
   }
 
-  const weakened = canonical.replace(laneCall, "\t$(MAKE) -j5 final-go-check final-race-check final-ts-check final-swift-check");
+  const weakened = canonical.replace(laneCall, "\t$(MAKE) final-race-check\n\t$(MAKE) -j4 final-go-check final-ts-check final-swift-check");
   assert.notEqual(weakened, canonical);
   const result = check(weakened);
   assert.notEqual(result.status, 0);
@@ -167,11 +170,11 @@ printf 'worker GOMAXPROCS=%s\\n' "\${GOMAXPROCS:-unset}"
   }
 });
 
-test("final race validation starts in its own isolated lane", () => {
+test("final race validation completes before bounded language build lanes start", () => {
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const goTarget = canonical.match(/^final-go-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const raceTarget = canonical.match(/^final-race-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  assert.match(laneTarget, /\$\(MAKE\) -j5 .*final-race-check/);
+  assert.match(laneTarget, /^\t\$\(MAKE\) final-race-check\n\t\$\(MAKE\) -j4 final-go-check final-ts-check final-swift-check final-rust-check\n$/);
   assert.doesNotMatch(goTarget, /go-test-race/);
   assert.match(raceTarget, /^\t\$\(MAKE\) go-test-race$/m);
 });
