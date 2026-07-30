@@ -115,11 +115,23 @@ test("final Go race gate runs all shards with an explicit CPU budget", () => {
   const raceTarget = canonical.match(/^go-test-race:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(
     raceTarget,
-    /run-go-test-race-shards\.sh tools\/transportcheck 18 5m 9 race 1/,
-    "all 18 isolated process shards must use nine dynamically refilled slots with one Go scheduler slot per worker",
+    /run-go-test-race-shards\.sh tools\/transportcheck 36 5m 9 race 1/,
+    "all tests must use 36 finer isolated process shards through nine dynamically refilled slots with one Go scheduler slot per worker",
   );
-  const measuredWorstShardSeconds = 267.839;
-  assert.ok(2 * measuredWorstShardSeconds < 595, "the measured two-wave upper bound must fit the final gate");
+  const discovered = spawnSync("go", ["test", "-list", "^Test", "."], {
+    cwd: path.join(sourceRoot, "tools/transportcheck"),
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  assert.equal(discovered.status, 0, discovered.stderr);
+  const discoveredTests = discovered.stdout
+    .split("\n")
+    .filter((line) => /^Test[A-Za-z0-9_]+$/.test(line)).length;
+  const shardCount = 36;
+  const workerSlots = 9;
+  assert.ok(discoveredTests > 0, "the transport checker must expose top-level tests");
+  assert.ok(Math.ceil(discoveredTests / shardCount) <= 4, "each shard must own at most four tests");
+  assert.equal(shardCount / workerSlots, 4, "the runner must expose four dynamically refilled waves");
 });
 
 test("race shard runner applies the CPU budget to every worker", () => {
