@@ -14,11 +14,11 @@ import (
 )
 
 const (
-	signedRunnerArchitecture  = "arm64"
-	signedRunnerKernelRelease = "5.10.0-1012-rockchip"
-	signedRunnerConfigDigest  = "19008cdade35472d04a6dc09c98fe6ed9ed86139e0315fe58faea2fdeb8b02fd"
+	signedRunnerArchitecture  = "amd64"
+	signedRunnerKernelRelease = "6.8.0-124-generic"
+	signedRunnerConfigDigest  = "94984c52b0417583217a7974f50bf13f838913f948960caa0dc0725a0893ad71"
 	signedRunnerConfigPath    = "runner_effective_config.json"
-	signedRunnerExecutableSHA = "9171db06114c08e46153572a2d10b75c40db1c7e9de3efff644453cad5119185"
+	signedRunnerExecutableSHA = "22b2c801b4ee3bfc3693b5b5c2a47b873a08fee9ec5c4223a5cb84eff76a4963"
 	signedRunnerSourceSHA     = "6757d6702b7ad44622619ea51f8a66a973078e7944d69280709828e9b976422b"
 	signedRunnerArgvSHA       = "828afd3776a174af61610a56dfd958a4bd5197037f4771526ab74b974da01145"
 )

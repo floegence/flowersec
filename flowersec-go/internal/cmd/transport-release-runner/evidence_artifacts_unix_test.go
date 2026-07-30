@@ -21,6 +21,7 @@ func TestPacketCaptureCancellationStopsDescendantProcess(t *testing.T) {
 	packetCaptureCommand = func(ctx context.Context, _, _, outputPath string) *exec.Cmd {
 		return exec.CommandContext(ctx, "sh", "-c", `
 printf '\324\303\262\24101234567890123456789x' > "$1"
+sleep 0.1
 (trap '' HUP INT TERM; while :; do sleep 1; done) &
 printf '%s\n' "$!" > "$2"
 printf 'listening on test\n' >&2
@@ -36,7 +37,7 @@ wait
 		cancel()
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(childPIDPath)
+	data, err := readFileEventually(childPIDPath, 2*time.Second)
 	if err != nil {
 		cancel()
 		_ = capture.Stop()
@@ -58,6 +59,17 @@ wait
 	}
 	if processIsActive(childPID) {
 		t.Fatalf("packet capture descendant PID %d remained active after context cancellation", childPID)
+	}
+}
+
+func readFileEventually(path string, timeout time.Duration) ([]byte, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil || !errors.Is(err, os.ErrNotExist) || time.Now().After(deadline) {
+			return data, err
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

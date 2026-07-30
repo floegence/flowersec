@@ -363,6 +363,15 @@ func TestDiffSwiftSymbolsDetectsMissingAndExtra(t *testing.T) {
 	}
 }
 
+func TestSwiftBuildArgumentsRequireResolvedVersions(t *testing.T) {
+	for _, base := range [][]string{{"--target", "Flowersec"}, {"--show-bin-path"}} {
+		arguments := swiftBuildArguments(base...)
+		if !slices.Contains(arguments, "--only-use-versions-from-resolved-file") {
+			t.Fatalf("Swift build arguments may refresh remote dependencies: %#v", arguments)
+		}
+	}
+}
+
 func TestSwiftSymbolGraphExtractCandidatesIncludeRuntimeToolchainBin(t *testing.T) {
 	root := t.TempDir()
 	swiftPath := filepath.Join(root, "usr", "bin", "swift")
