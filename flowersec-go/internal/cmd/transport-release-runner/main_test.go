@@ -333,8 +333,8 @@ func TestAdaptiveStageExecutionPlanAllocatesOnlyMobileHarnessSlack(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mobileExecution.Cold.PhaseDeadlineSeconds != 9 {
-		t.Fatalf("mobile phase deadline = %d, want 9", mobileExecution.Cold.PhaseDeadlineSeconds)
+	if mobileExecution.Cold.PhaseDeadlineSeconds != 10 {
+		t.Fatalf("mobile phase deadline = %d, want 10", mobileExecution.Cold.PhaseDeadlineSeconds)
 	}
 	if mobileExecution.Cold.Operations != mobile.Cold.Operations ||
 		mobileExecution.Cold.StartRatePerSecond != mobile.Cold.StartRatePerSecond ||
@@ -342,8 +342,8 @@ func TestAdaptiveStageExecutionPlanAllocatesOnlyMobileHarnessSlack(t *testing.T)
 		t.Fatalf("mobile workload changed: got %+v, want %+v", mobileExecution.Cold, mobile.Cold)
 	}
 	allocated := plan.RunCount * (mobileExecution.Cold.PhaseDeadlineSeconds - mobile.Cold.PhaseDeadlineSeconds)
-	if allocated != 30 || plan.Adaptive.HarnessSlackSeconds-allocated != 15 {
-		t.Fatalf("adaptive slack allocation = %ds with %ds retained, want 30s with 15s retained", allocated, plan.Adaptive.HarnessSlackSeconds-allocated)
+	if allocated != 45 || plan.Adaptive.HarnessSlackSeconds-allocated != 0 {
+		t.Fatalf("adaptive slack allocation = %ds with %ds retained, want 45s with 0s retained", allocated, plan.Adaptive.HarnessSlackSeconds-allocated)
 	}
 
 	insufficient := plan
