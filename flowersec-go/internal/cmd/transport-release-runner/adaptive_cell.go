@@ -67,6 +67,21 @@ func adaptiveCandidatesForTopology(topology string) ([]transportrelease.Adaptive
 	}
 }
 
+func adaptiveStageExecutionPlan(plan transportrelease.ReleasePlan, stage transportrelease.ProfilePlan) (transportrelease.ProfilePlan, error) {
+	if stage.ID != "mobile-v1" {
+		return stage, nil
+	}
+	if plan.RunCount < 1 {
+		return transportrelease.ProfilePlan{}, errors.New("adaptive execution requires a positive run count")
+	}
+	perRunSlack := plan.Adaptive.HarnessSlackSeconds / plan.RunCount
+	if perRunSlack < 3 {
+		return transportrelease.ProfilePlan{}, errors.New("adaptive mobile execution requires at least three seconds of harness slack per run")
+	}
+	stage.Cold.PhaseDeadlineSeconds += perRunSlack - 1
+	return stage, nil
+}
+
 func runAdaptiveCell(parent context.Context, reportPath string, destination *artifactDestination, sourceSHA, profileID, topology, bpfObject string, plan transportrelease.ReleasePlan, manifest transportrelease.ManifestBinding) (resultErr error) {
 	if profileID != plan.Adaptive.ID || profileID != "adaptive-selection-v1" {
 		return errors.New("adaptive selection cell requires adaptive-selection-v1")
@@ -111,10 +126,14 @@ func runAdaptiveCell(parent context.Context, reportPath string, destination *art
 		{profile: plan.Clean},
 		{profile: plan.Mobile, bpf: frozenBPFObject},
 	} {
+		executionPlan, err := adaptiveStageExecutionPlan(plan, stage.profile)
+		if err != nil {
+			return err
+		}
 		for runNumber := 1; runNumber <= plan.RunCount; runNumber++ {
-			result, err := runNetworkAdaptive(cellCtx, topology, candidates, stage.profile, runNumber, stage.bpf, destination)
+			result, err := runNetworkAdaptive(cellCtx, topology, candidates, executionPlan, runNumber, stage.bpf, destination)
 			if err != nil {
-				return fmt.Errorf("%s %s run %d: %w", stage.profile.ID, topology, runNumber, err)
+				return fmt.Errorf("%s %s run %d: %w", executionPlan.ID, topology, runNumber, err)
 			}
 			result.Run = runNumber
 			report.Results = append(report.Results, result)

@@ -307,6 +307,52 @@ func TestAdaptiveCandidatesForTopologyMatchesFrozenManifest(t *testing.T) {
 	}
 }
 
+func TestAdaptiveStageExecutionPlanAllocatesOnlyMobileHarnessSlack(t *testing.T) {
+	plan := transportrelease.ReleasePlan{
+		RunCount: 15,
+		Adaptive: transportrelease.AdaptivePlan{HarnessSlackSeconds: 45},
+	}
+	clean := transportrelease.ProfilePlan{
+		ID: "clean-v1",
+		Cold: transportrelease.ColdPlan{
+			Operations: 30, StartRatePerSecond: 15,
+			OperationDeadlineSeconds: 5, PhaseDeadlineSeconds: 7,
+		},
+	}
+	mobile := clean
+	mobile.ID = "mobile-v1"
+
+	cleanExecution, err := adaptiveStageExecutionPlan(plan, clean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cleanExecution, clean) {
+		t.Fatalf("clean execution plan changed: got %+v, want %+v", cleanExecution, clean)
+	}
+	mobileExecution, err := adaptiveStageExecutionPlan(plan, mobile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mobileExecution.Cold.PhaseDeadlineSeconds != 9 {
+		t.Fatalf("mobile phase deadline = %d, want 9", mobileExecution.Cold.PhaseDeadlineSeconds)
+	}
+	if mobileExecution.Cold.Operations != mobile.Cold.Operations ||
+		mobileExecution.Cold.StartRatePerSecond != mobile.Cold.StartRatePerSecond ||
+		mobileExecution.Cold.OperationDeadlineSeconds != mobile.Cold.OperationDeadlineSeconds {
+		t.Fatalf("mobile workload changed: got %+v, want %+v", mobileExecution.Cold, mobile.Cold)
+	}
+	allocated := plan.RunCount * (mobileExecution.Cold.PhaseDeadlineSeconds - mobile.Cold.PhaseDeadlineSeconds)
+	if allocated != 30 || plan.Adaptive.HarnessSlackSeconds-allocated != 15 {
+		t.Fatalf("adaptive slack allocation = %ds with %ds retained, want 30s with 15s retained", allocated, plan.Adaptive.HarnessSlackSeconds-allocated)
+	}
+
+	insufficient := plan
+	insufficient.Adaptive.HarnessSlackSeconds = 44
+	if _, err := adaptiveStageExecutionPlan(insufficient, mobile); err == nil {
+		t.Fatal("accepted adaptive mobile execution without three seconds of harness slack per run")
+	}
+}
+
 func TestVerifySourceCheckoutBindsCleanHeadAndManifest(t *testing.T) {
 	root := t.TempDir()
 	runGit(t, root, "init", "-q")
