@@ -250,7 +250,7 @@ cmp -s -- "$manifest_path" "$base_manifest_path" || fail "base and final perform
 [[ -f $rust_release_runner && ! -L $rust_release_runner && -x $rust_release_runner ]] || fail "Rust release runner build is unavailable"
 (
   cd "$source_root/flowersec-go"
-  go build -race -trimpath -buildvcs=false -o "$race_low_level_runner" ./internal/cmd/transport-release-runner
+  CGO_ENABLED=1 go build -race -trimpath -buildvcs=false -o "$race_low_level_runner" ./internal/cmd/transport-release-runner
 )
 (
   cd "$base_source_root/flowersec-go"
