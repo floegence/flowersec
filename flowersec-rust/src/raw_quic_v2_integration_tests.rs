@@ -356,20 +356,8 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
 
 #[tokio::test]
 async fn public_acceptor_establishes_opaque_direct_session() {
-    let port = UdpSocket::bind(loopback_ephemeral())
-        .expect("reserve acceptor port")
-        .local_addr()
-        .expect("reserved acceptor address")
-        .port();
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-    let artifact = Artifact::parse(public_connector_artifact(
-        address,
-        RawQuicPathProfile::Direct,
-        1,
-    ))
-    .expect("parse acceptor artifact");
     let options = AcceptorOptions {
-        bind_address: address,
+        bind_address: loopback_ephemeral(),
         certificate_chain_der: vec![test_cert_der()],
         private_key_der: test_key_der(),
         max_inbound_streams: 1,
@@ -379,7 +367,17 @@ async fn public_acceptor_establishes_opaque_direct_session() {
     assert!(!debug.contains(TEST_CERT_DER_B64));
     assert!(!debug.contains(TEST_KEY_DER_B64));
     let acceptor = Acceptor::bind(options).expect("bind public acceptor");
+    let address = acceptor
+        .local_address()
+        .expect("read public acceptor address");
+    let port = address.port();
     assert!(!format!("{acceptor:?}").contains(&port.to_string()));
+    let artifact = Artifact::parse(public_connector_artifact(
+        address,
+        RawQuicPathProfile::Direct,
+        1,
+    ))
+    .expect("parse acceptor artifact");
 
     let server_artifact = artifact.clone();
     let server = tokio::spawn(async move {

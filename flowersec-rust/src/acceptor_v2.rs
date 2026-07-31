@@ -100,6 +100,13 @@ impl Acceptor {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn local_address(&self) -> Result<SocketAddr, AcceptError> {
+        self.listener
+            .local_addr()
+            .map_err(|_| error(AcceptErrorCode::BindFailed))
+    }
+
     pub async fn accept(
         &self,
         artifact: &Artifact,
