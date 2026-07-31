@@ -606,7 +606,7 @@ func (pair *Pair) Close(ctx context.Context) error {
 			if entry.session != nil {
 				closeCount++
 				go func(label string, session flowersession.SessionV2) {
-					if err := session.Close(); err != nil {
+					if err := transportrelease.NormalizeCloseError(session.Close()); err != nil {
 						closeErrors <- fmt.Errorf("%s tunnel session close: %w", label, err)
 						return
 					}

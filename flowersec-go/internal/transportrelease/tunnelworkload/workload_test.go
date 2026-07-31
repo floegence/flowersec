@@ -7,8 +7,42 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 )
+
+type terminalCloseSession struct {
+	flowersession.SessionV2
+	closeErr   error
+	terminated chan struct{}
+}
+
+func (session *terminalCloseSession) Termination() <-chan struct{} { return session.terminated }
+func (session *terminalCloseSession) Close() error                 { return session.closeErr }
+
+func TestPairCloseAcceptsTerminalSessionCloseErrorsAfterTermination(t *testing.T) {
+	terminated := make(chan struct{})
+	close(terminated)
+	pair := &Pair{
+		Client: &terminalCloseSession{closeErr: context.DeadlineExceeded, terminated: terminated},
+		Server: &terminalCloseSession{closeErr: context.Canceled, terminated: terminated},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := pair.Close(ctx); err != nil {
+		t.Fatalf("Pair.Close terminal errors = %v", err)
+	}
+}
+
+func TestPairCloseRetainsUnexpectedSessionCloseErrors(t *testing.T) {
+	terminated := make(chan struct{})
+	close(terminated)
+	want := errors.New("unexpected close failure")
+	pair := &Pair{Client: &terminalCloseSession{closeErr: want, terminated: terminated}}
+	if err := pair.Close(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("Pair.Close error = %v, want %v", err, want)
+	}
+}
 
 func TestRunColdRequiresIndependentCleanupDeadline(t *testing.T) {
 	_, err := RunCold(context.Background(), &Endpoint{}, 1, 1, 1, time.Second, 0)

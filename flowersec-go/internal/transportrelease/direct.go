@@ -505,3 +505,6 @@ func normalizeCloseError(err error) error {
 	}
 	return err
 }
+
+// NormalizeCloseError filters only transport errors that mean cleanup already reached a terminal state.
+func NormalizeCloseError(err error) error { return normalizeCloseError(err) }
