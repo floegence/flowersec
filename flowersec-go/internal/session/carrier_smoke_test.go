@@ -72,6 +72,7 @@ func TestEngineWebSocketCarrierConformanceSmoke(t *testing.T) {
 	defer client.Close()
 	defer server.Close()
 	assertCarrierEngineSmoke(t, client, server)
+	assertPeerObservedNormalSessionClose(t, client, server)
 }
 
 func assertCarrierEngineSmoke(t *testing.T, client, server *engineSession) {

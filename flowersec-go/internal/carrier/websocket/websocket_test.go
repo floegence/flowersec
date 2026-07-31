@@ -95,6 +95,38 @@ func TestCloseWithErrorContextAcceptsNilContext(t *testing.T) {
 	_ = client.CloseWithErrorContext(nil, carrier.ApplicationError{Reason: "test close"})
 }
 
+func TestNormalPeerCloseDuringLocalShutdownIsNotAnError(t *testing.T) {
+	client, _ := newCarrierPair(t, SubprotocolDirect)
+	client.closeControl = func(context.Context, carrier.ApplicationError) error {
+		return &gorillaws.CloseError{Code: closeStatusCode, Text: "session closed"}
+	}
+	if err := client.CloseWithError(carrier.ApplicationError{Code: 1, Reason: "session closed"}); err != nil {
+		t.Fatalf("normal peer close during local shutdown = %v, want nil", err)
+	}
+}
+
+func TestShutdownPreservesNonMatchingPeerCloseErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		local      carrier.ApplicationError
+		peerCode   int
+		peerReason string
+	}{
+		{name: "different local reason", local: carrier.ApplicationError{Code: 1, Reason: "other"}, peerCode: closeStatusCode, peerReason: "session closed"},
+		{name: "different local code", local: carrier.ApplicationError{Code: 6, Reason: "session closed"}, peerCode: closeStatusCode, peerReason: "session closed"},
+		{name: "different peer reason", local: carrier.ApplicationError{Code: 1, Reason: "session closed"}, peerCode: closeStatusCode, peerReason: "other"},
+		{name: "different peer code", local: carrier.ApplicationError{Code: 1, Reason: "session closed"}, peerCode: closeStatusCode + 1, peerReason: "session closed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			peerError := &gorillaws.CloseError{Code: test.peerCode, Text: test.peerReason}
+			if got := normalizeWebSocketShutdownError(peerError, true, test.local); !errors.Is(got, peerError) {
+				t.Fatalf("shutdown error = %v, want original %v", got, peerError)
+			}
+		})
+	}
+}
+
 func TestCanceledAcceptDoesNotCloseSessionOrDropNextStream(t *testing.T) {
 	client, server := newCarrierPair(t, SubprotocolTunnel)
 	canceled, cancel := context.WithCancel(context.Background())

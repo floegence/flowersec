@@ -295,17 +295,22 @@ func (session *Session) CloseWithErrorContext(ctx context.Context, applicationEr
 			beforeCloseErr = session.beforeMuxClose()
 		}
 		session.closeErr = errors.Join(
-			normalizeWebSocketShutdownError(controlErr, true),
+			normalizeWebSocketShutdownError(controlErr, true, applicationError),
 			beforeCloseErr,
-			normalizeWebSocketShutdownError(session.mux.Close(), false),
+			normalizeWebSocketShutdownError(session.mux.Close(), false, carrier.ApplicationError{}),
 		)
 	})
 	return errors.Join(session.closeErr, context.Cause(ctx))
 }
 
-func normalizeWebSocketShutdownError(err error, allowTimeout bool) error {
+func normalizeWebSocketShutdownError(err error, allowTimeout bool, applicationError carrier.ApplicationError) error {
 	if err == nil || errors.Is(err, net.ErrClosed) || errors.Is(err, gorillaws.ErrCloseSent) ||
 		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+		return nil
+	}
+	var closeError *gorillaws.CloseError
+	if applicationError.Code == 1 && applicationError.Reason == "session closed" &&
+		errors.As(err, &closeError) && closeError.Code == closeStatusCode && closeError.Text == applicationError.Reason {
 		return nil
 	}
 	var networkError net.Error
