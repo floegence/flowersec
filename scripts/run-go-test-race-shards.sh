@@ -151,7 +151,7 @@ done < <(
     if [[ -s "$shard_file" ]]; then
       printf '%s %s\n' "$(wc -l < "$shard_file" | tr -d ' ')" "$shard"
     fi
-  done | sort -n -k1,1 -k2,2
+  done | sort -k1,1nr -k2,2n
 )
 for shard in "${shard_order[@]}"; do
   shard_file="$temp_dir/shard-$shard"

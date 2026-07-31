@@ -177,7 +177,7 @@ printf 'worker GOMAXPROCS=%s\\n' "\${GOMAXPROCS:-unset}"
   }
 });
 
-test("race shard runner starts sparse tail shards before full shards", () => {
+test("race shard runner starts full shards before sparse tail shards", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-race-order-"));
   try {
     const packageDirectory = path.join(root, "package");
@@ -210,7 +210,7 @@ exit 0
     assert.equal(result.status, 0, result.stderr);
     const starts = [...result.stdout.matchAll(/running normal shard (\d+)\/4/g)]
       .map((match) => Number(match[1]));
-    assert.deepEqual(starts, [3, 4, 1, 2]);
+    assert.deepEqual(starts, [1, 2, 3, 4]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
