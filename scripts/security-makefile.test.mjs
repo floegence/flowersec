@@ -70,6 +70,8 @@ test("precommit stays source-only while final integration retains heavy validati
     "npm run verify:package",
     "swift build",
     "swift test --enable-code-coverage",
+    "go run . verify-swift",
+    "go run . verify-rust",
     "cargo package --allow-dirty",
     "cargo publish --dry-run --allow-dirty",
   ];
@@ -123,8 +125,8 @@ test("final Go race gate runs all shards with an explicit CPU budget", () => {
   const raceTarget = canonical.match(/^go-test-race:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(
     raceTarget,
-    /run-go-test-race-shards\.sh tools\/transportcheck 36 5m 9 race 1/,
-    "all tests must use 36 finer isolated process shards through nine dynamically refilled slots with one Go scheduler slot per worker",
+    /run-go-test-race-shards\.sh tools\/transportcheck 45 5m 9 race 1/,
+    "all tests must use 45 fine isolated process shards through nine dynamically refilled slots with one Go scheduler slot per worker",
   );
   const discovered = spawnSync("go", ["test", "-list", "^Test", "."], {
     cwd: path.join(sourceRoot, "tools/transportcheck"),
@@ -135,11 +137,11 @@ test("final Go race gate runs all shards with an explicit CPU budget", () => {
   const discoveredTests = discovered.stdout
     .split("\n")
     .filter((line) => /^Test[A-Za-z0-9_]+$/.test(line)).length;
-  const shardCount = 36;
+  const shardCount = 45;
   const workerSlots = 9;
   assert.ok(discoveredTests > 0, "the transport checker must expose top-level tests");
   assert.ok(Math.ceil(discoveredTests / shardCount) <= 4, "each shard must own at most four tests");
-  assert.equal(shardCount / workerSlots, 4, "the runner must expose four dynamically refilled waves");
+  assert.equal(shardCount / workerSlots, 5, "the runner must expose five dynamically refilled waves");
 });
 
 test("race shard runner applies the CPU budget to every worker", () => {

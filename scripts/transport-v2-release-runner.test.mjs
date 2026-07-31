@@ -44,6 +44,15 @@ test("release wrapper accepts every Make release target before path validation",
   }
 });
 
+test("release wrapper loads host identity from a git-ignored local config", () => {
+  const runner = fs.readFileSync(runnerPath, "utf8");
+  const gitignore = fs.readFileSync(path.join(sourceRoot, ".gitignore"), "utf8");
+  assert.match(runner, /FLOWERSEC_TRANSPORT_RUNNER_CONFIG/);
+  assert.match(runner, /[.]flowersec[/]transport-runner[.]json/);
+  assert.match(gitignore, new RegExp("^/[.]flowersec/$", "m"));
+  assert.doesNotMatch(runner, /expected_kernel=.*trust_policy/);
+});
+
 test("release wrapper freezes the audited source, host, builds, and collect argv", () => {
   const runner = fs.readFileSync(runnerPath, "utf8");
   assert.match(runner, /^#!\/usr\/bin\/env bash\n\nset -euo pipefail$/m);
@@ -61,7 +70,7 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
 	assert.match(runner, /base and final performance manifests must be byte-identical/);
   assert.match(runner, /ID:-} == ubuntu && \$\{VERSION_ID:-} == 24\.04/);
   assert.match(runner, /actual_kernel=\$\(uname -r\)/);
-  assert.match(runner, /host kernel \$actual_kernel does not match frozen policy \$expected_kernel/);
+  assert.match(runner, /host kernel \$actual_kernel does not match local runner config \$local_runner_kernel/);
   assert.match(runner, /ip netns add "\$probe_namespace"/);
   assert.match(runner, /go build -trimpath -buildvcs=false -o "\$low_level_runner"/);
 	assert.match(runner, /cargo build --locked --release --example transport_release_runner/);
@@ -74,6 +83,7 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
   assert.match(runner, /case \$\(uname -m\) in/);
   assert.match(runner, /x86_64\)[\s\S]*bpf_target_arch=x86[\s\S]*bpf_system_include=\/usr\/include\/x86_64-linux-gnu/);
   assert.match(runner, /aarch64\)[\s\S]*bpf_target_arch=arm64[\s\S]*bpf_system_include=\/usr\/include\/aarch64-linux-gnu/);
+  assert.match(runner, /export GOOS=linux GOARCH="\$actual_architecture" CGO_ENABLED=0/);
   assert.match(runner, /clang -O2 -g -Wall -Werror -target bpf/);
   assert.match(runner, /-D"__TARGET_ARCH_\$\{bpf_target_arch\}"/);
   assert.match(runner, /-I"\$bpf_system_include"/);
@@ -83,7 +93,7 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
   for (const flag of [
     "manifest", "registry", "repo", "base-repo", "base-sha", "final-sha", "target", "report", "artifact-dir",
     "runner-executable", "race-runner-executable", "base-runner-executable", "runner-wrapper", "bpf-object", "host-bpftool",
-    "trust-policy", "effective-config", "kernel-release",
+    "trust-policy", "effective-config", "runner-config", "kernel-release",
   ]) {
     assert.match(runner, new RegExp(`-${flag} `), `collect argv omits -${flag}`);
   }
@@ -155,6 +165,13 @@ test("provision installs the source-matched wrapper at one stable container path
   assert.notEqual(browserInstall, -1, "provision must install the pinned Chromium runtime");
   assert.ok(dependencyInstall < browserBuild, "dependencies must be installed before the browser bundle is built");
   assert.ok(browserBuild < browserInstall, "the browser bundle must be built before Chromium is installed");
+  assert.match(provision, /make transport-runner-config/);
+  assert.match(provision, /\.flowersec\/transport-runner\.json/);
+  assert.match(provision, /chmod 0600/);
+  assert.ok(
+    provision.indexOf("npx playwright install chromium") < provision.indexOf("make transport-runner-config"),
+    "the workload-free local identity must describe the fully provisioned runner",
+  );
 });
 
 test("failed provision stops its task-owned container and preserves the failure status", () => {

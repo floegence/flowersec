@@ -320,7 +320,7 @@ export function verifySecurityMakefile(makefile) {
       "\tcd tools/idlgen && go test -race -timeout=5m ./...",
       "\tcd tools/releasenotes && go test -race -timeout=5m ./...",
       "\tcd tools/stabilitycheck && go test -race -timeout=5m ./...",
-      "\t./scripts/run-go-test-race-shards.sh tools/transportcheck 36 5m 9 race 1",
+      "\t./scripts/run-go-test-race-shards.sh tools/transportcheck 45 5m 9 race 1",
     ]],
     ["go-vulncheck", ["\tnode scripts/check-go-security.mjs"]],
     ["ts-audit", ["\tcd flowersec-ts && npm audit --audit-level=info --include=prod --include=dev --include=optional --include=peer"]],
@@ -404,7 +404,7 @@ export function verifySecurityMakefile(makefile) {
 
   for (const [target, requiredCalls] of [
     ["check", ["release-policy-check", "security-package-check", "final-integration-lanes"]],
-    ["precommit", ["release-policy-check", "precommit-go", "precommit-ts", "precommit-swift", "precommit-rust"]],
+    ["precommit", ["release-policy-check", "stability-source-check", "precommit-go", "precommit-ts", "precommit-swift", "precommit-rust"]],
   ]) {
     const recipe = effectiveRecipe(database.stdout, target);
     for (const required of requiredCalls) {
@@ -428,6 +428,8 @@ export function verifySecurityMakefile(makefile) {
     "npm run verify:package",
     "swift build",
     "swift test --enable-code-coverage",
+    "go run . verify-swift",
+    "go run . verify-rust",
     "cargo package --allow-dirty",
     "cargo publish --dry-run --allow-dirty",
   ];

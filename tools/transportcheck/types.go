@@ -238,18 +238,32 @@ type EvidenceTrustPolicy struct {
 }
 
 type EvidenceRunnerPolicy struct {
-	ID                    string `json:"id"`
-	OS                    string `json:"os"`
-	Architecture          string `json:"architecture"`
-	KernelRelease         string `json:"kernel_release"`
-	Namespace             string `json:"namespace"`
-	TrafficControl        string `json:"traffic_control"`
-	PacketCounters        string `json:"packet_counters"`
-	EffectiveConfigSHA256 string `json:"effective_config_sha256"`
-	EffectiveConfigPath   string `json:"effective_config_path"`
-	ExecutableSHA256      string `json:"executable_sha256"`
-	SourceSHA256          string `json:"source_sha256"`
-	ArgvSHA256            string `json:"argv_sha256"`
+	ID                    string   `json:"id"`
+	OS                    string   `json:"os"`
+	Architectures         []string `json:"architectures"`
+	Namespace             string   `json:"namespace"`
+	TrafficControl        string   `json:"traffic_control"`
+	PacketCounters        string   `json:"packet_counters"`
+	EffectiveConfigSHA256 string   `json:"effective_config_sha256"`
+	EffectiveConfigPath   string   `json:"effective_config_path"`
+	// Deprecated instance fields are decoded only so stale device-bound
+	// policies fail with an actionable portability error.
+	Architecture     string `json:"architecture,omitempty"`
+	KernelRelease    string `json:"kernel_release,omitempty"`
+	ExecutableSHA256 string `json:"executable_sha256,omitempty"`
+	SourceSHA256     string `json:"source_sha256,omitempty"`
+	ArgvSHA256       string `json:"argv_sha256,omitempty"`
+}
+
+type RunnerLocalConfig struct {
+	SchemaVersion    int    `json:"schema_version"`
+	RunnerID         string `json:"runner_id"`
+	OS               string `json:"os"`
+	Architecture     string `json:"architecture"`
+	KernelRelease    string `json:"kernel_release"`
+	ExecutableSHA256 string `json:"executable_sha256"`
+	SourceSHA256     string `json:"source_sha256"`
+	ArgvSHA256       string `json:"argv_sha256"`
 }
 
 type EvidenceAttestation struct {

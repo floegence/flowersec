@@ -401,9 +401,9 @@ test("runner source graph keeps stderr draining under exec.Cmd ownership", () =>
     path.join(sourceRoot, "tools/transportcheck/runner_identity.go"),
     "utf8",
   );
-  const start = source.indexOf("func runnerSourceSHA256(");
+  const start = source.indexOf("func runnerSourceSHA256ForPlatform(");
   const next = source.indexOf("\nfunc ", start + 1);
-  assert.notEqual(start, -1, "runnerSourceSHA256 must exist");
+  assert.notEqual(start, -1, "platform-aware runnerSourceSHA256 implementation must exist");
   const body = source.slice(start, next === -1 ? source.length : next);
 
   assert.doesNotMatch(body, /StderrPipe\(/, "Wait must not close stderr while a reader is draining it");

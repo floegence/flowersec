@@ -433,19 +433,29 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	target := text[strings.Index(text, "stability-check:"):]
+	sourceStart := strings.Index(text, "stability-source-check:")
+	fullStart := strings.Index(text, "stability-check: stability-source-check")
+	if sourceStart < 0 || fullStart < 0 || sourceStart >= fullStart {
+		t.Fatalf("Makefile must define source and full stability targets in order")
+	}
+	sourceTarget := text[sourceStart:fullStart]
 	for _, command := range []string{
 		"verify-manifest",
 		"verify-defaults",
 		"verify-parity",
 		"verify-docs",
 		"verify-go",
-		"verify-swift",
-		"verify-rust",
+		"verify-ts",
 		"report",
 	} {
-		if !strings.Contains(target, command) {
-			t.Fatalf("stability-check must run %s, got:\n%s", command, target)
+		if !strings.Contains(sourceTarget, command) {
+			t.Fatalf("stability-source-check must run %s, got:\n%s", command, sourceTarget)
+		}
+	}
+	fullTarget := text[fullStart:]
+	for _, command := range []string{"stability-check: stability-source-check", "verify-swift", "verify-rust"} {
+		if !strings.Contains(fullTarget, command) {
+			t.Fatalf("complete stability-check must retain %s, got:\n%s", command, fullTarget)
 		}
 	}
 }

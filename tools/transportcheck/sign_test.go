@@ -27,6 +27,7 @@ func TestSignCLIProducesVerifierCompatibleImmutableReport(t *testing.T) {
 	report := completeReport(t, manifest, registry)
 	report.Source.BaseSHA = baseSHA
 	report.Source.FinalSHA = finalSHA
+	bindReportRunnerToRepository(t, report, repositoryPath, manifest, registry)
 	report.Attestation = EvidenceAttestation{}
 	unsignedPath := filepath.Join(report.baseDir, "report.unsigned.json")
 	signedPath := filepath.Join(report.baseDir, "report.json")
@@ -189,10 +190,9 @@ func writeSigningTrustFixture(t *testing.T, privateKey ed25519.PrivateKey) (stri
 		TrustStoreSHA256: hex.EncodeToString(trustStoreDigest[:]),
 		KeyID:            "release-sign-test", PublicKeySHA256: hex.EncodeToString(publicKeyDigest[:]),
 		Runner: EvidenceRunnerPolicy{
-			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
+			ID: "flowersec-linux-release-v1", OS: "linux", Architectures: []string{"amd64", "arm64"},
 			Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1",
 			EffectiveConfigSHA256: signedRunnerConfigDigest, EffectiveConfigPath: signedRunnerConfigPath,
-			ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
 		},
 	})
 	return trustStorePath, trustPolicyPath

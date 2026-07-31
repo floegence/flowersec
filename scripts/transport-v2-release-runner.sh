@@ -107,6 +107,7 @@ readonly manifest_path=$source_root/testdata/transport_v2/performance_manifest.j
 readonly registry_path=$source_root/testdata/transport_v2/case_registry.json
 readonly trust_policy_path=$source_root/testdata/transport_v2/evidence_trust_policy.json
 readonly effective_config_path=$source_root/testdata/transport_v2/runner_effective_config.json
+runner_config_path=${FLOWERSEC_TRANSPORT_RUNNER_CONFIG:-$source_root/.flowersec/transport-runner.json}
 readonly bpf_source_path=$source_root/flowersec-go/internal/transportrelease/linuxnetlab/bpf/packet_fault.c
 readonly rust_runner_source_path=$source_root/flowersec-rust/examples/transport_release_runner.rs
 readonly rust_lock_path=$source_root/flowersec-rust/Cargo.lock
@@ -116,10 +117,12 @@ readonly host_bpftool=/opt/host-linux-tools/bpftool
 [[ $(uname -s) == Linux ]] || fail "runner requires native Linux"
 case $(uname -m) in
   x86_64)
+    readonly actual_architecture=amd64
     readonly bpf_target_arch=x86
     readonly bpf_system_include=/usr/include/x86_64-linux-gnu
     ;;
   aarch64)
+    readonly actual_architecture=arm64
     readonly bpf_target_arch=arm64
     readonly bpf_system_include=/usr/include/aarch64-linux-gnu
     ;;
@@ -127,6 +130,7 @@ case $(uname -m) in
     fail "unsupported Linux runner architecture: $(uname -m)"
     ;;
 esac
+export GOOS=linux GOARCH="$actual_architecture" CGO_ENABLED=0
 [[ $(id -u) == 0 ]] || fail "runner requires root inside the dedicated privileged container"
 [[ -r /etc/os-release ]] || fail "Ubuntu userspace identity is unavailable"
 # shellcheck disable=SC1091
@@ -136,6 +140,16 @@ source /etc/os-release
 for path in "$manifest_path" "$registry_path" "$trust_policy_path" "$effective_config_path" "$bpf_source_path" "$rust_runner_source_path" "$rust_lock_path" "$wrapper_source_path"; do
   [[ -f $path && ! -L $path ]] || fail "required source file is missing or is a symlink: $path"
 done
+[[ $runner_config_path == /* ]] || fail "runner config path must be absolute"
+[[ -f $runner_config_path && ! -L $runner_config_path ]] || fail "runner config must be a regular non-symlink file: $runner_config_path"
+runner_config_path=$(realpath -- "$runner_config_path")
+runner_config_mode=$(stat -c '%a' -- "$runner_config_path")
+((8#$runner_config_mode & 8#077 == 0)) || fail "runner config must not be accessible by group or other users"
+if [[ $runner_config_path == $source_root/* ]]; then
+  runner_config_relative=${runner_config_path#$source_root/}
+  git -C "$source_root" check-ignore -q -- "$runner_config_relative" || fail "runner config inside the checkout must be git-ignored"
+  ! git -C "$source_root" ls-files --error-unmatch -- "$runner_config_relative" >/dev/null 2>&1 || fail "runner config must not be tracked"
+fi
 [[ -x $host_bpftool ]] || fail "exact-host-kernel bpftool is unavailable"
 [[ -w /sys/fs/bpf ]] || fail "the privileged container cannot write the host BPF filesystem"
 [[ -w /sys/fs/cgroup && -r /sys/fs/cgroup/cgroup.controllers ]] || fail "writable cgroup v2 delegation is unavailable"
@@ -182,9 +196,14 @@ final_sha=$(git -C "$source_root" rev-parse HEAD)
 git -C "$source_root" merge-base --is-ancestor "$base_sha" "$final_sha" || fail "base SHA is not an ancestor of final SHA"
 [[ -z $(git -C "$source_root" status --porcelain --untracked-files=all) ]] || fail "source checkout must be clean"
 
-expected_kernel=$(jq -er '.runner.kernel_release | select(type == "string" and length > 0)' "$trust_policy_path")
 actual_kernel=$(uname -r)
-[[ $actual_kernel == "$expected_kernel" ]] || fail "host kernel $actual_kernel does not match frozen policy $expected_kernel"
+local_runner_id=$(jq -er '.runner_id | select(type == "string" and length > 0)' "$runner_config_path")
+local_runner_os=$(jq -er '.os | select(type == "string" and length > 0)' "$runner_config_path")
+local_runner_architecture=$(jq -er '.architecture | select(type == "string" and length > 0)' "$runner_config_path")
+local_runner_kernel=$(jq -er '.kernel_release | select(type == "string" and length > 0)' "$runner_config_path")
+[[ $(jq -er '.schema_version' "$runner_config_path") == 1 && $local_runner_id == flowersec-linux-release-v1 ]] || fail "runner config schema or runner ID is invalid"
+[[ $local_runner_os == linux && $local_runner_architecture == "$actual_architecture" ]] || fail "runner config platform does not match this Linux host"
+[[ $local_runner_kernel == "$actual_kernel" ]] || fail "host kernel $actual_kernel does not match local runner config $local_runner_kernel"
 
 umask 077
 build_directory=$(mktemp -d /tmp/flowersec-transport-release-build.XXXXXX)
@@ -284,6 +303,7 @@ collect_part() {
     -host-bpftool "$host_bpftool" \
     -trust-policy "$trust_policy_path" \
     -effective-config "$effective_config_path" \
+    -runner-config "$runner_config_path" \
     -kernel-release "$actual_kernel" \
     "$@"
 }

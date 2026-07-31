@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -20,6 +21,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+)
+
+const (
+	testRunnerArchitecture  = "amd64"
+	testRunnerKernelRelease = "6.8.0-test-generic"
+	testRunnerExecutableSHA = "1111111111111111111111111111111111111111111111111111111111111111"
+	testRunnerSourceSHA     = "2222222222222222222222222222222222222222222222222222222222222222"
+	testRunnerArgvSHA       = "3333333333333333333333333333333333333333333333333333333333333333"
 )
 
 var cachedCompleteReport struct {
@@ -103,7 +112,7 @@ func TestCaseOwnerRecipeValidationAcceptsMultiTargetRecipeAndRaceOwner(t *testin
 	}
 }
 
-func TestCheckedInEvidenceTrustPolicyPinsExactRunner(t *testing.T) {
+func TestCheckedInEvidenceTrustPolicyPinsPortableRunnerCapabilities(t *testing.T) {
 	policy, err := loadEvidenceTrustPolicy(fixturePath(t, "evidence_trust_policy.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -111,8 +120,8 @@ func TestCheckedInEvidenceTrustPolicyPinsExactRunner(t *testing.T) {
 	if policy.KeyID != "flowersec-release-linux-2026-01" || policy.PublicKeySHA256 != "56741b08f82a292b0fa9158a23c1f728111dfb6baa83ba605d3a20f3512e1afb" {
 		t.Fatalf("checked-in signer policy = %s/%s, want the reviewed production signer", policy.KeyID, policy.PublicKeySHA256)
 	}
-	if policy.Runner.Architecture != signedRunnerArchitecture || policy.Runner.KernelRelease != signedRunnerKernelRelease || policy.Runner.EffectiveConfigSHA256 != signedRunnerConfigDigest {
-		t.Fatalf("checked-in runner policy = %+v, want exact audited kernel/config", policy.Runner)
+	if !slices.Equal(policy.Runner.Architectures, []string{"amd64", "arm64"}) || policy.Runner.EffectiveConfigSHA256 != signedRunnerConfigDigest {
+		t.Fatalf("checked-in runner policy = %+v, want portable audited capabilities/config", policy.Runner)
 	}
 	storePath := fixturePath(t, "evidence_trust_store.json")
 	store, err := loadEvidenceTrustStore(storePath)
@@ -121,6 +130,32 @@ func TestCheckedInEvidenceTrustPolicyPinsExactRunner(t *testing.T) {
 	}
 	if err := validateTrustStoreAgainstPolicy(storePath, store, policy); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCheckedInEvidenceTrustPolicyIsPortableAcrossSupportedHosts(t *testing.T) {
+	policy, err := loadEvidenceTrustPolicy(fixturePath(t, "evidence_trust_policy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(policy.Runner.Architectures, []string{"amd64", "arm64"}) {
+		t.Fatalf("checked-in runner architectures = %v, want portable amd64/arm64 capability", policy.Runner.Architectures)
+	}
+	if policy.Runner.KernelRelease != "" || policy.Runner.ExecutableSHA256 != "" {
+		t.Fatalf("checked-in runner policy binds host identity: kernel=%q executable=%q", policy.Runner.KernelRelease, policy.Runner.ExecutableSHA256)
+	}
+}
+
+func TestRunnerConfigCommandRequiresRepositoryAndOutput(t *testing.T) {
+	for _, args := range [][]string{
+		{"runner-config"},
+		{"runner-config", "-repo", "/tmp/repository"},
+		{"runner-config", "-output", "/tmp/runner.json"},
+	} {
+		err := run(args, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "runner-config requires -repo and -output") {
+			t.Fatalf("run(%q) error = %v, want required runner-config flags", args, err)
+		}
 	}
 }
 
@@ -2203,9 +2238,8 @@ func TestRepositoryTrustPolicyRejectsSignerReplacement(t *testing.T) {
 		SchemaVersion: 1, TrustStoreSHA256: hex.EncodeToString(storeDigest[:]),
 		KeyID: "release-lab-2026", PublicKeySHA256: hex.EncodeToString(publicDigest[:]),
 		Runner: EvidenceRunnerPolicy{
-			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
+			ID: "flowersec-linux-release-v1", OS: "linux", Architectures: []string{"amd64", "arm64"},
 			Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
-			ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
 			EffectiveConfigPath: signedRunnerConfigPath,
 		},
 	}
@@ -2263,16 +2297,15 @@ func TestRepositoryTrustPolicyRejectsRunnerIdentityTampering(t *testing.T) {
 		SchemaVersion: 1, TrustStoreSHA256: strings.Repeat("1", 64),
 		KeyID: "release-lab-2026", PublicKeySHA256: strings.Repeat("2", 64),
 		Runner: EvidenceRunnerPolicy{
-			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
+			ID: "flowersec-linux-release-v1", OS: "linux", Architectures: []string{"amd64", "arm64"},
 			Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
-			ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
 			EffectiveConfigPath: signedRunnerConfigPath,
 		},
 	}
 	valid := EvidenceRunner{
-		ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
+		ID: "flowersec-linux-release-v1", OS: "linux", Architecture: testRunnerArchitecture, KernelRelease: testRunnerKernelRelease,
 		Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
-		ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
+		ExecutableSHA256: testRunnerExecutableSHA, SourceSHA256: testRunnerSourceSHA, ArgvSHA256: testRunnerArgvSHA,
 	}
 	for _, test := range []struct {
 		name   string
@@ -2281,7 +2314,10 @@ func TestRepositoryTrustPolicyRejectsRunnerIdentityTampering(t *testing.T) {
 		{name: "runner ID", mutate: func(runner *EvidenceRunner) { runner.ID = "other-runner" }},
 		{name: "OS", mutate: func(runner *EvidenceRunner) { runner.OS = "darwin" }},
 		{name: "architecture", mutate: func(runner *EvidenceRunner) { runner.Architecture = "riscv64" }},
-		{name: "exact kernel", mutate: func(runner *EvidenceRunner) { runner.KernelRelease = "6.12.2" }},
+		{name: "missing kernel", mutate: func(runner *EvidenceRunner) { runner.KernelRelease = "" }},
+		{name: "executable digest", mutate: func(runner *EvidenceRunner) { runner.ExecutableSHA256 = "invalid" }},
+		{name: "source digest", mutate: func(runner *EvidenceRunner) { runner.SourceSHA256 = "invalid" }},
+		{name: "argv digest", mutate: func(runner *EvidenceRunner) { runner.ArgvSHA256 = "invalid" }},
 		{name: "namespace", mutate: func(runner *EvidenceRunner) { runner.Namespace = "host" }},
 		{name: "traffic control", mutate: func(runner *EvidenceRunner) { runner.TrafficControl = "disabled" }},
 		{name: "packet counters", mutate: func(runner *EvidenceRunner) { runner.PacketCounters = "userspace" }},
@@ -2306,9 +2342,9 @@ func TestEvidenceRequiresSignedSource(t *testing.T) {
 				Dirty: boolPointer(false), UntrackedFileCount: intPointer(0),
 			},
 			Runner: EvidenceRunner{
-				ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
+				ID: "flowersec-linux-release-v1", OS: "linux", Architecture: testRunnerArchitecture, KernelRelease: testRunnerKernelRelease,
 				Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
-				ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
+				ExecutableSHA256: testRunnerExecutableSHA, SourceSHA256: testRunnerSourceSHA, ArgvSHA256: testRunnerArgvSHA,
 			},
 		}
 	}
@@ -2912,9 +2948,8 @@ func TestEvidenceCLIUsesNonzeroErrorForFailAndInconclusive(t *testing.T) {
 		SchemaVersion: 1, TrustStoreSHA256: hex.EncodeToString(trustStoreDigest[:]),
 		KeyID: "release-cli-test", PublicKeySHA256: hex.EncodeToString(publicKeyDigest[:]),
 		Runner: EvidenceRunnerPolicy{
-			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
+			ID: "flowersec-linux-release-v1", OS: "linux", Architectures: []string{"amd64", "arm64"},
 			Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
-			ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
 			EffectiveConfigPath: signedRunnerConfigPath,
 		},
 	})
@@ -2943,6 +2978,7 @@ func TestEvidenceCLIUsesNonzeroErrorForFailAndInconclusive(t *testing.T) {
 			report := completeReport(t, manifest, registry)
 			report.Source.BaseSHA = baseSHA
 			report.Source.FinalSHA = finalSHA
+			bindReportRunnerToRepository(t, report, repositoryPath, manifest, registry)
 			test.mutate(report)
 			signEvidenceReportForTest(t, report, "release-cli-test", privateKey)
 			reportPath := filepath.Join(report.baseDir, "report.json")
@@ -2962,6 +2998,7 @@ func TestEvidenceCLIUsesNonzeroErrorForFailAndInconclusive(t *testing.T) {
 		report := completeReport(t, manifest, registry)
 		report.Source.BaseSHA = baseSHA
 		report.Source.FinalSHA = finalSHA
+		bindReportRunnerToRepository(t, report, repositoryPath, manifest, registry)
 		signEvidenceReportForTest(t, report, "release-cli-test", privateKey)
 		reportPath := filepath.Join(report.baseDir, "report.json")
 		writeJSON(t, reportPath, report)
@@ -3004,13 +3041,30 @@ func TestNewCleanTestRepositoryIgnoresOuterGitEnvironment(t *testing.T) {
 
 func newCleanTestRepository(t *testing.T) (string, string, string) {
 	t.Helper()
-	directory := t.TempDir()
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	runGitTestCommand(t, directory, "init", "-q")
+	moduleRoot := filepath.Join(directory, "flowersec-go")
+	commandRoot := filepath.Join(moduleRoot, "internal", "cmd", "transport-release-runner")
+	if err := os.MkdirAll(commandRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for path, contents := range map[string]string{
+		filepath.Join(moduleRoot, "go.mod"):   "module example.com/transportcheck-test\n\ngo 1.23\n",
+		filepath.Join(moduleRoot, "go.sum"):   "",
+		filepath.Join(commandRoot, "main.go"): "package main\n\nfunc main() {}\n",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	path := filepath.Join(directory, "evidence.txt")
 	if err := os.WriteFile(path, []byte("base\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGitTestCommand(t, directory, "add", "evidence.txt")
+	runGitTestCommand(t, directory, "add", ".")
 	runGitTestCommand(t, directory, "-c", "user.name=Transport Check", "-c", "user.email=transport@example.invalid", "commit", "-qm", "base")
 	baseSHA := gitTestOutput(t, directory, "rev-parse", "HEAD")
 	if err := os.WriteFile(path, []byte("final\n"), 0o600); err != nil {
@@ -3019,6 +3073,20 @@ func newCleanTestRepository(t *testing.T) (string, string, string) {
 	runGitTestCommand(t, directory, "add", "evidence.txt")
 	runGitTestCommand(t, directory, "-c", "user.name=Transport Check", "-c", "user.email=transport@example.invalid", "commit", "-qm", "final")
 	return directory, baseSHA, gitTestOutput(t, directory, "rev-parse", "HEAD")
+}
+
+func bindReportRunnerToRepository(t *testing.T, report *EvidenceReport, repository string, manifest *PerformanceManifest, registry *CaseRegistry) {
+	t.Helper()
+	sourceDigest, err := runnerSourceSHA256(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argvDigest, err := canonicalAllTargetArgvSHA256(manifest, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.Runner.SourceSHA256 = sourceDigest
+	report.Runner.ArgvSHA256 = argvDigest
 }
 
 func runGitTestCommand(t *testing.T, directory string, args ...string) {
@@ -3873,9 +3941,9 @@ func buildCompleteReport(t *testing.T, manifest *PerformanceManifest, registry *
 			Dirty: boolPointer(false), UntrackedFileCount: intPointer(0),
 		},
 		Runner: EvidenceRunner{
-			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: signedRunnerArchitecture, KernelRelease: signedRunnerKernelRelease,
+			ID: "flowersec-linux-release-v1", OS: "linux", Architecture: testRunnerArchitecture, KernelRelease: testRunnerKernelRelease,
 			Namespace: "isolated", TrafficControl: "tc-netem-v1", PacketCounters: "ebpf-v1", EffectiveConfigSHA256: signedRunnerConfigDigest,
-			ExecutableSHA256: signedRunnerExecutableSHA, SourceSHA256: signedRunnerSourceSHA, ArgvSHA256: signedRunnerArgvSHA,
+			ExecutableSHA256: testRunnerExecutableSHA, SourceSHA256: testRunnerSourceSHA, ArgvSHA256: testRunnerArgvSHA,
 		},
 		baseDir: directory,
 	}

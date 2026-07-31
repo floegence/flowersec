@@ -41,6 +41,65 @@ func TestSupportedCollectPlatform(t *testing.T) {
 	}
 }
 
+func TestRunnerConfigPathAllowsPrivateExternalOrIgnoredFiles(t *testing.T) {
+	repository, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, repository, "init", "-q")
+	if err := os.WriteFile(filepath.Join(repository, ".gitignore"), []byte("/.flowersec/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, repository, "add", ".gitignore")
+	runGitTestCommand(t, repository, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture")
+	ignored := filepath.Join(repository, ".flowersec", "transport-runner.json")
+	if err := os.MkdirAll(filepath.Dir(ignored), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ignored, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRunnerConfigPath(repository, ignored); err != nil {
+		t.Fatalf("ignored runner config: %v", err)
+	}
+	external := filepath.Join(t.TempDir(), "transport-runner.json")
+	if err := os.WriteFile(external, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRunnerConfigPath(repository, external); err != nil {
+		t.Fatalf("external runner config: %v", err)
+	}
+	if err := os.Chmod(ignored, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRunnerConfigPath(repository, ignored); err == nil || !strings.Contains(err.Error(), "private") {
+		t.Fatalf("public runner config error = %v, want private-file rejection", err)
+	}
+}
+
+func TestRunnerConfigPathRejectsTrackedOrUnignoredCheckoutFiles(t *testing.T) {
+	repository, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, repository, "init", "-q")
+	tracked := filepath.Join(repository, "tracked.json")
+	if err := os.WriteFile(tracked, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, repository, "add", "tracked.json")
+	if err := validateRunnerConfigPath(repository, tracked); err == nil || !strings.Contains(err.Error(), "tracked") {
+		t.Fatalf("tracked runner config error = %v, want tracked-file rejection", err)
+	}
+	unignored := filepath.Join(repository, "local.json")
+	if err := os.WriteFile(unignored, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRunnerConfigPath(repository, unignored); err == nil || !strings.Contains(err.Error(), "git-ignored") {
+		t.Fatalf("unignored runner config error = %v, want ignored-file rejection", err)
+	}
+}
+
 func TestCollectFlagFrontDoorRejectsIncompleteAndUnknownRequests(t *testing.T) {
 	for _, args := range [][]string{
 		{"collect"},
@@ -938,7 +997,7 @@ func TestExecuteCollectionPublishesIndexAfterStableJobArtifacts(t *testing.T) {
 			BaseSHA: sourceSHA, FinalSHA: sourceSHA,
 			RunnerExecutable: runner, BaseRunnerExecutable: runner,
 			RunnerWrapper: runner, BPFObject: regularInput, HostBPFTool: runner,
-			TrustPolicyPath: regularInput, EffectiveConfigPath: regularInput,
+			TrustPolicyPath: regularInput, EffectiveConfigPath: regularInput, RunnerConfigPath: regularInput,
 			ArtifactDirectory: artifactDirectory, ReportPath: reportPath,
 		},
 		manifest: manifest,
@@ -946,7 +1005,7 @@ func TestExecuteCollectionPublishesIndexAfterStableJobArtifacts(t *testing.T) {
 			"manifest": regularDigest, "base_manifest": regularDigest, "registry": regularDigest,
 			"runner_executable": executableDigest, "base_runner_executable": executableDigest, "runner_wrapper": executableDigest,
 			"bpf_object": regularDigest, "host_bpftool": executableDigest,
-			"trust_policy": regularDigest, "effective_config": regularDigest,
+			"trust_policy": regularDigest, "effective_config": regularDigest, "runner_config": regularDigest,
 		},
 	}
 	plan := collectionPlan{Target: "bench-transport-ab", Jobs: []collectionJob{{

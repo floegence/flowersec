@@ -17,7 +17,7 @@ func main() {
 
 func run(args []string, output io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: transportcheck <manifest|collect|merge-capacity|evidence|sign> [flags]")
+		return errors.New("usage: transportcheck <manifest|runner-config|collect|merge-capacity|evidence|sign> [flags]")
 	}
 	switch args[0] {
 	case "manifest":
@@ -57,6 +57,23 @@ func run(args []string, output io.Writer) error {
 		}
 		_, _ = fmt.Fprintf(output, "manifest pass: digest=%s runs=%d cells=%d lane_loads_minutes=%v cases=%d\n", manifest.Digest, manifest.RunCount, len(manifest.Cells), loads, len(registry.Cases))
 		return nil
+	case "runner-config":
+		flags := flag.NewFlagSet("runner-config", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		repositoryPath := flags.String("repo", "", "clean source checkout root")
+		outputPath := flags.String("output", "", "private local runner config path")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *repositoryPath == "" || *outputPath == "" || flags.NArg() != 0 {
+			return errors.New("runner-config requires -repo and -output")
+		}
+		config, err := generateRunnerLocalConfig(*repositoryPath, *outputPath)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(output, "runner config written: id=%s os=%s architecture=%s kernel=%s output=%s\n", config.RunnerID, config.OS, config.Architecture, config.KernelRelease, *outputPath)
+		return nil
 	case "collect":
 		flags := flag.NewFlagSet("collect", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)
@@ -78,6 +95,7 @@ func run(args []string, output io.Writer) error {
 		flags.StringVar(&request.HostBPFTool, "host-bpftool", "", "exact host-kernel bpftool")
 		flags.StringVar(&request.TrustPolicyPath, "trust-policy", "", "repository trust policy")
 		flags.StringVar(&request.EffectiveConfigPath, "effective-config", "", "runner effective config")
+		flags.StringVar(&request.RunnerConfigPath, "runner-config", "", "git-ignored local runner identity")
 		flags.StringVar(&request.KernelRelease, "kernel-release", "", "actual host kernel release")
 		flags.StringVar(&request.CapacityBatch, "capacity-batch", "", "frozen capacity collection batch")
 		if err := flags.Parse(args[1:]); err != nil {
@@ -243,6 +261,9 @@ func validateEvidenceBundle(manifestPath, registryPath, reportPath, repositoryPa
 	}
 	repository, err := inspectRepository(repositoryPath, baseSHA)
 	if err != nil {
+		return nil, nil, nil, CheckResult{}, err
+	}
+	if err := validateRunnerRepositoryIdentity(repositoryPath, manifest, registry, report.Runner); err != nil {
 		return nil, nil, nil, CheckResult{}, err
 	}
 	result := checkEvidenceAgainstRepository(manifest, registry, report, report.baseDir, repository)

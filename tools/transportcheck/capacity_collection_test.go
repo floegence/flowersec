@@ -142,6 +142,13 @@ func TestMergeRawCapacityIndexesRequiresOneConsistentCompleteMatrix(t *testing.T
 			t.Fatal("accepted an invalid report digest")
 		}
 	})
+	t.Run("runner drift", func(t *testing.T) {
+		mutated := capacityIndexFixtures(t, plan)
+		mutated[1].index.Runner.KernelRelease = "6.12.0-other"
+		if _, _, err := mergeRawCapacityIndexes(mutated, plan); err == nil {
+			t.Fatal("accepted capacity parts from different runner instances")
+		}
+	})
 }
 
 func capacityIndexFixtures(t *testing.T, plan collectionPlan) []rawCapacityPart {
@@ -150,6 +157,11 @@ func capacityIndexFixtures(t *testing.T, plan collectionPlan) []rawCapacityPart 
 	inputs := map[string]string{
 		"manifest": strings.Repeat("2", 64), "registry": strings.Repeat("3", 64),
 		"runner_executable": strings.Repeat("4", 64),
+		"runner_config":     strings.Repeat("9", 64), "runner_source": strings.Repeat("7", 64), "runner_argv": strings.Repeat("8", 64),
+	}
+	runner := RunnerLocalConfig{
+		SchemaVersion: 1, RunnerID: "flowersec-linux-release-v1", OS: "linux", Architecture: "amd64", KernelRelease: "6.8.0-test",
+		ExecutableSHA256: strings.Repeat("4", 64), SourceSHA256: strings.Repeat("7", 64), ArgvSHA256: strings.Repeat("8", 64),
 	}
 	parts := make([]rawCapacityPart, 0, len(capacityCollectionBatchOrder))
 	for _, batch := range capacityCollectionBatchOrder {
@@ -161,6 +173,7 @@ func capacityIndexFixtures(t *testing.T, plan collectionPlan) []rawCapacityPart 
 			SchemaVersion: 1, Classification: "raw_transport_collection_part",
 			Target: "bench-transport-capacity", Batch: batch,
 			BaseSHA: "0000000000000000000000000000000000000000", FinalSHA: finalSHA,
+			Runner:      runner,
 			InputSHA256: cloneStringMap(inputs),
 		}
 		for _, job := range selected.Jobs {

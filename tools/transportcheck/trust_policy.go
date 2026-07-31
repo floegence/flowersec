@@ -14,13 +14,8 @@ import (
 )
 
 const (
-	signedRunnerArchitecture  = "arm64"
-	signedRunnerKernelRelease = "6.8.0-136-generic"
-	signedRunnerConfigDigest  = "0ec469e96abcd36c22f85bd4ba4d79232b1253bb29bec3496fc74df507c3e4d0"
-	signedRunnerConfigPath    = "runner_effective_config.json"
-	signedRunnerExecutableSHA = "90ed565080e0299414d141b8e9e62a0ce6f5053a988ca64dccc253ebffd5dbe5"
-	signedRunnerSourceSHA     = "d86da39bbc9971ae71a8a557368b6b10bde64a835b5e51591981533661e89c40"
-	signedRunnerArgvSHA       = "828afd3776a174af61610a56dfd958a4bd5197037f4771526ab74b974da01145"
+	signedRunnerConfigDigest = "9f1b2e9660b032f5633d675166e8646c20d1def23fcd13376dff8871f4e9668d"
+	signedRunnerConfigPath   = "runner_effective_config.json"
 )
 
 func loadEvidenceTrustPolicy(path string) (*EvidenceTrustPolicy, error) {
@@ -43,15 +38,15 @@ func validateEvidenceTrustPolicy(policy *EvidenceTrustPolicy) error {
 		return errors.New("evidence trust policy must freeze schema v1, key ID, trust-store digest, and public-key digest")
 	}
 	runner := policy.Runner
-	if runner.ID == "" || runner.OS != "linux" || runner.Architecture == "" || runner.KernelRelease == "" ||
+	if runner.ID == "" || runner.OS != "linux" || !slices.Equal(runner.Architectures, []string{"amd64", "arm64"}) ||
 		runner.Namespace != "isolated" || runner.TrafficControl == "" || runner.PacketCounters == "" ||
 		!validSHA256(runner.EffectiveConfigSHA256) || runner.EffectiveConfigPath != signedRunnerConfigPath ||
-		!validSHA256(runner.ExecutableSHA256) || !validSHA256(runner.SourceSHA256) || !validSHA256(runner.ArgvSHA256) {
-		return errors.New("evidence trust policy must freeze the Linux runner, kernel, namespace, traffic control, and packet counters")
+		runner.Architecture != "" || runner.KernelRelease != "" || runner.ExecutableSHA256 != "" ||
+		runner.SourceSHA256 != "" || runner.ArgvSHA256 != "" {
+		return errors.New("evidence trust policy must freeze portable Linux runner capabilities, namespace, traffic control, and packet counters")
 	}
-	if runner.Architecture != signedRunnerArchitecture || runner.KernelRelease != signedRunnerKernelRelease || runner.EffectiveConfigSHA256 != signedRunnerConfigDigest ||
-		runner.ExecutableSHA256 != signedRunnerExecutableSHA || runner.SourceSHA256 != signedRunnerSourceSHA || runner.ArgvSHA256 != signedRunnerArgvSHA {
-		return errors.New("evidence trust policy does not match the repository-audited exact kernel and effective tc/eBPF config digest")
+	if runner.EffectiveConfigSHA256 != signedRunnerConfigDigest {
+		return errors.New("evidence trust policy does not match the repository-audited effective tc/eBPF config digest")
 	}
 	return nil
 }
@@ -91,11 +86,9 @@ func validateRunnerEffectiveConfigFile(baseDir string, policy *EvidenceTrustPoli
 
 func runnerEffectiveConfigRecords() ([]ConfigRecord, error) {
 	records := []ConfigRecord{
-		{Key: "architecture", Value: signedRunnerArchitecture},
 		{Key: "ebpf_counter_schema", Value: "phase-profile-artifact-v1"},
 		{Key: "ebpf_program", Value: "ebpf-v1"},
 		{Key: "firewall", Value: signedFirewallPolicy},
-		{Key: "kernel_release", Value: signedRunnerKernelRelease},
 		{Key: "namespace", Value: "isolated"},
 		{Key: "namespace_backend", Value: "ip-netns-v1"},
 		{Key: "os", Value: "linux"},
@@ -178,12 +171,30 @@ func validateRunnerAgainstPolicy(runner EvidenceRunner, policy *EvidenceTrustPol
 		return err
 	}
 	want := policy.Runner
-	if runner.ID != want.ID || runner.OS != want.OS || runner.Architecture != want.Architecture ||
-		runner.KernelRelease != want.KernelRelease || runner.Namespace != want.Namespace ||
+	if runner.ID != want.ID || runner.OS != want.OS || !slices.Contains(want.Architectures, runner.Architecture) ||
+		runner.KernelRelease == "" || runner.Namespace != want.Namespace ||
 		runner.TrafficControl != want.TrafficControl || runner.PacketCounters != want.PacketCounters ||
-		runner.EffectiveConfigSHA256 != want.EffectiveConfigSHA256 || runner.ExecutableSHA256 != want.ExecutableSHA256 ||
-		runner.SourceSHA256 != want.SourceSHA256 || runner.ArgvSHA256 != want.ArgvSHA256 {
-		return fmt.Errorf("signed runner identity does not match repository-audited Linux runner policy")
+		runner.EffectiveConfigSHA256 != want.EffectiveConfigSHA256 || !validSHA256(runner.ExecutableSHA256) ||
+		!validSHA256(runner.SourceSHA256) || !validSHA256(runner.ArgvSHA256) {
+		return fmt.Errorf("signed runner identity does not match repository-audited portable Linux runner policy")
 	}
 	return nil
+}
+
+func validateRunnerLocalConfig(local RunnerLocalConfig, policy *EvidenceTrustPolicy) error {
+	if err := validateEvidenceTrustPolicy(policy); err != nil {
+		return err
+	}
+	if local.SchemaVersion != 1 || local.RunnerID != policy.Runner.ID || local.OS != policy.Runner.OS ||
+		!slices.Contains(policy.Runner.Architectures, local.Architecture) || strings.TrimSpace(local.KernelRelease) == "" ||
+		!validSHA256(local.ExecutableSHA256) || !validSHA256(local.SourceSHA256) || !validSHA256(local.ArgvSHA256) {
+		return errors.New("runner local config must bind one supported host and complete deterministic build identity")
+	}
+	return nil
+}
+
+func validRunnerLocalConfigShape(local RunnerLocalConfig) bool {
+	return local.SchemaVersion == 1 && strings.TrimSpace(local.RunnerID) != "" && local.OS == "linux" &&
+		(local.Architecture == "amd64" || local.Architecture == "arm64") && strings.TrimSpace(local.KernelRelease) != "" &&
+		validSHA256(local.ExecutableSHA256) && validSHA256(local.SourceSHA256) && validSHA256(local.ArgvSHA256)
 }

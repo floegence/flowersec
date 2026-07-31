@@ -10,7 +10,10 @@ A collection operator must provide all of the following for the exact clean fina
 - an absolute fresh output path through `TRANSPORT_V2_UNSIGNED_EVIDENCE_REPORT`;
 - a full ancestor Git SHA through `TRANSPORT_V2_BASE_SHA`;
 - an independent clean checkout at that base SHA and a separately built, clean-VCS-stamped base runner; the audited wrapper creates both in its private temporary build directory;
-- runner identity and exact kernel, architecture, namespace, tc/eBPF effective config, executable, source, and argv hashes matching `evidence_trust_policy.json`.
+- a private local runner identity file at `.flowersec/transport-runner.json`, or an absolute path selected by `FLOWERSEC_TRANSPORT_RUNNER_CONFIG`. The file records schema version, runner ID, OS, architecture, kernel release, executable SHA-256, source-graph SHA-256, and canonical argv SHA-256. It must be mode `0600`, non-symlink, untracked, and Git-ignored when it is inside the checkout;
+- repository policy matching the portable capabilities in `evidence_trust_policy.json`: Linux, the supported architecture set, namespace, tc/eBPF effective config, workload, thresholds, and signer. Host-specific kernel and build identities belong only to the local file and the produced evidence.
+
+Changing from one supported runner host or architecture to another changes only the local identity file. It must not cause a repository commit. The wrapper checks the local OS, architecture, and kernel before building; the collector deterministically rebuilds and compares executable bytes, source graph, and canonical argv, freezes the local file as an input digest, and records the complete actual identity in every raw collection index. Capacity parts must share that exact identity. Offline signing and release verification recompute the repository-derived source and argv digests and reject drift. These ownership changes do not relax any network, workload, certificate, resource, threshold, artifact, or zero-residual requirement.
 
 The offline signing host requires the complete unsigned artifact directory, the clean exact-final-SHA repository, the production Ed25519 PKCS#8 private key, and the public key pinned by `testdata/transport_v2/evidence_trust_store.json`. The private key must never enter the Linux runner, its privileged container, Git, or chat.
 
@@ -173,7 +176,15 @@ collection.
 
 ## Trust bootstrap
 
-The checked-in `flowersec-release-linux-2026-01` production public key is enabled for this release evidence authority, while the placeholder runner hashes deliberately continue to authorize no release. A reviewed final-runner change must install the exact executable, source, and argv hashes before collection. Never commit the private key, evidence credentials, or unredacted infrastructure secrets.
+The checked-in `flowersec-release-linux-2026-01` production public key is enabled for this release evidence authority. Repository policy authorizes only reviewed portable runner capabilities; each concrete host remains unauthorized until its private local identity file matches the actual platform and deterministic executable/source/argv digests. Never commit that host identity file, the private key, evidence credentials, or unredacted infrastructure secrets.
+
+After provisioning a clean checkout on the concrete Linux runner, generate the default private identity without starting a workload:
+
+```bash
+make transport-runner-config
+```
+
+`scripts/provision-transport-release-runner.sh` performs this step inside its pinned Ubuntu 24 container. For a manually provisioned runner, set `TRANSPORT_RUNNER_CONFIG` to an absolute repository-external output path when the default ignored file is unsuitable. Regenerate it after changing host, architecture, kernel, exact source, toolchain, or canonical collection plan; never change tracked policy merely to follow an instance change.
 
 The signer and runner changes must be reviewed independently from the feature under test. Verify the trust-store and policy digests with the transportcheck tests before collecting final-SHA evidence.
 
@@ -193,4 +204,4 @@ scripts/release.sh <version>
 5. `scripts/release.sh` records the signed report digest, reruns the full local release gate without invoking the collector, verifies the signature, runner policy, repository state, final/base SHA relationship, registered cases, performance cells, and referenced artifacts, then confirms the signed report bytes did not change before creating any tag.
 6. Only after the atomic tag push succeeds may hosted publication jobs publish ecosystem artifacts. Confirm all publication jobs and registry artifacts before upgrading downstream repositories.
 
-If any input is absent, the runner policy still contains placeholder hashes, the report final SHA differs, the repository is dirty, or one case is incomplete, stop. Do not bypass, downgrade, or relabel the evidence gate.
+If any input is absent, the local runner identity does not match the actual host or deterministic build, the report final SHA differs, the repository is dirty, or one case is incomplete, stop. Do not bypass, downgrade, or relabel the evidence gate.

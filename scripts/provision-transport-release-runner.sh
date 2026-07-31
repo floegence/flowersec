@@ -122,5 +122,14 @@ docker exec "$container_name" bash -euo pipefail -c '
   npx playwright --version
 '
 
+docker exec "$container_name" bash -euo pipefail -c '
+  cd /workspace/flowersec
+  make transport-runner-config
+'
+docker exec "$container_name" chown "$release_owner_uid:$release_owner_gid" \
+  /workspace/flowersec/.flowersec/transport-runner.json
+docker exec "$container_name" chmod 0600 \
+  /workspace/flowersec/.flowersec/transport-runner.json
+
 provision_complete=1
 trap - EXIT HUP INT TERM

@@ -1,6 +1,7 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check final-integration-lanes final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-check transportcheck-fast transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-package-check rust-audit rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check final-integration-lanes final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-check transportcheck-fast transport-runner-config transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
 
 CHECK_INTEROP ?= 1
+TRANSPORT_RUNNER_CONFIG ?= $(CURDIR)/.flowersec/transport-runner.json
 
 YAMUX_INTEROP ?= 1
 YAMUX_INTEROP_STRESS ?= 0
@@ -58,7 +59,7 @@ go-test-race:
 	cd tools/idlgen && go test -race -timeout=5m ./...
 	cd tools/releasenotes && go test -race -timeout=5m ./...
 	cd tools/stabilitycheck && go test -race -timeout=5m ./...
-	./scripts/run-go-test-race-shards.sh tools/transportcheck 36 5m 9 race 1
+	./scripts/run-go-test-race-shards.sh tools/transportcheck 45 5m 9 race 1
 
 go-vet:
 	cd flowersec-go && go vet ./...
@@ -66,6 +67,9 @@ go-vet:
 	cd tools/releasenotes && go vet ./...
 	cd tools/stabilitycheck && go vet ./...
 	cd tools/transportcheck && go vet ./...
+
+transport-runner-config:
+	cd tools/transportcheck && go run . runner-config -repo "$(CURDIR)" -output "$(TRANSPORT_RUNNER_CONFIG)"
 
 go-vulncheck:
 	node scripts/check-go-security.mjs
@@ -295,22 +299,24 @@ precommit: security-makefile-check security-dependency-check
 	$(MAKE) release-policy-check
 	$(MAKE) readme-localization-check
 	$(MAKE) gen-check
-	$(MAKE) stability-check
+	$(MAKE) stability-source-check
 	$(MAKE) precommit-go
 	$(MAKE) precommit-ts
 	$(MAKE) precommit-swift
 	$(MAKE) precommit-rust
 
-stability-check:
+stability-source-check:
 	cd tools/stabilitycheck && go run . verify-manifest
 	cd tools/stabilitycheck && go run . verify-defaults
 	cd tools/stabilitycheck && go run . verify-parity
 	cd tools/stabilitycheck && go run . verify-docs
 	cd tools/stabilitycheck && go run . verify-go
 	cd tools/stabilitycheck && go run . verify-ts
+	cd tools/stabilitycheck && go run . report
+
+stability-check: stability-source-check
 	cd tools/stabilitycheck && go run . verify-swift
 	cd tools/stabilitycheck && go run . verify-rust
-	cd tools/stabilitycheck && go run . report
 
 transportcheck-fast:
 	cd tools/transportcheck && go test -timeout=5m -count=1 -run '^(TestCheckedInManifestAndRegistryAreValid|TestFrozenSingleTestTargetsDoNotExceedFiveMinutes|TestCheckedInRegistryOwnersHaveMakeRecipes|TestCheckedInEvidenceTrustPolicyPinsExactRunner|TestManifestRejectsInvalidFrozenContract|TestManifestDigestIsCanonicalAndTamperEvident|TestManifestAcceptsMeasuredEdgeRecoveryBudgetWithinFiveMinuteCell|TestCaseRegistryRejectsInvalidOwnership|TestStrictJSONRejectsUnknownFields|TestEvidenceMetaSchemaAndGateClassifications|TestMakeTargetsUseEvidenceClassificationGate)$$' .

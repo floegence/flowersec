@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -62,10 +63,17 @@ func (buffer *boundedOutputBuffer) String() string {
 }
 
 func runnerSourceSHA256(repository string) (string, error) {
+	return runnerSourceSHA256ForPlatform(repository, "linux", runtime.GOARCH)
+}
+
+func runnerSourceSHA256ForPlatform(repository, goos, goarch string) (string, error) {
+	if !supportedCollectPlatform(goos, goarch) {
+		return "", fmt.Errorf("unsupported runner source platform %s/%s", goos, goarch)
+	}
 	moduleRoot := filepath.Join(repository, "flowersec-go")
 	command := exec.Command("go", "list", "-deps", "-json", lowLevelRunnerPackage)
 	command.Dir = moduleRoot
-	command.Env = slices.DeleteFunc(os.Environ(), func(value string) bool { return strings.HasPrefix(value, "GIT_") })
+	command.Env = runnerGoEnvironment(goos, goarch)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return "", err
@@ -138,6 +146,14 @@ func runnerSourceSHA256(repository string) (string, error) {
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
+func runnerGoEnvironment(goos, goarch string) []string {
+	environment := slices.DeleteFunc(os.Environ(), func(value string) bool {
+		name, _, _ := strings.Cut(value, "=")
+		return strings.HasPrefix(name, "GIT_") || name == "GOOS" || name == "GOARCH" || name == "CGO_ENABLED"
+	})
+	return append(environment, "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
+}
+
 func verifyDeterministicRunnerExecutable(repository, executable string, race bool) error {
 	directory, err := os.MkdirTemp("", "flowersec-runner-rebuild-*")
 	if err != nil {
@@ -152,7 +168,7 @@ func verifyDeterministicRunnerExecutable(repository, executable string, race boo
 	arguments = append(arguments, "-o", rebuilt, lowLevelRunnerPackage)
 	command := exec.Command("go", arguments...)
 	command.Dir = filepath.Join(repository, "flowersec-go")
-	command.Env = slices.DeleteFunc(os.Environ(), func(value string) bool { return strings.HasPrefix(value, "GIT_") })
+	command.Env = runnerGoEnvironment(runtime.GOOS, runtime.GOARCH)
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("rebuild deterministic low-level runner: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -188,6 +204,21 @@ func canonicalAllTargetArgvSHA256(manifest *PerformanceManifest, registry *CaseR
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+func validateRunnerRepositoryIdentity(repository string, manifest *PerformanceManifest, registry *CaseRegistry, runner EvidenceRunner) error {
+	sourceDigest, err := runnerSourceSHA256ForPlatform(repository, runner.OS, runner.Architecture)
+	if err != nil {
+		return fmt.Errorf("recompute runner source identity: %w", err)
+	}
+	argvDigest, err := canonicalAllTargetArgvSHA256(manifest, registry)
+	if err != nil {
+		return fmt.Errorf("recompute canonical runner argv identity: %w", err)
+	}
+	if runner.SourceSHA256 != sourceDigest || runner.ArgvSHA256 != argvDigest {
+		return errors.New("signed runner source or argv identity does not match the audited repository")
+	}
+	return nil
 }
 
 func canonicalAllTargetArgvRecords(manifest *PerformanceManifest, registry *CaseRegistry) ([]canonicalArgvRecord, error) {

@@ -187,7 +187,10 @@ func mergeRawCapacityIndexes(parts []rawCapacityPart, plan collectionPlan) (rawC
 		if index.SchemaVersion != 1 || index.Classification != "raw_transport_collection_part" ||
 			index.Target != "bench-transport-capacity" || !gitSHAPattern.MatchString(index.BaseSHA) ||
 			!gitSHAPattern.MatchString(index.FinalSHA) || index.BaseSHA == index.FinalSHA ||
-			!validCapacityPartInputDigests(index.InputSHA256) {
+			!validRunnerLocalConfigShape(index.Runner) || !validCapacityPartInputDigests(index.InputSHA256) ||
+			index.Runner.ExecutableSHA256 != index.InputSHA256["runner_executable"] ||
+			index.Runner.SourceSHA256 != index.InputSHA256["runner_source"] ||
+			index.Runner.ArgvSHA256 != index.InputSHA256["runner_argv"] {
 			return rawCollectionIndex{}, nil, errors.New("capacity merge received an invalid partial collection")
 		}
 		if _, ok := capacityCollectionBatches[index.Batch]; !ok {
@@ -200,10 +203,10 @@ func mergeRawCapacityIndexes(parts []rawCapacityPart, plan collectionPlan) (rawC
 		if partIndex == 0 {
 			merged = rawCollectionIndex{
 				SchemaVersion: 1, Classification: "raw_transport_collection", Target: index.Target,
-				BaseSHA: index.BaseSHA, FinalSHA: index.FinalSHA, InputSHA256: cloneStringMap(index.InputSHA256),
+				BaseSHA: index.BaseSHA, FinalSHA: index.FinalSHA, Runner: index.Runner, InputSHA256: cloneStringMap(index.InputSHA256),
 			}
 		} else if index.BaseSHA != merged.BaseSHA || index.FinalSHA != merged.FinalSHA ||
-			!equalStringMap(index.InputSHA256, merged.InputSHA256) {
+			index.Runner != merged.Runner || !equalStringMap(index.InputSHA256, merged.InputSHA256) {
 			return rawCollectionIndex{}, nil, errors.New("capacity parts do not share one source and input identity")
 		}
 		selected, err := selectCapacityCollectionBatch(plan, index.Batch)
@@ -253,7 +256,7 @@ func mergeRawCapacityIndexes(parts []rawCapacityPart, plan collectionPlan) (rawC
 }
 
 func validCapacityPartInputDigests(digests map[string]string) bool {
-	for _, required := range []string{"manifest", "registry", "runner_executable"} {
+	for _, required := range []string{"manifest", "registry", "runner_executable", "runner_config", "runner_source", "runner_argv"} {
 		if !validSHA256(digests[required]) {
 			return false
 		}

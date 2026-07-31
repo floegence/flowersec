@@ -73,6 +73,7 @@ type collectRequest struct {
 	HostBPFTool          string
 	TrustPolicyPath      string
 	EffectiveConfigPath  string
+	RunnerConfigPath     string
 	KernelRelease        string
 	CapacityBatch        string
 }
@@ -81,6 +82,7 @@ type collectEnvironment struct {
 	request      collectRequest
 	manifest     *PerformanceManifest
 	registry     *CaseRegistry
+	runner       RunnerLocalConfig
 	inputDigests map[string]string
 	output       *collectionDirectoryIdentity
 }
@@ -228,6 +230,7 @@ type rawCollectionIndex struct {
 	Batch          string            `json:"batch,omitempty"`
 	BaseSHA        string            `json:"base_sha"`
 	FinalSHA       string            `json:"final_sha"`
+	Runner         RunnerLocalConfig `json:"runner"`
 	InputSHA256    map[string]string `json:"input_sha256"`
 	Jobs           []rawJobRecord    `json:"jobs"`
 }
@@ -342,6 +345,7 @@ func validateCollectRequest(request collectRequest) (*collectEnvironment, error)
 		{"runner_executable", &request.RunnerExecutable, true}, {"race_runner_executable", &request.RaceRunnerExecutable, true}, {"base_runner_executable", &request.BaseRunnerExecutable, true}, {"runner_wrapper", &request.RunnerWrapper, true},
 		{"bpf_object", &request.BPFObject, false}, {"host_bpftool", &request.HostBPFTool, true},
 		{"trust_policy", &request.TrustPolicyPath, false}, {"effective_config", &request.EffectiveConfigPath, false},
+		{"runner_config", &request.RunnerConfigPath, false},
 	}
 	if request.BaseRunnerExecutable == request.RunnerExecutable {
 		return nil, errors.New("collect base and final runner executables must be independent files")
@@ -357,6 +361,9 @@ func validateCollectRequest(request collectRequest) (*collectEnvironment, error)
 		}
 		*spec.path = canonical
 		digests[spec.name] = digest
+	}
+	if err := validateRunnerConfigPath(repository, request.RunnerConfigPath); err != nil {
+		return nil, err
 	}
 	wrapperSource := filepath.Join(repository, "scripts", "transport-v2-release-runner.sh")
 	_, wrapperSourceDigest, err := snapshotRegularFile(wrapperSource, true)
@@ -411,24 +418,60 @@ func validateCollectRequest(request collectRequest) (*collectEnvironment, error)
 		digests["effective_config"] != policy.Runner.EffectiveConfigSHA256 {
 		return nil, errors.New("collect effective config does not match the frozen policy")
 	}
+	var local RunnerLocalConfig
+	if err := decodeStrictFile(request.RunnerConfigPath, &local); err != nil {
+		return nil, fmt.Errorf("runner local identity: %w", err)
+	}
+	if err := validateRunnerLocalConfig(local, policy); err != nil {
+		return nil, err
+	}
 	actualKernel, err := os.ReadFile("/proc/sys/kernel/osrelease")
 	if err != nil {
 		return nil, fmt.Errorf("read actual kernel release: %w", err)
 	}
-	if strings.TrimSpace(string(actualKernel)) != request.KernelRelease || request.KernelRelease != policy.Runner.KernelRelease ||
-		policy.Runner.OS != runtime.GOOS || policy.Runner.Architecture != runtime.GOARCH {
-		return nil, errors.New("collect kernel or platform does not match the frozen policy")
+	if local.SchemaVersion != 1 || local.RunnerID != policy.Runner.ID || local.OS != runtime.GOOS ||
+		!slices.Contains(policy.Runner.Architectures, local.Architecture) || local.Architecture != runtime.GOARCH ||
+		local.KernelRelease == "" || strings.TrimSpace(string(actualKernel)) != request.KernelRelease || request.KernelRelease != local.KernelRelease ||
+		local.ExecutableSHA256 != digests["runner_executable"] || local.SourceSHA256 != digests["runner_source"] ||
+		local.ArgvSHA256 != digests["runner_argv"] {
+		return nil, errors.New("collect host or deterministic build does not match runner local identity and repository capabilities")
 	}
 
 	output, err := pinCollectionDirectory(request.ArtifactDirectory)
 	if err != nil {
 		return nil, err
 	}
-	return &collectEnvironment{request: request, manifest: manifest, registry: registry, inputDigests: digests, output: output}, nil
+	return &collectEnvironment{request: request, manifest: manifest, registry: registry, runner: local, inputDigests: digests, output: output}, nil
 }
 
 func supportedCollectPlatform(goos, goarch string) bool {
 	return goos == "linux" && (goarch == "amd64" || goarch == "arm64")
+}
+
+func validateRunnerConfigPath(repository, path string) error {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return errors.New("runner local config must be a private regular file")
+	}
+	relative, err := filepath.Rel(repository, path)
+	if err != nil {
+		return fmt.Errorf("locate runner local config: %w", err)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil
+	}
+	if relative == "." {
+		return errors.New("runner local config cannot be the repository directory")
+	}
+	relative = filepath.ToSlash(relative)
+	tracked, err := collectGitOutput(repository, "ls-files", "--", relative)
+	if err != nil || tracked != "" {
+		return errors.New("runner local config inside the checkout must not be tracked")
+	}
+	if _, err := collectGitOutput(repository, "check-ignore", "-q", "--", relative); err != nil {
+		return errors.New("runner local config inside the checkout must be git-ignored")
+	}
+	return nil
 }
 
 func validateCollectCheckout(repository, sourceSHA, label string) error {
@@ -683,7 +726,7 @@ func executeCollection(ctx context.Context, environment *collectEnvironment, pla
 	index := rawCollectionIndex{
 		SchemaVersion: 1, Classification: "raw_transport_collection", Target: plan.Target, Batch: environment.request.CapacityBatch,
 		BaseSHA: environment.request.BaseSHA, FinalSHA: environment.request.FinalSHA,
-		InputSHA256: environment.inputDigests, Jobs: records,
+		Runner: environment.runner, InputSHA256: environment.inputDigests, Jobs: records,
 	}
 	if index.Batch != "" {
 		index.Classification = "raw_transport_collection_part"
@@ -1561,6 +1604,7 @@ func verifyInputDigests(request collectRequest, want map[string]string) error {
 		"runner_executable": request.RunnerExecutable, "base_runner_executable": request.BaseRunnerExecutable, "runner_wrapper": request.RunnerWrapper,
 		"bpf_object": request.BPFObject, "host_bpftool": request.HostBPFTool,
 		"trust_policy": request.TrustPolicyPath, "effective_config": request.EffectiveConfigPath,
+		"runner_config": request.RunnerConfigPath,
 	}
 	if request.RaceRunnerExecutable != "" {
 		paths["race_runner_executable"] = request.RaceRunnerExecutable
