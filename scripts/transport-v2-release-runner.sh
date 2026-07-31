@@ -144,7 +144,7 @@ done
 [[ -f $runner_config_path && ! -L $runner_config_path ]] || fail "runner config must be a regular non-symlink file: $runner_config_path"
 runner_config_path=$(realpath -- "$runner_config_path")
 runner_config_mode=$(stat -c '%a' -- "$runner_config_path")
-((8#$runner_config_mode & 8#077 == 0)) || fail "runner config must not be accessible by group or other users"
+(((8#$runner_config_mode & 8#077) == 0)) || fail "runner config must not be accessible by group or other users"
 if [[ $runner_config_path == $source_root/* ]]; then
   runner_config_relative=${runner_config_path#$source_root/}
   git -C "$source_root" check-ignore -q -- "$runner_config_relative" || fail "runner config inside the checkout must be git-ignored"

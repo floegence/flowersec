@@ -53,6 +53,28 @@ test("release wrapper loads host identity from a git-ignored local config", () =
   assert.doesNotMatch(runner, /expected_kernel=.*trust_policy/);
 });
 
+test("release wrapper accepts private runner config modes and rejects public modes", () => {
+  const runner = fs.readFileSync(runnerPath, "utf8");
+  const modeGuard = runner.match(
+    /^\(\((.+runner_config_mode.+)\)\) \|\| fail "runner config must not be accessible by group or other users"$/m,
+  )?.[1];
+  assert.ok(modeGuard, "runner config mode guard must remain directly testable");
+
+  for (const [mode, accepted] of [
+    ["600", true],
+    ["640", false],
+    ["604", false],
+    ["666", false],
+  ]) {
+    const result = spawnSync(
+      "bash",
+      ["-c", `runner_config_mode=$1; (( ${modeGuard} ))`, "runner-config-mode", mode],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status === 0, accepted, `runner config mode ${mode} acceptance mismatch`);
+  }
+});
+
 test("release wrapper freezes the audited source, host, builds, and collect argv", () => {
   const runner = fs.readFileSync(runnerPath, "utf8");
   assert.match(runner, /^#!\/usr\/bin\/env bash\n\nset -euo pipefail$/m);
