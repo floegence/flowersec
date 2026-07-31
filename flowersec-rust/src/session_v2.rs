@@ -2712,7 +2712,7 @@ impl EncryptedStreamV2 {
         let session = self.session.upgrade().ok_or_else(closed)?;
         let _lock = self.send_lock.lock().await;
         let epoch = self.send_epoch.load(Ordering::Acquire) as u32;
-        let sequence = self.send_sequence.fetch_add(1, Ordering::AcqRel);
+        let sequence = next_stream_send_sequence_v2(&self.send_sequence)?;
         write_stream_record_v2(
             &session,
             &self.carrier,
@@ -3459,6 +3459,14 @@ async fn fill_rpc_bytes_v2(
     Ok(())
 }
 
+fn next_stream_send_sequence_v2(sequence: &AtomicU64) -> io::Result<u64> {
+    sequence
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+            value.checked_add(1)
+        })
+        .map_err(|_| invalid("logical stream send sequence exhausted"))
+}
+
 async fn write_stream_record_v2(
     session: &EncryptedSessionV2,
     carrier: &Arc<dyn CarrierStreamV2>,
@@ -3742,6 +3750,21 @@ mod tests {
         assert!(ledger.mark_fss2(1).is_err());
         assert!(ledger.mark_fss2(2).is_err());
         assert!(ledger.mark_fss2(2 * MAX_LEDGER_SLOTS + 1).is_err());
+    }
+
+    #[test]
+    fn stream_send_sequence_exhaustion_fails_closed_without_wrap() {
+        let sequence = AtomicU64::new(u64::MAX - 1);
+
+        assert_eq!(
+            next_stream_send_sequence_v2(&sequence).expect("last safe stream sequence"),
+            u64::MAX - 1
+        );
+        let error = next_stream_send_sequence_v2(&sequence)
+            .expect_err("exhausted stream sequence must fail closed");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(sequence.load(Ordering::Acquire), u64::MAX);
     }
 
     #[test]
