@@ -147,11 +147,19 @@ func runnerSourceSHA256ForPlatform(repository, goos, goarch string) (string, err
 }
 
 func runnerGoEnvironment(goos, goarch string) []string {
+	return runnerBuildEnvironment(goos, goarch, false)
+}
+
+func runnerBuildEnvironment(goos, goarch string, race bool) []string {
 	environment := slices.DeleteFunc(os.Environ(), func(value string) bool {
 		name, _, _ := strings.Cut(value, "=")
 		return strings.HasPrefix(name, "GIT_") || name == "GOOS" || name == "GOARCH" || name == "CGO_ENABLED"
 	})
-	return append(environment, "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
+	cgoEnabled := "0"
+	if race {
+		cgoEnabled = "1"
+	}
+	return append(environment, "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED="+cgoEnabled)
 }
 
 func verifyDeterministicRunnerExecutable(repository, executable string, race bool) error {
@@ -168,7 +176,7 @@ func verifyDeterministicRunnerExecutable(repository, executable string, race boo
 	arguments = append(arguments, "-o", rebuilt, lowLevelRunnerPackage)
 	command := exec.Command("go", arguments...)
 	command.Dir = filepath.Join(repository, "flowersec-go")
-	command.Env = runnerGoEnvironment(runtime.GOOS, runtime.GOARCH)
+	command.Env = runnerBuildEnvironment(runtime.GOOS, runtime.GOARCH, race)
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("rebuild deterministic low-level runner: %w: %s", err, strings.TrimSpace(string(output)))
 	}

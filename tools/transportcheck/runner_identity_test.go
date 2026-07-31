@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +81,27 @@ func TestRunnerSourceSHA256UsesTheEvidencePlatform(t *testing.T) {
 	}
 	if linuxDigest == "" {
 		t.Fatal("Linux runner source digest is empty")
+	}
+}
+
+func TestDeterministicRunnerBuildEnvironmentEnablesCGOOnlyForRace(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		race bool
+		want string
+	}{
+		{name: "normal", race: false, want: "CGO_ENABLED=0"},
+		{name: "race", race: true, want: "CGO_ENABLED=1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			environment := runnerBuildEnvironment("linux", "amd64", test.race)
+			if !slices.Contains(environment, test.want) {
+				t.Fatalf("runner build environment does not contain %q", test.want)
+			}
+			if slices.Contains(environment, "CGO_ENABLED=0") == test.race || slices.Contains(environment, "CGO_ENABLED=1") != test.race {
+				t.Fatalf("runner build environment has conflicting CGO mode for race=%t", test.race)
+			}
+		})
 	}
 }
 
