@@ -451,8 +451,14 @@ test("CodeQL retains every language with bounded jobs outside ordinary push CI",
   assert.equal(fs.existsSync(workflowPath), true, "the bounded CodeQL workflow must exist");
   const workflow = fs.readFileSync(workflowPath, "utf8");
   assert.match(workflow, /^name: codeql$/m);
-  assert.match(workflow, /^on:\n  workflow_dispatch: \{\}\n  schedule:\n    - cron: "17 3 \* \* 3"$/m);
+  assert.match(workflow, /^on:\n  workflow_dispatch: \{\}\n  schedule:\n    - cron: "17 3 \* \* \*"$/m);
   assert.doesNotMatch(workflow, /^  (?:push|pull_request):/m);
+  assert.match(workflow, /^  plan:\n    name: Plan scheduled analysis$/m);
+  assert.match(workflow, /actions\/workflows\/codeql\.yml\/runs\?branch=main&event=schedule&status=success&per_page=1/);
+  assert.match(workflow, /previous_sha=.*workflow_runs\[0\]\.head_sha/);
+  assert.match(workflow, /Could not inspect previous CodeQL runs; scanning fail-safe\./);
+  assert.match(workflow, /"\$previous_sha" == "\$HEAD_SHA"/);
+  assert.match(workflow, /^    needs: plan\n    if: needs\.plan\.outputs\.should_scan == 'true'$/m);
   assert.match(workflow, /^    timeout-minutes: 5$/m);
   for (const language of ["actions", "c-cpp", "go", "javascript-typescript", "ruby", "rust", "swift"]) {
     assert.match(workflow, new RegExp("^          - language: " + language + "$", "m"));
