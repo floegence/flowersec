@@ -22,6 +22,21 @@ Parse an opaque `Artifact` with `parseArtifact(...)`, bind it to a single-use `A
 
 `classifyConnectError(_:)` and `classifySessionError(_:)` return `ErrorRetryClassification` with a `RetryAction`. The actions distinguish retrying the current operation, acquiring a fresh artifact and session, and stopping. `ConnectorOptions` uses the shared ten-second connection timeout when the caller omits it. Apple TLS uses the system trust store when `trustRootsPEM` is empty and accepts explicit PEM roots for private trust profiles.
 
+## Capability Layers
+
+The portable core is the same application model used by every Flowersec SDK:
+opaque artifact parsing, a durable single-use lease, one-shot connection,
+carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
+error classifiers. `classifyConnectErrorV2(...)` and
+`classifySessionErrorV2(...)` return the stable cross-language recovery decision;
+callers should not compare raw Swift error cases with other SDKs.
+
+The Swift SDK profile is Apple-platform WebSocket dialing. Its language convenience
+is the Swift-native async and typed value surface around `Data`,
+`Duration`, and bounded `StreamMetadataV2`. Swift does not expose an unreliable
+message channel in the current SDK profile, and that absence does not narrow the
+portable core.
+
 ## Production Support
 
 WebSocket, raw QUIC, and WebTransport are equal carrier candidates. The support below is the Apple SDK profile, not the portable API.

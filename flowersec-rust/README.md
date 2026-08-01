@@ -100,6 +100,20 @@ The recovery classifiers distinguish retrying an operation on the current
 session from acquiring a fresh artifact and session. They never authorize reuse
 of a durably committed lease or credential.
 
+## Capability Layers
+
+The portable core is the same application model used by every Flowersec SDK:
+opaque artifact parsing, a durable single-use lease, one-shot connection,
+carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
+error classifiers. `classify_connect_error(...)` and
+`classify_session_error(...)` return the stable cross-language recovery decision;
+callers should not compare raw Rust error variants with other SDKs.
+
+The Rust SDK profile owns native raw QUIC dialing and runtime-owned direct
+acceptance through `Acceptor`. Its language convenience is `RpcPeerExt`, which
+adds typed JSON encoding and decoding over the object-safe RPC core without
+making that exact method shape part of the portable core.
+
 ## Runtime Boundaries
 
 Rust owns the native Tokio implementation of the portable contract. Browser

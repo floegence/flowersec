@@ -33,6 +33,20 @@ the receipt path fails closed; the receipt contains no artifact or key material.
 
 An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. `ClassifyConnectError(...)` and `ClassifySessionError(...)` map public errors to `ErrorRetryClassification`: retry the current operation, acquire a fresh artifact and session, or stop. `ConnectExpired` identifies artifact expiry without exposing artifact contents.
 
+## Capability Layers
+
+The portable core is the same application model used by every Flowersec SDK:
+opaque artifact parsing, a durable single-use lease, one-shot connection,
+carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
+error classifiers. `ClassifyConnectError(...)` and
+`ClassifySessionError(...)` return the stable cross-language recovery decision;
+callers should not compare raw Go error codes with other SDKs.
+
+The Go SDK profile supports WebSocket, raw QUIC, and WebTransport production
+dialing. Its language convenience is `SessionHandlers`, which registers inbound
+RPC and stream handlers in a Go-native shape without making handler registration
+part of the portable core.
+
 ## Server Control Plane
 
 Go service control planes use `github.com/floegence/flowersec/flowersec-go/v2/controlplane` to issue direct artifacts or complementary tunnel pairs and to validate `flowersec-runtime` authorization callbacks. Endpoint sets, issued artifacts, authorization records, runtime requests, and responses are opaque. Artifact and record bytes cross only explicit serialization methods; the caller owns permissions, placement, durable one-time lease state, and upstream selection.

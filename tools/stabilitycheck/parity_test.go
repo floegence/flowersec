@@ -49,6 +49,27 @@ func TestLanguageCapabilitiesDeclareContractLayers(t *testing.T) {
 	}
 }
 
+func TestSDKReadmesDescribeCapabilityLayers(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"README.md",
+		"flowersec-go/README.md",
+		"flowersec-ts/README.md",
+		"flowersec-swift/README.md",
+		"flowersec-rust/README.md",
+	} {
+		assertDocumentContains(t, repoRoot, path, []string{
+			"portable core",
+			"SDK profile",
+			"language convenience",
+			"recovery decision",
+		})
+	}
+}
+
 func TestCapabilityManifestRequiresPortableContractsAndSharedFixtures(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {

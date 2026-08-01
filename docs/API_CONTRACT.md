@@ -16,6 +16,8 @@ The protocol carrier set is not a promise that every SDK exposes every carrier. 
 
 Trust-root sourcing is also profile-specific. TypeScript and Swift platform TLS may use the system trust store and accept explicit private roots. Go and Rust native QUIC paths require callers to provide non-empty trust roots explicitly; Go callers may load `x509.SystemCertPool()`, while Rust callers construct `ConnectorOptions::new(...)` with audited DER roots. None of these choices changes the shared ten-second default connection timeout.
 
+The public contract is split into three compatibility layers. The portable core is the shared artifact, lease, connector, session, RPC, stream, and error-classification model implemented by every SDK. Each SDK profile records runtime-owned carrier support, listener support, and platform trust constraints. A language convenience is an ecosystem-specific API shape layered on top of the portable core, not a promise that every SDK exposes the same syntax. The stable cross-language recovery decision is the classifier output; raw public error code taxonomies remain SDK-local.
+
 ## Go
 
 The only supported application import is `github.com/floegence/flowersec/flowersec-go/v2`, conventionally named `flowersec`.

@@ -36,6 +36,21 @@ When connector options omit a connection timeout, browser and Node.js connectors
 
 A negotiated `Session.unreliableMessages` channel returns `accepted`, `dropped_expired`, `dropped_budget`, or `dropped_carrier` from `send(...)`. Invalid payloads, unavailable channels, cancellation, closure, and internal failures remain redacted public operation errors.
 
+## Capability Layers
+
+The portable core is the same application model used by every Flowersec SDK:
+opaque artifact parsing, a durable single-use lease, one-shot connection,
+carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
+error classifiers. `classifyConnectErrorV2(...)` and
+`classifySessionErrorV2(...)` return the stable cross-language recovery decision;
+callers should not compare raw TypeScript error-code strings with other SDKs.
+
+The TypeScript SDK profile is split by entrypoint: browsers own WebSocket and
+WebTransport dialing, while Node.js owns WebSocket dialing. Its language convenience
+includes static generic RPC result typing, notification subscriptions, reconnect
+orchestration, and proxy composition. These conveniences do not expand the
+portable core required from Go, Swift, or Rust.
+
 ## Opaque Boundaries
 
 `Artifact` is an opaque handle. Applications cannot inspect its connection data or serialize it back to protocol JSON. `Session` exposes RPC, stream operations, liveness, rekeying, `waitClosed()`, and closure without revealing the selected transport or peer endpoint identity. Public streams expose their kind and terminal state, but no protocol stream identifier.

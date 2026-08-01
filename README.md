@@ -78,6 +78,8 @@ The [cookbook index](examples/README.md) contains only v2 examples and verificat
 
 ## Portable Contract
 
+Flowersec keeps three compatibility layers explicit. The portable core is the shared artifact, lease, connector, session, RPC, stream, and error-classification model available in every SDK. Each SDK profile records runtime-owned carrier support, listener support, or platform constraints. A language convenience is syntax or orchestration that fits one language ecosystem without becoming a required cross-language capability. The stable cross-language recovery decision is the classifier output, not byte-for-byte matching raw error codes.
+
 | Capability | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
 | Opaque artifact, connector, session, RPC, and byte streams | Yes | Yes | Yes | Yes |
