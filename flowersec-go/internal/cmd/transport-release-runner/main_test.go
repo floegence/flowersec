@@ -325,29 +325,34 @@ func TestAdaptiveCandidatesForTopologyMatchesFrozenManifest(t *testing.T) {
 	}
 }
 
-func TestAdaptiveStageExecutionPlanAllocatesOnlyMobileHarnessSlack(t *testing.T) {
+func TestAdaptiveStageExecutionPlanAllocatesTopologySpecificHarnessSlack(t *testing.T) {
 	plan := transportrelease.ReleasePlan{
 		RunCount: 15,
-		Adaptive: transportrelease.AdaptivePlan{HarnessSlackSeconds: 45},
+		Adaptive: transportrelease.AdaptivePlan{HarnessSlackSeconds: 45, CellWatchdogMinutes: 5},
 	}
 	clean := transportrelease.ProfilePlan{
 		ID: "clean-v1",
 		Cold: transportrelease.ColdPlan{
-			Operations: 30, StartRatePerSecond: 15,
-			OperationDeadlineSeconds: 5, PhaseDeadlineSeconds: 7,
+			Operations: 100, MaxInflight: 32, StartRatePerSecond: 100,
+			OperationDeadlineSeconds: 5, PhaseDeadlineSeconds: 6,
 		},
+		CleanupDeadlineSeconds: 2,
 	}
 	mobile := clean
 	mobile.ID = "mobile-v1"
+	mobile.Cold = transportrelease.ColdPlan{
+		Operations: 30, MaxInflight: 30, StartRatePerSecond: 15,
+		OperationDeadlineSeconds: 5, PhaseDeadlineSeconds: 7,
+	}
 
-	cleanExecution, err := adaptiveStageExecutionPlan(plan, clean)
+	cleanExecution, err := adaptiveStageExecutionPlan(plan, clean, adaptiveWebTopology)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(cleanExecution, clean) {
 		t.Fatalf("clean execution plan changed: got %+v, want %+v", cleanExecution, clean)
 	}
-	mobileExecution, err := adaptiveStageExecutionPlan(plan, mobile)
+	mobileExecution, err := adaptiveStageExecutionPlan(plan, mobile, adaptiveWebTopology)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,6 +361,16 @@ func TestAdaptiveStageExecutionPlanAllocatesOnlyMobileHarnessSlack(t *testing.T)
 	}
 	if mobileExecution.Cold.OperationDeadlineSeconds != 8 {
 		t.Fatalf("mobile operation deadline = %d, want 8", mobileExecution.Cold.OperationDeadlineSeconds)
+	}
+	if mobileExecution.CleanupDeadlineSeconds != 6 {
+		t.Fatalf("mobile cleanup deadline = %ds, want the 5s WebTransport drain plus 1s scheduler margin", mobileExecution.CleanupDeadlineSeconds)
+	}
+	nativeExecution, err := adaptiveStageExecutionPlan(plan, mobile, adaptiveNativeTopology)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nativeExecution.CleanupDeadlineSeconds != mobile.CleanupDeadlineSeconds {
+		t.Fatalf("native adaptive cleanup deadline = %ds, want unchanged %ds", nativeExecution.CleanupDeadlineSeconds, mobile.CleanupDeadlineSeconds)
 	}
 	if mobileExecution.Cold.Operations != mobile.Cold.Operations ||
 		mobileExecution.Cold.StartRatePerSecond != mobile.Cold.StartRatePerSecond ||
@@ -370,10 +385,19 @@ func TestAdaptiveStageExecutionPlanAllocatesOnlyMobileHarnessSlack(t *testing.T)
 	if allocated != 45 || plan.Adaptive.HarnessSlackSeconds-allocated != 0 {
 		t.Fatalf("adaptive slack allocation = %ds with %ds retained, want 45s with 0s retained", allocated, plan.Adaptive.HarnessSlackSeconds-allocated)
 	}
+	if plan.Adaptive.CellWatchdogMinutes != 5 {
+		t.Fatalf("adaptive cell watchdog changed to %d minutes", plan.Adaptive.CellWatchdogMinutes)
+	}
+	signedSeconds := plan.RunCount * ((clean.Cold.PhaseDeadlineSeconds + clean.CleanupDeadlineSeconds) +
+		(mobile.Cold.PhaseDeadlineSeconds + mobile.CleanupDeadlineSeconds))
+	signedSeconds += plan.Adaptive.HarnessSlackSeconds
+	if signedSeconds != plan.Adaptive.CellWatchdogMinutes*60 {
+		t.Fatalf("signed adaptive envelope = %ds, want unchanged %ds watchdog", signedSeconds, plan.Adaptive.CellWatchdogMinutes*60)
+	}
 
 	insufficient := plan
 	insufficient.Adaptive.HarnessSlackSeconds = 44
-	if _, err := adaptiveStageExecutionPlan(insufficient, mobile); err == nil {
+	if _, err := adaptiveStageExecutionPlan(insufficient, mobile, adaptiveWebTopology); err == nil {
 		t.Fatal("accepted adaptive mobile execution without three seconds of harness slack per run")
 	}
 }

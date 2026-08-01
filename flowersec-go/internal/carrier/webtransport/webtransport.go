@@ -213,6 +213,10 @@ type dialConnection struct {
 
 const webTransportConnectionDrainTimeout = 5 * time.Second
 
+// ConnectionDrainTimeout is the outer deadline lower bound for code that owns
+// a production WebTransport dialer or endpoint shutdown.
+func ConnectionDrainTimeout() time.Duration { return webTransportConnectionDrainTimeout }
+
 func NewDialer(tlsConfig *tls.Config, limits Limits) (*Dialer, error) {
 	preparedTLS, err := prepareTLS(tlsConfig, false)
 	if err != nil {

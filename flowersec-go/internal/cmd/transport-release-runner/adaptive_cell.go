@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/linuxnetlab"
 )
@@ -67,7 +68,7 @@ func adaptiveCandidatesForTopology(topology string) ([]transportrelease.Adaptive
 	}
 }
 
-func adaptiveStageExecutionPlan(plan transportrelease.ReleasePlan, stage transportrelease.ProfilePlan) (transportrelease.ProfilePlan, error) {
+func adaptiveStageExecutionPlan(plan transportrelease.ReleasePlan, stage transportrelease.ProfilePlan, topology string) (transportrelease.ProfilePlan, error) {
 	if stage.ID != "mobile-v1" {
 		return stage, nil
 	}
@@ -80,6 +81,15 @@ func adaptiveStageExecutionPlan(plan transportrelease.ReleasePlan, stage transpo
 	}
 	stage.Cold.OperationDeadlineSeconds += perRunSlack
 	stage.Cold.PhaseDeadlineSeconds += perRunSlack
+	if topology == adaptiveWebTopology {
+		// This is a local shutdown ceiling, not additional signed cell time. The
+		// parent cell context still enforces the five-minute manifest watchdog.
+		cleanupLimit := carrierwt.ConnectionDrainTimeout() + time.Second
+		cleanupSeconds := int((cleanupLimit + time.Second - 1) / time.Second)
+		if stage.CleanupDeadlineSeconds < cleanupSeconds {
+			stage.CleanupDeadlineSeconds = cleanupSeconds
+		}
+	}
 	return stage, nil
 }
 
@@ -127,7 +137,7 @@ func runAdaptiveCell(parent context.Context, reportPath string, destination *art
 		{profile: plan.Clean},
 		{profile: plan.Mobile, bpf: frozenBPFObject},
 	} {
-		executionPlan, err := adaptiveStageExecutionPlan(plan, stage.profile)
+		executionPlan, err := adaptiveStageExecutionPlan(plan, stage.profile, topology)
 		if err != nil {
 			return err
 		}
