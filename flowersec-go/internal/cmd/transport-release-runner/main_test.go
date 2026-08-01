@@ -349,8 +349,12 @@ func TestAdaptiveStageExecutionPlanAllocatesTopologySpecificHarnessSlack(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cleanExecution.CleanupDeadlineSeconds != 6 {
+		t.Fatalf("clean adaptive web cleanup deadline = %ds, want the 5s WebTransport drain plus 1s scheduler margin", cleanExecution.CleanupDeadlineSeconds)
+	}
+	cleanExecution.CleanupDeadlineSeconds = clean.CleanupDeadlineSeconds
 	if !reflect.DeepEqual(cleanExecution, clean) {
-		t.Fatalf("clean execution plan changed: got %+v, want %+v", cleanExecution, clean)
+		t.Fatalf("clean adaptive web workload changed: got %+v, want %+v", cleanExecution, clean)
 	}
 	mobileExecution, err := adaptiveStageExecutionPlan(plan, mobile, adaptiveWebTopology)
 	if err != nil {

@@ -68,6 +68,11 @@ func adaptiveCandidatesForTopology(topology string) ([]transportrelease.Adaptive
 }
 
 func adaptiveStageExecutionPlan(plan transportrelease.ReleasePlan, stage transportrelease.ProfilePlan, topology string) (transportrelease.ProfilePlan, error) {
+	if topology == adaptiveWebTopology {
+		// This is a local shutdown ceiling, not additional signed cell time. The
+		// parent cell context still enforces the five-minute manifest watchdog.
+		stage = webTransportExecutionPlan(stage)
+	}
 	if stage.ID != "mobile-v1" {
 		return stage, nil
 	}
@@ -80,11 +85,6 @@ func adaptiveStageExecutionPlan(plan transportrelease.ReleasePlan, stage transpo
 	}
 	stage.Cold.OperationDeadlineSeconds += perRunSlack
 	stage.Cold.PhaseDeadlineSeconds += perRunSlack
-	if topology == adaptiveWebTopology {
-		// This is a local shutdown ceiling, not additional signed cell time. The
-		// parent cell context still enforces the five-minute manifest watchdog.
-		stage = webTransportExecutionPlan(stage)
-	}
 	return stage, nil
 }
 
