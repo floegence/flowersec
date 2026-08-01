@@ -121,8 +121,8 @@ test("precommit uses the short Go group while final integration retains the comp
 
 test("final integration isolates race from the bounded language build lanes", () => {
   const laneCall = [
-    "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
-    "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check",
+    "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
+    "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check",
   ].join("\n");
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const checkTarget = canonical.match(/^check: security-makefile-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
@@ -133,7 +133,7 @@ test("final integration isolates race from the bounded language build lanes", ()
     assert.match(canonical, new RegExp("^" + target + ":", "m"), target + " must remain an explicit final lane");
   }
 
-  const weakened = canonical.replace(laneCall, "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check");
+  const weakened = canonical.replace(laneCall, "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check");
   assert.notEqual(weakened, canonical);
   const result = check(weakened);
   assert.notEqual(result.status, 0);
@@ -151,8 +151,18 @@ test("network preflight completes before expensive stages and final lanes stay o
 
   const preflight = canonical.match(/^final-network-preflight:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(preflight, /run-final-lanes\.mjs.*final-go-preflight.*final-ts-preflight.*final-swift-preflight.*final-rust-preflight/);
+  assert.match(
+    canonical,
+    /^final-go-preflight:\n\t\$\(MAKE\) go-vulncheck\n\tnode scripts\/check-go-security\.mjs --prepare-offline-toolchain$/m,
+  );
 
   const lanes = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  for (const recipe of checkTarget.split("\n").filter((line) => line.includes("run-final-stage.mjs") && !line.includes(" preflight "))) {
+    assert.match(recipe, /GOSUMDB=off/, "every post-preflight stage must disable the Go checksum database");
+  }
+  for (const recipe of lanes.trim().split("\n")) {
+    assert.match(recipe, /GOSUMDB=off/, "every final integration lane must disable the Go checksum database");
+  }
   assert.match(lanes, /GOPROXY=off.*npm_config_offline=true.*run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check/);
   assert.match(lanes, /CARGO_NET_OFFLINE=true.*GOPROXY=off.*npm_config_offline=true.*run-final-stage\.mjs 595 race/);
   const packages = canonical.match(/^final-package-validation:\n((?:\t.*\n)+)/m)?.[1] ?? "";
@@ -204,8 +214,8 @@ test("exact-main gate keeps network work before deterministic offline phases", (
   assert.doesNotMatch(packages, /rust-package-check/);
 
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  assert.match(laneTarget, /^\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race/m);
-  assert.match(laneTarget, /CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true.*595 languages/);
+  assert.match(laneTarget, /^\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race/m);
+  assert.match(laneTarget, /CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true.*595 languages/);
   const post = canonical.match(/^final-post-validation:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(post, /\$\(MAKE\) example-check/);
   assert.match(post, /\$\(MAKE\) transport-interop-smoke/);
@@ -467,7 +477,7 @@ test("final race validation completes before bounded language build lanes start"
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const goTarget = canonical.match(/^final-go-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const raceTarget = canonical.match(/^final-race-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  assert.match(laneTarget, /^\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check\n$/);
+  assert.match(laneTarget, /^\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check\n$/);
   assert.doesNotMatch(goTarget, /go-test-race/);
   assert.match(raceTarget, /^\t\$\(MAKE\) go-test-race$/m);
 });
@@ -743,7 +753,7 @@ test("check cannot suppress or disconnect final integration lanes", () => {
       assert.match(result.stderr, /check must call|exact, unsuppressed/i);
     }
   }
-  const packageCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
+  const packageCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
   for (const replacement of ["", `\t-${packageCall.slice(1)}`, `${packageCall} || true`]) {
     const mutated = replaceTargetRecipeLine(canonical, "check", packageCall, replacement);
     const result = check(mutated);

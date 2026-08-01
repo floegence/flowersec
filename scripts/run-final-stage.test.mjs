@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,8 +18,31 @@ if (helperMode === "descendant") {
   setInterval(() => {}, 1_000);
 } else {
 
-function run(args) {
-  return spawnSync(process.execPath, [runner, ...args], { encoding: "utf8" });
+function run(args, options = {}) {
+  return spawnSync(process.execPath, [runner, ...args], { encoding: "utf8", ...options });
+}
+
+function isolatedGitEnvironment(overrides = {}) {
+  const environment = { ...process.env, ...overrides };
+  for (const variable of [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_DIR",
+    "GIT_GRAFT_FILE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+    "GIT_QUARANTINE_PATH",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_SHALLOW_FILE",
+    "GIT_WORK_TREE",
+  ]) delete environment[variable];
+  return environment;
 }
 
 test("final stage wrapper validates its closed command contract", () => {
@@ -40,6 +64,46 @@ test("final stage wrapper preserves success and failure status", () => {
   assert.equal(run(["1", "race", process.execPath, "-e", "process.exit(0)"]).status, 0);
   assert.equal(run(["1", "languages", process.execPath, "-e", "process.exit(23)"]).status, 23);
   assert.equal(run(["1", "post", process.execPath, "-e", "process.exit(0)"]).status, 0);
+});
+
+test("offline stages use the exact prefetched Go toolchain and reject drift", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-final-go-toolchain-"));
+  try {
+    const gitEnvironment = isolatedGitEnvironment();
+    assert.equal(spawnSync("git", ["init", "-q"], { cwd: root, env: gitEnvironment }).status, 0);
+    assert.equal(spawnSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "fixture"], { cwd: root, env: gitEnvironment }).status, 0);
+    const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", env: gitEnvironment }).stdout.trim();
+    const bin = path.join(root, "toolchain", "bin");
+    const binary = path.join(bin, "go");
+    fs.mkdirSync(path.join(root, ".flowersec"), { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(binary, "#!/bin/sh\nprintf 'go version go1.26.5 test/arch\\n'\n", { mode: 0o755 });
+    const state = {
+      schema: "flowersec-final-go-toolchain-v1",
+      sourceHead: head,
+      version: "go1.26.5",
+      binary,
+      sha256: createHash("sha256").update(fs.readFileSync(binary)).digest("hex"),
+    };
+    fs.writeFileSync(path.join(root, ".flowersec", "final-go-toolchain.json"), `${JSON.stringify(state)}\n`);
+    const environment = isolatedGitEnvironment({
+      GOSUMDB: "off",
+      GOPROXY: "off",
+    });
+    const check = [
+      "const { spawnSync } = require('node:child_process');",
+      "if (process.env.GOTOOLCHAIN !== 'local') process.exit(21);",
+      "const result = spawnSync('go', ['version'], { encoding: 'utf8' });",
+      "if (result.status !== 0 || !result.stdout.includes('go1.26.5 test/arch')) process.exit(22);",
+    ].join("");
+    assert.equal(run(["5", "packages", process.execPath, "-e", check], { cwd: root, env: environment }).status, 0);
+    fs.appendFileSync(binary, "# drift\n");
+    const drifted = run(["5", "packages", process.execPath, "-e", "process.exit(0)"], { cwd: root, env: environment });
+    assert.notEqual(drifted.status, 0);
+    assert.match(drifted.stderr, /digest changed after preflight/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("final stage kill fallbacks do not delay a drained process group", () => {

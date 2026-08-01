@@ -373,6 +373,7 @@ export function verifySecurityMakefile(makefile) {
     ]],
     ["final-go-preflight", [
       "\t$(MAKE) go-vulncheck",
+      "\tnode scripts/check-go-security.mjs --prepare-offline-toolchain",
     ]],
     ["final-ts-preflight", [
       "\t$(MAKE) ts-ci",
@@ -399,8 +400,8 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) rust-package-offline-check",
     ]],
     ["final-integration-lanes", [
-      "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
-      "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check",
+      "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
+      "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check",
     ]],
     ["final-post-validation", [
       "\t$(MAKE) example-check",
@@ -503,12 +504,12 @@ export function verifySecurityMakefile(makefile) {
   const checkRecipe = effectiveRecipe(database.stdout, "check");
   const preflightCall = "\tnode scripts/run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight";
   const preflightIndex = checkRecipe.indexOf(preflightCall);
-  const contractsCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts";
+  const contractsCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts";
   const contractsIndex = checkRecipe.indexOf(contractsCall);
-  const packageCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
+  const packageCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
   const packageIndex = checkRecipe.indexOf(packageCall);
   const lanesIndex = checkRecipe.indexOf("\t$(MAKE) final-integration-lanes");
-  const postCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 post $(MAKE) final-post-validation";
+  const postCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 post $(MAKE) final-post-validation";
   const postIndex = checkRecipe.indexOf(postCall);
   if (preflightIndex < 0 || checkRecipe.lastIndexOf(preflightCall) !== preflightIndex
     || contractsIndex <= preflightIndex || checkRecipe.lastIndexOf(contractsCall) !== contractsIndex

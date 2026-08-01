@@ -453,16 +453,17 @@ check: security-makefile-check
 	$(MAKE) release-policy-check
 	$(MAKE) readme-localization-check
 	node scripts/run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight
-	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts
-	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation
+	CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts
+	CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation
 	$(MAKE) final-integration-lanes
-	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 post $(MAKE) final-post-validation
+	CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 post $(MAKE) final-post-validation
 
 final-network-preflight:
 	node scripts/run-final-lanes.mjs $(MAKE) final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight
 
 final-go-preflight:
 	$(MAKE) go-vulncheck
+	node scripts/check-go-security.mjs --prepare-offline-toolchain
 
 final-ts-preflight:
 	$(MAKE) ts-ci
@@ -489,8 +490,8 @@ final-package-validation:
 	$(MAKE) rust-package-offline-check
 
 final-integration-lanes:
-	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check
-	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check
+	CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check
+	CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check
 
 final-post-validation:
 	$(MAKE) example-check

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -152,12 +153,63 @@ export function runGoSecurityChecks({
   return modules;
 }
 
+export function prepareOfflineGoToolchain({
+  repoRoot,
+  goToolchain,
+  run = defaultRun,
+  statePath = path.join(repoRoot, ".flowersec", "final-go-toolchain.json"),
+}) {
+  const environment = { GOTOOLCHAIN: goToolchain, GOWORK: "off" };
+  const [reportedRoot, reportedVersion, extra] = run(
+    "go",
+    ["env", "GOROOT", "GOVERSION"],
+    { cwd: path.join(repoRoot, "flowersec-go"), env: environment },
+  ).trim().split(/\r?\n/);
+  if (!reportedRoot || reportedVersion !== goToolchain || extra !== undefined) {
+    throw new Error(`cannot resolve exact ${goToolchain} toolchain root`);
+  }
+  const binaryName = process.platform === "win32" ? "go.exe" : "go";
+  const binary = fs.realpathSync(path.join(reportedRoot, "bin", binaryName));
+  if (!fs.statSync(binary).isFile()) throw new Error(`Go toolchain is not a regular file: ${binary}`);
+  const version = run(binary, ["version"], {
+    cwd: repoRoot,
+    env: { GOTOOLCHAIN: "local", GOWORK: "off" },
+  }).trim();
+  if (!version.startsWith(`go version ${goToolchain} `)) {
+    throw new Error(`resolved Go toolchain version mismatch: ${version}`);
+  }
+  const sourceHead = run("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).trim();
+  if (!/^[0-9a-f]{40}$/.test(sourceHead)) throw new Error("cannot bind Go toolchain to source HEAD");
+  const state = {
+    schema: "flowersec-final-go-toolchain-v1",
+    sourceHead,
+    version: goToolchain,
+    binary,
+    sha256: createHash("sha256").update(fs.readFileSync(binary)).digest("hex"),
+  };
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  const temporary = `${statePath}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(state)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    fs.renameSync(temporary, statePath);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+  return state;
+}
+
 function main() {
-  if (process.argv.length !== 2) {
-    throw new Error("usage: check-go-security.mjs");
+  if (process.argv.length > 3
+    || (process.argv.length === 3 && process.argv[2] !== "--prepare-offline-toolchain")) {
+    throw new Error("usage: check-go-security.mjs [--prepare-offline-toolchain]");
   }
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const tools = goSecurityToolVersions();
+  if (process.argv[2] === "--prepare-offline-toolchain") {
+    const state = prepareOfflineGoToolchain({ repoRoot, goToolchain: tools.goToolchain });
+    process.stdout.write(`prepared ${state.version} offline toolchain for ${state.sourceHead}\n`);
+    return;
+  }
   const modules = runGoSecurityChecks({
     repoRoot,
     ...tools,

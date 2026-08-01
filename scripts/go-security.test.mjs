@@ -98,3 +98,36 @@ test("Go security tool versions are fixed and environment overrides fail closed"
     /GOVULNCHECK_GOTOOLCHAIN.*must not override/i,
   );
 });
+
+test("offline stages bind the exact prefetched Go toolchain to the source HEAD", async (t) => {
+  const { prepareOfflineGoToolchain } = await loadChecker();
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-go-toolchain-"));
+  t.after(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
+  const toolchainRoot = path.join(repoRoot, "toolchain");
+  const binary = path.join(toolchainRoot, "bin", "go");
+  const statePath = path.join(repoRoot, "state.json");
+  fs.mkdirSync(path.dirname(binary), { recursive: true });
+  fs.writeFileSync(binary, "fake-go-toolchain");
+  const realBinary = fs.realpathSync(binary);
+  const calls = [];
+  const sourceHead = "a".repeat(40);
+  const run = (command, args, options) => {
+    calls.push({ command, args, options });
+    if (command === "go") return `${toolchainRoot}\ngo1.26.5\n`;
+    if (command === realBinary) return "go version go1.26.5 test/arch\n";
+    if (command === "git") return `${sourceHead}\n`;
+    throw new Error(`unexpected command: ${command}`);
+  };
+  const state = prepareOfflineGoToolchain({
+    repoRoot,
+    goToolchain: "go1.26.5",
+    run,
+    statePath,
+  });
+  assert.deepEqual(JSON.parse(fs.readFileSync(statePath, "utf8")), state);
+  assert.equal(state.sourceHead, sourceHead);
+  assert.equal(state.binary, realBinary);
+  assert.match(state.sha256, /^[0-9a-f]{64}$/);
+  assert.deepEqual(calls[0].options.env, { GOTOOLCHAIN: "go1.26.5", GOWORK: "off" });
+  assert.deepEqual(calls[1].options.env, { GOTOOLCHAIN: "local", GOWORK: "off" });
+});
