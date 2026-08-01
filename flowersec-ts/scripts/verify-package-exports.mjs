@@ -474,6 +474,7 @@ void leakedNodeCarrierOptions;
 void terminalError;
 void createBrowserArtifactLease(artifact, commitSpend);
 void createNodeArtifactLease(artifact, commitSpend);
+// @ts-expect-error durable spend transition is connector-owned.
 void lease.commitSpend();
 void metadata;
 void openOptions;
