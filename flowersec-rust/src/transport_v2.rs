@@ -662,6 +662,25 @@ pub trait UnreliableMessageChannelV2: fmt::Debug + Send + Sync + 'static {
 }
 
 impl SessionError {
+    /// Returns the stable public code string for this redacted session failure.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Canceled => "canceled",
+            Self::Closed => "closed",
+            Self::GoingAway => "going_away",
+            Self::InvalidInput => "invalid_input",
+            Self::Rejected => "rejected",
+            Self::StreamRejected => "stream_rejected",
+            Self::ResourceExhausted => "resource_exhausted",
+            Self::Reset => "reset",
+            Self::StreamReset => "stream_reset",
+            Self::TimedOut => "timed_out",
+            Self::RekeyFailed => "rekey_failed",
+            Self::LivenessFailed => "liveness_failed",
+            Self::Failed => "failed",
+        }
+    }
+
     pub(crate) fn from_io(error: &io::Error) -> Self {
         if error.kind() == io::ErrorKind::ConnectionAborted
             && error.to_string() == "peer is going away"

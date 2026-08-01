@@ -1,6 +1,6 @@
 use flowersec::{
-    ArtifactLease, ConnectorOptions, ErrorRetryAction, RpcPeer, RpcPeerExt, SessionError,
-    classify_session_error, connect,
+    ArtifactLease, ConnectErrorCode, ConnectorOptions, ErrorRetryAction, RpcPeer, RpcPeerExt,
+    SessionError, classify_connect_error, classify_session_error, connect,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -48,6 +48,18 @@ fn recovery_action_names_match_portable_contract() {
     let closed = classify_session_error(SessionError::Closed);
     assert!(closed.refresh_artifact);
     assert!(closed.session_closed);
+}
+
+#[test]
+fn public_error_codes_expose_direct_stable_strings() {
+    let connection = classify_connect_error(ConnectErrorCode::Timeout);
+    assert_eq!(connection.action, ErrorRetryAction::RefreshArtifact);
+
+    let connect_error = ConnectorOptions::new(vec![]).expect_err("empty trust roots are invalid");
+    assert_eq!(connect_error.as_str(), "invalid_input");
+    assert_eq!(SessionError::TimedOut.as_str(), "timed_out");
+    assert_eq!(SessionError::GoingAway.as_str(), "going_away");
+    assert_eq!(SessionError::StreamRejected.as_str(), "stream_rejected");
 }
 
 #[test]

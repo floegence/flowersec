@@ -101,6 +101,11 @@ impl ConnectError {
     pub const fn code(&self) -> ConnectErrorCode {
         self.code
     }
+
+    /// Returns the stable public code string for this redacted connection failure.
+    pub const fn as_str(&self) -> &'static str {
+        self.code.as_str()
+    }
 }
 
 /// Establishes a v2 session without exposing candidates or carrier configuration.
