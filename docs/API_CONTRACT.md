@@ -57,6 +57,12 @@ Applications `import Flowersec` from the `Flowersec` product. The public lifecyc
 
 The `flowersec` crate exposes `Artifact`, `ArtifactError`, `ArtifactLease`, `ArtifactSpendError`, `Connector`, `ConnectorOptions`, `ConnectError`, `ConnectErrorCode`, `Session`, `SessionError`, `RpcPeer`, `RpcError`, `RpcCallError`, `ByteStream`, `IncomingStream`, `JsonObject`, `StreamTerminalError`, and the carrier-neutral optional `UnreliableMessageChannel`. `classify_connect_error(...)` and `classify_session_error(...)` return an `ErrorRetryClassification` with an `ErrorRetryAction`; `ErrorRetryAction::as_str()` returns its canonical cross-language action name. `RpcCallError` keeps a bounded remote `RpcError` separate from a redacted `SessionError`; generic `RpcError` formatting omits its sanitized message unless the caller explicitly requests it. Native server runtimes additionally use `AcceptorOptions`, `Acceptor`, `AcceptError`, and `AcceptErrorCode` to turn an opaque direct-session artifact into the same carrier-neutral `Session`. Quinn connections, admission frames, capability descriptors, candidate plans, session ledgers, and implementation modules remain crate-private.
 
+## Cross-language semantics
+
+Remote application RPC failures are semantically separate from session and transport failures across the SDKs. The expression is language-native rather than byte-for-byte identical: TypeScript uses `RpcResultV2` with an `ok: false` application `error`, Go returns `flowersec.RPCError`, Swift throws `RPCErrorV2`, and Rust returns `RpcCallError::Application`. Session, stream, carrier, handshake, and credential-spend failures remain redacted public connection or session failures instead of application RPC failures.
+
+Unreliable messages are a negotiated optional capability, not a mandatory method shape for every language. Go exposes `flowersec.UnreliableMessageChannel`, TypeScript exposes `UnreliableMessageChannelV2`, and Rust exposes `UnreliableMessageChannel` when the session negotiated support. Swift currently exposes no public unreliable-message channel; Swift applications keep the same carrier-neutral `SessionV2` core without receiving DATAGRAM or carrier objects.
+
 ## Error Boundary
 
 Public connection and session failures contain only a stable code. They never retain raw artifacts, credential-bearing URLs, tokens, peer payloads, candidate diagnostics, path or stage selection, key material, carrier handles, or implementation objects. Sanitized remote application RPC errors may retain only their bounded semantic code and message.
