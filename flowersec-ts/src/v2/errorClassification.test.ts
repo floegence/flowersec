@@ -36,6 +36,7 @@ describe("public error retry classification", () => {
     for (const testCase of sharedContract.connect) {
       const expected = sharedContract.decisions[testCase.decision];
       expect(expected).toBeDefined();
+      if (expected === undefined) throw new Error(`missing decision ${testCase.decision}`);
       for (const code of testCase.codes.typescript ?? []) {
         expect(classifyConnectError(new ConnectError(code as ConstructorParameters<typeof ConnectError>[0]))).toEqual({
           action: expected.action,
@@ -50,6 +51,7 @@ describe("public error retry classification", () => {
     for (const testCase of sharedContract.session) {
       const expected = sharedContract.decisions[testCase.decision];
       expect(expected).toBeDefined();
+      if (expected === undefined) throw new Error(`missing decision ${testCase.decision}`);
       for (const code of testCase.codes.typescript ?? []) {
         expect(classifySessionError(new SessionError(code as ConstructorParameters<typeof SessionError>[0]))).toEqual({
           action: expected.action,
@@ -123,6 +125,27 @@ describe("public error retry classification", () => {
       sessionClosed: false,
     });
     expect(classifySessionError(new SessionError("stream_rejected"))).toEqual({
+      action: "stop",
+      retryable: false,
+      refreshArtifact: false,
+      callerCanceled: false,
+      sessionClosed: false,
+    });
+    expect(classifySessionError(new SessionError("unreliable_unavailable"))).toEqual({
+      action: "stop",
+      retryable: false,
+      refreshArtifact: false,
+      callerCanceled: false,
+      sessionClosed: false,
+    });
+    expect(classifySessionError(new SessionError("unreliable_too_large"))).toEqual({
+      action: "stop",
+      retryable: false,
+      refreshArtifact: false,
+      callerCanceled: false,
+      sessionClosed: false,
+    });
+    expect(classifySessionError(new SessionError("unreliable_dropped"))).toEqual({
       action: "stop",
       retryable: false,
       refreshArtifact: false,

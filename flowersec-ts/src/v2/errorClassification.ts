@@ -31,6 +31,9 @@ export function classifySessionErrorV2(error: Readonly<{ code: SessionErrorCode 
     case "liveness_failed":
       return classify("retry");
     case "stream_rejected":
+    case "unreliable_unavailable":
+    case "unreliable_too_large":
+    case "unreliable_dropped":
     case "operation_failed":
       return classify("stop");
   }

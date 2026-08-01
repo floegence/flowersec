@@ -82,6 +82,7 @@ The [cookbook index](examples/README.md) contains only v2 examples and verificat
 | --- | :---: | :---: | :---: | :---: |
 | Opaque artifact, connector, session, RPC, and byte streams | Yes | Yes | Yes | Yes |
 | Public error recovery classification | Yes | Yes | Yes | Yes |
+| Negotiated unreliable message channel | Yes | Yes | No | Yes |
 | RPC notification subscription | No | Yes | No | No |
 | Inbound RPC request handlers | Yes | No | No | No |
 | Production WebSocket dialing | Yes | Browser and Node.js | macOS and iOS | No |

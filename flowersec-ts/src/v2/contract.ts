@@ -56,6 +56,9 @@ export type SessionErrorCode =
   | "stream_reset"
   | "rekey_failed"
   | "liveness_failed"
+  | "unreliable_unavailable"
+  | "unreliable_too_large"
+  | "unreliable_dropped"
   | "operation_failed";
 
 /** A closed, carrier-neutral session failure with no internal cause or peer detail. */

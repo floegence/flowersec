@@ -115,7 +115,7 @@
       "decision": "stop",
       "codes": {
         "go": ["stream_rejected", "unreliable_unavailable", "unreliable_too_large", "unreliable_dropped", "operation_failed"],
-        "typescript": ["stream_rejected", "operation_failed"],
+        "typescript": ["stream_rejected", "unreliable_unavailable", "unreliable_too_large", "unreliable_dropped", "operation_failed"],
         "swift": ["stream_rejected", "operation_failed"],
         "rust": ["invalid_input", "rejected", "stream_rejected", "failed"]
       }
