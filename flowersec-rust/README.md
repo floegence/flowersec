@@ -91,7 +91,10 @@ cancellation, closure, and internal failures remain public operation errors.
 bounded remote `RpcError` separate from session failure; its generic display
 omits the sanitized application message unless the caller explicitly requests
 it. Public errors do not retain peer payloads, carrier diagnostics, credentials,
-or cryptographic material.
+or cryptographic material. `SessionError` includes the portable going-away,
+stream rejection, stream reset, rekey failure, and liveness failure states used
+by the shared recovery classifier, while retaining the older generic Rust
+variants for compatibility.
 
 The recovery classifiers distinguish retrying an operation on the current
 session from acquiring a fresh artifact and session. They never authorize reuse

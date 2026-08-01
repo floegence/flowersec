@@ -46,13 +46,19 @@ pub const fn classify_connect_error(code: ConnectErrorCode) -> ErrorRetryClassif
 pub const fn classify_session_error(error: SessionError) -> ErrorRetryClassification {
     match error {
         SessionError::Canceled => classification(ErrorRetryAction::Stop, true, false),
-        SessionError::Closed => classification(ErrorRetryAction::RefreshArtifact, false, true),
-        SessionError::ResourceExhausted | SessionError::Reset | SessionError::TimedOut => {
-            classification(ErrorRetryAction::Retry, false, false)
+        SessionError::Closed | SessionError::GoingAway => {
+            classification(ErrorRetryAction::RefreshArtifact, false, true)
         }
-        SessionError::InvalidInput | SessionError::Rejected | SessionError::Failed => {
-            classification(ErrorRetryAction::Stop, false, false)
-        }
+        SessionError::ResourceExhausted
+        | SessionError::Reset
+        | SessionError::StreamReset
+        | SessionError::TimedOut
+        | SessionError::RekeyFailed
+        | SessionError::LivenessFailed => classification(ErrorRetryAction::Retry, false, false),
+        SessionError::InvalidInput
+        | SessionError::Rejected
+        | SessionError::StreamRejected
+        | SessionError::Failed => classification(ErrorRetryAction::Stop, false, false),
     }
 }
 

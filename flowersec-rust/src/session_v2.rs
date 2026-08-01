@@ -852,14 +852,22 @@ impl SessionV2 for SelfSession {
         .map_err(|error| SessionError::from_io(&error))
     }
     async fn rekey(&self) -> Result<(), SessionError> {
-        rekey_v2(self)
-            .await
-            .map_err(|error| SessionError::from_io(&error))
+        rekey_v2(self).await.map_err(|error| {
+            let public = SessionError::from_io(&error);
+            match public {
+                SessionError::Canceled | SessionError::Closed | SessionError::GoingAway => public,
+                _ => SessionError::RekeyFailed,
+            }
+        })
     }
     async fn probe_liveness(&self) -> Result<Duration, SessionError> {
-        probe_v2(self)
-            .await
-            .map_err(|error| SessionError::from_io(&error))
+        probe_v2(self).await.map_err(|error| {
+            let public = SessionError::from_io(&error);
+            match public {
+                SessionError::Canceled | SessionError::Closed | SessionError::GoingAway => public,
+                _ => SessionError::LivenessFailed,
+            }
+        })
     }
     async fn wait_closed(&self) -> Result<(), SessionError> {
         self.canceled.cancelled().await;

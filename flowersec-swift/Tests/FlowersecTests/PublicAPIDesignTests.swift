@@ -26,3 +26,12 @@ func unversionedOneShotPublicAPICompiles() async throws {
   _ = connectAttempt
   _ = rpcCall
 }
+
+@Test
+func recoveryActionNamesMatchPortableContract() {
+  #expect(RetryAction.retry.rawValue == "retry")
+  #expect(RetryAction.refreshArtifact.rawValue == "refresh_artifact")
+  #expect(RetryAction.stop.rawValue == "stop")
+  #expect(classifySessionError(.closed).refreshArtifact)
+  #expect(classifySessionError(.closed).sessionClosed)
+}

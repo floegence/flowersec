@@ -97,7 +97,7 @@
         "go": ["closed", "going_away"],
         "typescript": ["closed", "going_away"],
         "swift": ["closed", "going_away"],
-        "rust": ["closed"]
+        "rust": ["closed", "going_away"]
       }
     },
     {
@@ -107,7 +107,7 @@
         "go": ["timeout", "resource_exhausted", "stream_reset", "rekey_failed", "liveness_failed"],
         "typescript": ["timeout", "resource_exhausted", "stream_reset", "rekey_failed", "liveness_failed"],
         "swift": ["timeout", "resource_exhausted", "stream_reset", "rekey_failed", "liveness_failed"],
-        "rust": ["resource_exhausted", "reset", "timed_out"]
+        "rust": ["resource_exhausted", "reset", "stream_reset", "timed_out", "rekey_failed", "liveness_failed"]
       }
     },
     {
@@ -117,7 +117,7 @@
         "go": ["stream_rejected", "unreliable_unavailable", "unreliable_too_large", "unreliable_dropped", "operation_failed"],
         "typescript": ["stream_rejected", "operation_failed"],
         "swift": ["stream_rejected", "operation_failed"],
-        "rust": ["invalid_input", "rejected", "failed"]
+        "rust": ["invalid_input", "rejected", "stream_rejected", "failed"]
       }
     }
   ]

@@ -539,16 +539,26 @@ pub enum SessionError {
     Canceled,
     #[error("Flowersec session is closed")]
     Closed,
+    #[error("Flowersec session is going away")]
+    GoingAway,
     #[error("invalid Flowersec operation")]
     InvalidInput,
     #[error("Flowersec operation was rejected")]
     Rejected,
+    #[error("Flowersec stream was rejected")]
+    StreamRejected,
     #[error("Flowersec resources are exhausted")]
     ResourceExhausted,
     #[error("Flowersec stream was reset")]
     Reset,
+    #[error("Flowersec stream was reset")]
+    StreamReset,
     #[error("Flowersec operation timed out")]
     TimedOut,
+    #[error("Flowersec rekey failed")]
+    RekeyFailed,
+    #[error("Flowersec liveness probe failed")]
+    LivenessFailed,
     #[error("Flowersec operation failed")]
     Failed,
 }
@@ -653,6 +663,11 @@ pub trait UnreliableMessageChannelV2: fmt::Debug + Send + Sync + 'static {
 
 impl SessionError {
     pub(crate) fn from_io(error: &io::Error) -> Self {
+        if error.kind() == io::ErrorKind::ConnectionAborted
+            && error.to_string() == "peer is going away"
+        {
+            return Self::GoingAway;
+        }
         match error.kind() {
             io::ErrorKind::Interrupted => Self::Canceled,
             io::ErrorKind::ConnectionAborted
@@ -660,9 +675,9 @@ impl SessionError {
             | io::ErrorKind::NotConnected
             | io::ErrorKind::UnexpectedEof => Self::Closed,
             io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => Self::InvalidInput,
-            io::ErrorKind::PermissionDenied => Self::Rejected,
+            io::ErrorKind::PermissionDenied => Self::StreamRejected,
             io::ErrorKind::OutOfMemory => Self::ResourceExhausted,
-            io::ErrorKind::ConnectionReset => Self::Reset,
+            io::ErrorKind::ConnectionReset => Self::StreamReset,
             io::ErrorKind::TimedOut => Self::TimedOut,
             _ => Self::Failed,
         }
@@ -673,13 +688,17 @@ impl From<SessionError> for io::Error {
     fn from(error: SessionError) -> Self {
         let kind = match error {
             SessionError::Canceled => io::ErrorKind::Interrupted,
-            SessionError::Closed => io::ErrorKind::ConnectionAborted,
+            SessionError::Closed | SessionError::GoingAway => io::ErrorKind::ConnectionAborted,
             SessionError::InvalidInput => io::ErrorKind::InvalidInput,
-            SessionError::Rejected => io::ErrorKind::PermissionDenied,
+            SessionError::Rejected | SessionError::StreamRejected => {
+                io::ErrorKind::PermissionDenied
+            }
             SessionError::ResourceExhausted => io::ErrorKind::OutOfMemory,
-            SessionError::Reset => io::ErrorKind::ConnectionReset,
+            SessionError::Reset | SessionError::StreamReset => io::ErrorKind::ConnectionReset,
             SessionError::TimedOut => io::ErrorKind::TimedOut,
-            SessionError::Failed => io::ErrorKind::Other,
+            SessionError::RekeyFailed | SessionError::LivenessFailed | SessionError::Failed => {
+                io::ErrorKind::Other
+            }
         };
         io::Error::new(kind, error)
     }

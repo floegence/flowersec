@@ -1170,7 +1170,7 @@ async fn rekey_prepare_timeout_leaves_the_session_recoverable() {
         .rekey()
         .await
         .expect_err("pre-commit responder freeze must time out");
-    assert_eq!(error, SessionError::TimedOut);
+    assert_eq!(error, SessionError::RekeyFailed);
     release.notify_waiters();
     let incoming = tokio::time::timeout(Duration::from_millis(750), client.accept_stream())
         .await
@@ -1623,7 +1623,7 @@ async fn goaway_boundary_tightening_rejects_an_already_allocated_open() {
         .expect("open did not observe tightened GOAWAY boundary")
         .expect("join open task")
         .expect_err("open past GOAWAY boundary must fail");
-    assert_eq!(error, SessionError::Closed);
+    assert_eq!(error, SessionError::GoingAway);
     server_release.notify_waiters();
     closing
         .await

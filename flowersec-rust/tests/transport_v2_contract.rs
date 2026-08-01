@@ -302,14 +302,25 @@ fn session_errors_are_closed_and_redacted() {
     let snapshots = [
         (SessionError::Canceled, "Flowersec operation was canceled"),
         (SessionError::Closed, "Flowersec session is closed"),
+        (SessionError::GoingAway, "Flowersec session is going away"),
         (SessionError::InvalidInput, "invalid Flowersec operation"),
         (SessionError::Rejected, "Flowersec operation was rejected"),
+        (
+            SessionError::StreamRejected,
+            "Flowersec stream was rejected",
+        ),
         (
             SessionError::ResourceExhausted,
             "Flowersec resources are exhausted",
         ),
         (SessionError::Reset, "Flowersec stream was reset"),
+        (SessionError::StreamReset, "Flowersec stream was reset"),
         (SessionError::TimedOut, "Flowersec operation timed out"),
+        (SessionError::RekeyFailed, "Flowersec rekey failed"),
+        (
+            SessionError::LivenessFailed,
+            "Flowersec liveness probe failed",
+        ),
         (SessionError::Failed, "Flowersec operation failed"),
     ];
     for (error, display) in snapshots {
