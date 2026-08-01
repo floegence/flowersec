@@ -343,7 +343,10 @@ export function verifySecurityMakefile(makefile) {
       "\tswift test --package-path examples/swift --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file",
     ]],
     ["ts-build", ["\tcd flowersec-ts && rm -rf dist && npm run build"]],
-    ["ts-test-short", ["\tcd flowersec-ts && npx vitest run --exclude 'src/**/*.integration.test.ts' --exclude 'src/v2/session_go_interop.test.ts' --exclude 'src/v2/browserBundle.test.ts'"]],
+    ["ts-test-short", [
+      "\tcd flowersec-ts && npx vitest run --exclude 'src/**/*.integration.test.ts' --exclude 'src/v2/session_go_interop.test.ts' --exclude 'src/v2/browserBundle.test.ts'",
+      "\tnode --test flowersec-ts/scripts/browser-release-collector-core.node-test.mjs",
+    ]],
     ["go-test-race", [
       "\tcd flowersec-go && go test -race -timeout=5m ./...",
       "\tcd tools/idlgen && go test -race -timeout=5m ./...",

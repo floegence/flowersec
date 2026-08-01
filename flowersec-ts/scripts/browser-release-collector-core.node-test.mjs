@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   installWebTransportCertificateHash,
   navigateBrowserModule,
+  runColdPhase,
   runSessionWorkload,
 } from "./browser-release-collector.mjs";
 
@@ -74,8 +75,10 @@ test("binds held-session establishment to the cold phase deadline", async () => 
     rpc: { ...forcedPlan.rpc, phase_deadline_ms: 5_000 },
   });
   let payload;
+  let evaluatorSource = "";
   const page = {
-    evaluate: async (_operation, value) => {
+    evaluate: async (operation, value) => {
+      evaluatorSource = operation.toString();
       payload = value;
       return {};
     },
@@ -83,6 +86,36 @@ test("binds held-session establishment to the cold phase deadline", async () => 
 
   await runSessionWorkload(page, {}, plan);
   assert.equal(payload.connectDeadlineMs, 30_000);
+  assert.match(
+    evaluatorSource,
+    /connectBrowserSession\(lease, \{ signal, connectTimeoutMs: connectDeadlineMs \}\)/,
+  );
+});
+
+test("binds every cold connection to its operation deadline", async () => {
+  const cold = {
+    ...forcedPlan.cold,
+    operations: 1,
+    max_inflight: 1,
+    operation_deadline_ms: 53_000,
+    phase_deadline_ms: 55_000,
+  };
+  let payload;
+  let evaluatorSource = "";
+  const page = {
+    evaluate: async (operation, value) => {
+      evaluatorSource = operation.toString();
+      payload = value;
+      return {};
+    },
+  };
+
+  await runColdPhase(page, [{ artifact_json: "{}", spend_token: "spend-1" }], cold, 12_000);
+  assert.equal(payload.operationDeadlineMs, 53_000);
+  assert.match(
+    evaluatorSource,
+    /connectBrowserSession\(lease, \{\s*signal: controller\.signal,\s*connectTimeoutMs: operationDeadlineMs,?\s*\}\)/,
+  );
 });
 
 test("uses one native bidirectional stream for both bulk directions", async () => {

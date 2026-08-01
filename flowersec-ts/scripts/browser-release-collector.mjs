@@ -142,7 +142,7 @@ export async function collectBrowserReleaseWorkload(input, dependencies = {}) {
   return report;
 }
 
-async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
+export async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
   const phaseController = new AbortController();
   const phaseTimer = setTimeout(
     () => phaseController.abort(new Error("cold phase deadline exceeded")),
@@ -171,7 +171,10 @@ async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
             const timer = setTimeout(() => controller.abort(new Error("cold operation deadline exceeded")), operationDeadlineMs);
             let session;
             try {
-              session = await sdk.connectBrowserSession(lease, { signal: controller.signal });
+              session = await sdk.connectBrowserSession(lease, {
+                signal: controller.signal,
+                connectTimeoutMs: operationDeadlineMs,
+              });
             } finally {
               clearTimeout(timer);
             }
@@ -230,7 +233,7 @@ export async function runSessionWorkload(page, artifact, plan) {
     let session;
     try {
       session = await withSignalDeadline(
-        (signal) => sdk.connectBrowserSession(lease, { signal }),
+        (signal) => sdk.connectBrowserSession(lease, { signal, connectTimeoutMs: connectDeadlineMs }),
         connectDeadlineMs,
         "session connect deadline exceeded",
       );

@@ -82,9 +82,11 @@ ts-test:
 		YAMUX_INTEROP_CLIENT_RST=$(YAMUX_INTEROP_CLIENT_RST) \
 		YAMUX_INTEROP_DEBUG=$(YAMUX_INTEROP_DEBUG) \
 		npm test
+	node --test flowersec-ts/scripts/browser-release-collector-core.node-test.mjs
 
 ts-test-short: ts-ensure-deps
 	cd flowersec-ts && npx vitest run --exclude 'src/**/*.integration.test.ts' --exclude 'src/v2/session_go_interop.test.ts' --exclude 'src/v2/browserBundle.test.ts'
+	node --test flowersec-ts/scripts/browser-release-collector-core.node-test.mjs
 
 ts-browser-ensure:
 	cd flowersec-ts && npm run ensure:browser
