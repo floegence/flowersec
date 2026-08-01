@@ -151,8 +151,9 @@ test("security dependency checks stay wired into local gates", () => {
   );
   assert.match(
     makefile,
-    /^precommit: security-makefile-check security-dependency-check$/m,
+    /^precommit:\n(?:\tnode scripts\/run-precommit-wave\.mjs .*\n){4}$/m,
   );
+  assert.match(makefile, /^\tnode scripts\/run-precommit-wave\.mjs static \$\(MAKE\) security-makefile-check security-dependency-check /m);
   assert.match(
     makefile,
     /^check: security-makefile-check$/m,

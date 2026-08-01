@@ -31,6 +31,7 @@ const timeout = setTimeout(() => {
   process.stderr.write(`${stage} stage exceeded ${seconds} seconds; terminating its process group\n`);
   signalGroup("SIGTERM");
   killTimer = setTimeout(() => signalGroup("SIGKILL"), 5_000);
+  killTimer.unref();
 }, seconds * 1_000);
 timeout.unref();
 
@@ -41,6 +42,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     clearTimeout(timeout);
     signalGroup(signal);
     killTimer = setTimeout(() => signalGroup("SIGKILL"), 5_000);
+    killTimer.unref();
   });
 }
 

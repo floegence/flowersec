@@ -286,7 +286,7 @@ security-makefile-check:
 	node scripts/check-security-makefile.mjs Makefile
 
 security-dependency-check:
-	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs
+	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs
 	node scripts/generate-source-inventory.mjs --check
 
 security-package-check: ts-build
@@ -320,24 +320,14 @@ precommit-rust:
 	$(MAKE) rust-clippy
 	$(MAKE) rust-test-short
 
-precommit: security-makefile-check security-dependency-check
-	$(MAKE) release-policy-check
-	$(MAKE) readme-localization-check
-	$(MAKE) gen-check
-	$(MAKE) stability-source-check
-	$(MAKE) precommit-go
-	$(MAKE) precommit-ts
-	$(MAKE) precommit-swift
-	$(MAKE) precommit-rust
+precommit:
+	node scripts/run-precommit-wave.mjs generate $(MAKE) gen-check
+	node scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps
+	node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check
+	node scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust
 
 stability-source-check:
-	cd tools/stabilitycheck && go run . verify-manifest
-	cd tools/stabilitycheck && go run . verify-defaults
-	cd tools/stabilitycheck && go run . verify-parity
-	cd tools/stabilitycheck && go run . verify-docs
-	cd tools/stabilitycheck && go run . verify-go
-	cd tools/stabilitycheck && go run . verify-ts
-	cd tools/stabilitycheck && go run . report
+	cd tools/stabilitycheck && go run . verify-source
 
 stability-swift-check:
 	cd tools/stabilitycheck && go run . verify-swift

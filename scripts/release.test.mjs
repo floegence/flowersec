@@ -6,6 +6,32 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
+const releaseMutationConcurrency = 4;
+const releasePolicyFixtureFiles = [
+  "Makefile",
+  ".github/dependabot.yml",
+  ".githooks/pre-push",
+  ".github/workflows/ci.yml",
+  ".github/workflows/codeql.yml",
+  ".github/workflows/release.yml",
+  ".github/workflows/rust-release.yml",
+  "docker/flowersec-runtime/Dockerfile",
+  "scripts/check-release-version-consistency.mjs",
+  "scripts/check-release-version-consistency.test.mjs",
+  "scripts/check-container-release-policy.mjs",
+  "scripts/check-release-workflows.rb",
+  "scripts/check-release-workflow-policy.sh",
+  "scripts/check-security-makefile.mjs",
+  "scripts/run-final-lanes.mjs",
+  "scripts/run-final-stage.mjs",
+  "scripts/run-final-stage.test.mjs",
+  "scripts/run-precommit-wave.mjs",
+  "scripts/run-precommit-wave.test.mjs",
+  "scripts/check-transport-v2-evidence.sh",
+  "scripts/release.sh",
+  "scripts/push-main.sh",
+  "scripts/release.test.mjs",
+];
 const repositoryLocalEnvironmentVariables = [
   "GIT_ALTERNATE_OBJECT_DIRECTORIES",
   "GIT_COMMON_DIR",
@@ -56,6 +82,16 @@ test("release policy assertions use anchored mirror URL matching", () => {
     source.includes(unsafeMirrorSubstringAssertion),
     false,
   );
+});
+
+test("release policy mutations use bounded isolated concurrency", () => {
+  const source = fs.readFileSync(import.meta.filename, "utf8");
+  assert.match(source, /const releaseMutationConcurrency = 4;/);
+  assert.match(
+    source,
+    /test\("release policy rejects disconnected or commented-out gates", \{ concurrency: releaseMutationConcurrency \}/,
+  );
+  assert.match(source, /await Promise\.all\(policyMutations\);/);
 });
 
 function runGit(args, options = {}) {
@@ -207,30 +243,7 @@ function assertReleaseDidNotStartPublication(fixture) {
 function createReleasePolicyFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-policy-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const files = [
-    "Makefile",
-    ".github/dependabot.yml",
-    ".githooks/pre-push",
-    ".github/workflows/ci.yml",
-    ".github/workflows/codeql.yml",
-    ".github/workflows/release.yml",
-    ".github/workflows/rust-release.yml",
-    "docker/flowersec-runtime/Dockerfile",
-    "scripts/check-release-version-consistency.mjs",
-    "scripts/check-release-version-consistency.test.mjs",
-    "scripts/check-container-release-policy.mjs",
-    "scripts/check-release-workflows.rb",
-    "scripts/check-release-workflow-policy.sh",
-    "scripts/check-security-makefile.mjs",
-    "scripts/run-final-lanes.mjs",
-    "scripts/run-final-stage.mjs",
-    "scripts/run-final-stage.test.mjs",
-    "scripts/check-transport-v2-evidence.sh",
-    "scripts/release.sh",
-    "scripts/push-main.sh",
-    "scripts/release.test.mjs",
-  ];
-  for (const file of files) {
+  for (const file of releasePolicyFixtureFiles) {
     const destination = path.join(root, file);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.copyFileSync(path.join(sourceRoot, file), destination);
@@ -238,7 +251,41 @@ function createReleasePolicyFixture(t) {
   return root;
 }
 
+function workflowSnapshot(root) {
+  const workflowRoot = path.join(root, ".github/workflows");
+  return Object.fromEntries(
+    fs.readdirSync(workflowRoot)
+      .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))
+      .sort()
+      .map((file) => [file, fs.readFileSync(path.join(workflowRoot, file), "utf8")]),
+  );
+}
+
 function runReleasePolicy(root) {
+  const sourceWorkflows = workflowSnapshot(sourceRoot);
+  const fixtureWorkflows = workflowSnapshot(root);
+  const sourceWorkflowNames = Object.keys(sourceWorkflows);
+  const fixtureWorkflowNames = Object.keys(fixtureWorkflows);
+  const workflowSetMatches = JSON.stringify(sourceWorkflowNames) === JSON.stringify(fixtureWorkflowNames);
+  const workflowsChanged = JSON.stringify(sourceWorkflows) !== JSON.stringify(fixtureWorkflows);
+  const changedNonWorkflowFiles = releasePolicyFixtureFiles.filter((file) => {
+    if (file.startsWith(".github/workflows/")) return false;
+    return fs.readFileSync(path.join(root, file), "utf8") !== fs.readFileSync(path.join(sourceRoot, file), "utf8");
+  });
+  if (workflowSetMatches && workflowsChanged && changedNonWorkflowFiles.length === 0) {
+    return spawnSync("ruby", ["-W0", "scripts/check-release-workflows.rb"], {
+      cwd: root,
+      encoding: "utf8",
+      env: isolatedEnvironment(),
+    });
+  }
+  if (!workflowsChanged && changedNonWorkflowFiles.length === 1 && changedNonWorkflowFiles[0] === "Makefile") {
+    return spawnSync("node", ["scripts/check-security-makefile.mjs", "Makefile"], {
+      cwd: root,
+      encoding: "utf8",
+      env: isolatedEnvironment(),
+    });
+  }
   return spawnSync("bash", ["scripts/check-release-workflow-policy.sh"], {
     cwd: root,
     encoding: "utf8",
@@ -518,8 +565,12 @@ test("Rust recovery rejects non-canonical versions before invoking git", (t) => 
   assert.equal(fs.existsSync(gitLog), false, "invalid versions must fail before git");
 });
 
-test("release policy rejects disconnected or commented-out gates", async (t) => {
-  await t.test("current policy passes", () => {
+test("release policy rejects disconnected or commented-out gates", { concurrency: releaseMutationConcurrency }, async (t) => {
+  const policyMutations = [];
+  const schedulePolicyTest = (name, fn) => {
+    policyMutations.push(t.test(name, { concurrency: true }, fn));
+  };
+  schedulePolicyTest("current policy passes", () => {
     const root = createReleasePolicyFixture(t);
     const result = runReleasePolicy(root);
     assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
@@ -529,7 +580,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     { name: "npm publication before the release gate", run: "npm publish" },
     { name: "GitHub release publication before the release gate", run: "gh release create bypass" },
   ]) {
-    await t.test(`rejects ${bypass.name}`, () => {
+    schedulePolicyTest(`rejects ${bypass.name}`, () => {
       const root = createReleasePolicyFixture(t);
       const workflowPath = path.join(root, ".github/workflows/release.yml");
       const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -542,7 +593,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     });
   }
 
-  await t.test("rejects cargo publication before the Rust gate", () => {
+  schedulePolicyTest("rejects cargo publication before the Rust gate", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/rust-release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -554,7 +605,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /step sequence|publication|unreviewed/i);
   });
 
-  await t.test("rejects an unreviewed publication action", () => {
+  schedulePolicyTest("rejects an unreviewed publication action", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -581,7 +632,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
       replacement: "    steps:\n      - name: Unreviewed step\n        run: echo bypass\n\n",
     },
   ]) {
-    await t.test(`rejects an unreviewed ${mutation.name}`, () => {
+    schedulePolicyTest(`rejects an unreviewed ${mutation.name}`, () => {
       const root = createReleasePolicyFixture(t);
       const target = path.join(root, mutation.file);
       if (mutation.contents) {
@@ -597,7 +648,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     });
   }
 
-  await t.test("release validation rejects injected environment controls", () => {
+  schedulePolicyTest("release validation rejects injected environment controls", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -613,7 +664,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     "        shell: bash --noprofile --norc -c 'true; exit 0; #' {0}\n",
     "        working-directory: flowersec-ts\n",
   ]) {
-    await t.test(`release validation rejects semantic override ${mutation.trim()}`, () => {
+    schedulePolicyTest(`release validation rejects semantic override ${mutation.trim()}`, () => {
       const root = createReleasePolicyFixture(t);
       const workflowPath = path.join(root, ".github/workflows/release.yml");
       const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -632,7 +683,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     ["run: cargo publish --no-verify", "run: cargo publish --allow-dirty"],
     ["uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18", "uses: example/auth-action@v1"],
   ]) {
-    await t.test(`Rust publication rejects changed contract ${mutation[0]}`, () => {
+    schedulePolicyTest(`Rust publication rejects changed contract ${mutation[0]}`, () => {
       const root = createReleasePolicyFixture(t);
       const workflowPath = path.join(root, ".github/workflows/rust-release.yml");
       const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -644,7 +695,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     });
   }
 
-  await t.test("release tests disconnected from release-policy-check", () => {
+  schedulePolicyTest("release tests disconnected from release-policy-check", () => {
     const root = createReleasePolicyFixture(t);
     const makefilePath = path.join(root, "Makefile");
     const makefile = fs.readFileSync(makefilePath, "utf8");
@@ -654,7 +705,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /release-test/);
   });
 
-  await t.test("Dependabot action updates cannot be replaced by block-scalar decoys", () => {
+  schedulePolicyTest("Dependabot action updates cannot be replaced by block-scalar decoys", () => {
     const root = createReleasePolicyFixture(t);
     const configPath = path.join(root, ".github/dependabot.yml");
     const config = fs.readFileSync(configPath, "utf8");
@@ -666,7 +717,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /Dependabot|reviewed value|fields/i);
   });
 
-  await t.test("signed Transport v2 evidence disconnected from release-check", () => {
+  schedulePolicyTest("signed Transport v2 evidence disconnected from release-check", () => {
     const root = createReleasePolicyFixture(t);
     const makefilePath = path.join(root, "Makefile");
     const makefile = fs.readFileSync(makefilePath, "utf8");
@@ -679,7 +730,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /transport-v2-signed-evidence-check/);
   });
 
-  await t.test("Transport v2 evidence generation cannot run inside release-check", () => {
+  schedulePolicyTest("Transport v2 evidence generation cannot run inside release-check", () => {
     const root = createReleasePolicyFixture(t);
     const makefilePath = path.join(root, "Makefile");
     const makefile = fs.readFileSync(makefilePath, "utf8");
@@ -695,7 +746,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /release-check|transport-v2-release-evidence/);
   });
 
-  await t.test("commented unified workflow version check", () => {
+  schedulePolicyTest("commented unified workflow version check", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -715,7 +766,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     "        if: ${{ false }}\n",
     "        continue-on-error: true\n",
   ]) {
-    await t.test(`disabled unified workflow version check: ${mutation.trim()}`, () => {
+    schedulePolicyTest(`disabled unified workflow version check: ${mutation.trim()}`, () => {
       const root = createReleasePolicyFixture(t);
       const workflowPath = path.join(root, ".github/workflows/release.yml");
       const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -747,7 +798,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     { file: ".github/workflows/rust-release.yml", name: "Publish crate" },
   ]) {
     for (const mutation of equivalentControlKeyMutations) {
-      await t.test(`${step.name} rejects equivalent YAML key ${mutation.trim()}`, () => {
+      schedulePolicyTest(`${step.name} rejects equivalent YAML key ${mutation.trim()}`, () => {
         const root = createReleasePolicyFixture(t);
         const workflowPath = path.join(root, step.file);
         const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -775,7 +826,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
       "        if: ${{ always() }}\n",
       "        continue-on-error: true\n",
     ]) {
-      await t.test(`${step.name} rejects ${mutation.trim()}`, () => {
+      schedulePolicyTest(`${step.name} rejects ${mutation.trim()}`, () => {
         const root = createReleasePolicyFixture(t);
         const workflowPath = path.join(root, step.file);
         const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -789,7 +840,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     }
   }
 
-  await t.test("unified workflow version failure is swallowed", () => {
+  schedulePolicyTest("unified workflow version failure is swallowed", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -805,7 +856,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /unified release workflow/);
   });
 
-  await t.test("indented fake targets cannot hide no-op real gates", () => {
+  schedulePolicyTest("indented fake targets cannot hide no-op real gates", () => {
     const root = createReleasePolicyFixture(t);
     const makefilePath = path.join(root, "Makefile");
     const replaceTarget = (source, target, replacement) => {
@@ -845,7 +896,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /Makefile target (?:check|release-check)/);
   });
 
-  await t.test("Make definitions cannot hide no-op effective release gates", () => {
+  schedulePolicyTest("Make definitions cannot hide no-op effective release gates", () => {
     const root = createReleasePolicyFixture(t);
     const makefilePath = path.join(root, "Makefile");
     const makefile = fs.readFileSync(makefilePath, "utf8");
@@ -885,7 +936,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /effective|Makefile target|release gate/i);
   });
 
-  await t.test("validation run must be a direct step field", () => {
+  schedulePolicyTest("validation run must be a direct step field", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -909,7 +960,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /version facts|direct step field|unified release workflow/i);
   });
 
-  await t.test("Rust setup uses must be a direct step field", () => {
+  schedulePolicyTest("Rust setup uses must be a direct step field", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -930,7 +981,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /Setup Rust|direct step field|set up Rust/i);
   });
 
-  await t.test("Rust publish condition must be a direct step field", () => {
+  schedulePolicyTest("Rust publish condition must be a direct step field", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/rust-release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -955,7 +1006,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /approved condition|direct step field|Rust publication step|fields/i);
   });
 
-  await t.test("workflow aliases and merge keys are rejected", () => {
+  schedulePolicyTest("workflow aliases and merge keys are rejected", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -972,7 +1023,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
   });
 
   for (const implicitKey of ["yes", "true", "ON"]) {
-    await t.test(`implicit YAML scalar key ${implicitKey} cannot shadow the Actions on key`, () => {
+    schedulePolicyTest(`implicit YAML scalar key ${implicitKey} cannot shadow the Actions on key`, () => {
       const root = createReleasePolicyFixture(t);
       const workflowPath = path.join(root, ".github/workflows/release.yml");
       const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -1001,7 +1052,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     ["fetch-depth: 0", "fetch-depth: 00"],
     ["fetch-depth: 0", "fetch-depth: +0"],
   ]) {
-    await t.test(`non-canonical YAML scalar ${mutation[1]} is rejected`, () => {
+    schedulePolicyTest(`non-canonical YAML scalar ${mutation[1]} is rejected`, () => {
       const root = createReleasePolicyFixture(t);
       const workflowPath = path.join(root, ".github/workflows/release.yml");
       const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -1013,7 +1064,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     });
   }
 
-  await t.test("hosted CI invokes the full local release gate", () => {
+  schedulePolicyTest("hosted CI invokes the full local release gate", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/ci.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -1029,7 +1080,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /hosted CI/);
   });
 
-  await t.test("release validation steps moved into the prepare job", () => {
+  schedulePolicyTest("release validation steps moved into the prepare job", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -1056,7 +1107,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /unified release workflow/);
   });
 
-  await t.test("release version validation moved after publication", () => {
+  schedulePolicyTest("release version validation moved after publication", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -1077,7 +1128,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
     assert.match(result.stderr, /in order|before every publication step|step sequence/);
   });
 
-  await t.test("release tag verification moved after publication", () => {
+  schedulePolicyTest("release tag verification moved after publication", () => {
     const root = createReleasePolicyFixture(t);
     const workflowPath = path.join(root, ".github/workflows/release.yml");
     const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -1111,7 +1162,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
       "    \"\\x69f\": ${{ false }}\n",
       "    \"\\u0069f\": ${{ false }}\n",
     ]) {
-      await t.test(`${tt.job} job rejects ${mutation.trim()}`, () => {
+      schedulePolicyTest(`${tt.job} job rejects ${mutation.trim()}`, () => {
         const root = createReleasePolicyFixture(t);
         const workflowPath = path.join(root, tt.file);
         const workflow = fs.readFileSync(workflowPath, "utf8");
@@ -1125,6 +1176,7 @@ test("release policy rejects disconnected or commented-out gates", async (t) => 
       });
     }
   }
+  await Promise.all(policyMutations);
 });
 
 test("release validates maintained versions before publication", (t) => {

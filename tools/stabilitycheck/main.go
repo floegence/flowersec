@@ -32,7 +32,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: go run . <verify-manifest|verify-go|verify-ts|verify-swift|verify-rust|verify-docs|verify-go-coverage|verify-parity|verify-defaults|report>")
+		return errors.New("usage: go run . <verify-source|verify-manifest|verify-go|verify-ts|verify-swift|verify-rust|verify-docs|verify-go-coverage|verify-parity|verify-defaults|report>")
 	}
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
@@ -44,9 +44,10 @@ func run(args []string) error {
 	}
 
 	switch args[0] {
+	case "verify-source":
+		return verifySource(repoRoot, m)
 	case "verify-manifest":
-		fmt.Printf("manifest OK: %d go targets, %d ts subpaths, %d swift symbols, %d rust entries\n", len(m.Go.CompileTargets), len(m.TS.Subpaths), len(m.Swift.Symbols), len(m.Rust.CompileEntries))
-		return nil
+		return verifyManifest(m)
 	case "verify-go":
 		return verifyGo(repoRoot, m)
 	case "verify-ts":
@@ -68,6 +69,29 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func verifySource(repoRoot string, m *manifest) error {
+	checks := []func() error{
+		func() error { return verifyManifest(m) },
+		func() error { return verifyDefaults(repoRoot) },
+		func() error { return verifyParity(repoRoot) },
+		func() error { return verifyDocs(repoRoot, m) },
+		func() error { return verifyGo(repoRoot, m) },
+		func() error { return verifyTS(repoRoot, m) },
+		func() error { return report(repoRoot, m) },
+	}
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifyManifest(m *manifest) error {
+	fmt.Printf("manifest OK: %d go targets, %d ts subpaths, %d swift symbols, %d rust entries\n", len(m.Go.CompileTargets), len(m.TS.Subpaths), len(m.Swift.Symbols), len(m.Rust.CompileEntries))
+	return nil
 }
 
 func report(repoRoot string, m *manifest) error {

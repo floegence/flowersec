@@ -12,6 +12,7 @@ const requiredSecurityTests = [
   "scripts/security-makefile.test.mjs",
   "scripts/run-final-stage.test.mjs",
   "scripts/run-final-lanes.test.mjs",
+  "scripts/run-precommit-wave.test.mjs",
 ];
 
 const protectedMakeControlVariables = new Set([
@@ -304,11 +305,8 @@ export function verifySecurityMakefile(makefile) {
     }
   }
 
-  const precommitPrerequisites = new Set(effectivePrerequisites(database.stdout, "precommit"));
-  for (const required of ["security-makefile-check", "security-dependency-check"]) {
-    if (!precommitPrerequisites.has(required)) {
-      throw new Error(`Makefile target precommit effective graph is missing security prerequisite ${required}`);
-    }
+  if (effectivePrerequisites(database.stdout, "precommit").length !== 0) {
+    throw new Error("Makefile target precommit must schedule its ordered waves from the recipe");
   }
   const checkPrerequisites = effectivePrerequisites(database.stdout, "check");
   if (checkPrerequisites.length !== 1 || checkPrerequisites[0] !== "security-makefile-check") {
@@ -483,7 +481,6 @@ export function verifySecurityMakefile(makefile) {
 
   for (const [target, requiredCalls] of [
     ["check", ["release-policy-check", "readme-localization-check", "final-integration-lanes"]],
-    ["precommit", ["release-policy-check", "stability-source-check", "precommit-go", "precommit-ts", "precommit-swift", "precommit-rust"]],
   ]) {
     const recipe = effectiveRecipe(database.stdout, target);
     for (const required of requiredCalls) {
@@ -492,6 +489,16 @@ export function verifySecurityMakefile(makefile) {
         throw new Error(`${target} must call ${required} with one exact, unsuppressed recipe line`);
       }
     }
+  }
+  const expectedPrecommitRecipe = [
+    "\tnode scripts/run-precommit-wave.mjs generate $(MAKE) gen-check",
+    "\tnode scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps",
+    "\tnode scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check",
+    "\tnode scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust",
+  ];
+  const precommitRecipe = effectiveRecipe(database.stdout, "precommit");
+  if (JSON.stringify(precommitRecipe) !== JSON.stringify(expectedPrecommitRecipe)) {
+    throw new Error(`precommit must preserve the bounded phase recipe exactly; got ${JSON.stringify(precommitRecipe)}`);
   }
   const checkRecipe = effectiveRecipe(database.stdout, "check");
   const preflightCall = "\tnode scripts/run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight";

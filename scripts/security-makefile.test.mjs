@@ -25,6 +25,10 @@ function check(makefile, extraEnv = {}, makeBinary) {
     path.join(sourceRoot, "scripts/run-final-lanes.mjs"),
     path.join(root, "scripts/run-final-lanes.mjs"),
   );
+  fs.copyFileSync(
+    path.join(sourceRoot, "scripts/run-precommit-wave.mjs"),
+    path.join(root, "scripts/run-precommit-wave.mjs"),
+  );
   const env = { ...process.env, ...extraEnv };
   if (makeBinary !== undefined) {
     fs.symlinkSync(makeBinary, path.join(root, "make"));
@@ -93,14 +97,25 @@ test("precommit stays source-only while final integration retains heavy validati
   }
 });
 
+test("precommit phases prepare dependencies before bounded static and language waves", () => {
+  const precommit = canonical.match(/^precommit:[^\n]*\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const lines = precommit.trim().split("\n").map((line) => line.trim());
+  assert.deepEqual(lines, [
+    "node scripts/run-precommit-wave.mjs generate $(MAKE) gen-check",
+    "node scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps",
+    "node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check",
+    "node scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust",
+  ]);
+});
+
 test("precommit uses the short Go group while final integration retains the complete Go suite", () => {
-  const precommit = dryRun("precommit");
-  assert.equal(precommit.status, 0, precommit.stderr);
+  const precommitGo = dryRun("precommit-go");
+  assert.equal(precommitGo.status, 0, precommitGo.stderr);
   const finalIntegration = dryRun("check");
   assert.equal(finalIntegration.status, 0, finalIntegration.stderr);
 
-  assert.match(precommit.stdout, /go test -short -timeout=5m/);
-  assert.doesNotMatch(precommit.stdout, /cd flowersec-go && go test -timeout=5m \.\/\.\.\./);
+  assert.match(precommitGo.stdout, /go test -short -timeout=5m/);
+  assert.doesNotMatch(precommitGo.stdout, /cd flowersec-go && go test -timeout=5m \.\/\.\.\./);
   assert.match(finalIntegration.stdout, /cd flowersec-go && go test -timeout=5m \.\/\.\.\./);
 });
 
@@ -624,8 +639,8 @@ test("effective Make graph rejects recipe override and missing inventory freshne
   assert.match(ignoredResult.stderr, /exact|ignore|recipe/i);
 
   const swallowedFailure = canonical.replace(
-    "scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs\n\tnode scripts/generate-source-inventory.mjs --check",
-    "scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs || true\n\tnode scripts/generate-source-inventory.mjs --check",
+    "scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs\n\tnode scripts/generate-source-inventory.mjs --check",
+    "scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs || true\n\tnode scripts/generate-source-inventory.mjs --check",
   );
   assert.notEqual(swallowedFailure, canonical);
   const swallowedResult = check(swallowedFailure);
@@ -666,16 +681,24 @@ test("npm audit cannot omit dependencies or downgrade the severity threshold", (
 });
 
 test("effective Make graph rejects security gate removal from precommit and check", () => {
-  for (const [target, prerequisites] of [["precommit", "security-makefile-check security-dependency-check"], ["check", "security-makefile-check"]]) {
-    const disconnected = canonical.replace(
-      new RegExp(`^${target}: ${prerequisites}$`, "m"),
-      `${target}:`,
+  const staticWave = "\tnode scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check";
+  for (const securityTarget of ["security-makefile-check", "security-dependency-check"]) {
+    const disconnected = replaceTargetRecipeLine(
+      canonical,
+      "precommit",
+      staticWave,
+      staticWave.replace(` ${securityTarget}`, ""),
     );
-    assert.notEqual(disconnected, canonical, `${target} must declare security prerequisites`);
     const result = check(disconnected);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, new RegExp(`${target}.*security`, "i"));
+    assert.match(result.stderr, /precommit.*bounded phase recipe|bounded phase recipe.*precommit/i);
   }
+
+  const disconnectedCheck = canonical.replace(/^check: security-makefile-check$/m, "check:");
+  assert.notEqual(disconnectedCheck, canonical, "check must declare its dependency-free security prerequisite");
+  const checkResult = check(disconnectedCheck);
+  assert.notEqual(checkResult.status, 0);
+  assert.match(checkResult.stderr, /check.*security-makefile-check/i);
 });
 
 test("check cannot suppress or disconnect final integration lanes", () => {
@@ -698,12 +721,17 @@ test("check cannot suppress or disconnect final integration lanes", () => {
 });
 
 test("precommit cannot disconnect language security wrappers", () => {
+  const languageWave = "\tnode scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust";
   for (const wrapper of ["precommit-go", "precommit-ts", "precommit-swift", "precommit-rust"]) {
-    const exactLine = `\t$(MAKE) ${wrapper}`;
-    const mutated = replaceTargetRecipeLine(canonical, "precommit", exactLine, "");
+    const mutated = replaceTargetRecipeLine(
+      canonical,
+      "precommit",
+      languageWave,
+      languageWave.replace(` ${wrapper}`, ""),
+    );
     const result = check(mutated);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, new RegExp(`precommit.*${wrapper}|${wrapper}.*exact`, "i"));
+    assert.match(result.stderr, /precommit.*bounded phase recipe|bounded phase recipe.*precommit/i);
   }
 });
 

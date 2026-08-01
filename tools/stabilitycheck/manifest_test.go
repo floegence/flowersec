@@ -447,17 +447,12 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 		t.Fatalf("Makefile must define source, compiled-language, and full stability targets in order")
 	}
 	sourceTarget := text[sourceStart:swiftStart]
-	for _, command := range []string{
-		"verify-manifest",
-		"verify-defaults",
-		"verify-parity",
-		"verify-docs",
-		"verify-go",
-		"verify-ts",
-		"report",
-	} {
-		if !strings.Contains(sourceTarget, command) {
-			t.Fatalf("stability-source-check must run %s, got:\n%s", command, sourceTarget)
+	if strings.Count(sourceTarget, "go run . verify-source") != 1 {
+		t.Fatalf("stability-source-check must use one combined source verifier, got:\n%s", sourceTarget)
+	}
+	for _, command := range []string{"verify-manifest", "verify-defaults", "verify-parity", "verify-docs", "verify-go", "verify-ts", "report"} {
+		if strings.Contains(sourceTarget, "go run . "+command) {
+			t.Fatalf("stability-source-check must not launch the focused %s command separately, got:\n%s", command, sourceTarget)
 		}
 	}
 	if swiftTarget := text[swiftStart:rustStart]; !strings.Contains(swiftTarget, "go run . verify-swift") {

@@ -11,9 +11,9 @@ const runner = path.join(import.meta.dirname, "run-final-stage.mjs");
 const helperMode = process.argv[2];
 
 if (helperMode === "descendant") {
-  setTimeout(() => fs.writeFileSync(process.argv[3], "late"), 2_500);
+  setTimeout(() => fs.writeFileSync(process.argv[3], "late"), Number(process.argv[4]));
 } else if (helperMode === "parent") {
-  spawn(process.execPath, [import.meta.filename, "descendant", process.argv[3]], { stdio: "ignore" });
+  spawn(process.execPath, [import.meta.filename, "descendant", process.argv[3], process.argv[4]], { stdio: "ignore" });
   setInterval(() => {}, 1_000);
 } else {
 
@@ -42,14 +42,23 @@ test("final stage wrapper preserves success and failure status", () => {
   assert.equal(run(["1", "post", process.execPath, "-e", "process.exit(0)"]).status, 0);
 });
 
+test("final stage kill fallbacks do not delay a drained process group", () => {
+  const source = fs.readFileSync(runner, "utf8");
+  assert.equal(
+    source.match(/killTimer\.unref\(\);/g)?.length,
+    2,
+    "timeout and forwarded-signal fallbacks must both be unreferenced",
+  );
+});
+
 test("final stage wrapper terminates the complete child process group", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-final-stage-"));
   const marker = path.join(root, "child-finished");
   try {
-    const result = run(["1", "race", process.execPath, import.meta.filename, "parent", marker]);
+    const result = run(["1", "race", process.execPath, import.meta.filename, "parent", marker, "1500"]);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /race stage exceeded 1 seconds/);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1800);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 700);
     assert.equal(fs.existsSync(marker), false, "timed-out descendants must not survive the stage");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -60,10 +69,10 @@ test("final stage wrapper forwards external termination to descendants", async (
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-final-signal-"));
   const marker = path.join(root, "child-finished");
   try {
-    const child = spawn(process.execPath, [runner, "5", "languages", process.execPath, import.meta.filename, "parent", marker], {
+    const child = spawn(process.execPath, [runner, "5", "languages", process.execPath, import.meta.filename, "parent", marker, "700"], {
       stdio: ["ignore", "ignore", "pipe"],
     });
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 100));
     child.kill("SIGTERM");
     const result = await new Promise((resolve) => {
       let stderr = "";
@@ -73,7 +82,7 @@ test("final stage wrapper forwards external termination to descendants", async (
     });
     assert.equal(result.signal, null);
     assert.equal(result.code, 143, result.stderr);
-    await new Promise((resolve) => setTimeout(resolve, 2_800));
+    await new Promise((resolve) => setTimeout(resolve, 800));
     assert.equal(fs.existsSync(marker), false, "externally terminated descendants must not survive the stage");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
