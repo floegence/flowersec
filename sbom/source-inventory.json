@@ -9594,40 +9594,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "block-buffer",
-          "version": "0.12.1",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/utils",
-          "purl": "pkg:cargo/block-buffer@0.12.1",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa",
-            "sourceEvidenceSha256": "ee97fcc8b79905c9d8453e8b98c1c190c883dcf200cd1aaed716edfeeb508b84",
-            "expressionEvidenceSha256": "c2f75a0a396ec1ba77d7bc77c55621a828c4930b2c9e1696c8cec8ebe003fc83",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "bumpalo",
           "version": "3.20.3",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -9935,40 +9901,6 @@
         {
           "ecosystem": "cargo",
           "name": "const-oid",
-          "version": "0.10.2",
-          "declaredLicense": "Apache-2.0 OR MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/formats",
-          "purl": "pkg:cargo/const-oid@0.10.2",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "Apache-2.0 OR MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c",
-            "sourceEvidenceSha256": "d0e10d1438e23facac142eb2aebac3505c6cad4e326fa140ba61a18cce0e1271",
-            "expressionEvidenceSha256": "eeed4041fb8924b1f6f29a9f3b0c6d34e9ac33dd4080a9eb47475e33004986de",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "const-oid",
           "version": "0.9.6",
           "declaredLicense": "Apache-2.0 OR MIT",
           "concludedLicense": "MIT",
@@ -10206,40 +10138,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "crypto-common",
-          "version": "0.2.2",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/traits",
-          "purl": "pkg:cargo/crypto-common@0.2.2",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453",
-            "sourceEvidenceSha256": "798b8e96ae3258b0e0947360837f52a307abbc6a384f05c8b3525d199864d8c5",
-            "expressionEvidenceSha256": "ac571c6b26057f12d45bdcec88d9a96cf6ca20b2c4d7852c386757268954c862",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "ctr",
           "version": "0.9.2",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -10444,40 +10342,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "data-encoding",
-          "version": "2.11.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/ia0/data-encoding",
-          "purl": "pkg:cargo/data-encoding@2.11.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8",
-            "sourceEvidenceSha256": "70420061d5b5057a520716cc959268c96396397c742c9c265df948189ec47c06",
-            "expressionEvidenceSha256": "28ab495594168a29363a24beeefcb98f02c02f08ce443b5f43ece6f4eb683ada",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "der",
           "version": "0.7.10",
           "declaredLicense": "Apache-2.0 OR MIT",
@@ -10530,40 +10394,6 @@
             "sourceEvidenceValue": "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292",
             "sourceEvidenceSha256": "f24c5d7f8084be7f1e306a7c8694764f057c488acda97c06bec65f66201afc77",
             "expressionEvidenceSha256": "076fd87400b4f7c23eb2c7c17507e08da8eb6f9673880da9c4acdc4ef6a19345",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "digest",
-          "version": "0.11.3",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/traits",
-          "purl": "pkg:cargo/digest@0.11.3",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2",
-            "sourceEvidenceSha256": "56c012f15e2ddc6d40d757b8c5aff227f8a309bc90ac23926855524d58a947e4",
-            "expressionEvidenceSha256": "efc493af914030804600c299b6f2170219238c43b135128540da5132a629c6ac",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -11720,40 +11550,6 @@
             "sourceEvidenceValue": "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87",
             "sourceEvidenceSha256": "6107a7cc2a7fdeb24297ec5fae713594912165fcfd1c59fc5bd8623929056793",
             "expressionEvidenceSha256": "f9d59d8ee58bedeb6e9162b14e188ccce0f6d76cd68e151142cec0eea3acb2fb",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "hybrid-array",
-          "version": "0.4.13",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/hybrid-array",
-          "purl": "pkg:cargo/hybrid-array@0.4.13",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c",
-            "sourceEvidenceSha256": "5c779de9fe18d8d2caccea8c68b512caf47ec35308f4af05783c9dee29584a84",
-            "expressionEvidenceSha256": "8cadf6b8382821497196d325b779118a6bbcebc8b77c179dfaad5ccfba355f68",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -14626,40 +14422,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "sha1",
-          "version": "0.11.0",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/hashes",
-          "purl": "pkg:cargo/sha1@0.11.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214",
-            "sourceEvidenceSha256": "a27902e5e887d59e86c9d4494245eb032f187dfa60621a46e7e2daa1b5639e49",
-            "expressionEvidenceSha256": "fbbcb2b4dd1670bd236ae351ad182a41bcc24519c46b2d655b7fc8745285eb3f",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "sha2",
           "version": "0.10.9",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -15408,40 +15170,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "tokio-tungstenite",
-          "version": "0.30.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/snapview/tokio-tungstenite",
-          "purl": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71",
-            "sourceEvidenceSha256": "443c1bac9c8a68b23149afa4e42b351f050f2f378fde8fc19a85c3b595b374c3",
-            "expressionEvidenceSha256": "3ddf262bfe1f3be191ecb3bc9aace89c0178a1e18651741a1e8929a815f623c0",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "tokio-util",
           "version": "0.7.18",
           "declaredLicense": "MIT",
@@ -15732,40 +15460,6 @@
             "sourceEvidenceValue": "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b",
             "sourceEvidenceSha256": "974226dca4002fcd291c6f967a1b1c583172b6fb1c2f6bdf76a06416158bf03f",
             "expressionEvidenceSha256": "9c223a17933dcc2a08b3f546718a1e623335c58539a5a6bd40d76cdd7db861a9",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "tungstenite",
-          "version": "0.30.0",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/snapview/tungstenite-rs",
-          "purl": "pkg:cargo/tungstenite@0.30.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22",
-            "sourceEvidenceSha256": "559637dac264e621304d96e2af18e29c9340c14cc2533c14179a108535ab56b8",
-            "expressionEvidenceSha256": "630ad31b96f258acc4e693ccd49185e70f62b438e5d844f36081a12f75d970e5",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -16632,74 +16326,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "webpki-roots",
-          "version": "0.26.11",
-          "declaredLicense": "CDLA-Permissive-2.0",
-          "concludedLicense": "CDLA-Permissive-2.0",
-          "source": "https://github.com/rustls/webpki-roots",
-          "purl": "pkg:cargo/webpki-roots@0.26.11",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "CDLA-Permissive-2.0",
-            "concludedExpression": "CDLA-Permissive-2.0",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9",
-            "sourceEvidenceSha256": "128138aa4cbb81a734b3fceffd5300ccdd7450d2b342370332f1d8a9ce5d64c2",
-            "expressionEvidenceSha256": "7b3eb591ad50bdb982855252e43ade090b6212faafbf8c1185b806f74fdaad58",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "webpki-roots",
-          "version": "1.0.8",
-          "declaredLicense": "CDLA-Permissive-2.0",
-          "concludedLicense": "CDLA-Permissive-2.0",
-          "source": "https://github.com/rustls/webpki-roots",
-          "purl": "pkg:cargo/webpki-roots@1.0.8",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "CDLA-Permissive-2.0",
-            "concludedExpression": "CDLA-Permissive-2.0",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "bf85cb06032201fa7c6f829d7db5a7e5aa45bcc0655327713065f6f0576731bf",
-            "sourceEvidenceSha256": "24826a13b8cd32d3ecb42dbf9093ff16860b193576d9ba732d7884058495a8f7",
-            "expressionEvidenceSha256": "64460d6fc231c640dcd3bee2c2e78bd50cc1354a0b4c0407d7b8fe7ef3a849b8",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "winapi-util",
           "version": "0.1.11",
           "declaredLicense": "Unlicense OR MIT",
@@ -17496,11 +17122,6 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/block-buffer@0.12.1",
-          "to": "pkg:cargo/hybrid-array@0.4.13",
-          "kind": "runtime"
-        },
-        {
           "from": "pkg:cargo/cc@1.2.67",
           "to": "pkg:cargo/find-msvc-tools@0.1.9",
           "kind": "runtime"
@@ -17613,11 +17234,6 @@
         {
           "from": "pkg:cargo/crypto-common@0.1.6",
           "to": "pkg:cargo/typenum@1.20.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/crypto-common@0.2.2",
-          "to": "pkg:cargo/hybrid-array@0.4.13",
           "kind": "runtime"
         },
         {
@@ -17763,21 +17379,6 @@
         {
           "from": "pkg:cargo/digest@0.10.7",
           "to": "pkg:cargo/subtle@2.6.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/digest@0.11.3",
-          "to": "pkg:cargo/block-buffer@0.12.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/digest@0.11.3",
-          "to": "pkg:cargo/const-oid@0.10.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/digest@0.11.3",
-          "to": "pkg:cargo/crypto-common@0.2.2",
           "kind": "runtime"
         },
         {
@@ -17927,7 +17528,7 @@
         },
         {
           "from": "pkg:cargo/errno@0.3.14",
-          "to": "pkg:cargo/windows-sys@0.61.2",
+          "to": "pkg:cargo/windows-sys@0.52.0",
           "kind": "runtime"
         },
         {
@@ -18078,11 +17679,6 @@
         {
           "from": "pkg:cargo/flowersec@2.0.0",
           "to": "pkg:cargo/thiserror@2.0.18",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/flowersec@2.0.0",
-          "to": "pkg:cargo/tokio-tungstenite@0.30.0",
           "kind": "runtime"
         },
         {
@@ -18358,11 +17954,6 @@
         {
           "from": "pkg:cargo/http@1.4.2",
           "to": "pkg:cargo/itoa@1.0.18",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/hybrid-array@0.4.13",
-          "to": "pkg:cargo/typenum@1.20.1",
           "kind": "runtime"
         },
         {
@@ -18967,7 +18558,7 @@
         },
         {
           "from": "pkg:cargo/quinn-udp@0.5.15",
-          "to": "pkg:cargo/windows-sys@0.61.2",
+          "to": "pkg:cargo/windows-sys@0.52.0",
           "kind": "runtime"
         },
         {
@@ -19342,7 +18933,7 @@
         },
         {
           "from": "pkg:cargo/rustix@1.1.4",
-          "to": "pkg:cargo/windows-sys@0.61.2",
+          "to": "pkg:cargo/windows-sys@0.52.0",
           "kind": "runtime"
         },
         {
@@ -19437,7 +19028,7 @@
         },
         {
           "from": "pkg:cargo/rustls-platform-verifier@0.7.0",
-          "to": "pkg:cargo/windows-sys@0.61.2",
+          "to": "pkg:cargo/windows-sys@0.52.0",
           "kind": "runtime"
         },
         {
@@ -19696,21 +19287,6 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/sha1@0.11.0",
-          "to": "pkg:cargo/cfg-if@1.0.4",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/sha1@0.11.0",
-          "to": "pkg:cargo/cpufeatures@0.3.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/sha1@0.11.0",
-          "to": "pkg:cargo/digest@0.11.3",
-          "kind": "runtime"
-        },
-        {
           "from": "pkg:cargo/sha2@0.10.9",
           "to": "pkg:cargo/cfg-if@1.0.4",
           "kind": "runtime"
@@ -19797,7 +19373,7 @@
         },
         {
           "from": "pkg:cargo/tempfile@3.27.0",
-          "to": "pkg:cargo/getrandom@0.4.3",
+          "to": "pkg:cargo/getrandom@0.3.4",
           "kind": "runtime"
         },
         {
@@ -19812,7 +19388,7 @@
         },
         {
           "from": "pkg:cargo/tempfile@3.27.0",
-          "to": "pkg:cargo/windows-sys@0.61.2",
+          "to": "pkg:cargo/windows-sys@0.52.0",
           "kind": "runtime"
         },
         {
@@ -19863,51 +19439,6 @@
         {
           "from": "pkg:cargo/tokio-rustls@0.26.4",
           "to": "pkg:cargo/tokio@1.52.3",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/futures-util@0.3.32",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/log@0.4.33",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls-native-certs@0.8.4",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls-pki-types@1.15.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls@0.23.42",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/tokio-rustls@0.26.4",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/tokio@1.52.3",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/tungstenite@0.30.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/webpki-roots@0.26.11",
           "kind": "runtime"
         },
         {
@@ -20093,61 +19624,6 @@
         {
           "from": "pkg:cargo/tracing@0.1.44",
           "to": "pkg:cargo/tracing-core@0.1.36",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/bytes@1.12.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/data-encoding@2.11.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/http@1.4.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/httparse@1.10.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/log@0.4.33",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/rand@0.10.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls-pki-types@1.15.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls@0.23.42",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/sha1@0.11.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/thiserror@2.0.18",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/url@2.5.8",
           "kind": "runtime"
         },
         {
@@ -20341,18 +19817,8 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/webpki-roots@0.26.11",
-          "to": "pkg:cargo/webpki-roots@1.0.8",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/webpki-roots@1.0.8",
-          "to": "pkg:cargo/rustls-pki-types@1.15.0",
-          "kind": "runtime"
-        },
-        {
           "from": "pkg:cargo/winapi-util@0.1.11",
-          "to": "pkg:cargo/windows-sys@0.61.2",
+          "to": "pkg:cargo/windows-sys@0.52.0",
           "kind": "runtime"
         },
         {
@@ -20921,40 +20387,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "block-buffer",
-          "version": "0.12.1",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/utils",
-          "purl": "pkg:cargo/block-buffer@0.12.1",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa",
-            "sourceEvidenceSha256": "ee97fcc8b79905c9d8453e8b98c1c190c883dcf200cd1aaed716edfeeb508b84",
-            "expressionEvidenceSha256": "c2f75a0a396ec1ba77d7bc77c55621a828c4930b2c9e1696c8cec8ebe003fc83",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "bumpalo",
           "version": "3.20.3",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -21262,40 +20694,6 @@
         {
           "ecosystem": "cargo",
           "name": "const-oid",
-          "version": "0.10.2",
-          "declaredLicense": "Apache-2.0 OR MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/formats",
-          "purl": "pkg:cargo/const-oid@0.10.2",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "Apache-2.0 OR MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c",
-            "sourceEvidenceSha256": "d0e10d1438e23facac142eb2aebac3505c6cad4e326fa140ba61a18cce0e1271",
-            "expressionEvidenceSha256": "eeed4041fb8924b1f6f29a9f3b0c6d34e9ac33dd4080a9eb47475e33004986de",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "const-oid",
           "version": "0.9.6",
           "declaredLicense": "Apache-2.0 OR MIT",
           "concludedLicense": "MIT",
@@ -21533,40 +20931,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "crypto-common",
-          "version": "0.2.2",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/traits",
-          "purl": "pkg:cargo/crypto-common@0.2.2",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453",
-            "sourceEvidenceSha256": "798b8e96ae3258b0e0947360837f52a307abbc6a384f05c8b3525d199864d8c5",
-            "expressionEvidenceSha256": "ac571c6b26057f12d45bdcec88d9a96cf6ca20b2c4d7852c386757268954c862",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "ctr",
           "version": "0.9.2",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -21771,40 +21135,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "data-encoding",
-          "version": "2.11.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/ia0/data-encoding",
-          "purl": "pkg:cargo/data-encoding@2.11.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8",
-            "sourceEvidenceSha256": "70420061d5b5057a520716cc959268c96396397c742c9c265df948189ec47c06",
-            "expressionEvidenceSha256": "28ab495594168a29363a24beeefcb98f02c02f08ce443b5f43ece6f4eb683ada",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "der",
           "version": "0.7.10",
           "declaredLicense": "Apache-2.0 OR MIT",
@@ -21857,40 +21187,6 @@
             "sourceEvidenceValue": "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292",
             "sourceEvidenceSha256": "f24c5d7f8084be7f1e306a7c8694764f057c488acda97c06bec65f66201afc77",
             "expressionEvidenceSha256": "076fd87400b4f7c23eb2c7c17507e08da8eb6f9673880da9c4acdc4ef6a19345",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "digest",
-          "version": "0.11.3",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/traits",
-          "purl": "pkg:cargo/digest@0.11.3",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2",
-            "sourceEvidenceSha256": "56c012f15e2ddc6d40d757b8c5aff227f8a309bc90ac23926855524d58a947e4",
-            "expressionEvidenceSha256": "efc493af914030804600c299b6f2170219238c43b135128540da5132a629c6ac",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -22911,40 +22207,6 @@
             "sourceEvidenceValue": "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87",
             "sourceEvidenceSha256": "6107a7cc2a7fdeb24297ec5fae713594912165fcfd1c59fc5bd8623929056793",
             "expressionEvidenceSha256": "f9d59d8ee58bedeb6e9162b14e188ccce0f6d76cd68e151142cec0eea3acb2fb",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "hybrid-array",
-          "version": "0.4.13",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/hybrid-array",
-          "purl": "pkg:cargo/hybrid-array@0.4.13",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c",
-            "sourceEvidenceSha256": "5c779de9fe18d8d2caccea8c68b512caf47ec35308f4af05783c9dee29584a84",
-            "expressionEvidenceSha256": "8cadf6b8382821497196d325b779118a6bbcebc8b77c179dfaad5ccfba355f68",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -25443,40 +24705,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "sha1",
-          "version": "0.11.0",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/hashes",
-          "purl": "pkg:cargo/sha1@0.11.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214",
-            "sourceEvidenceSha256": "a27902e5e887d59e86c9d4494245eb032f187dfa60621a46e7e2daa1b5639e49",
-            "expressionEvidenceSha256": "fbbcb2b4dd1670bd236ae351ad182a41bcc24519c46b2d655b7fc8745285eb3f",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "sha2",
           "version": "0.10.9",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -26157,40 +25385,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "tokio-tungstenite",
-          "version": "0.30.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/snapview/tokio-tungstenite",
-          "purl": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71",
-            "sourceEvidenceSha256": "443c1bac9c8a68b23149afa4e42b351f050f2f378fde8fc19a85c3b595b374c3",
-            "expressionEvidenceSha256": "3ddf262bfe1f3be191ecb3bc9aace89c0178a1e18651741a1e8929a815f623c0",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "tokio-util",
           "version": "0.7.18",
           "declaredLicense": "MIT",
@@ -26481,40 +25675,6 @@
             "sourceEvidenceValue": "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b",
             "sourceEvidenceSha256": "974226dca4002fcd291c6f967a1b1c583172b6fb1c2f6bdf76a06416158bf03f",
             "expressionEvidenceSha256": "9c223a17933dcc2a08b3f546718a1e623335c58539a5a6bd40d76cdd7db861a9",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "tungstenite",
-          "version": "0.30.0",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/snapview/tungstenite-rs",
-          "purl": "pkg:cargo/tungstenite@0.30.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22",
-            "sourceEvidenceSha256": "559637dac264e621304d96e2af18e29c9340c14cc2533c14179a108535ab56b8",
-            "expressionEvidenceSha256": "630ad31b96f258acc4e693ccd49185e70f62b438e5d844f36081a12f75d970e5",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -28036,11 +27196,6 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/block-buffer@0.12.1",
-          "to": "pkg:cargo/hybrid-array@0.4.13",
-          "kind": "runtime"
-        },
-        {
           "from": "pkg:cargo/cc@1.2.67",
           "to": "pkg:cargo/find-msvc-tools@0.1.9",
           "kind": "runtime"
@@ -28153,11 +27308,6 @@
         {
           "from": "pkg:cargo/crypto-common@0.1.6",
           "to": "pkg:cargo/typenum@1.20.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/crypto-common@0.2.2",
-          "to": "pkg:cargo/hybrid-array@0.4.13",
           "kind": "runtime"
         },
         {
@@ -28303,21 +27453,6 @@
         {
           "from": "pkg:cargo/digest@0.10.7",
           "to": "pkg:cargo/subtle@2.6.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/digest@0.11.3",
-          "to": "pkg:cargo/block-buffer@0.12.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/digest@0.11.3",
-          "to": "pkg:cargo/const-oid@0.10.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/digest@0.11.3",
-          "to": "pkg:cargo/crypto-common@0.2.2",
           "kind": "runtime"
         },
         {
@@ -28602,11 +27737,6 @@
         },
         {
           "from": "pkg:cargo/flowersec-fuzz@0.0.0",
-          "to": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/flowersec-fuzz@0.0.0",
           "to": "pkg:cargo/tokio-util@0.7.18",
           "kind": "runtime"
         },
@@ -28858,11 +27988,6 @@
         {
           "from": "pkg:cargo/http@1.4.2",
           "to": "pkg:cargo/itoa@1.0.18",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/hybrid-array@0.4.13",
-          "to": "pkg:cargo/typenum@1.20.1",
           "kind": "runtime"
         },
         {
@@ -30071,21 +29196,6 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/sha1@0.11.0",
-          "to": "pkg:cargo/cfg-if@1.0.4",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/sha1@0.11.0",
-          "to": "pkg:cargo/cpufeatures@0.3.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/sha1@0.11.0",
-          "to": "pkg:cargo/digest@0.11.3",
-          "kind": "runtime"
-        },
-        {
           "from": "pkg:cargo/sha2@0.10.9",
           "to": "pkg:cargo/cfg-if@1.0.4",
           "kind": "runtime"
@@ -30213,46 +29323,6 @@
         {
           "from": "pkg:cargo/tokio-rustls@0.26.4",
           "to": "pkg:cargo/tokio@1.52.3",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/futures-util@0.3.32",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/log@0.4.33",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls-native-certs@0.8.4",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls-pki-types@1.15.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls@0.23.42",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/tokio-rustls@0.26.4",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/tokio@1.52.3",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/tungstenite@0.30.0",
           "kind": "runtime"
         },
         {
@@ -30438,61 +29508,6 @@
         {
           "from": "pkg:cargo/tracing@0.1.44",
           "to": "pkg:cargo/tracing-core@0.1.36",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/bytes@1.12.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/data-encoding@2.11.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/http@1.4.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/httparse@1.10.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/log@0.4.33",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/rand@0.10.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls-pki-types@1.15.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls@0.23.42",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/sha1@0.11.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/thiserror@2.0.18",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/url@2.5.8",
           "kind": "runtime"
         },
         {
@@ -31212,40 +30227,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "block-buffer",
-          "version": "0.12.1",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/utils",
-          "purl": "pkg:cargo/block-buffer@0.12.1",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa",
-            "sourceEvidenceSha256": "ee97fcc8b79905c9d8453e8b98c1c190c883dcf200cd1aaed716edfeeb508b84",
-            "expressionEvidenceSha256": "c2f75a0a396ec1ba77d7bc77c55621a828c4930b2c9e1696c8cec8ebe003fc83",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "bumpalo",
           "version": "3.20.3",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -31553,40 +30534,6 @@
         {
           "ecosystem": "cargo",
           "name": "const-oid",
-          "version": "0.10.2",
-          "declaredLicense": "Apache-2.0 OR MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/formats",
-          "purl": "pkg:cargo/const-oid@0.10.2",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "Apache-2.0 OR MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c",
-            "sourceEvidenceSha256": "d0e10d1438e23facac142eb2aebac3505c6cad4e326fa140ba61a18cce0e1271",
-            "expressionEvidenceSha256": "eeed4041fb8924b1f6f29a9f3b0c6d34e9ac33dd4080a9eb47475e33004986de",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "const-oid",
           "version": "0.9.6",
           "declaredLicense": "Apache-2.0 OR MIT",
           "concludedLicense": "MIT",
@@ -31824,40 +30771,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "crypto-common",
-          "version": "0.2.2",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/traits",
-          "purl": "pkg:cargo/crypto-common@0.2.2",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453",
-            "sourceEvidenceSha256": "798b8e96ae3258b0e0947360837f52a307abbc6a384f05c8b3525d199864d8c5",
-            "expressionEvidenceSha256": "ac571c6b26057f12d45bdcec88d9a96cf6ca20b2c4d7852c386757268954c862",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "ctr",
           "version": "0.9.2",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -32062,40 +30975,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "data-encoding",
-          "version": "2.11.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/ia0/data-encoding",
-          "purl": "pkg:cargo/data-encoding@2.11.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8",
-            "sourceEvidenceSha256": "70420061d5b5057a520716cc959268c96396397c742c9c265df948189ec47c06",
-            "expressionEvidenceSha256": "28ab495594168a29363a24beeefcb98f02c02f08ce443b5f43ece6f4eb683ada",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "der",
           "version": "0.7.10",
           "declaredLicense": "Apache-2.0 OR MIT",
@@ -32148,40 +31027,6 @@
             "sourceEvidenceValue": "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292",
             "sourceEvidenceSha256": "f24c5d7f8084be7f1e306a7c8694764f057c488acda97c06bec65f66201afc77",
             "expressionEvidenceSha256": "076fd87400b4f7c23eb2c7c17507e08da8eb6f9673880da9c4acdc4ef6a19345",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "digest",
-          "version": "0.11.3",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/traits",
-          "purl": "pkg:cargo/digest@0.11.3",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2",
-            "sourceEvidenceSha256": "56c012f15e2ddc6d40d757b8c5aff227f8a309bc90ac23926855524d58a947e4",
-            "expressionEvidenceSha256": "efc493af914030804600c299b6f2170219238c43b135128540da5132a629c6ac",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -33202,40 +32047,6 @@
             "sourceEvidenceValue": "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87",
             "sourceEvidenceSha256": "6107a7cc2a7fdeb24297ec5fae713594912165fcfd1c59fc5bd8623929056793",
             "expressionEvidenceSha256": "f9d59d8ee58bedeb6e9162b14e188ccce0f6d76cd68e151142cec0eea3acb2fb",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "hybrid-array",
-          "version": "0.4.13",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/hybrid-array",
-          "purl": "pkg:cargo/hybrid-array@0.4.13",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c",
-            "sourceEvidenceSha256": "5c779de9fe18d8d2caccea8c68b512caf47ec35308f4af05783c9dee29584a84",
-            "expressionEvidenceSha256": "8cadf6b8382821497196d325b779118a6bbcebc8b77c179dfaad5ccfba355f68",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -35700,40 +34511,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "sha1",
-          "version": "0.11.0",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/RustCrypto/hashes",
-          "purl": "pkg:cargo/sha1@0.11.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214",
-            "sourceEvidenceSha256": "a27902e5e887d59e86c9d4494245eb032f187dfa60621a46e7e2daa1b5639e49",
-            "expressionEvidenceSha256": "fbbcb2b4dd1670bd236ae351ad182a41bcc24519c46b2d655b7fc8745285eb3f",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "sha2",
           "version": "0.10.9",
           "declaredLicense": "MIT OR Apache-2.0",
@@ -36414,40 +35191,6 @@
         },
         {
           "ecosystem": "cargo",
-          "name": "tokio-tungstenite",
-          "version": "0.30.0",
-          "declaredLicense": "MIT",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/snapview/tokio-tungstenite",
-          "purl": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71",
-            "sourceEvidenceSha256": "443c1bac9c8a68b23149afa4e42b351f050f2f378fde8fc19a85c3b595b374c3",
-            "expressionEvidenceSha256": "3ddf262bfe1f3be191ecb3bc9aace89c0178a1e18651741a1e8929a815f623c0",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
           "name": "tokio-util",
           "version": "0.7.18",
           "declaredLicense": "MIT",
@@ -36738,40 +35481,6 @@
             "sourceEvidenceValue": "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b",
             "sourceEvidenceSha256": "974226dca4002fcd291c6f967a1b1c583172b6fb1c2f6bdf76a06416158bf03f",
             "expressionEvidenceSha256": "9c223a17933dcc2a08b3f546718a1e623335c58539a5a6bd40d76cdd7db861a9",
-            "copyright": {
-              "requirement": "retain-upstream-copyright-and-license-notices",
-              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-            },
-            "notice": {
-              "required": true,
-              "fulfillment": "component-entry-in-generated-third-party-notice"
-            },
-            "sourceOffer": {
-              "required": false,
-              "fulfillment": "not-required-by-concluded-license"
-            }
-          }
-        },
-        {
-          "ecosystem": "cargo",
-          "name": "tungstenite",
-          "version": "0.30.0",
-          "declaredLicense": "MIT OR Apache-2.0",
-          "concludedLicense": "MIT",
-          "source": "https://github.com/snapview/tungstenite-rs",
-          "purl": "pkg:cargo/tungstenite@0.30.0",
-          "sourceOfferRequired": false,
-          "review": {
-            "decision": "approved",
-            "declaredExpression": "MIT OR Apache-2.0",
-            "concludedExpression": "MIT",
-            "reviewer": "flowersec-security-license-review",
-            "reviewedAt": "2026-07-22",
-            "policyRevision": "source-license-policy-v2",
-            "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22",
-            "sourceEvidenceSha256": "559637dac264e621304d96e2af18e29c9340c14cc2533c14179a108535ab56b8",
-            "expressionEvidenceSha256": "630ad31b96f258acc4e693ccd49185e70f62b438e5d844f36081a12f75d970e5",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -38293,11 +37002,6 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/block-buffer@0.12.1",
-          "to": "pkg:cargo/hybrid-array@0.4.13",
-          "kind": "runtime"
-        },
-        {
           "from": "pkg:cargo/cc@1.2.67",
           "to": "pkg:cargo/find-msvc-tools@0.1.9",
           "kind": "runtime"
@@ -38410,11 +37114,6 @@
         {
           "from": "pkg:cargo/crypto-common@0.1.6",
           "to": "pkg:cargo/typenum@1.20.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/crypto-common@0.2.2",
-          "to": "pkg:cargo/hybrid-array@0.4.13",
           "kind": "runtime"
         },
         {
@@ -38560,21 +37259,6 @@
         {
           "from": "pkg:cargo/digest@0.10.7",
           "to": "pkg:cargo/subtle@2.6.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/digest@0.11.3",
-          "to": "pkg:cargo/block-buffer@0.12.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/digest@0.11.3",
-          "to": "pkg:cargo/const-oid@0.10.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/digest@0.11.3",
-          "to": "pkg:cargo/crypto-common@0.2.2",
           "kind": "runtime"
         },
         {
@@ -38859,11 +37543,6 @@
         },
         {
           "from": "pkg:cargo/flowersec-rust-client-example@0.1.0",
-          "to": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/flowersec-rust-client-example@0.1.0",
           "to": "pkg:cargo/tokio-util@0.7.18",
           "kind": "runtime"
         },
@@ -39115,11 +37794,6 @@
         {
           "from": "pkg:cargo/http@1.4.2",
           "to": "pkg:cargo/itoa@1.0.18",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/hybrid-array@0.4.13",
-          "to": "pkg:cargo/typenum@1.20.1",
           "kind": "runtime"
         },
         {
@@ -40318,21 +38992,6 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/sha1@0.11.0",
-          "to": "pkg:cargo/cfg-if@1.0.4",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/sha1@0.11.0",
-          "to": "pkg:cargo/cpufeatures@0.3.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/sha1@0.11.0",
-          "to": "pkg:cargo/digest@0.11.3",
-          "kind": "runtime"
-        },
-        {
           "from": "pkg:cargo/sha2@0.10.9",
           "to": "pkg:cargo/cfg-if@1.0.4",
           "kind": "runtime"
@@ -40460,46 +39119,6 @@
         {
           "from": "pkg:cargo/tokio-rustls@0.26.4",
           "to": "pkg:cargo/tokio@1.52.3",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/futures-util@0.3.32",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/log@0.4.33",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls-native-certs@0.8.4",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls-pki-types@1.15.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls@0.23.42",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/tokio-rustls@0.26.4",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/tokio@1.52.3",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-          "to": "pkg:cargo/tungstenite@0.30.0",
           "kind": "runtime"
         },
         {
@@ -40685,61 +39304,6 @@
         {
           "from": "pkg:cargo/tracing@0.1.44",
           "to": "pkg:cargo/tracing-core@0.1.36",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/bytes@1.12.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/data-encoding@2.11.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/http@1.4.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/httparse@1.10.1",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/log@0.4.33",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/rand@0.10.2",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls-pki-types@1.15.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/rustls@0.23.42",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/sha1@0.11.0",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/thiserror@2.0.18",
-          "kind": "runtime"
-        },
-        {
-          "from": "pkg:cargo/tungstenite@0.30.0",
-          "to": "pkg:cargo/url@2.5.8",
           "kind": "runtime"
         },
         {
@@ -43571,40 +42135,6 @@
     },
     {
       "ecosystem": "cargo",
-      "name": "block-buffer",
-      "version": "0.12.1",
-      "declaredLicense": "MIT OR Apache-2.0",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/RustCrypto/utils",
-      "purl": "pkg:cargo/block-buffer@0.12.1",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT OR Apache-2.0",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa",
-        "sourceEvidenceSha256": "ee97fcc8b79905c9d8453e8b98c1c190c883dcf200cd1aaed716edfeeb508b84",
-        "expressionEvidenceSha256": "c2f75a0a396ec1ba77d7bc77c55621a828c4930b2c9e1696c8cec8ebe003fc83",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
       "name": "bumpalo",
       "version": "3.20.3",
       "declaredLicense": "MIT OR Apache-2.0",
@@ -43912,40 +42442,6 @@
     {
       "ecosystem": "cargo",
       "name": "const-oid",
-      "version": "0.10.2",
-      "declaredLicense": "Apache-2.0 OR MIT",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/RustCrypto/formats",
-      "purl": "pkg:cargo/const-oid@0.10.2",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "Apache-2.0 OR MIT",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c",
-        "sourceEvidenceSha256": "d0e10d1438e23facac142eb2aebac3505c6cad4e326fa140ba61a18cce0e1271",
-        "expressionEvidenceSha256": "eeed4041fb8924b1f6f29a9f3b0c6d34e9ac33dd4080a9eb47475e33004986de",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "const-oid",
       "version": "0.9.6",
       "declaredLicense": "Apache-2.0 OR MIT",
       "concludedLicense": "MIT",
@@ -44183,40 +42679,6 @@
     },
     {
       "ecosystem": "cargo",
-      "name": "crypto-common",
-      "version": "0.2.2",
-      "declaredLicense": "MIT OR Apache-2.0",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/RustCrypto/traits",
-      "purl": "pkg:cargo/crypto-common@0.2.2",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT OR Apache-2.0",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453",
-        "sourceEvidenceSha256": "798b8e96ae3258b0e0947360837f52a307abbc6a384f05c8b3525d199864d8c5",
-        "expressionEvidenceSha256": "ac571c6b26057f12d45bdcec88d9a96cf6ca20b2c4d7852c386757268954c862",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
       "name": "ctr",
       "version": "0.9.2",
       "declaredLicense": "MIT OR Apache-2.0",
@@ -44421,40 +42883,6 @@
     },
     {
       "ecosystem": "cargo",
-      "name": "data-encoding",
-      "version": "2.11.0",
-      "declaredLicense": "MIT",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/ia0/data-encoding",
-      "purl": "pkg:cargo/data-encoding@2.11.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8",
-        "sourceEvidenceSha256": "70420061d5b5057a520716cc959268c96396397c742c9c265df948189ec47c06",
-        "expressionEvidenceSha256": "28ab495594168a29363a24beeefcb98f02c02f08ce443b5f43ece6f4eb683ada",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
       "name": "der",
       "version": "0.7.10",
       "declaredLicense": "Apache-2.0 OR MIT",
@@ -44507,40 +42935,6 @@
         "sourceEvidenceValue": "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292",
         "sourceEvidenceSha256": "f24c5d7f8084be7f1e306a7c8694764f057c488acda97c06bec65f66201afc77",
         "expressionEvidenceSha256": "076fd87400b4f7c23eb2c7c17507e08da8eb6f9673880da9c4acdc4ef6a19345",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "digest",
-      "version": "0.11.3",
-      "declaredLicense": "MIT OR Apache-2.0",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/RustCrypto/traits",
-      "purl": "pkg:cargo/digest@0.11.3",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT OR Apache-2.0",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2",
-        "sourceEvidenceSha256": "56c012f15e2ddc6d40d757b8c5aff227f8a309bc90ac23926855524d58a947e4",
-        "expressionEvidenceSha256": "efc493af914030804600c299b6f2170219238c43b135128540da5132a629c6ac",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -45697,40 +44091,6 @@
         "sourceEvidenceValue": "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87",
         "sourceEvidenceSha256": "6107a7cc2a7fdeb24297ec5fae713594912165fcfd1c59fc5bd8623929056793",
         "expressionEvidenceSha256": "f9d59d8ee58bedeb6e9162b14e188ccce0f6d76cd68e151142cec0eea3acb2fb",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "hybrid-array",
-      "version": "0.4.13",
-      "declaredLicense": "MIT OR Apache-2.0",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/RustCrypto/hybrid-array",
-      "purl": "pkg:cargo/hybrid-array@0.4.13",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT OR Apache-2.0",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c",
-        "sourceEvidenceSha256": "5c779de9fe18d8d2caccea8c68b512caf47ec35308f4af05783c9dee29584a84",
-        "expressionEvidenceSha256": "8cadf6b8382821497196d325b779118a6bbcebc8b77c179dfaad5ccfba355f68",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -48637,40 +46997,6 @@
     },
     {
       "ecosystem": "cargo",
-      "name": "sha1",
-      "version": "0.11.0",
-      "declaredLicense": "MIT OR Apache-2.0",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/RustCrypto/hashes",
-      "purl": "pkg:cargo/sha1@0.11.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT OR Apache-2.0",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214",
-        "sourceEvidenceSha256": "a27902e5e887d59e86c9d4494245eb032f187dfa60621a46e7e2daa1b5639e49",
-        "expressionEvidenceSha256": "fbbcb2b4dd1670bd236ae351ad182a41bcc24519c46b2d655b7fc8745285eb3f",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
       "name": "sha2",
       "version": "0.10.9",
       "declaredLicense": "MIT OR Apache-2.0",
@@ -49419,40 +47745,6 @@
     },
     {
       "ecosystem": "cargo",
-      "name": "tokio-tungstenite",
-      "version": "0.30.0",
-      "declaredLicense": "MIT",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/snapview/tokio-tungstenite",
-      "purl": "pkg:cargo/tokio-tungstenite@0.30.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71",
-        "sourceEvidenceSha256": "443c1bac9c8a68b23149afa4e42b351f050f2f378fde8fc19a85c3b595b374c3",
-        "expressionEvidenceSha256": "3ddf262bfe1f3be191ecb3bc9aace89c0178a1e18651741a1e8929a815f623c0",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
       "name": "tokio-util",
       "version": "0.7.18",
       "declaredLicense": "MIT",
@@ -49743,40 +48035,6 @@
         "sourceEvidenceValue": "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b",
         "sourceEvidenceSha256": "974226dca4002fcd291c6f967a1b1c583172b6fb1c2f6bdf76a06416158bf03f",
         "expressionEvidenceSha256": "9c223a17933dcc2a08b3f546718a1e623335c58539a5a6bd40d76cdd7db861a9",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "tungstenite",
-      "version": "0.30.0",
-      "declaredLicense": "MIT OR Apache-2.0",
-      "concludedLicense": "MIT",
-      "source": "https://github.com/snapview/tungstenite-rs",
-      "purl": "pkg:cargo/tungstenite@0.30.0",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "MIT OR Apache-2.0",
-        "concludedExpression": "MIT",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22",
-        "sourceEvidenceSha256": "559637dac264e621304d96e2af18e29c9340c14cc2533c14179a108535ab56b8",
-        "expressionEvidenceSha256": "630ad31b96f258acc4e693ccd49185e70f62b438e5d844f36081a12f75d970e5",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -50627,74 +48885,6 @@
         "sourceEvidenceValue": "0d46a5a140e6f7afeccd8eae97eff335163939eac8b929834875168b29b3d267",
         "sourceEvidenceSha256": "b43616d37f0b00d438a9192e5160a18c47999d9e85d1861a26288dd1947d9123",
         "expressionEvidenceSha256": "9a641a1cd2a6cf4e9b6196653ee5f1a9303752d5d20bb151ee012bfc90a8dc54",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "webpki-roots",
-      "version": "0.26.11",
-      "declaredLicense": "CDLA-Permissive-2.0",
-      "concludedLicense": "CDLA-Permissive-2.0",
-      "source": "https://github.com/rustls/webpki-roots",
-      "purl": "pkg:cargo/webpki-roots@0.26.11",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "CDLA-Permissive-2.0",
-        "concludedExpression": "CDLA-Permissive-2.0",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9",
-        "sourceEvidenceSha256": "128138aa4cbb81a734b3fceffd5300ccdd7450d2b342370332f1d8a9ce5d64c2",
-        "expressionEvidenceSha256": "7b3eb591ad50bdb982855252e43ade090b6212faafbf8c1185b806f74fdaad58",
-        "copyright": {
-          "requirement": "retain-upstream-copyright-and-license-notices",
-          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
-        },
-        "notice": {
-          "required": true,
-          "fulfillment": "component-entry-in-generated-third-party-notice"
-        },
-        "sourceOffer": {
-          "required": false,
-          "fulfillment": "not-required-by-concluded-license"
-        }
-      }
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "webpki-roots",
-      "version": "1.0.8",
-      "declaredLicense": "CDLA-Permissive-2.0",
-      "concludedLicense": "CDLA-Permissive-2.0",
-      "source": "https://github.com/rustls/webpki-roots",
-      "purl": "pkg:cargo/webpki-roots@1.0.8",
-      "sourceOfferRequired": false,
-      "review": {
-        "decision": "approved",
-        "declaredExpression": "CDLA-Permissive-2.0",
-        "concludedExpression": "CDLA-Permissive-2.0",
-        "reviewer": "flowersec-security-license-review",
-        "reviewedAt": "2026-07-22",
-        "policyRevision": "source-license-policy-v2",
-        "sourceEvidenceKind": "cargo-lock-checksum",
-        "sourceEvidenceValue": "bf85cb06032201fa7c6f829d7db5a7e5aa45bcc0655327713065f6f0576731bf",
-        "sourceEvidenceSha256": "24826a13b8cd32d3ecb42dbf9093ff16860b193576d9ba732d7884058495a8f7",
-        "expressionEvidenceSha256": "64460d6fc231c640dcd3bee2c2e78bd50cc1354a0b4c0407d7b8fe7ef3a849b8",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -59543,11 +57733,6 @@
       "kind": "runtime"
     },
     {
-      "from": "pkg:cargo/block-buffer@0.12.1",
-      "to": "pkg:cargo/hybrid-array@0.4.13",
-      "kind": "runtime"
-    },
-    {
       "from": "pkg:cargo/cc@1.2.67",
       "to": "pkg:cargo/find-msvc-tools@0.1.9",
       "kind": "runtime"
@@ -59660,11 +57845,6 @@
     {
       "from": "pkg:cargo/crypto-common@0.1.6",
       "to": "pkg:cargo/typenum@1.20.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/crypto-common@0.2.2",
-      "to": "pkg:cargo/hybrid-array@0.4.13",
       "kind": "runtime"
     },
     {
@@ -59810,21 +57990,6 @@
     {
       "from": "pkg:cargo/digest@0.10.7",
       "to": "pkg:cargo/subtle@2.6.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/digest@0.11.3",
-      "to": "pkg:cargo/block-buffer@0.12.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/digest@0.11.3",
-      "to": "pkg:cargo/const-oid@0.10.2",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/digest@0.11.3",
-      "to": "pkg:cargo/crypto-common@0.2.2",
       "kind": "runtime"
     },
     {
@@ -59974,7 +58139,7 @@
     },
     {
       "from": "pkg:cargo/errno@0.3.14",
-      "to": "pkg:cargo/windows-sys@0.61.2",
+      "to": "pkg:cargo/windows-sys@0.52.0",
       "kind": "runtime"
     },
     {
@@ -60220,11 +58385,6 @@
     {
       "from": "pkg:cargo/http@1.4.2",
       "to": "pkg:cargo/itoa@1.0.18",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/hybrid-array@0.4.13",
-      "to": "pkg:cargo/typenum@1.20.1",
       "kind": "runtime"
     },
     {
@@ -60839,6 +58999,11 @@
     },
     {
       "from": "pkg:cargo/quinn-udp@0.5.15",
+      "to": "pkg:cargo/windows-sys@0.52.0",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/quinn-udp@0.5.15",
       "to": "pkg:cargo/windows-sys@0.61.2",
       "kind": "runtime"
     },
@@ -61214,7 +59379,7 @@
     },
     {
       "from": "pkg:cargo/rustix@1.1.4",
-      "to": "pkg:cargo/windows-sys@0.61.2",
+      "to": "pkg:cargo/windows-sys@0.52.0",
       "kind": "runtime"
     },
     {
@@ -61305,6 +59470,11 @@
     {
       "from": "pkg:cargo/rustls-platform-verifier@0.7.0",
       "to": "pkg:cargo/webpki-root-certs@1.0.8",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/rustls-platform-verifier@0.7.0",
+      "to": "pkg:cargo/windows-sys@0.52.0",
       "kind": "runtime"
     },
     {
@@ -61568,21 +59738,6 @@
       "kind": "runtime"
     },
     {
-      "from": "pkg:cargo/sha1@0.11.0",
-      "to": "pkg:cargo/cfg-if@1.0.4",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/sha1@0.11.0",
-      "to": "pkg:cargo/cpufeatures@0.3.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/sha1@0.11.0",
-      "to": "pkg:cargo/digest@0.11.3",
-      "kind": "runtime"
-    },
-    {
       "from": "pkg:cargo/sha2@0.10.9",
       "to": "pkg:cargo/cfg-if@1.0.4",
       "kind": "runtime"
@@ -61669,7 +59824,7 @@
     },
     {
       "from": "pkg:cargo/tempfile@3.27.0",
-      "to": "pkg:cargo/getrandom@0.4.3",
+      "to": "pkg:cargo/getrandom@0.3.4",
       "kind": "runtime"
     },
     {
@@ -61684,7 +59839,7 @@
     },
     {
       "from": "pkg:cargo/tempfile@3.27.0",
-      "to": "pkg:cargo/windows-sys@0.61.2",
+      "to": "pkg:cargo/windows-sys@0.52.0",
       "kind": "runtime"
     },
     {
@@ -61735,51 +59890,6 @@
     {
       "from": "pkg:cargo/tokio-rustls@0.26.4",
       "to": "pkg:cargo/tokio@1.52.3",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-      "to": "pkg:cargo/futures-util@0.3.32",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-      "to": "pkg:cargo/log@0.4.33",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-      "to": "pkg:cargo/rustls-native-certs@0.8.4",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-      "to": "pkg:cargo/rustls-pki-types@1.15.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-      "to": "pkg:cargo/rustls@0.23.42",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-      "to": "pkg:cargo/tokio-rustls@0.26.4",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-      "to": "pkg:cargo/tokio@1.52.3",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-      "to": "pkg:cargo/tungstenite@0.30.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tokio-tungstenite@0.30.0",
-      "to": "pkg:cargo/webpki-roots@0.26.11",
       "kind": "runtime"
     },
     {
@@ -61965,61 +60075,6 @@
     {
       "from": "pkg:cargo/tracing@0.1.44",
       "to": "pkg:cargo/tracing-core@0.1.36",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/bytes@1.12.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/data-encoding@2.11.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/http@1.4.2",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/httparse@1.10.1",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/log@0.4.33",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/rand@0.10.2",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/rustls-pki-types@1.15.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/rustls@0.23.42",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/sha1@0.11.0",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/thiserror@2.0.18",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/tungstenite@0.30.0",
-      "to": "pkg:cargo/url@2.5.8",
       "kind": "runtime"
     },
     {
@@ -62213,13 +60268,8 @@
       "kind": "runtime"
     },
     {
-      "from": "pkg:cargo/webpki-roots@0.26.11",
-      "to": "pkg:cargo/webpki-roots@1.0.8",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:cargo/webpki-roots@1.0.8",
-      "to": "pkg:cargo/rustls-pki-types@1.15.0",
+      "from": "pkg:cargo/winapi-util@0.1.11",
+      "to": "pkg:cargo/windows-sys@0.52.0",
       "kind": "runtime"
     },
     {
@@ -62485,11 +60535,6 @@
     {
       "from": "pkg:generic/flowersec-source@2.0.0",
       "to": "pkg:cargo/thiserror@2.0.18",
-      "kind": "runtime"
-    },
-    {
-      "from": "pkg:generic/flowersec-source@2.0.0",
-      "to": "pkg:cargo/tokio-tungstenite@0.30.0",
       "kind": "runtime"
     },
     {

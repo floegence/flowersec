@@ -3,6 +3,10 @@ import Testing
 @testable import Flowersec
 
 struct SDKDefaultsContractTests {
+  @Test func publicConnectorUsesSharedConnectTimeoutDefault() {
+    #expect(ConnectorOptionsV2().connectTimeout == FlowersecSDKDefaults.Transport.connectTimeout)
+  }
+
   @Test func defaultsMatchSharedStabilityManifest() throws {
     let root = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent().deletingLastPathComponent()

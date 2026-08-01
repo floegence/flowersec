@@ -2,9 +2,11 @@
 
 The native Swift SDK for Flowersec v2 end-to-end encrypted sessions on Apple platforms.
 
+The current source is a Flowersec 2.0 release candidate. No `2.0.0` SwiftPM tag has been published yet; use an existing release tag until the coordinated 2.0 release.
+
 ## Install
 
-The repository root exposes the Swift package:
+After the 2.0 release, the repository root exposes the Swift package through the following version range:
 
 ```swift
 .package(url: "https://github.com/floegence/flowersec.git", from: "2.0.0")
@@ -17,6 +19,8 @@ Use the `Flowersec` library product.
 Parse an opaque `ArtifactV2` with `parseArtifactV2(...)`, bind it to a single-use `ArtifactLeaseV2`, initialize `ConnectorV2` with `ConnectorOptionsV2`, and call `ConnectorV2.connect()`. Applications receive only the carrier-neutral `SessionV2`, `RPCPeerV2`, `ByteStreamV2`, `IncomingStreamV2`, and bounded `StreamMetadataV2` contracts.
 
 `ConnectErrorV2` and `SessionErrorV2` are closed redacted error sets. A remote application RPC failure is `RPCErrorV2` with only its semantic code and sanitized message. Candidate credentials, carrier choice, admission reasons, path, endpoint identities, logical stream IDs, wire state, cryptographic keys, and Yamux are not public.
+
+`classifyConnectErrorV2(_:)` and `classifySessionErrorV2(_:)` return `FlowersecErrorRetryClassificationV2` with a `FlowersecRetryActionV2`. The actions distinguish retrying the current operation, acquiring a fresh artifact and session, and stopping. `ConnectorOptionsV2` uses the shared ten-second connection timeout when the caller omits it.
 
 ## Production Support
 

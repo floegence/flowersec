@@ -29,3 +29,7 @@ node examples/ts/node-client.mjs \
 The trust root is optional when the endpoint uses a system-trusted certificate.
 The example atomically creates and synchronizes the spend receipt before the
 connector sends connection credentials. Reusing a receipt path fails closed.
+When connection or liveness fails with a public Flowersec error, the example
+prints only `recovery=retry`, `recovery=refresh_artifact`, or `recovery=stop`.
+Refresh always means acquiring a new artifact and session, never reusing the
+spent receipt.

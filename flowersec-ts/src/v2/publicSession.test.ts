@@ -41,6 +41,24 @@ describe("opaque public SessionV2 projection", () => {
     await expect(session.termination).resolves.toEqual({ error: new SessionError("timeout") });
     expect((await session.waitClosed()).error).not.toHaveProperty("cause");
   });
+
+  test("projects RPC application outcomes as a discriminated union", async () => {
+    const terminal = new Error("closed");
+    const internal = fakeSession(fakeStream(terminal), terminal);
+    internal.rpc.call = vi.fn()
+      .mockResolvedValueOnce({ payload: { accepted: true } })
+      .mockResolvedValueOnce({ payload: null, error: { code: 409, message: "conflict" } });
+    const session = projectSessionV2(internal);
+
+    await expect(session.rpc.call(1, {})).resolves.toEqual({
+      ok: true,
+      payload: { accepted: true },
+    });
+    await expect(session.rpc.call(2, {})).resolves.toEqual({
+      ok: false,
+      error: { code: 409, message: "conflict" },
+    });
+  });
 });
 
 function fakeStream(error: Error): InternalByteStreamV2 & { read: ReturnType<typeof vi.fn> } {

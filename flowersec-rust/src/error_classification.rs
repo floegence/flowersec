@@ -1,0 +1,71 @@
+use crate::{ConnectErrorCode, SessionError};
+
+/// Carrier-neutral next step for a redacted public failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ErrorRetryAction {
+    Retry,
+    RefreshArtifact,
+    Stop,
+}
+
+impl ErrorRetryAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Retry => "retry",
+            Self::RefreshArtifact => "refresh_artifact",
+            Self::Stop => "stop",
+        }
+    }
+}
+
+/// Bounded application recovery policy that contains no transport diagnostics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ErrorRetryClassification {
+    pub action: ErrorRetryAction,
+    pub retryable: bool,
+    pub refresh_artifact: bool,
+    pub caller_canceled: bool,
+    pub session_closed: bool,
+}
+
+pub const fn classify_connect_error(code: ConnectErrorCode) -> ErrorRetryClassification {
+    match code {
+        ConnectErrorCode::InvalidInput => classification(ErrorRetryAction::Stop, false, false),
+        ConnectErrorCode::Canceled => classification(ErrorRetryAction::Stop, true, false),
+        ConnectErrorCode::Expired
+        | ConnectErrorCode::ResolveFailed
+        | ConnectErrorCode::SpendFailed
+        | ConnectErrorCode::DialFailed
+        | ConnectErrorCode::Timeout
+        | ConnectErrorCode::HandshakeFailed => {
+            classification(ErrorRetryAction::RefreshArtifact, false, false)
+        }
+    }
+}
+
+pub const fn classify_session_error(error: SessionError) -> ErrorRetryClassification {
+    match error {
+        SessionError::Canceled => classification(ErrorRetryAction::Stop, true, false),
+        SessionError::Closed => classification(ErrorRetryAction::RefreshArtifact, false, true),
+        SessionError::ResourceExhausted | SessionError::Reset | SessionError::TimedOut => {
+            classification(ErrorRetryAction::Retry, false, false)
+        }
+        SessionError::InvalidInput | SessionError::Rejected | SessionError::Failed => {
+            classification(ErrorRetryAction::Stop, false, false)
+        }
+    }
+}
+
+const fn classification(
+    action: ErrorRetryAction,
+    caller_canceled: bool,
+    session_closed: bool,
+) -> ErrorRetryClassification {
+    ErrorRetryClassification {
+        action,
+        retryable: !matches!(action, ErrorRetryAction::Stop),
+        refresh_artifact: matches!(action, ErrorRetryAction::RefreshArtifact),
+        caller_canceled,
+        session_closed,
+    }
+}

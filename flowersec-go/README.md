@@ -2,6 +2,8 @@
 
 The Go 2.x module exposes Flowersec's carrier-neutral v2 consumer API. Applications parse an opaque artifact, attach a durable single-use spend callback, connect, and use only the returned session, RPC, and byte-stream contracts.
 
+The current source is a Flowersec 2.0 release candidate and has not yet been published as a 2.0 module tag. The install command below applies after the coordinated 2.0 release; use an existing release tag for production until then.
+
 ## Install
 
 ```bash
@@ -29,6 +31,8 @@ Register inbound RPC handlers before constructing the connector; the connector s
 The executable `ExampleNewConnector` compiles the complete consumer lifecycle,
 including an atomically created and synchronized durable spend receipt. Reusing
 the receipt path fails closed; the receipt contains no artifact or key material.
+
+An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. `ClassifyConnectError(...)` and `ClassifySessionError(...)` map public errors to `ErrorRetryClassification`: retry the current operation, acquire a fresh artifact and session, or stop. `ConnectExpired` identifies artifact expiry without exposing artifact contents.
 
 ## Server Control Plane
 

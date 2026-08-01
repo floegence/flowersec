@@ -2,6 +2,8 @@
 
 `@floegence/flowersec-core` is the ESM-only Flowersec v2 SDK for browsers and Node.js. Its public package surface is limited to the root, `/browser`, `/node`, and `/proxy` entrypoints.
 
+The current source is a Flowersec 2.0 release candidate and has not yet been published as the coordinated 2.0 SDK release. The install command below refers to the registry package; verify its published version before depending on source-only 2.0 APIs.
+
 ## Install
 
 ```bash
@@ -26,6 +28,10 @@ The root type exports are:
 `createSessionReconnectManagerV2(...)` resolves a lease for each connection attempt. A refreshable source acquires a fresh lease; a one-time source can be consumed only once.
 
 `classifyConnectErrorV2(...)` and `classifySessionErrorV2(...)` map redacted public errors to stable application retry decisions. They expose only `action`, `retryable`, `refreshArtifact`, `callerCanceled`, and `sessionClosed`; they do not reveal carrier, candidate, URL, credential, stage, key, or diagnostic details.
+
+`RpcResultV2` is a discriminated union. Check `result.ok` before reading either the success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify are portable across SDKs, while `RpcPeerV2.onNotify(...)` is a TypeScript-specific subscription convenience.
+
+When connector options omit a connection timeout, browser and Node.js connectors use the shared ten-second default.
 
 ## Opaque Boundaries
 

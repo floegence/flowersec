@@ -39,6 +39,7 @@ mod acceptor_v2;
 mod artifact_v2;
 mod connector_v2;
 mod crypto_v2;
+mod error_classification;
 mod idna_v2;
 mod protocol_v2;
 mod raw_quic_v2;
@@ -47,10 +48,15 @@ mod transport_v2;
 
 #[cfg(test)]
 mod defaults_contract;
+#[cfg(test)]
+mod error_classification_contract;
 
 pub use acceptor_v2::{AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions};
 pub use artifact_v2::{Artifact, ArtifactError, ArtifactLease, ArtifactSpendError};
 pub use connector_v2::{ConnectError, ConnectErrorCode, Connector, ConnectorOptions};
+pub use error_classification::{
+    ErrorRetryAction, ErrorRetryClassification, classify_connect_error, classify_session_error,
+};
 pub use transport_v2::{
     ByteStreamV2 as ByteStream, IncomingStreamV2 as IncomingStream, JsonObjectV2 as JsonObject,
     RpcCallError, RpcError, RpcPeerV2 as RpcPeer, SessionError, SessionV2 as Session,

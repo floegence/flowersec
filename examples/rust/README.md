@@ -40,6 +40,9 @@ deadline options. Before establishing the encrypted session, it invokes the
 `ArtifactLease` callback to synchronize the create-new receipt. A successful
 connection prints only `session=ready` and the carrier-neutral liveness result,
 then closes the session cleanly. Reusing a receipt path fails closed.
+Connection and liveness failures print only the bounded `recovery` action from
+the public classifiers. `refresh_artifact` requires a new artifact and receipt;
+it never authorizes reuse of the committed path.
 
 The receipt does not contain the artifact or cryptographic material. Keep both
 paths outside the repository and apply permissions suitable for deployment

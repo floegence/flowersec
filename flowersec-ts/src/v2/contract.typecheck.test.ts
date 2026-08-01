@@ -2,6 +2,7 @@ import type {
   ByteStreamV2,
   IncomingStreamV2,
   JsonObjectV2,
+  RpcResultV2,
   SessionError,
   SessionV2,
   StreamOpenOptionsV2,
@@ -45,6 +46,20 @@ function typecheckCarrierContract(
   void carrier.yamux;
   // @ts-expect-error physical stream capacity is a carrier property, not a Yamux policy field.
   void policy.maxInboundStreams;
+}
+
+function typecheckRpcResult(result: RpcResultV2): void {
+  // @ts-expect-error callers must discriminate application success before reading payload.
+  void result.payload;
+  if (result.ok) {
+    void result.payload;
+    // @ts-expect-error successful RPC results do not carry an application error.
+    void result.error;
+  } else {
+    void result.error;
+    // @ts-expect-error failed RPC results do not carry a payload.
+    void result.payload;
+  }
 }
 
 function typecheckContract(
@@ -106,4 +121,5 @@ function typecheckContract(
 test("keeps the v2 contract available for compile-time checks", () => {
   expect(typecheckContract).toBeTypeOf("function");
   expect(typecheckCarrierContract).toBeTypeOf("function");
+  expect(typecheckRpcResult).toBeTypeOf("function");
 });

@@ -12,16 +12,18 @@ import (
 )
 
 const (
-	capabilityManifestPath = "stability/language_capabilities.json"
-	defaultsManifestPath   = "stability/sdk_defaults.json"
-	interopMatrixPath      = "stability/interop_matrix.json"
+	capabilityManifestPath        = "stability/language_capabilities.json"
+	defaultsManifestPath          = "stability/sdk_defaults.json"
+	interopMatrixPath             = "stability/interop_matrix.json"
+	publicErrorClassificationPath = "stability/public_error_classification.json"
 )
 
 var requiredPortableCapabilityIDs = []string{
 	"opaque_artifact",
 	"opaque_connector",
 	"secure_session",
-	"rpc",
+	"rpc_call_notify",
+	"error_classification",
 	"carrier_contract",
 	"wire_security",
 }
@@ -31,6 +33,7 @@ var requiredSharedFixtureIDs = []string{
 	"crypto_v2",
 	"handshake_v2",
 	"open_unicode_v2",
+	"public_error_classification",
 	"session_wire_v2",
 }
 
@@ -155,6 +158,27 @@ type interopCoverage struct {
 	Cases    []string `json:"cases"`
 }
 
+type publicErrorClassificationContract struct {
+	Version   int                                        `json:"version"`
+	Decisions map[string]publicErrorClassificationResult `json:"decisions"`
+	Connect   []publicErrorClassificationCase            `json:"connect"`
+	Session   []publicErrorClassificationCase            `json:"session"`
+}
+
+type publicErrorClassificationResult struct {
+	Action          string `json:"action"`
+	Retryable       bool   `json:"retryable"`
+	RefreshArtifact bool   `json:"refresh_artifact"`
+	CallerCanceled  bool   `json:"caller_canceled"`
+	SessionClosed   bool   `json:"session_closed"`
+}
+
+type publicErrorClassificationCase struct {
+	Semantic string              `json:"semantic"`
+	Decision string              `json:"decision"`
+	Codes    map[string][]string `json:"codes"`
+}
+
 type interopProfiles struct {
 	Version  int                       `json:"version"`
 	Seed     int64                     `json:"seed"`
@@ -273,9 +297,113 @@ func verifyParity(repoRoot string) error {
 	if err := verifyInteropMatrix(repoRoot, m); err != nil {
 		return err
 	}
+	if err := verifyPublicErrorClassification(repoRoot); err != nil {
+		return err
+	}
 	fmt.Printf("language parity OK: %d capabilities across %d languages; transport v%d has %d runtime registries\n", len(m.PortableCapabilities), len(m.Languages), transport.Version, len(transport.Runtimes))
 	return nil
 }
+
+func verifyPublicErrorClassification(repoRoot string) error {
+	var contract publicErrorClassificationContract
+	if err := decodeStrictJSONFile(filepath.Join(repoRoot, publicErrorClassificationPath), &contract); err != nil {
+		return fmt.Errorf("parse %s: %w", publicErrorClassificationPath, err)
+	}
+	if err := validatePublicErrorClassification(contract); err != nil {
+		return fmt.Errorf("validate %s: %w", publicErrorClassificationPath, err)
+	}
+	return nil
+}
+
+func validatePublicErrorClassification(contract publicErrorClassificationContract) error {
+	if contract.Version != 1 {
+		return fmt.Errorf("unsupported public error classification version %d", contract.Version)
+	}
+	if len(contract.Decisions) == 0 {
+		return errors.New("decisions must not be empty")
+	}
+	for name, decision := range contract.Decisions {
+		if strings.TrimSpace(name) == "" {
+			return errors.New("decision names must not be empty")
+		}
+		switch decision.Action {
+		case "retry", "refresh_artifact", "stop":
+		default:
+			return fmt.Errorf("decision %s has unsupported action %q", name, decision.Action)
+		}
+		if decision.Retryable != (decision.Action != "stop") {
+			return fmt.Errorf("decision %s retryable must match action %q", name, decision.Action)
+		}
+		if decision.RefreshArtifact != (decision.Action == "refresh_artifact") {
+			return fmt.Errorf("decision %s refresh_artifact must match action %q", name, decision.Action)
+		}
+	}
+
+	usedDecisions := make(map[string]struct{}, len(contract.Decisions))
+	if err := validatePublicErrorClassificationDomain("connect", contract.Connect, contract.Decisions, usedDecisions); err != nil {
+		return err
+	}
+	if err := validatePublicErrorClassificationDomain("session", contract.Session, contract.Decisions, usedDecisions); err != nil {
+		return err
+	}
+	for decision := range contract.Decisions {
+		if _, ok := usedDecisions[decision]; !ok {
+			return fmt.Errorf("decision %s is not referenced by any case", decision)
+		}
+	}
+	return nil
+}
+
+func validatePublicErrorClassificationDomain(
+	domain string,
+	cases []publicErrorClassificationCase,
+	decisions map[string]publicErrorClassificationResult,
+	usedDecisions map[string]struct{},
+) error {
+	if len(cases) == 0 {
+		return fmt.Errorf("%s cases must not be empty", domain)
+	}
+	semantics := make([]string, 0, len(cases))
+	codesByLanguage := make(map[string]map[string]struct{}, len(publicErrorClassificationLanguages))
+	for _, language := range publicErrorClassificationLanguages {
+		codesByLanguage[language] = make(map[string]struct{})
+	}
+	for _, classificationCase := range cases {
+		if strings.TrimSpace(classificationCase.Semantic) == "" {
+			return fmt.Errorf("%s case semantic must not be empty", domain)
+		}
+		semantics = append(semantics, classificationCase.Semantic)
+		if _, ok := decisions[classificationCase.Decision]; !ok {
+			return fmt.Errorf("%s case %s references unknown decision %q", domain, classificationCase.Semantic, classificationCase.Decision)
+		}
+		usedDecisions[classificationCase.Decision] = struct{}{}
+		languages := make([]string, 0, len(classificationCase.Codes))
+		for language := range classificationCase.Codes {
+			languages = append(languages, language)
+		}
+		if !sameStringSet(languages, publicErrorClassificationLanguages) {
+			return fmt.Errorf("%s case %s languages must contain exactly %s", domain, classificationCase.Semantic, strings.Join(publicErrorClassificationLanguages, ", "))
+		}
+		for _, language := range publicErrorClassificationLanguages {
+			codes := classificationCase.Codes[language]
+			if len(codes) == 0 {
+				return fmt.Errorf("%s case %s must contain at least one %s code", domain, classificationCase.Semantic, language)
+			}
+			for _, code := range codes {
+				if strings.TrimSpace(code) == "" {
+					return fmt.Errorf("%s case %s has an empty %s code", domain, classificationCase.Semantic, language)
+				}
+				if _, exists := codesByLanguage[language][code]; exists {
+					return fmt.Errorf("%s contains duplicate code %q for %s", domain, code, language)
+				}
+				codesByLanguage[language][code] = struct{}{}
+			}
+		}
+	}
+	return requireUnique(domain+" semantics", semantics)
+}
+
+var publicErrorClassificationLanguages = []string{"go", "typescript", "swift", "rust"}
 
 func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) error {
 	var matrix interopMatrix

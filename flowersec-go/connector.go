@@ -15,6 +15,7 @@ import (
 	carrierws "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/websocket"
 	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/defaults"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
@@ -34,6 +35,7 @@ const (
 	ConnectInvalid  ConnectErrorCode = "invalid"
 	ConnectCanceled ConnectErrorCode = "canceled"
 	ConnectTimeout  ConnectErrorCode = "timeout"
+	ConnectExpired  ConnectErrorCode = "expired_artifact"
 	ConnectFailed   ConnectErrorCode = "failed"
 )
 
@@ -284,9 +286,13 @@ func (connector *Connector) Connect(ctx context.Context) (Session, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if connector.timeout > 0 {
+	timeout := connector.timeout
+	if timeout == 0 {
+		timeout = defaults.ConnectTimeout
+	}
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, connector.timeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	result, err := connector.inner.Connect(ctx)
@@ -498,6 +504,9 @@ func redactConnectError(err error) error {
 	code := ConnectFailed
 	var internal *fserrors.Error
 	if errors.As(err, &internal) {
+		if errors.Is(internal, connectv2.ErrArtifactExpired) {
+			return &ConnectError{code: ConnectExpired}
+		}
 		switch internal.Code {
 		case fserrors.CodeCanceled:
 			code = ConnectCanceled

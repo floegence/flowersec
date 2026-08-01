@@ -45,7 +45,8 @@
     "opaque_artifact": { "fixtures": ["artifact_v2"], "cases": [] },
     "opaque_connector": { "fixtures": [], "cases": ["session"] },
     "secure_session": { "fixtures": ["session_wire_v2"], "cases": ["session", "streams", "rekey", "fin", "reset"] },
-    "rpc": { "fixtures": [], "cases": ["rpc"] },
+    "rpc_call_notify": { "fixtures": [], "cases": ["rpc"] },
+    "error_classification": { "fixtures": ["public_error_classification"], "cases": [] },
     "carrier_contract": { "fixtures": [], "cases": ["session", "streams", "fin", "reset"] },
     "wire_security": { "fixtures": ["crypto_v2", "handshake_v2", "open_unicode_v2"], "cases": [] }
   }

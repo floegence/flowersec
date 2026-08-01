@@ -1,8 +1,13 @@
 import { open, readFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import {
+  classifyConnectErrorV2,
+  classifySessionErrorV2,
   connectNodeSessionV2,
+  ConnectError,
   createArtifactLeaseV2,
   parseArtifact,
+  SessionError,
 } from "@floegence/flowersec-core/node";
 
 const [artifactPath, origin, receiptPath, trustRootPath] = process.argv.slice(2);
@@ -21,18 +26,43 @@ const lease = createArtifactLeaseV2(artifact, async () => {
   } finally {
     await receipt.close();
   }
+  const directory = await open(dirname(receiptPath), "r");
+  try {
+    await directory.sync();
+  } finally {
+    await directory.close();
+  }
 });
 const signal = AbortSignal.timeout(15_000);
 const tls = trustRootPath === undefined ? undefined : { ca: await readFile(trustRootPath) };
-const session = await connectNodeSessionV2(lease, {
-  origin,
-  signal,
-  ...(tls === undefined ? {} : { tls }),
-});
+let session;
 try {
-  const roundTripMs = await session.probeLiveness({ signal });
-  console.log("session=ready");
-  console.log(`liveness_ms=${Math.round(roundTripMs)}`);
+  session = await connectNodeSessionV2(lease, {
+    origin,
+    signal,
+    ...(tls === undefined ? {} : { tls }),
+  });
+} catch (error) {
+  reportRecovery(error);
+  throw error;
+}
+try {
+  try {
+    const roundTripMs = await session.probeLiveness({ signal });
+    console.log("session=ready");
+    console.log(`liveness_ms=${Math.round(roundTripMs)}`);
+  } catch (error) {
+    reportRecovery(error);
+    throw error;
+  }
 } finally {
   await session.close();
+}
+
+function reportRecovery(error) {
+  if (error instanceof ConnectError) {
+    console.error(`recovery=${classifyConnectErrorV2(error).action}`);
+  } else if (error instanceof SessionError) {
+    console.error(`recovery=${classifySessionErrorV2(error).action}`);
+  }
 }

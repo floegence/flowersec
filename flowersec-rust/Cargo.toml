@@ -13,11 +13,6 @@ keywords = ["websocket", "quic", "e2ee", "rpc", "tunnel"]
 categories = ["network-programming", "cryptography", "asynchronous"]
 include = ["src/**", "README.md", "LICENSE", "Cargo.toml", "THIRD_PARTY_NOTICES.md", "sbom/**"]
 
-[features]
-default = ["rustls-native-roots"]
-rustls-native-roots = ["tokio-tungstenite/rustls-tls-native-roots"]
-rustls-webpki-roots = ["tokio-tungstenite/rustls-tls-webpki-roots"]
-
 [dependencies]
 aes-gcm = "0.10"
 async-trait = "0.1"
@@ -44,7 +39,6 @@ serde_repr = "0.1"
 sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
-tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "url"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"

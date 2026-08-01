@@ -100,6 +100,16 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.RetryAction",
+            "doc_token": "`flowersec.RetryAction`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ErrorRetryClassification",
+            "doc_token": "`flowersec.ErrorRetryClassification`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.SessionError",
             "doc_token": "`flowersec.SessionError`"
           },
@@ -375,6 +385,16 @@
             "doc_token": "`flowersec.ConnectError.Code()`"
           },
           {
+            "kind": "func",
+            "expr": "flowersec.ClassifyConnectError",
+            "doc_token": "`flowersec.ClassifyConnectError(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.ClassifySessionError",
+            "doc_token": "`flowersec.ClassifySessionError(...)`"
+          },
+          {
             "kind": "method",
             "expr": "(*flowersec.SessionError).Error",
             "doc_token": "`flowersec.SessionError.Error()`"
@@ -403,6 +423,11 @@
             "kind": "const",
             "expr": "flowersec.ConnectCanceled",
             "doc_token": "`flowersec.ConnectCanceled`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectExpired",
+            "doc_token": "`flowersec.ConnectExpired`"
           },
           {
             "kind": "const",
@@ -498,6 +523,21 @@
             "kind": "const",
             "expr": "flowersec.UnreliableDroppedCarrier",
             "doc_token": "`flowersec.UnreliableDroppedCarrier`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.RetryActionRetry",
+            "doc_token": "`flowersec.RetryActionRetry`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.RetryActionRefreshArtifact",
+            "doc_token": "`flowersec.RetryActionRefreshArtifact`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.RetryActionStop",
+            "doc_token": "`flowersec.RetryActionStop`"
           },
           {
             "kind": "var",
@@ -835,7 +875,11 @@
       "`ConnectorOptionsV2`",
       "`SessionV2`",
       "`ConnectErrorV2`",
-      "`SessionErrorV2`"
+      "`SessionErrorV2`",
+      "`FlowersecRetryActionV2`",
+      "`FlowersecErrorRetryClassificationV2`",
+      "`classifyConnectErrorV2(_:)`",
+      "`classifySessionErrorV2(_:)`"
     ],
     "symbols": [
       {
@@ -856,6 +900,11 @@
       {
         "kind": "swift.enum",
         "name": "ConnectErrorV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "FlowersecRetryActionV2",
         "doc_token": ""
       },
       {
@@ -916,6 +965,21 @@
       {
         "kind": "swift.enum.case",
         "name": "ConnectErrorV2.timeout",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecRetryActionV2.refreshArtifact",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecRetryActionV2.retry",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "FlowersecRetryActionV2.stop",
         "doc_token": ""
       },
       {
@@ -1054,6 +1118,16 @@
         "doc_token": ""
       },
       {
+        "kind": "swift.func",
+        "name": "classifyConnectErrorV2(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.func",
+        "name": "classifySessionErrorV2(_:)",
+        "doc_token": ""
+      },
+      {
         "kind": "swift.init",
         "name": "ArtifactLeaseV2.init(artifact:commitSpend:)",
         "doc_token": ""
@@ -1061,6 +1135,11 @@
       {
         "kind": "swift.init",
         "name": "ConnectErrorV2.init(rawValue:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "FlowersecRetryActionV2.init(rawValue:)",
         "doc_token": ""
       },
       {
@@ -1220,6 +1299,31 @@
       },
       {
         "kind": "swift.property",
+        "name": "FlowersecErrorRetryClassificationV2.action",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecErrorRetryClassificationV2.callerCanceled",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecErrorRetryClassificationV2.refreshArtifact",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecErrorRetryClassificationV2.retryable",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "FlowersecErrorRetryClassificationV2.sessionClosed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
         "name": "IncomingStreamV2.kind",
         "doc_token": ""
       },
@@ -1286,6 +1390,11 @@
       {
         "kind": "swift.struct",
         "name": "ConnectorV2",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "FlowersecErrorRetryClassificationV2",
         "doc_token": ""
       },
       {
@@ -1359,6 +1468,11 @@
       "`AcceptorOptions`",
       "`Connector`",
       "`ConnectorOptions`",
+      "`ErrorRetryAction`",
+      "`ErrorRetryClassification`",
+      "`ErrorRetryAction::as_str()`",
+      "`classify_connect_error(...)`",
+      "`classify_session_error(...)`",
       "`RpcCallError`",
       "`RpcError`",
       "`Session`",
@@ -1378,6 +1492,15 @@
       "let _ = std::mem::size_of::<flowersec::ConnectErrorCode>()",
       "let _ = std::mem::size_of::<flowersec::Connector>()",
       "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
+      "let _ = flowersec::ConnectorOptions::default()",
+      "let _ = std::mem::size_of::<flowersec::ErrorRetryAction>()",
+      "let _ = std::mem::size_of::<flowersec::ErrorRetryClassification>()",
+      "let _ = flowersec::ErrorRetryAction::Retry",
+      "let _ = flowersec::ErrorRetryAction::RefreshArtifact",
+      "let _ = flowersec::ErrorRetryAction::Stop",
+      "let _ = flowersec::ErrorRetryAction::Retry.as_str()",
+      "let _: fn(flowersec::ConnectErrorCode) -> flowersec::ErrorRetryClassification = flowersec::classify_connect_error",
+      "let _: fn(flowersec::SessionError) -> flowersec::ErrorRetryClassification = flowersec::classify_session_error",
       "let _ = std::mem::size_of::<flowersec::IncomingStream>()",
       "let _ = std::mem::size_of::<flowersec::JsonObject>()",
       "let _ = std::mem::size_of::<flowersec::RpcCallError>()",

@@ -26,6 +26,25 @@ test("network-capable SDK examples require a durable spend receipt", () => {
   assert.match(go, /receipt\.Sync\(\)/);
 });
 
+test("atomic spend receipt examples sync the parent directory", () => {
+  const go = read("flowersec-go/example_client_test.go");
+  assert.match(go, /filepath\.Dir\(path\)/);
+  assert.match(go, /directory\.Sync\(\)/);
+
+  const typescript = read("examples/ts/node-client.mjs");
+  assert.match(typescript, /dirname\(receiptPath\)/);
+  assert.match(typescript, /directory\.sync\(\)/);
+
+  const swift = read("examples/swift/Sources/FlowersecSwiftClientExample/main.swift");
+  assert.match(swift, /deletingLastPathComponent\(\)/);
+  assert.match(swift, /syncDirectory/);
+  assert.match(swift, /fsync\(descriptor\)/);
+
+  const rust = read("examples/rust/src/main.rs");
+  assert.match(rust, /sync_parent_directory/);
+  assert.match(rust, /directory\.sync_all\(\)/);
+});
+
 test("consumer examples stay on opaque public SDK entrypoints", () => {
   const typescript = read("examples/ts/node-client.mjs");
   assert.match(typescript, /@floegence\/flowersec-core\/node/);
@@ -36,4 +55,47 @@ test("consumer examples stay on opaque public SDK entrypoints", () => {
   assert.match(go, /flowersec\.NewArtifactLease/);
   assert.match(go, /flowersec\.NewConnector/);
   assert.doesNotMatch(go, /\/internal\//);
+});
+
+test("consumer examples classify public connection and session failures", () => {
+  const examples = [
+    {
+      name: "Go",
+      source: read("flowersec-go/example_client_test.go"),
+      classifiers: [/flowersec\.ClassifyConnectError/, /flowersec\.ClassifySessionError/],
+    },
+    {
+      name: "TypeScript",
+      source: read("examples/ts/node-client.mjs"),
+      classifiers: [/classifyConnectErrorV2/, /classifySessionErrorV2/],
+    },
+    {
+      name: "Swift",
+      source: read("examples/swift/Sources/FlowersecSwiftClientExample/main.swift"),
+      classifiers: [/classifyConnectErrorV2/, /classifySessionErrorV2/],
+    },
+    {
+      name: "Rust",
+      source: read("examples/rust/src/main.rs"),
+      classifiers: [/classify_connect_error/, /classify_session_error/],
+    },
+  ];
+
+  for (const example of examples) {
+    for (const classifier of example.classifiers) {
+      assert.match(example.source, classifier, `${example.name} example must show public recovery classification`);
+    }
+  }
+
+  const rustReadme = read("flowersec-rust/README.md");
+  assert.match(rustReadme, /ConnectorOptions::default\(\)/);
+  assert.match(rustReadme, /trust_roots_der/u);
+});
+
+test("durable spend guidance covers three production persistence patterns", () => {
+  const apiContract = read("docs/API_CONTRACT.md");
+  assert.match(apiContract, /Database uniqueness/u);
+  assert.match(apiContract, /Atomic file/u);
+  assert.match(apiContract, /Transactional state/u);
+  assert.match(apiContract, /uncertain.*spent/isu);
 });

@@ -3,7 +3,9 @@ package flowersec_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
@@ -36,10 +38,25 @@ func ExampleNewConnector() {
 	defer cancel()
 	session, err := connector.Connect(ctx)
 	if err != nil {
+		reportRecovery(err)
 		return
 	}
 	defer session.Close()
-	_, _ = session.ProbeLiveness(ctx)
+	if _, err := session.ProbeLiveness(ctx); err != nil {
+		reportRecovery(err)
+	}
+}
+
+func reportRecovery(err error) {
+	var connectError *flowersec.ConnectError
+	if errors.As(err, &connectError) {
+		fmt.Fprintf(os.Stderr, "recovery=%s\n", flowersec.ClassifyConnectError(connectError).Action)
+		return
+	}
+	var sessionError *flowersec.SessionError
+	if errors.As(err, &sessionError) {
+		fmt.Fprintf(os.Stderr, "recovery=%s\n", flowersec.ClassifySessionError(sessionError).Action)
+	}
 }
 
 func commitSpendReceipt(path string) error {
@@ -48,5 +65,12 @@ func commitSpendReceipt(path string) error {
 		return err
 	}
 	_, writeErr := receipt.WriteString("flowersec-v2-artifact-spent\n")
-	return errors.Join(writeErr, receipt.Sync(), receipt.Close())
+	if err := errors.Join(writeErr, receipt.Sync(), receipt.Close()); err != nil {
+		return err
+	}
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	return errors.Join(directory.Sync(), directory.Close())
 }

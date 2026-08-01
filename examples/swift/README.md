@@ -29,6 +29,9 @@ FSEC_SPEND_RECEIPT_V2_PATH=/durable/state/artifact.spent \
 The example creates the receipt with no overwrite, restricts it to the current
 user, synchronizes it before connection credentials are sent, and fails closed
 when the path already exists. The receipt contains no artifact or key material.
+Connection and liveness failures are classified into `retry`,
+`refresh_artifact`, or `stop`; the example prints only that bounded action.
+Refreshing requires a newly acquired artifact and a new spend receipt.
 
 ## Runtime Boundaries
 

@@ -5,6 +5,10 @@ encrypted sessions. Its maintained public entrypoints use opaque artifacts, the
 carrier-neutral `Connector`, and `Session`; the legacy v1 facade has been
 removed.
 
+The current source is a Flowersec 2.0 release candidate and has not yet been
+published as the coordinated 2.0 crate release. Verify the registry version
+before depending on source-only 2.0 APIs.
+
 The crate targets Rust 1.88 or newer on Linux, macOS, and Windows, uses rustls
 by default, and contains no Flowersec-authored `unsafe`.
 
@@ -14,9 +18,19 @@ by default, and contains no Flowersec-authored `unsafe`.
 cargo add flowersec
 ```
 
-The default feature uses native root certificates. Use
-`default-features = false, features = ["rustls-webpki-roots"]` for an embedded
-WebPKI root set.
+The production raw QUIC connector requires explicit DER trust roots through
+`ConnectorOptions::trust_roots_der`. `ConnectorOptions::default()` supplies the
+shared ten-second connection timeout but intentionally leaves trust roots empty,
+so constructing a connector still fails closed until the application installs
+its audited trust material.
+
+```rust
+let options = flowersec::ConnectorOptions {
+    trust_roots_der: vec![root_der],
+    ..flowersec::ConnectorOptions::default()
+};
+let connector = flowersec::Connector::new(options)?;
+```
 
 ## Transport v2 Support
 
@@ -47,6 +61,8 @@ The crate root exports only these public categories:
   `ArtifactSpendError`;
 - connection lifecycle: `ConnectorOptions`, `Connector`, `ConnectError`, and
   `ConnectErrorCode`;
+- recovery policy: `ErrorRetryAction`, `ErrorRetryClassification`,
+  `classify_connect_error(...)`, and `classify_session_error(...)`;
 - runtime-owned direct acceptance: `AcceptorOptions`, `Acceptor`,
   `AcceptError`, and `AcceptErrorCode`;
 - carrier-neutral session behavior: `Session`, `RpcPeer`, `ByteStream`,
@@ -73,6 +89,10 @@ bounded remote `RpcError` separate from session failure; its generic display
 omits the sanitized application message unless the caller explicitly requests
 it. Public errors do not retain peer payloads, carrier diagnostics, credentials,
 or cryptographic material.
+
+The recovery classifiers distinguish retrying an operation on the current
+session from acquiring a fresh artifact and session. They never authorize reuse
+of a durably committed lease or credential.
 
 ## Runtime Boundaries
 

@@ -24,6 +24,15 @@ pub struct ConnectorOptions {
     pub connect_timeout: Duration,
 }
 
+impl Default for ConnectorOptions {
+    fn default() -> Self {
+        Self {
+            trust_roots_der: Vec::new(),
+            connect_timeout: Duration::from_secs(10),
+        }
+    }
+}
+
 /// Stable, redacted connection failure category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConnectErrorCode {

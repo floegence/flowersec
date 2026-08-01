@@ -20,6 +20,8 @@
 [![Latest Release](https://img.shields.io/github/v/release/floegence/flowersec?display_name=tag&sort=semver)](https://github.com/floegence/flowersec/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-0f766e)](LICENSE)
 
+The `main` branch currently contains the Flowersec 2.0 release candidate. It has not yet been published as the coordinated 2.0 SDK release; use an existing release tag for production dependencies.
+
 <!-- readme-section:why-flowersec -->
 <a id="why-flowersec"></a>
 
@@ -79,6 +81,9 @@ The [cookbook index](examples/README.md) contains only v2 examples and verificat
 | Capability | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
 | Opaque artifact, connector, session, RPC, and byte streams | Yes | Yes | Yes | Yes |
+| Public error recovery classification | Yes | Yes | Yes | Yes |
+| RPC notification subscription | No | Yes | No | No |
+| Inbound RPC request handlers | Yes | No | No | No |
 | Production WebSocket dialing | Yes | Browser and Node.js | macOS and iOS | No |
 | Production raw QUIC dialing | Yes | No | No | Yes |
 | Production WebTransport dialing | Yes | Browser | No | No |
@@ -94,6 +99,7 @@ Each support row is backed by production connector code and end-to-end tests. Un
 - Artifacts are opaque, bounded, single-use handles. Durable spend completes before the first credential byte is sent.
 - QUIC-family carriers require TLS 1.3, exact ALPN, explicit trust roots, and disabled early data.
 - Public errors are redacted and bounded; candidate, wire, key, and ledger details remain internal.
+- Public error classifiers distinguish retrying the current session from acquiring a fresh artifact without authorizing credential reuse.
 - Session cancellation, deadlines, FIN, reset, liveness, rekey, and cleanup have bounded behavior.
 
 See the [Transport v2 architecture](docs/TRANSPORT_V2_ARCHITECTURE.md) and [threat model](docs/THREAT_MODEL.md).

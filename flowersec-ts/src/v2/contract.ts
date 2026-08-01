@@ -65,10 +65,9 @@ export class SessionError extends Error {
   }
 }
 
-export type RpcResultV2 = Readonly<{
-  payload: unknown;
-  error?: Readonly<{ code: number; message?: string }>;
-}>;
+export type RpcResultV2 =
+  | Readonly<{ ok: true; payload: unknown }>
+  | Readonly<{ ok: false; error: Readonly<{ code: number; message?: string }> }>;
 
 export interface RpcPeerV2 {
   call(typeId: number, payload: unknown, signal?: AbortSignal): Promise<RpcResultV2>;

@@ -82,7 +82,15 @@ function projectByteStreamV2(stream: InternalByteStreamV2): ByteStreamV2 {
 function projectRpcPeerV2(peer: InternalSessionV2["rpc"]): RpcPeerV2 {
   return Object.freeze({
     async call(typeId: number, payload: unknown, signal?: AbortSignal) {
-      try { return await peer.call(typeId, payload, signal); } catch (error) { throw redactSessionError(error); }
+      try {
+        const result = await peer.call(typeId, payload, signal);
+        if (result.error !== undefined) {
+          return Object.freeze({ ok: false as const, error: Object.freeze({ ...result.error }) });
+        }
+        return Object.freeze({ ok: true as const, payload: result.payload });
+      } catch (error) {
+        throw redactSessionError(error);
+      }
     },
     async notify(typeId: number, payload: unknown) {
       try { await peer.notify(typeId, payload); } catch (error) { throw redactSessionError(error); }

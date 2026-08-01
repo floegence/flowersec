@@ -33,13 +33,23 @@
       }
     },
     {
-      "id": "rpc",
-      "description": "Bidirectional RPC over the reserved encrypted v2 stream kind",
+      "id": "rpc_call_notify",
+      "description": "Outbound RPC calls and notifications over the reserved encrypted v2 stream kind",
       "implementations": {
-        "go": { "status": "complete", "evidence": ["flowersec-go/internal/session/rpc_peer.go"] },
-        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/session.ts"] },
+        "go": { "status": "complete", "evidence": ["flowersec-go/connector.go"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/contract.ts"] },
         "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/TransportV2.swift"] },
-        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/session_v2.rs"] }
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/transport_v2.rs"] }
+      }
+    },
+    {
+      "id": "error_classification",
+      "description": "Carrier-neutral public recovery decisions for connection and session errors",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/error_classification.go"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/errorClassification.ts"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/ErrorClassificationV2.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/src/error_classification.rs"] }
       }
     },
     {
@@ -64,6 +74,18 @@
     }
   ],
   "runtime_specific_capabilities": [
+    {
+      "id": "typescript_rpc_notification_subscription",
+      "owner": "typescript",
+      "reason": "TypeScript exposes application notification subscriptions on its public RPC peer.",
+      "evidence": ["flowersec-ts/src/v2/contract.ts"]
+    },
+    {
+      "id": "go_rpc_request_handlers",
+      "owner": "go",
+      "reason": "Go exposes application request handler registration through SessionHandlers.",
+      "evidence": ["flowersec-go/server.go"]
+    },
     {
       "id": "browser_webtransport",
       "owner": "typescript",
@@ -128,6 +150,16 @@
         "typescript": ["flowersec-ts/src/v2/open.test.ts"],
         "swift": ["flowersec-swift/Tests/FlowersecTests/TransportV2OpenTests.swift"],
         "rust": ["flowersec-rust/src/open_v2_integration_tests.rs"]
+      }
+    },
+    {
+      "id": "public_error_classification",
+      "path": "stability/public_error_classification.json",
+      "consumers": {
+        "go": ["flowersec-go/error_classification_test.go"],
+        "typescript": ["flowersec-ts/src/v2/errorClassification.test.ts"],
+        "swift": ["flowersec-swift/Tests/FlowersecTests/ErrorClassificationContractTests.swift"],
+        "rust": ["flowersec-rust/src/error_classification_contract.rs"]
       }
     },
     {

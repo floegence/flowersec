@@ -9,7 +9,7 @@ public struct ConnectorOptionsV2: Sendable {
 
   public init(
     origin: String? = nil,
-    connectTimeout: Duration = .seconds(30),
+    connectTimeout: Duration = .seconds(10),
     trustRootsPEM: [Data] = []
   ) {
     self.origin = origin

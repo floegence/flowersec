@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
@@ -29,6 +30,15 @@ func TestConnectorMapsInternalResultToCarrierNeutralSession(t *testing.T) {
 	}
 	if formatted, want := fmt.Sprintf("%#v", got), "flowersec.Session"; formatted != want {
 		t.Fatalf("formatted Session = %q, want %q", formatted, want)
+	}
+}
+
+func TestConnectorZeroTimeoutUsesSharedDefault(t *testing.T) {
+	backend := &deadlineConnectorBackend{}
+	connector := &Connector{inner: backend}
+	_, _ = connector.Connect(context.Background())
+	if backend.remaining < 9*time.Second || backend.remaining > 10*time.Second {
+		t.Fatalf("zero-value connector timeout = %v, want shared 10 second default", backend.remaining)
 	}
 }
 
@@ -57,6 +67,25 @@ func TestConnectorRedactsInternalCandidateFailure(t *testing.T) {
 	}
 	if got, want := public.Error(), "Flowersec connection failed (code=failed)"; got != want {
 		t.Fatalf("Connect error = %q, want %q", got, want)
+	}
+}
+
+func TestConnectorProjectsArtifactExpiryWithoutInternalDetails(t *testing.T) {
+	internal := fserrors.Wrap(
+		fserrors.PathDirect,
+		fserrors.StageValidate,
+		fserrors.CodeTimeout,
+		errors.Join(connectv2.ErrArtifactExpired, errors.New("secret artifact detail")),
+	)
+	connector := &Connector{inner: staticConnectorBackend{err: internal}}
+
+	_, err := connector.Connect(context.Background())
+	var public *ConnectError
+	if !errors.As(err, &public) || public.Code() != ConnectExpired {
+		t.Fatalf("Connect error = %#v, want code %q", err, ConnectExpired)
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("Connect error leaked internal details: %q", err)
 	}
 }
 
@@ -129,6 +158,16 @@ func TestRPCProjectionPreservesApplicationErrorAndRedactsTransportFailure(t *tes
 type staticConnectorBackend struct {
 	result connectv2.Result
 	err    error
+}
+
+type deadlineConnectorBackend struct{ remaining time.Duration }
+
+func (backend *deadlineConnectorBackend) Connect(ctx context.Context) (connectv2.Result, error) {
+	deadline, ok := ctx.Deadline()
+	if ok {
+		backend.remaining = time.Until(deadline)
+	}
+	return connectv2.Result{}, errors.New("stop after recording deadline")
 }
 
 type staticRPCPeer struct{ err error }

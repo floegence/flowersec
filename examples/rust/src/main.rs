@@ -1,11 +1,13 @@
-use flowersec::{Artifact, ArtifactLease, ArtifactSpendError, Connector, ConnectorOptions};
+use flowersec::{
+    Artifact, ArtifactLease, ArtifactSpendError, Connector, ConnectorOptions,
+    classify_connect_error, classify_session_error,
+};
 use std::{
     env,
     error::Error,
     fs::OpenOptions,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
-    time::Duration,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -58,14 +60,29 @@ async fn connect_opaque_artifact(
     });
     let connector = Connector::new(ConnectorOptions {
         trust_roots_der: vec![std::fs::read(trust_root_path)?],
-        connect_timeout: Duration::from_secs(15),
+        ..ConnectorOptions::default()
     })?;
-    let session = connector
+    let session = match connector
         .connect(&mut lease, CancellationToken::new())
         .await
-        .map_err(|error| -> Box<dyn Error> { error.to_string().into() })?;
+    {
+        Ok(session) => session,
+        Err(error) => {
+            eprintln!(
+                "recovery={}",
+                classify_connect_error(error.code()).action.as_str()
+            );
+            return Err(error.to_string().into());
+        }
+    };
     println!("session=ready");
-    println!("liveness={:?}", session.probe_liveness().await?);
+    match session.probe_liveness().await {
+        Ok(round_trip) => println!("liveness={round_trip:?}"),
+        Err(error) => {
+            eprintln!("recovery={}", classify_session_error(error).action.as_str());
+            return Err(error.to_string().into());
+        }
+    }
     session.close().await?;
     Ok(())
 }
@@ -80,10 +97,20 @@ async fn write_spend_receipt(receipt_path: PathBuf) -> Result<(), ArtifactSpendE
         receipt
             .write_all(b"flowersec-v2-artifact-spent\n")
             .and_then(|()| receipt.sync_all())
-            .map_err(|_| ArtifactSpendError::CommitFailed)
+            .map_err(|_| ArtifactSpendError::CommitFailed)?;
+        drop(receipt);
+        sync_parent_directory(&receipt_path).map_err(|_| ArtifactSpendError::CommitFailed)
     })
     .await
     .map_err(|_| ArtifactSpendError::CommitFailed)?
+}
+
+fn sync_parent_directory(path: &Path) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "receipt path has no parent"))?;
+    let directory = std::fs::File::open(parent)?;
+    directory.sync_all()
 }
 
 fn required_argument(value: Option<String>, name: &str) -> Result<String, Box<dyn Error>> {
