@@ -463,13 +463,26 @@ func (pair *ProductDirectPair) Close() error {
 		return nil
 	}
 	pair.closeOnce.Do(func() {
+		var clientCloseErr error
 		if pair.Client != nil {
-			pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(pair.Client.Close()))
+			clientCloseErr = normalizeCloseError(pair.Client.Close())
 		}
+		clientTerminated := false
 		select {
 		case <-pair.Client.Termination():
+			clientTerminated = true
 		case <-time.After(3 * time.Second):
 			pair.closeErr = errors.Join(pair.closeErr, errors.New("client did not terminate after local close"))
+		}
+		if clientCloseErr != nil && clientTerminated {
+			termination, waitErr := pair.Client.WaitTermination(context.Background())
+			var terminationCode flowersec.SessionErrorCode
+			if termination.Error != nil {
+				terminationCode = termination.Error.Code()
+			}
+			pair.closeErr = errors.Join(pair.closeErr, reconcilePublicSessionCloseError(clientCloseErr, terminationCode, waitErr))
+		} else {
+			pair.closeErr = errors.Join(pair.closeErr, clientCloseErr)
 		}
 		select {
 		case <-pair.Server.Termination():
@@ -488,6 +501,16 @@ func (pair *ProductDirectPair) Close() error {
 		}
 	})
 	return pair.closeErr
+}
+
+func reconcilePublicSessionCloseError(closeErr error, terminationCode flowersec.SessionErrorCode, waitErr error) error {
+	if closeErr == nil {
+		return waitErr
+	}
+	if waitErr == nil && terminationCode == flowersec.SessionClosed {
+		return nil
+	}
+	return errors.Join(closeErr, waitErr)
 }
 
 type admissionExpectation struct {

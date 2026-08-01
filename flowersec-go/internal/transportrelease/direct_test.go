@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	flowersec "github.com/floegence/flowersec/flowersec-go/v2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	carrieryamux "github.com/floegence/flowersec/flowersec-go/v2/internal/mux/yamux"
@@ -806,6 +807,24 @@ func (stream *blockingReleaseStream) Reset() error {
 func TestNormalizeCloseErrorAcceptsTerminalDeadline(t *testing.T) {
 	if err := normalizeCloseError(context.DeadlineExceeded); err != nil {
 		t.Fatalf("normalize terminal deadline = %v", err)
+	}
+}
+
+func TestReconcilePublicSessionCloseErrorRequiresAuthoritativeClosedTermination(t *testing.T) {
+	closeErr := errors.New("redacted close failure")
+	if err := reconcilePublicSessionCloseError(closeErr, flowersec.SessionClosed, nil); err != nil {
+		t.Fatalf("reconcile authenticated closed termination = %v", err)
+	}
+
+	for _, code := range []flowersec.SessionErrorCode{"", flowersec.SessionOperationFailed, flowersec.SessionGoingAway} {
+		if err := reconcilePublicSessionCloseError(closeErr, code, nil); !errors.Is(err, closeErr) {
+			t.Fatalf("reconcile termination %q = %v, want close failure", code, err)
+		}
+	}
+
+	waitErr := errors.New("termination wait failed")
+	if err := reconcilePublicSessionCloseError(closeErr, flowersec.SessionClosed, waitErr); !errors.Is(err, closeErr) || !errors.Is(err, waitErr) {
+		t.Fatalf("reconcile failed termination wait = %v, want both failures", err)
 	}
 }
 
