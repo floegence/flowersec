@@ -112,7 +112,7 @@ func TestRaceShardRunnerCoversEveryTopLevelTestExactlyOnce(t *testing.T) {
 		installFakeGo(t, tempDir, "", logPath)
 
 		cmd := exec.Command("bash", runner, tempDir, "3", "5m")
-		cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath)
+		cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "TMPDIR="+tempDir)
 		if output, err := cmd.CombinedOutput(); err == nil {
 			t.Fatalf("runner succeeded without discovered tests:\n%s", output)
 		}
@@ -236,6 +236,44 @@ func TestRaceShardRunnerAutoCreatesOneShardPerTest(t *testing.T) {
 		if count := strings.Count(string(invocations), "^("+name+")$"); count != 1 {
 			t.Fatalf("%s invocation count = %d, want 1\n%s", name, count, invocations)
 		}
+	}
+}
+
+func TestRaceShardRunnerStopsSchedulingAfterFirstFailure(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "race-invocations.log")
+	goPath := filepath.Join(tempDir, "go")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "test" && "${2:-}" == "-list" ]]; then
+  printf 'TestOne\nTestTwo\nTestThree\nTestFour\n'
+  exit 0
+fi
+pattern=""
+while (( $# > 0 )); do
+  if [[ "$1" == "-run" ]]; then pattern="${2:-}"; break; fi
+  shift
+done
+printf '%s\n' "$pattern" >> "${RACE_SHARD_LOG:?}"
+if [[ "$pattern" == *TestOne* ]]; then exit 42; fi
+sleep 0.1
+`
+	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "2", "race", "1")
+	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "TMPDIR="+tempDir)
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("runner succeeded despite shard failure:\n%s", output)
+	}
+	invocations, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Fields(string(invocations)); len(lines) != 2 {
+		t.Fatalf("runner scheduled work after first failure: %q", invocations)
 	}
 }
 

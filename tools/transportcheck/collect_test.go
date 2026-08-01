@@ -632,8 +632,16 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$report" in
-  */fail/*) exit 42 ;;
-  *) exec sleep 30 ;;
+  */fail/*)
+    while [ ! -f "$(dirname "$(dirname "$report")")/wait.started" ]; do sleep 0.01; done
+    exit 42
+    ;;
+  *)
+    jobs_root=$(dirname "$(dirname "$report")")
+    touch "$jobs_root/wait.started"
+    trap 'touch "$jobs_root/wait.cancelled"; exit 0' INT
+    while :; do sleep 1; done
+    ;;
 esac
 `
 	if err := os.WriteFile(runner, []byte(script), 0o700); err != nil {
@@ -647,13 +655,17 @@ esac
 		{ID: "fail", DurationMinutes: 1}, {ID: "wait", DurationMinutes: 1},
 	}}
 	request := collectRequest{ManifestPath: filepath.Join(root, "manifest.json"), RepositoryPath: root, FinalSHA: collectTestFinalSHA, RunnerExecutable: runner}
-	started := time.Now()
-	_, err := runCollectionJobs(context.Background(), request, manifest, nil, []collectionJob{
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := runCollectionJobs(ctx, request, manifest, nil, []collectionJob{
 		{ID: "fail", CellIDs: []string{"fail"}, RunnerTarget: "direct-clean-baseline"},
 		{ID: "wait", CellIDs: []string{"wait"}, RunnerTarget: "direct-clean-baseline"},
 	}, staging)
-	if err == nil || time.Since(started) > 3*time.Second {
-		t.Fatalf("sibling lane cancellation error=%v elapsed=%s", err, time.Since(started))
+	if err == nil || !strings.Contains(err.Error(), "exit status 42") || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("sibling lane cancellation error=%v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(staging, "jobs", "wait.cancelled")); statErr != nil {
+		t.Fatalf("sibling lane did not observe cancellation: %v", statErr)
 	}
 }
 

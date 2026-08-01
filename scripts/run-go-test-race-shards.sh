@@ -195,6 +195,10 @@ for shard in "${shard_order[@]}"; do
   active_count=$((active_count + 1))
   if (( active_count >= parallelism )); then
     reap_finished_shards
+    if (( shard_failed != 0 )); then
+      echo "stopping shard scheduling after the first failure" >&2
+      break
+    fi
   fi
 done
 while (( active_count > 0 )); do
