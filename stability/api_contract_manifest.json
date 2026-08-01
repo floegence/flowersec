@@ -120,6 +120,11 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.SessionTermination",
+            "doc_token": "`flowersec.SessionTermination`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.Metadata",
             "doc_token": "`flowersec.Metadata`"
           },
@@ -304,6 +309,12 @@
           },
           {
             "kind": "interface_method",
+            "expr": "flowersec.Session.WaitTermination",
+            "signature": "func(flowersec.Session, context.Context) (flowersec.SessionTermination, error)",
+            "doc_token": "`flowersec.Session.WaitTermination(...)`"
+          },
+          {
+            "kind": "interface_method",
             "expr": "flowersec.Session.WaitClosed",
             "signature": "func(flowersec.Session, context.Context) error",
             "doc_token": "`flowersec.Session.WaitClosed(...)`"
@@ -375,6 +386,11 @@
             "doc_token": "`flowersec.ConnectError.Code()`"
           },
           {
+            "kind": "method",
+            "expr": "flowersec.ConnectErrorCode.String",
+            "doc_token": "`flowersec.ConnectErrorCode.String()`"
+          },
+          {
             "kind": "func",
             "expr": "flowersec.ClassifyConnectError",
             "doc_token": "`flowersec.ClassifyConnectError(...)`"
@@ -406,6 +422,16 @@
           },
           {
             "kind": "const",
+            "expr": "flowersec.ConnectInvalidInput",
+            "doc_token": "`flowersec.ConnectInvalidInput`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectInvalidOptions",
+            "doc_token": "`flowersec.ConnectInvalidOptions`"
+          },
+          {
+            "kind": "const",
             "expr": "flowersec.ConnectInvalid",
             "doc_token": "`flowersec.ConnectInvalid`"
           },
@@ -423,6 +449,11 @@
             "kind": "const",
             "expr": "flowersec.ConnectTimeout",
             "doc_token": "`flowersec.ConnectTimeout`"
+          },
+          {
+            "kind": "const",
+            "expr": "flowersec.ConnectConnectionFailed",
+            "doc_token": "`flowersec.ConnectConnectionFailed`"
           },
           {
             "kind": "const",

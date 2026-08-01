@@ -24,7 +24,7 @@ func ClassifyConnectError(err *ConnectError) ErrorRetryClassification {
 		return retryClassification(RetryActionStop, false, false)
 	}
 	switch err.Code() {
-	case ConnectInvalid:
+	case ConnectInvalidInput, ConnectInvalidOptions:
 		return retryClassification(RetryActionStop, false, false)
 	case ConnectCanceled:
 		return retryClassification(RetryActionStop, true, false)

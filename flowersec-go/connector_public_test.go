@@ -38,6 +38,35 @@ func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 	_ = connect
 }
 
+func TestSessionTerminationPublicSurfaceAlignsWithPortableCore(t *testing.T) {
+	sessionType := reflect.TypeOf((*flowersec.Session)(nil)).Elem()
+	method, ok := sessionType.MethodByName("WaitTermination")
+	if !ok {
+		t.Fatal("Session is missing WaitTermination")
+	}
+	wantTerminationType := reflect.TypeOf(flowersec.SessionTermination{})
+	if method.Type.NumIn() != 1 || method.Type.In(0) != reflect.TypeOf((*context.Context)(nil)).Elem() {
+		t.Fatalf("WaitTermination input signature = %v", method.Type)
+	}
+	if method.Type.NumOut() != 2 || method.Type.Out(0) != wantTerminationType || method.Type.Out(1) != reflect.TypeOf((*error)(nil)).Elem() {
+		t.Fatalf("WaitTermination output signature = %v, want (flowersec.SessionTermination, error)", method.Type)
+	}
+
+	terminationType := reflect.TypeOf(flowersec.SessionTermination{})
+	if terminationType.NumField() != 1 || terminationType.Field(0).Name != "Error" ||
+		terminationType.Field(0).Type != reflect.TypeOf((*flowersec.SessionError)(nil)) {
+		t.Fatalf("SessionTermination fields = %v, want exported Error *SessionError", terminationType)
+	}
+	for index := range sessionType.NumMethod() {
+		signature := sessionType.Method(index).Type.String()
+		for _, forbidden := range []string{"Artifact", "Credential", "Admission", "Handshake", "Carrier", "QUIC", "WebTransport", "Yamux", "Wire"} {
+			if strings.Contains(signature, forbidden) {
+				t.Fatalf("public session signature %q exposes %q", signature, forbidden)
+			}
+		}
+	}
+}
+
 func TestSessionHandlersPublicSurfaceIsCarrierNeutralAndOpaque(t *testing.T) {
 	optionsType := reflect.TypeOf(flowersec.SessionHandlerOptions{})
 	wantFields := []string{"MaxConcurrentStreams", "OnError"}
@@ -135,8 +164,27 @@ func TestConnectErrorPublicSnapshotContainsNoInternalDetail(t *testing.T) {
 	if got := err.Error(); got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
-	if err.Code() != flowersec.ConnectFailed {
-		t.Fatalf("nil ConnectError code = %q, want %q", err.Code(), flowersec.ConnectFailed)
+	if err.Code() != flowersec.ConnectConnectionFailed {
+		t.Fatalf("nil ConnectError code = %q, want %q", err.Code(), flowersec.ConnectConnectionFailed)
+	}
+	wantCodes := map[flowersec.ConnectErrorCode]string{
+		flowersec.ConnectInvalidInput:     "invalid_input",
+		flowersec.ConnectInvalidOptions:   "invalid_options",
+		flowersec.ConnectCanceled:         "canceled",
+		flowersec.ConnectTimeout:          "timeout",
+		flowersec.ConnectExpired:          "expired_artifact",
+		flowersec.ConnectConnectionFailed: "connection_failed",
+	}
+	for code, want := range wantCodes {
+		if got := code.String(); got != want {
+			t.Fatalf("ConnectErrorCode(%q).String() = %q, want %q", code, got, want)
+		}
+	}
+	if flowersec.ConnectInvalid != flowersec.ConnectInvalidInput {
+		t.Fatal("ConnectInvalid should remain a compatibility alias for ConnectInvalidInput")
+	}
+	if flowersec.ConnectFailed != flowersec.ConnectConnectionFailed {
+		t.Fatal("ConnectFailed should remain a compatibility alias for ConnectConnectionFailed")
 	}
 	var _ interface{ Is(error) bool } = err
 	var _ interface{ Unwrap() error } = (*flowersec.SessionError)(nil)

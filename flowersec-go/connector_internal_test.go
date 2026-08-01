@@ -165,6 +165,31 @@ func TestUnreliableUnavailableProjectsStablePublicCode(t *testing.T) {
 	}
 }
 
+func TestWaitTerminationSeparatesTerminalCauseFromWaitCancellation(t *testing.T) {
+	closed := &opaqueSession{inner: inertSession{waitErr: session.ErrSessionClosed}}
+	termination, err := closed.WaitTermination(context.Background())
+	if err != nil {
+		t.Fatalf("WaitTermination closed error = %v, want nil", err)
+	}
+	if termination.Error == nil || termination.Error.Code() != SessionClosed {
+		t.Fatalf("WaitTermination closed = %#v, want SessionClosed", termination)
+	}
+	if err := closed.WaitClosed(context.Background()); err == nil {
+		t.Fatal("WaitClosed closed error = nil, want compatibility error")
+	} else if projected, ok := err.(*SessionError); !ok || projected.Code() != SessionClosed {
+		t.Fatalf("WaitClosed closed error = %#v, want SessionClosed", err)
+	}
+
+	canceled := &opaqueSession{inner: inertSession{waitErr: context.Canceled}}
+	termination, err = canceled.WaitTermination(context.Background())
+	if termination.Error != nil {
+		t.Fatalf("WaitTermination canceled termination = %#v, want none", termination)
+	}
+	if projected, ok := err.(*SessionError); !ok || projected.Code() != SessionCanceled {
+		t.Fatalf("WaitTermination canceled error = %#v, want SessionCanceled", err)
+	}
+}
+
 func TestConnectorRedactsInternalCandidateFailure(t *testing.T) {
 	connector := &connector{inner: staticConnectorBackend{err: errors.New("candidate secret-id at wss://secret.example failed")}}
 
@@ -176,7 +201,7 @@ func TestConnectorRedactsInternalCandidateFailure(t *testing.T) {
 	if !errors.As(err, &public) || public.Code() != ConnectFailed {
 		t.Fatalf("Connect error projection = %#v", public)
 	}
-	if got, want := public.Error(), "Flowersec connection failed (code=failed)"; got != want {
+	if got, want := public.Error(), "Flowersec connection failed (code=connection_failed)"; got != want {
 		t.Fatalf("Connect error = %q, want %q", got, want)
 	}
 }
@@ -301,7 +326,10 @@ func (backend staticConnectorBackend) Connect(context.Context) (connectv2.Result
 	return backend.result, backend.err
 }
 
-type inertSession struct{ path session.PathKind }
+type inertSession struct {
+	path    session.PathKind
+	waitErr error
+}
 
 func (value inertSession) Path() session.PathKind       { return value.path }
 func (inertSession) EndpointInstanceID() (string, bool) { return "", false }
@@ -318,5 +346,8 @@ func (inertSession) AcceptStream(context.Context) (session.IncomingStream, error
 func (inertSession) Rekey(context.Context) error                          { return nil }
 func (inertSession) ProbeLiveness(context.Context) (time.Duration, error) { return 0, nil }
 func (inertSession) Termination() <-chan struct{}                         { return make(chan struct{}) }
-func (inertSession) WaitClosed(context.Context) error                     { return nil }
-func (inertSession) Close() error                                         { return nil }
+func (inertSession) WaitTermination(context.Context) (SessionTermination, error) {
+	return SessionTermination{}, nil
+}
+func (value inertSession) WaitClosed(context.Context) error { return value.waitErr }
+func (inertSession) Close() error                           { return nil }

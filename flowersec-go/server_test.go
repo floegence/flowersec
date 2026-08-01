@@ -239,6 +239,13 @@ func (session *serverTestSession) AcceptStream(ctx context.Context) (IncomingStr
 func (*serverTestSession) Rekey(context.Context) error                          { return nil }
 func (*serverTestSession) ProbeLiveness(context.Context) (time.Duration, error) { return 0, nil }
 func (session *serverTestSession) Termination() <-chan struct{}                 { return session.closed }
+func (session *serverTestSession) WaitTermination(ctx context.Context) (SessionTermination, error) {
+	err := session.WaitClosed(ctx)
+	if err != nil {
+		return SessionTermination{}, err
+	}
+	return SessionTermination{Error: &SessionError{code: SessionClosed}}, nil
+}
 func (session *serverTestSession) WaitClosed(ctx context.Context) error {
 	select {
 	case <-session.closed:

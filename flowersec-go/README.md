@@ -31,7 +31,7 @@ The executable `ExampleConnect` compiles the complete consumer lifecycle,
 including an atomically created and synchronized durable spend receipt. Reusing
 the receipt path fails closed; the receipt contains no artifact or key material.
 
-An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. `ClassifyConnectError(...)` and `ClassifySessionError(...)` map public errors to `ErrorRetryClassification`: retry the current operation, acquire a fresh artifact and session, or stop. `ConnectExpired` identifies artifact expiry without exposing artifact contents.
+An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. `Session.WaitTermination(...)` returns a redacted `SessionTermination` with the stable close reason; `WaitClosed(...)` remains available for existing Go callers. `ClassifyConnectError(...)` and `ClassifySessionError(...)` map public errors to `ErrorRetryClassification`: retry the current operation, acquire a fresh artifact and session, or stop. `ConnectExpired` identifies artifact expiry without exposing artifact contents.
 
 ## Capability Layers
 

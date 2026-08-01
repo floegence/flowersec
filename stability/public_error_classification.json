@@ -42,7 +42,7 @@
       "semantic": "invalid",
       "decision": "stop",
       "codes": {
-        "go": ["invalid"],
+        "go": ["invalid_input", "invalid_options"],
         "typescript": ["invalid_input", "invalid_options"],
         "swift": ["invalid_options"],
         "rust": ["invalid_input"]
@@ -72,7 +72,7 @@
       "semantic": "connection_not_established",
       "decision": "refresh_artifact",
       "codes": {
-        "go": ["timeout", "failed"],
+        "go": ["timeout", "connection_failed"],
         "typescript": ["resolve_failed", "credential_spend_failed", "connection_failed", "timeout", "handshake_failed", "rpc_failed", "resource_exhausted", "not_connected"],
         "swift": ["timeout", "connection_failed"],
         "rust": ["resolve_failed", "spend_failed", "dial_failed", "timeout", "handshake_failed"]

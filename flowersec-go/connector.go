@@ -32,12 +32,19 @@ var (
 type ConnectErrorCode string
 
 const (
-	ConnectInvalid  ConnectErrorCode = "invalid"
-	ConnectCanceled ConnectErrorCode = "canceled"
-	ConnectTimeout  ConnectErrorCode = "timeout"
-	ConnectExpired  ConnectErrorCode = "expired_artifact"
-	ConnectFailed   ConnectErrorCode = "failed"
+	ConnectInvalidInput     ConnectErrorCode = "invalid_input"
+	ConnectInvalidOptions   ConnectErrorCode = "invalid_options"
+	ConnectCanceled         ConnectErrorCode = "canceled"
+	ConnectTimeout          ConnectErrorCode = "timeout"
+	ConnectExpired          ConnectErrorCode = "expired_artifact"
+	ConnectConnectionFailed ConnectErrorCode = "connection_failed"
+
+	// Compatibility aliases retained for existing Go callers.
+	ConnectInvalid = ConnectInvalidInput
+	ConnectFailed  = ConnectConnectionFailed
 )
+
+func (code ConnectErrorCode) String() string { return string(code) }
 
 // ConnectorOptions configures carrier-neutral client trust and lifecycle
 // policy. Carrier selection and carrier-specific tuning remain internal.
@@ -62,6 +69,7 @@ type Session interface {
 	Rekey(context.Context) error
 	ProbeLiveness(context.Context) (time.Duration, error)
 	Termination() <-chan struct{}
+	WaitTermination(context.Context) (SessionTermination, error)
 	WaitClosed(context.Context) error
 	Close() error
 }
@@ -77,6 +85,11 @@ const (
 
 type UnreliableSendOptions struct {
 	ExpiresAt time.Time
+}
+
+// SessionTermination is the stable, redacted terminal state of a session.
+type SessionTermination struct {
+	Error *SessionError
 }
 
 // UnreliableMessageChannel sends opaque end-to-end encrypted messages without
@@ -351,8 +364,32 @@ func (current *opaqueSession) ProbeLiveness(ctx context.Context) (time.Duration,
 
 func (current *opaqueSession) Termination() <-chan struct{} { return current.inner.Termination() }
 
+func (current *opaqueSession) WaitTermination(ctx context.Context) (SessionTermination, error) {
+	err := current.inner.WaitClosed(ctx)
+	if err == nil {
+		return SessionTermination{}, nil
+	}
+	projected := redactSessionError(err)
+	select {
+	case <-current.inner.Termination():
+		return SessionTermination{Error: projected}, nil
+	default:
+	}
+	if projected.Code() == SessionCanceled || projected.Code() == SessionTimeout {
+		return SessionTermination{}, projected
+	}
+	return SessionTermination{Error: projected}, nil
+}
+
 func (current *opaqueSession) WaitClosed(ctx context.Context) error {
-	return redactNilSessionError(current.inner.WaitClosed(ctx))
+	termination, err := current.WaitTermination(ctx)
+	if err != nil {
+		return err
+	}
+	if termination.Error == nil {
+		return nil
+	}
+	return termination.Error
 }
 
 func (current *opaqueSession) Close() error { return redactNilSessionError(current.inner.Close()) }
@@ -501,7 +538,7 @@ func redactSessionError(err error) *SessionError {
 }
 
 func redactConnectError(err error) error {
-	code := ConnectFailed
+	code := ConnectConnectionFailed
 	var internal *fserrors.Error
 	if errors.As(err, &internal) {
 		if errors.Is(internal, connectv2.ErrArtifactExpired) {
@@ -512,8 +549,10 @@ func redactConnectError(err error) error {
 			code = ConnectCanceled
 		case fserrors.CodeTimeout:
 			code = ConnectTimeout
-		case fserrors.CodeInvalidInput, fserrors.CodeInvalidOption:
-			code = ConnectInvalid
+		case fserrors.CodeInvalidInput:
+			code = ConnectInvalidInput
+		case fserrors.CodeInvalidOption:
+			code = ConnectInvalidOptions
 		}
 		return &ConnectError{code: code}
 	}
