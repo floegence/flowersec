@@ -24,7 +24,7 @@ test("real browser exposes only opaque Transport v2 artifacts and connector entr
         artifactKeys: Object.keys(artifact),
         artifactJSON: JSON.stringify(artifact),
         frozen: Object.isFrozen(artifact),
-        connectorType: typeof sdk.connectBrowserSessionV2,
+        connectorType: typeof sdk.connectBrowserSession,
         capabilityExported: "detectBrowserRuntimeCapabilityV2" in sdk,
       };
     }, fixture.positive[0]!.artifact_json);
@@ -53,8 +53,8 @@ for (const sessionPath of ["direct", "tunnel"] as const) {
       const result = await page.evaluate(async (artifactJSON) => {
         const sdk = await import("/dist/browser/index.js");
         const artifact = sdk.parseArtifact(artifactJSON);
-        const lease = sdk.createArtifactLeaseV2(artifact, async () => undefined);
-        const session = await sdk.connectBrowserSessionV2(lease);
+        const lease = sdk.createArtifactLease(artifact, async () => undefined);
+        const session = await sdk.connectBrowserSession(lease);
         const liveness = await session.probeLiveness();
         const stream = await session.openStream("interop.echo");
         await stream.write(new TextEncoder().encode("hello-go"));
@@ -96,11 +96,11 @@ for (const sessionPath of ["direct", "tunnel"] as const) {
       const result = await page.evaluate(async (artifactJSON) => {
         const sdk = await import("/dist/browser/index.js");
         const artifact = sdk.parseArtifact(artifactJSON);
-        const lease = sdk.createArtifactLeaseV2(artifact, async () => undefined);
-        const session = await sdk.connectBrowserSessionV2(lease);
+        const lease = sdk.createArtifactLease(artifact, async () => undefined);
+        const session = await sdk.connectBrowserSession(lease);
         if (session.unreliableMessages === undefined) throw new Error("WebTransport DATAGRAM was not negotiated");
         const sent = await session.unreliableMessages.send(
-          sdk.createUnreliableMessageV2(new TextEncoder().encode("browser-datagram")),
+          sdk.createUnreliableMessage(new TextEncoder().encode("browser-datagram")),
           { expiresAtUnixMs: Date.now() + 5_000 },
         );
         const received = new TextDecoder().decode((await session.unreliableMessages.receive()).data);
@@ -155,8 +155,8 @@ for (const opposite of ["wss", "raw_quic"] as const) {
       const result = await page.evaluate(async (artifactJSON) => {
         const sdk = await import("/dist/browser/index.js");
         const artifact = sdk.parseArtifact(artifactJSON);
-        const lease = sdk.createArtifactLeaseV2(artifact, async () => undefined);
-        const session = await sdk.connectBrowserSessionV2(lease);
+        const lease = sdk.createArtifactLease(artifact, async () => undefined);
+        const session = await sdk.connectBrowserSession(lease);
         const stream = await session.openStream("mixed.echo");
         await stream.write(new TextEncoder().encode("browser-mixed"));
         await stream.closeWrite();
