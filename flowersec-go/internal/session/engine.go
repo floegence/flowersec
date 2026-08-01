@@ -143,10 +143,12 @@ type engineSession struct {
 	rpcServerMu sync.Mutex
 	rpcServing  bool
 
-	closeOnce sync.Once
-	closeErr  error
-	wg        sync.WaitGroup
-	idleTouch chan struct{}
+	closeOnce     sync.Once
+	closeErr      error
+	closeWaitOnce sync.Once
+	closeWaitErr  error
+	wg            sync.WaitGroup
+	idleTouch     chan struct{}
 }
 
 // Engine is the carrier-neutral concrete implementation of SessionV2.
@@ -428,7 +430,26 @@ func (s *engineSession) Close() error {
 		carrierErr := closeCarrierWithin(closeContext, s.carrier, carrier.ApplicationError{Code: 1, Reason: "session closed"})
 		s.closeErr = errors.Join(protocolErr, carrierErr)
 	})
-	return s.closeErr
+	s.closeWaitOnce.Do(func() {
+		waitContext, cancelWait := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
+		defer cancelWait()
+		s.closeWaitErr = s.waitForWorkers(waitContext)
+	})
+	return errors.Join(s.closeErr, s.closeWaitErr)
+}
+
+func (s *engineSession) waitForWorkers(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *engineSession) markClosing() {

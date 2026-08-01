@@ -207,12 +207,13 @@ func TestRPCPeerUsesReservedEncryptedStreamsInBothDirections(t *testing.T) {
 	serverRouter.Register(32, notifyRPCHandler(serverNotified))
 
 	clientConfig, serverConfig := testEngineConfigs(1)
+	clientConfig.RekeyCompletionTimeout = 500 * time.Millisecond
+	serverConfig.RekeyCompletionTimeout = 500 * time.Millisecond
 	clientConfig.RPCRouter = clientRouter
 	serverConfig.RPCRouter = serverRouter
 	clientCarrier, serverCarrier := newMemoryCarrierPair(carrier.KindQUIC)
 	client, server := establishWithCarriers(t, clientCarrier, serverCarrier, clientConfig, serverConfig)
-	defer client.Close()
-	defer server.Close()
+	defer closeEnginePair(client, server)
 
 	if client.RPC() == nil || server.RPC() == nil {
 		t.Fatal("established SessionV2 returned a nil RPC peer")
@@ -286,6 +287,20 @@ func TestRPCPeerUsesReservedEncryptedStreamsInBothDirections(t *testing.T) {
 	}
 	_ = applicationStream.Reset()
 	_ = peer.Stream.Reset()
+}
+
+func closeEnginePair(left, right *engineSession) {
+	closed := make(chan struct{}, 2)
+	go func() {
+		_ = left.Close()
+		closed <- struct{}{}
+	}()
+	go func() {
+		_ = right.Close()
+		closed <- struct{}{}
+	}()
+	<-closed
+	<-closed
 }
 
 func TestOpenStreamCanonicalizesUnicodeMetadataBeforeWritingOPEN(t *testing.T) {
@@ -1205,6 +1220,65 @@ func TestCloseDeadlineCoversCarrierShutdown(t *testing.T) {
 	}
 	if active := clientCarrier.closeActive.Load(); active != 0 {
 		t.Fatalf("carrier close left %d background operation(s) after the shutdown deadline", active)
+	}
+}
+
+func TestCloseWaitsForOwnedWorkers(t *testing.T) {
+	client, server := establishMemoryPair(t, carrier.KindQUIC, 2)
+
+	workerStarted := make(chan struct{})
+	releaseWorker := make(chan struct{})
+	client.wg.Add(1)
+	go func() {
+		defer client.wg.Done()
+		<-client.ctx.Done()
+		close(workerStarted)
+		<-releaseWorker
+	}()
+
+	clientClosed := make(chan error, 1)
+	serverClosed := make(chan error, 1)
+	go func() { clientClosed <- client.Close() }()
+	go func() { serverClosed <- server.Close() }()
+	select {
+	case <-workerStarted:
+	case <-time.After(time.Second):
+		close(releaseWorker)
+		t.Fatal("owned worker did not observe session shutdown")
+	}
+	select {
+	case err := <-clientClosed:
+		close(releaseWorker)
+		t.Fatalf("Close returned before its owned worker exited: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(releaseWorker)
+	if err := <-clientClosed; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverClosed; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkerDrainHonorsContext(t *testing.T) {
+	var session engineSession
+	releaseWorker := make(chan struct{})
+	session.wg.Add(1)
+	go func() {
+		defer session.wg.Done()
+		<-releaseWorker
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := session.waitForWorkers(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		close(releaseWorker)
+		t.Fatalf("worker drain error = %v, want deadline", err)
+	}
+	close(releaseWorker)
+	if err := session.waitForWorkers(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
