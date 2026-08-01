@@ -94,9 +94,9 @@ private enum FlowersecSwiftClientExample {
       if let action = recoveryActionV2(for: error) {
         print("recovery=\(action.rawValue)")
       }
-      await session.close()
+      try? await session.close()
       throw error
     }
-    await session.close()
+    try await session.close()
   }
 }

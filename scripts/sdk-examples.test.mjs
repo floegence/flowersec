@@ -94,6 +94,12 @@ test("consumer examples classify public connection and session failures", () => 
   assert.match(rustReadme, /requires explicit DER trust roots/u);
 });
 
+test("Swift example preserves the primary failure while propagating final close errors", () => {
+  const swift = read("examples/swift/Sources/FlowersecSwiftClientExample/main.swift");
+  assert.match(swift, /try\? await session\.close\(\)\s+throw error/u);
+  assert.match(swift, /try await session\.close\(\)\s+\}/u);
+});
+
 test("durable spend guidance covers three production persistence patterns", () => {
   const apiContract = read("docs/API_CONTRACT.md");
   assert.match(apiContract, /Database uniqueness/u);
