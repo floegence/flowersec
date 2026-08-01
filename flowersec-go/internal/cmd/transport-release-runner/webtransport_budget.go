@@ -15,3 +15,16 @@ func webTransportExecutionPlan(plan transportrelease.ProfilePlan) transportrelea
 	}
 	return plan
 }
+
+func forcedBrowserWebTransportExecutionPlan(plan transportrelease.ProfilePlan) transportrelease.ProfilePlan {
+	plan = webTransportExecutionPlan(plan)
+	if plan.Cold.Operations < 1 || plan.Cold.MaxInflight < 1 {
+		return plan
+	}
+	cleanupWaves := (plan.Cold.Operations + plan.Cold.MaxInflight - 1) / plan.Cold.MaxInflight
+	phaseSeconds := cleanupWaves*plan.CleanupDeadlineSeconds + 1
+	if plan.Cold.PhaseDeadlineSeconds < phaseSeconds {
+		plan.Cold.PhaseDeadlineSeconds = phaseSeconds
+	}
+	return plan
+}

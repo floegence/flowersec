@@ -608,11 +608,29 @@ func TestBrowserCollectorPlanCoversProductionWebTransportDrain(t *testing.T) {
 			if got.CleanupDeadlineMS != 6_000 {
 				t.Fatalf("clean browser cleanup timeout = %dms, want the 5s WebTransport drain plus 1s scheduler margin", got.CleanupDeadlineMS)
 			}
+			cleanupWaves := (got.Cold.Operations + got.Cold.MaxInflight - 1) / got.Cold.MaxInflight
+			cleanupOnlyLowerBound := int64(cleanupWaves) * got.CleanupDeadlineMS
+			if got.Cold.PhaseDeadlineMS <= cleanupOnlyLowerBound {
+				t.Fatalf("clean browser cold phase timeout = %dms, must exceed %d cleanup waves * %dms = %dms", got.Cold.PhaseDeadlineMS, cleanupWaves, got.CleanupDeadlineMS, cleanupOnlyLowerBound)
+			}
+			if got.Cold.PhaseDeadlineMS != 25_000 {
+				t.Fatalf("clean browser cold phase timeout = %dms, want 25000ms cleanup lower bound plus scheduler margin", got.Cold.PhaseDeadlineMS)
+			}
 		})
 	}
+	mobile := newBrowserCollectorPlan(browserWorkerRequest{Plan: plan.Mobile, Topology: browserDirectTopology}, "http://198.18.13.42:443/artifacts", "certificate-hash")
+	if mobile.Cold.PhaseDeadlineMS != 7_000 {
+		t.Fatalf("mobile browser cold phase timeout = %dms, want unchanged 7000ms", mobile.Cold.PhaseDeadlineMS)
+	}
 	edge := newBrowserCollectorPlan(browserWorkerRequest{Plan: plan.Edge, Topology: browserDirectTopology}, "http://198.18.13.42:443/artifacts", "certificate-hash")
+	if edge.Cold.PhaseDeadlineMS != 55_000 {
+		t.Fatalf("edge browser cold phase timeout = %dms, want unchanged 55000ms", edge.Cold.PhaseDeadlineMS)
+	}
 	if edge.CleanupDeadlineMS != int64(plan.Edge.CleanupDeadlineSeconds)*1_000 {
 		t.Fatalf("edge browser cleanup timeout = %dms, want unchanged %ds profile budget", edge.CleanupDeadlineMS, plan.Edge.CleanupDeadlineSeconds)
+	}
+	if got := forcedBrowserWebTransportExecutionPlan(forcedBrowserWebTransportExecutionPlan(plan.Clean)); !reflect.DeepEqual(got, forcedBrowserWebTransportExecutionPlan(plan.Clean)) {
+		t.Fatalf("forced browser WebTransport budget mapping is not idempotent: %+v", got)
 	}
 }
 

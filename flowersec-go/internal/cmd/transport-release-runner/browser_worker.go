@@ -105,7 +105,7 @@ func runBrowserNetworkCarrier(ctx context.Context, topology string, plan transpo
 }
 
 func runBrowserNetworkCarrierWithLabel(ctx context.Context, topology string, plan transportrelease.ProfilePlan, runNumber int, bpfObject, sourceRoot string, destination *artifactDestination, label string) (result browserCellResult, resultErr error) {
-	plan = webTransportExecutionPlan(plan)
+	plan = forcedBrowserWebTransportExecutionPlan(plan)
 	cellID := strings.ReplaceAll(plan.ID+"-"+topology, "_", "-")
 	config, err := linuxnetlab.ConfigForCell(cellID, runNumber, plan.Network.LinkMTU, plan.Network.Firewall)
 	if err != nil {
@@ -425,7 +425,7 @@ func closeBrowserArtifactHTTPServer(server *http.Server, listener net.Listener) 
 }
 
 func newBrowserCollectorPlan(request browserWorkerRequest, sourceURL, certificateHash string) browserCollectorPlan {
-	request.Plan = webTransportExecutionPlan(request.Plan)
+	request.Plan = forcedBrowserWebTransportExecutionPlan(request.Plan)
 	seconds := func(value int) int64 { return int64(value) * 1000 }
 	return browserCollectorPlan{
 		SchemaVersion: 1, Topology: request.Topology, ProfileID: request.Plan.ID, RunNumber: request.RunNumber, Mode: "forced",

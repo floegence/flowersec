@@ -19,6 +19,23 @@ The offline signing host requires the complete unsigned artifact directory, the 
 
 The runner owns real measurements. It must execute every owner in `case_registry.json`, every 15-run cell in `performance_manifest.json`, real-browser WebTransport, qlog/pcap semantics, common-kernel weak-network cases, migration/rebinding, PMTUD, capacity, soak, resource cleanup, and race. For `clean-01`, the base variant must run the base executable from the base checkout and the candidate variant must run the final executable from the final checkout; both manifests must be byte-identical. The raw index binds each variant's source SHA, executable digest, command digest, and report digest. It must not synthesize artifacts, run both variants from the final executable, or convert local smoke output into signed evidence.
 
+Forced browser WebTransport keeps each cold operation in the open-loop inflight
+set until its session cleanup finishes. The clean profile freezes 100 operations
+with at most 32 inflight, so cleanup necessarily spans four waves. An exact-SHA
+Chromium 151 run started the first 32 qlog connections between
+21:51:39.305Z and 21:51:39.617Z; the next 32 did not start until
+21:51:44.333Z through 21:51:44.641Z. The former 6-second phase failed after
+6.994 seconds with 64 artifacts spent and 36 unspent. The execution plan
+therefore gives every cleanup wave the production 5-second WebTransport drain
+plus its 1-second scheduler allowance, then adds one final second so the phase
+strictly exceeds the cleanup-only lower bound. For clean-v1 this is
+`ceil(100 / 32) * 6s + 1s = 25s`. The mapping applies only to forced browser
+WebTransport direct and tunnel collection; the signed operation count,
+inflight limit, start rate, network, payloads, certificate, thresholds,
+zero-residual checks, and five-minute cell watchdog remain unchanged. Mobile
+and edge forced profiles already exceed their one-wave lower bound, while the
+adaptive browser cell retains its independently frozen signed envelope.
+
 The `edge-v1` cold operation deadline is fifty-three seconds. Under the frozen
 outage and burst-loss schedule, release qlog captured 1-RTT recovery probes at
 2.156, 5.398, 11.882, and 24.847 seconds without an acknowledgement. Doubling
