@@ -12,16 +12,30 @@ import (
 	"time"
 )
 
-func TestCollectionCommandCancellationRequestsGracefulCleanup(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "terminated")
+func TestCollectionCommandCancellationRequestsGracefulCleanupWhenInterruptIsIgnored(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "terminated")
+	ready := filepath.Join(root, "ready")
 	ctx, cancel := context.WithCancel(context.Background())
-	command := exec.CommandContext(ctx, "sh", "-c", `trap 'printf terminated > "$1"; exit 0' INT; while :; do sleep 1; done`, "runner", marker)
+	command := exec.CommandContext(ctx, "sh", "-c", `trap '' INT; trap 'printf terminated > "$1"; exit 0' TERM; printf ready > "$2"; while :; do sleep 1; done`, "runner", marker, ready)
 	configureCollectionCommand(command)
+	command.WaitDelay = 2 * time.Second
 	if err := command.Start(); err != nil {
 		cancel()
 		t.Fatal(err)
 	}
-	time.Sleep(50 * time.Millisecond)
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			_ = command.Wait()
+			t.Fatal("collection command did not become ready")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	cancel()
 	if err := command.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatal(err)

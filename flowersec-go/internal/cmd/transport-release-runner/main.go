@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
@@ -188,7 +189,7 @@ func networkWorkerCommand(ctx context.Context, namespace, executable string) *ex
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == browserWorkerArg {
-		workerContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt)
+		workerContext, stopSignals := runnerSignalContext()
 		defer stopSignals()
 		if err := runBrowserWorkerWithContext(workerContext, os.Stdin, os.Stdout); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
@@ -210,12 +211,16 @@ func main() {
 		}
 		return
 	}
-	runnerContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt)
+	runnerContext, stopSignals := runnerSignalContext()
 	defer stopSignals()
 	if err := runWithContext(runnerContext, os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func runnerSignalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 func run(args []string) (resultErr error) {

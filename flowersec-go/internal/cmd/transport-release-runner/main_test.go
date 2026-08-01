@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,6 +29,23 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/linuxnetlab"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/tunnelworkload"
 )
+
+func TestRunnerSignalContextHandlesTermination(t *testing.T) {
+	ctx, stop := runnerSignalContext()
+	defer stop()
+	process, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("runner signal context ignored SIGTERM")
+	}
+}
 
 func TestWorkloadScheduleContainsEveryIndependentRun(t *testing.T) {
 	schedule := workloadSchedule(15)

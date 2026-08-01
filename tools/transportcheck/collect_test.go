@@ -638,7 +638,7 @@ case "$report" in
     ;;
   *)
     jobs_root=$(dirname "$(dirname "$report")")
-    trap 'touch "$jobs_root/wait.cancelled"; exit 0' INT
+    trap 'touch "$jobs_root/wait.cancelled"; exit 0' TERM
     touch "$jobs_root/wait.ready"
     while :; do sleep 1; done
     ;;

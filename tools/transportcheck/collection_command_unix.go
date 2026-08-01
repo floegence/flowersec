@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -29,7 +30,7 @@ func configureCollectionCommand(command *exec.Cmd) {
 		if command.Process == nil {
 			return os.ErrProcessDone
 		}
-		if err := command.Process.Signal(os.Interrupt); err != nil {
+		if err := command.Process.Signal(syscall.SIGTERM); err != nil {
 			if errors.Is(err, os.ErrProcessDone) {
 				return os.ErrProcessDone
 			}
