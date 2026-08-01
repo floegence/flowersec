@@ -43,6 +43,17 @@ func TestCoverageQualityGates(t *testing.T) {
 	assertMakeThreshold(t, filepath.Join(root, "Makefile"), `cargo llvm-cov[^\n]*--fail-under-lines\s+(\d+)`, []int{85})
 }
 
+func TestGoCoverageSerializesPackageExecution(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	source, err := os.ReadFile(filepath.Join(root, "tools", "stabilitycheck", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`exec\.Command\("go", "test", "-p=1", "-count=1", "-cover", "\./\.\.\."\)`).Match(source) {
+		t.Fatal("Go coverage must serialize package execution with -p=1")
+	}
+}
+
 func assertFileThresholds(t *testing.T, path string, want map[string]int) {
 	t.Helper()
 	b, err := os.ReadFile(path)

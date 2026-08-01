@@ -993,7 +993,7 @@ func goVerifierUsesQualifier(m *manifest, qualifier string) bool {
 var coverageLine = regexp.MustCompile(`^(?:ok|\?)\s+(\S+)\s+.*coverage:\s+([0-9.]+)% of statements$`)
 
 func verifyGoCoverage(repoRoot string, m *manifest) error {
-	cmd := exec.Command("go", "test", "-count=1", "-cover", "./...")
+	cmd := exec.Command("go", "test", "-p=1", "-count=1", "-cover", "./...")
 	cmd.Dir = filepath.Join(repoRoot, "flowersec-go")
 	cmd.Env = withRepoGoToolchain()
 	var out bytes.Buffer
