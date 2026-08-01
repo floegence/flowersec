@@ -23,6 +23,13 @@ import (
 const testCertDERBase64 = "MIIBjzCCAUGgAwIBAgIUW8hQEpQsUJN9a6qqF2g6hsNpSm8wBQYDK2VwMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAeFw0yNjA3MjAxOTAxMjFaFw0zNjA3MTcxOTAxMjFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAqMAUGAytlcAMhAAihki/Jec+1EaC6E6PsSxjMYFAazrgkNiUIlbj/+A/0o4GkMIGhMB0GA1UdDgQWBBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAfBgNVHSMEGDAWgBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEwBQYDK2VwA0EArZng3XitiH2E1pW/NTxQvEOBXJYpYE8coQmLV4yTjfI43CWHMG6lIrwk/so67oe6Z2R4iHGjUm3Tuy50Fl8hBw=="
 const testKeyDERBase64 = "MC4CAQAwBQYDK2VwBCIEICxYUWHqGoh0CBBohsaNg/NThm1n3UeWCzYuq6jS+Qi6"
 
+const (
+	sessionServerEstablishTimeout       = 30 * time.Second
+	sessionServerRekeyPrepareTimeout    = 10 * time.Second
+	sessionServerRekeyCompletionTimeout = 30 * time.Second
+	sessionServerWatchdog               = 90 * time.Second
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		fatalf("usage: raw_quic_peer client <address> [direct|tunnel] | server [direct|tunnel]")
@@ -57,7 +64,7 @@ func runSessionServer(profile string) {
 	}
 	defer listener.Close()
 	fmt.Printf("READY %s\n", listener.Addr())
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sessionServerWatchdog)
 	defer cancel()
 	carrierSession, err := listener.Accept(ctx)
 	if err != nil {
@@ -111,7 +118,10 @@ func runSessionServer(profile string) {
 		Role: flowersession.RoleServer, Path: path, ChannelID: decoded.Request.ChannelID,
 		SessionContractHash: decoded.Request.SessionContractHash,
 		Suite:               protocolv2.SuiteChaCha20Poly1305, PSK: psk, MaxInboundStreams: 4,
-		LocalAdmissionBinding: decoded.LocalAdmissionBinding, PeerAdmissionBinding: decoded.LocalAdmissionBinding,
+		EstablishTimeout:       sessionServerEstablishTimeout,
+		RekeyPrepareTimeout:    sessionServerRekeyPrepareTimeout,
+		RekeyCompletionTimeout: sessionServerRekeyCompletionTimeout,
+		LocalAdmissionBinding:  decoded.LocalAdmissionBinding, PeerAdmissionBinding: decoded.LocalAdmissionBinding,
 		LocalEndpointInstanceID: localEndpoint, ExpectedPeerEndpointInstanceID: peerEndpoint,
 		RPCRouter: router,
 	})
