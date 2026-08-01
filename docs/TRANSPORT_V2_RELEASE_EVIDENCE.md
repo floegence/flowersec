@@ -107,6 +107,14 @@ was approximately 0.311 seconds and RTT variance approximately 0.035 seconds,
 placing the base PTO near 0.478 seconds. Fifty seconds covers that measured
 lower bound, one PTO, one RTT, and approximately one second of application and
 scheduler margin without changing workload or evidence semantics.
+An exact-clean-SHA Ubuntu 24 focused Linux shard then validated the adjusted
+WQ budget without changing the frozen network or workload. Its three
+independent runs delivered the complete 128 KiB scored payload in both
+directions in approximately 18.19, 15.46, and 19.32 seconds. Each run retained
+its qlog, pcap, kernel fault counters, and resource records, and the runner
+exited with no Flowersec network namespace, BPF pin, browser, or build-directory
+residual. This focused result validates the budget correction but does not
+replace the complete signed final-SHA collection required below.
 The edge outer cleanup deadline is twelve seconds. A frozen Ubuntu 24 run
 measured a 13,138.9-millisecond server/client clock offset and
 180.15-millisecond median one-way delay. Its final bulk payload reached the
