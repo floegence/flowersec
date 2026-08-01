@@ -48,4 +48,3 @@ function classify(
     sessionClosed: flags.sessionClosed === true,
   });
 }
-
