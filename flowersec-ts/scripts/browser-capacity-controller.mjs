@@ -162,13 +162,13 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
               const sdk = await import("/dist/browser/index.js");
               globalThis.__flowersecCapacitySessions ??= new Map();
               if (globalThis.__flowersecCapacitySessions.has(id)) throw new Error("duplicate browser capacity session ID");
-              const lease = sdk.createArtifactLeaseV2(
+              const lease = sdk.createArtifactLease(
                 sdk.parseArtifact(rawArtifact),
                 async () => await globalThis.__flowersecCapacitySpend(spendToken),
               );
               let session;
               try {
-                session = await sdk.connectBrowserSessionV2(lease);
+                session = await sdk.connectBrowserSession(lease);
                 globalThis.__flowersecCapacitySessions.set(id, { session, token: spendToken });
                 void session.termination.then(async () => {
                   await globalThis.__flowersecCapacityTerminated({ session_id: id, token: spendToken });

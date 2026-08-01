@@ -214,8 +214,8 @@ ${checks}
     const artifact = root.parseArtifact(${JSON.stringify(artifactFixture)});
     assert.deepEqual(Object.keys(artifact), []);
     assert.equal(JSON.stringify(artifact), '{}');
-    assert.throws(() => root.createArtifactLeaseV2({}, async () => {}), /invalid Flowersec artifact handle/);
-    assert.equal(root.createArtifactLeaseV2(artifact, async () => {}).artifact, artifact);
+    assert.throws(() => root.createArtifactLease({}, async () => {}), /invalid Flowersec artifact handle/);
+    assert.equal(root.createArtifactLease(artifact, async () => {}).artifact, artifact);
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestConnectArtifact'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestEntryConnectArtifact'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(browser, 'createBrowserWebTransportCarrierInternalStage'), false);
@@ -275,29 +275,29 @@ function verifyTransportV2Types() {
     path.join(consumerDir, 'transport-v2.ts'),
     `import {
   Artifact,
-  createArtifactLeaseV2,
-  createArtifactAcquireContextV2,
-  createArtifactV2Resolver,
-  createSessionReconnectManagerV2,
+  createArtifactLease,
+  createArtifactAcquireContext,
+  createArtifactResolver,
+  createSessionReconnectManager,
   ConnectError,
   parseArtifact,
 } from '@floegence/flowersec-core';
 import {
-  createArtifactLeaseV2 as createBrowserArtifactLeaseV2,
+  createArtifactLease as createBrowserArtifactLease,
   ConnectError as BrowserConnectError,
 } from '@floegence/flowersec-core/browser';
 import {
-  createArtifactLeaseV2 as createNodeArtifactLeaseV2,
+  createArtifactLease as createNodeArtifactLease,
   ConnectError as NodeConnectError,
 } from '@floegence/flowersec-core/node';
 import type {
-  BrowserSessionConnectorV2Options,
-  JsonPrimitiveV2 as BrowserJsonPrimitiveV2,
-  JsonValueV2 as BrowserJsonValueV2,
-  OperationOptionsV2 as BrowserOperationOptionsV2,
-  SessionReconnectConfigV2 as BrowserSessionReconnectConfigV2,
+  BrowserSessionOptions,
+  JsonPrimitive as BrowserJsonPrimitive,
+  JsonValue as BrowserJsonValue,
+  OperationOptions as BrowserOperationOptions,
+  SessionReconnectConfig as BrowserSessionReconnectConfig,
   SessionError as BrowserSessionError,
-  SessionTerminationV2 as BrowserSessionTerminationV2,
+  SessionTermination as BrowserSessionTermination,
 } from '@floegence/flowersec-core/browser';
 // @ts-expect-error capability descriptors are runtime-internal.
 import type { RuntimeCapabilityDescriptorV2 as BrowserRuntimeCapabilityDescriptorV2 } from '@floegence/flowersec-core/browser';
@@ -318,13 +318,13 @@ import type { BrowserCandidateAttemptV2 } from '@floegence/flowersec-core/browse
 // @ts-expect-error prepared carrier candidates must remain package-internal.
 import type { BrowserPreparedCandidateV2 } from '@floegence/flowersec-core/browser';
 import type {
-  JsonPrimitiveV2 as NodeJsonPrimitiveV2,
-  JsonValueV2 as NodeJsonValueV2,
-  NodeSessionConnectorV2Options,
-  OperationOptionsV2 as NodeOperationOptionsV2,
-  SessionReconnectConfigV2 as NodeSessionReconnectConfigV2,
+  JsonPrimitive as NodeJsonPrimitive,
+  JsonValue as NodeJsonValue,
+  NodeSessionOptions,
+  OperationOptions as NodeOperationOptions,
+  SessionReconnectConfig as NodeSessionReconnectConfig,
   SessionError as NodeSessionError,
-  SessionTerminationV2 as NodeSessionTerminationV2,
+  SessionTermination as NodeSessionTermination,
 } from '@floegence/flowersec-core/node';
 // @ts-expect-error capability descriptors are runtime-internal.
 import type { RuntimeCapabilityDescriptorV2 as NodeRuntimeCapabilityDescriptorV2 } from '@floegence/flowersec-core/node';
@@ -337,17 +337,17 @@ import type { FlowersecCandidateDiagnostic as NodeFlowersecCandidateDiagnostic }
 // @ts-expect-error session key material and handshake configuration are package-internal.
 import type { SessionConfigV2 as NodeSessionConfigV2 } from '@floegence/flowersec-core/node';
 import type {
-  ArtifactAcquireContextV2,
-  ArtifactLeaseV2,
-  ArtifactSourceV2,
-  ByteStreamV2,
-  IncomingStreamV2,
-  JsonObjectV2,
+  ArtifactAcquireContext,
+  ArtifactLease,
+  ArtifactSource,
+  ByteStream,
+  IncomingStream,
+  JsonObject,
   SessionError,
-  SessionReconnectConfigV2,
-  SessionTerminationV2,
-  SessionV2,
-  StreamOpenOptionsV2,
+  SessionReconnectConfig,
+  SessionTermination,
+  Session,
+  StreamOpenOptions,
 } from '@floegence/flowersec-core';
 // @ts-expect-error capability descriptors are runtime-internal.
 import type { RuntimeCapabilityDescriptorV2 } from '@floegence/flowersec-core';
@@ -384,11 +384,11 @@ import type {} from '@floegence/flowersec-core/streamhello';
 // @ts-expect-error generated protocol modules are not public package subpaths.
 import type {} from '@floegence/flowersec-core/gen/flowersec/rpc/v1';
 
-declare const session: SessionV2;
-declare const stream: ByteStreamV2;
-declare const incoming: IncomingStreamV2;
-declare const metadata: JsonObjectV2;
-declare const openOptions: StreamOpenOptionsV2;
+declare const session: Session;
+declare const stream: ByteStream;
+declare const incoming: IncomingStream;
+declare const metadata: JsonObject;
+declare const openOptions: StreamOpenOptions;
 declare const rawArtifact: string;
 declare const commitSpend: (signal?: AbortSignal) => Promise<void>;
 
@@ -415,33 +415,33 @@ void session.chosenCarrier;
 void stream.id;
 // @ts-expect-error incoming logical stream IDs are internal wire bookkeeping.
 void incoming.id;
-const accepted: ByteStreamV2 = incoming.stream;
-const lease: ArtifactLeaseV2 = createArtifactLeaseV2(artifact, commitSpend);
-const source: ArtifactSourceV2 = { kind: 'once', artifact, commitSpend };
+const accepted: ByteStream = incoming.stream;
+const lease: ArtifactLease = createArtifactLease(artifact, commitSpend);
+const source: ArtifactSource = { kind: 'once', artifact, commitSpend };
 // @ts-expect-error lease construction accepts opaque Artifact handles only.
-createArtifactLeaseV2(rawArtifact, commitSpend);
+createArtifactLease(rawArtifact, commitSpend);
 // @ts-expect-error one-time sources accept opaque Artifact handles only.
-const rawSource: ArtifactSourceV2 = { kind: 'once', artifact: rawArtifact, commitSpend };
-const resolveArtifact = createArtifactV2Resolver(source);
-const acquireContext: ArtifactAcquireContextV2 = createArtifactAcquireContextV2({ traceId: 'trace-1' });
-const reconnectManager = createSessionReconnectManagerV2();
-declare const reconnectConfig: SessionReconnectConfigV2;
-declare const termination: SessionTerminationV2;
-declare const browserTypes: readonly [BrowserJsonPrimitiveV2, BrowserJsonValueV2, BrowserOperationOptionsV2, BrowserSessionReconnectConfigV2, BrowserSessionTerminationV2, BrowserSessionError, BrowserRuntimeCapabilityDescriptorV2];
-declare const nodeTypes: readonly [NodeJsonPrimitiveV2, NodeJsonValueV2, NodeOperationOptionsV2, NodeSessionReconnectConfigV2, NodeSessionTerminationV2, NodeSessionError, NodeRuntimeCapabilityDescriptorV2];
-const leakedWebSocketFactory: BrowserSessionConnectorV2Options = {
+const rawSource: ArtifactSource = { kind: 'once', artifact: rawArtifact, commitSpend };
+const resolveArtifact = createArtifactResolver(source);
+const acquireContext: ArtifactAcquireContext = createArtifactAcquireContext({ traceId: 'trace-1' });
+const reconnectManager = createSessionReconnectManager();
+declare const reconnectConfig: SessionReconnectConfig;
+declare const termination: SessionTermination;
+declare const browserTypes: readonly [BrowserJsonPrimitive, BrowserJsonValue, BrowserOperationOptions, BrowserSessionReconnectConfig, BrowserSessionTermination, BrowserSessionError, BrowserRuntimeCapabilityDescriptorV2];
+declare const nodeTypes: readonly [NodeJsonPrimitive, NodeJsonValue, NodeOperationOptions, NodeSessionReconnectConfig, NodeSessionTermination, NodeSessionError, NodeRuntimeCapabilityDescriptorV2];
+const leakedWebSocketFactory: BrowserSessionOptions = {
   // @ts-expect-error admission policy is runtime-owned.
   admissionReasons: new Set(),
 };
-const leakedWebTransportFactory: BrowserSessionConnectorV2Options = {
+const leakedWebTransportFactory: BrowserSessionOptions = {
   // @ts-expect-error carrier construction factories must remain package-internal.
   webTransportFactory: () => { throw new Error('unreachable'); },
 };
-const leakedAttemptFactory: BrowserSessionConnectorV2Options = {
+const leakedAttemptFactory: BrowserSessionOptions = {
   // @ts-expect-error low-level carrier attempt factories must remain package-internal.
   attemptFactory: { create: () => { throw new Error('unreachable'); } },
 };
-const leakedNodeCarrierOptions: NodeSessionConnectorV2Options = {
+const leakedNodeCarrierOptions: NodeSessionOptions = {
   origin: 'https://app.example',
   // @ts-expect-error Node carrier-specific tuning is package-internal.
   webSocket: {},
@@ -470,8 +470,8 @@ void leakedWebTransportFactory;
 void leakedAttemptFactory;
 void leakedNodeCarrierOptions;
 void terminalError;
-void createBrowserArtifactLeaseV2(artifact, commitSpend);
-void createNodeArtifactLeaseV2(artifact, commitSpend);
+void createBrowserArtifactLease(artifact, commitSpend);
+void createNodeArtifactLease(artifact, commitSpend);
 void lease.commitSpend();
 void metadata;
 void openOptions;

@@ -4,7 +4,7 @@ Every maintained cookbook is v2-only. Examples use opaque artifacts and carrier-
 
 | Language | Cookbook | Runnable evidence |
 | --- | --- | --- |
-| Go | [`ExampleNewConnector`](../flowersec-go/example_client_test.go) and [`controlplane.ExampleIssuer_IssueTunnelPair`](../flowersec-go/controlplane/example_test.go) | Compiles durable consumer connection and control-plane issuance workflows |
+| Go | [`ExampleConnect`](../flowersec-go/example_client_test.go) and [`controlplane.ExampleIssuer_IssueTunnelPair`](../flowersec-go/controlplane/example_test.go) | Compiles durable consumer connection and control-plane issuance workflows |
 | TypeScript | [examples/ts](ts/README.md) | Syntax-checks a runnable Node.js connector with a durable spend receipt |
 | Swift | [examples/swift](swift/README.md) | Exercises the opaque public connector and session contract |
 | Rust | [examples/rust](rust/README.md) | Exercises the opaque public connector and session contract |

@@ -62,10 +62,10 @@ Carrier-spezifische Nachweise liefern `make transport-conformance-smoke`, `make 
 
 | Sprache | Paket | Öffentlicher Einstieg |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | opake v2-Einstiege im Root sowie unter `/browser`, `/node` und `/proxy` |
-| Swift | SwiftPM-Produkt `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
-| Rust | Crate `flowersec` | `Artifact`, `Connector`, `Session` |
+| Swift | SwiftPM-Produkt `Flowersec` | `Artifact`, `connect`, `Session` |
+| Rust | Crate `flowersec` | `Artifact`, `connect`, `Session` |
 
 Go-Service-Control-Planes verwenden das separate Paket `github.com/floegence/flowersec/flowersec-go/v2/controlplane`, um opake Artefakte auszustellen und Autorisierungs-Callbacks von `flowersec-runtime` zu beantworten. Dadurch wird keine v1-Oberfläche für Issuer, Token, Channel-Init oder generierte DTOs wiederhergestellt.
 

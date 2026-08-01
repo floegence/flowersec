@@ -51,12 +51,12 @@ func syncDirectory(at directoryURL: URL) throws {
   }
 }
 
-func recoveryActionV2(for error: any Error) -> FlowersecRetryActionV2? {
-  if let connectError = error as? ConnectErrorV2 {
-    return classifyConnectErrorV2(connectError).action
+func recoveryActionV2(for error: any Error) -> RetryAction? {
+  if let connectError = error as? ConnectError {
+    return classifyConnectError(connectError).action
   }
-  if let sessionError = error as? SessionErrorV2 {
-    return classifySessionErrorV2(sessionError).action
+  if let sessionError = error as? SessionError {
+    return classifySessionError(sessionError).action
   }
   return nil
 }
@@ -75,13 +75,13 @@ private enum FlowersecSwiftClientExample {
     guard let receiptPath = ProcessInfo.processInfo.environment["FSEC_SPEND_RECEIPT_V2_PATH"] else {
       throw ExampleConfigurationError.missingSpendReceiptPath
     }
-    let artifact = try parseArtifactV2(Data(contentsOf: URL(fileURLWithPath: artifactPath)))
-    let lease = ArtifactLeaseV2(artifact: artifact) {
+    let artifact = try parseArtifact(Data(contentsOf: URL(fileURLWithPath: artifactPath)))
+    let lease = ArtifactLease(artifact: artifact) {
       try commitSpendReceipt(at: receiptPath)
     }
-    let session: any SessionV2
+    let session: any Session
     do {
-      session = try await ConnectorV2(lease: lease).connect()
+      session = try await connect(lease: lease)
     } catch {
       if let action = recoveryActionV2(for: error) {
         print("recovery=\(action.rawValue)")

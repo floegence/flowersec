@@ -40,6 +40,7 @@ var requiredSharedFixtureIDs = []string{
 type capabilityManifest struct {
 	Version                     int                         `json:"version"`
 	Languages                   []string                    `json:"languages"`
+	CapabilityLayers            []string                    `json:"capability_layers"`
 	PortableCapabilities        []portableCapability        `json:"portable_capabilities"`
 	RuntimeSpecificCapabilities []runtimeSpecificCapability `json:"runtime_specific_capabilities"`
 	SharedFixtures              []sharedFixture             `json:"shared_fixtures"`
@@ -47,6 +48,7 @@ type capabilityManifest struct {
 
 type portableCapability struct {
 	ID              string                              `json:"id"`
+	Layer           string                              `json:"layer"`
 	Description     string                              `json:"description"`
 	Implementations map[string]capabilityImplementation `json:"implementations"`
 }
@@ -58,6 +60,7 @@ type capabilityImplementation struct {
 
 type runtimeSpecificCapability struct {
 	ID       string   `json:"id"`
+	Layer    string   `json:"layer"`
 	Owner    string   `json:"owner"`
 	Reason   string   `json:"reason"`
 	Evidence []string `json:"evidence,omitempty"`
@@ -612,6 +615,9 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	if m.Version != 2 {
 		return nil, fmt.Errorf("unsupported capability manifest version %d", m.Version)
 	}
+	if !slices.Equal(m.CapabilityLayers, []string{"portable_core", "sdk_profile", "language_convenience"}) {
+		return nil, fmt.Errorf("capability_layers must be [portable_core sdk_profile language_convenience]")
+	}
 	if len(m.Languages) == 0 || len(m.PortableCapabilities) == 0 {
 		return nil, errors.New("capability manifest languages and portable_capabilities must not be empty")
 	}
@@ -624,6 +630,9 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 	}
 	capabilityIDs := make([]string, 0, len(m.PortableCapabilities))
 	for _, capability := range m.PortableCapabilities {
+		if capability.Layer != "portable_core" {
+			return nil, fmt.Errorf("portable capability %s must use layer portable_core", capability.ID)
+		}
 		if strings.TrimSpace(capability.ID) == "" || strings.TrimSpace(capability.Description) == "" {
 			return nil, errors.New("portable capability id and description must not be empty")
 		}
@@ -657,13 +666,21 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 			return nil, fmt.Errorf("capability manifest is missing required portable capability %s", required)
 		}
 	}
+	runtimeIDs := make([]string, 0, len(m.RuntimeSpecificCapabilities))
 	for _, capability := range m.RuntimeSpecificCapabilities {
+		runtimeIDs = append(runtimeIDs, capability.ID)
+		if capability.Layer != "sdk_profile" && capability.Layer != "language_convenience" {
+			return nil, fmt.Errorf("runtime-specific capability %s has unsupported layer %q", capability.ID, capability.Layer)
+		}
 		if strings.TrimSpace(capability.ID) == "" || strings.TrimSpace(capability.Reason) == "" {
 			return nil, errors.New("runtime-specific capability id and reason must not be empty")
 		}
 		if _, ok := knownLanguages[capability.Owner]; !ok {
 			return nil, fmt.Errorf("runtime-specific capability %s has unknown owner %s", capability.ID, capability.Owner)
 		}
+	}
+	if err := requireUnique("runtime-specific capability ids", runtimeIDs); err != nil {
+		return nil, err
 	}
 	if len(m.SharedFixtures) == 0 {
 		return nil, errors.New("capability manifest shared_fixtures must not be empty")

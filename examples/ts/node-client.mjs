@@ -1,11 +1,11 @@
 import { open, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
-  classifyConnectErrorV2,
-  classifySessionErrorV2,
-  connectNodeSessionV2,
+  classifyConnectError,
+  classifySessionError,
+  connectNodeSession,
   ConnectError,
-  createArtifactLeaseV2,
+  createArtifactLease,
   parseArtifact,
   SessionError,
 } from "@floegence/flowersec-core/node";
@@ -18,7 +18,7 @@ if (artifactPath === undefined || origin === undefined || receiptPath === undefi
 }
 
 const artifact = parseArtifact(await readFile(artifactPath));
-const lease = createArtifactLeaseV2(artifact, async () => {
+const lease = createArtifactLease(artifact, async () => {
   const receipt = await open(receiptPath, "wx", 0o600);
   try {
     await receipt.writeFile("flowersec-v2-artifact-spent\n", "utf8");
@@ -37,7 +37,7 @@ const signal = AbortSignal.timeout(15_000);
 const tls = trustRootPath === undefined ? undefined : { ca: await readFile(trustRootPath) };
 let session;
 try {
-  session = await connectNodeSessionV2(lease, {
+  session = await connectNodeSession(lease, {
     origin,
     signal,
     ...(tls === undefined ? {} : { tls }),
@@ -61,8 +61,8 @@ try {
 
 function reportRecovery(error) {
   if (error instanceof ConnectError) {
-    console.error(`recovery=${classifyConnectErrorV2(error).action}`);
+    console.error(`recovery=${classifyConnectError(error).action}`);
   } else if (error instanceof SessionError) {
-    console.error(`recovery=${classifySessionErrorV2(error).action}`);
+    console.error(`recovery=${classifySessionError(error).action}`);
   }
 }

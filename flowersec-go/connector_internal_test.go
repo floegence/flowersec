@@ -18,9 +18,9 @@ import (
 
 func TestConnectorMapsInternalResultToCarrierNeutralSession(t *testing.T) {
 	want := inertSession{path: session.PathTunnel}
-	connector := &Connector{inner: staticConnectorBackend{result: connectv2.Result{Session: want}}}
+	connector := &connector{inner: staticConnectorBackend{result: connectv2.Result{Session: want}}}
 
-	got, err := connector.Connect(context.Background())
+	got, err := connector.connect(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,8 +35,8 @@ func TestConnectorMapsInternalResultToCarrierNeutralSession(t *testing.T) {
 
 func TestConnectorZeroTimeoutUsesSharedDefault(t *testing.T) {
 	backend := &deadlineConnectorBackend{}
-	connector := &Connector{inner: backend}
-	_, _ = connector.Connect(context.Background())
+	connector := &connector{inner: backend}
+	_, _ = connector.connect(context.Background())
 	if backend.remaining < 9*time.Second || backend.remaining > 10*time.Second {
 		t.Fatalf("zero-value connector timeout = %v, want shared 10 second default", backend.remaining)
 	}
@@ -55,9 +55,9 @@ func TestUnreliableUnavailableProjectsStablePublicCode(t *testing.T) {
 }
 
 func TestConnectorRedactsInternalCandidateFailure(t *testing.T) {
-	connector := &Connector{inner: staticConnectorBackend{err: errors.New("candidate secret-id at wss://secret.example failed")}}
+	connector := &connector{inner: staticConnectorBackend{err: errors.New("candidate secret-id at wss://secret.example failed")}}
 
-	_, err := connector.Connect(context.Background())
+	_, err := connector.connect(context.Background())
 	if !errors.Is(err, ErrConnectionFailed) || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("Connect error = %q, want redacted stable failure", err)
 	}
@@ -77,9 +77,9 @@ func TestConnectorProjectsArtifactExpiryWithoutInternalDetails(t *testing.T) {
 		fserrors.CodeTimeout,
 		errors.Join(connectv2.ErrArtifactExpired, errors.New("secret artifact detail")),
 	)
-	connector := &Connector{inner: staticConnectorBackend{err: internal}}
+	connector := &connector{inner: staticConnectorBackend{err: internal}}
 
-	_, err := connector.Connect(context.Background())
+	_, err := connector.connect(context.Background())
 	var public *ConnectError
 	if !errors.As(err, &public) || public.Code() != ConnectExpired {
 		t.Fatalf("Connect error = %#v, want code %q", err, ConnectExpired)

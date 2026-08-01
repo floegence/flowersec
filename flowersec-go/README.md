@@ -21,18 +21,17 @@ handlers, err := flowersec.NewSessionHandlers(flowersec.SessionHandlerOptions{})
 err = handlers.HandleRPC(typeID, rpcHandler)
 err = handlers.HandleStream(streamKind, streamHandler)
 options.Handlers = handlers
-connector, err := flowersec.NewConnector(lease, options)
-session, err := connector.Connect(ctx)
+session, err := flowersec.Connect(ctx, lease, options)
 err = handlers.Serve(ctx, session)
 ```
 
-Register inbound RPC handlers before constructing the connector; the connector snapshots them for session establishment. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, and resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
+Register inbound RPC handlers before connecting; `Connect` snapshots them for session establishment. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, and resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
 
-The executable `ExampleNewConnector` compiles the complete consumer lifecycle,
+The executable `ExampleConnect` compiles the complete consumer lifecycle,
 including an atomically created and synchronized durable spend receipt. Reusing
 the receipt path fails closed; the receipt contains no artifact or key material.
 
-An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. `ClassifyConnectError(...)` and `ClassifySessionError(...)` map public errors to `ErrorRetryClassification`: retry the current operation, acquire a fresh artifact and session, or stop. `ConnectExpired` identifies artifact expiry without exposing artifact contents.
+An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. `ClassifyConnectError(...)` and `ClassifySessionError(...)` map public errors to `ErrorRetryClassification`: retry the current operation, acquire a fresh artifact and session, or stop. `ConnectExpired` identifies artifact expiry without exposing artifact contents.
 
 ## Server Control Plane
 
@@ -42,7 +41,7 @@ See the executable `controlplane.ExampleIssuer_IssueTunnelPair` example for arti
 
 ## Transport v2 Support
 
-WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
+WebSocket, raw QUIC, and WebTransport are equal carrier candidates. This SDK's production profile supports all three; that profile is separate from the portable application API shared by every SDK.
 
 Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. They use native bidirectional streams without Yamux. WebSocket uses hop-local Yamux internally.
 

@@ -161,7 +161,7 @@ async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
         try {
           return await page.evaluate(async ({ item, ordinalValue, scheduledAtValue, operationDeadlineMs, cleanupMs }) => {
             const sdk = await import("/dist/browser/index.js");
-            const lease = sdk.createArtifactLeaseV2(
+            const lease = sdk.createArtifactLease(
               sdk.parseArtifact(item.artifact_json),
               async () => await globalThis.__flowersecCommitArtifactSpend(item.spend_token),
             );
@@ -171,7 +171,7 @@ async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
             const timer = setTimeout(() => controller.abort(new Error("cold operation deadline exceeded")), operationDeadlineMs);
             let session;
             try {
-              session = await sdk.connectBrowserSessionV2(lease, { signal: controller.signal });
+              session = await sdk.connectBrowserSession(lease, { signal: controller.signal });
             } finally {
               clearTimeout(timer);
             }
@@ -223,14 +223,14 @@ async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
 export async function runSessionWorkload(page, artifact, plan) {
   return await page.evaluate(async ({ item, profileID, connectDeadlineMs, rpcPlan, bulkPlan, cleanupDeadlineMs }) => {
     const sdk = await import("/dist/browser/index.js");
-    const lease = sdk.createArtifactLeaseV2(
+    const lease = sdk.createArtifactLease(
       sdk.parseArtifact(item.artifact_json),
       async () => await globalThis.__flowersecCommitArtifactSpend(item.spend_token),
     );
     let session;
     try {
       session = await withSignalDeadline(
-        (signal) => sdk.connectBrowserSessionV2(lease, { signal }),
+        (signal) => sdk.connectBrowserSession(lease, { signal }),
         connectDeadlineMs,
         "session connect deadline exceeded",
       );

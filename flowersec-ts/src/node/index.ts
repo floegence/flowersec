@@ -1,51 +1,6 @@
-export { connectNodeSessionV2 } from "./connectV2.js";
-export type { NodeSessionConnectorV2Options, NodeSessionTLSOptionsV2 } from "./connectV2.js";
-export {
-  TRANSPORT_V2_VERSION_POLICY,
-  createArtifactAcquireContextV2,
-  createArtifactLeaseV2,
-  createArtifactV2Resolver,
-} from "../v2/artifactLease.js";
+export { connectNodeSessionV2 as connectNodeSession } from "./connectV2.js";
 export type {
-  ArtifactAcquireContextV2,
-  ArtifactAcquireContextOptionsV2,
-  ArtifactLeaseV2,
-  ArtifactSourceV2,
-  ArtifactVersionPolicyV2,
-} from "../v2/artifactLease.js";
-export { Artifact, parseArtifact } from "../v2/opaqueArtifact.js";
-export { createSessionReconnectManagerV2 } from "../v2/reconnect.js";
-export type {
-  SessionAutoReconnectConfigV2,
-  SessionReconnectConfigV2,
-  SessionReconnectManagerV2,
-  SessionReconnectStateV2,
-  SessionReconnectStatusV2,
-} from "../v2/reconnect.js";
-export type {
-  ByteStreamV2,
-  IncomingStreamV2,
-  JsonObjectV2,
-  JsonPrimitiveV2,
-  JsonValueV2,
-  OperationOptionsV2,
-  RpcPeerV2,
-  RpcResultV2,
-  SessionErrorCode,
-  SessionTerminationV2,
-  SessionV2,
-  StreamOpenOptionsV2,
-  UnreliableMessageChannelV2,
-  UnreliableMessageSendOptionsV2,
-  UnreliableMessageSendResultV2,
-  UnreliableMessageV2,
-} from "../v2/contract.js";
-export { SessionError } from "../v2/contract.js";
-export { createUnreliableMessageV2, UnreliableMessageError } from "../v2/unreliableMessage.js";
-export { ConnectError } from "../utils/errors.js";
-export type { ConnectErrorCode } from "../utils/errors.js";
-export { classifyConnectErrorV2, classifySessionErrorV2 } from "../v2/errorClassification.js";
-export type {
-  FlowersecErrorRetryClassificationV2,
-  FlowersecRetryActionV2,
-} from "../v2/errorClassification.js";
+  NodeSessionConnectorV2Options as NodeSessionOptions,
+  NodeSessionTLSOptionsV2 as NodeSessionTLSOptions,
+} from "./connectV2.js";
+export * from "../facade.js";

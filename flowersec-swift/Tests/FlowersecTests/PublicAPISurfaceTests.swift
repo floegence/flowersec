@@ -4,7 +4,7 @@ import Testing
 
 struct PublicAPISurfaceTests {
   @Test func opaqueApplicationSurfaceCompilesWithoutTestableImport() async throws {
-    let metadata = try StreamMetadataV2([
+    let metadata = try StreamMetadata([
       "operation": .string("health"),
       "attempt": .integer(1),
     ])
@@ -20,12 +20,12 @@ struct PublicAPISurfaceTests {
     #expect(accepted.metadata == .empty)
     #expect(await stream.terminalError() == nil)
     #expect(await session.waitClosed() == .closed)
-    #expect(SessionErrorV2.operationFailed.rawValue == "operation_failed")
-    #expect(RPCErrorV2(code: 404, message: "not found").code == 404)
+    #expect(SessionError.operationFailed.rawValue == "operation_failed")
+    #expect(RPCError(code: 404, message: "not found").code == 404)
   }
 }
 
-private actor PublicContractByteStream: ByteStreamV2 {
+private actor PublicContractByteStream: ByteStream {
   nonisolated let kind: String
 
   init(kind: String) { self.kind = kind }
@@ -39,10 +39,10 @@ private actor PublicContractByteStream: ByteStreamV2 {
   func closeWrite() async throws {}
   func reset() async {}
   func close() async {}
-  func terminalError() async -> SessionErrorV2? { nil }
+  func terminalError() async -> SessionError? { nil }
 }
 
-private actor PublicContractRPCPeer: RPCPeerV2 {
+private actor PublicContractRPCPeer: RPCPeer {
   func call<Request: Encodable & Sendable, Response: Decodable & Sendable>(
     _ typeID: UInt32,
     _ request: Request,
@@ -53,7 +53,7 @@ private actor PublicContractRPCPeer: RPCPeerV2 {
     _ = request
     _ = responseType
     _ = timeout
-    throw SessionErrorV2.operationFailed
+    throw SessionError.operationFailed
   }
 
   func notify<Payload: Encodable & Sendable>(
@@ -65,25 +65,25 @@ private actor PublicContractRPCPeer: RPCPeerV2 {
   }
 }
 
-private struct PublicContractSession: SessionV2 {
-  let rpc: any RPCPeerV2
-  let stream: any ByteStreamV2
+private struct PublicContractSession: Session {
+  let rpc: any RPCPeer
+  let stream: any ByteStream
 
   func openStream(
     kind: String,
-    metadata: StreamMetadataV2
-  ) async throws -> any ByteStreamV2 {
+    metadata: StreamMetadata
+  ) async throws -> any ByteStream {
     _ = kind
     _ = metadata
     return stream
   }
 
-  func acceptStream() async throws -> IncomingStreamV2 {
-    IncomingStreamV2(kind: stream.kind, metadata: .empty, stream: stream)
+  func acceptStream() async throws -> IncomingStream {
+    IncomingStream(kind: stream.kind, metadata: .empty, stream: stream)
   }
 
   func rekey() async throws {}
   func probeLiveness() async throws -> Duration { .zero }
-  func waitClosed() async -> SessionErrorV2 { .closed }
+  func waitClosed() async -> SessionError { .closed }
   func close() async {}
 }

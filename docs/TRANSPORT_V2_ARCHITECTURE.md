@@ -176,8 +176,8 @@ Rust pins `quinn =0.11.11` with default features disabled and only `runtime-toki
   both session roles. Raw QUIC and WebTransport remain unavailable until a
   production-grade runtime API passes the dependency gate.
 - Rust native: raw QUIC direct client dialing and runtime-owned direct server
-  listening, plus tunnel dialing for both session roles. The opaque Connector
-  owns ArtifactV2 acquisition, equal-candidate race, durable spend, and client
+  listening, plus tunnel dialing for both session roles. The one-shot
+  connection path owns opaque artifact acquisition, equal-candidate race, durable spend, and client
   admission; the runtime listener owns server admission. WebSocket and
   WebTransport remain unsupported.
 - Swift macOS and iOS: WebSocket direct client dialing and tunnel dialing for
@@ -224,8 +224,8 @@ remains spent because the durable transition cannot be rolled back.
 
 Session termination is observable independently of the carrier. Go exposes
 `Termination()` and `WaitClosed(ctx)`; TypeScript exposes `termination` and
-`waitClosed()`; Rust exposes `SessionV2::wait_closed()`; Swift exposes
-`SessionV2.waitClosed()`. The TypeScript reconnect manager requires refreshable artifacts
+`waitClosed()`; Rust exposes `Session::wait_closed()`; Swift exposes
+`Session.waitClosed()`. The TypeScript reconnect manager requires refreshable artifacts
 for automatic reconnect, acquires a new lease for every attempt, and treats a
 serialized one-time artifact as consumed across subsequent connect calls. Its
 artifact acquisition context always carries the exact version policy, runtime

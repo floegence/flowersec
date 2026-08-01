@@ -5,6 +5,7 @@ import type {
   InternalSessionV2,
   OperationOptionsV2,
   RpcPeerV2,
+  RpcResultV2,
   SessionErrorCode,
   SessionV2,
   StreamOpenOptionsV2,
@@ -81,22 +82,26 @@ function projectByteStreamV2(stream: InternalByteStreamV2): ByteStreamV2 {
 
 function projectRpcPeerV2(peer: InternalSessionV2["rpc"]): RpcPeerV2 {
   return Object.freeze({
-    async call(typeId: number, payload: unknown, signal?: AbortSignal) {
+    async call<Request = unknown, Response = unknown>(
+      typeId: number,
+      payload: Request,
+      signal?: AbortSignal,
+    ): Promise<RpcResultV2<Response>> {
       try {
         const result = await peer.call(typeId, payload, signal);
         if (result.error !== undefined) {
           return Object.freeze({ ok: false as const, error: Object.freeze({ ...result.error }) });
         }
-        return Object.freeze({ ok: true as const, payload: result.payload });
+        return Object.freeze({ ok: true as const, payload: result.payload as Response });
       } catch (error) {
         throw redactSessionError(error);
       }
     },
-    async notify(typeId: number, payload: unknown) {
+    async notify<Payload = unknown>(typeId: number, payload: Payload) {
       try { await peer.notify(typeId, payload); } catch (error) { throw redactSessionError(error); }
     },
-    onNotify(typeId: number, handler: (payload: unknown) => void) {
-      return peer.onNotify(typeId, handler);
+    onNotify<Payload = unknown>(typeId: number, handler: (payload: Payload) => void) {
+      return peer.onNotify(typeId, (payload) => handler(payload as Payload));
     },
   });
 }

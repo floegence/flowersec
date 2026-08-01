@@ -62,10 +62,10 @@ make transport-v2-unit
 
 | 언어 | 패키지 | 공개 진입점 |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | root, `/browser`, `/node`, `/proxy`의 불투명 v2 진입점 |
-| Swift | SwiftPM 제품 `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
-| Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
+| Swift | SwiftPM 제품 `Flowersec` | `Artifact`, `connect`, `Session` |
+| Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
 
 Go 서비스 control plane은 별도의 `github.com/floegence/flowersec/flowersec-go/v2/controlplane` 패키지를 사용해 opaque artifact를 발급하고 `flowersec-runtime` authorization callback에 응답합니다. v1 issuer, token, channel-init 또는 generated DTO surface를 복원하지 않습니다.
 

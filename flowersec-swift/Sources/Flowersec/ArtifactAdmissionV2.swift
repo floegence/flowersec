@@ -48,7 +48,7 @@ enum AdmissionCodecV2 {
   static let maxCanonicalFSB2Payload = 32_768
   static let maxAdmissionReasonBytes = 64
 
-  static func canonicalizeCandidates(_ artifact: ArtifactV2) throws -> CandidateSetV2 {
+  static func canonicalizeCandidates(_ artifact: Artifact) throws -> CandidateSetV2 {
     let path = artifact.value.path
     var seenTuples = Set<String>()
     let candidates = try path.candidates.map { candidate -> CanonicalCandidateV2 in
@@ -74,7 +74,7 @@ enum AdmissionCodecV2 {
     )
   }
 
-  static func encodeFSB2(artifact: ArtifactV2, chosenCandidateID: String) throws -> Data {
+  static func encodeFSB2(artifact: Artifact, chosenCandidateID: String) throws -> Data {
     let value = artifact.value
     let candidateSet = try canonicalizeCandidates(artifact)
     guard candidateSet.candidates.contains(where: { $0.id == chosenCandidateID }) else {

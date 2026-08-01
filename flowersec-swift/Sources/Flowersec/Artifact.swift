@@ -1,7 +1,7 @@
 import Crypto
 import Foundation
 
-public enum ArtifactCodecErrorV2: Error, Equatable, Sendable {
+public enum ArtifactCodecError: Error, Equatable, Sendable {
   case artifactTooLarge
   case invalidArtifact
   case invalidCandidate
@@ -11,24 +11,24 @@ public enum ArtifactCodecErrorV2: Error, Equatable, Sendable {
 ///
 /// Wire credentials are intentionally unavailable to application code. Pass this
 /// handle to Flowersec session APIs instead of inspecting or serializing it.
-public final class ArtifactV2: @unchecked Sendable, CustomStringConvertible,
+public final class Artifact: @unchecked Sendable, CustomStringConvertible,
   CustomDebugStringConvertible, CustomReflectable
 {
   let value: ArtifactWireV2
 
   fileprivate init(value: ArtifactWireV2) { self.value = value }
 
-  public var description: String { "Flowersec.ArtifactV2(<redacted>)" }
+  public var description: String { "Flowersec.Artifact(<redacted>)" }
   public var debugDescription: String { description }
   public var customMirror: Mirror { Mirror(self, unlabeledChildren: [Any]()) }
 }
 
 /// Parses and fully validates a Transport v2 artifact without exposing its wire fields.
-public func parseArtifactV2(_ data: Data) throws -> ArtifactV2 {
+public func parseArtifact(_ data: Data) throws -> Artifact {
   try ArtifactCodecV2.decode(data)
 }
 
-public enum ArtifactLeaseErrorV2: Error, Equatable, Sendable {
+public enum ArtifactLeaseError: Error, Equatable, Sendable {
   case alreadyCommitted
 }
 
@@ -36,11 +36,11 @@ public enum ArtifactLeaseErrorV2: Error, Equatable, Sendable {
 ///
 /// `commitSpend` must durably publish SPENT before it returns successfully. A
 /// connector must call it before writing the first credential-bearing byte.
-public struct ArtifactLeaseV2: Sendable {
-  public let artifact: ArtifactV2
+public struct ArtifactLease: Sendable {
+  public let artifact: Artifact
   private let state: ArtifactLeaseStateV2
 
-  public init(artifact: ArtifactV2, commitSpend: @escaping @Sendable () async throws -> Void) {
+  public init(artifact: Artifact, commitSpend: @escaping @Sendable () async throws -> Void) {
     self.artifact = artifact
     self.state = ArtifactLeaseStateV2(spend: commitSpend)
   }
@@ -66,7 +66,7 @@ private actor ArtifactLeaseStateV2 {
     let task: Task<Void, Error>
     switch state {
     case .committed:
-      throw ArtifactLeaseErrorV2.alreadyCommitted
+      throw ArtifactLeaseError.alreadyCommitted
     case .committing(let existingAttempt, let existingTask):
       attempt = existingAttempt
       task = existingTask
@@ -95,22 +95,22 @@ private actor ArtifactLeaseStateV2 {
 private enum ArtifactCodecV2 {
   static let maxBytes = 65_536
 
-  static func decode(_ data: Data) throws -> ArtifactV2 {
-    guard data.count <= maxBytes else { throw ArtifactCodecErrorV2.artifactTooLarge }
+  static func decode(_ data: Data) throws -> Artifact {
+    guard data.count <= maxBytes else { throw ArtifactCodecError.artifactTooLarge }
     do {
       try JSONDuplicateKeyScannerV2.validate(data)
       guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        throw ArtifactCodecErrorV2.invalidArtifact
+        throw ArtifactCodecError.invalidArtifact
       }
       try exact(root, ["v", "profile", "session", "path", "scoped", "correlation"])
       try validateShapes(root)
       let value = try JSONDecoder().decode(ArtifactWireV2.self, from: data)
       try validate(value)
-      return ArtifactV2(value: value)
-    } catch let error as ArtifactCodecErrorV2 {
+      return Artifact(value: value)
+    } catch let error as ArtifactCodecError {
       throw error
     } catch {
-      throw ArtifactCodecErrorV2.invalidArtifact
+      throw ArtifactCodecError.invalidArtifact
     }
   }
 
@@ -122,14 +122,14 @@ private enum ArtifactCodecV2 {
       let correlation = root["correlation"] as? [String: Any],
       let candidates = path["candidates"] as? [[String: Any]],
       let tags = correlation["tags"] as? [[String: Any]]
-    else { throw ArtifactCodecErrorV2.invalidArtifact }
+    else { throw ArtifactCodecError.invalidArtifact }
     try exact(session, [
       "channel_id", "init_expire_at_unix_s", "idle_timeout_seconds",
       "establish_timeout_seconds", "rekey_prepare_timeout_seconds",
       "rekey_completion_timeout_seconds", "max_inbound_streams", "e2ee_psk_b64u",
       "allowed_suites", "default_suite", "selected_features", "contract_hash_b64u",
     ])
-    guard let kind = path["kind"] as? String else { throw ArtifactCodecErrorV2.invalidArtifact }
+    guard let kind = path["kind"] as? String else { throw ArtifactCodecError.invalidArtifact }
     if kind == "direct" {
       try exact(path, ["kind", "rendezvous_group_id", "listener_audience", "routing_token", "candidates"])
     } else if kind == "tunnel" {
@@ -137,7 +137,7 @@ private enum ArtifactCodecV2 {
         "kind", "rendezvous_group_id", "listener_audience", "role",
         "local_endpoint_instance_id", "expected_peer_endpoint_instance_id", "token", "candidates",
       ])
-    } else { throw ArtifactCodecErrorV2.invalidArtifact }
+    } else { throw ArtifactCodecError.invalidArtifact }
     for candidate in candidates { try exact(candidate, ["id", "carrier", "url", "wire_profile"]) }
     for scope in scopes { try exact(scope, ["scope", "scope_version", "critical", "payload"]) }
     try exact(correlation, ["v", "tags"])
@@ -145,12 +145,12 @@ private enum ArtifactCodecV2 {
   }
 
   private static func exact(_ object: [String: Any], _ keys: Set<String>) throws {
-    guard Set(object.keys) == keys else { throw ArtifactCodecErrorV2.invalidArtifact }
+    guard Set(object.keys) == keys else { throw ArtifactCodecError.invalidArtifact }
   }
 
   private static func validate(_ artifact: ArtifactWireV2) throws {
     guard artifact.v == 2, artifact.profile == "flowersec/2" else {
-      throw ArtifactCodecErrorV2.invalidArtifact
+      throw ArtifactCodecError.invalidArtifact
     }
     let session = artifact.session
     guard
@@ -165,7 +165,7 @@ private enum ArtifactCodecV2 {
       Set(session.allowedSuites).count == session.allowedSuites.count,
       session.allowedSuites.allSatisfy({ $0 == 1 || $0 == 2 }),
       session.allowedSuites.contains(session.defaultSuite)
-    else { throw ArtifactCodecErrorV2.invalidArtifact }
+    else { throw ArtifactCodecError.invalidArtifact }
 
     let canonicalSession: [String: Any] = [
       "allowed_suites": session.allowedSuites, "channel_id": session.channelID,
@@ -182,23 +182,23 @@ private enum ArtifactCodecV2 {
     preimage.append(contentsOf: withUnsafeBytes(of: UInt32(canonical.count).bigEndian, Array.init))
     preimage.append(canonical)
     let expected = Data(SHA256.hash(data: preimage)).base64URLEncodedStringV2()
-    guard expected == session.contractHashBase64URL else { throw ArtifactCodecErrorV2.invalidArtifact }
+    guard expected == session.contractHashBase64URL else { throw ArtifactCodecError.invalidArtifact }
 
     let path = artifact.path
     guard registry(path.rendezvousGroupID, max: 128), registry(path.listenerAudience, max: 128),
       (1...4).contains(path.candidates.count)
-    else { throw ArtifactCodecErrorV2.invalidCandidate }
+    else { throw ArtifactCodecError.invalidCandidate }
     switch path.kind {
     case "direct":
-      guard ascii(path.routingToken ?? "", max: 8_192) else { throw ArtifactCodecErrorV2.invalidArtifact }
+      guard ascii(path.routingToken ?? "", max: 8_192) else { throw ArtifactCodecError.invalidArtifact }
     case "tunnel":
       guard (path.role == 1 || path.role == 2),
         registry(path.localEndpointInstanceID ?? "", max: 128),
         registry(path.expectedPeerEndpointInstanceID ?? "", max: 128),
         path.localEndpointInstanceID != path.expectedPeerEndpointInstanceID,
         ascii(path.token ?? "", max: 8_192)
-      else { throw ArtifactCodecErrorV2.invalidArtifact }
-    default: throw ArtifactCodecErrorV2.invalidArtifact
+      else { throw ArtifactCodecError.invalidArtifact }
+    default: throw ArtifactCodecError.invalidArtifact
     }
     var ids = Set<String>()
     for candidate in path.candidates {
@@ -207,24 +207,24 @@ private enum ArtifactCodecV2 {
         ["websocket", "raw_quic", "webtransport"].contains(candidate.carrier),
         candidate.wireProfile == "flowersec-\(path.kind)/2",
         validCandidateURL(candidate, kind: path.kind)
-      else { throw ArtifactCodecErrorV2.invalidCandidate }
+      else { throw ArtifactCodecError.invalidCandidate }
     }
-    guard artifact.scoped.count <= 8 else { throw ArtifactCodecErrorV2.invalidArtifact }
+    guard artifact.scoped.count <= 8 else { throw ArtifactCodecError.invalidArtifact }
     var scopeNames = Set<String>()
     for scope in artifact.scoped {
       guard scope.scope.range(of: "^[a-z][a-z0-9._-]{0,63}$", options: .regularExpression) != nil,
         scope.scopeVersion > 0, scopeNames.insert(scope.scope).inserted,
         try JSONEncoder().encode(scope.payload).count <= 4_096
-      else { throw ArtifactCodecErrorV2.invalidArtifact }
+      else { throw ArtifactCodecError.invalidArtifact }
     }
     guard artifact.correlation.v == 2, artifact.correlation.tags.count <= 8 else {
-      throw ArtifactCodecErrorV2.invalidArtifact
+      throw ArtifactCodecError.invalidArtifact
     }
     var tagNames = Set<String>()
     for tag in artifact.correlation.tags {
       guard tag.key.range(of: "^[a-z][a-z0-9._-]{0,31}$", options: .regularExpression) != nil,
         tagNames.insert(tag.key).inserted, ascii(tag.value, max: 128)
-      else { throw ArtifactCodecErrorV2.invalidArtifact }
+      else { throw ArtifactCodecError.invalidArtifact }
     }
   }
 
@@ -322,34 +322,34 @@ indirect enum ArtifactJSONValueV2: Codable, Sendable {
 
 private enum JSONDuplicateKeyScannerV2 {
   static func validate(_ data: Data) throws {
-    guard let text = String(data: data, encoding: .utf8) else { throw ArtifactCodecErrorV2.invalidArtifact }
+    guard let text = String(data: data, encoding: .utf8) else { throw ArtifactCodecError.invalidArtifact }
     var parser = Parser(bytes: Array(text.utf8)); try parser.value(); parser.space()
-    guard parser.index == parser.bytes.count else { throw ArtifactCodecErrorV2.invalidArtifact }
+    guard parser.index == parser.bytes.count else { throw ArtifactCodecError.invalidArtifact }
   }
   private struct Parser {
     let bytes: [UInt8]; var index = 0
     mutating func space() { while index < bytes.count && [9,10,13,32].contains(bytes[index]) { index += 1 } }
     mutating func value() throws {
-      space(); guard index < bytes.count else { throw ArtifactCodecErrorV2.invalidArtifact }
+      space(); guard index < bytes.count else { throw ArtifactCodecError.invalidArtifact }
       switch bytes[index] { case 123: try object(); case 91: try array(); case 34: _ = try string()
       default: try scalar() }
     }
     mutating func object() throws {
       index += 1; space(); var keys = Set<String>()
       if take(125) { return }
-      while true { space(); let key = try string(); guard keys.insert(key).inserted else { throw ArtifactCodecErrorV2.invalidArtifact }
-        space(); guard take(58) else { throw ArtifactCodecErrorV2.invalidArtifact }; try value(); space()
-        if take(125) { return }; guard take(44) else { throw ArtifactCodecErrorV2.invalidArtifact }
+      while true { space(); let key = try string(); guard keys.insert(key).inserted else { throw ArtifactCodecError.invalidArtifact }
+        space(); guard take(58) else { throw ArtifactCodecError.invalidArtifact }; try value(); space()
+        if take(125) { return }; guard take(44) else { throw ArtifactCodecError.invalidArtifact }
       }
     }
-    mutating func array() throws { index += 1; space(); if take(93) { return }; while true { try value(); space(); if take(93) { return }; guard take(44) else { throw ArtifactCodecErrorV2.invalidArtifact } } }
+    mutating func array() throws { index += 1; space(); if take(93) { return }; while true { try value(); space(); if take(93) { return }; guard take(44) else { throw ArtifactCodecError.invalidArtifact } } }
     mutating func string() throws -> String {
-      guard take(34) else { throw ArtifactCodecErrorV2.invalidArtifact }; let start = index
-      while index < bytes.count { if bytes[index] == 34 { var quoted = Data([34]); quoted.append(contentsOf: bytes[start..<index]); quoted.append(34); index += 1; guard let value = try? JSONDecoder().decode(String.self, from: quoted) else { throw ArtifactCodecErrorV2.invalidArtifact }; return value }
+      guard take(34) else { throw ArtifactCodecError.invalidArtifact }; let start = index
+      while index < bytes.count { if bytes[index] == 34 { var quoted = Data([34]); quoted.append(contentsOf: bytes[start..<index]); quoted.append(34); index += 1; guard let value = try? JSONDecoder().decode(String.self, from: quoted) else { throw ArtifactCodecError.invalidArtifact }; return value }
         if bytes[index] == 92 { index += 2 } else { index += 1 } }
-      throw ArtifactCodecErrorV2.invalidArtifact
+      throw ArtifactCodecError.invalidArtifact
     }
-    mutating func scalar() throws { let start = index; while index < bytes.count && ![44,93,125,9,10,13,32].contains(bytes[index]) { index += 1 }; guard index > start else { throw ArtifactCodecErrorV2.invalidArtifact } }
+    mutating func scalar() throws { let start = index; while index < bytes.count && ![44,93,125,9,10,13,32].contains(bytes[index]) { index += 1 }; guard index > start else { throw ArtifactCodecError.invalidArtifact } }
     mutating func take(_ byte: UInt8) -> Bool { guard index < bytes.count, bytes[index] == byte else { return false }; index += 1; return true }
   }
 }

@@ -16,19 +16,19 @@ Use the `Flowersec` library product.
 
 ## Public Contract
 
-Parse an opaque `ArtifactV2` with `parseArtifactV2(...)`, bind it to a single-use `ArtifactLeaseV2`, initialize `ConnectorV2` with `ConnectorOptionsV2`, and call `ConnectorV2.connect()`. Applications receive only the carrier-neutral `SessionV2`, `RPCPeerV2`, `ByteStreamV2`, `IncomingStreamV2`, and bounded `StreamMetadataV2` contracts.
+Parse an opaque `Artifact` with `parseArtifact(...)`, bind it to a single-use `ArtifactLease`, and call `connect(lease:options:)` with `ConnectorOptions`. Applications receive only the carrier-neutral `Session`, `RPCPeer`, `ByteStream`, `IncomingStream`, and bounded `StreamMetadata` contracts.
 
-`ConnectErrorV2` and `SessionErrorV2` are closed redacted error sets. A remote application RPC failure is `RPCErrorV2` with only its semantic code and sanitized message. Candidate credentials, carrier choice, admission reasons, path, endpoint identities, logical stream IDs, wire state, cryptographic keys, and Yamux are not public.
+`ConnectError` and `SessionError` are closed redacted error sets. A remote application RPC failure is `RPCError` with only its semantic code and sanitized message. Candidate credentials, carrier choice, admission reasons, path, endpoint identities, logical stream IDs, wire state, cryptographic keys, and Yamux are not public.
 
-`classifyConnectErrorV2(_:)` and `classifySessionErrorV2(_:)` return `FlowersecErrorRetryClassificationV2` with a `FlowersecRetryActionV2`. The actions distinguish retrying the current operation, acquiring a fresh artifact and session, and stopping. `ConnectorOptionsV2` uses the shared ten-second connection timeout when the caller omits it.
+`classifyConnectError(_:)` and `classifySessionError(_:)` return `FlowersecErrorRetryClassification` with a `FlowersecRetryAction`. The actions distinguish retrying the current operation, acquiring a fresh artifact and session, and stopping. `ConnectorOptions` uses the shared ten-second connection timeout when the caller omits it. Apple TLS uses the system trust store when `trustRootsPEM` is empty and accepts explicit PEM roots for private trust profiles.
 
 ## Production Support
 
-WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
+WebSocket, raw QUIC, and WebTransport are equal carrier candidates. The support below is the Apple SDK profile, not the portable API.
 
 Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior. The Swift SDK support below is narrower than the protocol carrier set.
 
-`ConnectorV2` establishes direct and tunneled WebSocket sessions on macOS and iOS. It validates TLS and the exact Flowersec v2 WebSocket subprotocol before durable spend and admission. WebSocket keeps Yamux internal to its hop. Raw QUIC and WebTransport are not exposed by the current Swift connector.
+`connect(lease:options:)` establishes direct and tunneled WebSocket sessions on macOS and iOS. It validates TLS and the exact Flowersec v2 WebSocket subprotocol before durable spend and admission. WebSocket keeps Yamux internal to its hop. Raw QUIC and WebTransport are not exposed by the current Swift connector.
 
 Transport v2 production carrier support: macOS and iOS support WebSocket direct and tunnel dial sessions.
 

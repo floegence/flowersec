@@ -32,16 +32,9 @@ func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 		TrustRoots: x509.NewCertPool(), Origin: "https://client.example",
 		ConnectTimeout: time.Second,
 	}
-	var connector *flowersec.Connector
-	var connect func(context.Context) (flowersec.Session, error)
+	var connect func(context.Context, flowersec.ArtifactLease, flowersec.ConnectorOptions) (flowersec.Session, error) = flowersec.Connect
 	_ = options
-	if connector != nil {
-		connect = connector.Connect
-	}
 	_ = connect
-	if got, want := fmt.Sprintf("%v %#v", connector, connector), "Flowersec.Connector flowersec.Connector"; got != want {
-		t.Fatalf("connector formatting = %q, want %q", got, want)
-	}
 }
 
 func TestSessionHandlersPublicSurfaceIsCarrierNeutralAndOpaque(t *testing.T) {
@@ -151,22 +144,22 @@ func TestConnectorRejectsInvalidCarrierNeutralOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := flowersec.NewConnector(lease, flowersec.ConnectorOptions{
+	if _, err := flowersec.Connect(context.Background(), lease, flowersec.ConnectorOptions{
 		TrustRoots: x509.NewCertPool(),
 	}); err != flowersec.ErrInvalidConnectorOptions {
-		t.Fatalf("NewConnector error = %v, want ErrInvalidConnectorOptions", err)
+		t.Fatalf("Connect error = %v, want ErrInvalidConnectorOptions", err)
 	}
 	for _, origin := range []string{"", "http://client.example", "https://user@client.example", "https://client.example/path"} {
-		if _, err := flowersec.NewConnector(lease, flowersec.ConnectorOptions{
+		if _, err := flowersec.Connect(context.Background(), lease, flowersec.ConnectorOptions{
 			TrustRoots: fixtureTrustRoots(t), Origin: origin,
 		}); err != flowersec.ErrInvalidConnectorOptions {
-			t.Fatalf("NewConnector origin %q error = %v, want ErrInvalidConnectorOptions", origin, err)
+			t.Fatalf("Connect origin %q error = %v, want ErrInvalidConnectorOptions", origin, err)
 		}
 	}
-	if _, err := flowersec.NewConnector(lease, flowersec.ConnectorOptions{
+	if _, err := flowersec.Connect(context.Background(), lease, flowersec.ConnectorOptions{
 		TrustRoots: fixtureTrustRoots(t), Origin: "https://client.example", Handlers: &flowersec.SessionHandlers{},
 	}); err != flowersec.ErrInvalidConnectorOptions {
-		t.Fatalf("NewConnector zero handlers error = %v, want ErrInvalidConnectorOptions", err)
+		t.Fatalf("Connect zero handlers error = %v, want ErrInvalidConnectorOptions", err)
 	}
 }
 

@@ -777,6 +777,40 @@ pub trait RpcPeerV2: fmt::Debug + Send + Sync + 'static {
     async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), SessionError>;
 }
 
+/// Type-safe JSON convenience methods layered over the object-safe RPC core.
+#[async_trait]
+pub trait RpcPeerExt {
+    async fn call_typed<Request, Response>(
+        &self,
+        type_id: u32,
+        request: &Request,
+    ) -> Result<Response, RpcCallError>
+    where
+        Request: serde::Serialize + Sync,
+        Response: serde::de::DeserializeOwned + Send;
+}
+
+#[async_trait]
+impl<T> RpcPeerExt for T
+where
+    T: RpcPeerV2 + ?Sized,
+{
+    async fn call_typed<Request, Response>(
+        &self,
+        type_id: u32,
+        request: &Request,
+    ) -> Result<Response, RpcCallError>
+    where
+        Request: serde::Serialize + Sync,
+        Response: serde::de::DeserializeOwned + Send,
+    {
+        let request = serde_json::to_value(request)
+            .map_err(|_| RpcCallError::Session(SessionError::InvalidInput))?;
+        let response = self.call(type_id, request).await?;
+        serde_json::from_value(response).map_err(|_| RpcCallError::Session(SessionError::Failed))
+    }
+}
+
 /// Public Flowersec v2 session contract shared by WSS and raw QUIC.
 #[async_trait]
 pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
@@ -810,6 +844,81 @@ pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Debug)]
+    struct TypedRpcPeer {
+        calls: Mutex<Vec<(u32, serde_json::Value)>>,
+        result: Result<serde_json::Value, RpcCallError>,
+    }
+
+    #[async_trait]
+    impl RpcPeerV2 for TypedRpcPeer {
+        async fn call(
+            &self,
+            type_id: u32,
+            request: serde_json::Value,
+        ) -> Result<serde_json::Value, RpcCallError> {
+            self.calls.lock().unwrap().push((type_id, request));
+            self.result.clone()
+        }
+
+        async fn notify(
+            &self,
+            _type_id: u32,
+            _request: serde_json::Value,
+        ) -> Result<(), SessionError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Serialize)]
+    struct TypedRequest {
+        value: String,
+    }
+
+    #[derive(Debug, Deserialize, Eq, PartialEq)]
+    struct TypedResponse {
+        accepted: bool,
+    }
+
+    #[tokio::test]
+    async fn typed_rpc_encodes_decodes_and_preserves_application_errors() {
+        let peer = TypedRpcPeer {
+            calls: Mutex::new(Vec::new()),
+            result: Ok(serde_json::json!({"accepted": true})),
+        };
+        let response = peer
+            .call_typed::<TypedRequest, TypedResponse>(
+                7,
+                &TypedRequest {
+                    value: "request".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(response, TypedResponse { accepted: true });
+        assert_eq!(
+            *peer.calls.lock().unwrap(),
+            vec![(7, serde_json::json!({"value": "request"}))]
+        );
+
+        let application = RpcError::from_wire(409, Some("conflict".into())).unwrap();
+        let peer = TypedRpcPeer {
+            calls: Mutex::new(Vec::new()),
+            result: Err(RpcCallError::Application(application.clone())),
+        };
+        assert_eq!(
+            peer.call_typed::<TypedRequest, TypedResponse>(
+                8,
+                &TypedRequest {
+                    value: "request".into(),
+                },
+            )
+            .await,
+            Err(RpcCallError::Application(application))
+        );
+    }
 
     #[test]
     fn rpc_application_error_is_bounded_and_safe_to_log() {

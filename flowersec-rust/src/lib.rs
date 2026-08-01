@@ -3,7 +3,7 @@
 
 //! Native Rust support for Flowersec v2 secure direct and tunneled sessions.
 //!
-//! Maintained callers use the opaque [`Artifact`], [`Connector`], and
+//! Maintained callers use the opaque [`Artifact`], one-shot [`connect`], and
 //! carrier-neutral [`Session`] contracts. Native runtimes accept direct
 //! sessions through [`Acceptor`] without receiving carrier or wire objects.
 //! Carrier configuration, candidates, wire formats, and cryptographic state
@@ -53,13 +53,13 @@ mod error_classification_contract;
 
 pub use acceptor_v2::{AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions};
 pub use artifact_v2::{Artifact, ArtifactError, ArtifactLease, ArtifactSpendError};
-pub use connector_v2::{ConnectError, ConnectErrorCode, Connector, ConnectorOptions};
+pub use connector_v2::{ConnectError, ConnectErrorCode, ConnectorOptions, connect};
 pub use error_classification::{
     ErrorRetryAction, ErrorRetryClassification, classify_connect_error, classify_session_error,
 };
 pub use transport_v2::{
     ByteStreamV2 as ByteStream, IncomingStreamV2 as IncomingStream, JsonObjectV2 as JsonObject,
-    RpcCallError, RpcError, RpcPeerV2 as RpcPeer, SessionError, SessionV2 as Session,
+    RpcCallError, RpcError, RpcPeerExt, RpcPeerV2 as RpcPeer, SessionError, SessionV2 as Session,
     StreamTerminalError, UnreliableMessageChannelV2 as UnreliableMessageChannel,
     UnreliableMessageError, UnreliableSendOutcome,
 };

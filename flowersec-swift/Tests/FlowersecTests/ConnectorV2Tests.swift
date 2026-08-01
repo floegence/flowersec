@@ -19,7 +19,7 @@ final class ConnectorV2Tests: XCTestCase {
     let tls = try ConnectorTestTLS.load()
     let accepted = ConnectorAcceptedTransport()
     let source = try loadArtifactJSON(index: 1)
-    let original = try parseArtifactV2(Data(source.utf8)).value
+    let original = try parseArtifact(Data(source.utf8)).value
     let server = try await ConnectorWSSServer.start(
       tls: tls, selectedProtocol: "flowersec.tunnel.v2", accepted: accepted)
     let candidateURL = original.path.candidates.first(where: { $0.carrier == "websocket" })!.url
@@ -31,21 +31,17 @@ final class ConnectorV2Tests: XCTestCase {
       .replacingOccurrences(of: "endpoint-client", with: "endpoint-swap")
       .replacingOccurrences(of: "endpoint-server", with: "endpoint-client")
       .replacingOccurrences(of: "endpoint-swap", with: "endpoint-server")
-    let clientArtifact = try parseArtifactV2(Data(clientRaw.utf8))
-    let serverArtifact = try parseArtifactV2(Data(serverRaw.utf8))
+    let clientArtifact = try parseArtifact(Data(clientRaw.utf8))
+    let serverArtifact = try parseArtifact(Data(serverRaw.utf8))
     let clientSpend = ConnectorSpendCounter()
     let serverSpend = ConnectorSpendCounter()
-    let options = ConnectorOptionsV2(
+    let options = ConnectorOptions(
       connectTimeout: .seconds(5), trustRootsPEM: [tls.certificatePEM])
-    let clientConnector = try ConnectorV2(
-      lease: ArtifactLeaseV2(artifact: clientArtifact) { await clientSpend.commit() },
-      options: options)
-    let serverConnector = try ConnectorV2(
-      lease: ArtifactLeaseV2(artifact: serverArtifact) { await serverSpend.commit() },
-      options: options)
+    let clientLease = ArtifactLease(artifact: clientArtifact) { await clientSpend.commit() }
+    let serverLease = ArtifactLease(artifact: serverArtifact) { await serverSpend.commit() }
     async let bridgeResult: Void = Self.bridgeTunnelLegs(accepted: accepted)
-    async let clientResult = clientConnector.connect()
-    async let serverResult = serverConnector.connect()
+    async let clientResult = connect(lease: clientLease, options: options)
+    async let serverResult = connect(lease: serverLease, options: options)
     let (client, serverPeer) = try await (clientResult, serverResult)
 
     let outbound = try await client.openStream(kind: "tunnel-e2e")
@@ -109,7 +105,7 @@ final class ConnectorV2Tests: XCTestCase {
     let tls = try ConnectorTestTLS.load()
     let accepted = ConnectorAcceptedTransport()
     let raw = try loadArtifactJSON(index: vectorIndex)
-    let original = try parseArtifactV2(Data(raw.utf8)).value
+    let original = try parseArtifact(Data(raw.utf8)).value
     let expectedProtocol =
       original.path.kind == "direct" ? "flowersec.direct.v2" : "flowersec.tunnel.v2"
     let server = try await ConnectorWSSServer.start(
@@ -118,15 +114,13 @@ final class ConnectorV2Tests: XCTestCase {
       of: original.path.candidates.first(where: { $0.carrier == "websocket" })!.url,
       with: "wss://localhost:\(server.port)/flowersec/v2/\(original.path.kind)"
     )
-    let artifact = try parseArtifactV2(Data(rewritten.utf8))
+    let artifact = try parseArtifact(Data(rewritten.utf8))
     let spend = ConnectorSpendCounter()
-    let lease = ArtifactLeaseV2(artifact: artifact) { await spend.commit() }
-    let connector = try ConnectorV2(
-      lease: lease,
-      options: ConnectorOptionsV2(connectTimeout: .seconds(5), trustRootsPEM: [tls.certificatePEM])
-    )
+    let lease = ArtifactLease(artifact: artifact) { await spend.commit() }
+    let options = ConnectorOptions(
+      connectTimeout: .seconds(5), trustRootsPEM: [tls.certificatePEM])
     async let serverSession = Self.establishServerSession(artifact: artifact, accepted: accepted)
-    async let clientSession = connector.connect()
+    async let clientSession = connect(lease: lease, options: options)
     let (client, serverPeer) = try await (clientSession, serverSession)
 
     let outbound = try await client.openStream(kind: "wss-e2e")
@@ -152,7 +146,7 @@ final class ConnectorV2Tests: XCTestCase {
   }
 
   private static func establishServerSession(
-    artifact: ArtifactV2, accepted: ConnectorAcceptedTransport
+    artifact: Artifact, accepted: ConnectorAcceptedTransport
   ) async throws -> TransportV2Session {
     let transport = try await accepted.accept()
     let fsb2 = try await transport.readBinary()
@@ -209,25 +203,27 @@ final class ConnectorV2Tests: XCTestCase {
     await server.close(code: 0, reason: "done")
   }
 
-  func testConnectorRejectsInvalidPublicOptions() throws {
+  func testConnectRejectsInvalidPublicOptions() async throws {
     let artifact = try loadArtifact()
-    let lease = ArtifactLeaseV2(artifact: artifact) {}
-    XCTAssertThrowsError(
-      try ConnectorV2(
+    let lease = ArtifactLease(artifact: artifact) {}
+    do {
+      _ = try await connect(
         lease: lease,
-        options: ConnectorOptionsV2(origin: "http://example.com")
-      )
-    ) { XCTAssertEqual($0 as? ConnectErrorV2, .invalidOptions) }
+        options: ConnectorOptions(origin: "http://example.com"))
+      XCTFail("invalid public options unexpectedly established a session")
+    } catch {
+      XCTAssertEqual(error as? ConnectError, .invalidOptions)
+    }
   }
 
   func testConnectorCommitsSpendBeforeFSB2AndClosesAfterAdmissionReject() async throws {
     let artifact = try loadArtifact()
     let events = ConnectorEventRecorder()
-    let lease = ArtifactLeaseV2(artifact: artifact) { await events.append("spend") }
+    let lease = ArtifactLease(artifact: artifact) { await events.append("spend") }
     let transport = ConnectorAdmissionTransport(events: events)
-    let connector = try ConnectorV2(
+    let connector = try ConnectionAttempt(
       lease: lease,
-      options: ConnectorOptionsV2(),
+      options: ConnectorOptions(),
       dial: { _, _, _ in
         await events.append("dial")
         return transport
@@ -238,14 +234,14 @@ final class ConnectorV2Tests: XCTestCase {
       _ = try await connector.connect()
       XCTFail("admission rejection unexpectedly established a session")
     } catch {
-      XCTAssertEqual(error as? ConnectErrorV2, .connectionFailed)
+      XCTAssertEqual(error as? ConnectError, .connectionFailed)
     }
     let recordedEvents = await events.values()
     XCTAssertEqual(recordedEvents, ["dial", "spend", "write", "read", "close"])
   }
 
-  private func loadArtifact() throws -> ArtifactV2 {
-    try parseArtifactV2(Data(loadArtifactJSON(index: 0).utf8))
+  private func loadArtifact() throws -> Artifact {
+    try parseArtifact(Data(loadArtifactJSON(index: 0).utf8))
   }
 
   private func loadArtifactJSON(index: Int) throws -> String {

@@ -40,7 +40,7 @@ struct TransportV2ContractTests {
   }
 
   @Test func metadataAcceptsBoundedPortableJSON() throws {
-    let metadata = try StreamMetadataV2([
+    let metadata = try StreamMetadata([
       "request": .string("hello"),
       "nested": .object([
         "items": .array([.integer(1), .bool(true), .null])
@@ -48,28 +48,28 @@ struct TransportV2ContractTests {
     ])
 
     #expect(metadata.values["request"] == .string("hello"))
-    #expect(metadata.encodedByteCount <= StreamMetadataV2.maxEncodedBytes)
+    #expect(metadata.encodedByteCount <= StreamMetadata.maxEncodedBytes)
   }
 
   @Test func metadataRejectsUnsafeIntegersAndOversizedStrings() {
-    #expect(throws: StreamMetadataErrorV2.unsafeInteger) {
-      try StreamMetadataV2(["value": .integer(9_007_199_254_740_992)])
+    #expect(throws: StreamMetadataError.unsafeInteger) {
+      try StreamMetadata(["value": .integer(9_007_199_254_740_992)])
     }
-    #expect(throws: StreamMetadataErrorV2.stringTooLong) {
-      try StreamMetadataV2(["value": .string(String(repeating: "a", count: 513))])
+    #expect(throws: StreamMetadataError.stringTooLong) {
+      try StreamMetadata(["value": .string(String(repeating: "a", count: 513))])
     }
   }
 
   @Test func metadataRejectsDepthNodeAndArrayLimitViolations() {
-    let tooDeep: JSONValueV2 = .array([.array([.array([.array([.array([.null])])])])])
-    #expect(throws: StreamMetadataErrorV2.depthExceeded) {
-      try StreamMetadataV2(["value": tooDeep])
+    let tooDeep: JSONValue = .array([.array([.array([.array([.array([.null])])])])])
+    #expect(throws: StreamMetadataError.depthExceeded) {
+      try StreamMetadata(["value": tooDeep])
     }
-    #expect(throws: StreamMetadataErrorV2.arrayTooLong) {
-      try StreamMetadataV2(["value": .array(Array(repeating: .null, count: 33))])
+    #expect(throws: StreamMetadataError.arrayTooLong) {
+      try StreamMetadata(["value": .array(Array(repeating: .null, count: 33))])
     }
-    #expect(throws: StreamMetadataErrorV2.nodeLimitExceeded) {
-      try StreamMetadataV2([
+    #expect(throws: StreamMetadataError.nodeLimitExceeded) {
+      try StreamMetadata([
         "a": .array(Array(repeating: .null, count: 32)),
         "b": .array(Array(repeating: .null, count: 32)),
       ])
@@ -96,7 +96,7 @@ struct TransportV2ContractTests {
   }
 }
 
-private actor ContractRPCPeerV2: RPCPeerV2 {
+private actor ContractRPCPeerV2: RPCPeer {
   func call<Request: Encodable & Sendable, Response: Decodable & Sendable>(
     _ typeID: UInt32,
     _ request: Request,
@@ -116,7 +116,7 @@ private actor ContractRPCPeerV2: RPCPeerV2 {
   }
 }
 
-private actor ContractByteStreamV2: ByteStreamV2 {
+private actor ContractByteStreamV2: ByteStream {
   nonisolated let id: UInt64
   nonisolated let kind: String
 
@@ -134,33 +134,33 @@ private actor ContractByteStreamV2: ByteStreamV2 {
   func closeWrite() async throws {}
   func reset() async {}
   func close() async {}
-  func terminalError() async -> SessionErrorV2? { nil }
+  func terminalError() async -> SessionError? { nil }
 }
 
-private final class ContractSessionV2: SessionV2, @unchecked Sendable {
+private final class ContractSessionV2: Session, @unchecked Sendable {
   let path: PathKind = .direct
   let chosenCarrier: CarrierKind = .webSocket
   let endpointInstanceID: String? = nil
-  let rpc: any RPCPeerV2
-  private let stream: any ByteStreamV2
+  let rpc: any RPCPeer
+  private let stream: any ByteStream
 
-  init(rpc: any RPCPeerV2, stream: any ByteStreamV2) {
+  init(rpc: any RPCPeer, stream: any ByteStream) {
     self.rpc = rpc
     self.stream = stream
   }
 
-  func openStream(kind: String, metadata: StreamMetadataV2) async throws -> any ByteStreamV2 {
+  func openStream(kind: String, metadata: StreamMetadata) async throws -> any ByteStream {
     _ = kind
     _ = metadata
     return stream
   }
 
-  func acceptStream() async throws -> IncomingStreamV2 {
-    IncomingStreamV2(kind: stream.kind, metadata: .empty, stream: stream)
+  func acceptStream() async throws -> IncomingStream {
+    IncomingStream(kind: stream.kind, metadata: .empty, stream: stream)
   }
 
   func rekey() async throws {}
   func probeLiveness() async throws -> Duration { .milliseconds(1) }
-  func waitClosed() async -> SessionErrorV2 { .closed }
+  func waitClosed() async -> SessionError { .closed }
   func close() async {}
 }

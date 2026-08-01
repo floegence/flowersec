@@ -113,7 +113,7 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 	const goRoot = "github.com/floegence/flowersec/flowersec-go/v2"
 	for _, expression := range []string{
 		"flowersec.Artifact", "flowersec.ArtifactLease", "flowersec.ParseArtifact",
-		"flowersec.NewArtifactLease", "flowersec.Connector", "flowersec.NewConnector",
+		"flowersec.NewArtifactLease", "flowersec.ConnectorOptions", "flowersec.Connect",
 		"flowersec.Session", "flowersec.ByteStream", "flowersec.RPCPeer", "flowersec.ConnectError",
 		"flowersec.UnreliableMessageChannel", "flowersec.UnreliableSendOptions",
 	} {
@@ -143,34 +143,37 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 	if raw.Docs.TransportV2API == "" || !slices.Contains(raw.Docs.TransportV2Tokens, "`CarrierSession`") {
 		t.Fatalf("manifest docs must register the Transport v2 API document and CarrierSession token")
 	}
-	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "SessionV2")
-	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "UnreliableMessageChannelV2")
-	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/browser", "BrowserSessionConnectorV2Options")
-	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/node", "ByteStreamV2")
+	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "Session")
+	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core", "UnreliableMessageChannel")
+	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/browser", "BrowserSessionOptions")
+	requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/node", "ByteStream")
 	for _, specifier := range []string{"@floegence/flowersec-core/browser", "@floegence/flowersec-core/node"} {
 		for _, exportName := range []string{
-			"JsonPrimitiveV2", "JsonValueV2", "OperationOptionsV2", "RpcPeerV2",
-			"RpcResultV2", "SessionErrorCode", "SessionTerminationV2",
-			"SessionReconnectConfigV2", "SessionReconnectManagerV2", "SessionReconnectStateV2",
+			"JsonPrimitive", "JsonValue", "OperationOptions", "RpcPeer",
+			"RpcResult", "SessionErrorCode", "SessionTermination",
+			"SessionReconnectConfig", "SessionReconnectManager", "SessionReconnectState",
 		} {
 			requireTSTypeExport(t, raw.TS.Subpaths, specifier, exportName)
 		}
 	}
-	requireSwiftManifestSymbol(t, m, "swift.protocol", "SessionV2")
-	requireSwiftManifestSymbol(t, m, "swift.protocol", "ByteStreamV2")
-	requireSwiftManifestSymbol(t, m, "swift.enum", "SessionErrorV2")
+	requireSwiftManifestSymbol(t, m, "swift.protocol", "Session")
+	requireSwiftManifestSymbol(t, m, "swift.protocol", "ByteStream")
+	requireSwiftManifestSymbol(t, m, "swift.enum", "SessionError")
+	requireSwiftManifestSymbol(t, m, "swift.func", "connect(lease:options:)")
 
 	for _, entry := range []string{
 		"let _: Option<&dyn flowersec::Session> = None",
 		"let _ = std::mem::size_of::<flowersec::Artifact>()",
-		"let _ = std::mem::size_of::<flowersec::Connector>()",
+		"let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
+		"let _ = flowersec::connect",
 	} {
 		if !slices.Contains(m.Rust.CompileEntries, entry) {
 			t.Errorf("rust compile entries missing %q", entry)
 		}
 	}
 	assertDocumentContains(t, repoRoot, "docs/API_CONTRACT.md", []string{
-		"`Connector`",
+		"`flowersec.Connect(...)`",
+		"`connect(...)`",
 		"`ConnectorOptions`",
 		"`Session`",
 	})

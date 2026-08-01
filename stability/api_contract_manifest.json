@@ -85,11 +85,6 @@
           },
           {
             "kind": "type",
-            "expr": "flowersec.Connector",
-            "doc_token": "`flowersec.Connector`"
-          },
-          {
-            "kind": "type",
             "expr": "flowersec.ConnectError",
             "doc_token": "`flowersec.ConnectError`"
           },
@@ -311,8 +306,8 @@
           },
           {
             "kind": "func",
-            "expr": "flowersec.NewConnector",
-            "doc_token": "`flowersec.NewConnector(...)`"
+            "expr": "flowersec.Connect",
+            "doc_token": "`flowersec.Connect(...)`"
           },
           {
             "kind": "func",
@@ -348,21 +343,6 @@
             "kind": "method",
             "expr": "(*flowersec.SessionHandlers).MarshalJSON",
             "doc_token": "`flowersec.SessionHandlers.MarshalJSON()`"
-          },
-          {
-            "kind": "method",
-            "expr": "(*flowersec.Connector).Connect",
-            "doc_token": "`flowersec.Connector.Connect(...)`"
-          },
-          {
-            "kind": "method",
-            "expr": "(*flowersec.Connector).String",
-            "doc_token": "`flowersec.Connector.String()`"
-          },
-          {
-            "kind": "method",
-            "expr": "(*flowersec.Connector).GoString",
-            "doc_token": "`flowersec.Connector.GoString()`"
           },
           {
             "kind": "method",
@@ -621,13 +601,13 @@
         "package_json_export": ".",
         "doc_tokens": [
           "`@floegence/flowersec-core`",
-          "`ArtifactLeaseV2`",
-          "`SessionV2`",
-          "`UnreliableMessageChannelV2`",
-          "`classifyConnectErrorV2(...)`",
-          "`classifySessionErrorV2(...)`",
-          "`FlowersecErrorRetryClassificationV2`",
-          "`createUnreliableMessageV2(...)`",
+          "`ArtifactLease`",
+          "`Session`",
+          "`UnreliableMessageChannel`",
+          "`classifyConnectError(...)`",
+          "`classifySessionError(...)`",
+          "`ErrorRetryClassification`",
+          "`createUnreliableMessage(...)`",
           "`UnreliableMessageError`"
         ],
         "runtime_exports": [
@@ -636,48 +616,48 @@
           "SessionError",
           "TRANSPORT_V2_VERSION_POLICY",
           "UnreliableMessageError",
-          "classifyConnectErrorV2",
-          "classifySessionErrorV2",
-          "createArtifactAcquireContextV2",
-          "createArtifactLeaseV2",
-          "createArtifactV2Resolver",
-          "createSessionReconnectManagerV2",
-          "createUnreliableMessageV2",
+          "classifyConnectError",
+          "classifySessionError",
+          "createArtifactAcquireContext",
+          "createArtifactLease",
+          "createArtifactResolver",
+          "createSessionReconnectManager",
+          "createUnreliableMessage",
           "parseArtifact"
         ],
         "type_exports": [
           "Artifact",
-          "ArtifactAcquireContextV2",
-          "ArtifactAcquireContextOptionsV2",
-          "ArtifactLeaseV2",
-          "ArtifactSourceV2",
-          "ArtifactVersionPolicyV2",
-          "ByteStreamV2",
+          "ArtifactAcquireContext",
+          "ArtifactAcquireContextOptions",
+          "ArtifactLease",
+          "ArtifactSource",
+          "ArtifactVersionPolicy",
+          "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
-          "FlowersecErrorRetryClassificationV2",
-          "FlowersecRetryActionV2",
-          "IncomingStreamV2",
-          "JsonObjectV2",
-          "JsonPrimitiveV2",
-          "JsonValueV2",
-          "OperationOptionsV2",
-          "RpcPeerV2",
-          "RpcResultV2",
-          "SessionAutoReconnectConfigV2",
+          "ErrorRetryClassification",
+          "RetryAction",
+          "IncomingStream",
+          "JsonObject",
+          "JsonPrimitive",
+          "JsonValue",
+          "OperationOptions",
+          "RpcPeer",
+          "RpcResult",
+          "SessionAutoReconnectConfig",
           "SessionError",
           "SessionErrorCode",
-          "SessionReconnectConfigV2",
-          "SessionReconnectManagerV2",
-          "SessionReconnectStateV2",
-          "SessionReconnectStatusV2",
-          "SessionTerminationV2",
-          "SessionV2",
-          "StreamOpenOptionsV2",
-          "UnreliableMessageChannelV2",
-          "UnreliableMessageSendOptionsV2",
-          "UnreliableMessageSendResultV2",
-          "UnreliableMessageV2"
+          "SessionReconnectConfig",
+          "SessionReconnectManager",
+          "SessionReconnectState",
+          "SessionReconnectStatus",
+          "SessionTermination",
+          "Session",
+          "StreamOpenOptions",
+          "UnreliableMessageChannel",
+          "UnreliableMessageSendOptions",
+          "UnreliableMessageSendResult",
+          "UnreliableMessage"
         ]
       },
       {
@@ -685,7 +665,7 @@
         "package_json_export": "./node",
         "doc_tokens": [
           "`@floegence/flowersec-core/node`",
-          "`connectNodeSessionV2(...)`"
+          "`connectNodeSession(...)`"
         ],
         "runtime_exports": [
           "Artifact",
@@ -693,51 +673,51 @@
           "SessionError",
           "TRANSPORT_V2_VERSION_POLICY",
           "UnreliableMessageError",
-          "classifyConnectErrorV2",
-          "classifySessionErrorV2",
-          "connectNodeSessionV2",
-          "createArtifactAcquireContextV2",
-          "createArtifactLeaseV2",
-          "createArtifactV2Resolver",
-          "createSessionReconnectManagerV2",
-          "createUnreliableMessageV2",
+          "classifyConnectError",
+          "classifySessionError",
+          "connectNodeSession",
+          "createArtifactAcquireContext",
+          "createArtifactLease",
+          "createArtifactResolver",
+          "createSessionReconnectManager",
+          "createUnreliableMessage",
           "parseArtifact"
         ],
         "type_exports": [
           "Artifact",
-          "ArtifactAcquireContextV2",
-          "ArtifactAcquireContextOptionsV2",
-          "ArtifactLeaseV2",
-          "ArtifactSourceV2",
-          "ArtifactVersionPolicyV2",
-          "ByteStreamV2",
+          "ArtifactAcquireContext",
+          "ArtifactAcquireContextOptions",
+          "ArtifactLease",
+          "ArtifactSource",
+          "ArtifactVersionPolicy",
+          "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
-          "FlowersecErrorRetryClassificationV2",
-          "FlowersecRetryActionV2",
-          "IncomingStreamV2",
-          "JsonObjectV2",
-          "JsonPrimitiveV2",
-          "JsonValueV2",
-          "NodeSessionConnectorV2Options",
-          "NodeSessionTLSOptionsV2",
-          "OperationOptionsV2",
-          "RpcPeerV2",
-          "RpcResultV2",
-          "SessionAutoReconnectConfigV2",
+          "ErrorRetryClassification",
+          "RetryAction",
+          "IncomingStream",
+          "JsonObject",
+          "JsonPrimitive",
+          "JsonValue",
+          "NodeSessionOptions",
+          "NodeSessionTLSOptions",
+          "OperationOptions",
+          "RpcPeer",
+          "RpcResult",
+          "SessionAutoReconnectConfig",
           "SessionError",
           "SessionErrorCode",
-          "SessionReconnectConfigV2",
-          "SessionReconnectManagerV2",
-          "SessionReconnectStateV2",
-          "SessionReconnectStatusV2",
-          "SessionTerminationV2",
-          "SessionV2",
-          "StreamOpenOptionsV2",
-          "UnreliableMessageChannelV2",
-          "UnreliableMessageSendOptionsV2",
-          "UnreliableMessageSendResultV2",
-          "UnreliableMessageV2"
+          "SessionReconnectConfig",
+          "SessionReconnectManager",
+          "SessionReconnectState",
+          "SessionReconnectStatus",
+          "SessionTermination",
+          "Session",
+          "StreamOpenOptions",
+          "UnreliableMessageChannel",
+          "UnreliableMessageSendOptions",
+          "UnreliableMessageSendResult",
+          "UnreliableMessage"
         ]
       },
       {
@@ -745,7 +725,7 @@
         "package_json_export": "./browser",
         "doc_tokens": [
           "`@floegence/flowersec-core/browser`",
-          "`connectBrowserSessionV2(...)`"
+          "`connectBrowserSession(...)`"
         ],
         "runtime_exports": [
           "Artifact",
@@ -753,50 +733,50 @@
           "SessionError",
           "TRANSPORT_V2_VERSION_POLICY",
           "UnreliableMessageError",
-          "classifyConnectErrorV2",
-          "classifySessionErrorV2",
-          "connectBrowserSessionV2",
-          "createArtifactAcquireContextV2",
-          "createArtifactLeaseV2",
-          "createArtifactV2Resolver",
-          "createSessionReconnectManagerV2",
-          "createUnreliableMessageV2",
+          "classifyConnectError",
+          "classifySessionError",
+          "connectBrowserSession",
+          "createArtifactAcquireContext",
+          "createArtifactLease",
+          "createArtifactResolver",
+          "createSessionReconnectManager",
+          "createUnreliableMessage",
           "parseArtifact"
         ],
         "type_exports": [
           "Artifact",
-          "ArtifactAcquireContextV2",
-          "ArtifactAcquireContextOptionsV2",
-          "ArtifactLeaseV2",
-          "ArtifactSourceV2",
-          "ArtifactVersionPolicyV2",
-          "BrowserSessionConnectorV2Options",
-          "ByteStreamV2",
+          "ArtifactAcquireContext",
+          "ArtifactAcquireContextOptions",
+          "ArtifactLease",
+          "ArtifactSource",
+          "ArtifactVersionPolicy",
+          "BrowserSessionOptions",
+          "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
-          "FlowersecErrorRetryClassificationV2",
-          "FlowersecRetryActionV2",
-          "IncomingStreamV2",
-          "JsonObjectV2",
-          "JsonPrimitiveV2",
-          "JsonValueV2",
-          "OperationOptionsV2",
-          "RpcPeerV2",
-          "RpcResultV2",
-          "SessionAutoReconnectConfigV2",
+          "ErrorRetryClassification",
+          "RetryAction",
+          "IncomingStream",
+          "JsonObject",
+          "JsonPrimitive",
+          "JsonValue",
+          "OperationOptions",
+          "RpcPeer",
+          "RpcResult",
+          "SessionAutoReconnectConfig",
           "SessionError",
           "SessionErrorCode",
-          "SessionReconnectConfigV2",
-          "SessionReconnectManagerV2",
-          "SessionReconnectStateV2",
-          "SessionReconnectStatusV2",
-          "SessionTerminationV2",
-          "SessionV2",
-          "StreamOpenOptionsV2",
-          "UnreliableMessageChannelV2",
-          "UnreliableMessageSendOptionsV2",
-          "UnreliableMessageSendResultV2",
-          "UnreliableMessageV2"
+          "SessionReconnectConfig",
+          "SessionReconnectManager",
+          "SessionReconnectState",
+          "SessionReconnectStatus",
+          "SessionTermination",
+          "Session",
+          "StreamOpenOptions",
+          "UnreliableMessageChannel",
+          "UnreliableMessageSendOptions",
+          "UnreliableMessageSendResult",
+          "UnreliableMessage"
         ]
       },
       {
@@ -804,15 +784,15 @@
         "package_json_export": "./proxy",
         "doc_tokens": [
           "`@floegence/flowersec-core/proxy`",
-          "`connectProxyBrowserV2(...)`",
+          "`connectProxyBrowser(...)`",
           "`createProxyRuntime(...)`",
           "`PROXY_RUNTIME_SCOPE_V2`"
         ],
         "runtime_exports": [
           "PROXY_RUNTIME_SCOPE_V2",
           "assertProxyRuntimeScopeV2",
-          "connectProxyBrowserV2",
-          "connectProxyControllerBrowserV2",
+          "connectProxyBrowser",
+          "connectProxyControllerBrowser",
           "createProxyRuntime",
           "createProxyServiceWorkerScript",
           "createServiceWorkerControllerGuard",
@@ -828,21 +808,21 @@
           "EnsureServiceWorkerRuntimeRegisteredOptions",
           "ProxyAppServiceWorkerControlOptions",
           "ProxyAppWindowHandle",
-          "ProxyBrowserConnectV2Options",
-          "ProxyBrowserHandleV2",
-          "ProxyControllerBrowserConnectV2Options",
-          "ProxyControllerBrowserHandleV2",
+          "ProxyBrowserConnectOptions",
+          "ProxyBrowserHandle",
+          "ProxyControllerBrowserConnectOptions",
+          "ProxyControllerBrowserHandle",
           "ProxyControllerWindowHandle",
-          "ProxyFetchRequestV2",
+          "ProxyFetchRequest",
           "ProxyHeader",
           "ProxyRuntime",
-          "ProxyRuntimeControllerBridgeScopeV2",
+          "ProxyRuntimeControllerBridgeScope",
           "ProxyRuntimeLimits",
           "ProxyRuntimeOptions",
           "ProxyRuntimePathPolicy",
-          "ProxyRuntimeScopeLimitsV2",
-          "ProxyRuntimeScopeV2",
-          "ProxyRuntimeServiceWorkerScopeV2",
+          "ProxyRuntimeScopeLimits",
+          "ProxyRuntimeScope",
+          "ProxyRuntimeServiceWorkerScope",
           "ProxyServiceWorkerInjectHTMLOptions",
           "ProxyServiceWorkerPassthroughOptions",
           "ProxyServiceWorkerScriptOptions",
@@ -868,593 +848,582 @@
     "doc_tokens": [
       "`Flowersec`",
       "`import Flowersec`",
-      "`ArtifactV2`",
-      "`ArtifactLeaseV2`",
-      "`ConnectorV2`",
-      "`ConnectorV2.connect()`",
-      "`ConnectorOptionsV2`",
-      "`SessionV2`",
-      "`ConnectErrorV2`",
-      "`SessionErrorV2`",
-      "`FlowersecRetryActionV2`",
-      "`FlowersecErrorRetryClassificationV2`",
-      "`classifyConnectErrorV2(_:)`",
-      "`classifySessionErrorV2(_:)`"
+      "`Artifact`",
+      "`ArtifactLease`",
+      "`ConnectorOptions`",
+      "`connect(lease:options:)`",
+      "`Session`",
+      "`ConnectError`",
+      "`SessionError`",
+      "`RetryAction`",
+      "`ErrorRetryClassification`",
+      "`classifyConnectError(_:)`",
+      "`classifySessionError(_:)`"
     ],
     "symbols": [
       {
         "kind": "swift.class",
-        "name": "ArtifactV2",
+        "name": "Artifact",
         "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "ArtifactCodecErrorV2",
+        "name": "ArtifactCodecError",
         "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "ArtifactLeaseErrorV2",
+        "name": "ArtifactLeaseError",
         "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "ConnectErrorV2",
+        "name": "ConnectError",
         "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "FlowersecRetryActionV2",
+        "name": "RetryAction",
         "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "JSONValueV2",
+        "name": "JSONValue",
         "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "SessionErrorV2",
+        "name": "SessionError",
         "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "StreamMetadataErrorV2",
+        "name": "StreamMetadataError",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ArtifactCodecErrorV2.artifactTooLarge",
+        "name": "ArtifactCodecError.artifactTooLarge",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ArtifactCodecErrorV2.invalidArtifact",
+        "name": "ArtifactCodecError.invalidArtifact",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ArtifactCodecErrorV2.invalidCandidate",
+        "name": "ArtifactCodecError.invalidCandidate",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ArtifactLeaseErrorV2.alreadyCommitted",
+        "name": "ArtifactLeaseError.alreadyCommitted",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.canceled",
+        "name": "ConnectError.canceled",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.connectionFailed",
+        "name": "ConnectError.connectionFailed",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.expiredArtifact",
+        "name": "ConnectError.expiredArtifact",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.invalidOptions",
+        "name": "ConnectError.invalidOptions",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.timeout",
+        "name": "ConnectError.timeout",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecRetryActionV2.refreshArtifact",
+        "name": "RetryAction.refreshArtifact",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecRetryActionV2.retry",
+        "name": "RetryAction.retry",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "FlowersecRetryActionV2.stop",
+        "name": "RetryAction.stop",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "JSONValueV2.array(_:)",
+        "name": "JSONValue.array(_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "JSONValueV2.bool(_:)",
+        "name": "JSONValue.bool(_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "JSONValueV2.integer(_:)",
+        "name": "JSONValue.integer(_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "JSONValueV2.null",
+        "name": "JSONValue.null",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "JSONValueV2.object(_:)",
+        "name": "JSONValue.object(_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "JSONValueV2.string(_:)",
+        "name": "JSONValue.string(_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "SessionErrorV2.canceled",
+        "name": "SessionError.canceled",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "SessionErrorV2.closed",
+        "name": "SessionError.closed",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "SessionErrorV2.goingAway",
+        "name": "SessionError.goingAway",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "SessionErrorV2.livenessFailed",
+        "name": "SessionError.livenessFailed",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "SessionErrorV2.operationFailed",
+        "name": "SessionError.operationFailed",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "SessionErrorV2.rekeyFailed",
+        "name": "SessionError.rekeyFailed",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "SessionErrorV2.resourceExhausted",
+        "name": "SessionError.resourceExhausted",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "SessionErrorV2.streamRejected",
+        "name": "SessionError.streamRejected",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "SessionErrorV2.streamReset",
+        "name": "SessionError.streamReset",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "SessionErrorV2.timeout",
+        "name": "SessionError.timeout",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataErrorV2.arrayTooLong",
+        "name": "StreamMetadataError.arrayTooLong",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataErrorV2.depthExceeded",
+        "name": "StreamMetadataError.depthExceeded",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataErrorV2.emptyKey",
+        "name": "StreamMetadataError.emptyKey",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataErrorV2.encodedTooLarge",
+        "name": "StreamMetadataError.encodedTooLarge",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataErrorV2.keyNotNormalized",
+        "name": "StreamMetadataError.keyNotNormalized",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataErrorV2.keyTooLong",
+        "name": "StreamMetadataError.keyTooLong",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataErrorV2.nodeLimitExceeded",
+        "name": "StreamMetadataError.nodeLimitExceeded",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataErrorV2.objectTooLarge",
+        "name": "StreamMetadataError.objectTooLarge",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataErrorV2.stringTooLong",
+        "name": "StreamMetadataError.stringTooLong",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "StreamMetadataErrorV2.unsafeInteger",
+        "name": "StreamMetadataError.unsafeInteger",
         "doc_token": ""
       },
       {
         "kind": "swift.func",
-        "name": "parseArtifactV2(_:)",
+        "name": "parseArtifact(_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.func",
-        "name": "classifyConnectErrorV2(_:)",
+        "name": "connect(lease:options:)",
         "doc_token": ""
       },
       {
         "kind": "swift.func",
-        "name": "classifySessionErrorV2(_:)",
+        "name": "classifyConnectError(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.func",
+        "name": "classifySessionError(_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ArtifactLeaseV2.init(artifact:commitSpend:)",
+        "name": "ArtifactLease.init(artifact:commitSpend:)",
         "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ConnectErrorV2.init(rawValue:)",
+        "name": "ConnectError.init(rawValue:)",
         "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "FlowersecRetryActionV2.init(rawValue:)",
+        "name": "RetryAction.init(rawValue:)",
         "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ConnectorOptionsV2.init(origin:connectTimeout:trustRootsPEM:)",
+        "name": "ConnectorOptions.init(origin:connectTimeout:trustRootsPEM:)",
         "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ConnectorV2.init(lease:options:)",
+        "name": "IncomingStream.init(kind:metadata:stream:)",
         "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "IncomingStreamV2.init(kind:metadata:stream:)",
+        "name": "RPCError.init(code:message:)",
         "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "RPCErrorV2.init(code:message:)",
+        "name": "SessionError.init(rawValue:)",
         "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "SessionErrorV2.init(rawValue:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.init",
-        "name": "StreamMetadataV2.init(_:)",
+        "name": "StreamMetadata.init(_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ArtifactLeaseV2.commitSpend()",
+        "name": "ArtifactLease.commitSpend()",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ByteStreamV2.close()",
+        "name": "ByteStream.close()",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ByteStreamV2.closeWrite()",
+        "name": "ByteStream.closeWrite()",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ByteStreamV2.read(maxBytes:)",
+        "name": "ByteStream.read(maxBytes:)",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ByteStreamV2.reset()",
+        "name": "ByteStream.reset()",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ByteStreamV2.terminalError()",
+        "name": "ByteStream.terminalError()",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ByteStreamV2.write(_:)",
+        "name": "ByteStream.write(_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "ConnectorV2.connect()",
+        "name": "RPCPeer.call(_:_:as:timeout:)",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "RPCPeerV2.call(_:_:as:timeout:)",
+        "name": "RPCPeer.notify(_:_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "RPCPeerV2.notify(_:_:)",
+        "name": "Session.acceptStream()",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "SessionV2.acceptStream()",
+        "name": "Session.close()",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "SessionV2.close()",
+        "name": "Session.openStream(kind:)",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "SessionV2.openStream(kind:)",
+        "name": "Session.openStream(kind:metadata:)",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "SessionV2.openStream(kind:metadata:)",
+        "name": "Session.probeLiveness()",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "SessionV2.probeLiveness()",
+        "name": "Session.rekey()",
         "doc_token": ""
       },
       {
         "kind": "swift.method",
-        "name": "SessionV2.rekey()",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.method",
-        "name": "SessionV2.waitClosed()",
+        "name": "Session.waitClosed()",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ArtifactLeaseV2.artifact",
+        "name": "ArtifactLease.artifact",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ArtifactV2.customMirror",
+        "name": "Artifact.customMirror",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ArtifactV2.debugDescription",
+        "name": "Artifact.debugDescription",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ArtifactV2.description",
+        "name": "Artifact.description",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ByteStreamV2.kind",
+        "name": "ByteStream.kind",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectorOptionsV2.connectTimeout",
+        "name": "ConnectorOptions.connectTimeout",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectorOptionsV2.origin",
+        "name": "ConnectorOptions.origin",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "ConnectorOptionsV2.trustRootsPEM",
+        "name": "ConnectorOptions.trustRootsPEM",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecErrorRetryClassificationV2.action",
+        "name": "ErrorRetryClassification.action",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecErrorRetryClassificationV2.callerCanceled",
+        "name": "ErrorRetryClassification.callerCanceled",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecErrorRetryClassificationV2.refreshArtifact",
+        "name": "ErrorRetryClassification.refreshArtifact",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecErrorRetryClassificationV2.retryable",
+        "name": "ErrorRetryClassification.retryable",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "FlowersecErrorRetryClassificationV2.sessionClosed",
+        "name": "ErrorRetryClassification.sessionClosed",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "IncomingStreamV2.kind",
+        "name": "IncomingStream.kind",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "IncomingStreamV2.metadata",
+        "name": "IncomingStream.metadata",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "IncomingStreamV2.stream",
+        "name": "IncomingStream.stream",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "RPCErrorV2.code",
+        "name": "RPCError.code",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "RPCErrorV2.message",
+        "name": "RPCError.message",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "SessionV2.rpc",
+        "name": "Session.rpc",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "StreamMetadataV2.encodedByteCount",
+        "name": "StreamMetadata.encodedByteCount",
         "doc_token": ""
       },
       {
         "kind": "swift.property",
-        "name": "StreamMetadataV2.values",
+        "name": "StreamMetadata.values",
         "doc_token": ""
       },
       {
         "kind": "swift.protocol",
-        "name": "ByteStreamV2",
+        "name": "ByteStream",
         "doc_token": ""
       },
       {
         "kind": "swift.protocol",
-        "name": "RPCPeerV2",
+        "name": "RPCPeer",
         "doc_token": ""
       },
       {
         "kind": "swift.protocol",
-        "name": "SessionV2",
+        "name": "Session",
         "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "ArtifactLeaseV2",
+        "name": "ArtifactLease",
         "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "ConnectorOptionsV2",
+        "name": "ConnectorOptions",
         "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "ConnectorV2",
+        "name": "ErrorRetryClassification",
         "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "FlowersecErrorRetryClassificationV2",
+        "name": "IncomingStream",
         "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "IncomingStreamV2",
+        "name": "RPCError",
         "doc_token": ""
       },
       {
         "kind": "swift.struct",
-        "name": "RPCErrorV2",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.struct",
-        "name": "StreamMetadataV2",
+        "name": "StreamMetadata",
         "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "StreamMetadataV2.empty",
+        "name": "StreamMetadata.empty",
         "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "StreamMetadataV2.maxArrayItems",
+        "name": "StreamMetadata.maxArrayItems",
         "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "StreamMetadataV2.maxDepth",
+        "name": "StreamMetadata.maxDepth",
         "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "StreamMetadataV2.maxEncodedBytes",
+        "name": "StreamMetadata.maxEncodedBytes",
         "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "StreamMetadataV2.maxKeyBytes",
+        "name": "StreamMetadata.maxKeyBytes",
         "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "StreamMetadataV2.maxNodes",
+        "name": "StreamMetadata.maxNodes",
         "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "StreamMetadataV2.maxObjectKeys",
+        "name": "StreamMetadata.maxObjectKeys",
         "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "StreamMetadataV2.maxStringBytes",
+        "name": "StreamMetadata.maxStringBytes",
         "doc_token": ""
       },
       {
         "kind": "swift.type.property",
-        "name": "StreamMetadataV2.maximumSafeInteger",
+        "name": "StreamMetadata.maximumSafeInteger",
         "doc_token": ""
       }
     ]
@@ -1466,8 +1435,8 @@
       "`flowersec`",
       "`Acceptor`",
       "`AcceptorOptions`",
-      "`Connector`",
       "`ConnectorOptions`",
+      "`connect(...)`",
       "`ErrorRetryAction`",
       "`ErrorRetryClassification`",
       "`ErrorRetryAction::as_str()`",
@@ -1475,6 +1444,8 @@
       "`classify_session_error(...)`",
       "`RpcCallError`",
       "`RpcError`",
+      "`RpcPeerExt`",
+      "`RpcPeerExt::call_typed(...)`",
       "`Session`",
       "`UnreliableMessageChannel`",
       "`UnreliableSendOutcome`"
@@ -1491,9 +1462,9 @@
       "let _: Option<&dyn flowersec::ByteStream> = None",
       "let _ = std::mem::size_of::<flowersec::ConnectError>()",
       "let _ = std::mem::size_of::<flowersec::ConnectErrorCode>()",
-      "let _ = std::mem::size_of::<flowersec::Connector>()",
-      "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
-      "let _ = flowersec::ConnectorOptions::default()",
+    "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
+    "let _ = flowersec::ConnectorOptions::new(vec![vec![1_u8]])",
+    "let _ = flowersec::connect",
       "let _ = std::mem::size_of::<flowersec::ErrorRetryAction>()",
       "let _ = std::mem::size_of::<flowersec::ErrorRetryClassification>()",
       "let _ = flowersec::ErrorRetryAction::Retry",
@@ -1506,7 +1477,9 @@
       "let _ = std::mem::size_of::<flowersec::JsonObject>()",
       "let _ = std::mem::size_of::<flowersec::RpcCallError>()",
       "let _ = std::mem::size_of::<flowersec::RpcError>()",
-      "let _: Option<&dyn flowersec::RpcPeer> = None",
+    "let _: Option<&dyn flowersec::RpcPeer> = None",
+    "fn require_rpc_peer_ext<T: flowersec::RpcPeerExt + ?Sized>() {}",
+    "require_rpc_peer_ext::<dyn flowersec::RpcPeer>()",
       "let _: Option<&dyn flowersec::Session> = None",
       "let _ = std::mem::size_of::<flowersec::SessionError>()",
       "let _ = std::mem::size_of::<flowersec::StreamTerminalError>()",

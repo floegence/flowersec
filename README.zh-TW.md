@@ -62,9 +62,9 @@ make transport-v2-unit
 
 | 語言 | Package | 公開入口 |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | Root、`/browser`、`/node` 與 `/proxy` 的不透明 v2 入口 |
-| Swift | SwiftPM Product `Flowersec` | `ArtifactV2`、`ConnectorV2`、`SessionV2` |
+| Swift | SwiftPM Product `Flowersec` | `Artifact`、`connect`、`Session` |
 | Rust | Crate `flowersec` | `Artifact`、`Connector`、`Session` |
 
 Go 服務控制面使用獨立的 `github.com/floegence/flowersec/flowersec-go/v2/controlplane` 套件簽發 opaque artifact，並回應 `flowersec-runtime` 的授權 callback。此入口不會恢復任何 v1 issuer、token、channel-init 或 generated DTO 產品面。

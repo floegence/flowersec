@@ -5,7 +5,7 @@ carrier candidates, credentials, keys, or wire contracts. It provides two
 workflows:
 
 - parse an application-acquired opaque artifact without exposing its contents;
-- establish a session through the carrier-neutral `Connector` and `Session`.
+- establish a session through the carrier-neutral one-shot `connect(...)` and `Session`.
 
 Transport selection and topology remain internal. Neither command prints a
 carrier, path, candidate, endpoint identity, stream identifier, credential,
@@ -35,7 +35,7 @@ cargo run --locked --manifest-path examples/rust/Cargo.toml -- \
   /durable/state/artifact.spent
 ```
 
-The public `Connector` consumes only the opaque artifact lease and its trust and
+The public `connect(...)` function consumes only the opaque artifact lease and its trust and
 deadline options. Before establishing the encrypted session, it invokes the
 `ArtifactLease` callback to synchronize the create-new receipt. A successful
 connection prints only `session=ready` and the carrier-neutral liveness result,
@@ -58,5 +58,5 @@ cargo clippy --locked --manifest-path examples/rust/Cargo.toml \
 
 The integration test verifies artifact redaction. The compiled `connect-v2`
 workflow uses trusted roots, a bounded deadline, a cancellation token, durable
-single-use spend, the opaque connector boundary, session liveness, and bounded
+single-use spend, the opaque connection boundary, session liveness, and bounded
 close.

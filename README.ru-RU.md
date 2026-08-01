@@ -62,10 +62,10 @@ make transport-v2-unit
 
 | Язык | Пакет | Публичная точка входа |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | непрозрачные точки входа v2 в корне пакета, `/browser`, `/node` и `/proxy` |
-| Swift | Продукт SwiftPM `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
-| Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
+| Swift | Продукт SwiftPM `Flowersec` | `Artifact`, `connect`, `Session` |
+| Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
 
 Сервисные control plane на Go используют отдельный пакет `github.com/floegence/flowersec/flowersec-go/v2/controlplane` для выпуска непрозрачных artifacts и обработки authorization callback от `flowersec-runtime`. Это не восстанавливает v1-поверхности issuer, token, channel-init или сгенерированных DTO.
 

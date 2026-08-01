@@ -34,22 +34,25 @@ export type {
 export { installWebSocketPatch } from "./wsPatch.js";
 export type { WebSocketPatchOptions } from "./wsPatch.js";
 export { disableUpstreamServiceWorkerRegister } from "./disableUpstreamServiceWorkerRegister.js";
-export { connectProxyBrowserV2, connectProxyControllerBrowserV2 } from "./integration.js";
-export type {
-  ProxyBrowserConnectV2Options,
-  ProxyBrowserHandleV2,
-  ProxyControllerBrowserConnectV2Options,
-  ProxyControllerBrowserHandleV2,
+export {
+  connectProxyBrowserV2 as connectProxyBrowser,
+  connectProxyControllerBrowserV2 as connectProxyControllerBrowser,
 } from "./integration.js";
 export type {
-  ProxyFetchRequestV2,
+  ProxyBrowserConnectV2Options as ProxyBrowserConnectOptions,
+  ProxyBrowserHandleV2 as ProxyBrowserHandle,
+  ProxyControllerBrowserConnectV2Options as ProxyControllerBrowserConnectOptions,
+  ProxyControllerBrowserHandleV2 as ProxyControllerBrowserHandle,
+} from "./integration.js";
+export type {
+  ProxyFetchRequestV2 as ProxyFetchRequest,
   ProxyHeader,
   ProxyRuntime,
-  ProxyRuntimeControllerBridgeScopeV2,
+  ProxyRuntimeControllerBridgeScopeV2 as ProxyRuntimeControllerBridgeScope,
   ProxyRuntimeLimits,
   ProxyRuntimeOptions,
   ProxyRuntimePathPolicy,
-  ProxyRuntimeScopeLimitsV2,
-  ProxyRuntimeScopeV2,
-  ProxyRuntimeServiceWorkerScopeV2,
+  ProxyRuntimeScopeLimitsV2 as ProxyRuntimeScopeLimits,
+  ProxyRuntimeScopeV2 as ProxyRuntimeScope,
+  ProxyRuntimeServiceWorkerScopeV2 as ProxyRuntimeServiceWorkerScope,
 } from "./types.js";

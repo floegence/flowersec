@@ -48,18 +48,10 @@ type ConnectorOptions struct {
 	Handlers       *SessionHandlers
 }
 
-// Connector establishes a Flowersec v2 session without exposing the selected
-// carrier, candidate, or carrier-specific configuration.
-type Connector struct {
+type connector struct {
 	inner   connectorBackend
 	timeout time.Duration
 }
-
-// String deliberately reveals no carrier or candidate state.
-func (*Connector) String() string { return "Flowersec.Connector" }
-
-// GoString deliberately reveals no carrier or candidate state.
-func (*Connector) GoString() string { return "flowersec.Connector" }
 
 // Session is the carrier-neutral Flowersec v2 session contract.
 type Session interface {
@@ -222,9 +214,17 @@ type connectorBackend interface {
 	Connect(context.Context) (connectv2.Result, error)
 }
 
-// NewConnector creates a production connector with equal WSS, raw QUIC, and
-// WebTransport support.
-func NewConnector(lease ArtifactLease, options ConnectorOptions) (*Connector, error) {
+// Connect establishes one carrier-neutral session from a single-use artifact
+// lease. Carrier selection and connection-attempt state remain internal.
+func Connect(ctx context.Context, lease ArtifactLease, options ConnectorOptions) (Session, error) {
+	connector, err := newConnector(lease, options)
+	if err != nil {
+		return nil, err
+	}
+	return connector.connect(ctx)
+}
+
+func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, error) {
 	if lease.artifact.value == nil || lease.commitSpend == nil || options.TrustRoots == nil ||
 		len(options.TrustRoots.Subjects()) == 0 || options.ConnectTimeout < 0 || !validOrigin(options.Origin) {
 		return nil, ErrInvalidConnectorOptions
@@ -269,7 +269,7 @@ func NewConnector(lease ArtifactLease, options ConnectorOptions) (*Connector, er
 	inner := connectv2.NewConnector(connectv2.ArtifactLease{
 		Artifact: *lease.artifact.value, CommitSpend: lease.commitSpend,
 	}, session.GoCapabilities(), connectv2.Adaptive, factory, connectorOptions...)
-	return &Connector{inner: inner, timeout: options.ConnectTimeout}, nil
+	return &connector{inner: inner, timeout: options.ConnectTimeout}, nil
 }
 
 func validOrigin(value string) bool {
@@ -278,8 +278,7 @@ func validOrigin(value string) bool {
 		(origin.Path == "" || origin.Path == "/") && origin.RawQuery == "" && origin.Fragment == ""
 }
 
-// Connect establishes and returns only the carrier-neutral session contract.
-func (connector *Connector) Connect(ctx context.Context) (Session, error) {
+func (connector *connector) connect(ctx context.Context) (Session, error) {
 	if connector == nil || connector.inner == nil {
 		return nil, ErrInvalidConnectorOptions
 	}

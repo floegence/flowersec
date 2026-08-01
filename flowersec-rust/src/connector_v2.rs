@@ -20,16 +20,38 @@ use crate::{
 /// Carrier-neutral trust and lifecycle policy.
 #[derive(Clone, Debug)]
 pub struct ConnectorOptions {
-    pub trust_roots_der: Vec<Vec<u8>>,
-    pub connect_timeout: Duration,
+    trust_roots_der: Vec<Vec<u8>>,
+    connect_timeout: Duration,
 }
 
-impl Default for ConnectorOptions {
-    fn default() -> Self {
-        Self {
-            trust_roots_der: Vec::new(),
-            connect_timeout: Duration::from_secs(10),
+impl ConnectorOptions {
+    /// Creates valid client options with explicit DER trust roots and the shared
+    /// ten-second connection timeout.
+    pub fn new(trust_roots_der: Vec<Vec<u8>>) -> Result<Self, ConnectError> {
+        if trust_roots_der.is_empty() || trust_roots_der.iter().any(Vec::is_empty) {
+            return Err(error(PathKind::Direct, ConnectErrorCode::InvalidInput));
         }
+        Ok(Self {
+            trust_roots_der,
+            connect_timeout: Duration::from_secs(10),
+        })
+    }
+
+    /// Overrides the complete connection-attempt deadline.
+    pub fn with_connect_timeout(mut self, connect_timeout: Duration) -> Result<Self, ConnectError> {
+        if connect_timeout.is_zero() {
+            return Err(error(PathKind::Direct, ConnectErrorCode::InvalidInput));
+        }
+        self.connect_timeout = connect_timeout;
+        Ok(self)
+    }
+
+    pub fn trust_roots_der(&self) -> &[Vec<u8>] {
+        &self.trust_roots_der
+    }
+
+    pub const fn connect_timeout(&self) -> Duration {
+        self.connect_timeout
     }
 }
 
@@ -61,7 +83,7 @@ impl ConnectError {
 
 /// Establishes a v2 session without exposing candidates or carrier configuration.
 #[derive(Debug)]
-pub struct Connector {
+pub(crate) struct Connector {
     options: ConnectorOptions,
     backend: Arc<dyn DialBackend>,
 }
@@ -153,7 +175,7 @@ impl ReadyCarrier for ProductionReadyCarrier {
 }
 
 impl Connector {
-    pub fn new(options: ConnectorOptions) -> Result<Self, ConnectError> {
+    pub(crate) fn new(options: ConnectorOptions) -> Result<Self, ConnectError> {
         if options.trust_roots_der.is_empty() || options.connect_timeout.is_zero() {
             return Err(error(PathKind::Direct, ConnectErrorCode::InvalidInput));
         }
@@ -163,7 +185,7 @@ impl Connector {
         })
     }
 
-    pub async fn connect(
+    pub(crate) async fn connect(
         &self,
         lease: &mut ArtifactLease,
         cancellation: CancellationToken,
@@ -241,6 +263,15 @@ impl Connector {
         )
         .await
     }
+}
+
+/// Establishes one carrier-neutral session from a single-use artifact lease.
+pub async fn connect(
+    lease: &mut ArtifactLease,
+    options: ConnectorOptions,
+    cancellation: CancellationToken,
+) -> Result<Arc<dyn SessionV2>, ConnectError> {
+    Connector::new(options)?.connect(lease, cancellation).await
 }
 
 async fn select_winner(
@@ -348,21 +379,15 @@ mod tests {
     #[test]
     fn connector_rejects_empty_trust_or_lifecycle_deadline() {
         assert_eq!(
-            Connector::new(ConnectorOptions {
-                trust_roots_der: vec![],
-                connect_timeout: Duration::from_secs(1)
-            })
-            .unwrap_err()
-            .code(),
+            ConnectorOptions::new(vec![]).unwrap_err().code(),
             ConnectErrorCode::InvalidInput
         );
         assert_eq!(
-            Connector::new(ConnectorOptions {
-                trust_roots_der: vec![vec![1]],
-                connect_timeout: Duration::ZERO
-            })
-            .unwrap_err()
-            .code(),
+            ConnectorOptions::new(vec![vec![1]])
+                .unwrap()
+                .with_connect_timeout(Duration::ZERO)
+                .unwrap_err()
+                .code(),
             ConnectErrorCode::InvalidInput
         );
     }

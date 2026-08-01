@@ -1,6 +1,6 @@
 use flowersec::{
-    Artifact, ArtifactLease, ArtifactSpendError, Connector, ConnectorOptions,
-    classify_connect_error, classify_session_error,
+    Artifact, ArtifactLease, ArtifactSpendError, ConnectorOptions, classify_connect_error,
+    classify_session_error, connect,
 };
 use std::{
     env,
@@ -58,14 +58,8 @@ async fn connect_opaque_artifact(
         let receipt_path = receipt_path.clone();
         async move { write_spend_receipt(receipt_path).await }
     });
-    let connector = Connector::new(ConnectorOptions {
-        trust_roots_der: vec![std::fs::read(trust_root_path)?],
-        ..ConnectorOptions::default()
-    })?;
-    let session = match connector
-        .connect(&mut lease, CancellationToken::new())
-        .await
-    {
+    let options = ConnectorOptions::new(vec![std::fs::read(trust_root_path)?])?;
+    let session = match connect(&mut lease, options, CancellationToken::new()).await {
         Ok(session) => session,
         Err(error) => {
             eprintln!(

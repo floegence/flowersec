@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
-  classifyConnectErrorV2,
-  classifySessionErrorV2,
+  classifyConnectError,
+  classifySessionError,
   ConnectError,
   SessionError,
 } from "../facade.js";
@@ -37,7 +37,7 @@ describe("public error retry classification", () => {
       const expected = sharedContract.decisions[testCase.decision];
       expect(expected).toBeDefined();
       for (const code of testCase.codes.typescript ?? []) {
-        expect(classifyConnectErrorV2(new ConnectError(code as ConstructorParameters<typeof ConnectError>[0]))).toEqual({
+        expect(classifyConnectError(new ConnectError(code as ConstructorParameters<typeof ConnectError>[0]))).toEqual({
           action: expected.action,
           retryable: expected.retryable,
           refreshArtifact: expected.refresh_artifact,
@@ -51,7 +51,7 @@ describe("public error retry classification", () => {
       const expected = sharedContract.decisions[testCase.decision];
       expect(expected).toBeDefined();
       for (const code of testCase.codes.typescript ?? []) {
-        expect(classifySessionErrorV2(new SessionError(code as ConstructorParameters<typeof SessionError>[0]))).toEqual({
+        expect(classifySessionError(new SessionError(code as ConstructorParameters<typeof SessionError>[0]))).toEqual({
           action: expected.action,
           retryable: expected.retryable,
           refreshArtifact: expected.refresh_artifact,
@@ -63,35 +63,35 @@ describe("public error retry classification", () => {
   });
 
   test("classifies connection failures without exposing internal diagnostics", () => {
-    expect(classifyConnectErrorV2(new ConnectError("timeout"))).toEqual({
+    expect(classifyConnectError(new ConnectError("timeout"))).toEqual({
       action: "refresh_artifact",
       retryable: true,
       refreshArtifact: true,
       callerCanceled: false,
       sessionClosed: false,
     });
-    expect(classifyConnectErrorV2(new ConnectError("expired_artifact"))).toEqual({
+    expect(classifyConnectError(new ConnectError("expired_artifact"))).toEqual({
       action: "refresh_artifact",
       retryable: true,
       refreshArtifact: true,
       callerCanceled: false,
       sessionClosed: false,
     });
-    expect(classifyConnectErrorV2(new ConnectError("canceled"))).toEqual({
+    expect(classifyConnectError(new ConnectError("canceled"))).toEqual({
       action: "stop",
       retryable: false,
       refreshArtifact: false,
       callerCanceled: true,
       sessionClosed: false,
     });
-    expect(classifyConnectErrorV2(new ConnectError("invalid_options"))).toEqual({
+    expect(classifyConnectError(new ConnectError("invalid_options"))).toEqual({
       action: "stop",
       retryable: false,
       refreshArtifact: false,
       callerCanceled: false,
       sessionClosed: false,
     });
-    expect(Object.keys(classifyConnectErrorV2(new ConnectError("connection_failed"))).sort()).toEqual([
+    expect(Object.keys(classifyConnectError(new ConnectError("connection_failed"))).sort()).toEqual([
       "action",
       "callerCanceled",
       "refreshArtifact",
@@ -101,28 +101,28 @@ describe("public error retry classification", () => {
   });
 
   test("classifies session failures for operation retry or fresh session acquisition", () => {
-    expect(classifySessionErrorV2(new SessionError("timeout"))).toEqual({
+    expect(classifySessionError(new SessionError("timeout"))).toEqual({
       action: "retry",
       retryable: true,
       refreshArtifact: false,
       callerCanceled: false,
       sessionClosed: false,
     });
-    expect(classifySessionErrorV2(new SessionError("closed"))).toEqual({
+    expect(classifySessionError(new SessionError("closed"))).toEqual({
       action: "refresh_artifact",
       retryable: true,
       refreshArtifact: true,
       callerCanceled: false,
       sessionClosed: true,
     });
-    expect(classifySessionErrorV2(new SessionError("canceled"))).toEqual({
+    expect(classifySessionError(new SessionError("canceled"))).toEqual({
       action: "stop",
       retryable: false,
       refreshArtifact: false,
       callerCanceled: true,
       sessionClosed: false,
     });
-    expect(classifySessionErrorV2(new SessionError("stream_rejected"))).toEqual({
+    expect(classifySessionError(new SessionError("stream_rejected"))).toEqual({
       action: "stop",
       retryable: false,
       refreshArtifact: false,

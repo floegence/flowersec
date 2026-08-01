@@ -62,10 +62,10 @@ Pour obtenir des preuves propres à chaque transport, exécutez `make transport-
 
 | Langage | Paquet | Point d'entrée public |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | points d'entrée v2 opaques à la racine, sous `/browser`, sous `/node` et sous `/proxy` |
-| Swift | Produit SwiftPM `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
-| Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
+| Swift | Produit SwiftPM `Flowersec` | `Artifact`, `connect`, `Session` |
+| Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
 
 Les plans de contrôle de services Go utilisent le package séparé `github.com/floegence/flowersec/flowersec-go/v2/controlplane` pour émettre des artifacts opaques et répondre aux callbacks d'autorisation de `flowersec-runtime`. Cela ne restaure aucune surface v1 d'issuer, de token, de channel-init ou de DTO générés.
 

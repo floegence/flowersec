@@ -7,10 +7,10 @@ struct ErrorClassificationContractTests {
     let document = try loadContract()
     let decisions = try #require(document["decisions"] as? [String: [String: Any]])
     try verifyCases(document["connect"], language: "swift", decisions: decisions) { code in
-      classifyConnectErrorV2(try #require(ConnectErrorV2(rawValue: code)))
+      classifyConnectError(try #require(ConnectError(rawValue: code)))
     }
     try verifyCases(document["session"], language: "swift", decisions: decisions) { code in
-      classifySessionErrorV2(try #require(SessionErrorV2(rawValue: code)))
+      classifySessionError(try #require(SessionError(rawValue: code)))
     }
   }
 
@@ -18,7 +18,7 @@ struct ErrorClassificationContractTests {
     _ rawCases: Any?,
     language: String,
     decisions: [String: [String: Any]],
-    classify: (String) throws -> FlowersecErrorRetryClassificationV2
+    classify: (String) throws -> ErrorRetryClassification
   ) throws {
     let cases = try #require(rawCases as? [[String: Any]])
     for item in cases {

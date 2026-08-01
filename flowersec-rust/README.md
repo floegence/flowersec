@@ -2,7 +2,7 @@
 
 The `flowersec` crate is the Tokio-native Rust SDK for Flowersec v2 end-to-end
 encrypted sessions. Its maintained public entrypoints use opaque artifacts, the
-carrier-neutral `Connector`, and `Session`; the legacy v1 facade has been
+carrier-neutral one-shot `connect(...)` function, and `Session`; the legacy v1 facade has been
 removed.
 
 The current source is a Flowersec 2.0 release candidate and has not yet been
@@ -18,23 +18,18 @@ by default, and contains no Flowersec-authored `unsafe`.
 cargo add flowersec
 ```
 
-The production raw QUIC connector requires explicit DER trust roots through
-`ConnectorOptions::trust_roots_der`. `ConnectorOptions::default()` supplies the
-shared ten-second connection timeout but intentionally leaves trust roots empty,
-so constructing a connector still fails closed until the application installs
-its audited trust material.
+The production raw QUIC connection profile requires explicit DER trust roots.
+`ConnectorOptions::new(...)` rejects empty roots and creates a valid option value
+with the shared ten-second connection timeout.
 
 ```rust
-let options = flowersec::ConnectorOptions {
-    trust_roots_der: vec![root_der],
-    ..flowersec::ConnectorOptions::default()
-};
-let connector = flowersec::Connector::new(options)?;
+let options = flowersec::ConnectorOptions::new(vec![root_der])?;
+let session = flowersec::connect(&mut lease, options, cancellation).await?;
 ```
 
 ## Transport v2 Support
 
-WebSocket, raw QUIC, and WebTransport are equal carrier candidates.
+WebSocket, raw QUIC, and WebTransport are equal carrier candidates. The support below is the native Rust SDK profile, not the portable API.
 
 Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow control, and migration behavior.
 
@@ -59,7 +54,7 @@ The crate root exports only these public categories:
 
 - opaque artifact lifecycle: `Artifact`, `ArtifactError`, `ArtifactLease`, and
   `ArtifactSpendError`;
-- connection lifecycle: `ConnectorOptions`, `Connector`, `ConnectError`, and
+- connection lifecycle: `ConnectorOptions`, `connect(...)`, `ConnectError`, and
   `ConnectErrorCode`;
 - recovery policy: `ErrorRetryAction`, `ErrorRetryClassification`,
   `classify_connect_error(...)`, and `classify_session_error(...)`;
@@ -70,10 +65,11 @@ The crate root exports only these public categories:
 - negotiated unreliable messages: `UnreliableMessageChannel`,
   `UnreliableMessageError`, and `UnreliableSendOutcome`;
 - closed operation failures: `SessionError` and `StreamTerminalError`;
-- bounded remote application failures: `RpcError` and `RpcCallError`.
+- bounded remote application failures: `RpcError`, `RpcCallError`, and typed
+  `RpcPeerExt::call_typed(...)` convenience over the object-safe JSON core.
 
 Parse an opaque artifact with `Artifact::parse`, bind its durable single-use
-callback with `ArtifactLease`, and establish a session through `Connector`.
+callback with `ArtifactLease`, and establish a session through `connect(...)`.
 Native server runtimes bind `Acceptor` with explicit TLS and resource policy,
 then pass an opaque `Artifact` to `accept`; successful acceptance returns the
 same carrier-neutral `Session` interface. Duplicate concurrent registration of

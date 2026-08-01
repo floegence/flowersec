@@ -247,8 +247,8 @@ var transportV2WireFixtureExpectations = map[string]transportV2WireFixtureExpect
 			"go_native":          {Source: "flowersec-go/internal/artifactv2/shared_vectors_test.go", Tokens: []string{"DecodeArtifactJSON", "MarshalRequest", "ParseResponse"}},
 			"typescript_browser": {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"decodeArtifactV2JSON", "buildFSB2RequestV2", "decodeFSA2ResponseV2"}},
 			"typescript_node":    {Source: "flowersec-ts/src/v2/artifact.test.ts", Tokens: []string{"decodeArtifactV2JSON", "buildFSB2RequestV2", "decodeFSA2ResponseV2"}},
-			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift", Tokens: []string{"parseArtifactV2", "encodeFSB2", "decodeFSA2"}},
-			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift", Tokens: []string{"parseArtifactV2", "encodeFSB2", "decodeFSA2"}},
+			"swift_ios":          {Source: "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift", Tokens: []string{"parseArtifact", "encodeFSB2", "decodeFSA2"}},
+			"swift_macos":        {Source: "flowersec-swift/Tests/FlowersecTests/ArtifactV2Tests.swift", Tokens: []string{"parseArtifact", "encodeFSB2", "decodeFSA2"}},
 		},
 		Unsupported: map[string]string{
 			"rust_native": "artifact_v2_codec_not_implemented",

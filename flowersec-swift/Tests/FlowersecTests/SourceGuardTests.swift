@@ -87,7 +87,7 @@ final class SourceGuardTests: XCTestCase {
   func testTransportV2PublicContractKeepsBinaryCarrierAndCryptoInternal() throws {
     let sourceRoot = packageRoot().appendingPathComponent("flowersec-swift/Sources/Flowersec")
     let connector = try String(
-      contentsOf: sourceRoot.appendingPathComponent("ConnectorV2.swift"),
+      contentsOf: sourceRoot.appendingPathComponent("Connector.swift"),
       encoding: .utf8)
     let crypto = try String(
       contentsOf: sourceRoot.appendingPathComponent("TransportV2Crypto.swift"),
@@ -100,8 +100,9 @@ final class SourceGuardTests: XCTestCase {
   func testOnlyOpaqueApplicationContractFilesDeclarePublicAPI() throws {
     let sourceRoot = packageRoot().appendingPathComponent("flowersec-swift/Sources/Flowersec")
     let publicContractFiles: Set<String> = [
-      "ArtifactV2.swift",
-      "ConnectorV2.swift",
+      "Artifact.swift",
+      "Connector.swift",
+      "ErrorClassification.swift",
       "TransportV2.swift",
     ]
     for file in try swiftFiles(under: sourceRoot)
@@ -124,7 +125,7 @@ final class SourceGuardTests: XCTestCase {
       encoding: .utf8
     )
     let connector = try String(
-      contentsOf: sourceRoot.appendingPathComponent("ConnectorV2.swift"),
+      contentsOf: sourceRoot.appendingPathComponent("Connector.swift"),
       encoding: .utf8
     )
 
@@ -141,28 +142,28 @@ final class SourceGuardTests: XCTestCase {
     ] {
       XCTAssertFalse(transport.contains(declaration), "public API must not restore \(declaration)")
     }
-    let options = try XCTUnwrap(structBody(named: "ConnectorOptionsV2", in: connector))
-    let connectError = try XCTUnwrap(enumBody(named: "ConnectErrorV2", in: connector))
+    let options = try XCTUnwrap(structBody(named: "ConnectorOptions", in: connector))
+    let connectError = try XCTUnwrap(enumBody(named: "ConnectError", in: connector))
     XCTAssertFalse(
       options.contains("admissionReasons"),
-      "ConnectorOptionsV2 must not expose admission reason registries"
+      "ConnectorOptions must not expose admission reason registries"
     )
     for errorCase in ["case unsupportedCarrier", "case admissionRejected"] {
       XCTAssertFalse(
         connectError.contains(errorCase),
-        "ConnectErrorV2 must not expose \(errorCase)"
+        "ConnectError must not expose \(errorCase)"
       )
     }
 
-    let byteStream = try XCTUnwrap(protocolBody(named: "ByteStreamV2", in: transport))
-    let session = try XCTUnwrap(protocolBody(named: "SessionV2", in: transport))
-    let incoming = try XCTUnwrap(structBody(named: "IncomingStreamV2", in: transport))
-    XCTAssertFalse(byteStream.contains("var id:"), "ByteStreamV2 must not expose logical IDs")
-    XCTAssertFalse(incoming.contains(" let id:"), "IncomingStreamV2 must not expose logical IDs")
-    XCTAssertFalse(session.contains("var path:"), "SessionV2 must not expose path selection")
+    let byteStream = try XCTUnwrap(protocolBody(named: "ByteStream", in: transport))
+    let session = try XCTUnwrap(protocolBody(named: "Session", in: transport))
+    let incoming = try XCTUnwrap(structBody(named: "IncomingStream", in: transport))
+    XCTAssertFalse(byteStream.contains("var id:"), "ByteStream must not expose logical IDs")
+    XCTAssertFalse(incoming.contains(" let id:"), "IncomingStream must not expose logical IDs")
+    XCTAssertFalse(session.contains("var path:"), "Session must not expose path selection")
     XCTAssertFalse(
       session.contains("var endpointInstanceID:"),
-      "SessionV2 must not expose endpoint instance IDs"
+      "Session must not expose endpoint instance IDs"
     )
     XCTAssertFalse(session.lowercased().contains("unreliable"), "Swift DATAGRAM is unavailable")
     XCTAssertFalse(session.lowercased().contains("migrat"), "Swift migration is unavailable")

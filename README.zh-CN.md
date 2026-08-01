@@ -62,9 +62,9 @@ make transport-v2-unit
 
 | 语言 | 软件包 | 公共入口 |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | 根入口、`/browser`、`/node` 和 `/proxy` 不透明 v2 入口 |
-| Swift | SwiftPM 产品 `Flowersec` | `ArtifactV2`、`ConnectorV2`、`SessionV2` |
+| Swift | SwiftPM 产品 `Flowersec` | `Artifact`、`connect`、`Session` |
 | Rust | crate `flowersec` | `Artifact`、`Connector`、`Session` |
 
 Go 服务控制面使用独立的 `github.com/floegence/flowersec/flowersec-go/v2/controlplane` 包签发 opaque artifact，并响应 `flowersec-runtime` 的授权回调。该入口不会恢复任何 v1 issuer、token、channel-init 或 generated DTO 产品面。

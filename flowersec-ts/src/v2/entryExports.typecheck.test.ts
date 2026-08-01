@@ -1,12 +1,12 @@
 import type {
-  ArtifactAcquireContextOptionsV2 as BrowserArtifactAcquireContextOptionsV2,
-  ArtifactVersionPolicyV2 as BrowserArtifactVersionPolicyV2,
-  BrowserSessionConnectorV2Options,
-  FlowersecErrorRetryClassificationV2 as BrowserFlowersecErrorRetryClassificationV2,
-  FlowersecRetryActionV2 as BrowserFlowersecRetryActionV2,
-  JsonPrimitiveV2 as BrowserJsonPrimitiveV2,
-  JsonValueV2 as BrowserJsonValueV2,
-  OperationOptionsV2 as BrowserOperationOptionsV2,
+  ArtifactAcquireContextOptions as BrowserArtifactAcquireContextOptions,
+  ArtifactVersionPolicy as BrowserArtifactVersionPolicy,
+  BrowserSessionOptions,
+  ErrorRetryClassification as BrowserErrorRetryClassification,
+  JsonPrimitive as BrowserJsonPrimitive,
+  JsonValue as BrowserJsonValue,
+  OperationOptions as BrowserOperationOptions,
+  RetryAction as BrowserRetryAction,
   SessionError as BrowserSessionError,
 } from "../browser/index.js";
 // @ts-expect-error runtime capability descriptors are package-internal.
@@ -14,19 +14,19 @@ import type { RuntimeCapabilityDescriptorV2 as BrowserRuntimeCapabilityDescripto
 // @ts-expect-error candidate selection diagnostics are package-internal.
 import type { FlowersecCandidateDiagnostic as BrowserFlowersecCandidateDiagnostic } from "../browser/index.js";
 import {
-  classifyConnectErrorV2 as classifyBrowserConnectErrorV2,
-  classifySessionErrorV2 as classifyBrowserSessionErrorV2,
+  classifyConnectError as classifyBrowserConnectError,
+  classifySessionError as classifyBrowserSessionError,
   ConnectError as BrowserConnectError,
 } from "../browser/index.js";
 import type {
-  ArtifactAcquireContextOptionsV2 as NodeArtifactAcquireContextOptionsV2,
-  ArtifactVersionPolicyV2 as NodeArtifactVersionPolicyV2,
-  FlowersecErrorRetryClassificationV2 as NodeFlowersecErrorRetryClassificationV2,
-  FlowersecRetryActionV2 as NodeFlowersecRetryActionV2,
-  JsonPrimitiveV2 as NodeJsonPrimitiveV2,
-  JsonValueV2 as NodeJsonValueV2,
-  OperationOptionsV2 as NodeOperationOptionsV2,
-  NodeSessionConnectorV2Options,
+  ArtifactAcquireContextOptions as NodeArtifactAcquireContextOptions,
+  ArtifactVersionPolicy as NodeArtifactVersionPolicy,
+  ErrorRetryClassification as NodeErrorRetryClassification,
+  JsonPrimitive as NodeJsonPrimitive,
+  JsonValue as NodeJsonValue,
+  NodeSessionOptions,
+  OperationOptions as NodeOperationOptions,
+  RetryAction as NodeRetryAction,
   SessionError as NodeSessionError,
 } from "../node/index.js";
 // @ts-expect-error runtime capability descriptors are package-internal.
@@ -34,61 +34,73 @@ import type { RuntimeCapabilityDescriptorV2 as NodeRuntimeCapabilityDescriptorV2
 // @ts-expect-error candidate selection diagnostics are package-internal.
 import type { FlowersecCandidateDiagnostic as NodeFlowersecCandidateDiagnostic } from "../node/index.js";
 import {
-  classifyConnectErrorV2 as classifyNodeConnectErrorV2,
-  classifySessionErrorV2 as classifyNodeSessionErrorV2,
+  classifyConnectError as classifyNodeConnectError,
+  classifySessionError as classifyNodeSessionError,
   ConnectError as NodeConnectError,
 } from "../node/index.js";
+// @ts-expect-error Application-level v2 names are not exported by the browser entry.
+import type { BrowserSessionConnectorV2Options } from "../browser/index.js";
+// @ts-expect-error Application-level v2 names are not exported by the Node entry.
+import type { NodeSessionConnectorV2Options } from "../node/index.js";
+// @ts-expect-error Application-level v2 functions are not exported by the browser entry.
+import { classifyConnectErrorV2 } from "../browser/index.js";
+// @ts-expect-error Application-level v2 functions are not exported by the Node entry.
+import { classifySessionErrorV2 } from "../node/index.js";
 // @ts-expect-error Internal carrier stages must not be exported by the browser entry.
 import { createBrowserWebTransportCarrierInternalStage } from "../browser/index.js";
 import { expect, test } from "vitest";
 
 type BrowserTypes = readonly [
-  BrowserArtifactAcquireContextOptionsV2,
-  BrowserArtifactVersionPolicyV2,
-  BrowserFlowersecErrorRetryClassificationV2,
-  BrowserFlowersecRetryActionV2,
-  BrowserJsonPrimitiveV2,
-  BrowserJsonValueV2,
-  BrowserOperationOptionsV2,
+  BrowserArtifactAcquireContextOptions,
+  BrowserArtifactVersionPolicy,
+  BrowserErrorRetryClassification,
+  BrowserRetryAction,
+  BrowserJsonPrimitive,
+  BrowserJsonValue,
+  BrowserOperationOptions,
   BrowserSessionError,
   BrowserRuntimeCapabilityDescriptorV2,
   BrowserFlowersecCandidateDiagnostic,
+  BrowserSessionConnectorV2Options,
 ];
 type NodeTypes = readonly [
-  NodeArtifactAcquireContextOptionsV2,
-  NodeArtifactVersionPolicyV2,
-  NodeFlowersecErrorRetryClassificationV2,
-  NodeFlowersecRetryActionV2,
-  NodeJsonPrimitiveV2,
-  NodeJsonValueV2,
-  NodeOperationOptionsV2,
+  NodeArtifactAcquireContextOptions,
+  NodeArtifactVersionPolicy,
+  NodeErrorRetryClassification,
+  NodeRetryAction,
+  NodeJsonPrimitive,
+  NodeJsonValue,
+  NodeOperationOptions,
   NodeSessionError,
   NodeRuntimeCapabilityDescriptorV2,
   NodeFlowersecCandidateDiagnostic,
+  NodeSessionConnectorV2Options,
 ];
 
 test("keeps shared Transport v2 types importable from browser and Node entries", () => {
   expect(true).toBe(true);
   expect(BrowserConnectError).toBe(NodeConnectError);
-  expect(classifyBrowserConnectErrorV2).toBe(classifyNodeConnectErrorV2);
-  expect(classifyBrowserSessionErrorV2).toBe(classifyNodeSessionErrorV2);
+  expect(classifyBrowserConnectError).toBe(classifyNodeConnectError);
+  expect(classifyBrowserSessionError).toBe(classifyNodeSessionError);
+  void classifyConnectErrorV2;
+  void classifySessionErrorV2;
   void createBrowserWebTransportCarrierInternalStage;
   void (undefined as unknown as BrowserTypes);
   void (undefined as unknown as NodeTypes);
 });
 
 function typecheckOpaqueConnectorOptions(
-  browserOptions: BrowserSessionConnectorV2Options,
-  nodeOptions: NodeSessionConnectorV2Options,
+  browserOptions: BrowserSessionOptions,
+  nodeOptions: NodeSessionOptions,
   browserError: BrowserConnectError,
 ): void {
   void browserOptions;
   void nodeOptions;
-  const leakedAdmissionReasons: BrowserSessionConnectorV2Options = {
+  const leakedAdmissionReasons: BrowserSessionOptions = {
     // @ts-expect-error admission policy is runtime-owned.
     admissionReasons: new Set(),
   };
-  const leakedNodeCarrier: NodeSessionConnectorV2Options = {
+  const leakedNodeCarrier: NodeSessionOptions = {
     origin: "https://app.example",
     // @ts-expect-error Node carrier tuning is package-internal.
     webSocket: {},

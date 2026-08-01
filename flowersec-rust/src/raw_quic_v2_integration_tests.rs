@@ -14,8 +14,9 @@ use crate::raw_quic_v2::{
     SessionContractV2,
 };
 use crate::{
-    Acceptor, AcceptorOptions, Connector, ConnectorOptions,
+    Acceptor, AcceptorOptions, ConnectorOptions,
     artifact_v2::{Artifact, ArtifactLease},
+    connect,
     protocol_v2::CipherSuiteV2,
     session_v2::{RpcHandlerV2, SessionConfigV2, establish_session_v2},
     transport_v2::{
@@ -266,13 +267,9 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
                 Ok(())
             }
         });
-        let connector = Connector::new(ConnectorOptions {
-            trust_roots_der: vec![test_cert_der()],
-            connect_timeout: Duration::from_secs(10),
-        })
-        .expect("create public connector");
-        let session = connector
-            .connect(&mut lease, CancellationToken::new())
+        let options =
+            ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
+        let session = connect(&mut lease, options, CancellationToken::new())
             .await
             .expect("connect through public facade");
         let unreliable = session
@@ -387,13 +384,9 @@ async fn public_acceptor_establishes_opaque_direct_session() {
             .expect("accept opaque direct session")
     });
     let mut lease = ArtifactLease::new(artifact, || async { Ok(()) });
-    let connector = Connector::new(ConnectorOptions {
-        trust_roots_der: vec![test_cert_der()],
-        connect_timeout: Duration::from_secs(10),
-    })
-    .expect("create public connector");
-    let client = connector
-        .connect(&mut lease, CancellationToken::new())
+    let options =
+        ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
+    let client = connect(&mut lease, options, CancellationToken::new())
         .await
         .expect("connect public client");
     let server = server.await.expect("join public acceptor");

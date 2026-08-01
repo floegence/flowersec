@@ -62,10 +62,10 @@ Para obter evidências específicas de cada carrier, execute `make transport-con
 
 | Linguagem | Pacote | Entrada pública |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | entradas opacas v2 na raiz, em `/browser`, em `/node` e em `/proxy` |
-| Swift | Produto SwiftPM `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
-| Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
+| Swift | Produto SwiftPM `Flowersec` | `Artifact`, `connect`, `Session` |
+| Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
 
 Os control planes de serviços Go usam o pacote separado `github.com/floegence/flowersec/flowersec-go/v2/controlplane` para emitir artifacts opacos e responder aos callbacks de autorização do `flowersec-runtime`. Isso não restaura nenhuma superfície v1 de issuer, token, channel-init ou DTOs gerados.
 

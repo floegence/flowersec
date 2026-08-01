@@ -237,16 +237,16 @@ enum RuntimeCapabilitiesV2 {
   }
 }
 
-public indirect enum JSONValueV2: Equatable, Sendable {
+public indirect enum JSONValue: Equatable, Sendable {
   case null
   case bool(Bool)
   case integer(Int64)
   case string(String)
-  case array([JSONValueV2])
-  case object([String: JSONValueV2])
+  case array([JSONValue])
+  case object([String: JSONValue])
 }
 
-public enum StreamMetadataErrorV2: Error, Equatable, Sendable {
+public enum StreamMetadataError: Error, Equatable, Sendable {
   case emptyKey
   case keyTooLong
   case keyNotNormalized
@@ -263,7 +263,7 @@ public enum StreamMetadataErrorV2: Error, Equatable, Sendable {
 ///
 /// Wire close codes, carrier errors, cryptographic state, and peer credentials are
 /// intentionally collapsed into this closed set before crossing the public boundary.
-public enum SessionErrorV2: String, Error, Equatable, Sendable {
+public enum SessionError: String, Error, Equatable, Sendable {
   case canceled
   case timeout
   case closed
@@ -279,8 +279,8 @@ public enum SessionErrorV2: String, Error, Equatable, Sendable {
 /// An application-level error returned by a remote RPC handler.
 ///
 /// This value carries only the remote application's semantic code and message;
-/// transport and carrier failures are returned as ``SessionErrorV2``.
-public struct RPCErrorV2: Error, Equatable, Sendable {
+/// transport and carrier failures are returned as ``SessionError``.
+public struct RPCError: Error, Equatable, Sendable {
   public let code: UInt32
   public let message: String
 
@@ -290,7 +290,7 @@ public struct RPCErrorV2: Error, Equatable, Sendable {
   }
 }
 
-public struct StreamMetadataV2: Equatable, Sendable {
+public struct StreamMetadata: Equatable, Sendable {
   public static let maxEncodedBytes = 4_096
   public static let maxDepth = 4
   public static let maxNodes = 64
@@ -300,12 +300,12 @@ public struct StreamMetadataV2: Equatable, Sendable {
   public static let maxStringBytes = 512
   public static let maximumSafeInteger: Int64 = 9_007_199_254_740_991
 
-  public static let empty = StreamMetadataV2(values: [:], encodedByteCount: 2)
+  public static let empty = StreamMetadata(values: [:], encodedByteCount: 2)
 
-  public let values: [String: JSONValueV2]
+  public let values: [String: JSONValue]
   public let encodedByteCount: Int
 
-  public init(_ values: [String: JSONValueV2]) throws {
+  public init(_ values: [String: JSONValue]) throws {
     var nodeCount = 1
     try Self.validateObject(values, depth: 0, nodeCount: &nodeCount)
     let encoded = try JSONSerialization.data(
@@ -313,54 +313,54 @@ public struct StreamMetadataV2: Equatable, Sendable {
       options: [.sortedKeys, .withoutEscapingSlashes]
     )
     guard encoded.count <= Self.maxEncodedBytes else {
-      throw StreamMetadataErrorV2.encodedTooLarge
+      throw StreamMetadataError.encodedTooLarge
     }
     self.init(values: values, encodedByteCount: encoded.count)
   }
 
-  private init(values: [String: JSONValueV2], encodedByteCount: Int) {
+  private init(values: [String: JSONValue], encodedByteCount: Int) {
     self.values = values
     self.encodedByteCount = encodedByteCount
   }
 
   private static func validateObject(
-    _ object: [String: JSONValueV2],
+    _ object: [String: JSONValue],
     depth: Int,
     nodeCount: inout Int
   ) throws {
-    guard depth <= maxDepth else { throw StreamMetadataErrorV2.depthExceeded }
-    guard object.count <= maxObjectKeys else { throw StreamMetadataErrorV2.objectTooLarge }
+    guard depth <= maxDepth else { throw StreamMetadataError.depthExceeded }
+    guard object.count <= maxObjectKeys else { throw StreamMetadataError.objectTooLarge }
     for (key, value) in object {
-      guard !key.isEmpty else { throw StreamMetadataErrorV2.emptyKey }
-      guard key.utf8.count <= maxKeyBytes else { throw StreamMetadataErrorV2.keyTooLong }
+      guard !key.isEmpty else { throw StreamMetadataError.emptyKey }
+      guard key.utf8.count <= maxKeyBytes else { throw StreamMetadataError.keyTooLong }
       guard key == key.precomposedStringWithCanonicalMapping else {
-        throw StreamMetadataErrorV2.keyNotNormalized
+        throw StreamMetadataError.keyNotNormalized
       }
       try validate(value, depth: depth + 1, nodeCount: &nodeCount)
     }
   }
 
   private static func validate(
-    _ value: JSONValueV2,
+    _ value: JSONValue,
     depth: Int,
     nodeCount: inout Int
   ) throws {
-    guard depth <= maxDepth else { throw StreamMetadataErrorV2.depthExceeded }
+    guard depth <= maxDepth else { throw StreamMetadataError.depthExceeded }
     nodeCount += 1
-    guard nodeCount <= maxNodes else { throw StreamMetadataErrorV2.nodeLimitExceeded }
+    guard nodeCount <= maxNodes else { throw StreamMetadataError.nodeLimitExceeded }
     switch value {
     case .null, .bool:
       return
     case .integer(let integer):
       guard absSafe(integer) <= maximumSafeInteger else {
-        throw StreamMetadataErrorV2.unsafeInteger
+        throw StreamMetadataError.unsafeInteger
       }
     case .string(let string):
       guard string.utf8.count <= maxStringBytes else {
-        throw StreamMetadataErrorV2.stringTooLong
+        throw StreamMetadataError.stringTooLong
       }
     case .array(let array):
-      guard array.count <= maxArrayItems else { throw StreamMetadataErrorV2.arrayTooLong }
+      guard array.count <= maxArrayItems else { throw StreamMetadataError.arrayTooLong }
       for item in array {
         try validate(item, depth: depth + 1, nodeCount: &nodeCount)
       }
@@ -373,11 +373,11 @@ public struct StreamMetadataV2: Equatable, Sendable {
     value == .min ? .max : Swift.abs(value)
   }
 
-  private static func foundationObject(_ object: [String: JSONValueV2]) throws -> [String: Any] {
+  private static func foundationObject(_ object: [String: JSONValue]) throws -> [String: Any] {
     try object.mapValues(foundationValue)
   }
 
-  private static func foundationValue(_ value: JSONValueV2) throws -> Any {
+  private static func foundationValue(_ value: JSONValue) throws -> Any {
     switch value {
     case .null:
       return NSNull()
@@ -395,7 +395,7 @@ public struct StreamMetadataV2: Equatable, Sendable {
   }
 }
 
-public protocol ByteStreamV2: Sendable {
+public protocol ByteStream: Sendable {
   var kind: String { get }
 
   func read(maxBytes: Int) async throws -> Data?
@@ -403,18 +403,18 @@ public protocol ByteStreamV2: Sendable {
   func closeWrite() async throws
   func reset() async
   func close() async
-  func terminalError() async -> SessionErrorV2?
+  func terminalError() async -> SessionError?
 }
 
-public struct IncomingStreamV2: Sendable {
+public struct IncomingStream: Sendable {
   public let kind: String
-  public let metadata: StreamMetadataV2
-  public let stream: any ByteStreamV2
+  public let metadata: StreamMetadata
+  public let stream: any ByteStream
 
   public init(
     kind: String,
-    metadata: StreamMetadataV2,
-    stream: any ByteStreamV2
+    metadata: StreamMetadata,
+    stream: any ByteStream
   ) {
     self.kind = kind
     self.metadata = metadata
@@ -422,7 +422,7 @@ public struct IncomingStreamV2: Sendable {
   }
 }
 
-public protocol RPCPeerV2: Sendable {
+public protocol RPCPeer: Sendable {
   func call<Request: Encodable & Sendable, Response: Decodable & Sendable>(
     _ typeID: UInt32,
     _ request: Request,
@@ -433,19 +433,19 @@ public protocol RPCPeerV2: Sendable {
   func notify<Payload: Encodable & Sendable>(_ typeID: UInt32, _ payload: Payload) async throws
 }
 
-public protocol SessionV2: Sendable {
-  var rpc: any RPCPeerV2 { get }
+public protocol Session: Sendable {
+  var rpc: any RPCPeer { get }
 
-  func openStream(kind: String, metadata: StreamMetadataV2) async throws -> any ByteStreamV2
-  func acceptStream() async throws -> IncomingStreamV2
+  func openStream(kind: String, metadata: StreamMetadata) async throws -> any ByteStream
+  func acceptStream() async throws -> IncomingStream
   func rekey() async throws
   func probeLiveness() async throws -> Duration
-  func waitClosed() async -> SessionErrorV2
+  func waitClosed() async -> SessionError
   func close() async
 }
 
-extension SessionV2 {
-  public func openStream(kind: String) async throws -> any ByteStreamV2 {
+extension Session {
+  public func openStream(kind: String) async throws -> any ByteStream {
     try await openStream(kind: kind, metadata: .empty)
   }
 }

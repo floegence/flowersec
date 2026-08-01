@@ -4,9 +4,50 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestLanguageCapabilitiesDeclareContractLayers(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot, capabilityManifestPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		CapabilityLayers     []string `json:"capability_layers"`
+		PortableCapabilities []struct {
+			ID    string `json:"id"`
+			Layer string `json:"layer"`
+		} `json:"portable_capabilities"`
+		RuntimeSpecificCapabilities []struct {
+			ID    string `json:"id"`
+			Layer string `json:"layer"`
+		} `json:"runtime_specific_capabilities"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"portable_core", "sdk_profile", "language_convenience"}
+	if !slices.Equal(document.CapabilityLayers, want) {
+		t.Fatalf("capability_layers = %v, want %v", document.CapabilityLayers, want)
+	}
+	for _, capability := range document.PortableCapabilities {
+		if capability.Layer != "portable_core" {
+			t.Errorf("portable capability %s layer = %q, want portable_core", capability.ID, capability.Layer)
+		}
+	}
+	allowedProfiles := map[string]bool{"sdk_profile": true, "language_convenience": true}
+	for _, capability := range document.RuntimeSpecificCapabilities {
+		if !allowedProfiles[capability.Layer] {
+			t.Errorf("runtime capability %s has invalid layer %q", capability.ID, capability.Layer)
+		}
+	}
+}
 
 func TestCapabilityManifestRequiresPortableContractsAndSharedFixtures(t *testing.T) {
 	repoRoot, err := repoRootFromWD()

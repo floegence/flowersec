@@ -20,7 +20,7 @@
     "Swift",
     "Rust",
     "flowersec.ParseArtifact",
-    "flowersec.NewConnector",
+    "flowersec.Connect",
     "examples/README.md",
     "docs/THREAT_MODEL.md",
     "docs/TRANSPORT_V2_ARCHITECTURE.md",

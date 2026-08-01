@@ -195,7 +195,7 @@ fn release_runner_uses_only_the_opaque_flowersec_surface() {
     for required in [
         "Artifact::parse",
         "ArtifactLease::new",
-        "Connector::new",
+        "connect(&mut lease, options, CancellationToken::new())",
         "Acceptor::bind",
         "Arc<dyn Session>",
     ] {

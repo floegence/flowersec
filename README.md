@@ -64,10 +64,10 @@ For carrier-specific evidence, run `make transport-conformance-smoke`, `make tra
 
 | Language | Package | Public entry |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | root, `/browser`, `/node`, and `/proxy` opaque v2 entrypoints |
-| Swift | SwiftPM product `Flowersec` | `ArtifactV2`, `ConnectorV2`, `SessionV2` |
-| Rust | crate `flowersec` | `Artifact`, `Connector`, `Session` |
+| Swift | SwiftPM product `Flowersec` | `Artifact`, `connect`, `Session` |
+| Rust | crate `flowersec` | `Artifact`, `connect`, `Session` |
 
 Go service control planes use the separate `github.com/floegence/flowersec/flowersec-go/v2/controlplane` package to issue opaque artifacts and answer `flowersec-runtime` authorization callbacks. It does not restore any v1 issuer, token, channel-init, or generated DTO surface.
 

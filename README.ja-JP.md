@@ -62,9 +62,9 @@ Carrier ごとの検証には、`make transport-conformance-smoke`、`make trans
 
 | 言語 | パッケージ | 公開エントリ |
 | --- | --- | --- |
-| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.NewConnector`, `flowersec.NewSessionHandlers` |
+| Go | `github.com/floegence/flowersec/flowersec-go/v2` | `flowersec.ParseArtifact`, `flowersec.Connect`, `flowersec.NewSessionHandlers` |
 | TypeScript | `@floegence/flowersec-core` | ルート、`/browser`、`/node`、`/proxy` の不透明な v2 エントリポイント |
-| Swift | SwiftPM プロダクト `Flowersec` | `ArtifactV2`、`ConnectorV2`、`SessionV2` |
+| Swift | SwiftPM プロダクト `Flowersec` | `Artifact`、`connect`、`Session` |
 | Rust | crate `flowersec` | `Artifact`、`Connector`、`Session` |
 
 Go サービスのコントロールプレーンは、opaque artifact の発行と `flowersec-runtime` の認可コールバックへの応答に、独立した `github.com/floegence/flowersec/flowersec-go/v2/controlplane` パッケージを使用します。v1 の issuer、token、channel-init、生成 DTO のサーフェスは復元されません。

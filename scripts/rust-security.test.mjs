@@ -108,12 +108,15 @@ test("non-published Rust roots remain licensed and version their local Flowersec
 test("Rust raw QUIC trust policy has no inactive root-store or WebSocket features", () => {
   const manifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/Cargo.toml"), "utf8");
   const readme = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/README.md"), "utf8");
+  const connector = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/connector_v2.rs"), "utf8");
 
   assert.doesNotMatch(manifest, /^\[features\]$/m);
   assert.doesNotMatch(manifest, /rustls-(?:native|webpki)-roots/u);
   assert.doesNotMatch(manifest, /tokio-tungstenite/u);
   assert.match(readme, /requires explicit DER trust roots/u);
-  assert.match(readme, /intentionally leaves trust roots empty/u);
+  assert.match(readme, /rejects empty roots/u);
+  assert.doesNotMatch(connector, /impl Default for ConnectorOptions/u);
+  assert.match(connector, /pub fn new\(trust_roots_der: Vec<Vec<u8>>\)/u);
 });
 
 test("GHSA-7gcf-g7xr-8hxj is patched without drifting the published MSRV", async () => {

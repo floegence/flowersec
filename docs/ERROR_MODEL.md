@@ -6,6 +6,8 @@ Cancellation and deadlines preserve `context.Canceled` and `context.DeadlineExce
 
 Remote RPC handlers may return a bounded application code and sanitized message. SDKs preserve that application outcome separately from transport and session failures; they never attach the underlying carrier or protocol cause.
 
+Raw public error enums and code taxonomies are SDK-local because each runtime has different cancellation, TLS, and transport integration boundaries. The portable contract is the shared recovery decision plus the separation between remote RPC application errors and connection/session failures; consumers must not compare raw codes across languages.
+
 An error after durable artifact commitment never authorizes credential reuse. Cleanup errors may be joined internally for diagnostics, but public projections remain redacted.
 
 ## Recovery decisions

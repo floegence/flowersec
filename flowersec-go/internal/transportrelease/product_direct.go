@@ -90,7 +90,7 @@ type ProductDirectPair struct {
 }
 
 // OpenProductDirect starts one real server endpoint and connects to it through
-// flowersec.NewConnector. It includes TLS, admission, durable spend, FSH2, and
+// flowersec.Connect. It includes TLS, admission, durable spend, FSH2, and
 // the encrypted READY boundary in the measured connection path.
 func OpenProductDirect(ctx context.Context, kind carrier.Kind) (*ProductDirectPair, error) {
 	endpoint, err := OpenProductDirectEndpoint(ctx, kind)
@@ -327,13 +327,9 @@ func (endpoint *ProductDirectEndpoint) Connect(ctx context.Context) (*ProductDir
 	if err != nil {
 		return nil, err
 	}
-	connector, err := flowersec.NewConnector(lease, flowersec.ConnectorOptions{
+	client, err := flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{
 		TrustRoots: endpoint.trustRoots, Origin: releaseRunnerOrigin, ConnectTimeout: connectorTimeout(ctx),
 	})
-	if err != nil {
-		return nil, err
-	}
-	client, err := connector.Connect(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -61,9 +61,9 @@ describe("docs/API_CONTRACT.md", () => {
     const doc = fs.readFileSync(path.join(repoRoot, manifest.docs.api_contract), "utf8");
 
     expect(doc).toContain("Remote application RPC failures are semantically separate");
-    expect(doc).toContain("TypeScript uses `RpcResultV2`");
+    expect(doc).toContain("TypeScript uses typed `RpcResult<Response>`");
     expect(doc).toContain("Go returns `flowersec.RPCError`");
-    expect(doc).toContain("Swift throws `RPCErrorV2`");
+    expect(doc).toContain("Swift throws `RPCError`");
     expect(doc).toContain("Rust returns `RpcCallError::Application`");
   });
 });

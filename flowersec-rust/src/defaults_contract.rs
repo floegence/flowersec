@@ -37,12 +37,12 @@ fn public_connector_uses_shared_connect_timeout_default() {
         .join("stability")
         .join("sdk_defaults.json");
     let manifest: Value = serde_json::from_slice(&fs::read(manifest_path).unwrap()).unwrap();
-    let options = ConnectorOptions::default();
+    let options = ConnectorOptions::new(vec![vec![1]]).expect("explicit trust roots");
     assert_eq!(
-        options.connect_timeout.as_millis(),
+        options.connect_timeout().as_millis(),
         manifest["transport"]["connect_timeout_ms"]
             .as_u64()
             .unwrap() as u128
     );
-    assert!(options.trust_roots_der.is_empty());
+    assert_eq!(options.trust_roots_der(), &[vec![1]]);
 }

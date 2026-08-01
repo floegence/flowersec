@@ -16,8 +16,8 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use flowersec::{
-    Acceptor, AcceptorOptions, Artifact, ArtifactLease, ByteStream, Connector, ConnectorOptions,
-    JsonObject, Session, SessionError,
+    Acceptor, AcceptorOptions, Artifact, ArtifactLease, ByteStream, ConnectorOptions, JsonObject,
+    Session, SessionError,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -477,13 +477,8 @@ async fn connect_artifact(
             Ok(())
         }
     });
-    let connector = Connector::new(ConnectorOptions {
-        trust_roots_der: trust_roots,
-        connect_timeout,
-    })?;
-    let session = connector
-        .connect(&mut lease, CancellationToken::new())
-        .await?;
+    let options = ConnectorOptions::new(trust_roots)?.with_connect_timeout(connect_timeout)?;
+    let session = flowersec::connect(&mut lease, options, CancellationToken::new()).await?;
     if !lease.is_committed() || commits.load(Ordering::SeqCst) != 1 {
         return Err("artifact spend was not committed exactly once".into());
     }

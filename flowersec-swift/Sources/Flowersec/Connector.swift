@@ -2,7 +2,7 @@ import Crypto
 import Foundation
 import NIOSSL
 
-public struct ConnectorOptionsV2: Sendable {
+public struct ConnectorOptions: Sendable {
   public var origin: String?
   public var connectTimeout: Duration
   public var trustRootsPEM: [Data]
@@ -18,7 +18,7 @@ public struct ConnectorOptionsV2: Sendable {
   }
 }
 
-public enum ConnectErrorV2: String, Error, Equatable, Sendable {
+public enum ConnectError: String, Error, Equatable, Sendable {
   case invalidOptions = "invalid_options"
   case expiredArtifact = "expired_artifact"
   case canceled = "canceled"
@@ -27,13 +27,20 @@ public enum ConnectErrorV2: String, Error, Equatable, Sendable {
 }
 
 /// Establishes a carrier-neutral Transport v2 session from an opaque artifact lease.
-public struct ConnectorV2: Sendable {
-  private let lease: ArtifactLeaseV2
-  private let options: ConnectorOptionsV2
-  private let dial:
-    @Sendable (URL, String, ConnectorOptionsV2) async throws -> any FlowersecBinaryTransport
+public func connect(
+  lease: ArtifactLease,
+  options: ConnectorOptions = ConnectorOptions()
+) async throws -> any Session {
+  try await ConnectionAttempt(lease: lease, options: options).connect()
+}
 
-  public init(lease: ArtifactLeaseV2, options: ConnectorOptionsV2 = ConnectorOptionsV2()) throws {
+struct ConnectionAttempt: Sendable {
+  private let lease: ArtifactLease
+  private let options: ConnectorOptions
+  private let dial:
+    @Sendable (URL, String, ConnectorOptions) async throws -> any FlowersecBinaryTransport
+
+  init(lease: ArtifactLease, options: ConnectorOptions = ConnectorOptions()) throws {
     try Self.validate(options)
     self.lease = lease
     self.options = options
@@ -51,17 +58,17 @@ public struct ConnectorV2: Sendable {
       )
       guard socket.selectedProtocol == subprotocol else {
         await socket.close()
-        throw ConnectErrorV2.connectionFailed
+        throw ConnectError.connectionFailed
       }
       return NIOWebSocketBinaryTransportV2(socket: socket)
     }
   }
 
   init(
-    lease: ArtifactLeaseV2,
-    options: ConnectorOptionsV2,
+    lease: ArtifactLease,
+    options: ConnectorOptions,
     dial:
-      @escaping @Sendable (URL, String, ConnectorOptionsV2) async throws ->
+      @escaping @Sendable (URL, String, ConnectorOptions) async throws ->
       any FlowersecBinaryTransport
   ) throws {
     try Self.validate(options)
@@ -70,36 +77,36 @@ public struct ConnectorV2: Sendable {
     self.dial = dial
   }
 
-  public func connect() async throws -> any SessionV2 {
+  func connect() async throws -> any Session {
     do {
-      return try await withThrowingTaskGroup(of: (any SessionV2).self) { group in
+      return try await withThrowingTaskGroup(of: (any Session).self) { group in
         group.addTask { try await connectWithoutDeadline() }
         group.addTask {
           try await Task.sleep(for: options.connectTimeout)
-          throw ConnectErrorV2.timeout
+          throw ConnectError.timeout
         }
         defer { group.cancelAll() }
-        guard let session = try await group.next() else { throw ConnectErrorV2.connectionFailed }
+        guard let session = try await group.next() else { throw ConnectError.connectionFailed }
         return session
       }
     } catch is CancellationError {
-      throw ConnectErrorV2.canceled
-    } catch let error as ConnectErrorV2 {
+      throw ConnectError.canceled
+    } catch let error as ConnectError {
       throw error
     } catch {
-      throw ConnectErrorV2.connectionFailed
+      throw ConnectError.connectionFailed
     }
   }
 
-  private func connectWithoutDeadline() async throws -> any SessionV2 {
+  private func connectWithoutDeadline() async throws -> any Session {
     try Task.checkCancellation()
     let artifact = lease.artifact.value
     guard artifact.session.initExpireAtUnixSeconds > Int64(Date().timeIntervalSince1970) else {
-      throw ConnectErrorV2.expiredArtifact
+      throw ConnectError.expiredArtifact
     }
     guard let candidate = artifact.path.candidates.first(where: { $0.carrier == "websocket" }),
       let url = URL(string: candidate.url)
-    else { throw ConnectErrorV2.connectionFailed }
+    else { throw ConnectError.connectionFailed }
     let path: PathKind = artifact.path.kind == "direct" ? .direct : .tunnel
     let subprotocol = path == .direct ? "flowersec.direct.v2" : "flowersec.tunnel.v2"
     let transport = try await dial(url, subprotocol, options)
@@ -112,7 +119,7 @@ public struct ConnectorV2: Sendable {
       try await transport.writeBinary(fsb2)
       let response = try AdmissionCodecV2.decodeFSA2(
         try await transport.readBinary(), reasons: [])
-      guard response.status == .success else { throw ConnectErrorV2.connectionFailed }
+      guard response.status == .success else { throw ConnectError.connectionFailed }
 
       let carrier = WebSocketCarrierSessionV2(
         transport: transport,
@@ -144,20 +151,20 @@ public struct ConnectorV2: Sendable {
     }
   }
 
-  private static func validate(_ options: ConnectorOptionsV2) throws {
-    guard options.connectTimeout > .zero else { throw ConnectErrorV2.invalidOptions }
+  private static func validate(_ options: ConnectorOptions) throws {
+    guard options.connectTimeout > .zero else { throw ConnectError.invalidOptions }
     do {
       for pem in options.trustRootsPEM {
         guard !pem.isEmpty, !(try NIOSSLCertificate.fromPEMBytes(Array(pem))).isEmpty else {
-          throw ConnectErrorV2.invalidOptions
+          throw ConnectError.invalidOptions
         }
       }
-    } catch { throw ConnectErrorV2.invalidOptions }
+    } catch { throw ConnectError.invalidOptions }
     if let origin = options.origin {
       guard let value = URLComponents(string: origin), value.scheme == "https",
         value.host != nil, value.user == nil, value.password == nil,
         value.path.isEmpty || value.path == "/", value.query == nil, value.fragment == nil
-      else { throw ConnectErrorV2.invalidOptions }
+      else { throw ConnectError.invalidOptions }
     }
   }
 
@@ -172,7 +179,7 @@ public struct ConnectorV2: Sendable {
       .replacingOccurrences(of: "_", with: "/")
     text += String(repeating: "=", count: (4 - text.count % 4) % 4)
     guard let data = Data(base64Encoded: text), data.count == 32 else {
-      throw ConnectErrorV2.connectionFailed
+      throw ConnectError.connectionFailed
     }
     return data
   }
@@ -193,7 +200,7 @@ private actor NIOWebSocketBinaryTransportV2: FlowersecBinaryTransport {
 
   func readBinary() async throws -> Data {
     let frame = try await socket.receive()
-    guard frame.operation == .binary else { throw ConnectErrorV2.connectionFailed }
+    guard frame.operation == .binary else { throw ConnectError.connectionFailed }
     return frame.payload
   }
 

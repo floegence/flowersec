@@ -1,7 +1,7 @@
 import Foundation
 
-struct OpaqueSessionV2: SessionV2 {
-  let rpc: any RPCPeerV2
+struct OpaqueSessionV2: Session {
+  let rpc: any RPCPeer
 
   private let session: TransportV2Session
 
@@ -12,8 +12,8 @@ struct OpaqueSessionV2: SessionV2 {
 
   func openStream(
     kind: String,
-    metadata: StreamMetadataV2
-  ) async throws -> any ByteStreamV2 {
+    metadata: StreamMetadata
+  ) async throws -> any ByteStream {
     do {
       return RedactedByteStreamV2(
         stream: try await session.openStream(kind: kind, metadata: metadata)
@@ -23,10 +23,10 @@ struct OpaqueSessionV2: SessionV2 {
     }
   }
 
-  func acceptStream() async throws -> IncomingStreamV2 {
+  func acceptStream() async throws -> IncomingStream {
     do {
       let incoming = try await session.acceptStream()
-      return IncomingStreamV2(
+      return IncomingStream(
         kind: incoming.kind,
         metadata: incoming.metadata,
         stream: RedactedByteStreamV2(stream: incoming.stream)
@@ -52,19 +52,19 @@ struct OpaqueSessionV2: SessionV2 {
     }
   }
 
-  func waitClosed() async -> SessionErrorV2 {
+  func waitClosed() async -> SessionError {
     redactTransportErrorV2(await session.waitClosed())
   }
 
   func close() async { await session.close() }
 }
 
-private struct RedactedByteStreamV2: ByteStreamV2 {
+private struct RedactedByteStreamV2: ByteStream {
   let kind: String
 
-  private let stream: any ByteStreamV2
+  private let stream: any ByteStream
 
-  init(stream: any ByteStreamV2) {
+  init(stream: any ByteStream) {
     self.stream = stream
     kind = stream.kind
   }
@@ -95,11 +95,11 @@ private struct RedactedByteStreamV2: ByteStreamV2 {
 
   func reset() async { await stream.reset() }
   func close() async { await stream.close() }
-  func terminalError() async -> SessionErrorV2? { await stream.terminalError() }
+  func terminalError() async -> SessionError? { await stream.terminalError() }
 }
 
-private struct RedactedRPCPeerV2: RPCPeerV2 {
-  let peer: any RPCPeerV2
+private struct RedactedRPCPeerV2: RPCPeer {
+  let peer: any RPCPeer
 
   func call<Request: Encodable & Sendable, Response: Decodable & Sendable>(
     _ typeID: UInt32,
@@ -110,7 +110,7 @@ private struct RedactedRPCPeerV2: RPCPeerV2 {
     do {
       return try await peer.call(typeID, request, as: responseType, timeout: timeout)
     } catch let error as FlowersecRPCError {
-      throw RPCErrorV2(code: error.code, message: error.message)
+      throw RPCError(code: error.code, message: error.message)
     } catch {
       throw redactTransportErrorV2(error)
     }
@@ -123,15 +123,15 @@ private struct RedactedRPCPeerV2: RPCPeerV2 {
     do {
       try await peer.notify(typeID, payload)
     } catch let error as FlowersecRPCError {
-      throw RPCErrorV2(code: error.code, message: error.message)
+      throw RPCError(code: error.code, message: error.message)
     } catch {
       throw redactTransportErrorV2(error)
     }
   }
 }
 
-func redactTransportErrorV2(_ error: any Error) -> SessionErrorV2 {
-  if let redacted = error as? SessionErrorV2 { return redacted }
+func redactTransportErrorV2(_ error: any Error) -> SessionError {
+  if let redacted = error as? SessionError { return redacted }
   if error is CancellationError { return .canceled }
   if let transport = error as? TransportV2SessionError {
     switch transport {

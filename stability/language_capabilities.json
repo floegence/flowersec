@@ -1,9 +1,11 @@
 {
   "version": 2,
   "languages": ["go", "typescript", "swift", "rust"],
+  "capability_layers": ["portable_core", "sdk_profile", "language_convenience"],
   "portable_capabilities": [
     {
       "id": "opaque_artifact",
+      "layer": "portable_core",
       "description": "Strict Flowersec v2 artifact parsing behind an opaque application-facing value",
       "implementations": {
         "go": { "status": "complete", "evidence": ["flowersec-go/internal/artifactv2/shared_vectors_test.go"] },
@@ -14,6 +16,7 @@
     },
     {
       "id": "opaque_connector",
+      "layer": "portable_core",
       "description": "Lease-consuming direct and tunnel connection without exposing carrier credentials",
       "implementations": {
         "go": { "status": "complete", "evidence": ["flowersec-go/connector.go"] },
@@ -24,6 +27,7 @@
     },
     {
       "id": "secure_session",
+      "layer": "portable_core",
       "description": "Authenticated v2 sessions, bounded streams, rekey, cancellation, and close",
       "implementations": {
         "go": { "status": "complete", "evidence": ["flowersec-go/internal/session/contract_test.go"] },
@@ -34,6 +38,7 @@
     },
     {
       "id": "rpc_call_notify",
+      "layer": "portable_core",
       "description": "Outbound RPC calls and notifications over the reserved encrypted v2 stream kind",
       "implementations": {
         "go": { "status": "complete", "evidence": ["flowersec-go/connector.go"] },
@@ -44,16 +49,18 @@
     },
     {
       "id": "error_classification",
+      "layer": "portable_core",
       "description": "Carrier-neutral public recovery decisions for connection and session errors",
       "implementations": {
         "go": { "status": "complete", "evidence": ["flowersec-go/error_classification.go"] },
         "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/errorClassification.ts"] },
-        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/ErrorClassificationV2.swift"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Sources/Flowersec/ErrorClassification.swift"] },
         "rust": { "status": "complete", "evidence": ["flowersec-rust/src/error_classification.rs"] }
       }
     },
     {
       "id": "carrier_contract",
+      "layer": "portable_core",
       "description": "Carrier-neutral stream semantics with WSS, raw QUIC, and WebTransport capability reporting",
       "implementations": {
         "go": { "status": "complete", "evidence": ["flowersec-go/internal/carrier/contract_test.go"] },
@@ -64,6 +71,7 @@
     },
     {
       "id": "wire_security",
+      "layer": "portable_core",
       "description": "Canonical v2 handshake, record protection, admission binding, and Unicode validation",
       "implementations": {
         "go": { "status": "complete", "evidence": ["flowersec-go/internal/protocolv2/crypto_vectors_test.go"] },
@@ -76,54 +84,63 @@
   "runtime_specific_capabilities": [
     {
       "id": "typescript_rpc_notification_subscription",
+      "layer": "language_convenience",
       "owner": "typescript",
       "reason": "TypeScript exposes application notification subscriptions on its public RPC peer.",
       "evidence": ["flowersec-ts/src/v2/contract.ts"]
     },
     {
       "id": "go_rpc_request_handlers",
+      "layer": "language_convenience",
       "owner": "go",
       "reason": "Go exposes application request handler registration through SessionHandlers.",
       "evidence": ["flowersec-go/server.go"]
     },
     {
       "id": "browser_webtransport",
+      "layer": "sdk_profile",
       "owner": "typescript",
       "reason": "Browser WebTransport uses browser-owned networking APIs.",
       "evidence": ["flowersec-ts/src/browser/connectV2.ts"]
     },
     {
       "id": "native_raw_quic",
+      "layer": "sdk_profile",
       "owner": "go",
       "reason": "Go owns the deployable native raw QUIC listener used by cross-language validation.",
       "evidence": ["flowersec-go/internal/carrier/rawquic"]
     },
     {
       "id": "rust_native_raw_quic",
+      "layer": "sdk_profile",
       "owner": "rust",
       "reason": "Rust owns its native raw QUIC connector and runtime listener implementation.",
       "evidence": ["flowersec-rust/src/raw_quic_v2_integration_tests.rs"]
     },
     {
       "id": "swift_apple_websocket",
+      "layer": "sdk_profile",
       "owner": "swift",
       "reason": "The Swift production connector supports WSS direct and tunnel dialing on macOS and iOS.",
       "evidence": ["flowersec-swift/Tests/FlowersecTests/ConnectorV2Tests.swift"]
     },
     {
       "id": "go_negotiated_unreliable_messages",
+      "layer": "sdk_profile",
       "owner": "go",
       "reason": "Go exposes negotiated carrier-neutral unreliable-message channels with accepted and dropped send outcome semantics.",
       "evidence": ["flowersec-go/connector_public_test.go"]
     },
     {
       "id": "typescript_negotiated_unreliable_messages",
+      "layer": "sdk_profile",
       "owner": "typescript",
       "reason": "TypeScript exposes negotiated carrier-neutral unreliable-message channels with accepted and dropped send outcome semantics.",
       "evidence": ["flowersec-ts/src/v2/unreliableMessage.test.ts"]
     },
     {
       "id": "rust_negotiated_unreliable_messages",
+      "layer": "sdk_profile",
       "owner": "rust",
       "reason": "Rust exposes negotiated carrier-neutral unreliable-message channels with accepted and dropped send outcome semantics.",
       "evidence": ["flowersec-rust/src/session_v2_integration_tests.rs"]

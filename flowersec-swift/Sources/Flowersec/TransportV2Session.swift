@@ -7,7 +7,7 @@ let openRejectResourceExhaustedReasonV2: UInt16 = 2
 actor TransportV2Session {
   nonisolated let path: PathKind
   nonisolated let endpointInstanceID: String?
-  nonisolated let rpc: any RPCPeerV2
+  nonisolated let rpc: any RPCPeer
 
   private let carrier: any TransportV2CarrierSession
   private let controlReader: TransportV2CarrierReader
@@ -45,8 +45,8 @@ actor TransportV2Session {
   private var inboundResponderWaiters: [UInt64: CheckedContinuation<Void, Error>] = [:]
   private var inboundApplicationStreams = 0
   private var outboundApplicationStreams = 0
-  private var incoming: [IncomingStreamV2] = []
-  private var incomingWaiters: [UInt64: CheckedContinuation<IncomingStreamV2, Error>] = [:]
+  private var incoming: [IncomingStream] = []
+  private var incomingWaiters: [UInt64: CheckedContinuation<IncomingStream, Error>] = [:]
   private var incomingWaiterOrder: [UInt64] = []
   private var nextIncomingWaiterID: UInt64 = 1
   private var pings: [UInt64: PingWaiterV2] = [:]
@@ -79,7 +79,7 @@ actor TransportV2Session {
     control: any TransportV2CarrierStream,
     config: TransportV2SessionConfig,
     material: TransportV2HandshakeMaterial,
-    rpc: any RPCPeerV2
+    rpc: any RPCPeer
   ) throws {
     self.carrier = carrier
     self.config = config
@@ -166,16 +166,16 @@ actor TransportV2Session {
 
   func openStream(
     kind: String,
-    metadata: StreamMetadataV2
-  ) async throws -> any ByteStreamV2 {
+    metadata: StreamMetadata
+  ) async throws -> any ByteStream {
     try await openStream(kind: kind, metadata: metadata, internalRPC: false)
   }
 
-  func openStream(kind: String) async throws -> any ByteStreamV2 {
+  func openStream(kind: String) async throws -> any ByteStream {
     try await openStream(kind: kind, metadata: .empty)
   }
 
-  func acceptStream() async throws -> IncomingStreamV2 {
+  func acceptStream() async throws -> IncomingStream {
     try Task.checkCancellation()
     guard !closing, !closed else { throw TransportV2SessionError.closed }
     if !incoming.isEmpty { return incoming.removeFirst() }
@@ -184,7 +184,7 @@ actor TransportV2Session {
     if nextIncomingWaiterID == 0 { nextIncomingWaiterID = 1 }
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation {
-        (continuation: CheckedContinuation<IncomingStreamV2, Error>) in
+        (continuation: CheckedContinuation<IncomingStream, Error>) in
         if Task.isCancelled {
           continuation.resume(throwing: CancellationError())
         } else if closing || closed {
@@ -432,7 +432,7 @@ actor TransportV2Session {
 
   private func openStream(
     kind: String,
-    metadata: StreamMetadataV2,
+    metadata: StreamMetadata,
     internalRPC: Bool
   ) async throws -> TransportV2ByteStream {
     let waiterID = allocateLifecycleWaiterID()
@@ -720,7 +720,7 @@ actor TransportV2Session {
         await startRPCServer(stream)
       } else {
         await deliver(
-          IncomingStreamV2(
+          IncomingStream(
             kind: open.kind,
             metadata: metadata,
             stream: stream
@@ -778,7 +778,7 @@ actor TransportV2Session {
     await carrierStream.close()
   }
 
-  private func deliver(_ value: IncomingStreamV2) async {
+  private func deliver(_ value: IncomingStream) async {
     guard !closing, !closed else {
       await value.stream.reset()
       return
@@ -1567,7 +1567,7 @@ actor TransportV2Session {
   func sendEpochForTesting() -> UInt32 { sendEpoch }
 }
 
-private actor TransportV2ByteStream: ByteStreamV2 {
+private actor TransportV2ByteStream: ByteStream {
   static let reservedRPCStreamKind = "flowersec.rpc.v2"
 
   nonisolated let id: UInt64
@@ -1726,7 +1726,7 @@ private actor TransportV2ByteStream: ByteStreamV2 {
 
   func close() async { await reset() }
 
-  func terminalError() async -> SessionErrorV2? { terminal.map(redactTransportErrorV2) }
+  func terminalError() async -> SessionError? { terminal.map(redactTransportErrorV2) }
 
   func detailedTerminalError() -> TransportV2SessionError? { terminal }
 
@@ -2496,7 +2496,7 @@ private final class PendingSessionRekeyV2: @unchecked Sendable {
   func succeed() async { await signal.succeed() }
 }
 
-private final class TransportV2RPCReference: RPCPeerV2, @unchecked Sendable {
+private final class TransportV2RPCReference: RPCPeer, @unchecked Sendable {
   private let lock = NSLock()
   private weak var session: TransportV2Session?
 
@@ -2528,9 +2528,9 @@ private final class TransportV2RPCReference: RPCPeerV2, @unchecked Sendable {
 }
 
 private final class TransportV2RPCStreamAdapter: FlowersecRPCStream, @unchecked Sendable {
-  private let stream: any ByteStreamV2
+  private let stream: any ByteStream
 
-  init(stream: any ByteStreamV2) { self.stream = stream }
+  init(stream: any ByteStream) { self.stream = stream }
 
   func write(_ data: Data) async throws {
     _ = try await stream.write(data)
@@ -2555,21 +2555,21 @@ private final class TransportV2RPCStreamAdapter: FlowersecRPCStream, @unchecked 
 }
 
 private enum TransportV2MetadataCodec {
-  static func encode(_ metadata: StreamMetadataV2) throws -> Data {
+  static func encode(_ metadata: StreamMetadata) throws -> Data {
     var output = Data()
     try appendObject(metadata.values, to: &output)
     return output
   }
 
-  static func decode(_ data: Data) throws -> StreamMetadataV2 {
+  static func decode(_ data: Data) throws -> StreamMetadata {
     let raw = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     guard let object = raw as? [String: Any] else {
       throw TransportV2SessionError.protocolViolation
     }
-    return try StreamMetadataV2(try object.mapValues(decodeValue))
+    return try StreamMetadata(try object.mapValues(decodeValue))
   }
 
-  private static func decodeValue(_ value: Any) throws -> JSONValueV2 {
+  private static func decodeValue(_ value: Any) throws -> JSONValue {
     if value is NSNull { return .null }
     if let number = value as? NSNumber {
       if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
@@ -2584,7 +2584,7 @@ private enum TransportV2MetadataCodec {
   }
 
   private static func appendObject(
-    _ object: [String: JSONValueV2],
+    _ object: [String: JSONValue],
     to output: inout Data
   ) throws {
     output.append(0x7B)
@@ -2601,7 +2601,7 @@ private enum TransportV2MetadataCodec {
     output.append(0x7D)
   }
 
-  private static func appendValue(_ value: JSONValueV2, to output: inout Data) throws {
+  private static func appendValue(_ value: JSONValue, to output: inout Data) throws {
     switch value {
     case .null:
       output.append(Data("null".utf8))
