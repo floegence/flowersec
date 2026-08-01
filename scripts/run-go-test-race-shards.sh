@@ -29,7 +29,17 @@ if [[ ! "$shard_count" =~ ^[1-9][0-9]*$ ]]; then
   echo "race shard count must be a positive integer: $shard_count" >&2
   exit 2
 fi
-if [[ ! "$parallelism" =~ ^[1-9][0-9]*$ ]]; then
+if [[ "$parallelism" == "auto" ]]; then
+  online_cpus="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  if [[ ! "$online_cpus" =~ ^[1-9][0-9]*$ ]]; then
+    echo "race shard runner cannot determine the online CPU count" >&2
+    exit 2
+  fi
+  parallelism="$online_cpus"
+  if (( parallelism > 12 )); then
+    parallelism=12
+  fi
+elif [[ ! "$parallelism" =~ ^[1-9][0-9]*$ ]]; then
   echo "race shard parallelism must be a positive integer: $parallelism" >&2
   exit 2
 fi

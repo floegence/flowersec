@@ -218,8 +218,8 @@ test("final Go race gate runs all shards with an explicit CPU budget", () => {
   const raceTarget = canonical.match(/^go-test-race:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(
     raceTarget,
-    /run-go-test-race-shards\.sh tools\/transportcheck 45 5m 9 race 1/,
-    "all tests must use 45 fine isolated process shards through nine dynamically refilled slots with one Go scheduler slot per worker",
+    /run-go-test-race-shards\.sh tools\/transportcheck 45 5m auto race 1/,
+    "exclusive race must use host-adaptive worker slots with one Go scheduler slot per worker",
   );
   const discovered = spawnSync("go", ["test", "-list", "^Test", "."], {
     cwd: path.join(sourceRoot, "tools/transportcheck"),
@@ -231,10 +231,40 @@ test("final Go race gate runs all shards with an explicit CPU budget", () => {
     .split("\n")
     .filter((line) => /^Test[A-Za-z0-9_]+$/.test(line)).length;
   const shardCount = 45;
-  const workerSlots = 9;
   assert.ok(discoveredTests > 0, "the transport checker must expose top-level tests");
   assert.ok(Math.ceil(discoveredTests / shardCount) <= 4, "each shard must own at most four tests");
-  assert.equal(shardCount / workerSlots, 5, "the runner must expose five dynamically refilled waves");
+});
+
+test("race shard runner derives bounded auto parallelism from online CPUs", () => {
+  for (const { online, want } of [{ online: 3, want: 3 }, { online: 32, want: 12 }]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-race-auto-"));
+    try {
+      const packageDirectory = path.join(root, "package");
+      const binDirectory = path.join(root, "bin");
+      fs.mkdirSync(packageDirectory);
+      fs.mkdirSync(binDirectory);
+      fs.writeFileSync(path.join(binDirectory, "getconf"), `#!/bin/sh\nprintf '${online}\\n'\n`, { mode: 0o755 });
+      fs.writeFileSync(path.join(binDirectory, "go"), `#!/bin/sh
+if [ "$2" = "-list" ]; then
+  printf 'TestOne\\nTestTwo\\nTestThree\\n'
+fi
+`, { mode: 0o755 });
+
+      const result = spawnSync(
+        path.join(sourceRoot, "scripts/run-go-test-race-shards.sh"),
+        [packageDirectory, "3", "1m", "auto", "normal", "1"],
+        {
+          cwd: sourceRoot,
+          encoding: "utf8",
+          env: { ...process.env, PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}` },
+        },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, new RegExp(`parallelism ${want}\\b`));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
 });
 
 test("race shard runner applies the CPU budget to every worker", () => {
