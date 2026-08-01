@@ -3,6 +3,7 @@ import type {
   IncomingStreamV2,
   InternalByteStreamV2,
   InternalSessionV2,
+  JsonValueV2,
   OperationOptionsV2,
   RpcPeerV2,
   RpcResultV2,
@@ -44,8 +45,8 @@ export function projectSessionV2(session: InternalSessionV2): SessionV2 {
     async probeLiveness(options?: OperationOptionsV2): Promise<number> {
       try { return await session.probeLiveness(options); } catch (error) { throw redactSessionError(error); }
     },
-    async waitClosed() {
-      const { error } = await session.waitClosed();
+    async waitTermination() {
+      const { error } = await session.waitTermination();
       return Object.freeze({ error: redactSessionError(error) });
     },
     async close(): Promise<void> {
@@ -83,6 +84,7 @@ function projectRpcPeerV2(peer: InternalSessionV2["rpc"]): RpcPeerV2 {
     async call<Request = unknown, Response = unknown>(
       typeId: number,
       payload: Request,
+      decodeResponse: (payload: JsonValueV2) => Response,
       signal?: AbortSignal,
     ): Promise<RpcResultV2<Response>> {
       try {
@@ -90,7 +92,7 @@ function projectRpcPeerV2(peer: InternalSessionV2["rpc"]): RpcPeerV2 {
         if (result.error !== undefined) {
           return Object.freeze({ ok: false as const, error: Object.freeze({ ...result.error }) });
         }
-        return Object.freeze({ ok: true as const, payload: result.payload as Response });
+        return Object.freeze({ ok: true as const, payload: decodeResponse(result.payload as JsonValueV2) });
       } catch (error) {
         throw redactSessionError(error);
       }

@@ -628,7 +628,7 @@ impl ArtifactLease {
 
     /// Marks the artifact spent only after the durable callback succeeds.
     /// A failed callback remains retryable; a successful callback cannot repeat.
-    pub async fn commit_spend(&mut self) -> Result<(), ArtifactSpendError> {
+    pub(crate) async fn commit_spend(&mut self) -> Result<(), ArtifactSpendError> {
         if self.committed {
             return Err(ArtifactSpendError::AlreadyCommitted);
         }

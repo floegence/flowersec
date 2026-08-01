@@ -17,7 +17,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use flowersec::{
     Acceptor, AcceptorOptions, Artifact, ArtifactLease, ByteStream, ConnectorOptions, JsonObject,
-    Session, SessionError,
+    Session, SessionError, SessionTermination,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -248,7 +248,7 @@ async fn run_server(request: ServerRequest) -> Result<RoleResult, AnyError> {
     for (acceptor, artifact) in registrations {
         cold_tasks.spawn(async move {
             let session = acceptor.accept(&artifact, CancellationToken::new()).await?;
-            accept_orderly_session_close(session.wait_closed().await)?;
+            accept_orderly_session_close(session.wait_termination().await)?;
             Ok::<(), AnyError>(())
         });
     }
@@ -292,7 +292,7 @@ async fn run_server(request: ServerRequest) -> Result<RoleResult, AnyError> {
         Duration::from_millis(request.plan.cleanup_timeout_ms),
         async {
             finish_release_server(session.clone()).await?;
-            accept_orderly_session_close(session.wait_closed().await)?;
+            accept_orderly_session_close(session.wait_termination().await)?;
             Ok::<(), AnyError>(())
         },
     )
@@ -372,7 +372,7 @@ async fn run_client(request: ClientRequest) -> Result<RoleResult, AnyError> {
         Duration::from_millis(request.plan.cleanup_timeout_ms),
         async {
             finish_release_client(session.clone()).await?;
-            accept_orderly_session_close(session.close().await)?;
+            accept_orderly_close_result(session.close().await)?;
             Ok::<(), AnyError>(())
         },
     )
@@ -430,7 +430,7 @@ async fn run_cold_client(
             let duration = duration_ns(started.elapsed())?;
             let cleanup_started = Instant::now();
             tokio::time::timeout(operation_timeout, async {
-                accept_orderly_session_close(session.close().await)
+                accept_orderly_close_result(session.close().await)
             })
             .await
             .map_err(|_| "cold cleanup timed out")??;
@@ -899,7 +899,14 @@ fn duration_ns(value: Duration) -> Result<i64, AnyError> {
     i64::try_from(value.as_nanos()).map_err(Into::into)
 }
 
-fn accept_orderly_session_close(result: Result<(), SessionError>) -> Result<(), SessionError> {
+fn accept_orderly_session_close(termination: SessionTermination) -> Result<(), SessionError> {
+    match termination.error {
+        SessionError::Closed => Ok(()),
+        error => Err(error),
+    }
+}
+
+fn accept_orderly_close_result(result: Result<(), SessionError>) -> Result<(), SessionError> {
     match result {
         Ok(()) | Err(SessionError::Closed) => Ok(()),
         Err(error) => Err(error),
@@ -912,21 +919,29 @@ mod tests {
 
     #[test]
     fn orderly_peer_close_is_success_but_other_failures_propagate() {
-        assert_eq!(accept_orderly_session_close(Ok(())), Ok(()));
         assert_eq!(
-            accept_orderly_session_close(Err(SessionError::Closed)),
+            accept_orderly_session_close(SessionTermination {
+                error: SessionError::Closed,
+            }),
+            Ok(())
+        );
+        assert_eq!(accept_orderly_close_result(Ok(())), Ok(()));
+        assert_eq!(
+            accept_orderly_close_result(Err(SessionError::Closed)),
             Ok(())
         );
         for error in [
             SessionError::Canceled,
-            SessionError::InvalidInput,
-            SessionError::Rejected,
+            SessionError::OperationFailed,
             SessionError::ResourceExhausted,
-            SessionError::Reset,
-            SessionError::TimedOut,
-            SessionError::Failed,
+            SessionError::StreamReset,
+            SessionError::Timeout,
         ] {
-            assert_eq!(accept_orderly_session_close(Err(error)), Err(error));
+            assert_eq!(
+                accept_orderly_session_close(SessionTermination { error }),
+                Err(error)
+            );
+            assert_eq!(accept_orderly_close_result(Err(error)), Err(error));
         }
     }
 }

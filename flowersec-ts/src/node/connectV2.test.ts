@@ -15,6 +15,7 @@ vi.mock("../browser/connectV2.js", () => ({
 vi.mock("./wsFactory.js", () => ({ createNodeWsFactory: mocks.createNodeWsFactory }));
 
 import { connectNodeSessionV2 } from "./connectV2.js";
+import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
 
 describe("connectNodeSessionV2", () => {
   beforeEach(() => {
@@ -31,7 +32,7 @@ describe("connectNodeSessionV2", () => {
         acceptStream: vi.fn(),
         rekey: vi.fn(),
         probeLiveness: vi.fn(),
-        waitClosed: vi.fn(async () => await termination),
+        waitTermination: vi.fn(async () => await termination),
         close: vi.fn(async () => undefined),
       },
     });
@@ -39,7 +40,7 @@ describe("connectNodeSessionV2", () => {
   });
 
   test("returns only the carrier-neutral session and binds the Node runtime", async () => {
-    const lease = { artifact: {} as never, commitSpend: vi.fn() };
+    const lease = {} as ArtifactLeaseV2;
     const session = await connectNodeSessionV2(lease, { origin: "https://app.example" });
     expect(session).toEqual(expect.objectContaining({ close: expect.any(Function) }));
     expect(session).not.toHaveProperty("candidate");
@@ -54,7 +55,7 @@ describe("connectNodeSessionV2", () => {
   });
 
   test.each(["https://app.example/path", "ftp://app.example", "not a URL"])("rejects invalid origin %s before dialing", async (origin) => {
-    await expect(connectNodeSessionV2({ artifact: {} as never, commitSpend: vi.fn() }, { origin })).rejects.toThrow(/origin/);
+    await expect(connectNodeSessionV2({} as ArtifactLeaseV2, { origin })).rejects.toThrow(/origin/);
     expect(mocks.createInternal).not.toHaveBeenCalled();
   });
 });

@@ -303,21 +303,9 @@
           },
           {
             "kind": "interface_method",
-            "expr": "flowersec.Session.Termination",
-            "signature": "func(flowersec.Session) <-chan struct{}",
-            "doc_token": "`flowersec.Session.Termination()`"
-          },
-          {
-            "kind": "interface_method",
             "expr": "flowersec.Session.WaitTermination",
             "signature": "func(flowersec.Session, context.Context) (flowersec.SessionTermination, error)",
             "doc_token": "`flowersec.Session.WaitTermination(...)`"
-          },
-          {
-            "kind": "interface_method",
-            "expr": "flowersec.Session.WaitClosed",
-            "signature": "func(flowersec.Session, context.Context) error",
-            "doc_token": "`flowersec.Session.WaitClosed(...)`"
           },
           {
             "kind": "interface_method",
@@ -432,11 +420,6 @@
           },
           {
             "kind": "const",
-            "expr": "flowersec.ConnectInvalid",
-            "doc_token": "`flowersec.ConnectInvalid`"
-          },
-          {
-            "kind": "const",
             "expr": "flowersec.ConnectCanceled",
             "doc_token": "`flowersec.ConnectCanceled`"
           },
@@ -454,11 +437,6 @@
             "kind": "const",
             "expr": "flowersec.ConnectConnectionFailed",
             "doc_token": "`flowersec.ConnectConnectionFailed`"
-          },
-          {
-            "kind": "const",
-            "expr": "flowersec.ConnectFailed",
-            "doc_token": "`flowersec.ConnectFailed`"
           },
           {
             "kind": "const",
@@ -1188,12 +1166,12 @@
       },
       {
         "kind": "swift.init",
-        "name": "StreamMetadata.init(_:)",
+        "name": "SessionTermination.init(error:)",
         "doc_token": ""
       },
       {
-        "kind": "swift.method",
-        "name": "ArtifactLease.commitSpend()",
+        "kind": "swift.init",
+        "name": "StreamMetadata.init(_:)",
         "doc_token": ""
       },
       {
@@ -1268,7 +1246,7 @@
       },
       {
         "kind": "swift.method",
-        "name": "Session.waitClosed()",
+        "name": "Session.waitTermination()",
         "doc_token": ""
       },
       {
@@ -1368,6 +1346,11 @@
       },
       {
         "kind": "swift.property",
+        "name": "SessionTermination.error",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
         "name": "StreamMetadata.encodedByteCount",
         "doc_token": ""
       },
@@ -1419,6 +1402,11 @@
       {
         "kind": "swift.struct",
         "name": "StreamMetadata",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "SessionTermination",
         "doc_token": ""
       },
       {
@@ -1490,6 +1478,7 @@
       "`RpcPeerExt`",
       "`RpcPeerExt::call_typed(...)`",
       "`Session`",
+      "`SessionTermination`",
       "`SessionError::as_str()`",
       "`UnreliableMessageChannel`",
       "`UnreliableSendOutcome`"
@@ -1529,7 +1518,10 @@
     "require_rpc_peer_ext::<dyn flowersec::RpcPeer>()",
       "let _: Option<&dyn flowersec::Session> = None",
       "let _ = std::mem::size_of::<flowersec::SessionError>()",
+      "let _ = std::mem::size_of::<flowersec::SessionTermination>()",
       "let _: fn(flowersec::SessionError) -> &'static str = flowersec::SessionError::as_str",
+      "let _ = flowersec::SessionError::Timeout",
+      "let _ = flowersec::SessionError::OperationFailed",
       "let _ = flowersec::SessionError::GoingAway",
       "let _ = flowersec::SessionError::StreamRejected",
       "let _ = flowersec::SessionError::StreamReset",

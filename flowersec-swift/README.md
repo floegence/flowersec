@@ -33,7 +33,7 @@ callers should not compare raw Swift error cases with other SDKs.
 
 The Swift SDK profile is Apple-platform WebSocket dialing. Its language convenience
 is the Swift-native async and typed value surface around `Data`,
-`Duration`, and bounded `StreamMetadataV2`. Swift does not expose an unreliable
+`Duration`, and bounded `StreamMetadata`. Swift does not expose an unreliable
 message channel in the current SDK profile, and that absence does not narrow the
 portable core.
 

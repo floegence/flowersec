@@ -20,10 +20,24 @@ export class ArtifactLeaseError extends Error {
   }
 }
 
-export type ArtifactLeaseV2 = Readonly<{
-  artifact: Artifact;
-  commitSpend(signal?: AbortSignal): Promise<void>;
-}>;
+class ArtifactLeaseV2Value {
+  readonly #artifactLeaseBrand = undefined;
+  readonly artifact: Artifact;
+
+  constructor(artifact: Artifact) {
+    this.artifact = artifact;
+    Object.freeze(this);
+  }
+}
+
+export type ArtifactLeaseV2 = ArtifactLeaseV2Value;
+
+type ArtifactLeaseStateV2 = {
+  state: "idle" | "spending" | "consumed";
+  readonly commitSpend: (signal?: AbortSignal) => Promise<void>;
+};
+
+const artifactLeaseStatesV2 = new WeakMap<ArtifactLeaseV2, ArtifactLeaseStateV2>();
 
 export type ArtifactSourceV2 =
   | Readonly<{
@@ -52,21 +66,26 @@ export function createArtifactLeaseV2(
   commitSpend: (signal?: AbortSignal) => Promise<void>,
 ): ArtifactLeaseV2 {
   const validated = validateArtifact(artifact);
-  let state: "idle" | "spending" | "consumed" = "idle";
-  return Object.freeze({
-    artifact: validated,
-    async commitSpend(signal?: AbortSignal): Promise<void> {
-      if (state !== "idle") throw new ArtifactLeaseError();
-      state = "spending";
-      try {
-        await commitSpend(signal);
-        state = "consumed";
-      } catch (error) {
-        state = "idle";
-        throw error;
-      }
-    },
-  });
+  const lease = new ArtifactLeaseV2Value(validated);
+  artifactLeaseStatesV2.set(lease, { state: "idle", commitSpend });
+  return lease;
+}
+
+/** @internal Connector-owned durable spend transition. */
+export async function commitArtifactLeaseSpendV2(
+  lease: ArtifactLeaseV2,
+  signal?: AbortSignal,
+): Promise<void> {
+  const leaseState = artifactLeaseStatesV2.get(lease);
+  if (leaseState === undefined || leaseState.state !== "idle") throw new ArtifactLeaseError();
+  leaseState.state = "spending";
+  try {
+    await leaseState.commitSpend(signal);
+    leaseState.state = "consumed";
+  } catch (error) {
+    leaseState.state = "idle";
+    throw error;
+  }
 }
 
 export function createArtifactV2Resolver(

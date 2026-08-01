@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use flowersec::{
     ByteStream, IncomingStream, JsonObject, RpcCallError, RpcError, RpcPeer, Session, SessionError,
-    StreamTerminalError,
+    SessionTermination, StreamTerminalError,
 };
 
 #[derive(Debug)]
@@ -94,8 +94,10 @@ impl Session for ProbeSession {
         Ok(Duration::ZERO)
     }
 
-    async fn wait_closed(&self) -> Result<(), SessionError> {
-        Err(SessionError::Closed)
+    async fn wait_termination(&self) -> SessionTermination {
+        SessionTermination {
+            error: SessionError::Closed,
+        }
     }
 
     async fn close(&self) -> Result<(), SessionError> {
@@ -218,7 +220,7 @@ fn release_runner_waits_for_client_cold_cleanup_before_server_teardown() {
         .expect("server cold phase boundary");
     let cold = &source[cold_start..cold_end];
     assert!(
-        cold.contains("session.wait_closed().await"),
+        cold.contains("session.wait_termination().await"),
         "server must wait until the client finishes READY and owns cold cleanup"
     );
     assert!(
@@ -233,7 +235,7 @@ fn release_runner_reconciles_final_bulk_delivery_before_session_teardown() {
     for required in [
         "finish_release_client(session.clone())",
         "finish_release_server(session.clone())",
-        "session.wait_closed().await",
+        "session.wait_termination().await",
         "release-complete",
     ] {
         assert!(
@@ -258,7 +260,7 @@ fn release_runner_reconciles_final_bulk_delivery_before_session_teardown() {
         .find("finish_release_server(session.clone())")
         .expect("server completion handshake");
     let server_wait = source[server_cleanup..]
-        .find("session.wait_closed().await")
+        .find("session.wait_termination().await")
         .map(|offset| server_cleanup + offset)
         .expect("server peer-close wait");
     assert!(
@@ -303,8 +305,6 @@ fn session_errors_are_closed_and_redacted() {
         (SessionError::Canceled, "Flowersec operation was canceled"),
         (SessionError::Closed, "Flowersec session is closed"),
         (SessionError::GoingAway, "Flowersec session is going away"),
-        (SessionError::InvalidInput, "invalid Flowersec operation"),
-        (SessionError::Rejected, "Flowersec operation was rejected"),
         (
             SessionError::StreamRejected,
             "Flowersec stream was rejected",
@@ -313,15 +313,14 @@ fn session_errors_are_closed_and_redacted() {
             SessionError::ResourceExhausted,
             "Flowersec resources are exhausted",
         ),
-        (SessionError::Reset, "Flowersec stream was reset"),
         (SessionError::StreamReset, "Flowersec stream was reset"),
-        (SessionError::TimedOut, "Flowersec operation timed out"),
+        (SessionError::Timeout, "Flowersec operation timed out"),
         (SessionError::RekeyFailed, "Flowersec rekey failed"),
         (
             SessionError::LivenessFailed,
             "Flowersec liveness probe failed",
         ),
-        (SessionError::Failed, "Flowersec operation failed"),
+        (SessionError::OperationFailed, "Flowersec operation failed"),
     ];
     for (error, display) in snapshots {
         assert_eq!(error.to_string(), display);

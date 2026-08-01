@@ -59,9 +59,10 @@ pub use error_classification::{
 };
 pub use transport_v2::{
     ByteStreamV2 as ByteStream, IncomingStreamV2 as IncomingStream, JsonObjectV2 as JsonObject,
-    RpcCallError, RpcError, RpcPeerExt, RpcPeerV2 as RpcPeer, SessionError, SessionV2 as Session,
-    StreamTerminalError, UnreliableMessageChannelV2 as UnreliableMessageChannel,
-    UnreliableMessageError, UnreliableSendOutcome,
+    RpcCallError, RpcError, RpcPeerExt, RpcPeerV2 as RpcPeer, SessionError, SessionTermination,
+    SessionV2 as Session, StreamTerminalError,
+    UnreliableMessageChannelV2 as UnreliableMessageChannel, UnreliableMessageError,
+    UnreliableSendOutcome,
 };
 
 #[cfg(test)]

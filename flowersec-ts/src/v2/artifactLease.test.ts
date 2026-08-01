@@ -5,6 +5,7 @@ import {
   createArtifactAcquireContextV2,
   createArtifactLeaseV2,
   createArtifactV2Resolver,
+  commitArtifactLeaseSpendV2,
   type ArtifactLeaseError,
   type ArtifactLeaseV2,
   type ArtifactSourceV2,
@@ -28,7 +29,7 @@ describe("ArtifactV2 acquisition and durable spend leases", () => {
     expect(Object.keys(lease.artifact)).toEqual([]);
     expect(JSON.stringify(lease.artifact)).toBe("{}");
     expect(unwrapArtifact(lease.artifact).profile).toBe("flowersec/2");
-    await lease.commitSpend(controller.signal);
+    await commitArtifactLeaseSpendV2(lease, controller.signal);
     expect(spends).toEqual([controller.signal]);
   });
 
@@ -41,15 +42,15 @@ describe("ArtifactV2 acquisition and durable spend leases", () => {
       await gate;
     });
 
-    const first = lease.commitSpend();
-    const second = lease.commitSpend();
+    const first = commitArtifactLeaseSpendV2(lease);
+    const second = commitArtifactLeaseSpendV2(lease);
     await expect(second).rejects.toMatchObject({
       name: "ArtifactLeaseError",
       code: "already_consumed",
     } satisfies Partial<ArtifactLeaseError>);
     release();
     await expect(first).resolves.toBeUndefined();
-    await expect(lease.commitSpend()).rejects.toMatchObject({ code: "already_consumed" });
+    await expect(commitArtifactLeaseSpendV2(lease)).rejects.toMatchObject({ code: "already_consumed" });
     expect(calls).toBe(1);
   });
 
@@ -60,8 +61,8 @@ describe("ArtifactV2 acquisition and durable spend leases", () => {
       if (calls === 1) throw new Error("durability failed");
     });
 
-    await expect(lease.commitSpend()).rejects.toThrow("durability failed");
-    await expect(lease.commitSpend()).resolves.toBeUndefined();
+    await expect(commitArtifactLeaseSpendV2(lease)).rejects.toThrow("durability failed");
+    await expect(commitArtifactLeaseSpendV2(lease)).resolves.toBeUndefined();
     expect(calls).toBe(2);
   });
 

@@ -54,7 +54,7 @@ class FakeSession implements SessionV2 {
   async acceptStream(): Promise<never> { throw new Error("unused"); }
   async rekey(): Promise<void> {}
   async probeLiveness(): Promise<number> { return 0; }
-  async waitClosed(): Promise<never> { return await this.termination; }
+  async waitTermination(): Promise<never> { return await this.termination; }
   async close(): Promise<void> {}
 }
 

@@ -733,7 +733,12 @@ func (endpoint *directCapacityEndpoint) Connect(ctx context.Context) (capacitySe
 	if err != nil {
 		return nil, err
 	}
-	return &directCapacitySession{pair: pair, id: fmt.Sprintf("direct-%p", pair), termination: joinTermination(pair.Client.Termination(), pair.Server.Termination())}, nil
+	clientTermination := make(chan struct{})
+	go func() {
+		_, _ = pair.Client.WaitTermination(context.Background())
+		close(clientTermination)
+	}()
+	return &directCapacitySession{pair: pair, id: fmt.Sprintf("direct-%p", pair), termination: joinTermination(clientTermination, pair.Server.Termination())}, nil
 }
 
 func (endpoint *directCapacityEndpoint) Close(context.Context) error {

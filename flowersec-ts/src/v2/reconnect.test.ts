@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { createArtifactLeaseV2, type ArtifactSourceV2 } from "./artifactLease.js";
+import {
+  commitArtifactLeaseSpendV2,
+  createArtifactLeaseV2,
+  type ArtifactSourceV2,
+} from "./artifactLease.js";
 import type { SessionV2 } from "./contract.js";
 import {
   ConnectError,
@@ -32,14 +36,16 @@ describe("SessionV2 reconnect lifecycle", () => {
       acquire: async () => {
         acquisitions++;
         events.push(`acquire:${acquisitions}`);
-        return createArtifactLeaseV2(artifact, async () => events.push(`spend:${acquisitions}`));
+        return createArtifactLeaseV2(artifact, async () => {
+          events.push(`spend:${acquisitions}`);
+        });
       },
     };
     const config: SessionReconnectConfigV2 = {
       source,
       connect: async (lease) => {
         events.push(`connect:${acquisitions}`);
-        await lease.commitSpend();
+        await commitArtifactLeaseSpendV2(lease);
         if (acquisitions === 1) throw new Error("first attempt failed");
         return connected.session;
       },
@@ -391,7 +397,7 @@ function fakeSession(closeDelayMs = 0): Readonly<{
   };
   const session = {
     termination,
-    waitClosed: async () => await termination,
+    waitTermination: async () => await termination,
     close: async () => {
       closeCount++;
       if (closeDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, closeDelayMs));

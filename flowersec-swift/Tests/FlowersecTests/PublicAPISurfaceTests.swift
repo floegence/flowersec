@@ -19,7 +19,7 @@ struct PublicAPISurfaceTests {
     #expect(accepted.kind == "health")
     #expect(accepted.metadata == .empty)
     #expect(await stream.terminalError() == nil)
-    #expect(await session.waitClosed() == .closed)
+    #expect(await session.waitTermination() == SessionTermination(error: .closed))
     try await stream.reset()
     try await stream.close()
     try await session.close()
@@ -87,6 +87,6 @@ private struct PublicContractSession: Session {
 
   func rekey() async throws {}
   func probeLiveness() async throws -> Duration { .zero }
-  func waitClosed() async -> SessionError { .closed }
+  func waitTermination() async -> SessionTermination { SessionTermination(error: .closed) }
   func close() async throws {}
 }

@@ -20,7 +20,10 @@ import {
   type SessionV2 as InternalSessionV2,
 } from "../v2/session.js";
 import type { SessionV2 } from "../v2/contract.js";
-import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
+import {
+  commitArtifactLeaseSpendV2,
+  type ArtifactLeaseV2,
+} from "../v2/artifactLease.js";
 import { unwrapArtifact } from "../v2/opaqueArtifact.js";
 import {
   AbortError,
@@ -123,9 +126,6 @@ export class BrowserSessionConnectorV2 {
         connectTimeoutMs = normalizeConnectTimeout(this.options.connectTimeoutMs);
       } catch (error) {
         throw connectorError(path, "validate", "invalid_option", error);
-      }
-      if (typeof this.lease?.commitSpend !== "function") {
-        throw connectorError(path, "validate", "invalid_option", new TypeError("browser SessionV2 requires a durable artifact lease"));
       }
       let canonical: ReturnType<typeof validateArtifactV2>;
       try {
@@ -399,7 +399,7 @@ export class BrowserSessionConnectorV2 {
 
       stage = "handshake";
       try {
-        await this.lease.commitSpend(operationSignal);
+        await commitArtifactLeaseSpendV2(this.lease, operationSignal);
         this.state = "spent";
         throwIfAborted(operationSignal);
       } catch (error) {

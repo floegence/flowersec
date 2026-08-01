@@ -174,12 +174,6 @@ func TestWaitTerminationSeparatesTerminalCauseFromWaitCancellation(t *testing.T)
 	if termination.Error == nil || termination.Error.Code() != SessionClosed {
 		t.Fatalf("WaitTermination closed = %#v, want SessionClosed", termination)
 	}
-	if err := closed.WaitClosed(context.Background()); err == nil {
-		t.Fatal("WaitClosed closed error = nil, want compatibility error")
-	} else if projected, ok := err.(*SessionError); !ok || projected.Code() != SessionClosed {
-		t.Fatalf("WaitClosed closed error = %#v, want SessionClosed", err)
-	}
-
 	canceled := &opaqueSession{inner: inertSession{waitErr: context.Canceled}}
 	termination, err = canceled.WaitTermination(context.Background())
 	if termination.Error != nil {
@@ -198,7 +192,7 @@ func TestConnectorRedactsInternalCandidateFailure(t *testing.T) {
 		t.Fatalf("Connect error = %q, want redacted stable failure", err)
 	}
 	var public *ConnectError
-	if !errors.As(err, &public) || public.Code() != ConnectFailed {
+	if !errors.As(err, &public) || public.Code() != ConnectConnectionFailed {
 		t.Fatalf("Connect error projection = %#v", public)
 	}
 	if got, want := public.Error(), "Flowersec connection failed (code=connection_failed)"; got != want {

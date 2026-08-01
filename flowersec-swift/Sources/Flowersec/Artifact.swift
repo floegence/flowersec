@@ -34,8 +34,9 @@ public enum ArtifactLeaseError: Error, Equatable, Sendable {
 
 /// Binds an artifact to the caller-owned durable single-use record.
 ///
-/// `commitSpend` must durably publish SPENT before it returns successfully. A
-/// connector must call it before writing the first credential-bearing byte.
+/// The supplied `commitSpend` callback must durably publish SPENT before it
+/// returns successfully. The connector invokes it before writing the first
+/// credential-bearing byte; applications cannot invoke the transition directly.
 public struct ArtifactLease: Sendable {
   public let artifact: Artifact
   private let state: ArtifactLeaseStateV2
@@ -45,7 +46,7 @@ public struct ArtifactLease: Sendable {
     self.state = ArtifactLeaseStateV2(spend: commitSpend)
   }
 
-  public func commitSpend() async throws { try await state.commit() }
+  func commitSpend() async throws { try await state.commit() }
 }
 
 private actor ArtifactLeaseStateV2 {

@@ -223,9 +223,10 @@ writes FSB2. If expiry becomes visible while durable spend succeeds, the lease
 remains spent because the durable transition cannot be rolled back.
 
 Session termination is observable independently of the carrier. Go exposes
-`Termination()` and `WaitClosed(ctx)`; TypeScript exposes `termination` and
-`waitClosed()`; Rust exposes `Session::wait_closed()`; Swift exposes
-`Session.waitClosed()`. The TypeScript reconnect manager requires refreshable artifacts
+`WaitTermination(ctx)`; TypeScript exposes `Session.waitTermination()`; Rust exposes
+`Session::wait_termination()`; Swift exposes `Session.waitTermination()`. Each returns
+the same stable `SessionTermination` concept, while Go reports cancellation of the wait
+separately through its context error. The TypeScript reconnect manager requires refreshable artifacts
 for automatic reconnect, acquires a new lease for every attempt, and treats a
 serialized one-time artifact as consumed across subsequent connect calls. Its
 artifact acquisition context always carries the exact version policy, runtime

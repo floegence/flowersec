@@ -1,6 +1,6 @@
 use flowersec::{
     ArtifactLease, ConnectErrorCode, ConnectorOptions, ErrorRetryAction, RpcPeer, RpcPeerExt,
-    SessionError, classify_connect_error, classify_session_error, connect,
+    SessionError, SessionTermination, classify_connect_error, classify_session_error, connect,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -57,9 +57,17 @@ fn public_error_codes_expose_direct_stable_strings() {
 
     let connect_error = ConnectorOptions::new(vec![]).expect_err("empty trust roots are invalid");
     assert_eq!(connect_error.as_str(), "invalid_input");
-    assert_eq!(SessionError::TimedOut.as_str(), "timed_out");
+    assert_eq!(SessionError::Timeout.as_str(), "timeout");
     assert_eq!(SessionError::GoingAway.as_str(), "going_away");
     assert_eq!(SessionError::StreamRejected.as_str(), "stream_rejected");
+}
+
+#[test]
+fn session_termination_is_a_stable_value() {
+    let termination = SessionTermination {
+        error: SessionError::Closed,
+    };
+    assert_eq!(termination.error, SessionError::Closed);
 }
 
 #[test]

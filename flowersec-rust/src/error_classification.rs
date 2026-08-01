@@ -50,15 +50,13 @@ pub const fn classify_session_error(error: SessionError) -> ErrorRetryClassifica
             classification(ErrorRetryAction::RefreshArtifact, false, true)
         }
         SessionError::ResourceExhausted
-        | SessionError::Reset
         | SessionError::StreamReset
-        | SessionError::TimedOut
+        | SessionError::Timeout
         | SessionError::RekeyFailed
         | SessionError::LivenessFailed => classification(ErrorRetryAction::Retry, false, false),
-        SessionError::InvalidInput
-        | SessionError::Rejected
-        | SessionError::StreamRejected
-        | SessionError::Failed => classification(ErrorRetryAction::Stop, false, false),
+        SessionError::StreamRejected | SessionError::OperationFailed => {
+            classification(ErrorRetryAction::Stop, false, false)
+        }
     }
 }
 

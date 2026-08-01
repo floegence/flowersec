@@ -77,6 +77,7 @@ export interface RpcPeerV2 {
   call<Request = unknown, Response = unknown>(
     typeId: number,
     payload: Request,
+    decodeResponse: (payload: JsonValueV2) => Response,
     signal?: AbortSignal,
   ): Promise<RpcResultV2<Response>>;
   notify<Payload = unknown>(typeId: number, payload: Payload): Promise<void>;
@@ -112,7 +113,7 @@ export interface SessionV2 {
   acceptStream(options?: OperationOptionsV2): Promise<IncomingStreamV2>;
   rekey(options?: OperationOptionsV2): Promise<void>;
   probeLiveness(options?: OperationOptionsV2): Promise<number>;
-  waitClosed(): Promise<SessionTerminationV2>;
+  waitTermination(): Promise<SessionTerminationV2>;
   close(): Promise<void>;
 }
 
@@ -146,6 +147,6 @@ export interface InternalSessionV2 {
   acceptStream(options?: OperationOptionsV2): Promise<InternalIncomingStreamV2>;
   rekey(options?: OperationOptionsV2): Promise<void>;
   probeLiveness(options?: OperationOptionsV2): Promise<number>;
-  waitClosed(): Promise<Readonly<{ error: Error }>>;
+  waitTermination(): Promise<Readonly<{ error: Error }>>;
   close(): Promise<void>;
 }

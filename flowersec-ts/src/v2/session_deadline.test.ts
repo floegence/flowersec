@@ -106,7 +106,7 @@ describe("SessionV2 internal deadlines", () => {
     await opening;
 
     void client.rekey().catch(() => undefined);
-    await expect(server.waitClosed()).resolves.toMatchObject({ error: { code: "timeout" } });
+    await expect(server.waitTermination()).resolves.toMatchObject({ error: { code: "timeout" } });
     void client.close();
   });
 });

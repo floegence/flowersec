@@ -77,16 +77,13 @@ fn parse_session(code: &str) -> SessionError {
         "canceled" => SessionError::Canceled,
         "closed" => SessionError::Closed,
         "going_away" => SessionError::GoingAway,
-        "invalid_input" => SessionError::InvalidInput,
-        "rejected" => SessionError::Rejected,
         "stream_rejected" => SessionError::StreamRejected,
         "resource_exhausted" => SessionError::ResourceExhausted,
-        "reset" => SessionError::Reset,
         "stream_reset" => SessionError::StreamReset,
-        "timed_out" => SessionError::TimedOut,
+        "timeout" => SessionError::Timeout,
         "rekey_failed" => SessionError::RekeyFailed,
         "liveness_failed" => SessionError::LivenessFailed,
-        "failed" => SessionError::Failed,
+        "operation_failed" => SessionError::OperationFailed,
         _ => panic!("unknown session code {code}"),
     }
 }

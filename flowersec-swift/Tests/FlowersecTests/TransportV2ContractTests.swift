@@ -161,6 +161,6 @@ private final class ContractSessionV2: Session, @unchecked Sendable {
 
   func rekey() async throws {}
   func probeLiveness() async throws -> Duration { .milliseconds(1) }
-  func waitClosed() async -> SessionError { .closed }
+  func waitTermination() async -> SessionTermination { SessionTermination(error: .closed) }
   func close() async throws {}
 }

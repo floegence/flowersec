@@ -30,7 +30,7 @@ The `/reconnect` entrypoint exposes `ArtifactAcquireContext`, `ArtifactSource`, 
 
 `classifyConnectError(...)` and `classifySessionError(...)` map redacted public errors to stable application retry decisions. They expose only `action`, `retryable`, `refreshArtifact`, `callerCanceled`, and `sessionClosed`; they do not reveal carrier, candidate, URL, credential, stage, key, or diagnostic details.
 
-`RpcResult<Response>` is a discriminated union. Check `result.ok` before reading either the typed success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify are portable across SDKs, while `RpcPeer.onNotify(...)` is a TypeScript-specific subscription convenience. Generic response typing is static only and does not add runtime schema validation.
+`RpcResult<Response>` is a discriminated union. `RpcPeer.call(...)` requires a decoder for successful payloads, so the typed success value has passed application validation before it is returned. Check `result.ok` before reading either the typed success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify are portable across SDKs, while `RpcPeer.onNotify(...)` is a TypeScript-specific subscription convenience.
 
 When connector options omit a connection timeout, browser and Node.js connectors use the shared ten-second default.
 
@@ -53,7 +53,7 @@ portable core required from Go, Swift, or Rust.
 
 ## Opaque Boundaries
 
-`Artifact` is an opaque handle. Applications cannot inspect its connection data or serialize it back to protocol JSON. `Session` exposes RPC, stream operations, liveness, rekeying, `waitClosed()`, and closure without revealing the selected transport or peer endpoint identity. Public streams expose their kind and terminal state, but no protocol stream identifier.
+`Artifact` is an opaque handle. Applications cannot inspect its connection data or serialize it back to protocol JSON. `ArtifactLease` exposes no spend operation; only the connector may invoke the durable callback. `Session` exposes RPC, stream operations, liveness, rekeying, `waitTermination()`, and closure without revealing the selected transport or peer endpoint identity. Public streams expose their kind and terminal state, but no protocol stream identifier.
 
 `ConnectError` and `SessionError` expose only a closed `code`. They do not retain raw causes, credentials, URLs, candidate diagnostics, transport objects, peer details, or internal routing and handshake state.
 

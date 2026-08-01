@@ -467,20 +467,19 @@ func (pair *ProductDirectPair) Close() error {
 		if pair.Client != nil {
 			clientCloseErr = normalizeCloseError(pair.Client.Close())
 		}
-		clientTerminated := false
-		select {
-		case <-pair.Client.Termination():
-			clientTerminated = true
-		case <-time.After(3 * time.Second):
+		clientWaitCtx, cancelClientWait := context.WithTimeout(context.Background(), 3*time.Second)
+		termination, clientWaitErr := pair.Client.WaitTermination(clientWaitCtx)
+		cancelClientWait()
+		clientTerminated := clientWaitErr == nil
+		if !clientTerminated {
 			pair.closeErr = errors.Join(pair.closeErr, errors.New("client did not terminate after local close"))
 		}
 		if clientCloseErr != nil && clientTerminated {
-			termination, waitErr := pair.Client.WaitTermination(context.Background())
 			var terminationCode flowersec.SessionErrorCode
 			if termination.Error != nil {
 				terminationCode = termination.Error.Code()
 			}
-			pair.closeErr = errors.Join(pair.closeErr, reconcilePublicSessionCloseError(clientCloseErr, terminationCode, waitErr))
+			pair.closeErr = errors.Join(pair.closeErr, reconcilePublicSessionCloseError(clientCloseErr, terminationCode, nil))
 		} else {
 			pair.closeErr = errors.Join(pair.closeErr, clientCloseErr)
 		}

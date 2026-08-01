@@ -284,7 +284,7 @@ class SessionReconnectManager implements SessionReconnectManagerV2 {
     settings: ReconnectSettings,
     session: SessionV2,
   ): void {
-    void session.waitClosed().then(({ error }) => this.beginTermination(generation, config, settings, session, error));
+    void session.waitTermination().then(({ error }) => this.beginTermination(generation, config, settings, session, error));
   }
 
   private beginTermination(

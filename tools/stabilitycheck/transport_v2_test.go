@@ -245,8 +245,7 @@ func TestTransportV2PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 			"flowersec.UnreliableMessageChannel.MaxMessageBytes", "flowersec.UnreliableMessageChannel.Send",
 			"flowersec.UnreliableMessageChannel.Receive", "flowersec.Session.RPC", "flowersec.Session.UnreliableMessages",
 			"flowersec.Session.OpenStream", "flowersec.Session.AcceptStream", "flowersec.Session.Rekey",
-			"flowersec.Session.ProbeLiveness", "flowersec.Session.Termination",
-			"flowersec.Session.WaitClosed", "flowersec.Session.Close",
+			"flowersec.Session.ProbeLiveness", "flowersec.Session.WaitTermination", "flowersec.Session.Close",
 		},
 	}
 

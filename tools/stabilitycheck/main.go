@@ -76,6 +76,7 @@ func verifySource(repoRoot string, m *manifest) error {
 		func() error { return verifyManifest(m) },
 		func() error { return verifyDefaults(repoRoot) },
 		func() error { return verifyParity(repoRoot) },
+		func() error { return verifyPublicAPIDesign(repoRoot) },
 		func() error { return verifyDocs(repoRoot, m) },
 		func() error { return verifyGo(repoRoot, m) },
 		func() error { return verifyTS(repoRoot, m) },

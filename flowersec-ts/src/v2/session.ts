@@ -844,7 +844,7 @@ export class SessionV2 implements SessionV2Contract {
     this.fail(closed, false);
   }
 
-  async waitClosed(): Promise<SessionTerminationV2> {
+  async waitTermination(): Promise<SessionTerminationV2> {
     return await this.termination;
   }
 

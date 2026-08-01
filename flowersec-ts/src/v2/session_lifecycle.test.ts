@@ -52,7 +52,7 @@ describe("SessionV2 lifecycle bounds", () => {
       expect(client.terminalError).toMatchObject({ code: "timeout" });
       expect(server.terminalError).toBeInstanceOf(Error);
     }, 250);
-    await expect(client.waitClosed()).resolves.toMatchObject({ error: { code: "timeout" } });
+    await expect(client.waitTermination()).resolves.toMatchObject({ error: { code: "timeout" } });
     await expect(client.termination).resolves.toMatchObject({ error: { code: "timeout" } });
   });
 
@@ -68,7 +68,7 @@ describe("SessionV2 lifecycle bounds", () => {
     await client.close();
     expect(performance.now() - started).toBeLessThan(150);
     expect(client.terminalError).toMatchObject({ code: "closed" });
-    await expect(client.waitClosed()).resolves.toMatchObject({ error: { code: "closed" } });
+    await expect(client.waitTermination()).resolves.toMatchObject({ error: { code: "closed" } });
     expect(clientCarrier.activeCloses).toBe(0);
     expect(clientCarrier.aborts).toBe(1);
   });
@@ -127,7 +127,7 @@ describe("SessionV2 lifecycle bounds", () => {
     ]);
 
     await client.close();
-    await expect(server.waitClosed()).resolves.toMatchObject({ error: { code: "closed" } });
+    await expect(server.waitTermination()).resolves.toMatchObject({ error: { code: "closed" } });
     expect(serverCarrier.closes).toBe(1);
     expect(serverCarrier.aborts).toBe(0);
   });
@@ -146,7 +146,7 @@ describe("SessionV2 lifecycle bounds", () => {
     clientCarrier.deferControlWrites = true;
 
     await client.close();
-    await expect(server.waitClosed()).resolves.toMatchObject({ error: { code: "closed" } });
+    await expect(server.waitTermination()).resolves.toMatchObject({ error: { code: "closed" } });
     expect(clientCarrier.controlCloseWrites).toBe(1);
     expect(clientCarrier.aborts).toBe(0);
   });
@@ -176,7 +176,7 @@ describe("SessionV2 lifecycle bounds", () => {
       establishSessionV2(serverCarrier, config("server", { idleTimeoutMs: 0, closeTimeoutMs: 25 })),
     ]);
 
-    await expect(client.waitClosed()).resolves.toMatchObject({ error: { code: "timeout" } });
+    await expect(client.waitTermination()).resolves.toMatchObject({ error: { code: "timeout" } });
     await eventually(() => {
       expect(clientCarrier.activeCloses).toBe(0);
       expect(clientCarrier.aborts).toBe(1);

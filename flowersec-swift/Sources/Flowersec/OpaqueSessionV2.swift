@@ -52,8 +52,8 @@ struct OpaqueSessionV2: Session {
     }
   }
 
-  func waitClosed() async -> SessionError {
-    redactTransportErrorV2(await session.waitClosed())
+  func waitTermination() async -> SessionTermination {
+    SessionTermination(error: redactTransportErrorV2(await session.waitClosed()))
   }
 
   func close() async throws {

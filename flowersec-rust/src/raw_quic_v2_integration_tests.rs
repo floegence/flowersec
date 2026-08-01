@@ -411,14 +411,13 @@ async fn public_acceptor_establishes_opaque_direct_session() {
         None
     );
     let observing_server = server.clone();
-    let server_closed = tokio::spawn(async move { observing_server.wait_closed().await });
+    let server_closed = tokio::spawn(async move { observing_server.wait_termination().await });
     client.close().await.expect("close public client");
-    let error = tokio::time::timeout(Duration::from_secs(1), server_closed)
+    let termination = tokio::time::timeout(Duration::from_secs(1), server_closed)
         .await
         .expect("public server did not observe peer close")
-        .expect("join public server close observer")
-        .expect_err("public peer close unexpectedly reported success");
-    assert_eq!(error, SessionError::Closed);
+        .expect("join public server close observer");
+    assert_eq!(termination.error, SessionError::Closed);
     server.close().await.expect("close public server");
 }
 

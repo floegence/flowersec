@@ -38,10 +38,6 @@ const (
 	ConnectTimeout          ConnectErrorCode = "timeout"
 	ConnectExpired          ConnectErrorCode = "expired_artifact"
 	ConnectConnectionFailed ConnectErrorCode = "connection_failed"
-
-	// Compatibility aliases retained for existing Go callers.
-	ConnectInvalid = ConnectInvalidInput
-	ConnectFailed  = ConnectConnectionFailed
 )
 
 func (code ConnectErrorCode) String() string { return string(code) }
@@ -68,9 +64,7 @@ type Session interface {
 	AcceptStream(context.Context) (IncomingStream, error)
 	Rekey(context.Context) error
 	ProbeLiveness(context.Context) (time.Duration, error)
-	Termination() <-chan struct{}
 	WaitTermination(context.Context) (SessionTermination, error)
-	WaitClosed(context.Context) error
 	Close() error
 }
 
@@ -163,7 +157,7 @@ func (err *ConnectError) Is(target error) bool {
 // Code returns the closed, carrier-neutral connection outcome.
 func (err *ConnectError) Code() ConnectErrorCode {
 	if err == nil || err.code == "" {
-		return ConnectFailed
+		return ConnectConnectionFailed
 	}
 	return err.code
 }
@@ -362,12 +356,10 @@ func (current *opaqueSession) ProbeLiveness(ctx context.Context) (time.Duration,
 	return duration, redactNilSessionError(err)
 }
 
-func (current *opaqueSession) Termination() <-chan struct{} { return current.inner.Termination() }
-
 func (current *opaqueSession) WaitTermination(ctx context.Context) (SessionTermination, error) {
 	err := current.inner.WaitClosed(ctx)
 	if err == nil {
-		return SessionTermination{}, nil
+		return SessionTermination{Error: &SessionError{code: SessionClosed}}, nil
 	}
 	projected := redactSessionError(err)
 	select {
@@ -379,17 +371,6 @@ func (current *opaqueSession) WaitTermination(ctx context.Context) (SessionTermi
 		return SessionTermination{}, projected
 	}
 	return SessionTermination{Error: projected}, nil
-}
-
-func (current *opaqueSession) WaitClosed(ctx context.Context) error {
-	termination, err := current.WaitTermination(ctx)
-	if err != nil {
-		return err
-	}
-	if termination.Error == nil {
-		return nil
-	}
-	return termination.Error
 }
 
 func (current *opaqueSession) Close() error { return redactNilSessionError(current.inner.Close()) }

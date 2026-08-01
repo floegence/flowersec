@@ -1678,7 +1678,7 @@ async fn close_flush_is_bounded_when_the_control_stream_stalls() {
         .await
         .expect("close ignored its flush deadline")
         .expect_err("stalled close flush must report timeout");
-    assert_eq!(error, SessionError::TimedOut);
+    assert_eq!(error, SessionError::Timeout);
     gate.store(false, Ordering::Release);
     let _ = server.close().await;
 }
@@ -1759,11 +1759,10 @@ async fn signed_idle_timeout_is_refreshed_by_protocol_activity() {
         .probe_liveness()
         .await
         .expect("activity must refresh idle watchdog");
-    let terminal = tokio::time::timeout(Duration::from_millis(500), client.wait_closed())
+    let terminal = tokio::time::timeout(Duration::from_millis(500), client.wait_termination())
         .await
-        .expect("idle watchdog did not terminate the session")
-        .expect_err("idle watchdog must expose a terminal cause");
-    assert_eq!(terminal, SessionError::TimedOut);
+        .expect("idle watchdog did not terminate the session");
+    assert_eq!(terminal.error, SessionError::Timeout);
     assert!(client.probe_liveness().await.is_err());
     assert!(server.probe_liveness().await.is_err());
 }
@@ -1935,14 +1934,8 @@ async fn protocol_failure_closes_carrier_and_wakes_blocked_accept() {
     })
     .await
     .expect("protocol failure did not close the local carrier");
-    let first_cause = client
-        .wait_closed()
-        .await
-        .expect_err("terminated session must expose its cause");
-    let repeated_cause = client
-        .wait_closed()
-        .await
-        .expect_err("termination observation must be repeatable");
+    let first_cause = client.wait_termination().await.error;
+    let repeated_cause = client.wait_termination().await.error;
     assert_eq!(first_cause, SessionError::Closed);
     assert_eq!(repeated_cause, first_cause);
     assert_eq!(repeated_cause.to_string(), first_cause.to_string());
@@ -2090,11 +2083,10 @@ async fn peer_initiated_rekey_is_bounded_by_the_receivers_completion_deadline() 
     tokio::time::timeout(Duration::from_millis(250), entered.notified())
         .await
         .expect("receiver never waited for the stream key update");
-    let terminal = tokio::time::timeout(Duration::from_millis(250), server.wait_closed())
+    let terminal = tokio::time::timeout(Duration::from_millis(250), server.wait_termination())
         .await
-        .expect("peer-initiated rekey ignored the receiver completion deadline")
-        .expect_err("receiver deadline must terminate the session");
-    assert_eq!(terminal, SessionError::TimedOut);
+        .expect("peer-initiated rekey ignored the receiver completion deadline");
+    assert_eq!(terminal.error, SessionError::Timeout);
     release.notify_waiters();
     assert!(rekeying.await.expect("join rekey task").is_err());
     let _ = stream.reset().await;
@@ -2126,7 +2118,7 @@ async fn close_flush_deadline_also_bounds_carrier_close() {
         .await
         .expect("carrier close escaped the close_flush deadline")
         .expect_err("hanging carrier close must report timeout");
-    assert_eq!(error, SessionError::TimedOut);
+    assert_eq!(error, SessionError::Timeout);
     assert_eq!(active_closes.load(Ordering::Acquire), 0);
     let _ = server.close().await;
 }
@@ -2150,11 +2142,10 @@ async fn idle_timeout_drops_a_hanging_carrier_close_future() {
     let client = client.expect("client SessionV2");
     let server = server.expect("server SessionV2");
 
-    let error = tokio::time::timeout(Duration::from_millis(250), client.wait_closed())
+    let termination = tokio::time::timeout(Duration::from_millis(250), client.wait_termination())
         .await
-        .expect("idle timeout did not terminate the session")
-        .expect_err("idle timeout must expose a terminal cause");
-    assert_eq!(error, SessionError::TimedOut);
+        .expect("idle timeout did not terminate the session");
+    assert_eq!(termination.error, SessionError::Timeout);
     tokio::time::sleep(Duration::from_millis(40)).await;
     assert_eq!(active_closes.load(Ordering::Acquire), 0);
     let _ = server.close().await;

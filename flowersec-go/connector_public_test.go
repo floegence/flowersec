@@ -40,6 +40,11 @@ func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 
 func TestSessionTerminationPublicSurfaceAlignsWithPortableCore(t *testing.T) {
 	sessionType := reflect.TypeOf((*flowersec.Session)(nil)).Elem()
+	for _, forbidden := range []string{"Termination", "WaitClosed"} {
+		if _, ok := sessionType.MethodByName(forbidden); ok {
+			t.Fatalf("Session retains duplicate termination entrypoint %s", forbidden)
+		}
+	}
 	method, ok := sessionType.MethodByName("WaitTermination")
 	if !ok {
 		t.Fatal("Session is missing WaitTermination")
@@ -179,12 +184,6 @@ func TestConnectErrorPublicSnapshotContainsNoInternalDetail(t *testing.T) {
 		if got := code.String(); got != want {
 			t.Fatalf("ConnectErrorCode(%q).String() = %q, want %q", code, got, want)
 		}
-	}
-	if flowersec.ConnectInvalid != flowersec.ConnectInvalidInput {
-		t.Fatal("ConnectInvalid should remain a compatibility alias for ConnectInvalidInput")
-	}
-	if flowersec.ConnectFailed != flowersec.ConnectConnectionFailed {
-		t.Fatal("ConnectFailed should remain a compatibility alias for ConnectConnectionFailed")
 	}
 	var _ interface{ Is(error) bool } = err
 	var _ interface{ Unwrap() error } = (*flowersec.SessionError)(nil)

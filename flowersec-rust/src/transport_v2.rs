@@ -541,26 +541,26 @@ pub enum SessionError {
     Closed,
     #[error("Flowersec session is going away")]
     GoingAway,
-    #[error("invalid Flowersec operation")]
-    InvalidInput,
-    #[error("Flowersec operation was rejected")]
-    Rejected,
     #[error("Flowersec stream was rejected")]
     StreamRejected,
     #[error("Flowersec resources are exhausted")]
     ResourceExhausted,
     #[error("Flowersec stream was reset")]
-    Reset,
-    #[error("Flowersec stream was reset")]
     StreamReset,
     #[error("Flowersec operation timed out")]
-    TimedOut,
+    Timeout,
     #[error("Flowersec rekey failed")]
     RekeyFailed,
     #[error("Flowersec liveness probe failed")]
     LivenessFailed,
     #[error("Flowersec operation failed")]
-    Failed,
+    OperationFailed,
+}
+
+/// Stable, redacted reason for authoritative session termination.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionTermination {
+    pub error: SessionError,
 }
 
 /// A bounded application failure returned by a remote RPC handler.
@@ -584,7 +584,7 @@ impl RpcError {
                 .as_ref()
                 .is_some_and(|value| value.len() > Self::MAX_MESSAGE_BYTES)
         {
-            return Err(SessionError::Failed);
+            return Err(SessionError::OperationFailed);
         }
         Ok(Self { code, message })
     }
@@ -668,16 +668,13 @@ impl SessionError {
             Self::Canceled => "canceled",
             Self::Closed => "closed",
             Self::GoingAway => "going_away",
-            Self::InvalidInput => "invalid_input",
-            Self::Rejected => "rejected",
             Self::StreamRejected => "stream_rejected",
             Self::ResourceExhausted => "resource_exhausted",
-            Self::Reset => "reset",
             Self::StreamReset => "stream_reset",
-            Self::TimedOut => "timed_out",
+            Self::Timeout => "timeout",
             Self::RekeyFailed => "rekey_failed",
             Self::LivenessFailed => "liveness_failed",
-            Self::Failed => "failed",
+            Self::OperationFailed => "operation_failed",
         }
     }
 
@@ -693,12 +690,12 @@ impl SessionError {
             | io::ErrorKind::BrokenPipe
             | io::ErrorKind::NotConnected
             | io::ErrorKind::UnexpectedEof => Self::Closed,
-            io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => Self::InvalidInput,
+            io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => Self::OperationFailed,
             io::ErrorKind::PermissionDenied => Self::StreamRejected,
             io::ErrorKind::OutOfMemory => Self::ResourceExhausted,
             io::ErrorKind::ConnectionReset => Self::StreamReset,
-            io::ErrorKind::TimedOut => Self::TimedOut,
-            _ => Self::Failed,
+            io::ErrorKind::TimedOut => Self::Timeout,
+            _ => Self::OperationFailed,
         }
     }
 }
@@ -708,16 +705,13 @@ impl From<SessionError> for io::Error {
         let kind = match error {
             SessionError::Canceled => io::ErrorKind::Interrupted,
             SessionError::Closed | SessionError::GoingAway => io::ErrorKind::ConnectionAborted,
-            SessionError::InvalidInput => io::ErrorKind::InvalidInput,
-            SessionError::Rejected | SessionError::StreamRejected => {
-                io::ErrorKind::PermissionDenied
-            }
+            SessionError::StreamRejected => io::ErrorKind::PermissionDenied,
             SessionError::ResourceExhausted => io::ErrorKind::OutOfMemory,
-            SessionError::Reset | SessionError::StreamReset => io::ErrorKind::ConnectionReset,
-            SessionError::TimedOut => io::ErrorKind::TimedOut,
-            SessionError::RekeyFailed | SessionError::LivenessFailed | SessionError::Failed => {
-                io::ErrorKind::Other
-            }
+            SessionError::StreamReset => io::ErrorKind::ConnectionReset,
+            SessionError::Timeout => io::ErrorKind::TimedOut,
+            SessionError::RekeyFailed
+            | SessionError::LivenessFailed
+            | SessionError::OperationFailed => io::ErrorKind::Other,
         };
         io::Error::new(kind, error)
     }
@@ -843,9 +837,10 @@ where
         Response: serde::de::DeserializeOwned + Send,
     {
         let request = serde_json::to_value(request)
-            .map_err(|_| RpcCallError::Session(SessionError::InvalidInput))?;
+            .map_err(|_| RpcCallError::Session(SessionError::OperationFailed))?;
         let response = self.call(type_id, request).await?;
-        serde_json::from_value(response).map_err(|_| RpcCallError::Session(SessionError::Failed))
+        serde_json::from_value(response)
+            .map_err(|_| RpcCallError::Session(SessionError::OperationFailed))
     }
 }
 
@@ -874,7 +869,7 @@ pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
     async fn probe_liveness(&self) -> Result<Duration, SessionError>;
     /// Waits for authoritative session termination and returns its stable cause.
     /// Canceling this future never changes the session state.
-    async fn wait_closed(&self) -> Result<(), SessionError>;
+    async fn wait_termination(&self) -> SessionTermination;
     /// Closes the session and performs bounded local cleanup.
     async fn close(&self) -> Result<(), SessionError>;
 }
@@ -969,10 +964,13 @@ mod tests {
         );
         assert!(!error.to_string().contains("retry later"));
 
-        assert_eq!(RpcError::from_wire(0, None), Err(SessionError::Failed));
+        assert_eq!(
+            RpcError::from_wire(0, None),
+            Err(SessionError::OperationFailed)
+        );
         assert_eq!(
             RpcError::from_wire(500, Some("x".repeat(RpcError::MAX_MESSAGE_BYTES + 1))),
-            Err(SessionError::Failed)
+            Err(SessionError::OperationFailed)
         );
     }
 

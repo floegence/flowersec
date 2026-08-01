@@ -60,7 +60,7 @@ The crate root exports only these public categories:
   `classify_connect_error(...)`, and `classify_session_error(...)`;
 - runtime-owned direct acceptance: `AcceptorOptions`, `Acceptor`,
   `AcceptError`, and `AcceptErrorCode`;
-- carrier-neutral session behavior: `Session`, `RpcPeer`, `ByteStream`,
+- carrier-neutral session behavior: `Session`, `SessionTermination`, `RpcPeer`, `ByteStream`,
   `IncomingStream`, and `JsonObject`;
 - negotiated unreliable messages: `UnreliableMessageChannel`,
   `UnreliableMessageError`, and `UnreliableSendOutcome`;
@@ -76,10 +76,10 @@ same carrier-neutral `Session` interface. Duplicate concurrent registration of
 one artifact fails closed, and cancellation and artifact expiry bound the
 complete accept operation. One `Acceptor` admits one pending artifact at a
 time; runtimes use independent acceptors when sessions must wait concurrently.
-`Session` exposes RPC, logical streams, rekey, liveness, termination waiting,
-and bounded close. It does not expose route or carrier selection, endpoint
-identity, stream identifiers, candidates, wire data, keys, or transport
-diagnostics.
+`Session` exposes RPC, logical streams, rekey, liveness, `wait_termination`,
+which returns a stable `SessionTermination`, and bounded close. It does not
+expose route or carrier selection, endpoint identity, stream identifiers,
+candidates, wire data, keys, or transport diagnostics.
 
 When negotiated, `UnreliableMessageChannel::send(...)` returns
 `UnreliableSendOutcome::Accepted`, `DroppedExpired`, `DroppedBudget`, or
@@ -89,14 +89,12 @@ cancellation, closure, and internal failures remain public operation errors.
 `ConnectErrorCode`, `AcceptErrorCode`, `SessionError`, and
 `StreamTerminalError` are closed, redacted failure sets. `ConnectErrorCode::as_str()`
 and `AcceptErrorCode::as_str()` return stable snake_case public code strings.
-`RpcCallError` keeps a
-bounded remote `RpcError` separate from session failure; its generic display
-omits the sanitized application message unless the caller explicitly requests
-it. Public errors do not retain peer payloads, carrier diagnostics, credentials,
-or cryptographic material. `SessionError` includes the portable going-away,
-stream rejection, stream reset, rekey failure, and liveness failure states used
-by the shared recovery classifier, while retaining the older generic Rust
-variants for compatibility.
+`RpcCallError` keeps a bounded remote `RpcError` separate from session failure;
+its generic display omits the sanitized application message unless the caller
+explicitly requests it. Public errors do not retain peer payloads, carrier
+diagnostics, credentials, or cryptographic material. `SessionError` uses the
+portable terminal-state names consumed by the shared recovery classifier and
+does not retain overlapping generic compatibility variants.
 
 The recovery classifiers distinguish retrying an operation on the current
 session from acquiring a fresh artifact and session. They never authorize reuse

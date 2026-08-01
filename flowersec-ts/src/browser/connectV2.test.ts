@@ -21,6 +21,7 @@ import {
   type BrowserPreparedCandidateV2,
 } from "./connectV2.js";
 import { wrapArtifact } from "../v2/opaqueArtifact.js";
+import { createArtifactLeaseV2 } from "../v2/artifactLease.js";
 import {
   AbortError,
   ConnectError,
@@ -34,15 +35,16 @@ const fixture = JSON.parse(
 const artifact = decodeArtifactV2JSON(fixture.positive[0]!.artifact_json);
 
 function createBrowserSessionConnectorV2InternalStage(
-  lease: Omit<Parameters<typeof createBrowserSessionConnectorV2InternalStageWithOpaqueArtifact>[0], "artifact"> & {
+  lease: Readonly<{
     readonly artifact: ArtifactV2;
-  },
+    readonly commitSpend: (signal?: AbortSignal) => Promise<void>;
+  }>,
   options: Parameters<typeof createBrowserSessionConnectorV2InternalStageWithOpaqueArtifact>[1],
 ) {
-  return createBrowserSessionConnectorV2InternalStageWithOpaqueArtifact({
-    ...lease,
-    artifact: wrapArtifact(lease.artifact),
-  }, options);
+  return createBrowserSessionConnectorV2InternalStageWithOpaqueArtifact(
+    createArtifactLeaseV2(wrapArtifact(lease.artifact), lease.commitSpend),
+    options,
+  );
 }
 
 describe("browser SessionV2 equal-candidate connector", () => {

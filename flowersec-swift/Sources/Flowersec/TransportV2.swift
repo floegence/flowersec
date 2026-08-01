@@ -276,6 +276,15 @@ public enum SessionError: String, Error, Equatable, Sendable {
   case operationFailed = "operation_failed"
 }
 
+/// Stable, redacted reason for authoritative session termination.
+public struct SessionTermination: Equatable, Sendable {
+  public let error: SessionError
+
+  public init(error: SessionError) {
+    self.error = error
+  }
+}
+
 /// An application-level error returned by a remote RPC handler.
 ///
 /// This value carries only the remote application's semantic code and message;
@@ -440,7 +449,7 @@ public protocol Session: Sendable {
   func acceptStream() async throws -> IncomingStream
   func rekey() async throws
   func probeLiveness() async throws -> Duration
-  func waitClosed() async -> SessionError
+  func waitTermination() async -> SessionTermination
   func close() async throws
 }
 

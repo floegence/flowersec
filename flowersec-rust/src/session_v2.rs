@@ -42,8 +42,9 @@ use crate::{
     transport_v2::{
         ByteStreamV2, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2,
         IncomingStreamV2, JsonObjectV2, PathKind, RpcCallError, RpcError, RpcPeerV2, SessionError,
-        SessionRole, SessionV2, StreamTerminalError, UnreliableMessageChannelV2,
-        UnreliableMessageError, UnreliableSendOutcome, carrier_inbound_stream_limit_v2,
+        SessionRole, SessionTermination, SessionV2, StreamTerminalError,
+        UnreliableMessageChannelV2, UnreliableMessageError, UnreliableSendOutcome,
+        carrier_inbound_stream_limit_v2,
     },
 };
 
@@ -836,7 +837,7 @@ impl SessionV2 for SelfSession {
         metadata: JsonObjectV2,
     ) -> Result<Box<dyn ByteStreamV2>, SessionError> {
         if kind == RESERVED_RPC_KIND {
-            return Err(SessionError::InvalidInput);
+            return Err(SessionError::OperationFailed);
         }
         open_stream_v2(self, kind, metadata)
             .await
@@ -869,9 +870,11 @@ impl SessionV2 for SelfSession {
             }
         })
     }
-    async fn wait_closed(&self) -> Result<(), SessionError> {
+    async fn wait_termination(&self) -> SessionTermination {
         self.canceled.cancelled().await;
-        Err(SessionError::from_io(&terminal_error_v2(self)))
+        SessionTermination {
+            error: SessionError::from_io(&terminal_error_v2(self)),
+        }
     }
     async fn close(&self) -> Result<(), SessionError> {
         close_session_v2(self)
@@ -3294,7 +3297,7 @@ async fn rpc_call_v2(
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
             (value < MAX_PORTABLE_RPC_ID).then_some(value + 1)
         })
-        .map_err(|_| RpcCallError::Session(SessionError::InvalidInput))?;
+        .map_err(|_| RpcCallError::Session(SessionError::OperationFailed))?;
     let envelope = RpcEnvelopeWireV2 {
         type_id,
         request_id,
@@ -3329,7 +3332,7 @@ async fn rpc_call_v2(
             if response.response_to == 0 && response.request_id == 0 {
                 continue;
             }
-            return Err(RpcCallError::Session(SessionError::InvalidInput));
+            return Err(RpcCallError::Session(SessionError::OperationFailed));
         }
         if let Some(error) = response.error {
             let error =
