@@ -35,7 +35,7 @@ test("manifest and maintained-tree Go module inventories are identical", async (
   );
 });
 
-test("every Go module is verified, resolved, and scanned with workspace mode disabled", async () => {
+test("every Go module is downloaded, verified, resolved, and scanned with workspace mode disabled", async () => {
   const { runGoSecurityChecks } = await loadChecker();
   const calls = [];
   const run = (command, args, options) => {
@@ -59,10 +59,11 @@ test("every Go module is verified, resolved, and scanned with workspace mode dis
     path.join(sourceRoot, "flowersec-go"),
     path.join(sourceRoot, "tools/transportcheck"),
   ]);
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 8);
   for (const moduleDir of modules) {
     const moduleCalls = calls.filter((call) => call.options.cwd === moduleDir);
     assert.deepEqual(moduleCalls.map((call) => call.args), [
+      ["mod", "download", "all"],
       ["mod", "verify"],
       ["list", "-m", "-json", "all"],
       ["run", "golang.org/x/vuln/cmd/govulncheck@v1.1.4", "./..."],
@@ -70,6 +71,7 @@ test("every Go module is verified, resolved, and scanned with workspace mode dis
     for (const call of moduleCalls) {
       assert.equal(call.options.env.GOWORK, "off");
       assert.equal(call.options.env.GOTOOLCHAIN, "go1.26.5");
+      assert.equal(call.options.env.GOFLAGS, "-mod=readonly");
     }
   }
 });

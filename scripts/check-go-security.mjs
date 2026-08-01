@@ -134,6 +134,7 @@ export function runGoSecurityChecks({
   );
   const modules = collectGoModuleDirectories(repoRoot, manifest, discoverModules(repoRoot));
   const environment = {
+    GOFLAGS: "-mod=readonly",
     GOTOOLCHAIN: goToolchain,
     GOWORK: "off",
   };
@@ -142,6 +143,7 @@ export function runGoSecurityChecks({
     if (!fs.existsSync(path.join(moduleDir, "go.mod"))) {
       throw new Error(`workspace module has no go.mod: ${moduleDir}`);
     }
+    run("go", ["mod", "download", "all"], { cwd: moduleDir, env: environment });
     run("go", ["mod", "verify"], { cwd: moduleDir, env: environment });
     run("go", ["list", "-m", "-json", "all"], { cwd: moduleDir, env: environment });
     run(
