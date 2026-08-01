@@ -9,6 +9,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
+	"github.com/gorilla/websocket"
 )
 
 type terminalCloseSession struct {
@@ -31,6 +32,20 @@ func TestPairCloseAcceptsTerminalSessionCloseErrorsAfterTermination(t *testing.T
 	defer cancel()
 	if err := pair.Close(ctx); err != nil {
 		t.Fatalf("Pair.Close terminal errors = %v", err)
+	}
+}
+
+func TestPairCloseAcceptsPeerTunnelBridgeCloseAfterTermination(t *testing.T) {
+	terminated := make(chan struct{})
+	close(terminated)
+	pair := &Pair{
+		Client: &terminalCloseSession{
+			closeErr:   &websocket.CloseError{Code: 4000, Text: "tunnel bridge closed"},
+			terminated: terminated,
+		},
+	}
+	if err := pair.Close(context.Background()); err != nil {
+		t.Fatalf("Pair.Close peer tunnel bridge close = %v", err)
 	}
 }
 

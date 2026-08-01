@@ -500,8 +500,11 @@ func normalizeCloseError(err error) error {
 		return nil
 	}
 	var websocketClose *gorillaws.CloseError
-	if errors.As(err, &websocketClose) && websocketClose.Code == 4000 && websocketClose.Text == "session closed" {
-		return nil
+	if errors.As(err, &websocketClose) && websocketClose.Code == 4000 {
+		switch websocketClose.Text {
+		case "session closed", "tunnel bridge closed":
+			return nil
+		}
 	}
 	return err
 }

@@ -809,14 +809,17 @@ func TestNormalizeCloseErrorAcceptsTerminalDeadline(t *testing.T) {
 	}
 }
 
-func TestNormalizeCloseErrorAcceptsPeerSessionClose(t *testing.T) {
-	err := &gorillaws.CloseError{Code: 4000, Text: "session closed"}
-	if normalized := normalizeCloseError(err); normalized != nil {
-		t.Fatalf("normalize peer session close = %v", normalized)
+func TestNormalizeCloseErrorAcceptsOwnedPeerCloseReasons(t *testing.T) {
+	for _, reason := range []string{"session closed", "tunnel bridge closed"} {
+		err := &gorillaws.CloseError{Code: 4000, Text: reason}
+		if normalized := normalizeCloseError(err); normalized != nil {
+			t.Fatalf("normalize peer close %q = %v", reason, normalized)
+		}
 	}
 
 	for _, unexpected := range []*gorillaws.CloseError{
 		{Code: 4000, Text: "session protocol failure"},
+		{Code: 4000, Text: "tunnel bridge closure"},
 		{Code: gorillaws.CloseProtocolError, Text: "protocol error"},
 	} {
 		if normalized := normalizeCloseError(unexpected); normalized == nil {
