@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -96,6 +97,35 @@ func TestUnreliableMessagePublicSurfaceIsOpaqueAndCarrierNeutral(t *testing.T) {
 		if status == "" {
 			t.Fatal("empty unreliable send status")
 		}
+	}
+}
+
+func TestMetadataPublicConstructorValidatesAndCopiesJSONObjectBoundary(t *testing.T) {
+	nested := map[string]any{
+		"accepted": true,
+	}
+	source := map[string]any{
+		"operation": "health",
+		"attempt":   int64(1),
+		"nested":    nested,
+	}
+	metadata, err := flowersec.NewMetadata(source)
+	if err != nil {
+		t.Fatalf("NewMetadata() error = %v", err)
+	}
+	source["operation"] = "mutated"
+	nested["accepted"] = false
+	if metadata["operation"] != "health" {
+		t.Fatalf("metadata was not defensively copied: %#v", metadata)
+	}
+	if child, ok := metadata["nested"].(map[string]any); !ok || child["accepted"] != true {
+		t.Fatalf("nested metadata was not defensively copied: %#v", metadata)
+	}
+	if _, err := flowersec.NewMetadata(map[string]any{"fraction": 1.5}); !errors.Is(err, flowersec.ErrInvalidMetadata) {
+		t.Fatalf("NewMetadata() float error = %v, want ErrInvalidMetadata", err)
+	}
+	if _, err := flowersec.NewMetadata(map[string]any{"unsafe": int64(9_007_199_254_740_992)}); !errors.Is(err, flowersec.ErrInvalidMetadata) {
+		t.Fatalf("NewMetadata() unsafe integer error = %v, want ErrInvalidMetadata", err)
 	}
 }
 

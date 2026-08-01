@@ -124,6 +124,16 @@
             "doc_token": "`flowersec.Metadata`"
           },
           {
+            "kind": "func",
+            "expr": "flowersec.NewMetadata",
+            "doc_token": "`flowersec.NewMetadata(...)`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidMetadata",
+            "doc_token": "`flowersec.ErrInvalidMetadata`"
+          },
+          {
             "kind": "type",
             "expr": "flowersec.ByteStream",
             "doc_token": "`flowersec.ByteStream`"
