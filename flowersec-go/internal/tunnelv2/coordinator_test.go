@@ -305,7 +305,11 @@ func TestCoordinatorScopedChannelRejectsDifferentSessionContract(t *testing.T) {
 	coordinator := newTestCoordinator(t, tunnelv2.Config{})
 	_, clientTunnel := memorySessionPair(carrier.KindQUIC)
 	_, serverTunnel := memorySessionPair(carrier.KindQUIC)
-	client := newPendingLeg(tunnelRequest(1, "client", "contract-client"), clientTunnel)
+	client := &guardedPendingLeg{
+		pendingLeg: newPendingLeg(tunnelRequest(1, "client", "contract-client"), clientTunnel),
+		extras:     make(chan carrier.Stream),
+		started:    make(chan struct{}),
+	}
 	serverRequest := tunnelRequest(2, "server", "contract-server")
 	serverRequest.SessionContractHash[0]++
 	server := newPendingLeg(serverRequest, serverTunnel)
@@ -313,7 +317,7 @@ func TestCoordinatorScopedChannelRejectsDifferentSessionContract(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	clientDone := serveLeg(coordinator, ctx, client)
-	waitForSignal(t, client.received, "contract client")
+	waitForSignal(t, client.started, "contract client registration")
 	serverDone := serveLeg(coordinator, context.Background(), server)
 	assertResponse(t, server, artifactv2.AdmissionReject, tunnelv2.ReasonPairMismatch)
 	if err := <-serverDone; !errors.Is(err, tunnelv2.ErrPairMismatch) {
