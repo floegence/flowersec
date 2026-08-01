@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/webtransport"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease/linuxnetlab"
 )
@@ -84,11 +83,7 @@ func adaptiveStageExecutionPlan(plan transportrelease.ReleasePlan, stage transpo
 	if topology == adaptiveWebTopology {
 		// This is a local shutdown ceiling, not additional signed cell time. The
 		// parent cell context still enforces the five-minute manifest watchdog.
-		cleanupLimit := carrierwt.ConnectionDrainTimeout() + time.Second
-		cleanupSeconds := int((cleanupLimit + time.Second - 1) / time.Second)
-		if stage.CleanupDeadlineSeconds < cleanupSeconds {
-			stage.CleanupDeadlineSeconds = cleanupSeconds
-		}
+		stage = webTransportExecutionPlan(stage)
 	}
 	return stage, nil
 }

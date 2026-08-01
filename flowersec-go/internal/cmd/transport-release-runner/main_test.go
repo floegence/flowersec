@@ -589,6 +589,29 @@ func TestBrowserCollectorPlanBindsMeasuredEdgeRecoveryBudget(t *testing.T) {
 	}
 }
 
+func TestBrowserCollectorPlanCoversProductionWebTransportDrain(t *testing.T) {
+	plan, _, err := transportrelease.LoadReleasePlan("../../../../testdata/transport_v2/performance_manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, topology := range []string{
+		browserDirectTopology,
+		string(tunnelworkload.BrowserTunnelWTWSS),
+		string(tunnelworkload.BrowserTunnelWTQUIC),
+	} {
+		t.Run(topology, func(t *testing.T) {
+			got := newBrowserCollectorPlan(browserWorkerRequest{Plan: plan.Clean, Topology: topology}, "http://198.18.13.42:443/artifacts", "certificate-hash")
+			if got.CleanupDeadlineMS != 6_000 {
+				t.Fatalf("clean browser cleanup timeout = %dms, want the 5s WebTransport drain plus 1s scheduler margin", got.CleanupDeadlineMS)
+			}
+		})
+	}
+	edge := newBrowserCollectorPlan(browserWorkerRequest{Plan: plan.Edge, Topology: browserDirectTopology}, "http://198.18.13.42:443/artifacts", "certificate-hash")
+	if edge.CleanupDeadlineMS != int64(plan.Edge.CleanupDeadlineSeconds)*1_000 {
+		t.Fatalf("edge browser cleanup timeout = %dms, want unchanged %ds profile budget", edge.CleanupDeadlineMS, plan.Edge.CleanupDeadlineSeconds)
+	}
+}
+
 func TestBrowserWorkerRequestUsesUnprefixedClientAddressAndOrigin(t *testing.T) {
 	request := newBrowserWorkerRequest(
 		transportrelease.ProfilePlan{ID: "edge-v1"},
