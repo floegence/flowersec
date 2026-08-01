@@ -106,11 +106,11 @@ test("precommit uses the short Go group while final integration retains the comp
 
 test("final integration isolates race from the bounded language build lanes", () => {
   const laneCall = [
-    "\tGOPROXY=off node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
+    "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
     "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check",
   ].join("\n");
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  const checkTarget = canonical.match(/^check: security-makefile-check security-dependency-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const checkTarget = canonical.match(/^check: security-makefile-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.equal(laneTarget.trim(), laneCall.trim());
   assert.match(checkTarget, /^\t\$\(MAKE\) final-integration-lanes$/m);
 
@@ -118,7 +118,7 @@ test("final integration isolates race from the bounded language build lanes", ()
     assert.match(canonical, new RegExp("^" + target + ":", "m"), target + " must remain an explicit final lane");
   }
 
-  const weakened = canonical.replace(laneCall, "\tGOPROXY=off node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check");
+  const weakened = canonical.replace(laneCall, "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check");
   assert.notEqual(weakened, canonical);
   const result = check(weakened);
   assert.notEqual(result.status, 0);
@@ -126,8 +126,8 @@ test("final integration isolates race from the bounded language build lanes", ()
 });
 
 test("network preflight completes before expensive stages and final lanes stay offline", () => {
-  const checkTarget = canonical.match(/^check: security-makefile-check security-dependency-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  const preflightIndex = checkTarget.indexOf("run-final-stage.mjs 300 preflight $(MAKE) final-network-preflight");
+  const checkTarget = canonical.match(/^check: security-makefile-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const preflightIndex = checkTarget.indexOf("run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight");
   const packagesIndex = checkTarget.indexOf("run-final-stage.mjs 300 packages $(MAKE) final-package-validation");
   const lanesIndex = checkTarget.indexOf("$(MAKE) final-integration-lanes");
   assert.ok(preflightIndex >= 0, "check must run the bounded network preflight");
@@ -135,22 +135,83 @@ test("network preflight completes before expensive stages and final lanes stay o
   assert.ok(lanesIndex > packagesIndex, "package validation must fail before expensive final lanes");
 
   const preflight = canonical.match(/^final-network-preflight:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  for (const target of ["rust-audit", "go-vulncheck", "ts-ci", "ts-audit", "ts-browser-ensure", "swift-security-check"]) {
-    assert.match(preflight, new RegExp(`^\\t\\$\\(MAKE\\) ${target}$`, "m"));
-  }
+  assert.match(preflight, /run-final-lanes\.mjs.*final-go-preflight.*final-ts-preflight.*final-swift-preflight.*final-rust-preflight/);
 
   const lanes = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(lanes, /GOPROXY=off.*npm_config_offline=true.*run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check/);
-  assert.match(lanes, /GOPROXY=off.*run-final-stage\.mjs 595 race/);
+  assert.match(lanes, /CARGO_NET_OFFLINE=true.*GOPROXY=off.*npm_config_offline=true.*run-final-stage\.mjs 595 race/);
   const packages = canonical.match(/^final-package-validation:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  for (const target of ["security-package-check", "ts-package-check", "swift-package-check", "rust-package-check"]) {
+  for (const target of ["security-package-check", "ts-package-check", "swift-package-check", "rust-package-offline-check"]) {
     assert.match(packages, new RegExp(`^\\t\\$\\(MAKE\\) ${target}$`, "m"));
   }
   assert.doesNotMatch(canonical.match(/^final-go-check:\n((?:\t.*\n)+)/m)?.[1] ?? "", /go-vulncheck/);
   assert.doesNotMatch(canonical.match(/^final-ts-check:\n((?:\t.*\n)+)/m)?.[1] ?? "", /ts-audit|ts-browser-ensure|ts-package-check/);
   assert.match(canonical.match(/^final-swift-check:\n((?:\t.*\n)+)/m)?.[1] ?? "", /swift-final-check/);
   assert.match(canonical.match(/^final-rust-check:\n((?:\t.*\n)+)/m)?.[1] ?? "", /CARGO_NET_OFFLINE=true.*rust-final-check/);
-  assert.doesNotMatch(canonical.match(/^rust-final-check:.*$/m)?.[0] ?? "", /rust-package/);
+  assert.doesNotMatch(canonical.match(/^rust-final-check:.*$/m)?.[0] ?? "", /rust-package|rust-audit/);
+});
+
+test("exact-main gate keeps network work before deterministic offline phases", () => {
+  assert.match(canonical, /^security-dependency-check:\n/m);
+  assert.doesNotMatch(canonical, /^security-dependency-check:.*ts-ensure-deps/m);
+  assert.match(canonical, /^check: security-makefile-check\n/m);
+
+  const checkTarget = canonical.match(/^check: security-makefile-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const releaseIndex = checkTarget.indexOf("$(MAKE) release-policy-check");
+  const readmeIndex = checkTarget.indexOf("$(MAKE) readme-localization-check");
+  const preflightIndex = checkTarget.indexOf("run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight");
+  const contractsIndex = checkTarget.indexOf("run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts");
+  const packagesIndex = checkTarget.indexOf("run-final-stage.mjs 300 packages $(MAKE) final-package-validation");
+  const lanesIndex = checkTarget.indexOf("$(MAKE) final-integration-lanes");
+  const postIndex = checkTarget.indexOf("run-final-stage.mjs 595 post $(MAKE) final-post-validation");
+  assert.ok(releaseIndex >= 0 && readmeIndex > releaseIndex, "dependency-free source contracts must run first");
+  assert.doesNotMatch(
+    checkTarget.slice(0, preflightIndex),
+    /npm ci|npm audit|cargo (?:fetch|package|publish)|go-vulncheck|swift-security-check|ts-browser-ensure/,
+    "the source-contract phase must not reach network-sensitive dependency work",
+  );
+  assert.ok(preflightIndex > readmeIndex, "network preflight must follow source contracts");
+  assert.ok(contractsIndex > preflightIndex, "deterministic contracts must follow dependency preparation");
+  assert.ok(packagesIndex > contractsIndex, "offline package validation must follow deterministic contracts");
+  assert.ok(lanesIndex > packagesIndex, "race and language lanes must follow package validation");
+  assert.ok(postIndex > lanesIndex, "offline examples and interoperability must run last");
+
+  const preflight = canonical.match(/^final-network-preflight:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  for (const target of ["final-go-preflight", "final-ts-preflight", "final-swift-preflight", "final-rust-preflight"]) {
+    assert.match(preflight, new RegExp(target));
+  }
+  const offlineContracts = canonical.match(/^final-offline-contracts:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  for (const target of ["security-dependency-check", "gen-check", "stability-source-check"]) {
+    assert.match(offlineContracts, new RegExp(`^\\t\\$\\(MAKE\\) ${target}$`, "m"));
+  }
+  const packages = canonical.match(/^final-package-validation:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(packages, /rust-package-offline-check/);
+  assert.doesNotMatch(packages, /rust-package-check/);
+
+  const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(laneTarget, /^\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race/m);
+  assert.match(laneTarget, /CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true.*595 languages/);
+  const post = canonical.match(/^final-post-validation:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(post, /\$\(MAKE\) example-check/);
+  assert.match(post, /\$\(MAKE\) transport-interop-smoke/);
+
+  const finalSwift = canonical.match(/^final-swift-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const finalRust = canonical.match(/^final-rust-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(finalSwift, /stability-swift-check/);
+  assert.match(finalRust, /stability-rust-check/);
+  assert.doesNotMatch(canonical.match(/^rust-final-check:.*$/m)?.[0] ?? "", /rust-audit/);
+  assert.equal((canonical.match(/\$\(MAKE\) rust-audit$/gm) ?? []).length, 1, "Rust audit must run once in preflight");
+  assert.equal((canonical.match(/\$\(MAKE\) rust-package-check$/gm) ?? []).length, 1, "online publish dry-run must run once in preflight");
+  assert.equal((canonical.match(/\$\(MAKE\) rust-package-offline-check$/gm) ?? []).length, 1, "offline package closure must run once after preflight");
+
+  assert.match(canonical, /^SWIFTPM_CACHE_PATH := \$\(CURDIR\)\/\.flowersec\/swiftpm-cache$/m);
+  const swiftCache = '\"$(SWIFTPM_CACHE_PATH)\"';
+  for (const target of ["swift-package-check", "swift-final-check", "example-check"]) {
+    const recipe = canonical.match(new RegExp(`^${target}:.*\\n((?:\\t.*\\n)+)`, "m"))?.[1] ?? "";
+    assert.ok(recipe.includes(swiftCache), `${target} must use the shared SwiftPM cache`);
+    assert.match(recipe, /--skip-update/);
+    assert.match(recipe, /--only-use-versions-from-resolved-file/);
+  }
 });
 
 test("final Go race gate runs all shards with an explicit CPU budget", () => {
@@ -323,7 +384,7 @@ test("final race validation completes before bounded language build lanes start"
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const goTarget = canonical.match(/^final-go-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const raceTarget = canonical.match(/^final-race-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  assert.match(laneTarget, /^\tGOPROXY=off node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check\n$/);
+  assert.match(laneTarget, /^\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check\n$/);
   assert.doesNotMatch(goTarget, /go-test-race/);
   assert.match(raceTarget, /^\t\$\(MAKE\) go-test-race$/m);
 });
@@ -473,15 +534,15 @@ test("Swift source guard recipe cannot be replaced with a no-op", () => {
 
 test("security source checks stay fast while package closure keeps a fresh npm build", () => {
   assert.match(canonical, /^ts-build: ts-ensure-deps$/m);
-  assert.match(canonical, /^security-dependency-check: ts-ensure-deps$/m);
+  assert.match(canonical, /^security-dependency-check:$/m);
   assert.match(canonical, /^security-package-check: ts-build$/m);
-  const disconnected = canonical.replace(
-    /^security-dependency-check: ts-ensure-deps$/m,
-    "security-dependency-check:",
+  const reconnected = canonical.replace(
+    /^security-dependency-check:$/m,
+    "security-dependency-check: ts-ensure-deps",
   );
-  const result = check(disconnected);
+  const result = check(reconnected);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /security-dependency-check.*ts-ensure-deps/i);
+  assert.match(result.stderr, /security-dependency-check.*dependency installation|before final-network-preflight/i);
 
   const packageDisconnected = canonical.replace(
     /^security-package-check: ts-build$/m,
@@ -569,9 +630,9 @@ test("npm audit cannot omit dependencies or downgrade the severity threshold", (
 });
 
 test("effective Make graph rejects security gate removal from precommit and check", () => {
-  for (const target of ["precommit", "check"]) {
+  for (const [target, prerequisites] of [["precommit", "security-makefile-check security-dependency-check"], ["check", "security-makefile-check"]]) {
     const disconnected = canonical.replace(
-      new RegExp(`^${target}: security-makefile-check security-dependency-check$`, "m"),
+      new RegExp(`^${target}: ${prerequisites}$`, "m"),
       `${target}:`,
     );
     assert.notEqual(disconnected, canonical, `${target} must declare security prerequisites`);
@@ -591,12 +652,12 @@ test("check cannot suppress or disconnect final integration lanes", () => {
       assert.match(result.stderr, /check must call|exact, unsuppressed/i);
     }
   }
-  const packageCall = "\tnode scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
+  const packageCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
   for (const replacement of ["", `\t-${packageCall.slice(1)}`, `${packageCall} || true`]) {
     const mutated = replaceTargetRecipeLine(canonical, "check", packageCall, replacement);
     const result = check(mutated);
     assert.notEqual(result.status, 0, "package validation mutation must fail");
-    assert.match(result.stderr, /package validation|bounded network preflight/i);
+    assert.match(result.stderr, /packages|phase|order|validation/i);
   }
 });
 

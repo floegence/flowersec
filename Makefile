@@ -1,7 +1,8 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-package-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check rust-final-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-package-validation final-integration-lanes final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-check transportcheck-fast transport-runner-config transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check rust-final-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check transportcheck-fast transport-runner-config transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
 
 CHECK_INTEROP ?= 1
 TRANSPORT_RUNNER_CONFIG ?= $(CURDIR)/.flowersec/transport-runner.json
+SWIFTPM_CACHE_PATH := $(CURDIR)/.flowersec/swiftpm-cache
 
 YAMUX_INTEROP ?= 1
 YAMUX_INTEROP_STRESS ?= 0
@@ -116,7 +117,7 @@ ts-package-check:
 	cd flowersec-ts && npm run verify:package
 
 swift-package-check:
-	swift package describe >/dev/null
+	swift package --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file describe >/dev/null
 
 swift-security-check:
 	node scripts/check-swift-security.mjs
@@ -148,15 +149,15 @@ swift-source-guard:
 	fi
 
 swift-build:
-	swift build
+	swift build --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file
 
 swift-test:
 	# Xcode 26.4 can retain a stale test-bundle resource seal after swift-build.
-	@if [ "$$(uname -s)" = "Darwin" ]; then swift package clean; fi
-	swift test --enable-code-coverage
+	@if [ "$$(uname -s)" = "Darwin" ]; then swift package --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file clean; fi
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --enable-code-coverage
 
 swift-cover-check:
-	@coverage_path=$$(swift test --show-codecov-path); \
+	@coverage_path=$$(swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --show-codecov-path); \
 		node scripts/check-swift-coverage.mjs "$$coverage_path" 79 80
 
 swift-check:
@@ -169,11 +170,11 @@ swift-check:
 
 swift-final-check:
 	$(MAKE) swift-source-guard
-	swift build --cache-path "$(CURDIR)/.flowersec/swiftpm-cache" --skip-update --only-use-versions-from-resolved-file
+	swift build --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file
 	@# Xcode 26.4 can retain a stale test-bundle resource seal after swift-build.
-	@if [ "$$(uname -s)" = "Darwin" ]; then swift package clean; fi
-	swift test --cache-path "$(CURDIR)/.flowersec/swiftpm-cache" --skip-update --only-use-versions-from-resolved-file --enable-code-coverage
-	@coverage_path=$$(swift test --cache-path "$(CURDIR)/.flowersec/swiftpm-cache" --skip-update --only-use-versions-from-resolved-file --show-codecov-path); \
+	@if [ "$$(uname -s)" = "Darwin" ]; then swift package --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file clean; fi
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --enable-code-coverage
+	@coverage_path=$$(swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --show-codecov-path); \
 		node scripts/check-swift-coverage.mjs "$$coverage_path" 79 80
 
 rust-fmt-check:
@@ -195,9 +196,17 @@ rust-doc:
 rust-msrv-check:
 	cd flowersec-rust && rustup run 1.88.0 cargo check --all-targets --all-features
 
+rust-fetch:
+	cd flowersec-rust && rustup run 1.88.0 cargo fetch --locked
+	cd flowersec-rust && rustup run 1.88.0 cargo fetch --locked --manifest-path fuzz/Cargo.toml
+	rustup run 1.88.0 cargo fetch --locked --manifest-path examples/rust/Cargo.toml
+
 rust-package-check:
 	cd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty
 	cd flowersec-rust && rustup run 1.88.0 cargo publish --dry-run --allow-dirty
+
+rust-package-offline-check:
+	cd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty --offline
 
 rust-audit:
 	node scripts/check-rust-security.mjs
@@ -230,7 +239,7 @@ rust-check: rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-p
 
 rust-release-check: rust-check rust-audit rust-deny rust-cover-check rust-semver-check
 
-rust-final-check: rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-audit-offline rust-cover-check rust-fuzz-build rust-semver-check
+rust-final-check: rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-cover-check rust-fuzz-build rust-semver-check
 
 release-check:
 	$(MAKE) check
@@ -238,8 +247,8 @@ release-check:
 
 example-check:
 	find examples/ts -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
-	rustup run 1.88.0 cargo check --locked --manifest-path examples/rust/Cargo.toml
-	swift build --package-path examples/swift
+	rustup run 1.88.0 cargo check --locked --offline --manifest-path examples/rust/Cargo.toml
+	swift build --package-path examples/swift --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file
 
 example-install-check: example-check
 
@@ -274,7 +283,7 @@ release-test:
 security-makefile-check:
 	node scripts/check-security-makefile.mjs Makefile
 
-security-dependency-check: ts-ensure-deps
+security-dependency-check:
 	node --test scripts/security-dependencies.test.mjs scripts/go-security.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs
 	node scripts/generate-source-inventory.mjs --check
 
@@ -328,9 +337,13 @@ stability-source-check:
 	cd tools/stabilitycheck && go run . verify-ts
 	cd tools/stabilitycheck && go run . report
 
-stability-check: stability-source-check
+stability-swift-check:
 	cd tools/stabilitycheck && go run . verify-swift
+
+stability-rust-check:
 	cd tools/stabilitycheck && go run . verify-rust
+
+stability-check: stability-source-check stability-swift-check stability-rust-check
 
 transportcheck-fast:
 	cd tools/transportcheck && go test -timeout=5m -count=1 -run '^(TestCheckedInManifestAndRegistryAreValid|TestFrozenSingleTestTargetsDoNotExceedFiveMinutes|TestCheckedInRegistryOwnersHaveMakeRecipes|TestCheckedInEvidenceTrustPolicyPinsExactRunner|TestManifestRejectsInvalidFrozenContract|TestManifestDigestIsCanonicalAndTamperEvident|TestManifestAcceptsMeasuredEdgeRecoveryBudgetWithinFiveMinuteCell|TestCaseRegistryRejectsInvalidOwnership|TestStrictJSONRejectsUnknownFields|TestEvidenceMetaSchemaAndGateClassifications|TestMakeTargetsUseEvidenceClassificationGate)$$' .
@@ -444,34 +457,52 @@ nightly-check:
 	$(MAKE) rust-fuzz-check
 	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) transport-interop-smoke; fi
 
-check: security-makefile-check security-dependency-check
+check: security-makefile-check
 	$(MAKE) release-policy-check
-	node scripts/run-final-stage.mjs 300 preflight $(MAKE) final-network-preflight
-	node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation
 	$(MAKE) readme-localization-check
-	$(MAKE) gen-check
-	$(MAKE) stability-check
+	node scripts/run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight
+	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts
+	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation
 	$(MAKE) final-integration-lanes
-	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true $(MAKE) example-check
-	@if [ "$(CHECK_INTEROP)" = "1" ]; then CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true $(MAKE) transport-interop-smoke; fi
+	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 post $(MAKE) final-post-validation
 
 final-network-preflight:
-	$(MAKE) rust-audit
+	node scripts/run-final-lanes.mjs $(MAKE) final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight
+
+final-go-preflight:
 	$(MAKE) go-vulncheck
+
+final-ts-preflight:
 	$(MAKE) ts-ci
 	$(MAKE) ts-audit
 	$(MAKE) ts-browser-ensure
+
+final-swift-preflight:
 	$(MAKE) swift-security-check
+
+final-rust-preflight:
+	$(MAKE) rust-fetch
+	$(MAKE) rust-audit
+	$(MAKE) rust-package-check
+
+final-offline-contracts:
+	$(MAKE) security-dependency-check
+	$(MAKE) gen-check
+	$(MAKE) stability-source-check
 
 final-package-validation:
 	$(MAKE) security-package-check
 	$(MAKE) ts-package-check
 	$(MAKE) swift-package-check
-	$(MAKE) rust-package-check
+	$(MAKE) rust-package-offline-check
 
 final-integration-lanes:
-	GOPROXY=off node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check
+	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check
 	CARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check
+
+final-post-validation:
+	$(MAKE) example-check
+	@if [ "$(CHECK_INTEROP)" = "1" ]; then $(MAKE) transport-interop-smoke; fi
 
 final-go-check:
 	$(MAKE) transport-v2-unit
@@ -493,6 +524,8 @@ final-ts-check:
 
 final-swift-check:
 	$(MAKE) swift-final-check
+	$(MAKE) stability-swift-check
 
 final-rust-check:
 	CARGO_NET_OFFLINE=true $(MAKE) rust-final-check
+	CARGO_NET_OFFLINE=true $(MAKE) stability-rust-check

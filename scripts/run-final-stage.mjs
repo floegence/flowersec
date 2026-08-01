@@ -5,8 +5,8 @@ import { spawn } from "node:child_process";
 const [, , secondsText, stage, command, ...args] = process.argv;
 const seconds = Number(secondsText);
 if (!Number.isInteger(seconds) || seconds < 1 || seconds > 595
-  || !["preflight", "packages", "race", "languages"].includes(stage) || !command) {
-  process.stderr.write("usage: run-final-stage.mjs <1-595 seconds> <preflight|packages|race|languages> <command> [args...]\n");
+  || !["preflight", "contracts", "packages", "race", "languages", "post"].includes(stage) || !command) {
+  process.stderr.write("usage: run-final-stage.mjs <1-595 seconds> <preflight|contracts|packages|race|languages|post> <command> [args...]\n");
   process.exit(2);
 }
 

@@ -365,7 +365,13 @@ func TestDiffSwiftSymbolsDetectsMissingAndExtra(t *testing.T) {
 
 func TestSwiftBuildArgumentsRequireResolvedVersions(t *testing.T) {
 	for _, base := range [][]string{{"--target", "Flowersec"}, {"--show-bin-path"}} {
-		arguments := swiftBuildArguments(base...)
+		arguments := swiftBuildArguments("/repo", base...)
+		if !slices.Contains(arguments, "--cache-path") || !slices.Contains(arguments, filepath.Join("/repo", ".flowersec", "swiftpm-cache")) {
+			t.Fatalf("Swift build arguments must use the shared package cache: %#v", arguments)
+		}
+		if !slices.Contains(arguments, "--skip-update") {
+			t.Fatalf("Swift build arguments may update remote dependencies: %#v", arguments)
+		}
 		if !slices.Contains(arguments, "--only-use-versions-from-resolved-file") {
 			t.Fatalf("Swift build arguments may refresh remote dependencies: %#v", arguments)
 		}
@@ -434,11 +440,13 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 	}
 	text := string(data)
 	sourceStart := strings.Index(text, "stability-source-check:")
-	fullStart := strings.Index(text, "stability-check: stability-source-check")
-	if sourceStart < 0 || fullStart < 0 || sourceStart >= fullStart {
-		t.Fatalf("Makefile must define source and full stability targets in order")
+	swiftStart := strings.Index(text, "stability-swift-check:")
+	rustStart := strings.Index(text, "stability-rust-check:")
+	fullStart := strings.Index(text, "stability-check: stability-source-check stability-swift-check stability-rust-check")
+	if sourceStart < 0 || swiftStart <= sourceStart || rustStart <= swiftStart || fullStart <= rustStart {
+		t.Fatalf("Makefile must define source, compiled-language, and full stability targets in order")
 	}
-	sourceTarget := text[sourceStart:fullStart]
+	sourceTarget := text[sourceStart:swiftStart]
 	for _, command := range []string{
 		"verify-manifest",
 		"verify-defaults",
@@ -452,11 +460,11 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 			t.Fatalf("stability-source-check must run %s, got:\n%s", command, sourceTarget)
 		}
 	}
-	fullTarget := text[fullStart:]
-	for _, command := range []string{"stability-check: stability-source-check", "verify-swift", "verify-rust"} {
-		if !strings.Contains(fullTarget, command) {
-			t.Fatalf("complete stability-check must retain %s, got:\n%s", command, fullTarget)
-		}
+	if swiftTarget := text[swiftStart:rustStart]; !strings.Contains(swiftTarget, "go run . verify-swift") {
+		t.Fatalf("stability-swift-check must retain compiled Swift verification, got:\n%s", swiftTarget)
+	}
+	if rustTarget := text[rustStart:fullStart]; !strings.Contains(rustTarget, "go run . verify-rust") {
+		t.Fatalf("stability-rust-check must retain compiled Rust verification, got:\n%s", rustTarget)
 	}
 }
 

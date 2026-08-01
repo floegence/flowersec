@@ -326,10 +326,10 @@ test("release gates stay wired into local checks and publication workflows", () 
   assert.match(makefile, /^release-policy-check:\n(?:\t.*\n)*\t\$\(MAKE\) release-test$/m);
   assert.match(
     makefile,
-    /^check: security-makefile-check security-dependency-check\n\t\$\(MAKE\) release-policy-check$/m,
+    /^check: security-makefile-check\n\t\$\(MAKE\) release-policy-check$/m,
   );
-  assert.match(makefile, /^check: security-makefile-check security-dependency-check\n(?:\t.*\n)*\t\$\(MAKE\) final-integration-lanes$/m);
-  assert.match(makefile, /^final-integration-lanes:\n\tGOPROXY=off node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check$/m);
+  assert.match(makefile, /^check: security-makefile-check\n(?:\t.*\n)*\t\$\(MAKE\) final-integration-lanes$/m);
+  assert.match(makefile, /^final-integration-lanes:\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check$/m);
   assert.match(makefile, /^release-check:\n(?:\t.*\n)*\t\$\(MAKE\) transport-v2-signed-evidence-check$/m);
   assert.doesNotMatch(makefile, /^release-check:\n(?:\t.*\n)*\t\$\(MAKE\) transport-v2-release-evidence$/m);
   assert.match(

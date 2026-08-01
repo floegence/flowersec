@@ -467,7 +467,7 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 }
 
 func buildSwiftTarget(repoRoot, module string) error {
-	cmd := exec.Command("swift", swiftBuildArguments("--target", module)...)
+	cmd := exec.Command("swift", swiftBuildArguments(repoRoot, "--target", module)...)
 	cmd.Dir = repoRoot
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -479,7 +479,7 @@ func buildSwiftTarget(repoRoot, module string) error {
 }
 
 func swiftBuildBinPath(repoRoot string) (string, error) {
-	cmd := exec.Command("swift", swiftBuildArguments("--show-bin-path")...)
+	cmd := exec.Command("swift", swiftBuildArguments(repoRoot, "--show-bin-path")...)
 	cmd.Dir = repoRoot
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -494,8 +494,13 @@ func swiftBuildBinPath(repoRoot string) (string, error) {
 	return path, nil
 }
 
-func swiftBuildArguments(arguments ...string) []string {
-	return append([]string{"build", "--only-use-versions-from-resolved-file"}, arguments...)
+func swiftBuildArguments(repoRoot string, arguments ...string) []string {
+	return append([]string{
+		"build",
+		"--cache-path", filepath.Join(repoRoot, ".flowersec", "swiftpm-cache"),
+		"--skip-update",
+		"--only-use-versions-from-resolved-file",
+	}, arguments...)
 }
 
 func swiftBuildModulePaths(repoRoot, binPath string) ([]string, error) {

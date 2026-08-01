@@ -226,6 +226,9 @@ export function verifySecurityMakefile(makefile) {
     "swift-source-guard",
     "swift-check",
     "swift-final-check",
+    "rust-fetch",
+    "rust-package-check",
+    "rust-package-offline-check",
     "rust-audit",
     "rust-audit-offline",
     "rust-release-check",
@@ -238,12 +241,20 @@ export function verifySecurityMakefile(makefile) {
     "precommit",
     "check",
     "final-network-preflight",
+    "final-go-preflight",
+    "final-ts-preflight",
+    "final-swift-preflight",
+    "final-rust-preflight",
+    "final-offline-contracts",
     "final-package-validation",
     "final-integration-lanes",
+    "final-post-validation",
     "final-go-check",
     "final-ts-check",
     "final-swift-check",
     "final-rust-check",
+    "stability-swift-check",
+    "stability-rust-check",
   ];
   validateMakefileSource(source, protectedTargets);
   for (const target of protectedTargets) {
@@ -293,16 +304,18 @@ export function verifySecurityMakefile(makefile) {
     }
   }
 
-  for (const target of ["precommit", "check"]) {
-    const prerequisites = new Set(effectivePrerequisites(database.stdout, target));
-    for (const required of ["security-makefile-check", "security-dependency-check"]) {
-      if (!prerequisites.has(required)) {
-        throw new Error(`Makefile target ${target} effective graph is missing security prerequisite ${required}`);
-      }
+  const precommitPrerequisites = new Set(effectivePrerequisites(database.stdout, "precommit"));
+  for (const required of ["security-makefile-check", "security-dependency-check"]) {
+    if (!precommitPrerequisites.has(required)) {
+      throw new Error(`Makefile target precommit effective graph is missing security prerequisite ${required}`);
     }
   }
-  if (!effectivePrerequisites(database.stdout, "security-dependency-check").includes("ts-ensure-deps")) {
-    throw new Error("security-dependency-check effective graph is missing ts-ensure-deps");
+  const checkPrerequisites = effectivePrerequisites(database.stdout, "check");
+  if (checkPrerequisites.length !== 1 || checkPrerequisites[0] !== "security-makefile-check") {
+    throw new Error("Makefile target check must have only the dependency-free security-makefile-check prerequisite");
+  }
+  if (effectivePrerequisites(database.stdout, "security-dependency-check").length !== 0) {
+    throw new Error("security-dependency-check must not run dependency installation before final-network-preflight");
   }
   if (!effectivePrerequisites(database.stdout, "security-package-check").includes("ts-build")) {
     throw new Error("security-package-check effective graph is missing ts-build");
@@ -334,6 +347,18 @@ export function verifySecurityMakefile(makefile) {
     ["swift-source-guard", expectedSwiftSourceGuardRecipe],
     ["rust-audit", ["\tnode scripts/check-rust-security.mjs"]],
     ["rust-audit-offline", ["\tnode scripts/check-rust-security.mjs --offline"]],
+    ["rust-fetch", [
+      "\tcd flowersec-rust && rustup run 1.88.0 cargo fetch --locked",
+      "\tcd flowersec-rust && rustup run 1.88.0 cargo fetch --locked --manifest-path fuzz/Cargo.toml",
+      "\trustup run 1.88.0 cargo fetch --locked --manifest-path examples/rust/Cargo.toml",
+    ]],
+    ["rust-package-check", [
+      "\tcd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty",
+      "\tcd flowersec-rust && rustup run 1.88.0 cargo publish --dry-run --allow-dirty",
+    ]],
+    ["rust-package-offline-check", [
+      "\tcd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty --offline",
+    ]],
     ["release-policy-check", [
       "\t./scripts/check-release-workflow-policy.sh",
       "\t$(MAKE) release-version-check",
@@ -346,22 +371,42 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) transport-v2-signed-evidence-check",
     ]],
     ["final-network-preflight", [
-      "\t$(MAKE) rust-audit",
+      "\tnode scripts/run-final-lanes.mjs $(MAKE) final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight",
+    ]],
+    ["final-go-preflight", [
       "\t$(MAKE) go-vulncheck",
+    ]],
+    ["final-ts-preflight", [
       "\t$(MAKE) ts-ci",
       "\t$(MAKE) ts-audit",
       "\t$(MAKE) ts-browser-ensure",
+    ]],
+    ["final-swift-preflight", [
       "\t$(MAKE) swift-security-check",
+    ]],
+    ["final-rust-preflight", [
+      "\t$(MAKE) rust-fetch",
+      "\t$(MAKE) rust-audit",
+      "\t$(MAKE) rust-package-check",
+    ]],
+    ["final-offline-contracts", [
+      "\t$(MAKE) security-dependency-check",
+      "\t$(MAKE) gen-check",
+      "\t$(MAKE) stability-source-check",
     ]],
     ["final-package-validation", [
       "\t$(MAKE) security-package-check",
       "\t$(MAKE) ts-package-check",
       "\t$(MAKE) swift-package-check",
-      "\t$(MAKE) rust-package-check",
+      "\t$(MAKE) rust-package-offline-check",
     ]],
     ["final-integration-lanes", [
-      "\tGOPROXY=off node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
+      "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
       "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check",
+    ]],
+    ["final-post-validation", [
+      "\t$(MAKE) example-check",
+      "\t@if [ \"$(CHECK_INTEROP)\" = \"1\" ]; then $(MAKE) transport-interop-smoke; fi",
     ]],
     ["final-go-check", [
       "\t$(MAKE) transport-v2-unit",
@@ -389,15 +434,23 @@ export function verifySecurityMakefile(makefile) {
     ]],
     ["swift-final-check", [
       "\t$(MAKE) swift-source-guard",
-      "\tswift build --cache-path \"$(CURDIR)/.flowersec/swiftpm-cache\" --skip-update --only-use-versions-from-resolved-file",
+      "\tswift build --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file",
       "\t@# Xcode 26.4 can retain a stale test-bundle resource seal after swift-build.",
-      "\t@if [ \"$$(uname -s)\" = \"Darwin\" ]; then swift package clean; fi",
-      "\tswift test --cache-path \"$(CURDIR)/.flowersec/swiftpm-cache\" --skip-update --only-use-versions-from-resolved-file --enable-code-coverage",
-      "\t@coverage_path=$$(swift test --cache-path \"$(CURDIR)/.flowersec/swiftpm-cache\" --skip-update --only-use-versions-from-resolved-file --show-codecov-path); \\",
+      "\t@if [ \"$$(uname -s)\" = \"Darwin\" ]; then swift package --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file clean; fi",
+      "\tswift test --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file --enable-code-coverage",
+      "\t@coverage_path=$$(swift test --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file --show-codecov-path); \\",
       "\tnode scripts/check-swift-coverage.mjs \"$$coverage_path\" 79 80",
     ]],
-    ["final-swift-check", ["\t$(MAKE) swift-final-check"]],
-    ["final-rust-check", ["\tCARGO_NET_OFFLINE=true $(MAKE) rust-final-check"]],
+    ["final-swift-check", [
+      "\t$(MAKE) swift-final-check",
+      "\t$(MAKE) stability-swift-check",
+    ]],
+    ["final-rust-check", [
+      "\tCARGO_NET_OFFLINE=true $(MAKE) rust-final-check",
+      "\tCARGO_NET_OFFLINE=true $(MAKE) stability-rust-check",
+    ]],
+    ["stability-swift-check", ["\tcd tools/stabilitycheck && go run . verify-swift"]],
+    ["stability-rust-check", ["\tcd tools/stabilitycheck && go run . verify-rust"]],
     ["rust-test-short", ["\tcd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib"]],
     ["precommit-go", [
       "\t$(MAKE) fmt-check",
@@ -429,7 +482,7 @@ export function verifySecurityMakefile(makefile) {
   }
 
   for (const [target, requiredCalls] of [
-    ["check", ["release-policy-check", "final-integration-lanes"]],
+    ["check", ["release-policy-check", "readme-localization-check", "final-integration-lanes"]],
     ["precommit", ["release-policy-check", "stability-source-check", "precommit-go", "precommit-ts", "precommit-swift", "precommit-rust"]],
   ]) {
     const recipe = effectiveRecipe(database.stdout, target);
@@ -441,15 +494,20 @@ export function verifySecurityMakefile(makefile) {
     }
   }
   const checkRecipe = effectiveRecipe(database.stdout, "check");
-  const preflightCall = "\tnode scripts/run-final-stage.mjs 300 preflight $(MAKE) final-network-preflight";
+  const preflightCall = "\tnode scripts/run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight";
   const preflightIndex = checkRecipe.indexOf(preflightCall);
-  const packageCall = "\tnode scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
+  const contractsCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts";
+  const contractsIndex = checkRecipe.indexOf(contractsCall);
+  const packageCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
   const packageIndex = checkRecipe.indexOf(packageCall);
   const lanesIndex = checkRecipe.indexOf("\t$(MAKE) final-integration-lanes");
+  const postCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 post $(MAKE) final-post-validation";
+  const postIndex = checkRecipe.indexOf(postCall);
   if (preflightIndex < 0 || checkRecipe.lastIndexOf(preflightCall) !== preflightIndex
-    || packageIndex <= preflightIndex || checkRecipe.lastIndexOf(packageCall) !== packageIndex
-    || lanesIndex <= packageIndex) {
-    throw new Error("check must run one bounded network preflight and package validation before final integration lanes");
+    || contractsIndex <= preflightIndex || checkRecipe.lastIndexOf(contractsCall) !== contractsIndex
+    || packageIndex <= contractsIndex || checkRecipe.lastIndexOf(packageCall) !== packageIndex
+    || lanesIndex <= packageIndex || postIndex <= lanesIndex || checkRecipe.lastIndexOf(postCall) !== postIndex) {
+    throw new Error("check must preserve source, preflight, offline contracts, packages, lanes, and post-validation order");
   }
 
   const precommitDryRun = runMake(makefile, ["-n", "precommit"]);
@@ -481,7 +539,6 @@ export function verifySecurityMakefile(makefile) {
 
   for (const [target, requiredPrerequisite] of [
     ["rust-release-check", "rust-audit"],
-    ["rust-final-check", "rust-audit-offline"],
   ]) {
     if (!effectivePrerequisites(database.stdout, target).includes(requiredPrerequisite)) {
       throw new Error(`${target} effective graph is missing ${requiredPrerequisite}`);

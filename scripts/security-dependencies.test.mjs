@@ -147,7 +147,7 @@ test("security dependency checks stay wired into local gates", () => {
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   assert.match(
     makefile,
-    /^security-dependency-check: ts-ensure-deps\n\tnode --test .*scripts\/security-makefile\.test\.mjs.*\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
+    /^security-dependency-check:\n\tnode --test .*scripts\/security-makefile\.test\.mjs.*\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
   );
   assert.match(
     makefile,
@@ -155,8 +155,9 @@ test("security dependency checks stay wired into local gates", () => {
   );
   assert.match(
     makefile,
-    /^check: security-makefile-check security-dependency-check$/m,
+    /^check: security-makefile-check$/m,
   );
+  assert.match(makefile, /^final-offline-contracts:\n\t\$\(MAKE\) security-dependency-check$/m);
 });
 
 test("module-local Go checks cannot be masked by workspace MVS", (t) => {
