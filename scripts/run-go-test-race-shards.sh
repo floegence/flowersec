@@ -102,10 +102,16 @@ trap 'handle_signal INT' INT
 trap 'handle_signal TERM' TERM
 trap 'handle_signal HUP' HUP
 tests_file="$temp_dir/tests"
+test_binary="$temp_dir/package.test"
 
 (
   cd "$package_dir"
-  go test -list '^Test' .
+  if [[ "$mode" == "race" ]]; then
+    go test -race -c -o "$test_binary" .
+  else
+    go test -c -o "$test_binary" .
+  fi
+  "$test_binary" -test.list '^Test'
 ) | awk '/^Test[A-Za-z0-9_]+$/ { print }' > "$tests_file"
 
 if [[ ! -s "$tests_file" ]]; then
@@ -125,12 +131,45 @@ if (( auto_shard_count == 1 )); then
   shard_count="$test_count"
 fi
 
+# Keep expensive source-level contracts distributed across the bounded worker
+# pool without relying on host-specific timing profiles. Function body span is
+# a stable, repository-local cost proxy; tests without a source match retain
+# their discovery order after the weighted entries.
+test_weights="$temp_dir/test-weights"
+: > "$test_weights"
+for source_file in "$package_dir"/*_test.go; do
+  [[ -f "$source_file" ]] || continue
+  awk '
+    /^[[:space:]]*func[[:space:]]+/ {
+      if (name != "") print name, NR - start
+      name = ""
+      if ($0 ~ /^[[:space:]]*func[[:space:]]+Test[A-Za-z0-9_]*[[:space:]]*\(/) {
+        name = $2
+        sub(/\(.*/, "", name)
+        start = NR
+      }
+    }
+    END {
+      if (name != "") print name, NR - start + 1
+    }
+  ' "$source_file" >> "$test_weights"
+done
+ordered_tests="$temp_dir/ordered-tests"
+awk -v weights_file="$test_weights" '
+  FILENAME == weights_file { weight[$1] = $2; next }
+  {
+    value = weight[$1]
+    if (value == "") value = 1
+    print value "\t" NR "\t" $0
+  }
+' "$test_weights" "$tests_file" | sort -k1,1nr -k2,2n | cut -f3- > "$ordered_tests"
+
 awk -v directory="$temp_dir" -v count="$shard_count" '
   {
     shard = (NR - 1) % count
     print > (directory "/shard-" shard)
   }
-' "$tests_file"
+' "$ordered_tests"
 
 echo "$mode shard runner discovered $test_count tests across $shard_count shards with parallelism $parallelism and worker GOMAXPROCS ${worker_gomaxprocs:-inherited}"
 
@@ -183,11 +222,7 @@ for shard in "${shard_order[@]}"; do
     if [[ -n "$worker_gomaxprocs" ]]; then
       export GOMAXPROCS="$worker_gomaxprocs"
     fi
-    if [[ "$mode" == "race" ]]; then
-      go test -race -count=1 -timeout="$timeout" -run "^(${pattern})$" .
-    else
-      go test -count=1 -timeout="$timeout" -run "^(${pattern})$" .
-    fi
+    "$test_binary" -test.count=1 -test.timeout="$timeout" -test.run "^(${pattern})$"
   ) >"$log_file" 2>&1 &
   active_pids[$active_count]="$!"
   active_logs[$active_count]="$log_file"

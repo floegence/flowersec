@@ -37,10 +37,10 @@ func TestRaceShardRunnerCoversEveryTopLevelTestExactlyOnce(t *testing.T) {
 		patterns := make([]*regexp.Regexp, 0, len(invocations))
 		for _, invocation := range invocations {
 			fields := strings.Fields(invocation)
-			if !contains(fields, "-race") || !contains(fields, "-count=1") || !contains(fields, "-timeout=5m") {
+			if !contains(fields, "-test.count=1") || !contains(fields, "-test.timeout=5m") {
 				t.Fatalf("race invocation is missing required flags: %q", invocation)
 			}
-			pattern := flagValue(fields, "-run")
+			pattern := flagValue(fields, "-test.run")
 			compiled, err := regexp.Compile(pattern)
 			if err != nil {
 				t.Fatalf("compile shard pattern %q: %v", pattern, err)
@@ -87,7 +87,7 @@ func TestRaceShardRunnerCoversEveryTopLevelTestExactlyOnce(t *testing.T) {
 		}
 		for _, invocation := range invocations {
 			fields := strings.Fields(invocation)
-			if contains(fields, "-race") || !contains(fields, "-count=1") || !contains(fields, "-timeout=5m") {
+			if !contains(fields, "-test.count=1") || !contains(fields, "-test.timeout=5m") {
 				t.Fatalf("normal invocation has incorrect flags: %q", invocation)
 			}
 		}
@@ -163,16 +163,21 @@ func TestRaceShardRunnerRefillsAvailableSlotsWithoutBatchBarrier(t *testing.T) {
 	goPath := filepath.Join(tempDir, "go")
 	script := `#!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == "test" && "${2:-}" == "-list" ]]; then
+output=""
+while (( $# > 0 )); do
+  if [[ "$1" == "-o" ]]; then output="${2:-}"; shift; fi
+  shift
+done
+cat > "$output" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-test.list" ]]; then
   printf 'TestSlow\nTestFastOne\nTestFastTwo\n'
   exit 0
 fi
 pattern=""
 while (( $# > 0 )); do
-  if [[ "$1" == "-run" ]]; then
-    pattern="${2:-}"
-    break
-  fi
+  if [[ "$1" == "-test.run" ]]; then pattern="${2:-}"; break; fi
   shift
 done
 printf 'start %s\n' "$pattern" >> "${RACE_SHARD_LOG:?}"
@@ -182,6 +187,8 @@ else
   sleep 0.05
 fi
 printf 'end %s\n' "$pattern" >> "${RACE_SHARD_LOG:?}"
+EOF
+chmod +x "$output"
 `
 	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write timed fake go: %v", err)
@@ -239,7 +246,54 @@ func TestRaceShardRunnerAutoCreatesOneShardPerTest(t *testing.T) {
 	}
 }
 
-func TestRaceShardRunnerStopsSchedulingAfterFirstFailure(t *testing.T) {
+func TestRaceShardRunnerOrdersTestsBySourceCost(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "race-invocations.log")
+	installFakeGo(t, tempDir, "TestShort\nTestLong\nTestMedium\n", logPath)
+	source := `package cost
+
+func TestShort(t any) {}
+
+func TestLong(t any) {
+	_ = 1
+	_ = 2
+	_ = 3
+	_ = 4
+	_ = 5
+}
+
+func TestMedium(t any) {
+	_ = 1
+	_ = 2
+}
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "cost_test.go"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", runner, tempDir, "3", "1m", "1", "normal", "1")
+	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "TMPDIR="+tempDir)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("runner failed: %v\n%s", err, output)
+	}
+	lines, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocations := strings.Split(strings.TrimSpace(string(lines)), "\n")
+	if len(invocations) != 3 {
+		t.Fatalf("invocations = %d, want 3: %q", len(invocations), invocations)
+	}
+	want := []string{"TestLong", "TestMedium", "TestShort"}
+	for index, name := range want {
+		if !strings.Contains(invocations[index], name) {
+			t.Fatalf("invocation %d = %q, want %s first", index, invocations[index], name)
+		}
+	}
+}
+
+func TestRaceShardRunnerBuildsOneBinaryForAllShards(t *testing.T) {
 	repoRoot := filepath.Clean(filepath.Join("..", ".."))
 	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
 	tempDir := t.TempDir()
@@ -251,14 +305,91 @@ if [[ "${1:-}" == "test" && "${2:-}" == "-list" ]]; then
   printf 'TestOne\nTestTwo\nTestThree\nTestFour\n'
   exit 0
 fi
+if [[ "${1:-}" == "test" ]]; then
+  output=""
+  compile=0
+  while (( $# > 0 )); do
+    if [[ "$1" == "-c" ]]; then compile=1; fi
+    if [[ "$1" == "-o" ]]; then output="${2:-}"; shift; fi
+    shift
+  done
+  if (( compile == 1 )); then
+    printf 'compile\n' >> "${RACE_SHARD_LOG:?}"
+    cat > "$output" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"-test.list"* ]]; then
+  printf 'TestOne\nTestTwo\nTestThree\nTestFour\n'
+  exit 0
+fi
+printf 'binary %s\n' "$*" >> "${RACE_SHARD_LOG:?}"
+EOF
+    chmod +x "$output"
+    exit 0
+  fi
+  printf 'go-shard\n' >> "${RACE_SHARD_LOG:?}"
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "2", "race", "1")
+	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "TMPDIR="+tempDir)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("runner failed: %v\n%s", err, output)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(logBytes)), "\n")
+	compileCount, binaryCount, goShardCount := 0, 0, 0
+	for _, line := range lines {
+		switch {
+		case line == "compile":
+			compileCount++
+		case strings.HasPrefix(line, "binary "):
+			binaryCount++
+		case line == "go-shard":
+			goShardCount++
+		}
+	}
+	if compileCount != 1 || binaryCount != 4 || goShardCount != 0 {
+		t.Fatalf("race build invocations = compile:%d binary:%d go-shard:%d; log=%q", compileCount, binaryCount, goShardCount, string(logBytes))
+	}
+}
+
+func TestRaceShardRunnerStopsSchedulingAfterFirstFailure(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "race-invocations.log")
+	goPath := filepath.Join(tempDir, "go")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while (( $# > 0 )); do
+  if [[ "$1" == "-o" ]]; then output="${2:-}"; shift; fi
+  shift
+done
+cat > "$output" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-test.list" ]]; then
+  printf 'TestOne\nTestTwo\nTestThree\nTestFour\n'
+  exit 0
+fi
 pattern=""
 while (( $# > 0 )); do
-  if [[ "$1" == "-run" ]]; then pattern="${2:-}"; break; fi
+  if [[ "$1" == "-test.run" ]]; then pattern="${2:-}"; break; fi
   shift
 done
 printf '%s\n' "$pattern" >> "${RACE_SHARD_LOG:?}"
 if [[ "$pattern" == *TestOne* ]]; then exit 42; fi
 sleep 0.1
+EOF
+chmod +x "$output"
 `
 	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -285,10 +416,30 @@ if [[ "${1:-}" == "test" && "${2:-}" == "-list" ]]; then
   printf '%s' "${FAKE_GO_TEST_LIST:-}"
   exit 0
 fi
-printf '%s\n' "$*" >> "${RACE_SHARD_LOG:?}"
-if [[ "${FAKE_GO_TEST_FAIL:-}" == "1" ]]; then
-  exit 1
+if [[ "${1:-}" == "test" ]]; then
+  output=""
+  compile=0
+  while (( $# > 0 )); do
+    if [[ "$1" == "-c" ]]; then compile=1; fi
+    if [[ "$1" == "-o" ]]; then output="${2:-}"; shift; fi
+    shift
+  done
+  if (( compile == 1 )); then
+    cat > "$output" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-test.list" ]]; then
+  printf '%s' "${FAKE_GO_TEST_LIST:-}"
+  exit 0
 fi
+printf '%s\n' "$*" >> "${RACE_SHARD_LOG:?}"
+if [[ "${FAKE_GO_TEST_FAIL:-}" == "1" ]]; then exit 1; fi
+EOF
+    chmod +x "$output"
+    exit 0
+  fi
+fi
+exit 2
 `
 	goPath := filepath.Join(dir, "go")
 	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {

@@ -264,9 +264,18 @@ test("race shard runner derives bounded auto parallelism from online CPUs", () =
       fs.mkdirSync(binDirectory);
       fs.writeFileSync(path.join(binDirectory, "getconf"), `#!/bin/sh\nprintf '${online}\\n'\n`, { mode: 0o755 });
       fs.writeFileSync(path.join(binDirectory, "go"), `#!/bin/sh
-if [ "$2" = "-list" ]; then
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then output="$2"; shift; fi
+  shift
+done
+cat > "$output" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-test.list" ]; then
   printf 'TestOne\\nTestTwo\\nTestThree\\n'
 fi
+EOF
+chmod +x "$output"
 `, { mode: 0o755 });
 
       const result = spawnSync(
@@ -295,11 +304,20 @@ test("race shard runner applies the CPU budget to every worker", () => {
     fs.mkdirSync(binDirectory);
     const fakeGo = path.join(binDirectory, "go");
     fs.writeFileSync(fakeGo, `#!/bin/sh
-if [ "$2" = "-list" ]; then
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then output="$2"; shift; fi
+  shift
+done
+cat > "$output" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-test.list" ]; then
   printf 'TestOne\\nTestTwo\\nTestThree\\n'
   exit 0
 fi
 printf 'worker GOMAXPROCS=%s\\n' "\${GOMAXPROCS:-unset}"
+EOF
+chmod +x "$output"
 `);
     fs.chmodSync(fakeGo, 0o755);
 
@@ -328,15 +346,22 @@ test("race shard runner starts full shards before sparse tail shards", () => {
     fs.mkdirSync(binDirectory);
     const fakeGo = path.join(binDirectory, "go");
     fs.writeFileSync(fakeGo, `#!/bin/sh
-if [ "$2" = "-list" ]; then
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then output="$2"; shift; fi
+  shift
+done
+cat > "$output" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-test.list" ]; then
   i=1
   while [ "$i" -le 10 ]; do
     printf 'Test%s\n' "$i"
     i=$((i + 1))
   done
-  exit 0
 fi
-exit 0
+EOF
+chmod +x "$output"
 `);
     fs.chmodSync(fakeGo, 0o755);
 
@@ -368,11 +393,20 @@ test("race shard runner retains diagnostics after SIGTERM", async () => {
   fs.mkdirSync(tempDirectory);
   const fakeGo = path.join(binDirectory, "go");
   fs.writeFileSync(fakeGo, `#!/bin/sh
-if [ "$2" = "-list" ]; then
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then output="$2"; shift; fi
+  shift
+done
+cat > "$output" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-test.list" ]; then
   printf 'TestOne\n'
   exit 0
 fi
-sleep 30
+exec sleep 30
+EOF
+chmod +x "$output"
 `);
   fs.chmodSync(fakeGo, 0o755);
 
