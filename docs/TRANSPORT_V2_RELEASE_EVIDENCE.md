@@ -55,7 +55,7 @@ seconds covers the measured lower bound, that PTO, and approximately two
 seconds of application and scheduler margin. The two additional phase seconds
 cover the persistent connection establishment and the unchanged
 one-millisecond open-loop schedule without changing payload or operation
-count. The edge bulk phase deadline is fifty seconds. A clean-SHA Ubuntu
+count. The former edge bulk phase deadline was fifty seconds. A clean-SHA Ubuntu
 24 Chromium 151 browser WebTransport run completed RPC before approximately
 4.15 seconds on its persistent connection. Its 64 KiB bidirectional warmup
 then ran from approximately 4.908 through 11.206 seconds before both
@@ -107,7 +107,7 @@ was approximately 0.311 seconds and RTT variance approximately 0.035 seconds,
 placing the base PTO near 0.478 seconds. Fifty seconds covers that measured
 lower bound, one PTO, one RTT, and approximately one second of application and
 scheduler margin without changing workload or evidence semantics.
-An exact-clean-SHA Ubuntu 24 focused Linux shard then validated the adjusted
+An exact-clean-SHA Ubuntu 24 focused Linux shard then validated that adjusted
 WQ budget without changing the frozen network or workload. Its three
 independent runs delivered the complete 128 KiB scored payload in both
 directions in approximately 18.19, 15.46, and 19.32 seconds. Each run retained
@@ -115,6 +115,18 @@ its qlog, pcap, kernel fault counters, and resource records, and the runner
 exited with no Flowersec network namespace, BPF pin, browser, or build-directory
 residual. This focused result validates the budget correction but does not
 replace the complete signed final-SHA collection required below.
+A later exact-main full collector exposed a rarer WQ tail at that boundary. The
+raw QUIC server emitted the final scored-stream bytes and FIN approximately
+49.15 seconds after the inferred phase start, then made the first PTO
+retransmission approximately 0.339 seconds before the fifty-second deadline.
+The client reset at the deadline before receiving the remaining 1,348 wire
+bytes. The next observed PTO interval was approximately 1.020 seconds, and the
+frozen jitter schedule permits a 195-millisecond one-way delay. Composing the
+first-PTO position, the next PTO, maximum one-way delay, and two seconds of
+application and scheduler margin gives a 52.876-second lower bound. The edge
+bulk phase deadline is therefore fifty-three seconds. This changes only the
+phase budget; the network, payloads, operation count, certificate, thresholds,
+resource accounting, and zero-residual requirements remain unchanged.
 The edge outer cleanup deadline is twelve seconds. A frozen Ubuntu 24 run
 measured a 13,138.9-millisecond server/client clock offset and
 180.15-millisecond median one-way delay. Its final bulk payload reached the
@@ -139,7 +151,7 @@ client received no more packets, but three PTOs kept close/control traffic
 active through approximately 25.703 seconds before the outer seven-second
 timeout fired. Twelve seconds composes the measured completion allowance,
 rounded up to four seconds, the seven-second internal close bound, and one
-second of scheduler margin. One run's total phase limit is 143
+second of scheduler margin. One run's total phase limit is 146
 seconds, below the unchanged five-minute cell watchdog. This changes no
 completion handshake, internal close bound, network, workload, certificate,
 retry, zero-residual, or evidence semantics.

@@ -42,7 +42,7 @@ func TestLoadReleasePlanUsesFrozenWeakNetworkWorkloads(t *testing.T) {
 		plan.Edge.Cold.Operations != 10 || plan.Edge.Cold.StartRatePerSecond != 5 || plan.Edge.Cold.Retries != 0 ||
 		plan.Edge.Cold.OperationDeadlineSeconds != 53 || plan.Edge.Cold.PhaseDeadlineSeconds != 55 ||
 		plan.Edge.RPC.Operations != 30 || plan.Edge.RPC.Workers != 30 || plan.Edge.RPC.OperationDeadlineSeconds != 24 || plan.Edge.RPC.PhaseDeadlineSeconds != 26 ||
-		plan.Edge.Bulk.ScoreBytesPerDirection != 128<<10 || plan.Edge.Bulk.PhaseDeadlineSeconds != 50 ||
+		plan.Edge.Bulk.ScoreBytesPerDirection != 128<<10 || plan.Edge.Bulk.PhaseDeadlineSeconds != 53 ||
 		plan.Edge.CleanupDeadlineSeconds != 12 {
 		t.Fatalf("edge workload = %+v", plan.Edge)
 	}
@@ -72,6 +72,26 @@ func TestLoadReleasePlanUsesFrozenWeakNetworkWorkloads(t *testing.T) {
 		edgeNetwork.Shape.TokenBurstBytes != 16_384 || edgeNetwork.Shape.QueueBytes != 65_536 ||
 		edgeNetwork.LinkMTU != 1280 || len(edgeNetwork.JitterMilliseconds) != 8 {
 		t.Fatalf("edge network = %+v", edgeNetwork)
+	}
+}
+
+func TestEdgeBulkBudgetCoversObservedMixedTunnelTailRecovery(t *testing.T) {
+	plan, _, err := LoadReleasePlan("../../../testdata/transport_v2/performance_manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		formerDeadline             = 50 * time.Second
+		firstPTOBeforeDeadline     = 339 * time.Millisecond
+		nextPTOInterval            = 1020 * time.Millisecond
+		maximumFrozenOneWayDelay   = 195 * time.Millisecond
+		applicationSchedulerMargin = 2 * time.Second
+	)
+	minimum := formerDeadline - firstPTOBeforeDeadline + nextPTOInterval + maximumFrozenOneWayDelay + applicationSchedulerMargin
+	budget := time.Duration(plan.Edge.Bulk.PhaseDeadlineSeconds) * time.Second
+	if budget < minimum {
+		t.Fatalf("edge bulk deadline = %s, want at least %s for the observed tail PTO recovery", budget, minimum)
 	}
 }
 
