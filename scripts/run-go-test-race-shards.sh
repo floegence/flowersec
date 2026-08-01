@@ -25,7 +25,10 @@ if [[ ! -d "$package_dir" ]]; then
   echo "race shard package directory does not exist: $package_dir" >&2
   exit 2
 fi
-if [[ ! "$shard_count" =~ ^[1-9][0-9]*$ ]]; then
+auto_shard_count=0
+if [[ "$shard_count" == "auto" ]]; then
+  auto_shard_count=1
+elif [[ ! "$shard_count" =~ ^[1-9][0-9]*$ ]]; then
   echo "race shard count must be a positive integer: $shard_count" >&2
   exit 2
 fi
@@ -117,6 +120,11 @@ if [[ -n "$duplicate_tests" ]]; then
   exit 1
 fi
 
+test_count="$(wc -l < "$tests_file" | tr -d ' ')"
+if (( auto_shard_count == 1 )); then
+  shard_count="$test_count"
+fi
+
 awk -v directory="$temp_dir" -v count="$shard_count" '
   {
     shard = (NR - 1) % count
@@ -124,7 +132,6 @@ awk -v directory="$temp_dir" -v count="$shard_count" '
   }
 ' "$tests_file"
 
-test_count="$(wc -l < "$tests_file" | tr -d ' ')"
 echo "$mode shard runner discovered $test_count tests across $shard_count shards with parallelism $parallelism and worker GOMAXPROCS ${worker_gomaxprocs:-inherited}"
 
 reap_finished_shards() {

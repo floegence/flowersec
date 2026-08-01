@@ -239,8 +239,8 @@ test("final Go race gate runs all shards with an explicit CPU budget", () => {
   const raceTarget = canonical.match(/^go-test-race:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(
     raceTarget,
-    /run-go-test-race-shards\.sh tools\/transportcheck 45 5m auto race 1/,
-    "exclusive race must use host-adaptive worker slots with one Go scheduler slot per worker",
+    /run-go-test-race-shards\.sh tools\/transportcheck auto 5m auto race 1/,
+    "exclusive race must use one shard per test, host-adaptive worker slots, and one Go scheduler slot per worker",
   );
   const discovered = spawnSync("go", ["test", "-list", "^Test", "."], {
     cwd: path.join(sourceRoot, "tools/transportcheck"),
@@ -251,9 +251,7 @@ test("final Go race gate runs all shards with an explicit CPU budget", () => {
   const discoveredTests = discovered.stdout
     .split("\n")
     .filter((line) => /^Test[A-Za-z0-9_]+$/.test(line)).length;
-  const shardCount = 45;
   assert.ok(discoveredTests > 0, "the transport checker must expose top-level tests");
-  assert.ok(Math.ceil(discoveredTests / shardCount) <= 4, "each shard must own at most four tests");
 });
 
 test("race shard runner derives bounded auto parallelism from online CPUs", () => {

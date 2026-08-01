@@ -211,6 +211,34 @@ printf 'end %s\n' "$pattern" >> "${RACE_SHARD_LOG:?}"
 	}
 }
 
+func TestRaceShardRunnerAutoCreatesOneShardPerTest(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "race-invocations.log")
+	testNames := []string{"TestOne", "TestTwo", "TestThree", "TestFour"}
+	installFakeGo(t, tempDir, strings.Join(testNames, "\n")+"\n", logPath)
+
+	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "2", "race", "1")
+	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "FAKE_GO_TEST_LIST="+strings.Join(testNames, "\n")+"\n")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run auto-sharded race runner: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "4 tests across 4 shards") {
+		t.Fatalf("auto shard summary = %s", output)
+	}
+	invocations, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range testNames {
+		if count := strings.Count(string(invocations), "^("+name+")$"); count != 1 {
+			t.Fatalf("%s invocation count = %d, want 1\n%s", name, count, invocations)
+		}
+	}
+}
+
 func installFakeGo(t *testing.T, dir, listedTests, logPath string) {
 	t.Helper()
 	script := `#!/usr/bin/env bash
