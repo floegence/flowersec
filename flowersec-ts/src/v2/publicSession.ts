@@ -119,7 +119,10 @@ function sessionErrorCode(error: unknown): SessionErrorCode {
         case "closed": return "closed";
         case "going_away": return "going_away";
         case "open_rejected": return "stream_rejected";
+        case "stream_reset": return "stream_reset";
         case "resource_exhausted": return "resource_exhausted";
+        case "rekey_failed": return "rekey_failed";
+        case "liveness_failed": return "liveness_failed";
         default: return "operation_failed";
       }
     }

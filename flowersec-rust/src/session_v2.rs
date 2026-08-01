@@ -888,17 +888,16 @@ async fn send_unreliable_message_v2(
     }
     let expires_at_unix_ms = unix_millis(expires_at)?;
     if expires_at_unix_ms <= unix_millis(SystemTime::now())? {
-        return Err(UnreliableMessageError::Expired);
+        return Ok(UnreliableSendOutcome::DroppedExpired);
     }
     if session.closed.load(Ordering::Acquire) {
         return Err(UnreliableMessageError::Closed);
     }
-    let _send_permit = session
-        .unreliable_send_budget
-        .try_acquire()
-        .map_err(|_| UnreliableMessageError::DroppedBudget)?;
+    let Ok(_send_permit) = session.unreliable_send_budget.try_acquire() else {
+        return Ok(UnreliableSendOutcome::DroppedBudget);
+    };
     if expires_at_unix_ms <= unix_millis(SystemTime::now())? {
-        return Err(UnreliableMessageError::Expired);
+        return Ok(UnreliableSendOutcome::DroppedExpired);
     }
 
     let wire = {
@@ -947,11 +946,9 @@ async fn send_unreliable_message_v2(
         Bytes::from(wire)
     };
 
-    session
-        .carrier
-        .send_unreliable_message(wire)
-        .await
-        .map_err(map_carrier_unreliable_error)?;
+    if let Err(error) = session.carrier.send_unreliable_message(wire).await {
+        return map_carrier_unreliable_send_error(error);
+    }
     touch_activity_v2(session);
     Ok(UnreliableSendOutcome::Accepted)
 }
@@ -1050,6 +1047,17 @@ fn map_carrier_unreliable_error(error: CarrierUnreliableMessageErrorV2) -> Unrel
         CarrierUnreliableMessageErrorV2::TooLarge => UnreliableMessageError::TooLarge,
         CarrierUnreliableMessageErrorV2::Dropped => UnreliableMessageError::DroppedBudget,
         CarrierUnreliableMessageErrorV2::Closed => UnreliableMessageError::Closed,
+    }
+}
+
+fn map_carrier_unreliable_send_error(
+    error: CarrierUnreliableMessageErrorV2,
+) -> Result<UnreliableSendOutcome, UnreliableMessageError> {
+    match error {
+        CarrierUnreliableMessageErrorV2::Dropped => Ok(UnreliableSendOutcome::DroppedCarrier),
+        CarrierUnreliableMessageErrorV2::Unavailable => Err(UnreliableMessageError::Unavailable),
+        CarrierUnreliableMessageErrorV2::TooLarge => Err(UnreliableMessageError::TooLarge),
+        CarrierUnreliableMessageErrorV2::Closed => Err(UnreliableMessageError::Closed),
     }
 }
 

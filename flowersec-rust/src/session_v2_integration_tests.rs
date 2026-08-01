@@ -72,6 +72,7 @@ async fn client_datagram_offer_with_unsupported_server_reaches_ready_without_unr
     let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(GatedUnreliableCarrierSession {
         inner: client_inner,
         gate_sends: false,
+        send_error: None,
         started: Arc::new(AtomicUsize::new(0)),
         started_notify: Arc::new(Notify::new()),
         release: Arc::new(Semaphore::new(0)),
@@ -126,6 +127,7 @@ async fn unreliable_send_budget_drops_the_sixty_fifth_pending_send() {
     let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(GatedUnreliableCarrierSession {
         inner: client_inner,
         gate_sends: true,
+        send_error: None,
         started: started.clone(),
         started_notify: started_notify.clone(),
         release: release.clone(),
@@ -133,6 +135,7 @@ async fn unreliable_send_budget_drops_the_sixty_fifth_pending_send() {
     let server_carrier: Arc<dyn CarrierSessionV2> = Arc::new(GatedUnreliableCarrierSession {
         inner: server_inner,
         gate_sends: false,
+        send_error: None,
         started: Arc::new(AtomicUsize::new(0)),
         started_notify: Arc::new(Notify::new()),
         release: Arc::new(Semaphore::new(0)),
@@ -195,7 +198,7 @@ async fn unreliable_send_budget_drops_the_sixty_fifth_pending_send() {
                 SystemTime::now() + Duration::from_secs(30),
             )
             .await,
-        Err(UnreliableMessageError::DroppedBudget)
+        Ok(crate::UnreliableSendOutcome::DroppedBudget)
     );
     assert_eq!(started.load(Ordering::Acquire), 64);
     release.add_permits(64);
@@ -207,6 +210,70 @@ async fn unreliable_send_budget_drops_the_sixty_fifth_pending_send() {
     }
     client.close().await.expect("close budget client");
     server.close().await.expect("close budget server");
+}
+
+#[tokio::test]
+async fn unreliable_carrier_drop_is_a_public_send_outcome() {
+    let (client_inner, server_inner) = memory_carrier_pair_v2_with_capacity(3);
+    let client_carrier: Arc<dyn CarrierSessionV2> = Arc::new(GatedUnreliableCarrierSession {
+        inner: client_inner,
+        gate_sends: false,
+        send_error: Some(CarrierUnreliableMessageErrorV2::Dropped),
+        started: Arc::new(AtomicUsize::new(0)),
+        started_notify: Arc::new(Notify::new()),
+        release: Arc::new(Semaphore::new(0)),
+    });
+    let server_carrier: Arc<dyn CarrierSessionV2> = Arc::new(GatedUnreliableCarrierSession {
+        inner: server_inner,
+        gate_sends: false,
+        send_error: None,
+        started: Arc::new(AtomicUsize::new(0)),
+        started_notify: Arc::new(Notify::new()),
+        release: Arc::new(Semaphore::new(0)),
+    });
+    let client_config = SessionConfigV2 {
+        role: SessionRole::Client,
+        path: PathKind::Direct,
+        channel_id: "rust-unreliable-carrier-drop".into(),
+        session_contract_hash: [0x81; 32],
+        suite: CipherSuiteV2::ChaCha20Poly1305,
+        psk: [0x82; 32],
+        max_inbound_streams: 1,
+        idle_timeout: Duration::ZERO,
+        local_admission_binding: [1; 32],
+        peer_admission_binding: Some([2; 32]),
+        local_endpoint_instance_id: None,
+        expected_peer_endpoint_instance_id: None,
+        rpc_handler: None,
+        deadlines: Default::default(),
+    };
+    let server_config = SessionConfigV2 {
+        role: SessionRole::Server,
+        local_admission_binding: [2; 32],
+        peer_admission_binding: Some([1; 32]),
+        ..client_config.clone()
+    };
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client_config),
+        establish_session_v2(server_carrier, server_config),
+    );
+    let client = client.expect("establish carrier-drop client");
+    let server = server.expect("establish carrier-drop server");
+
+    assert_eq!(
+        client
+            .unreliable_messages()
+            .unwrap()
+            .send(
+                Bytes::from_static(b"dropped"),
+                SystemTime::now() + Duration::from_secs(30),
+            )
+            .await,
+        Ok(crate::UnreliableSendOutcome::DroppedCarrier)
+    );
+
+    client.close().await.expect("close carrier-drop client");
+    server.close().await.expect("close carrier-drop server");
 }
 
 #[derive(Debug)]
@@ -243,6 +310,7 @@ struct CapacityReportingCarrierSession {
 struct GatedUnreliableCarrierSession {
     inner: Arc<dyn CarrierSessionV2>,
     gate_sends: bool,
+    send_error: Option<CarrierUnreliableMessageErrorV2>,
     started: Arc<AtomicUsize>,
     started_notify: Arc<Notify>,
     release: Arc<Semaphore>,
@@ -274,6 +342,9 @@ impl CarrierSessionV2 for GatedUnreliableCarrierSession {
         &self,
         _payload: Bytes,
     ) -> Result<(), CarrierUnreliableMessageErrorV2> {
+        if let Some(error) = self.send_error {
+            return Err(error);
+        }
         if self.gate_sends {
             self.started.fetch_add(1, Ordering::AcqRel);
             self.started_notify.notify_waiters();

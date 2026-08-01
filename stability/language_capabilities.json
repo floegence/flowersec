@@ -109,6 +109,24 @@
       "owner": "swift",
       "reason": "The Swift production connector supports WSS direct and tunnel dialing on macOS and iOS.",
       "evidence": ["flowersec-swift/Tests/FlowersecTests/ConnectorV2Tests.swift"]
+    },
+    {
+      "id": "go_negotiated_unreliable_messages",
+      "owner": "go",
+      "reason": "Go exposes negotiated carrier-neutral unreliable-message channels with accepted and dropped send outcome semantics.",
+      "evidence": ["flowersec-go/connector_public_test.go"]
+    },
+    {
+      "id": "typescript_negotiated_unreliable_messages",
+      "owner": "typescript",
+      "reason": "TypeScript exposes negotiated carrier-neutral unreliable-message channels with accepted and dropped send outcome semantics.",
+      "evidence": ["flowersec-ts/src/v2/unreliableMessage.test.ts"]
+    },
+    {
+      "id": "rust_negotiated_unreliable_messages",
+      "owner": "rust",
+      "reason": "Rust exposes negotiated carrier-neutral unreliable-message channels with accepted and dropped send outcome semantics.",
+      "evidence": ["flowersec-rust/src/session_v2_integration_tests.rs"]
     }
   ],
   "shared_fixtures": [

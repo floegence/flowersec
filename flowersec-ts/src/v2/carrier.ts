@@ -19,7 +19,7 @@ export interface CarrierUnreliableDatagramsV2 {
   send(
     data: Uint8Array,
     options?: Readonly<{ signal?: AbortSignal; expiresAt?: number }>,
-  ): Promise<"accepted" | "dropped_budget" | "dropped_expired">;
+  ): Promise<"accepted" | "dropped_budget" | "dropped_expired" | "dropped_carrier">;
   receive(options?: OperationOptionsV2): Promise<Uint8Array>;
 }
 

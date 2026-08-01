@@ -67,6 +67,8 @@ The crate root exports only these public categories:
   `AcceptError`, and `AcceptErrorCode`;
 - carrier-neutral session behavior: `Session`, `RpcPeer`, `ByteStream`,
   `IncomingStream`, and `JsonObject`;
+- negotiated unreliable messages: `UnreliableMessageChannel`,
+  `UnreliableMessageError`, and `UnreliableSendOutcome`;
 - closed operation failures: `SessionError` and `StreamTerminalError`;
 - bounded remote application failures: `RpcError` and `RpcCallError`.
 
@@ -82,6 +84,11 @@ time; runtimes use independent acceptors when sessions must wait concurrently.
 and bounded close. It does not expose route or carrier selection, endpoint
 identity, stream identifiers, candidates, wire data, keys, or transport
 diagnostics.
+
+When negotiated, `UnreliableMessageChannel::send(...)` returns
+`UnreliableSendOutcome::Accepted`, `DroppedExpired`, `DroppedBudget`, or
+`DroppedCarrier`. Invalid payloads, unavailable channels, oversized messages,
+cancellation, closure, and internal failures remain public operation errors.
 
 `ConnectErrorCode`, `AcceptErrorCode`, `SessionError`, and
 `StreamTerminalError` are closed, redacted failure sets. `RpcCallError` keeps a

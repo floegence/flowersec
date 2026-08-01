@@ -29,7 +29,8 @@ export type UnreliableMessageSendOptionsV2 = OperationOptionsV2 & Readonly<{
 export type UnreliableMessageSendResultV2 =
   | "accepted"
   | "dropped_budget"
-  | "dropped_expired";
+  | "dropped_expired"
+  | "dropped_carrier";
 
 export interface UnreliableMessageChannelV2 {
   readonly maxMessageSize: 976;

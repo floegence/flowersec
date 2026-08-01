@@ -36,7 +36,7 @@ export type BrowserWebTransportUnreliableDatagramsInternalStage = Readonly<{
   send(
     data: Uint8Array,
     options?: Readonly<{ signal?: AbortSignal; expiresAt?: number }>,
-  ): Promise<"accepted" | "dropped_budget" | "dropped_expired">;
+  ): Promise<"accepted" | "dropped_budget" | "dropped_expired" | "dropped_carrier">;
   receive(options?: Readonly<{ signal?: AbortSignal }>): Promise<Uint8Array>;
 }>;
 
@@ -386,7 +386,7 @@ class BrowserWebTransportUnreliableDatagrams implements BrowserWebTransportUnrel
   async send(
     data: Uint8Array,
     options: Readonly<{ signal?: AbortSignal; expiresAt?: number }> = {},
-  ): Promise<"accepted" | "dropped_budget" | "dropped_expired"> {
+  ): Promise<"accepted" | "dropped_budget" | "dropped_expired" | "dropped_carrier"> {
     this.assertOpen();
     throwIfAborted(options.signal);
     if (!(data instanceof Uint8Array)) throw new TypeError("WebTransport datagram send requires Uint8Array");

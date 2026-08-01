@@ -207,10 +207,12 @@ AAD = L("flowersec-v2-unreliable", h3, direction, FSD2_header)
 
 The negotiated session suite supplies the AEAD and its 16-byte tag. Public
 sends use a fixed 64-operation non-blocking budget: native acceptance reports
-`accepted`, while local budget exhaustion reports `dropped_budget`. Neither is
-a delivery acknowledgement. Typed `unavailable`, `oversize`, `expired`, and
-closed outcomes expose no carrier, route, key, or credential detail. The exact
-key, header, ciphertext, expiry, replay, and type-isolation cases are frozen by
+`accepted`, while local expiry, local budget exhaustion, and native carrier
+drops report `dropped_expired`, `dropped_budget`, and `dropped_carrier`.
+None of these outcomes is a delivery acknowledgement. Typed unavailable,
+oversize, canceled, closed, and failed channel errors expose no carrier, route,
+key, or credential detail. The exact key, header, ciphertext, expiry, replay,
+and type-isolation cases are frozen by
 `testdata/transport_v2/datagram_vectors.json`.
 
 ## FSS2 Stream Setup

@@ -1476,7 +1476,8 @@
       "`RpcCallError`",
       "`RpcError`",
       "`Session`",
-      "`UnreliableMessageChannel`"
+      "`UnreliableMessageChannel`",
+      "`UnreliableSendOutcome`"
     ],
     "compile_entries": [
       "let _ = std::mem::size_of::<flowersec::AcceptError>()",
@@ -1511,7 +1512,11 @@
       "let _ = std::mem::size_of::<flowersec::StreamTerminalError>()",
       "let _: Option<&dyn flowersec::UnreliableMessageChannel> = None",
       "let _ = std::mem::size_of::<flowersec::UnreliableMessageError>()",
-      "let _ = std::mem::size_of::<flowersec::UnreliableSendOutcome>()"
+      "let _ = std::mem::size_of::<flowersec::UnreliableSendOutcome>()",
+      "let _ = flowersec::UnreliableSendOutcome::Accepted",
+      "let _ = flowersec::UnreliableSendOutcome::DroppedExpired",
+      "let _ = flowersec::UnreliableSendOutcome::DroppedBudget",
+      "let _ = flowersec::UnreliableSendOutcome::DroppedCarrier"
     ]
   },
   "coverage": {

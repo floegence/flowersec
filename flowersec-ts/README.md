@@ -21,6 +21,7 @@ The root type exports are:
 
 - Artifact acquisition: `ArtifactAcquireContextV2`, `ArtifactAcquireContextOptionsV2`, `ArtifactLeaseV2`, `ArtifactSourceV2`, and `ArtifactVersionPolicyV2`.
 - Sessions: `SessionV2`, `SessionTerminationV2`, `RpcPeerV2`, `RpcResultV2`, `ByteStreamV2`, `IncomingStreamV2`, `OperationOptionsV2`, and `StreamOpenOptionsV2`.
+- Unreliable messages: `UnreliableMessageChannelV2`, `UnreliableMessageV2`, `UnreliableMessageSendOptionsV2`, and `UnreliableMessageSendResultV2`.
 - JSON values: `JsonPrimitiveV2`, `JsonValueV2`, and `JsonObjectV2`.
 - Reconnection: `SessionAutoReconnectConfigV2`, `SessionReconnectConfigV2`, `SessionReconnectManagerV2`, `SessionReconnectStateV2`, and `SessionReconnectStatusV2`.
 - Errors: `ConnectErrorCode`, `SessionErrorCode`, `FlowersecRetryActionV2`, and `FlowersecErrorRetryClassificationV2`.
@@ -32,6 +33,8 @@ The root type exports are:
 `RpcResultV2` is a discriminated union. Check `result.ok` before reading either the success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify are portable across SDKs, while `RpcPeerV2.onNotify(...)` is a TypeScript-specific subscription convenience.
 
 When connector options omit a connection timeout, browser and Node.js connectors use the shared ten-second default.
+
+A negotiated `SessionV2.unreliableMessages` channel returns `accepted`, `dropped_expired`, `dropped_budget`, or `dropped_carrier` from `send(...)`. Invalid payloads, unavailable channels, cancellation, closure, and internal failures remain redacted public operation errors.
 
 ## Opaque Boundaries
 

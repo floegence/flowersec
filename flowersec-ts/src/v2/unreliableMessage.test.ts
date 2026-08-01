@@ -215,6 +215,16 @@ describe("FSD2 unreliable message channel", () => {
     await expect(Promise.all(pending)).resolves.toEqual(new Array(64).fill("accepted"));
   });
 
+  test("returns carrier-level datagram drops as a public send result", async () => {
+    const transport = new DroppingTransport();
+    const channel = createChannel(transport, DirectionV2.ClientToServer, DirectionV2.ServerToClient);
+
+    await expect(channel.send(createUnreliableMessageV2(Uint8Array.of(9)), {
+      expiresAtUnixMs: 2_000,
+    })).resolves.toBe("dropped_carrier");
+    expect(transport.sent).toHaveLength(1);
+  });
+
   test("requires the nominal message type and never accepts protocol bytes directly", () => {
     const use = (channel: UnreliableMessageChannelV2) => {
       // @ts-expect-error raw handshake/control bytes are not application unreliable messages.
@@ -340,6 +350,13 @@ class HangingTransport extends CapturingTransport {
 
   release(): void {
     this.gate.resolve();
+  }
+}
+
+class DroppingTransport extends CapturingTransport {
+  override async send(data: Uint8Array): Promise<"dropped_carrier"> {
+    this.sent.push(data.slice());
+    return "dropped_carrier";
   }
 }
 

@@ -42,6 +42,25 @@ describe("opaque public SessionV2 projection", () => {
     expect((await session.waitClosed()).error).not.toHaveProperty("cause");
   });
 
+  test("preserves stable retryable session error codes across the public projection", async () => {
+    for (const [internalCode, publicCode] of [
+      ["stream_reset", "stream_reset"],
+      ["rekey_failed", "rekey_failed"],
+      ["liveness_failed", "liveness_failed"],
+    ] as const) {
+      const internalError = Object.assign(new Error(`private detail for ${internalCode}`), {
+        name: "SessionV2Error",
+        code: internalCode,
+      });
+      const stream = fakeStream(internalError);
+      stream.read = vi.fn(async () => { throw internalError; });
+      const session = projectSessionV2(fakeSession(stream, internalError));
+
+      await expect((await session.openStream("data")).read()).rejects.toEqual(new SessionError(publicCode));
+      await expect(session.waitClosed()).resolves.toEqual({ error: new SessionError(publicCode) });
+    }
+  });
+
   test("projects RPC application outcomes as a discriminated union", async () => {
     const terminal = new Error("closed");
     const internal = fakeSession(fakeStream(terminal), terminal);

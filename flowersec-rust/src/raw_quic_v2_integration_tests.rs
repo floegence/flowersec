@@ -315,7 +315,7 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
                     SystemTime::now() - Duration::from_millis(1),
                 )
                 .await,
-            Err(crate::UnreliableMessageError::Expired)
+            Ok(crate::UnreliableSendOutcome::DroppedExpired)
         );
         let stream = session
             .open_stream("facade-client", serde_json::Map::new())

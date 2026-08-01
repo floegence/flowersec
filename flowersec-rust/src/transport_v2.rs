@@ -631,6 +631,9 @@ pub enum UnreliableMessageError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnreliableSendOutcome {
     Accepted,
+    DroppedExpired,
+    DroppedBudget,
+    DroppedCarrier,
 }
 
 /// Opaque, carrier-neutral unreliable message access owned by a session.
