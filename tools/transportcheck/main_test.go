@@ -826,6 +826,7 @@ func TestRequiredCaseIdentityBindsCaseArtifacts(t *testing.T) {
 	assertResult(t, result, statusFail, "case identity")
 }
 
+// flowersec:race-cost=high
 func TestRaceCaseRequiresExecutionAttestation(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -972,6 +973,7 @@ func TestEvidenceRejectsSyntheticStatusOnlyReleaseEvidence(t *testing.T) {
 	assertResult(t, result, statusFail, "typed operation records")
 }
 
+// flowersec:race-cost=high
 func TestEvidenceRejectsArtifactReuseAcrossContexts(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -1809,6 +1811,7 @@ func TestPerformanceCellWatchdogIsFailClosed(t *testing.T) {
 	assertResult(t, result, statusFail, "wall-clock elapsed time exceeds")
 }
 
+// flowersec:race-cost=high
 func TestCleanupMetricIsAHardProfileDeadline(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -2736,6 +2739,7 @@ func TestEvidenceRequiresQlogOnlyForQUICFamilyTopologies(t *testing.T) {
 	}
 }
 
+// flowersec:race-cost=high
 func TestEvidenceRequiresEveryDeclaredVariantInEveryRun(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)

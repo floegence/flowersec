@@ -293,6 +293,46 @@ func TestMedium(t any) {
 	}
 }
 
+func TestRaceShardRunnerHonorsExplicitHighCostAnnotations(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "race-invocations.log")
+	installFakeGo(t, tempDir, "TestLongDefault\nTestMeasuredHighCost\n", logPath)
+	source := `package cost
+
+func TestLongDefault(t any) {
+	_ = 1
+	_ = 2
+	_ = 3
+	_ = 4
+	_ = 5
+}
+
+// flowersec:race-cost=high
+func TestMeasuredHighCost(t any) {}
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "cost_test.go"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "1", "normal", "1")
+	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "TMPDIR="+tempDir)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("runner failed: %v\n%s", err, output)
+	}
+	lines, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocations := strings.Split(strings.TrimSpace(string(lines)), "\n")
+	if len(invocations) != 2 {
+		t.Fatalf("invocations = %d, want 2: %q", len(invocations), invocations)
+	}
+	if !strings.Contains(invocations[0], "TestMeasuredHighCost") {
+		t.Fatalf("first invocation = %q, want explicitly high-cost test", invocations[0])
+	}
+}
+
 func TestRaceShardRunnerBuildsOneBinaryForAllShards(t *testing.T) {
 	repoRoot := filepath.Clean(filepath.Join("..", ".."))
 	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")

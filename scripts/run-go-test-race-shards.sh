@@ -133,24 +133,39 @@ fi
 
 # Keep expensive source-level contracts distributed across the bounded worker
 # pool without relying on host-specific timing profiles. Function body span is
-# a stable, repository-local cost proxy; tests without a source match retain
-# their discovery order after the weighted entries.
+# the default stable cost proxy; measured fixture-heavy tests may opt into the
+# closed flowersec:race-cost=high annotation.
 test_weights="$temp_dir/test-weights"
 : > "$test_weights"
 for source_file in "$package_dir"/*_test.go; do
   [[ -f "$source_file" ]] || continue
   awk '
+    /^[[:space:]]*\/\/[[:space:]]*flowersec:race-cost=high[[:space:]]*$/ {
+      next_cost = 1000000
+      next
+    }
     /^[[:space:]]*func[[:space:]]+/ {
-      if (name != "") print name, NR - start
+      if (name != "") {
+        value = NR - start
+        if (cost > value) value = cost
+        print name, value
+      }
       name = ""
+      cost = 0
       if ($0 ~ /^[[:space:]]*func[[:space:]]+Test[A-Za-z0-9_]*[[:space:]]*\(/) {
         name = $2
         sub(/\(.*/, "", name)
         start = NR
+        cost = next_cost
       }
+      next_cost = 0
     }
     END {
-      if (name != "") print name, NR - start + 1
+      if (name != "") {
+        value = NR - start + 1
+        if (cost > value) value = cost
+        print name, value
+      }
     }
   ' "$source_file" >> "$test_weights"
 done
