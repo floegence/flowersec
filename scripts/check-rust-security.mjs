@@ -47,7 +47,7 @@ function assertToolVersion(output, expected, label) {
   }
 }
 
-export function runRustSecurityChecks({ repoRoot, run = defaultRun }) {
+export function runRustSecurityChecks({ repoRoot, run = defaultRun, offline = false }) {
   assertToolVersion(run("cargo", ["audit", "--version"], { cwd: repoRoot }), cargoAuditVersion, "cargo-audit");
   assertToolVersion(run("cargo", ["deny", "--version"], { cwd: repoRoot }), cargoDenyVersion, "cargo-deny");
 
@@ -57,17 +57,17 @@ export function runRustSecurityChecks({ repoRoot, run = defaultRun }) {
     for (const requiredFile of [context.manifest, context.lockfile, denyConfig]) {
       if (!fs.existsSync(requiredFile)) throw new Error(`missing Rust security input: ${requiredFile}`);
     }
+    const auditArgs = ["audit", "--file", context.lockfile, "--deny", "warnings"];
+    if (offline) auditArgs.push("--no-fetch");
+    run("cargo", auditArgs, { cwd: repoRoot });
+    const denyArgs = [
+      "deny", "--manifest-path", context.manifest, "--locked", "--all-features",
+      "check", "--config", denyConfig,
+    ];
+    if (offline) denyArgs.push("--disable-fetch");
     run(
       "cargo",
-      ["audit", "--file", context.lockfile, "--deny", "warnings"],
-      { cwd: repoRoot },
-    );
-    run(
-      "cargo",
-      [
-        "deny", "--manifest-path", context.manifest, "--locked", "--all-features",
-        "check", "--config", denyConfig,
-      ],
+      denyArgs,
       { cwd: repoRoot },
     );
   }
@@ -75,9 +75,12 @@ export function runRustSecurityChecks({ repoRoot, run = defaultRun }) {
 }
 
 function main() {
-  if (process.argv.length !== 2) throw new Error("usage: check-rust-security.mjs");
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== "--offline")) {
+    throw new Error("usage: check-rust-security.mjs [--offline]");
+  }
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  for (const context of runRustSecurityChecks({ repoRoot })) {
+  for (const context of runRustSecurityChecks({ repoRoot, offline: args[0] === "--offline" })) {
     process.stdout.write(`verified ${path.relative(repoRoot, context.lockfile)}\n`);
   }
 }

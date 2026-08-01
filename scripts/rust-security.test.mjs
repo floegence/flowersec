@@ -61,6 +61,25 @@ test("every Rust lock is audited and denied without suppressions", async () => {
   }
 });
 
+test("final Rust security checks reuse the preflight database without network access", async () => {
+  const { runRustSecurityChecks } = await loadChecker();
+  const calls = [];
+  const run = (command, args) => {
+    calls.push({ command, args });
+    if (args.join(" ") === "audit --version") return "cargo-audit-audit 0.22.2\n";
+    if (args.join(" ") === "deny --version") return "cargo-deny 0.19.9\n";
+    return "";
+  };
+
+  runRustSecurityChecks({ repoRoot: sourceRoot, run, offline: true });
+  const audits = calls.filter((call) => call.args[0] === "audit" && call.args[1] !== "--version");
+  const denies = calls.filter((call) => call.args[0] === "deny" && call.args[1] !== "--version");
+  assert.equal(audits.length, 3);
+  assert.equal(denies.length, 3);
+  for (const call of audits) assert.ok(call.args.includes("--no-fetch"));
+  for (const call of denies) assert.ok(call.args.includes("--disable-fetch"));
+});
+
 test("Rust security policy has no advisory suppression and is wired to release checks", async () => {
   await loadChecker();
   const policy = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/deny.toml"), "utf8");

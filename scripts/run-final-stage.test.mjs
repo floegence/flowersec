@@ -34,6 +34,8 @@ test("final stage wrapper validates its closed command contract", () => {
 });
 
 test("final stage wrapper preserves success and failure status", () => {
+  assert.equal(run(["1", "preflight", process.execPath, "-e", "process.exit(0)"]).status, 0);
+  assert.equal(run(["1", "packages", process.execPath, "-e", "process.exit(0)"]).status, 0);
   assert.equal(run(["1", "race", process.execPath, "-e", "process.exit(0)"]).status, 0);
   assert.equal(run(["1", "languages", process.execPath, "-e", "process.exit(23)"]).status, 23);
 });

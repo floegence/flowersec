@@ -412,7 +412,7 @@ function finishSwiftCacheRecoveryAsOwner({
 }
 
 export function swiftSecurityCachePath(repoRoot) {
-  return path.join(repoRoot, ".build", "security", "swiftpm-cache");
+  return path.join(repoRoot, ".flowersec", "swiftpm-cache");
 }
 
 export function withSwiftSecurityCache(repoRoot, action, options = {}) {

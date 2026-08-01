@@ -230,6 +230,7 @@ test("Swift locks match independently resolved complete graphs", async () => {
 test("Swift resolver is pinned and inspects root and example in isolated scratch paths", async () => {
   const { resolveSwiftSecurityContexts, swiftSecurityCachePath } = await loadChecker();
   assert.equal(typeof resolveSwiftSecurityContexts, "function");
+  assert.equal(swiftSecurityCachePath(sourceRoot), path.join(sourceRoot, ".flowersec/swiftpm-cache"));
   const calls = [];
   const graph = {
     identity: "fixture",
@@ -582,8 +583,8 @@ test("Swift cache lock recovers dead owners but refuses live owners", async (t) 
 
   const outside = fs.mkdtempSync(path.join("/tmp", "flowersec-swift-outside-"));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
-  fs.rmSync(path.join(repoRoot, ".build"), { recursive: true, force: true });
-  fs.symlinkSync(outside, path.join(repoRoot, ".build"));
+  fs.rmSync(path.join(repoRoot, ".flowersec"), { recursive: true, force: true });
+  fs.symlinkSync(outside, path.join(repoRoot, ".flowersec"));
   assert.throws(
     () => withSwiftSecurityCache(repoRoot, () => "unreachable"),
     /refusing symlinked SwiftPM cache directory/,

@@ -21,6 +21,10 @@ function check(makefile, extraEnv = {}, makeBinary) {
     path.join(sourceRoot, "scripts/run-final-stage.mjs"),
     path.join(root, "scripts/run-final-stage.mjs"),
   );
+  fs.copyFileSync(
+    path.join(sourceRoot, "scripts/run-final-lanes.mjs"),
+    path.join(root, "scripts/run-final-lanes.mjs"),
+  );
   const env = { ...process.env, ...extraEnv };
   if (makeBinary !== undefined) {
     fs.symlinkSync(makeBinary, path.join(root, "make"));
@@ -69,7 +73,7 @@ test("precommit stays source-only while final integration retains heavy validati
     "npm run test:coverage",
     "npm run verify:package",
     "swift build",
-    "swift test --enable-code-coverage",
+    "--enable-code-coverage",
     "go run . verify-swift",
     "go run . verify-rust",
     "cargo package --allow-dirty",
@@ -102,8 +106,8 @@ test("precommit uses the short Go group while final integration retains the comp
 
 test("final integration isolates race from the bounded language build lanes", () => {
   const laneCall = [
-    "\tnode scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
-    "\tnode scripts/run-final-stage.mjs 595 languages $(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check",
+    "\tGOPROXY=off node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
+    "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check",
   ].join("\n");
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const checkTarget = canonical.match(/^check: security-makefile-check security-dependency-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
@@ -114,11 +118,39 @@ test("final integration isolates race from the bounded language build lanes", ()
     assert.match(canonical, new RegExp("^" + target + ":", "m"), target + " must remain an explicit final lane");
   }
 
-  const weakened = canonical.replace(laneCall, "\tnode scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check\n\tnode scripts/run-final-stage.mjs 595 languages $(MAKE) -j4 final-go-check final-ts-check final-swift-check");
+  const weakened = canonical.replace(laneCall, "\tGOPROXY=off node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check");
   assert.notEqual(weakened, canonical);
   const result = check(weakened);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /final-integration-lanes|final-rust-check|exact/i);
+});
+
+test("network preflight completes before expensive stages and final lanes stay offline", () => {
+  const checkTarget = canonical.match(/^check: security-makefile-check security-dependency-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  const preflightIndex = checkTarget.indexOf("run-final-stage.mjs 300 preflight $(MAKE) final-network-preflight");
+  const packagesIndex = checkTarget.indexOf("run-final-stage.mjs 300 packages $(MAKE) final-package-validation");
+  const lanesIndex = checkTarget.indexOf("$(MAKE) final-integration-lanes");
+  assert.ok(preflightIndex >= 0, "check must run the bounded network preflight");
+  assert.ok(packagesIndex > preflightIndex, "package validation must follow the network preflight");
+  assert.ok(lanesIndex > packagesIndex, "package validation must fail before expensive final lanes");
+
+  const preflight = canonical.match(/^final-network-preflight:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  for (const target of ["rust-audit", "go-vulncheck", "ts-ci", "ts-audit", "ts-browser-ensure", "swift-security-check"]) {
+    assert.match(preflight, new RegExp(`^\\t\\$\\(MAKE\\) ${target}$`, "m"));
+  }
+
+  const lanes = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(lanes, /GOPROXY=off.*npm_config_offline=true.*run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check/);
+  assert.match(lanes, /GOPROXY=off.*run-final-stage\.mjs 595 race/);
+  const packages = canonical.match(/^final-package-validation:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  for (const target of ["security-package-check", "ts-package-check", "swift-package-check", "rust-package-check"]) {
+    assert.match(packages, new RegExp(`^\\t\\$\\(MAKE\\) ${target}$`, "m"));
+  }
+  assert.doesNotMatch(canonical.match(/^final-go-check:\n((?:\t.*\n)+)/m)?.[1] ?? "", /go-vulncheck/);
+  assert.doesNotMatch(canonical.match(/^final-ts-check:\n((?:\t.*\n)+)/m)?.[1] ?? "", /ts-audit|ts-browser-ensure|ts-package-check/);
+  assert.match(canonical.match(/^final-swift-check:\n((?:\t.*\n)+)/m)?.[1] ?? "", /swift-final-check/);
+  assert.match(canonical.match(/^final-rust-check:\n((?:\t.*\n)+)/m)?.[1] ?? "", /CARGO_NET_OFFLINE=true.*rust-final-check/);
+  assert.doesNotMatch(canonical.match(/^rust-final-check:.*$/m)?.[0] ?? "", /rust-package/);
 });
 
 test("final Go race gate runs all shards with an explicit CPU budget", () => {
@@ -291,7 +323,7 @@ test("final race validation completes before bounded language build lanes start"
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const goTarget = canonical.match(/^final-go-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const raceTarget = canonical.match(/^final-race-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  assert.match(laneTarget, /^\tnode scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tnode scripts\/run-final-stage\.mjs 595 languages \$\(MAKE\) -j4 final-go-check final-ts-check final-swift-check final-rust-check\n$/);
+  assert.match(laneTarget, /^\tGOPROXY=off node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check\n$/);
   assert.doesNotMatch(goTarget, /go-test-race/);
   assert.match(raceTarget, /^\t\$\(MAKE\) go-test-race$/m);
 });
@@ -495,8 +527,8 @@ test("effective Make graph rejects recipe override and missing inventory freshne
   assert.match(ignoredResult.stderr, /exact|ignore|recipe/i);
 
   const swallowedFailure = canonical.replace(
-    "scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs\n\tnode scripts/generate-source-inventory.mjs --check",
-    "scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs || true\n\tnode scripts/generate-source-inventory.mjs --check",
+    "scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs\n\tnode scripts/generate-source-inventory.mjs --check",
+    "scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs || true\n\tnode scripts/generate-source-inventory.mjs --check",
   );
   assert.notEqual(swallowedFailure, canonical);
   const swallowedResult = check(swallowedFailure);
@@ -550,7 +582,7 @@ test("effective Make graph rejects security gate removal from precommit and chec
 });
 
 test("check cannot suppress or disconnect final integration lanes", () => {
-  for (const scanner of ["security-package-check", "final-integration-lanes"]) {
+  for (const scanner of ["final-integration-lanes"]) {
     const exactLine = `\t$(MAKE) ${scanner}`;
     for (const replacement of ["", `\t-$(MAKE) ${scanner}`, `${exactLine} || true`]) {
       const mutated = replaceTargetRecipeLine(canonical, "check", exactLine, replacement);
@@ -558,6 +590,13 @@ test("check cannot suppress or disconnect final integration lanes", () => {
       assert.notEqual(result.status, 0, `${scanner} mutation must fail`);
       assert.match(result.stderr, /check must call|exact, unsuppressed/i);
     }
+  }
+  const packageCall = "\tnode scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
+  for (const replacement of ["", `\t-${packageCall.slice(1)}`, `${packageCall} || true`]) {
+    const mutated = replaceTargetRecipeLine(canonical, "check", packageCall, replacement);
+    const result = check(mutated);
+    assert.notEqual(result.status, 0, "package validation mutation must fail");
+    assert.match(result.stderr, /package validation|bounded network preflight/i);
   }
 });
 

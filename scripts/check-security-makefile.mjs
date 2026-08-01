@@ -11,6 +11,7 @@ const requiredSecurityTests = [
   "scripts/swift-security.test.mjs",
   "scripts/security-makefile.test.mjs",
   "scripts/run-final-stage.test.mjs",
+  "scripts/run-final-lanes.test.mjs",
 ];
 
 const protectedMakeControlVariables = new Set([
@@ -224,8 +225,11 @@ export function verifySecurityMakefile(makefile) {
     "swift-security-check",
     "swift-source-guard",
     "swift-check",
+    "swift-final-check",
     "rust-audit",
+    "rust-audit-offline",
     "rust-release-check",
+    "rust-final-check",
     "rust-test-short",
     "release-policy-check",
     "release-version-check",
@@ -233,6 +237,8 @@ export function verifySecurityMakefile(makefile) {
     "release-check",
     "precommit",
     "check",
+    "final-network-preflight",
+    "final-package-validation",
     "final-integration-lanes",
     "final-go-check",
     "final-ts-check",
@@ -327,6 +333,7 @@ export function verifySecurityMakefile(makefile) {
     ["swift-security-check", ["\tnode scripts/check-swift-security.mjs"]],
     ["swift-source-guard", expectedSwiftSourceGuardRecipe],
     ["rust-audit", ["\tnode scripts/check-rust-security.mjs"]],
+    ["rust-audit-offline", ["\tnode scripts/check-rust-security.mjs --offline"]],
     ["release-policy-check", [
       "\t./scripts/check-release-workflow-policy.sh",
       "\t$(MAKE) release-version-check",
@@ -338,9 +345,23 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) check",
       "\t$(MAKE) transport-v2-signed-evidence-check",
     ]],
+    ["final-network-preflight", [
+      "\t$(MAKE) rust-audit",
+      "\t$(MAKE) go-vulncheck",
+      "\t$(MAKE) ts-ci",
+      "\t$(MAKE) ts-audit",
+      "\t$(MAKE) ts-browser-ensure",
+      "\t$(MAKE) swift-security-check",
+    ]],
+    ["final-package-validation", [
+      "\t$(MAKE) security-package-check",
+      "\t$(MAKE) ts-package-check",
+      "\t$(MAKE) swift-package-check",
+      "\t$(MAKE) rust-package-check",
+    ]],
     ["final-integration-lanes", [
-      "\tnode scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
-      "\tnode scripts/run-final-stage.mjs 595 languages $(MAKE) -j4 final-go-check final-ts-check final-swift-check final-rust-check",
+      "\tGOPROXY=off node scripts/run-final-stage.mjs 595 race $(MAKE) final-race-check",
+      "\tCARGO_NET_OFFLINE=true GOPROXY=off npm_config_offline=true node scripts/run-final-stage.mjs 595 languages node scripts/run-final-lanes.mjs $(MAKE) final-go-check final-ts-check final-swift-check final-rust-check",
     ]],
     ["final-go-check", [
       "\t$(MAKE) transport-v2-unit",
@@ -349,18 +370,14 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) go-vet",
       "\t$(MAKE) go-test",
       "\t$(MAKE) go-cover-check",
-      "\t$(MAKE) go-vulncheck",
     ]],
     ["final-race-check", ["\t$(MAKE) go-test-race"]],
     ["final-ts-check", [
       "\t$(MAKE) ts-lint",
       "\t$(MAKE) ts-build",
-      "\t$(MAKE) ts-browser-ensure",
       "\t$(MAKE) ts-browser-e2e",
       "\t$(MAKE) ts-test",
       "\t$(MAKE) ts-cover-check",
-      "\t$(MAKE) ts-package-check",
-      "\t$(MAKE) ts-audit",
     ]],
     ["swift-check", [
       "\t$(MAKE) swift-package-check",
@@ -370,8 +387,17 @@ export function verifySecurityMakefile(makefile) {
       "\t$(MAKE) swift-test",
       "\t$(MAKE) swift-cover-check",
     ]],
-    ["final-swift-check", ["\t$(MAKE) swift-check"]],
-    ["final-rust-check", ["\t$(MAKE) rust-release-check"]],
+    ["swift-final-check", [
+      "\t$(MAKE) swift-source-guard",
+      "\tswift build --cache-path \"$(CURDIR)/.flowersec/swiftpm-cache\" --skip-update --only-use-versions-from-resolved-file",
+      "\t@# Xcode 26.4 can retain a stale test-bundle resource seal after swift-build.",
+      "\t@if [ \"$$(uname -s)\" = \"Darwin\" ]; then swift package clean; fi",
+      "\tswift test --cache-path \"$(CURDIR)/.flowersec/swiftpm-cache\" --skip-update --only-use-versions-from-resolved-file --enable-code-coverage",
+      "\t@coverage_path=$$(swift test --cache-path \"$(CURDIR)/.flowersec/swiftpm-cache\" --skip-update --only-use-versions-from-resolved-file --show-codecov-path); \\",
+      "\tnode scripts/check-swift-coverage.mjs \"$$coverage_path\" 79 80",
+    ]],
+    ["final-swift-check", ["\t$(MAKE) swift-final-check"]],
+    ["final-rust-check", ["\tCARGO_NET_OFFLINE=true $(MAKE) rust-final-check"]],
     ["rust-test-short", ["\tcd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib"]],
     ["precommit-go", [
       "\t$(MAKE) fmt-check",
@@ -403,7 +429,7 @@ export function verifySecurityMakefile(makefile) {
   }
 
   for (const [target, requiredCalls] of [
-    ["check", ["release-policy-check", "security-package-check", "final-integration-lanes"]],
+    ["check", ["release-policy-check", "final-integration-lanes"]],
     ["precommit", ["release-policy-check", "stability-source-check", "precommit-go", "precommit-ts", "precommit-swift", "precommit-rust"]],
   ]) {
     const recipe = effectiveRecipe(database.stdout, target);
@@ -413,6 +439,17 @@ export function verifySecurityMakefile(makefile) {
         throw new Error(`${target} must call ${required} with one exact, unsuppressed recipe line`);
       }
     }
+  }
+  const checkRecipe = effectiveRecipe(database.stdout, "check");
+  const preflightCall = "\tnode scripts/run-final-stage.mjs 300 preflight $(MAKE) final-network-preflight";
+  const preflightIndex = checkRecipe.indexOf(preflightCall);
+  const packageCall = "\tnode scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation";
+  const packageIndex = checkRecipe.indexOf(packageCall);
+  const lanesIndex = checkRecipe.indexOf("\t$(MAKE) final-integration-lanes");
+  if (preflightIndex < 0 || checkRecipe.lastIndexOf(preflightCall) !== preflightIndex
+    || packageIndex <= preflightIndex || checkRecipe.lastIndexOf(packageCall) !== packageIndex
+    || lanesIndex <= packageIndex) {
+    throw new Error("check must run one bounded network preflight and package validation before final integration lanes");
   }
 
   const precommitDryRun = runMake(makefile, ["-n", "precommit"]);
@@ -427,7 +464,7 @@ export function verifySecurityMakefile(makefile) {
     "npm run test:coverage",
     "npm run verify:package",
     "swift build",
-    "swift test --enable-code-coverage",
+    "--enable-code-coverage",
     "go run . verify-swift",
     "go run . verify-rust",
     "cargo package --allow-dirty",
@@ -442,7 +479,10 @@ export function verifySecurityMakefile(makefile) {
     }
   }
 
-  for (const [target, requiredPrerequisite] of [["rust-release-check", "rust-audit"]]) {
+  for (const [target, requiredPrerequisite] of [
+    ["rust-release-check", "rust-audit"],
+    ["rust-final-check", "rust-audit-offline"],
+  ]) {
     if (!effectivePrerequisites(database.stdout, target).includes(requiredPrerequisite)) {
       throw new Error(`${target} effective graph is missing ${requiredPrerequisite}`);
     }
