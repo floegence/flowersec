@@ -216,6 +216,16 @@ test("exact-main gate keeps network work before deterministic offline phases", (
   const packages = canonical.match(/^final-package-validation:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(packages, /rust-package-offline-check/);
   assert.doesNotMatch(packages, /rust-package-check/);
+  const rustPreflight = canonical.match(/^final-rust-preflight:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(rustPreflight, /\$\(MAKE\) rust-fetch/);
+  assert.match(rustPreflight, /\$\(MAKE\) rust-audit/);
+  assert.match(rustPreflight, /\$\(MAKE\) rust-publish-preflight/);
+  assert.doesNotMatch(rustPreflight, /rust-package/, "network preflight must not perform Rust package validation");
+  const rustPublishPreflight = canonical.match(/^rust-publish-preflight:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(rustPublishPreflight, /cargo publish --dry-run --allow-dirty --no-verify/);
+  const rustPackageOffline = canonical.match(/^rust-package-offline-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(rustPackageOffline, /cargo package --allow-dirty --offline/);
+  assert.doesNotMatch(rustPackageOffline, /cargo publish/);
 
   const laneTarget = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(laneTarget, /^\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race/m);
@@ -230,8 +240,9 @@ test("exact-main gate keeps network work before deterministic offline phases", (
   assert.match(finalRust, /stability-rust-check/);
   assert.doesNotMatch(canonical.match(/^rust-final-check:.*$/m)?.[0] ?? "", /rust-audit/);
   assert.equal((canonical.match(/\$\(MAKE\) rust-audit$/gm) ?? []).length, 1, "Rust audit must run once in preflight");
-  assert.equal((canonical.match(/\$\(MAKE\) rust-package-check$/gm) ?? []).length, 1, "online publish dry-run must run once in preflight");
-  assert.equal((canonical.match(/\$\(MAKE\) rust-package-offline-check$/gm) ?? []).length, 1, "offline package closure must run once after preflight");
+  assert.equal((canonical.match(/\$\(MAKE\) rust-package-check$/gm) ?? []).length, 0, "online package validation must not run in preflight");
+  assert.equal((canonical.match(/\$\(MAKE\) rust-publish-preflight$/gm) ?? []).length, 1, "publish dry-run must run once in network preflight");
+  assert.equal((canonical.match(/\$\(MAKE\) rust-package-offline-check$/gm) ?? []).length, 1, "offline package validation must run once after preflight");
 
   assert.match(canonical, /^SWIFTPM_CACHE_PATH := \$\(CURDIR\)\/\.flowersec\/swiftpm-cache$/m);
   const swiftCache = '\"$(SWIFTPM_CACHE_PATH)\"';

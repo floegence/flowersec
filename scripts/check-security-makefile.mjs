@@ -229,6 +229,7 @@ export function verifySecurityMakefile(makefile) {
     "swift-final-check",
     "rust-fetch",
     "rust-package-check",
+    "rust-publish-preflight",
     "rust-package-offline-check",
     "rust-audit",
     "rust-audit-offline",
@@ -365,6 +366,9 @@ export function verifySecurityMakefile(makefile) {
       "\tcd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty",
       "\tcd flowersec-rust && rustup run 1.88.0 cargo publish --dry-run --allow-dirty",
     ]],
+    ["rust-publish-preflight", [
+      "\tcd flowersec-rust && rustup run 1.88.0 cargo publish --dry-run --allow-dirty --no-verify",
+    ]],
     ["rust-package-offline-check", [
       "\tcd flowersec-rust && rustup run 1.88.0 cargo package --allow-dirty --offline",
     ]],
@@ -397,7 +401,7 @@ export function verifySecurityMakefile(makefile) {
     ["final-rust-preflight", [
       "\t$(MAKE) rust-fetch",
       "\t$(MAKE) rust-audit",
-      "\t$(MAKE) rust-package-check",
+      "\t$(MAKE) rust-publish-preflight",
     ]],
     ["final-offline-contracts", [
       "\t$(MAKE) security-dependency-check",
