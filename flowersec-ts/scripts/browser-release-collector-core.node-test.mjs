@@ -136,6 +136,27 @@ test("opens each browser bulk phase only after the previous phase completes", as
   assert.doesNotMatch(evaluatorSource, /scoreOutgoingPromise|scorePrepareController/);
 });
 
+test("passes explicit response decoders before browser RPC abort signals", async () => {
+  let evaluatorSource = "";
+  const page = {
+    evaluate: async (operation) => {
+      evaluatorSource = operation.toString();
+      return {};
+    },
+  };
+
+  await runSessionWorkload(page, {}, normalizeCollectorPlan(forcedPlan));
+  assert.match(
+    evaluatorSource,
+    /activeSession\.rpc\.call\(\s*1,\s*payload,\s*decodeRPCString,\s*operationController\.signal,?\s*\)/,
+  );
+  assert.match(
+    evaluatorSource,
+    /activeSession\.rpc\.call\(\s*1,\s*"native-isolation-survivor",\s*decodeRPCString,\s*phaseSignal,?\s*\)/,
+  );
+  assert.match(evaluatorSource, /function decodeRPCString\(value\)[\s\S]*typeof value !== "string"/);
+});
+
 test("adaptive_web accepts cold-only stages and rejects forced payload phases", () => {
   const adaptive = normalizeCollectorPlan({
     ...forcedPlan,

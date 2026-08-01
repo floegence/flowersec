@@ -296,7 +296,12 @@ export async function runSessionWorkload(page, artifact, plan) {
           try {
             let response;
             try {
-              response = await activeSession.rpc.call(1, payload, operationController.signal);
+              response = await activeSession.rpc.call(
+                1,
+                payload,
+                decodeRPCString,
+                operationController.signal,
+              );
             } catch (error) {
               const durationMs = Math.max(0, performance.now() - started).toFixed(1);
               const code = typeof error?.code === "string" ? error.code : "unclassified";
@@ -392,7 +397,7 @@ export async function runSessionWorkload(page, artifact, plan) {
 		  }
 		}));
 		events.push({ event: "native_siblings_completed", at: new Date().toISOString(), stream_count: 3 });
-		const response = await activeSession.rpc.call(1, "native-isolation-survivor", phaseSignal);
+		const response = await activeSession.rpc.call(1, "native-isolation-survivor", decodeRPCString, phaseSignal);
 		if (response.error !== undefined || response.payload !== "native-isolation-survivor") {
 		  throw new Error("native isolation post-reset RPC mismatch");
 		}
@@ -410,6 +415,13 @@ export async function runSessionWorkload(page, artifact, plan) {
 		await Promise.allSettled(streams.slice(1).map(async (stream) => await stream.close()));
 	  }
 	}
+
+    function decodeRPCString(value) {
+      if (typeof value !== "string") {
+        throw new TypeError("RPC response must be a string");
+      }
+      return value;
+    }
 
     async function runBulk(activeSession, config, phaseSignal) {
       const warmupOutgoing = await prepareTransfer(activeSession, phaseSignal);
