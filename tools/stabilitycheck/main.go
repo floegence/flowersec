@@ -288,10 +288,11 @@ func verifyRust(repoRoot string, m *manifest) error {
 	if err != nil {
 		return err
 	}
-	probeDir := filepath.Join(repoRoot, ".build", "stability-rust-probe")
-	if err := os.RemoveAll(probeDir); err != nil {
+	probeDir, err := createRustProbeDir(repoRoot)
+	if err != nil {
 		return err
 	}
+	defer os.RemoveAll(probeDir)
 	if err := os.MkdirAll(filepath.Join(probeDir, "src"), 0o755); err != nil {
 		return err
 	}
@@ -325,6 +326,14 @@ func verifyRust(repoRoot string, m *manifest) error {
 	}
 	fmt.Printf("rust symbols OK: %d compile entries verified\n", len(m.Rust.CompileEntries))
 	return nil
+}
+
+func createRustProbeDir(repoRoot string) (string, error) {
+	buildDir := filepath.Join(repoRoot, ".build")
+	if err := os.MkdirAll(buildDir, 0o755); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(buildDir, "stability-rust-probe-")
 }
 
 func rustToolchainVersion(repoRoot, cratePath string) (string, error) {
