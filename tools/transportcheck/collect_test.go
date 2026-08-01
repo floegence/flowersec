@@ -633,13 +633,13 @@ while [ "$#" -gt 0 ]; do
 done
 case "$report" in
   */fail/*)
-    while [ ! -f "$(dirname "$(dirname "$report")")/wait.started" ]; do sleep 0.01; done
+    while [ ! -f "$(dirname "$(dirname "$report")")/wait.ready" ]; do sleep 0.01; done
     exit 42
     ;;
   *)
     jobs_root=$(dirname "$(dirname "$report")")
-    touch "$jobs_root/wait.started"
     trap 'touch "$jobs_root/wait.cancelled"; exit 0' INT
+    touch "$jobs_root/wait.ready"
     while :; do sleep 1; done
     ;;
 esac
