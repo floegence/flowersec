@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 )
@@ -44,7 +45,16 @@ func (Artifact) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
 // ArtifactLease binds an opaque artifact to the application's durable spend
 // callback. It exposes neither the artifact payload nor the callback.
 type ArtifactLease struct {
-	artifact    Artifact
+	artifact Artifact
+	state    *artifactLeaseState
+}
+
+var errArtifactLeaseConsumed = errors.New("Flowersec artifact lease already consumed")
+
+type artifactLeaseState struct {
+	mu          sync.Mutex
+	spending    bool
+	consumed    bool
 	commitSpend func(context.Context) error
 }
 
@@ -60,7 +70,34 @@ func NewArtifactLease(artifact Artifact, commitSpend func(context.Context) error
 	if artifact.value == nil || commitSpend == nil {
 		return ArtifactLease{}, ErrInvalidArtifact
 	}
-	return ArtifactLease{artifact: artifact, commitSpend: commitSpend}, nil
+	return ArtifactLease{
+		artifact: artifact,
+		state:    &artifactLeaseState{commitSpend: commitSpend},
+	}, nil
+}
+
+func (lease ArtifactLease) commitSpend(ctx context.Context) error {
+	if lease.state == nil || lease.state.commitSpend == nil {
+		return ErrInvalidArtifact
+	}
+	lease.state.mu.Lock()
+	if lease.state.spending || lease.state.consumed {
+		lease.state.mu.Unlock()
+		return errArtifactLeaseConsumed
+	}
+	lease.state.spending = true
+	lease.state.mu.Unlock()
+
+	succeeded := false
+	defer func() {
+		lease.state.mu.Lock()
+		lease.state.spending = false
+		lease.state.consumed = succeeded
+		lease.state.mu.Unlock()
+	}()
+	err := lease.state.commitSpend(ctx)
+	succeeded = err == nil
+	return err
 }
 
 // MarshalJSON prevents generic serialization from exposing lease internals.

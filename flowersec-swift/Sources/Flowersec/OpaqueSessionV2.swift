@@ -56,7 +56,13 @@ struct OpaqueSessionV2: Session {
     redactTransportErrorV2(await session.waitClosed())
   }
 
-  func close() async { await session.close() }
+  func close() async throws {
+    do {
+      try await session.close()
+    } catch {
+      throw redactTransportErrorV2(error)
+    }
+  }
 }
 
 private struct RedactedByteStreamV2: ByteStream {
@@ -93,8 +99,21 @@ private struct RedactedByteStreamV2: ByteStream {
     }
   }
 
-  func reset() async { await stream.reset() }
-  func close() async { await stream.close() }
+  func reset() async throws {
+    do {
+      try await stream.reset()
+    } catch {
+      throw redactTransportErrorV2(error)
+    }
+  }
+
+  func close() async throws {
+    do {
+      try await stream.close()
+    } catch {
+      throw redactTransportErrorV2(error)
+    }
+  }
   func terminalError() async -> SessionError? { await stream.terminalError() }
 }
 

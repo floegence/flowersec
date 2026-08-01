@@ -15,8 +15,7 @@ export type NodeSessionTLSOptionsV2 = Readonly<{
 export type NodeSessionConnectorV2Options = Readonly<{
   origin: string;
   signal?: AbortSignal;
-  loserCloseTimeoutMs?: number;
-  now?: () => number;
+  connectTimeoutMs?: number;
   tls?: NodeSessionTLSOptionsV2;
 }>;
 
@@ -29,8 +28,7 @@ export async function connectNodeSessionV2(
   const connector = createBrowserSessionConnectorV2InternalStage(lease, {
     admissionReasons: new Set(),
     capability: NODE_RUNTIME_CAPABILITY_V2,
-    ...(options.loserCloseTimeoutMs === undefined ? {} : { loserCloseTimeoutMs: options.loserCloseTimeoutMs }),
-    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
     runtime: "node",
     attemptFactory: createWebSocketAttemptFactoryV2InternalStage(
       (url, subprotocol) => wsFactory(url, origin, subprotocol),

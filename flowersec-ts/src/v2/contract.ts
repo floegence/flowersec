@@ -103,7 +103,6 @@ export type SessionTerminationV2 = Readonly<{
 
 export interface SessionV2 {
   readonly rpc: RpcPeerV2;
-  readonly termination: Promise<SessionTerminationV2>;
   readonly unreliableMessages?: UnreliableMessageChannelV2;
 
   openStream(kind: string, options?: StreamOpenOptionsV2): Promise<ByteStreamV2>;

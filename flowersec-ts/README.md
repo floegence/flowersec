@@ -1,6 +1,6 @@
 # Flowersec for TypeScript
 
-`@floegence/flowersec-core` is the ESM-only Flowersec v2 SDK for browsers and Node.js. Its public package surface is limited to the root, `/browser`, `/node`, and `/proxy` entrypoints.
+`@floegence/flowersec-core` is the ESM-only Flowersec v2 SDK for browsers and Node.js. Its public package surface is limited to the root, `/browser`, `/node`, `/reconnect`, and `/proxy` entrypoints.
 
 The current source is a Flowersec 2.0 release candidate and has not yet been published as the coordinated 2.0 SDK release. The install command below refers to the registry package; verify its published version before depending on source-only 2.0 APIs.
 
@@ -12,21 +12,21 @@ npm install @floegence/flowersec-core
 
 ## Public API
 
-- `@floegence/flowersec-core` exports `Artifact`, `parseArtifact(...)`, `TRANSPORT_V2_VERSION_POLICY`, `createArtifactAcquireContext(...)`, `createArtifactLease(...)`, `createArtifactResolver(...)`, `createSessionReconnectManager(...)`, `classifyConnectError(...)`, `classifySessionError(...)`, `ConnectError`, and `SessionError` at runtime.
+- `@floegence/flowersec-core` exports the portable artifact, lease, session, stream, RPC, unreliable-message, and error-classification API.
 - `@floegence/flowersec-core/browser` adds `connectBrowserSession(...)` and `BrowserSessionOptions`.
 - `@floegence/flowersec-core/node` adds `connectNodeSession(...)`, `NodeSessionOptions`, and `NodeSessionTLSOptions`.
+- `@floegence/flowersec-core/reconnect` adds artifact-source acquisition and reconnect orchestration without a redundant v2 version policy.
 - `@floegence/flowersec-core/proxy` adds the `Session`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowser(...)` composition.
 
 The root type exports are:
 
-- Artifact acquisition: `ArtifactAcquireContext`, `ArtifactAcquireContextOptions`, `ArtifactLease`, `ArtifactSource`, and `ArtifactVersionPolicy`.
+- Artifact lifecycle: `Artifact` and `ArtifactLease`.
 - Sessions: `Session`, `SessionTermination`, `RpcPeer`, `RpcResult<Response>`, `ByteStream`, `IncomingStream`, `OperationOptions`, and `StreamOpenOptions`.
 - Unreliable messages: `UnreliableMessageChannel`, `UnreliableMessage`, `UnreliableMessageSendOptions`, and `UnreliableMessageSendResult`.
 - JSON values: `JsonPrimitive`, `JsonValue`, and `JsonObject`.
-- Reconnection: `SessionAutoReconnectConfig`, `SessionReconnectConfig`, `SessionReconnectManager`, `SessionReconnectState`, and `SessionReconnectStatus`.
 - Errors: `ConnectErrorCode`, `SessionErrorCode`, `RetryAction`, and `ErrorRetryClassification`.
 
-`createSessionReconnectManager(...)` resolves a lease for each connection attempt. A refreshable source acquires a fresh lease; a one-time source can be consumed only once.
+The `/reconnect` entrypoint exposes `ArtifactAcquireContext`, `ArtifactSource`, and the reconnect types. `createSessionReconnectManager(...)` resolves a lease for each connection attempt. A refreshable source acquires a fresh lease; a one-time source can be consumed only once.
 
 `classifyConnectError(...)` and `classifySessionError(...)` map redacted public errors to stable application retry decisions. They expose only `action`, `retryable`, `refreshArtifact`, `callerCanceled`, and `sessionClosed`; they do not reveal carrier, candidate, URL, credential, stage, key, or diagnostic details.
 
@@ -38,7 +38,7 @@ A negotiated `Session.unreliableMessages` channel returns `accepted`, `dropped_e
 
 ## Opaque Boundaries
 
-`Artifact` is an opaque handle. Applications cannot inspect its connection data or serialize it back to protocol JSON. `Session` exposes RPC, stream operations, liveness, rekeying, termination, and closure without revealing the selected transport or peer endpoint identity. Public streams expose their kind and terminal state, but no protocol stream identifier.
+`Artifact` is an opaque handle. Applications cannot inspect its connection data or serialize it back to protocol JSON. `Session` exposes RPC, stream operations, liveness, rekeying, `waitClosed()`, and closure without revealing the selected transport or peer endpoint identity. Public streams expose their kind and terminal state, but no protocol stream identifier.
 
 `ConnectError` and `SessionError` expose only a closed `code`. They do not retain raw causes, credentials, URLs, candidate diagnostics, transport objects, peer details, or internal routing and handshake state.
 

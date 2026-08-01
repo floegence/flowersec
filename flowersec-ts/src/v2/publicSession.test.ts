@@ -38,7 +38,7 @@ describe("opaque public SessionV2 projection", () => {
 
     await expect((await session.openStream("data")).read()).rejects.toEqual(new SessionError("timeout"));
     await expect(session.waitClosed()).resolves.toEqual({ error: new SessionError("timeout") });
-    await expect(session.termination).resolves.toEqual({ error: new SessionError("timeout") });
+    expect(session).not.toHaveProperty("termination");
     expect((await session.waitClosed()).error).not.toHaveProperty("cause");
   });
 

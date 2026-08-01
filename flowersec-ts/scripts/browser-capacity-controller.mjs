@@ -136,7 +136,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
           if (entry === undefined || entry.token !== spendToken) throw new Error("browser capacity session is unavailable");
           await Promise.allSettled((entry.streams ?? []).map(async (stream) => await stream.close()));
           await entry.session.close();
-          await entry.session.termination;
+          await entry.session.waitClosed();
           sessions.delete(id);
         }));
         const failed = results.find((result) => result.status === "rejected");
@@ -170,7 +170,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
               try {
                 session = await sdk.connectBrowserSession(lease);
                 globalThis.__flowersecCapacitySessions.set(id, { session, token: spendToken });
-                void session.termination.then(async () => {
+                void session.waitClosed().then(async () => {
                   await globalThis.__flowersecCapacityTerminated({ session_id: id, token: spendToken });
                 });
                 await session.probeLiveness();

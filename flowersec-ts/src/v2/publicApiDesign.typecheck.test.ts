@@ -35,7 +35,10 @@ function typecheckPublicAPI(
   void session.openStream("typed", { metadata });
   void stream.kind;
   void connectNodeSession(lease, { origin: "https://client.example" });
+  void connectNodeSession(lease, { origin: "https://client.example", connectTimeoutMs: 2_500 });
   void createArtifactLease(parseArtifact("{}"), async () => {});
+  // @ts-expect-error session termination has one public waiting entrypoint.
+  void session.termination;
 }
 
 test("exposes the unversioned typed public API", () => {

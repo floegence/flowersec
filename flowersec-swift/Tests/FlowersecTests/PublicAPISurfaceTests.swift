@@ -20,6 +20,9 @@ struct PublicAPISurfaceTests {
     #expect(accepted.metadata == .empty)
     #expect(await stream.terminalError() == nil)
     #expect(await session.waitClosed() == .closed)
+    try await stream.reset()
+    try await stream.close()
+    try await session.close()
     #expect(SessionError.operationFailed.rawValue == "operation_failed")
     #expect(RPCError(code: 404, message: "not found").code == 404)
   }
@@ -37,8 +40,8 @@ private actor PublicContractByteStream: ByteStream {
 
   func write(_ data: Data) async throws -> Int { data.count }
   func closeWrite() async throws {}
-  func reset() async {}
-  func close() async {}
+  func reset() async throws {}
+  func close() async throws {}
   func terminalError() async -> SessionError? { nil }
 }
 
@@ -85,5 +88,5 @@ private struct PublicContractSession: Session {
   func rekey() async throws {}
   func probeLiveness() async throws -> Duration { .zero }
   func waitClosed() async -> SessionError { .closed }
-  func close() async {}
+  func close() async throws {}
 }

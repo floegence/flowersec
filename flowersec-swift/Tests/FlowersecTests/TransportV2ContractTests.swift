@@ -88,11 +88,11 @@ struct TransportV2ContractTests {
     #expect(accepted.metadata == .empty)
     #expect(try await opened.write(Data([1, 2])) == 2)
     try await opened.closeWrite()
-    await opened.reset()
-    await opened.close()
+    try await opened.reset()
+    try await opened.close()
     try await session.rekey()
     #expect(try await session.probeLiveness() == .milliseconds(1))
-    await session.close()
+    try await session.close()
   }
 }
 
@@ -132,8 +132,8 @@ private actor ContractByteStreamV2: ByteStream {
 
   func write(_ data: Data) async throws -> Int { data.count }
   func closeWrite() async throws {}
-  func reset() async {}
-  func close() async {}
+  func reset() async throws {}
+  func close() async throws {}
   func terminalError() async -> SessionError? { nil }
 }
 
@@ -162,5 +162,5 @@ private final class ContractSessionV2: Session, @unchecked Sendable {
   func rekey() async throws {}
   func probeLiveness() async throws -> Duration { .milliseconds(1) }
   func waitClosed() async -> SessionError { .closed }
-  func close() async {}
+  func close() async throws {}
 }

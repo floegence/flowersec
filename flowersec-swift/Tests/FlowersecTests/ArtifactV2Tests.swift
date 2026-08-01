@@ -120,6 +120,27 @@ final class ArtifactV2Tests: XCTestCase {
     }
   }
 
+  func testArtifactLeaseAuthorizesExactlyOneConcurrentSpend() async throws {
+    let raw = try XCTUnwrap(loadVectors().positive.first?.artifactJSON)
+    let artifact = try parseArtifact(Data(raw.utf8))
+    let gate = SpendGateV2()
+    let lease = ArtifactLease(artifact: artifact) {
+      await gate.wait()
+    }
+
+    let first = Task { try await lease.commitSpend() }
+    await gate.waitUntilStarted()
+    let second = Task { try await lease.commitSpend() }
+    do {
+      try await second.value
+      XCTFail("Expected concurrent lease reuse to fail")
+    } catch {
+      XCTAssertEqual(error as? ArtifactLeaseError, .alreadyCommitted)
+    }
+    await gate.release()
+    try await first.value
+  }
+
   func testRejectsNestedUnknownAndEscapedDuplicateKeys() throws {
     let raw = try XCTUnwrap(loadVectors().positive.first?.artifactJSON)
     let nestedUnknown = raw.replacingOccurrences(
@@ -158,6 +179,22 @@ private actor RetryingSpendRecorderV2 {
     if attempts == 1 { throw SpendTestErrorV2.durabilityFailure }
   }
   func attemptCount() -> Int { attempts }
+}
+
+private actor SpendGateV2 {
+  private var started = false
+  private var released = false
+
+  func wait() async {
+    started = true
+    while !released { await Task.yield() }
+  }
+
+  func waitUntilStarted() async {
+    while !started { await Task.yield() }
+  }
+
+  func release() { released = true }
 }
 
 private struct ArtifactVectorsV2: Decodable {

@@ -2,9 +2,13 @@ package flowersec
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +19,113 @@ import (
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v2/internal/rpc"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/session"
 )
+
+func mustParseInternalFixtureArtifact(t *testing.T) Artifact {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "testdata", "transport_v2", "artifact_vectors.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures struct {
+		Positive []struct {
+			ArtifactJSON string `json:"artifact_json"`
+		} `json:"positive"`
+	}
+	if err := json.Unmarshal(raw, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ParseArtifact([]byte(fixtures.Positive[0].ArtifactJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return artifact
+}
+
+func TestArtifactLeaseAuthorizesExactlyOneConcurrentSpend(t *testing.T) {
+	artifact := mustParseInternalFixtureArtifact(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	lease, err := NewArtifactLease(artifact, func(context.Context) error {
+		close(started)
+		<-release
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := make(chan error, 1)
+	go func() { first <- lease.commitSpend(context.Background()) }()
+	<-started
+	if err := lease.commitSpend(context.Background()); !errors.Is(err, errArtifactLeaseConsumed) {
+		t.Fatalf("concurrent commitSpend() error = %v, want consumed", err)
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first commitSpend() error = %v", err)
+	}
+	if err := lease.commitSpend(context.Background()); !errors.Is(err, errArtifactLeaseConsumed) {
+		t.Fatalf("reused commitSpend() error = %v, want consumed", err)
+	}
+}
+
+func TestArtifactLeaseAllowsRetryAfterSpendFailure(t *testing.T) {
+	artifact := mustParseInternalFixtureArtifact(t)
+	attempts := 0
+	lease, err := NewArtifactLease(artifact, func(context.Context) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("durability failed")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.commitSpend(context.Background()); err == nil {
+		t.Fatal("first commitSpend() error = nil")
+	}
+	if err := lease.commitSpend(context.Background()); err != nil {
+		t.Fatalf("retry commitSpend() error = %v", err)
+	}
+}
+
+func TestConnectorFreezesHandlersOnlyAfterLocalValidation(t *testing.T) {
+	artifact := mustParseInternalFixtureArtifact(t)
+	lease, err := NewArtifactLease(artifact, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustRoots := x509.NewCertPool()
+	trustRoots.AddCert(&x509.Certificate{RawSubject: []byte("test root")})
+
+	if _, err := newConnector(lease, ConnectorOptions{
+		TrustRoots: trustRoots,
+		Origin:     "invalid",
+		Handlers:   handlers,
+	}); !errors.Is(err, ErrInvalidConnectorOptions) {
+		t.Fatalf("newConnector() error = %v, want invalid options", err)
+	}
+	if err := handlers.HandleRPC(1, func(context.Context, json.RawMessage) (any, *RPCError) {
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("HandleRPC() after invalid options = %v", err)
+	}
+
+	if _, err := newConnector(lease, ConnectorOptions{
+		TrustRoots: trustRoots,
+		Origin:     "https://client.example",
+		Handlers:   handlers,
+	}); err != nil {
+		t.Fatalf("newConnector() error = %v", err)
+	}
+	if err := handlers.HandleStream("late", func(context.Context, IncomingStream) {}); !errors.Is(err, ErrSessionHandlersFrozen) {
+		t.Fatalf("HandleStream() after valid connector = %v, want frozen", err)
+	}
+}
 
 func TestConnectorMapsInternalResultToCarrierNeutralSession(t *testing.T) {
 	want := inertSession{path: session.PathTunnel}

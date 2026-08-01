@@ -25,7 +25,7 @@ session, err := flowersec.Connect(ctx, lease, options)
 err = handlers.Serve(ctx, session)
 ```
 
-Register inbound RPC handlers before connecting; `Connect` snapshots them for session establishment. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, and resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
+Register inbound RPC and stream handlers before connecting. A valid connection attempt freezes both registration sets; later registrations return `ErrSessionHandlersFrozen`. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, and resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
 
 The executable `ExampleConnect` compiles the complete consumer lifecycle,
 including an atomically created and synchronized durable spend receipt. Reusing

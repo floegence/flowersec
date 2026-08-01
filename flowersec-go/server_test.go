@@ -148,6 +148,20 @@ func TestSessionHandlersRejectInvalidAndDuplicateRegistrations(t *testing.T) {
 	}
 }
 
+func TestSessionHandlersFreezeRPCAndStreamRegistrationsTogether(t *testing.T) {
+	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlers.freeze()
+	if err := handlers.HandleStream("late", func(context.Context, IncomingStream) {}); !errors.Is(err, ErrSessionHandlersFrozen) {
+		t.Fatalf("late HandleStream() error = %v, want ErrSessionHandlersFrozen", err)
+	}
+	if err := handlers.HandleRPC(9, func(context.Context, json.RawMessage) (any, *RPCError) { return nil, nil }); !errors.Is(err, ErrSessionHandlersFrozen) {
+		t.Fatalf("late HandleRPC() error = %v, want ErrSessionHandlersFrozen", err)
+	}
+}
+
 func TestSessionHandlersResetStreamWhenConcurrencyIsExhausted(t *testing.T) {
 	first := &serverTestStream{Reader: bytes.NewReader(nil)}
 	second := &serverTestStream{Reader: bytes.NewReader(nil)}

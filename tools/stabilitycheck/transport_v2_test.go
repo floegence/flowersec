@@ -151,10 +151,15 @@ func TestTransportV2PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		for _, exportName := range []string{
 			"JsonPrimitive", "JsonValue", "OperationOptions", "RpcPeer",
 			"RpcResult", "SessionErrorCode", "SessionTermination",
-			"SessionReconnectConfig", "SessionReconnectManager", "SessionReconnectState",
 		} {
 			requireTSTypeExport(t, raw.TS.Subpaths, specifier, exportName)
 		}
+	}
+	for _, exportName := range []string{
+		"ArtifactAcquireContext", "ArtifactSource", "SessionReconnectConfig",
+		"SessionReconnectManager", "SessionReconnectState",
+	} {
+		requireTSTypeExport(t, raw.TS.Subpaths, "@floegence/flowersec-core/reconnect", exportName)
 	}
 	requireSwiftManifestSymbol(t, m, "swift.protocol", "Session")
 	requireSwiftManifestSymbol(t, m, "swift.protocol", "ByteStream")

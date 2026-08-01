@@ -21,6 +21,7 @@ const (
 var (
 	ErrInvalidSessionHandlers = errors.New("invalid Flowersec session handlers")
 	ErrHandlerAlreadyExists   = errors.New("Flowersec session handler already exists")
+	ErrSessionHandlersFrozen  = errors.New("Flowersec session handlers are frozen")
 )
 
 // StreamHandler processes one accepted application stream. The stream is
@@ -45,6 +46,7 @@ type SessionHandlers struct {
 	onError       func(error)
 
 	mu             sync.RWMutex
+	frozen         bool
 	streamHandlers map[string]StreamHandler
 	rpcHandlers    map[uint32]RPCHandler
 }
@@ -88,6 +90,9 @@ func (handlers *SessionHandlers) HandleStream(kind string, handler StreamHandler
 	}
 	handlers.mu.Lock()
 	defer handlers.mu.Unlock()
+	if handlers.frozen {
+		return ErrSessionHandlersFrozen
+	}
 	if _, exists := handlers.streamHandlers[kind]; exists {
 		return ErrHandlerAlreadyExists
 	}
@@ -103,11 +108,23 @@ func (handlers *SessionHandlers) HandleRPC(typeID uint32, handler RPCHandler) er
 	}
 	handlers.mu.Lock()
 	defer handlers.mu.Unlock()
+	if handlers.frozen {
+		return ErrSessionHandlersFrozen
+	}
 	if _, exists := handlers.rpcHandlers[typeID]; exists {
 		return ErrHandlerAlreadyExists
 	}
 	handlers.rpcHandlers[typeID] = handler
 	return nil
+}
+
+func (handlers *SessionHandlers) freeze() {
+	if handlers == nil {
+		return
+	}
+	handlers.mu.Lock()
+	handlers.frozen = true
+	handlers.mu.Unlock()
 }
 
 func (handlers *SessionHandlers) rpcRouter() *internalrpc.Router {

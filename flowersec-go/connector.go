@@ -225,7 +225,7 @@ func Connect(ctx context.Context, lease ArtifactLease, options ConnectorOptions)
 }
 
 func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, error) {
-	if lease.artifact.value == nil || lease.commitSpend == nil || options.TrustRoots == nil ||
+	if lease.artifact.value == nil || lease.state == nil || lease.state.commitSpend == nil || options.TrustRoots == nil ||
 		len(options.TrustRoots.Subjects()) == 0 || options.ConnectTimeout < 0 || !validOrigin(options.Origin) {
 		return nil, ErrInvalidConnectorOptions
 	}
@@ -264,6 +264,7 @@ func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, er
 	}
 	connectorOptions := make([]connectv2.ConnectorOption, 0, 1)
 	if options.Handlers != nil {
+		options.Handlers.freeze()
 		connectorOptions = append(connectorOptions, connectv2.WithRPCRouter(options.Handlers.rpcRouter()))
 	}
 	inner := connectv2.NewConnector(connectv2.ArtifactLease{

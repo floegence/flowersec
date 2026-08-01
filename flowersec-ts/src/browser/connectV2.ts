@@ -43,6 +43,7 @@ import {
   type BrowserWebTransportCarrierInternalStage,
 } from "./webTransportCarrierInternalStage.js";
 import { projectSessionV2 } from "../v2/publicSession.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 
 const BROWSER_SESSION_CLOSE_TIMEOUT_MS = 5_000;
 
@@ -76,12 +77,12 @@ export type BrowserCandidateAttemptFactoryV2 = Readonly<{
 
 export type BrowserSessionConnectorV2Options = Readonly<{
   signal?: AbortSignal;
-  loserCloseTimeoutMs?: number;
-  now?: () => number;
+  connectTimeoutMs?: number;
 }>;
 
 type BrowserSessionConnectorInternalOptionsV2 = Readonly<{
   admissionReasons: ReadonlySet<string>;
+  connectTimeoutMs?: number;
   deadlineFactory?: SessionDeadlineFactoryV2;
   loserCloseTimeoutMs?: number;
   now?: () => number;
@@ -116,8 +117,10 @@ export class BrowserSessionConnectorV2 {
     const diagnostics: FlowersecCandidateDiagnostic[] = [];
     try {
       let loserCloseTimeoutMs: number;
+      let connectTimeoutMs: number;
       try {
         loserCloseTimeoutMs = normalizeLoserCloseTimeout(this.options.loserCloseTimeoutMs);
+        connectTimeoutMs = normalizeConnectTimeout(this.options.connectTimeoutMs);
       } catch (error) {
         throw connectorError(path, "validate", "invalid_option", error);
       }
@@ -174,6 +177,7 @@ export class BrowserSessionConnectorV2 {
       }
       try {
         deadline = createConnectorDeadline(Math.min(
+          connectTimeoutMs,
           this.artifact.session.establish_timeout_seconds * 1_000,
           remaining,
         ), this.options.deadlineFactory);
@@ -645,6 +649,14 @@ function normalizeLoserCloseTimeout(value: number | undefined): number {
   const timeout = value ?? 1_000;
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 60_000) {
     throw new RangeError("loserCloseTimeoutMs must be an integer from 1 to 60000");
+  }
+  return timeout;
+}
+
+function normalizeConnectTimeout(value: number | undefined): number {
+  const timeout = value ?? SDK_DEFAULTS.transport.connectTimeoutMs;
+  if (!Number.isSafeInteger(timeout) || timeout < 1) {
+    throw new RangeError("connectTimeoutMs must be a positive safe integer");
   }
   return timeout;
 }

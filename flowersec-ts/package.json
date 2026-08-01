@@ -37,6 +37,10 @@
       "types": "./dist/browser/index.d.ts",
       "default": "./dist/browser/index.js"
     },
+    "./reconnect": {
+      "types": "./dist/reconnect/index.d.ts",
+      "default": "./dist/reconnect/index.js"
+    },
     "./proxy": {
       "types": "./dist/proxy/index.d.ts",
       "default": "./dist/proxy/index.js"

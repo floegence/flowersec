@@ -163,7 +163,7 @@ describe("browser SessionV2 equal-candidate connector", () => {
       admissionReasons: new Set(),
       capability: BROWSER_RUNTIME_CAPABILITY_V2,
       deadlineFactory: (timeoutMs, phase) => {
-        expect(timeoutMs).toBe(30_000);
+        expect(timeoutMs).toBe(10_000);
         expect(phase).toBe("establish");
         return { signal: deadline.signal, cancel: () => undefined };
       },
@@ -195,6 +195,29 @@ describe("browser SessionV2 equal-candidate connector", () => {
     retryReady.resolve();
     await expect(retrying).resolves.toMatchObject({ candidate: { id: "w1" } });
     expect(events).toContain("spend");
+  });
+
+  test("uses an explicit public connection timeout when it is shorter", async () => {
+    const deadline = new AbortController();
+    const ready = deferred<void>();
+    const connector = createBrowserSessionConnectorV2InternalStage({
+      artifact: withCandidates(artifact, ["w1"]),
+      commitSpend: async () => undefined,
+    }, {
+      attemptFactory: fakeFactory([], {} as SessionV2, new Map([["w1", ready]])),
+      admissionReasons: new Set(),
+      capability: BROWSER_RUNTIME_CAPABILITY_V2,
+      connectTimeoutMs: 2_500,
+      deadlineFactory: (timeoutMs, phase) => {
+        expect(timeoutMs).toBe(2_500);
+        expect(phase).toBe("establish");
+        return { signal: deadline.signal, cancel: () => undefined };
+      },
+    });
+
+    const connecting = connector.connect();
+    deadline.abort(new Error("connection timeout"));
+    await expect(connecting).rejects.toMatchObject({ code: "timeout" });
   });
 
   test("rejects an expired artifact before starting candidates or spending", async () => {

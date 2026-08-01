@@ -401,8 +401,8 @@ public protocol ByteStream: Sendable {
   func read(maxBytes: Int) async throws -> Data?
   func write(_ data: Data) async throws -> Int
   func closeWrite() async throws
-  func reset() async
-  func close() async
+  func reset() async throws
+  func close() async throws
   func terminalError() async -> SessionError?
 }
 
@@ -441,7 +441,7 @@ public protocol Session: Sendable {
   func rekey() async throws
   func probeLiveness() async throws -> Duration
   func waitClosed() async -> SessionError
-  func close() async
+  func close() async throws
 }
 
 extension Session {

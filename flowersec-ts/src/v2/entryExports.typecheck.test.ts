@@ -1,6 +1,4 @@
 import type {
-  ArtifactAcquireContextOptions as BrowserArtifactAcquireContextOptions,
-  ArtifactVersionPolicy as BrowserArtifactVersionPolicy,
   BrowserSessionOptions,
   ErrorRetryClassification as BrowserErrorRetryClassification,
   JsonPrimitive as BrowserJsonPrimitive,
@@ -19,8 +17,6 @@ import {
   ConnectError as BrowserConnectError,
 } from "../browser/index.js";
 import type {
-  ArtifactAcquireContextOptions as NodeArtifactAcquireContextOptions,
-  ArtifactVersionPolicy as NodeArtifactVersionPolicy,
   ErrorRetryClassification as NodeErrorRetryClassification,
   JsonPrimitive as NodeJsonPrimitive,
   JsonValue as NodeJsonValue,
@@ -29,6 +25,20 @@ import type {
   RetryAction as NodeRetryAction,
   SessionError as NodeSessionError,
 } from "../node/index.js";
+// @ts-expect-error acquisition orchestration is available only from the reconnect subpath.
+import type { ArtifactAcquireContextOptions as RootArtifactAcquireContextOptions } from "../facade.js";
+// @ts-expect-error reconnect orchestration is available only from the reconnect subpath.
+import type { SessionReconnectConfig as RootSessionReconnectConfig } from "../facade.js";
+// @ts-expect-error a v2-only SDK does not expose a single-value version policy.
+import type { ArtifactVersionPolicy as RootArtifactVersionPolicy } from "../facade.js";
+// @ts-expect-error acquisition orchestration is available only from the reconnect subpath.
+import type { ArtifactAcquireContextOptions as BrowserArtifactAcquireContextOptions } from "../browser/index.js";
+// @ts-expect-error a v2-only SDK does not expose a single-value version policy.
+import type { ArtifactVersionPolicy as BrowserArtifactVersionPolicy } from "../browser/index.js";
+// @ts-expect-error acquisition orchestration is available only from the reconnect subpath.
+import type { ArtifactAcquireContextOptions as NodeArtifactAcquireContextOptions } from "../node/index.js";
+// @ts-expect-error a v2-only SDK does not expose a single-value version policy.
+import type { ArtifactVersionPolicy as NodeArtifactVersionPolicy } from "../node/index.js";
 // @ts-expect-error runtime capability descriptors are package-internal.
 import type { RuntimeCapabilityDescriptorV2 as NodeRuntimeCapabilityDescriptorV2 } from "../node/index.js";
 // @ts-expect-error candidate selection diagnostics are package-internal.
@@ -51,8 +61,6 @@ import { createBrowserWebTransportCarrierInternalStage } from "../browser/index.
 import { expect, test } from "vitest";
 
 type BrowserTypes = readonly [
-  BrowserArtifactAcquireContextOptions,
-  BrowserArtifactVersionPolicy,
   BrowserErrorRetryClassification,
   BrowserRetryAction,
   BrowserJsonPrimitive,
@@ -62,10 +70,10 @@ type BrowserTypes = readonly [
   BrowserRuntimeCapabilityDescriptorV2,
   BrowserFlowersecCandidateDiagnostic,
   BrowserSessionConnectorV2Options,
+  BrowserArtifactAcquireContextOptions,
+  BrowserArtifactVersionPolicy,
 ];
 type NodeTypes = readonly [
-  NodeArtifactAcquireContextOptions,
-  NodeArtifactVersionPolicy,
   NodeErrorRetryClassification,
   NodeRetryAction,
   NodeJsonPrimitive,
@@ -75,6 +83,13 @@ type NodeTypes = readonly [
   NodeRuntimeCapabilityDescriptorV2,
   NodeFlowersecCandidateDiagnostic,
   NodeSessionConnectorV2Options,
+  NodeArtifactAcquireContextOptions,
+  NodeArtifactVersionPolicy,
+];
+type RootRemovedTypes = readonly [
+  RootArtifactAcquireContextOptions,
+  RootSessionReconnectConfig,
+  RootArtifactVersionPolicy,
 ];
 
 test("keeps shared Transport v2 types importable from browser and Node entries", () => {
@@ -87,6 +102,7 @@ test("keeps shared Transport v2 types importable from browser and Node entries",
   void createBrowserWebTransportCarrierInternalStage;
   void (undefined as unknown as BrowserTypes);
   void (undefined as unknown as NodeTypes);
+  void (undefined as unknown as RootRemovedTypes);
 });
 
 function typecheckOpaqueConnectorOptions(
@@ -105,12 +121,34 @@ function typecheckOpaqueConnectorOptions(
     // @ts-expect-error Node carrier tuning is package-internal.
     webSocket: {},
   };
+  const leakedBrowserClock: BrowserSessionOptions = {
+    // @ts-expect-error clock injection is package-internal.
+    now: () => 0,
+  };
+  const leakedBrowserCleanup: BrowserSessionOptions = {
+    // @ts-expect-error candidate cleanup tuning is package-internal.
+    loserCloseTimeoutMs: 1,
+  };
+  const leakedNodeClock: NodeSessionOptions = {
+    origin: "https://app.example",
+    // @ts-expect-error clock injection is package-internal.
+    now: () => 0,
+  };
+  const leakedNodeCleanup: NodeSessionOptions = {
+    origin: "https://app.example",
+    // @ts-expect-error candidate cleanup tuning is package-internal.
+    loserCloseTimeoutMs: 1,
+  };
   // @ts-expect-error public connection errors expose only their closed code.
   void browserError.path;
   // @ts-expect-error public connection errors expose only their closed code.
   void browserError.stage;
   void leakedAdmissionReasons;
   void leakedNodeCarrier;
+  void leakedBrowserClock;
+  void leakedBrowserCleanup;
+  void leakedNodeClock;
+  void leakedNodeCleanup;
 }
 
 test("keeps connector policy and diagnostics package-internal", () => {

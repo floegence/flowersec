@@ -20,7 +20,7 @@ Parse an opaque `Artifact` with `parseArtifact(...)`, bind it to a single-use `A
 
 `ConnectError` and `SessionError` are closed redacted error sets. A remote application RPC failure is `RPCError` with only its semantic code and sanitized message. Candidate credentials, carrier choice, admission reasons, path, endpoint identities, logical stream IDs, wire state, cryptographic keys, and Yamux are not public.
 
-`classifyConnectError(_:)` and `classifySessionError(_:)` return `FlowersecErrorRetryClassification` with a `FlowersecRetryAction`. The actions distinguish retrying the current operation, acquiring a fresh artifact and session, and stopping. `ConnectorOptions` uses the shared ten-second connection timeout when the caller omits it. Apple TLS uses the system trust store when `trustRootsPEM` is empty and accepts explicit PEM roots for private trust profiles.
+`classifyConnectError(_:)` and `classifySessionError(_:)` return `ErrorRetryClassification` with a `RetryAction`. The actions distinguish retrying the current operation, acquiring a fresh artifact and session, and stopping. `ConnectorOptions` uses the shared ten-second connection timeout when the caller omits it. Apple TLS uses the system trust store when `trustRootsPEM` is empty and accepts explicit PEM roots for private trust profiles.
 
 ## Production Support
 

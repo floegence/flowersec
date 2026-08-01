@@ -67,9 +67,8 @@ private actor ArtifactLeaseStateV2 {
     switch state {
     case .committed:
       throw ArtifactLeaseError.alreadyCommitted
-    case .committing(let existingAttempt, let existingTask):
-      attempt = existingAttempt
-      task = existingTask
+    case .committing:
+      throw ArtifactLeaseError.alreadyCommitted
     case .idle:
       nextAttempt &+= 1
       attempt = nextAttempt

@@ -18,8 +18,8 @@ final class TransportV2SessionTests: XCTestCase {
     _ = try await opening.write(Data([1]))
     let received = try await incoming.stream.read(maxBytes: 1)
     XCTAssertEqual(received, Data([1]))
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testPhysicalCapacityMismatchFailsBeforeControlStreamOpen() async throws {
@@ -92,8 +92,8 @@ final class TransportV2SessionTests: XCTestCase {
     let reverseReceived = try await reverseInbound.stream.read(maxBytes: 32)
     XCTAssertEqual(reverseReceived, Data("world".utf8))
 
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testLivenessAndResetAreDeliveredOverControlStream() async throws {
@@ -107,13 +107,13 @@ final class TransportV2SessionTests: XCTestCase {
     let serverStream = try await serverSession.acceptStream().stream
     let elapsed = try await clientSession.probeLiveness()
     XCTAssertGreaterThanOrEqual(elapsed, Duration.zero)
-    await clientStream.reset()
+    try await clientStream.reset()
     try await Task.sleep(for: .milliseconds(10))
     let terminalError = await serverStream.terminalError()
     XCTAssertNotNil(terminalError)
 
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testLazyRPCUsesReservedEncryptedStreamsInBothDirections() async throws {
@@ -189,8 +189,8 @@ final class TransportV2SessionTests: XCTestCase {
     }
     XCTAssertEqual(postRekey, SessionEcho(value: "post-rekey"))
 
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testActiveBidirectionalStreamSurvivesConsecutiveRekeys() async throws {
@@ -215,8 +215,8 @@ final class TransportV2SessionTests: XCTestCase {
     let clientReceived = try await clientStream.read(maxBytes: 32)
     XCTAssertEqual(clientReceived, Data("reverse".utf8))
 
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testPeerInitiatedRekeyUsesReceiverCompletionDeadline() async throws {
@@ -246,8 +246,8 @@ final class TransportV2SessionTests: XCTestCase {
     await blocker.release()
     rekeying.cancel()
     _ = try? await rekeying.value
-    await clientStream.reset()
-    await serverStream.reset()
+    try await clientStream.reset()
+    try await serverStream.reset()
   }
 
   func testWaitClosedIsRepeatableAndReportsNormalClose() async throws {
@@ -258,12 +258,12 @@ final class TransportV2SessionTests: XCTestCase {
     let (clientSession, serverSession) = try await (client, server)
     let waiting = Task { await clientSession.waitClosed() }
 
-    await clientSession.close()
+    try await clientSession.close()
     let first = await waiting.value
     let repeated = await clientSession.waitClosed()
     XCTAssertEqual(first, .closed)
     XCTAssertEqual(repeated, .closed)
-    await serverSession.close()
+    try await serverSession.close()
   }
 
   func testApplicationDataAndFINWaitForStreamRekeyACK() async throws {
@@ -319,8 +319,8 @@ final class TransportV2SessionTests: XCTestCase {
     let afterFIN = try await serverStream.read(maxBytes: 1)
     XCTAssertNil(afterFIN)
 
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testEstablishAppliesInternalDeadline() async throws {
@@ -382,8 +382,8 @@ final class TransportV2SessionTests: XCTestCase {
       XCTAssertEqual(error, .closed)
     }
     _ = await accepting.result
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testSignedZeroIdleTimeoutDisablesWatchdog() async throws {
@@ -399,8 +399,8 @@ final class TransportV2SessionTests: XCTestCase {
 
     try await Task.sleep(for: .milliseconds(70))
     _ = try await clientSession.probeLiveness()
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testSuccessfulStreamActivityResetsSignedIdleWatchdog() async throws {
@@ -423,8 +423,8 @@ final class TransportV2SessionTests: XCTestCase {
       XCTAssertEqual(received, Data([byte]))
     }
     _ = try await clientSession.probeLiveness()
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testCloseIsBoundedAndRejectsOperationsWhileSessionCloseWriteIsStalled() async throws {
@@ -464,7 +464,7 @@ final class TransportV2SessionTests: XCTestCase {
     await blocker.enable(afterSuccessfulWrites: 1)
     let closeProbe = CompletionProbe()
     let closing = Task {
-      await clientSession.close()
+      try await clientSession.close()
       await closeProbe.finish()
     }
     await blocker.waitUntilBlocked()
@@ -489,7 +489,7 @@ final class TransportV2SessionTests: XCTestCase {
     await blocker.release()
     _ = await accepting.result
     _ = await closing.result
-    await serverSession.close()
+    try await serverSession.close()
   }
 
   func testCloseDeadlineAlsoBoundsHangingCarrierClose() async throws {
@@ -506,7 +506,7 @@ final class TransportV2SessionTests: XCTestCase {
 
     let closeProbe = CompletionProbe()
     let closing = Task {
-      await clientSession.close()
+      try await clientSession.close()
       await closeProbe.finish()
     }
     await closeGate.waitUntilEntered()
@@ -517,7 +517,7 @@ final class TransportV2SessionTests: XCTestCase {
 
     await closeGate.release()
     _ = await closing.result
-    await serverSession.close()
+    try await serverSession.close()
   }
 
   func testProbeLivenessCancellationRemovesWaiterAndPreservesSession() async throws {
@@ -547,8 +547,8 @@ final class TransportV2SessionTests: XCTestCase {
 
     await blocker.release()
     _ = try await clientSession.probeLiveness()
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testProbeLivenessFailsWhenPONGMissesDeadline() async throws {
@@ -581,8 +581,8 @@ final class TransportV2SessionTests: XCTestCase {
 
     await blocker.release()
     _ = try await clientSession.probeLiveness()
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testCancellingQueuedRekeyRemovesOnlyThatCaller() async throws {
@@ -631,8 +631,8 @@ final class TransportV2SessionTests: XCTestCase {
     _ = try await outgoing.write(Data([1]))
     let received = try await incoming.stream.read(maxBytes: 1)
     XCTAssertEqual(received, Data([1]))
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testCancellingRekeyWaitingForActiveOpenReleasesRekeyGate() async throws {
@@ -675,8 +675,8 @@ final class TransportV2SessionTests: XCTestCase {
     _ = try await outgoing.write(Data([2]))
     let received = try await incoming.stream.read(maxBytes: 1)
     XCTAssertEqual(received, Data([2]))
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testCancellingResponderFreezeUnfreezesInboundOpen() async throws {
@@ -718,8 +718,8 @@ final class TransportV2SessionTests: XCTestCase {
     _ = try await outgoing.write(Data([3]))
     let received = try await incoming.stream.read(maxBytes: 1)
     XCTAssertEqual(received, Data([3]))
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testRekeyPrepareTimeoutUnfreezesAndLeavesSessionRecoverable() async throws {
@@ -763,8 +763,8 @@ final class TransportV2SessionTests: XCTestCase {
       opening.cancel()
       _ = await opening.result
       XCTFail("rekey prepare deadline did not release the caller")
-      await clientSession.close()
-      await serverSession.close()
+      try await clientSession.close()
+      try await serverSession.close()
       return
     }
     let prepareOutcome = await prepareProbe.outcome
@@ -802,8 +802,8 @@ final class TransportV2SessionTests: XCTestCase {
     XCTAssertEqual(laterRekeyOutcome, .succeeded)
     if !laterRekeyFinished { laterRekey.cancel() }
     _ = await laterRekey.result
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testAcceptStreamCancellationAtomicallyRemovesOnlyCancelledWaiters() async throws {
@@ -846,8 +846,8 @@ final class TransportV2SessionTests: XCTestCase {
     let stream = try await clientSession.openStream(kind: "after-cancelled-accepts")
     let incoming = try await serverSession.acceptStream()
     XCTAssertEqual(stream.kind, incoming.kind)
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testSessionEngineIsCarrierNeutral() async throws {
@@ -859,8 +859,8 @@ final class TransportV2SessionTests: XCTestCase {
       async let client = TransportV2Session.establish(
         carrier: clientCarrier, config: configs.client)
       let (clientSession, serverSession) = try await (client, server)
-      await clientSession.close()
-      await serverSession.close()
+      try await clientSession.close()
+      try await serverSession.close()
     }
   }
 
@@ -883,8 +883,8 @@ final class TransportV2SessionTests: XCTestCase {
     let fromServer = try await clientStream.read(maxBytes: 16)
     XCTAssertEqual(fromClient, Data("client".utf8))
     XCTAssertEqual(fromServer, Data("server".utf8))
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testFailedCarrierOpenCommitsResetBeforeRekeyWatermark() async throws {
@@ -904,8 +904,8 @@ final class TransportV2SessionTests: XCTestCase {
     let stream = try await clientSession.openStream(kind: "after-reset")
     let incoming = try await serverSession.acceptStream()
     XCTAssertEqual(stream.kind, incoming.kind)
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testStreamLedgerTracksAbandonedLateSetupAndTerminalStates() throws {
@@ -986,8 +986,8 @@ final class TransportV2SessionTests: XCTestCase {
     let clientState = await clientSession.goAwayStateForTesting()
     XCTAssertEqual(serverState.sentLastAccepted, 1)
     XCTAssertEqual(clientState.receivedLastAccepted, 1)
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testGoAwayRejectsWrongParityFutureAndChangedBoundaries() throws {
@@ -1030,8 +1030,8 @@ final class TransportV2SessionTests: XCTestCase {
     } catch let error as TransportV2SessionError {
       XCTAssertEqual(error, .goingAway)
     }
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testOpenCancellationDuringFSS2WriteCommitsResetBeforeRekey() async throws {
@@ -1060,8 +1060,8 @@ final class TransportV2SessionTests: XCTestCase {
     let stream = try await clientSession.openStream(kind: "after-cancel")
     let incoming = try await serverSession.acceptStream()
     XCTAssertEqual(stream.kind, incoming.kind)
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testLateFSS2AfterCommittedResetIsStreamScoped() async throws {
@@ -1090,8 +1090,8 @@ final class TransportV2SessionTests: XCTestCase {
     let stream = try await clientSession.openStream(kind: "after-late-fss2")
     let incoming = try await serverSession.acceptStream()
     XCTAssertEqual(stream.kind, incoming.kind)
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testOpenCancellationWhileWaitingForACKCommitsResetBeforeRekey() async throws {
@@ -1121,8 +1121,8 @@ final class TransportV2SessionTests: XCTestCase {
     let stream = try await clientSession.openStream(kind: "after-cancel")
     let incoming = try await serverSession.acceptStream()
     XCTAssertEqual(stream.kind, incoming.kind)
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   func testConsecutiveRekeysRetireObsoleteEpochRoots() async throws {
@@ -1138,8 +1138,8 @@ final class TransportV2SessionTests: XCTestCase {
     XCTAssertEqual(clientCounts.send, 1)
     XCTAssertLessThanOrEqual(serverCounts.receive, 2)
 
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
     let closedCounts = await clientSession.epochRootCountsForTesting()
     XCTAssertEqual(closedCounts.send, 0)
     XCTAssertEqual(closedCounts.receive, 0)
@@ -1185,8 +1185,8 @@ final class TransportV2SessionTests: XCTestCase {
       received,
       Data("after-responder-barrier".utf8)
     )
-    await clientSession.close()
-    await serverSession.close()
+    try await clientSession.close()
+    try await serverSession.close()
   }
 
   private func makeConfigs(

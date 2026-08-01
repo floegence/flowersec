@@ -344,7 +344,7 @@ actor TransportV2Session {
     }
   }
 
-  func close() async {
+  func close() async throws {
     if closed { return }
     let signal = initiateClose(
       goAwayReason: 1,
@@ -713,7 +713,7 @@ actor TransportV2Session {
       try await stream.sendOpenACK(Data(SHA256.hash(data: openRaw)))
       guard await stream.isUsableAfterOpenACK() else { return }
       guard acceptsPeerStreamAfterGoAway(preface.logicalStreamID) else {
-        await stream.reset()
+        try? await stream.reset()
         return
       }
       if internalRPC {
@@ -780,7 +780,7 @@ actor TransportV2Session {
 
   private func deliver(_ value: IncomingStream) async {
     guard !closing, !closed else {
-      await value.stream.reset()
+      try? await value.stream.reset()
       return
     }
     while !incomingWaiterOrder.isEmpty {
@@ -1709,7 +1709,7 @@ private actor TransportV2ByteStream: ByteStream {
     await releaseIfFinished()
   }
 
-  func reset() async {
+  func reset() async throws {
     guard terminal == nil else { return }
     terminal = .streamReset
     if let pendingSendRekey {
@@ -1724,7 +1724,7 @@ private actor TransportV2ByteStream: ByteStream {
     await session.streamFinished(id: id, inbound: inbound, internalRPC: internalRPC)
   }
 
-  func close() async { await reset() }
+  func close() async throws { try await reset() }
 
   func terminalError() async -> SessionError? { terminal.map(redactTransportErrorV2) }
 
@@ -2549,9 +2549,9 @@ private final class TransportV2RPCStreamAdapter: FlowersecRPCStream, @unchecked 
     return output
   }
 
-  func close() async { await stream.close() }
+  func close() async { try? await stream.close() }
 
-  func reset() async throws { await stream.reset() }
+  func reset() async throws { try await stream.reset() }
 }
 
 private enum TransportV2MetadataCodec {

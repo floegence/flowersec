@@ -98,6 +98,7 @@ function typecheckContract(
   void session.rekey({ signal: new AbortController().signal });
   void session.probeLiveness({ signal: new AbortController().signal });
   void session.close();
+  // @ts-expect-error waitClosed is the only public termination waiting entrypoint.
   void session.termination;
   void session.waitClosed();
 

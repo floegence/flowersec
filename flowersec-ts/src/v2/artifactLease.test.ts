@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
-  TRANSPORT_V2_VERSION_POLICY,
   createArtifactAcquireContextV2,
   createArtifactLeaseV2,
   createArtifactV2Resolver,
+  type ArtifactLeaseError,
   type ArtifactLeaseV2,
   type ArtifactSourceV2,
 } from "./artifactLease.js";
@@ -32,6 +32,39 @@ describe("ArtifactV2 acquisition and durable spend leases", () => {
     expect(spends).toEqual([controller.signal]);
   });
 
+  test("authorizes exactly one concurrent durable spend and rejects later reuse", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const lease = createArtifactLeaseV2(artifact, async () => {
+      calls++;
+      await gate;
+    });
+
+    const first = lease.commitSpend();
+    const second = lease.commitSpend();
+    await expect(second).rejects.toMatchObject({
+      name: "ArtifactLeaseError",
+      code: "already_consumed",
+    } satisfies Partial<ArtifactLeaseError>);
+    release();
+    await expect(first).resolves.toBeUndefined();
+    await expect(lease.commitSpend()).rejects.toMatchObject({ code: "already_consumed" });
+    expect(calls).toBe(1);
+  });
+
+  test("allows durable spend retry after the callback fails", async () => {
+    let calls = 0;
+    const lease = createArtifactLeaseV2(artifact, async () => {
+      calls++;
+      if (calls === 1) throw new Error("durability failed");
+    });
+
+    await expect(lease.commitSpend()).rejects.toThrow("durability failed");
+    await expect(lease.commitSpend()).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+  });
+
   test("consumes one-time sources once and refreshable sources for each acquisition", async () => {
     const oneTime: ArtifactSourceV2 = {
       kind: "once",
@@ -56,24 +89,14 @@ describe("ArtifactV2 acquisition and durable spend leases", () => {
     await resolveRefreshable(createArtifactAcquireContextV2({ traceId: "trace-a" }));
     expect(acquired).toEqual([expect.objectContaining({
       traceId: "trace-a",
-      versionPolicy: TRANSPORT_V2_VERSION_POLICY,
     })]);
   });
 
-  test("rejects a forged version policy before invoking the source", async () => {
-    let calls = 0;
-    const resolve = createArtifactV2Resolver({
-      kind: "refreshable",
-      acquire: async () => {
-        calls++;
-        return createArtifactLeaseV2(artifact, async () => undefined);
-      },
+  test("keeps acquisition context focused on request metadata", () => {
+    const signal = new AbortController().signal;
+    expect(createArtifactAcquireContextV2({ traceId: "trace-a", signal })).toEqual({
+      traceId: "trace-a",
+      signal,
     });
-    const context = {
-      ...createArtifactAcquireContextV2(),
-      versionPolicy: { artifactVersions: [1], sessionProfiles: ["flowersec/1"] },
-    };
-    await expect(resolve(context as never)).rejects.toThrow(/version policy/i);
-    expect(calls).toBe(0);
   });
 });

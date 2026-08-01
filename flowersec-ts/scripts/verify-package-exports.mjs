@@ -276,12 +276,14 @@ function verifyTransportV2Types() {
     `import {
   Artifact,
   createArtifactLease,
-  createArtifactAcquireContext,
-  createArtifactResolver,
-  createSessionReconnectManager,
   ConnectError,
   parseArtifact,
 } from '@floegence/flowersec-core';
+import {
+  createArtifactAcquireContext,
+  createArtifactResolver,
+  createSessionReconnectManager,
+} from '@floegence/flowersec-core/reconnect';
 import {
   createArtifactLease as createBrowserArtifactLease,
   ConnectError as BrowserConnectError,
@@ -295,7 +297,6 @@ import type {
   JsonPrimitive as BrowserJsonPrimitive,
   JsonValue as BrowserJsonValue,
   OperationOptions as BrowserOperationOptions,
-  SessionReconnectConfig as BrowserSessionReconnectConfig,
   SessionError as BrowserSessionError,
   SessionTermination as BrowserSessionTermination,
 } from '@floegence/flowersec-core/browser';
@@ -322,7 +323,6 @@ import type {
   JsonValue as NodeJsonValue,
   NodeSessionOptions,
   OperationOptions as NodeOperationOptions,
-  SessionReconnectConfig as NodeSessionReconnectConfig,
   SessionError as NodeSessionError,
   SessionTermination as NodeSessionTermination,
 } from '@floegence/flowersec-core/node';
@@ -337,18 +337,20 @@ import type { FlowersecCandidateDiagnostic as NodeFlowersecCandidateDiagnostic }
 // @ts-expect-error session key material and handshake configuration are package-internal.
 import type { SessionConfigV2 as NodeSessionConfigV2 } from '@floegence/flowersec-core/node';
 import type {
-  ArtifactAcquireContext,
   ArtifactLease,
-  ArtifactSource,
   ByteStream,
   IncomingStream,
   JsonObject,
   SessionError,
-  SessionReconnectConfig,
   SessionTermination,
   Session,
   StreamOpenOptions,
 } from '@floegence/flowersec-core';
+import type {
+  ArtifactAcquireContext,
+  ArtifactSource,
+  SessionReconnectConfig,
+} from '@floegence/flowersec-core/reconnect';
 // @ts-expect-error capability descriptors are runtime-internal.
 import type { RuntimeCapabilityDescriptorV2 } from '@floegence/flowersec-core';
 // @ts-expect-error raw artifacts must remain package-internal.
@@ -427,8 +429,8 @@ const acquireContext: ArtifactAcquireContext = createArtifactAcquireContext({ tr
 const reconnectManager = createSessionReconnectManager();
 declare const reconnectConfig: SessionReconnectConfig;
 declare const termination: SessionTermination;
-declare const browserTypes: readonly [BrowserJsonPrimitive, BrowserJsonValue, BrowserOperationOptions, BrowserSessionReconnectConfig, BrowserSessionTermination, BrowserSessionError, BrowserRuntimeCapabilityDescriptorV2];
-declare const nodeTypes: readonly [NodeJsonPrimitive, NodeJsonValue, NodeOperationOptions, NodeSessionReconnectConfig, NodeSessionTermination, NodeSessionError, NodeRuntimeCapabilityDescriptorV2];
+declare const browserTypes: readonly [BrowserJsonPrimitive, BrowserJsonValue, BrowserOperationOptions, BrowserSessionTermination, BrowserSessionError, BrowserRuntimeCapabilityDescriptorV2];
+declare const nodeTypes: readonly [NodeJsonPrimitive, NodeJsonValue, NodeOperationOptions, NodeSessionTermination, NodeSessionError, NodeRuntimeCapabilityDescriptorV2];
 const leakedWebSocketFactory: BrowserSessionOptions = {
   // @ts-expect-error admission policy is runtime-owned.
   admissionReasons: new Set(),
