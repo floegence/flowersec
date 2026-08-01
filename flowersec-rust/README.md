@@ -87,7 +87,9 @@ When negotiated, `UnreliableMessageChannel::send(...)` returns
 cancellation, closure, and internal failures remain public operation errors.
 
 `ConnectErrorCode`, `AcceptErrorCode`, `SessionError`, and
-`StreamTerminalError` are closed, redacted failure sets. `RpcCallError` keeps a
+`StreamTerminalError` are closed, redacted failure sets. `ConnectErrorCode::as_str()`
+and `AcceptErrorCode::as_str()` return stable snake_case public code strings.
+`RpcCallError` keeps a
 bounded remote `RpcError` separate from session failure; its generic display
 omits the sanitized application message unless the caller explicitly requests
 it. Public errors do not retain peer payloads, carrier diagnostics, credentials,

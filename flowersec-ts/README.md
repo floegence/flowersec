@@ -41,8 +41,8 @@ A negotiated `Session.unreliableMessages` channel returns `accepted`, `dropped_e
 The portable core is the same application model used by every Flowersec SDK:
 opaque artifact parsing, a durable single-use lease, one-shot connection,
 carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
-error classifiers. `classifyConnectErrorV2(...)` and
-`classifySessionErrorV2(...)` return the stable cross-language recovery decision;
+error classifiers. `classifyConnectError(...)` and
+`classifySessionError(...)` return the stable cross-language recovery decision;
 callers should not compare raw TypeScript error-code strings with other SDKs.
 
 The TypeScript SDK profile is split by entrypoint: browsers own WebSocket and

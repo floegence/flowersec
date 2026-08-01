@@ -1,7 +1,7 @@
 //! Carrier-neutral production connector for opaque Flowersec v2 artifacts.
 
 use std::{
-    io,
+    fmt, io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -68,9 +68,31 @@ pub enum ConnectErrorCode {
     HandshakeFailed,
 }
 
+impl ConnectErrorCode {
+    /// Returns the stable public code string used in redacted error text.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidInput => "invalid_input",
+            Self::Expired => "expired_artifact",
+            Self::ResolveFailed => "resolve_failed",
+            Self::SpendFailed => "credential_spend_failed",
+            Self::DialFailed => "connection_failed",
+            Self::Timeout => "timeout",
+            Self::Canceled => "canceled",
+            Self::HandshakeFailed => "handshake_failed",
+        }
+    }
+}
+
+impl fmt::Display for ConnectErrorCode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// A redacted connection failure that never retains carrier credentials or diagnostics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("Flowersec connection failed (code={code:?})")]
+#[error("Flowersec connection failed (code={code})")]
 pub struct ConnectError {
     code: ConnectErrorCode,
 }
@@ -370,7 +392,21 @@ mod tests {
         let failure = error(PathKind::Tunnel, ConnectErrorCode::DialFailed);
         let text = failure.to_string().to_ascii_lowercase();
         assert_eq!(failure.code(), ConnectErrorCode::DialFailed);
-        assert_eq!(text, "flowersec connection failed (code=dialfailed)");
+        assert_eq!(ConnectErrorCode::InvalidInput.as_str(), "invalid_input");
+        assert_eq!(ConnectErrorCode::Expired.as_str(), "expired_artifact");
+        assert_eq!(ConnectErrorCode::ResolveFailed.as_str(), "resolve_failed");
+        assert_eq!(
+            ConnectErrorCode::SpendFailed.as_str(),
+            "credential_spend_failed"
+        );
+        assert_eq!(ConnectErrorCode::DialFailed.as_str(), "connection_failed");
+        assert_eq!(ConnectErrorCode::Timeout.as_str(), "timeout");
+        assert_eq!(ConnectErrorCode::Canceled.as_str(), "canceled");
+        assert_eq!(
+            ConnectErrorCode::HandshakeFailed.as_str(),
+            "handshake_failed"
+        );
+        assert_eq!(text, "flowersec connection failed (code=connection_failed)");
         for forbidden in ["candidate", "carrier", "quic://", "token", "certificate"] {
             assert!(!text.contains(forbidden));
         }

@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    fmt,
     net::SocketAddr,
     sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -52,9 +53,32 @@ pub enum AcceptErrorCode {
     HandshakeFailed,
 }
 
+impl AcceptErrorCode {
+    /// Returns the stable public code string used in redacted error text.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidInput => "invalid_input",
+            Self::Expired => "expired_artifact",
+            Self::AlreadyRegistered => "already_registered",
+            Self::Busy => "busy",
+            Self::BindFailed => "bind_failed",
+            Self::Closed => "closed",
+            Self::Timeout => "timeout",
+            Self::Canceled => "canceled",
+            Self::HandshakeFailed => "handshake_failed",
+        }
+    }
+}
+
+impl fmt::Display for AcceptErrorCode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// A redacted runtime acceptance failure without credentials or peer diagnostics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("Flowersec session acceptance failed (code={code:?})")]
+#[error("Flowersec session acceptance failed (code={code})")]
 pub struct AcceptError {
     code: AcceptErrorCode,
 }
@@ -219,4 +243,32 @@ impl std::fmt::Debug for Acceptor {
 
 const fn error(code: AcceptErrorCode) -> AcceptError {
     AcceptError { code }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_accept_error_uses_canonical_code_strings() {
+        assert_eq!(AcceptErrorCode::InvalidInput.as_str(), "invalid_input");
+        assert_eq!(AcceptErrorCode::Expired.as_str(), "expired_artifact");
+        assert_eq!(
+            AcceptErrorCode::AlreadyRegistered.as_str(),
+            "already_registered"
+        );
+        assert_eq!(AcceptErrorCode::Busy.as_str(), "busy");
+        assert_eq!(AcceptErrorCode::BindFailed.as_str(), "bind_failed");
+        assert_eq!(AcceptErrorCode::Closed.as_str(), "closed");
+        assert_eq!(AcceptErrorCode::Timeout.as_str(), "timeout");
+        assert_eq!(AcceptErrorCode::Canceled.as_str(), "canceled");
+        assert_eq!(
+            AcceptErrorCode::HandshakeFailed.as_str(),
+            "handshake_failed"
+        );
+        assert_eq!(
+            error(AcceptErrorCode::BindFailed).to_string(),
+            "Flowersec session acceptance failed (code=bind_failed)"
+        );
+    }
 }
