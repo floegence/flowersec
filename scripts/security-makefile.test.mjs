@@ -269,6 +269,20 @@ test("final Go race gate runs all shards with an explicit CPU budget", () => {
   assert.ok(discoveredTests > 0, "the transport checker must expose top-level tests");
 });
 
+test("measured fixture-heavy race cases stay in the high-cost wave", () => {
+  const source = fs.readFileSync(path.join(sourceRoot, "tools/transportcheck/main_test.go"), "utf8");
+  for (const name of [
+    "TestEvidenceAcceptsCompleteSyntheticUnitEvidence",
+    "TestMigrationMetricRequiresSharedQlogRPCTimestamp",
+  ]) {
+    assert.match(
+      source,
+      new RegExp(`// flowersec:race-cost=high\\nfunc ${name}\\(`),
+      `${name} must start before short race shards`,
+    );
+  }
+});
+
 test("race shard runner derives bounded auto parallelism from online CPUs", () => {
   for (const { online, want } of [{ online: 3, want: 3 }, { online: 32, want: 12 }]) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-race-auto-"));

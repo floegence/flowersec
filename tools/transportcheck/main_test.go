@@ -716,6 +716,7 @@ func TestCaseRegistryRejectsInvalidOwnership(t *testing.T) {
 	}
 }
 
+// flowersec:race-cost=high
 func TestEvidenceAcceptsCompleteSyntheticUnitEvidence(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -951,6 +952,7 @@ func TestMigrationMetricRequiresSharedRequestIdentity(t *testing.T) {
 	assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "request identity")
 }
 
+// flowersec:race-cost=high
 func TestMigrationMetricRequiresSharedQlogRPCTimestamp(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
