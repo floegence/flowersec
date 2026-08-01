@@ -2,6 +2,8 @@ import type {
   ArtifactAcquireContextOptionsV2 as BrowserArtifactAcquireContextOptionsV2,
   ArtifactVersionPolicyV2 as BrowserArtifactVersionPolicyV2,
   BrowserSessionConnectorV2Options,
+  FlowersecErrorRetryClassificationV2 as BrowserFlowersecErrorRetryClassificationV2,
+  FlowersecRetryActionV2 as BrowserFlowersecRetryActionV2,
   JsonPrimitiveV2 as BrowserJsonPrimitiveV2,
   JsonValueV2 as BrowserJsonValueV2,
   OperationOptionsV2 as BrowserOperationOptionsV2,
@@ -11,10 +13,16 @@ import type {
 import type { RuntimeCapabilityDescriptorV2 as BrowserRuntimeCapabilityDescriptorV2 } from "../browser/index.js";
 // @ts-expect-error candidate selection diagnostics are package-internal.
 import type { FlowersecCandidateDiagnostic as BrowserFlowersecCandidateDiagnostic } from "../browser/index.js";
-import { ConnectError as BrowserConnectError } from "../browser/index.js";
+import {
+  classifyConnectErrorV2 as classifyBrowserConnectErrorV2,
+  classifySessionErrorV2 as classifyBrowserSessionErrorV2,
+  ConnectError as BrowserConnectError,
+} from "../browser/index.js";
 import type {
   ArtifactAcquireContextOptionsV2 as NodeArtifactAcquireContextOptionsV2,
   ArtifactVersionPolicyV2 as NodeArtifactVersionPolicyV2,
+  FlowersecErrorRetryClassificationV2 as NodeFlowersecErrorRetryClassificationV2,
+  FlowersecRetryActionV2 as NodeFlowersecRetryActionV2,
   JsonPrimitiveV2 as NodeJsonPrimitiveV2,
   JsonValueV2 as NodeJsonValueV2,
   OperationOptionsV2 as NodeOperationOptionsV2,
@@ -25,7 +33,11 @@ import type {
 import type { RuntimeCapabilityDescriptorV2 as NodeRuntimeCapabilityDescriptorV2 } from "../node/index.js";
 // @ts-expect-error candidate selection diagnostics are package-internal.
 import type { FlowersecCandidateDiagnostic as NodeFlowersecCandidateDiagnostic } from "../node/index.js";
-import { ConnectError as NodeConnectError } from "../node/index.js";
+import {
+  classifyConnectErrorV2 as classifyNodeConnectErrorV2,
+  classifySessionErrorV2 as classifyNodeSessionErrorV2,
+  ConnectError as NodeConnectError,
+} from "../node/index.js";
 // @ts-expect-error Internal carrier stages must not be exported by the browser entry.
 import { createBrowserWebTransportCarrierInternalStage } from "../browser/index.js";
 import { expect, test } from "vitest";
@@ -33,6 +45,8 @@ import { expect, test } from "vitest";
 type BrowserTypes = readonly [
   BrowserArtifactAcquireContextOptionsV2,
   BrowserArtifactVersionPolicyV2,
+  BrowserFlowersecErrorRetryClassificationV2,
+  BrowserFlowersecRetryActionV2,
   BrowserJsonPrimitiveV2,
   BrowserJsonValueV2,
   BrowserOperationOptionsV2,
@@ -43,6 +57,8 @@ type BrowserTypes = readonly [
 type NodeTypes = readonly [
   NodeArtifactAcquireContextOptionsV2,
   NodeArtifactVersionPolicyV2,
+  NodeFlowersecErrorRetryClassificationV2,
+  NodeFlowersecRetryActionV2,
   NodeJsonPrimitiveV2,
   NodeJsonValueV2,
   NodeOperationOptionsV2,
@@ -54,6 +70,8 @@ type NodeTypes = readonly [
 test("keeps shared Transport v2 types importable from browser and Node entries", () => {
   expect(true).toBe(true);
   expect(BrowserConnectError).toBe(NodeConnectError);
+  expect(classifyBrowserConnectErrorV2).toBe(classifyNodeConnectErrorV2);
+  expect(classifyBrowserSessionErrorV2).toBe(classifyNodeSessionErrorV2);
   void createBrowserWebTransportCarrierInternalStage;
   void (undefined as unknown as BrowserTypes);
   void (undefined as unknown as NodeTypes);

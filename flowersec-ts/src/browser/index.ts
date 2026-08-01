@@ -46,3 +46,8 @@ export type {
 } from "./connectV2.js";
 export { ConnectError } from "../utils/errors.js";
 export type { ConnectErrorCode } from "../utils/errors.js";
+export { classifyConnectErrorV2, classifySessionErrorV2 } from "../v2/errorClassification.js";
+export type {
+  FlowersecErrorRetryClassificationV2,
+  FlowersecRetryActionV2,
+} from "../v2/errorClassification.js";

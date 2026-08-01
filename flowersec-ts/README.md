@@ -10,7 +10,7 @@ npm install @floegence/flowersec-core
 
 ## Public API
 
-- `@floegence/flowersec-core` exports `Artifact`, `parseArtifact(...)`, `TRANSPORT_V2_VERSION_POLICY`, `createArtifactAcquireContextV2(...)`, `createArtifactLeaseV2(...)`, `createArtifactV2Resolver(...)`, `createSessionReconnectManagerV2(...)`, `ConnectError`, and `SessionError` at runtime.
+- `@floegence/flowersec-core` exports `Artifact`, `parseArtifact(...)`, `TRANSPORT_V2_VERSION_POLICY`, `createArtifactAcquireContextV2(...)`, `createArtifactLeaseV2(...)`, `createArtifactV2Resolver(...)`, `createSessionReconnectManagerV2(...)`, `classifyConnectErrorV2(...)`, `classifySessionErrorV2(...)`, `ConnectError`, and `SessionError` at runtime.
 - `@floegence/flowersec-core/browser` adds `connectBrowserSessionV2(...)` and `BrowserSessionConnectorV2Options`.
 - `@floegence/flowersec-core/node` adds `connectNodeSessionV2(...)`, `NodeSessionConnectorV2Options`, and `NodeSessionTLSOptionsV2`.
 - `@floegence/flowersec-core/proxy` adds the `SessionV2`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowserV2(...)` composition.
@@ -21,9 +21,11 @@ The root type exports are:
 - Sessions: `SessionV2`, `SessionTerminationV2`, `RpcPeerV2`, `RpcResultV2`, `ByteStreamV2`, `IncomingStreamV2`, `OperationOptionsV2`, and `StreamOpenOptionsV2`.
 - JSON values: `JsonPrimitiveV2`, `JsonValueV2`, and `JsonObjectV2`.
 - Reconnection: `SessionAutoReconnectConfigV2`, `SessionReconnectConfigV2`, `SessionReconnectManagerV2`, `SessionReconnectStateV2`, and `SessionReconnectStatusV2`.
-- Errors: `ConnectErrorCode` and `SessionErrorCode`.
+- Errors: `ConnectErrorCode`, `SessionErrorCode`, `FlowersecRetryActionV2`, and `FlowersecErrorRetryClassificationV2`.
 
 `createSessionReconnectManagerV2(...)` resolves a lease for each connection attempt. A refreshable source acquires a fresh lease; a one-time source can be consumed only once.
+
+`classifyConnectErrorV2(...)` and `classifySessionErrorV2(...)` map redacted public errors to stable application retry decisions. They expose only `action`, `retryable`, `refreshArtifact`, `callerCanceled`, and `sessionClosed`; they do not reveal carrier, candidate, URL, credential, stage, key, or diagnostic details.
 
 ## Opaque Boundaries
 
