@@ -239,6 +239,8 @@ export function verifySecurityMakefile(makefile) {
     "release-version-check",
     "release-test",
     "release-check",
+    "example-source-check",
+    "example-check",
     "precommit",
     "check",
     "final-network-preflight",
@@ -330,6 +332,15 @@ export function verifySecurityMakefile(makefile) {
       "\tnode scripts/generate-source-inventory.mjs --check",
     ]],
     ["security-package-check", ["\tnode --test scripts/source-inventory.test.mjs"]],
+    ["example-source-check", [
+      "\tnode --test scripts/sdk-examples.test.mjs",
+      "\tfind examples/ts -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check",
+    ]],
+    ["example-check", [
+      "\tcd flowersec-go && go test -run '^$$' .",
+      "\trustup run 1.88.0 cargo check --locked --offline --manifest-path examples/rust/Cargo.toml",
+      "\tswift test --package-path examples/swift --cache-path \"$(SWIFTPM_CACHE_PATH)\" --skip-update --only-use-versions-from-resolved-file",
+    ]],
     ["ts-build", ["\tcd flowersec-ts && rm -rf dist && npm run build"]],
     ["ts-test-short", ["\tcd flowersec-ts && npx vitest run --exclude 'src/**/*.integration.test.ts' --exclude 'src/v2/session_go_interop.test.ts' --exclude 'src/v2/browserBundle.test.ts'"]],
     ["go-test-race", [
@@ -481,7 +492,7 @@ export function verifySecurityMakefile(makefile) {
   }
 
   for (const [target, requiredCalls] of [
-    ["check", ["release-policy-check", "readme-localization-check", "final-integration-lanes"]],
+    ["check", ["release-policy-check", "readme-localization-check", "example-source-check", "final-integration-lanes"]],
   ]) {
     const recipe = effectiveRecipe(database.stdout, target);
     for (const required of requiredCalls) {
@@ -494,7 +505,7 @@ export function verifySecurityMakefile(makefile) {
   const expectedPrecommitRecipe = [
     "\tnode scripts/run-precommit-wave.mjs generate $(MAKE) gen-check",
     "\tnode scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps",
-    "\tnode scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check",
+    "\tnode scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check example-source-check",
     "\tnode scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust",
   ];
   const precommitRecipe = effectiveRecipe(database.stdout, "precommit");
@@ -502,6 +513,7 @@ export function verifySecurityMakefile(makefile) {
     throw new Error(`precommit must preserve the bounded phase recipe exactly; got ${JSON.stringify(precommitRecipe)}`);
   }
   const checkRecipe = effectiveRecipe(database.stdout, "check");
+  const exampleSourceIndex = checkRecipe.indexOf("\t$(MAKE) example-source-check");
   const preflightCall = "\tnode scripts/run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight";
   const preflightIndex = checkRecipe.indexOf(preflightCall);
   const contractsCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts";
@@ -511,7 +523,7 @@ export function verifySecurityMakefile(makefile) {
   const lanesIndex = checkRecipe.indexOf("\t$(MAKE) final-integration-lanes");
   const postCall = "\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 595 post $(MAKE) final-post-validation";
   const postIndex = checkRecipe.indexOf(postCall);
-  if (preflightIndex < 0 || checkRecipe.lastIndexOf(preflightCall) !== preflightIndex
+  if (exampleSourceIndex < 0 || preflightIndex <= exampleSourceIndex || checkRecipe.lastIndexOf(preflightCall) !== preflightIndex
     || contractsIndex <= preflightIndex || checkRecipe.lastIndexOf(contractsCall) !== contractsIndex
     || packageIndex <= contractsIndex || checkRecipe.lastIndexOf(packageCall) !== packageIndex
     || lanesIndex <= packageIndex || postIndex <= lanesIndex || checkRecipe.lastIndexOf(postCall) !== postIndex) {

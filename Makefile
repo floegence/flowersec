@@ -1,4 +1,4 @@
-.PHONY: gen gen-core gen-examples gen-check test go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check rust-final-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check transportcheck-fast transport-runner-config transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
+.PHONY: gen gen-core gen-examples gen-check test go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check swift-package-check swift-security-check swift-source-guard swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check rust-final-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check example-install-check fmt fmt-check lint lint-check install-hooks precommit precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check transportcheck-fast transport-runner-config transport-v2-unit transport-conformance-smoke transport-browser-smoke transport-interop-smoke transport-conformance-full weaknet-smoke weaknet-full weaknet-system quic-native-smoke quic-native-proof quic-native-race quic-native-race-smoke bench-transport-capacity bench-transport-soak bench-transport-ab transport-v2-release-collect-conformance-smoke transport-v2-release-evidence transport-v2-signed-evidence-check go-cover-check compat-check nightly-check
 
 CHECK_INTEROP ?= 1
 TRANSPORT_RUNNER_CONFIG ?= $(CURDIR)/.flowersec/transport-runner.json
@@ -245,9 +245,11 @@ release-check:
 	$(MAKE) check
 	$(MAKE) transport-v2-signed-evidence-check
 
-example-check:
+example-source-check:
 	node --test scripts/sdk-examples.test.mjs
 	find examples/ts -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
+
+example-check: example-source-check
 	cd flowersec-go && go test -run '^$$' .
 	rustup run 1.88.0 cargo check --locked --offline --manifest-path examples/rust/Cargo.toml
 	swift test --package-path examples/swift --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file
@@ -323,7 +325,7 @@ precommit-rust:
 precommit:
 	node scripts/run-precommit-wave.mjs generate $(MAKE) gen-check
 	node scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps
-	node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check
+	node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check example-source-check
 	node scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust
 
 stability-source-check:
@@ -452,6 +454,7 @@ nightly-check:
 check: security-makefile-check
 	$(MAKE) release-policy-check
 	$(MAKE) readme-localization-check
+	$(MAKE) example-source-check
 	node scripts/run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight
 	CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts
 	CARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts/run-final-stage.mjs 300 packages $(MAKE) final-package-validation

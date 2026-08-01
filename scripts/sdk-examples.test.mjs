@@ -17,7 +17,8 @@ test("network-capable SDK examples require a durable spend receipt", () => {
   assert.match(swift, /commitSpendReceipt/);
 
   const typescript = read("examples/ts/node-client.mjs");
-  assert.match(typescript, /createArtifactLeaseV2/);
+  assert.match(typescript, /createArtifactLease/);
+  assert.doesNotMatch(typescript, /createArtifactLeaseV2/);
   assert.match(typescript, /["']wx["']/);
   assert.match(typescript, /\.sync\(\)/);
 
@@ -53,7 +54,8 @@ test("consumer examples stay on opaque public SDK entrypoints", () => {
   const go = read("flowersec-go/example_client_test.go");
   assert.match(go, /flowersec\.ParseArtifact/);
   assert.match(go, /flowersec\.NewArtifactLease/);
-  assert.match(go, /flowersec\.NewConnector/);
+  assert.match(go, /flowersec\.Connect/);
+  assert.doesNotMatch(go, /flowersec\.NewConnector/);
   assert.doesNotMatch(go, /\/internal\//);
 });
 
@@ -67,12 +69,12 @@ test("consumer examples classify public connection and session failures", () => 
     {
       name: "TypeScript",
       source: read("examples/ts/node-client.mjs"),
-      classifiers: [/classifyConnectErrorV2/, /classifySessionErrorV2/],
+      classifiers: [/classifyConnectError/, /classifySessionError/],
     },
     {
       name: "Swift",
       source: read("examples/swift/Sources/FlowersecSwiftClientExample/main.swift"),
-      classifiers: [/classifyConnectErrorV2/, /classifySessionErrorV2/],
+      classifiers: [/classifyConnectError/, /classifySessionError/],
     },
     {
       name: "Rust",
@@ -88,8 +90,8 @@ test("consumer examples classify public connection and session failures", () => 
   }
 
   const rustReadme = read("flowersec-rust/README.md");
-  assert.match(rustReadme, /ConnectorOptions::default\(\)/);
-  assert.match(rustReadme, /trust_roots_der/u);
+  assert.match(rustReadme, /ConnectorOptions::new\(vec!\[root_der\]\)/);
+  assert.match(rustReadme, /requires explicit DER trust roots/u);
 });
 
 test("durable spend guidance covers three production persistence patterns", () => {

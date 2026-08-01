@@ -103,7 +103,7 @@ test("precommit phases prepare dependencies before bounded static and language w
   assert.deepEqual(lines, [
     "node scripts/run-precommit-wave.mjs generate $(MAKE) gen-check",
     "node scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps",
-    "node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check",
+    "node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check example-source-check",
     "node scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust",
   ]);
 });
@@ -184,18 +184,22 @@ test("exact-main gate keeps network work before deterministic offline phases", (
   const checkTarget = canonical.match(/^check: security-makefile-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const releaseIndex = checkTarget.indexOf("$(MAKE) release-policy-check");
   const readmeIndex = checkTarget.indexOf("$(MAKE) readme-localization-check");
+  const exampleSourceIndex = checkTarget.indexOf("$(MAKE) example-source-check");
   const preflightIndex = checkTarget.indexOf("run-final-stage.mjs 595 preflight $(MAKE) final-network-preflight");
   const contractsIndex = checkTarget.indexOf("run-final-stage.mjs 300 contracts $(MAKE) final-offline-contracts");
   const packagesIndex = checkTarget.indexOf("run-final-stage.mjs 300 packages $(MAKE) final-package-validation");
   const lanesIndex = checkTarget.indexOf("$(MAKE) final-integration-lanes");
   const postIndex = checkTarget.indexOf("run-final-stage.mjs 595 post $(MAKE) final-post-validation");
-  assert.ok(releaseIndex >= 0 && readmeIndex > releaseIndex, "dependency-free source contracts must run first");
+  assert.ok(
+    releaseIndex >= 0 && readmeIndex > releaseIndex && exampleSourceIndex > readmeIndex,
+    "dependency-free source contracts must run first",
+  );
   assert.doesNotMatch(
     checkTarget.slice(0, preflightIndex),
     /npm ci|npm audit|cargo (?:fetch|package|publish)|go-vulncheck|swift-security-check|ts-browser-ensure/,
     "the source-contract phase must not reach network-sensitive dependency work",
   );
-  assert.ok(preflightIndex > readmeIndex, "network preflight must follow source contracts");
+  assert.ok(preflightIndex > exampleSourceIndex, "network preflight must follow source contracts");
   assert.ok(contractsIndex > preflightIndex, "deterministic contracts must follow dependency preparation");
   assert.ok(packagesIndex > contractsIndex, "offline package validation must follow deterministic contracts");
   assert.ok(lanesIndex > packagesIndex, "race and language lanes must follow package validation");
@@ -237,9 +241,10 @@ test("exact-main gate keeps network work before deterministic offline phases", (
     assert.match(recipe, /--skip-update/);
     assert.match(recipe, /--only-use-versions-from-resolved-file/);
   }
-  const examples = canonical.match(/^example-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
-  assert.match(examples, /node --test scripts\/sdk-examples\.test\.mjs/);
-  assert.match(examples, /find examples\/ts .*node --check/);
+  const exampleSource = canonical.match(/^example-source-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(exampleSource, /node --test scripts\/sdk-examples\.test\.mjs/);
+  assert.match(exampleSource, /find examples\/ts .*node --check/);
+  const examples = canonical.match(/^example-check: example-source-check\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(examples, /cd flowersec-go && go test -run/);
   assert.match(examples, /cargo check --locked --offline --manifest-path examples\/rust\/Cargo\.toml/);
   assert.match(examples, /swift test --package-path examples\/swift/);
