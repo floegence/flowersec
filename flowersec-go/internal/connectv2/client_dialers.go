@@ -64,7 +64,7 @@ func NewWebTransportCarrierDial(config WebTransportDialConfig) (CarrierDial, err
 		if err != nil {
 			return nil, err
 		}
-		bindQUICIdleTimeout(&limits, contract)
+		bindQUICTimeouts(&limits, contract)
 		if ctx == nil {
 			ctx = context.Background()
 		}
@@ -123,7 +123,7 @@ func NewRawQUICCarrierDial(config RawQUICDialConfig) (CarrierDial, error) {
 		if err != nil {
 			return nil, err
 		}
-		bindQUICIdleTimeout(&limits, contract)
+		bindQUICTimeouts(&limits, contract)
 		session, err := rawquic.Dial(ctx, address, tlsConfig, limits)
 		if err != nil {
 			return nil, err
@@ -145,14 +145,19 @@ func validQUICClientTLS(config *tls.Config) bool {
 	return config != nil && !config.InsecureSkipVerify && config.RootCAs != nil && len(config.RootCAs.Subjects()) != 0
 }
 
-func bindQUICIdleTimeout(limits *rawquic.Limits, contract artifactv2.SessionContract) {
-	if limits == nil || contract.IdleTimeoutSeconds == 0 {
+func bindQUICTimeouts(limits *rawquic.Limits, contract artifactv2.SessionContract) {
+	if limits == nil {
 		return
 	}
-	idle := time.Duration(contract.IdleTimeoutSeconds) * time.Second
-	limits.MaxIdleTimeout = idle
-	if limits.KeepAlivePeriod >= idle {
-		limits.KeepAlivePeriod = 0
+	if contract.EstablishTimeoutSeconds != 0 {
+		limits.HandshakeIdleTimeout = time.Duration(contract.EstablishTimeoutSeconds) * time.Second
+	}
+	if contract.IdleTimeoutSeconds != 0 {
+		idle := time.Duration(contract.IdleTimeoutSeconds) * time.Second
+		limits.MaxIdleTimeout = idle
+		if limits.KeepAlivePeriod >= idle {
+			limits.KeepAlivePeriod = 0
+		}
 	}
 }
 

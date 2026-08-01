@@ -23,6 +23,12 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
 )
 
+func TestDefaultHandshakeTimeoutCoversArtifactEstablishmentContract(t *testing.T) {
+	if got, want := rawquic.DefaultLimits().HandshakeIdleTimeout, 30*time.Second; got != want {
+		t.Fatalf("default handshake idle timeout = %s, want %s", got, want)
+	}
+}
+
 func TestLimitsRejectUnboundedOrInconsistentValues(t *testing.T) {
 	tests := []rawquic.Limits{
 		{MaxInboundStreams: 0},

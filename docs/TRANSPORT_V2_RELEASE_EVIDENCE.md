@@ -44,6 +44,19 @@ approximately 50.779 seconds. Fifty-three seconds covers that probe, the
 measured 0.583-second recovery round trip, and one second of application and
 scheduler margin. The cold phase is fifty-five seconds so all ten operations
 retain that allowance across the unchanged five-per-second open-loop schedule.
+An exact-main QQ tunnel sample then exposed a lower carrier timeout inside that
+unchanged budget. Burst loss delivered only the first fragment of a split QUIC
+ClientHello. The client received its first Initial acknowledgement at about
+3.349 seconds, but the server still lacked the second crypto fragment and
+closed at the former ten-second handshake-idle limit. The artifact already
+authorizes a thirty-second establishment interval, while both endpoints
+advertise the independent sixty-second session-idle interval. Raw QUIC and
+WebTransport therefore use the fixed artifact establishment interval for the
+client handshake limit, and their shared production default gives a server
+that same thirty-second allowance before admission can reveal the artifact.
+This corrects the lower-layer timeout mismatch without changing the frozen
+network, operation schedule, retries, payload, phase deadline, certificate,
+threshold, or zero-residual contract.
 The edge RPC operation deadline is twenty-four seconds and its phase deadline is
 twenty-six seconds. A frozen 30-stream Ubuntu 24 release run at the former
 sixteen-second boundary matched 169 client-to-server and 166 server-to-client

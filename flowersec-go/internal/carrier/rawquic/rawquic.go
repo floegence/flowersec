@@ -63,7 +63,7 @@ func DefaultLimits() Limits {
 		MaxStreamReceiveWindow:         6 << 20,
 		InitialConnectionReceiveWindow: 1 << 20,
 		MaxConnectionReceiveWindow:     16 << 20,
-		HandshakeIdleTimeout:           10 * time.Second,
+		HandshakeIdleTimeout:           30 * time.Second,
 		MaxIdleTimeout:                 60 * time.Second,
 		KeepAlivePeriod:                20 * time.Second,
 	}
