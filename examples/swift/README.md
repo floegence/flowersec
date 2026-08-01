@@ -17,11 +17,18 @@ transport=v2
 session_api=opaque
 ```
 
-To establish and close a session, provide a fresh artifact containing a macOS-compatible WSS candidate:
+To establish and close a session, provide a fresh artifact containing a
+macOS-compatible WSS candidate and a new path for the durable spend receipt:
 
 ```bash
-FSEC_ARTIFACT_V2_PATH=./artifact-v2.json swift run --package-path ./examples/swift
+FSEC_ARTIFACT_V2_PATH=/secure/path/artifact-v2.json \
+FSEC_SPEND_RECEIPT_V2_PATH=/durable/state/artifact.spent \
+  swift run --package-path ./examples/swift
 ```
+
+The example creates the receipt with no overwrite, restricts it to the current
+user, synchronizes it before connection credentials are sent, and fails closed
+when the path already exists. The receipt contains no artifact or key material.
 
 ## Runtime Boundaries
 

@@ -212,6 +212,12 @@ test("exact-main gate keeps network work before deterministic offline phases", (
     assert.match(recipe, /--skip-update/);
     assert.match(recipe, /--only-use-versions-from-resolved-file/);
   }
+  const examples = canonical.match(/^example-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
+  assert.match(examples, /node --test scripts\/sdk-examples\.test\.mjs/);
+  assert.match(examples, /find examples\/ts .*node --check/);
+  assert.match(examples, /cd flowersec-go && go test -run/);
+  assert.match(examples, /cargo check --locked --offline --manifest-path examples\/rust\/Cargo\.toml/);
+  assert.match(examples, /swift test --package-path examples\/swift/);
 });
 
 test("final Go race gate runs all shards with an explicit CPU budget", () => {

@@ -15,12 +15,20 @@
   - If local `main` is going to be pushed, push the full current local `main` tip together with all of its latest commits.
   - Do not push only a subset of local `main` commits, and do not update remote `main` through another branch while leaving newer local `main` commits unpublished.
 - One feature = one dedicated worktree + one local private branch.
-- Keep at most one active non-main Flowersec worktree for the current task.
-  Before creating or switching to another feature or diagnostic worktree,
-  finish or preserve the current work, remove its worktree, and verify with
-  `git worktree list` that no superseded Flowersec worktree remains. The main
-  worktree may coexist only as the clean integration worktree described in
-  this guide; do not perform feature edits there.
+- Worktree and branch ownership is strict. Manage only worktrees and branches
+  created for the current task. Worktrees and branches owned by another user,
+  agent, or task may coexist and do not count toward the current task's limit.
+  Do not stash, stage, commit, switch, rebase, move, prune, remove, or delete
+  another owner's worktree or branch. Read-only inspection is allowed only to
+  identify ownership or avoid a path or branch-name collision; leave the
+  resource unchanged and choose a different task-local path or name.
+- Keep at most one active non-main Flowersec worktree owned by the current task.
+  Before creating or switching to another feature or diagnostic worktree for
+  that task, finish or preserve the task's current work, remove that task-owned
+  worktree, and verify with `git worktree list` that no superseded worktree
+  owned by the current task remains. Other owners' worktrees may coexist. The
+  main worktree remains the clean integration worktree described in this guide;
+  do not perform feature edits there.
 - Do not leave disposable Flowersec worktrees or clones under `/tmp`,
   `/private/tmp`, or the platform temporary directory. When a failed
   diagnostic contains evidence worth retaining, move a checksummed archive,
@@ -159,14 +167,16 @@ git config --global merge.conflictstyle zdiff3
   - Prefer storing them outside the repository.
   - If they must live inside the repository during development, keep them under paths covered by `.gitignore`, and make sure `git status` is clean before merging.
 - Delete temporary working docs after the feature is merged so they do not accumulate as misleading historical drafts.
-- Test and diagnostic temporary directories follow the same lifecycle. Remove
+- Test and diagnostic temporary directories owned by the current task follow
+  the same lifecycle. Remove
   successful scratch directories immediately after their result is recorded.
   For a failed run, retain only the checksummed logs or artifacts required for
   diagnosis in the repository-external task artifact directory, then remove
   the scratch directory. At every commit, integration, push, stage transition,
   and task recovery, audit `git worktree list` plus Flowersec-named entries in
-  the system temporary roots; do not proceed while a superseded worktree or
-  unused test directory remains.
+  the system temporary roots for resources owned by the current task; do not
+  proceed while a superseded task-owned worktree or unused task-owned test
+  directory remains. Do not clean or mutate another owner's resources.
 
 ## 3. Local quality gate (required)
 

@@ -1344,6 +1344,8 @@
       "`AcceptorOptions`",
       "`Connector`",
       "`ConnectorOptions`",
+      "`RpcCallError`",
+      "`RpcError`",
       "`Session`",
       "`UnreliableMessageChannel`"
     ],
@@ -1363,6 +1365,8 @@
       "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
       "let _ = std::mem::size_of::<flowersec::IncomingStream>()",
       "let _ = std::mem::size_of::<flowersec::JsonObject>()",
+      "let _ = std::mem::size_of::<flowersec::RpcCallError>()",
+      "let _ = std::mem::size_of::<flowersec::RpcError>()",
       "let _: Option<&dyn flowersec::RpcPeer> = None",
       "let _: Option<&dyn flowersec::Session> = None",
       "let _ = std::mem::size_of::<flowersec::SessionError>()",

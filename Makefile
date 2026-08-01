@@ -246,9 +246,11 @@ release-check:
 	$(MAKE) transport-v2-signed-evidence-check
 
 example-check:
+	node --test scripts/sdk-examples.test.mjs
 	find examples/ts -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
+	cd flowersec-go && go test -run '^$$' .
 	rustup run 1.88.0 cargo check --locked --offline --manifest-path examples/rust/Cargo.toml
-	swift build --package-path examples/swift --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file
+	swift test --package-path examples/swift --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file
 
 example-install-check: example-check
 

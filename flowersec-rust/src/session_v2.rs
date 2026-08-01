@@ -41,9 +41,9 @@ use crate::{
     },
     transport_v2::{
         ByteStreamV2, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2,
-        IncomingStreamV2, JsonObjectV2, PathKind, RpcPeerV2, SessionError, SessionRole, SessionV2,
-        StreamTerminalError, UnreliableMessageChannelV2, UnreliableMessageError,
-        UnreliableSendOutcome, carrier_inbound_stream_limit_v2,
+        IncomingStreamV2, JsonObjectV2, PathKind, RpcCallError, RpcError, RpcPeerV2, SessionError,
+        SessionRole, SessionV2, StreamTerminalError, UnreliableMessageChannelV2,
+        UnreliableMessageError, UnreliableSendOutcome, carrier_inbound_stream_limit_v2,
     },
 };
 
@@ -778,10 +778,8 @@ impl RpcPeerV2 for SessionRpcPeerV2 {
         &self,
         type_id: u32,
         request: serde_json::Value,
-    ) -> Result<serde_json::Value, SessionError> {
-        rpc_call_v2(self, type_id, request)
-            .await
-            .map_err(|error| SessionError::from_io(&error))
+    ) -> Result<serde_json::Value, RpcCallError> {
+        rpc_call_v2(self, type_id, request).await
     }
     async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), SessionError> {
         rpc_notify_v2(self, type_id, request)
@@ -3273,14 +3271,14 @@ async fn rpc_call_v2(
     peer: &SessionRpcPeerV2,
     type_id: u32,
     request: serde_json::Value,
-) -> io::Result<serde_json::Value> {
+) -> Result<serde_json::Value, RpcCallError> {
     let _serial = peer.serial.lock().await;
     let request_id = peer
         .next_request_id
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
             (value < MAX_PORTABLE_RPC_ID).then_some(value + 1)
         })
-        .map_err(|_| invalid("portable RPC request ID exhausted"))?;
+        .map_err(|_| RpcCallError::Session(SessionError::InvalidInput))?;
     let envelope = RpcEnvelopeWireV2 {
         type_id,
         request_id,
@@ -3292,27 +3290,35 @@ async fn rpc_call_v2(
         .session
         .get()
         .and_then(Weak::upgrade)
-        .ok_or_else(closed)?;
+        .ok_or(RpcCallError::Session(SessionError::Closed))?;
     let mut stream = peer.stream.lock().await;
     if stream.is_none() {
-        *stream = Some(open_reserved_rpc_stream_v2(&session).await?);
+        *stream = Some(
+            open_reserved_rpc_stream_v2(&session)
+                .await
+                .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?,
+        );
     }
-    let stream = stream.as_deref().ok_or_else(closed)?;
-    write_rpc_frame_v2(stream, &envelope).await?;
+    let stream = stream
+        .as_deref()
+        .ok_or(RpcCallError::Session(SessionError::Closed))?;
+    write_rpc_frame_v2(stream, &envelope)
+        .await
+        .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?;
     loop {
-        let response = read_rpc_frame_v2(stream, &peer.read_buffer).await?;
+        let response = read_rpc_frame_v2(stream, &peer.read_buffer)
+            .await
+            .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?;
         if response.response_to != request_id {
             if response.response_to == 0 && response.request_id == 0 {
                 continue;
             }
-            return Err(invalid("RPC response ID mismatch"));
+            return Err(RpcCallError::Session(SessionError::InvalidInput));
         }
         if let Some(error) = response.error {
-            return Err(io::Error::other(
-                error
-                    .message
-                    .unwrap_or_else(|| format!("RPC error {}", error.code)),
-            ));
+            let error =
+                RpcError::from_wire(error.code, error.message).map_err(RpcCallError::Session)?;
+            return Err(RpcCallError::Application(error));
         }
         return Ok(response.payload);
     }
@@ -3363,11 +3369,11 @@ async fn serve_rpc_stream_v2(session: &SelfSession, stream: StreamHandleV2) -> i
         let (payload, error) = match handler {
             Some(handler) => match handler.call(request.type_id, request.payload).await {
                 Ok(payload) => (payload, None),
-                Err(error) => (
+                Err(_) => (
                     serde_json::Value::Null,
                     Some(RpcErrorWireV2 {
                         code: 500,
-                        message: Some(error.to_string()),
+                        message: Some("handler failed".into()),
                     }),
                 ),
             },

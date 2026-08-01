@@ -26,6 +26,10 @@ err = handlers.Serve(ctx, session)
 
 Register inbound RPC handlers before constructing the connector; the connector snapshots them for session establishment. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, and resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
 
+The executable `ExampleNewConnector` compiles the complete consumer lifecycle,
+including an atomically created and synchronized durable spend receipt. Reusing
+the receipt path fails closed; the receipt contains no artifact or key material.
+
 ## Server Control Plane
 
 Go service control planes use `github.com/floegence/flowersec/flowersec-go/v2/controlplane` to issue direct artifacts or complementary tunnel pairs and to validate `flowersec-runtime` authorization callbacks. Endpoint sets, issued artifacts, authorization records, runtime requests, and responses are opaque. Artifact and record bytes cross only explicit serialization methods; the caller owns permissions, placement, durable one-time lease state, and upstream selection.

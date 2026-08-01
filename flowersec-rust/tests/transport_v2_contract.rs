@@ -3,7 +3,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use flowersec::{
-    ByteStream, IncomingStream, JsonObject, RpcPeer, Session, SessionError, StreamTerminalError,
+    ByteStream, IncomingStream, JsonObject, RpcCallError, RpcError, RpcPeer, Session, SessionError,
+    StreamTerminalError,
 };
 
 #[derive(Debug)]
@@ -49,7 +50,7 @@ impl RpcPeer for ProbeRpc {
         &self,
         _type_id: u32,
         request: serde_json::Value,
-    ) -> Result<serde_json::Value, SessionError> {
+    ) -> Result<serde_json::Value, RpcCallError> {
         Ok(request)
     }
 
@@ -117,6 +118,8 @@ fn v2_contract_is_object_safe_and_carrier_neutral() {
     assert_stream_object_safe(None);
 
     let _rpc: &dyn RpcPeer = session.rpc();
+    let _rpc_error_size = std::mem::size_of::<RpcError>();
+    let _rpc_call_error_size = std::mem::size_of::<RpcCallError>();
 
     let incoming = IncomingStream::new("rpc", JsonObject::new(), Box::new(ProbeStream));
     assert_eq!(incoming.kind(), "rpc");

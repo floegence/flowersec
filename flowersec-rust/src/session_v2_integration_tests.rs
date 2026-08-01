@@ -15,7 +15,7 @@ use crate::{
     },
     transport_v2::{
         CarrierKind, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2, PathKind,
-        SessionError, SessionRole, SessionV2, UnreliableMessageError,
+        RpcCallError, SessionError, SessionRole, SessionV2, UnreliableMessageError,
     },
 };
 use bytes::Bytes;
@@ -710,6 +710,127 @@ async fn lazy_reserved_rpc_is_encrypted_and_uses_u32_type_ids() {
         .await
         .expect("RPC after rekey");
     assert_eq!(after["request"]["epoch"], 1);
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[tokio::test]
+async fn remote_rpc_application_error_preserves_bounded_semantics() {
+    let (client_carrier, server_carrier) = memory_carrier_pair_v2();
+    let client = SessionConfigV2 {
+        role: SessionRole::Client,
+        path: PathKind::Direct,
+        channel_id: "rpc-error-v2".into(),
+        session_contract_hash: [31; 32],
+        suite: CipherSuiteV2::ChaCha20Poly1305,
+        psk: [32; 32],
+        max_inbound_streams: 4,
+        idle_timeout: Duration::ZERO,
+        local_admission_binding: [33; 32],
+        peer_admission_binding: Some([34; 32]),
+        local_endpoint_instance_id: None,
+        expected_peer_endpoint_instance_id: None,
+        rpc_handler: None,
+        deadlines: Default::default(),
+    };
+    let server = SessionConfigV2 {
+        role: SessionRole::Server,
+        local_admission_binding: [34; 32],
+        peer_admission_binding: Some([33; 32]),
+        ..client.clone()
+    };
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client),
+        establish_session_v2(server_carrier, server),
+    );
+    let client = client.expect("client");
+    let server = server.expect("server");
+
+    let error = client
+        .rpc()
+        .call(404, serde_json::json!({"lookup": "missing"}))
+        .await
+        .expect_err("missing handler must remain an application error");
+    match error {
+        RpcCallError::Application(error) => {
+            assert_eq!(error.code(), 404);
+            assert_eq!(error.message(), Some("handler not found"));
+            assert_eq!(
+                error.to_string(),
+                "Flowersec RPC application error (code=404)"
+            );
+        }
+        RpcCallError::Session(error) => panic!("application error collapsed into {error:?}"),
+    }
+
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
+}
+
+#[derive(Debug)]
+struct SensitiveRpcFailure;
+
+#[async_trait::async_trait]
+impl RpcHandlerV2 for SensitiveRpcFailure {
+    async fn call(
+        &self,
+        _type_id: u32,
+        _request: serde_json::Value,
+    ) -> io::Result<serde_json::Value> {
+        Err(io::Error::other("secret endpoint and credential"))
+    }
+
+    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn rpc_handler_failure_is_sanitized_before_crossing_the_session() {
+    let (client_carrier, server_carrier) = memory_carrier_pair_v2();
+    let client = SessionConfigV2 {
+        role: SessionRole::Client,
+        path: PathKind::Direct,
+        channel_id: "rpc-redaction-v2".into(),
+        session_contract_hash: [41; 32],
+        suite: CipherSuiteV2::ChaCha20Poly1305,
+        psk: [42; 32],
+        max_inbound_streams: 4,
+        idle_timeout: Duration::ZERO,
+        local_admission_binding: [43; 32],
+        peer_admission_binding: Some([44; 32]),
+        local_endpoint_instance_id: None,
+        expected_peer_endpoint_instance_id: None,
+        rpc_handler: None,
+        deadlines: Default::default(),
+    };
+    let server = SessionConfigV2 {
+        role: SessionRole::Server,
+        local_admission_binding: [44; 32],
+        peer_admission_binding: Some([43; 32]),
+        rpc_handler: Some(Arc::new(SensitiveRpcFailure)),
+        ..client.clone()
+    };
+    let (client, server) = tokio::join!(
+        establish_session_v2(client_carrier, client),
+        establish_session_v2(server_carrier, server),
+    );
+    let client = client.expect("client");
+    let server = server.expect("server");
+
+    let error = client
+        .rpc()
+        .call(500, serde_json::Value::Null)
+        .await
+        .expect_err("handler failure");
+    match error {
+        RpcCallError::Application(error) => {
+            assert_eq!(error.code(), 500);
+            assert_eq!(error.message(), Some("handler failed"));
+        }
+        RpcCallError::Session(error) => panic!("application error collapsed into {error:?}"),
+    }
+
     client.close().await.expect("close client");
     server.close().await.expect("close server");
 }

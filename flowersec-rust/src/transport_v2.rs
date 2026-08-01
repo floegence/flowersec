@@ -553,6 +553,58 @@ pub enum SessionError {
     Failed,
 }
 
+/// A bounded application failure returned by a remote RPC handler.
+///
+/// The display representation omits the message so generic error logging does
+/// not disclose application data. Callers must explicitly request the already
+/// sanitized message through [`RpcError::message`].
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("Flowersec RPC application error (code={code})")]
+pub struct RpcError {
+    code: u32,
+    message: Option<String>,
+}
+
+impl RpcError {
+    pub(crate) const MAX_MESSAGE_BYTES: usize = 1_024;
+
+    pub(crate) fn from_wire(code: u32, message: Option<String>) -> Result<Self, SessionError> {
+        if code == 0
+            || message
+                .as_ref()
+                .is_some_and(|value| value.len() > Self::MAX_MESSAGE_BYTES)
+        {
+            return Err(SessionError::Failed);
+        }
+        Ok(Self { code, message })
+    }
+
+    /// Returns the remote application's nonzero semantic error code.
+    pub const fn code(&self) -> u32 {
+        self.code
+    }
+
+    /// Returns the remote application's bounded, sanitized message when present.
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
+}
+
+/// Separates a remote application outcome from a session operation failure.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum RpcCallError {
+    #[error(transparent)]
+    Application(RpcError),
+    #[error(transparent)]
+    Session(SessionError),
+}
+
+impl From<SessionError> for RpcCallError {
+    fn from(error: SessionError) -> Self {
+        Self::Session(error)
+    }
+}
+
 /// Stable, redacted failure set for carrier-neutral unreliable messages.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum UnreliableMessageError {
@@ -717,7 +769,7 @@ pub trait RpcPeerV2: fmt::Debug + Send + Sync + 'static {
         &self,
         type_id: u32,
         request: serde_json::Value,
-    ) -> Result<serde_json::Value, SessionError>;
+    ) -> Result<serde_json::Value, RpcCallError>;
     /// Sends one notification without waiting for an application response.
     async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), SessionError>;
 }
@@ -755,6 +807,24 @@ pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rpc_application_error_is_bounded_and_safe_to_log() {
+        let error = RpcError::from_wire(429, Some("retry later".into())).expect("valid RPC error");
+        assert_eq!(error.code(), 429);
+        assert_eq!(error.message(), Some("retry later"));
+        assert_eq!(
+            error.to_string(),
+            "Flowersec RPC application error (code=429)"
+        );
+        assert!(!error.to_string().contains("retry later"));
+
+        assert_eq!(RpcError::from_wire(0, None), Err(SessionError::Failed));
+        assert_eq!(
+            RpcError::from_wire(500, Some("x".repeat(RpcError::MAX_MESSAGE_BYTES + 1))),
+            Err(SessionError::Failed)
+        );
+    }
 
     #[test]
     fn logical_stream_limit_reserves_control_and_rpc_carrier_streams() {

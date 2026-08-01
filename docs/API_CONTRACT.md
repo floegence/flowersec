@@ -50,7 +50,7 @@ Applications `import Flowersec` from the `Flowersec` product. The public lifecyc
 
 ## Rust
 
-The `flowersec` crate exposes `Artifact`, `ArtifactError`, `ArtifactLease`, `ArtifactSpendError`, `Connector`, `ConnectorOptions`, `ConnectError`, `ConnectErrorCode`, `Session`, `SessionError`, `RpcPeer`, `ByteStream`, `IncomingStream`, `JsonObject`, `StreamTerminalError`, and the carrier-neutral optional `UnreliableMessageChannel`. Native server runtimes additionally use `AcceptorOptions`, `Acceptor`, `AcceptError`, and `AcceptErrorCode` to turn an opaque direct-session artifact into the same carrier-neutral `Session`. Quinn connections, admission frames, capability descriptors, candidate plans, session ledgers, and implementation modules remain crate-private.
+The `flowersec` crate exposes `Artifact`, `ArtifactError`, `ArtifactLease`, `ArtifactSpendError`, `Connector`, `ConnectorOptions`, `ConnectError`, `ConnectErrorCode`, `Session`, `SessionError`, `RpcPeer`, `RpcError`, `RpcCallError`, `ByteStream`, `IncomingStream`, `JsonObject`, `StreamTerminalError`, and the carrier-neutral optional `UnreliableMessageChannel`. `RpcCallError` keeps a bounded remote `RpcError` separate from a redacted `SessionError`; generic `RpcError` formatting omits its sanitized message unless the caller explicitly requests it. Native server runtimes additionally use `AcceptorOptions`, `Acceptor`, `AcceptError`, and `AcceptErrorCode` to turn an opaque direct-session artifact into the same carrier-neutral `Session`. Quinn connections, admission frames, capability descriptors, candidate plans, session ledgers, and implementation modules remain crate-private.
 
 ## Error Boundary
 

@@ -51,7 +51,8 @@ The crate root exports only these public categories:
   `AcceptError`, and `AcceptErrorCode`;
 - carrier-neutral session behavior: `Session`, `RpcPeer`, `ByteStream`,
   `IncomingStream`, and `JsonObject`;
-- closed operation failures: `SessionError` and `StreamTerminalError`.
+- closed operation failures: `SessionError` and `StreamTerminalError`;
+- bounded remote application failures: `RpcError` and `RpcCallError`.
 
 Parse an opaque artifact with `Artifact::parse`, bind its durable single-use
 callback with `ArtifactLease`, and establish a session through `Connector`.
@@ -67,9 +68,11 @@ identity, stream identifiers, candidates, wire data, keys, or transport
 diagnostics.
 
 `ConnectErrorCode`, `AcceptErrorCode`, `SessionError`, and
-`StreamTerminalError` are closed, redacted failure sets. Public errors do not
-retain peer payloads, carrier diagnostics, credentials, or cryptographic
-material.
+`StreamTerminalError` are closed, redacted failure sets. `RpcCallError` keeps a
+bounded remote `RpcError` separate from session failure; its generic display
+omits the sanitized application message unless the caller explicitly requests
+it. Public errors do not retain peer payloads, carrier diagnostics, credentials,
+or cryptographic material.
 
 ## Runtime Boundaries
 
