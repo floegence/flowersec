@@ -64,7 +64,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.should_scan == 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 5
+    # Swift manual extraction includes a bounded traced compile; keep this
+    # asynchronous security lane below the 10-minute operational stop line.
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:
