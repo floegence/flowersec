@@ -100,10 +100,10 @@ for (const sessionPath of ["direct", "tunnel"] as const) {
         const session = await sdk.connectBrowserSession(lease);
         if (session.unreliableMessages === undefined) throw new Error("WebTransport DATAGRAM was not negotiated");
         const sent = await session.unreliableMessages.send(
-          sdk.createUnreliableMessage(new TextEncoder().encode("browser-datagram")),
+          new TextEncoder().encode("browser-datagram"),
           { expiresAtUnixMs: Date.now() + 5_000 },
         );
-        const received = new TextDecoder().decode((await session.unreliableMessages.receive()).data);
+        const received = new TextDecoder().decode(await session.unreliableMessages.receive());
         const liveness = await session.probeLiveness();
         const stream = await session.openStream("interop.echo");
         await stream.write(new TextEncoder().encode("hello-go"));
