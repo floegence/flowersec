@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use flowersec::{
     ByteStream, IncomingStream, RpcCallError, RpcError, RpcPeer, Session, SessionError,
-    SessionTermination, StreamMetadata, StreamTerminalError,
+    SessionTermination, StreamMetadata,
 };
 
 #[derive(Debug)]
@@ -16,8 +16,8 @@ impl ByteStream for ProbeStream {
         "rpc"
     }
 
-    fn terminal_error(&self) -> Option<StreamTerminalError> {
-        Some(StreamTerminalError::Reset)
+    fn terminal_error(&self) -> Option<SessionError> {
+        Some(SessionError::StreamReset)
     }
 
     async fn read(&self) -> Result<Option<Bytes>, SessionError> {
@@ -107,9 +107,7 @@ impl Session for ProbeSession {
 
 fn assert_session_object_safe(_session: Option<&dyn Session>) {}
 fn assert_stream_object_safe(_stream: Option<&dyn ByteStream>) {}
-fn assert_terminal_error_is_closed(
-    error: Option<StreamTerminalError>,
-) -> Option<StreamTerminalError> {
+fn assert_terminal_error_is_closed(error: Option<SessionError>) -> Option<SessionError> {
     error
 }
 
@@ -129,7 +127,7 @@ fn v2_contract_is_object_safe_and_carrier_neutral() {
     assert_eq!(incoming.stream().kind(), "rpc");
     assert_eq!(
         assert_terminal_error_is_closed(incoming.stream().terminal_error()),
-        Some(StreamTerminalError::Reset)
+        Some(SessionError::StreamReset)
     );
     assert!(format!("{incoming:?}").contains("IncomingStreamV2"));
     let _stream: Box<dyn ByteStream> = incoming.into_stream();
@@ -197,7 +195,7 @@ fn release_runner_uses_only_the_opaque_flowersec_surface() {
     for required in [
         "Artifact::parse",
         "ArtifactLease::new",
-        "connect(&mut lease, options, CancellationToken::new())",
+        "connect(&mut lease, options)",
         "Acceptor::bind",
         "Arc<dyn Session>",
     ] {
@@ -270,33 +268,11 @@ fn release_runner_reconciles_final_bulk_delivery_before_session_teardown() {
 }
 
 #[test]
-fn stream_terminal_errors_are_typed_and_redacted() {
-    let snapshots = [
-        (
-            StreamTerminalError::Closed,
-            "Closed",
-            "Flowersec stream closed",
-        ),
-        (
-            StreamTerminalError::Failed,
-            "Failed",
-            "Flowersec stream failed",
-        ),
-        (
-            StreamTerminalError::Reset,
-            "Reset",
-            "Flowersec stream reset",
-        ),
-        (
-            StreamTerminalError::TimedOut,
-            "TimedOut",
-            "Flowersec stream timed out",
-        ),
-    ];
-    for (error, debug, display) in snapshots {
-        assert_eq!(format!("{error:?}"), debug);
-        assert_eq!(error.to_string(), display);
-    }
+fn stream_terminal_errors_use_the_session_error_model() {
+    assert_eq!(
+        ProbeStream.terminal_error(),
+        Some(SessionError::StreamReset)
+    );
 }
 
 #[test]

@@ -478,7 +478,7 @@ async fn connect_artifact(
         }
     });
     let options = ConnectorOptions::new(trust_roots)?.with_connect_timeout(connect_timeout)?;
-    let session = flowersec::connect(&mut lease, options, CancellationToken::new()).await?;
+    let session = flowersec::connect(&mut lease, options).await?;
     if commits.load(Ordering::SeqCst) != 1 {
         return Err("artifact spend was not committed exactly once".into());
     }

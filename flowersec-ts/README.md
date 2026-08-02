@@ -20,7 +20,7 @@ npm install @floegence/flowersec-core
 
 The root type exports are:
 
-- Artifact lifecycle: `Artifact` and `ArtifactLease`.
+- Artifact lifecycle: `Artifact`, closed `ArtifactError` parse failures, and `ArtifactLease`.
 - Sessions: `Session`, `SessionTermination`, `RpcPeer`, `RpcResult<Response>`, `ByteStream`, `IncomingStream`, `StreamMetadata`, `OperationOptions`, and `StreamOpenOptions`. Create metadata with `createStreamMetadata(...)`; invalid values throw `StreamMetadataError` before opening a stream.
 - Unreliable messages: `UnreliableMessageChannel`, `UnreliableMessageSendOptions`, and `UnreliableMessageSendResult`.
 - JSON values: `JsonPrimitive`, `JsonValue`, and `JsonObject`.
@@ -28,7 +28,7 @@ The root type exports are:
 
 The `/reconnect` entrypoint exposes `ArtifactAcquireContext`, `ArtifactSource`, and the reconnect types. `createSessionReconnectManager(...)` resolves a lease for each connection attempt. A refreshable source acquires a fresh lease; a one-time source can be consumed only once.
 
-`classifyConnectError(...)` and `classifySessionError(...)` map redacted public errors to stable application retry decisions. They expose only `action`, `retryable`, `refreshArtifact`, `callerCanceled`, and `sessionClosed`; they do not reveal carrier, candidate, URL, credential, stage, key, or diagnostic details.
+`classifyConnectError(...)` and `classifySessionError(...)` map redacted public errors to stable application retry decisions. They expose only `action`, `callerCanceled`, and `sessionClosed`; retryability and fresh-artifact acquisition are represented by `action` instead of duplicate booleans. They do not reveal carrier, candidate, URL, credential, stage, key, or diagnostic details.
 
 `RpcResult<Response>` is a discriminated union. `RpcPeer.call(...)` requires a decoder for successful payloads, so the typed success value has passed application validation before it is returned. Check `result.ok` before reading either the typed success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify are portable across SDKs, while `RpcPeer.onNotify(...)` is a TypeScript-specific subscription convenience.
 

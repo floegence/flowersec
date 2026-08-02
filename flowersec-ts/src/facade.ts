@@ -26,7 +26,8 @@ export {
 export type {
   ArtifactLeaseV2 as ArtifactLease,
 } from "./v2/artifactLease.js";
-export { Artifact, parseArtifact } from "./v2/opaqueArtifact.js";
+export { Artifact, ArtifactError, parseArtifact } from "./v2/opaqueArtifact.js";
+export type { ArtifactErrorCode } from "./v2/opaqueArtifact.js";
 export type { ConnectErrorCode } from "./utils/errors.js";
 export { ConnectError } from "./utils/errors.js";
 export {

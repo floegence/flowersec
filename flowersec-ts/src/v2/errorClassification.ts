@@ -5,8 +5,6 @@ export type FlowersecRetryActionV2 = "retry" | "refresh_artifact" | "stop";
 
 export type FlowersecErrorRetryClassificationV2 = Readonly<{
   action: FlowersecRetryActionV2;
-  retryable: boolean;
-  refreshArtifact: boolean;
   callerCanceled: boolean;
   sessionClosed: boolean;
 }>;
@@ -45,8 +43,6 @@ function classify(
 ): FlowersecErrorRetryClassificationV2 {
   return Object.freeze({
     action,
-    retryable: action !== "stop",
-    refreshArtifact: action === "refresh_artifact",
     callerCanceled: flags.callerCanceled === true,
     sessionClosed: flags.sessionClosed === true,
   });

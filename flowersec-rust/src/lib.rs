@@ -53,14 +53,16 @@ mod error_classification_contract;
 
 pub use acceptor_v2::{AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions};
 pub use artifact_v2::{Artifact, ArtifactError, ArtifactLease, ArtifactSpendError};
-pub use connector_v2::{ConnectError, ConnectErrorCode, ConnectorOptions, connect};
+pub use connector_v2::{
+    ConnectError, ConnectErrorCode, ConnectorOptions, connect, connect_with_cancellation,
+};
 pub use error_classification::{
     ErrorRetryAction, ErrorRetryClassification, classify_connect_error, classify_session_error,
 };
 pub use transport_v2::{
     ByteStreamV2 as ByteStream, IncomingStreamV2 as IncomingStream, JsonObjectV2 as JsonObject,
     RpcCallError, RpcError, RpcPeerExt, RpcPeerV2 as RpcPeer, SessionError, SessionTermination,
-    SessionV2 as Session, StreamMetadata, StreamMetadataError, StreamTerminalError,
+    SessionV2 as Session, StreamMetadata, StreamMetadataError,
     UnreliableMessageChannelV2 as UnreliableMessageChannel, UnreliableMessageError,
     UnreliableSendOutcome,
 };

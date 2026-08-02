@@ -169,11 +169,9 @@ type publicErrorClassificationContract struct {
 }
 
 type publicErrorClassificationResult struct {
-	Action          string `json:"action"`
-	Retryable       bool   `json:"retryable"`
-	RefreshArtifact bool   `json:"refresh_artifact"`
-	CallerCanceled  bool   `json:"caller_canceled"`
-	SessionClosed   bool   `json:"session_closed"`
+	Action         string `json:"action"`
+	CallerCanceled bool   `json:"caller_canceled"`
+	SessionClosed  bool   `json:"session_closed"`
 }
 
 type publicErrorClassificationCase struct {
@@ -333,12 +331,6 @@ func validatePublicErrorClassification(contract publicErrorClassificationContrac
 		case "retry", "refresh_artifact", "stop":
 		default:
 			return fmt.Errorf("decision %s has unsupported action %q", name, decision.Action)
-		}
-		if decision.Retryable != (decision.Action != "stop") {
-			return fmt.Errorf("decision %s retryable must match action %q", name, decision.Action)
-		}
-		if decision.RefreshArtifact != (decision.Action == "refresh_artifact") {
-			return fmt.Errorf("decision %s refresh_artifact must match action %q", name, decision.Action)
 		}
 	}
 

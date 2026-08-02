@@ -42,9 +42,8 @@ use crate::{
     transport_v2::{
         ByteStreamV2, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2,
         IncomingStreamV2, JsonObjectV2, PathKind, RpcCallError, RpcError, RpcPeerV2, SessionError,
-        SessionRole, SessionTermination, SessionV2, StreamMetadata, StreamTerminalError,
-        UnreliableMessageChannelV2, UnreliableMessageError, UnreliableSendOutcome,
-        carrier_inbound_stream_limit_v2,
+        SessionRole, SessionTermination, SessionV2, StreamMetadata, UnreliableMessageChannelV2,
+        UnreliableMessageError, UnreliableSendOutcome, carrier_inbound_stream_limit_v2,
     },
 };
 
@@ -2288,7 +2287,7 @@ struct EncryptedStreamV2 {
     local_fin: AtomicBool,
     remote_fin: AtomicBool,
     reset: AtomicBool,
-    terminal: OnceLock<StreamTerminalError>,
+    terminal: OnceLock<SessionError>,
     _outbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
     _inbound_permit: StdMutex<Option<tokio::sync::OwnedSemaphorePermit>>,
 }
@@ -2604,7 +2603,7 @@ impl ByteStreamV2 for StreamHandleV2 {
     fn kind(&self) -> &str {
         &self.0.kind
     }
-    fn terminal_error(&self) -> Option<StreamTerminalError> {
+    fn terminal_error(&self) -> Option<SessionError> {
         self.0.terminal_error()
     }
     async fn read(&self) -> Result<Option<Bytes>, SessionError> {
@@ -2646,37 +2645,37 @@ impl ByteStreamV2 for StreamHandleV2 {
 }
 
 impl EncryptedStreamV2 {
-    fn terminal_error(&self) -> Option<StreamTerminalError> {
+    fn terminal_error(&self) -> Option<SessionError> {
         if let Some(error) = self.terminal.get() {
             return Some(*error);
         }
         if self.reset.load(Ordering::Acquire) {
-            return Some(StreamTerminalError::Reset);
+            return Some(SessionError::StreamReset);
         }
         let Some(session) = self.session.upgrade() else {
-            return Some(StreamTerminalError::Closed);
+            return Some(SessionError::Closed);
         };
         if !session.canceled.is_cancelled() {
             return None;
         }
         let terminal = session.terminal.lock().expect("terminal lock poisoned");
         Some(match terminal.as_ref().map(|cause| cause.kind) {
-            Some(io::ErrorKind::TimedOut) => StreamTerminalError::TimedOut,
+            Some(io::ErrorKind::TimedOut) => SessionError::Timeout,
             Some(io::ErrorKind::InvalidData | io::ErrorKind::PermissionDenied) => {
-                StreamTerminalError::Failed
+                SessionError::OperationFailed
             }
-            _ => StreamTerminalError::Closed,
+            _ => SessionError::Closed,
         })
     }
 
     fn record_terminal(&self, error: &io::Error) {
         let redacted = match error.kind() {
-            io::ErrorKind::TimedOut => StreamTerminalError::TimedOut,
+            io::ErrorKind::TimedOut => SessionError::Timeout,
+            io::ErrorKind::ConnectionReset => SessionError::StreamReset,
             io::ErrorKind::ConnectionAborted
-            | io::ErrorKind::ConnectionReset
             | io::ErrorKind::BrokenPipe
-            | io::ErrorKind::NotConnected => StreamTerminalError::Closed,
-            _ => StreamTerminalError::Failed,
+            | io::ErrorKind::NotConnected => SessionError::Closed,
+            _ => SessionError::OperationFailed,
         };
         let _ = self.terminal.set(redacted);
     }
@@ -2705,7 +2704,7 @@ impl EncryptedStreamV2 {
         Ok(())
     }
     async fn reset_inner(&self) -> io::Result<()> {
-        let _ = self.terminal.set(StreamTerminalError::Reset);
+        let _ = self.terminal.set(SessionError::StreamReset);
         if !self.reset.swap(true, Ordering::AcqRel) {
             if let Some(session) = self.session.upgrade() {
                 let mut payload = [0; 10];
@@ -2719,7 +2718,7 @@ impl EncryptedStreamV2 {
         Ok(())
     }
     async fn reset_local(&self) -> io::Result<()> {
-        let _ = self.terminal.set(StreamTerminalError::Reset);
+        let _ = self.terminal.set(SessionError::StreamReset);
         self.reset.store(true, Ordering::Release);
         let result = self.carrier.reset().await;
         self.release_capacity();

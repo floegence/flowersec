@@ -27,7 +27,7 @@ func TestSessionHandlersDispatchAcceptedStreamMetadata(t *testing.T) {
 		Stream:   stream,
 	}
 
-	handled := make(chan Metadata, 1)
+	handled := make(chan StreamMetadata, 1)
 	handlers, err := NewSessionHandlers(SessionHandlerOptions{MaxConcurrentStreams: 2})
 	if err != nil {
 		t.Fatalf("NewSessionHandlers() error = %v", err)
@@ -225,7 +225,7 @@ func (*serverTestSession) RPC() RPCPeer { return nil }
 func (*serverTestSession) UnreliableMessages() (UnreliableMessageChannel, error) {
 	return nil, errors.New("unavailable")
 }
-func (*serverTestSession) OpenStream(context.Context, string, Metadata) (ByteStream, error) {
+func (*serverTestSession) OpenStream(context.Context, string, StreamMetadata) (ByteStream, error) {
 	return nil, errors.New("unavailable")
 }
 func (session *serverTestSession) AcceptStream(ctx context.Context) (IncomingStream, error) {
@@ -246,7 +246,7 @@ func (session *serverTestSession) WaitTermination(ctx context.Context) (SessionT
 	if err != nil {
 		return SessionTermination{}, err
 	}
-	return SessionTermination{Error: &SessionError{code: SessionClosed}}, nil
+	return SessionTermination{Error: SessionError{code: SessionClosed}}, nil
 }
 func (session *serverTestSession) WaitClosed(ctx context.Context) error {
 	select {

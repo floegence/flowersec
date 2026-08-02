@@ -28,8 +28,6 @@ struct ErrorClassificationContractTests {
       for code in try #require(codes[language]) {
         let actual = try classify(code)
         #expect(actual.action.rawValue == expected["action"] as? String)
-        #expect(actual.retryable == expected["retryable"] as? Bool)
-        #expect(actual.refreshArtifact == expected["refresh_artifact"] as? Bool)
         #expect(actual.callerCanceled == expected["caller_canceled"] as? Bool)
         #expect(actual.sessionClosed == expected["session_closed"] as? Bool)
       }

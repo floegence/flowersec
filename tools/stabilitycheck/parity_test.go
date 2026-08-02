@@ -148,15 +148,6 @@ func TestPublicErrorClassificationRejectsInvalidContracts(t *testing.T) {
 			want: "unsupported action",
 		},
 		{
-			name: "inconsistent retryable flag",
-			edit: func(contract *publicErrorClassificationContract) {
-				decision := contract.Decisions["stop"]
-				decision.Retryable = true
-				contract.Decisions["stop"] = decision
-			},
-			want: "retryable must match action",
-		},
-		{
 			name: "missing language",
 			edit: func(contract *publicErrorClassificationContract) {
 				delete(contract.Connect[0].Codes, "rust")

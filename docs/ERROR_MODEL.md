@@ -14,7 +14,7 @@ An error after durable artifact commitment never authorizes credential reuse. Cl
 
 ## Recovery decisions
 
-Each SDK provides public connection and session error classifiers backed by `stability/public_error_classification.json`. A classification contains an action plus `retryable`, `refresh_artifact`, `caller_canceled`, and `session_closed` flags. Field spelling follows each language's conventions, but the semantics are identical.
+Each SDK provides public connection and session error classifiers backed by `stability/public_error_classification.json`. A classification contains an action plus `caller_canceled` and `session_closed` flags. Retryability and fresh-artifact acquisition are represented only by the action, so the public value cannot contain contradictory duplicate state. Field spelling follows each language's conventions, but the semantics are identical.
 
 - `retry` means the failed operation may be repeated on the current usable session.
 - `refresh_artifact` means the application must acquire a fresh artifact and establish a fresh session. It never authorizes reuse of a committed lease or credential.

@@ -4,17 +4,16 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 )
 
 type retryContract struct {
 	Decisions map[string]struct {
-		Action          RetryAction `json:"action"`
-		Retryable       bool        `json:"retryable"`
-		RefreshArtifact bool        `json:"refresh_artifact"`
-		CallerCanceled  bool        `json:"caller_canceled"`
-		SessionClosed   bool        `json:"session_closed"`
+		Action         RetryAction `json:"action"`
+		CallerCanceled bool        `json:"caller_canceled"`
+		SessionClosed  bool        `json:"session_closed"`
 	} `json:"decisions"`
 	Connect []retryContractCase `json:"connect"`
 	Session []retryContractCase `json:"session"`
@@ -26,6 +25,10 @@ type retryContractCase struct {
 }
 
 func TestPublicErrorClassificationMatchesSharedContract(t *testing.T) {
+	classificationType := reflect.TypeOf(ErrorRetryClassification{})
+	if classificationType.NumField() != 3 {
+		t.Fatalf("ErrorRetryClassification has %d fields, want Action, CallerCanceled, SessionClosed", classificationType.NumField())
+	}
 	contract := loadRetryContract(t)
 	for _, test := range contract.Connect {
 		want := contract.Decisions[test.Decision]
@@ -61,15 +64,12 @@ func loadRetryContract(t *testing.T) retryContract {
 }
 
 func assertRetryClassification(t *testing.T, got ErrorRetryClassification, want struct {
-	Action          RetryAction `json:"action"`
-	Retryable       bool        `json:"retryable"`
-	RefreshArtifact bool        `json:"refresh_artifact"`
-	CallerCanceled  bool        `json:"caller_canceled"`
-	SessionClosed   bool        `json:"session_closed"`
+	Action         RetryAction `json:"action"`
+	CallerCanceled bool        `json:"caller_canceled"`
+	SessionClosed  bool        `json:"session_closed"`
 }) {
 	t.Helper()
-	if got.Action != want.Action || got.Retryable != want.Retryable ||
-		got.RefreshArtifact != want.RefreshArtifact || got.CallerCanceled != want.CallerCanceled ||
+	if got.Action != want.Action || got.CallerCanceled != want.CallerCanceled ||
 		got.SessionClosed != want.SessionClosed {
 		t.Fatalf("classification = %+v, want %+v", got, want)
 	}

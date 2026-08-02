@@ -7,6 +7,7 @@ import type {
   StreamMetadata,
 } from "../node/index.js";
 import {
+  ArtifactError,
   connectNodeSession,
   createArtifactLease,
   createStreamMetadata,
@@ -66,6 +67,12 @@ function typecheckPublicAPI(
 test("exposes the unversioned typed public API", () => {
   expect(typecheckPublicAPI).toBeTypeOf("function");
   expect("connectNodeSessionV2" in publicAPI).toBe(false);
+  expect(ArtifactError).toBeTypeOf("function");
   const legacySession: SessionV2 | undefined = undefined;
   expect(legacySession).toBeUndefined();
+});
+
+test("projects artifact parsing failures to the stable public error", () => {
+  expect(() => parseArtifact("{}"))
+    .toThrowError(expect.objectContaining({ name: "ArtifactError", code: "invalid_artifact" }));
 });

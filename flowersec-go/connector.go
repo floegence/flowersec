@@ -83,7 +83,7 @@ type UnreliableSendOptions struct {
 
 // SessionTermination is the stable, redacted terminal state of a session.
 type SessionTermination struct {
-	Error *SessionError
+	Error SessionError
 }
 
 // UnreliableMessageChannel sends opaque end-to-end encrypted messages without
@@ -379,18 +379,18 @@ func (current *opaqueSession) ProbeLiveness(ctx context.Context) (time.Duration,
 func (current *opaqueSession) WaitTermination(ctx context.Context) (SessionTermination, error) {
 	err := current.inner.WaitClosed(ctx)
 	if err == nil {
-		return SessionTermination{Error: &SessionError{code: SessionClosed}}, nil
+		return SessionTermination{Error: SessionError{code: SessionClosed}}, nil
 	}
 	projected := redactSessionError(err)
 	select {
 	case <-current.inner.Termination():
-		return SessionTermination{Error: projected}, nil
+		return SessionTermination{Error: *projected}, nil
 	default:
 	}
 	if projected.Code() == SessionCanceled || projected.Code() == SessionTimeout {
 		return SessionTermination{}, projected
 	}
-	return SessionTermination{Error: projected}, nil
+	return SessionTermination{Error: *projected}, nil
 }
 
 func (current *opaqueSession) Close() error { return redactNilSessionError(current.inner.Close()) }

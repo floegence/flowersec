@@ -17,8 +17,6 @@ struct Contract {
 #[derive(Deserialize)]
 struct Decision {
     action: String,
-    retryable: bool,
-    refresh_artifact: bool,
     caller_canceled: bool,
     session_closed: bool,
 }
@@ -55,8 +53,6 @@ fn classifications_match_shared_contract() {
 
 fn assert_decision(actual: ErrorRetryClassification, expected: &Decision) {
     assert_eq!(actual.action.as_str(), expected.action);
-    assert_eq!(actual.retryable, expected.retryable);
-    assert_eq!(actual.refresh_artifact, expected.refresh_artifact);
     assert_eq!(actual.caller_canceled, expected.caller_canceled);
     assert_eq!(actual.session_closed, expected.session_closed);
 }

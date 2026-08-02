@@ -144,16 +144,6 @@
             "doc_token": "`flowersec.StreamMetadata.Values()`"
           },
           {
-            "kind": "type",
-            "expr": "flowersec.Metadata",
-            "doc_token": "`flowersec.Metadata`"
-          },
-          {
-            "kind": "func",
-            "expr": "flowersec.NewMetadata",
-            "doc_token": "`flowersec.NewMetadata(...)`"
-          },
-          {
             "kind": "var",
             "expr": "flowersec.ErrInvalidMetadata",
             "doc_token": "`flowersec.ErrInvalidMetadata`"
@@ -645,6 +635,7 @@
         "package_json_export": ".",
         "doc_tokens": [
           "`@floegence/flowersec-core`",
+          "`ArtifactError`",
           "`ArtifactLease`",
           "`Session`",
           "`UnreliableMessageChannel`",
@@ -657,6 +648,7 @@
         ],
         "runtime_exports": [
           "Artifact",
+          "ArtifactError",
           "ArtifactLeaseError",
           "ConnectError",
           "SessionError",
@@ -670,6 +662,8 @@
         ],
         "type_exports": [
           "Artifact",
+          "ArtifactError",
+          "ArtifactErrorCode",
           "ArtifactLeaseError",
           "ArtifactLease",
           "ByteStream",
@@ -705,6 +699,7 @@
         ],
         "runtime_exports": [
           "Artifact",
+          "ArtifactError",
           "ArtifactLeaseError",
           "ConnectError",
           "SessionError",
@@ -719,6 +714,8 @@
         ],
         "type_exports": [
           "Artifact",
+          "ArtifactError",
+          "ArtifactErrorCode",
           "ArtifactLeaseError",
           "ArtifactLease",
           "ByteStream",
@@ -756,6 +753,7 @@
         ],
         "runtime_exports": [
           "Artifact",
+          "ArtifactError",
           "ArtifactLeaseError",
           "ConnectError",
           "SessionError",
@@ -770,6 +768,8 @@
         ],
         "type_exports": [
           "Artifact",
+          "ArtifactError",
+          "ArtifactErrorCode",
           "ArtifactLeaseError",
           "ArtifactLease",
           "BrowserSessionOptions",
@@ -1328,16 +1328,6 @@
       },
       {
         "kind": "swift.property",
-        "name": "ErrorRetryClassification.refreshArtifact",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ErrorRetryClassification.retryable",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
         "name": "ErrorRetryClassification.sessionClosed",
         "doc_token": ""
       },
@@ -1492,6 +1482,7 @@
       "`AcceptorOptions`",
       "`ConnectorOptions`",
       "`connect(...)`",
+      "`connect_with_cancellation(...)`",
       "`AcceptErrorCode::as_str()`",
       "`ConnectError::as_str()`",
       "`ConnectErrorCode::as_str()`",
@@ -1529,7 +1520,8 @@
       "let _ = flowersec::ConnectErrorCode::InvalidInput.as_str()",
     "let _ = std::mem::size_of::<flowersec::ConnectorOptions>()",
     "let _ = flowersec::ConnectorOptions::new(vec![vec![1_u8]])",
-    "let _ = flowersec::connect",
+      "let _ = flowersec::connect",
+      "let _ = flowersec::connect_with_cancellation",
       "let _ = std::mem::size_of::<flowersec::ErrorRetryAction>()",
       "let _ = std::mem::size_of::<flowersec::ErrorRetryClassification>()",
       "let _ = flowersec::ErrorRetryAction::Retry",
@@ -1556,7 +1548,6 @@
       "let _ = flowersec::SessionError::StreamReset",
       "let _ = flowersec::SessionError::RekeyFailed",
       "let _ = flowersec::SessionError::LivenessFailed",
-      "let _ = std::mem::size_of::<flowersec::StreamTerminalError>()",
       "let _ = std::mem::size_of::<flowersec::StreamMetadata>()",
       "let _ = std::mem::size_of::<flowersec::StreamMetadataError>()",
       "let _ = flowersec::StreamMetadata::empty()",

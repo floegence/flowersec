@@ -6,8 +6,6 @@ public enum RetryAction: String, Equatable, Sendable {
 
 public struct ErrorRetryClassification: Equatable, Sendable {
   public let action: RetryAction
-  public let retryable: Bool
-  public let refreshArtifact: Bool
   public let callerCanceled: Bool
   public let sessionClosed: Bool
 
@@ -17,8 +15,6 @@ public struct ErrorRetryClassification: Equatable, Sendable {
     sessionClosed: Bool = false
   ) {
     self.action = action
-    self.retryable = action != .stop
-    self.refreshArtifact = action == .refreshArtifact
     self.callerCanceled = callerCanceled
     self.sessionClosed = sessionClosed
   }

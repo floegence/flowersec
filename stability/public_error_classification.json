@@ -3,36 +3,26 @@
   "decisions": {
     "stop": {
       "action": "stop",
-      "retryable": false,
-      "refresh_artifact": false,
       "caller_canceled": false,
       "session_closed": false
     },
     "caller_canceled": {
       "action": "stop",
-      "retryable": false,
-      "refresh_artifact": false,
       "caller_canceled": true,
       "session_closed": false
     },
     "retry": {
       "action": "retry",
-      "retryable": true,
-      "refresh_artifact": false,
       "caller_canceled": false,
       "session_closed": false
     },
     "refresh_artifact": {
       "action": "refresh_artifact",
-      "retryable": true,
-      "refresh_artifact": true,
       "caller_canceled": false,
       "session_closed": false
     },
     "refresh_closed_session": {
       "action": "refresh_artifact",
-      "retryable": true,
-      "refresh_artifact": true,
       "caller_canceled": false,
       "session_closed": true
     }

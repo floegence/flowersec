@@ -479,10 +479,7 @@ func (pair *ProductDirectPair) Close() error {
 			pair.closeErr = errors.Join(pair.closeErr, errors.New("client did not terminate after local close"))
 		}
 		if clientCloseErr != nil && clientTerminated {
-			var terminationCode flowersec.SessionErrorCode
-			if termination.Error != nil {
-				terminationCode = termination.Error.Code()
-			}
+			terminationCode := termination.Error.Code()
 			pair.closeErr = errors.Join(pair.closeErr, reconcilePublicSessionCloseError(clientCloseErr, terminationCode, nil))
 		} else {
 			pair.closeErr = errors.Join(pair.closeErr, clientCloseErr)

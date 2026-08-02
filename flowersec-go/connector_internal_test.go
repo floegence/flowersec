@@ -226,12 +226,12 @@ func TestWaitTerminationSeparatesTerminalCauseFromWaitCancellation(t *testing.T)
 	if err != nil {
 		t.Fatalf("WaitTermination closed error = %v, want nil", err)
 	}
-	if termination.Error == nil || termination.Error.Code() != SessionClosed {
+	if termination.Error.Code() != SessionClosed {
 		t.Fatalf("WaitTermination closed = %#v, want SessionClosed", termination)
 	}
 	canceled := &opaqueSession{inner: inertSession{waitErr: context.Canceled}}
 	termination, err = canceled.WaitTermination(context.Background())
-	if termination.Error != nil {
+	if termination != (SessionTermination{}) {
 		t.Fatalf("WaitTermination canceled termination = %#v, want none", termination)
 	}
 	if projected, ok := err.(*SessionError); !ok || projected.Code() != SessionCanceled {

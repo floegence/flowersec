@@ -1020,7 +1020,7 @@ async fn encrypted_stream_reports_only_the_closed_terminal_error_set() {
     opened.reset().await.expect("reset stream");
     assert_eq!(
         opened.terminal_error(),
-        Some(crate::StreamTerminalError::Reset)
+        Some(crate::SessionError::StreamReset)
     );
     client.close().await.expect("close client");
     server.close().await.expect("close server");

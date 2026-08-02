@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -59,8 +60,8 @@ func TestSessionTerminationPublicSurfaceAlignsWithPortableCore(t *testing.T) {
 
 	terminationType := reflect.TypeOf(flowersec.SessionTermination{})
 	if terminationType.NumField() != 1 || terminationType.Field(0).Name != "Error" ||
-		terminationType.Field(0).Type != reflect.TypeOf((*flowersec.SessionError)(nil)) {
-		t.Fatalf("SessionTermination fields = %v, want exported Error *SessionError", terminationType)
+		terminationType.Field(0).Type != reflect.TypeOf(flowersec.SessionError{}) {
+		t.Fatalf("SessionTermination fields = %v, want exported non-null Error SessionError", terminationType)
 	}
 	for index := range sessionType.NumMethod() {
 		signature := sessionType.Method(index).Type.String()
@@ -68,6 +69,18 @@ func TestSessionTerminationPublicSurfaceAlignsWithPortableCore(t *testing.T) {
 			if strings.Contains(signature, forbidden) {
 				t.Fatalf("public session signature %q exposes %q", signature, forbidden)
 			}
+		}
+	}
+}
+
+func TestStreamMetadataHasNoPreReleaseCompatibilityAliases(t *testing.T) {
+	source, err := os.ReadFile("metadata.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"type Metadata =", "func NewMetadata("} {
+		if strings.Contains(string(source), forbidden) {
+			t.Fatalf("Go public API retains pre-release compatibility alias %q", forbidden)
 		}
 	}
 }

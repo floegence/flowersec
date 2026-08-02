@@ -301,6 +301,14 @@ impl Connector {
 pub async fn connect(
     lease: &mut ArtifactLease,
     options: ConnectorOptions,
+) -> Result<Arc<dyn SessionV2>, ConnectError> {
+    connect_with_cancellation(lease, options, CancellationToken::new()).await
+}
+
+/// Establishes one carrier-neutral session with explicit external cancellation.
+pub async fn connect_with_cancellation(
+    lease: &mut ArtifactLease,
+    options: ConnectorOptions,
     cancellation: CancellationToken,
 ) -> Result<Arc<dyn SessionV2>, ConnectError> {
     Connector::new(options)?.connect(lease, cancellation).await

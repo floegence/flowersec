@@ -22,8 +22,6 @@ impl ErrorRetryAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ErrorRetryClassification {
     pub action: ErrorRetryAction,
-    pub retryable: bool,
-    pub refresh_artifact: bool,
     pub caller_canceled: bool,
     pub session_closed: bool,
 }
@@ -67,8 +65,6 @@ const fn classification(
 ) -> ErrorRetryClassification {
     ErrorRetryClassification {
         action,
-        retryable: !matches!(action, ErrorRetryAction::Stop),
-        refresh_artifact: matches!(action, ErrorRetryAction::RefreshArtifact),
         caller_canceled,
         session_closed,
     }

@@ -568,19 +568,6 @@ pub(crate) fn validate_capabilities_v2(
     Ok(())
 }
 
-/// Stable, redacted terminal state for an encrypted logical byte stream.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum StreamTerminalError {
-    #[error("Flowersec stream closed")]
-    Closed,
-    #[error("Flowersec stream failed")]
-    Failed,
-    #[error("Flowersec stream reset")]
-    Reset,
-    #[error("Flowersec stream timed out")]
-    TimedOut,
-}
-
 /// Closed, redacted failure set shared by public session, stream, and RPC operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum SessionError {
@@ -775,7 +762,7 @@ pub trait ByteStreamV2: fmt::Debug + Send + Sync + 'static {
     fn kind(&self) -> &str;
     /// Stable terminal failure, if the stream has already terminated abnormally.
     /// The closed enum cannot retain carrier diagnostics, peer payloads, or secrets.
-    fn terminal_error(&self) -> Option<StreamTerminalError>;
+    fn terminal_error(&self) -> Option<SessionError>;
     /// Reads the next non-empty byte chunk, or `None` after peer FIN.
     async fn read(&self) -> Result<Option<Bytes>, SessionError>;
     /// Writes bytes and returns the accepted byte count.

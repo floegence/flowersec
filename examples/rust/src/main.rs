@@ -9,7 +9,6 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
 };
-use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -58,7 +57,7 @@ async fn connect_opaque_artifact(
         async move { write_spend_receipt(receipt_path).await }
     });
     let options = ConnectorOptions::new(vec![std::fs::read(trust_root_path)?])?;
-    let session = match connect(&mut lease, options, CancellationToken::new()).await {
+    let session = match connect(&mut lease, options).await {
         Ok(session) => session,
         Err(error) => {
             eprintln!(

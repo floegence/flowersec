@@ -4,7 +4,6 @@ use flowersec::{
     classify_session_error, connect,
 };
 use serde::{Deserialize, Serialize};
-use tokio_util::sync::CancellationToken;
 
 #[derive(Serialize)]
 struct TypedRequest {
@@ -18,7 +17,7 @@ struct TypedResponse {
 
 async fn compile_public_api(lease: &mut ArtifactLease, peer: &dyn RpcPeer) {
     let options = ConnectorOptions::new(vec![vec![1]]).expect("explicit trust roots");
-    let _ = connect(lease, options, CancellationToken::new()).await;
+    let _ = connect(lease, options).await;
     let response = peer
         .call_typed::<TypedRequest, TypedResponse>(
             7,
@@ -38,6 +37,13 @@ fn exposes_explicit_options_and_typed_rpc() {
 }
 
 #[test]
+fn recovery_classification_has_no_derived_boolean_state() {
+    let source = include_str!("../src/error_classification.rs");
+    assert!(!source.contains("pub retryable:"));
+    assert!(!source.contains("pub refresh_artifact:"));
+}
+
+#[test]
 fn recovery_action_names_match_portable_contract() {
     assert_eq!(ErrorRetryAction::Retry.as_str(), "retry");
     assert_eq!(
@@ -47,7 +53,7 @@ fn recovery_action_names_match_portable_contract() {
     assert_eq!(ErrorRetryAction::Stop.as_str(), "stop");
 
     let closed = classify_session_error(SessionError::Closed);
-    assert!(closed.refresh_artifact);
+    assert_eq!(closed.action, ErrorRetryAction::RefreshArtifact);
     assert!(closed.session_closed);
 }
 

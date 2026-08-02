@@ -11,11 +11,9 @@ const (
 
 // ErrorRetryClassification contains only bounded application recovery policy.
 type ErrorRetryClassification struct {
-	Action          RetryAction
-	Retryable       bool
-	RefreshArtifact bool
-	CallerCanceled  bool
-	SessionClosed   bool
+	Action         RetryAction
+	CallerCanceled bool
+	SessionClosed  bool
 }
 
 // ClassifyConnectError maps a public connection failure to stable recovery policy.
@@ -52,10 +50,8 @@ func ClassifySessionError(err *SessionError) ErrorRetryClassification {
 
 func retryClassification(action RetryAction, callerCanceled, sessionClosed bool) ErrorRetryClassification {
 	return ErrorRetryClassification{
-		Action:          action,
-		Retryable:       action != RetryActionStop,
-		RefreshArtifact: action == RetryActionRefreshArtifact,
-		CallerCanceled:  callerCanceled,
-		SessionClosed:   sessionClosed,
+		Action:         action,
+		CallerCanceled: callerCanceled,
+		SessionClosed:  sessionClosed,
 	}
 }

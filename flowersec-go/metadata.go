@@ -18,9 +18,6 @@ type StreamMetadata struct {
 	values map[string]any
 }
 
-// Metadata is retained as a compatibility name for StreamMetadata.
-type Metadata = StreamMetadata
-
 // NewStreamMetadata validates and defensively copies application stream metadata.
 func NewStreamMetadata(values map[string]any) (StreamMetadata, error) {
 	if values == nil {
@@ -38,9 +35,6 @@ func NewStreamMetadata(values map[string]any) (StreamMetadata, error) {
 	}
 	return StreamMetadata{values: copied}, nil
 }
-
-// NewMetadata is the compatibility spelling for NewStreamMetadata.
-func NewMetadata(values map[string]any) (Metadata, error) { return NewStreamMetadata(values) }
 
 // EmptyStreamMetadata returns validated empty metadata.
 func EmptyStreamMetadata() StreamMetadata { return StreamMetadata{values: map[string]any{}} }

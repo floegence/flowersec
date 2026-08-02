@@ -270,7 +270,7 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
         });
         let options =
             ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
-        let session = connect(&mut lease, options, CancellationToken::new())
+        let session = connect(&mut lease, options)
             .await
             .expect("connect through public facade");
         let unreliable = session
@@ -387,7 +387,7 @@ async fn public_acceptor_establishes_opaque_direct_session() {
     let mut lease = ArtifactLease::new(artifact, || async { Ok(()) });
     let options =
         ConnectorOptions::new(vec![test_cert_der()]).expect("create public connector options");
-    let client = connect(&mut lease, options, CancellationToken::new())
+    let client = connect(&mut lease, options)
         .await
         .expect("connect public client");
     let server = server.await.expect("join public acceptor");

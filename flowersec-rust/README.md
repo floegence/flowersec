@@ -24,7 +24,7 @@ with the shared ten-second connection timeout.
 
 ```rust
 let options = flowersec::ConnectorOptions::new(vec![root_der])?;
-let session = flowersec::connect(&mut lease, options, cancellation).await?;
+let session = flowersec::connect(&mut lease, options).await?;
 ```
 
 ## Transport v2 Support
@@ -64,7 +64,7 @@ The crate root exports only these public categories:
   `IncomingStream`, `JsonObject`, `StreamMetadata`, and `StreamMetadataError`;
 - negotiated unreliable messages: `UnreliableMessageChannel`,
   `UnreliableMessageError`, and `UnreliableSendOutcome`;
-- closed operation failures: `SessionError` and `StreamTerminalError`;
+- closed operation failures: `SessionError`, including byte-stream terminal state;
 - bounded remote application failures: `RpcError`, `RpcCallError`, and typed
   `RpcPeerExt::call_typed(...)` convenience over the object-safe JSON core.
 
@@ -89,8 +89,8 @@ When negotiated, `UnreliableMessageChannel::send(...)` returns
 `DroppedCarrier`. Invalid payloads, unavailable channels, oversized messages,
 cancellation, closure, and internal failures remain public operation errors.
 
-`ConnectErrorCode`, `AcceptErrorCode`, `SessionError`, and
-`StreamTerminalError` are closed, redacted failure sets. `ConnectErrorCode::as_str()`
+`ConnectErrorCode`, `AcceptErrorCode`, and `SessionError` are closed, redacted
+failure sets. `ConnectErrorCode::as_str()`
 and `AcceptErrorCode::as_str()` return stable snake_case public code strings.
 `RpcCallError` keeps a bounded remote `RpcError` separate from session failure;
 its generic display omits the sanitized application message unless the caller
