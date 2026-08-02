@@ -321,6 +321,13 @@ test("measured fixture-heavy race cases stay in the high-cost wave", () => {
     "TestMigrationMetricRequiresPostValidationRPCTrace",
     "TestPerformanceCellWatchdogIsFailClosed",
     "TestEvidenceRejectsSyntheticStatusOnlyReleaseEvidence",
+    "TestMigrationMetricRejectsOutageEventSubstitution",
+    "TestMigrationMetricRequiresSharedRequestIdentity",
+    "TestEveryPerformancePhaseBindsAndExercisesItsFrozenFaults",
+    "TestMigrationRequiresTheValidatedUpdatedPathAndPostValidationRPCIdentity",
+    "TestCapacityEvidenceRejectsGenericStatusArtifacts",
+    "TestSoakEvidenceAcceptsIndependentMeasuredTraceAndResourceTimestamps",
+    "TestEvidenceMatchesAuditedRepositoryState",
   ]) {
     assert.match(
       source,

@@ -893,6 +893,7 @@ func TestFaultMetricQlogBindingMatchesPhaseArtifacts(t *testing.T) {
 	}
 }
 
+// flowersec:race-cost=high
 func TestMigrationMetricRejectsOutageEventSubstitution(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -940,6 +941,7 @@ func TestMigrationMetricRequiresPostValidationRPCTrace(t *testing.T) {
 	assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "fault trace contains")
 }
 
+// flowersec:race-cost=high
 func TestMigrationMetricRequiresSharedRequestIdentity(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -1172,6 +1174,7 @@ func TestPerformancePhaseConfigMustExactlyMatchFrozenNetwork(t *testing.T) {
 	}
 }
 
+// flowersec:race-cost=high
 func TestEveryPerformancePhaseBindsAndExercisesItsFrozenFaults(t *testing.T) {
 	tests := []struct {
 		name, cellID, counter, wantIssue string
@@ -1338,6 +1341,7 @@ func TestTypedRebindAndQUICPMTUDCasesRejectFalseEvidence(t *testing.T) {
 	})
 }
 
+// flowersec:race-cost=high
 func TestMigrationRequiresTheValidatedUpdatedPathAndPostValidationRPCIdentity(t *testing.T) {
 	for _, test := range []struct {
 		name, event, field, value string
@@ -1419,6 +1423,7 @@ func TestRequiredSeededRandomLossEvidenceCannotClaimAnotherSequence(t *testing.T
 	assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "seeded random-loss counters")
 }
 
+// flowersec:race-cost=high
 func TestCapacityEvidenceRejectsGenericStatusArtifacts(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -1627,6 +1632,7 @@ func TestSoakEvidenceRejectsEveryFrozenContractDrift(t *testing.T) {
 	}
 }
 
+// flowersec:race-cost=high
 func TestSoakEvidenceAcceptsIndependentMeasuredTraceAndResourceTimestamps(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -2383,6 +2389,7 @@ func TestEvidenceRequiresSignedSource(t *testing.T) {
 	}
 }
 
+// flowersec:race-cost=high
 func TestEvidenceMatchesAuditedRepositoryState(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
