@@ -519,8 +519,8 @@ test("CodeQL retains every language with bounded jobs outside ordinary push CI",
   const initializeCodeQL = workflow.indexOf("      - name: Initialize CodeQL");
   assert.notEqual(prepareSwift, -1, "Swift dependencies must be built outside CodeQL tracing");
   assert.ok(prepareSwift < initializeCodeQL, "Swift dependencies must be built before CodeQL initialization");
-  assert.match(workflow, /^        run: \|\n          swift package --skip-update --only-use-versions-from-resolved-file resolve\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec$/m);
-  assert.match(workflow, /^      - name: Build Swift library\n        if: matrix\.language == 'swift'\n        run: \|\n          find flowersec-swift\/Sources\/Flowersec -type f -name '\*\.swift' -exec touch \{\} \+\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec$/m);
+  assert.match(workflow, /^        run: \|\n          swift package --skip-update --only-use-versions-from-resolved-file resolve\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8$/m);
+  assert.match(workflow, /^      - name: Build Swift library\n        if: matrix\.language == 'swift'\n        run: \|\n          find flowersec-swift\/Sources\/Flowersec -type f -name '\*\.swift' -exec touch \{\} \+\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8$/m);
   assert.match(workflow, /^        if: matrix\.language == 'go'\n        uses: github\/codeql-action\/autobuild@[0-9a-f]{40} # v4$/m);
   assert.match(workflow, /^        uses: github\/codeql-action\/analyze@[0-9a-f]{40} # v4$/m);
 });

@@ -97,7 +97,7 @@ jobs:
         if: matrix.language == 'swift'
         run: |
           swift package --skip-update --only-use-versions-from-resolved-file resolve
-          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec
+          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
@@ -110,7 +110,7 @@ jobs:
         if: matrix.language == 'swift'
         run: |
           find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +
-          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec
+          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8
 
       - name: Autobuild Go
         if: matrix.language == 'go'
