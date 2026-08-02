@@ -22,6 +22,20 @@ function defaultRun(command, args, options = {}) {
   return result.stdout;
 }
 
+function readRegularFileNoFollow(filePath, label) {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error(`${label} is not a regular file: ${filePath}`);
+    return fs.readFileSync(descriptor);
+  } catch (error) {
+    if (error.code === "ELOOP") throw new Error(`${label} is not a regular file: ${filePath}`);
+    throw error;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
 const ignoredModuleSearchDirectories = new Set([
   ".build",
   ".git",
@@ -172,7 +186,7 @@ export function prepareOfflineGoToolchain({
   }
   const binaryName = process.platform === "win32" ? "go.exe" : "go";
   const binary = fs.realpathSync(path.join(reportedRoot, "bin", binaryName));
-  if (!fs.statSync(binary).isFile()) throw new Error(`Go toolchain is not a regular file: ${binary}`);
+  const binaryContents = readRegularFileNoFollow(binary, "Go toolchain");
   const version = run(binary, ["version"], {
     cwd: repoRoot,
     env: { GOTOOLCHAIN: "local", GOWORK: "off" },
@@ -187,7 +201,7 @@ export function prepareOfflineGoToolchain({
     sourceHead,
     version: goToolchain,
     binary,
-    sha256: createHash("sha256").update(fs.readFileSync(binary)).digest("hex"),
+    sha256: createHash("sha256").update(binaryContents).digest("hex"),
   };
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   const temporary = `${statePath}.${process.pid}.tmp`;

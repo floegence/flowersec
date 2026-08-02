@@ -133,3 +133,13 @@ test("offline stages bind the exact prefetched Go toolchain to the source HEAD",
   assert.deepEqual(calls[0].options.env, { GOTOOLCHAIN: "go1.26.5", GOWORK: "off" });
   assert.deepEqual(calls[1].options.env, { GOTOOLCHAIN: "local", GOWORK: "off" });
 });
+
+test("offline toolchain digest reads the verified regular file descriptor", () => {
+  const source = fs.readFileSync(checkerPath, "utf8");
+  assert.match(source, /openSync\(filePath, fs\.constants\.O_RDONLY \| fs\.constants\.O_NOFOLLOW\)/);
+  assert.match(source, /fstatSync\(descriptor\)/);
+  assert.match(source, /readFileSync\(descriptor\)/);
+  assert.match(source, /readRegularFileNoFollow\(binary/);
+  assert.doesNotMatch(source, /statSync\(binary\)/);
+  assert.doesNotMatch(source, /readFileSync\(binary\)/);
+});

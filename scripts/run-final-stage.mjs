@@ -13,6 +13,20 @@ if (!Number.isInteger(seconds) || seconds < 1 || seconds > 595
   process.exit(2);
 }
 
+function readRegularFileNoFollow(filePath, label) {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error(`${label} must be a regular file`);
+    return fs.readFileSync(descriptor);
+  } catch (error) {
+    if (error.code === "ELOOP") throw new Error(`${label} must be a regular file`);
+    throw error;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
 function offlineEnvironment() {
   if (stage === "preflight" || process.env.GOSUMDB !== "off") return process.env;
   const makeFlags = (process.env.MAKEFLAGS ?? "").split(/\s+/).filter(Boolean);
@@ -24,9 +38,7 @@ function offlineEnvironment() {
   ));
   if (makeDryRun) return process.env;
   const statePath = path.join(process.cwd(), ".flowersec", "final-go-toolchain.json");
-  const linked = fs.lstatSync(statePath);
-  if (!linked.isFile() || linked.isSymbolicLink()) throw new Error("offline Go toolchain state must be a regular file");
-  const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const state = JSON.parse(readRegularFileNoFollow(statePath, "offline Go toolchain state").toString("utf8"));
   if (state.schema !== "flowersec-final-go-toolchain-v1"
     || state.version !== "go1.26.5"
     || typeof state.binary !== "string"
@@ -35,11 +47,8 @@ function offlineEnvironment() {
     || !/^[0-9a-f]{40}$/.test(state.sourceHead)) {
     throw new Error("offline Go toolchain state is invalid");
   }
-  const binaryInfo = fs.lstatSync(state.binary);
-  if (!binaryInfo.isFile() || binaryInfo.isSymbolicLink()) {
-    throw new Error("offline Go toolchain must be a regular file");
-  }
-  const digest = createHash("sha256").update(fs.readFileSync(state.binary)).digest("hex");
+  const binaryContents = readRegularFileNoFollow(state.binary, "offline Go toolchain");
+  const digest = createHash("sha256").update(binaryContents).digest("hex");
   if (digest !== state.sha256) throw new Error("offline Go toolchain digest changed after preflight");
   const head = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" });
   if (head.status !== 0 || head.stdout.trim() !== state.sourceHead) {

@@ -106,6 +106,16 @@ test("offline stages use the exact prefetched Go toolchain and reject drift", ()
   }
 });
 
+test("offline toolchain state and binary reads use no-follow file descriptors", () => {
+  const source = fs.readFileSync(runner, "utf8");
+  assert.match(source, /openSync\(filePath, fs\.constants\.O_RDONLY \| fs\.constants\.O_NOFOLLOW\)/);
+  assert.match(source, /fstatSync\(descriptor\)/);
+  assert.match(source, /readFileSync\(descriptor\)/);
+  assert.match(source, /readRegularFileNoFollow\(statePath/);
+  assert.match(source, /readRegularFileNoFollow\(state\.binary/);
+  assert.doesNotMatch(source, /lstatSync\(/);
+});
+
 test("final stage kill fallbacks do not delay a drained process group", () => {
   const source = fs.readFileSync(runner, "utf8");
   assert.equal(
