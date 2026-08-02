@@ -133,7 +133,8 @@ fi
 
 # Keep expensive source-level contracts distributed across the bounded worker
 # pool without relying on host-specific timing profiles. Function body span is
-# the default stable cost proxy; measured fixture-heavy tests may opt into the
+# the default stable cost proxy. Tests that build the complete evidence fixture
+# are discovered from their helper call; other measured cases may opt into the
 # closed flowersec:race-cost=high annotation.
 test_weights="$temp_dir/test-weights"
 : > "$test_weights"
@@ -159,6 +160,9 @@ for source_file in "$package_dir"/*_test.go; do
         cost = next_cost
       }
       next_cost = 0
+    }
+    /completeReport[[:space:]]*\(/ {
+      if (name != "") cost = 1000000
     }
     END {
       if (name != "") {
