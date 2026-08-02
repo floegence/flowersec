@@ -167,9 +167,22 @@ bytes. The next observed PTO interval was approximately 1.020 seconds, and the
 frozen jitter schedule permits a 195-millisecond one-way delay. Composing the
 first-PTO position, the next PTO, maximum one-way delay, and two seconds of
 application and scheduler margin gives a 52.876-second lower bound. The edge
-bulk phase deadline is therefore fifty-three seconds. This changes only the
-phase budget; the network, payloads, operation count, certificate, thresholds,
-resource accounting, and zero-residual requirements remain unchanged.
+former bulk phase deadline was therefore fifty-three seconds. A later
+exact-main collection exposed a longer WQ acknowledgment-loss tail. The raw
+QUIC receiver had received stream data through offset 119,397 and emitted
+three acknowledgment waves, but the sender received no acknowledgment after
+approximately 47.789 seconds. Its fourth PTO probes were sent at approximately
+54.264 seconds and the next PTO was scheduled for approximately 61.167
+seconds, after the fifty-three-second phase reset at approximately 60.540
+seconds. Relative to the inferred phase start, the next probe alone required
+approximately 53.627 seconds. Three frozen maximum one-way delays cover the
+probe, acknowledgment, and remaining data path; serializing the remaining
+12,308 wire bytes at the unchanged 1 Mbps rate requires another 98.464
+milliseconds. Adding the existing two-second application and scheduler margin
+produces a 56.310-second lower bound, so the edge bulk phase deadline is
+fifty-seven seconds. This changes only the phase budget; the network, payloads,
+operation count, certificate, thresholds, resource accounting, and
+zero-residual requirements remain unchanged.
 The edge outer cleanup deadline is twelve seconds. A frozen Ubuntu 24 run
 measured a 13,138.9-millisecond server/client clock offset and
 180.15-millisecond median one-way delay. Its final bulk payload reached the
@@ -194,7 +207,7 @@ client received no more packets, but three PTOs kept close/control traffic
 active through approximately 25.703 seconds before the outer seven-second
 timeout fired. Twelve seconds composes the measured completion allowance,
 rounded up to four seconds, the seven-second internal close bound, and one
-second of scheduler margin. One run's total phase limit is 146
+second of scheduler margin. One run's total phase limit is 150
 seconds, below the unchanged five-minute cell watchdog. This changes no
 completion handshake, internal close bound, network, workload, certificate,
 retry, zero-residual, or evidence semantics.

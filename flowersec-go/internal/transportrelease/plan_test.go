@@ -42,7 +42,7 @@ func TestLoadReleasePlanUsesFrozenWeakNetworkWorkloads(t *testing.T) {
 		plan.Edge.Cold.Operations != 10 || plan.Edge.Cold.StartRatePerSecond != 5 || plan.Edge.Cold.Retries != 0 ||
 		plan.Edge.Cold.OperationDeadlineSeconds != 53 || plan.Edge.Cold.PhaseDeadlineSeconds != 55 ||
 		plan.Edge.RPC.Operations != 30 || plan.Edge.RPC.Workers != 30 || plan.Edge.RPC.OperationDeadlineSeconds != 24 || plan.Edge.RPC.PhaseDeadlineSeconds != 26 ||
-		plan.Edge.Bulk.ScoreBytesPerDirection != 128<<10 || plan.Edge.Bulk.PhaseDeadlineSeconds != 53 ||
+		plan.Edge.Bulk.ScoreBytesPerDirection != 128<<10 || plan.Edge.Bulk.PhaseDeadlineSeconds != 57 ||
 		plan.Edge.CleanupDeadlineSeconds != 12 {
 		t.Fatalf("edge workload = %+v", plan.Edge)
 	}
@@ -82,16 +82,20 @@ func TestEdgeBulkBudgetCoversObservedMixedTunnelTailRecovery(t *testing.T) {
 	}
 
 	const (
-		formerDeadline             = 50 * time.Second
-		firstPTOBeforeDeadline     = 339 * time.Millisecond
-		nextPTOInterval            = 1020 * time.Millisecond
+		formerDeadline             = 53 * time.Second
+		deadlineResetAt            = 60*time.Second + 540*time.Millisecond
+		phaseStartedAt             = deadlineResetAt - formerDeadline
+		nextPTOScheduledAt         = 61*time.Second + 167*time.Millisecond
 		maximumFrozenOneWayDelay   = 195 * time.Millisecond
+		outstandingWireBytes       = 12_308
+		frozenRateBitsPerSecond    = 1_000_000
 		applicationSchedulerMargin = 2 * time.Second
 	)
-	minimum := formerDeadline - firstPTOBeforeDeadline + nextPTOInterval + maximumFrozenOneWayDelay + applicationSchedulerMargin
+	remainingSerialization := time.Duration(outstandingWireBytes*8) * time.Second / frozenRateBitsPerSecond
+	minimum := nextPTOScheduledAt - phaseStartedAt + 3*maximumFrozenOneWayDelay + remainingSerialization + applicationSchedulerMargin
 	budget := time.Duration(plan.Edge.Bulk.PhaseDeadlineSeconds) * time.Second
 	if budget < minimum {
-		t.Fatalf("edge bulk deadline = %s, want at least %s for the observed tail PTO recovery", budget, minimum)
+		t.Fatalf("edge bulk deadline = %s, want at least %s for the observed ACK-loss tail recovery", budget, minimum)
 	}
 }
 
