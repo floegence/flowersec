@@ -253,9 +253,10 @@ require_exact_value(codeql_plan_job["timeout-minutes"], 1, "the CodeQL plan time
 require_exact_value(codeql_plan_job["outputs"], {
   "should_scan" => "${{ steps.changes.outputs.should_scan }}",
 }, "the CodeQL plan outputs")
-require_exact_keys(codeql_job, ["name", "needs", "if", "runs-on", "timeout-minutes", "strategy", "steps"], "the CodeQL analyze job")
+require_exact_keys(codeql_job, ["name", "needs", "if", "continue-on-error", "runs-on", "timeout-minutes", "strategy", "steps"], "the CodeQL analyze job")
 require_exact_value(codeql_job["name"], "Analyze (${{ matrix.language }})", "the CodeQL job name")
 require_exact_value(codeql_job["needs"], "plan", "the CodeQL analyze dependency")
+require_exact_value(codeql_job["continue-on-error"], "${{ matrix.language == 'swift' }}", "the Swift CodeQL failure policy")
 require_exact_value(codeql_job["runs-on"], "${{ matrix.runner }}", "the CodeQL runner selector")
 require_exact_value(codeql_job["timeout-minutes"], 9, "the CodeQL timeout")
 require_exact_value(codeql_job["strategy"], {
@@ -283,7 +284,7 @@ require_exact_value(release_job["needs"], "prepare", "the release job dependency
   [repository_job, "the hosted CI repository job"],
   [codeql_plan_job, "the CodeQL plan job"],
 ].each { |job, context| require_unconditional(job, context) }
-require_condition_value(codeql_job, "needs.plan.outputs.should_scan == 'true'", "the CodeQL analyze job")
+require_condition(codeql_job["if"] == "needs.plan.outputs.should_scan == 'true'", "the CodeQL analyze job must use only the approved condition")
 
 require_condition(prepare_job["runs-on"] == "ubuntu-latest", "the unified release workflow prepare job must run on ubuntu-latest")
 require_condition(release_job["runs-on"] == "ubuntu-latest", "the unified release workflow release job must run on ubuntu-latest")

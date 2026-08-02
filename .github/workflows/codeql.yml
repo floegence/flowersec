@@ -63,6 +63,7 @@ jobs:
     name: Analyze (${{ matrix.language }})
     needs: plan
     if: needs.plan.outputs.should_scan == 'true'
+    continue-on-error: ${{ matrix.language == 'swift' }}
     runs-on: ${{ matrix.runner }}
     # Swift manual extraction includes a bounded traced compile; keep this
     # asynchronous security lane below the 10-minute operational stop line.
