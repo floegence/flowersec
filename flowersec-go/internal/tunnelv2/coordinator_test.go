@@ -165,11 +165,11 @@ func TestCoordinatorCredentialReplayDoesNotReplacePendingLeg(t *testing.T) {
 	assertSuccessResponse(t, server)
 	controlClient := openStream(t, clientEndpoint)
 	controlServer := acceptStream(t, serverEndpoint)
-	_ = controlClient.Reset()
-	_ = controlServer.Reset()
 	cancel()
 	assertServeCanceled(t, clientDone)
 	assertServeCanceled(t, serverDone)
+	_ = controlClient.Reset()
+	_ = controlServer.Reset()
 	assertLeaseReleasedOnce(t, client)
 	assertLeaseReleasedOnce(t, replay)
 }
@@ -201,11 +201,11 @@ func TestCoordinatorDuplicateRoleReplacesWholePendingGeneration(t *testing.T) {
 	assertSuccessResponse(t, server)
 	controlClient := openStream(t, clientEndpoint)
 	controlServer := acceptStream(t, serverEndpoint)
-	_ = controlClient.Reset()
-	_ = controlServer.Reset()
 	cancel()
 	assertServeCanceled(t, newDone)
 	assertServeCanceled(t, serverDone)
+	_ = controlClient.Reset()
+	_ = controlServer.Reset()
 }
 
 func TestCoordinatorReplacementRequiresVerifiedPermission(t *testing.T) {
