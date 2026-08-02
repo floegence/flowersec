@@ -73,7 +73,7 @@ jobs:
             build-mode: none
             runner: ubuntu-latest
           - language: c-cpp
-            build-mode: autobuild
+            build-mode: none
             runner: ubuntu-latest
           - language: go
             build-mode: autobuild
@@ -85,13 +85,17 @@ jobs:
             build-mode: none
             runner: ubuntu-latest
           - language: rust
-            build-mode: autobuild
+            build-mode: none
             runner: ubuntu-latest
           - language: swift
             build-mode: manual
             runner: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Prepare Swift dependencies
+        if: matrix.language == 'swift'
+        run: swift package --skip-update --only-use-versions-from-resolved-file resolve
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
@@ -102,10 +106,10 @@ jobs:
 
       - name: Build Swift library
         if: matrix.language == 'swift'
-        run: swift build --target Flowersec
+        run: swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec
 
-      - name: Autobuild compiled language
-        if: matrix.build-mode == 'autobuild'
+      - name: Autobuild Go
+        if: matrix.language == 'go'
         uses: github/codeql-action/autobuild@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
 
       - name: Analyze

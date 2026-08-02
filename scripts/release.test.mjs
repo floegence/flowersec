@@ -511,9 +511,17 @@ test("CodeQL retains every language with bounded jobs outside ordinary push CI",
   for (const language of ["actions", "c-cpp", "go", "javascript-typescript", "ruby", "rust", "swift"]) {
     assert.match(workflow, new RegExp("^          - language: " + language + "$", "m"));
   }
+  assert.match(workflow, /^          - language: c-cpp\n            build-mode: none$/m);
+  assert.match(workflow, /^          - language: rust\n            build-mode: none$/m);
   assert.match(workflow, /^        uses: github\/codeql-action\/init@[0-9a-f]{40} # v4$/m);
   assert.match(workflow, /^          languages: \$\{\{ matrix\.language \}\}\n          build-mode: \$\{\{ matrix\.build-mode \}\}\n          queries: security-extended$/m);
-  assert.match(workflow, /^        run: swift build --target Flowersec$/m);
+  const prepareSwift = workflow.indexOf("      - name: Prepare Swift dependencies");
+  const initializeCodeQL = workflow.indexOf("      - name: Initialize CodeQL");
+  assert.notEqual(prepareSwift, -1, "Swift dependencies must be prepared outside CodeQL tracing");
+  assert.ok(prepareSwift < initializeCodeQL, "Swift dependencies must be prepared before CodeQL initialization");
+  assert.match(workflow, /^        run: swift package --skip-update --only-use-versions-from-resolved-file resolve$/m);
+  assert.match(workflow, /^        run: swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec$/m);
+  assert.match(workflow, /^        if: matrix\.language == 'go'\n        uses: github\/codeql-action\/autobuild@[0-9a-f]{40} # v4$/m);
   assert.match(workflow, /^        uses: github\/codeql-action\/analyze@[0-9a-f]{40} # v4$/m);
 });
 
