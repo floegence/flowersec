@@ -74,6 +74,18 @@ describe("opaque public SessionV2 projection", () => {
     expect((await session.waitTermination()).error.message).not.toContain("carrier");
   });
 
+  test("classifies a browser carrier close without exposing browser carrier details", async () => {
+    const internalError = Object.assign(new Error("private WebTransport detail"), {
+      name: "BrowserWebTransportCarrierInternalStageError",
+      code: "carrier_closed",
+    });
+    const stream = fakeStream(internalError);
+    const session = projectSessionV2(fakeSession(stream, internalError));
+
+    await expect(session.waitTermination()).resolves.toEqual({ error: new SessionError("closed") });
+    expect((await session.waitTermination()).error.message).not.toContain("WebTransport");
+  });
+
   test("projects RPC application outcomes as a discriminated union", async () => {
     const terminal = new Error("closed");
     const internal = fakeSession(fakeStream(terminal), terminal);

@@ -126,6 +126,12 @@ function sessionErrorCode(error: unknown): SessionErrorCode {
       if (code === "closed") return "closed";
       if (code === "aborted") return "canceled";
     }
+    if (error.name === "BrowserWebTransportCarrierInternalStageError") {
+      const code = (error as Error & { code?: unknown }).code;
+      if (code === "carrier_closed") return "closed";
+      if (code === "operation_aborted") return "canceled";
+      if (code === "stream_reset") return "stream_reset";
+    }
     if (error.name === "SessionV2Error") {
       const code = (error as Error & { code?: unknown }).code;
       switch (code) {
