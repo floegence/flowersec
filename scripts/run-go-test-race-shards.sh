@@ -239,10 +239,13 @@ for shard in "${shard_order[@]}"; do
   shard_tests="$(wc -l < "$shard_file" | tr -d ' ')"
   log_file="$temp_dir/shard-$shard.log"
   done_file="$temp_dir/shard-$shard.done"
+  worker_temp="$temp_dir/worker-$shard"
+  mkdir -p "$worker_temp"
   (
     trap 'printf "done\n" > "$done_file"' EXIT
     echo "running $mode shard $((shard + 1))/$shard_count with $shard_tests tests"
     cd "$package_dir"
+    export TMPDIR="$worker_temp"
     if [[ -n "$worker_gomaxprocs" ]]; then
       export GOMAXPROCS="$worker_gomaxprocs"
     fi

@@ -533,6 +533,59 @@ exit 2
 	}
 }
 
+func TestRaceShardRunnerIsolatesWorkerTemporaryDirectories(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "worker-tmpdirs.log")
+	goPath := filepath.Join(tempDir, "go")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while (( $# > 0 )); do
+  if [[ "$1" == "-o" ]]; then output="${2:-}"; shift; fi
+  shift
+done
+cat > "$output" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-test.list" ]]; then
+  printf 'TestOne\nTestTwo\n'
+  exit 0
+fi
+printf '%s\n' "${TMPDIR:-unset}" >> "${RACE_SHARD_LOG:?}"
+EOF
+chmod +x "$output"
+`
+	if err := os.WriteFile(goPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "2", "normal", "1")
+	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "TMPDIR="+tempDir)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("runner failed: %v\n%s", err, output)
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpdirs := strings.Fields(string(logged))
+	if len(tmpdirs) != 2 {
+		t.Fatalf("worker tmpdirs = %q, want two", tmpdirs)
+	}
+	if tmpdirs[0] == tmpdirs[1] {
+		t.Fatalf("workers share TMPDIR %q", tmpdirs[0])
+	}
+	for _, workerTemp := range tmpdirs {
+		if !strings.HasPrefix(filepath.Base(filepath.Dir(workerTemp)), "flowersec-race-shards.") {
+			t.Fatalf("worker TMPDIR %q is outside runner scratch", workerTemp)
+		}
+		if _, err := os.Stat(workerTemp); !os.IsNotExist(err) {
+			t.Fatalf("worker TMPDIR %q remains after success: %v", workerTemp, err)
+		}
+	}
+}
+
 func TestRaceShardRunnerStopsSchedulingAfterFirstFailure(t *testing.T) {
 	repoRoot := filepath.Clean(filepath.Join("..", ".."))
 	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
