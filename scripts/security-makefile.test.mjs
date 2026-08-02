@@ -307,6 +307,7 @@ test("measured fixture-heavy race cases stay in the high-cost wave", () => {
   const source = fs.readFileSync(path.join(sourceRoot, "tools/transportcheck/main_test.go"), "utf8");
   for (const name of [
     "TestEvidenceAcceptsCompleteSyntheticUnitEvidence",
+    "TestRequiredCaseIdentityBindsCaseArtifacts",
     "TestMigrationMetricRequiresSharedQlogRPCTimestamp",
   ]) {
     assert.match(

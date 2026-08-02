@@ -817,6 +817,7 @@ func TestTraceArtifactsRequireStrictlyIncreasingTimestamps(t *testing.T) {
 	}
 }
 
+// flowersec:race-cost=high
 func TestRequiredCaseIdentityBindsCaseArtifacts(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
