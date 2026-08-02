@@ -153,7 +153,7 @@ for source_file in "$package_dir"/*_test.go; do
     /^[[:space:]]*func[[:space:]]+/ {
       if (name != "") {
         value = NR - start
-        if (cost > value) value = cost
+        value += cost
         print name, value
       }
       name = ""
@@ -172,7 +172,7 @@ for source_file in "$package_dir"/*_test.go; do
     END {
       if (name != "") {
         value = NR - start + 1
-        if (cost > value) value = cost
+        value += cost
         print name, value
       }
     }
