@@ -135,7 +135,8 @@ func (runtime *runtimeServer) Serve(ctx context.Context) error {
 		TLSConfig:         runtime.tlsConfig.Clone(),
 	}
 	runtime.addCloser(httpServerCloser{server: wssHTTP, timeout: runtime.config.shutdownTimeout()})
-	wssTLS := tls.NewListener(wssListener, runtime.tlsConfig.Clone())
+	wssTLS := newWebSocketHandshakeListener(tls.NewListener(wssListener, runtime.tlsConfig.Clone()))
+	wssHTTP.ConnState = wssTLS.connState
 
 	errorsCh := make(chan error, 4)
 	runtime.listenerWG.Add(4)

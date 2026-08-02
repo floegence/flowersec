@@ -40,3 +40,10 @@ func prepareWebSocketHandshakeConnection(conn net.Conn) func() {
 		})
 	}
 }
+
+// PrepareWebSocketHandshakeConnection keeps Linux TCP recovery linear only
+// while a WSS handshake is in flight. The returned restore function is safe to
+// call more than once.
+func PrepareWebSocketHandshakeConnection(conn net.Conn) func() {
+	return prepareWebSocketHandshakeConnection(conn)
+}
