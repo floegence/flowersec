@@ -167,7 +167,7 @@ for source_file in "$package_dir"/*_test.go; do
       next_cost = 0
     }
     /completeReport[[:space:]]*\(/ {
-      if (name != "") cost = 1000000
+      if (name != "" && cost < 1000000) cost = 1000000
     }
     END {
       if (name != "") {

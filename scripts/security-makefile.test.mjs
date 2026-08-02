@@ -497,6 +497,63 @@ chmod +x "$output"
   }
 });
 
+test("race shard runner preserves critical priority over fixture detection", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-race-critical-"));
+  try {
+    const packageDirectory = path.join(root, "package");
+    const binDirectory = path.join(root, "bin");
+    fs.mkdirSync(packageDirectory);
+    fs.mkdirSync(binDirectory);
+    fs.writeFileSync(path.join(packageDirectory, "priority_test.go"), `package fixture
+
+func TestFixtureHeavy() {
+  completeReport()
+}
+
+// flowersec:race-cost=critical
+func TestCriticalFixtureHeavy() {
+  completeReport()
+}
+
+func TestShort() {}
+`);
+    const fakeGo = path.join(binDirectory, "go");
+    fs.writeFileSync(fakeGo, `#!/bin/sh
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then output="$2"; shift; fi
+  shift
+done
+cat > "$output" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-test.list" ]; then
+  printf 'TestFixtureHeavy\\nTestCriticalFixtureHeavy\\nTestShort\\n'
+  exit 0
+fi
+printf 'invocation %s\\n' "$*"
+EOF
+chmod +x "$output"
+`);
+    fs.chmodSync(fakeGo, 0o755);
+
+    const result = spawnSync(
+      path.join(sourceRoot, "scripts/run-go-test-race-shards.sh"),
+      [packageDirectory, "3", "1m", "1", "normal"],
+      {
+        cwd: sourceRoot,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}` },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const starts = [...result.stdout.matchAll(/-test\.run \^\((Test[A-Za-z0-9_]+)\)\$/g)]
+      .map((match) => match[1]);
+    assert.deepEqual(starts, ["TestCriticalFixtureHeavy", "TestFixtureHeavy", "TestShort"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("race shard runner retains diagnostics after SIGTERM", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-race-signal-"));
   const packageDirectory = path.join(root, "package");
