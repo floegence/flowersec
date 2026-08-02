@@ -21,6 +21,7 @@ use crate::{
     session_v2::{RpcHandlerV2, SessionConfigV2, establish_session_v2},
     transport_v2::{
         CarrierSessionV2, CarrierUnreliableMessageErrorV2, PathKind, SessionError, SessionRole,
+        StreamMetadata,
     },
 };
 use base64::{
@@ -241,7 +242,7 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
                 .await
                 .expect("finish response");
             let outbound = session
-                .open_stream("facade-server", serde_json::Map::new())
+                .open_stream("facade-server", StreamMetadata::empty())
                 .await
                 .expect("open server stream");
             outbound
@@ -315,7 +316,7 @@ async fn public_connector_runs_localhost_raw_quic_direct_and_tunnel_end_to_end()
             Ok(crate::UnreliableSendOutcome::DroppedExpired)
         );
         let stream = session
-            .open_stream("facade-client", serde_json::Map::new())
+            .open_stream("facade-client", StreamMetadata::empty())
             .await
             .expect("open client stream");
         stream
@@ -392,7 +393,7 @@ async fn public_acceptor_establishes_opaque_direct_session() {
     let server = server.await.expect("join public acceptor");
 
     let outbound = client
-        .open_stream("acceptor-e2e", serde_json::Map::new())
+        .open_stream("acceptor-e2e", StreamMetadata::empty())
         .await
         .expect("open public stream");
     outbound
@@ -1246,7 +1247,7 @@ async fn raw_quic_control_and_rpc_slots_preserve_one_data_stream_capacity() {
     assert_eq!(rpc["capacity"], "reserved");
 
     let (first, first_incoming) = tokio::join!(
-        client.open_stream("first", serde_json::Map::new()),
+        client.open_stream("first", StreamMetadata::empty()),
         server.accept_stream(),
     );
     let first = first.expect("first logical stream");
@@ -1254,7 +1255,7 @@ async fn raw_quic_control_and_rpc_slots_preserve_one_data_stream_capacity() {
     assert!(
         tokio::time::timeout(
             Duration::from_millis(100),
-            client.open_stream("blocked", serde_json::Map::new()),
+            client.open_stream("blocked", StreamMetadata::empty()),
         )
         .await
         .is_err(),
@@ -1268,7 +1269,7 @@ async fn raw_quic_control_and_rpc_slots_preserve_one_data_stream_capacity() {
         .expect("observe peer after reset control record");
     let (third, third_incoming) = tokio::time::timeout(Duration::from_secs(2), async {
         tokio::join!(
-            client.open_stream("third", serde_json::Map::new()),
+            client.open_stream("third", StreamMetadata::empty()),
             server.accept_stream(),
         )
     })
@@ -1601,7 +1602,7 @@ async fn rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel() {
             .expect("admit and establish Rust SessionV2");
 
         let stream = session
-            .open_stream("rust-open", serde_json::Map::new())
+            .open_stream("rust-open", StreamMetadata::empty())
             .await
             .expect("Rust opens logical stream");
         stream
@@ -1639,7 +1640,7 @@ async fn rust_and_go_run_full_session_v2_over_raw_quic_direct_and_tunnel() {
             .expect("Rust to Go RPC after rekey");
         assert_eq!(response["epoch"], 1);
         let done = session
-            .open_stream("done", serde_json::Map::new())
+            .open_stream("done", StreamMetadata::empty())
             .await
             .expect("open done stream");
         let response = session

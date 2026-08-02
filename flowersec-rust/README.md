@@ -61,7 +61,7 @@ The crate root exports only these public categories:
 - runtime-owned direct acceptance: `AcceptorOptions`, `Acceptor`,
   `AcceptError`, and `AcceptErrorCode`;
 - carrier-neutral session behavior: `Session`, `SessionTermination`, `RpcPeer`, `ByteStream`,
-  `IncomingStream`, and `JsonObject`;
+  `IncomingStream`, `JsonObject`, `StreamMetadata`, and `StreamMetadataError`;
 - negotiated unreliable messages: `UnreliableMessageChannel`,
   `UnreliableMessageError`, and `UnreliableSendOutcome`;
 - closed operation failures: `SessionError` and `StreamTerminalError`;
@@ -70,6 +70,9 @@ The crate root exports only these public categories:
 
 Parse an opaque artifact with `Artifact::parse`, bind its durable single-use
 callback with `ArtifactLease`, and establish a session through `connect(...)`.
+Construct application stream metadata with `StreamMetadata::try_from(...)`, or
+use `StreamMetadata::empty()`; invalid values fail before `Session::open_stream`.
+The lease deliberately exposes no connector-owned committed-state accessor.
 Native server runtimes bind `Acceptor` with explicit TLS and resource policy,
 then pass an opaque `Artifact` to `accept`; successful acceptance returns the
 same carrier-neutral `Session` interface. Duplicate concurrent registration of
@@ -98,7 +101,8 @@ does not retain overlapping generic compatibility variants.
 
 The recovery classifiers distinguish retrying an operation on the current
 session from acquiring a fresh artifact and session. They never authorize reuse
-of a durably committed lease or credential.
+of a durably committed lease or credential. Pass a `ConnectError` directly to
+`classify_connect_error(...)`; callers do not extract its code first.
 
 ## Capability Layers
 
@@ -108,6 +112,9 @@ carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
 error classifiers. `classify_connect_error(...)` and
 `classify_session_error(...)` return the stable cross-language recovery decision;
 callers should not compare raw Rust error variants with other SDKs.
+
+Only this portable core is required to align across languages. Complete SDK
+profiles and language conveniences intentionally differ by runtime.
 
 The Rust SDK profile owns native raw QUIC dialing and runtime-owned direct
 acceptance through `Acceptor`. Its language convenience is `RpcPeerExt`, which

@@ -4,6 +4,8 @@ Public connection and session failures expose only a stable bounded code. Error 
 
 Cancellation and deadlines preserve `context.Canceled` and `context.DeadlineExceeded` semantics where the language supports causal errors. Protocol, admission, transport, and cryptographic implementation errors are mapped to closed public outcomes before crossing an SDK boundary.
 
+Public connection input and option validation also crosses the connection boundary as a closed `ConnectError` value. Callers can pass the error directly to the language's connection classifier instead of maintaining a second recovery path for constructor or option exceptions.
+
 Remote RPC handlers may return a bounded application code and sanitized message. SDKs preserve that application outcome separately from transport and session failures; they never attach the underlying carrier or protocol cause.
 
 Raw public error enums and code taxonomies are SDK-local because each runtime has different cancellation, TLS, and transport integration boundaries. The portable contract is the shared recovery decision plus the separation between remote RPC application errors and connection/session failures; consumers must not compare raw codes across languages.

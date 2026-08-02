@@ -96,7 +96,9 @@ describe("SessionV2 proxy runtime", () => {
 
     expect(session.opens).toEqual([{
       kind: "flowersec-proxy/http1",
-      options: expect.objectContaining({ metadata: { protocol: "flowersec.proxy.http", version: 2 } }),
+      options: expect.objectContaining({
+        metadata: expect.objectContaining({ values: { protocol: "flowersec.proxy.http", version: 2 } }),
+      }),
     }]);
     expect(messages.map((message) => message.type)).toEqual([
       "flowersec-proxy:response_meta",
@@ -130,7 +132,9 @@ describe("SessionV2 proxy runtime", () => {
     expect(opened).toEqual({ stream, protocol: "chat" });
     expect(session.opens[0]).toEqual({
       kind: "flowersec-proxy/ws",
-      options: { metadata: { protocol: "flowersec.proxy.websocket", version: 2 } },
+      options: {
+        metadata: expect.objectContaining({ values: { protocol: "flowersec.proxy.websocket", version: 2 } }),
+      },
     });
     runtime.dispose();
   });

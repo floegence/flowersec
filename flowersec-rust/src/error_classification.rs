@@ -1,4 +1,4 @@
-use crate::{ConnectErrorCode, SessionError};
+use crate::{ConnectError, ConnectErrorCode, SessionError};
 
 /// Carrier-neutral next step for a redacted public failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,8 +28,8 @@ pub struct ErrorRetryClassification {
     pub session_closed: bool,
 }
 
-pub const fn classify_connect_error(code: ConnectErrorCode) -> ErrorRetryClassification {
-    match code {
+pub const fn classify_connect_error(error: ConnectError) -> ErrorRetryClassification {
+    match error.code() {
         ConnectErrorCode::InvalidInput => classification(ErrorRetryAction::Stop, false, false),
         ConnectErrorCode::Canceled => classification(ErrorRetryAction::Stop, true, false),
         ConnectErrorCode::Expired

@@ -2,6 +2,7 @@ package flowersec
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/fserrors"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
@@ -124,6 +126,59 @@ func TestConnectorFreezesHandlersOnlyAfterLocalValidation(t *testing.T) {
 	}
 	if err := handlers.HandleStream("late", func(context.Context, IncomingStream) {}); !errors.Is(err, ErrSessionHandlersFrozen) {
 		t.Fatalf("HandleStream() after valid connector = %v, want frozen", err)
+	}
+}
+
+func TestConnectorAllowsEmptyOriginForNonWebTransportProfiles(t *testing.T) {
+	artifact := mustParseInternalFixtureArtifact(t)
+	lease, err := NewArtifactLease(artifact, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustRoots := x509.NewCertPool()
+	trustRoots.AddCert(&x509.Certificate{RawSubject: []byte("test root")})
+	if _, err := newConnector(lease, ConnectorOptions{TrustRoots: trustRoots}); err != nil {
+		t.Fatalf("newConnector() empty Origin error = %v", err)
+	}
+	if _, err := newConnector(lease, ConnectorOptions{TrustRoots: trustRoots, Origin: "http://client.example"}); err != nil {
+		t.Fatalf("newConnector() HTTP Origin error = %v", err)
+	}
+	dialers, err := newCarrierDialers(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: trustRoots}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dialers) != 2 || dialers[artifactv2.CarrierWebSocket] == nil || dialers[artifactv2.CarrierRawQUIC] == nil {
+		t.Fatalf("empty-Origin dialers = %#v, want WSS and raw QUIC", dialers)
+	}
+	if dialers[artifactv2.CarrierWebTransport] != nil {
+		t.Fatal("empty-Origin dialers unexpectedly include WebTransport")
+	}
+	dialers, err = newCarrierDialers(&tls.Config{MinVersion: tls.VersionTLS13, RootCAs: trustRoots}, "https://client.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dialers[artifactv2.CarrierWebTransport] == nil {
+		t.Fatal("non-empty-Origin dialers do not include WebTransport")
+	}
+}
+
+func TestConnectorOriginIsAnExactHTTPOrigin(t *testing.T) {
+	for _, origin := range []string{"", "http://client.example", "https://client.example"} {
+		if !validOrigin(origin) {
+			t.Fatalf("validOrigin(%q) = false, want true", origin)
+		}
+	}
+	for _, origin := range []string{
+		"ftp://client.example",
+		"https://user@client.example",
+		"https://client.example/",
+		"https://client.example/path",
+		"https://client.example?query",
+		"https://client.example#fragment",
+	} {
+		if validOrigin(origin) {
+			t.Fatalf("validOrigin(%q) = true, want false", origin)
+		}
 	}
 }
 

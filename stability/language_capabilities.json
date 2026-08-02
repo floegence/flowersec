@@ -48,6 +48,17 @@
       }
     },
     {
+      "id": "validated_stream_metadata",
+      "layer": "portable_core",
+      "description": "Construction-validated application stream metadata used by both outgoing and incoming streams",
+      "implementations": {
+        "go": { "status": "complete", "evidence": ["flowersec-go/connector_public_test.go"] },
+        "typescript": { "status": "complete", "evidence": ["flowersec-ts/src/v2/streamMetadata.test.ts"] },
+        "swift": { "status": "complete", "evidence": ["flowersec-swift/Tests/FlowersecTests/TransportV2ContractTests.swift"] },
+        "rust": { "status": "complete", "evidence": ["flowersec-rust/tests/public_api_design.rs"] }
+      }
+    },
+    {
       "id": "error_classification",
       "layer": "portable_core",
       "description": "Carrier-neutral public recovery decisions for connection and session errors",

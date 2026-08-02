@@ -20,7 +20,6 @@ import {
   UNRELIABLE_MESSAGE_WIRE_BYTES_V2,
   UnreliableMessageError,
   createInternalUnreliableMessageChannelV2,
-  createUnreliableMessageV2,
   sealUnreliableMessageDatagramV2,
 } from "./unreliableMessage.js";
 
@@ -109,11 +108,11 @@ describe("FSD2 unreliable message channel", () => {
 
     expect(client.unreliableMessages?.maxMessageSize).toBe(976);
     expect(server.unreliableMessages?.maxMessageSize).toBe(976);
-    await client.unreliableMessages!.send(createUnreliableMessageV2(Uint8Array.of(7, 8)), {
+    await client.unreliableMessages!.send(Uint8Array.of(7, 8), {
       expiresAtUnixMs: Date.now() + 5_000,
     });
     await expect(server.unreliableMessages!.receive()).resolves.toEqual(
-      expect.objectContaining({ data: Uint8Array.of(7, 8) }),
+      Uint8Array.of(7, 8),
     );
     await client.close();
 
@@ -137,7 +136,7 @@ describe("FSD2 unreliable message channel", () => {
     const channel = createChannel(transport, DirectionV2.ClientToServer, DirectionV2.ServerToClient);
     const plaintext = new TextEncoder().encode("private unreliable payload");
 
-    await expect(channel.send(createUnreliableMessageV2(plaintext), {
+    await expect(channel.send(plaintext, {
       expiresAtUnixMs: 2_000,
     })).resolves.toBe("accepted");
 
@@ -167,47 +166,47 @@ describe("FSD2 unreliable message channel", () => {
       () => receiverNow,
     );
 
-    await sender.send(createUnreliableMessageV2(Uint8Array.of(1, 2)), { expiresAtUnixMs: 2_000 });
+    await sender.send(Uint8Array.of(1, 2), { expiresAtUnixMs: 2_000 });
     const first = outbound.sent[0]!;
     inbound.enqueue(first);
-    await expect(receiver.receive()).resolves.toEqual(expect.objectContaining({ data: Uint8Array.of(1, 2) }));
+    await expect(receiver.receive()).resolves.toEqual(Uint8Array.of(1, 2));
 
     const tampered = first.slice();
     tampered[tampered.length - 1]! ^= 0xff;
     inbound.enqueue(first);
     inbound.enqueue(tampered);
-    await sender.send(createUnreliableMessageV2(Uint8Array.of(3)), { expiresAtUnixMs: 2_500 });
+    await sender.send(Uint8Array.of(3), { expiresAtUnixMs: 2_500 });
     inbound.enqueue(outbound.sent[1]!);
-    await expect(receiver.receive()).resolves.toEqual(expect.objectContaining({ data: Uint8Array.of(3) }));
+    await expect(receiver.receive()).resolves.toEqual(Uint8Array.of(3));
 
     receiverNow = 3_000;
-    await sender.send(createUnreliableMessageV2(Uint8Array.of(4)), { expiresAtUnixMs: 3_500 });
+    await sender.send(Uint8Array.of(4), { expiresAtUnixMs: 3_500 });
     const expiredAtReceiver = outbound.sent[2]!;
     receiverNow = 4_000;
     inbound.enqueue(expiredAtReceiver);
     const receivingAfterExpired = receiver.receive();
     await Promise.resolve();
     receiverNow = 3_000;
-    await sender.send(createUnreliableMessageV2(Uint8Array.of(5)), { expiresAtUnixMs: 4_500 });
+    await sender.send(Uint8Array.of(5), { expiresAtUnixMs: 4_500 });
     inbound.enqueue(outbound.sent[3]!);
-    await expect(receivingAfterExpired).resolves.toEqual(expect.objectContaining({ data: Uint8Array.of(5) }));
+    await expect(receivingAfterExpired).resolves.toEqual(Uint8Array.of(5));
   });
 
   test("enforces payload, expiry, and the 64-send budget before native transport", async () => {
     const transport = new HangingTransport();
     const channel = createChannel(transport, DirectionV2.ClientToServer, DirectionV2.ServerToClient);
-    expect(() => createUnreliableMessageV2(new Uint8Array())).toThrow(UnreliableMessageError);
-    expect(() => createUnreliableMessageV2(new Uint8Array(1_025))).toThrow(UnreliableMessageError);
-    await expect(channel.send(createUnreliableMessageV2(Uint8Array.of(1)), {
+    await expect(channel.send(new Uint8Array(), { expiresAtUnixMs: 2_000 })).rejects.toThrow(UnreliableMessageError);
+    await expect(channel.send(new Uint8Array(1_025), { expiresAtUnixMs: 2_000 })).rejects.toThrow(UnreliableMessageError);
+    await expect(channel.send(Uint8Array.of(1), {
       expiresAtUnixMs: 999,
     })).resolves.toBe("dropped_expired");
 
     const pending = Array.from({ length: 64 }, (_, index) => channel.send(
-      createUnreliableMessageV2(Uint8Array.of(index)),
+      Uint8Array.of(index),
       { expiresAtUnixMs: 2_000 },
     ));
     await Promise.resolve();
-    await expect(channel.send(createUnreliableMessageV2(Uint8Array.of(65)), {
+    await expect(channel.send(Uint8Array.of(65), {
       expiresAtUnixMs: 2_000,
     })).resolves.toBe("dropped_budget");
     expect(transport.sendCount).toBe(64);
@@ -219,15 +218,14 @@ describe("FSD2 unreliable message channel", () => {
     const transport = new DroppingTransport();
     const channel = createChannel(transport, DirectionV2.ClientToServer, DirectionV2.ServerToClient);
 
-    await expect(channel.send(createUnreliableMessageV2(Uint8Array.of(9)), {
+    await expect(channel.send(Uint8Array.of(9), {
       expiresAtUnixMs: 2_000,
     })).resolves.toBe("dropped_carrier");
     expect(transport.sent).toHaveLength(1);
   });
 
-  test("requires the nominal message type and never accepts protocol bytes directly", () => {
+  test("accepts application bytes directly but rejects arbitrary objects", () => {
     const use = (channel: UnreliableMessageChannelV2) => {
-      // @ts-expect-error raw handshake/control bytes are not application unreliable messages.
       void channel.send(Uint8Array.of(0x46, 0x53, 0x48, 0x32), { expiresAtUnixMs: 2_000 });
       // @ts-expect-error arbitrary artifact-like objects cannot enter the message channel.
       void channel.send({ artifact: "opaque" }, { expiresAtUnixMs: 2_000 });

@@ -637,7 +637,8 @@ impl ArtifactLease {
         Ok(())
     }
 
-    pub fn is_committed(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_committed(&self) -> bool {
         self.committed
     }
 }

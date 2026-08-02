@@ -42,7 +42,7 @@ use crate::{
     transport_v2::{
         ByteStreamV2, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2,
         IncomingStreamV2, JsonObjectV2, PathKind, RpcCallError, RpcError, RpcPeerV2, SessionError,
-        SessionRole, SessionTermination, SessionV2, StreamTerminalError,
+        SessionRole, SessionTermination, SessionV2, StreamMetadata, StreamTerminalError,
         UnreliableMessageChannelV2, UnreliableMessageError, UnreliableSendOutcome,
         carrier_inbound_stream_limit_v2,
     },
@@ -834,12 +834,12 @@ impl SessionV2 for SelfSession {
     async fn open_stream(
         &self,
         kind: &str,
-        metadata: JsonObjectV2,
+        metadata: StreamMetadata,
     ) -> Result<Box<dyn ByteStreamV2>, SessionError> {
         if kind == RESERVED_RPC_KIND {
             return Err(SessionError::OperationFailed);
         }
-        open_stream_v2(self, kind, metadata)
+        open_stream_v2(self, kind, metadata.values().clone())
             .await
             .map_err(|error| SessionError::from_io(&error))
     }
@@ -3144,7 +3144,7 @@ async fn accept_one_stream_v2(
         .incoming_tx
         .send(IncomingStreamV2::new(
             open.kind(),
-            metadata,
+            StreamMetadata::from_validated(metadata),
             Box::new(StreamHandleV2(stream)),
         ))
         .await

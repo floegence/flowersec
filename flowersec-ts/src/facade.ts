@@ -12,15 +12,13 @@ export type {
   UnreliableMessageChannelV2 as UnreliableMessageChannel,
   UnreliableMessageSendOptionsV2 as UnreliableMessageSendOptions,
   UnreliableMessageSendResultV2 as UnreliableMessageSendResult,
-  UnreliableMessageV2 as UnreliableMessage,
   SessionTerminationV2 as SessionTermination,
   SessionV2 as Session,
 } from "./v2/contract.js";
 export { SessionError } from "./v2/contract.js";
-export {
-  createUnreliableMessageV2 as createUnreliableMessage,
-  UnreliableMessageError,
-} from "./v2/unreliableMessage.js";
+export { UnreliableMessageError } from "./v2/unreliableMessage.js";
+export { createStreamMetadataV2 as createStreamMetadata, StreamMetadataError } from "./v2/streamMetadata.js";
+export type { StreamMetadataV2 as StreamMetadata } from "./v2/streamMetadata.js";
 export {
   ArtifactLeaseError,
   createArtifactLeaseV2 as createArtifactLease,

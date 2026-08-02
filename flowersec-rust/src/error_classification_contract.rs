@@ -39,7 +39,10 @@ fn classifications_match_shared_contract() {
     for case in contract.connect {
         let expected = &contract.decisions[&case.decision];
         for code in &case.codes["rust"] {
-            assert_decision(classify_connect_error(parse_connect(code)), expected);
+            assert_decision(
+                classify_connect_error(crate::ConnectError::from_code(parse_connect(code))),
+                expected,
+            );
         }
     }
     for case in contract.session {

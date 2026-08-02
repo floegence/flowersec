@@ -12,6 +12,7 @@ import type {
   StreamOpenOptionsV2,
 } from "./contract.js";
 import { SessionError } from "./contract.js";
+import { createStreamMetadataV2, streamMetadataValuesV2 } from "./streamMetadata.js";
 
 /** @internal */
 export function projectSessionV2(session: InternalSessionV2): SessionV2 {
@@ -22,7 +23,11 @@ export function projectSessionV2(session: InternalSessionV2): SessionV2 {
     ...(unreliable === undefined ? {} : { unreliableMessages: unreliable }),
     async openStream(kind: string, options?: StreamOpenOptionsV2): Promise<ByteStreamV2> {
       try {
-        return projectByteStreamV2(await session.openStream(kind, options));
+        const internalOptions = options === undefined ? undefined : {
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          ...(options.metadata === undefined ? {} : { metadata: streamMetadataValuesV2(options.metadata) }),
+        };
+        return projectByteStreamV2(await session.openStream(kind, internalOptions));
       } catch (error) {
         throw redactSessionError(error);
       }
@@ -32,7 +37,7 @@ export function projectSessionV2(session: InternalSessionV2): SessionV2 {
         const incoming = await session.acceptStream(options);
         return Object.freeze({
           kind: incoming.kind,
-          metadata: incoming.metadata,
+          metadata: createStreamMetadataV2(incoming.metadata),
           stream: projectByteStreamV2(incoming.stream),
         });
       } catch (error) {

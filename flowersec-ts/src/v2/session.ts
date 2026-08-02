@@ -8,7 +8,7 @@ import type {
   JsonObjectV2,
   OperationOptionsV2,
   PathKind,
-  StreamOpenOptionsV2,
+  InternalStreamOpenOptionsV2,
   UnreliableMessageChannelV2,
 } from "./contract.js";
 import { CarrierV2Error, type CarrierSessionV2, type CarrierStreamV2 } from "./carrier.js";
@@ -313,7 +313,7 @@ export class SessionV2 implements SessionV2Contract {
     );
   }
 
-  async openStream(kind: string, options: StreamOpenOptionsV2 = {}): Promise<ByteStreamV2> {
+  async openStream(kind: string, options: InternalStreamOpenOptionsV2 = {}): Promise<ByteStreamV2> {
     if (kind === RESERVED_RPC_KIND) throw new SessionV2Error("open_rejected", "reserved RPC stream kind");
     return await this.openLogicalStream(kind, options, false);
   }
@@ -470,7 +470,7 @@ export class SessionV2 implements SessionV2Contract {
 
   private async openLogicalStream(
     kind: string,
-    options: StreamOpenOptionsV2,
+    options: InternalStreamOpenOptionsV2,
     internal: boolean,
   ): Promise<EncryptedStreamV2> {
     this.assertOpen();

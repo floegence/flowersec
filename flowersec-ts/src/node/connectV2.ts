@@ -7,6 +7,7 @@ import {
 } from "../browser/connectV2.js";
 import { createNodeWsFactory } from "./wsFactory.js";
 import { projectSessionV2 } from "../v2/publicSession.js";
+import { ConnectError } from "../utils/errors.js";
 
 export type NodeSessionTLSOptionsV2 = Readonly<{
   ca?: string | Uint8Array;
@@ -23,8 +24,14 @@ export async function connectNodeSessionV2(
   lease: ArtifactLeaseV2,
   options: NodeSessionConnectorV2Options,
 ): Promise<SessionV2> {
-  const origin = normalizeOrigin(options.origin);
-  const wsFactory = createNodeWsFactory(options.tls);
+  let origin: string;
+  let wsFactory: ReturnType<typeof createNodeWsFactory>;
+  try {
+    origin = normalizeOrigin(options.origin);
+    wsFactory = createNodeWsFactory(options.tls);
+  } catch {
+    throw new ConnectError("invalid_options");
+  }
   const connector = createBrowserSessionConnectorV2InternalStage(lease, {
     admissionReasons: new Set(),
     capability: NODE_RUNTIME_CAPABILITY_V2,

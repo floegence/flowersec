@@ -801,9 +801,7 @@ function canonicalMetadata(raw: Uint8Array, allowEmpty: boolean): Uint8Array {
   }
   if (!isJSONObject(value))
     throw new ProtocolV2Error("OPEN metadata root must be an object");
-  const state = { nodes: -1 };
-  validateMetadataValue(value, 1, state);
-  const canonical = canonicalJSONString(value);
+  const canonical = canonicalStreamMetadataJSONV2Internal(value);
   if (
     canonical !== text ||
     encoder.encode(canonical).length > MAX_OPEN_METADATA_BYTES
@@ -811,6 +809,18 @@ function canonicalMetadata(raw: Uint8Array, allowEmpty: boolean): Uint8Array {
     throw new ProtocolV2Error("OPEN metadata is not canonical JSON");
   }
   return encoder.encode(canonical);
+}
+
+/** @internal Validates a public metadata value against the exact OPEN contract. */
+export function canonicalStreamMetadataJSONV2Internal(value: unknown): string {
+  if (!isJSONObject(value)) throw new ProtocolV2Error("OPEN metadata root must be an object");
+  const state = { nodes: -1 };
+  validateMetadataValue(value, 1, state);
+  const canonical = canonicalJSONString(value);
+  if (encoder.encode(canonical).length > MAX_OPEN_METADATA_BYTES) {
+    throw new ProtocolV2Error("OPEN metadata is too large");
+  }
+  return canonical;
 }
 
 function validateMetadataValue(

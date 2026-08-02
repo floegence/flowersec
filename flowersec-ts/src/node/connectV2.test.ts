@@ -16,6 +16,8 @@ vi.mock("./wsFactory.js", () => ({ createNodeWsFactory: mocks.createNodeWsFactor
 
 import { connectNodeSessionV2 } from "./connectV2.js";
 import type { ArtifactLeaseV2 } from "../v2/artifactLease.js";
+import { classifyConnectErrorV2 } from "../v2/errorClassification.js";
+import { ConnectError } from "../utils/errors.js";
 
 describe("connectNodeSessionV2", () => {
   beforeEach(() => {
@@ -55,7 +57,19 @@ describe("connectNodeSessionV2", () => {
   });
 
   test.each(["https://app.example/path", "ftp://app.example", "not a URL"])("rejects invalid origin %s before dialing", async (origin) => {
-    await expect(connectNodeSessionV2({} as ArtifactLeaseV2, { origin })).rejects.toThrow(/origin/);
+    const error = await connectNodeSessionV2({} as ArtifactLeaseV2, { origin }).catch((value: unknown) => value);
+    expect(error).toEqual(expect.objectContaining({ name: "ConnectError", code: "invalid_options" }));
+    expect(error).toBeInstanceOf(ConnectError);
+    expect(classifyConnectErrorV2(error as ConnectError).action).toBe("stop");
+    expect(mocks.createInternal).not.toHaveBeenCalled();
+  });
+
+  test("projects local TLS option failures to ConnectError", async () => {
+    mocks.createNodeWsFactory.mockImplementationOnce(() => { throw new TypeError("invalid CA"); });
+    await expect(connectNodeSessionV2({} as ArtifactLeaseV2, {
+      origin: "https://app.example",
+      tls: { ca: "invalid" },
+    })).rejects.toEqual(expect.objectContaining({ name: "ConnectError", code: "invalid_options" }));
     expect(mocks.createInternal).not.toHaveBeenCalled();
   });
 });

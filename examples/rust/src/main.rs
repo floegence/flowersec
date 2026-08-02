@@ -44,7 +44,6 @@ fn inspect_opaque_artifact(artifact_path: &Path) -> Result<(), Box<dyn Error>> {
     let artifact = Artifact::parse(std::fs::read(artifact_path)?)?;
     let lease = ArtifactLease::new(artifact, || async { Ok(()) });
     println!("artifact={:?}", lease.artifact());
-    println!("spend_committed={}", lease.is_committed());
     Ok(())
 }
 
@@ -64,7 +63,7 @@ async fn connect_opaque_artifact(
         Err(error) => {
             eprintln!(
                 "recovery={}",
-                classify_connect_error(error.code()).action.as_str()
+                classify_connect_error(error).action.as_str()
             );
             return Err(error.to_string().into());
         }

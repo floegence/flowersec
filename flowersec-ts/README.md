@@ -12,7 +12,7 @@ npm install @floegence/flowersec-core
 
 ## Public API
 
-- `@floegence/flowersec-core` exports the portable artifact, lease, session, stream, RPC, unreliable-message, and error-classification API.
+- `@floegence/flowersec-core` exports the portable artifact, lease, session, stream, RPC, stream-metadata, and error-classification API, plus profile-owned unreliable messages when negotiated.
 - `@floegence/flowersec-core/browser` adds `connectBrowserSession(...)` and `BrowserSessionOptions`.
 - `@floegence/flowersec-core/node` adds `connectNodeSession(...)`, `NodeSessionOptions`, and `NodeSessionTLSOptions`.
 - `@floegence/flowersec-core/reconnect` adds artifact-source acquisition and reconnect orchestration without a redundant v2 version policy.
@@ -21,8 +21,8 @@ npm install @floegence/flowersec-core
 The root type exports are:
 
 - Artifact lifecycle: `Artifact` and `ArtifactLease`.
-- Sessions: `Session`, `SessionTermination`, `RpcPeer`, `RpcResult<Response>`, `ByteStream`, `IncomingStream`, `OperationOptions`, and `StreamOpenOptions`.
-- Unreliable messages: `UnreliableMessageChannel`, `UnreliableMessage`, `UnreliableMessageSendOptions`, and `UnreliableMessageSendResult`.
+- Sessions: `Session`, `SessionTermination`, `RpcPeer`, `RpcResult<Response>`, `ByteStream`, `IncomingStream`, `StreamMetadata`, `OperationOptions`, and `StreamOpenOptions`. Create metadata with `createStreamMetadata(...)`; invalid values throw `StreamMetadataError` before opening a stream.
+- Unreliable messages: `UnreliableMessageChannel`, `UnreliableMessageSendOptions`, and `UnreliableMessageSendResult`.
 - JSON values: `JsonPrimitive`, `JsonValue`, and `JsonObject`.
 - Errors: `ConnectErrorCode`, `SessionErrorCode`, `RetryAction`, and `ErrorRetryClassification`.
 
@@ -34,7 +34,7 @@ The `/reconnect` entrypoint exposes `ArtifactAcquireContext`, `ArtifactSource`, 
 
 When connector options omit a connection timeout, browser and Node.js connectors use the shared ten-second default.
 
-A negotiated `Session.unreliableMessages` channel returns `accepted`, `dropped_expired`, `dropped_budget`, or `dropped_carrier` from `send(...)`. Invalid payloads, unavailable channels, cancellation, closure, and internal failures remain redacted public operation errors.
+A negotiated `Session.unreliableMessages` channel sends defensively copied `Uint8Array` values and returns `accepted`, `dropped_expired`, `dropped_budget`, or `dropped_carrier`. `receive(...)` also returns a fresh `Uint8Array`. Invalid payloads, unavailable channels, cancellation, closure, and internal failures remain redacted public operation errors.
 
 ## Capability Layers
 
@@ -44,6 +44,9 @@ carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
 error classifiers. `classifyConnectError(...)` and
 `classifySessionError(...)` return the stable cross-language recovery decision;
 callers should not compare raw TypeScript error-code strings with other SDKs.
+
+Only this portable core is required to align across languages. Complete SDK
+profiles and language conveniences intentionally differ by runtime.
 
 The TypeScript SDK profile is split by entrypoint: browsers own WebSocket and
 WebTransport dialing, while Node.js owns WebSocket dialing. Its language convenience
@@ -69,7 +72,7 @@ Raw QUIC and WebTransport preserve native FIN, RESET_STREAM, STOP_SENDING, flow 
 
 Browser applications receive a ready `Session` from `connectBrowserSession(...)`. The browser connector supports WSS and WebTransport production connections. WebTransport uses native HTTP/3 bidirectional streams and does not use Yamux.
 
-Node.js applications receive the same `Session` contract from `connectNodeSession(...)`. The Node.js connector supports WSS production connections for direct and tunnel artifacts. It requires an absolute HTTP(S) `origin`; a custom certificate authority can be supplied through `tls.ca`.
+Node.js applications receive the same `Session` contract from `connectNodeSession(...)`. The Node.js connector supports WSS production connections for direct and tunnel artifacts. It requires an absolute HTTP(S) `origin`; a custom certificate authority can be supplied through `tls.ca`. Invalid origin and TLS options fail as `ConnectError` with `invalid_options`, so callers can use the normal connection classifier.
 
 The connectors select an eligible transport from the opaque artifact internally. They do not accept a public transport selector, capability manifest, candidate factory, or admission-reason override. Unsupported artifacts fail closed. The TypeScript package does not expose raw QUIC dialing.
 

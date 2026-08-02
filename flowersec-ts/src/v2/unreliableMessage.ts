@@ -9,7 +9,6 @@ import type {
   UnreliableMessageChannelV2,
   UnreliableMessageSendOptionsV2,
   UnreliableMessageSendResultV2,
-  UnreliableMessageV2,
 } from "./contract.js";
 import { CipherSuiteV2 } from "./protocol.js";
 import type { DirectionV2 } from "./protocol.js";
@@ -23,23 +22,12 @@ const TAG_BYTES = 16;
 const MAX_PENDING_SENDS = 64;
 const MAX_UINT64 = (1n << 64n) - 1n;
 const encoder = new TextEncoder();
-const messages = new WeakSet<object>();
 
 export class UnreliableMessageError extends Error {
   constructor(readonly code: "invalid_message" | "closed" | "operation_failed") {
     super(`Flowersec unreliable message failed (code=${code})`);
     this.name = "UnreliableMessageError";
   }
-}
-
-export function createUnreliableMessageV2(data: Uint8Array): UnreliableMessageV2 {
-  if (!(data instanceof Uint8Array) || data.byteLength < 1 ||
-      data.byteLength > UNRELIABLE_MESSAGE_MAX_PLAINTEXT_BYTES_V2) {
-    throw new UnreliableMessageError("invalid_message");
-  }
-  const value = Object.freeze({ data: data.slice() });
-  messages.add(value);
-  return value as UnreliableMessageV2;
 }
 
 export type InternalUnreliableMessageChannelV2Options = Readonly<{
@@ -77,11 +65,15 @@ class InternalUnreliableMessageChannelV2 implements UnreliableMessageChannelV2 {
   }
 
   async send(
-    message: UnreliableMessageV2,
+    message: Uint8Array,
     options: UnreliableMessageSendOptionsV2,
   ): Promise<UnreliableMessageSendResultV2> {
     throwIfAborted(options.signal);
-    if (!isUnreliableMessage(message)) throw new UnreliableMessageError("invalid_message");
+    if (!(message instanceof Uint8Array) || message.byteLength < 1 ||
+        message.byteLength > UNRELIABLE_MESSAGE_MAX_PLAINTEXT_BYTES_V2) {
+      throw new UnreliableMessageError("invalid_message");
+    }
+    const payload = message.slice();
     const expiresAt = requireFutureExpiry(options.expiresAtUnixMs, this.now());
     if (expiresAt === undefined) return "dropped_expired";
     if (this.pendingSends >= MAX_PENDING_SENDS) return "dropped_budget";
@@ -101,7 +93,7 @@ class InternalUnreliableMessageChannelV2 implements UnreliableMessageChannelV2 {
       epoch: roots.epoch,
       sequence,
       expiresAtUnixMs: BigInt(expiresAt),
-      plaintext: message.data,
+      plaintext: payload,
     });
 
     this.pendingSends++;
@@ -118,7 +110,7 @@ class InternalUnreliableMessageChannelV2 implements UnreliableMessageChannelV2 {
     }
   }
 
-  async receive(options: OperationOptionsV2 = {}): Promise<UnreliableMessageV2> {
+  async receive(options: OperationOptionsV2 = {}): Promise<Uint8Array> {
     for (;;) {
       throwIfAborted(options.signal);
       let wire: Uint8Array;
@@ -157,7 +149,7 @@ class InternalUnreliableMessageChannelV2 implements UnreliableMessageChannelV2 {
       window.mark(decoded.sequence);
       this.replay.set(decoded.epoch, window);
       pruneReplayEpochs(this.replay, decoded.epoch);
-      return createUnreliableMessageV2(plaintext);
+      return plaintext.slice();
     }
   }
 }
@@ -320,9 +312,6 @@ function pruneReplayEpochs(windows: Map<number, ReplayWindow>, current: number):
   }
 }
 
-function isUnreliableMessage(value: unknown): value is UnreliableMessageV2 {
-  return typeof value === "object" && value !== null && messages.has(value);
-}
 
 function requireFutureExpiry(value: number, now: number): number | undefined {
   if (!Number.isSafeInteger(value) || value < 0) throw new UnreliableMessageError("invalid_message");

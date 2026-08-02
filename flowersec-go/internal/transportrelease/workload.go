@@ -319,7 +319,11 @@ func runBulkPhase(ctx context.Context, pair *ProductDirectPair, bytesPerDirectio
 		incoming, err := pair.Server.AcceptStream(phaseCtx)
 		serverAccepted <- normalizeInternalIncoming(incoming, err)
 	}()
-	clientOpened, err := pair.Client.OpenStream(phaseCtx, "release-bulk", flowersec.Metadata{"direction": "client-to-server"})
+	clientMetadata, err := flowersec.NewStreamMetadata(map[string]any{"direction": "client-to-server"})
+	if err != nil {
+		return nil, 0, err
+	}
+	clientOpened, err := pair.Client.OpenStream(phaseCtx, "release-bulk", clientMetadata)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -401,8 +405,9 @@ func runBulkPhase(ctx context.Context, pair *ProductDirectPair, bytesPerDirectio
 }
 
 func normalizePublicIncoming(incoming flowersec.IncomingStream, err error) acceptedReleaseStream {
+	metadata := incoming.Metadata.Values()
 	return acceptedReleaseStream{
-		kind: incoming.Kind, direction: fmt.Sprint(incoming.Metadata["direction"]), stream: incoming.Stream, err: err,
+		kind: incoming.Kind, direction: fmt.Sprint(metadata["direction"]), stream: incoming.Stream, err: err,
 	}
 }
 

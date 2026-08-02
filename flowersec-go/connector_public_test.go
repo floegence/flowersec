@@ -143,23 +143,31 @@ func TestMetadataPublicConstructorValidatesAndCopiesJSONObjectBoundary(t *testin
 		"attempt":   int64(1),
 		"nested":    nested,
 	}
-	metadata, err := flowersec.NewMetadata(source)
+	metadata, err := flowersec.NewStreamMetadata(source)
 	if err != nil {
-		t.Fatalf("NewMetadata() error = %v", err)
+		t.Fatalf("NewStreamMetadata() error = %v", err)
 	}
 	source["operation"] = "mutated"
 	nested["accepted"] = false
-	if metadata["operation"] != "health" {
-		t.Fatalf("metadata was not defensively copied: %#v", metadata)
+	values := metadata.Values()
+	if values["operation"] != "health" {
+		t.Fatalf("metadata was not defensively copied: %#v", values)
 	}
-	if child, ok := metadata["nested"].(map[string]any); !ok || child["accepted"] != true {
-		t.Fatalf("nested metadata was not defensively copied: %#v", metadata)
+	if child, ok := values["nested"].(map[string]any); !ok || child["accepted"] != true {
+		t.Fatalf("nested metadata was not defensively copied: %#v", values)
 	}
-	if _, err := flowersec.NewMetadata(map[string]any{"fraction": 1.5}); !errors.Is(err, flowersec.ErrInvalidMetadata) {
-		t.Fatalf("NewMetadata() float error = %v, want ErrInvalidMetadata", err)
+	values["operation"] = "changed"
+	if metadata.Values()["operation"] != "health" {
+		t.Fatalf("Values() exposed mutable state: %#v", metadata.Values())
 	}
-	if _, err := flowersec.NewMetadata(map[string]any{"unsafe": int64(9_007_199_254_740_992)}); !errors.Is(err, flowersec.ErrInvalidMetadata) {
-		t.Fatalf("NewMetadata() unsafe integer error = %v, want ErrInvalidMetadata", err)
+	if _, err := flowersec.NewStreamMetadata(map[string]any{"fraction": 1.5}); !errors.Is(err, flowersec.ErrInvalidMetadata) {
+		t.Fatalf("NewStreamMetadata() float error = %v, want ErrInvalidMetadata", err)
+	}
+	if _, err := flowersec.NewStreamMetadata(map[string]any{"unsafe": int64(9_007_199_254_740_992)}); !errors.Is(err, flowersec.ErrInvalidMetadata) {
+		t.Fatalf("NewStreamMetadata() unsafe integer error = %v, want ErrInvalidMetadata", err)
+	}
+	if got := flowersec.EmptyStreamMetadata().Values(); len(got) != 0 {
+		t.Fatalf("EmptyStreamMetadata() = %#v, want empty", got)
 	}
 }
 
@@ -223,20 +231,51 @@ func TestConnectorRejectsInvalidCarrierNeutralOptions(t *testing.T) {
 	}
 	if _, err := flowersec.Connect(context.Background(), lease, flowersec.ConnectorOptions{
 		TrustRoots: x509.NewCertPool(),
-	}); err != flowersec.ErrInvalidConnectorOptions {
-		t.Fatalf("Connect error = %v, want ErrInvalidConnectorOptions", err)
+	}); err == nil {
+		t.Fatal("Connect error = nil, want invalid options")
+	} else {
+		var connectErr *flowersec.ConnectError
+		if !errors.As(err, &connectErr) || connectErr.Code() != flowersec.ConnectInvalidOptions {
+			t.Fatalf("Connect error = %#v, want ConnectInvalidOptions", err)
+		}
+		if !errors.Is(err, flowersec.ErrInvalidConnectorOptions) {
+			t.Fatalf("Connect error = %v, want errors.Is ErrInvalidConnectorOptions", err)
+		}
+		if got := flowersec.ClassifyConnectError(connectErr).Action; got != flowersec.RetryActionStop {
+			t.Fatalf("classification = %q, want stop", got)
+		}
 	}
-	for _, origin := range []string{"", "http://client.example", "https://user@client.example", "https://client.example/path"} {
+	if _, err := flowersec.Connect(context.Background(), flowersec.ArtifactLease{}, flowersec.ConnectorOptions{
+		TrustRoots: fixtureTrustRoots(t),
+	}); err == nil {
+		t.Fatal("Connect zero lease error = nil, want invalid input")
+	} else {
+		var connectErr *flowersec.ConnectError
+		if !errors.As(err, &connectErr) || connectErr.Code() != flowersec.ConnectInvalidInput {
+			t.Fatalf("Connect zero lease error = %#v, want ConnectInvalidInput", err)
+		}
+		if got := flowersec.ClassifyConnectError(connectErr).Action; got != flowersec.RetryActionStop {
+			t.Fatalf("zero lease classification = %q, want stop", got)
+		}
+	}
+	for _, origin := range []string{
+		"ftp://client.example",
+		"https://user@client.example",
+		"https://client.example/",
+		"https://client.example/path",
+		"https://client.example?query",
+		"https://client.example#fragment",
+	} {
 		if _, err := flowersec.Connect(context.Background(), lease, flowersec.ConnectorOptions{
 			TrustRoots: fixtureTrustRoots(t), Origin: origin,
-		}); err != flowersec.ErrInvalidConnectorOptions {
-			t.Fatalf("Connect origin %q error = %v, want ErrInvalidConnectorOptions", origin, err)
+		}); !errors.Is(err, flowersec.ErrInvalidConnectorOptions) {
+			t.Fatalf("Connect origin %q error = %v, want invalid options", origin, err)
 		}
 	}
 	if _, err := flowersec.Connect(context.Background(), lease, flowersec.ConnectorOptions{
 		TrustRoots: fixtureTrustRoots(t), Origin: "https://client.example", Handlers: &flowersec.SessionHandlers{},
-	}); err != flowersec.ErrInvalidConnectorOptions {
-		t.Fatalf("Connect zero handlers error = %v, want ErrInvalidConnectorOptions", err)
+	}); !errors.Is(err, flowersec.ErrInvalidConnectorOptions) {
+		t.Fatalf("Connect zero handlers error = %v, want invalid options", err)
 	}
 }
 

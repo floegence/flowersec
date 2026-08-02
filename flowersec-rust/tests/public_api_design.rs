@@ -1,6 +1,7 @@
 use flowersec::{
-    ArtifactLease, ConnectErrorCode, ConnectorOptions, ErrorRetryAction, RpcPeer, RpcPeerExt,
-    SessionError, SessionTermination, classify_connect_error, classify_session_error, connect,
+    ArtifactLease, ConnectorOptions, ErrorRetryAction, RpcPeer, RpcPeerExt, SessionError,
+    SessionTermination, StreamMetadata, StreamMetadataError, classify_connect_error,
+    classify_session_error, connect,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -52,14 +53,31 @@ fn recovery_action_names_match_portable_contract() {
 
 #[test]
 fn public_error_codes_expose_direct_stable_strings() {
-    let connection = classify_connect_error(ConnectErrorCode::Timeout);
-    assert_eq!(connection.action, ErrorRetryAction::RefreshArtifact);
-
     let connect_error = ConnectorOptions::new(vec![]).expect_err("empty trust roots are invalid");
+    let connection = classify_connect_error(connect_error);
+    assert_eq!(connection.action, ErrorRetryAction::Stop);
     assert_eq!(connect_error.as_str(), "invalid_input");
     assert_eq!(SessionError::Timeout.as_str(), "timeout");
     assert_eq!(SessionError::GoingAway.as_str(), "going_away");
     assert_eq!(SessionError::StreamRejected.as_str(), "stream_rejected");
+}
+
+#[test]
+fn stream_metadata_is_validated_before_opening_a_stream() {
+    let metadata = StreamMetadata::try_from(serde_json::json!({"purpose": "health", "attempt": 1}))
+        .expect("valid metadata");
+    assert_eq!(metadata.values()["purpose"], "health");
+    assert!(matches!(
+        StreamMetadata::try_from(serde_json::json!({"fraction": 1.5})),
+        Err(StreamMetadataError::InvalidValue)
+    ));
+    assert!(StreamMetadata::empty().values().is_empty());
+}
+
+#[test]
+fn artifact_lease_does_not_expose_spend_state() {
+    let source = include_str!("../src/artifact_v2.rs");
+    assert!(!source.contains("pub fn is_committed"));
 }
 
 #[test]

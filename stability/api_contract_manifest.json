@@ -125,6 +125,26 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.StreamMetadata",
+            "doc_token": "`flowersec.StreamMetadata`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewStreamMetadata",
+            "doc_token": "`flowersec.NewStreamMetadata(...)`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.EmptyStreamMetadata",
+            "doc_token": "`flowersec.EmptyStreamMetadata()`"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.StreamMetadata.Values",
+            "doc_token": "`flowersec.StreamMetadata.Values()`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.Metadata",
             "doc_token": "`flowersec.Metadata`"
           },
@@ -280,7 +300,7 @@
           {
             "kind": "interface_method",
             "expr": "flowersec.Session.OpenStream",
-            "signature": "func(flowersec.Session, context.Context, string, flowersec.Metadata) (flowersec.ByteStream, error)",
+            "signature": "func(flowersec.Session, context.Context, string, flowersec.StreamMetadata) (flowersec.ByteStream, error)",
             "doc_token": "`flowersec.Session.OpenStream(...)`"
           },
           {
@@ -631,7 +651,8 @@
           "`classifyConnectError(...)`",
           "`classifySessionError(...)`",
           "`ErrorRetryClassification`",
-          "`createUnreliableMessage(...)`",
+          "`createStreamMetadata(...)`",
+          "`StreamMetadata`",
           "`UnreliableMessageError`"
         ],
         "runtime_exports": [
@@ -639,11 +660,12 @@
           "ArtifactLeaseError",
           "ConnectError",
           "SessionError",
+          "StreamMetadataError",
           "UnreliableMessageError",
           "classifyConnectError",
           "classifySessionError",
           "createArtifactLease",
-          "createUnreliableMessage",
+          "createStreamMetadata",
           "parseArtifact"
         ],
         "type_exports": [
@@ -666,11 +688,12 @@
           "SessionErrorCode",
           "SessionTermination",
           "Session",
+          "StreamMetadata",
+          "StreamMetadataError",
           "StreamOpenOptions",
           "UnreliableMessageChannel",
           "UnreliableMessageSendOptions",
-          "UnreliableMessageSendResult",
-          "UnreliableMessage"
+          "UnreliableMessageSendResult"
         ]
       },
       {
@@ -685,12 +708,13 @@
           "ArtifactLeaseError",
           "ConnectError",
           "SessionError",
+          "StreamMetadataError",
           "UnreliableMessageError",
           "classifyConnectError",
           "classifySessionError",
           "connectNodeSession",
           "createArtifactLease",
-          "createUnreliableMessage",
+          "createStreamMetadata",
           "parseArtifact"
         ],
         "type_exports": [
@@ -715,11 +739,12 @@
           "SessionErrorCode",
           "SessionTermination",
           "Session",
+          "StreamMetadata",
+          "StreamMetadataError",
           "StreamOpenOptions",
           "UnreliableMessageChannel",
           "UnreliableMessageSendOptions",
-          "UnreliableMessageSendResult",
-          "UnreliableMessage"
+          "UnreliableMessageSendResult"
         ]
       },
       {
@@ -734,12 +759,13 @@
           "ArtifactLeaseError",
           "ConnectError",
           "SessionError",
+          "StreamMetadataError",
           "UnreliableMessageError",
           "classifyConnectError",
           "classifySessionError",
           "connectBrowserSession",
           "createArtifactLease",
-          "createUnreliableMessage",
+          "createStreamMetadata",
           "parseArtifact"
         ],
         "type_exports": [
@@ -763,11 +789,12 @@
           "SessionErrorCode",
           "SessionTermination",
           "Session",
+          "StreamMetadata",
+          "StreamMetadataError",
           "StreamOpenOptions",
           "UnreliableMessageChannel",
           "UnreliableMessageSendOptions",
-          "UnreliableMessageSendResult",
-          "UnreliableMessage"
+          "UnreliableMessageSendResult"
         ]
       },
       {
@@ -1480,6 +1507,8 @@
       "`Session`",
       "`SessionTermination`",
       "`SessionError::as_str()`",
+      "`StreamMetadata`",
+      "`StreamMetadataError`",
       "`UnreliableMessageChannel`",
       "`UnreliableSendOutcome`"
     ],
@@ -1507,7 +1536,7 @@
       "let _ = flowersec::ErrorRetryAction::RefreshArtifact",
       "let _ = flowersec::ErrorRetryAction::Stop",
       "let _ = flowersec::ErrorRetryAction::Retry.as_str()",
-      "let _: fn(flowersec::ConnectErrorCode) -> flowersec::ErrorRetryClassification = flowersec::classify_connect_error",
+      "let _: fn(flowersec::ConnectError) -> flowersec::ErrorRetryClassification = flowersec::classify_connect_error",
       "let _: fn(flowersec::SessionError) -> flowersec::ErrorRetryClassification = flowersec::classify_session_error",
       "let _ = std::mem::size_of::<flowersec::IncomingStream>()",
       "let _ = std::mem::size_of::<flowersec::JsonObject>()",
@@ -1528,6 +1557,9 @@
       "let _ = flowersec::SessionError::RekeyFailed",
       "let _ = flowersec::SessionError::LivenessFailed",
       "let _ = std::mem::size_of::<flowersec::StreamTerminalError>()",
+      "let _ = std::mem::size_of::<flowersec::StreamMetadata>()",
+      "let _ = std::mem::size_of::<flowersec::StreamMetadataError>()",
+      "let _ = flowersec::StreamMetadata::empty()",
       "let _: Option<&dyn flowersec::UnreliableMessageChannel> = None",
       "let _ = std::mem::size_of::<flowersec::UnreliableMessageError>()",
       "let _ = std::mem::size_of::<flowersec::UnreliableSendOutcome>()",

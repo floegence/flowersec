@@ -1,10 +1,10 @@
 import type {
   ByteStreamV2,
   IncomingStreamV2,
-  JsonObjectV2,
   RpcResultV2,
   SessionError,
   SessionV2,
+  StreamMetadataV2,
   StreamOpenOptionsV2,
 } from "./contract.js";
 import type {
@@ -66,7 +66,7 @@ function typecheckContract(
   session: SessionV2,
   stream: ByteStreamV2,
   incoming: IncomingStreamV2,
-  metadata: JsonObjectV2,
+  metadata: StreamMetadataV2,
   openOptions: StreamOpenOptionsV2,
 ): void {
   // @ts-expect-error path selection is an internal diagnostic, not session API.
@@ -81,7 +81,7 @@ function typecheckContract(
   // @ts-expect-error accepted logical stream IDs remain package-internal.
   void incoming.id;
   const incomingKind: string = incoming.kind;
-  const incomingMetadata: JsonObjectV2 = incoming.metadata;
+  const incomingMetadata: StreamMetadataV2 = incoming.metadata;
   const incomingStream: ByteStreamV2 = incoming.stream;
   const terminalError: SessionError | undefined = stream.terminalError;
 

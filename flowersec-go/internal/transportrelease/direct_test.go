@@ -167,7 +167,11 @@ func TestBrowserBulkServerUsesNativeBidirectionalStreams(t *testing.T) {
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- ServeBrowserBulk(ctx, pair.Server, []int64{64 * 1024, 256 * 1024}) }()
 	for _, byteCount := range []int64{64 * 1024, 256 * 1024} {
-		outgoing, err := pair.Client.OpenStream(ctx, "release-bulk", map[string]any{"direction": "client-to-server"})
+		metadata, err := flowersec.NewStreamMetadata(map[string]any{"direction": "client-to-server"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		outgoing, err := pair.Client.OpenStream(ctx, "release-bulk", metadata)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -210,7 +214,11 @@ func TestBrowserNativeIsolationPreservesSiblingFIN(t *testing.T) {
 
 	streams := make([]releaseByteStream, 0, 4)
 	for index := range 4 {
-		stream, openErr := pair.Client.OpenStream(ctx, "native-isolation", map[string]any{"stream_index": index})
+		metadata, metadataErr := flowersec.NewStreamMetadata(map[string]any{"stream_index": index})
+		if metadataErr != nil {
+			t.Fatal(metadataErr)
+		}
+		stream, openErr := pair.Client.OpenStream(ctx, "native-isolation", metadata)
 		if openErr != nil {
 			t.Fatal(openErr)
 		}

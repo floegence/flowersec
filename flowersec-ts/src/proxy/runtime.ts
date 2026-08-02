@@ -3,6 +3,7 @@ import { readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
 import { base64urlEncode } from "../utils/base64url.js";
 import { readU32be, u32be } from "../utils/bin.js";
 import { SessionError, type ByteStreamV2 } from "../v2/contract.js";
+import { createStreamMetadataV2 } from "../v2/streamMetadata.js";
 
 import { ProxyByteReader, writeAll } from "./stream.js";
 import type {
@@ -375,7 +376,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
         release = await admission.acquire(body.length, controller.signal);
         stream = await options.session.openStream(PROXY_HTTP_STREAM_KIND, {
           signal: controller.signal,
-          metadata: { protocol: "flowersec.proxy.http", version: 2 },
+          metadata: createStreamMetadataV2({ protocol: "flowersec.proxy.http", version: 2 }),
         });
         const reader = new ProxyByteReader(stream, { signal: controller.signal });
         const requestID = request.id.trim() === "" ? randomID() : request.id;
@@ -425,7 +426,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
     enforcePathPolicy("websocket", path, pathPolicy);
     const stream = await options.session.openStream(PROXY_WEBSOCKET_STREAM_KIND, {
       ...(openOptions.signal === undefined ? {} : { signal: openOptions.signal }),
-      metadata: { protocol: "flowersec.proxy.websocket", version: 2 },
+      metadata: createStreamMetadataV2({ protocol: "flowersec.proxy.websocket", version: 2 }),
     });
     try {
       const protocols = (openOptions.protocols ?? []).filter((value) => value.trim() !== "" && value === value.trim());

@@ -33,7 +33,7 @@ fn artifact_subcommand_keeps_the_unspent_artifact_opaque() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "artifact=Artifact { <opaque> }\nspend_committed=false\n"
+        "artifact=Artifact { <opaque> }\n"
     );
 
     fs::remove_dir_all(base).unwrap();

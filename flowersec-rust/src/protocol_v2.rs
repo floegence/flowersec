@@ -1099,6 +1099,20 @@ fn canonical_open_metadata(raw: &[u8], allow_empty: bool) -> Result<Vec<u8>, Pro
     Ok(canonical)
 }
 
+pub(crate) fn canonical_open_metadata_value_v2(value: &Value) -> Result<Vec<u8>, ProtocolV2Error> {
+    if !value.is_object() {
+        return Err(ProtocolV2Error::InvalidOpenPayload);
+    }
+    let mut nodes = -1_i32;
+    validate_metadata_value(value, 1, &mut nodes)?;
+    let mut canonical = Vec::new();
+    append_canonical_json(&mut canonical, value)?;
+    if canonical.len() > MAX_OPEN_METADATA_V2_BYTES {
+        return Err(ProtocolV2Error::InvalidOpenPayload);
+    }
+    Ok(canonical)
+}
+
 fn validate_metadata_value(
     value: &Value,
     depth: usize,

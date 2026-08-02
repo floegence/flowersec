@@ -17,7 +17,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use flowersec::{
     Acceptor, AcceptorOptions, Artifact, ArtifactLease, ByteStream, ConnectorOptions, JsonObject,
-    Session, SessionError, SessionTermination,
+    Session, SessionError, SessionTermination, StreamMetadata,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -479,7 +479,7 @@ async fn connect_artifact(
     });
     let options = ConnectorOptions::new(trust_roots)?.with_connect_timeout(connect_timeout)?;
     let session = flowersec::connect(&mut lease, options, CancellationToken::new()).await?;
-    if !lease.is_committed() || commits.load(Ordering::SeqCst) != 1 {
+    if commits.load(Ordering::SeqCst) != 1 {
         return Err("artifact spend was not committed exactly once".into());
     }
     Ok((session, commits))
@@ -540,7 +540,7 @@ async fn run_request_response_client(
                 let started_at = unix_ns()?;
                 let started = Instant::now();
                 let stream = session
-                    .open_stream("release-request-response", JsonObject::new())
+                    .open_stream("release-request-response", StreamMetadata::empty())
                     .await?;
                 write_all(stream.as_ref(), payload.as_slice()).await?;
                 stream.close_write().await?;
@@ -647,7 +647,7 @@ async fn finish_release_server(session: Arc<dyn Session>) -> Result<(), AnyError
 
 async fn finish_release_client(session: Arc<dyn Session>) -> Result<(), AnyError> {
     let stream = session
-        .open_stream("release-complete", JsonObject::new())
+        .open_stream("release-complete", StreamMetadata::empty())
         .await?;
     write_all(stream.as_ref(), b"done").await?;
     stream.close_write().await?;
@@ -671,6 +671,7 @@ async fn bulk_role_phase(
         serde_json::Value::String(outbound_direction.to_owned()),
     );
     let metadata: JsonObject = metadata.into_iter().collect();
+    let metadata = StreamMetadata::try_from(metadata)?;
     let (outbound, incoming) = tokio::try_join!(
         session.open_stream("release-bulk", metadata),
         session.accept_stream(),
@@ -680,6 +681,7 @@ async fn bulk_role_phase(
     }
     let inbound_direction = incoming
         .metadata()
+        .values()
         .get("direction")
         .and_then(serde_json::Value::as_str)
         .ok_or("bulk direction metadata is missing")?;

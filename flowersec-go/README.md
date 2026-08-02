@@ -22,16 +22,18 @@ err = handlers.HandleRPC(typeID, rpcHandler)
 err = handlers.HandleStream(streamKind, streamHandler)
 options.Handlers = handlers
 session, err := flowersec.Connect(ctx, lease, options)
+metadata, err := flowersec.NewStreamMetadata(map[string]any{"request_id": "req-1"})
+stream, err := session.OpenStream(ctx, "example", metadata)
 err = handlers.Serve(ctx, session)
 ```
 
-Register inbound RPC and stream handlers before connecting. A valid connection attempt freezes both registration sets; later registrations return `ErrSessionHandlersFrozen`. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, and resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
+Register inbound RPC and stream handlers before connecting. A valid connection attempt freezes both registration sets; later registrations return `ErrSessionHandlersFrozen`. `NewStreamMetadata(...)` validates and defensively copies metadata before a stream is opened; `EmptyStreamMetadata()` represents the empty value, and incoming streams expose the same `StreamMetadata` type. `SessionHandlers.Serve` owns the session lifecycle, supplies bounded stream metadata to application handlers, and resets unhandled or excess streams. The root package deliberately hides candidate data, carrier implementations, Yamux, wire messages, cryptographic state, keys, endpoint identities, logical stream IDs, and spend-ledger internals. Public connection and operation failures are bounded `ConnectError` and `SessionError` values.
 
 The executable `ExampleConnect` compiles the complete consumer lifecycle,
 including an atomically created and synchronized durable spend receipt. Reusing
 the receipt path fails closed; the receipt contains no artifact or key material.
 
-An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. `Session.WaitTermination(...)` is the sole public termination waiting entrypoint and returns a redacted `SessionTermination` with the stable close reason; cancellation of the wait is returned separately. `ClassifyConnectError(...)` and `ClassifySessionError(...)` map public errors to `ErrorRetryClassification`: retry the current operation, acquire a fresh artifact and session, or stop. `ConnectExpired` identifies artifact expiry without exposing artifact contents.
+An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. `ConnectorOptions.Origin` may be empty when the artifact uses WSS or raw QUIC; a non-empty absolute HTTP(S) origin registers WebTransport eligibility, whose secure dial path still requires HTTPS. Go's native TLS paths require explicit non-empty `ConnectorOptions.TrustRoots`; load the system pool with `x509.SystemCertPool()` when platform trust is intended. Invalid connector inputs and options are returned as `ConnectError` values and can be passed directly to `ClassifyConnectError(...)`. `Session.WaitTermination(...)` is the sole public termination waiting entrypoint and returns a redacted `SessionTermination` with the stable close reason; cancellation of the wait is returned separately. `ClassifyConnectError(...)` and `ClassifySessionError(...)` map public errors to `ErrorRetryClassification`: retry the current operation, acquire a fresh artifact and session, or stop. `ConnectExpired` identifies artifact expiry without exposing artifact contents.
 
 ## Capability Layers
 
@@ -41,6 +43,9 @@ carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
 error classifiers. `ClassifyConnectError(...)` and
 `ClassifySessionError(...)` return the stable cross-language recovery decision;
 callers should not compare raw Go error codes with other SDKs.
+
+Only this portable core is required to align across languages. Complete SDK
+profiles and language conveniences intentionally differ by runtime.
 
 The Go SDK profile supports WebSocket, raw QUIC, and WebTransport production
 dialing. Its language convenience is `SessionHandlers`, which registers inbound

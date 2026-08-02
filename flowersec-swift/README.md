@@ -16,7 +16,7 @@ Use the `Flowersec` library product.
 
 ## Public Contract
 
-Parse an opaque `Artifact` with `parseArtifact(...)`, bind it to a single-use `ArtifactLease`, and call `connect(lease:options:)` with `ConnectorOptions`. Applications receive only the carrier-neutral `Session`, `RPCPeer`, `ByteStream`, `IncomingStream`, and bounded `StreamMetadata` contracts.
+Parse an opaque `Artifact` with `parseArtifact(...)`, bind it to a single-use `ArtifactLease`, and call `connect(lease:options:)` with `ConnectorOptions`. Applications receive only the carrier-neutral `Session`, `RPCPeer`, `ByteStream`, `IncomingStream`, and bounded `StreamMetadata` contracts. `StreamMetadata` validates during initialization and is the same value type used for outgoing and incoming stream metadata.
 
 `ConnectError` and `SessionError` are closed redacted error sets. A remote application RPC failure is `RPCError` with only its semantic code and sanitized message. Candidate credentials, carrier choice, admission reasons, path, endpoint identities, logical stream IDs, wire state, cryptographic keys, and Yamux are not public.
 
@@ -30,6 +30,9 @@ carrier-neutral sessions, RPC, reliable streams, redacted public errors, and
 error classifiers. `classifyConnectError(_:)` and
 `classifySessionError(_:)` return the stable cross-language recovery decision;
 callers should not compare raw Swift error cases with other SDKs.
+
+Only this portable core is required to align across languages. Complete SDK
+profiles and language conveniences intentionally differ by runtime.
 
 The Swift SDK profile is Apple-platform WebSocket dialing. Its language convenience
 is the Swift-native async and typed value surface around `Data`,

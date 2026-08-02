@@ -60,7 +60,7 @@ type connector struct {
 type Session interface {
 	RPC() RPCPeer
 	UnreliableMessages() (UnreliableMessageChannel, error)
-	OpenStream(context.Context, string, Metadata) (ByteStream, error)
+	OpenStream(context.Context, string, StreamMetadata) (ByteStream, error)
 	AcceptStream(context.Context) (IncomingStream, error)
 	Rekey(context.Context) error
 	ProbeLiveness(context.Context) (time.Duration, error)
@@ -94,9 +94,6 @@ type UnreliableMessageChannel interface {
 	Receive(context.Context) ([]byte, error)
 }
 
-// Metadata is the bounded JSON object attached to an application stream.
-type Metadata map[string]any
-
 // ByteStream is a carrier-neutral encrypted application stream.
 type ByteStream interface {
 	io.Reader
@@ -111,7 +108,7 @@ type ByteStream interface {
 // IncomingStream is one accepted application stream and its bounded metadata.
 type IncomingStream struct {
 	Kind     string
-	Metadata Metadata
+	Metadata StreamMetadata
 	Stream   ByteStream
 }
 
@@ -133,7 +130,12 @@ func (err *ConnectError) Error() string {
 	return "Flowersec connection failed (code=" + string(err.code) + ")"
 }
 
-func (*ConnectError) Unwrap() error { return ErrConnectionFailed }
+func (err *ConnectError) Unwrap() error {
+	if err != nil && err.Code() == ConnectInvalidOptions {
+		return ErrInvalidConnectorOptions
+	}
+	return ErrConnectionFailed
+}
 
 // Is preserves cancellation and deadline matching without exposing the
 // internal connection failure that produced this public projection.
@@ -232,42 +234,24 @@ func Connect(ctx context.Context, lease ArtifactLease, options ConnectorOptions)
 }
 
 func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, error) {
-	if lease.artifact.value == nil || lease.state == nil || lease.state.commitSpend == nil || options.TrustRoots == nil ||
-		len(options.TrustRoots.Subjects()) == 0 || options.ConnectTimeout < 0 || !validOrigin(options.Origin) {
-		return nil, ErrInvalidConnectorOptions
+	if lease.artifact.value == nil || lease.state == nil || lease.state.commitSpend == nil {
+		return nil, &ConnectError{code: ConnectInvalidInput}
+	}
+	if options.TrustRoots == nil || len(options.TrustRoots.Subjects()) == 0 ||
+		options.ConnectTimeout < 0 || !validOrigin(options.Origin) {
+		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
 	if options.Handlers != nil && !options.Handlers.valid() {
-		return nil, ErrInvalidConnectorOptions
+		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: options.TrustRoots.Clone()}
-	webSocketClient := *gorillaws.DefaultDialer
-	webSocketClient.TLSClientConfig = tlsConfig.Clone()
-	webSocketDial, err := connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
-		Dialer:    &webSocketClient,
-		Resources: carrierws.DefaultResourcePolicy(),
-	})
+	dialers, err := newCarrierDialers(tlsConfig, options.Origin)
 	if err != nil {
-		return nil, ErrInvalidConnectorOptions
+		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
-	rawQUICDial, err := connectv2.NewRawQUICCarrierDial(connectv2.RawQUICDialConfig{
-		TLSConfig: tlsConfig.Clone(), Limits: rawquic.DefaultLimits(),
-	})
+	factory, err := connectv2.NewAdmissionFactory(dialers, artifactv2.ReasonRegistry{})
 	if err != nil {
-		return nil, ErrInvalidConnectorOptions
-	}
-	webTransportDial, err := connectv2.NewWebTransportCarrierDial(connectv2.WebTransportDialConfig{
-		TLSConfig: tlsConfig.Clone(), Limits: carrierwt.DefaultLimits(), Origin: options.Origin,
-	})
-	if err != nil {
-		return nil, ErrInvalidConnectorOptions
-	}
-	factory, err := connectv2.NewAdmissionFactory(map[artifactv2.Carrier]connectv2.CarrierDial{
-		artifactv2.CarrierWebSocket:    webSocketDial,
-		artifactv2.CarrierRawQUIC:      rawQUICDial,
-		artifactv2.CarrierWebTransport: webTransportDial,
-	}, artifactv2.ReasonRegistry{})
-	if err != nil {
-		return nil, ErrInvalidConnectorOptions
+		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
 	connectorOptions := make([]connectv2.ConnectorOption, 0, 1)
 	if options.Handlers != nil {
@@ -280,15 +264,51 @@ func newConnector(lease ArtifactLease, options ConnectorOptions) (*connector, er
 	return &connector{inner: inner, timeout: options.ConnectTimeout}, nil
 }
 
+func newCarrierDialers(tlsConfig *tls.Config, origin string) (map[artifactv2.Carrier]connectv2.CarrierDial, error) {
+	webSocketClient := *gorillaws.DefaultDialer
+	webSocketClient.TLSClientConfig = tlsConfig.Clone()
+	webSocketDial, err := connectv2.NewWebSocketCarrierDial(connectv2.WebSocketDialConfig{
+		Dialer:    &webSocketClient,
+		Resources: carrierws.DefaultResourcePolicy(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	rawQUICDial, err := connectv2.NewRawQUICCarrierDial(connectv2.RawQUICDialConfig{
+		TLSConfig: tlsConfig.Clone(), Limits: rawquic.DefaultLimits(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	dialers := map[artifactv2.Carrier]connectv2.CarrierDial{
+		artifactv2.CarrierWebSocket: webSocketDial,
+		artifactv2.CarrierRawQUIC:   rawQUICDial,
+	}
+	if origin != "" {
+		webTransportDial, err := connectv2.NewWebTransportCarrierDial(connectv2.WebTransportDialConfig{
+			TLSConfig: tlsConfig.Clone(), Limits: carrierwt.DefaultLimits(), Origin: origin,
+		})
+		if err != nil {
+			return nil, err
+		}
+		dialers[artifactv2.CarrierWebTransport] = webTransportDial
+	}
+	return dialers, nil
+}
+
 func validOrigin(value string) bool {
+	if value == "" {
+		return true
+	}
 	origin, err := url.Parse(value)
-	return err == nil && origin.Scheme == "https" && origin.Host != "" && origin.User == nil &&
-		(origin.Path == "" || origin.Path == "/") && origin.RawQuery == "" && origin.Fragment == ""
+	return err == nil && (origin.Scheme == "https" || origin.Scheme == "http") && origin.Host != "" && origin.User == nil &&
+		origin.Hostname() != "" && origin.Path == "" && origin.RawPath == "" && origin.Opaque == "" &&
+		origin.RawQuery == "" && !origin.ForceQuery && origin.Fragment == "" && origin.RawFragment == ""
 }
 
 func (connector *connector) connect(ctx context.Context) (Session, error) {
 	if connector == nil || connector.inner == nil {
-		return nil, ErrInvalidConnectorOptions
+		return nil, &ConnectError{code: ConnectInvalidOptions}
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -329,8 +349,8 @@ func (current *opaqueSession) UnreliableMessages() (UnreliableMessageChannel, er
 	return &opaqueUnreliableMessageChannel{inner: channel}, nil
 }
 
-func (current *opaqueSession) OpenStream(ctx context.Context, kind string, metadata Metadata) (ByteStream, error) {
-	stream, err := current.inner.OpenStream(ctx, kind, session.Metadata(metadata))
+func (current *opaqueSession) OpenStream(ctx context.Context, kind string, metadata StreamMetadata) (ByteStream, error) {
+	stream, err := current.inner.OpenStream(ctx, kind, session.Metadata(metadata.sessionValues()))
 	if err != nil {
 		return nil, redactSessionError(err)
 	}
@@ -343,7 +363,7 @@ func (current *opaqueSession) AcceptStream(ctx context.Context) (IncomingStream,
 		return IncomingStream{}, redactSessionError(err)
 	}
 	return IncomingStream{
-		Kind: incoming.Kind, Metadata: Metadata(incoming.Metadata), Stream: &opaqueByteStream{inner: incoming.Stream},
+		Kind: incoming.Kind, Metadata: StreamMetadata{values: map[string]any(incoming.Metadata)}, Stream: &opaqueByteStream{inner: incoming.Stream},
 	}, nil
 }
 

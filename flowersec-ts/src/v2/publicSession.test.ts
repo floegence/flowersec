@@ -24,7 +24,8 @@ describe("opaque public SessionV2 projection", () => {
     const incoming = await session.acceptStream();
     expect(incoming).not.toHaveProperty("id");
     expect(incoming.stream).not.toHaveProperty("id");
-    expect(incoming).toEqual(expect.objectContaining({ kind: "data", metadata: { purpose: "test" } }));
+    expect(incoming.kind).toBe("data");
+    expect(incoming.metadata.values).toEqual({ purpose: "test" });
   });
 
   test("projects operation and termination failures to the closed error set", async () => {

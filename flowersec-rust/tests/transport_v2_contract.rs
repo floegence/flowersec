@@ -3,8 +3,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use flowersec::{
-    ByteStream, IncomingStream, JsonObject, RpcCallError, RpcError, RpcPeer, Session, SessionError,
-    SessionTermination, StreamTerminalError,
+    ByteStream, IncomingStream, RpcCallError, RpcError, RpcPeer, Session, SessionError,
+    SessionTermination, StreamMetadata, StreamTerminalError,
 };
 
 #[derive(Debug)]
@@ -73,7 +73,7 @@ impl Session for ProbeSession {
     async fn open_stream(
         &self,
         _kind: &str,
-        _metadata: JsonObject,
+        _metadata: StreamMetadata,
     ) -> Result<Box<dyn ByteStream>, SessionError> {
         Ok(Box::new(ProbeStream))
     }
@@ -81,7 +81,7 @@ impl Session for ProbeSession {
     async fn accept_stream(&self) -> Result<IncomingStream, SessionError> {
         Ok(IncomingStream::new(
             "rpc",
-            JsonObject::new(),
+            StreamMetadata::empty(),
             Box::new(ProbeStream),
         ))
     }
@@ -123,9 +123,9 @@ fn v2_contract_is_object_safe_and_carrier_neutral() {
     let _rpc_error_size = std::mem::size_of::<RpcError>();
     let _rpc_call_error_size = std::mem::size_of::<RpcCallError>();
 
-    let incoming = IncomingStream::new("rpc", JsonObject::new(), Box::new(ProbeStream));
+    let incoming = IncomingStream::new("rpc", StreamMetadata::empty(), Box::new(ProbeStream));
     assert_eq!(incoming.kind(), "rpc");
-    assert!(incoming.metadata().is_empty());
+    assert!(incoming.metadata().values().is_empty());
     assert_eq!(incoming.stream().kind(), "rpc");
     assert_eq!(
         assert_terminal_error_is_closed(incoming.stream().terminal_error()),

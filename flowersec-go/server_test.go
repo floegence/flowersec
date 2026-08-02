@@ -17,12 +17,14 @@ import (
 func TestSessionHandlersDispatchAcceptedStreamMetadata(t *testing.T) {
 	stream := &serverTestStream{Reader: bytes.NewReader([]byte("request"))}
 	session := &serverTestSession{incoming: make(chan IncomingStream, 1), closed: make(chan struct{})}
+	metadata, err := NewStreamMetadata(map[string]any{"request_id": "req-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	session.incoming <- IncomingStream{
-		Kind: "files/read",
-		Metadata: Metadata{
-			"request_id": "req-1",
-		},
-		Stream: stream,
+		Kind:     "files/read",
+		Metadata: metadata,
+		Stream:   stream,
 	}
 
 	handled := make(chan Metadata, 1)
@@ -42,8 +44,8 @@ func TestSessionHandlersDispatchAcceptedStreamMetadata(t *testing.T) {
 
 	select {
 	case metadata := <-handled:
-		if metadata["request_id"] != "req-1" {
-			t.Fatalf("request_id = %#v, want req-1", metadata["request_id"])
+		if metadata.Values()["request_id"] != "req-1" {
+			t.Fatalf("request_id = %#v, want req-1", metadata.Values()["request_id"])
 		}
 	case <-time.After(time.Second):
 		t.Fatal("stream handler was not called")
@@ -186,13 +188,13 @@ func TestSessionHandlersResetStreamWhenConcurrencyIsExhausted(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- handlers.Serve(ctx, session) }()
-	session.incoming <- IncomingStream{Kind: "held", Metadata: Metadata{}, Stream: first}
+	session.incoming <- IncomingStream{Kind: "held", Metadata: EmptyStreamMetadata(), Stream: first}
 	select {
 	case <-started:
 	case <-time.After(time.Second):
 		t.Fatal("first stream handler did not start")
 	}
-	session.incoming <- IncomingStream{Kind: "held", Metadata: Metadata{}, Stream: second}
+	session.incoming <- IncomingStream{Kind: "held", Metadata: EmptyStreamMetadata(), Stream: second}
 	select {
 	case err := <-errorsCh:
 		var sessionErr *SessionError

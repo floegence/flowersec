@@ -15,7 +15,7 @@ use crate::{
     },
     transport_v2::{
         CarrierKind, CarrierSessionV2, CarrierStreamV2, CarrierUnreliableMessageErrorV2, PathKind,
-        RpcCallError, SessionError, SessionRole, SessionV2, UnreliableMessageError,
+        RpcCallError, SessionError, SessionRole, SessionV2, StreamMetadata, UnreliableMessageError,
     },
 };
 use bytes::Bytes;
@@ -968,7 +968,7 @@ async fn bidirectional_open_data_fin_and_consecutive_rekey() {
     assert_eq!(format!("{client:?}"), "EncryptedSessionV2 { <opaque> }");
     assert_eq!(format!("{server:?}"), "EncryptedSessionV2 { <opaque> }");
     let (opened, incoming) = tokio::join!(
-        client.open_stream("echo", serde_json::Map::new()),
+        client.open_stream("echo", StreamMetadata::empty()),
         server.accept_stream(),
     );
     let opened = opened.expect("open");
@@ -1010,7 +1010,7 @@ async fn bidirectional_open_data_fin_and_consecutive_rekey() {
 async fn encrypted_stream_reports_only_the_closed_terminal_error_set() {
     let (client, server) = establish_pair().await;
     let (opened, incoming) = tokio::join!(
-        client.open_stream("typed-terminal", serde_json::Map::new()),
+        client.open_stream("typed-terminal", StreamMetadata::empty()),
         server.accept_stream(),
     );
     let opened = opened.expect("open typed terminal stream");
@@ -1030,7 +1030,7 @@ async fn encrypted_stream_reports_only_the_closed_terminal_error_set() {
 async fn simultaneous_rekey_keeps_the_ordered_control_stream_live() {
     let (client, server) = establish_pair().await;
     let (stream, incoming) = tokio::join!(
-        client.open_stream("simultaneous", serde_json::Map::new()),
+        client.open_stream("simultaneous", StreamMetadata::empty()),
         server.accept_stream(),
     );
     let stream = stream.expect("open active stream");
@@ -1159,7 +1159,7 @@ async fn rekey_prepare_timeout_leaves_the_session_recoverable() {
         let server = server.clone();
         tokio::spawn(async move {
             server
-                .open_stream("prepare-timeout", serde_json::Map::new())
+                .open_stream("prepare-timeout", StreamMetadata::empty())
                 .await
         })
     };
@@ -1355,12 +1355,12 @@ async fn failed_outbound_carrier_open_commits_abandonment_before_later_rekey() {
     let server = server.expect("server SessionV2");
     assert!(
         client
-            .open_stream("fails-before-fss2", serde_json::Map::new())
+            .open_stream("fails-before-fss2", StreamMetadata::empty())
             .await
             .is_err()
     );
     let (stream, incoming) = tokio::join!(
-        client.open_stream("after-abandonment", serde_json::Map::new()),
+        client.open_stream("after-abandonment", StreamMetadata::empty()),
         server.accept_stream(),
     );
     assert_eq!(stream.expect("later stream").internal_test_id(), 3);
@@ -1422,7 +1422,7 @@ async fn canceled_outbound_setup_commits_reset_before_later_rekey() {
         let client = client.clone();
         tokio::spawn(async move {
             client
-                .open_stream("cancel-during-fss2", serde_json::Map::new())
+                .open_stream("cancel-during-fss2", StreamMetadata::empty())
                 .await
         })
     };
@@ -1440,7 +1440,7 @@ async fn canceled_outbound_setup_commits_reset_before_later_rekey() {
     release_write.notify_waiters();
 
     let (stream, incoming) = tokio::join!(
-        client.open_stream("after-cancel", serde_json::Map::new()),
+        client.open_stream("after-cancel", StreamMetadata::empty()),
         server.accept_stream(),
     );
     assert_eq!(stream.expect("later stream").internal_test_id(), 3);
@@ -1508,7 +1508,7 @@ async fn canceled_abandonment_finishes_the_in_flight_reset_record() {
         let client = client.clone();
         tokio::spawn(async move {
             client
-                .open_stream("fails-before-fss2", serde_json::Map::new())
+                .open_stream("fails-before-fss2", StreamMetadata::empty())
                 .await
         })
     };
@@ -1521,7 +1521,7 @@ async fn canceled_abandonment_finishes_the_in_flight_reset_record() {
     enabled.store(false, Ordering::Release);
     let (stream, incoming) = tokio::time::timeout(Duration::from_secs(1), async {
         tokio::join!(
-            client.open_stream("after-in-flight-reset", serde_json::Map::new()),
+            client.open_stream("after-in-flight-reset", StreamMetadata::empty()),
             server.accept_stream(),
         )
     })
@@ -1598,7 +1598,7 @@ async fn goaway_boundary_tightening_rejects_an_already_allocated_open() {
         let client = client.clone();
         tokio::spawn(async move {
             client
-                .open_stream("past-boundary", serde_json::Map::new())
+                .open_stream("past-boundary", StreamMetadata::empty())
                 .await
         })
     };
@@ -1966,7 +1966,7 @@ async fn stalled_fss2_does_not_block_later_authenticated_streams() {
     tokio::time::sleep(Duration::from_millis(10)).await;
     let (outgoing, incoming) = tokio::time::timeout(Duration::from_millis(250), async {
         tokio::join!(
-            client.open_stream("after-stalled-fss2", serde_json::Map::new()),
+            client.open_stream("after-stalled-fss2", StreamMetadata::empty()),
             server.accept_stream(),
         )
     })
@@ -2010,7 +2010,7 @@ async fn queued_data_open_does_not_starve_reserved_rpc_capacity() {
     let client = client.expect("client SessionV2");
     let server = server.expect("server SessionV2");
     let (first, first_incoming) = tokio::join!(
-        client.open_stream("capacity-owner", serde_json::Map::new()),
+        client.open_stream("capacity-owner", StreamMetadata::empty()),
         server.accept_stream(),
     );
     let first = first.expect("first data stream");
@@ -2019,7 +2019,7 @@ async fn queued_data_open_does_not_starve_reserved_rpc_capacity() {
         let client = client.clone();
         tokio::spawn(async move {
             client
-                .open_stream("queued-data", serde_json::Map::new())
+                .open_stream("queued-data", StreamMetadata::empty())
                 .await
         })
     };
@@ -2070,7 +2070,7 @@ async fn peer_initiated_rekey_is_bounded_by_the_receivers_completion_deadline() 
     let client = client.expect("client SessionV2");
     let server = server.expect("server SessionV2");
     let (stream, incoming) = tokio::join!(
-        client.open_stream("peer-rekey-deadline", serde_json::Map::new()),
+        client.open_stream("peer-rekey-deadline", StreamMetadata::empty()),
         server.accept_stream(),
     );
     let stream = stream.expect("outgoing stream");
@@ -2184,7 +2184,7 @@ async fn local_rekey_waits_for_an_in_flight_inbound_open_responder() {
         let server = server.clone();
         tokio::spawn(async move {
             server
-                .open_stream("concurrent-inbound-open", serde_json::Map::new())
+                .open_stream("concurrent-inbound-open", StreamMetadata::empty())
                 .await
         })
     };

@@ -1,4 +1,6 @@
 import type { RpcClient } from "../rpc/client.js";
+import type { StreamMetadataV2 } from "./streamMetadata.js";
+export type { StreamMetadataV2 } from "./streamMetadata.js";
 
 export type CarrierKind = "websocket" | "raw_quic" | "webtransport";
 
@@ -14,14 +16,6 @@ export type OperationOptionsV2 = Readonly<{
   signal?: AbortSignal;
 }>;
 
-declare const unreliableMessageBrandV2: unique symbol;
-
-/** Opaque application payload accepted by the unreliable message channel. */
-export type UnreliableMessageV2 = Readonly<{
-  readonly data: Uint8Array;
-  readonly [unreliableMessageBrandV2]: true;
-}>;
-
 export type UnreliableMessageSendOptionsV2 = OperationOptionsV2 & Readonly<{
   expiresAtUnixMs: number;
 }>;
@@ -35,15 +29,15 @@ export type UnreliableMessageSendResultV2 =
 export interface UnreliableMessageChannelV2 {
   readonly maxMessageSize: 976;
   send(
-    message: UnreliableMessageV2,
+    message: Uint8Array,
     options: UnreliableMessageSendOptionsV2,
   ): Promise<UnreliableMessageSendResultV2>;
-  receive(options?: OperationOptionsV2): Promise<UnreliableMessageV2>;
+  receive(options?: OperationOptionsV2): Promise<Uint8Array>;
 }
 
 export type StreamOpenOptionsV2 = OperationOptionsV2 &
   Readonly<{
-    metadata?: JsonObjectV2;
+    metadata?: StreamMetadataV2;
   }>;
 
 export type SessionErrorCode =
@@ -97,7 +91,7 @@ export interface ByteStreamV2 {
 
 export interface IncomingStreamV2 {
   readonly kind: string;
-  readonly metadata: JsonObjectV2;
+  readonly metadata: StreamMetadataV2;
   readonly stream: ByteStreamV2;
 }
 
@@ -143,10 +137,14 @@ export interface InternalSessionV2 {
   readonly termination: Promise<Readonly<{ error: Error }>>;
   readonly unreliableMessages?: UnreliableMessageChannelV2 | undefined;
 
-  openStream(kind: string, options?: StreamOpenOptionsV2): Promise<InternalByteStreamV2>;
+  openStream(kind: string, options?: InternalStreamOpenOptionsV2): Promise<InternalByteStreamV2>;
   acceptStream(options?: OperationOptionsV2): Promise<InternalIncomingStreamV2>;
   rekey(options?: OperationOptionsV2): Promise<void>;
   probeLiveness(options?: OperationOptionsV2): Promise<number>;
   waitTermination(): Promise<Readonly<{ error: Error }>>;
   close(): Promise<void>;
 }
+
+export type InternalStreamOpenOptionsV2 = OperationOptionsV2 & Readonly<{
+  metadata?: JsonObjectV2;
+}>;

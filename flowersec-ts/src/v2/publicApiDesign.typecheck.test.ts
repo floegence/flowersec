@@ -1,14 +1,15 @@
 import type {
   ArtifactLease,
   ByteStream,
-  JsonObject,
   RpcPeer,
   RpcResult,
   Session,
+  StreamMetadata,
 } from "../node/index.js";
 import {
   connectNodeSession,
   createArtifactLease,
+  createStreamMetadata,
   parseArtifact,
 } from "../node/index.js";
 import { expect, test } from "vitest";
@@ -37,7 +38,7 @@ function typecheckPublicAPI(
   session: Session,
   peer: RpcPeer,
   stream: ByteStream,
-  metadata: JsonObject,
+  metadata: StreamMetadata,
 ): void {
   const result: Promise<RpcResult<PingResponse>> = peer.call<PingRequest, PingResponse>(
     7,
@@ -50,6 +51,9 @@ function typecheckPublicAPI(
   void connectNodeSession(lease, { origin: "https://client.example" });
   void connectNodeSession(lease, { origin: "https://client.example", connectTimeoutMs: 2_500 });
   void createArtifactLease(parseArtifact("{}"), async () => {});
+  void createStreamMetadata({ purpose: "typed", attempt: 1 });
+  // @ts-expect-error stream metadata must be constructed and validated first.
+  void session.openStream("unvalidated", { metadata: { purpose: "typed" } });
   // @ts-expect-error Artifact leases are nominal handles created by the SDK.
   const forgedLease: ArtifactLease = { artifact: parseArtifact("{}") };
   void forgedLease;

@@ -98,6 +98,11 @@ pub struct ConnectError {
 }
 
 impl ConnectError {
+    #[cfg(test)]
+    pub(crate) const fn from_code(code: ConnectErrorCode) -> Self {
+        Self { code }
+    }
+
     pub const fn code(&self) -> ConnectErrorCode {
         self.code
     }

@@ -12,6 +12,55 @@ use sha2::{Digest, Sha256};
 /// Canonical JSON metadata attached to a logical v2 stream.
 pub type JsonObjectV2 = serde_json::Map<String, serde_json::Value>;
 
+/// A validated immutable value accepted as application stream metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamMetadata {
+    values: JsonObjectV2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum StreamMetadataError {
+    #[error("invalid Flowersec stream metadata")]
+    InvalidValue,
+}
+
+impl StreamMetadata {
+    pub fn empty() -> Self {
+        Self {
+            values: JsonObjectV2::new(),
+        }
+    }
+
+    pub fn values(&self) -> &JsonObjectV2 {
+        &self.values
+    }
+
+    pub(crate) fn from_validated(values: JsonObjectV2) -> Self {
+        Self { values }
+    }
+}
+
+impl TryFrom<serde_json::Value> for StreamMetadata {
+    type Error = StreamMetadataError;
+
+    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+        crate::protocol_v2::canonical_open_metadata_value_v2(&value)
+            .map_err(|_| StreamMetadataError::InvalidValue)?;
+        let serde_json::Value::Object(values) = value else {
+            return Err(StreamMetadataError::InvalidValue);
+        };
+        Ok(Self { values })
+    }
+}
+
+impl TryFrom<JsonObjectV2> for StreamMetadata {
+    type Error = StreamMetadataError;
+
+    fn try_from(values: JsonObjectV2) -> Result<Self, Self::Error> {
+        Self::try_from(serde_json::Value::Object(values))
+    }
+}
+
 /// One reliable bidirectional carrier stream before Flowersec encryption.
 ///
 /// Implementations expose native directional shutdown. In particular, the raw
@@ -742,7 +791,7 @@ pub trait ByteStreamV2: fmt::Debug + Send + Sync + 'static {
 /// One accepted logical stream and its authenticated setup metadata.
 pub struct IncomingStreamV2 {
     kind: String,
-    metadata: JsonObjectV2,
+    metadata: StreamMetadata,
     stream: Box<dyn ByteStreamV2>,
 }
 
@@ -750,7 +799,7 @@ impl IncomingStreamV2 {
     /// Wraps an accepted stream after its v2 setup metadata has been authenticated.
     pub fn new(
         kind: impl Into<String>,
-        metadata: JsonObjectV2,
+        metadata: StreamMetadata,
         stream: Box<dyn ByteStreamV2>,
     ) -> Self {
         Self {
@@ -771,7 +820,7 @@ impl IncomingStreamV2 {
     }
 
     /// Returns the authenticated stream metadata.
-    pub fn metadata(&self) -> &JsonObjectV2 {
+    pub fn metadata(&self) -> &StreamMetadata {
         &self.metadata
     }
 
@@ -859,7 +908,7 @@ pub trait SessionV2: fmt::Debug + Send + Sync + 'static {
     async fn open_stream(
         &self,
         kind: &str,
-        metadata: JsonObjectV2,
+        metadata: StreamMetadata,
     ) -> Result<Box<dyn ByteStreamV2>, SessionError>;
     /// Accepts the next authenticated logical stream.
     async fn accept_stream(&self) -> Result<IncomingStreamV2, SessionError>;

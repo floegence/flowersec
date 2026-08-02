@@ -383,7 +383,11 @@ func (pair *ProductDirectPair) RoundTrip(ctx context.Context, request, response 
 		incoming, err := pair.Server.AcceptStream(ctx)
 		accepted <- acceptResult{incoming: incoming, err: err}
 	}()
-	opened, err := pair.Client.OpenStream(ctx, "public-release-roundtrip", flowersec.Metadata{"direction": "client-to-server"})
+	metadata, err := flowersec.NewStreamMetadata(map[string]any{"direction": "client-to-server"})
+	if err != nil {
+		return err
+	}
+	opened, err := pair.Client.OpenStream(ctx, "public-release-roundtrip", metadata)
 	if err != nil {
 		return err
 	}
