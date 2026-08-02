@@ -32,6 +32,7 @@ const forcedPlan = {
   client_netns: "flowersec-client-01",
   module_bind_address: "192.0.2.1",
   module_advertise_host: "192.0.2.1",
+  evidence_directory: path.resolve("browser-release-evidence"),
   cell_deadline_ms: 900_000,
   cold: {
     operations: 4,
@@ -226,6 +227,8 @@ test("launches the actual Chromium process inside the named client netns", () =>
   assert.deepEqual(options.args, [
     "--unsafely-treat-insecure-origin-as-secure=http://192.0.2.1:38123",
     "--quic-client-connection-options=TBBR",
+    `--log-net-log=${path.resolve("browser-release-evidence", "chromium-netlog.json")}`,
+    "--net-log-capture-mode=IncludeSensitive",
   ]);
   assert.throws(
     () => chromiumLaunchOptions(normalizeCollectorPlan({ ...forcedPlan, client_netns: "bad;namespace" }), "/chrome", launcher, "http://192.0.2.1:38123"),

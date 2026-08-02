@@ -142,7 +142,7 @@ func runBrowserNetworkCarrierWithLabel(ctx context.Context, topology string, pla
 	if err != nil {
 		return result, err
 	}
-	request := newBrowserWorkerRequest(plan, topology, runNumber, config, sourceRoot)
+	request := newBrowserWorkerRequest(plan, topology, runNumber, config, sourceRoot, evidence.directory)
 	requestJSON, err := json.Marshal(request)
 	if err != nil {
 		return result, err
@@ -189,23 +189,25 @@ func runBrowserNetworkCarrierWithLabel(ctx context.Context, topology string, pla
 }
 
 type browserWorkerRequest struct {
-	Mode            string                       `json:"mode,omitempty"`
-	Plan            transportrelease.ProfilePlan `json:"plan"`
-	Topology        string                       `json:"topology"`
-	RunNumber       int                          `json:"run_number"`
-	ClientNamespace string                       `json:"client_namespace"`
-	ServerNamespace string                       `json:"server_namespace"`
-	ClientAddress   string                       `json:"client_address,omitempty"`
-	ServerAddress   string                       `json:"server_address"`
-	SourceRoot      string                       `json:"source_root"`
-	Capacity        *browserCapacityWorkerPlan   `json:"capacity,omitempty"`
+	Mode              string                       `json:"mode,omitempty"`
+	Plan              transportrelease.ProfilePlan `json:"plan"`
+	Topology          string                       `json:"topology"`
+	RunNumber         int                          `json:"run_number"`
+	ClientNamespace   string                       `json:"client_namespace"`
+	ServerNamespace   string                       `json:"server_namespace"`
+	ClientAddress     string                       `json:"client_address,omitempty"`
+	ServerAddress     string                       `json:"server_address"`
+	SourceRoot        string                       `json:"source_root"`
+	EvidenceDirectory string                       `json:"evidence_directory,omitempty"`
+	Capacity          *browserCapacityWorkerPlan   `json:"capacity,omitempty"`
 }
 
-func newBrowserWorkerRequest(plan transportrelease.ProfilePlan, topology string, runNumber int, config linuxnetlab.Config, sourceRoot string) browserWorkerRequest {
+func newBrowserWorkerRequest(plan transportrelease.ProfilePlan, topology string, runNumber int, config linuxnetlab.Config, sourceRoot, evidenceDirectory string) browserWorkerRequest {
 	return browserWorkerRequest{
 		Plan: plan, Topology: topology, RunNumber: runNumber,
 		ClientNamespace: config.ClientNamespace, ServerNamespace: config.ServerNamespace,
-		ClientAddress: config.ClientAddress.Addr().String(), ServerAddress: config.ServerAddress.Addr().String(), SourceRoot: sourceRoot,
+		ClientAddress: config.ClientAddress.Addr().String(), ServerAddress: config.ServerAddress.Addr().String(),
+		SourceRoot: sourceRoot, EvidenceDirectory: evidenceDirectory,
 	}
 }
 
@@ -224,6 +226,7 @@ type browserCollectorPlan struct {
 	ClientNamespace     string                       `json:"client_netns"`
 	ModuleBindAddress   string                       `json:"module_bind_address"`
 	ModuleAdvertiseHost string                       `json:"module_advertise_host"`
+	EvidenceDirectory   string                       `json:"evidence_directory"`
 	CellDeadlineMS      int64                        `json:"cell_deadline_ms"`
 	Cold                browserCollectorColdPlan     `json:"cold"`
 	RPC                 browserCollectorRPCPlan      `json:"rpc"`
@@ -357,12 +360,12 @@ func validateBrowserWorkerRequest(request browserWorkerRequest) error {
 		return errors.New("browser release worker request is outside the supported topology")
 	}
 	if request.Mode == "capacity" {
-		if request.Capacity == nil || request.RunNumber != 0 || request.Plan.ID != "" {
+		if request.Capacity == nil || request.RunNumber != 0 || request.Plan.ID != "" || request.EvidenceDirectory != "" {
 			return errors.New("browser capacity worker request is outside the frozen capacity matrix")
 		}
 		return validateBrowserCapacityWorkerPlan(*request.Capacity, request.SourceRoot)
 	}
-	if request.Mode != "" || request.Capacity != nil || request.RunNumber < 1 {
+	if request.Mode != "" || request.Capacity != nil || request.RunNumber < 1 || !filepath.IsAbs(request.EvidenceDirectory) {
 		return errors.New("browser release worker mode is invalid")
 	}
 	plan := request.Plan
@@ -431,7 +434,8 @@ func newBrowserCollectorPlan(request browserWorkerRequest, sourceURL, certificat
 		SchemaVersion: 1, Topology: request.Topology, ProfileID: request.Plan.ID, RunNumber: request.RunNumber, Mode: "forced",
 		ArtifactSourceURL: sourceURL, CertificateHash: certificateHash, ClientNamespace: request.ClientNamespace,
 		ModuleBindAddress: request.ClientAddress, ModuleAdvertiseHost: request.ClientAddress,
-		CellDeadlineMS: seconds(request.Plan.CellWatchdogMinutes * 60), CleanupDeadlineMS: seconds(request.Plan.CleanupDeadlineSeconds),
+		EvidenceDirectory: request.EvidenceDirectory,
+		CellDeadlineMS:    seconds(request.Plan.CellWatchdogMinutes * 60), CleanupDeadlineMS: seconds(request.Plan.CleanupDeadlineSeconds),
 		Cold: browserCollectorColdPlan{
 			Operations: request.Plan.Cold.Operations, MaxInflight: request.Plan.Cold.MaxInflight,
 			StartRatePerSecond:  request.Plan.Cold.StartRatePerSecond,

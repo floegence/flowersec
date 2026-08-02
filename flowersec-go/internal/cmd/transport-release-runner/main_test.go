@@ -568,7 +568,8 @@ func TestBrowserCollectorPlanKeepsModuleSiteOnClientSide(t *testing.T) {
 		"client_namespace":"client-netns",
 		"client_address":"198.18.13.41",
 		"server_namespace":"server-netns",
-		"server_address":"198.18.13.42"
+		"server_address":"198.18.13.42",
+		"evidence_directory":"/release/evidence/run-001"
 	}`), &request); err != nil {
 		t.Fatal(err)
 	}
@@ -578,6 +579,9 @@ func TestBrowserCollectorPlanKeepsModuleSiteOnClientSide(t *testing.T) {
 	}
 	if plan.ArtifactSourceURL != "http://198.18.13.42:443/artifacts" {
 		t.Fatalf("artifact source URL = %q, want server-side weak-network endpoint", plan.ArtifactSourceURL)
+	}
+	if plan.EvidenceDirectory != "/release/evidence/run-001" {
+		t.Fatalf("collector evidence directory = %q, want run-owned evidence directory", plan.EvidenceDirectory)
 	}
 }
 
@@ -646,9 +650,13 @@ func TestBrowserWorkerRequestUsesUnprefixedClientAddressAndOrigin(t *testing.T) 
 			ServerAddress:   netip.MustParsePrefix("198.18.13.42/30"),
 		},
 		"/source",
+		"/evidence",
 	)
 	if request.ClientAddress != "198.18.13.41" || request.ServerAddress != "198.18.13.42" {
 		t.Fatalf("worker addresses = %q/%q, want unprefixed client/server IPs", request.ClientAddress, request.ServerAddress)
+	}
+	if request.EvidenceDirectory != "/evidence" {
+		t.Fatalf("worker evidence directory = %q, want /evidence", request.EvidenceDirectory)
 	}
 	if got := browserWorkerAllowedOrigin(request); got != "http://198.18.13.41" {
 		t.Fatalf("allowed origin = %q, want client module-site origin", got)

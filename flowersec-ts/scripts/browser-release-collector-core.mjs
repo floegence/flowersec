@@ -33,6 +33,7 @@ export function normalizeCollectorPlan(input) {
     client_netns: clientNetns,
     module_bind_address: moduleBindAddress,
     module_advertise_host: moduleAdvertiseHost,
+    evidence_directory: absolutePath(plan.evidence_directory, "evidence_directory"),
     cell_deadline_ms: positiveInteger(plan.cell_deadline_ms, "cell_deadline_ms"),
   };
   if (adaptive) {
@@ -66,6 +67,8 @@ export function chromiumLaunchOptions(plan, chromiumExecutable, launcherPath, mo
     args: [
       `--unsafely-treat-insecure-origin-as-secure=${secureOrigin}`,
       "--quic-client-connection-options=TBBR",
+      `--log-net-log=${path.join(normalized.evidence_directory, "chromium-netlog.json")}`,
+      "--net-log-capture-mode=IncludeSensitive",
     ],
     env: {
       ...process.env,
