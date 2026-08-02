@@ -128,9 +128,14 @@ fi
 
 test_count="$(wc -l < "$tests_file" | tr -d ' ')"
 if (( auto_shard_count == 1 )); then
-  shard_count="$parallelism"
-  if (( shard_count > test_count )); then
-    shard_count="$test_count"
+  # Two bounded waves preserve fixture reuse without packing the complete
+  # package workload into one five-minute process window per worker.
+  shard_count="$test_count"
+  if (( parallelism < test_count )); then
+    shard_count=$((parallelism * 2))
+    if (( shard_count > test_count )); then
+      shard_count="$test_count"
+    fi
   fi
 fi
 

@@ -218,7 +218,7 @@ chmod +x "$output"
 	}
 }
 
-func TestRaceShardRunnerAutoBoundsShardsByParallelism(t *testing.T) {
+func TestRaceShardRunnerAutoUsesAtMostTwoBoundedWaves(t *testing.T) {
 	repoRoot := filepath.Clean(filepath.Join("..", ".."))
 	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
 	tempDir := t.TempDir()
@@ -255,7 +255,7 @@ func TestFour(t any) {}
 	if err != nil {
 		t.Fatalf("run auto-sharded race runner: %v\n%s", err, output)
 	}
-	if !strings.Contains(string(output), "8 tests across 3 shards") {
+	if !strings.Contains(string(output), "8 tests across 6 shards") {
 		t.Fatalf("auto shard summary = %s", output)
 	}
 	invocationBytes, err := os.ReadFile(logPath)
@@ -263,8 +263,8 @@ func TestFour(t any) {}
 		t.Fatal(err)
 	}
 	invocations := strings.Split(strings.TrimSpace(string(invocationBytes)), "\n")
-	if len(invocations) != 3 {
-		t.Fatalf("auto shard invocations = %d, want bounded parallelism 3: %q", len(invocations), invocations)
+	if len(invocations) != 6 {
+		t.Fatalf("auto shard invocations = %d, want two bounded waves of 3: %q", len(invocations), invocations)
 	}
 	patterns := make([]*regexp.Regexp, 0, len(invocations))
 	for _, invocation := range invocations {
@@ -569,7 +569,7 @@ exit 2
 			goShardCount++
 		}
 	}
-	if compileCount != 1 || binaryCount != 2 || goShardCount != 0 {
+	if compileCount != 1 || binaryCount != 4 || goShardCount != 0 {
 		t.Fatalf("race build invocations = compile:%d binary:%d go-shard:%d; log=%q", compileCount, binaryCount, goShardCount, string(logBytes))
 	}
 }
