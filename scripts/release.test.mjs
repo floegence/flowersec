@@ -507,7 +507,7 @@ test("CodeQL retains every language with bounded jobs outside ordinary push CI",
   assert.match(workflow, /Could not inspect previous CodeQL runs; scanning fail-safe\./);
   assert.match(workflow, /"\$previous_sha" == "\$HEAD_SHA"/);
   assert.match(workflow, /^    needs: plan\n    if: needs\.plan\.outputs\.should_scan == 'true'$/m);
-  assert.match(workflow, /^    timeout-minutes: 8$/m);
+  assert.match(workflow, /^    timeout-minutes: 9$/m);
   for (const language of ["actions", "c-cpp", "go", "javascript-typescript", "ruby", "rust", "swift"]) {
     assert.match(workflow, new RegExp("^          - language: " + language + "$", "m"));
   }

@@ -257,7 +257,7 @@ require_exact_keys(codeql_job, ["name", "needs", "if", "runs-on", "timeout-minut
 require_exact_value(codeql_job["name"], "Analyze (${{ matrix.language }})", "the CodeQL job name")
 require_exact_value(codeql_job["needs"], "plan", "the CodeQL analyze dependency")
 require_exact_value(codeql_job["runs-on"], "${{ matrix.runner }}", "the CodeQL runner selector")
-require_exact_value(codeql_job["timeout-minutes"], 8, "the CodeQL timeout")
+require_exact_value(codeql_job["timeout-minutes"], 9, "the CodeQL timeout")
 require_exact_value(codeql_job["strategy"], {
   "fail-fast" => false,
   "matrix" => { "include" => [
@@ -267,7 +267,7 @@ require_exact_value(codeql_job["strategy"], {
     { "language" => "javascript-typescript", "build-mode" => "none", "runner" => "ubuntu-latest" },
     { "language" => "ruby", "build-mode" => "none", "runner" => "ubuntu-latest" },
     { "language" => "rust", "build-mode" => "none", "runner" => "ubuntu-latest" },
-    { "language" => "swift", "build-mode" => "manual", "runner" => "macos-15" },
+    { "language" => "swift", "build-mode" => "manual", "runner" => "macos-15-large" },
   ] },
 }, "the CodeQL matrix")
 require_exact_value(prepare_job["outputs"], { "version" => "${{ steps.version.outputs.version }}" }, "the prepare job outputs")
