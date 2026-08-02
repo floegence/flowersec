@@ -515,12 +515,12 @@ test("CodeQL retains every language with bounded jobs outside ordinary push CI",
   assert.match(workflow, /^          - language: rust\n            build-mode: none$/m);
   assert.match(workflow, /^        uses: github\/codeql-action\/init@[0-9a-f]{40} # v4$/m);
   assert.match(workflow, /^          languages: \$\{\{ matrix\.language \}\}\n          build-mode: \$\{\{ matrix\.build-mode \}\}\n          queries: security-extended$/m);
-  const prepareSwift = workflow.indexOf("      - name: Prepare Swift dependencies");
+  const prepareSwift = workflow.indexOf("      - name: Prepare Swift build cache");
   const initializeCodeQL = workflow.indexOf("      - name: Initialize CodeQL");
-  assert.notEqual(prepareSwift, -1, "Swift dependencies must be prepared outside CodeQL tracing");
-  assert.ok(prepareSwift < initializeCodeQL, "Swift dependencies must be prepared before CodeQL initialization");
-  assert.match(workflow, /^        run: swift package --skip-update --only-use-versions-from-resolved-file resolve$/m);
-  assert.match(workflow, /^        run: swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec$/m);
+  assert.notEqual(prepareSwift, -1, "Swift dependencies must be built outside CodeQL tracing");
+  assert.ok(prepareSwift < initializeCodeQL, "Swift dependencies must be built before CodeQL initialization");
+  assert.match(workflow, /^        run: \|\n          swift package --skip-update --only-use-versions-from-resolved-file resolve\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec$/m);
+  assert.match(workflow, /^      - name: Build Swift library\n        if: matrix\.language == 'swift'\n        run: \|\n          find flowersec-swift\/Sources\/Flowersec -type f -name '\*\.swift' -exec touch \{\} \+\n          swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec$/m);
   assert.match(workflow, /^        if: matrix\.language == 'go'\n        uses: github\/codeql-action\/autobuild@[0-9a-f]{40} # v4$/m);
   assert.match(workflow, /^        uses: github\/codeql-action\/analyze@[0-9a-f]{40} # v4$/m);
 });

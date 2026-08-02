@@ -309,9 +309,9 @@ validate_step_contracts(ci_steps, [
 ], "the hosted CI repository job")
 validate_step_contracts(codeql_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
-  { name: "Prepare Swift dependencies", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve" } },
+  { name: "Prepare Swift build cache", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec\n" } },
   { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
-  { name: "Build Swift library", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "swift build --skip-update --only-use-versions-from-resolved-file --target Flowersec" } },
+  { name: "Build Swift library", keys: ["name", "if", "run"], values: { "if" => "matrix.language == 'swift'", "run" => "find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec\n" } },
   { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@f205ea1c3313d32999d8d6a48b4f6530d4437b38" } },
   { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38" } },
 ], "the CodeQL analyze job")

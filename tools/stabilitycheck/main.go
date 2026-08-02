@@ -812,7 +812,7 @@ func verifyGo(repoRoot string, m *manifest) error {
 		"GOWORK=off",
 		"GOMODCACHE="+filepath.Join(tmpDir, "modcache"),
 		"GONOSUMDB="+m.Go.ModulePath,
-		"GOPROXY=file://"+filepath.ToSlash(proxyRoot)+",https://proxy.golang.org,direct",
+		"GOPROXY="+goVerifierProxyChain(proxyRoot, os.Getenv("GOPROXY")),
 	)
 	var out bytes.Buffer
 	for attempt := 1; attempt <= 3; attempt++ {
@@ -834,6 +834,14 @@ func verifyGo(repoRoot string, m *manifest) error {
 		return nil
 	}
 	return errors.New("verify-go exhausted its retry contract")
+}
+
+func goVerifierProxyChain(proxyRoot, configured string) string {
+	configured = strings.TrimSpace(configured)
+	if configured == "" {
+		configured = "https://proxy.golang.org,direct"
+	}
+	return "file://" + filepath.ToSlash(proxyRoot) + "," + configured
 }
 
 func isTransientGoDownloadFailure(output string) bool {
