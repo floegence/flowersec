@@ -218,30 +218,71 @@ chmod +x "$output"
 	}
 }
 
-func TestRaceShardRunnerAutoCreatesOneShardPerTest(t *testing.T) {
+func TestRaceShardRunnerAutoBoundsShardsByParallelism(t *testing.T) {
 	repoRoot := filepath.Clean(filepath.Join("..", ".."))
 	runner := filepath.Join(repoRoot, "scripts", "run-go-test-race-shards.sh")
 	tempDir := t.TempDir()
 	logPath := filepath.Join(tempDir, "race-invocations.log")
-	testNames := []string{"TestOne", "TestTwo", "TestThree", "TestFour"}
+	testNames := []string{
+		"TestFixtureOne",
+		"TestFixtureTwo",
+		"TestFixtureThree",
+		"TestFixtureFour",
+		"TestOne",
+		"TestTwo",
+		"TestThree",
+		"TestFour",
+	}
 	installFakeGo(t, tempDir, strings.Join(testNames, "\n")+"\n", logPath)
+	source := `package cost
 
-	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "2", "race", "1")
+func TestFixtureOne(t any) { completeReport(t, nil, nil) }
+func TestFixtureTwo(t any) { completeReport(t, nil, nil) }
+func TestFixtureThree(t any) { completeReport(t, nil, nil) }
+func TestFixtureFour(t any) { completeReport(t, nil, nil) }
+func TestOne(t any) {}
+func TestTwo(t any) {}
+func TestThree(t any) {}
+func TestFour(t any) {}
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "cost_test.go"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "3", "race", "1")
 	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "FAKE_GO_TEST_LIST="+strings.Join(testNames, "\n")+"\n")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run auto-sharded race runner: %v\n%s", err, output)
 	}
-	if !strings.Contains(string(output), "4 tests across 4 shards") {
+	if !strings.Contains(string(output), "8 tests across 3 shards") {
 		t.Fatalf("auto shard summary = %s", output)
 	}
-	invocations, err := os.ReadFile(logPath)
+	invocationBytes, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
+	invocations := strings.Split(strings.TrimSpace(string(invocationBytes)), "\n")
+	if len(invocations) != 3 {
+		t.Fatalf("auto shard invocations = %d, want bounded parallelism 3: %q", len(invocations), invocations)
+	}
+	patterns := make([]*regexp.Regexp, 0, len(invocations))
+	for _, invocation := range invocations {
+		pattern, err := regexp.Compile(flagValue(strings.Fields(invocation), "-test.run"))
+		if err != nil {
+			t.Fatalf("compile shard pattern from %q: %v", invocation, err)
+		}
+		patterns = append(patterns, pattern)
+	}
 	for _, name := range testNames {
-		if count := strings.Count(string(invocations), "^("+name+")$"); count != 1 {
-			t.Fatalf("%s invocation count = %d, want 1\n%s", name, count, invocations)
+		matches := 0
+		for _, pattern := range patterns {
+			if pattern.MatchString(name) {
+				matches++
+			}
+		}
+		if matches != 1 {
+			t.Fatalf("%s matched %d shards, want exactly 1: %q", name, matches, invocations)
 		}
 	}
 }
@@ -319,7 +360,7 @@ func TestShort(t any) {}
 	if err := os.WriteFile(filepath.Join(tempDir, "cost_test.go"), []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "1", "normal", "1")
+	cmd := exec.Command("bash", runner, tempDir, "3", "1m", "1", "normal", "1")
 	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "TMPDIR="+tempDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("runner failed: %v\n%s", err, output)
@@ -362,7 +403,7 @@ func TestLongFixture(t any) {
 	if err := os.WriteFile(filepath.Join(tempDir, "cost_test.go"), []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "1", "normal", "1")
+	cmd := exec.Command("bash", runner, tempDir, "2", "1m", "1", "normal", "1")
 	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "TMPDIR="+tempDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("runner failed: %v\n%s", err, output)
@@ -402,7 +443,7 @@ func TestMeasuredHighCost(t any) {}
 	if err := os.WriteFile(filepath.Join(tempDir, "cost_test.go"), []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "1", "normal", "1")
+	cmd := exec.Command("bash", runner, tempDir, "2", "1m", "1", "normal", "1")
 	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "TMPDIR="+tempDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("runner failed: %v\n%s", err, output)
@@ -445,7 +486,7 @@ func TestMeasuredCriticalCost(t any) {}
 	if err := os.WriteFile(filepath.Join(tempDir, "cost_test.go"), []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("bash", runner, tempDir, "auto", "1m", "1", "normal", "1")
+	cmd := exec.Command("bash", runner, tempDir, "3", "1m", "1", "normal", "1")
 	cmd.Env = append(os.Environ(), "PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"), "RACE_SHARD_LOG="+logPath, "TMPDIR="+tempDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("runner failed: %v\n%s", err, output)
@@ -528,7 +569,7 @@ exit 2
 			goShardCount++
 		}
 	}
-	if compileCount != 1 || binaryCount != 4 || goShardCount != 0 {
+	if compileCount != 1 || binaryCount != 2 || goShardCount != 0 {
 		t.Fatalf("race build invocations = compile:%d binary:%d go-shard:%d; log=%q", compileCount, binaryCount, goShardCount, string(logBytes))
 	}
 }

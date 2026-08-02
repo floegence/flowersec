@@ -128,7 +128,10 @@ fi
 
 test_count="$(wc -l < "$tests_file" | tr -d ' ')"
 if (( auto_shard_count == 1 )); then
-  shard_count="$test_count"
+  shard_count="$parallelism"
+  if (( shard_count > test_count )); then
+    shard_count="$test_count"
+  fi
 fi
 
 # Keep expensive source-level contracts distributed across the bounded worker
