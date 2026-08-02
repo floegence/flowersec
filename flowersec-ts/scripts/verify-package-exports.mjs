@@ -276,6 +276,7 @@ function verifyTransportV2Types() {
     `import {
   Artifact,
   createArtifactLease,
+  createStreamMetadata,
   ConnectError,
   parseArtifact,
 } from '@floegence/flowersec-core';
@@ -340,7 +341,6 @@ import type {
   ArtifactLease,
   ByteStream,
   IncomingStream,
-  JsonObject,
   SessionError,
   SessionTermination,
   Session,
@@ -389,7 +389,7 @@ import type {} from '@floegence/flowersec-core/gen/flowersec/rpc/v1';
 declare const session: Session;
 declare const stream: ByteStream;
 declare const incoming: IncomingStream;
-declare const metadata: JsonObject;
+const metadata = createStreamMetadata({ purpose: 'rpc' });
 declare const openOptions: StreamOpenOptions;
 declare const rawArtifact: string;
 declare const commitSpend: (signal?: AbortSignal) => Promise<void>;
@@ -481,6 +481,8 @@ void openOptions;
 void stream.closeWrite();
 void stream.reset();
 void session.openStream('rpc', { metadata });
+// @ts-expect-error plain JSON objects cannot forge opaque stream metadata.
+void session.openStream('rpc', { metadata: {} });
 
 // @ts-expect-error v2 public streams must remain carrier-neutral.
 void stream.yamuxStream;
