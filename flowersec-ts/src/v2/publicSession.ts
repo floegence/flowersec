@@ -121,10 +121,11 @@ function sessionErrorCode(error: unknown): SessionErrorCode {
   if (error instanceof Error) {
     if (error.name === "AbortError") return "canceled";
     if (error.name === "TimeoutError") return "timeout";
-    if (error.name === "CarrierV2Error") {
-      const code = (error as Error & { code?: unknown }).code;
-      if (code === "closed") return "closed";
-      if (code === "aborted") return "canceled";
+    const code = (error as Error & { code?: unknown }).code;
+    if (error.name === "CarrierV2Error" || typeof code === "string") {
+      if (code === "closed" || code === "carrier_closed") return "closed";
+      if (code === "aborted" || code === "operation_aborted") return "canceled";
+      if (code === "stream_reset") return "stream_reset";
     }
     if (error.name === "BrowserWebTransportCarrierInternalStageError") {
       const code = (error as Error & { code?: unknown }).code;
