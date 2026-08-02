@@ -517,14 +517,15 @@ func TestGoVerifierProxyChainHonorsRunnerConfiguration(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		configured string
+		cache      string
 		want       string
 	}{
 		{name: "runner mirror", configured: "https://goproxy.cn,direct", want: localProxy + ",https://goproxy.cn,direct"},
-		{name: "fail closed", configured: "off", want: localProxy + ",off"},
+		{name: "offline prefetched cache", configured: "off", cache: "/cache", want: localProxy + ",file:///cache/cache/download,off"},
 		{name: "default", want: localProxy + ",https://proxy.golang.org,direct"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := goVerifierProxyChain(proxyRoot, test.configured); got != test.want {
+			if got := goVerifierProxyChain(proxyRoot, test.configured, test.cache); got != test.want {
 				t.Fatalf("go verifier proxy chain = %q, want %q", got, test.want)
 			}
 		})

@@ -808,11 +808,19 @@ func verifyGo(repoRoot string, m *manifest) error {
 		return err
 	}
 
+	configuredProxy := os.Getenv("GOPROXY")
+	prefetchedModuleCache := ""
+	if strings.EqualFold(strings.TrimSpace(configuredProxy), "off") {
+		prefetchedModuleCache, err = resolveGoModuleCache()
+		if err != nil {
+			return err
+		}
+	}
 	commandEnvironment := append(withRepoGoToolchain(),
 		"GOWORK=off",
 		"GOMODCACHE="+filepath.Join(tmpDir, "modcache"),
 		"GONOSUMDB="+m.Go.ModulePath,
-		"GOPROXY="+goVerifierProxyChain(proxyRoot, os.Getenv("GOPROXY")),
+		"GOPROXY="+goVerifierProxyChain(proxyRoot, configuredProxy, prefetchedModuleCache),
 	)
 	var out bytes.Buffer
 	for attempt := 1; attempt <= 3; attempt++ {
@@ -836,10 +844,29 @@ func verifyGo(repoRoot string, m *manifest) error {
 	return errors.New("verify-go exhausted its retry contract")
 }
 
-func goVerifierProxyChain(proxyRoot, configured string) string {
+func resolveGoModuleCache() (string, error) {
+	if configured := strings.TrimSpace(os.Getenv("GOMODCACHE")); configured != "" {
+		return configured, nil
+	}
+	cmd := exec.Command("go", "env", "GOMODCACHE")
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve prefetched Go module cache: %w", err)
+	}
+	cache := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(cache) {
+		return "", fmt.Errorf("prefetched Go module cache is not absolute: %q", cache)
+	}
+	return cache, nil
+}
+
+func goVerifierProxyChain(proxyRoot, configured, prefetchedModuleCache string) string {
 	configured = strings.TrimSpace(configured)
 	if configured == "" {
 		configured = "https://proxy.golang.org,direct"
+	} else if strings.EqualFold(configured, "off") {
+		configured = "file://" + filepath.ToSlash(filepath.Join(prefetchedModuleCache, "cache", "download")) + ",off"
 	}
 	return "file://" + filepath.ToSlash(proxyRoot) + "," + configured
 }
