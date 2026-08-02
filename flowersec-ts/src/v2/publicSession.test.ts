@@ -62,6 +62,18 @@ describe("opaque public SessionV2 projection", () => {
     }
   });
 
+  test("classifies a carrier close as a closed session without exposing carrier details", async () => {
+    const internalError = Object.assign(new Error("private carrier detail"), {
+      name: "CarrierV2Error",
+      code: "closed",
+    });
+    const stream = fakeStream(internalError);
+    const session = projectSessionV2(fakeSession(stream, internalError));
+
+    await expect(session.waitTermination()).resolves.toEqual({ error: new SessionError("closed") });
+    expect((await session.waitTermination()).error.message).not.toContain("carrier");
+  });
+
   test("projects RPC application outcomes as a discriminated union", async () => {
     const terminal = new Error("closed");
     const internal = fakeSession(fakeStream(terminal), terminal);

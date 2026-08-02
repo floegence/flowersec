@@ -23,6 +23,33 @@ function config(role: "client" | "server", rpcRouter: RpcRouter, maxInboundStrea
 }
 
 describe("SessionV2 reserved RPC stream", () => {
+  test("opens the first application stream after concurrent RPC completion", async () => {
+    const clientRouter = new RpcRouter();
+    const serverRouter = new RpcRouter();
+    clientRouter.register(8, async (payload) => ({ payload }));
+    serverRouter.register(7, async (payload) => ({ payload }));
+    const [clientCarrier, serverCarrier] = createMemoryCarrierPairV2({
+      kind: "webtransport",
+      path: "direct",
+      inboundBidirectionalStreamCapacity: 35,
+    });
+    const [client, server] = await Promise.all([
+      establishSessionV2(clientCarrier, config("client", clientRouter, 33)),
+      establishSessionV2(serverCarrier, config("server", serverRouter, 33)),
+    ]);
+
+    await Promise.all(Array.from({ length: 30 }, (_, index) =>
+      client.rpc.call(7, { index }),
+    ));
+
+    const opening = client.openStream("release-bulk");
+    const incoming = await server.acceptStream();
+    const stream = await opening;
+    expect(incoming.kind).toBe("release-bulk");
+    await stream.reset();
+    await client.close();
+  });
+
   test("lets both peers actively call and notify with numeric type IDs", async () => {
     const clientRouter = new RpcRouter();
     const serverRouter = new RpcRouter();

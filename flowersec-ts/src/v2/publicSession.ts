@@ -121,6 +121,11 @@ function sessionErrorCode(error: unknown): SessionErrorCode {
   if (error instanceof Error) {
     if (error.name === "AbortError") return "canceled";
     if (error.name === "TimeoutError") return "timeout";
+    if (error.name === "CarrierV2Error") {
+      const code = (error as Error & { code?: unknown }).code;
+      if (code === "closed") return "closed";
+      if (code === "aborted") return "canceled";
+    }
     if (error.name === "SessionV2Error") {
       const code = (error as Error & { code?: unknown }).code;
       switch (code) {
