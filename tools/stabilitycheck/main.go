@@ -32,7 +32,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: go run . <verify-source|verify-manifest|verify-go|verify-ts|verify-swift|verify-rust|verify-docs|verify-go-coverage|verify-parity|verify-defaults|report>")
+		return errors.New("usage: go run . <verify-source|verify-manifest|verify-go|verify-ts|verify-swift|verify-rust|verify-docs|verify-go-coverage-short|verify-go-coverage|verify-parity|verify-defaults|report>")
 	}
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
@@ -58,8 +58,10 @@ func run(args []string) error {
 		return verifyRust(repoRoot, m)
 	case "verify-docs":
 		return verifyDocs(repoRoot, m)
+	case "verify-go-coverage-short":
+		return verifyGoCoverage(repoRoot, m, true)
 	case "verify-go-coverage":
-		return verifyGoCoverage(repoRoot, m)
+		return verifyGoCoverage(repoRoot, m, false)
 	case "verify-parity":
 		return verifyParity(repoRoot)
 	case "verify-defaults":
@@ -1026,8 +1028,8 @@ func goVerifierUsesQualifier(m *manifest, qualifier string) bool {
 
 var coverageLine = regexp.MustCompile(`^(?:ok|\?)\s+(\S+)\s+.*coverage:\s+([0-9.]+)% of statements$`)
 
-func verifyGoCoverage(repoRoot string, m *manifest) error {
-	cmd := exec.Command("go", "test", "-p=1", "-count=1", "-cover", "./...")
+func verifyGoCoverage(repoRoot string, m *manifest, short bool) error {
+	cmd := goCoverageCommand(short)
 	cmd.Dir = filepath.Join(repoRoot, "flowersec-go")
 	cmd.Env = withRepoGoToolchain()
 	var out bytes.Buffer
@@ -1056,6 +1058,15 @@ func verifyGoCoverage(repoRoot string, m *manifest) error {
 	}
 	fmt.Printf("go coverage OK: %d package thresholds verified\n", len(m.Coverage.Go))
 	return nil
+}
+
+func goCoverageCommand(short bool) *exec.Cmd {
+	args := []string{"test", "-p=1"}
+	if short {
+		args = append(args, "-short")
+	}
+	args = append(args, "-count=1", "-cover", "./...")
+	return exec.Command("go", args...)
 }
 
 func mustParseFloat(s string) float64 {

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"testing"
@@ -44,13 +45,16 @@ func TestCoverageQualityGates(t *testing.T) {
 }
 
 func TestGoCoverageSerializesPackageExecution(t *testing.T) {
-	root := filepath.Clean(filepath.Join("..", ".."))
-	source, err := os.ReadFile(filepath.Join(root, "tools", "stabilitycheck", "main.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !regexp.MustCompile(`exec\.Command\("go", "test", "-p=1", "-count=1", "-cover", "\./\.\.\."\)`).Match(source) {
-		t.Fatal("Go coverage must serialize package execution with -p=1")
+	for name, test := range map[string]struct {
+		short bool
+		want  []string
+	}{
+		"short": {short: true, want: []string{"go", "test", "-p=1", "-short", "-count=1", "-cover", "./..."}},
+		"full":  {short: false, want: []string{"go", "test", "-p=1", "-count=1", "-cover", "./..."}},
+	} {
+		if got := goCoverageCommand(test.short).Args; !reflect.DeepEqual(got, test.want) {
+			t.Fatalf("Go %s coverage command = %v, want %v", name, got, test.want)
+		}
 	}
 }
 

@@ -115,8 +115,31 @@ test("precommit uses the short Go group while final integration retains the comp
   assert.equal(finalIntegration.status, 0, finalIntegration.stderr);
 
   assert.match(precommitGo.stdout, /go test -short -timeout=5m/);
+  assert.match(precommitGo.stdout, /go run \. verify-go-coverage-short/);
+  assert.doesNotMatch(precommitGo.stdout, /go run \. verify-go-coverage(?:\s|$)/m);
   assert.doesNotMatch(precommitGo.stdout, /cd flowersec-go && go test -timeout=5m \.\/\.\.\./);
   assert.match(finalIntegration.stdout, /cd flowersec-go && go test -timeout=5m \.\/\.\.\./);
+  assert.match(finalIntegration.stdout, /go run \. verify-go-coverage(?:\s|$)/m);
+});
+
+test("capacity workloads stay out of short Go gates", () => {
+  const source = fs.readFileSync(
+    path.join(sourceRoot, "flowersec-go/internal/cmd/transport-release-runner/capacity_cases_test.go"),
+    "utf8",
+  );
+  for (const name of [
+    "TestFocusedProductionCapacityCase",
+    "TestRunBrowserStreamCapacityCleanupConvergesOneHundredReliableSessions",
+    "TestRunBrowserTunnelCapacityCleanupConvergesOneThousandReliableSessions",
+    "TestDirectCapacityWrappersHoldDistinctProductionSessions",
+    "TestRawQUICCapacityPathsCleanEveryShortSampleSession",
+  ]) {
+    assert.match(
+      source,
+      new RegExp(`func ${name}\\(t \\*testing\\.T\\) \\{\\n\\tskipCapacityWorkloadInShortMode\\(t\\)`),
+      `${name} must remain final-only`,
+    );
+  }
 });
 
 test("final integration isolates race from the bounded language build lanes", () => {

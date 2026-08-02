@@ -24,6 +24,7 @@ func TestBrowserCapacityWorkerCommandPreservesCgroupMountNamespace(t *testing.T)
 }
 
 func TestFocusedProductionCapacityCase(t *testing.T) {
+	skipCapacityWorkloadInShortMode(t)
 	id := os.Getenv("FLOWERSEC_TEST_CAPACITY_CASE")
 	if id == "" {
 		t.Skip("set FLOWERSEC_TEST_CAPACITY_CASE to run one production capacity case")
@@ -138,6 +139,7 @@ func TestCapacityCleanupReservesResourceConvergenceWindow(t *testing.T) {
 }
 
 func TestRunBrowserStreamCapacityCleanupConvergesOneHundredReliableSessions(t *testing.T) {
+	skipCapacityWorkloadInShortMode(t)
 	contract := capacityContract{
 		Sessions: 100, StreamsPerSession: 1,
 		Ramp: time.Second, Hold: 100 * time.Millisecond, Cleanup: 600 * time.Millisecond, Watchdog: 1700 * time.Millisecond,
@@ -154,6 +156,7 @@ func TestRunBrowserStreamCapacityCleanupConvergesOneHundredReliableSessions(t *t
 }
 
 func TestRunBrowserTunnelCapacityCleanupConvergesOneThousandReliableSessions(t *testing.T) {
+	skipCapacityWorkloadInShortMode(t)
 	contract := capacityContract{
 		Sessions: 1000,
 		Ramp:     3 * time.Second, Hold: 100 * time.Millisecond, Cleanup: 600 * time.Millisecond, Watchdog: 3700 * time.Millisecond,
@@ -172,6 +175,7 @@ func TestRunBrowserTunnelCapacityCleanupConvergesOneThousandReliableSessions(t *
 }
 
 func TestDirectCapacityWrappersHoldDistinctProductionSessions(t *testing.T) {
+	skipCapacityWorkloadInShortMode(t)
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -211,6 +215,7 @@ func TestDirectCapacityWrappersHoldDistinctProductionSessions(t *testing.T) {
 }
 
 func TestRawQUICCapacityPathsCleanEveryShortSampleSession(t *testing.T) {
+	skipCapacityWorkloadInShortMode(t)
 	tests := []struct {
 		name string
 		open func(context.Context) (capacityEndpoint, error)
@@ -250,6 +255,13 @@ func TestRawQUICCapacityPathsCleanEveryShortSampleSession(t *testing.T) {
 				t.Fatalf("raw QUIC short capacity result = %+v", result)
 			}
 		})
+	}
+}
+
+func skipCapacityWorkloadInShortMode(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("capacity workloads run only in final integration")
 	}
 }
 
