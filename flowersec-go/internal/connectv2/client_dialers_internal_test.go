@@ -4,12 +4,60 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 )
+
+func TestInflightConnectionGuardRestoresHandshakeRecoveryOnRelease(t *testing.T) {
+	client, server := net.Pipe()
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+	})
+	restored := make(chan struct{})
+	guard := &inflightConnectionGuard{prepare: func(got net.Conn) func() {
+		if got != client {
+			t.Errorf("prepared connection = %T %p, want client %p", got, got, client)
+		}
+		return func() { close(restored) }
+	}}
+
+	if got := guard.bind(client); got != client {
+		t.Fatalf("bound connection = %T %p, want client %p", got, got, client)
+	}
+	guard.release()
+	select {
+	case <-restored:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("successful WebSocket upgrade did not restore handshake-only TCP recovery")
+	}
+	guard.release()
+}
+
+func TestInflightConnectionGuardRestoresHandshakeRecoveryOnClose(t *testing.T) {
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = server.Close() })
+	restored := make(chan struct{})
+	guard := &inflightConnectionGuard{prepare: func(net.Conn) func() {
+		return func() { close(restored) }
+	}}
+	guard.bind(client)
+	guard.close()
+
+	select {
+	case <-restored:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("canceled WebSocket upgrade did not restore handshake-only TCP recovery")
+	}
+	if _, err := client.Write([]byte("closed")); err == nil {
+		t.Fatal("canceled WebSocket upgrade left its connection open")
+	}
+	guard.close()
+}
 
 func TestStreamAdmissionHandleReturnsAfterLocalCloseBeforeFullDrain(t *testing.T) {
 	fullCloseStarted := make(chan struct{})

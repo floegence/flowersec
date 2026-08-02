@@ -57,6 +57,17 @@ that same thirty-second allowance before admission can reveal the artifact.
 This corrects the lower-layer timeout mismatch without changing the frozen
 network, operation schedule, retries, payload, phase deadline, certificate,
 threshold, or zero-residual contract.
+An exact-main QW tunnel sample exposed the corresponding TCP recovery boundary.
+The TLS ClientHello crossed the 1,280-byte link as 1,228-byte and 227-byte TCP
+segments. The tail segment was lost, and the Linux exponential retransmission
+schedule still had not closed the gap about sixteen seconds after the SYN; its
+next interval fell beyond the artifact's fixed thirty-second establishment
+limit. Linux WSS dials therefore enable `TCP_THIN_LINEAR_TIMEOUTS` only while
+the TLS and WebSocket upgrade is in flight, then restore ordinary TCP backoff
+before admission begins. Unsupported platforms retain their native TCP policy.
+This adds recovery opportunities inside the existing establishment contract;
+it does not extend that contract or change the frozen network, workload,
+certificate, threshold, resource, or zero-residual semantics.
 The edge RPC operation deadline is twenty-four seconds and its phase deadline is
 twenty-six seconds. A frozen 30-stream Ubuntu 24 release run at the former
 sixteen-second boundary matched 169 client-to-server and 166 server-to-client

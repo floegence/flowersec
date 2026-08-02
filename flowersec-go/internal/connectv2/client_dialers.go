@@ -196,7 +196,7 @@ func NewWebSocketCarrierDial(config WebSocketDialConfig) (CarrierDial, error) {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		guard := &inflightConnectionGuard{}
+		guard := newInflightConnectionGuard()
 		bindInflightWebSocketConnection(&attemptDialer, guard)
 		stopLocalClose := context.AfterFunc(ctx, guard.close)
 		conn, _, err := attemptDialer.DialContext(ctx, dialURL, nil)
@@ -227,26 +227,46 @@ func NewWebSocketCarrierDial(config WebSocketDialConfig) (CarrierDial, error) {
 }
 
 type inflightConnectionGuard struct {
-	mu     sync.Mutex
-	conn   net.Conn
-	closed bool
+	mu      sync.Mutex
+	conn    net.Conn
+	prepare func(net.Conn) func()
+	restore func()
+	closed  bool
+}
+
+func newInflightConnectionGuard() *inflightConnectionGuard {
+	return &inflightConnectionGuard{prepare: prepareWebSocketHandshakeConnection}
 }
 
 func (guard *inflightConnectionGuard) bind(conn net.Conn) net.Conn {
+	restore := func() {}
+	if guard.prepare != nil {
+		if preparedRestore := guard.prepare(conn); preparedRestore != nil {
+			restore = preparedRestore
+		}
+	}
 	guard.mu.Lock()
-	defer guard.mu.Unlock()
 	if guard.closed {
+		guard.mu.Unlock()
+		restore()
 		_ = conn.Close()
 		return conn
 	}
 	guard.conn = conn
+	guard.restore = restore
+	guard.mu.Unlock()
 	return conn
 }
 
 func (guard *inflightConnectionGuard) release() {
 	guard.mu.Lock()
 	guard.conn = nil
+	restore := guard.restore
+	guard.restore = nil
 	guard.mu.Unlock()
+	if restore != nil {
+		restore()
+	}
 }
 
 func (guard *inflightConnectionGuard) close() {
@@ -254,7 +274,12 @@ func (guard *inflightConnectionGuard) close() {
 	guard.closed = true
 	conn := guard.conn
 	guard.conn = nil
+	restore := guard.restore
+	guard.restore = nil
 	guard.mu.Unlock()
+	if restore != nil {
+		restore()
+	}
 	if conn != nil {
 		_ = conn.Close()
 	}
