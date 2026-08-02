@@ -178,6 +178,14 @@ test("network preflight completes before expensive stages and final lanes stay o
     canonical,
     /^final-go-preflight:\n\t\$\(MAKE\) go-vulncheck\n\tnode scripts\/check-go-security\.mjs --prepare-offline-toolchain$/m,
   );
+  assert.match(
+    canonical,
+    /^ts-package-cache-preflight:\n\tnode scripts\/prepare-ts-package-cache\.mjs$/m,
+  );
+  assert.match(
+    canonical,
+    /^final-ts-preflight:\n\t\$\(MAKE\) ts-ci\n\t\$\(MAKE\) ts-audit\n\t\$\(MAKE\) ts-package-cache-preflight\n\t\$\(MAKE\) ts-browser-ensure$/m,
+  );
 
   const lanes = canonical.match(/^final-integration-lanes:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   for (const recipe of checkTarget.split("\n").filter((line) => line.includes("run-final-stage.mjs") && !line.includes(" preflight "))) {

@@ -9,6 +9,7 @@ const requiredSecurityTests = [
   "scripts/go-security.test.mjs",
   "scripts/rust-security.test.mjs",
   "scripts/swift-security.test.mjs",
+  "scripts/prepare-ts-package-cache.test.mjs",
   "scripts/security-makefile.test.mjs",
   "scripts/run-final-stage.test.mjs",
   "scripts/run-final-lanes.test.mjs",
@@ -225,6 +226,7 @@ export function verifySecurityMakefile(makefile) {
     "go-cover-check",
     "go-vulncheck",
     "ts-audit",
+    "ts-package-cache-preflight",
     "swift-security-check",
     "swift-source-guard",
     "swift-check",
@@ -358,6 +360,7 @@ export function verifySecurityMakefile(makefile) {
     ]],
     ["go-vulncheck", ["\tnode scripts/check-go-security.mjs"]],
     ["ts-audit", ["\tcd flowersec-ts && npm audit --audit-level=info --include=prod --include=dev --include=optional --include=peer"]],
+    ["ts-package-cache-preflight", ["\tnode scripts/prepare-ts-package-cache.mjs"]],
     ["swift-security-check", ["\tnode scripts/check-swift-security.mjs"]],
     ["swift-source-guard", expectedSwiftSourceGuardRecipe],
     ["rust-audit", ["\tnode scripts/check-rust-security.mjs"]],
@@ -398,6 +401,7 @@ export function verifySecurityMakefile(makefile) {
     ["final-ts-preflight", [
       "\t$(MAKE) ts-ci",
       "\t$(MAKE) ts-audit",
+      "\t$(MAKE) ts-package-cache-preflight",
       "\t$(MAKE) ts-browser-ensure",
     ]],
     ["final-swift-preflight", [
