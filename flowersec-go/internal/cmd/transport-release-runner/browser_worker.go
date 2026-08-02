@@ -480,7 +480,15 @@ func executeBrowserCollector(ctx context.Context, sourceRoot, serverNamespace st
 	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
 		result, _ := os.ReadFile(resultPath)
-		return nil, fmt.Errorf("browser collector: %w: stdout=%s stderr=%s result=%s", err, strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), strings.TrimSpace(string(result)))
+		failurePath, preserveErr := writeBrowserCollectorFailure(plan, result, stdout.Bytes(), stderr.Bytes())
+		collectorErr := fmt.Errorf(
+			"browser collector: %w: stdout=%s stderr=%s result=%s failure_evidence=%s",
+			err, strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), strings.TrimSpace(string(result)), failurePath,
+		)
+		if preserveErr != nil {
+			return nil, errors.Join(collectorErr, fmt.Errorf("preserve browser collector failure: %w", preserveErr))
+		}
+		return nil, collectorErr
 	}
 	result, err := os.ReadFile(resultPath)
 	if err != nil {
@@ -495,4 +503,45 @@ func executeBrowserCollector(ctx context.Context, sourceRoot, serverNamespace st
 		return nil, errors.New("browser collector returned an invalid result")
 	}
 	return result, nil
+}
+
+func writeBrowserCollectorFailure(plan browserCollectorPlan, result, stdout, stderr []byte) (string, error) {
+	path := plan.EvidenceDirectory + ".collector-failure.json"
+	type failureEvidence struct {
+		SchemaVersion       int             `json:"schema_version"`
+		Classification      string          `json:"classification"`
+		Topology            string          `json:"topology"`
+		ProfileID           string          `json:"profile_id"`
+		RunNumber           int             `json:"run_number"`
+		CollectorResult     json.RawMessage `json:"collector_result,omitempty"`
+		CollectorResultText string          `json:"collector_result_text,omitempty"`
+		Stdout              string          `json:"stdout"`
+		Stderr              string          `json:"stderr"`
+	}
+	evidence := failureEvidence{
+		SchemaVersion: 1, Classification: "browser_collector_failure",
+		Topology: plan.Topology, ProfileID: plan.ProfileID, RunNumber: plan.RunNumber,
+		Stdout: string(stdout), Stderr: string(stderr),
+	}
+	if len(result) > 0 {
+		if json.Valid(result) {
+			evidence.CollectorResult = append(json.RawMessage(nil), result...)
+		} else {
+			evidence.CollectorResultText = string(result)
+		}
+	}
+	raw, err := json.MarshalIndent(evidence, "", "  ")
+	if err != nil {
+		return path, err
+	}
+	raw = append(raw, '\n')
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return path, err
+	}
+	if _, err := file.Write(raw); err != nil {
+		_ = file.Close()
+		return path, err
+	}
+	return path, file.Close()
 }
