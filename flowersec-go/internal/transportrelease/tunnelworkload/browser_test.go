@@ -157,3 +157,19 @@ func TestBrowserTunnelEndpointRejectsInvalidTopologyAndUsesP256Pin(t *testing.T)
 		t.Fatal("browser tunnel certificate is not ECDSA P-256")
 	}
 }
+
+func TestBrowserReleaseEndpointPairTimeoutCoversColdPhase(t *testing.T) {
+	plan := transportrelease.ProfilePlan{
+		Cold: transportrelease.ColdPlan{OperationDeadlineSeconds: 53, PhaseDeadlineSeconds: 55},
+	}
+	endpoint, err := OpenBrowserReleaseEndpointAt(context.Background(), BrowserTunnelWTQUIC, "127.0.0.1", "http://127.0.0.1", plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endpoint.Close(context.Background())
+	if _, err := OpenBrowserReleaseEndpointAt(context.Background(), BrowserTunnelWTQUIC, "127.0.0.1", "http://127.0.0.1", transportrelease.ProfilePlan{
+		Cold: transportrelease.ColdPlan{OperationDeadlineSeconds: 55, PhaseDeadlineSeconds: 54},
+	}); err == nil {
+		t.Fatal("accepted browser release profile whose pair timeout cannot cover cold phase")
+	}
+}

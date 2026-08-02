@@ -301,8 +301,8 @@ func runBrowserWorkerWithContext(parent context.Context, input io.Reader, output
 			source, openErr = newBrowserArtifactSource(endpoint, request.Plan, request.Topology, request.RunNumber)
 			return openErr
 		}
-		endpoint, openErr := tunnelworkload.OpenBrowserEndpointAt(
-			ctx, tunnelworkload.BrowserTopology(request.Topology), request.ServerAddress, allowedOrigin,
+		endpoint, openErr := tunnelworkload.OpenBrowserReleaseEndpointAt(
+			ctx, tunnelworkload.BrowserTopology(request.Topology), request.ServerAddress, allowedOrigin, request.Plan,
 		)
 		if openErr != nil {
 			return openErr

@@ -27,6 +27,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/connectv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/protocolv2"
 	flowersession "github.com/floegence/flowersec/flowersec-go/v2/internal/session"
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/transportrelease"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/tunnelv2"
 )
 
@@ -91,6 +92,16 @@ type BrowserArtifact struct {
 // client namespace so the Go server-role leg and Chromium leg cross the link.
 func OpenBrowserEndpointAt(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string) (*BrowserEndpoint, error) {
 	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, tunnelv2.Config{}, defaultMaxInboundStreams)
+}
+
+// OpenBrowserReleaseEndpointAt binds browser tunnel pairing to the frozen
+// release cold-phase deadline instead of the shorter interactive default.
+func OpenBrowserReleaseEndpointAt(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string, plan transportrelease.ProfilePlan) (*BrowserEndpoint, error) {
+	config, err := releaseCoordinatorConfig(plan)
+	if err != nil {
+		return nil, err
+	}
+	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, config, defaultMaxInboundStreams)
 }
 
 // OpenBrowserCapacityEndpointAt creates a browser tunnel endpoint that can
