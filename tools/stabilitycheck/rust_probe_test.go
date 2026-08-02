@@ -34,3 +34,21 @@ func TestRustProbeDirectoriesAreIsolated(t *testing.T) {
 		t.Fatalf("cleaning one Rust probe affected another: %v", err)
 	}
 }
+
+func TestRustProbeDirectoryIsOutsideSharedBuildTree(t *testing.T) {
+	repoRoot := t.TempDir()
+	probe, err := createRustProbeDir(repoRoot)
+	if err != nil {
+		t.Fatalf("create Rust probe directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(probe) })
+
+	sharedBuild := filepath.Join(repoRoot, ".build")
+	relative, err := filepath.Rel(sharedBuild, probe)
+	if err != nil {
+		t.Fatalf("compare Rust probe location: %v", err)
+	}
+	if relative == "." || (len(relative) < 2 || relative[:2] != "..") {
+		t.Fatalf("Rust probe must not live under shared SwiftPM build tree: %s", probe)
+	}
+}

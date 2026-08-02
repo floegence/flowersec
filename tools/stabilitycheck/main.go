@@ -355,12 +355,11 @@ func verifyRust(repoRoot string, m *manifest) error {
 	return nil
 }
 
-func createRustProbeDir(repoRoot string) (string, error) {
-	buildDir := filepath.Join(repoRoot, ".build")
-	if err := os.MkdirAll(buildDir, 0o755); err != nil {
-		return "", err
-	}
-	return os.MkdirTemp(buildDir, "stability-rust-probe-")
+func createRustProbeDir(_ string) (string, error) {
+	// SwiftPM owns the repository .build tree and may replace it while the
+	// language lanes run in parallel. Keep the Rust probe outside that tree so
+	// another lane cannot remove an active Cargo target directory.
+	return os.MkdirTemp("", "flowersec-stability-rust-probe-")
 }
 
 func rustToolchainVersion(repoRoot, cratePath string) (string, error) {
