@@ -267,7 +267,7 @@ require_exact_value(codeql_job["strategy"], {
     { "language" => "javascript-typescript", "build-mode" => "none", "runner" => "ubuntu-latest" },
     { "language" => "ruby", "build-mode" => "none", "runner" => "ubuntu-latest" },
     { "language" => "rust", "build-mode" => "none", "runner" => "ubuntu-latest" },
-    { "language" => "swift", "build-mode" => "manual", "runner" => "macos-15" },
+    { "language" => "swift", "build-mode" => "manual", "runner" => "macos-15-large" },
   ] },
 }, "the CodeQL matrix")
 require_exact_value(prepare_job["outputs"], { "version" => "${{ steps.version.outputs.version }}" }, "the prepare job outputs")
