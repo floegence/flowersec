@@ -286,19 +286,24 @@ test("gives every WebTransport constructor an independent certificate hash buffe
   const instances = [];
   class NativeWebTransport {
     constructor(_url, options) {
-      instances.push(options.serverCertificateHashes[0].value);
+      instances.push({
+        allowPooling: options.allowPooling,
+        hash: options.serverCertificateHashes[0].value,
+      });
     }
   }
   try {
     globalThis.WebTransport = NativeWebTransport;
     initScript(initValue);
     const WrappedWebTransport = globalThis.WebTransport;
-    new WrappedWebTransport("https://192.0.2.1:443");
-    new WrappedWebTransport("https://192.0.2.1:443");
+    new WrappedWebTransport("https://192.0.2.1:443", { allowPooling: true });
+    new WrappedWebTransport("https://192.0.2.1:443", { allowPooling: true });
     assert.equal(instances.length, 2);
-    assert.notStrictEqual(instances[0], instances[1]);
-    instances[0][0] ^= 0xff;
-    assert.notEqual(instances[0][0], instances[1][0]);
+    assert.equal(instances[0].allowPooling, true);
+    assert.equal(instances[1].allowPooling, true);
+    assert.notStrictEqual(instances[0].hash, instances[1].hash);
+    instances[0].hash[0] ^= 0xff;
+    assert.notEqual(instances[0].hash[0], instances[1].hash[0]);
   } finally {
     if (original === undefined) delete globalThis.WebTransport;
     else globalThis.WebTransport = original;
