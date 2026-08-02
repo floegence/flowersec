@@ -72,6 +72,13 @@ func TestCloseWithErrorContextAcceptsNilContext(t *testing.T) {
 	_ = client.CloseWithErrorContext(nil, carrier.ApplicationError{Reason: "test close"})
 }
 
+func TestCloseWithErrorContextRejectsNilSession(t *testing.T) {
+	var session *webtransport.Session
+	if err := session.CloseWithErrorContext(context.Background(), carrier.ApplicationError{Reason: "test close"}); !errors.Is(err, webtransport.ErrInvalidSession) {
+		t.Fatalf("nil session close error = %v, want ErrInvalidSession", err)
+	}
+}
+
 func TestURLRegistryRejectsCrossPathAndAmbientURLFeatures(t *testing.T) {
 	valid := []string{
 		"https://example.test" + webtransport.PathDirect,

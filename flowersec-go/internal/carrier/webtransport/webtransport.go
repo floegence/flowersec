@@ -683,6 +683,9 @@ func (session *Session) CloseWithError(applicationError carrier.ApplicationError
 }
 
 func (session *Session) CloseWithErrorContext(ctx context.Context, applicationError carrier.ApplicationError) error {
+	if session == nil || session.inner == nil {
+		return ErrInvalidSession
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
