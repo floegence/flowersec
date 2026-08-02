@@ -309,6 +309,10 @@ test("measured fixture-heavy race cases stay in the high-cost wave", () => {
     "TestEvidenceAcceptsCompleteSyntheticUnitEvidence",
     "TestRequiredCaseIdentityBindsCaseArtifacts",
     "TestMigrationMetricRequiresSharedQlogRPCTimestamp",
+    "TestFaultMetricRejectsUnboundFirstRPCDuration",
+    "TestMigrationMetricRequiresPostValidationRPCTrace",
+    "TestPerformanceCellWatchdogIsFailClosed",
+    "TestEvidenceRejectsSyntheticStatusOnlyReleaseEvidence",
   ]) {
     assert.match(
       source,

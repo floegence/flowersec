@@ -910,6 +910,7 @@ func TestMigrationMetricRejectsOutageEventSubstitution(t *testing.T) {
 	assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "fault binding event contract")
 }
 
+// flowersec:race-cost=high
 func TestFaultMetricRejectsUnboundFirstRPCDuration(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -925,6 +926,7 @@ func TestFaultMetricRejectsUnboundFirstRPCDuration(t *testing.T) {
 	assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "post-recovery RPC")
 }
 
+// flowersec:race-cost=high
 func TestMigrationMetricRequiresPostValidationRPCTrace(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -965,6 +967,7 @@ func TestMigrationMetricRequiresSharedQlogRPCTimestamp(t *testing.T) {
 	assertResult(t, checkEvidence(manifest, registry, report, report.baseDir), statusFail, "migration qlog does not prove")
 }
 
+// flowersec:race-cost=high
 func TestEvidenceRejectsSyntheticStatusOnlyReleaseEvidence(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
@@ -1802,6 +1805,7 @@ func mustParsePCAP(t *testing.T, data []byte) []packetObservation {
 	return packets
 }
 
+// flowersec:race-cost=high
 func TestPerformanceCellWatchdogIsFailClosed(t *testing.T) {
 	manifest := loadFixtureManifest(t)
 	registry := loadFixtureRegistry(t)
