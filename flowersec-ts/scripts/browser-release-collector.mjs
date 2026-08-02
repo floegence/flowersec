@@ -63,6 +63,9 @@ export async function collectBrowserReleaseWorkload(input, dependencies = {}) {
     await page.exposeBinding("__flowersecCommitArtifactSpend", async (_source, token) => {
       await ledger.commit(token);
     });
+    await page.exposeBinding("__flowersecRecordDiagnostic", async (_source, value) => {
+      if (typeof value === "string") recordDiagnostic(value);
+    });
     await installWebTransportCertificateHash(page, plan.certificate_hash);
     await navigateBrowserModule(page, site.origin);
     await preloadBrowserSDK(page);
@@ -175,6 +178,28 @@ export async function runColdPhase(page, artifacts, cold, cleanupDeadlineMs) {
                 signal: controller.signal,
                 connectTimeoutMs: operationDeadlineMs,
               });
+            } catch (error) {
+              try {
+                const internal = await import("/dist/utils/errors.js");
+                if (error instanceof internal.ConnectError) {
+                  const details = internal.connectErrorDetailsInternal(error);
+                  await globalThis.__flowersecRecordDiagnostic(JSON.stringify({
+                    type: "connect",
+                    public_code: error.code,
+                    internal_code: details.code,
+                    stage: details.stage,
+                    candidates: details.diagnostics.slice(0, 4).map((diagnostic) => ({
+                      carrier: diagnostic.carrier,
+                      stage: diagnostic.stage,
+                      code: diagnostic.code,
+                      message: diagnostic.message.slice(0, 256),
+                    })),
+                  }));
+                }
+              } catch {
+                // Raw diagnostics must never replace the public connection failure.
+              }
+              throw error;
             } finally {
               clearTimeout(timer);
             }

@@ -34,7 +34,7 @@ describe("browser WebTransport carrier internal stage", () => {
         path,
         webTransportFactory: factory,
       });
-      expect(factory).toHaveBeenCalledWith(rawURL, { allowPooling: true });
+      expect(factory).toHaveBeenCalledWith(rawURL);
       expect(carrier.kind).toBe("webtransport");
       expect(carrier.path).toBe(path);
       await carrier.close();

@@ -21,7 +21,6 @@ export type BrowserWebTransportLikeInternalStage = Readonly<{
 
 export type BrowserWebTransportFactoryInternalStage = (
   url: string,
-  options: Readonly<{ allowPooling: true }>,
 ) => BrowserWebTransportLikeInternalStage;
 
 export type BrowserWebTransportCarrierStreamInternalStage = Readonly<{
@@ -98,9 +97,7 @@ export async function createBrowserWebTransportCarrierInternalStage(
   const closeTimeoutMs = normalizeCloseTimeout(options.closeTimeoutMs);
   const maxIncomingStreams = normalizeMaxIncomingStreams(options.maxIncomingStreams);
   const factory = options.webTransportFactory ?? defaultWebTransportFactory;
-  // Chromium otherwise retains one dedicated QUIC connection per short-lived
-  // WebTransport session until its network-context idle timeout.
-  const transport = factory(url, { allowPooling: true });
+  const transport = factory(url);
   let nativeCloseIssued = false;
   const closeNative = () => {
     if (nativeCloseIssued) return;
@@ -704,10 +701,7 @@ function normalizeExpiry(value: number | undefined): number | undefined {
   return value;
 }
 
-function defaultWebTransportFactory(
-  url: string,
-  options: Readonly<{ allowPooling: true }>,
-): BrowserWebTransportLikeInternalStage {
+function defaultWebTransportFactory(url: string): BrowserWebTransportLikeInternalStage {
   const candidate = (globalThis as unknown as { WebTransport?: unknown }).WebTransport;
   if (typeof candidate !== "function") {
     throw new BrowserWebTransportCarrierInternalStageError(
@@ -715,11 +709,8 @@ function defaultWebTransportFactory(
       "WebTransport is unavailable in this browser runtime",
     );
   }
-  const Constructor = candidate as new (
-    url: string,
-    options: Readonly<{ allowPooling: true }>,
-  ) => BrowserWebTransportLikeInternalStage;
-  return new Constructor(url, options);
+  const Constructor = candidate as new (url: string) => BrowserWebTransportLikeInternalStage;
+  return new Constructor(url);
 }
 
 function waitWithSignal<T>(

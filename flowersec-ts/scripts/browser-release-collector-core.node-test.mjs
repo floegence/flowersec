@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
@@ -117,6 +118,30 @@ test("binds every cold connection to its operation deadline", async () => {
     evaluatorSource,
     /connectBrowserSession\(lease, \{\s*signal: controller\.signal,\s*connectTimeoutMs: operationDeadlineMs,?\s*\}\)/,
   );
+});
+
+test("records bounded internal connect diagnostics before preserving the public failure", async () => {
+  let evaluatorSource = "";
+  const page = {
+    evaluate: async (operation) => {
+      evaluatorSource = operation.toString();
+      return {};
+    },
+  };
+
+  await runColdPhase(
+    page,
+    [{ artifact_json: "{}", spend_token: "spend-1" }],
+    { ...forcedPlan.cold, operations: 1, max_inflight: 1 },
+    5_000,
+  );
+  assert.match(evaluatorSource, /connectErrorDetailsInternal/);
+  assert.match(evaluatorSource, /__flowersecRecordDiagnostic/);
+  assert.match(evaluatorSource, /diagnostic\.message\.slice\(0, 256\)/);
+  assert.match(evaluatorSource, /throw error/);
+  assert.doesNotMatch(evaluatorSource, /candidateId|normalized_url/);
+  const collectorSource = readFileSync(new URL("./browser-release-collector.mjs", import.meta.url), "utf8");
+  assert.match(collectorSource, /exposeBinding\("__flowersecRecordDiagnostic"/);
 });
 
 test("uses one native bidirectional stream for both bulk directions", async () => {
@@ -286,24 +311,19 @@ test("gives every WebTransport constructor an independent certificate hash buffe
   const instances = [];
   class NativeWebTransport {
     constructor(_url, options) {
-      instances.push({
-        allowPooling: options.allowPooling,
-        hash: options.serverCertificateHashes[0].value,
-      });
+      instances.push(options.serverCertificateHashes[0].value);
     }
   }
   try {
     globalThis.WebTransport = NativeWebTransport;
     initScript(initValue);
     const WrappedWebTransport = globalThis.WebTransport;
-    new WrappedWebTransport("https://192.0.2.1:443", { allowPooling: true });
-    new WrappedWebTransport("https://192.0.2.1:443", { allowPooling: true });
+    new WrappedWebTransport("https://192.0.2.1:443");
+    new WrappedWebTransport("https://192.0.2.1:443");
     assert.equal(instances.length, 2);
-    assert.equal(instances[0].allowPooling, true);
-    assert.equal(instances[1].allowPooling, true);
-    assert.notStrictEqual(instances[0].hash, instances[1].hash);
-    instances[0].hash[0] ^= 0xff;
-    assert.notEqual(instances[0].hash[0], instances[1].hash[0]);
+    assert.notStrictEqual(instances[0], instances[1]);
+    instances[0][0] ^= 0xff;
+    assert.notEqual(instances[0][0], instances[1][0]);
   } finally {
     if (original === undefined) delete globalThis.WebTransport;
     else globalThis.WebTransport = original;
