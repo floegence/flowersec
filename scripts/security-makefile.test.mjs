@@ -312,28 +312,39 @@ test("final Go race gate runs all shards with an explicit CPU budget", () => {
 });
 
 test("measured fixture-heavy race cases stay in the high-cost wave", () => {
-  const source = fs.readFileSync(path.join(sourceRoot, "tools/transportcheck/main_test.go"), "utf8");
-  for (const name of [
-    "TestEvidenceAcceptsCompleteSyntheticUnitEvidence",
-    "TestRequiredCaseIdentityBindsCaseArtifacts",
-    "TestMigrationMetricRequiresSharedQlogRPCTimestamp",
-    "TestFaultMetricRejectsUnboundFirstRPCDuration",
-    "TestMigrationMetricRequiresPostValidationRPCTrace",
-    "TestPerformanceCellWatchdogIsFailClosed",
-    "TestEvidenceRejectsSyntheticStatusOnlyReleaseEvidence",
-    "TestMigrationMetricRejectsOutageEventSubstitution",
-    "TestMigrationMetricRequiresSharedRequestIdentity",
-    "TestEveryPerformancePhaseBindsAndExercisesItsFrozenFaults",
-    "TestMigrationRequiresTheValidatedUpdatedPathAndPostValidationRPCIdentity",
-    "TestCapacityEvidenceRejectsGenericStatusArtifacts",
-    "TestSoakEvidenceAcceptsIndependentMeasuredTraceAndResourceTimestamps",
-    "TestEvidenceMatchesAuditedRepositoryState",
-  ]) {
-    assert.match(
-      source,
-      new RegExp(`// flowersec:race-cost=high\\nfunc ${name}\\(`),
-      `${name} must start before short race shards`,
-    );
+  const measuredCases = new Map([
+    ["tools/transportcheck/main_test.go", [
+      "TestEvidenceAcceptsCompleteSyntheticUnitEvidence",
+      "TestRequiredCaseIdentityBindsCaseArtifacts",
+      "TestMigrationMetricRequiresSharedQlogRPCTimestamp",
+      "TestFaultMetricRejectsUnboundFirstRPCDuration",
+      "TestMigrationMetricRequiresPostValidationRPCTrace",
+      "TestPerformanceCellWatchdogIsFailClosed",
+      "TestEvidenceRejectsSyntheticStatusOnlyReleaseEvidence",
+      "TestMigrationMetricRejectsOutageEventSubstitution",
+      "TestMigrationMetricRequiresSharedRequestIdentity",
+      "TestEveryPerformancePhaseBindsAndExercisesItsFrozenFaults",
+      "TestMigrationRequiresTheValidatedUpdatedPathAndPostValidationRPCIdentity",
+      "TestCapacityEvidenceRejectsGenericStatusArtifacts",
+      "TestSoakEvidenceAcceptsIndependentMeasuredTraceAndResourceTimestamps",
+      "TestEvidenceMatchesAuditedRepositoryState",
+      "TestEvidenceRejectsArtifactImpersonationAndTampering",
+      "TestEvidenceRejectsUnknownDuplicateMissingAndWrongOwnerCases",
+      "TestEvidenceCLIUsesNonzeroErrorForFailAndInconclusive",
+    ]],
+    ["tools/transportcheck/sign_test.go", [
+      "TestSignCLIProducesVerifierCompatibleImmutableReport",
+    ]],
+  ]);
+  for (const [relativePath, names] of measuredCases) {
+    const source = fs.readFileSync(path.join(sourceRoot, relativePath), "utf8");
+    for (const name of names) {
+      assert.match(
+        source,
+        new RegExp(`// flowersec:race-cost=high\\nfunc ${name}\\(`),
+        `${name} must start before short race shards`,
+      );
+    }
   }
 });
 

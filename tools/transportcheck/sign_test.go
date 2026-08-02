@@ -14,6 +14,7 @@ import (
 	"testing"
 )
 
+// flowersec:race-cost=high
 func TestSignCLIProducesVerifierCompatibleImmutableReport(t *testing.T) {
 	manifestPath := fixturePath(t, "performance_manifest.json")
 	registryPath := fixturePath(t, "case_registry.json")
