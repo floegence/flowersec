@@ -1963,7 +1963,7 @@ func TestReleaseEvidenceRequiresRegisteredRaceAndWeaknetFullResults(t *testing.T
 	}
 }
 
-// flowersec:race-cost=high
+// flowersec:race-cost=critical
 func TestEvidenceRejectsArtifactImpersonationAndTampering(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -2851,7 +2851,7 @@ func TestEvidenceEnforcesForcedAndAdaptiveSelection(t *testing.T) {
 	}
 }
 
-// flowersec:race-cost=high
+// flowersec:race-cost=critical
 func TestEvidenceRejectsUnknownDuplicateMissingAndWrongOwnerCases(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -2933,7 +2933,7 @@ func TestStrictJSONRejectsUnknownFields(t *testing.T) {
 	}
 }
 
-// flowersec:race-cost=high
+// flowersec:race-cost=critical
 func TestEvidenceCLIUsesNonzeroErrorForFailAndInconclusive(t *testing.T) {
 	manifestPath := fixturePath(t, "performance_manifest.json")
 	registryPath := fixturePath(t, "case_registry.json")

@@ -328,12 +328,6 @@ test("measured fixture-heavy race cases stay in the high-cost wave", () => {
       "TestCapacityEvidenceRejectsGenericStatusArtifacts",
       "TestSoakEvidenceAcceptsIndependentMeasuredTraceAndResourceTimestamps",
       "TestEvidenceMatchesAuditedRepositoryState",
-      "TestEvidenceRejectsArtifactImpersonationAndTampering",
-      "TestEvidenceRejectsUnknownDuplicateMissingAndWrongOwnerCases",
-      "TestEvidenceCLIUsesNonzeroErrorForFailAndInconclusive",
-    ]],
-    ["tools/transportcheck/sign_test.go", [
-      "TestSignCLIProducesVerifierCompatibleImmutableReport",
     ]],
   ]);
   for (const [relativePath, names] of measuredCases) {
@@ -346,6 +340,32 @@ test("measured fixture-heavy race cases stay in the high-cost wave", () => {
       );
     }
   }
+});
+
+test("measured longest race cases fit in the first worker wave", () => {
+  const criticalCases = new Map([
+    ["tools/transportcheck/main_test.go", [
+      "TestEvidenceRejectsArtifactImpersonationAndTampering",
+      "TestEvidenceRejectsUnknownDuplicateMissingAndWrongOwnerCases",
+      "TestEvidenceCLIUsesNonzeroErrorForFailAndInconclusive",
+    ]],
+    ["tools/transportcheck/sign_test.go", [
+      "TestSignCLIProducesVerifierCompatibleImmutableReport",
+    ]],
+  ]);
+  let criticalCount = 0;
+  for (const [relativePath, names] of criticalCases) {
+    const source = fs.readFileSync(path.join(sourceRoot, relativePath), "utf8");
+    criticalCount += source.match(/\/\/ flowersec:race-cost=critical/g)?.length ?? 0;
+    for (const name of names) {
+      assert.match(
+        source,
+        new RegExp(`// flowersec:race-cost=critical\\nfunc ${name}\\(`),
+        `${name} must start in the first race worker wave`,
+      );
+    }
+  }
+  assert.ok(criticalCount <= 12, `critical race cases = ${criticalCount}, want at most 12 workers`);
 });
 
 test("race shard runner derives bounded auto parallelism from online CPUs", () => {

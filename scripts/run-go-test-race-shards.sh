@@ -135,12 +135,17 @@ fi
 # pool without relying on host-specific timing profiles. Function body span is
 # the default stable cost proxy. Tests that build the complete evidence fixture
 # are discovered from their helper call; other measured cases may opt into the
-# closed flowersec:race-cost=high annotation.
+# closed flowersec:race-cost=high annotation. Measured tail cases that must fit
+# in the first worker wave use the higher critical annotation.
 test_weights="$temp_dir/test-weights"
 : > "$test_weights"
 for source_file in "$package_dir"/*_test.go; do
   [[ -f "$source_file" ]] || continue
   awk '
+    /^[[:space:]]*\/\/[[:space:]]*flowersec:race-cost=critical[[:space:]]*$/ {
+      next_cost = 2000000
+      next
+    }
     /^[[:space:]]*\/\/[[:space:]]*flowersec:race-cost=high[[:space:]]*$/ {
       next_cost = 1000000
       next
