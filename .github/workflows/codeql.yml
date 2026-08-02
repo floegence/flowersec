@@ -91,7 +91,7 @@ jobs:
             runner: ubuntu-latest
           - language: swift
             build-mode: manual
-            runner: macos-15-large
+            runner: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
