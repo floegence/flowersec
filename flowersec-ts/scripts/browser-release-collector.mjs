@@ -395,7 +395,7 @@ export async function runSessionWorkload(page, artifact, plan) {
 	  try {
 		for (let index = 0; index < 4; index++) {
 		  const stream = await activeSession.openStream("native-isolation", {
-			metadata: { stream_index: index },
+			metadata: sdk.createStreamMetadata({ stream_index: index }),
 			signal: phaseSignal,
 		  });
 		  streams.push(stream);
@@ -465,7 +465,7 @@ export async function runSessionWorkload(page, artifact, plan) {
 
     async function prepareTransfer(activeSession, signal) {
       return await activeSession.openStream("release-bulk", {
-        metadata: { direction: "client-to-server" },
+        metadata: sdk.createStreamMetadata({ direction: "client-to-server" }),
         signal,
       });
     }

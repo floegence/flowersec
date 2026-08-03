@@ -195,6 +195,27 @@ test("opens each browser bulk phase only after the previous phase completes", as
   assert.doesNotMatch(evaluatorSource, /scoreOutgoingPromise|scorePrepareController/);
 });
 
+test("constructs opaque stream metadata through the public browser API", async () => {
+  let evaluatorSource = "";
+  const page = {
+    evaluate: async (operation) => {
+      evaluatorSource = operation.toString();
+      return {};
+    },
+  };
+
+  await runSessionWorkload(page, {}, normalizeCollectorPlan(forcedPlan));
+  assert.match(evaluatorSource, /sdk\.createStreamMetadata\(\{ stream_index: index \}\)/);
+  assert.match(evaluatorSource, /sdk\.createStreamMetadata\(\{ direction: "client-to-server" \}\)/);
+
+  const capacitySource = readFileSync(new URL("./browser-capacity-controller.mjs", import.meta.url), "utf8");
+  assert.match(
+    capacitySource,
+    /sdk\.createStreamMetadata\(\{ session_index: sessionIndex, stream_index: streamIndex \}\)/,
+  );
+  assert.doesNotMatch(capacitySource, /openStream\([^\n]+\{ metadata: \{/);
+});
+
 test("passes explicit response decoders before browser RPC abort signals", async () => {
   let evaluatorSource = "";
   const page = {

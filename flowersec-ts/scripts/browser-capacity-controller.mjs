@@ -201,6 +201,7 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
           let streamResult;
           try {
             streamResult = await withTimeout(page.evaluate(async ({ sessionCount, streamsPerSession, assignments }) => {
+              const sdk = await import("/dist/browser/index.js");
               const entries = [...(globalThis.__flowersecCapacitySessions?.entries() ?? [])].sort(([left], [right]) => left.localeCompare(right));
               if (entries.length !== sessionCount) throw new Error("browser stream capacity session count mismatch");
               globalThis.__flowersecCapacityStreamProgress = { opened_streams: 0, writes_completed: 0, acks_read: 0 };
@@ -208,7 +209,9 @@ export async function startBrowserCapacityController(input, dependencies = {}) {
 				const streams = new Array(streamsPerSession);
 				await Promise.all(assignments.map(async (indexes) => {
 				  for (const streamIndex of indexes) {
-					const stream = await entry.session.openStream("capacity-bidi", { metadata: { session_index: sessionIndex, stream_index: streamIndex } });
+					const stream = await entry.session.openStream("capacity-bidi", {
+					  metadata: sdk.createStreamMetadata({ session_index: sessionIndex, stream_index: streamIndex }),
+					});
 					globalThis.__flowersecCapacityStreamProgress.opened_streams++;
 					const payload = new Uint8Array([sessionIndex & 255, streamIndex & 255]);
 					const written = await stream.write(payload);
