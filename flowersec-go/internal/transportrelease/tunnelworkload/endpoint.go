@@ -247,8 +247,14 @@ func (endpoint *Endpoint) startWebSocketListener(id string, serverTLS *tls.Confi
 	if err != nil {
 		return artifactv2.Candidate{}, err
 	}
+	handshakeListener := connectv2.NewWebSocketHandshakeListener(listener)
 	upgrader := gorillaws.Upgrader{Subprotocols: []string{carrierws.SubprotocolTunnel}}
-	httpServer := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	httpServer := &http.Server{ConnState: func(connection net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateActive, http.StateHijacked, http.StateClosed:
+			handshakeListener.Restore(connection)
+		}
+	}, Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		connection, upgradeErr := upgrader.Upgrade(writer, request, nil)
 		if upgradeErr != nil {
 			return
@@ -273,7 +279,7 @@ func (endpoint *Endpoint) startWebSocketListener(id string, serverTLS *tls.Confi
 	endpoint.acceptWG.Add(1)
 	go func() {
 		defer endpoint.acceptWG.Done()
-		serveDone <- httpServer.Serve(listener)
+		serveDone <- httpServer.Serve(handshakeListener)
 	}()
 	endpoint.listeners = append(endpoint.listeners, listenerOwner{close: func(ctx context.Context) error {
 		shutdownErr := httpServer.Shutdown(ctx)
