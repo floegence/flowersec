@@ -27,16 +27,36 @@ type Result struct {
 	CleanupDuration time.Duration                       `json:"cleanup_duration_ns"`
 }
 
-func closeTunnelOwners(ctx context.Context, closers ...func(context.Context) error) error {
-	results := make(chan error, len(closers))
-	for _, closeOwner := range closers {
-		go func() { results <- closeOwner(ctx) }()
+func closeTunnelOwners(ctx context.Context, pair *Pair, closeEndpoint func(context.Context) error) error {
+	pairResult := make(chan error, 1)
+	go func() { pairResult <- pair.Close(ctx) }()
+	var preparationErr error
+	for _, session := range []flowersession.SessionV2{pair.Client, pair.Server} {
+		if session == nil {
+			continue
+		}
+		select {
+		case <-flowersession.ClosePreparation(session):
+		case <-ctx.Done():
+			preparationErr = context.Cause(ctx)
+		}
 	}
-	var joined error
-	for range closers {
-		joined = errors.Join(joined, <-results)
+	endpointResult := make(chan error, 1)
+	go func() { endpointResult <- closeEndpoint(ctx) }()
+	flowersession.CompletePreparedClose(pair.Client)
+	flowersession.CompletePreparedClose(pair.Server)
+	pairErr := <-pairResult
+	endpointErr := <-endpointResult
+	if preparationErr != nil {
+		preparationErr = fmt.Errorf("prepare tunnel pair close: %w", preparationErr)
 	}
-	return joined
+	if pairErr != nil {
+		pairErr = fmt.Errorf("close tunnel pair: %w", pairErr)
+	}
+	if endpointErr != nil {
+		endpointErr = fmt.Errorf("close tunnel endpoint: %w", endpointErr)
+	}
+	return errors.Join(preparationErr, pairErr, endpointErr)
 }
 
 // Run executes one frozen cold/RPC/bulk workload and owns final pair and
@@ -116,7 +136,7 @@ func Run(ctx context.Context, endpoint *Endpoint, plan transportrelease.ProfileP
 	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, cleanupLimit)
 	pairClosed = true
 	endpointClosed = true
-	resultErr = closeTunnelOwners(cleanupCtx, pair.Close, endpoint.Close)
+	resultErr = closeTunnelOwners(cleanupCtx, pair, endpoint.Close)
 	deadlineErr = completedWithin(cleanupCtx, cleanupStarted, cleanupLimit)
 	cancelCleanup()
 	if resultErr != nil || deadlineErr != nil {

@@ -81,7 +81,7 @@ func TestCloseTunnelOwnersCancelsEndpointBeforeWaitingForPairTermination(t *test
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := closeTunnelOwners(ctx, pair.Close, func(context.Context) error {
+	if err := closeTunnelOwners(ctx, pair, func(context.Context) error {
 		close(terminated)
 		return nil
 	}); err != nil {
@@ -189,6 +189,38 @@ func TestProductionTunnelTopologiesRunColdRPCBulkAndCleanup(t *testing.T) {
 				t.Fatalf("incomplete bulk/cleanup result: %+v", result)
 			}
 		})
+	}
+}
+
+func TestProductionTunnelWQCleanupFitsFrozenDeadline(t *testing.T) {
+	plan := transportrelease.ProfilePlan{
+		ID: "cleanup-contract-v1",
+		Cold: transportrelease.ColdPlan{
+			Operations: 1, MaxInflight: 1, StartRatePerSecond: 1,
+			OperationDeadlineSeconds: 5, PhaseDeadlineSeconds: 6,
+		},
+		RPC: transportrelease.RPCPlan{
+			Operations: 1, RequestBytes: 128, ResponseBytes: 128, Workers: 1,
+			OperationDeadlineSeconds: 2, PhaseDeadlineSeconds: 4,
+		},
+		Bulk: transportrelease.BulkPlan{
+			WarmupBytesPerDirection: 1024, ScoreBytesPerDirection: 4096,
+			PhaseDeadlineSeconds: 5,
+		},
+		CleanupDeadlineSeconds: 2,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	endpoint, err := OpenEndpointAt(ctx, TopologyWQ, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(ctx, endpoint, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CleanupDuration <= 0 || result.CleanupDuration > 2*time.Second {
+		t.Fatalf("WQ cleanup duration = %s, want within frozen 2s deadline", result.CleanupDuration)
 	}
 }
 

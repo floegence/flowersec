@@ -98,6 +98,31 @@ type SessionV2 interface {
 	Close() error
 }
 
+var completedClosePreparation = func() <-chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
+}()
+
+// ClosePreparation completes when a session has flushed its graceful-close
+// control records. Unknown SessionV2 implementations require no preparation.
+func ClosePreparation(session SessionV2) <-chan struct{} {
+	if prepared, ok := session.(interface{ closePreparation() <-chan struct{} }); ok {
+		if done := prepared.closePreparation(); done != nil {
+			return done
+		}
+	}
+	return completedClosePreparation
+}
+
+// CompletePreparedClose ends the peer acknowledgement wait after an owner has
+// begun draining the transport that carried the flushed close records.
+func CompletePreparedClose(session SessionV2) {
+	if completer, ok := session.(interface{ completeClose() }); ok {
+		completer.completeClose()
+	}
+}
+
 type CapabilityTuple struct {
 	Carrier     carrier.Kind `json:"carrier"`
 	NetworkMode NetworkMode  `json:"networkMode"`

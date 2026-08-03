@@ -145,6 +145,10 @@ type engineSession struct {
 
 	closeOnce     sync.Once
 	closeErr      error
+	closePrepared chan struct{}
+	closePrepOnce sync.Once
+	closeProceed  chan struct{}
+	closeProcOnce sync.Once
 	closeWaitOnce sync.Once
 	closeWaitErr  error
 	wg            sync.WaitGroup
@@ -296,6 +300,8 @@ func newEngineSession(carrierSession carrier.Session, control carrier.Stream, co
 		recvRoots:   map[uint32]protocolv2.EpochRoots{0: receiveRoots},
 		openChanged: openChanged, nextID: nextID, closingCh: make(chan struct{}),
 		peerSessionClose: make(chan struct{}),
+		closePrepared:    make(chan struct{}),
+		closeProceed:     make(chan struct{}),
 		outboundPermits:  make(chan struct{}, maxInbound),
 		inboundPermits:   make(chan struct{}, maxInbound),
 		acceptCh:         make(chan IncomingStream, maxInbound),
@@ -420,10 +426,12 @@ func (s *engineSession) Close() error {
 		protocolErr := s.sendGoAway(1)
 		protocolErr = errors.Join(protocolErr, s.sendControl(protocolv2.InnerSessionClose, []byte{0, 1}))
 		protocolErr = errors.Join(protocolErr, s.flushControl(closeContext))
+		s.signalClosePrepared()
 		protocolErr = errors.Join(protocolErr, s.control.CloseWrite())
 		s.resetAllStreams()
 		select {
 		case <-s.peerSessionClose:
+		case <-s.closeProceed:
 		case <-closeContext.Done():
 		}
 		s.cancel(ErrSessionClosed)
@@ -436,6 +444,20 @@ func (s *engineSession) Close() error {
 		s.closeWaitErr = s.waitForWorkers(waitContext)
 	})
 	return errors.Join(s.closeErr, s.closeWaitErr)
+}
+
+func (s *engineSession) closePreparation() <-chan struct{} { return s.closePrepared }
+
+func (s *engineSession) signalClosePrepared() {
+	if s.closePrepared != nil {
+		s.closePrepOnce.Do(func() { close(s.closePrepared) })
+	}
+}
+
+func (s *engineSession) completeClose() {
+	if s.closeProceed != nil {
+		s.closeProcOnce.Do(func() { close(s.closeProceed) })
+	}
 }
 
 func (s *engineSession) waitForWorkers(ctx context.Context) error {
@@ -482,6 +504,7 @@ func (s *engineSession) handlePeerSessionClose() {
 		defer cancelClose()
 		protocolErr := s.sendControl(protocolv2.InnerSessionClose, []byte{0, 1})
 		protocolErr = errors.Join(protocolErr, s.flushControl(closeContext))
+		s.signalClosePrepared()
 		protocolErr = errors.Join(protocolErr, s.control.CloseWrite())
 		s.cancel(ErrSessionClosed)
 		s.resetAllStreams()
@@ -502,6 +525,7 @@ func (s *engineSession) fail(err error) {
 		err = ErrSessionClosed
 	}
 	s.closeOnce.Do(func() {
+		s.signalClosePrepared()
 		s.cancel(err)
 		s.resetAllStreams()
 		closeContext, cancelClose := context.WithTimeout(context.Background(), sessionCloseFlushTimeout)
