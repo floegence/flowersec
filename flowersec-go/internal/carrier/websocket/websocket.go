@@ -136,6 +136,9 @@ func NewAfterAdmission(conn *gorillaws.Conn, role Role, subprotocol string, reso
 }
 
 func newSessionWithByteConn(conn *gorillaws.Conn, byteConn net.Conn, role Role, subprotocol string, limits fsyamux.YamuxLimits, liveness fsyamux.LivenessOptions, beforeMuxClose func() error) (*Session, error) {
+	if err := byteConn.SetDeadline(time.Time{}); err != nil {
+		return nil, fmt.Errorf("clear WebSocket admission deadline: %w", err)
+	}
 	var mux *fsyamux.Session
 	if role == ClientRole {
 		var err error

@@ -726,6 +726,50 @@ esac
 	}
 }
 
+func TestRunCollectionJobsReportsChronologicalFirstFailure(t *testing.T) {
+	root := canonicalCollectTestRoot(t)
+	runner := filepath.Join(root, "chronological-failure-runner.sh")
+	script := `#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --report) report=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+jobs_root=$(dirname "$(dirname "$report")")
+case "$report" in
+  */actual/*)
+    touch "$jobs_root/actual.ready"
+    exit 42
+    ;;
+  *)
+    while [ ! -f "$jobs_root/actual.ready" ]; do sleep 0.01; done
+    trap 'exit 0' TERM
+    while :; do sleep 1; done
+    ;;
+esac
+`
+	if err := os.WriteFile(runner, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	staging := filepath.Join(root, "staging")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := &PerformanceManifest{Digest: "sha256:chronological-failure", EligibleLaneCount: 2, Cells: []PerformanceCell{
+		{ID: "peer", DurationMinutes: 2}, {ID: "actual", DurationMinutes: 1},
+	}}
+	request := collectRequest{ManifestPath: filepath.Join(root, "manifest.json"), RepositoryPath: root, FinalSHA: collectTestFinalSHA, RunnerExecutable: runner}
+	_, err := runCollectionJobs(context.Background(), request, manifest, nil, []collectionJob{
+		{ID: "peer", CellIDs: []string{"peer"}, RunnerTarget: "direct-clean-baseline"},
+		{ID: "actual", CellIDs: []string{"actual"}, RunnerTarget: "direct-clean-baseline"},
+	}, staging)
+	if err == nil || !strings.HasPrefix(err.Error(), "low-level runner job actual failed: exit status 42") {
+		t.Fatalf("chronological first failure = %v", err)
+	}
+}
+
 func TestRunCollectionJobsUsesIndependentBaseAndCandidateBindings(t *testing.T) {
 	root := canonicalCollectTestRoot(t)
 	baseRoot := filepath.Join(root, "base")

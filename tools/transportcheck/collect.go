@@ -850,7 +850,14 @@ func executeCollectionLaneStage(ctx context.Context, request collectRequest, man
 	workerContext, cancelWorkers := context.WithCancel(ctx)
 	defer cancelWorkers()
 	var workers sync.WaitGroup
-	errorsByLane := make([]error, len(lanes))
+	firstFailure := make(chan error, 1)
+	failWorkers := func(err error) {
+		select {
+		case firstFailure <- err:
+			cancelWorkers()
+		default:
+		}
+	}
 	browserSlots := make(chan struct{}, collectionBrowserParallelism)
 	for laneIndex, laneJobs := range lanes {
 		laneIndex, laneJobs := laneIndex, laneJobs
@@ -869,8 +876,7 @@ func executeCollectionLaneStage(ctx context.Context, request collectRequest, man
 					case browserSlots <- struct{}{}:
 					case <-jobContext.Done():
 						cancelJob()
-						errorsByLane[laneIndex] = fmt.Errorf("collection job %s browser slot: %w", scheduled.job.ID, jobContext.Err())
-						cancelWorkers()
+						failWorkers(fmt.Errorf("collection job %s browser slot: %w", scheduled.job.ID, jobContext.Err()))
 						return
 					}
 				}
@@ -884,8 +890,7 @@ func executeCollectionLaneStage(ctx context.Context, request collectRequest, man
 					if watchdogErr != nil {
 						err = errors.Join(err, fmt.Errorf("collection job %s watchdog: %w", scheduled.job.ID, watchdogErr))
 					}
-					errorsByLane[laneIndex] = err
-					cancelWorkers()
+					failWorkers(err)
 					return
 				}
 				records[scheduled.index] = record
@@ -893,8 +898,10 @@ func executeCollectionLaneStage(ctx context.Context, request collectRequest, man
 		}()
 	}
 	workers.Wait()
-	if err := errors.Join(errorsByLane...); err != nil {
+	select {
+	case err := <-firstFailure:
 		return err
+	default:
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("collection stage watchdog: %w", err)

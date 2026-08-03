@@ -219,6 +219,51 @@ func TestDeferredTunnelServerActivatesYamuxOnlyAfterSuccess(t *testing.T) {
 	assertCarrierRoundTrip(t, clientSession, serverSession)
 }
 
+func TestDeferredTunnelServerClearsAdmissionDeadlinesBeforeActivation(t *testing.T) {
+	clientConn, serverConn := newUpgradedPair(t, SubprotocolTunnel)
+	resources := DefaultResourcePolicy()
+	deferred, err := NewDeferredTunnelServer(serverConn, resources, LivenessPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawFSB2 := validWebSocketFSB2(t, artifactv2.PathTunnel)
+	clientAdmission := make(chan error, 1)
+	go func() {
+		_, commitErr := CommitAdmission(context.Background(), clientConn, rawFSB2, nil)
+		clientAdmission <- commitErr
+	}()
+	if _, err := deferred.ReceiveAdmission(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := deferred.SendAdmission(context.Background(), artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-clientAdmission; err != nil {
+		t.Fatal(err)
+	}
+
+	expired := time.Now().Add(-time.Second)
+	for _, connection := range []*gorillaws.Conn{clientConn, serverConn} {
+		if err := connection.SetReadDeadline(expired); err != nil {
+			t.Fatal(err)
+		}
+		if err := connection.SetWriteDeadline(expired); err != nil {
+			t.Fatal(err)
+		}
+	}
+	serverSession, err := deferred.Activate(context.Background())
+	if err != nil {
+		t.Fatalf("server Activate with stale admission deadline: %v", err)
+	}
+	clientSession, err := NewAfterAdmission(clientConn, ClientRole, SubprotocolTunnel, resources, LivenessPolicy{})
+	if err != nil {
+		t.Fatalf("client NewAfterAdmission with stale admission deadline: %v", err)
+	}
+	t.Cleanup(func() { _ = clientSession.Close() })
+	t.Cleanup(func() { _ = serverSession.Close() })
+	assertCarrierRoundTrip(t, clientSession, serverSession)
+}
+
 func TestDeferredTunnelServerSuccessLinearizesBeforeFirstCarrierMessage(t *testing.T) {
 	clientConn, serverConn := newUpgradedPair(t, SubprotocolTunnel)
 	resources := DefaultResourcePolicy()
@@ -449,10 +494,14 @@ func assertCarrierRoundTrip(t *testing.T, client, server carrier.Session) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	accepted := make(chan carrier.Stream, 1)
+	type acceptResult struct {
+		stream carrier.Stream
+		err    error
+	}
+	accepted := make(chan acceptResult, 1)
 	go func() {
-		stream, _ := server.AcceptStream(ctx)
-		accepted <- stream
+		stream, err := server.AcceptStream(ctx)
+		accepted <- acceptResult{stream: stream, err: err}
 	}()
 	clientStream, err := client.OpenStream(ctx)
 	if err != nil {
@@ -464,7 +513,11 @@ func assertCarrierRoundTrip(t *testing.T, client, server carrier.Session) {
 	if err := clientStream.CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
-	serverStream := <-accepted
+	result := <-accepted
+	if result.err != nil {
+		t.Fatalf("accept carrier stream: %v", result.err)
+	}
+	serverStream := result.stream
 	payload, err := io.ReadAll(serverStream)
 	if err != nil {
 		t.Fatal(err)
