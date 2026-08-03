@@ -388,7 +388,9 @@ test("guest collect resumes a terminal exact-state archive before rebuilding it"
   const collect = agent.slice(collectStart, collectEnd);
 
   assert.ok(recoverStart >= 0 && collectStart > recoverStart && collectEnd > collectStart);
-  assert.match(recovery, /validate_any_result \"\$payload\"/);
+  assert.doesNotMatch(recovery, /validate_any_result/);
+  assert.match(recovery, /has\("archive_path"\) or has\("archive_sha256"\)/);
+  assert.match(recovery, /\(keys \| sort\)/);
   assert.match(recovery, /formal-closure\.tar\.gz/);
   assert.match(recovery, /formal-failure\.tar\.gz/);
   assert.match(recovery, /sha256sum \"\$archive\"/);

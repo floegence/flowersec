@@ -609,8 +609,15 @@ recover_guest_collection() {
   recovered_collection=
   [[ -f $guest_request.status && ! -L $guest_request.status ]] || return 1
   payload=$(<"$guest_request.status")
-  validate_any_result "$payload" || agent_fail guest_collection_receipt "guest collection receipt schema drifted" identity 30
-  [[ $(jq -r '.status' <<<"$payload") == GREEN || $(jq -r '.status' <<<"$payload") == RED ]] || return 1
+  jq -e 'has("archive_path") or has("archive_sha256")' <<<"$payload" >/dev/null || return 1
+  jq -e --arg sha "$source_sha" --arg base "$base_sha" '
+    (keys | sort) == (["action","archive_path","archive_sha256","base_sha","check_id","classification",
+      "message","schema","source_sha","status"] | sort) and
+    .schema == "flowersec-remote-runner-result-v1" and .action == "collect" and
+    .source_sha == $sha and .base_sha == $base and (.status == "GREEN" or .status == "RED") and
+    (.archive_path | type == "string" and length > 0) and (.archive_sha256 | test("^[0-9a-f]{64}$")) and
+    (.classification | type == "string") and (.check_id | type == "string") and (.message | type == "string")
+  ' <<<"$payload" >/dev/null || agent_fail guest_collection_receipt "guest collection receipt schema drifted" identity 30
   archive=$(jq -er '.archive_path' <<<"$payload")
   archive_sha=$(jq -er '.archive_sha256' <<<"$payload")
   if [[ $(jq -r '.status' <<<"$payload") == GREEN ]]; then
