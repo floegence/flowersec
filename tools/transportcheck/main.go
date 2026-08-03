@@ -1,23 +1,37 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := runContext(ctx, os.Args[1:], os.Stdout); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		code := 1
+		var coded interface{ ExitCode() int }
+		if errors.As(err, &coded) {
+			code = coded.ExitCode()
+		}
+		os.Exit(code)
 	}
 }
 
 func run(args []string, output io.Writer) error {
+	return runContext(context.Background(), args, output)
+}
+
+func runContext(ctx context.Context, args []string, output io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: transportcheck <manifest|runner-config|collect|merge-capacity|evidence|sign> [flags]")
+		return errors.New("usage: transportcheck <manifest|runner-config|focused-tail|collect|merge-capacity|evidence|sign|gate> [flags]")
 	}
 	switch args[0] {
 	case "manifest":
@@ -74,6 +88,25 @@ func run(args []string, output io.Writer) error {
 		}
 		_, _ = fmt.Fprintf(output, "runner config written: id=%s os=%s architecture=%s kernel=%s output=%s\n", config.RunnerID, config.OS, config.Architecture, config.KernelRelease, *outputPath)
 		return nil
+	case "focused-tail":
+		flags := flag.NewFlagSet("focused-tail", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		request := focusedTailRequest{StartShard: 1}
+		flags.StringVar(&request.RepositoryPath, "repo", "", "clean source checkout root")
+		flags.StringVar(&request.SHA, "sha", "", "exact full source Git SHA")
+		flags.StringVar(&request.CellID, "cell", "", "frozen browser WebTransport cell ID")
+		flags.IntVar(&request.StartShard, "start-shard", 1, "first shard to recover or run")
+		flags.StringVar(&request.StatePath, "state", "", "private resumable state path")
+		flags.StringVar(&request.ReceiptDirectory, "receipt-dir", "", "private local receipt directory")
+		flags.StringVar(&request.RunnerConfigPath, "runner-config", "", "git-ignored remote runner config")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if request.RepositoryPath == "" || request.SHA == "" || request.CellID == "" || request.StatePath == "" ||
+			request.ReceiptDirectory == "" || request.RunnerConfigPath == "" || flags.NArg() != 0 {
+			return errors.New("focused-tail requires -repo, -sha, -cell, -start-shard, -state, -receipt-dir, and -runner-config")
+		}
+		return runFocusedTail(ctx, request, output, newSSHFocusedTailExecutor())
 	case "collect":
 		flags := flag.NewFlagSet("collect", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)
