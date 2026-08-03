@@ -307,6 +307,9 @@ run_guest_deploy() {
   actual_go_architecture=$(guest_go_architecture) || agent_fail guest_architecture "guest architecture is unsupported" policy 30
   export GOOS=linux GOARCH="$actual_go_architecture" CGO_ENABLED=0 GOWORK=off GOFLAGS=-mod=readonly GOPROXY=off
   export RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_NET_OFFLINE=true
+  if ! locked_cargo_cache_ready; then
+    agent_fail deploy_rust_dependency_cache "exact-SHA locked Rust dependency graph is unavailable offline" environment 20
+  fi
   install -d -m 0700 "$(dirname "$prepared_root")"
   find "$guest_root" -maxdepth 1 -type d -name ".prepared-$source_sha.*" -exec rm -rf -- {} +
   if [[ -e $prepared_root || -L $prepared_root ]]; then

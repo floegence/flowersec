@@ -285,6 +285,8 @@ test("deploy preserves bounded Rust diagnostics and classifies source build fail
 
   assert.match(deploy, /rust-build\.stderr/);
   assert.match(deploy, /tail -c 16384/);
+  assert.match(deploy, /deploy_rust_dependency_cache/);
+  assert.ok(deploy.indexOf("locked_cargo_cache_ready") < deploy.indexOf("rustup run 1.88.0 cargo build"));
   assert.match(deploy, /deploy_rust_runner_build[\s\S]+product 50/);
 });
 
