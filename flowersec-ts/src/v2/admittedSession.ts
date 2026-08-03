@@ -64,7 +64,9 @@ export async function establishAdmittedNativeSessionV2(
   if (native.path !== config.path) throw new AdmissionSessionV2Error("path_mismatch", "native carrier path mismatch");
   requireExactCarrierCapacity(native.inboundBidirectionalStreamCapacity, config.maxInboundStreams);
   validateOutboundAdmission(rawFSB2, config, native.kind);
-  const admission = await native.openStream(signalOptions(options.signal));
+  const admission = native.kind === "webtransport"
+    ? await native.acceptStream(signalOptions(options.signal))
+    : await native.openStream(signalOptions(options.signal));
   try {
     await writeAll(admission, rawFSB2, options.signal);
     await raceAbort(admission.closeWrite(), options.signal);

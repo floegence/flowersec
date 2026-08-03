@@ -200,7 +200,7 @@ func serveNativeCoordinatorLeg(
 	transport carrier.Session,
 	errorsCh chan<- error,
 ) {
-	admission, err := transport.AcceptStream(ctx)
+	admission, err := admissionv2.ServerStream(ctx, transport)
 	if err != nil {
 		selectSendError(errorsCh, err)
 		return
@@ -440,7 +440,7 @@ func serveSession(
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	admission, err := transport.AcceptStream(ctx)
+	admission, err := admissionv2.ServerStream(ctx, transport)
 	if err != nil {
 		return err
 	}

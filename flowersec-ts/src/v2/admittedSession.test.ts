@@ -131,10 +131,11 @@ describe("admitted production carrier adapters", () => {
     await clientSession.close();
   });
 
-  test("uses a native WebTransport bidi stream for FSA2 and never inserts Yamux", async () => {
-    const [clientNative, serverNative] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 10 });
+  test("accepts the server-opened WebTransport admission stream and never inserts Yamux", async () => {
+    const [clientCarrier, serverNative] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 10 });
+    const clientNative = new RemoteAdmissionNativeCarrier(clientCarrier);
     const server = (async () => {
-      const admission = await serverNative.acceptStream();
+      const admission = await serverNative.openStream();
       expect(await admission.read()).toEqual(rawWebTransportFSB2);
       expect(await admission.read()).toBeNull();
       await admission.write(rawFSA2);
@@ -148,6 +149,7 @@ describe("admitted production carrier adapters", () => {
       config("client", 8, undefined, rawWebTransportFSB2),
     );
     const [clientSession, serverSession] = await Promise.all([client, server]);
+    expect(clientNative.opensBeforeAdmission).toBe(0);
 
     const opening = clientSession.openStream("wt-native");
     const incoming = await serverSession.acceptStream();
@@ -185,7 +187,7 @@ describe("admitted production carrier adapters", () => {
   test("rejects trailing bytes after an otherwise valid native FSA2", async () => {
     const [clientNative, serverNative] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 10 });
     const server = (async () => {
-      const admission = await serverNative.acceptStream();
+      const admission = await serverNative.openStream();
       expect(await admission.read()).toEqual(rawWebTransportFSB2);
       expect(await admission.read()).toBeNull();
       const trailing = new Uint8Array(rawFSA2.length + 1);
@@ -205,7 +207,8 @@ describe("admitted production carrier adapters", () => {
   });
 
   test("aborts and resets a native admission stream whose FSB2 write is blocked", async () => {
-    const [clientNative] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 10 });
+    const [clientNative, serverNative] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 10 });
+    await serverNative.openStream();
     const blocked = new BlockingAdmissionWriteCarrier(clientNative);
     const controller = new AbortController();
     const connecting = establishAdmittedNativeSessionV2(
@@ -229,7 +232,8 @@ describe("admitted production carrier adapters", () => {
   });
 
   test("does not retain hanging reset or close work after admission is aborted", async () => {
-    const [clientNative] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 10 });
+    const [clientNative, serverNative] = createMemoryCarrierPairV2({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 10 });
+    await serverNative.openStream();
     const blocked = new BlockingAdmissionWriteCarrier(clientNative, true);
     const controller = new AbortController();
     const connecting = establishAdmittedNativeSessionV2(
@@ -350,6 +354,37 @@ describe("admitted production carrier adapters", () => {
   });
 });
 
+class RemoteAdmissionNativeCarrier implements NativeCarrierSessionV2 {
+  readonly kind = "webtransport" as const;
+  readonly path;
+  readonly inboundBidirectionalStreamCapacity;
+  readonly unreliableDatagrams;
+  opensBeforeAdmission = 0;
+  private admissionAccepted = false;
+
+  constructor(private readonly inner: NativeCarrierSessionV2) {
+    this.path = inner.path;
+    this.inboundBidirectionalStreamCapacity = inner.inboundBidirectionalStreamCapacity;
+    this.unreliableDatagrams = inner.unreliableDatagrams;
+  }
+
+  async openStream(options: OperationOptionsV2 = {}): Promise<NativeCarrierStreamV2> {
+    if (!this.admissionAccepted) {
+      this.opensBeforeAdmission++;
+      throw new Error("browser WebTransport admission must accept the listener-opened stream");
+    }
+    return await this.inner.openStream(options);
+  }
+
+  async acceptStream(options: OperationOptionsV2 = {}): Promise<NativeCarrierStreamV2> {
+    this.admissionAccepted = true;
+    return await this.inner.acceptStream(options);
+  }
+
+  async close(): Promise<void> { await this.inner.close(); }
+  abort(error?: Readonly<{ code: number; reason: string }>): void { this.inner.abort(error); }
+}
+
 class BlockingAdmissionWriteCarrier implements NativeCarrierSessionV2 {
   readonly kind;
   readonly path;
@@ -375,7 +410,14 @@ class BlockingAdmissionWriteCarrier implements NativeCarrierSessionV2 {
   }
 
   async openStream(options: OperationOptionsV2 = {}): Promise<NativeCarrierStreamV2> {
-    const stream = await this.inner.openStream(options);
+    return this.wrapAdmissionStream(await this.inner.openStream(options));
+  }
+
+  async acceptStream(options: OperationOptionsV2 = {}): Promise<NativeCarrierStreamV2> {
+    return this.wrapAdmissionStream(await this.inner.acceptStream(options));
+  }
+
+  private wrapAdmissionStream(stream: NativeCarrierStreamV2): NativeCarrierStreamV2 {
     this.opens++;
     if (this.opens !== 1) return stream;
     return {
@@ -404,10 +446,6 @@ class BlockingAdmissionWriteCarrier implements NativeCarrierSessionV2 {
         stream.abort();
       },
     };
-  }
-
-  async acceptStream(options: OperationOptionsV2 = {}): Promise<NativeCarrierStreamV2> {
-    return await this.inner.acceptStream(options);
   }
 
   async close(): Promise<void> {

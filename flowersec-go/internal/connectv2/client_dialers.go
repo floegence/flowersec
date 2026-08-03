@@ -85,7 +85,7 @@ func NewWebTransportCarrierDial(config WebTransportDialConfig) (CarrierDial, err
 			return nil, err
 		}
 		owned := &ownedCarrierSession{Session: session, owner: dialer}
-		stream, err := owned.OpenStream(ctx)
+		stream, err := admissionv2.ClientStream(ctx, owned)
 		if err != nil {
 			_ = owned.Close()
 			return nil, err
@@ -128,7 +128,7 @@ func NewRawQUICCarrierDial(config RawQUICDialConfig) (CarrierDial, error) {
 		if err != nil {
 			return nil, err
 		}
-		stream, err := session.OpenStream(ctx)
+		stream, err := admissionv2.ClientStream(ctx, session)
 		if err != nil {
 			_ = session.Close()
 			return nil, err

@@ -204,7 +204,7 @@ func (runtime *runtimeServer) serveNativeDirect(ctx context.Context, carrierSess
 	defer runtime.releaseDirectSlot()
 	admissionContext, cancel := context.WithTimeout(ctx, runtime.config.admissionTimeout())
 	defer cancel()
-	admissionStream, err := carrierSession.AcceptStream(admissionContext)
+	admissionStream, err := admissionv2.ServerStream(admissionContext, carrierSession)
 	if err != nil {
 		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission failed"})
 		return
@@ -229,7 +229,7 @@ func (runtime *runtimeServer) serveNativeDirect(ctx context.Context, carrierSess
 func (runtime *runtimeServer) serveNativeTunnel(ctx context.Context, carrierSession carrier.Session) {
 	admissionContext, cancel := context.WithTimeout(ctx, runtime.config.admissionTimeout())
 	defer cancel()
-	admissionStream, err := carrierSession.AcceptStream(admissionContext)
+	admissionStream, err := admissionv2.ServerStream(admissionContext, carrierSession)
 	if err != nil {
 		_ = carrierSession.CloseWithError(carrier.ApplicationError{Code: 6, Reason: "admission failed"})
 		return

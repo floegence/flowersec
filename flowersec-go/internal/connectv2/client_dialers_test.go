@@ -540,12 +540,14 @@ func TestWebTransportCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 			serverErrors <- err
 			return
 		}
-		stream, err := session.AcceptStream(context.Background())
+		admissionCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		stream, err := admissionv2.ServerStream(admissionCtx, session)
 		if err != nil {
 			serverErrors <- err
 			return
 		}
-		if _, err := admissionv2.Serve(context.Background(), stream, reasons, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
+		if _, err := admissionv2.Serve(admissionCtx, stream, reasons, func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error) {
 			authorized <- struct{}{}
 			return artifactv2.AdmissionResponse{Status: artifactv2.AdmissionSuccess}, nil
 		}); err != nil {
@@ -614,7 +616,9 @@ func TestWebTransportCarrierDialKeepsAdmissionBehindCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientSession, err := prepared.Commit(context.Background(), fsb2)
+	commitCtx, cancelCommit := context.WithTimeout(context.Background(), time.Second)
+	defer cancelCommit()
+	clientSession, err := prepared.Commit(commitCtx, fsb2)
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}

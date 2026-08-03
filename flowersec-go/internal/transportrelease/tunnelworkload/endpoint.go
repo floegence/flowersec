@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v2/internal/admissionv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/artifactv2"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier"
 	"github.com/floegence/flowersec/flowersec-go/v2/internal/carrier/rawquic"
@@ -335,7 +336,7 @@ func (endpoint *Endpoint) startRawQUICListener(id string, serverTLS *tls.Config)
 
 func (endpoint *Endpoint) serveNative(session carrier.Session) {
 	defer endpoint.legWG.Done()
-	stream, err := session.AcceptStream(endpoint.ctx)
+	stream, err := admissionv2.ServerStream(endpoint.ctx, session)
 	if err != nil {
 		_ = session.Close()
 		return

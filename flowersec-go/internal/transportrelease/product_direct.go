@@ -677,7 +677,7 @@ func browserOriginAllowed(raw, allowed string) bool {
 }
 
 func (endpoint *ProductDirectEndpoint) serveNative(carrierSession carrier.Session) {
-	stream, err := carrierSession.AcceptStream(endpoint.ctx)
+	stream, err := admissionv2.ServerStream(endpoint.ctx, carrierSession)
 	if err != nil {
 		_ = carrierSession.Close()
 		return

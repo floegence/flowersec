@@ -37,6 +37,50 @@ func (err *ResponseError) Unwrap() error {
 
 type Authorize func(context.Context, *artifactv2.DecodedRequest) (artifactv2.AdmissionResponse, error)
 
+// ClientStream returns the native admission stream used by a carrier dialer.
+// WebTransport listeners open the stream so browser clients never need to race
+// Chromium session teardown with the first native CreateStream call.
+func ClientStream(ctx context.Context, session carrier.Session) (carrier.Stream, error) {
+	if session == nil {
+		return nil, io.ErrClosedPipe
+	}
+	switch session.Kind() {
+	case carrier.KindWebTransport:
+		return session.AcceptStream(ctx)
+	case carrier.KindQUIC:
+		return session.OpenStream(ctx)
+	default:
+		return nil, fmt.Errorf("%w: admission client stream", carrier.ErrInvalidKind)
+	}
+}
+
+// ServerStream returns the native admission stream used by a carrier listener.
+func ServerStream(ctx context.Context, session carrier.Session) (carrier.Stream, error) {
+	if session == nil {
+		return nil, io.ErrClosedPipe
+	}
+	switch session.Kind() {
+	case carrier.KindWebTransport:
+		stream, err := session.OpenStream(ctx)
+		if err != nil {
+			return nil, err
+		}
+		written, err := stream.Write(nil)
+		if err != nil || written != 0 {
+			_ = stream.Reset()
+			if err != nil {
+				return nil, err
+			}
+			return nil, io.ErrShortWrite
+		}
+		return stream, nil
+	case carrier.KindQUIC:
+		return session.AcceptStream(ctx)
+	default:
+		return nil, fmt.Errorf("%w: admission server stream", carrier.ErrInvalidKind)
+	}
+}
+
 // Commit writes the one-shot credential frame and reads an exact FSA2 response.
 // Callers must mark the artifact spent before invoking this function.
 func Commit(ctx context.Context, stream carrier.Stream, rawFSB2 []byte, reasons artifactv2.ReasonRegistry) (response artifactv2.AdmissionResponse, err error) {
