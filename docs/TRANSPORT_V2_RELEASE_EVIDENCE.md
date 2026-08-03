@@ -71,7 +71,7 @@ This adds recovery opportunities inside the existing establishment contract;
 it does not extend that contract or change the frozen network, workload,
 certificate, threshold, resource, or zero-residual semantics.
 The edge RPC operation deadline is twenty-four seconds and its phase deadline is
-twenty-six seconds. A frozen 30-stream Ubuntu 24 release run at the former
+forty-seven seconds. A frozen 30-stream Ubuntu 24 release run at the former
 sixteen-second boundary matched 169 client-to-server and 166 server-to-client
 qlog packets with a 0.168-second median clock-adjusted one-way delay. The last
 1,153-byte client request was sent at approximately 18.109 seconds on the
@@ -95,10 +95,22 @@ bound left only about 31 milliseconds for decrypt, scheduling, and future
 completion. The server's final 0.408-second smoothed RTT and 0.153-second RTT
 variance put one further PTO at approximately 1.02 seconds. Twenty-four
 seconds covers the measured lower bound, that PTO, and approximately two
-seconds of application and scheduler margin. The two additional phase seconds
-cover the persistent connection establishment and the unchanged
-one-millisecond open-loop schedule without changing payload or operation
-count. The former edge bulk phase deadline was fifty seconds. A clean-SHA Ubuntu
+seconds of application and scheduler margin. The former two additional phase
+seconds covered only the previously observed short persistent-connection
+establishment path. A later exact-main QW tunnel run proved that bound could
+preempt the unchanged operation budget. The persistent raw QUIC connection
+started at zero, but its WSS peer lost the 276-byte tail of the fragmented TLS
+ClientHello. The session OPEN acknowledgement reached the raw QUIC client at
+approximately 19.522 seconds and its persistent RPC stream started at
+approximately 20.779 seconds. At the former 26-second phase boundary the client
+had received only about 31.8 KiB of RPC response stream data and the phase
+closed at approximately 26.355 seconds. Composing the observed 20.779-second
+establishment tail, the unchanged 24-second operation deadline, and the
+existing two-second application and scheduler margin produces a 46.779-second
+lower bound. The forty-seven-second phase is the smallest whole-second budget
+that covers that evidence. It changes no network, operation count, payload,
+certificate, threshold, resource, or zero-residual contract. The former edge
+bulk phase deadline was fifty seconds. A clean-SHA Ubuntu
 24 Chromium 151 browser WebTransport run completed RPC before approximately
 4.15 seconds on its persistent connection. Its 64 KiB bidirectional warmup
 then ran from approximately 4.908 through 11.206 seconds before both

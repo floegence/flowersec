@@ -44,8 +44,8 @@ func TestRustPlanBindsMeasuredEdgeRecoveryBudgets(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := rustPlan(plan.Edge)
-	if got.RequestOperationTimeoutMS != 24_000 || got.RequestPhaseTimeoutMS != 26_000 {
-		t.Fatalf("edge RPC timeouts = %d/%dms, want 24000/26000ms", got.RequestOperationTimeoutMS, got.RequestPhaseTimeoutMS)
+	if got.RequestOperationTimeoutMS != 24_000 || got.RequestPhaseTimeoutMS != 47_000 {
+		t.Fatalf("edge RPC timeouts = %d/%dms, want 24000/47000ms", got.RequestOperationTimeoutMS, got.RequestPhaseTimeoutMS)
 	}
 	if got.BulkPhaseTimeoutMS != 57_000 {
 		t.Fatalf("edge bulk timeout = %dms, want 57000ms", got.BulkPhaseTimeoutMS)

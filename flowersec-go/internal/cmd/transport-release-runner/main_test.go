@@ -592,6 +592,9 @@ func TestBrowserCollectorPlanBindsMeasuredEdgeRecoveryBudget(t *testing.T) {
 	}
 	request := browserWorkerRequest{Plan: plan.Edge}
 	got := newBrowserCollectorPlan(request, "http://198.18.13.42:443/artifacts", "certificate-hash")
+	if got.RPC.OperationDeadlineMS != 24_000 || got.RPC.PhaseDeadlineMS != 47_000 {
+		t.Fatalf("edge browser RPC timeouts = %d/%dms, want 24000/47000ms", got.RPC.OperationDeadlineMS, got.RPC.PhaseDeadlineMS)
+	}
 	if got.Bulk.PhaseDeadlineMS != 57_000 {
 		t.Fatalf("edge browser bulk timeout = %dms, want 57000ms", got.Bulk.PhaseDeadlineMS)
 	}
