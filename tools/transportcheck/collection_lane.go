@@ -35,7 +35,7 @@ const (
 	collectionLaneCPUs           = 2
 	collectionLaneMemoryMaxBytes = 3 * 1024 * 1024 * 1024
 	collectionLanePIDsMax        = 4096
-	collectionBrowserParallelism = 3
+	collectionBrowserParallelism = 1
 	collectionCaseParallelism    = 3
 	collectionCaseLaneCPUs       = 4
 	collectionCaseMemoryMaxBytes = 4 * 1024 * 1024 * 1024

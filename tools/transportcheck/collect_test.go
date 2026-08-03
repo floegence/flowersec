@@ -620,6 +620,63 @@ printf '{"schema_version":1,"classification":"raw_parallel","source_sha":"%s","m
 	}
 }
 
+func TestRunCollectionJobsSerializesSharedBrowserLanes(t *testing.T) {
+	root := canonicalCollectTestRoot(t)
+	runner := filepath.Join(root, "browser-serial-runner.sh")
+	script := `#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --report) report=$2; shift 2 ;;
+    --artifact-dir) artifacts=$2; shift 2 ;;
+    --source-sha) source_sha=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+job_dir=$(dirname "$report")
+jobs_root=$(dirname "$job_dir")
+lock="$jobs_root/browser-running"
+if ! mkdir "$lock" 2>/dev/null; then
+  touch "$jobs_root/browser-overlap"
+  exit 42
+fi
+trap 'rmdir "$lock"' EXIT
+sleep 0.2
+mkdir "$artifacts/run-1"
+printf packet >"$artifacts/run-1/traffic.pcap"
+printf '{"schema_version":1,"classification":"raw_browser_serial","source_sha":"%s","manifest_digest":"sha256:browser-serial"}\n' "$source_sha" >"$report"
+`
+	if err := os.WriteFile(runner, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	staging := filepath.Join(root, "staging")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := &PerformanceManifest{Digest: "sha256:browser-serial", EligibleLaneCount: 2, Cells: []PerformanceCell{
+		{ID: "browser", DurationMinutes: 1, Topology: "browser_webtransport"},
+		{ID: "adaptive", DurationMinutes: 1, Topology: "adaptive_web"},
+	}}
+	request := collectRequest{ManifestPath: filepath.Join(root, "manifest.json"), RepositoryPath: root, FinalSHA: collectTestFinalSHA, RunnerExecutable: runner}
+	jobs := []collectionJob{
+		{ID: "browser", CellIDs: []string{"browser"}, RunnerTarget: "browser-webtransport-cell"},
+		{ID: "adaptive", CellIDs: []string{"adaptive"}, RunnerTarget: "adaptive-selection-cell"},
+	}
+	records, err := runCollectionJobs(context.Background(), request, manifest, nil, jobs, staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != len(jobs) {
+		t.Fatalf("serial browser run returned %d records, want %d", len(records), len(jobs))
+	}
+	if _, err := os.Stat(filepath.Join(staging, "browser-overlap")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("shared browser lanes overlapped: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(staging, "browser-running")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("browser lock remained after serial run: %v", err)
+	}
+}
+
 func TestRunCollectionJobsCancelsSiblingLaneOnFailure(t *testing.T) {
 	root := canonicalCollectTestRoot(t)
 	runner := filepath.Join(root, "cancel-runner.sh")
