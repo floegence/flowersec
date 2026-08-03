@@ -134,6 +134,28 @@ test("provision repairs generated build ownership and deploy reserves stdout for
   assert.match(deploy, /make -C "\$guest_repo" transport-runner-config >&2/);
 });
 
+test("doctor mirrors the formal build and browser identity context", async () => {
+  const agent = await readFile(agentPath, "utf8");
+  const deployStart = agent.indexOf("run_guest_deploy() {");
+  const deployEnd = agent.indexOf("\ndoctor_fail() {", deployStart);
+  const deploy = agent.slice(deployStart, deployEnd);
+  const doctorStart = agent.indexOf("run_guest_doctor() {");
+  const doctorEnd = agent.indexOf("\nlocked_cargo_cache_ready() {", doctorStart);
+  const doctor = agent.slice(doctorStart, doctorEnd);
+
+  assert.match(deploy, /"\$\(node --version\)"/);
+  for (const assignment of [
+    "--setenv=CARGO_NET_OFFLINE=true",
+    "--setenv=GOWORK=off",
+    "--setenv=GOFLAGS=-mod=readonly",
+    "--setenv=GOPROXY=off",
+    '--setenv=GOMODCACHE="$guest_home/go/pkg/mod"',
+    '--setenv=PLAYWRIGHT_BROWSERS_PATH="$guest_home/.cache/ms-playwright"',
+  ]) {
+    assert.ok(doctor.includes(assignment), `doctor is missing ${assignment}`);
+  }
+});
+
 test("controller does not expand parameters or commit partial GREEN state", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-runner-contract-"));
   t.after(() => rm(root, { recursive: true, force: true }));

@@ -91,6 +91,18 @@ func TestRunnerPreflightRejectsMissingRustDependencyCacheBeforeFormalWorkload(t 
 	}
 }
 
+func TestRunnerPreflightIdentityFailureReportsTheValidatorReason(t *testing.T) {
+	request, facts := greenRunnerPreflightFixture("formal")
+	facts.IdentityValid = false
+	facts.IdentityError = "runner source or argv digest drift"
+
+	report := evaluateRunnerPreflight(request, facts)
+	check := runnerPreflightCheckByID(t, report, "runner_identity")
+	if check.Status != "RED" || !strings.Contains(check.Actual, `identity_error="runner source or argv digest drift"`) {
+		t.Fatalf("runner identity check = %#v", check)
+	}
+}
+
 func TestRunnerPreflightRustDependencyProbeIsOfflineAndPreservesArguments(t *testing.T) {
 	directory := t.TempDir()
 	argumentsPath := filepath.Join(directory, "arguments")

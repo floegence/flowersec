@@ -83,6 +83,8 @@ type runnerPreflightFacts struct {
 	ManifestEqual   bool
 	ConfigValid     bool
 	IdentityValid   bool
+	ConfigError     string
+	IdentityError   string
 	ToolchainSHA    string
 	DistSHA         string
 	Tools           map[string]bool
@@ -274,8 +276,16 @@ func collectRunnerPreflightFacts(ctx context.Context, request runnerPreflightReq
 			facts.ManifestEqual = err == nil && finalErr == nil && string(baseManifest) == string(finalManifest)
 		}
 	}
-	facts.ConfigValid = validateRunnerPreflightConfig(request, repository) == nil
-	facts.IdentityValid = validateRunnerPreflightIdentity(request, repository) == nil
+	if err := validateRunnerPreflightConfig(request, repository); err == nil {
+		facts.ConfigValid = true
+	} else {
+		facts.ConfigError = err.Error()
+	}
+	if err := validateRunnerPreflightIdentity(request, repository); err == nil {
+		facts.IdentityValid = true
+	} else {
+		facts.IdentityError = err.Error()
+	}
 	facts.ToolchainSHA = runnerPreflightToolchainDigest(repository)
 	facts.DistSHA = runnerPreflightDistDigest(filepath.Join(repository, "flowersec-ts/dist"))
 	for _, tool := range runnerPreflightTools(request.Mode) {
@@ -331,7 +341,11 @@ func evaluateRunnerPreflight(request runnerPreflightRequest, facts runnerPreflig
 		add("base_ancestry", facts.BaseAncestor, "identity", "base SHA is an ancestor of the candidate", strconv.FormatBool(facts.BaseAncestor), "true")
 		add("manifest_identity", facts.ManifestEqual, "identity", "base and candidate manifests are byte-identical", strconv.FormatBool(facts.ManifestEqual), "true")
 	}
-	add("runner_identity", facts.ConfigValid && facts.IdentityValid, "identity", "private runner identity and executable/source/argv digests match", fmt.Sprintf("config=%t identity=%t", facts.ConfigValid, facts.IdentityValid), "true/true")
+	identityActual := fmt.Sprintf("config=%t identity=%t", facts.ConfigValid, facts.IdentityValid)
+	if facts.ConfigError != "" || facts.IdentityError != "" {
+		identityActual += fmt.Sprintf(" config_error=%q identity_error=%q", facts.ConfigError, facts.IdentityError)
+	}
+	add("runner_identity", facts.ConfigValid && facts.IdentityValid, "identity", "private runner identity and executable/source/argv digests match", identityActual, "true/true")
 	if request.ExpectedToolchainSHA256 != "" {
 		add("toolchain_digest", facts.ToolchainSHA == request.ExpectedToolchainSHA256, "identity", "toolchain digest matches the prepared artifact", facts.ToolchainSHA, request.ExpectedToolchainSHA256)
 	}

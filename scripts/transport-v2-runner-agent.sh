@@ -291,6 +291,7 @@ run_guest_deploy() {
     toolchain_material=$(cd "$guest_repo" && printf '%s\n' \
       "$(go version)" \
       "$(go env GOOS GOARCH CGO_ENABLED)" \
+      "$(node --version)" \
       "$(sha256sum flowersec-go/go.mod flowersec-go/go.sum flowersec-ts/package-lock.json)")
     toolchain_sha=$(printf '%s' "$toolchain_material" | sha256sum | awk '{print $1}')
     dist_sha=$(cd "$guest_repo/flowersec-ts" && find dist -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
@@ -399,6 +400,11 @@ run_guest_doctor() {
     --property=Type=exec --property=RuntimeMaxSec=30s --property=TimeoutStopSec=2s --property=KillMode=control-group \
     --setenv=PATH=/usr/local/go/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     --setenv=HOME=/root --setenv=RUSTUP_HOME=/usr/local/rustup --setenv=CARGO_HOME=/usr/local/cargo \
+    --setenv=LC_ALL=C.UTF-8 --setenv=TZ=UTC --setenv=CARGO_NET_OFFLINE=true \
+    --setenv=GOWORK=off --setenv=GOFLAGS=-mod=readonly --setenv=GOPROXY=off \
+    --setenv=GOMODCACHE="$guest_home/go/pkg/mod" \
+    --setenv=PLAYWRIGHT_BROWSERS_PATH="$guest_home/.cache/ms-playwright" \
+    --setenv=FLOWERSEC_TRANSPORT_RUNNER_CONFIG="$guest_repo/.flowersec/transport-runner.json" \
     --setenv=FLOWERSEC_RUNNER_CONTEXT=formal --setenv=FLOWERSEC_RUNNER_CONTEXT_SHA="$source_sha" \
     "$guest_agent" --role guest-root doctor-root "$guest_config" "$guest_request" flowersec-remote-runner-v1)
   nested_status=$?
