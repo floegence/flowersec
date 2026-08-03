@@ -134,11 +134,13 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
   private readonly transport: BrowserWebTransportLikeInternalStage;
   private readonly closeTimeoutMs: number;
   private readonly postReadyStability: Promise<void>;
+  private readonly pendingNativeOpens = new Set<Promise<BrowserWebTransportBidirectionalStreamInternalStage>>();
   private terminalError: Error | undefined;
   private closing = false;
   private closePromise: Promise<void> | undefined;
   private activeIncomingStreams = 0;
   private transportCloseIssued = false;
+  private requestedTransportClose: Readonly<{ closeCode: number; reason: string }> | undefined;
   private readerCleanupIssued = false;
 
   constructor(
@@ -196,7 +198,7 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
     await waitWithSignal(this.postReadyStability, options.signal);
     this.assertOpen();
     throwIfAborted(options.signal);
-    const pending = this.transport.createBidirectionalStream();
+    const pending = this.trackNativeOpen(this.transport.createBidirectionalStream());
     const native = await waitWithSignal(pending, options.signal, undefined, (lateStream) => {
       abortNativeStream(lateStream);
     });
@@ -292,10 +294,33 @@ class BrowserWebTransportCarrier implements BrowserWebTransportCarrierInternalSt
   }
 
   private closeTransport(closeCode: number, reason: string): void {
-    if (this.transportCloseIssued) return;
+    if (this.transportCloseIssued || this.requestedTransportClose !== undefined) return;
+    this.requestedTransportClose = { closeCode, reason };
+    this.flushTransportClose();
+  }
+
+  private trackNativeOpen(
+    pending: Promise<BrowserWebTransportBidirectionalStreamInternalStage>,
+  ): Promise<BrowserWebTransportBidirectionalStreamInternalStage> {
+    this.pendingNativeOpens.add(pending);
+    void pending.then(
+      () => this.finishNativeOpen(pending),
+      () => this.finishNativeOpen(pending),
+    );
+    return pending;
+  }
+
+  private finishNativeOpen(pending: Promise<BrowserWebTransportBidirectionalStreamInternalStage>): void {
+    this.pendingNativeOpens.delete(pending);
+    this.flushTransportClose();
+  }
+
+  private flushTransportClose(): void {
+    const requested = this.requestedTransportClose;
+    if (this.transportCloseIssued || requested === undefined || this.pendingNativeOpens.size !== 0) return;
     this.transportCloseIssued = true;
     try {
-      this.transport.close({ closeCode, reason });
+      this.transport.close(requested);
     } catch {
       // The native transport may already be closed.
     }

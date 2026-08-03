@@ -250,6 +250,39 @@ describe("browser WebTransport carrier internal stage", () => {
     await expect(opening).resolves.toMatchObject({ code: "carrier_closed" });
   });
 
+  test.each(["close", "abort"] as const)(
+    "defers native transport %s until an in-flight native stream open settles",
+    async (action) => {
+      vi.useFakeTimers();
+      const fake = new FakeWebTransport();
+      fake.resolveReady();
+      const carrier = await createCarrier(fake);
+      await vi.runAllTimersAsync();
+
+      const nativeOpen = deferred<BrowserWebTransportBidirectionalStreamInternalStage>();
+      fake.createBidirectionalStream.mockImplementationOnce(async () => await nativeOpen.promise);
+      const opening = carrier.openStream().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await flushTasks();
+      expect(fake.createBidirectionalStream).toHaveBeenCalledTimes(1);
+
+      const closing = action === "close" ? carrier.close() : Promise.resolve(carrier.abort());
+      expect(fake.close).not.toHaveBeenCalled();
+
+      const lateNative = new FakeNativeBidirectionalStream(`late-${action}`);
+      nativeOpen.resolve(lateNative.native);
+      await eventually(() => {
+        expect(fake.close).toHaveBeenCalledTimes(1);
+        expect(lateNative.writeAbort).toHaveBeenCalledTimes(1);
+        expect(lateNative.readCancel).toHaveBeenCalledTimes(1);
+      });
+      await closing;
+      await expect(opening).resolves.toMatchObject({ code: "carrier_closed" });
+    },
+  );
+
   test("cancels incoming unidirectional streams and bounds close even if closed never settles", async () => {
     vi.useFakeTimers();
     const fake = new FakeWebTransport({
