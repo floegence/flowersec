@@ -233,15 +233,13 @@ test("failed provision stops its task-owned container and preserves the failure 
   assert.match(provision, /provision_complete=1\ntrap - EXIT HUP INT TERM\n?$/);
 });
 
-test("release wrapper delegates cgroup controllers with a bounded live-process retry", () => {
+test("release wrapper leaves cgroup capability checks to unified preflight", () => {
   const runner = fs.readFileSync(runnerPath, "utf8");
-  assert.match(runner, /readonly required_cgroup_controllers="cpuset cpu memory pids"/);
-  assert.match(runner, /for \(\(cgroup_attempt = 1; cgroup_attempt <= 100; cgroup_attempt\+\+\)\)/);
-  assert.match(runner, /done < \/sys\/fs\/cgroup\/cgroup\.procs/);
-  assert.match(runner, /\[\[ ! -s \/sys\/fs\/cgroup\/cgroup\.procs \]\] &&/);
-  assert.match(runner, /echo "\+cpuset \+cpu \+memory \+pids" > \/sys\/fs\/cgroup\/cgroup\.subtree_control/);
-  assert.match(runner, /sleep 0\.05/);
-  assert.match(runner, /within 5 seconds/);
+  assert.doesNotMatch(runner, /flowersec-release-supervisor/);
+  assert.doesNotMatch(runner, /> "?\$?cgroup_supervisor\/cgroup\.procs/);
+  assert.doesNotMatch(runner, /done < \/sys\/fs\/cgroup\/cgroup\.procs/);
+  assert.match(runner, /"\$transportcheck" runner-preflight/);
+  assert.match(runner, /-cgroup-root \/sys\/fs\/cgroup/);
 });
 
 test("release wrapper owns and cleans only exact network-lab kernel state", () => {

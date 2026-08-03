@@ -146,28 +146,6 @@ source /etc/os-release
 for path in "$manifest_path" "$registry_path" "$trust_policy_path" "$effective_config_path" "$bpf_source_path" "$rust_runner_source_path" "$rust_lock_path" "$wrapper_source_path"; do
   [[ -f $path && ! -L $path ]] || fail "required source file is missing or is a symlink: $path"
 done
-[[ -w /sys/fs/cgroup && -r /sys/fs/cgroup/cgroup.controllers ]] || fail "writable cgroup v2 delegation is unavailable"
-
-readonly cgroup_supervisor=/sys/fs/cgroup/flowersec-release-supervisor
-mkdir -p "$cgroup_supervisor"
-readonly required_cgroup_controllers="cpuset cpu memory pids"
-cgroup_controllers_delegated=0
-for ((cgroup_attempt = 1; cgroup_attempt <= 100; cgroup_attempt++)); do
-  while read -r cgroup_pid; do
-    [[ -n $cgroup_pid ]] || continue
-    if ! echo "$cgroup_pid" > "$cgroup_supervisor/cgroup.procs"; then
-      [[ ! -d /proc/$cgroup_pid ]] || fail "failed to move live process $cgroup_pid into the release supervisor cgroup"
-    fi
-  done < /sys/fs/cgroup/cgroup.procs
-
-  if [[ ! -s /sys/fs/cgroup/cgroup.procs ]] &&
-    echo "+cpuset +cpu +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null; then
-    cgroup_controllers_delegated=1
-    break
-  fi
-  sleep 0.05
-done
-((cgroup_controllers_delegated)) || fail "could not empty the release cgroup root and delegate controllers within 5 seconds"
 actual_wrapper=$(realpath -- "$0")
 cmp -s -- "$actual_wrapper" "$wrapper_source_path" || fail "installed wrapper does not match the clean source checkout"
 
