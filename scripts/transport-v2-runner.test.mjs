@@ -394,7 +394,8 @@ test("guest collect resumes a terminal exact-state archive before rebuilding it"
   assert.match(recovery, /formal-closure\.tar\.gz/);
   assert.match(recovery, /formal-failure\.tar\.gz/);
   assert.match(recovery, /sha256sum \"\$archive\"/);
-  assert.ok(collect.indexOf("recover_guest_collection") < collect.indexOf("systemctl show"));
+  assert.match(recovery, /multiple guest collection archives block recovery/);
+  assert.ok(collect.indexOf("systemctl show") < collect.indexOf("recover_guest_collection"));
   assert.ok(collect.indexOf("recover_guest_collection") < collect.indexOf("tar -czf"));
 });
 

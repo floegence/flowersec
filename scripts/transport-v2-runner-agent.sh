@@ -605,11 +605,37 @@ run_guest_formal_root() {
 }
 
 recover_guest_collection() {
-  local payload archive archive_sha expected_archive
+  local formal_result=$1 payload archive archive_sha expected_archive other_archive status message check_id
   recovered_collection=
-  [[ -f $guest_request.status && ! -L $guest_request.status ]] || return 1
-  payload=$(<"$guest_request.status")
-  jq -e 'has("archive_path") or has("archive_sha256")' <<<"$payload" >/dev/null || return 1
+  if [[ -e $guest_request.status || -L $guest_request.status ]]; then
+    [[ -f $guest_request.status && ! -L $guest_request.status ]] || \
+      agent_fail guest_collection_receipt "guest collection receipt is not a regular task file" identity 30
+    payload=$(<"$guest_request.status")
+  else
+    payload='{}'
+  fi
+  if ! jq -e 'has("archive_path") or has("archive_sha256")' <<<"$payload" >/dev/null; then
+    if [[ $formal_result == success ]]; then
+      status=GREEN
+      message="formal evidence closure is ready"
+      check_id=
+      expected_archive=$artifact_root/$source_sha-$runner_id-formal-closure.tar.gz
+      other_archive=$artifact_root/$source_sha-$runner_id-formal-failure.tar.gz
+    else
+      status=RED
+      message="formal collector failed"
+      check_id=formal_collector
+      expected_archive=$artifact_root/$source_sha-$runner_id-formal-failure.tar.gz
+      other_archive=$artifact_root/$source_sha-$runner_id-formal-closure.tar.gz
+    fi
+    [[ ! -e $other_archive && ! -L $other_archive ]] || \
+      agent_fail guest_collection_receipt "multiple guest collection archives block recovery" identity 30
+    [[ -f $expected_archive && ! -L $expected_archive ]] || return 1
+    archive_sha=$(sha256sum "$expected_archive" | awk '{print $1}')
+    payload=$(result_json "$status" "$message" "$check_id")
+    payload=$(jq -c --arg path "$expected_archive" --arg sha "$archive_sha" '. + {archive_path:$path,archive_sha256:$sha}' <<<"$payload")
+    write_status_atomically "$guest_request.status" "$payload"
+  fi
   jq -e --arg sha "$source_sha" --arg base "$base_sha" '
     (keys | sort) == (["action","archive_path","archive_sha256","base_sha","check_id","classification",
       "message","schema","source_sha","status"] | sort) and
@@ -637,19 +663,19 @@ recover_guest_collection() {
 run_guest_collect() {
   local active result archive archive_sha payload journal recovered_status recovered_collection
   local -a failure_members=()
+  active=$(sudo -n systemctl show "$unit" -p ActiveState --value 2>/dev/null || true)
+  result=$(sudo -n systemctl show "$unit" -p Result --value 2>/dev/null || true)
+  if [[ $active == active || $active == activating ]]; then
+    guest_result "$(result_json RUNNING "formal collector is still running")"
+    return
+  fi
   set +e
-  recover_guest_collection
+  recover_guest_collection "$result"
   recovered_status=$?
   set -e
   if [[ $recovered_status != 1 ]]; then
     printf '%s\n' "$recovered_collection"
     if [[ $recovered_status != 0 ]]; then exit "$recovered_status"; fi
-    return
-  fi
-  active=$(sudo -n systemctl show "$unit" -p ActiveState --value 2>/dev/null || true)
-  result=$(sudo -n systemctl show "$unit" -p Result --value 2>/dev/null || true)
-  if [[ $active == active || $active == activating ]]; then
-    guest_result "$(result_json RUNNING "formal collector is still running")"
     return
   fi
   if [[ $result != success ]]; then
