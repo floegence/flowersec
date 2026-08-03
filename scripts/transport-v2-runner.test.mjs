@@ -303,6 +303,23 @@ test("host failures forward only bounded nested stderr and cleanup retains the f
   assert.match(controller, /if \$existing \| has\("last_failure"\) then \.last_failure=\$existing\.last_failure else \. end/);
 });
 
+test("host collect watchdog covers nested archive creation and transfer", () => {
+  const probe = spawnSync("python3", ["-c", String.raw`
+import importlib.util
+import json
+import sys
+
+helper_path = sys.argv[1]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("flowersec_runner_host", helper_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(json.dumps({"collect": module.action_timeout("collect"), "cleanup": module.action_timeout("cleanup")}))
+`, hostHelperPath], { encoding: "utf8" });
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+  assert.deepEqual(JSON.parse(probe.stdout), { collect: 9 * 60, cleanup: 3 * 60 });
+});
+
 test("doctor mirrors the formal build and browser identity context", async () => {
   const agent = await readFile(agentPath, "utf8");
   const preflight = await readFile(path.join(repository, "tools", "transportcheck", "runner_preflight.go"), "utf8");

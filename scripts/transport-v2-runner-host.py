@@ -290,7 +290,7 @@ def transfer_to_lxd(config, request, agent_path, helper_directory):
 
 
 def action_timeout(action):
-    return {"doctor": 35, "provision": 600, "deploy": 1200, "run-formal": 60, "collect": 180, "cleanup": 180}[action]
+    return {"doctor": 35, "provision": 600, "deploy": 1200, "run-formal": 60, "collect": 540, "cleanup": 180}[action]
 
 
 def pull_collection(config, request, payload):
