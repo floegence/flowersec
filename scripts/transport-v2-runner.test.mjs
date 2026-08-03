@@ -115,7 +115,7 @@ test("provision fills the locked Cargo cache through the proxy and verifies it o
   assert.ok(agent.indexOf("cargo fetch --locked") < agent.lastIndexOf("locked_cargo_cache_ready"));
 });
 
-test("provision repairs generated build ownership and deploy reports build failures", async () => {
+test("provision repairs generated build ownership and deploy reserves stdout for strict JSON", async () => {
   const agent = await readFile(agentPath, "utf8");
   const provisionStart = agent.indexOf("run_guest_provision() {");
   const provisionEnd = agent.indexOf("\nrun_guest_formal() {", provisionStart);
@@ -129,6 +129,9 @@ test("provision repairs generated build ownership and deploy reports build failu
   assert.match(deploy, /agent_fail deploy_ts_build/);
   assert.match(deploy, /agent_fail deploy_go_runner_build/);
   assert.match(deploy, /agent_fail deploy_transportcheck_build/);
+  assert.match(deploy, /agent_fail deploy_identity_generation/);
+  assert.match(deploy, /npm run build >&2/);
+  assert.match(deploy, /make -C "\$guest_repo" transport-runner-config >&2/);
 });
 
 test("controller does not expand parameters or commit partial GREEN state", async (t) => {

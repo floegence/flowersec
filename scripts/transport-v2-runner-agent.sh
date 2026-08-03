@@ -267,7 +267,7 @@ run_guest_deploy() {
     trap 'rm -rf -- "$build_temp"' EXIT HUP INT TERM
     if ! (
       cd "$guest_repo/flowersec-ts"
-      npm run build
+      npm run build >&2
     ); then
       agent_fail deploy_ts_build "prepared TypeScript build failed" environment 20
     fi
@@ -311,7 +311,9 @@ run_guest_deploy() {
     [[ -f $identity && ! -L $identity && $(stat -c %a "$identity") == 600 ]]
     rm -- "$identity"
   fi
-  make -C "$guest_repo" transport-runner-config
+  if ! make -C "$guest_repo" transport-runner-config >&2; then
+    agent_fail deploy_identity_generation "runner identity generation failed" environment 20
+  fi
   [[ -f $identity && ! -L $identity && $(stat -c %a "$identity") == 600 ]]
   rm -- "$guest_bundle"
   test -z "$(git -C "$guest_repo" status --porcelain --untracked-files=all)"
