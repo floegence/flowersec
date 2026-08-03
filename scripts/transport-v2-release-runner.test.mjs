@@ -76,7 +76,7 @@ test("release wrapper freezes the audited source, host, builds, and collect argv
   assert.match(runner, /actual_kernel=\$\(uname -r\)/);
   assert.match(runner, /-runner-config "\$runner_config_path"/);
   assert.match(runner, /go build -trimpath -buildvcs=false -o "\$low_level_runner"/);
-	assert.match(runner, /cargo build --locked --release --example transport_release_runner/);
+	assert.match(runner, /rustup run 1\.88\.0 cargo build --locked --release --example transport_release_runner/);
 	assert.match(runner, /CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="\$rust_target_directory"/);
 	assert.match(runner, /Rust release runner build is unavailable/);
 	assert.match(runner, /CGO_ENABLED=1 go build -race -trimpath -buildvcs=false -o "\$race_low_level_runner"/);

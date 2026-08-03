@@ -89,6 +89,8 @@ type runnerPreflightFacts struct {
 	GoVersion       string
 	NodeVersion     string
 	TiniVersion     string
+	RustVersion     string
+	CargoVersion    string
 	ChromiumVersion string
 	NetNSCanary     bool
 	BPFCanary       bool
@@ -286,6 +288,10 @@ func collectRunnerPreflightFacts(ctx context.Context, request runnerPreflightReq
 	facts.GoVersion = runnerPreflightCommandOutput("go", "version")
 	facts.NodeVersion = runnerPreflightCommandOutput("node", "--version")
 	facts.TiniVersion = runnerPreflightCommandOutput("tini", "--version")
+	if request.Mode == "formal" {
+		facts.RustVersion = runnerPreflightCommandOutput("rustup", "run", "1.88.0", "rustc", "--version")
+		facts.CargoVersion = runnerPreflightCommandOutput("rustup", "run", "1.88.0", "cargo", "--version")
+	}
 	facts.ChromiumVersion = runnerPreflightChromiumVersion(ctx, repository)
 	facts.NetNSCanary = runnerPreflightNetNSCanary(ctx)
 	facts.BPFCanary = runnerPreflightBPFCanary(ctx)
@@ -341,7 +347,12 @@ func evaluateRunnerPreflight(request runnerPreflightRequest, facts runnerPreflig
 	}
 	add("required_tools", len(missingTools) == 0, "environment", "required executables are available", strings.Join(missingTools, ","), "empty")
 	versionsOK := strings.HasPrefix(facts.GoVersion, "go version go1.26.5 linux/") && facts.NodeVersion == "v24.14.1" && facts.TiniVersion == "tini version 0.19.0"
-	add("tool_versions", versionsOK, "environment", "Go, Node, and tini match the pinned workload toolchain", fmt.Sprintf("go=%s node=%s tini=%s", facts.GoVersion, facts.NodeVersion, facts.TiniVersion), "go1.26.5 linux/*; node v24.14.1; tini 0.19.0")
+	versionExpected := "go1.26.5 linux/*; node v24.14.1; tini 0.19.0"
+	if request.Mode == "formal" {
+		versionsOK = versionsOK && facts.RustVersion == "rustc 1.88.0 (6b00bc388 2025-06-23)" && facts.CargoVersion == "cargo 1.88.0 (873a06493 2025-05-10)"
+		versionExpected += "; rustc/cargo 1.88.0"
+	}
+	add("tool_versions", versionsOK, "environment", "workload tools match the pinned versions", fmt.Sprintf("go=%s node=%s tini=%s rustc=%s cargo=%s", facts.GoVersion, facts.NodeVersion, facts.TiniVersion, facts.RustVersion, facts.CargoVersion), versionExpected)
 	add("chromium", facts.ChromiumVersion == "151.0.7922.34", "environment", "Chromium is the pinned release", facts.ChromiumVersion, "151.0.7922.34")
 	add("netns_canary", facts.NetNSCanary, "environment", "network namespace canary was created and removed", strconv.FormatBool(facts.NetNSCanary), "true")
 	add("bpf_canary", facts.BPFCanary, "environment", "BPF canary was created and removed", strconv.FormatBool(facts.BPFCanary), "true")
@@ -473,7 +484,7 @@ func writeRunnerPreflightReport(path string, report runnerPreflightReport, outpu
 func runnerPreflightTools(mode string) []string {
 	tools := []string{"git", "sha256sum", "ip", "nft", "tc", "jq", "flock", "timeout", "tini", "bpftool", "go", "node"}
 	if mode == "formal" {
-		tools = append(tools, "clang", "cargo", "rustc")
+		tools = append(tools, "clang", "rustup", "cargo", "rustc")
 	}
 	return tools
 }

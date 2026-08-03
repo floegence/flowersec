@@ -252,6 +252,7 @@ func greenRunnerPreflightFixture(mode string) (runnerPreflightRequest, runnerPre
 		Context: true, Reachable: true, LauncherRuntime: "lxc", PlatformValid: true, PlatformActual: "linux/arm64 ubuntu 24.04", SourceSHA: sha, Clean: true, BaseAncestor: true, ManifestEqual: true,
 		ConfigValid: true, IdentityValid: true, ToolchainSHA: toolchain, DistSHA: dist, Tools: tools,
 		GoVersion: "go version go1.26.5 linux/arm64", NodeVersion: "v24.14.1", TiniVersion: "tini version 0.19.0",
+		RustVersion: "rustc 1.88.0 (6b00bc388 2025-06-23)", CargoVersion: "cargo 1.88.0 (873a06493 2025-05-10)",
 		ChromiumVersion: "151.0.7922.34", NetNSCanary: true, BPFCanary: true, CgroupCanary: true,
 		Controllers: []string{"cpuset", "cpu", "memory", "pids"}, MemoryAvailable: 8 << 30, MemoryLimit: "max",
 		LaneMemoryLimit: "4294967296", LaneSwapLimit: "0", LanePidsLimit: "8192",
@@ -264,6 +265,17 @@ func greenRunnerPreflightFixture(mode string) (runnerPreflightRequest, runnerPre
 		request.BaseSHA = ""
 	}
 	return request, facts
+}
+
+func TestRunnerPreflightFormalToolVersionsRejectMissingPinnedRust(t *testing.T) {
+	request, facts := greenRunnerPreflightFixture("formal")
+	facts.RustVersion = ""
+	facts.CargoVersion = ""
+	report := evaluateRunnerPreflight(request, facts)
+	check := runnerPreflightCheckByID(t, report, "tool_versions")
+	if check.Status != "RED" || !strings.Contains(check.Expected, "rustc/cargo 1.88.0") {
+		t.Fatalf("tool_versions check = %#v", check)
+	}
 }
 
 func runnerPreflightCheckByID(t *testing.T, report runnerPreflightReport, id string) runnerPreflightCheck {

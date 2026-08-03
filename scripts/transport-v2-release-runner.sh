@@ -289,7 +289,7 @@ git -C "$base_source_root" checkout --quiet --detach "$base_sha"
 (
   cd "$source_root/flowersec-rust"
   CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$rust_target_directory" \
-    cargo build --locked --release --example transport_release_runner
+    rustup run 1.88.0 cargo build --locked --release --example transport_release_runner
 )
 [[ -f $rust_release_runner && ! -L $rust_release_runner && -x $rust_release_runner ]] || fail "Rust release runner build is unavailable"
 (
