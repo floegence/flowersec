@@ -111,7 +111,9 @@ def require_digest(path, expected, check_id):
 
 
 def require_executable(path, check_id):
-    if not os.path.isabs(path) or not os.path.isfile(path) or os.path.islink(path) or not os.access(path, os.X_OK):
+    resolved = os.path.realpath(path)
+    if (not os.path.isabs(path) or not os.path.isabs(resolved) or not os.path.isfile(resolved)
+            or os.path.islink(resolved) or not os.access(path, os.X_OK)):
         raise RunnerFailure(check_id, f"configured executable is unavailable: {path}")
 
 

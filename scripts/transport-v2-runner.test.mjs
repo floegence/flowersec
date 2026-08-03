@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -504,8 +504,10 @@ test("host helper uses the private absolute LXC executable without ambient PATH"
   const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-lxc-path-contract-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const fakeLXC = path.join(root, "lxc-private");
+  const linkedLXC = path.join(root, "lxc-linked");
   await writeFile(fakeLXC, "#!/bin/sh\nset -eu\nif IFS= read -r unexpected; then exit 91; fi\nprintf '%s\\n' \"$*\"\n");
   await chmod(fakeLXC, 0o700);
+  await symlink(fakeLXC, linkedLXC);
   const probe = spawnSync("python3", ["-c", String.raw`
 import importlib.util
 import sys
@@ -523,6 +525,24 @@ print(completed.stdout, end="")
   });
   assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
   assert.equal(probe.stdout, "info runner\n");
+
+  const linked = spawnSync("python3", ["-c", String.raw`
+import importlib.util
+import sys
+
+helper_path, lxc_path = sys.argv[1:]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("flowersec_runner_host", helper_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+completed = module.lxc({"lxc_executable": lxc_path}, "info", "linked-runner")
+print(completed.stdout, end="")
+`, hostHelperPath, linkedLXC], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: "/usr/bin:/bin" },
+  });
+  assert.equal(linked.status, 0, `${linked.stderr}\n${linked.stdout}`);
+  assert.equal(linked.stdout, "info linked-runner\n");
 
   const legacy = spawnSync("python3", ["-c", String.raw`
 import importlib.util
