@@ -196,6 +196,27 @@ test("provision installs the source-matched wrapper at one stable container path
   );
 });
 
+test("provision checks Docker access in its service context before mutation", () => {
+  const provision = fs.readFileSync(path.join(scriptsDirectory, "provision-transport-release-runner.sh"), "utf8");
+  const dockerAccess = provision.indexOf("timeout --kill-after=1s 29s docker info");
+  const directoryPreparation = provision.indexOf("install -d -m 0750");
+  const privilegedDirectoryPreparation = provision.indexOf("sudo install -d");
+  const imageBuild = provision.indexOf("docker build");
+  const staleContainerRemoval = provision.indexOf('docker rm --force "$container_name"');
+
+  assert.notEqual(dockerAccess, -1, "provision must bound Docker access in the actual execution context");
+  assert.match(provision, /Docker access preflight failed in the current service context/);
+  for (const [name, index] of [
+    ["directory preparation", directoryPreparation],
+    ["privileged directory preparation", privilegedDirectoryPreparation],
+    ["image build", imageBuild],
+    ["stale container removal", staleContainerRemoval],
+  ]) {
+    assert.notEqual(index, -1, `provision must retain ${name}`);
+    assert.ok(dockerAccess < index, `Docker access preflight must precede ${name}`);
+  }
+});
+
 test("failed provision stops its task-owned container and preserves the failure status", () => {
   const provision = fs.readFileSync(path.join(scriptsDirectory, "provision-transport-release-runner.sh"), "utf8");
   const oldContainerRemoval = provision.indexOf('docker rm --force "$container_name"');

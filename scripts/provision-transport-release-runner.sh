@@ -34,6 +34,10 @@ if [[ ! -x $host_bpftool ]]; then
   echo "exact-kernel bpftool not found: $host_bpftool" >&2
   exit 1
 fi
+if ! timeout --kill-after=1s 29s docker info --format '{{.ServerVersion}}' >/dev/null; then
+  echo "Docker access preflight failed in the current service context" >&2
+  exit 1
+fi
 
 install -d -m 0750 \
   "$runner_root/cache" \
