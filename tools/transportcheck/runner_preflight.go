@@ -530,8 +530,8 @@ func runnerPreflightCommandOutput(name string, arguments ...string) string {
 }
 
 func runnerPreflightRustDependencies(ctx context.Context, repository string) bool {
-	command := exec.CommandContext(ctx, "rustup", "run", "1.88.0", "cargo", "metadata",
-		"--locked", "--offline", "--format-version", "1",
+	command := exec.CommandContext(ctx, "rustup", "run", "1.88.0", "cargo", "fetch",
+		"--locked", "--offline",
 		"--manifest-path", filepath.Join(repository, "flowersec-rust", "Cargo.toml"))
 	command.Env = append(os.Environ(), "CARGO_NET_OFFLINE=true")
 	return command.Run() == nil

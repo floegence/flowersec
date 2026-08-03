@@ -244,7 +244,7 @@ test("provision fills the locked Cargo cache through the proxy and verifies it o
   assert.match(agent, /HTTP_PROXY="\$proxy_url" HTTPS_PROXY="\$proxy_url"/);
   assert.match(agent, /RUSTUP_HOME=\/usr\/local\/rustup CARGO_HOME=\/usr\/local\/cargo/);
   assert.match(agent, /CARGO_NET_OFFLINE=true/);
-  assert.match(agent, /rustup run 1\.88\.0 cargo metadata --locked --offline/);
+  assert.match(agent, /rustup run 1\.88\.0 cargo fetch --locked --offline/);
   assert.match(agent, /agent_fail provision_cargo_cache/);
   assert.match(cache, /sudo -n timeout --signal=TERM --kill-after=5s 8m env/);
   assert.match(cache, /HOME=\/root/);

@@ -164,7 +164,7 @@ exit "${FLOWERSEC_TEST_STATUS:-0}"
 		t.Fatal(err)
 	}
 	wantArguments := strings.Join([]string{
-		"run", "1.88.0", "cargo", "metadata", "--locked", "--offline", "--format-version", "1",
+		"run", "1.88.0", "cargo", "fetch", "--locked", "--offline",
 		"--manifest-path", filepath.Join(repository, "flowersec-rust", "Cargo.toml"), "",
 	}, "\n")
 	if string(arguments) != wantArguments {

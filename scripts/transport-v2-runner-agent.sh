@@ -500,8 +500,8 @@ run_guest_doctor() {
 locked_cargo_cache_ready() {
   sudo -n timeout --signal=TERM --kill-after=5s 30s env \
     HOME=/root RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_NET_OFFLINE=true \
-    /usr/local/cargo/bin/rustup run 1.88.0 cargo metadata --locked --offline --format-version 1 \
-    --manifest-path "$guest_repo/flowersec-rust/Cargo.toml" >/dev/null 2>&1
+    /usr/local/cargo/bin/rustup run 1.88.0 cargo fetch --locked --offline \
+      --manifest-path "$guest_repo/flowersec-rust/Cargo.toml" >/dev/null 2>&1
 }
 
 provision_locked_cargo_cache() {
