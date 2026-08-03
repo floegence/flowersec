@@ -141,6 +141,20 @@ assert any(call[1:3] == ["enable", "--now"] for call in first), first
 assert not any(call[1] in {"enable", "start", "stop", "daemon-reload"} for call in second), second
 assert module.process_argv(42)[-1] == special
 
+executables = iter(["/usr/bin/python3", os.path.realpath(qemu)])
+module.process_executable = lambda pid: next(executables, os.path.realpath(qemu))
+module.verify_service(config)
+
+module.PROCESS_READY_ATTEMPTS = 2
+module.PROCESS_READY_DELAY = 0
+module.process_executable = lambda pid: "/usr/bin/python3"
+try:
+    module.verify_service(config)
+except module.KVMFailure as error:
+    assert error.check_id == "kvm_process_identity"
+else:
+    raise AssertionError("persistent KVM executable drift was accepted")
+
 seven_cpu = dict(config)
 seven_cpu["guest_effective_cpus"] = 7
 seven_cpu["guest_launcher_argv"] = ["-name", "runner-contract", "-smp", "7", "-netdev", "user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22"]

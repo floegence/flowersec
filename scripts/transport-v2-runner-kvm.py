@@ -28,6 +28,8 @@ RESULT_SCHEMA = "flowersec-kvm-guest-result-v1"
 STABLE_HELPER = "/usr/local/libexec/flowersec-transport-v2-runner-kvm"
 STABLE_CONFIG_ROOT = "/etc/flowersec"
 STABLE_TEMPLATE = "/etc/systemd/system/flowersec-kvm-guest@.service"
+PROCESS_READY_ATTEMPTS = 50
+PROCESS_READY_DELAY = 0.1
 
 
 class KVMFailure(Exception):
@@ -250,10 +252,14 @@ def verify_service(config):
     if command(["systemctl", "is-active", unit_name(config["runner_id"])], 10, False).stdout.strip() != "active":
         raise KVMFailure("kvm_service", "KVM guest service is not active")
     expected = [config["guest_launcher_executable"], *config["guest_launcher_argv"]]
-    pid = service_pid(config["runner_id"])
-    argv = process_argv(pid)
-    if not argv or process_executable(pid) != os.path.realpath(expected[0]) or argv[1:] != expected[1:]:
-        raise KVMFailure("kvm_process_identity", "KVM service argv differs from the private runner config")
+    for attempt in range(PROCESS_READY_ATTEMPTS):
+        pid = service_pid(config["runner_id"])
+        argv = process_argv(pid)
+        if argv and process_executable(pid) == os.path.realpath(expected[0]) and argv[1:] == expected[1:]:
+            return
+        if attempt + 1 < PROCESS_READY_ATTEMPTS:
+            time.sleep(PROCESS_READY_DELAY)
+    raise KVMFailure("kvm_process_identity", "KVM service argv did not converge to the private runner config")
 
 
 def provision(config, template_path):
