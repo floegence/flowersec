@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+
+import hashlib
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.parse
+
+
+CONFIG_KEYS = {
+    "artifact_root", "dependency_urls", "guest_identity_file", "guest_known_hosts_file", "guest_port",
+    "guest_repo", "guest_root", "guest_target", "host_agent_path", "host_config_path", "host_request_path",
+    "lxc_name", "lxc_root", "proxy_url", "runner_id", "schema", "scp_executable", "ssh_executable",
+    "ssh_target", "state_path",
+}
+REQUEST_KEYS = {
+    "action", "agent_sha256", "archive_sha256", "base_sha", "bundle_sha256", "config_sha256",
+    "host_bundle_path", "host_helper_sha256", "output_path", "proxy_sha256", "schema", "source_sha",
+    "template_sha256",
+}
+BASE_RESULT_KEYS = {
+    "action", "base_sha", "check_id", "classification", "message", "schema", "source_sha", "status",
+}
+SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_@./:-]+$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+class RunnerFailure(Exception):
+    def __init__(self, check_id, message, classification="environment", code=20):
+        super().__init__(message)
+        self.check_id = check_id
+        self.classification = classification
+        self.code = code
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
+
+def load_json(path):
+    info = os.lstat(path)
+    if not pathlib.Path(path).is_file() or pathlib.Path(path).is_symlink() or info.st_mode & 0o077:
+        raise RunnerFailure("host_input", "host runner input is not a private regular file", "input", 10)
+    with open(path, "r", encoding="utf-8") as source:
+        return json.load(source)
+
+
+def result_json(request, status, message, check_id="", classification="none"):
+    return {
+        "schema": "flowersec-remote-runner-result-v1",
+        "status": status,
+        "action": request["action"],
+        "source_sha": request["source_sha"],
+        "base_sha": request["base_sha"],
+        "classification": classification,
+        "message": message,
+        "check_id": check_id,
+    }
+
+
+def write_status(path, payload):
+    parent = os.path.dirname(path)
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".remote-runner-status.", dir=parent)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+            json.dump(payload, target, separators=(",", ":"))
+            target.write("\n")
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def command(argv, timeout, check=True):
+    completed = subprocess.run(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if check and completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip() or f"command exited {completed.returncode}"
+        raise RunnerFailure("host_command", message)
+    return completed
+
+
+def require_digest(path, expected, check_id):
+    if not os.path.isfile(path) or os.path.islink(path) or digest(path) != expected:
+        raise RunnerFailure(check_id, f"digest drifted: {path}", "identity", 30)
+
+
+def validate_inputs(agent_path, helper_path, config, request, action):
+    if set(config) != CONFIG_KEYS or config.get("schema") != "flowersec-remote-runner-config-v1":
+        raise RunnerFailure("host_config_schema", "host runner config schema is invalid", "input", 10)
+    if set(request) != REQUEST_KEYS or request.get("schema") != "flowersec-remote-runner-request-v1":
+        raise RunnerFailure("host_request_schema", "host runner request schema is invalid", "input", 10)
+    if request["action"] not in {"doctor", "provision", "deploy", "run-formal", "collect", "cleanup"}:
+        raise RunnerFailure("host_action", "host runner action is invalid", "input", 10)
+    if request["action"] != action:
+        raise RunnerFailure("host_action", "host runner argv and request actions differ", "input", 10)
+    if not re.fullmatch(r"[0-9a-f]{40}", request["source_sha"]):
+        raise RunnerFailure("host_source_sha", "host runner SHA is invalid", "input", 10)
+    for name in ("agent_sha256", "host_helper_sha256", "proxy_sha256", "template_sha256"):
+        if not SHA256.fullmatch(request[name]):
+            raise RunnerFailure("host_request_digest", f"invalid request digest: {name}", "input", 10)
+    for name in (
+        "runner_id", "lxc_name", "lxc_root", "guest_target", "guest_identity_file", "guest_known_hosts_file",
+        "guest_root", "guest_repo", "artifact_root", "host_agent_path", "host_config_path", "host_request_path",
+    ):
+        if not isinstance(config[name], str) or not SAFE_TOKEN.fullmatch(config[name]):
+            raise RunnerFailure("host_config_token", f"unsafe host runner token: {name}", "input", 10)
+    require_digest(agent_path, request["agent_sha256"], "host_agent_digest")
+    require_digest(helper_path, request["host_helper_sha256"], "host_helper_digest")
+
+
+def validate_nested(payload, request):
+    if not isinstance(payload, dict) or not BASE_RESULT_KEYS.issubset(payload):
+        raise RunnerFailure("lxd_result_schema", "LXD agent returned an invalid result", "identity", 30)
+    if payload["schema"] != "flowersec-remote-runner-result-v1" or payload["action"] != request["action"]:
+        raise RunnerFailure("lxd_result_schema", "LXD agent result identity drifted", "identity", 30)
+    if payload["source_sha"] != request["source_sha"] or payload["base_sha"] != request["base_sha"]:
+        raise RunnerFailure("lxd_result_schema", "LXD agent result SHA drifted", "identity", 30)
+    if payload["status"] not in {"GREEN", "RUNNING", "RED"}:
+        raise RunnerFailure("lxd_result_schema", "LXD agent result status is invalid", "identity", 30)
+
+
+def parse_result(output, request):
+    try:
+        payload = json.loads(output.strip())
+    except json.JSONDecodeError as error:
+        raise RunnerFailure("lxd_result_schema", f"LXD agent did not return strict JSON: {error}", "identity", 30)
+    validate_nested(payload, request)
+    return payload
+
+
+def lxc(config, *arguments, timeout=30, check=True):
+    return command(["lxc", *arguments], timeout, check)
+
+
+def start_proxy(config, request, helper_directory):
+    proxy_path = os.path.join(helper_directory, "transport-v2-runner-proxy.py")
+    require_digest(proxy_path, request["proxy_sha256"], "proxy_digest")
+    parsed = urllib.parse.urlparse(config["proxy_url"])
+    if parsed.scheme != "http" or not parsed.hostname or not parsed.port:
+        raise RunnerFailure("proxy_config", "proxy URL is invalid", "input", 10)
+    allowed = []
+    for endpoint in config["dependency_urls"]:
+        host = urllib.parse.urlparse(endpoint).hostname
+        if not host or not re.fullmatch(r"[A-Za-z0-9.-]+", host):
+            raise RunnerFailure("proxy_config", "dependency URL host is invalid", "input", 10)
+        allowed.extend(["--allow-host", host])
+    unit = "flowersec-transport-v2-proxy.service"
+    command(["systemctl", "--user", "stop", unit], 15, False)
+    command(["systemctl", "--user", "reset-failed", unit], 15, False)
+    command([
+        "systemd-run", "--user", f"--unit={unit}", "--property=Type=simple", "--property=Restart=on-failure",
+        "--property=RestartSec=2s", "--property=RuntimeMaxSec=24h", "--property=TimeoutStopSec=5s",
+        "/usr/bin/python3", proxy_path, "--listen-host", parsed.hostname, "--listen-port", str(parsed.port), *allowed,
+    ], 30)
+    for _ in range(50):
+        active = command(["systemctl", "--user", "is-active", unit], 5, False)
+        if active.stdout.strip() == "active":
+            return
+        time.sleep(0.1)
+    raise RunnerFailure("proxy_service", "host dependency proxy did not become active")
+
+
+def verify_proxy(config):
+    unit = "flowersec-transport-v2-proxy.service"
+    active = command(["systemctl", "--user", "is-active", unit], 5, False)
+    if active.stdout.strip() != "active":
+        raise RunnerFailure("proxy_service", "host dependency proxy is not active")
+    parsed = urllib.parse.urlparse(config["proxy_url"])
+    sockets = command(["ss", "-ltn"], 10).stdout
+    if f"{parsed.hostname}:{parsed.port}" not in sockets:
+        raise RunnerFailure("proxy_socket", "host dependency proxy is not listening on the configured endpoint")
+
+
+def transfer_to_lxd(config, request, agent_path, helper_directory):
+    lxc_name = config["lxc_name"]
+    lxc_root = config["lxc_root"]
+    lxd_agent = f"{lxc_root}/transport-v2-runner-agent.sh"
+    lxd_config = f"{lxc_root}/runner-config.json"
+    lxd_request = f"{lxc_root}/request.json"
+    lxc(config, "info", lxc_name)
+    lxc(config, "exec", lxc_name, "--", "install", "-d", "-m", "0700", lxc_root)
+    for source, mode, destination in (
+        (agent_path, "0700", lxd_agent),
+        (config["host_config_path"], "0600", lxd_config),
+        (config["host_request_path"], "0600", lxd_request),
+    ):
+        lxc(config, "file", "push", f"--mode={mode}", source, f"{lxc_name}{destination}")
+    remote_agent = lxc(config, "exec", lxc_name, "--", "sha256sum", lxd_agent).stdout.split()[0]
+    remote_config = lxc(config, "exec", lxc_name, "--", "sha256sum", lxd_config).stdout.split()[0]
+    if remote_agent != request["agent_sha256"] or remote_config != request["config_sha256"]:
+        raise RunnerFailure("lxd_transfer_digest", "LXD agent or config transfer digest drifted", "identity", 30)
+    if request["action"] == "provision":
+        template = os.path.join(helper_directory, "flowersec-formal@.service")
+        require_digest(template, request["template_sha256"], "template_digest")
+        lxd_template = f"{lxc_root}/flowersec-formal@.service"
+        lxc(config, "file", "push", "--mode=0644", template, f"{lxc_name}{lxd_template}")
+        remote_template = lxc(config, "exec", lxc_name, "--", "sha256sum", lxd_template).stdout.split()[0]
+        if remote_template != request["template_sha256"]:
+            raise RunnerFailure("lxd_template_digest", "LXD template transfer digest drifted", "identity", 30)
+    if request["action"] == "deploy":
+        bundle = request["host_bundle_path"]
+        require_digest(bundle, request["bundle_sha256"], "host_bundle_digest")
+        lxd_bundle = f"{lxc_root}/{request['source_sha']}.bundle"
+        lxc(config, "file", "push", "--mode=0600", bundle, f"{lxc_name}{lxd_bundle}", timeout=300)
+    return lxd_agent, lxd_config, lxd_request
+
+
+def action_timeout(action):
+    return {"doctor": 35, "provision": 600, "deploy": 1200, "run-formal": 60, "collect": 180, "cleanup": 180}[action]
+
+
+def pull_collection(config, request, payload):
+    if request["action"] != "collect" or payload["status"] not in {"GREEN", "RED"} or "lxd_archive_path" not in payload:
+        return payload
+    lxd_archive = payload["lxd_archive_path"]
+    archive_sha = payload.get("archive_sha256", "")
+    if not SHA256.fullmatch(archive_sha):
+        raise RunnerFailure("host_archive_digest", "LXD collection archive receipt is invalid", "identity", 30)
+    host_directory = os.path.dirname(config["host_agent_path"])
+    host_archive = os.path.join(host_directory, os.path.basename(lxd_archive))
+    if not os.path.exists(host_archive):
+        temporary_directory = tempfile.mkdtemp(prefix=f".collect-{request['source_sha']}.", dir=host_directory)
+        temporary_archive = os.path.join(temporary_directory, "archive")
+        try:
+            lxc(config, "file", "pull", f"{config['lxc_name']}{lxd_archive}", temporary_archive, timeout=300)
+            require_digest(temporary_archive, archive_sha, "host_archive_digest")
+            os.replace(temporary_archive, host_archive)
+        finally:
+            shutil.rmtree(temporary_directory, ignore_errors=True)
+    require_digest(host_archive, archive_sha, "host_archive_digest")
+    return {**payload, "host_archive_path": host_archive}
+
+
+def cleanup_host(config, request, helper_directory):
+    expected = request["archive_sha256"]
+    host_directory = os.path.dirname(config["host_agent_path"])
+    bundle = os.path.join(host_directory, f"{request['source_sha']}.bundle")
+    if os.path.lexists(bundle):
+        if not os.path.isfile(bundle) or os.path.islink(bundle):
+            raise RunnerFailure("host_cleanup_bundle", "host deploy bundle is not a regular task file", "cleanup", 40)
+        os.unlink(bundle)
+    if expected:
+        for suffix in ("closure", "failure"):
+            candidate = os.path.join(host_directory, f"{request['source_sha']}-{config['runner_id']}-formal-{suffix}.tar.gz")
+            if os.path.lexists(candidate):
+                require_digest(candidate, expected, "host_cleanup_digest")
+                os.unlink(candidate)
+    command(["systemctl", "--user", "stop", "flowersec-transport-v2-proxy.service"], 15, False)
+    command(["systemctl", "--user", "reset-failed", "flowersec-transport-v2-proxy.service"], 15, False)
+    for candidate in pathlib.Path(host_directory).glob(f".collect-{request['source_sha']}.*"):
+        if candidate.is_dir() and not candidate.is_symlink():
+            shutil.rmtree(candidate)
+
+
+def main():
+    if len(sys.argv) != 7 or sys.argv[1:3] != ["--role", "host"] or sys.argv[6] != "flowersec-remote-runner-v1":
+        return 2
+    action, config_path, request_path = sys.argv[3:6]
+    helper_path = os.path.realpath(__file__)
+    helper_directory = os.path.dirname(helper_path)
+    agent_path = os.path.join(helper_directory, "transport-v2-runner-agent.sh")
+    request = {"action": action, "source_sha": "", "base_sha": ""}
+    status_path = f"{request_path}.status"
+    try:
+        config = load_json(config_path)
+        request = load_json(request_path)
+        validate_inputs(agent_path, helper_path, config, request, action)
+        require_digest(config_path, request["config_sha256"], "host_config_digest")
+        os.chmod(agent_path, 0o700)
+        os.chmod(config_path, 0o600)
+        os.chmod(request_path, 0o600)
+        if action == "provision":
+            start_proxy(config, request, helper_directory)
+        if action in {"provision", "doctor"}:
+            verify_proxy(config)
+        lxd_agent, lxd_config, lxd_request = transfer_to_lxd(config, request, agent_path, helper_directory)
+        nested = lxc(
+            config, "exec", config["lxc_name"], "--", lxd_agent, "--role", "lxd", action, lxd_config,
+            lxd_request, "flowersec-remote-runner-v1", timeout=action_timeout(action), check=False,
+        )
+        payload = parse_result(nested.stdout, request)
+        payload = pull_collection(config, request, payload)
+        if action == "deploy" and nested.returncode == 0:
+            os.unlink(request["host_bundle_path"])
+            lxd_bundle = f"{config['lxc_root']}/{request['source_sha']}.bundle"
+            lxc(config, "exec", config["lxc_name"], "--", "rm", "-f", "--", lxd_bundle)
+        if action == "cleanup" and nested.returncode == 0:
+            cleanup_host(config, request, helper_directory)
+        write_status(status_path, payload)
+        print(json.dumps(payload, separators=(",", ":")), flush=True)
+        if action == "cleanup" and nested.returncode == 0:
+            for path in (
+                config["host_agent_path"], config["host_config_path"], config["host_request_path"], status_path,
+                helper_path, os.path.join(helper_directory, "transport-v2-runner-proxy.py"),
+                os.path.join(helper_directory, "flowersec-formal@.service"),
+            ):
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
+        return nested.returncode
+    except RunnerFailure as error:
+        payload = result_json(request, "RED", str(error), error.check_id, error.classification)
+        try:
+            write_status(status_path, payload)
+        except OSError:
+            pass
+        print(json.dumps(payload, separators=(",", ":")), flush=True)
+        return error.code
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError, json.JSONDecodeError) as error:
+        payload = result_json(request, "RED", str(error), "host_orchestration", "environment")
+        try:
+            write_status(status_path, payload)
+        except OSError:
+            pass
+        print(json.dumps(payload, separators=(",", ":")), flush=True)
+        return 20
+
+
+if __name__ == "__main__":
+    sys.exit(main())

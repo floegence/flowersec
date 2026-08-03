@@ -9,11 +9,13 @@ import test from "node:test";
 const repository = path.resolve(import.meta.dirname, "..");
 const controllerPath = path.join(repository, "scripts", "transport-v2-runner.sh");
 const agentPath = path.join(repository, "scripts", "transport-v2-runner-agent.sh");
+const hostHelperPath = path.join(repository, "scripts", "transport-v2-runner-host.py");
 
 test("three-tier runner uses fixed agents and closed stdin", async () => {
   const controller = await readFile(controllerPath, "utf8");
   const agent = await readFile(agentPath, "utf8");
   const proxy = await readFile(path.join(repository, "scripts", "transport-v2-runner-proxy.py"), "utf8");
+  const hostHelper = await readFile(hostHelperPath, "utf8");
   const service = await readFile(path.join(repository, "scripts", "flowersec-formal@.service"), "utf8");
   const formalRunner = await readFile(path.join(repository, "scripts", "transport-v2-release-runner.sh"), "utf8");
 
@@ -31,6 +33,8 @@ test("three-tier runner uses fixed agents and closed stdin", async () => {
   assert.match(controller, /write_state_atomically/);
   assert.match(agent, /write_status_atomically/);
   assert.match(agent, /"\$prepared_transportcheck" runner-preflight/);
+  assert.ok(agent.indexOf("transport-v2-runner-host.py") < agent.indexOf("jq -e"));
+  assert.match(hostHelper, /stdin=subprocess\.DEVNULL/);
   assert.match(agent, /archive_sha256/);
   assert.match(agent, /artifact_ownership/);
   assert.doesNotMatch(proxy, /10\.191\.|goproxy\.cn|registry\.npmjs\.org|crates\.io/);
@@ -129,7 +133,7 @@ test("controller does not expand parameters or commit partial GREEN state", asyn
   assert.equal(failedState.last_failure.classification, "unreachable");
 });
 
-test("host agent closes every LXC stdin before continuing state transitions", async (t) => {
+test("host agent needs no jq and closes every LXC stdin before state transitions", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "flowersec-lxc-stdin-contract-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const fakeLXC = path.join(root, "lxc");
@@ -137,12 +141,15 @@ test("host agent closes every LXC stdin before continuing state transitions", as
   const fakeSS = path.join(root, "ss");
   const fakeTimeout = path.join(root, "timeout");
   const calls = path.join(root, "calls.log");
-  const agent = path.join(root, "remote-agent");
+  const agent = path.join(root, "transport-v2-runner-agent.sh");
   const config = path.join(root, "config.json");
   const request = path.join(root, "request.json");
   const sourceSHA = "a".repeat(40);
   await copyFile(agentPath, agent);
   await chmod(agent, 0o700);
+  const hostHelper = path.join(root, "transport-v2-runner-host.py");
+  await copyFile(hostHelperPath, hostHelper);
+  await chmod(hostHelper, 0o700);
   await writeFile(fakeLXC, `#!/bin/sh\nset -eu\nif IFS= read -r unexpected; then exit 91; fi\nprintf 'stdin=eof %s\\n' "$*" >>"${calls}"\ncase "$*" in\n  *'-- sha256sum '*'transport-v2-runner-agent.sh'*) sha256sum "${agent}" ;;\n  *'-- sha256sum '*'runner-config.json'*) sha256sum "${config}" ;;\n  *'--role lxd doctor'*) printf '%s\\n' '{"schema":"flowersec-remote-runner-result-v1","status":"GREEN","action":"doctor","source_sha":"${sourceSHA}","base_sha":"","classification":"none","message":"lxc stdin closed","check_id":""}' ;;\n  *'--role lxd cleanup'*) printf '%s\\n' '{"schema":"flowersec-remote-runner-result-v1","status":"RED","action":"cleanup","source_sha":"${sourceSHA}","base_sha":"","classification":"residual","message":"bounded cleanup failed","check_id":"residual_process"}'; exit 20 ;;\nesac\n`);
   await chmod(fakeLXC, 0o700);
   await writeFile(fakeSystemctl, "#!/bin/sh\ncase \"$*\" in *'is-active'*) echo active;; esac\n");
@@ -175,6 +182,7 @@ test("host agent closes every LXC stdin before continuing state transitions", as
   }, null, 2)}\n`;
   const configSHA = createHash("sha256").update(configText).digest("hex");
   const agentSHA = createHash("sha256").update(await readFile(agent, "utf8")).digest("hex");
+  const hostHelperSHA = createHash("sha256").update(await readFile(hostHelper, "utf8")).digest("hex");
   await writeFile(config, configText);
   await chmod(config, 0o600);
   await writeFile(request, `${JSON.stringify({
@@ -187,6 +195,7 @@ test("host agent closes every LXC stdin before continuing state transitions", as
     bundle_sha256: "",
     archive_sha256: "",
     agent_sha256: agentSHA,
+    host_helper_sha256: hostHelperSHA,
     proxy_sha256: "c".repeat(64),
     template_sha256: "d".repeat(64),
     host_bundle_path: path.join(root, "unused.bundle"),
@@ -197,7 +206,7 @@ test("host agent closes every LXC stdin before continuing state transitions", as
     encoding: "utf8",
     env: { ...process.env, PATH: `${root}:${process.env.PATH}` },
   });
-  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.status, 0, `${run.stderr}\n${run.stdout}`);
   const lines = (await readFile(calls, "utf8")).trim().split("\n");
   assert.ok(lines.some((line) => line.includes("exec flowersec-release-ubuntu24")));
   assert.ok(lines.every((line) => line.startsWith("stdin=eof ")));
@@ -213,6 +222,7 @@ test("host agent closes every LXC stdin before continuing state transitions", as
     bundle_sha256: "",
     archive_sha256: "",
     agent_sha256: agentSHA,
+    host_helper_sha256: hostHelperSHA,
     proxy_sha256: "c".repeat(64),
     template_sha256: "d".repeat(64),
     host_bundle_path: path.join(root, "unused.bundle"),
@@ -285,6 +295,7 @@ test("guest cleanup fails closed on archive drift and removes only verified exac
   await chmod(config, 0o600);
   const configSHA = createHash("sha256").update(configText).digest("hex");
   const agentSHA = createHash("sha256").update(await readFile(agent, "utf8")).digest("hex");
+  const hostHelperSHA = createHash("sha256").update(await readFile(hostHelperPath, "utf8")).digest("hex");
   const archiveSHA = createHash("sha256").update(await readFile(archive)).digest("hex");
   const requestFor = (digest) => `${JSON.stringify({
     schema: "flowersec-remote-runner-request-v1",
@@ -296,6 +307,7 @@ test("guest cleanup fails closed on archive drift and removes only verified exac
     bundle_sha256: "",
     archive_sha256: digest,
     agent_sha256: agentSHA,
+    host_helper_sha256: hostHelperSHA,
     proxy_sha256: "c".repeat(64),
     template_sha256: "d".repeat(64),
     host_bundle_path: path.join(root, "unused.bundle"),

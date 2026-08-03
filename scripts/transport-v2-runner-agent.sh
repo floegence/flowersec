@@ -20,15 +20,21 @@ request=$5
 case "$role" in host | lxd | guest | guest-root) ;; *) usage ;; esac
 case "$action" in doctor | doctor-root | provision | deploy | run-formal | run-formal-root | collect | cleanup) ;; *) usage ;; esac
 [[ -f $config && ! -L $config && -f $request && ! -L $request ]] || usage
+if [[ $role == host ]]; then
+  host_helper=$(dirname "${BASH_SOURCE[0]}")/transport-v2-runner-host.py
+  [[ -f $host_helper && ! -L $host_helper ]] || usage
+  exec /usr/bin/python3 "$host_helper" "$@"
+fi
 
 jq -e --arg action "$action" '
   .schema == "flowersec-remote-runner-request-v1" and
   (keys | sort) == (["action","agent_sha256","archive_sha256","base_sha","bundle_sha256","config_sha256",
-    "host_bundle_path","output_path","proxy_sha256","schema","source_sha","template_sha256"] | sort) and
+    "host_bundle_path","host_helper_sha256","output_path","proxy_sha256","schema","source_sha","template_sha256"] | sort) and
   (.action == $action or ($action == "doctor-root" and .action == "doctor") or ($action == "run-formal-root" and .action == "run-formal")) and
   (.source_sha | test("^[0-9a-f]{40}$")) and
   (.base_sha == "" or (.base_sha | test("^[0-9a-f]{40}$"))) and
   (.agent_sha256 | test("^[0-9a-f]{64}$")) and
+  (.host_helper_sha256 | test("^[0-9a-f]{64}$")) and
   (.proxy_sha256 | test("^[0-9a-f]{64}$")) and
   (.template_sha256 | test("^[0-9a-f]{64}$")) and
   (.archive_sha256 == "" or (.archive_sha256 | test("^[0-9a-f]{64}$")))
@@ -149,119 +155,6 @@ case "$action" in
   *) action_timeout=30s ;;
 esac
 
-run_host() {
-  local nested_result nested_status host_bundle proxy_path proxy_unit proxy_host proxy_port attempt template_path lxd_template lxd_archive archive_sha host_archive host_archive_temp dependency_url dependency_host candidate expected_archive
-  local -a proxy_allow_args=()
-  chmod 0700 "$host_agent_path"
-  chmod 0600 "$host_config_path" "$host_request_path"
-  install -d -m 0700 "$(dirname "$host_agent_path")"
-  if [[ $action == provision ]]; then
-    proxy_path=$(dirname "$host_agent_path")/transport-v2-runner-proxy.py
-    template_path=$(dirname "$host_agent_path")/flowersec-formal@.service
-    lxd_template=$lxc_root/flowersec-formal@.service
-    proxy_unit=flowersec-transport-v2-proxy.service
-    [[ -f $proxy_path && ! -L $proxy_path && -f $template_path && ! -L $template_path ]]
-    [[ $(sha256sum "$proxy_path" | awk '{print $1}') == "$(jq -r '.proxy_sha256' "$request")" ]] || agent_fail proxy_digest "proxy transfer digest drifted" identity 30
-    [[ $(sha256sum "$template_path" | awk '{print $1}') == "$(jq -r '.template_sha256' "$request")" ]] || agent_fail template_digest "service template transfer digest drifted" identity 30
-    chmod 0700 "$proxy_path"
-    [[ $proxy_url =~ ^http://([^:/]+):([0-9]+)$ ]]
-    proxy_host=${BASH_REMATCH[1]}
-    proxy_port=${BASH_REMATCH[2]}
-    while IFS= read -r dependency_url; do
-      [[ $dependency_url =~ ^https://([^/:]+)(:[0-9]+)?(/|$) ]]
-      dependency_host=${BASH_REMATCH[1]}
-      [[ $dependency_host =~ ^[A-Za-z0-9.-]+$ ]]
-      proxy_allow_args+=(--allow-host "$dependency_host")
-    done < <(jq -r '.dependency_urls[]' "$config")
-    systemctl --user stop "$proxy_unit" >/dev/null 2>&1 || true
-    systemctl --user reset-failed "$proxy_unit" >/dev/null 2>&1 || true
-    systemd-run --user --unit="$proxy_unit" --property=Type=simple --property=Restart=on-failure \
-      --property=RestartSec=2s --property=RuntimeMaxSec=24h --property=TimeoutStopSec=5s \
-      /usr/bin/python3 "$proxy_path" --listen-host "$proxy_host" --listen-port "$proxy_port" "${proxy_allow_args[@]}" >/dev/null
-    attempt=0
-    until [[ $(systemctl --user is-active "$proxy_unit" 2>/dev/null || true) == active ]]; do
-      attempt=$((attempt + 1))
-      [[ $attempt -le 50 ]]
-      sleep 0.1
-    done
-  fi
-  if [[ $action == provision || $action == doctor ]]; then
-    proxy_unit=flowersec-transport-v2-proxy.service
-    [[ $(systemctl --user is-active "$proxy_unit") == active ]]
-    [[ $proxy_url =~ ^http://([^:/]+):([0-9]+)$ ]]
-    proxy_host=${BASH_REMATCH[1]}
-    proxy_port=${BASH_REMATCH[2]}
-    ss -ltn | awk -v endpoint="$proxy_host:$proxy_port" '$4 == endpoint {found=1} END {exit !found}'
-  fi
-  timeout --signal=TERM --kill-after=2s 30s lxc info "$lxc_name" >/dev/null
-  timeout --signal=TERM --kill-after=2s 30s lxc exec "$lxc_name" -- install -d -m 0700 "$lxc_root" </dev/null
-  timeout --signal=TERM --kill-after=2s 30s lxc file push --mode=0700 "$host_agent_path" "$lxc_name$lxd_agent"
-  timeout --signal=TERM --kill-after=2s 30s lxc file push --mode=0600 "$host_config_path" "$lxc_name$lxd_config"
-  timeout --signal=TERM --kill-after=2s 30s lxc file push --mode=0600 "$host_request_path" "$lxc_name$lxd_request"
-  [[ $(timeout --signal=TERM --kill-after=2s 30s lxc exec "$lxc_name" -- sha256sum "$lxd_agent" </dev/null | awk '{print $1}') == "$(jq -r '.agent_sha256' "$request")" ]] || agent_fail lxd_agent_digest "LXD agent transfer digest drifted" identity 30
-  [[ $(timeout --signal=TERM --kill-after=2s 30s lxc exec "$lxc_name" -- sha256sum "$lxd_config" </dev/null | awk '{print $1}') == "$(jq -r '.config_sha256' "$request")" ]] || agent_fail lxd_config_digest "LXD config transfer digest drifted" identity 30
-  if [[ $action == provision ]]; then
-    [[ -f $template_path && ! -L $template_path ]]
-    timeout --signal=TERM --kill-after=2s 30s lxc file push --mode=0644 "$template_path" "$lxc_name$lxd_template"
-    [[ $(timeout --signal=TERM --kill-after=2s 30s lxc exec "$lxc_name" -- sha256sum "$lxd_template" </dev/null | awk '{print $1}') == "$(jq -r '.template_sha256' "$request")" ]] || agent_fail lxd_template_digest "LXD template transfer digest drifted" identity 30
-  fi
-  if [[ $action == deploy ]]; then
-    host_bundle=$(jq -r '.host_bundle_path' "$request")
-    [[ -f $host_bundle && ! -L $host_bundle ]]
-    [[ $(sha256sum "$host_bundle" | awk '{print $1}') == "$(jq -r '.bundle_sha256' "$request")" ]] || agent_fail host_bundle_digest "host deploy bundle digest drifted" identity 30
-    timeout --signal=TERM --kill-after=5s 5m lxc file push --mode=0600 "$host_bundle" "$lxc_name$lxd_bundle"
-  fi
-  set +e
-  nested_result=$(timeout --signal=TERM --kill-after=5s "$action_timeout" lxc exec "$lxc_name" -- "$lxd_agent" --role lxd "$action" "$lxd_config" "$lxd_request" flowersec-remote-runner-v1 </dev/null)
-  nested_status=$?
-  set -e
-  validate_any_result "$nested_result"
-  if [[ $nested_status == 0 ]]; then validate_result "$nested_result"; fi
-  if [[ $action == deploy ]]; then
-    host_bundle=$(jq -r '.host_bundle_path' "$request")
-    rm -f -- "$host_bundle"
-    timeout --signal=TERM --kill-after=2s 30s lxc exec "$lxc_name" -- rm -f -- "$lxd_bundle" </dev/null
-  fi
-  if [[ $action == collect && ($(jq -r '.status' <<<"$nested_result") == GREEN || $(jq -r '.status' <<<"$nested_result") == RED) ]]; then
-    lxd_archive=$(jq -er '.lxd_archive_path' <<<"$nested_result")
-    archive_sha=$(jq -er '.archive_sha256' <<<"$nested_result")
-    host_archive=$(dirname "$host_agent_path")/$(basename "$lxd_archive")
-    if [[ ! -e $host_archive && ! -L $host_archive ]]; then
-      host_archive_temp=$(mktemp "$(dirname "$host_agent_path")/.collect-$source_sha.XXXXXX")
-      if ! timeout --signal=TERM --kill-after=5s 5m lxc file pull "$lxc_name$lxd_archive" "$host_archive_temp"; then
-        rm -f -- "$host_archive_temp"
-        exit 20
-      fi
-      [[ $(sha256sum "$host_archive_temp" | awk '{print $1}') == "$archive_sha" ]] || agent_fail host_archive_digest "host collection transfer digest drifted" identity 30
-      mv -- "$host_archive_temp" "$host_archive"
-    fi
-    [[ $(sha256sum "$host_archive" | awk '{print $1}') == "$archive_sha" ]] || agent_fail host_archive_digest "host collection archive digest drifted" identity 30
-    nested_result=$(jq -c --arg path "$host_archive" '. + {host_archive_path:$path}' <<<"$nested_result")
-  fi
-  if [[ $action == cleanup ]]; then
-    expected_archive=$(jq -r '.archive_sha256' "$request")
-    if [[ -n $expected_archive ]]; then
-      for candidate in "$(dirname "$host_agent_path")/$source_sha-$runner_id-formal-closure.tar.gz" \
-        "$(dirname "$host_agent_path")/$source_sha-$runner_id-formal-failure.tar.gz"; do
-        if [[ -e $candidate || -L $candidate ]]; then
-          [[ -f $candidate && ! -L $candidate && $(sha256sum "$candidate" | awk '{print $1}') == "$expected_archive" ]] || agent_fail host_cleanup_digest "host cleanup archive digest drifted" cleanup 40
-          rm -- "$candidate"
-        fi
-      done
-    fi
-    proxy_unit=flowersec-transport-v2-proxy.service
-    systemctl --user stop "$proxy_unit" >/dev/null 2>&1 || true
-    systemctl --user reset-failed "$proxy_unit" >/dev/null 2>&1 || true
-    find "$(dirname "$host_agent_path")" -maxdepth 1 -type f -name ".collect-$source_sha.*" -delete
-  fi
-  write_status_atomically "$host_request_path.status" "$nested_result"
-  printf '%s\n' "$nested_result"
-  if [[ $action == cleanup && $nested_status == 0 ]]; then
-    rm -f -- "$host_agent_path" "$host_config_path" "$host_request_path" "$host_request_path.status" \
-      "$(dirname "$host_agent_path")/transport-v2-runner-proxy.py" "$(dirname "$host_agent_path")/flowersec-formal@.service"
-  fi
-  if [[ $nested_status != 0 ]]; then exit "$nested_status"; fi
-}
 
 guest_ssh_args=(-T -i "$guest_identity_file" -o BatchMode=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile="$guest_known_hosts_file" -o ConnectTimeout=10 -o ConnectionAttempts=1 -p "$guest_port" "$guest_target")
@@ -322,6 +215,10 @@ run_lxd() {
           rm -- "$candidate"
         fi
       done
+    fi
+    if [[ -e $lxd_bundle || -L $lxd_bundle ]]; then
+      [[ -f $lxd_bundle && ! -L $lxd_bundle ]] || agent_fail lxd_cleanup_bundle "LXD deploy bundle is not a regular task file" cleanup 40
+      rm -- "$lxd_bundle"
     fi
     find "$lxc_root" -maxdepth 1 -type f -name ".collect-$source_sha.*" -delete
   fi
@@ -658,7 +555,6 @@ run_guest_cleanup() {
 }
 
 case "$role:$action" in
-  host:*) run_host ;;
   lxd:*) run_lxd ;;
   guest:deploy) run_guest_deploy ;;
   guest:doctor) run_guest_doctor ;;

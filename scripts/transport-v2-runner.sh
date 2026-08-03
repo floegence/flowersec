@@ -72,9 +72,10 @@ fi
 script_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 repository=$(cd "$script_root/.." && pwd -P)
 agent_source=$script_root/transport-v2-runner-agent.sh
+host_helper_source=$script_root/transport-v2-runner-host.py
 proxy_source=$script_root/transport-v2-runner-proxy.py
 template_source=$script_root/flowersec-formal@.service
-[[ -x $agent_source && -f $proxy_source && -f $template_source && ! -L $agent_source && ! -L $proxy_source && ! -L $template_source ]] || {
+[[ -x $agent_source && -x $host_helper_source && -f $proxy_source && -f $template_source && ! -L $agent_source && ! -L $host_helper_source && ! -L $proxy_source && ! -L $template_source ]] || {
   echo "checked-in runner agents are unavailable" >&2
   exit 2
 }
@@ -169,6 +170,7 @@ host_bundle_path=$(dirname "$host_agent_path")/$source_sha.bundle
 bundle_sha256=
 archive_sha256=
 agent_sha256=$(sha256_file "$agent_source")
+host_helper_sha256=$(sha256_file "$host_helper_source")
 proxy_sha256=$(sha256_file "$proxy_source")
 template_sha256=$(sha256_file "$template_source")
 if [[ $action == deploy ]]; then
@@ -204,12 +206,13 @@ jq -n \
   --arg bundle_sha256 "$bundle_sha256" \
   --arg archive_sha256 "$archive_sha256" \
   --arg agent_sha256 "$agent_sha256" \
+  --arg host_helper_sha256 "$host_helper_sha256" \
   --arg proxy_sha256 "$proxy_sha256" \
   --arg template_sha256 "$template_sha256" \
   --arg host_bundle_path "$host_bundle_path" \
   '{schema:$schema,action:$action,source_sha:$source_sha,base_sha:$base_sha,output_path:$output_path,
     config_sha256:$config_sha256,bundle_sha256:$bundle_sha256,archive_sha256:$archive_sha256,
-    agent_sha256:$agent_sha256,proxy_sha256:$proxy_sha256,template_sha256:$template_sha256,
+    agent_sha256:$agent_sha256,host_helper_sha256:$host_helper_sha256,proxy_sha256:$proxy_sha256,template_sha256:$template_sha256,
     host_bundle_path:$host_bundle_path}' >"$request"
 
 persist_failure() {
@@ -260,6 +263,8 @@ run_transport() {
 
 run_transport "$ssh_executable" -n -o ConnectTimeout=10 -o ConnectionAttempts=1 "$ssh_target" install -d -m 0700 "$host_remote_root" >/dev/null
 run_transport "$scp_executable" -q -o ConnectTimeout=10 -o ConnectionAttempts=1 -- "$agent_source" "$ssh_target:$host_agent_path"
+host_helper_path=$host_remote_root/transport-v2-runner-host.py
+run_transport "$scp_executable" -q -o ConnectTimeout=10 -o ConnectionAttempts=1 -- "$host_helper_source" "$ssh_target:$host_helper_path"
 run_transport "$scp_executable" -q -o ConnectTimeout=10 -o ConnectionAttempts=1 -- "$config" "$ssh_target:$host_config_path"
 run_transport "$scp_executable" -q -o ConnectTimeout=10 -o ConnectionAttempts=1 -- "$request" "$ssh_target:$host_request_path"
 if [[ $action == provision ]]; then
