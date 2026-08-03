@@ -604,9 +604,41 @@ run_guest_formal_root() {
   exec "$guest_repo/scripts/transport-v2-release-runner.sh" --target all --report "$report_path"
 }
 
+recover_guest_collection() {
+  local payload archive archive_sha expected_archive
+  recovered_collection=
+  [[ -f $guest_request.status && ! -L $guest_request.status ]] || return 1
+  payload=$(<"$guest_request.status")
+  validate_any_result "$payload" || agent_fail guest_collection_receipt "guest collection receipt schema drifted" identity 30
+  [[ $(jq -r '.status' <<<"$payload") == GREEN || $(jq -r '.status' <<<"$payload") == RED ]] || return 1
+  archive=$(jq -er '.archive_path' <<<"$payload")
+  archive_sha=$(jq -er '.archive_sha256' <<<"$payload")
+  if [[ $(jq -r '.status' <<<"$payload") == GREEN ]]; then
+    expected_archive=$artifact_root/$source_sha-$runner_id-formal-closure.tar.gz
+  else
+    expected_archive=$artifact_root/$source_sha-$runner_id-formal-failure.tar.gz
+  fi
+  [[ $archive == "$expected_archive" && $archive_sha =~ ^[0-9a-f]{64}$ && -f $archive && ! -L $archive ]] || \
+    agent_fail guest_collection_receipt "guest collection archive receipt drifted" identity 30
+  [[ $(sha256sum "$archive" | awk '{print $1}') == "$archive_sha" ]] || \
+    agent_fail guest_collection_receipt "guest collection archive digest drifted" identity 30
+  recovered_collection=$payload
+  [[ $(jq -r '.status' <<<"$payload") == GREEN ]] && return 0
+  return 20
+}
+
 run_guest_collect() {
-  local active result archive archive_sha payload journal
+  local active result archive archive_sha payload journal recovered_status recovered_collection
   local -a failure_members=()
+  set +e
+  recover_guest_collection
+  recovered_status=$?
+  set -e
+  if [[ $recovered_status != 1 ]]; then
+    printf '%s\n' "$recovered_collection"
+    if [[ $recovered_status != 0 ]]; then exit "$recovered_status"; fi
+    return
+  fi
   active=$(sudo -n systemctl show "$unit" -p ActiveState --value 2>/dev/null || true)
   result=$(sudo -n systemctl show "$unit" -p Result --value 2>/dev/null || true)
   if [[ $active == active || $active == activating ]]; then

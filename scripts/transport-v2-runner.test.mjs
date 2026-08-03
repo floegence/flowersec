@@ -379,6 +379,23 @@ finally:
   assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
 });
 
+test("guest collect resumes a terminal exact-state archive before rebuilding it", async () => {
+  const agent = await readFile(agentPath, "utf8");
+  const recoverStart = agent.indexOf("recover_guest_collection() {");
+  const collectStart = agent.indexOf("run_guest_collect() {");
+  const collectEnd = agent.indexOf("\nrun_guest_cleanup() {", collectStart);
+  const recovery = agent.slice(recoverStart, collectStart);
+  const collect = agent.slice(collectStart, collectEnd);
+
+  assert.ok(recoverStart >= 0 && collectStart > recoverStart && collectEnd > collectStart);
+  assert.match(recovery, /validate_any_result \"\$payload\"/);
+  assert.match(recovery, /formal-closure\.tar\.gz/);
+  assert.match(recovery, /formal-failure\.tar\.gz/);
+  assert.match(recovery, /sha256sum \"\$archive\"/);
+  assert.ok(collect.indexOf("recover_guest_collection") < collect.indexOf("systemctl show"));
+  assert.ok(collect.indexOf("recover_guest_collection") < collect.indexOf("tar -czf"));
+});
+
 test("doctor mirrors the formal build and browser identity context", async () => {
   const agent = await readFile(agentPath, "utf8");
   const preflight = await readFile(path.join(repository, "tools", "transportcheck", "runner_preflight.go"), "utf8");
