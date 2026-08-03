@@ -198,6 +198,7 @@ describe("browser WebTransport carrier internal stage", () => {
     expect(alreadyQueuedNative.writes).toEqual([Uint8Array.of(8)]);
 
     await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const lateOpen = deferred<BrowserWebTransportBidirectionalStreamInternalStage>();
     fake.createBidirectionalStream.mockImplementationOnce(async () => await lateOpen.promise);
     const openAbort = new AbortController();
@@ -230,6 +231,23 @@ describe("browser WebTransport carrier internal stage", () => {
     expect(fake.createBidirectionalStream).not.toHaveBeenCalled();
     await vi.runAllTimersAsync();
     await opening;
+  });
+
+  test("fails closed when native closure arrives one task after ready", async () => {
+    vi.useFakeTimers();
+    const fake = new FakeWebTransport();
+    fake.resolveReady();
+    const carrier = await createCarrier(fake);
+
+    const opening = carrier.openStream().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    setTimeout(() => fake.closedState.resolve(undefined), 0);
+    await vi.runAllTimersAsync();
+
+    expect(fake.createBidirectionalStream).not.toHaveBeenCalled();
+    await expect(opening).resolves.toMatchObject({ code: "carrier_closed" });
   });
 
   test("cancels incoming unidirectional streams and bounds close even if closed never settles", async () => {
